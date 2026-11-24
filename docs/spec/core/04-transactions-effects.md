@@ -506,9 +506,14 @@ the primary target, and every other change follows the closed writer contract
 below. The created target is authorized as its complete proposed state; laws
 run on the whole proposed state; the create, the writer's changes and the call
 receipt commit as one transaction. A generated (naming-series) key does not
-compose with a writer and refuses. Named scenarios (`governed_create.rs`):
-`submitter_creates_and_only_an_independent_approver_decides` and
-`writer_create_refuses_an_existing_target_and_a_violated_law_atomically`.
+compose with a writer and refuses. A writer never writes a protected property:
+Ring 0 refuses a writer fact schema (`values`/`patch`) or parent values that
+name one (`artifact_set.action.target_not_writable`), and the kernel refuses
+the write at commit. Named scenarios (`governed_create.rs`):
+`submitter_creates_and_only_an_independent_approver_decides`,
+`writer_create_refuses_an_existing_target_and_a_violated_law_atomically` and
+`create_writer_cannot_write_the_creator_or_create_its_target`; checker:
+`writer_schema_naming_a_protected_creator_refuses`.
 
 TXN-RULE-1 / TXN-CLOSED-1: an action may name one exact `synchronousRule`
 artifactId/version and must declare the same required Rule dependency.
@@ -617,6 +622,8 @@ bounded Kani harness profile.
 ### FA-PROTECT-1: caller writes and kernel initialization
 
 A protected property is inherited conjunctively: a subtype or extension cannot remove an ancestor's rule-only write requirement. Unsealed actions, decisions and observations cannot supply protected fields, transition a protected lifecycle or delete an existing object with protected properties. Owned-row admission validates the caller's patch first, then may initialize declared defaults under its private kernel origin; callers cannot claim that origin. Until sealed-rule evaluation is connected, these writes fail closed. Named scenarios: `protected_delete_then_recreate_is_refused`, `owned_row_defaults_are_kernel_values_but_protected_inputs_are_refused`, and the generated-chain `protected_fields_cannot_be_weakened_anywhere_in_a_subtype_chain`. Admission-time action-target and kernel row-field diagnostics follow separately; runtime enforcement does not depend on that earlier rejection.
+
+One kernel-built exception exists (ACTOR-STAMP-1, Core 05): a create-only create may write a protected property only with the verified principal it stamps through the action's sole `actor.subjectId` derivation of that field. Nothing else, including a writer's `set` or a caller value equal to the principal, uses that exception.
 
 Observed deletes cannot transition or tombstone objects with protected properties. Owned-row caller-selected identity and order never count as kernel default initialization. Observation creation retains unique initial-state initialization after caller input is checked. Named regressions: `an_observed_delete_cannot_transition_a_protected_lifecycle`, `owned_row_actions_refuse_protected_framework_identity_and_order`, and `an_observed_create_keeps_unique_initialization_without_a_property_default`.
 

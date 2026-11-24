@@ -400,6 +400,55 @@ fn synchronous_writer_targets(
     Some(result)
 }
 
+/// ACTOR-STAMP-1 (Ring 0): a writer's closed fact schema never names a
+/// protected property of a type it writes. Only the kernel's create stamp of
+/// the verified principal writes one; the kernel refuses a writer's write.
+fn writer_protected_findings(
+    artifact: &ArtifactEnvelope,
+    writer: &serde_json::Value,
+    model: &Model<'_>,
+) -> Vec<Diagnostic> {
+    let Some(item) = writer.pointer("/outputSchema/properties/facts/items/properties") else {
+        return Vec::new();
+    };
+    let kinds = item
+        .pointer("/objectType/enum")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str);
+    let mut findings = Vec::new();
+    for kind in kinds {
+        let Some(view) = model.effective_object_type_named(kind) else {
+            continue;
+        };
+        for member in ["values", "patch"] {
+            let names = item
+                .get(member)
+                .and_then(|schema| schema.get("properties"))
+                .and_then(serde_json::Value::as_object)
+                .into_iter()
+                .flat_map(serde_json::Map::keys);
+            for name in names {
+                if view
+                    .property(name)
+                    .is_some_and(EffectiveProperty::protected)
+                {
+                    findings.push(finding(
+                        codes::TARGET_NOT_WRITABLE,
+                        format!(
+                            "synchronousRule {member} may write {name:?}, a protected property of {kind:?}; only the kernel's create stamp of the verified principal writes it"
+                        ),
+                        artifact,
+                        "/payload/synchronousRule",
+                    ));
+                }
+            }
+        }
+    }
+    findings
+}
+
 fn synchronous_writer_payload(
     root: &ActionRoot,
     artifacts: &[ArtifactEnvelope],
@@ -441,6 +490,7 @@ fn check_action(
         findings.extend(crate::decision_links::synchronous_writer_link_findings(
             artifact, root, writer, model,
         ));
+        findings.extend(writer_protected_findings(artifact, writer, model));
     }
     if let Some(program) = &root.effect_program {
         let kind = program.target().object_kind;
@@ -1955,11 +2005,11 @@ fn owned_rows_effect_findings(
         {
             continue;
         }
-        if property.computed {
+        if property.computed || property.protected() {
             findings.push(finding(
                 codes::TARGET_NOT_WRITABLE,
                 format!(
-                    "parent values may not write computed property {:?}",
+                    "parent values may not write computed or protected property {:?}",
                     property.id.as_str()
                 ),
                 artifact,
@@ -2931,6 +2981,11 @@ fn independent_actor_reason(
     let Some(property) = resolved else {
         return Some("names no stored property of the effect target");
     };
+    if property.computed {
+        return Some(
+            "names a computed property, which holds no recorded principal and would refuse every call",
+        );
+    }
     if !property.protected() {
         return Some(
             "names a property a caller, import or update can write; only a protected actor property (a server-stamped principal) proves independence",
@@ -3264,6 +3319,76 @@ mod actor_binding_tests {
             [(
                 codes::INDEPENDENT_ACTOR.to_owned(),
                 "/payload/independentOf/0".to_owned()
+            )]
+        );
+    }
+
+    fn mutated(edit: impl FnOnce(&mut Vec<serde_json::Value>)) -> Vec<ArtifactEnvelope> {
+        let mut documents: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+            "../../norn-cell/tests/fixtures/governed-create.json"
+        ))
+        .expect("generated fixture");
+        edit(&mut documents);
+        serde_json::from_value(serde_json::Value::Array(documents)).expect("mutated fixture")
+    }
+
+    fn document<'a>(documents: &'a mut [serde_json::Value], id: &str) -> &'a mut serde_json::Value {
+        documents
+            .iter_mut()
+            .find(|document| document["artifactId"] == id)
+            .expect("fixture artifact")
+    }
+
+    /// ACTOR-INDEPENDENT-1: a computed property records no principal, so an
+    /// independence check over it would refuse every call; admission refuses.
+    #[test]
+    fn independent_actor_check_on_a_computed_property_refuses() {
+        let artifacts = mutated(|documents| {
+            let invoice = document(documents, "ledger.Invoice.entity");
+            let properties = invoice["payload"]["objectType"]["properties"]
+                .as_array_mut()
+                .expect("properties");
+            let property = properties
+                .iter_mut()
+                .find(|property| property["id"] == "tax_code")
+                .expect("tax_code");
+            property["protected"] = serde_json::json!(true);
+            property["computed"] = serde_json::json!("self.invoice_id");
+        });
+        let model = Model::new(&artifacts, &[], &BTreeSet::new(), true);
+        let (artifact, mut approve) = root(&artifacts, "ledger.invoice.approve.action");
+        approve.independent_of = vec![PropertyId("tax_code".into())];
+        let findings = actor_binding_findings(&artifact, &approve, &model);
+        assert_eq!(
+            codes_at(&findings),
+            [(
+                codes::INDEPENDENT_ACTOR.to_owned(),
+                "/payload/independentOf/0".to_owned()
+            )]
+        );
+        assert!(findings[0].message.contains("computed"), "{findings:?}");
+    }
+
+    /// ACTOR-STAMP-1 (Ring 0): a writer whose closed fact schema can write a
+    /// protected creator refuses; the generated writer names none.
+    #[test]
+    fn writer_schema_naming_a_protected_creator_refuses() {
+        let artifacts = artifacts();
+        let model = Model::new(&artifacts, &[], &BTreeSet::new(), true);
+        let (artifact, submit) = root(&artifacts, "ledger.invoice.submit.action");
+        let writer = synchronous_writer_payload(&submit, &artifacts, &[]).expect("writer");
+        assert_eq!(writer_protected_findings(&artifact, &writer, &model), []);
+        let widened = mutated(|documents| {
+            let rule = document(documents, "ledger.invoice.writer.rule");
+            rule["payload"]["outputSchema"]["properties"]["facts"]["items"]["properties"]["patch"]
+                ["properties"]["submitted_by"] = serde_json::json!({"type": "string"});
+        });
+        let writer = synchronous_writer_payload(&submit, &widened, &[]).expect("writer");
+        assert_eq!(
+            codes_at(&writer_protected_findings(&artifact, &writer, &model)),
+            [(
+                codes::TARGET_NOT_WRITABLE.to_owned(),
+                "/payload/synchronousRule".to_owned()
             )]
         );
     }

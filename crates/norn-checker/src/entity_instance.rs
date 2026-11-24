@@ -378,7 +378,9 @@ impl EffectiveProperty {
         self.write_authority = WriteAuthority::RulesOnly;
     }
 
-    /// Whether only declared rule outputs may write this property.
+    /// Whether only declared rule outputs may write this property
+    /// (FA-PROTECT-1). The one other admitted write is the kernel's
+    /// create-only stamp of the verified principal (ACTOR-STAMP-1).
     #[must_use]
     pub const fn protected(&self) -> bool {
         matches!(self.write_authority, WriteAuthority::RulesOnly)

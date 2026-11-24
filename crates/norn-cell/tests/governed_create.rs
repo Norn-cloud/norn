@@ -40,6 +40,13 @@ const APPROVER: &str = "person:approver";
 /// a revocation takes effect at the next check, including the commit's.
 struct Members(Mutex<BTreeSet<String>>);
 
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    reason = "integration-test fixtures and assertions"
+)]
 impl Members {
     fn of(principals: &[&str]) -> Self {
         Self(Mutex::new(
@@ -74,10 +81,24 @@ impl ActionAuthorizer for Members {
     }
 }
 
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    reason = "integration-test fixtures and assertions"
+)]
 fn documents() -> Vec<Value> {
     serde_json::from_str(FIXTURE).unwrap()
 }
 
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    reason = "integration-test fixtures and assertions"
+)]
 fn types() -> Vec<ObjectTypeDef> {
     let mut definitions: Vec<ObjectTypeDef> = documents()
         .iter()
@@ -117,6 +138,13 @@ fn types() -> Vec<ObjectTypeDef> {
 }
 
 /// Every generated artifact; the cell and catalog retain its laws.
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    reason = "integration-test fixtures and assertions"
+)]
 fn artifacts() -> Vec<ArtifactEnvelope> {
     let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(FIXTURE).unwrap();
     assert!(
@@ -127,11 +155,50 @@ fn artifacts() -> Vec<ArtifactEnvelope> {
     artifacts
 }
 
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    reason = "integration-test fixtures and assertions"
+)]
 fn writer() -> SynchronousRule {
-    let document = documents()
+    admit_writer(writer_document())
+}
+
+#[allow(
+    clippy::unwrap_used,
+    reason = "integration-test fixtures and assertions"
+)]
+fn writer_document() -> Value {
+    documents()
         .into_iter()
         .find(|document| document["artifactId"] == "ledger.invoice.writer.rule")
-        .unwrap();
+        .unwrap()
+}
+
+/// The generated writer with its fact output replaced by `facts`, and its
+/// closed output schema widened to name the protected creator, so a test can
+/// drive a writer that breaks the create contract through the kernel.
+#[allow(
+    clippy::indexing_slicing,
+    reason = "integration-test fixtures and assertions"
+)]
+fn writer_emitting(facts: &str) -> SynchronousRule {
+    let mut document = writer_document();
+    document["payload"]["graph"]["nodes"][1]["content"]["rules"][0]["out_facts"] = json!(facts);
+    for member in ["values", "patch"] {
+        document["payload"]["outputSchema"]["properties"]["facts"]["items"]["properties"][member]
+            ["properties"]["submitted_by"] = json!({"type": "string"});
+    }
+    admit_writer(document)
+}
+
+#[allow(
+    clippy::unwrap_used,
+    reason = "integration-test fixtures and assertions"
+)]
+fn admit_writer(document: Value) -> SynchronousRule {
     SynchronousRule::admit(
         norn_ir::ActionRuleRef {
             artifact_id: "ledger.invoice.writer.rule".into(),
@@ -147,6 +214,13 @@ fn writer() -> SynchronousRule {
     .unwrap()
 }
 
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    reason = "integration-test fixtures and assertions"
+)]
 fn action(id: &str) -> ActionRoot {
     let document = documents()
         .into_iter()
@@ -155,6 +229,13 @@ fn action(id: &str) -> ActionRoot {
     serde_json::from_value(document["payload"].clone()).unwrap()
 }
 
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    reason = "integration-test fixtures and assertions"
+)]
 fn call<'a>(action: &'a ActionRoot, actor: &str, input: Value, key: &str) -> ActionCall<'a> {
     ActionCall {
         action,
@@ -178,6 +259,13 @@ fn call<'a>(action: &'a ActionRoot, actor: &str, input: Value, key: &str) -> Act
     }
 }
 
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    reason = "integration-test fixtures and assertions"
+)]
 fn open(path: &Path, definitions: &[ObjectTypeDef], artifacts: &[ArtifactEnvelope]) -> Cell {
     Cell::open(
         path,
@@ -192,6 +280,13 @@ fn open(path: &Path, definitions: &[ObjectTypeDef], artifacts: &[ArtifactEnvelop
     .unwrap()
 }
 
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    reason = "integration-test fixtures and assertions"
+)]
 fn seed_tax_codes(cell: &mut Cell) {
     let mut proposal = CellCommit::empty();
     for (code, fee) in [("STD", 5_i64), ("NEG", -5_i64)] {
@@ -206,14 +301,35 @@ fn seed_tax_codes(cell: &mut Cell) {
     cell.commit(proposal).unwrap();
 }
 
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    reason = "integration-test fixtures and assertions"
+)]
 fn values(cell: &Cell, kind: &str, key: &str) -> Option<JsonObject> {
     cell.load(&FactKey::new(kind, key)).unwrap().values
 }
 
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    reason = "integration-test fixtures and assertions"
+)]
 fn text<'a>(values: &'a JsonObject, property: &str) -> Option<&'a str> {
     values.get(property).and_then(RuntimeValue::as_str)
 }
 
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    reason = "integration-test fixtures and assertions"
+)]
 fn integer(values: &JsonObject, property: &str) -> i64 {
     match serde_json::to_value(&values[property]).unwrap() {
         Value::Number(number) => number.as_i64().unwrap(),
@@ -222,6 +338,13 @@ fn integer(values: &JsonObject, property: &str) -> i64 {
     }
 }
 
+#[allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    reason = "integration-test fixtures and assertions"
+)]
 fn submit(invoice: &str, tax_code: &str, amount: i64) -> Value {
     json!({"invoice_id": invoice, "tax_code": tax_code, "amount": amount})
 }
@@ -436,7 +559,12 @@ fn protected_creator_cannot_be_spoofed_or_overwritten_at_commit() {
         let mut input = submit(invoice, "STD", 100);
         input["submitted_by"] = json!(APPROVER);
         let spoofed = call(&forged, APPROVER, input, &format!("forged-{invoice}"));
-        assert!(commit_action(&mut cell, &catalog, &spoofed, &members).is_err());
+        let refusal = commit_action(&mut cell, &catalog, &spoofed, &members).unwrap_err();
+        assert_eq!(
+            refusal.code(),
+            "decision.invalid_output",
+            "{invoice}: {refusal}"
+        );
         assert_eq!(cell.store().read().dump().unwrap(), dump);
     }
     // A stamp derivation that a second derivation rewrites is not a stamp.
@@ -453,7 +581,8 @@ fn protected_creator_cannot_be_spoofed_or_overwritten_at_commit() {
         submit("INV-8", "STD", 100),
         "s-laundered",
     );
-    assert!(commit_action(&mut cell, &catalog, &laundered, &members).is_err());
+    let refusal = commit_action(&mut cell, &catalog, &laundered, &members).unwrap_err();
+    assert_eq!(refusal.code(), "decision.invalid_output", "{refusal}");
     assert_eq!(cell.store().read().dump().unwrap(), dump);
     assert_eq!(
         text(&values(&cell, INVOICE, "INV-1").unwrap(), "submitted_by"),
@@ -527,4 +656,49 @@ fn custodian_authority_is_current_at_commit_and_independent_of_the_requester() {
     let transfer = values(&cell, TRANSFER, "TR-1").unwrap();
     assert_eq!(text(&transfer, "status"), Some("released"));
     assert_eq!(text(&transfer, "requested_by"), Some(REQUESTER));
+}
+
+/// CREATE-WRITER-1 / ACTOR-STAMP-1: a governed-create writer only `set`s the
+/// fields of the record it creates. Writing its protected creator refuses
+/// when the proposal is prepared, even with the caller's own id (a stamp is
+/// the kernel's create, never a writer's `set`), and creating the primary
+/// record itself refuses the closed writer contract. Nothing commits.
+#[test]
+fn create_writer_cannot_write_the_creator_or_create_its_target() {
+    let directory = tempfile::tempdir().unwrap();
+    let definitions = types();
+    let submit_action = action("ledger.invoice.submit");
+    let members = Members::of(&[SUBMITTER]);
+    for (index, (facts, code)) in [
+        (
+            "[{op: 'patch', objectType: 'ledger.Invoice', key: event.input.invoice_id, patch: {submitted_by: 'person:someone-else'}}]",
+            "decision.invalid_output",
+        ),
+        (
+            "[{op: 'patch', objectType: 'ledger.Invoice', key: event.input.invoice_id, patch: {submitted_by: event.actor}}]",
+            "decision.invalid_output",
+        ),
+        (
+            "[{op: 'create', objectType: 'ledger.Invoice', key: event.input.invoice_id, values: {tax: 1, total: 101}}]",
+            "core.txn.unchecked_writer",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let rules = [writer_emitting(facts)];
+        let catalog = TypeCatalog::new(&definitions).with_action_rules(&rules);
+        let mut cell = open(
+            &directory.path().join(format!("writer-{index}.sqlite")),
+            &definitions,
+            &[],
+        );
+        seed_tax_codes(&mut cell);
+        let dump = cell.store().read().dump().unwrap();
+        let created = call(&submit_action, SUBMITTER, submit("INV-1", "STD", 100), "s-1");
+        let refusal = commit_action(&mut cell, &catalog, &created, &members).unwrap_err();
+        assert_eq!(refusal.code(), code, "{facts}: {refusal}");
+        assert_eq!(cell.store().read().dump().unwrap(), dump);
+        assert!(values(&cell, INVOICE, "INV-1").is_none());
+    }
 }

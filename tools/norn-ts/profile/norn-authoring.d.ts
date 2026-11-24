@@ -565,6 +565,9 @@ declare module "@norn/authoring" {
        * ACTOR-INDEPENDENT-1: protected actor properties of the effect target
        * (a server-stamped creator) whose recorded principal must differ from
        * the verified caller. Checked against the committed target at commit.
+       * Property ids of the effect's target type: that type is not a type
+       * parameter of the action, so the names are checked at admission
+       * (`artifact_set.action.independent_actor`), not by TypeScript.
        */
       readonly independentOf?: ReadonlyArray<string>
     }
