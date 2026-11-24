@@ -22,6 +22,12 @@ export interface StepReceipt {
   readonly recordedAtMs: number
   /** Display words ("you", a name, "another decider"), never an id. */
   readonly executor?: string | null
+  /**
+   * PROVISIONAL CONTRACT (#1208, PR #1631 S2): the projected episode id, when the cell names one.
+   * Studio never derives it and only links to it when the cell advertises `learning.Episode`
+   * (S1 capability gate), until the backend lane pins `episodeId` with route-produced fixtures.
+   */
+  readonly episodeId?: string | null
 }
 
 export interface RunStep {

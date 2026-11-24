@@ -258,8 +258,8 @@ export const PostInvoice = Norn.action({
     }
   }, 30_000)
 
-  test("refuses binary JS numbers on decimal settings (VAL-EXACT-1)", () => {
-    for (const literal of ["0.12", "-0.12", "10"]) {
+  for (const literal of ["0.12", "-0.12", "10"]) {
+    test(`refuses binary JS number ${literal} on decimal settings (VAL-EXACT-1)`, () => {
       const refused = compileSnippet(`
 import { Norn } from "@norn/authoring"
 export const Bad = Norn.setting({
@@ -278,7 +278,10 @@ export const Bad = Norn.setting({
       if (!refused.ok) {
         expect(refused.diagnostics.length).toBeGreaterThan(0)
       }
-    }
+    })
+  }
+
+  test("refuses a direct JS number on decimal settings (VAL-EXACT-1)", () => {
     const untypedFloat = compileSnippet(`
 import { Norn } from "@norn/authoring"
 export const Bad = Norn.setting({
@@ -294,64 +297,65 @@ export const Bad = Norn.setting({
 })
 `)
     expect(untypedFloat.ok).toBe(false)
-  }, 30_000)
+  })
 
-  test("refuses invalid decimal strings, windows, unknown fields, non-serializable values, and missing required fields", () => {
-    const cases: ReadonlyArray<readonly [string, string]> = [
-      [
-        "exponent decimal",
-        `valueType: "number", value: "1e2", effectiveFrom: "2026-06-01T00:00:00Z", review: { state: "approved" }, scopeRequired: ["orgId"]`,
-      ],
-      [
-        "leading plus decimal",
-        `valueType: "number", value: "+0.12", effectiveFrom: "2026-06-01T00:00:00Z", review: { state: "approved" }, scopeRequired: ["orgId"]`,
-      ],
-      [
-        "leading zero decimal",
-        `valueType: "number", value: "01.5", effectiveFrom: "2026-06-01T00:00:00Z", review: { state: "approved" }, scopeRequired: ["orgId"]`,
-      ],
-      [
-        "scale over 28",
-        `valueType: "number", value: "0.${"1".repeat(29)}", effectiveFrom: "2026-06-01T00:00:00Z", review: { state: "approved" }, scopeRequired: ["orgId"]`,
-      ],
-      [
-        "mantissa over 96 bits",
-        `valueType: "number", value: "999999999999999999999999999999", effectiveFrom: "2026-06-01T00:00:00Z", review: { state: "approved" }, scopeRequired: ["orgId"]`,
-      ],
-      [
-        "invalid calendar date",
-        `valueType: "number", value: "0.10", effectiveFrom: "2026-02-30T00:00:00Z", review: { state: "approved" }, scopeRequired: ["orgId"]`,
-      ],
-      [
-        "inverted effective window",
-        `valueType: "number", value: "0.10", effectiveFrom: "2026-07-01T00:00:00Z", effectiveTo: "2026-06-01T00:00:00Z", review: { state: "approved" }, scopeRequired: ["orgId"]`,
-      ],
-      [
-        "zero-width effective window across offsets",
-        `valueType: "number", value: "0.10", effectiveFrom: "2026-07-01T00:00:00Z", effectiveTo: "2026-07-01T02:00:00+02:00", review: { state: "approved" }, scopeRequired: ["orgId"]`,
-      ],
-      [
-        "unknown top-level field",
-        `valueType: "number", value: "0.10", effectiveFrom: "2026-06-01T00:00:00Z", review: { state: "approved" }, scopeRequired: ["orgId"], extra: true`,
-      ],
-      [
-        "non-serializable json value",
-        `valueType: "json", value: () => 1, effectiveFrom: "2026-06-01T00:00:00Z", review: { state: "approved" }, scopeRequired: ["orgId"]`,
-      ],
-      [
-        "missing review",
-        `valueType: "number", value: "0.10", effectiveFrom: "2026-06-01T00:00:00Z", scopeRequired: ["orgId"]`,
-      ],
-      [
-        "empty scopeRequired",
-        `valueType: "number", value: "0.10", effectiveFrom: "2026-06-01T00:00:00Z", review: { state: "approved" }, scopeRequired: []`,
-      ],
-      [
-        "duplicate scopeRequired",
-        `valueType: "number", value: "0.10", effectiveFrom: "2026-06-01T00:00:00Z", review: { state: "approved" }, scopeRequired: ["orgId", "orgId"]`,
-      ],
-    ]
-    for (const [label, body] of cases) {
+  const invalidFields: ReadonlyArray<readonly [string, string]> = [
+    [
+      "exponent decimal",
+      `valueType: "number", value: "1e2", effectiveFrom: "2026-06-01T00:00:00Z", review: { state: "approved" }, scopeRequired: ["orgId"]`,
+    ],
+    [
+      "leading plus decimal",
+      `valueType: "number", value: "+0.12", effectiveFrom: "2026-06-01T00:00:00Z", review: { state: "approved" }, scopeRequired: ["orgId"]`,
+    ],
+    [
+      "leading zero decimal",
+      `valueType: "number", value: "01.5", effectiveFrom: "2026-06-01T00:00:00Z", review: { state: "approved" }, scopeRequired: ["orgId"]`,
+    ],
+    [
+      "scale over 28",
+      `valueType: "number", value: "0.${"1".repeat(29)}", effectiveFrom: "2026-06-01T00:00:00Z", review: { state: "approved" }, scopeRequired: ["orgId"]`,
+    ],
+    [
+      "mantissa over 96 bits",
+      `valueType: "number", value: "999999999999999999999999999999", effectiveFrom: "2026-06-01T00:00:00Z", review: { state: "approved" }, scopeRequired: ["orgId"]`,
+    ],
+    [
+      "invalid calendar date",
+      `valueType: "number", value: "0.10", effectiveFrom: "2026-02-30T00:00:00Z", review: { state: "approved" }, scopeRequired: ["orgId"]`,
+    ],
+    [
+      "inverted effective window",
+      `valueType: "number", value: "0.10", effectiveFrom: "2026-07-01T00:00:00Z", effectiveTo: "2026-06-01T00:00:00Z", review: { state: "approved" }, scopeRequired: ["orgId"]`,
+    ],
+    [
+      "zero-width effective window across offsets",
+      `valueType: "number", value: "0.10", effectiveFrom: "2026-07-01T00:00:00Z", effectiveTo: "2026-07-01T02:00:00+02:00", review: { state: "approved" }, scopeRequired: ["orgId"]`,
+    ],
+    [
+      "unknown top-level field",
+      `valueType: "number", value: "0.10", effectiveFrom: "2026-06-01T00:00:00Z", review: { state: "approved" }, scopeRequired: ["orgId"], extra: true`,
+    ],
+    [
+      "non-serializable json value",
+      `valueType: "json", value: () => 1, effectiveFrom: "2026-06-01T00:00:00Z", review: { state: "approved" }, scopeRequired: ["orgId"]`,
+    ],
+    [
+      "missing review",
+      `valueType: "number", value: "0.10", effectiveFrom: "2026-06-01T00:00:00Z", scopeRequired: ["orgId"]`,
+    ],
+    [
+      "empty scopeRequired",
+      `valueType: "number", value: "0.10", effectiveFrom: "2026-06-01T00:00:00Z", review: { state: "approved" }, scopeRequired: []`,
+    ],
+    [
+      "duplicate scopeRequired",
+      `valueType: "number", value: "0.10", effectiveFrom: "2026-06-01T00:00:00Z", review: { state: "approved" }, scopeRequired: ["orgId", "orgId"]`,
+    ],
+  ]
+
+  for (const [label, body] of invalidFields) {
+    test(`refuses ${label}`, () => {
       const refused = compileSnippet(`
 import { Norn } from "@norn/authoring"
 export const Bad = Norn.setting({
@@ -363,9 +367,11 @@ export const Bad = Norn.setting({
 })
 `)
       expect({ label, ok: refused.ok }).toEqual({ label, ok: false })
-    }
+    })
+  }
 
-    for (const badId of [" .foo", "tax. ", " tax.vat", "tax.vat ", "tax..vat", "tax. .vat", "tax. vat", "tax", ".vat", "tax."]) {
+  for (const badId of [" .foo", "tax. ", " tax.vat", "tax.vat ", "tax..vat", "tax. .vat", "tax. vat", "tax", ".vat", "tax."]) {
+    test(`refuses invalid setting ID ${JSON.stringify(badId)}`, () => {
       const refused = compileSnippet(`
 import { Norn } from "@norn/authoring"
 export const Bad = Norn.setting({
@@ -381,8 +387,8 @@ export const Bad = Norn.setting({
 })
 `)
       expect({ badId, ok: refused.ok }).toEqual({ badId, ok: false })
-    }
-  }, 30_000)
+    })
+  }
 
   test("parseRfc3339Instant preserves literal 2-digit years (0000..0099) without JS 1900 offset", () => {
     const year50 = parseRfc3339Instant("0050-01-01T00:00:00Z")

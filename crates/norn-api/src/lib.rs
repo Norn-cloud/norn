@@ -83,6 +83,8 @@ pub mod trace_contract;
 pub mod transform_routes;
 /// File uploads: signed storage URLs, CSV profiling, generated definitions and row loads.
 pub mod uploads;
+/// The `view` retained-definition kind (VIEW-DEF-1).
+pub mod view_definitions;
 
 /// The trusted transport's identity seam: verified host tokens to Norn principals.
 pub mod principal;

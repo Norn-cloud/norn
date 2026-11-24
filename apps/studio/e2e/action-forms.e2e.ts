@@ -278,7 +278,6 @@ test("undo: a lost answer reads as unconfirmed, Retry undo re-sends it under the
   await form.getByRole("button", { name: "Another" }).click()
   await expect(form.getByLabel("Holding id")).toHaveValue("")
 })
-
 test("refused by a law with no detail (a hosted cell's reason: null): says so plainly, claims no law, and reads nothing but the refusal, though the record's page holds an open finding", async ({ page }) => {
   await open(page)
   // The hosted refusal: 422 core.laws.violated, no reason, the generic message, for every role (#1353).
@@ -306,4 +305,19 @@ test("refused by a law with no detail (a hosted cell's reason: null): says so pl
   await expect(card).not.toContainText("This change breaks a rule")
   await expect(card.getByRole("button", { name: /^Use / })).toHaveCount(0)
   await shoot(page, "refused-redacted")
+})
+
+test("undo: Another starts a new draft straight from an unconfirmed undo, before any retry", async ({ page }) => {
+  const { actions } = await open(page, 40, { undoOpen: true })
+  await newRecord(page, "Open a holding")
+  await fillHolding(page, "demo/holding/9102", "1.000")
+  await sheet(page).getByRole("button", { name: "Open a holding" }).click()
+  const form = sheet(page)
+  await expect(form.getByRole("status")).toHaveText(/^Holding demo\/holding\/9102 created/)
+  actions.failNext()
+  await form.getByRole("button", { name: "Undo" }).click()
+  await expect(form.getByRole("alert")).toContainText("Couldn't confirm the undo")
+  await form.getByRole("button", { name: "Another" }).click()
+  await expect(form.getByLabel("Holding id")).toHaveValue("")
+  expect(actions.calls.filter((c) => c.actionId === "canon.holding.retire")).toHaveLength(1)
 })
