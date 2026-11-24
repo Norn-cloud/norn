@@ -1,5 +1,5 @@
 {
-  "sha256": "8c1a15f5f9aec0090987d9d763d8d01e9e99827cd8c09e265e4e706f98c78ed9",
+  "sha256": "4c690353f1945aaacf9ff82d3e9c0875ac8c336a5b162e29527b79dee9530a25",
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
@@ -28,6 +28,8 @@
     "registry/core/artifacts/core.time.json",
     "registry/core/artifacts/core.units.json",
     "registry/core/artifacts/core.value_types.entity.json",
+    "registry/core/artifacts/identity.Directory.interface.json",
+    "registry/core/artifacts/party.Organization.entity.json",
     "registry/core/artifacts/std.value_types.entity.json",
     "registry/packs/canon/artifacts/canon.Catalog.interface.json",
     "registry/packs/canon/artifacts/canon.Delivery.entity.json",
