@@ -150,7 +150,7 @@ export async function cellRead<T>(path: string, what: string, init: RequestInit 
   const write = method !== "GET" && method !== "HEAD" && method !== "OPTIONS"
   const scopeProvider = boundScope !== undefined
     ? async () => boundScope
-    : write && isDefaultFetch(fetcher) && getDisplayedScope() !== undefined
+    : write && getDisplayedScope() !== undefined
       ? async () => getDisplayedScope()!
       : () => readStudioScope(fetcher)
   const call = scopedHostFetch(fetcher, "/api/host", scopeProvider)

@@ -18,7 +18,7 @@ const migration = (name: string) => readFileSync(join(import.meta.dir, "../migra
 
 function stage(mcp = true): Env & { forwarded: { url: string; authorization: string | null }[] } {
   const db = new Database(":memory:")
-  for (const name of ["0001_better_auth.sql", "0002_workspace_provisioning.sql", "0007_oauth_provider.sql"]) db.exec(migration(name))
+  for (const name of ["0001_better_auth.sql", "0002_workspace_provisioning.sql", "0007_oauth_provider.sql", "0013_oauth_membership_guards.sql"]) db.exec(migration(name))
   const forwarded: { url: string; authorization: string | null }[] = []
   const host = {
     fetch: async (request: Request) => {
@@ -97,7 +97,8 @@ test("a signed-in person's grant is their own /mcp access in their workspace, sh
   expect(response.headers.get("cache-control")).toBe("no-store")
   const { token, expiresAt } = (await response.json()) as { token: string; expiresAt: number }
   const claims = claimsOf(token)
-  expect(claims).toMatchObject({ iss: ORIGIN, aud: `${ORIGIN}/mcp`, sub: owner.user, azp: SIDEKICK_CLIENT, "https://norn.cloud/org": org })
+  expect(claims).toMatchObject({ iss: ORIGIN, aud: `${ORIGIN}/mcp`, sub: owner.user, azp: SIDEKICK_CLIENT, "https://norn.cloud/org": org, "https://norn.cloud/env": "analytics" })
+  expect(claims["https://norn.cloud/member"]).toBeString()
   expect((claims.exp as number) - (claims.iat as number)).toBe(GRANT_SECONDS)
   expect(expiresAt).toBe((claims.exp as number) * 1000)
 
@@ -107,6 +108,10 @@ test("a signed-in person's grant is their own /mcp access in their workspace, sh
   // The cell never sees the grant, only a host token for the person.
   expect(sent?.authorization).not.toContain(token)
   expect(claimsOf((sent?.authorization ?? "").replace(/^Bearer /, ""))).toMatchObject({ sub: owner.user, aud: "norn-host", norn: { kind: "user", org, role: "owner", amr: "oauth" } })
+
+  // If the workspace's cell environment changes, the existing Sidekick grant is rejected 401.
+  db(env).run(`update "organization" set "metadata" = '{"environmentId":"staging"}' where "id" = ?`, [org])
+  expect((await mcp(env, token)).status).toBe(401)
 })
 
 test("an analyst's Sidekick reaches the cell as a member, so the cell masks what they read, and the grant opens no other route", async () => {

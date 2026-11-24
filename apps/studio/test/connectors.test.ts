@@ -77,9 +77,16 @@ test("connector mutations carry pinned workspace scope headers even after displa
   }) as typeof fetch
   try {
     const pinned = { orgId: "org_a", environmentId: "env_a" }
+    const wrapped = (input: string, init?: RequestInit) => globalThis.fetch(input, init)
+    setDisplayedWorkspaceScope(pinned)
+    // Error from a GET in org_a captures org_a on ConnectorError.scope even after displayed workspace changes.
+    const failed = await api("/inventory", undefined, async () => Response.json({ code: "connectors.not_linked", error: "Sign in.", action: { kind: "sign_in_gateway" } }, { status: 409 })).catch((e: unknown) => e)
+    expect(failed).toBeInstanceOf(ConnectorError)
+    expect((failed as ConnectorError).scope).toEqual(pinned)
+
     setDisplayedWorkspaceScope({ orgId: "org_b", environmentId: "env_b" })
-    await api("/link", { method: "POST", scope: pinned }, defaultFetch)
-    await startFix({ kind: "sign_in_gateway" }, (path, init) => api(path, init, defaultFetch), pinned)
+    await api("/link", { method: "POST", scope: pinned }, wrapped)
+    await startFix({ kind: "sign_in_gateway" }, (path, init) => api(path, init, wrapped), (failed as ConnectorError).scope)
     await api("/inventory", undefined, defaultFetch)
     expect(seen[0]?.headers.get("x-norn-expected-org")).toBe("org_a")
     expect(seen[0]?.headers.get("x-norn-expected-env")).toBe("env_a")

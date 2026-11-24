@@ -48,7 +48,7 @@ export async function sidekickServed(fetcher: typeof fetch = fetch, signal?: Abo
 
 /** The Worker's grant for the signed-in person; the reason in words when it refuses. */
 export async function fetchGrant(fetcher: (input: string, init?: RequestInit) => Promise<Response> = defaultFetch, boundScope?: StudioScope | null): Promise<Grant> {
-  const scope = boundScope !== undefined ? boundScope : isDefaultFetch(fetcher) ? getDisplayedScope() : undefined
+  const scope = boundScope !== undefined ? boundScope : getDisplayedScope()
   const response = await fetcher("/api/sidekick/grant", {
     method: "POST",
     headers: { accept: "application/json", ...scopeHeaders(scope) },

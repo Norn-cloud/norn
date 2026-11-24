@@ -1,5 +1,5 @@
 import { forwardToHost, originAllowed, resolveActor, verifyWriteScope } from "./actor.ts"
-import { activeMembership, createAuth, DISABLED_ORG_PATHS, verifyMagicLinkOrigin, type Auth, type MagicLinkMail } from "./auth.ts"
+import { activeMembership, createAuth, DISABLED_ORG_PATHS, issueConsentApproval, verifyMagicLinkOrigin, type Auth, type MagicLinkMail, type ProvisionDb } from "./auth.ts"
 import { passwordScrypt } from "./password.ts"
 import { clientIpHeader } from "./client-ip.ts"
 import { connectors } from "./connectors.ts"
@@ -308,14 +308,24 @@ async function toPolar(response: Response): Promise<Response> {
  * checks included); a person who already pays is sent to the portal, never a second checkout.
  */
 async function billingRoute(request: Request, env: Env, billing: BillingSettings | undefined, pathname: string): Promise<Response> {
-  if (request.method !== "GET") return refuse(405, "GET only.", { allow: "GET" })
-  // Checkout and portal are plain links in Studio's own pages; another site must not start one with the person's cookie.
+  if (pathname === "/api/billing") {
+    if (request.method !== "GET") return refuse(405, "GET only.", { allow: "GET" })
+    const session = await auth(env).api.getSession({ headers: request.headers })
+    if (session === null) return refuse(401, "Sign in first.")
+    const db = env.AUTH_DB as unknown as BillingDb
+    return Response.json(await billingDocument(db, billing, env.BETTER_AUTH_URL, session.user.id), { headers: { "cache-control": "no-store" } })
+  }
+  if (pathname !== "/api/billing/portal" && pathname !== "/api/billing/checkout") return refuse(404, "No such endpoint.")
+  // Creating a Polar checkout or portal session is state-changing: require same-origin POST so
+  // browsers (with or without Fetch Metadata headers) can never trigger it via cross-site GET.
+  if (request.method !== "POST") return refuse(405, "POST only.", { allow: "POST" })
+  const origin = request.headers.get("origin")
+  if (origin === null || !trustedOrigins(env).includes(origin)) return refuse(403, "Cross-site billing request refused.")
   const site = request.headers.get("sec-fetch-site")
-  if (pathname !== "/api/billing" && site !== null && site !== "same-origin" && site !== "none") return refuse(403, "Cross-site billing request refused.")
+  if (site !== null && site !== "same-origin" && site !== "none") return refuse(403, "Cross-site billing request refused.")
   const session = await auth(env).api.getSession({ headers: request.headers })
   if (session === null) return refuse(401, "Sign in first.")
   const db = env.AUTH_DB as unknown as BillingDb
-  if (pathname === "/api/billing") return Response.json(await billingDocument(db, billing, env.BETTER_AUTH_URL, session.user.id), { headers: { "cache-control": "no-store" } })
   if (billing === undefined) return refuse(404, "Billing is not enabled on this deployment.")
   const internal = (path: string, body: unknown) => auth(env).handler(new Request(new URL(`/api/auth${path}`, env.BETTER_AUTH_URL), {
     method: "POST",
@@ -325,13 +335,54 @@ async function billingRoute(request: Request, env: Env, billing: BillingSettings
     body: JSON.stringify(body),
   }))
   if (pathname === "/api/billing/portal") return toPolar(await internal("/customer/portal", { redirect: false }))
-  if (pathname === "/api/billing/checkout") {
-    const plan = new URL(request.url).searchParams.get("plan")
-    if (plan === null || !billing.plans.some((candidate) => candidate.id === plan)) return refuse(404, "No such plan.")
-    if (subscribed(await entitlementOf(db, billing, session.user.id))) return toPolar(await internal("/customer/portal", { redirect: false }))
-    return toPolar(await internal("/checkout", { slug: plan, redirect: false }))
+  const plan = new URL(request.url).searchParams.get("plan")
+  if (plan === null || !billing.plans.some((candidate) => candidate.id === plan)) return refuse(404, "No such plan.")
+  if (subscribed(await entitlementOf(db, billing, session.user.id))) return toPolar(await internal("/customer/portal", { redirect: false }))
+  return toPolar(await internal("/checkout", { slug: plan, redirect: false }))
+}
+
+/**
+ * POST /api/oauth/consent-context: returns the active ready workspace displayed on `/oauth/consent`
+ * together with a short-lived, single-use approval token bound to the caller's session, user,
+ * workspace, membership generation, and exact signed `oauth_query`.
+ */
+async function oauthConsentContext(request: Request, env: Env): Promise<Response> {
+  if (request.method !== "POST") return refuse(405, "POST only.", { allow: "POST" })
+  const origin = request.headers.get("origin")
+  if (origin === null || !trustedOrigins(env).includes(origin)) return refuse(403, "Cross-origin request refused.")
+  const { headers: sessionHeaders, response: session } = await auth(env).api.getSession({ headers: request.headers, returnHeaders: true })
+  const withCookies = (response: Response) => {
+    for (const cookie of sessionHeaders.getSetCookie()) response.headers.append("set-cookie", cookie)
+    return response
   }
-  return refuse(404, "No such endpoint.")
+  if (session === null) return withCookies(refuse(401, "Sign in first."))
+  let body: { oauth_query?: unknown } | null = null
+  try { body = await request.json() as { oauth_query?: unknown } } catch { body = null }
+  const oauthQuery = typeof body?.oauth_query === "string" && body.oauth_query.trim() !== "" ? body.oauth_query : null
+  if (oauthQuery === null) return withCookies(refuse(400, "Missing OAuth authorization request."))
+  const member = await activeMembership(auth(env), session.user.id, session.session.activeOrganizationId)
+  if (member === null) {
+    return withCookies(Response.json(
+      { user: { email: session.user.email }, organization: null, approvalToken: null },
+      { headers: { "cache-control": "no-store" } },
+    ))
+  }
+  const approvalToken = await issueConsentApproval(env.AUTH_DB as unknown as ProvisionDb, {
+    sessionToken: session.session.token,
+    userId: session.user.id,
+    organizationId: member.organizationId,
+    memberId: member.memberId,
+    oauthQuery,
+  })
+  if (approvalToken === null) return withCookies(refuse(409, "Your session or active workspace changed."))
+  return withCookies(Response.json(
+    {
+      user: { email: session.user.email },
+      organization: { id: member.organizationId, name: member.organizationName },
+      approvalToken,
+    },
+    { headers: { "cache-control": "no-store" } },
+  ))
 }
 /** The invited addresses, lower-case; undefined (open sign-up) when the setting is absent. */
 export const signUpEmails = (env: Pick<Env, "STUDIO_SIGNUP_EMAILS">): readonly string[] | undefined =>
@@ -376,6 +427,7 @@ const handler = {
     if (pathname === "/api/workspaces" || pathname.startsWith("/api/workspaces/")) return workspaceRoute(request, env, pathname)
     if (pathname.startsWith("/api/auth/")) return auth(env).handler(request)
     if (pathname === "/api/me") return me(request, env)
+    if (mcpOn(env) && pathname === "/api/oauth/consent-context") return oauthConsentContext(request, env)
     if (pathname === "/api/billing" || pathname.startsWith("/api/billing/")) return billingRoute(request, env, await billingSettings(env), pathname)
     // Every Norn call goes to the host as the resolved actor; the host and its PDP decide.
     if (pathname.startsWith("/api/host/")) {
@@ -395,7 +447,8 @@ const handler = {
       const scopeCheck = await verifyWriteScope(request, auth(env), actor, { requireEnv: true })
       if (!scopeCheck.ok) return scopeCheck.response
       if (env.NORN_HOST === undefined) return refuse(503, "No Norn host is connected to this deployment.")
-      return questions(request, cellFor(env.NORN_HOST, auth(env), actor), pathname.slice("/api/questions".length))
+      const resolvedScope = scopeCheck.scope ?? await cellScope(auth(env), actor.orgId)
+      return questions(request, cellFor(env.NORN_HOST, auth(env), actor, resolvedScope), pathname.slice("/api/questions".length))
     }
     // Sidekick's grant: the signed-in person's own /mcp access for the in-app agent (sidekick.ts).
     if (pathname === "/api/sidekick/grant") {
@@ -407,10 +460,11 @@ const handler = {
       if (!originAllowed(request, actor, trustedOrigins(env))) return refuse(403, "Cross-origin request refused.")
       const scopeCheck = await verifyWriteScope(request, auth(env), actor, { requireEnv: true })
       if (!scopeCheck.ok) return scopeCheck.response
-      if ((await cellScope(auth(env), actor.orgId)).environmentId === null) return refuse(409, "This workspace has no data cell yet.")
+      const environmentId = scopeCheck.scope?.environmentId ?? null
+      if (environmentId === null) return refuse(409, "This workspace has no data cell yet.")
       const { grantAllowed, sidekickGrant } = await import("./sidekick.ts")
       if (!grantAllowed(actor.subjectId)) return refuse(429, "Too many Sidekick grants; wait a few minutes.", { "retry-after": "60" })
-      return Response.json(await sidekickGrant(auth(env), env.BETTER_AUTH_URL, actor), { headers: { "cache-control": "no-store" } })
+      return Response.json(await sidekickGrant(auth(env), env.BETTER_AUTH_URL, actor, environmentId), { headers: { "cache-control": "no-store" } })
     }
     // The dashboard assistant: it acts only as the signed-in person, through the cell's own admission.
     if (pathname === "/api/agent/dashboards" || pathname.startsWith("/api/agent/dashboards/")) {
@@ -421,14 +475,14 @@ const handler = {
       const scopeCheck = await verifyWriteScope(request, auth(env), actor, { requireEnv: true })
       if (!scopeCheck.ok) return scopeCheck.response
       if (env.NORN_HOST === undefined) return refuse(503, "No Norn host is connected to this deployment.")
-      const scope = await cellScope(auth(env), actor.orgId)
-      if (scope.environmentId === null) return refuse(409, "This workspace has no data cell yet.")
+      const resolvedScope = scopeCheck.scope ?? await cellScope(auth(env), actor.orgId)
+      if (resolvedScope.environmentId === null) return refuse(409, "This workspace has no data cell yet.")
       // Loaded on first use, never with the Worker: sign-in must not pay for the assistant.
       const [{ assistant }, { configuredModel }] = await Promise.all([import("./assistant.ts"), import("./model.ts")])
       const cap = Number(env.AGENT_SPEND_CAP_USD ?? "20")
       return assistant(request, pathname.slice("/api/agent/dashboards".length), {
-        db: env.AUTH_DB, cell: cellFor(env.NORN_HOST, auth(env), actor),
-        scope: { orgId: actor.orgId, environmentId: scope.environmentId, userId: actor.subjectId },
+        db: env.AUTH_DB, cell: cellFor(env.NORN_HOST, auth(env), actor, resolvedScope),
+        scope: { orgId: resolvedScope.orgId, environmentId: resolvedScope.environmentId, userId: actor.subjectId },
         model: configuredModel(env), capMicroUsd: Math.round((Number.isFinite(cap) && cap >= 0 ? cap : 20) * 1_000_000), now: Date.now(),
       })
     }

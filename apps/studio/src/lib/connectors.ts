@@ -14,7 +14,14 @@ export type FixAction =
 
 /** A typed refusal from the server. */
 export class ConnectorError extends Error {
-  constructor(readonly status: number, readonly code: string, message: string, readonly action: FixAction | null = null, readonly field: string | null = null) {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+    readonly action: FixAction | null = null,
+    readonly field: string | null = null,
+    readonly scope?: WorkspaceScope | null,
+  ) {
     super(message)
   }
 }
@@ -36,18 +43,13 @@ export function fixAction(value: unknown): FixAction | null {
 
 export async function api<T>(
   path: string,
-  init?: { readonly method: string; readonly body?: unknown; readonly scope?: WorkspaceScope | null },
+  init?: { readonly method?: string; readonly body?: unknown; readonly scope?: WorkspaceScope | null },
   fetcher: (input: string, init?: RequestInit) => Promise<Response> = defaultFetch,
 ): Promise<T> {
   const method = (init?.method ?? "GET").toUpperCase()
   const write = method !== "GET" && method !== "HEAD" && method !== "OPTIONS"
-  const activeScope = !write
-    ? undefined
-    : init?.scope !== undefined
-      ? init.scope
-      : isDefaultFetch(fetcher)
-        ? getDisplayedWorkspaceScope()
-        : undefined
+  const originScope = init?.scope !== undefined ? init.scope : getDisplayedWorkspaceScope()
+  const activeScope = write ? originScope : undefined
   const response = await fetcher(`/api/connectors${path}`, {
     method: init?.method ?? "GET",
     credentials: "same-origin",
@@ -60,10 +62,10 @@ export async function api<T>(
   const body = (await response.json().catch(() => null)) as Record<string, unknown> | null
   if (!response.ok) {
     const error = typeof body?.error === "string" ? body.error : `The server answered ${response.status}.`
-    throw new ConnectorError(response.status, typeof body?.code === "string" ? body.code : "connectors.unreadable", error, fixAction(body?.action), typeof body?.field === "string" ? body.field : null)
+    throw new ConnectorError(response.status, typeof body?.code === "string" ? body.code : "connectors.unreadable", error, fixAction(body?.action), typeof body?.field === "string" ? body.field : null, originScope)
   }
   // A success that is not a JSON object (an HTML fallback, an empty body) is not the server's answer.
-  if (body === null || typeof body !== "object" || Array.isArray(body)) throw new ConnectorError(response.status, "connectors.unreadable", "The server's answer could not be read.")
+  if (body === null || typeof body !== "object" || Array.isArray(body)) throw new ConnectorError(response.status, "connectors.unreadable", "The server's answer could not be read.", null, null, originScope)
   return body as T
 }
 
@@ -94,6 +96,7 @@ export interface Binding {
   readonly connectorRef: string
   /** The cell definition agents reference; null while the stage keeps bindings in Studio only. */
   readonly definition: { readonly id: string; readonly version: number } | null
+  readonly state?: string
 }
 
 export interface Tool {

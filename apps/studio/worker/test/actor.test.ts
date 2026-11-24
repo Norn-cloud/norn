@@ -129,21 +129,31 @@ test("a cookie-authenticated write from anywhere but the Studio origin never rea
   expect(seen).toHaveLength(2)
 })
 
-test("a live socket (UI-LIVE-1) opens only from the Studio origin and reaches the host with the host token and its handshake", async () => {
-  const { env, seen } = stage(() => new Response(null, { status: 204 }))
+test("a live socket (UI-LIVE-1) opens only from the Studio origin with canonical session scope and reaches the host with the host token and its handshake", async () => {
+  const { env, db, seen, auth } = stage(() => new Response(null, { status: 204 }))
   const cookie = await signUp(env, "live@example.com")
+  const actor = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
+  if (!actor) throw new Error("no actor")
+  db.run(`update "organization" set "metadata" = ? where "id" = ?`, [JSON.stringify({ environmentId: "analytics" }), actor.orgId])
   const handshake = { cookie, upgrade: "websocket", connection: "Upgrade", "sec-websocket-key": btoa("the sample nonce"), "sec-websocket-version": "13", "sec-websocket-protocol": "norn.live.v1" }
   // Cross-site socket hijacking: the browser sends the cookie on an upgrade from any page.
   for (const origin of ["https://evil.norn.cloud", "null", undefined]) {
     const headers: Record<string, string> = { ...handshake }
     if (origin !== undefined) headers.origin = origin
-    expect([origin, (await call(env, "/api/host/v1/subscribe", { headers })).status]).toEqual([origin, 403])
+    expect([origin, (await call(env, `/api/host/v1/subscribe?orgId=${actor.orgId}&environmentId=analytics`, { headers })).status]).toEqual([origin, 403])
   }
+  // Missing or mismatched scope query params on a WebSocket upgrade are refused before reaching the host.
+  expect((await call(env, "/api/host/v1/subscribe", { headers: { ...handshake, origin: ORIGIN } })).status).toBe(400)
+  expect((await call(env, `/api/host/v1/subscribe?orgId=${actor.orgId}&environmentId=other`, { headers: { ...handshake, origin: ORIGIN } })).status).toBe(409)
+  expect((await call(env, `/api/host/v1/subscribe?orgId=org_other&environmentId=analytics`, { headers: { ...handshake, origin: ORIGIN } })).status).toBe(409)
   expect(seen).toHaveLength(0)
-  await call(env, "/api/host/v1/subscribe?orgId=o&environmentId=e", { headers: { ...handshake, origin: ORIGIN } })
+  await call(env, `/api/host/v1/subscribe?orgId=${actor.orgId}&environmentId=analytics`, { headers: { ...handshake, origin: ORIGIN } })
   expect(seen).toHaveLength(1)
   const forwarded = seen[0]!
-  expect(new URL(forwarded.url).pathname).toBe("/v1/subscribe")
+  const forwardedUrl = new URL(forwarded.url)
+  expect(forwardedUrl.pathname).toBe("/v1/subscribe")
+  expect(forwardedUrl.searchParams.get("orgId")).toBe(actor.orgId)
+  expect(forwardedUrl.searchParams.get("environmentId")).toBe("analytics")
   expect(forwarded.headers.get("cookie")).toBeNull()
   expect(forwarded.headers.get("authorization")).toStartWith("Bearer ")
   for (const name of ["upgrade", "sec-websocket-key", "sec-websocket-version", "sec-websocket-protocol"]) expect(forwarded.headers.get(name)).toBe(handshake[name as keyof typeof handshake])

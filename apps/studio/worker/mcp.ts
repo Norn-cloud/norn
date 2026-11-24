@@ -1,5 +1,5 @@
 import { verifyJwsAccessToken } from "better-auth/oauth2"
-import { MCP_PATH, ORG_CLAIM, activeMembership, mcpResource, type Auth } from "./auth.ts"
+import { ENV_CLAIM, MCP_PATH, MEMBER_CLAIM, ORG_CLAIM, activeMembership, mcpResource, type Auth } from "./auth.ts"
 import { hostToken, type NornActor } from "./actor.ts"
 import { viewPage } from "./widget-page.ts"
 
@@ -41,13 +41,21 @@ export function challenge(baseURL: string, error?: "invalid_token"): Response {
  * once. Grants without a bound workspace claim are always rejected (never resolved against
  * a fallback membership). Null when the token names nobody or no valid ready workspace.
  */
-export async function grantActor(auth: Auth, claims: { readonly sub?: unknown; readonly [ORG_CLAIM]?: unknown }): Promise<(NornActor & { readonly environmentId: string | null }) | null> {
+export async function grantActor(
+  auth: Auth,
+  claims: { readonly sub?: unknown; readonly [ORG_CLAIM]?: unknown; readonly [MEMBER_CLAIM]?: unknown; readonly [ENV_CLAIM]?: unknown },
+): Promise<(NornActor & { readonly environmentId: string | null }) | null> {
   if (typeof claims.sub !== "string" || claims.sub === "") return null
   const org = typeof claims[ORG_CLAIM] === "string" && claims[ORG_CLAIM] !== "" ? claims[ORG_CLAIM] : null
   if (org === null) return null
+  const memberClaim = typeof claims[MEMBER_CLAIM] === "string" && claims[MEMBER_CLAIM] !== "" ? claims[MEMBER_CLAIM] : null
+  if (memberClaim === null) return null
   const member = await activeMembership(auth, claims.sub, org)
-  if (member === null || member.organizationId !== org) return null
-  return { actorKind: "user", subjectId: claims.sub, orgId: member.organizationId, role: member.role, authMethod: "oauth", environmentId: member.environmentId }
+  if (member === null || member.organizationId !== org || member.memberId !== memberClaim) return null
+  if (claims[ENV_CLAIM] !== undefined) {
+    if (typeof claims[ENV_CLAIM] !== "string" || claims[ENV_CLAIM] === "" || member.environmentId !== claims[ENV_CLAIM]) return null
+  }
+  return { actorKind: "user", subjectId: claims.sub, orgId: member.organizationId, memberId: member.memberId, role: member.role, authMethod: "oauth", environmentId: member.environmentId }
 }
 
 /**
@@ -85,7 +93,7 @@ async function verifiedClaims(auth: Auth, baseURL: string, authorization: string
   try {
     const claims = await verifyJwsAccessToken(token, {
       jwksFetch: async () => jwks as never,
-      verifyOptions: { issuer: baseURL, audience: mcpResource(baseURL), requiredClaims: ["azp", "sub", "exp", ORG_CLAIM] },
+      verifyOptions: { issuer: baseURL, audience: mcpResource(baseURL), requiredClaims: ["azp", "sub", "exp", ORG_CLAIM, MEMBER_CLAIM] },
     })
     // A sender-constrained (DPoP) token is not accepted as a plain bearer token.
     return "cnf" in claims ? null : claims

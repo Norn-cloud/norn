@@ -171,7 +171,7 @@ export async function callAction(
 ): Promise<CallResult> {
   const scope = boundScope !== undefined
     ? boundScope
-    : isDefaultFetch(fetcher) && getDisplayedScope() !== undefined
+    : getDisplayedScope() !== undefined
       ? getDisplayedScope()!
       : await readStudioScope(fetcher)
   if (scope === null) return { kind: "no-cell" }

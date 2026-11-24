@@ -100,8 +100,10 @@ export function OAuthSignIn() {
   )
 }
 
+const CONSENT_APPROVAL_HEADER = "x-norn-consent-approval"
+
 interface Requester { readonly name: string; readonly site: string | null }
-interface Workspace { readonly user: string; readonly organizationId: string | null; readonly organization: string | null }
+interface Workspace { readonly user: string; readonly organizationId: string | null; readonly organization: string | null; readonly approvalToken: string | null }
 
 /** What the person is agreeing to: the client's name, where the answer goes, and the workspace it acts in. */
 export function consentFacts(search: string, client: { readonly client_name?: unknown; readonly client_uri?: unknown } | null): { readonly requester: Requester; readonly callbackHost: string | null } {
@@ -125,23 +127,40 @@ export function OAuthConsent() {
     void fetch(`/api/auth/oauth2/public-client?${new URLSearchParams({ client_id: clientId })}`, { headers: { accept: "application/json" } })
       .then(async (response) => setClient(response.ok ? await response.json() : null))
       .catch(() => setClient(null))
-    void fetch("/api/me", { headers: { accept: "application/json" } })
+    if (query === undefined) { setWorkspace(null); return }
+    void fetch("/api/oauth/consent-context", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify({ oauth_query: query }),
+    })
       .then(async (response) => {
         if (!response.ok) { setWorkspace(null); return }
-        const me = await response.json() as { user: { email: string }; organization: { id: string; name: string } | null }
-        setWorkspace({ user: me.user.email, organizationId: me.organization?.id ?? null, organization: me.organization?.name ?? null })
+        const context = await response.json() as {
+          user: { email: string }
+          organization: { id: string; name: string } | null
+          approvalToken: string | null
+        }
+        setWorkspace({
+          user: context.user.email,
+          organizationId: context.organization?.id ?? null,
+          organization: context.organization?.name ?? null,
+          approvalToken: typeof context.approvalToken === "string" && context.approvalToken !== "" ? context.approvalToken : null,
+        })
       })
       .catch(() => setWorkspace(null))
-  }, [clientId])
+  }, [clientId, query])
 
   async function decide(accept: boolean) {
-    if (accept && workspace?.organizationId == null) {
+    if (accept && (workspace?.organizationId == null || workspace.approvalToken == null)) {
       setFailure("Select an active workspace in Studio before authorizing an assistant.")
       return
     }
     setPending(true)
     setFailure(null)
-    const headers: HeadersInit = accept && workspace?.organizationId != null ? { [EXPECTED_ORG_HEADER]: workspace.organizationId } : {}
+    const headers: HeadersInit = accept && workspace?.organizationId != null && workspace.approvalToken != null
+      ? { [EXPECTED_ORG_HEADER]: workspace.organizationId, [CONSENT_APPROVAL_HEADER]: workspace.approvalToken }
+      : {}
     const answer = await post("/oauth2/consent", { accept, oauth_query: query }, headers).catch(() => null)
     const next = answer?.ok === true ? nextUrl(answer.body, window.location.origin) : null
     if (next !== null) {
@@ -156,7 +175,7 @@ export function OAuthConsent() {
   if (query === undefined || clientId === null) return <Frame title="Link expired" description="Start connecting Norn again from your assistant."><CardContent /></Frame>
   if (client === undefined || workspace === undefined) return null
   const { requester, callbackHost } = consentFacts(window.location.search, client)
-  const readyWorkspace = workspace?.organizationId != null && workspace.organization != null
+  const readyWorkspace = workspace?.organizationId != null && workspace.organization != null && workspace.approvalToken != null
   return (
     <Frame
       title={`Allow ${requester.name} to use Norn?`}

@@ -62,7 +62,7 @@ async function post(path: string, body: unknown, fetcher: Fetch, boundScope?: St
   try {
     const scopeProvider = boundScope !== undefined
       ? async () => boundScope
-      : isDefaultFetch(fetcher) && getDisplayedScope() !== undefined
+      : getDisplayedScope() !== undefined
         ? async () => getDisplayedScope()!
         : () => readStudioScope(fetcher)
     const scoped = scopedHostFetch(fetcher, "/api/host", scopeProvider)

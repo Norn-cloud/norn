@@ -41,7 +41,13 @@ const settled = (result: Installed) => {
 }
 
 /** A deleted dashboard: retiring keeps its history, so undoing installs the same definition over the retired version. */
-interface Removed { readonly id: string; readonly version: number; readonly dashboard: Dashboard }
+interface Removed {
+  readonly id: string
+  readonly version: number
+  readonly dashboard: Dashboard
+  readonly store: DefinitionStore
+  readonly scopeKey: string
+}
 
 function UndoDelete({ removed, pending, error, onUndo }: { readonly removed: Removed; readonly pending: boolean; readonly error?: string; readonly onUndo: () => void }) {
   return (
@@ -81,17 +87,21 @@ export function DashboardsPage() {
     },
     onSuccess: refresh,
   })
+  const scopeKey = scope.data ? `${scope.data.orgId}:${scope.data.environmentId}` : ""
   const [removed, setRemoved] = useState<Removed>()
+  useEffect(() => { setRemoved((current) => current?.scopeKey === scopeKey ? current : undefined) }, [scopeKey])
   const remove = useMutation({
     mutationFn: async (summary: DashboardSummary) => {
-      const stored = await store.get(summary.id)
-      const retired = settled(await store.retire(summary.id, summary.version))
-      return stored === undefined || !retired.installed ? undefined : { id: summary.id, version: retired.version, dashboard: stored.dashboard }
+      const originStore = store
+      const originScopeKey = scopeKey
+      const stored = await originStore.get(summary.id)
+      const retired = settled(await originStore.retire(summary.id, summary.version))
+      return stored === undefined || !retired.installed ? undefined : { id: summary.id, version: retired.version, dashboard: stored.dashboard, store: originStore, scopeKey: originScopeKey }
     },
     onSuccess: setRemoved,
     onSettled: refresh,
   })
-  const undo = useMutation({ mutationFn: async (gone: Removed) => settled(await store.install(gone.id, gone.dashboard, gone.version)), onSuccess: () => setRemoved(undefined), onSettled: refresh })
+  const undo = useMutation({ mutationFn: async (gone: Removed) => settled(await gone.store.install(gone.id, gone.dashboard, gone.version)), onSuccess: () => setRemoved(undefined), onSettled: refresh })
   const catalog = useQuery({ queryKey: ["question-catalog"], queryFn: readCatalog, retry: false, staleTime: Infinity, enabled: cellAvailable })
   return (
     <section className="space-y-6">
@@ -322,16 +332,20 @@ export function DashboardBoardPage() {
     },
     onSuccess: (copied) => { void client.invalidateQueries({ queryKey: ["dashboards"] }); void navigate({ to: "/dashboards/$id", params: { id: copied } }) },
   })
+  const scopeKey = scope.data ? `${scope.data.orgId}:${scope.data.environmentId}` : ""
   const [removed, setRemoved] = useState<Removed>()
+  useEffect(() => { setRemoved((current) => current?.scopeKey === scopeKey ? current : undefined) }, [scopeKey])
   const remove = useMutation({
     mutationFn: async (from: StoredDashboard) => {
-      const retired = settled(await store.retire(from.id, from.version))
-      return retired.installed ? { id: from.id, version: retired.version, dashboard: from.dashboard } : undefined
+      const originStore = store
+      const originScopeKey = scopeKey
+      const retired = settled(await originStore.retire(from.id, from.version))
+      return retired.installed ? { id: from.id, version: retired.version, dashboard: from.dashboard, store: originStore, scopeKey: originScopeKey } : undefined
     },
     onSuccess: (gone) => { setRemoved(gone); void client.invalidateQueries({ queryKey: ["dashboards"] }) },
   })
   const undo = useMutation({
-    mutationFn: async (gone: Removed) => settled(await store.install(gone.id, gone.dashboard, gone.version)),
+    mutationFn: async (gone: Removed) => settled(await gone.store.install(gone.id, gone.dashboard, gone.version)),
     onSuccess: () => { setRemoved(undefined); void client.invalidateQueries({ queryKey: ["dashboards"] }); void stored.refetch() },
   })
   const board = removed ? undefined : stored.data

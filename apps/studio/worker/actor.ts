@@ -13,6 +13,8 @@ export interface NornActor {
   readonly subjectId: string
   /** The organization the request is scoped to. */
   readonly orgId: string
+  /** The membership row id (generation) for user actors; changes on revoke+rejoin. */
+  readonly memberId?: string
   /** The membership role in that organization (owner/admin/member/viewer). */
   readonly role: string
   /** `oauth`: an assistant the person connected, acting on their grant (MCP). */
@@ -55,7 +57,7 @@ export async function resolveActor(request: Request, auth: Auth): Promise<NornAc
   if (method == null || !USER_METHODS.has(method)) return null
   const member = await activeMembership(auth, session.user.id, session.session.activeOrganizationId)
   if (member === null) return null
-  return { actorKind: "user", subjectId: session.user.id, orgId: member.organizationId, role: member.role, authMethod: method as NornActor["authMethod"] }
+  return { actorKind: "user", subjectId: session.user.id, orgId: member.organizationId, memberId: member.memberId, role: member.role, authMethod: method as NornActor["authMethod"] }
 }
 
 /** A short-lived signed token for the Norn host carrying exactly this actor (audience `norn-host`). */
@@ -103,7 +105,8 @@ export async function verifyWriteScope(
   actor: NornActor,
   options: { readonly checkHostQuery?: boolean; readonly requireEnv?: boolean } = {},
 ): Promise<WriteScopeCheck> {
-  if (SAFE_METHODS.has(request.method)) return { ok: true }
+  const upgrade = request.headers.get("upgrade")?.toLowerCase() === "websocket"
+  if (SAFE_METHODS.has(request.method) && !upgrade) return { ok: true }
   const mismatch = () => ({
     ok: false as const,
     response: Response.json(
@@ -126,7 +129,30 @@ export async function verifyWriteScope(
     ),
   })
 
-  const url = options.checkHostQuery ? new URL(request.url) : null
+  const url = options.checkHostQuery || upgrade ? new URL(request.url) : null
+  if (upgrade) {
+    // Browser WebSocket upgrades cannot send custom headers, so query scope is validated directly
+    // against the canonical server session workspace/environment and rewritten before forwarding.
+    const scope = await cellScope(auth, actor.orgId)
+    if (options.requireEnv && scope.environmentId === null) return noCell()
+    if (url !== null) {
+      const queryOrgs = url.searchParams.getAll("orgId")
+      if (actor.actorKind === "user") {
+        if (queryOrgs.length === 0) return required()
+        if (queryOrgs.some((org) => org !== actor.orgId)) return mismatch()
+      } else if (queryOrgs.some((org) => org !== actor.orgId)) {
+        return mismatch()
+      }
+      const queryEnvs = url.searchParams.getAll("environmentId")
+      if (actor.actorKind === "user" && options.requireEnv) {
+        if (queryEnvs.length === 0) return required()
+        if (queryEnvs.some((env) => env !== scope.environmentId)) return mismatch()
+      } else if (scope.environmentId !== null && queryEnvs.some((env) => env !== scope.environmentId)) {
+        return mismatch()
+      }
+    }
+    return { ok: true, scope: { orgId: actor.orgId, environmentId: scope.environmentId } }
+  }
   if (actor.actorKind !== "user") {
     // Service API keys are bound to a single organization (not a multi-tab session), but if the
     // organization has a server-provisioned environment, never allow query smuggling to another env.

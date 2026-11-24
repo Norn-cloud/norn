@@ -3,7 +3,7 @@ import { expect, test } from "bun:test"
 import { createHash, randomBytes } from "node:crypto"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { assistantCallback, cimdAllowed, createAuth, fetchClientMetadata, ORG_CLAIM } from "../auth.ts"
+import { assistantCallback, cimdAllowed, CONSENT_APPROVAL_HEADER, createAuth, fetchClientMetadata, MEMBER_CLAIM, ORG_CLAIM } from "../auth.ts"
 import worker, { type Env } from "../index.ts"
 import { EXPECTED_ORG_HEADER, hostToken } from "../actor.ts"
 import { grantActor, retried } from "../mcp.ts"
@@ -23,7 +23,7 @@ interface Forwarded { readonly url: string; readonly authorization: string | nul
 
 function stage(mcp = true): Env & { forwarded: Forwarded[] } {
   const db = new Database(":memory:")
-  for (const name of ["0001_better_auth.sql", "0002_workspace_provisioning.sql", "0007_oauth_provider.sql"]) db.exec(migration(name))
+  for (const name of ["0001_better_auth.sql", "0002_workspace_provisioning.sql", "0007_oauth_provider.sql", "0013_oauth_membership_guards.sql"]) db.exec(migration(name))
   const assets = { fetch: async () => new Response("<!doctype html>studio") } as unknown as Fetcher
   const forwarded: Forwarded[] = []
   const host = {
@@ -81,16 +81,31 @@ function authorizeUrl(clientId: string, challenge: string, redirect = CLAUDE) {
 /** The signed query a redirect hands to Studio's sign-in or consent page. */
 const signedQueryOf = (location: string) => new URL(location, ORIGIN).search.slice(1)
 
+/** Fetch the consent screen context and mint its single-use approval token for `oauthQuery`. */
+async function consentContext(env: Env, cookie: string, oauthQuery: string) {
+  const response = await postJson(env, "/api/oauth/consent-context", { oauth_query: oauthQuery }, { cookie, origin: ORIGIN })
+  expect(response.status).toBe(200)
+  return (await response.json()) as { user: { email: string }; organization: { id: string; name: string } | null; approvalToken: string | null }
+}
+
 /** Sign in, consent and exchange the code: the access token an assistant ends up holding. */
-async function grant(env: Env, cookie: string, expectedOrg?: string): Promise<{ accessToken: string; claims: Record<string, unknown> }> {
-  const org = expectedOrg ?? (((await (await call(env, "/api/me", { headers: { cookie } })).json()) as { organization?: { id?: string } | null }).organization?.id ?? "")
+async function grant(env: Env, cookie: string, expectedOrg?: string): Promise<{ accessToken: string; refreshToken?: string; claims: Record<string, unknown> }> {
   const clientId = await register(env)
   const { verifier, challenge } = pkce()
   const authorize = await call(env, authorizeUrl(clientId, challenge), { headers: { cookie } })
   expect(authorize.status).toBe(302)
   const consentPage = authorize.headers.get("location") ?? ""
   expect(new URL(consentPage, ORIGIN).pathname).toBe("/oauth/consent")
-  const consent = await postJson(env, "/api/auth/oauth2/consent", { accept: true, oauth_query: signedQueryOf(consentPage) }, { cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: org })
+  const oauthQuery = signedQueryOf(consentPage)
+  const ctx = await consentContext(env, cookie, oauthQuery)
+  const org = expectedOrg ?? ctx.organization?.id ?? ""
+  expect(ctx.approvalToken).toBeString()
+  const consent = await postJson(
+    env,
+    "/api/auth/oauth2/consent",
+    { accept: true, oauth_query: oauthQuery },
+    { cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: org, [CONSENT_APPROVAL_HEADER]: ctx.approvalToken ?? "" },
+  )
   expect(consent.status).toBe(200)
   const callback = new URL(((await consent.json()) as { url: string }).url)
   expect(`${callback.origin}${callback.pathname}`).toBe(CLAUDE)
@@ -102,8 +117,12 @@ async function grant(env: Env, cookie: string, expectedOrg?: string): Promise<{ 
     body: new URLSearchParams({ grant_type: "authorization_code", code: callback.searchParams.get("code") ?? "", redirect_uri: CLAUDE, client_id: clientId, code_verifier: verifier, resource: RESOURCE }),
   })
   expect(token.status).toBe(200)
-  const accessToken = ((await token.json()) as { access_token: string }).access_token
-  return { accessToken, claims: JSON.parse(Buffer.from(accessToken.split(".")[1] ?? "", "base64url").toString()) }
+  const payload = (await token.json()) as { access_token: string; refresh_token?: string }
+  return {
+    accessToken: payload.access_token,
+    refreshToken: payload.refresh_token,
+    claims: JSON.parse(Buffer.from(payload.access_token.split(".")[1] ?? "", "base64url").toString()),
+  }
 }
 
 const mcp = (env: Env, token: string | null, message: unknown, headers: HeadersInit = {}) =>
@@ -185,7 +204,14 @@ test("a loopback callback registers without naming an application type, and gets
   expect(authorize.status).toBe(302)
   const consentPage = authorize.headers.get("location") ?? ""
   expect(new URL(consentPage, ORIGIN).pathname).toBe("/oauth/consent")
-  const consent = await postJson(env, "/api/auth/oauth2/consent", { accept: true, oauth_query: signedQueryOf(consentPage) }, { cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: org })
+  const oauthQuery = signedQueryOf(consentPage)
+  const ctx = await consentContext(env, cookie, oauthQuery)
+  const consent = await postJson(
+    env,
+    "/api/auth/oauth2/consent",
+    { accept: true, oauth_query: oauthQuery },
+    { cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: org, [CONSENT_APPROVAL_HEADER]: ctx.approvalToken ?? "" },
+  )
   expect(consent.status).toBe(200)
   const callback = new URL(((await consent.json()) as { url: string }).url)
   expect(`${callback.origin}${callback.pathname}`).toBe(loopback)
@@ -326,21 +352,24 @@ test("consent binds to the ready workspace /api/me displays even when raw sessio
   expect(new URL(consentPage, ORIGIN).pathname).toBe("/oauth/consent")
 
   // If the consent screen displayed another workspace (switched in another tab), accepting must be refused.
+  const oauthQuery = signedQueryOf(consentPage)
+  const wrongCtx = await consentContext(env, cookie, oauthQuery)
   const wrongWorkspace = await postJson(
     env,
     "/api/auth/oauth2/consent",
-    { accept: true, oauth_query: signedQueryOf(consentPage) },
-    { cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: "org_different" },
+    { accept: true, oauth_query: oauthQuery },
+    { cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: "org_different", [CONSENT_APPROVAL_HEADER]: wrongCtx.approvalToken ?? "" },
   )
   expect(wrongWorkspace.status).toBe(409)
   expect(await wrongWorkspace.json()).toMatchObject({ code: "WORKSPACE_CHANGED" })
 
   // Accepting with the displayed workspace binds consent & access token to `org` (never unscoped).
+  const okCtx = await consentContext(env, cookie, oauthQuery)
   const consent = await postJson(
     env,
     "/api/auth/oauth2/consent",
-    { accept: true, oauth_query: signedQueryOf(consentPage) },
-    { cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: org },
+    { accept: true, oauth_query: oauthQuery },
+    { cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: org, [CONSENT_APPROVAL_HEADER]: okCtx.approvalToken ?? "" },
   )
   expect(consent.status).toBe(200)
   const callback = new URL(((await consent.json()) as { url: string }).url)
@@ -395,35 +424,65 @@ test("consent refuses without a ready workspace, and /mcp rejects unscoped or re
   const authorize = await call(env, authorizeUrl(clientId, pkce().challenge), { headers: { cookie } })
   expect(authorize.status).toBe(302)
   const consentPage = authorize.headers.get("location") ?? ""
+  const oauthQuery = signedQueryOf(consentPage)
+  const ctx = await consentContext(env, cookie, oauthQuery)
   db(env).run(`update "organization" set "metadata" = '{"norn.provisioning":true}' where "id" = 'org_second'`)
-  const accepted = await postJson(env, "/api/auth/oauth2/consent", { accept: true, oauth_query: signedQueryOf(consentPage) }, { cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: "org_second" })
+  const accepted = await postJson(
+    env,
+    "/api/auth/oauth2/consent",
+    { accept: true, oauth_query: oauthQuery },
+    { cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: "org_second", [CONSENT_APPROVAL_HEADER]: ctx.approvalToken ?? "" },
+  )
   expect(accepted.status).toBe(409)
   expect(await accepted.json()).toMatchObject({ code: "NO_ACTIVE_WORKSPACE" })
-  const denied = await postJson(env, "/api/auth/oauth2/consent", { accept: false, oauth_query: signedQueryOf(consentPage) }, { cookie, origin: ORIGIN })
+  const denied = await postJson(env, "/api/auth/oauth2/consent", { accept: false, oauth_query: oauthQuery }, { cookie, origin: ORIGIN })
   expect(denied.status).toBe(200)
   expect(new URL(((await denied.json()) as { url: string }).url).searchParams.get("error")).toBe("access_denied")
 })
 
-test("consent approval requires x-norn-expected-org and never drifts to another membership on concurrent changes", async () => {
+test("consent approval requires single-use approval token, guards persistence at commit, and revokes grants across rejoin", async () => {
   const env = stage()
   const { cookie, user, org } = await person(env, "pinned-consent@example.com")
-  db(env).run(`update "session" set "activeOrganizationId" = null where "userId" = ?`, [user])
+  const sqlite = db(env)
+  sqlite.run(`update "session" set "activeOrganizationId" = null where "userId" = ?`, [user])
 
   const clientId = await register(env)
   const { verifier, challenge } = pkce()
   const authorize = await call(env, authorizeUrl(clientId, challenge), { headers: { cookie } })
   expect(authorize.status).toBe(302)
-  const consentPage = authorize.headers.get("location") ?? ""
+  const oauthQuery = signedQueryOf(authorize.headers.get("location") ?? "")
 
-  // 1. Omitting x-norn-expected-org on accept: true is refused 400 WORKSPACE_SCOPE_REQUIRED.
-  const missingHeader = await postJson(env, "/api/auth/oauth2/consent", { accept: true, oauth_query: signedQueryOf(consentPage) }, { cookie, origin: ORIGIN })
+  // 1. Missing x-norn-expected-org -> 400 WORKSPACE_SCOPE_REQUIRED; missing approval token -> 400 CONSENT_APPROVAL_REQUIRED.
+  const missingHeader = await postJson(env, "/api/auth/oauth2/consent", { accept: true, oauth_query: oauthQuery }, { cookie, origin: ORIGIN })
   expect(missingHeader.status).toBe(400)
   expect(await missingHeader.json()).toMatchObject({ code: "WORKSPACE_SCOPE_REQUIRED" })
-  expect(db(env).query(`select count(*) as n from "oauthConsent" where "userId" = ?`).get(user)).toEqual({ n: 0 })
+  const missingApproval = await postJson(env, "/api/auth/oauth2/consent", { accept: true, oauth_query: oauthQuery }, { cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: org })
+  expect(missingApproval.status).toBe(400)
+  expect(await missingApproval.json()).toMatchObject({ code: "CONSENT_APPROVAL_REQUIRED" })
+  expect(sqlite.query(`select count(*) as n from "oauthConsent" where "userId" = ?`).get(user)).toEqual({ n: 0 })
 
-  // 2. Inject an earlier-created ready membership right when oauthConsent is inserted (between consent write and code issuance):
+  // 2. Approval token is bound to session + oauth_query and single-use (replay refused 409 CONSENT_APPROVAL_EXPIRED).
+  const firstCtx = await consentContext(env, cookie, oauthQuery)
+  const wrongQueryRes = await postJson(
+    env,
+    "/api/auth/oauth2/consent",
+    { accept: true, oauth_query: `${oauthQuery}&tampered=1` },
+    { cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: org, [CONSENT_APPROVAL_HEADER]: firstCtx.approvalToken ?? "" },
+  )
+  expect(wrongQueryRes.status).toBe(409)
+  // The token was consumed on the failed attempt and cannot be replayed even with the real query.
+  const replay = await postJson(
+    env,
+    "/api/auth/oauth2/consent",
+    { accept: true, oauth_query: oauthQuery },
+    { cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: org, [CONSENT_APPROVAL_HEADER]: firstCtx.approvalToken ?? "" },
+  )
+  expect(replay.status).toBe(409)
+  expect(await replay.json()).toMatchObject({ code: "CONSENT_APPROVAL_EXPIRED" })
+
+  // 3. Inject an earlier-created ready membership right before oauthConsent is inserted:
   //    both oauthConsent.referenceId and the issued access token MUST stay pinned to `org`, never drifting to `org_earlier`.
-  const sqlite = db(env)
+  const pinnedCtx = await consentContext(env, cookie, oauthQuery)
   const origPrepare = sqlite.prepare.bind(sqlite)
   let injected = false
   sqlite.prepare = ((sql: string, ...rest: unknown[]) => {
@@ -437,8 +496,8 @@ test("consent approval requires x-norn-expected-org and never drifts to another 
   const approved = await postJson(
     env,
     "/api/auth/oauth2/consent",
-    { accept: true, oauth_query: signedQueryOf(consentPage) },
-    { cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: org },
+    { accept: true, oauth_query: oauthQuery },
+    { cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: org, [CONSENT_APPROVAL_HEADER]: pinnedCtx.approvalToken ?? "" },
   )
   sqlite.prepare = origPrepare
   expect(injected).toBe(true)
@@ -452,23 +511,36 @@ test("consent approval requires x-norn-expected-org and never drifts to another 
     body: new URLSearchParams({ grant_type: "authorization_code", code: callback.searchParams.get("code") ?? "", redirect_uri: CLAUDE, client_id: clientId, code_verifier: verifier, resource: RESOURCE }),
   })
   expect(token.status).toBe(200)
-  const accessToken = ((await token.json()) as { access_token: string }).access_token
-  const claims = JSON.parse(Buffer.from(accessToken.split(".")[1] ?? "", "base64url").toString()) as Record<string, unknown>
+  const tokenPayload = (await token.json()) as { access_token: string; refresh_token?: string }
+  const claims = JSON.parse(Buffer.from(tokenPayload.access_token.split(".")[1] ?? "", "base64url").toString()) as Record<string, unknown>
   expect(claims[ORG_CLAIM]).toBe(org)
+  expect(claims[MEMBER_CLAIM]).toBeString()
 
-  // 3. Concurrent revocation of the pinned workspace between consent write and code issuance refuses 409 NO_ACTIVE_WORKSPACE
-  //    instead of falling back to the other ready workspace (`org_earlier`).
+  // 4. Revocation + rejoin into the same org NEVER resurrects pre-revocation access token, refresh token, or consent!
+  sqlite.run(`delete from "member" where "userId" = ? and "organizationId" = ?`, [user, org])
+  expect(sqlite.query(`select count(*) as n from "oauthConsent" where "userId" = ? and "referenceId" = ?`).get(user, org)).toEqual({ n: 0 })
+  sqlite.run(`insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values ('m_rejoined_gen2', ?, ?, 'owner', ?)`, [org, user, new Date().toISOString()])
+  expect((await mcp(env, tokenPayload.access_token, INIT)).status).toBe(401)
+  if (tokenPayload.refresh_token) {
+    const refreshed = await call(env, "/api/auth/oauth2/token", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+      body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: tokenPayload.refresh_token, client_id: clientId, resource: RESOURCE }),
+    })
+    expect(refreshed.status).toBeGreaterThanOrEqual(400)
+  }
+
+  // 5. Commit-time SQLite trigger aborts oauthConsent insert on concurrent membership deletion (0 consent rows, 0 codes).
   const clientId2 = await register(env)
+  sqlite.run(`update "session" set "activeOrganizationId" = ? where "userId" = ?`, [org, user])
   const auth2 = await call(env, authorizeUrl(clientId2, pkce().challenge), { headers: { cookie } })
   expect(auth2.status).toBe(302)
-  const consentPage2 = auth2.headers.get("location") ?? ""
-  // Set activeOrganizationId back to `org` so hooks.before resolves `org`, then clear it to null & remove membership mid-request.
-  sqlite.run(`update "session" set "activeOrganizationId" = ? where "userId" = ?`, [org, user])
+  const oauthQuery2 = signedQueryOf(auth2.headers.get("location") ?? "")
+  const ctx2 = await consentContext(env, cookie, oauthQuery2)
   let revoked = false
   sqlite.prepare = ((sql: string, ...rest: unknown[]) => {
     if (!revoked && sql.toLowerCase().includes(`insert into "oauthconsent"`)) {
       revoked = true
-      origPrepare(`update "session" set "activeOrganizationId" = null where "userId" = ?`).run(user)
       origPrepare(`delete from "member" where "userId" = ? and "organizationId" = ?`).run(user, org)
     }
     return (origPrepare as (...args: unknown[]) => ReturnType<typeof origPrepare>)(sql, ...rest)
@@ -476,11 +548,12 @@ test("consent approval requires x-norn-expected-org and never drifts to another 
   const failed = await postJson(
     env,
     "/api/auth/oauth2/consent",
-    { accept: true, oauth_query: signedQueryOf(consentPage2) },
-    { cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: org },
+    { accept: true, oauth_query: oauthQuery2 },
+    { cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: org, [CONSENT_APPROVAL_HEADER]: ctx2.approvalToken ?? "" },
   )
   sqlite.prepare = origPrepare
   expect(revoked).toBe(true)
   expect(failed.status).toBe(409)
   expect(await failed.json()).toMatchObject({ code: "NO_ACTIVE_WORKSPACE" })
+  expect(sqlite.query(`select count(*) as n from "oauthConsent" where "userId" = ? and "referenceId" = ?`).get(user, org)).toEqual({ n: 0 })
 })

@@ -6,6 +6,9 @@ import {
   dbAll,
   dbFirst,
   isProvisioningMetadata,
+  isSessionLive,
+  LIVE_SESSION_S_SQL,
+  LIVE_SESSION_SQL,
   publicMetadata,
   BILLING_PAYER,
   BILLED,
@@ -139,13 +142,16 @@ export async function activateWorkspace(request: Request, context: WorkspaceCont
   if (isProvisioningMetadata(membership.metadata)) return failure(409, "WORKSPACE_PROVISIONING", "This workspace is still being provisioned.", sessionHeaders)
   const updated = await commitActivateSession(db, { token: session.session.token, userId: session.user.id, organizationId })
   if (updated === null) {
+    if (!(await isSessionLive(db, session.session.token, session.user.id))) {
+      return failure(401, "UNAUTHORIZED", "Sign in first.", sessionHeaders)
+    }
     const current = await dbFirst<{ metadata: string | null }>(db,
       `select o."metadata" from "member" m join "organization" o on o."id" = m."organizationId" where m."organizationId" = ? and m."userId" = ?`,
       organizationId, session.user.id)
     if (current !== null && isProvisioningMetadata(current.metadata)) return failure(409, "WORKSPACE_PROVISIONING", "This workspace is still being provisioned.", sessionHeaders)
     return failure(403, "WORKSPACE_ACCESS_DENIED", WORKSPACE_ACCESS_DENIED_MESSAGE, sessionHeaders)
   }
-  return json({ activeOrganizationId: organizationId, name: membership.name, role: membership.role, hasCell: environmentOf(membership.metadata) !== null }, 200, sessionHeaders)
+  return json({ activeOrganizationId: updated.activeOrganizationId, name: membership.name, role: membership.role, hasCell: environmentOf(membership.metadata) !== null }, 200, sessionHeaders)
 }
 
 /**
@@ -173,15 +179,27 @@ export async function createWorkspace(request: Request, context: WorkspaceContex
   // Server-only keys: the payer, read by migration 0011's triggers, only while billing is on.
   const metadata = { ...publicMetadata(input?.metadata), ...context.billing === undefined ? {} : { [BILLING_PAYER]: session.user.id, [BILLED]: true } }
   const member = { id: crypto.randomUUID(), organizationId: id, userId: session.user.id, role: "owner", createdAt: at }
+  const keepCurrent = input?.keepCurrentActiveOrganization === true
   try {
+    // Guard the initial organization insert on a live, unexpired caller session and chain the
+    // member insert via changes() = 1 so a concurrent sign-out commits zero workspace rows.
     await atomically(db, [
-      { sql: `insert into "organization" ("id", "name", "slug", "logo", "metadata", "createdAt") values (?, ?, ?, ?, ?, ?)`, params: [id, name, slug, logo, JSON.stringify(metadata), at] },
-      { sql: `insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values (?, ?, ?, ?, ?)`, params: [member.id, id, member.userId, member.role, at] },
-      ...input?.keepCurrentActiveOrganization === true
+      {
+        sql: `insert into "organization" ("id", "name", "slug", "logo", "metadata", "createdAt")
+          select ?, ?, ?, ?, ?, ?
+          where exists (select 1 from "session" s where s."token" = ? and s."userId" = ? and ${LIVE_SESSION_S_SQL})`,
+        params: [id, name, slug, logo, JSON.stringify(metadata), at, session.session.token, session.user.id],
+      },
+      {
+        sql: `insert into "member" ("id", "organizationId", "userId", "role", "createdAt")
+          select ?, ?, ?, ?, ? where changes() = 1`,
+        params: [member.id, id, member.userId, member.role, at],
+      },
+      ...keepCurrent
         ? []
         : [{
           sql: `update "session" set "activeOrganizationId" = ?, "updatedAt" = ?
-            where "token" = ? and "userId" = ?
+            where "token" = ? and "userId" = ? and ${LIVE_SESSION_SQL}
               and exists (select 1 from "member" m join "organization" o on o."id" = m."organizationId"
                           where m."id" = ? and m."organizationId" = ? and m."userId" = ? and ${READY_ORG_SQL})`,
           params: [id, at, session.session.token, session.user.id, member.id, id, session.user.id],
@@ -191,6 +209,20 @@ export async function createWorkspace(request: Request, context: WorkspaceContex
     if (limitRaised(error) === "cells") return planLimit(await admitCell(context.db as unknown as BillingDb, context.billing, context.baseURL, session.user.id), "Your plan's workspace limit is reached.", sessionHeaders)
     if (/UNIQUE constraint failed: organization\.slug/.test(error instanceof Error ? error.message : "")) return failure(400, "ORGANIZATION_ALREADY_EXISTS", "Organization already exists", sessionHeaders)
     throw error
+  }
+  const createdMember = await dbFirst<{ id: string }>(db, `select "id" from "member" where "id" = ?`, member.id)
+  const activated = keepCurrent
+    ? true
+    : (await dbFirst<{ activeOrganizationId: string | null }>(
+      db,
+      `select "activeOrganizationId" from "session" where "token" = ? and "userId" = ? and "activeOrganizationId" = ? and "updatedAt" = ?`,
+      session.session.token,
+      session.user.id,
+      id,
+      at,
+    )) !== null
+  if (createdMember === null || !activated) {
+    return failure(401, "UNAUTHORIZED", "Sign in first.", sessionHeaders)
   }
   return json({ id, name, slug, logo, metadata: publicMetadata(metadata), createdAt: at, members: [member] }, 200, sessionHeaders)
 }

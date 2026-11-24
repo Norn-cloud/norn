@@ -191,7 +191,7 @@ export function scopedHostFetch(fetcher: Fetch, base = "/api/host", scope?: Scop
     const write = isWriteMethod(init?.method)
     const active = scope !== undefined
       ? await scope()
-      : write && isDefaultFetch(fetcher) && currentDisplayedScope !== undefined
+      : write && currentDisplayedScope !== undefined
         ? currentDisplayedScope
         : await readStudioScope(fetcher)
     if (active === null) throw new StudioScopeError(NO_DATA_CELL)

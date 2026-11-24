@@ -2,8 +2,8 @@ import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
-import { resolveActor } from "../actor.ts"
-import { createAuth, DISABLED_ORG_PATHS, WORKSPACE_ACCESS_DENIED_MESSAGE } from "../auth.ts"
+import { EXPECTED_ORG_HEADER, resolveActor } from "../actor.ts"
+import { commitAcceptInvitation, commitActivateSession, commitCreateApiKey, createAuth, DISABLED_ORG_PATHS, WORKSPACE_ACCESS_DENIED_MESSAGE, type ProvisionDb } from "../auth.ts"
 import { billingModeStatement } from "../billing.ts"
 import worker, { type Env } from "../index.ts"
 import type { WorkspacesDocument } from "../workspaces.ts"
@@ -457,4 +457,129 @@ test("API-key creation enforces role and workspace readiness atomically at inser
   expect(verified.key?.referenceId).toBe(owner.organizationId)
   const actor = await resolveActor(new Request(ORIGIN, { headers: { "x-api-key": payload.key } }), auth)
   expect(actor).toEqual({ actorKind: "service", subjectId: payload.id, orgId: owner.organizationId, role: "viewer", authMethod: "api_key" })
+
+  // 5. Malformed request body (e.g. non-number expiresIn, non-string name, invalid metadata) is rejected 400 with 0 new rows.
+  for (const badBody of [
+    { name: "bad-exp", organizationId: owner.organizationId, expiresIn: "never" },
+    { name: 123, organizationId: owner.organizationId },
+    { name: "bad-meta", organizationId: owner.organizationId, metadata: "not-an-object" },
+    { name: "unknown-field", organizationId: owner.organizationId, extra: true },
+  ]) {
+    const res = await mutate(env, "POST", "/api/auth/api-key/create", badBody, { cookie: owner.cookie })
+    expect({ badBody, status: res.status }).toEqual({ badBody, status: 400 })
+  }
+  expect(countKeys()).toBe(1)
+
+  // 6. Case- or space-tampered member roles never authorize key creation (exact case-sensitive GLOB matching).
+  const tampered = await enroll(env, "s6-tampered@example.com", "Tampered")
+  for (const role of ["OWNER", "Admin", "o w n e r", " owner ", "co-owner"]) {
+    db.run(`delete from "member" where "userId" = ? and "organizationId" = ?`, [tampered.userId, owner.organizationId])
+    db.run(`insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values (?, ?, ?, ?, ?)`, [`m_t_${role}`, owner.organizationId, tampered.userId, role, now])
+    const res = await mutate(env, "POST", "/api/auth/api-key/create", { name: "tampered", organizationId: owner.organizationId }, { cookie: tampered.cookie })
+    expect({ role, status: res.status }).toEqual({ role, status: 403 })
+  }
+  expect(countKeys()).toBe(1)
+})
+
+test("revoked or expired sessions commit zero workspace changes across activate, accept-invitation, createWorkspace, and D1 batch adapter", async () => {
+  const { db, env } = stage({ defaultEnvironmentId: "prod", billing: false })
+  const owner = await enroll(env, "rev-owner@example.com", "Owner")
+  const guest = await enroll(env, "rev-guest@example.com", "Guest")
+  const now = new Date().toISOString()
+  db.run(`update "user" set "emailVerified" = 1 where "id" = ?`, [guest.userId])
+  db.run(`insert into "organization" ("id", "name", "slug", "metadata", "createdAt") values ('org_rev', 'Rev Org', 'rev-org', '{"environmentId":"prod"}', ?)`, [now])
+  db.run(`insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values ('m_rev_o', 'org_rev', ?, 'owner', ?)`, [owner.userId, now])
+  const origPrepare = db.prepare.bind(db)
+
+  // 1. Concurrent sign-out right before activateWorkspace -> 401 UNAUTHORIZED.
+  let raced = false
+  db.prepare = ((sql: string, ...rest: unknown[]) => {
+    if (!raced && sql.includes(`update "session" set "activeOrganizationId"`)) {
+      raced = true
+      origPrepare(`delete from "session" where "userId" = ?`).run(owner.userId)
+    }
+    return (origPrepare as (...args: unknown[]) => ReturnType<typeof origPrepare>)(sql, ...rest)
+  }) as typeof db.prepare
+  const actRes = await mutate(env, "POST", "/api/workspaces/org_rev/activate", {}, { cookie: owner.cookie })
+  db.prepare = origPrepare
+  expect(raced).toBe(true)
+  expect(actRes.status).toBe(401)
+
+  // 2. Concurrent sign-out right before accept-invitation -> 401, invitation stays pending, 0 members inserted.
+  const invId = crypto.randomUUID()
+  db.run(`insert into "invitation" ("id", "organizationId", "email", "role", "status", "expiresAt", "createdAt", "inviterId") values (?, 'org_rev', 'rev-guest@example.com', 'member', 'pending', ?, ?, ?)`,
+    [invId, new Date(Date.now() + 3_600_000).toISOString(), now, owner.userId])
+  raced = false
+  db.prepare = ((sql: string, ...rest: unknown[]) => {
+    if (!raced && sql.includes(`update "invitation" set "status" = 'accepted'`)) {
+      raced = true
+      origPrepare(`delete from "session" where "userId" = ?`).run(guest.userId)
+    }
+    return (origPrepare as (...args: unknown[]) => ReturnType<typeof origPrepare>)(sql, ...rest)
+  }) as typeof db.prepare
+  const accRes = await mutate(env, "POST", "/api/workspaces/invitations/accept", { invitationId: invId }, { cookie: guest.cookie })
+  db.prepare = origPrepare
+  expect(raced).toBe(true)
+  expect(accRes.status).toBe(401)
+  expect(db.query(`select "status" from "invitation" where "id" = ?`).get(invId)).toEqual({ status: "pending" })
+  expect(db.query(`select count(*) as n from "member" where "organizationId" = 'org_rev' and "userId" = ?`).get(guest.userId)).toEqual({ n: 0 })
+
+  // 3. Concurrent sign-out right before createWorkspace -> 401, 0 organizations & 0 members inserted.
+  const creator = await enroll(env, "rev-creator@example.com", "Creator")
+  raced = false
+  db.prepare = ((sql: string, ...rest: unknown[]) => {
+    if (!raced && sql.includes(`insert into "organization"`)) {
+      raced = true
+      origPrepare(`delete from "session" where "userId" = ?`).run(creator.userId)
+    }
+    return (origPrepare as (...args: unknown[]) => ReturnType<typeof origPrepare>)(sql, ...rest)
+  }) as typeof db.prepare
+  const createRes = await mutate(env, "POST", "/api/workspaces", { name: "Ghost", slug: "ghost-ws" }, { cookie: creator.cookie })
+  db.prepare = origPrepare
+  expect(raced).toBe(true)
+  expect(createRes.status).toBe(401)
+  expect(db.query(`select count(*) as n from "organization" where "slug" = 'ghost-ws'`).get()).toEqual({ n: 0 })
+
+  // 4. Implicit active-organization mutation (POST /api/auth/organization/update without organizationId) requires x-norn-expected-org.
+  const implicit = await enroll(env, "implicit-org@example.com", "Implicit")
+  expect((await mutate(env, "POST", "/api/auth/organization/update", { data: { name: "Renamed" } }, { cookie: implicit.cookie })).status).toBe(400)
+  expect((await mutate(env, "POST", "/api/auth/organization/update", { data: { name: "Renamed" } }, { cookie: implicit.cookie, [EXPECTED_ORG_HEADER]: "org_wrong" })).status).toBe(409)
+  expect((await mutate(env, "POST", "/api/auth/organization/update", { data: { name: "Renamed" } }, { cookie: implicit.cookie, [EXPECTED_ORG_HEADER]: implicit.organizationId })).status).toBe(200)
+
+  // 5. D1-shaped adapter (bind/first/all/run/batch) exercises commitActivateSession, commitAcceptInvitation, and commitCreateApiKey end to end.
+  const d1Wrapper: ProvisionDb = {
+    prepare(sql: string) {
+      return {
+        bind(...params: (string | number | null)[]) {
+          return {
+            sql, params,
+            first: async <T>() => (db.query(sql).get(...params) as T | null) ?? null,
+            all: async <T>() => ({ results: db.query(sql).all(...params) as T[] }),
+            run: async () => { db.query(sql).run(...params); return { success: true } },
+          }
+        },
+      }
+    },
+    batch: async (stmts: unknown[]) => {
+      db.transaction(() => {
+        for (const s of stmts as { sql: string; params: (string | number | null)[] }[]) db.query(s.sql).run(...s.params)
+      })()
+      return []
+    },
+  }
+  const d1User = await enroll(env, "d1-user@example.com", "D1")
+  const d1Session = db.query(`select "token" from "session" where "userId" = ?`).get(d1User.userId) as { token: string }
+  db.run(`update "user" set "emailVerified" = 1 where "id" = ?`, [d1User.userId])
+  const d1Inv = crypto.randomUUID()
+  db.run(`insert into "invitation" ("id", "organizationId", "email", "role", "status", "expiresAt", "createdAt", "inviterId") values (?, 'org_rev', 'd1-user@example.com', 'admin', 'pending', ?, ?, ?)`,
+    [d1Inv, new Date(Date.now() + 3_600_000).toISOString(), now, owner.userId])
+  const d1Acc = await commitAcceptInvitation(d1Wrapper, {
+    invitationId: d1Inv, userId: d1User.userId, userEmail: "d1-user@example.com", emailVerified: true,
+    sessionToken: d1Session.token, billing: undefined, baseURL: ORIGIN,
+  })
+  expect(d1Acc.kind).toBe("accepted")
+  const d1Act = await commitActivateSession(d1Wrapper, { token: d1Session.token, userId: d1User.userId, organizationId: d1User.organizationId })
+  expect(d1Act?.activeOrganizationId).toBe(d1User.organizationId)
+  const d1Key = await commitCreateApiKey(d1Wrapper, { userId: d1User.userId, organizationId: "org_rev", sessionToken: d1Session.token, name: "d1-key" })
+  expect(d1Key.kind).toBe("created")
 })

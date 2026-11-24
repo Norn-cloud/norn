@@ -128,10 +128,17 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
   // Service keys cannot hold a person's gateway grant.
   if (actor.actorKind !== "user") return refusal(403, "connectors.user_only", "Connectors act for a signed-in person, not an API key.")
   if (!originAllowed(request, actor, env.trustedOrigins ?? [env.BETTER_AUTH_URL])) return refusal(403, "connectors.origin", "Cross-origin request refused.")
-  const scopeCheck = await verifyWriteScope(request, auth, actor)
-  if (!scopeCheck.ok) return scopeCheck.response
-  // The cell scope is the session's: its active organization and that organization's environment.
-  const { environmentId } = await cellScope(auth, actor.orgId)
+  const scopeCheck = await verifyWriteScope(request, auth, actor, { requireEnv: deps.host !== undefined })
+  if (!scopeCheck.ok) {
+    const failed = await scopeCheck.response.clone().json().catch(() => null) as { code?: unknown } | null
+    if (failed?.code === "workspace.no_cell") {
+      return refusal(409, "connectors.no_environment", "Your organization has no cell environment yet, so connectors cannot be used.", { kind: "ask_admin" })
+    }
+    return scopeCheck.response
+  }
+  // Reuse the validated scope from verifyWriteScope on mutations so downstream PDP and cell
+  // operations stay pinned to the exact (orgId, environmentId) pair verified at admission.
+  const environmentId = scopeCheck.scope !== undefined ? scopeCheck.scope.environmentId : (await cellScope(auth, actor.orgId)).environmentId
   // Every connector verb is the host PDP's decision (#1036); the Worker holds no role logic.
   const ask = async (checks: Parameters<typeof decide>[4]) => {
     try {
@@ -189,6 +196,10 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
   const settled = async (id: string) => { const binding = await getBinding(db, actor.orgId, id); return binding === null ? null : await reconcile(binding) }
   const stillPending = () => refusal(409, "connectors.binding_pending", "This binding is still being saved. Try again in a moment.")
   if (route === "GET /bindings") {
+    const rows = await listBindings(db, actor.orgId)
+    return ok({ bindings: rows.map(shown), manage })
+  }
+  if (route === "POST /bindings:reconcile") {
     const rows = await Promise.all((await listBindings(db, actor.orgId)).map(reconcile))
     return ok({ bindings: rows.filter((b): b is Binding => b !== null).map(shown), manage })
   }

@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { EXPECTED_ORG_HEADER, resolveActor } from "../actor.ts"
+import { EXPECTED_ENV_HEADER, EXPECTED_ORG_HEADER, resolveActor } from "../actor.ts"
 import { createAuth, gatewaySubject } from "../auth.ts"
 import { connectors, PENDING_CREATE_LEASE_MS, type ConnectorDeps } from "../connectors.ts"
 import { canonicalJson, connectorVersion, manifestDigest, readDraft, runInput, toolManifest } from "../bindings.ts"
@@ -72,9 +72,15 @@ function stage(gatewayClient = false) {
     if (init.cookie !== undefined) headers.set("cookie", init.cookie)
     if (init.method !== undefined && init.method !== "GET") {
       headers.set("origin", ORIGIN)
-      if (init.omitScope !== true && init.cookie !== undefined && !headers.has(EXPECTED_ORG_HEADER)) {
+      if (init.omitScope !== true && init.cookie !== undefined) {
         const actor = await resolveActor(new Request(ORIGIN, { headers: { cookie: init.cookie } }), auth)
-        if (actor !== null) headers.set(EXPECTED_ORG_HEADER, actor.orgId)
+        if (actor !== null) {
+          if (!headers.has(EXPECTED_ORG_HEADER)) headers.set(EXPECTED_ORG_HEADER, actor.orgId)
+          if (!headers.has(EXPECTED_ENV_HEADER)) {
+            const scope = await cellScope(auth, actor.orgId)
+            if (scope.environmentId !== null) headers.set(EXPECTED_ENV_HEADER, scope.environmentId)
+          }
+        }
       }
     }
     // A test that brings its own cell keeps the same stand-in PDP in front of it.
@@ -434,7 +440,7 @@ test("the whole link round trip: state cookie, basic client auth, resource, intr
   }) as typeof fetch
   try {
     const orgId = (db.query("SELECT id FROM organization LIMIT 1").get() as { id: string }).id
-    const link = await call("/api/connectors/link", { method: "POST", headers: { [EXPECTED_ORG_HEADER]: orgId } })
+    const link = await call("/api/connectors/link", { method: "POST", headers: { [EXPECTED_ORG_HEADER]: orgId, [EXPECTED_ENV_HEADER]: "analytics" } })
     const state = new URL(((await link.json()) as { url: string }).url).searchParams.get("state") ?? ""
     const back = await call(`/api/auth/callback/executor?code=abc&state=${encodeURIComponent(state)}`)
     expect(back.status).toBe(302)
@@ -511,21 +517,24 @@ function liveCell() {
   return { host, seen, held, state }
 }
 
-test("a save never ends half-done: each failure point is settled against the cell", async () => {
+test("a save never ends half-done: each failure point is settled via scoped POST /bindings:reconcile (GET stays read-only)", async () => {
   const { send, signUp, clock } = stage()
   const owner = await signUp("ada@example.com")
   const cell = liveCell()
-  const list = async () => (await send("/bindings", { cookie: owner }, { host: cell.host })).body.bindings as (Binding & { label: string })[]
+  const readOnlyList = async () => (await send("/bindings", { cookie: owner }, { host: cell.host })).body.bindings as (Binding & { label: string })[]
+  const list = async () => (await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: cell.host })).body.bindings as (Binding & { label: string })[]
   type Binding = { id: string; state: string; definition: { id: string; version: number } | null }
 
   // 1. Create: the cell installs it, then writing the result locally fails. The row is left
-  //    "creating"; the next read adopts the cell's definition.
+  //    "creating"; GET /bindings never mutates DB, while POST /bindings:reconcile adopts the cell's definition.
   failures.next = /^UPDATE connector_binding SET label/
   const failed = await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "One" }), cookie: owner }, { host: cell.host })
   expect(failed).toMatchObject({ status: 500, body: { code: "connectors.internal" } })
   // Within its lease the create may still be installing elsewhere, so it is left alone.
   expect((await list())[0]).toMatchObject({ label: "One", state: "pending" })
   clock.offset += PENDING_CREATE_LEASE_MS + 1
+  // GET /bindings stays read-only even after lease expiry; POST /bindings:reconcile settles it.
+  expect((await readOnlyList())[0]).toMatchObject({ label: "One", state: "pending" })
   const [one] = await list()
   expect(one).toMatchObject({ label: "One", state: "ready", definition: { version: 1 } })
   expect(cell.held.size).toBe(1)
@@ -572,7 +581,7 @@ test("a create still installing is never reconciled away by another read", async
   let release: () => void = () => {}
   const gate = new Promise<void>((resolve) => { release = resolve })
   const slow = { fetch: async (request: Request) => { if (new URL(request.url).pathname === "/v1/definitions:install") await gate; return cell.host.fetch(request) } } as unknown as Fetcher
-  const list = async () => (await send("/bindings", { cookie: owner }, { host: cell.host })).body.bindings as { label: string; state: string; definition: { version: number } | null }[]
+  const list = async () => (await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: cell.host })).body.bindings as { label: string; state: string; definition: { version: number } | null }[]
 
   const saving = send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "Slow" }), cookie: owner }, { host: slow })
   // Another page loads Connections mid-install: the row is shown pending, not deleted.
@@ -674,13 +683,15 @@ test("a binding kept only in Studio cannot run: who may run it is the cell's to 
   expect((await send(`/bindings/${local.id}/run`, { ...body("POST", { input: {} }), cookie: owner }, { host: noKind.host })).body.code).toBe("connectors.binding_not_in_cell")
 })
 
-test("connector mutations require x-norn-expected-org and refuse mismatched workspaces before reaching gateway or cell", async () => {
+test("connector mutations require x-norn-expected-org and x-norn-expected-env and refuse mismatched workspaces before reaching gateway or cell", async () => {
   const { send, signUp, calls } = stage()
   const owner = await signUp("scope-conn@example.com")
   const before = calls.length
   const missing = await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner, omitScope: true })
   expect(missing).toMatchObject({ status: 400, body: { code: "scope.required" } })
-  const stale = await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner, headers: { "content-type": "application/json", [EXPECTED_ORG_HEADER]: "org_other" } })
-  expect(stale).toMatchObject({ status: 409, body: { code: "workspace.changed" } })
+  const staleOrg = await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner, headers: { "content-type": "application/json", [EXPECTED_ORG_HEADER]: "org_other", [EXPECTED_ENV_HEADER]: "analytics" } })
+  expect(staleOrg).toMatchObject({ status: 409, body: { code: "workspace.changed" } })
+  const staleEnv = await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner, headers: { "content-type": "application/json", [EXPECTED_ENV_HEADER]: "wrong_env" } })
+  expect(staleEnv).toMatchObject({ status: 409, body: { code: "workspace.changed" } })
   expect(calls.length).toBe(before)
 })

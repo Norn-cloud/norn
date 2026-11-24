@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link2, Play, Wrench } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -94,7 +94,7 @@ function BindingEditor({ tool, binding, onDone, scope }: { readonly tool: Tool; 
         <Button size="sm" variant="ghost" type="button" onClick={onDone}>Cancel</Button>
       </div>
       {problem && <p role="alert" className="text-sm text-destructive">{problem}</p>}
-      {save.isError && <ConnectorProblem error={save.error} />}
+      {save.isError && <ConnectorProblem error={save.error} scope={effectiveScope} />}
     </form>
   )
 }
@@ -124,7 +124,7 @@ function TestRun({ binding, tool, scope }: { readonly binding: Binding; readonly
       ))}
       <Button size="sm" type="submit" disabled={run.isPending}><Play />Run</Button>
       {problem && <p role="alert" className="text-sm text-destructive">{problem}</p>}
-      {run.isError && <ConnectorProblem error={run.error} />}
+      {run.isError && <ConnectorProblem error={run.error} scope={effectiveScope} />}
       {run.isSuccess && <pre aria-label="Result" className="max-h-80 overflow-auto rounded-md bg-muted p-3 text-xs">{JSON.stringify(run.data.result, null, 2)}</pre>}
     </form>
   )
@@ -166,7 +166,7 @@ function BindingRow({ binding, manage, scope }: { readonly binding: Binding; rea
         </dl>
       )}
       {mode !== null && mode !== "view" && tools.isPending && <p className="border-t px-4 py-3 text-sm text-muted-foreground">Loading the tool…</p>}
-      {mode !== null && mode !== "view" && tools.isError && <ConnectorProblem error={tools.error} />}
+      {mode !== null && mode !== "view" && tools.isError && <ConnectorProblem error={tools.error} scope={scope} />}
       {mode !== null && mode !== "view" && tools.isSuccess && tool === undefined && (
         <p role="alert" className="border-t px-4 py-3 text-sm text-destructive">The gateway no longer lists {binding.app}.{binding.tool}. Remove this binding, or bind the tool again once the app serves it.</p>
       )}
@@ -209,8 +209,15 @@ function AddBinding({ scope }: { readonly scope?: WorkspaceScope | null }) {
 }
 
 export function ToolBindings() {
+  const client = useQueryClient()
   const bindings = useQuery({ queryKey: ["connectors", "bindings"], queryFn: () => api<{ bindings: readonly Binding[]; manage: boolean }>("/bindings") })
   const pinnedScope = usePinnedWorkspaceScope(bindings.data !== undefined)
+  const hasPending = bindings.data?.bindings.some((binding) => binding.state === "pending") === true
+  useEffect(() => {
+    if (!hasPending || pinnedScope === undefined || pinnedScope === null) return
+    void api<{ bindings: readonly Binding[]; manage: boolean }>("/bindings:reconcile", { method: "POST", scope: pinnedScope })
+      .then((reconciled) => client.setQueryData(["connectors", "bindings"], reconciled), () => undefined)
+  }, [hasPending, pinnedScope, client])
   return (
     <Panel icon={Link2} label="Tool bindings">
       <Well>

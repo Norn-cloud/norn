@@ -23,8 +23,8 @@ const go = ({ url }: { url: string }) => window.location.assign(url)
 export function ConnectorProblem({ error, scope }: { readonly error: unknown; readonly scope?: WorkspaceScope | null }) {
   const [failed, setFailed] = useState<string | null>(null)
   const pinnedScope = usePinnedWorkspaceScope(error)
-  const effectiveScope = scope !== undefined ? scope : pinnedScope
   const typed = error instanceof ConnectorError ? error : null
+  const effectiveScope = scope !== undefined ? scope : typed?.scope !== undefined ? typed.scope : pinnedScope
   const action = typed?.action ?? null
   return (
     <div role="alert" data-code={typed?.code} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
@@ -79,7 +79,7 @@ function AccountRow({ app, requirement, label, scope }: { readonly app: string; 
       )}
       {open && account !== null && (
         <dl className="grid grid-cols-[8rem_1fr] gap-x-3 gap-y-1 px-4 pb-3 text-meta">
-          {detail.isPending ? <dd className="col-span-2 text-muted-foreground">Loading…</dd> : detail.isError ? <dd className="col-span-2"><ConnectorProblem error={detail.error} /></dd> : (
+          {detail.isPending ? <dd className="col-span-2 text-muted-foreground">Loading…</dd> : detail.isError ? <dd className="col-span-2"><ConnectorProblem error={detail.error} scope={effectiveScope} /></dd> : (
             <>
               <dt className="text-muted-foreground">Provider</dt><dd>{detail.data.provider}</dd>
               <dt className="text-muted-foreground">Used by</dt><dd>{detail.data.apps.join(", ") || "—"}</dd>
@@ -89,7 +89,7 @@ function AccountRow({ app, requirement, label, scope }: { readonly app: string; 
           )}
         </dl>
       )}
-      {error && <ConnectorProblem error={error} />}
+      {error && <ConnectorProblem error={error} scope={effectiveScope} />}
     </div>
   )
 }
@@ -126,7 +126,7 @@ export function ConnectionsPage({ children }: { readonly children?: ReactNode })
       <Panel icon={Plug} label="Tool gateway" action={status.data?.gateway ?? undefined}>
         <Well>
           {status.isPending ? <Note>Checking…</Note>
-            : status.isError ? <ConnectorProblem error={status.error} />
+            : status.isError ? <ConnectorProblem error={status.error} scope={pinnedScope} />
             : status.data.gateway === null ? <Note>No tool gateway is configured for this deployment.</Note>
             : (
               <div className="flex flex-wrap items-center gap-3 px-4 py-3">
@@ -139,14 +139,14 @@ export function ConnectionsPage({ children }: { readonly children?: ReactNode })
                 ) : <Button size="sm" onClick={() => link.mutate()} disabled={link.isPending}>Sign in to the gateway</Button>}
               </div>
             )}
-          {(link.error ?? unlink.error) && <ConnectorProblem error={link.error ?? unlink.error} />}
+          {(link.error ?? unlink.error) && <ConnectorProblem error={link.error ?? unlink.error} scope={pinnedScope} />}
         </Well>
       </Panel>
       {linked && (
         <Panel icon={Cable} label="Connected apps">
           <Well className="space-y-3 p-3">
             {inventory.isPending ? <Note>Loading…</Note>
-              : inventory.isError ? <ConnectorProblem error={inventory.error} />
+              : inventory.isError ? <ConnectorProblem error={inventory.error} scope={pinnedScope} />
               : inventory.data.apps.length === 0 ? <EmptyState icon={Cable}>No apps yet. Add one in the gateway.</EmptyState>
               : inventory.data.apps.map((app) => <AppAccounts key={app.id} app={app.id} name={app.name} inventory={inventory.data} scope={pinnedScope} />)}
           </Well>

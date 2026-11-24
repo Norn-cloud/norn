@@ -12,6 +12,7 @@ import { jwt } from "better-auth/plugins/jwt"
 import { magicLink } from "better-auth/plugins/magic-link"
 import { organization } from "better-auth/plugins/organization"
 import { adminAc, defaultStatements, memberAc, ownerAc } from "better-auth/plugins/organization/access"
+import { z } from "zod"
 import { hashPassword, verifyPassword, type PasswordScrypt } from "./password.ts"
 import type { ClientIpHeader } from "./client-ip.ts"
 import { admitMember, billingModeOn, billingOf, limitRaised, refusalMessage, type Admission, type BillingDb, type BillingSettings } from "./billing.ts"
@@ -94,6 +95,13 @@ export const mcpResource = (baseURL: string) => new URL(MCP_PATH, baseURL).href
 
 /** The access-token claim carrying the organization the person consented for. */
 export const ORG_CLAIM = "https://norn.cloud/org"
+/** The access-token claim carrying the membership row id (generation) that authorized the grant. */
+export const MEMBER_CLAIM = "https://norn.cloud/member"
+/** Optional access-token claim pinning a Sidekick grant to a specific cell environment. */
+export const ENV_CLAIM = "https://norn.cloud/env"
+/** Header carrying the single-use consent approval token minted by POST /api/oauth/consent-context. */
+export const CONSENT_APPROVAL_HEADER = "x-norn-consent-approval"
+export const CONSENT_APPROVAL_TTL_MS = 5 * 60_000
 
 /**
  * Callbacks an assistant may receive a person's authorization code on. Registration (dynamic or
@@ -143,8 +151,64 @@ export async function fetchClientMetadata(input: RequestInfo | URL, init?: Reque
  */
 interface OAuthConsentScope {
   referenceId?: string
+  memberId?: string
 }
 const oauthScopeStore = new AsyncLocalStorage<OAuthConsentScope>()
+
+async function sha256Hex(value: string): Promise<string> {
+  const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)))
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")
+}
+
+/**
+ * Mint a short-lived, single-use consent approval token bound to the caller's live session,
+ * user, active ready workspace, membership generation, and exact signed `oauth_query`.
+ * Persisted conditionally so a revoked/expired session or revoked membership writes nothing.
+ */
+export async function issueConsentApproval(
+  db: ProvisionDb,
+  args: {
+    readonly sessionToken: string
+    readonly userId: string
+    readonly organizationId: string
+    readonly memberId: string
+    readonly oauthQuery: string
+  },
+): Promise<string | null> {
+  const token = generateRandomString(43, "a-z", "A-Z", "0-9")
+  const [tokenHash, queryHash] = await Promise.all([sha256Hex(token), sha256Hex(args.oauthQuery)])
+  const now = new Date()
+  const nowIso = now.toISOString()
+  const expiresIso = new Date(now.getTime() + CONSENT_APPROVAL_TTL_MS).toISOString()
+  const id = crypto.randomUUID()
+  const identifier = `oauth-approval:${tokenHash}`
+  const payload = JSON.stringify({
+    sessionToken: args.sessionToken,
+    userId: args.userId,
+    organizationId: args.organizationId,
+    memberId: args.memberId,
+    queryHash,
+  })
+  const inserted = await dbFirst<{ id: string }>(
+    db,
+    `insert into "verification" ("id", "identifier", "value", "expiresAt", "createdAt", "updatedAt")
+     select ?, ?, ?, ?, ?, ?
+     where exists (
+       select 1 from "session" s
+       where s."token" = ? and s."userId" = ? and ${LIVE_SESSION_S_SQL}
+     )
+     and exists (
+       select 1 from "member" m
+       join "organization" o on o."id" = m."organizationId"
+       where m."id" = ? and m."organizationId" = ? and m."userId" = ? and ${READY_ORG_SQL}
+     )
+     returning "id"`,
+    id, identifier, payload, expiresIso, nowIso, nowIso,
+    args.sessionToken, args.userId,
+    args.memberId, args.organizationId, args.userId,
+  )
+  return inserted === null ? null : token
+}
 
 /**
  * The OAuth 2.1 authorization server for assistants (MCP authorization). Identity only, like the
@@ -180,9 +244,9 @@ const assistantAuthorization = (baseURL: string, self: Self) => [
         const store = oauthScopeStore.getStore()
         const pinned = store?.referenceId
         if (pinned !== undefined) {
-          // Never re-run null-fallback: confirm this exact validated workspace is still a ready membership.
+          // Never re-run null-fallback: confirm this exact validated workspace & membership generation is still ready.
           const verified = await activeMembershipWithAdapter(adapter, user.id, pinned)
-          if (verified === null || verified.organizationId !== pinned) {
+          if (verified === null || verified.organizationId !== pinned || (store?.memberId !== undefined && verified.memberId !== store.memberId)) {
             throw new APIError("CONFLICT", { code: "NO_ACTIVE_WORKSPACE", message: "Select a ready workspace before authorizing an assistant." })
           }
           return pinned
@@ -192,16 +256,25 @@ const assistantAuthorization = (baseURL: string, self: Self) => [
         if (member === null) {
           throw new APIError("CONFLICT", { code: "NO_ACTIVE_WORKSPACE", message: "Select a ready workspace before authorizing an assistant." })
         }
-        if (store !== undefined) store.referenceId = member.organizationId
+        if (store !== undefined) {
+          store.referenceId = member.organizationId
+          store.memberId = member.memberId
+        }
         return member.organizationId
       },
       shouldRedirect: () => false,
     },
-    customAccessTokenClaims: ({ referenceId }) => {
-      if (typeof referenceId !== "string" || referenceId === "") {
+    customAccessTokenClaims: async ({ user, referenceId }) => {
+      if (typeof referenceId !== "string" || referenceId === "" || typeof user?.id !== "string" || user.id === "") {
         throw new APIError("FORBIDDEN", { code: "WORKSPACE_REQUIRED", message: "Assistant access requires a workspace-scoped grant." })
       }
-      return { [ORG_CLAIM]: referenceId }
+      const adapter = (await self.auth?.$context)?.adapter as AdapterLike | undefined
+      if (adapter === undefined) throw new APIError("INTERNAL_SERVER_ERROR", { message: "Auth context unavailable." })
+      const member = await activeMembershipWithAdapter(adapter, user.id, referenceId)
+      if (member === null || member.organizationId !== referenceId) {
+        throw new APIError("FORBIDDEN", { code: "WORKSPACE_REQUIRED", message: "Assistant access requires an active ready workspace membership." })
+      }
+      return { [ORG_CLAIM]: referenceId, [MEMBER_CLAIM]: member.memberId }
     },
   }),
   cimd({ fetchClientMetadataResource: (input, init) => fetchClientMetadata(input, init), isMetadataDocumentUrlAllowed: cimdAllowed }),
@@ -307,8 +380,19 @@ interface Self { auth?: { readonly $context: Promise<{ adapter: unknown }> } }
 const nonEmptyString = (value: unknown): string | null =>
   typeof value === "string" && value.trim() !== "" ? value : null
 
+const VALID_ORG_ROLES: ReadonlySet<string> = new Set(Object.keys(ORG_ROLES))
+
+/** Exact case-sensitive role token check matching SQLite `GLOB` predicates (no whitespace stripping). */
 const hasOrgRole = (role: string | null | undefined, allowed: readonly string[]): boolean =>
-  typeof role === "string" && role.split(",").map((part) => part.trim()).some((part) => allowed.includes(part))
+  typeof role === "string" && role.split(",").some((part) => allowed.includes(part))
+
+/** Validate that every comma-separated role token is an exact declared organization role. */
+function validateRoleList(role: string | null | undefined): string | null {
+  if (role === null || role === undefined || role === "") return "member"
+  const parts = role.split(",")
+  if (parts.some((part) => !VALID_ORG_ROLES.has(part))) return null
+  return parts.join(",")
+}
 
 type SqlParam = string | number | null
 export type SqlStatement = { readonly sql: string; readonly params: readonly SqlParam[] }
@@ -321,13 +405,51 @@ export type ProvisionDb = {
 
 /** SQL predicate confirming an organization row is not marked `norn.provisioning`. */
 export const READY_ORG_SQL = `(o."metadata" is null or not json_valid(o."metadata") or coalesce(json_extract(o."metadata", '$."norn.provisioning"'), 0) != 1)`
+/** SQL predicate confirming a timestamp column (`expiresAt`) has not passed. */
+export const LIVE_EXPIRY_SQL = (column: string) =>
+  `(case when typeof(${column}) in ('integer', 'real') then ${column} > (julianday('now') - 2440587.5) * 86400000.0 else julianday(${column}) > julianday('now') end)`
+export const LIVE_SESSION_SQL = LIVE_EXPIRY_SQL(`"expiresAt"`)
+export const LIVE_SESSION_S_SQL = LIVE_EXPIRY_SQL(`s."expiresAt"`)
 
-/** Better Auth organization discovery endpoints that leak org existence or bypass Studio's workspace list. */
+/**
+ * Unused Better Auth organization endpoints disabled on this deployment, including every
+ * slug-accepting read route that resolves slugs before checking caller membership.
+ */
 export const DISABLED_ORG_PATHS: ReadonlySet<string> = new Set([
   "/organization/check-slug",
   "/organization/get-organization",
   "/organization/get-full-organization",
   "/organization/list",
+  "/organization/list-members",
+  "/organization/get-active-member",
+  "/organization/get-active-member-role",
+  "/organization/list-invitations",
+  "/organization/get-invitation",
+  "/organization/list-user-invitations",
+  "/organization/has-permission",
+  "/organization/create-team",
+  "/organization/remove-team",
+  "/organization/update-team",
+  "/organization/list-teams",
+  "/organization/set-active-team",
+  "/organization/list-user-teams",
+  "/organization/list-team-members",
+  "/organization/add-team-member",
+  "/organization/remove-team-member",
+  "/organization/create-role",
+  "/organization/delete-role",
+  "/organization/list-roles",
+  "/organization/get-role",
+  "/organization/update-role",
+])
+
+/** Retained Better Auth organization mutations that can default to activeOrganizationId when organizationId is omitted. */
+const IMPLICIT_ORG_MUTATION_PATHS: ReadonlySet<string> = new Set([
+  "/organization/update",
+  "/organization/invite-member",
+  "/organization/remove-member",
+  "/organization/update-member-role",
+  "/organization/leave",
 ])
 
 export const INVITATION_GONE = "This invitation is no longer open: it expired or was withdrawn. Ask the workspace's admins for a new one."
@@ -384,12 +506,21 @@ export async function commitActivateSession(
   return dbFirst<CommittedSessionRow>(
     db,
     `update "session" set "activeOrganizationId" = ?, "updatedAt" = ?
-     where "token" = ? and "userId" = ?
+     where "token" = ? and "userId" = ? and ${LIVE_SESSION_SQL}
        and exists (select 1 from "member" m join "organization" o on o."id" = m."organizationId"
                    where m."organizationId" = ? and m."userId" = ?${slugClause} and ${READY_ORG_SQL})
      returning "id", "token", "userId", "expiresAt", "createdAt", "updatedAt", "ipAddress", "userAgent", "activeOrganizationId", "authMethod"`,
     ...params,
   )
+}
+
+export async function isSessionLive(db: ProvisionDb, token: string, userId: string): Promise<boolean> {
+  return (await dbFirst<{ live: number }>(
+    db,
+    `select 1 as "live" from "session" where "token" = ? and "userId" = ? and ${LIVE_SESSION_SQL}`,
+    token,
+    userId,
+  )) !== null
 }
 
 const expiryOf = (value: unknown) => typeof value === "number" ? value : typeof value === "string" ? Date.parse(value) : Number.NaN
@@ -403,7 +534,7 @@ export type AcceptInvitationOutcome =
   }
   | {
     readonly kind: "refused"
-    readonly status: 400 | 403 | 409
+    readonly status: 400 | 401 | 403 | 409
     readonly code: string
     readonly message: string
     readonly refusal?: Admission
@@ -451,20 +582,26 @@ export async function commitAcceptInvitation(
   if ((count?.n ?? 0) >= MEMBERSHIP_LIMIT) {
     return { kind: "refused", status: 403, code: "ORGANIZATION_MEMBERSHIP_LIMIT_REACHED", message: "Organization membership limit reached" }
   }
+  const role = validateRoleList(invitation.role)
+  if (role === null) {
+    return { kind: "refused", status: 400, code: "INVALID_ROLE", message: "Invitation specifies an invalid workspace role." }
+  }
   const at = new Date().toISOString()
-  const member = { id: crypto.randomUUID(), organizationId: invitation.organizationId, userId: args.userId, role: invitation.role ?? "member", createdAt: at }
+  const member = { id: crypto.randomUUID(), organizationId: invitation.organizationId, userId: args.userId, role, createdAt: at }
   try {
-    // All three writes commit in one serialized transaction: invitation status update, member insert
-    // guarded by changes() = 1, and conditional session activation guarded by the new member row
-    // and READY_ORG_SQL so no window exists between membership creation and session activation.
+    // All three writes commit in one serialized transaction: invitation status update guarded by
+    // live session ownership/expiry, recipient verification, org readiness, and member cap; member
+    // insert guarded by changes() = 1; and session activation guarded by the new member row,
+    // READY_ORG_SQL, and live session expiry so a concurrent sign-out commits zero workspace rows.
     await atomically(db as unknown as ProvisionDb, [
       {
         sql: `update "invitation" set "status" = 'accepted' where "id" = ? and "status" = 'pending'
-          and (case when typeof("expiresAt") in ('integer', 'real') then "expiresAt" > (julianday('now') - 2440587.5) * 86400000.0 else julianday("expiresAt") > julianday('now') end)
+          and ${LIVE_EXPIRY_SQL(`"expiresAt"`)}
+          and exists (select 1 from "session" s where s."token" = ? and s."userId" = ? and ${LIVE_SESSION_S_SQL})
           and exists (select 1 from "user" u where u."id" = ? and u."emailVerified" = 1 and lower(u."email") = lower("invitation"."email"))
           and exists (select 1 from "organization" o where o."id" = "invitation"."organizationId" and ${READY_ORG_SQL})
           and (select count(*) from "member" m where m."organizationId" = "invitation"."organizationId") < ${MEMBERSHIP_LIMIT}`,
-        params: [args.invitationId, args.userId],
+        params: [args.invitationId, args.sessionToken, args.userId, args.userId],
       },
       {
         sql: `insert into "member" ("id", "organizationId", "userId", "role", "createdAt") select ?, ?, ?, ?, ? where changes() = 1`,
@@ -472,7 +609,7 @@ export async function commitAcceptInvitation(
       },
       {
         sql: `update "session" set "activeOrganizationId" = ?, "updatedAt" = ?
-          where "token" = ? and "userId" = ?
+          where "token" = ? and "userId" = ? and ${LIVE_SESSION_SQL}
             and exists (select 1 from "member" m join "organization" o on o."id" = m."organizationId"
                         where m."id" = ? and m."organizationId" = ? and m."userId" = ? and ${READY_ORG_SQL})`,
         params: [member.organizationId, at, args.sessionToken, args.userId, member.id, member.organizationId, args.userId],
@@ -495,7 +632,18 @@ export async function commitAcceptInvitation(
     }
     throw error
   }
-  if (await dbFirst(db, `select 1 as "joined" from "member" where "id" = ?`, member.id) === null) {
+  const committedSession = await dbFirst<{ activeOrganizationId: string | null }>(
+    db,
+    `select "activeOrganizationId" from "session" where "token" = ? and "userId" = ? and "activeOrganizationId" = ? and "updatedAt" = ?`,
+    args.sessionToken,
+    args.userId,
+    member.organizationId,
+    at,
+  )
+  if (await dbFirst(db, `select 1 as "joined" from "member" where "id" = ?`, member.id) === null || committedSession === null) {
+    if (!(await isSessionLive(db, args.sessionToken, args.userId))) {
+      return { kind: "refused", status: 401, code: "UNAUTHORIZED", message: "Sign in first." }
+    }
     const latestOrg = await dbFirst<{ metadata: string | null }>(db, `select "metadata" from "organization" where "id" = ?`, invitation.organizationId)
     if (latestOrg !== null && isProvisioningMetadata(latestOrg.metadata)) {
       return { kind: "refused", status: 409, code: "WORKSPACE_PROVISIONING", message: "This workspace is still being provisioned." }
@@ -520,6 +668,7 @@ async function hashApiKey(key: string): Promise<string> {
 export interface CreateApiKeyInput {
   readonly userId: string
   readonly organizationId: string
+  readonly sessionToken?: string | null
   readonly name?: string | null
   readonly prefix?: string | null
   readonly expiresIn?: number | null
@@ -540,15 +689,34 @@ export type CreateApiKeyOutcome =
   }
   | {
     readonly kind: "refused"
-    readonly status: 403 | 409
+    readonly status: 401 | 403 | 409
     readonly code: string
     readonly message: string
   }
 
+/** Strict request-body schema mirroring `@better-auth/api-key`'s `createApiKeyBodySchema`. */
+const createApiKeyRequestSchema = z.object({
+  configId: z.literal("default").optional(),
+  name: z.string().min(1).max(32).optional(),
+  expiresIn: z.number().finite().min(1).nullable().optional(),
+  prefix: z.string().min(1).max(32).regex(/^[a-zA-Z0-9_-]+$/).optional(),
+  remaining: z.number().finite().int().min(0).nullable().optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+  refillAmount: z.number().finite().int().min(1).optional(),
+  refillInterval: z.number().finite().int().min(1).optional(),
+  rateLimitTimeWindow: z.number().finite().int().min(1).optional(),
+  rateLimitMax: z.number().finite().int().min(1).optional(),
+  rateLimitEnabled: z.boolean().optional(),
+  permissions: z.record(z.string(), z.array(z.string())).optional(),
+  userId: z.string().min(1).optional(),
+  organizationId: z.string().optional(),
+  referenceId: z.string().optional(),
+}).strict()
+
 /**
- * Atomically insert an organization API key ONLY if at insertion time `userId` holds an `owner` or
- * `admin` membership in `organizationId` and the organization satisfies `READY_ORG_SQL`.
- * A concurrent demotion, membership removal, or provisioning transition writes zero rows.
+ * Atomically insert an organization API key ONLY if at insertion time `userId` holds an exact
+ * case-sensitive `owner` or `admin` membership in `organizationId`, the organization satisfies
+ * `READY_ORG_SQL`, and (for session-backed calls) the session still exists and has not expired.
  */
 export async function commitCreateApiKey(
   db: ProvisionDb,
@@ -571,6 +739,13 @@ export async function commitCreateApiKey(
   const remaining = input.remaining === null ? null : input.remaining ?? refillAmount ?? null
   const permissionsText = input.permissions ? JSON.stringify(input.permissions) : null
   const metadataText = input.metadata ? JSON.stringify(input.metadata) : null
+  const hasSession = typeof input.sessionToken === "string" && input.sessionToken !== ""
+  const sessionGuard = hasSession
+    ? ` and exists (select 1 from "session" s where s."token" = ? and s."userId" = ? and ${LIVE_SESSION_S_SQL})`
+    : ""
+  const guardParams: SqlParam[] = hasSession
+    ? [input.organizationId, input.userId, input.sessionToken!, input.userId]
+    : [input.organizationId, input.userId]
 
   const inserted = await dbFirst<{ id: string }>(
     db,
@@ -586,10 +761,10 @@ export async function commitCreateApiKey(
        select 1 from "member" m
        join "organization" o on o."id" = m."organizationId"
        where m."organizationId" = ? and m."userId" = ?
-         and ((',' || replace(m."role", ' ', '') || ',') like '%,owner,%'
-           or (',' || replace(m."role", ' ', '') || ',') like '%,admin,%')
+         and ((',' || m."role" || ',') glob '*,owner,*'
+           or (',' || m."role" || ',') glob '*,admin,*')
          and ${READY_ORG_SQL}
-     )
+     )${sessionGuard}
      returning "id"`,
     id,
     input.name ?? null,
@@ -608,11 +783,13 @@ export async function commitCreateApiKey(
     nowIso,
     permissionsText,
     metadataText,
-    input.organizationId,
-    input.userId,
+    ...guardParams,
   )
 
   if (inserted === null) {
+    if (hasSession && !(await isSessionLive(db, input.sessionToken!, input.userId))) {
+      return { kind: "refused", status: 401, code: "UNAUTHORIZED_SESSION", message: "Unauthorized or invalid session" }
+    }
     const row = await dbFirst<{ role: string; metadata: string | null }>(
       db,
       `select m."role", o."metadata" from "member" m join "organization" o on o."id" = m."organizationId" where m."organizationId" = ? and m."userId" = ?`,
@@ -905,6 +1082,33 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
         if (DISABLED_ORG_PATHS.has(path)) {
           throw new APIError("NOT_FOUND", { code: "NOT_FOUND", message: "No such endpoint." })
         }
+        if (IMPLICIT_ORG_MUTATION_PATHS.has(path)) {
+          const session = await getSessionFromCtx(ctx, { disableCookieCache: true })
+          const responseHeaders = responseHeadersOf(ctx)
+          if (session === null) return
+          const body = (ctx.body ?? {}) as Record<string, unknown>
+          const bodyOrg = nonEmptyString(body.organizationId)
+          const headerOrg = nonEmptyString((ctx.headers ?? ctx.request?.headers)?.get("x-norn-expected-org"))
+          if (bodyOrg === null) {
+            if (headerOrg === null) {
+              throw apiError(400, { code: "WORKSPACE_SCOPE_REQUIRED", message: "Workspace scope header is required for organization mutations." }, responseHeaders)
+            }
+            const adapter = await getCurrentAdapter(ctx.context.adapter) as unknown as AdapterLike
+            const rawOrg = (session.session as { activeOrganizationId?: unknown }).activeOrganizationId
+            const active = await activeMembershipWithAdapter(adapter, session.user.id, nonEmptyString(rawOrg))
+            if (active === null) {
+              throw apiError(409, { code: "NO_ACTIVE_WORKSPACE", message: "Select a ready workspace before submitting." }, responseHeaders)
+            }
+            if (active.organizationId !== headerOrg) {
+              throw apiError(409, { code: "WORKSPACE_CHANGED", message: "Your active workspace changed. Reload the page before submitting." }, responseHeaders)
+            }
+            return { context: { ...ctx, body: { ...body, organizationId: active.organizationId } } }
+          }
+          if (headerOrg !== null && headerOrg !== bodyOrg) {
+            throw apiError(409, { code: "WORKSPACE_CHANGED", message: "Your active workspace changed. Reload the page before submitting." }, responseHeaders)
+          }
+          return
+        }
         if (path === "/organization/set-active") {
           const session = await getSessionFromCtx(ctx, { disableCookieCache: true })
           const responseHeaders = responseHeadersOf(ctx)
@@ -972,6 +1176,9 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
             ...requestedSlug === null ? {} : { expectedSlug: requestedSlug },
           })
           if (updated === null) {
+            if (!(await isSessionLive(db, session.session.token, session.user.id))) {
+              throw apiError(401, { code: "UNAUTHORIZED", message: "Unauthorized" }, responseHeaders)
+            }
             const latest = await dbFirst<{ metadata: string | null }>(
               db,
               `select o."metadata" from "member" m join "organization" o on o."id" = m."organizationId" where m."userId" = ? and m."organizationId" = ?`,
@@ -1029,84 +1236,70 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
           return { invitation: outcome.invitation, member: outcome.member }
         }
         if (path === "/api-key/create") {
-          const body = ctx.body as {
-            organizationId?: unknown
-            referenceId?: unknown
-            userId?: unknown
-            name?: unknown
-            prefix?: unknown
-            expiresIn?: unknown
-            metadata?: unknown
-            permissions?: unknown
-            remaining?: unknown
-            refillAmount?: unknown
-            refillInterval?: unknown
-            rateLimitEnabled?: unknown
-            rateLimitTimeWindow?: unknown
-            rateLimitMax?: unknown
-          } | undefined
           const session = await getSessionFromCtx(ctx, { disableCookieCache: true })
           const responseHeaders = responseHeadersOf(ctx)
           const isClientRequest = ctx.request !== undefined || ctx.headers !== undefined
+          const rawBody = ctx.body
+          if (rawBody === null || typeof rawBody !== "object" || Array.isArray(rawBody)) {
+            throw apiError(400, { code: "VALIDATION_ERROR", message: "Invalid API key request body." }, responseHeaders)
+          }
+          const rawRecord = rawBody as Record<string, unknown>
           if (
             isClientRequest
-            && (body?.refillAmount !== undefined
-              || body?.refillInterval !== undefined
-              || body?.rateLimitMax !== undefined
-              || body?.rateLimitTimeWindow !== undefined
-              || body?.rateLimitEnabled !== undefined
-              || body?.permissions !== undefined
-              || (body?.remaining !== undefined && body.remaining !== null))
+            && (rawRecord.refillAmount !== undefined
+              || rawRecord.refillInterval !== undefined
+              || rawRecord.rateLimitMax !== undefined
+              || rawRecord.rateLimitTimeWindow !== undefined
+              || rawRecord.rateLimitEnabled !== undefined
+              || rawRecord.permissions !== undefined
+              || (rawRecord.remaining !== undefined && rawRecord.remaining !== null))
           ) {
             throw apiError(400, { code: "SERVER_ONLY_PROPERTY", message: "This property can only be set from the server." }, responseHeaders)
           }
-          if (ctx.request !== undefined && body?.userId !== undefined) {
+          if (ctx.request !== undefined && rawRecord.userId !== undefined) {
             throw apiError(401, { code: "UNAUTHORIZED_SESSION", message: "Unauthorized or invalid session" }, responseHeaders)
           }
-          const userId = session?.user.id ?? (isClientRequest ? null : nonEmptyString(body?.userId))
+          const parsed = createApiKeyRequestSchema.safeParse(rawRecord)
+          if (!parsed.success) {
+            throw apiError(400, { code: "VALIDATION_ERROR", message: parsed.error.issues[0]?.message ?? "Invalid API key request." }, responseHeaders)
+          }
+          const body = parsed.data
+          const userId = session?.user.id ?? (isClientRequest ? null : nonEmptyString(body.userId))
           if (userId === null) {
             throw apiError(401, { code: "UNAUTHORIZED_SESSION", message: "Unauthorized or invalid session" }, responseHeaders)
           }
-          const orgId = nonEmptyString(body?.organizationId)
-          if (body?.referenceId !== undefined && body.referenceId !== orgId) {
+          const orgId = nonEmptyString(body.organizationId)
+          if (body.referenceId !== undefined && body.referenceId !== orgId) {
             throw apiError(400, { code: "INVALID_ORGANIZATION", message: "Use organizationId to scope a workspace API key." }, responseHeaders)
           }
           if (orgId === null) {
             throw apiError(400, { code: "ORGANIZATION_ID_REQUIRED", message: "A workspace id is required to create an API key." }, responseHeaders)
           }
-          if (body?.metadata !== undefined && (body.metadata === null || typeof body.metadata !== "object" || Array.isArray(body.metadata))) {
-            throw apiError(400, { code: "INVALID_METADATA_TYPE", message: "metadata must be an object." }, responseHeaders)
-          }
-          if ((body?.refillAmount !== undefined && body?.refillInterval === undefined) || (body?.refillInterval !== undefined && body?.refillAmount === undefined)) {
+          if ((body.refillAmount !== undefined && body.refillInterval === undefined) || (body.refillInterval !== undefined && body.refillAmount === undefined)) {
             throw apiError(400, { code: "REFILL_AMOUNT_AND_INTERVAL_REQUIRED", message: "refillAmount and refillInterval must be provided together." }, responseHeaders)
           }
-          if (typeof body?.expiresIn === "number") {
+          if (typeof body.expiresIn === "number") {
             const days = body.expiresIn / (3600 * 24)
             if (days < 1 || days > 365) {
               throw apiError(400, { code: days < 1 ? "EXPIRES_IN_IS_TOO_SMALL" : "EXPIRES_IN_IS_TOO_LARGE", message: "expiresIn must be between 1 and 365 days." }, responseHeaders)
             }
           }
-          if (typeof body?.prefix === "string" && (body.prefix.length < 1 || body.prefix.length > 32 || !/^[a-zA-Z0-9_-]+$/.test(body.prefix))) {
-            throw apiError(400, { code: "INVALID_PREFIX_LENGTH", message: "Invalid API key prefix." }, responseHeaders)
-          }
-          if (typeof body?.name === "string" && (body.name.length < 1 || body.name.length > 32)) {
-            throw apiError(400, { code: "INVALID_NAME_LENGTH", message: "Invalid API key name length." }, responseHeaders)
-          }
           const db = config.database as unknown as ProvisionDb
           const outcome = await commitCreateApiKey(db, {
             userId,
             organizationId: orgId,
-            name: typeof body?.name === "string" ? body.name : null,
-            prefix: typeof body?.prefix === "string" ? body.prefix : null,
-            expiresIn: typeof body?.expiresIn === "number" ? body.expiresIn : null,
-            metadata: body?.metadata === undefined ? null : body.metadata as Record<string, unknown>,
-            permissions: body?.permissions === undefined ? null : body.permissions as Record<string, string[]>,
-            remaining: typeof body?.remaining === "number" ? body.remaining : null,
-            refillAmount: typeof body?.refillAmount === "number" ? body.refillAmount : null,
-            refillInterval: typeof body?.refillInterval === "number" ? body.refillInterval : null,
-            ...typeof body?.rateLimitEnabled === "boolean" ? { rateLimitEnabled: body.rateLimitEnabled } : {},
-            ...typeof body?.rateLimitTimeWindow === "number" ? { rateLimitTimeWindow: body.rateLimitTimeWindow } : {},
-            ...typeof body?.rateLimitMax === "number" ? { rateLimitMax: body.rateLimitMax } : {},
+            sessionToken: session?.session.token ?? null,
+            name: body.name ?? null,
+            prefix: body.prefix ?? null,
+            expiresIn: body.expiresIn ?? null,
+            metadata: body.metadata ?? null,
+            permissions: body.permissions ?? null,
+            remaining: body.remaining ?? null,
+            refillAmount: body.refillAmount ?? null,
+            refillInterval: body.refillInterval ?? null,
+            ...body.rateLimitEnabled === undefined ? {} : { rateLimitEnabled: body.rateLimitEnabled },
+            ...body.rateLimitTimeWindow === undefined ? {} : { rateLimitTimeWindow: body.rateLimitTimeWindow },
+            ...body.rateLimitMax === undefined ? {} : { rateLimitMax: body.rateLimitMax },
           })
           if (outcome.kind === "refused") {
             throw apiError(outcome.status, { code: outcome.code, message: outcome.message }, responseHeaders)
@@ -1114,14 +1307,50 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
           return outcome.apiKey
         }
         if (path === "/oauth2/consent") {
-          const body = ctx.body as { accept?: unknown } | undefined
+          const body = ctx.body as { accept?: unknown; oauth_query?: unknown } | undefined
           if (body?.accept === false) return
           const session = await getSessionFromCtx(ctx, { disableCookieCache: true })
           const responseHeaders = responseHeadersOf(ctx)
           if (session === null) return
-          const expectedOrg = nonEmptyString((ctx.headers ?? ctx.request?.headers)?.get("x-norn-expected-org"))
+          const headers = ctx.headers ?? ctx.request?.headers
+          const expectedOrg = nonEmptyString(headers?.get("x-norn-expected-org"))
           if (expectedOrg === null) {
             throw apiError(400, { code: "WORKSPACE_SCOPE_REQUIRED", message: "Workspace scope header is required to approve assistant access." }, responseHeaders)
+          }
+          const approvalToken = nonEmptyString(headers?.get(CONSENT_APPROVAL_HEADER))
+          if (approvalToken === null) {
+            throw apiError(400, { code: "CONSENT_APPROVAL_REQUIRED", message: "Reload this consent screen before approving assistant access." }, responseHeaders)
+          }
+          const oauthQuery = nonEmptyString(body?.oauth_query)
+          if (oauthQuery === null) {
+            throw apiError(400, { code: "INVALID_OAUTH_QUERY", message: "Missing OAuth authorization request." }, responseHeaders)
+          }
+          const db = config.database as unknown as ProvisionDb
+          const [tokenHash, queryHash] = await Promise.all([sha256Hex(approvalToken), sha256Hex(oauthQuery)])
+          // Consume the single-use consent approval atomically so it can never be replayed or swapped across sessions/workspaces.
+          const consumed = await dbFirst<{ value: string }>(
+            db,
+            `delete from "verification" where "identifier" = ? and ${LIVE_SESSION_SQL} returning "value"`,
+            `oauth-approval:${tokenHash}`,
+          )
+          if (consumed === null) {
+            throw apiError(409, { code: "CONSENT_APPROVAL_EXPIRED", message: "This approval request expired or was already used. Start connecting again from your assistant." }, responseHeaders)
+          }
+          let approval: { sessionToken?: unknown; userId?: unknown; organizationId?: unknown; memberId?: unknown; queryHash?: unknown }
+          try {
+            approval = JSON.parse(consumed.value) as typeof approval
+          } catch {
+            throw apiError(409, { code: "CONSENT_APPROVAL_EXPIRED", message: "This approval request is no longer valid." }, responseHeaders)
+          }
+          if (
+            approval.sessionToken !== session.session.token
+            || approval.userId !== session.user.id
+            || approval.organizationId !== expectedOrg
+            || approval.queryHash !== queryHash
+            || typeof approval.memberId !== "string"
+            || approval.memberId === ""
+          ) {
+            throw apiError(409, { code: "WORKSPACE_CHANGED", message: "Your session or active workspace changed. Reload this page and approve again for the workspace you intend." }, responseHeaders)
           }
           const adapter = await getCurrentAdapter(ctx.context.adapter) as unknown as AdapterLike
           const rawOrg = (session.session as { activeOrganizationId?: unknown }).activeOrganizationId
@@ -1129,11 +1358,14 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
           if (member === null) {
             throw apiError(409, { code: "NO_ACTIVE_WORKSPACE", message: "Select a ready workspace before authorizing an assistant." }, responseHeaders)
           }
-          if (expectedOrg !== member.organizationId) {
+          if (expectedOrg !== member.organizationId || member.memberId !== approval.memberId) {
             throw apiError(409, { code: "WORKSPACE_CHANGED", message: "Your active workspace changed. Reload this page and approve again for the workspace you intend." }, responseHeaders)
           }
           const store = oauthScopeStore.getStore()
-          if (store !== undefined) store.referenceId = member.organizationId
+          if (store !== undefined) {
+            store.referenceId = member.organizationId
+            store.memberId = member.memberId
+          }
         }
       }),
     },
@@ -1192,6 +1424,7 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
 }
 
 export interface Membership {
+  readonly memberId: string
   readonly organizationId: string
   readonly organizationName: string
   readonly role: string
@@ -1208,13 +1441,13 @@ async function activeMembershipWithAdapter(
   activeOrganizationId: string | null | undefined,
 ): Promise<Membership | null> {
   const where = [{ field: "userId", value: userId }, ...activeOrganizationId == null ? [] : [{ field: "organizationId", value: activeOrganizationId }]]
-  const rows = await adapter.findMany<{ organizationId: string; role: string }>({
+  const rows = await adapter.findMany<{ id: string; organizationId: string; role: string }>({
     model: "member",
     where,
     sortBy: { field: "createdAt", direction: "asc" },
     limit: activeOrganizationId == null ? 100 : 1,
   })
-  let member: { organizationId: string; role: string } | undefined
+  let member: { id: string; organizationId: string; role: string } | undefined
   let org: { name: string; metadata?: unknown } | null = null
   for (const candidate of rows) {
     const found = await adapter.findOne<{ name: string; metadata?: unknown }>({ model: "organization", where: [{ field: "id", value: candidate.organizationId }] })
@@ -1225,7 +1458,7 @@ async function activeMembershipWithAdapter(
   }
   if (member === undefined || org === null) return null
   const environmentId = metadataObject(org.metadata).environmentId
-  return { organizationId: member.organizationId, organizationName: org.name, role: member.role, environmentId: typeof environmentId === "string" && environmentId.trim() !== "" ? environmentId : null }
+  return { memberId: member.id, organizationId: member.organizationId, organizationName: org.name, role: member.role, environmentId: typeof environmentId === "string" && environmentId.trim() !== "" ? environmentId : null }
 }
 
 /**
@@ -1238,12 +1471,47 @@ export async function activeMembership(auth: Auth, userId: string, activeOrganiz
   return activeMembershipWithAdapter(adapter as unknown as AdapterLike, userId, activeOrganizationId)
 }
 
+const isOAuthMembershipAbort = (error: unknown): boolean =>
+  error instanceof Error && error.message.includes("oauth.membership_invalid")
+
 export function createAuth(config: AuthConfig) {
   const self: Self = {}
   const auth = betterAuth(authOptions(config, self))
   self.auth = auth
   const rawHandler = auth.handler
-  auth.handler = (request: Request) => oauthScopeStore.run({}, () => rawHandler(request))
+  auth.handler = async (request: Request) => {
+    try {
+      return await oauthScopeStore.run({}, () => rawHandler(request))
+    } catch (error) {
+      if (isOAuthMembershipAbort(error)) {
+        return Response.json(
+          { code: "NO_ACTIVE_WORKSPACE", message: "Select a ready workspace before authorizing an assistant." },
+          { status: 409, headers: { "cache-control": "no-store" } },
+        )
+      }
+      throw error
+    }
+  }
+  const rawApi = auth.api
+  auth.api = new Proxy(rawApi, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver)
+      if (typeof value !== "function") return value
+      return (...args: unknown[]) => {
+        const invoke = async () => {
+          try {
+            return await (value as (...a: unknown[]) => unknown).apply(target, args)
+          } catch (error) {
+            if (isOAuthMembershipAbort(error)) {
+              throw new APIError("CONFLICT", { code: "NO_ACTIVE_WORKSPACE", message: "Select a ready workspace before authorizing an assistant." })
+            }
+            throw error
+          }
+        }
+        return oauthScopeStore.getStore() === undefined ? oauthScopeStore.run({}, invoke) : invoke()
+      }
+    },
+  })
   return auth
 }
 export type Auth = ReturnType<typeof createAuth>
