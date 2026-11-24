@@ -19,36 +19,61 @@ function stringText(node: { minLength?: unknown; maxLength?: unknown; pattern?: 
   return `string(${[node.minLength ?? "", node.maxLength ?? "", node.pattern ?? ""].join("|")})`
 }
 
+/** Keys that annotate a schema without constraining a value. */
+const ANNOTATIONS = new Set(["description", "title", "example", "examples", "default"])
+const COMPOSITIONS = ["oneOf", "anyOf", "allOf"] as const
+/** The keys each JSON type may carry here; any other key is unmodelled, so the test fails on it. */
+const TYPE_KEYS: Readonly<Record<string, readonly string[]>> = {
+  string: ["type", "minLength", "maxLength", "pattern", "enum"],
+  integer: ["type", "format", "minimum"],
+  boolean: ["type"],
+  null: ["type"],
+  array: ["type", "items"],
+  object: ["type", "properties", "required", "additionalProperties"],
+}
+
+/**
+ * A contract node's description. Every constraint is kept: a `$ref` or a composition (`oneOf`,
+ * `anyOf`, `allOf`) with sibling constraints is described as the `allOf` of all of them, so a
+ * sibling can never be dropped by the first keyword found.
+ */
 function contract(node: Json, name = ""): string {
+  const parts: string[] = []
   if (typeof node["$ref"] === "string") {
     const ref = node["$ref"].replace("#/components/schemas/", "")
-    return ref in SHAPES ? `shape:${ref}` : contract(schemas[ref]!, ref)
+    parts.push(ref in SHAPES ? `shape:${ref}` : contract(schemas[ref]!, ref))
   }
-  // Unions and intersections are described as they are written, member for member.
-  for (const union of ["oneOf", "anyOf", "allOf"] as const) {
-    const members = node[union] as Json[] | undefined
-    if (members !== undefined) return `${union}[${sorted(members.map((m) => contract(m)))}]`
+  for (const composition of COMPOSITIONS) {
+    const members = node[composition] as Json[] | undefined
+    if (members !== undefined) parts.push(`${composition}[${sorted(members.map((m) => contract(m)))}]`)
   }
+  const rest = Object.fromEntries(Object.entries(node).filter(([key]) => key !== "$ref" && !(COMPOSITIONS as readonly string[]).includes(key) && !ANNOTATIONS.has(key)))
+  if (Object.keys(rest).length > 0) parts.push(typed(rest, name))
+  return parts.length === 1 ? parts[0]! : `allOf[${sorted(parts)}]`
+}
+
+function typed(node: Json, name: string): string {
   const type = node["type"]
   if (Array.isArray(type)) {
     const inner = type.filter((t) => t !== "null")
-    if (type.includes("null") && inner.length === 1) return `nullable(${contract({ ...node, type: inner[0] })})`
+    if (type.includes("null") && inner.length === 1) return `nullable(${typed({ ...node, type: inner[0] }, name)})`
+    return `unmodelled:${JSON.stringify(node)}`
   }
+  const allowed = typeof type === "string" ? TYPE_KEYS[type] : undefined
+  if (allowed === undefined || Object.keys(node).some((key) => !allowed.includes(key))) return `unmodelled:${JSON.stringify(node)}`
   if (type === "null") return "null"
   if (Array.isArray(node["enum"])) return `enum:${name}:${sorted(node["enum"] as string[])}`
   if (type === "string") return stringText(node)
   if (type === "boolean") return "boolean"
-  if (type === "integer") return node["minimum"] === 0 ? "count" : "integer"
+  if (type === "integer") return node["minimum"] === 0 ? "count" : `integer(${JSON.stringify(node["minimum"] ?? null)})`
   if (type === "array") return `array(${contract(node["items"] as Json)})`
-  if (type === "object") {
-    const properties = node["properties"] as Readonly<Record<string, Json>> | undefined
-    if (properties === undefined) return "record"
-    const mandatory = new Set((node["required"] as string[] | undefined) ?? [])
-    const required: Record<string, string> = {}, optional: Record<string, string> = {}
-    for (const [member, child] of Object.entries(properties)) (mandatory.has(member) ? required : optional)[member] = contract(child)
-    return objectText(required, optional, node["additionalProperties"] === false)
-  }
-  return `unmodelled:${JSON.stringify(node)}`
+  const properties = node["properties"] as Readonly<Record<string, Json>> | undefined
+  if (properties === undefined) return node["additionalProperties"] === false ? "object(closed){}" : "record"
+  const mandatory = new Set((node["required"] as string[] | undefined) ?? [])
+  // Null-prototype maps: a member named `__proto__` is a member, never a prototype.
+  const required: Record<string, string> = Object.create(null), optional: Record<string, string> = Object.create(null)
+  for (const [member, child] of Object.entries(properties)) (mandatory.has(member) ? required : optional)[member] = contract(child)
+  return objectText(required, optional, node["additionalProperties"] === false)
 }
 
 function described(check: Check): string {
@@ -133,4 +158,15 @@ test("SDK-SHAPES-2: a document is admitted only whole", () => {
     ["Refusal", { ...refusal, diagnostics: [{ code: "c", message: "m", pointer: "/input/a" }] }],
   ]
   for (const [name, value] of rejected) expect([name, value, conforms(name, value)]).toEqual([name, value, false])
+})
+
+test("SDK-SHAPES-3: the contract description keeps every constraint, whatever a schema combines", () => {
+  // A composition with sibling constraints is all of them, never just the first keyword.
+  expect(contract({ oneOf: [{ type: "null" }, { type: "string" }], type: "string", minLength: 1 })).toBe("allOf[oneOf[null,string(||)],string(1||)]")
+  expect(contract({ $ref: "#/components/schemas/RefusalSpan", type: "object", required: ["x"], properties: { x: { type: "boolean" } } })).toBe("allOf[object{x!:boolean},shape:RefusalSpan]")
+  // A member named `__proto__` is a member.
+  expect(contract({ type: "object", required: ["__proto__"], properties: JSON.parse('{"__proto__":{"type":"boolean"}}') })).toBe("object{__proto__!:boolean}")
+  // A constraint the description does not model fails loudly.
+  expect(contract({ type: "string", format: "date-time" })).toStartWith("unmodelled:")
+  expect(contract({ type: "integer", minimum: 0, maximum: 5 })).toStartWith("unmodelled:")
 })

@@ -246,6 +246,11 @@ test("SDK-REFUSAL-1: only a whole Refusal@2 envelope is a refusal; anything less
   expect(read.kind === "refused" && read.reason?.values).toEqual({
     total: "9007199254740993", "lines.amount": ["9007199254740993", "12.500", "-0.10"], nested: { n: "1e400", ok: true, none: null, text: "9007199254740993" },
   })
+  // The envelope is checked on its wire types: a numeric `code` is not a refusal, even though the
+  // same body's reason values would read exactly.
+  const numericCode = wire.replace('"code":"core.laws.violated"', '"code":123')
+  const wrongType = await failure(createNornClient({ scope, fetch: cell(() => new Response(numericCode, { status: 422 })).fetch }).call("any.action", {}, { idempotencyKey: "k" })) as NornUnavailable
+  expect([wrongType instanceof NornUnavailable, wrongType.outcome]).toEqual([true, "unknown"])
   // A disclosed reason is validated too, and kept.
   const reason = { law: "fixture.total_ok", subject: "fixture.Record/r-1", values: { total: "3" }, pin: { kind: "law", artifactId: "fixture.total_ok.law", lawId: "total_ok", version: "1.0.0" } }
   const disclosed = createNornClient({ scope, fetch: cell(() => Response.json({ ...served.precondition, reason }, { status: 422 })).fetch })

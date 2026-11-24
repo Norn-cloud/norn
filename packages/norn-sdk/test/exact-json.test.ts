@@ -23,3 +23,11 @@ test("EXACT-JSON-3: anything that is not JSON reads as undefined", () => {
     expect([text.slice(0, 20), parseExactJson(text)]).toEqual([text.slice(0, 20), undefined])
   }
 })
+
+test("EXACT-JSON-4: strings are scanned in one pass, so hostile escapes stay linear", () => {
+  const hostile = `"${"\\\"".repeat(200_000)}`
+  const start = performance.now()
+  expect(parseExactJson(hostile)).toBeUndefined()
+  expect(parseExactJson(`${hostile}"`)).toBe("\"".repeat(200_000))
+  expect(performance.now() - start).toBeLessThan(1000)
+})

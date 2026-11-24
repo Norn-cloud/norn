@@ -175,11 +175,15 @@ const isRecord = (value: unknown): value is Record<string, unknown> => typeof va
  * not the cell's answer and the request behind it may have been applied.
  */
 export function readRefusal(status: number, text: string): Refusal | null {
-  // Exact: a disclosed reason's values keep every number as its source text (`"9007199254740993"`,
-  // `"12.500"`), as the cell's runtime values are exact decimals.
-  const body = parseExactJson(text)
+  // The envelope is validated on its wire types first; only then are a disclosed reason's values
+  // read exactly, every number as its source text (`"9007199254740993"`, `"12.500"`), as the cell's
+  // runtime values are exact decimals. Nothing else is stringified.
+  const body = parsed(text)
   if (!conforms("Refusal", body)) return null
-  const refusal = body as Wire["Refusal"]
+  const wire = body as Wire["Refusal"]
+  const exact = wire.reason === null ? undefined : (parseExactJson(text) as { reason?: { values?: ExactJson } } | undefined)?.reason?.values
+  if (wire.reason !== null && (exact === undefined || exact === null || typeof exact !== "object" || Array.isArray(exact))) return null
+  const refusal = wire.reason === null ? wire : { ...wire, reason: { ...wire.reason, values: exact as { readonly [path: string]: ExactJson } } }
   const diagnostics = (refusal.diagnostics ?? []).map((d) => ({ code: d.code, message: d.message, pointer: d.span?.pointer ?? null }))
   return {
     status,

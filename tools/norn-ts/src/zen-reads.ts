@@ -521,11 +521,16 @@ function lexicalBounds(source: string): boolean {
   return true
 }
 
-/** `Number::from_str`: a JSON decimal without exponent that the engine's decimal holds exactly. */
+/**
+ * A number literal both checks admit: the parser's `Decimal::from_str_exact` on the raw token (at
+ * most 28 fraction digits, trailing zeros included, and a 96-bit mantissa; its `from_scientific`
+ * fallback needs an exponent, which the next check refuses), then `Number::from_str` (a JSON
+ * decimal with no exponent).
+ */
 function exactNumber(text: string): boolean {
   const match = /^-?(0|[1-9][0-9]*)(?:\.([0-9]+))?$/.exec(text)
   if (match === null) return false
-  const fraction = (match[2] ?? "").replace(/0+$/, "")
+  const fraction = match[2] ?? ""
   if (fraction.length > 28) return false
   return BigInt(`${match[1]}${fraction}`) < 2n ** 96n
 }

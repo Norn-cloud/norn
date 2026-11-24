@@ -10,7 +10,8 @@
 export type ExactJson = null | boolean | string | readonly ExactJson[] | { readonly [key: string]: ExactJson }
 
 const NUMBER = /-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/y
-const STRING = /"(?:[^"\\\u0000-\u001f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*"/y
+const HEX = /^[0-9a-fA-F]{4}$/
+const ESCAPES = new Set(['"', "\\", "/", "b", "f", "n", "r", "t"])
 const SPACE = /[ \t\n\r]*/y
 
 export function parseExactJson(text: string): ExactJson | undefined {
@@ -23,6 +24,24 @@ export function parseExactJson(text: string): ExactJson | undefined {
     if (match === null) return null
     at = pattern.lastIndex
     return match[0]
+  }
+  /** One string token, scanned in one pass (no regex backtracking): its raw text, quotes included. */
+  const string = (): string => {
+    const start = at
+    if (text[at] !== "\"") fail()
+    at++
+    for (;;) {
+      const c = text.charCodeAt(at)
+      if (Number.isNaN(c) || c < 0x20) fail()
+      if (c === 0x22) { at++; return text.slice(start, at) }
+      if (c === 0x5c) {
+        const escape = text[at + 1]
+        if (escape === "u") { if (!HEX.test(text.slice(at + 2, at + 6))) fail(); at += 6 } else if (escape !== undefined && ESCAPES.has(escape)) at += 2
+        else fail()
+        continue
+      }
+      at++
+    }
   }
   const keyword = (word: string) => { if (text.startsWith(word, at)) { at += word.length; return true } return false }
   const member = (object: Record<string, ExactJson>, key: string, value: ExactJson) => {
@@ -38,7 +57,7 @@ export function parseExactJson(text: string): ExactJson | undefined {
       if (text[at] === "}") { at++; return object }
       for (;;) {
         space()
-        const key = token(STRING) ?? fail()
+        const key = string()
         space()
         if (text[at] !== ":") fail()
         at++
@@ -62,7 +81,7 @@ export function parseExactJson(text: string): ExactJson | undefined {
         return fail()
       }
     }
-    if (c === "\"") return JSON.parse(token(STRING) ?? fail()) as string
+    if (c === "\"") return JSON.parse(string()) as string
     if (keyword("true")) return true
     if (keyword("false")) return false
     if (keyword("null")) return null

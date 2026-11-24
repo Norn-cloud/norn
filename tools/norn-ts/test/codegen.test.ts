@@ -142,6 +142,11 @@ test("CODEGEN-TS-3: a shape outside the closed dialect, or two definitions of on
   refused(entityDecimal({ scale: 2, unit: { code: "kg" } }), "a decimal is not well-formed: unit names no unit system")
   refused(entityDecimal({ scale: 2, unit: { system: "ucum", code: "" } }), "a unit code must be non-blank without whitespace")
   refused(entityDecimal({ scale: 2, unit: { system: "ucum", code: "k g" } }), "a unit code must be non-blank without whitespace")
+  // Whitespace is Unicode White_Space, as Rust's char::is_whitespace reads it: NEL is, BOM is not.
+  refused(entityDecimal({ scale: 2, unit: { system: "ucum", code: "kg\u0085m" } }), "a unit code must be non-blank without whitespace")
+  expect(generateTypes(entityDecimal({ scale: 2, unit: { system: "ucum", code: "kg\uFEFFm" } }), { base: catalogs() })).toContain('readonly "learning_rate": string')
+  refused(decimal({ scale: 2, unit: { system: "ucum", code: "kg\u0085m" } }), "unit has no code")
+  expect(generateTypes(decimal({ scale: 2, unit: { system: "ucum", code: "kg\uFEFFm" } }), { base: catalogs() })).toContain('readonly "learning_rate": string')
   refused(entityDecimal({ scale: 2, unitSource: ["model", "model"] }), "a unit source names distinct member ids")
   refused(entityDecimal({ scale: 2, unitSource: ["Model"] }), "a unit source names distinct member ids")
   refused(entityDecimal({ scale: 2, unitSource: ["model"], unit: { system: "ucum", code: "kg" } }), "declares no unit source")
@@ -273,7 +278,7 @@ test("CODEGEN-TS-6: the caller's input excludes actor-derived fields and makes d
     'input.label ?? "a\\"actor"', 'input.label ?? "unterminated', "input.label ?? @", "input.label +", "(input.label", "[1, 2",
     "factor(input.id)", "input?.actor", "0..10", "{ a: input.x }.a", "input.d.notAMethod()",
     // validate_evaluation_source runs first: exact plain-decimal numbers only, and its bounds.
-    "1e2", "input.weight * 1e2", "1_000", "99999999999999999999999999999999", "take(input.tags, 99999)", "join(input.tags, input.sep)",
+    "1e2", "input.weight * 1e2", "1_000", "99999999999999999999999999999999", `1.${"0".repeat(29)}`, "take(input.tags, 99999)", "join(input.tags, input.sep)",
     `input.label ?? "${"x".repeat(4097)}"`, `${"(".repeat(129)}1${")".repeat(129)}`,
   ]) expect([expression, labelWith(expression)]).toEqual([expression, "dropped"])
   // Keeps: names inside strings, unquoted object keys (strings to ZEN), members named `actor`, a bare

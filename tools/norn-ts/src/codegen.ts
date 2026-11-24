@@ -86,7 +86,8 @@ const DECIMAL_MEMBERS = new Set(["kind", "scale", "unit", "currencySource", "per
 const UNIT_SYSTEMS = ["ucum", "qudt"]
 const ROUNDINGS = ["refuse", "toward_zero", "half_even", "half_away_from_zero"]
 const ADDITIVITIES = ["undeclared", "additive", "semi_additive", "non_additive"]
-const unitCode = (unit: unknown): boolean => record(unit) && typeof unit["code"] === "string" && unit["code"] !== "" && !/\s/.test(unit["code"])
+/** A unit code is non-empty with no Unicode `White_Space` (Rust's `char::is_whitespace`, not JS `\s`). */
+const unitCode = (unit: unknown): boolean => record(unit) && typeof unit["code"] === "string" && unit["code"] !== "" && !/\p{White_Space}/u.test(unit["code"])
 
 /**
  * A Decimal property type as `norn_ir::PropertyType::Decimal` decodes it (every member typed,
