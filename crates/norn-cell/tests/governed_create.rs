@@ -1346,15 +1346,44 @@ fn a_stamped_create_at_its_event_ceiling_refuses_one_attached_event() {
     let mut cell = open(&directory.path().join("attached.sqlite"), &definitions, &[]);
     seed_receipt(&mut cell);
     let dump = cell.store().read().dump().unwrap();
-    let audit = norn_cell::decision_ledger::ApprovalConsumed {
-        decision_id: "audit".into(),
-    }
-    .event()
-    .unwrap();
-    let refused = cell.attributed(vec![audit], |cell| {
-        commit_action_with_limits(cell, &catalog, &request, &members, &limits(ceiling))
-    });
-    assert!(refused.is_err(), "{refused:?}");
+    let audit = || {
+        norn_cell::decision_ledger::ApprovalConsumed {
+            decision_id: "audit".into(),
+        }
+        .event()
+        .unwrap()
+    };
+    // At the ceiling, the one attached event is refused by the stamp's event
+    // check itself, before ledger intake ever reads it.
+    let refused = cell
+        .attributed(vec![audit()], |cell| {
+            commit_action_with_limits(cell, &catalog, &request, &members, &limits(ceiling))
+        })
+        .unwrap_err();
+    assert_eq!(refused.code(), "decision.invalid_output", "{refused}");
+    assert_eq!(
+        refused.to_string(),
+        format!(
+            "invalid decision output: commit emitted {} events, limit is {ceiling}",
+            ceiling.saturating_add(1)
+        )
+    );
+    assert_eq!(cell.store().read().dump().unwrap(), dump);
+    // Control: one more admitted event lets the same attachment past the
+    // ceiling check, so the refusal above was the ceiling's, not the ledger's
+    // (which rejects this unseeded approval on its own).
+    let past = cell
+        .attributed(vec![audit()], |cell| {
+            commit_action_with_limits(
+                cell,
+                &catalog,
+                &request,
+                &members,
+                &limits(ceiling.saturating_add(1)),
+            )
+        })
+        .unwrap_err();
+    assert!(!past.to_string().contains("commit emitted"), "{past}");
     assert_eq!(cell.store().read().dump().unwrap(), dump);
     assert!(values(&cell, PAYABLE, "PAY-1").is_none());
     assert!(
