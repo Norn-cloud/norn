@@ -21,6 +21,20 @@
       "implements": [
         "core.EconomicEvent"
       ],
+      "lifecycles": [
+        {
+          "immutable": [
+            "recorded"
+          ],
+          "initial": [
+            "recorded"
+          ],
+          "property": "status",
+          "terminal": [
+            "recorded"
+          ]
+        }
+      ],
       "links": [
         {
           "cardinality": {
@@ -169,6 +183,18 @@
           "type": {
             "kind": "ref",
             "name": "core.code"
+          }
+        },
+        {
+          "default": "recorded",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "recorded"
+              }
+            ]
           }
         }
       ],

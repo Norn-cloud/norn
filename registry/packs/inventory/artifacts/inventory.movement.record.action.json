@@ -29,7 +29,7 @@
         "targetType": "inventory.StockBalance"
       }
     ],
-    "description": "Post a create-only StockMovement verifying active warehouses, unit match, available unreserved stock on outflows, and active bin/lot state.",
+    "description": "Post a create-only StockMovement verifying active warehouses (including balance owner/custodian), (action, movement_kind) consistency, unit match, unreserved stock availability on outflows/consumptions, and active bin/lot state.",
     "effectProgram": {
       "entityArtifactId": "inventory.StockMovement.entity",
       "entityArtifactVersion": "0.1.0",
@@ -123,9 +123,11 @@
     },
     "preconditions": [
       "(slice.provider.status == 'active') and (slice.receiver.status == 'active')",
+      "((len(slice.balance_owners) > 0) and all(slice.balance_owners as warehouse, warehouse.status == 'active')) and all(slice.balance_custodians as warehouse, warehouse.status == 'active')",
+      "(((((input.movement_kind == 'receipt') and (input.action == 'produce')) or ((input.movement_kind == 'issue') and (input.action == 'consume'))) or ((input.movement_kind == 'transfer') and (input.action == 'transfer_custody'))) or ((input.movement_kind == 'scrap') and (input.action == 'consume'))) or ((input.movement_kind == 'adjustment') and ((input.action == 'produce') or (input.action == 'consume')))",
       "(input.quantity > 0) and (input.unit_cost >= 0)",
       "(slice.resource.unit != null) and (input.unit == (slice.resource.unit ?? ''))",
-      "(((input.movement_kind != 'issue') and (input.movement_kind != 'transfer')) and (input.movement_kind != 'scrap')) or ((slice.resource.quantity - slice.resource.reserved_quantity) >= input.quantity)",
+      "((((input.action != 'consume') and (input.movement_kind != 'issue')) and (input.movement_kind != 'transfer')) and (input.movement_kind != 'scrap')) or ((slice.resource.quantity - slice.resource.reserved_quantity) >= input.quantity)",
       "all(slice.bins as bin, bin.status == 'active')",
       "all(slice.lots as lot, lot.status == 'active')"
     ],
@@ -163,6 +165,26 @@
         },
         "name": "resource",
         "objectType": "inventory.StockBalance"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "resource",
+            "link": "owner"
+          }
+        },
+        "name": "balance_owners",
+        "objectType": "inventory.Warehouse"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "resource",
+            "link": "custodian"
+          }
+        },
+        "name": "balance_custodians",
+        "objectType": "inventory.Warehouse"
       },
       {
         "key": {

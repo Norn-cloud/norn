@@ -24,7 +24,7 @@
         "targetType": "inventory.Warehouse"
       }
     ],
-    "description": "Create a conserved stock hold against an active warehouse, balance, bin, and lot with exact unit match and available unreserved stock.",
+    "description": "Create a conserved stock hold against an active holder warehouse, active balance owner/custodian warehouse, active bin and lot, exact unit match, and available unreserved stock.",
     "effectProgram": {
       "entityArtifactId": "inventory.StockReservation.entity",
       "entityArtifactVersion": "0.1.0",
@@ -97,6 +97,7 @@
     },
     "preconditions": [
       "slice.warehouse.status == 'active'",
+      "((len(slice.balance_owners) > 0) and all(slice.balance_owners as warehouse, warehouse.status == 'active')) and all(slice.balance_custodians as warehouse, warehouse.status == 'active')",
       "(slice.resource.unit != null) and (input.unit == (slice.resource.unit ?? ''))",
       "(input.quantity > 0) and ((slice.resource.quantity - slice.resource.reserved_quantity) >= input.quantity)",
       "all(slice.bins as bin, bin.status == 'active')",
@@ -126,6 +127,26 @@
         },
         "name": "resource",
         "objectType": "inventory.StockBalance"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "resource",
+            "link": "owner"
+          }
+        },
+        "name": "balance_owners",
+        "objectType": "inventory.Warehouse"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "resource",
+            "link": "custodian"
+          }
+        },
+        "name": "balance_custodians",
+        "objectType": "inventory.Warehouse"
       },
       {
         "key": {

@@ -138,10 +138,12 @@ export const StockMovement = Norn.type({
     unit_cost: Norn.ref("core.money_amount"),
     currency: Schema.NullOr(Norn.ref("core.code")),
     reference_code: Norn.ref("core.code"),
+    status: Schema.Literal("recorded"),
   }),
   identity: [{ name: "primary", properties: ["id"] }],
   defaults: {
     action: "transfer_custody",
+    status: "recorded",
   },
   links: [
     {
@@ -173,6 +175,15 @@ export const StockMovement = Norn.type({
       description: "Prior stock movement reversed by this compensating movement.",
       target: "inventory.StockMovement",
       cardinality: { to: "one", from: "one" },
+    },
+  ],
+  lifecycles: [
+    {
+      property: "status",
+      initial: ["recorded"],
+      terminal: ["recorded"],
+      immutable: ["recorded"],
+      transitions: [],
     },
   ],
 })
@@ -392,7 +403,7 @@ export const StockMovementValidHolds = Norn.example("positive receipt movement w
   of: StockMovementPositiveQuantity,
   given: {
     id: "mov_1",
-    action: "transfer_custody",
+    action: "produce",
     movement_kind: "receipt",
     occurred_at: "2026-11-23T10:00:00Z",
     quantity: 25,
@@ -400,6 +411,7 @@ export const StockMovementValidHolds = Norn.example("positive receipt movement w
     unit_cost: 14.5,
     currency: "USD",
     reference_code: "GRN-2026-0001",
+    status: "recorded",
   },
   expect: "holds",
 })
@@ -408,7 +420,7 @@ export const StockMovementZeroQtyViolated = Norn.example("zero-quantity stock mo
   of: StockMovementPositiveQuantity,
   given: {
     id: "mov_zero",
-    action: "transfer_custody",
+    action: "produce",
     movement_kind: "receipt",
     occurred_at: "2026-11-23T10:00:00Z",
     quantity: 0,
@@ -416,6 +428,7 @@ export const StockMovementZeroQtyViolated = Norn.example("zero-quantity stock mo
     unit_cost: 14.5,
     currency: "USD",
     reference_code: "GRN-2026-0002",
+    status: "recorded",
   },
   expect: "violated",
 })
@@ -424,7 +437,7 @@ export const StockMovementNegativeCostViolated = Norn.example("negative-cost sto
   of: StockMovementPositiveQuantity,
   given: {
     id: "mov_neg_cost",
-    action: "transfer_custody",
+    action: "produce",
     movement_kind: "receipt",
     occurred_at: "2026-11-23T10:00:00Z",
     quantity: 10,
@@ -432,6 +445,7 @@ export const StockMovementNegativeCostViolated = Norn.example("negative-cost sto
     unit_cost: -1,
     currency: "USD",
     reference_code: "GRN-2026-0003",
+    status: "recorded",
   },
   expect: "violated",
 })
@@ -440,7 +454,7 @@ export const StockMovementUnitlessViolated = Norn.example("unitless stock moveme
   of: StockMovementPositiveQuantity,
   given: {
     id: "mov_no_unit",
-    action: "transfer_custody",
+    action: "produce",
     movement_kind: "receipt",
     occurred_at: "2026-11-23T10:00:00Z",
     quantity: 10,
@@ -448,6 +462,7 @@ export const StockMovementUnitlessViolated = Norn.example("unitless stock moveme
     unit_cost: 14.5,
     currency: "USD",
     reference_code: "GRN-2026-0004",
+    status: "recorded",
   },
   expect: "violated",
 })
@@ -523,6 +538,7 @@ export const CycleCountNegativeCountedViolated = Norn.example("cycle count with 
 
 const MovementPreconditionContext = Schema.Struct({
   input: Schema.Struct({
+    action: Schema.String,
     movement_kind: Schema.String,
     quantity: Norn.decimal(6),
     unit: Schema.String,
@@ -536,6 +552,8 @@ const MovementPreconditionContext = Schema.Struct({
       reserved_quantity: Norn.decimal(6),
       unit: Schema.NullOr(Schema.String),
     }),
+    balance_owners: Schema.Array(Schema.Struct({ status: Schema.String })),
+    balance_custodians: Schema.Array(Schema.Struct({ status: Schema.String })),
     bins: Schema.Array(Schema.Struct({ status: Schema.String })),
     lots: Schema.Array(Schema.Struct({ status: Schema.String })),
   }),
@@ -545,7 +563,7 @@ export const RecordMovement = Norn.action({
   id: "inventory.movement.record",
   title: "Record immutable stock movement",
   version: "0.1.0",
-  description: "Post a create-only StockMovement verifying active warehouses, unit match, available unreserved stock on outflows, and active bin/lot state.",
+  description: "Post a create-only StockMovement verifying active warehouses (including balance owner/custodian), (action, movement_kind) consistency, unit match, unreserved stock availability on outflows/consumptions, and active bin/lot state.",
   scopeRequired: ["orgId", "environmentId"],
   idempotent: true,
   ledgered: true,
@@ -569,6 +587,8 @@ export const RecordMovement = Norn.action({
     { name: "provider", type: Warehouse, key: { property: { from: "input", property: "providerId" } } },
     { name: "receiver", type: Warehouse, key: { property: { from: "input", property: "receiverId" } } },
     { name: "resource", type: StockBalance, key: { property: { from: "input", property: "resourceId" } } },
+    { name: "balance_owners", type: Warehouse, key: { link: { from: "resource", link: "owner" } } },
+    { name: "balance_custodians", type: Warehouse, key: { link: { from: "resource", link: "custodian" } } },
     { name: "bins", type: BinLocation, key: { link: { from: "resource", link: "bin" } } },
     { name: "lots", type: LotBatch, key: { link: { from: "resource", link: "lot" } } },
   ],
@@ -576,6 +596,23 @@ export const RecordMovement = Norn.action({
     Norn.expression(
       MovementPreconditionContext,
       (ctx) => ctx.slice.provider.status === "active" && ctx.slice.receiver.status === "active",
+    ),
+    Norn.expression(
+      MovementPreconditionContext,
+      (ctx) =>
+        ctx.slice.balance_owners.length > 0 &&
+        ctx.slice.balance_owners.every((warehouse) => warehouse.status === "active") &&
+        ctx.slice.balance_custodians.every((warehouse) => warehouse.status === "active"),
+    ),
+    Norn.expression(
+      MovementPreconditionContext,
+      (ctx) =>
+        (ctx.input.movement_kind === "receipt" && ctx.input.action === "produce") ||
+        (ctx.input.movement_kind === "issue" && ctx.input.action === "consume") ||
+        (ctx.input.movement_kind === "transfer" && ctx.input.action === "transfer_custody") ||
+        (ctx.input.movement_kind === "scrap" && ctx.input.action === "consume") ||
+        (ctx.input.movement_kind === "adjustment" &&
+          (ctx.input.action === "produce" || ctx.input.action === "consume")),
     ),
     Norn.expression(
       MovementPreconditionContext,
@@ -588,7 +625,8 @@ export const RecordMovement = Norn.action({
     Norn.expression(
       MovementPreconditionContext,
       (ctx) =>
-        (ctx.input.movement_kind !== "issue" &&
+        (ctx.input.action !== "consume" &&
+          ctx.input.movement_kind !== "issue" &&
           ctx.input.movement_kind !== "transfer" &&
           ctx.input.movement_kind !== "scrap") ||
         ctx.slice.resource.quantity - ctx.slice.resource.reserved_quantity >= ctx.input.quantity,
@@ -628,6 +666,8 @@ const ReservationCreatePreconditionContext = Schema.Struct({
       reserved_quantity: Norn.decimal(6),
       unit: Schema.NullOr(Schema.String),
     }),
+    balance_owners: Schema.Array(Schema.Struct({ status: Schema.String })),
+    balance_custodians: Schema.Array(Schema.Struct({ status: Schema.String })),
     bins: Schema.Array(Schema.Struct({ status: Schema.String })),
     lots: Schema.Array(Schema.Struct({ status: Schema.String })),
   }),
@@ -637,7 +677,7 @@ export const CreateReservation = Norn.action({
   id: "inventory.reservation.create",
   title: "Create stock reservation",
   version: "0.1.0",
-  description: "Create a conserved stock hold against an active warehouse, balance, bin, and lot with exact unit match and available unreserved stock.",
+  description: "Create a conserved stock hold against an active holder warehouse, active balance owner/custodian warehouse, active bin and lot, exact unit match, and available unreserved stock.",
   scopeRequired: ["orgId", "environmentId"],
   idempotent: true,
   ledgered: true,
@@ -655,6 +695,8 @@ export const CreateReservation = Norn.action({
   slice: [
     { name: "warehouse", type: Warehouse, key: { property: { from: "input", property: "holderId" } } },
     { name: "resource", type: StockBalance, key: { property: { from: "input", property: "resourceId" } } },
+    { name: "balance_owners", type: Warehouse, key: { link: { from: "resource", link: "owner" } } },
+    { name: "balance_custodians", type: Warehouse, key: { link: { from: "resource", link: "custodian" } } },
     { name: "bins", type: BinLocation, key: { link: { from: "resource", link: "bin" } } },
     { name: "lots", type: LotBatch, key: { link: { from: "resource", link: "lot" } } },
   ],
@@ -662,6 +704,13 @@ export const CreateReservation = Norn.action({
     Norn.expression(
       ReservationCreatePreconditionContext,
       (ctx) => ctx.slice.warehouse.status === "active",
+    ),
+    Norn.expression(
+      ReservationCreatePreconditionContext,
+      (ctx) =>
+        ctx.slice.balance_owners.length > 0 &&
+        ctx.slice.balance_owners.every((warehouse) => warehouse.status === "active") &&
+        ctx.slice.balance_custodians.every((warehouse) => warehouse.status === "active"),
     ),
     Norn.expression(
       ReservationCreatePreconditionContext,
