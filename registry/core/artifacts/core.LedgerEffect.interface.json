@@ -1,6 +1,13 @@
 {
   "artifactId": "core.LedgerEffect.interface",
-  "dependencies": [],
+  "dependencies": [
+    {
+      "artifactId": "core.value_types.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    }
+  ],
   "irVersion": "0.1",
   "kind": "entity",
   "lifecycle": "active",
@@ -10,6 +17,13 @@
     "entityVersion": "2.0",
     "interface": {
       "description": "The value view of an economic event: one signed amount on one account. A positive amount is a debit and a negative one a credit; the side is presentation only and is never stored. The effects posted together balance (core.law.value_conservation).",
+      "invariants": [
+        {
+          "expression": "self.amount != 0",
+          "id": "non_zero_amount",
+          "message": "A ledger effect amount must be non-zero."
+        }
+      ],
       "links": [
         {
           "cardinality": {
@@ -54,5 +68,5 @@
     "sourcePath": "registry/core/artifacts/core.LedgerEffect.interface.json"
   },
   "scope": {},
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

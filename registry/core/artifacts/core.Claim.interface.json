@@ -1,6 +1,19 @@
 {
   "artifactId": "core.Claim.interface",
-  "dependencies": [],
+  "dependencies": [
+    {
+      "artifactId": "core.value_types.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    },
+    {
+      "artifactId": "std.value_types.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    }
+  ],
   "irVersion": "0.1",
   "kind": "entity",
   "lifecycle": "active",
@@ -10,6 +23,13 @@
     "entityVersion": "2.0",
     "interface": {
       "description": "An economic claim: a right to receive resources, such as an invoice or a receivable, settled by economic events. Not a catalog claim about definitions. Disjoint from core.Commitment (Commitment ⊓ Claim = ∅): a promise is not yet a right, and no type is both. A fulfilled or accepted commitment gives rise to claims (givesRiseTo); the relation is recorded on the claim as `arises_from`, because a commitment is not edited when a claim arises.",
+      "invariants": [
+        {
+          "expression": "self.amount > 0",
+          "id": "positive_amount",
+          "message": "A claim amount must be strictly positive."
+        }
+      ],
       "links": [
         {
           "cardinality": {
@@ -73,5 +93,5 @@
     "sourcePath": "registry/core/artifacts/core.Claim.interface.json"
   },
   "scope": {},
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

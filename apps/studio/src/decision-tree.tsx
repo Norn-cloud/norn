@@ -28,7 +28,7 @@ const RISK_TONE: Record<DecisionView["risk"], string> = {
 /** An option's number: a small round chip, filled when it is on the chosen path. */
 const OptionNumber = ({ n, on }: { readonly n: number; readonly on: boolean }) => (
   <span className={cn("inline-flex size-6 shrink-0 items-center justify-center rounded-full font-mono text-xs font-semibold ring-1 ring-inset",
-    on ? "bg-[var(--edge-active)] text-primary-foreground ring-transparent" : "bg-muted text-muted-foreground ring-node-border")}>{n}</span>
+    on ? "bg-primary text-primary-foreground ring-transparent" : "bg-muted text-muted-foreground ring-node-border")}>{n}</span>
 )
 
 /** One decision level: numbered option cards on a spine, the agent's pick marked, the chosen one opening its follow-up. */
@@ -41,18 +41,19 @@ function Level({ view, path, depth, choose }: { readonly view: DecisionView; rea
         <ol className="relative flex w-72 flex-col gap-2.5 ps-4 before:absolute before:inset-y-5 before:start-0 before:w-px before:bg-node-border" aria-label={depth === 0 ? "Options" : `Options for: ${view.question}`}>
           {view.options.map(({ option, agentPick, tools }, index) => {
             const active = option.id === path[depth]
+            const muted = chosen !== undefined && !active
             const extra = tools.filter((tool) => !(option.effect && "binding" in option.effect && option.effect.binding === tool))
             return (
               <li key={option.id} className="relative before:absolute before:top-1/2 before:-start-4 before:h-px before:w-4 before:bg-node-border">
                 <button type="button" aria-pressed={active} onClick={() => choose(depth, option.id)}
-                  className={cn("canvas-node w-full rounded-node border border-node-border bg-card px-3 py-2.5 text-left text-sm outline-none focus-visible:ring-2 focus-visible:ring-[var(--node-ring)]",
-                    active && "canvas-node-selected", chosen && !active && "opacity-70")}>
+                  className={cn("canvas-node w-full rounded-node border border-node-border bg-card px-3 py-2.5 text-left text-sm outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring",
+                    active && "canvas-node-selected", muted && "bg-surface-subtle/60")}>
                   <span className="flex items-start gap-2.5">
                     <OptionNumber n={index + 1} on={active} />
                     <span className="min-w-0 flex-1 space-y-1">
                       <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <span className="font-semibold tracking-[-0.01em]">{option.label}</span>
-                        {agentPick && <span className="inline-flex items-center gap-1 rounded-full bg-[color-mix(in_oklab,var(--edge-active)_12%,transparent)] px-2 text-[11px] leading-5 font-medium text-[var(--edge-active)]"><Sparkles className="size-3" />Agent's pick</span>}
+                        <span className={cn("font-semibold tracking-[-0.01em]", muted && "text-muted-foreground")}>{option.label}</span>
+                        {agentPick && <span className="inline-flex items-center gap-1 rounded-full bg-tone-violet/10 px-2 text-[11px] leading-5 font-medium text-tone-violet ring-1 ring-inset ring-tone-violet/20 dark:bg-tone-violet/15 dark:ring-tone-violet/25"><Sparkles className="size-3" />Agent's pick</span>}
                       </span>
                       <span className="block text-meta text-muted-foreground">{option.scope || "No scope stated"}</span>
                       {(option.effect || extra.length > 0) && (

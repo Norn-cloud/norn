@@ -106,7 +106,7 @@ export const Source = Norn.sourceSchema({
 export const Mapping = Norn.mapping({
   id: "odoo.three.mapping",
   title: "odoo synthetic observations to the REA canon",
-  version: "0.1.0",
+  version: "0.2.0",
   source: {schemaId: "odoo.three.source", version: "0.1.0", sha256: "9a996b1b5b2827db69b781441373fedc1e2750f83ab40553fb535eb8ba804ec0"},
   sourceContract: {kind: "generic"},
   interfaces: [Catalog, Resource, Agent, AgentRole, Commitment, EconomicEvent, LedgerEffect, Settlement],

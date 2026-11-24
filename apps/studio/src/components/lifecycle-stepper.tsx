@@ -15,7 +15,7 @@ export function LifecycleStepper({ lifecycle, record }: { readonly lifecycle: Li
         {states.map((step, index) => (
           <li key={step} aria-current={step === state ? "step" : undefined} className="flex items-center gap-2">
             {index > 0 && <span aria-hidden className="h-px w-6 bg-border" />}
-            <span className={cn("rounded-full border px-3 py-1 text-sm", step === state ? "border-primary bg-primary text-primary-foreground" : "text-muted-foreground")}>
+            <span className={cn("rounded-md border px-2.5 py-1 text-sm transition-colors", step === state ? "border-primary bg-primary font-medium text-primary-foreground shadow-action" : "border-border/90 bg-surface-subtle/70 text-muted-foreground")}>
               {step.replaceAll("_", " ")}
             </span>
           </li>
