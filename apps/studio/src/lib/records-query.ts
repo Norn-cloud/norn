@@ -42,7 +42,7 @@ import type { Field, Scalar } from "./catalog.ts"
  * `total: 0` from any filter, not a refusal. Every record also carries `withheldProperties`
  * (always present, `[]` until field-level policy lands): each listed property reads Withheld.
  *
- * Refusals are the host's `Refusal` with `diagnostics: [{ code, message, pointer }]`, where each
+ * Refusals are the host's `Refusal` with `diagnostics: [{ code, message, span: { pointer } }]`, where each
  * pointer is into the request: `/sort/1`, `/filter/all/0/value`, `/after`.
  *
  * The page is `NornObjectPage` plus `query` (the normalized sort and filter the server applied),
