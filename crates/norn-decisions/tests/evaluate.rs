@@ -2181,10 +2181,37 @@ fn ordered_fold_two_arg_round_preserves_fold_policy_in_conditions_and_call_args(
     );
     assert_eq!(
         isolate
+            .run_standard("round(-1.005, 2)")
+            .map_err(|err| format!("fold 2-arg round negated over-scale literal: {err:?}"))?,
+        Variable::Number("-1.01".parse()?)
+    );
+    assert_eq!(
+        isolate
+            .run_standard("round((1 / 3 > 0) ? -1.005 : 1.005, 2)")
+            .map_err(|err| format!(
+                "fold 2-arg round ternary negated over-scale literal: {err:?}"
+            ))?,
+        Variable::Number("-1.01".parse()?)
+    );
+    assert_eq!(
+        isolate
             .run_standard("round((round(1.25, 1) > 1) ? 1 : 2, 2)")
             .map_err(|err| format!("fold nested 2-arg round condition: {err:?}"))?,
         Variable::Number("1".parse()?)
     );
+
+    // Over-scale literals outside `round` or inside conditions/call args still refuse.
+    for overscale_refusal in [
+        "1.005",
+        "-1.005",
+        "round((1.005 > 0) ? 1 : 2, 2)",
+        "round(len([1.005]), 2)",
+    ] {
+        assert!(
+            isolate.run_standard(overscale_refusal).is_err(),
+            "fold meter must refuse non-rescale over-scale literal `{overscale_refusal}`"
+        );
+    }
 
     // Explicit 3-argument `round(..., scale, mode)` enters an isolated exact
     // site, so bare division and undeclared 2-arg `round` inside its condition

@@ -298,21 +298,25 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
                 let next_ip = usize::try_from(self.ip)
                     .ok()
                     .and_then(|ip| self.next_effective_ip(ip));
-                let next = next_ip.and_then(|ip| self.bytecode.get(ip));
+                let mut terminal_ip = next_ip;
+                for _ in 0..=128 {
+                    let Some(ip) = terminal_ip else {
+                        break;
+                    };
+                    if matches!(self.bytecode.get(ip), Some(Opcode::Negate)) {
+                        terminal_ip = ip
+                            .checked_add(1)
+                            .and_then(|after_neg| self.next_effective_ip(after_neg));
+                    } else {
+                        break;
+                    }
+                }
+                let terminal_op = terminal_ip.and_then(|ip| self.bytecode.get(ip));
+                let at_explicit_rescale =
+                    arithmetic.is_some() && matches!(terminal_op, Some(Opcode::Rescale { .. }));
                 let at_rescale = arithmetic.is_some()
-                    && next_ip.is_some()
-                    && (next.is_none()
-                        || matches!(next, Some(Opcode::Rescale { .. }))
-                        || (matches!(next, Some(Opcode::Negate))
-                            && next_ip
-                                .and_then(|ip| ip.checked_add(1))
-                                .and_then(|ip| self.next_effective_ip(ip))
-                                .is_some_and(|ip| {
-                                    matches!(
-                                        self.bytecode.get(ip),
-                                        None | Some(Opcode::Rescale { .. })
-                                    )
-                                })));
+                    && terminal_ip.is_some()
+                    && matches!(terminal_op, None | Some(Opcode::Rescale { .. }));
                 let failure = |message: &str| OpcodeErr {
                     opcode: "ScaledArithmetic".into(),
                     message: message.into(),
@@ -387,7 +391,7 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
                                 0,
                             )
                             .map_err(failure)?;
-                        } else if !exact && !matches!(next, Some(Opcode::Rescale { .. })) {
+                        } else if !exact && !at_explicit_rescale {
                             meter
                                 .arithmetic()
                                 .ok_or_else(|| failure("missing arithmetic site"))?
