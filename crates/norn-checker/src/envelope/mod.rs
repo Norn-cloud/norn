@@ -284,8 +284,10 @@ fn validate_kind_payload(artifact: &ArtifactEnvelope, diagnostics: &mut Vec<Diag
         );
     }
     // Typed-root agreement: a payload Ring-0 accepts must decode into its
-    // strict typed root.
-    if diagnostics.len() == before {
+    // strict typed root. For `Widget`, run typed-root checks even when
+    // `validate_root_shape` reported unknown fields so Ring-0 surfaces every
+    // structural widget error before emitting `WIDGET_RING1_REQUIRED`.
+    if diagnostics.len() == before || matches!(artifact.payload, ArtifactPayload::Widget(_)) {
         crate::typed_roots::check_typed_root(&artifact.payload, diagnostics, artifact_id);
     }
     if matches!(artifact.payload, ArtifactPayload::Widget(_)) {

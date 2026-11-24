@@ -382,7 +382,7 @@ fn ring0_renamed_dependency_and_feature_forwarding_are_rejected() {
     checker_pkg["features"]
         .as_object_mut()
         .expect("features")
-        .insert("sneaky-ui".to_owned(), json!(["ui?/extra"]));
+        .insert("sneaky-ui".to_owned(), json!(["ui/extra", "ui?/extra"]));
     let renamed_ring0_meta: Metadata = serde_json::from_value(renamed_ring0).expect("deserialize");
     let v = check_ring0_dependencies(&renamed_ring0_meta);
     assert!(
@@ -393,8 +393,14 @@ fn ring0_renamed_dependency_and_feature_forwarding_are_rejected() {
     );
     assert!(
         v.iter()
+            .any(|v| v.rule == "ring0-ui-crate" && v.message.contains("ui/extra")),
+        "non-weak feature forwarding through renamed dep alias must fail closed: {}",
+        render(&v)
+    );
+    assert!(
+        v.iter()
             .any(|v| v.rule == "ring0-ui-crate" && v.message.contains("ui?/extra")),
-        "feature forwarding through renamed dep alias must fail closed: {}",
+        "weak feature forwarding through renamed dep alias must fail closed: {}",
         render(&v)
     );
 }
@@ -533,6 +539,12 @@ fn ring1_ui_source_seam_rejects_leaks_across_all_members_and_targets() {
             "tools/sneaky/src/lib.rs",
             "lib",
             "pub use norn_checker::__ring1_ui_seam::UiValidator;\n",
+            "UiValidator",
+        ),
+        (
+            "tools/sneaky/src/bin/runner.rs",
+            "bin",
+            "fn main() { let _ = r#UiValidator; }\n",
             "UiValidator",
         ),
         (

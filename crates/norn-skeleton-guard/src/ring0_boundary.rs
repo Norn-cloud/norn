@@ -213,8 +213,10 @@ pub fn check_ring0_dependencies(metadata: &Metadata) -> Vec<Violation> {
         if !is_ring0(pkg_name) {
             continue;
         }
-        let mut forbidden_aliases: BTreeMap<&str, (&str, &'static str, &'static str, &'static str)> =
-            BTreeMap::new();
+        let mut forbidden_aliases: BTreeMap<
+            &str,
+            (&str, &'static str, &'static str, &'static str),
+        > = BTreeMap::new();
         for dep in &pkg.dependencies {
             let dep_name = dep.name.as_str();
             if let Some((rule, category, prefix)) = forbidden_ring0_category(dep_name, true) {
@@ -659,8 +661,9 @@ fn scan_tokens_for_sealed_idents(
         match tree {
             proc_macro2::TokenTree::Ident(ident) => {
                 let text = ident.to_string();
+                let normalized = text.strip_prefix("r#").unwrap_or(&text);
                 for &sealed in RING1_UI_SEALED_IDENTS {
-                    if text == sealed {
+                    if normalized == sealed {
                         found.insert(sealed);
                     }
                 }
@@ -732,8 +735,8 @@ pub fn check_ring1_ui_source_seam(metadata: &Metadata) -> Result<Vec<Violation>,
 
     let mut out = Vec::new();
     for path in files {
-        let source = std::fs::read_to_string(&path)
-            .map_err(|err| ScanError::Io(path.clone(), err))?;
+        let source =
+            std::fs::read_to_string(&path).map_err(|err| ScanError::Io(path.clone(), err))?;
         let mut matched = BTreeSet::new();
         if let Ok(stream) = source.parse::<proc_macro2::TokenStream>() {
             scan_tokens_for_sealed_idents(stream, &mut matched);

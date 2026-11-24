@@ -248,33 +248,63 @@ mod ring0_widget_boundary_tests {
     use crate::{Diagnostic, DiagnosticCode, DiagnosticSeverity, Span};
 
     #[test]
-    fn ring0_widget_runs_typed_root_before_emitting_ring1_required() {
+    fn ring0_widget_runs_shape_and_typed_root_before_emitting_ring1_required()
+    -> Result<(), Box<dyn std::error::Error>> {
         let mut malformed_widget: serde_json::Value = serde_json::from_str(include_str!(
             "../../../fixtures/ir/retail-replenishment.widget.json"
-        ))
-        .expect("widget fixture");
-        // Null `projectionHints` violates `WidgetRoot` typed-root decoding.
-        malformed_widget["payload"]["projectionHints"] = serde_json::Value::Null;
-        let env: norn_ir::ArtifactEnvelope =
-            serde_json::from_value(malformed_widget).expect("widget envelope");
+        ))?;
+        // Include BOTH an unknown payload field (caught by `validate_root_shape`)
+        // AND null `projectionHints` (caught by `check_typed_root`).
+        if let Some(payload) = malformed_widget
+            .get_mut("payload")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            payload.insert(
+                "unknownExtraField".to_owned(),
+                serde_json::Value::Bool(true),
+            );
+            payload.insert("projectionHints".to_owned(), serde_json::Value::Null);
+        } else {
+            return Err("widget fixture payload must be an object".into());
+        }
+        let env: norn_ir::ArtifactEnvelope = serde_json::from_value(malformed_widget)?;
 
         let findings = crate::check_artifact(&env);
+        let unknown_idx = findings.iter().position(|d| {
+            d.is_error()
+                && d.code.as_str() == "widget.validation.invalid_payload"
+                && d.span
+                    .as_ref()
+                    .is_some_and(|s| s.pointer == "/payload/unknownExtraField")
+        });
+        let typed_root_idx = findings.iter().position(|d| {
+            d.is_error()
+                && d.code.as_str() == "widget.validation.invalid_payload"
+                && d.span
+                    .as_ref()
+                    .is_some_and(|s| s.pointer == "/payload/projectionHints")
+        });
+        let ring1_required_idx = findings
+            .iter()
+            .position(|d| d.is_error() && d.code.as_str() == crate::codes::WIDGET_RING1_REQUIRED);
+
         assert!(
-            findings.iter().any(|d| {
-                d.is_error()
-                    && d.code.as_str() == "widget.validation.invalid_payload"
-                    && d.span
-                        .as_ref()
-                        .is_some_and(|s| s.pointer == "/payload/projectionHints")
-            }),
-            "Ring-0 typed-root error must still fire on widgets: {findings:#?}"
+            unknown_idx.is_some(),
+            "Ring-0 root-shape error must fire on widgets: {findings:#?}"
         );
         assert!(
-            findings
-                .iter()
-                .any(|d| d.is_error() && d.code.as_str() == crate::codes::WIDGET_RING1_REQUIRED),
+            typed_root_idx.is_some(),
+            "Ring-0 typed-root error must still fire even with unknown fields: {findings:#?}"
+        );
+        assert!(
+            ring1_required_idx.is_some(),
             "Ring-0 must also fail closed with WIDGET_RING1_REQUIRED: {findings:#?}"
         );
+        assert!(
+            unknown_idx < typed_root_idx && typed_root_idx < ring1_required_idx,
+            "Ring-0 order must be root-shape < typed-root < WIDGET_RING1_REQUIRED: {findings:#?}"
+        );
+        Ok(())
     }
 
     #[test]
@@ -308,7 +338,10 @@ mod ring0_widget_boundary_tests {
         ] {
             let deduped = crate::entity_artifacts::dedupe_findings(pair);
             assert_eq!(deduped.len(), 1);
-            assert_eq!(deduped[0].severity, DiagnosticSeverity::Error);
+            assert_eq!(
+                deduped.first().map(|d| &d.severity),
+                Some(&DiagnosticSeverity::Error)
+            );
         }
     }
 }
