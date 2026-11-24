@@ -130,6 +130,30 @@ impl<E: SqlEngine> CellStore<E> {
         })
     }
 
+    /// Retry persisting a local fence marker that previously failed transiently
+    /// (S12, #1551 round 5).
+    pub(crate) fn persist_pending_fence(&self) {
+        let Some(finding) = self.scrub.borrow().pending_fence_finding() else {
+            return;
+        };
+        match open_checkpoint::fence_durably(&self.conn, &finding) {
+            Ok(()) => self.scrub.borrow_mut().mark_fence_persisted(),
+            Err(fence_error) => {
+                tracing::warn!(%fence_error, "history scrub: durable fence write failed; will retry");
+            }
+        }
+    }
+
+    /// Observe any durable fence recorded by a sibling handle (S12).
+    pub(crate) fn sync_durable_fence(&self) {
+        if self.scrub.borrow().is_fenced() {
+            return;
+        }
+        if let Ok(Some(finding)) = open_checkpoint::read_fence(&self.conn) {
+            self.scrub.borrow_mut().record_durable_fence(finding);
+        }
+    }
+
     /// Return the scrub gate after retrying any pending fence persistence.
     pub(crate) fn served_gate(&self) -> crate::scrub::Gate {
         if self.scrub.borrow().needs_fence_persist() {
@@ -501,10 +525,12 @@ impl<E: SqlEngine> CellStore<E> {
             crate::cell_identity::verify_history_after(&self.conn, previous.as_ref())?;
             self.verify_definition_history(previous.as_ref())?;
             self.verifier().verify_value_history_after(from.commits)?;
-            self.record_open_checkpoint(previous.clone(), &head, boundary, &log)
+            let recorded = self.record_open_checkpoint(previous.clone(), &head, boundary, &log)?;
+            let dv = self.conn.external_data_version()?;
+            Ok(recorded.map(|checkpoint| (checkpoint, dv)))
         });
         match recorded {
-            Ok(Some(checkpoint)) => self.scrub.borrow_mut().validated(checkpoint),
+            Ok(Some((checkpoint, dv))) => self.scrub.borrow_mut().validated(checkpoint, dv),
             Ok(None) => self.scrub.borrow_mut().invalidate(),
             Err(error) => {
                 tracing::warn!(%error, commits, "open checkpoint not recorded; the last one stands");

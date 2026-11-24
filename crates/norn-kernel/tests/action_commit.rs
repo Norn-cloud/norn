@@ -4656,28 +4656,30 @@ fn ancestor_addressed_noop_action_with_subtype_slice_read_commits_and_reports_ve
         .unwrap(),
     );
     let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+        .with_types(types.clone());
     let concrete = seed(&mut cell, subtype, "SO-sub", "draft");
+
     // Bump the concrete subtype to version 2 so version != 1 and != 0.
-    let bump: ActionRoot = serde_json::from_value(json!({
-        "actionId": "commerce.bump",
-        "name": "Bump",
-        "inputSchema": {
-            "type": "object",
-            "properties": { "so_number": { "type": "string" }, "status": { "type": "string" } },
-            "required": ["so_number", "status"]
-        },
-        "outputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
-        "effectProgram": {
-            "kind": "upsert_input_object",
-            "objectKind": ORDER,
-            "objectIdField": "so_number",
-            "entityArtifactId": "commerce.SalesOrder.entity",
-            "entityArtifactVersion": "0.1.0",
-            "writeMode": { "kind": "upsert" }
-        }
-    }))
-    .unwrap();
+    let mut bump_payload =
+        fixture("ir/commerce-sales-order-submit-invoice.action.json")["payload"].clone();
+    bump_payload["actionId"] = json!("commerce.bump");
+    bump_payload["inputSchema"] = json!({
+        "type": "object",
+        "properties": { "so_number": { "type": "string" }, "status": { "type": "string" } },
+        "required": ["so_number", "status"],
+        "additionalProperties": false
+    });
+    bump_payload["preconditions"] = json!([]);
+    bump_payload["effectProgram"] = json!({
+        "kind": "upsert_input_object",
+        "objectIdField": "so_number",
+        "objectKind": ORDER,
+        "entityArtifactId": "commerce.SalesOrder.entity",
+        "entityArtifactVersion": "0.1.0",
+        "writeMode": { "kind": "upsert" }
+    });
+    let bump: ActionRoot = serde_json::from_value(bump_payload.clone()).unwrap();
     let mut bump_call = call(&bump, "SO-sub", "bump-1");
     bump_call.input = json_object(json!({ "so_number": "SO-sub", "status": "approved" }));
     bump_call.object_type = Some(ObjectTypeName(subtype.to_owned()));
@@ -4691,31 +4693,15 @@ fn ancestor_addressed_noop_action_with_subtype_slice_read_commits_and_reports_ve
 
     // Action addressed through ancestor `ORDER` with a declared slice read of
     // concrete `subtype` and unchanged property values (net no-op on target).
-    let noop: ActionRoot = serde_json::from_value(json!({
-        "actionId": "commerce.noop_ancestor",
-        "name": "Noop Ancestor",
-        "inputSchema": {
-            "type": "object",
-            "properties": { "so_number": { "type": "string" }, "status": { "type": "string" } },
-            "required": ["so_number", "status"]
-        },
-        "outputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
-        "slice": [{
-            "name": "reviewed",
-            "objectType": subtype,
-            "key": { "property": { "from": "input", "property": "so_number" } }
-        }],
-        "preconditions": ["slice.reviewed.status == \"approved\""],
-        "effectProgram": {
-            "kind": "upsert_input_object",
-            "objectKind": ORDER,
-            "objectIdField": "so_number",
-            "entityArtifactId": "commerce.SalesOrder.entity",
-            "entityArtifactVersion": "0.1.0",
-            "writeMode": { "kind": "upsert" }
-        }
-    }))
-    .unwrap();
+    let mut noop_payload = bump_payload;
+    noop_payload["actionId"] = json!("commerce.noop_ancestor");
+    noop_payload["slice"] = json!([{
+        "name": "reviewed",
+        "objectType": subtype,
+        "key": { "property": { "from": "input", "property": "so_number" } }
+    }]);
+    noop_payload["preconditions"] = json!(["slice.reviewed.status == \"approved\""]);
+    let noop: ActionRoot = serde_json::from_value(noop_payload).unwrap();
     let mut noop_call = call(&noop, "SO-sub", "noop-ancestor-1");
     noop_call.input = json_object(json!({ "so_number": "SO-sub", "status": "approved" }));
     noop_call.object_type = Some(ObjectTypeName(ORDER.to_owned()));

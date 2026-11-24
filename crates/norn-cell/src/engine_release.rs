@@ -335,10 +335,11 @@ fn migrate_to<E: SqlEngine>(_engine: &E, to: u32) -> Result<(), CellError> {
         // Version 5 (#1547) adds `_norn_marking_version_nonempty`, which the
         // schema statements that follow the chain create from the rows the
         // cell holds; no row is rewritten.
-        // Version 6 (OPEN-CHECKPOINT-1, #1533) adds `_norn_open_checkpoint`,
-        // created empty by the schema statements that follow the chain; the
-        // upgrading open then verifies the whole history and records its head
-        // there. No row is rewritten.
+        // Version 6 (OPEN-CHECKPOINT-1, #1533) adds `_norn_open_checkpoint`
+        // plus `_norn_quantity_history/commit_seq` and `_norn_quantity_posting/commit_seq`,
+        // created by the schema statements that follow the chain; the upgrading
+        // open then verifies the whole history and records its head there. No row
+        // is rewritten.
         2..=STORAGE_VERSION => Ok(()),
         _ => Err(CellError::EngineUpgradeUnsupported {
             cell: to.saturating_sub(1),

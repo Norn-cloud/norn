@@ -2192,3 +2192,145 @@ fn unchanged_target_fresh_and_replayed_receipts_agree_across_sibling_update() {
         "fresh and replayed responses must agree on untouched target version"
     );
 }
+
+fn subtype_noop_documents() -> Vec<Value> {
+    let base_order = entity(
+        "test.BaseOrder.entity",
+        &json!({
+            "name": "test.BaseOrder",
+            "properties": [
+                { "id": "order_id", "type": { "kind": "text" } },
+                { "id": "title", "type": { "kind": "text" } }
+            ]
+        }),
+        &[],
+    );
+    let special_order = entity(
+        "test.SpecialOrder.entity",
+        &json!({
+            "name": "test.SpecialOrder",
+            "extends": "test.BaseOrder",
+            "properties": [
+                { "id": "reviewer", "type": { "kind": "text" }, "constraints": { "nullable": true } }
+            ]
+        }),
+        &["test.BaseOrder.entity"],
+    );
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "order_id": { "type": "string" },
+            "title": { "type": "string" }
+        },
+        "required": ["order_id", "title"],
+        "additionalProperties": false
+    });
+    let upsert_special = action_artifact(
+        "test.SpecialOrder.upsert.action",
+        "test.special_order.upsert",
+        &schema,
+        &json!([
+            { "entityKind": "test.SpecialOrder", "change": "created" },
+            { "entityKind": "test.SpecialOrder", "change": "modified" }
+        ]),
+        &json!({
+            "kind": "upsert_input_object",
+            "objectIdField": "order_id",
+            "objectKind": "test.SpecialOrder",
+            "entityArtifactId": "test.SpecialOrder.entity",
+            "entityArtifactVersion": "1.0.0",
+            "writeMode": { "kind": "upsert" }
+        }),
+        &["test.SpecialOrder.entity"],
+    );
+    let noop_ancestor = envelope(
+        "test.BaseOrder.noop_ancestor.action",
+        "action",
+        &json!({
+            "actionId": "test.base_order.noop_ancestor",
+            "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": true,
+            "ledgered": true,
+            "inputSchema": schema,
+            "outputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+            "slice": [{
+                "name": "special",
+                "objectType": "test.SpecialOrder",
+                "key": { "property": { "from": "input", "property": "order_id" } }
+            }],
+            "preconditions": ["slice.special.title == \"ready\""],
+            "writes": [
+                { "entityKind": "test.BaseOrder", "change": "created" },
+                { "entityKind": "test.BaseOrder", "change": "modified" }
+            ],
+            "effectProgram": {
+                "kind": "upsert_input_object",
+                "objectIdField": "order_id",
+                "objectKind": "test.BaseOrder",
+                "entityArtifactId": "test.BaseOrder.entity",
+                "entityArtifactVersion": "1.0.0",
+                "writeMode": { "kind": "upsert" }
+            }
+        }),
+        &["test.BaseOrder.entity", "test.SpecialOrder.entity"],
+    );
+    vec![base_order, special_order, upsert_special, noop_ancestor]
+}
+
+/// S7/S5b (#1551 round 8): `norn-api` fresh and replayed responses agree on the
+/// exact target version when an ancestor-addressed no-op action reads a
+/// concrete subtype through a declared slice entry.
+#[test]
+fn ancestor_addressed_noop_and_replay_report_subtype_target_version() {
+    let store = admitted_store(
+        &subtype_noop_documents(),
+        crate::action_admission::prepare_action_model,
+    );
+    let host = host_of(store);
+    let query = scoped("org_demo");
+
+    // Seed concrete subtype at version 1, then bump to version 2.
+    let v1 = call(
+        &host,
+        &query,
+        Some(OPERATOR),
+        "test.special_order.upsert",
+        r#"{"input":{"order_id":"ord-1","title":"draft"},"idempotencyKey":"seed-1"}"#,
+    )
+    .unwrap();
+    assert_eq!(v1.version, 1);
+    let v2 = call(
+        &host,
+        &query,
+        Some(OPERATOR),
+        "test.special_order.upsert",
+        r#"{"input":{"order_id":"ord-1","title":"ready"},"idempotencyKey":"seed-2"}"#,
+    )
+    .unwrap();
+    assert_eq!(v2.version, 2);
+
+    // Ancestor-addressed no-op with subtype slice read: fresh and replay both report v2.
+    let noop_body =
+        r#"{"input":{"order_id":"ord-1","title":"ready"},"idempotencyKey":"noop-ancestor-1"}"#;
+    let fresh = call(
+        &host,
+        &query,
+        Some(OPERATOR),
+        "test.base_order.noop_ancestor",
+        noop_body,
+    )
+    .unwrap();
+    assert_eq!(fresh.outcome, ActionCallOutcome::Committed);
+    assert_eq!(fresh.version, 2);
+
+    let replayed = call(
+        &host,
+        &query,
+        Some(OPERATOR),
+        "test.base_order.noop_ancestor",
+        noop_body,
+    )
+    .unwrap();
+    assert_eq!(replayed.outcome, ActionCallOutcome::Replayed);
+    assert_eq!(replayed.version, 2);
+}

@@ -283,9 +283,154 @@ impl QuantityReplay {
         Ok(())
     }
 
-    /// Verify one bounded scrub history chunk `(after, through]`: replay each
-    /// receipt and compare the append-only `_norn_quantity_history` and
-    /// `_norn_quantity_posting` rows emitted in that commit range (S10).
+    fn live_rows(&self, stage: LiveStage) -> Rows {
+        match stage {
+            LiveStage::Timers => self.timers.clone(),
+            LiveStage::Ledgers => self.heads.clone(),
+            LiveStage::Balances => self.balances.clone(),
+            LiveStage::Reservations => self.reservations.clone(),
+        }
+    }
+
+    fn is_live_empty(&self) -> bool {
+        self.timers.is_empty()
+            && self.heads.is_empty()
+            && self.balances.is_empty()
+            && self.reservations.is_empty()
+    }
+}
+
+const SCRUB_PAGE: usize = crate::scrub::RECEIPT_STEP;
+const SCRUB_PAGE_I64: i64 = 512;
+
+const QUANTITY_RECEIPT_RANGE_SQL: &str = r#"SELECT "commit_seq" FROM "_norn_receipt"
+    WHERE "commit_seq" > ?1 AND "commit_seq" <= ?2 AND (
+        json_extract("receipt", '$.quantity.version') = 'norn.quantity.commit/2'
+        OR json_type("receipt", '$.quantity') = 'array'
+    )
+    ORDER BY "commit_seq" LIMIT ?3"#;
+
+#[derive(Clone, Copy)]
+enum LiveStage {
+    Timers,
+    Ledgers,
+    Balances,
+    Reservations,
+}
+
+impl LiveStage {
+    const fn next(self) -> Option<Self> {
+        match self {
+            Self::Timers => Some(Self::Ledgers),
+            Self::Ledgers => Some(Self::Balances),
+            Self::Balances => Some(Self::Reservations),
+            Self::Reservations => None,
+        }
+    }
+}
+
+#[derive(Clone)]
+struct SeedState {
+    after: u64,
+    through: u64,
+    expected_digest: String,
+    digest: String,
+}
+
+#[derive(Clone)]
+enum AppendCursor {
+    History {
+        after: u64,
+        through: u64,
+        cursor: Vec<SqlValue>,
+        expected_history: Rows,
+        expected_postings: Rows,
+    },
+    Posting {
+        after: u64,
+        through: u64,
+        cursor: Vec<SqlValue>,
+        expected_postings: Rows,
+    },
+}
+
+#[derive(Clone)]
+enum TailState {
+    SuffixReceipts {
+        after: u64,
+        db_commits: u64,
+        had_suffix: bool,
+    },
+    Live {
+        checked_db_commits: u64,
+        stage: LiveStage,
+        cursor: Vec<SqlValue>,
+        remaining: Rows,
+    },
+}
+
+enum PageStep {
+    Done,
+    More {
+        next_cursor: Vec<SqlValue>,
+        remaining: Rows,
+    },
+}
+
+/// Bounded (`<= 512` rows/wake) quantity verification state carried by a scrub
+/// run across `Phase::History` and `Phase::QuantityTail` (S10).
+#[derive(Clone, Default)]
+pub(crate) struct QuantityScrub {
+    replay: QuantityReplay,
+    seed: Option<SeedState>,
+    pending_append: Option<AppendCursor>,
+    tail: Option<TailState>,
+}
+
+impl QuantityScrub {
+    pub(crate) fn new(
+        start: Option<&crate::open_checkpoint::OpenCheckpoint>,
+        target_boundary: Option<super::FormatBoundary>,
+    ) -> Self {
+        let seed = start
+            .filter(|cp| {
+                cp.head.commits > 0 && (cp.boundary.is_some() || target_boundary.is_some())
+            })
+            .map(|cp| SeedState {
+                after: 0,
+                through: cp.head.commits,
+                expected_digest: cp.quantity_receipts.clone(),
+                digest: String::new(),
+            });
+        Self {
+            replay: QuantityReplay::default(),
+            seed,
+            pending_append: None,
+            tail: None,
+        }
+    }
+
+    pub(crate) const fn has_pending_work(&self) -> bool {
+        self.seed.is_some() || self.pending_append.is_some()
+    }
+
+    /// Run one bounded (`<= 512`-row) pending seed or append-table page step.
+    pub(crate) fn step_pending<S: SqlEngine>(
+        &mut self,
+        engine: &S,
+        reader: &crate::read::StoreReader<'_, S>,
+    ) -> Result<(), CellError> {
+        if self.seed.is_some() {
+            return self.step_seed(engine, reader);
+        }
+        if self.pending_append.is_some() {
+            return self.step_append_page(engine);
+        }
+        Ok(())
+    }
+
+    /// Replay a `<= 64`-commit history chunk and verify its first `<= 512`-row
+    /// append page; any overflow pages drain on subsequent wakes via `step_pending`.
     pub(crate) fn verify_chunk<S: SqlEngine>(
         &mut self,
         engine: &S,
@@ -308,118 +453,327 @@ impl QuantityReplay {
         let mut history = Rows::new();
         let mut postings = Rows::new();
         for receipt in receipts {
-            self.step_receipt(receipt, &mut history, &mut postings)?;
+            self.replay
+                .step_receipt(receipt, &mut history, &mut postings)?;
         }
-        verify_append_range(engine, after, through, history, postings)
+        self.start_append_range(engine, after, through, history, postings)
     }
 
-    /// Verify `clock_floor`, `validate_boundary`, surplus append-only rows, and
-    /// all live quantity projections at the end of a full scrub (`through`).
-    /// Returns `Ok(false)` only if more than 512 local quantity commits landed
-    /// after `through` while the scrub ran, signaling a bounded target refresh.
-    pub(crate) fn verify_tail<S: SqlEngine>(
-        &self,
+    /// Advance `Phase::QuantityTail` by one bounded (`<= 512`-row) wake; returns
+    /// `Ok(true)` once clock, boundary, suffix append rows, and all live tables verify.
+    pub(crate) fn step_tail<S: SqlEngine>(
+        &mut self,
         engine: &S,
         reader: &crate::read::StoreReader<'_, S>,
-        through: u64,
+        target_commits: u64,
         target_boundary: Option<super::FormatBoundary>,
     ) -> Result<bool, CellError> {
-        super::clock_floor(engine)?;
-        let db_commits = reader.next_commit_seq()?.saturating_sub(1);
-        if db_commits < through {
-            return Err(QuantityError::Corrupt.into());
+        if self.pending_append.is_some() {
+            self.step_append_page(engine)?;
+            return Ok(false);
         }
-        let through_i64 = to_i64(through, "quantity scrub target")?;
-        let suffix_commits = if db_commits == through {
-            Vec::new()
-        } else {
-            let rows = engine.query(
-                r#"SELECT "commit_seq" FROM "_norn_receipt"
-                   WHERE "commit_seq" > ?1 AND (
-                       json_extract("receipt", '$.quantity.version') = 'norn.quantity.commit/2'
-                       OR json_type("receipt", '$.quantity') = 'array'
-                   )
-                   ORDER BY "commit_seq" LIMIT 513"#,
-                &[through_i64.into()],
-            )?;
-            if rows.len() > crate::scrub::RECEIPT_STEP {
-                return Ok(false);
+        if self.tail.is_none() {
+            super::clock_floor(engine)?;
+            let db_commits = reader.next_commit_seq()?.saturating_sub(1);
+            if db_commits < target_commits {
+                return Err(QuantityError::Corrupt.into());
             }
-            rows.into_iter()
-                .map(|row| {
-                    crate::read::to_u64(crate::engine::SqlRow(row).get(0)?, "quantity commit")
-                })
-                .collect::<Result<Vec<_>, _>>()?
-        };
-        if suffix_commits.is_empty() {
-            super::validate_boundary(engine, target_boundary)?;
-            check_no_rows(
-                engine,
-                r#"SELECT 1 FROM "_norn_quantity_history" WHERE "commit_seq" > ?1 LIMIT 1"#,
-                &[through_i64.into()],
-            )?;
-            check_no_rows(
-                engine,
-                r#"SELECT 1 FROM "_norn_quantity_posting" WHERE "commit_seq" > ?1 LIMIT 1"#,
-                &[through_i64.into()],
-            )?;
-            self.verify_live_tables(engine)?;
-            return Ok(true);
+            self.tail = Some(TailState::SuffixReceipts {
+                after: target_commits,
+                db_commits,
+                had_suffix: false,
+            });
         }
-        let mut tail = self.clone();
-        let mut suffix_history = Rows::new();
-        let mut suffix_postings = Rows::new();
-        for commit in suffix_commits {
+        match self.tail.take().ok_or(QuantityError::Corrupt)? {
+            TailState::SuffixReceipts {
+                after,
+                db_commits,
+                had_suffix,
+            } => self.step_suffix_receipts(
+                engine,
+                reader,
+                after,
+                db_commits,
+                target_boundary,
+                had_suffix,
+            ),
+            TailState::Live {
+                checked_db_commits,
+                stage,
+                cursor,
+                remaining,
+            } => self.step_live_stage(engine, reader, checked_db_commits, stage, cursor, remaining),
+        }
+    }
+
+    fn step_seed<S: SqlEngine>(
+        &mut self,
+        engine: &S,
+        reader: &crate::read::StoreReader<'_, S>,
+    ) -> Result<(), CellError> {
+        let mut state = self.seed.take().ok_or(QuantityError::Corrupt)?;
+        if state.digest.is_empty() {
+            state.digest = crate::open_checkpoint::quantity_seed()?;
+        }
+        let commits = query_quantity_commits(engine, state.after, state.through, SCRUB_PAGE_I64)?;
+        let mut discard_history = Rows::new();
+        let mut discard_postings = Rows::new();
+        for &commit in &commits {
             let receipt = reader
                 .receipt_at(commit)?
                 .filter(|receipt| receipt.body.quantity.is_some())
                 .ok_or(QuantityError::Corrupt)?;
-            tail.step_receipt(&receipt, &mut suffix_history, &mut suffix_postings)?;
+            state.digest =
+                crate::open_checkpoint::quantity_extend(&state.digest, commit, &receipt.hash)?;
+            self.replay
+                .step_receipt(&receipt, &mut discard_history, &mut discard_postings)?;
+            discard_history.clear();
+            discard_postings.clear();
         }
-        verify_append_after(engine, through_i64, suffix_history, suffix_postings)?;
-        super::format_boundary(engine)?;
-        tail.verify_live_tables(engine)?;
-        Ok(true)
-    }
-
-    fn verify_live_tables<S: SqlEngine>(&self, engine: &S) -> Result<(), CellError> {
-        let mut timers = self.timers.clone();
-        let limit = row_limit(timers.len())?;
-        for row in engine.query(
-            r#"SELECT timer_id,due,timer,commit_seq FROM "_norn_timer" WHERE "timer_id">='norn.quantity.expiry/' AND "timer_id"<'norn.quantity.expiry0' LIMIT ?1"#,
-            &[limit.into()],
-        )? {
-            if timers.remove(&key(&row, 1)?).as_ref() != Some(&row) {
+        if commits.len() < SCRUB_PAGE {
+            if state.digest != state.expected_digest {
                 return Err(QuantityError::Corrupt.into());
             }
+            return Ok(());
         }
-        if !timers.is_empty() {
-            return Err(QuantityError::Corrupt.into());
-        }
-        for (table, columns, count, expected) in [
-            (
-                "_norn_quantity_ledger",
-                "world,ledger,version,pack,unrestricted,defined_at",
-                2,
-                self.heads.clone(),
-            ),
-            (
-                "_norn_quantity_balance",
-                "world,ledger,account,unit,layer,posted,held,version",
-                5,
-                self.balances.clone(),
-            ),
-            (
-                "_norn_quantity_reservation",
-                "world,ledger,id,record,version,commit_seq,created_at",
-                3,
-                self.reservations.clone(),
-            ),
-        ] {
-            verify_table_rows(engine, table, columns, count, false, expected)?;
-        }
+        state.after = *commits.last().ok_or(QuantityError::Corrupt)?;
+        self.seed = Some(state);
         Ok(())
     }
+
+    fn start_append_range<S: SqlEngine>(
+        &mut self,
+        engine: &S,
+        after: u64,
+        through: u64,
+        expected_history: Rows,
+        expected_postings: Rows,
+    ) -> Result<(), CellError> {
+        self.pending_append = Some(AppendCursor::History {
+            after,
+            through,
+            cursor: Vec::new(),
+            expected_history,
+            expected_postings,
+        });
+        self.step_append_page(engine)
+    }
+
+    fn step_append_page<S: SqlEngine>(&mut self, engine: &S) -> Result<(), CellError> {
+        let next = match self.pending_append.take().ok_or(QuantityError::Corrupt)? {
+            AppendCursor::History {
+                after,
+                through,
+                cursor,
+                expected_history,
+                expected_postings,
+            } => match verify_append_page(engine, true, after, through, &cursor, expected_history)?
+            {
+                PageStep::More {
+                    next_cursor,
+                    remaining,
+                } => Some(AppendCursor::History {
+                    after,
+                    through,
+                    cursor: next_cursor,
+                    expected_history: remaining,
+                    expected_postings,
+                }),
+                PageStep::Done => {
+                    match verify_append_page(engine, false, after, through, &[], expected_postings)?
+                    {
+                        PageStep::More {
+                            next_cursor,
+                            remaining,
+                        } => Some(AppendCursor::Posting {
+                            after,
+                            through,
+                            cursor: next_cursor,
+                            expected_postings: remaining,
+                        }),
+                        PageStep::Done => None,
+                    }
+                }
+            },
+            AppendCursor::Posting {
+                after,
+                through,
+                cursor,
+                expected_postings,
+            } => {
+                match verify_append_page(engine, false, after, through, &cursor, expected_postings)?
+                {
+                    PageStep::More {
+                        next_cursor,
+                        remaining,
+                    } => Some(AppendCursor::Posting {
+                        after,
+                        through,
+                        cursor: next_cursor,
+                        expected_postings: remaining,
+                    }),
+                    PageStep::Done => None,
+                }
+            }
+        };
+        self.pending_append = next;
+        Ok(())
+    }
+
+    fn step_suffix_receipts<S: SqlEngine>(
+        &mut self,
+        engine: &S,
+        reader: &crate::read::StoreReader<'_, S>,
+        after: u64,
+        db_commits: u64,
+        target_boundary: Option<super::FormatBoundary>,
+        had_suffix: bool,
+    ) -> Result<bool, CellError> {
+        if after >= db_commits {
+            return self.finish_suffix(engine, db_commits, target_boundary, had_suffix);
+        }
+        let commits = query_quantity_commits(engine, after, db_commits, SCRUB_PAGE_I64)?;
+        if commits.is_empty() {
+            return self.finish_suffix(engine, db_commits, target_boundary, had_suffix);
+        }
+        let mut suffix_history = Rows::new();
+        let mut suffix_postings = Rows::new();
+        for &commit in &commits {
+            let receipt = reader
+                .receipt_at(commit)?
+                .filter(|receipt| receipt.body.quantity.is_some())
+                .ok_or(QuantityError::Corrupt)?;
+            self.replay
+                .step_receipt(&receipt, &mut suffix_history, &mut suffix_postings)?;
+        }
+        let last_commit = *commits.last().ok_or(QuantityError::Corrupt)?;
+        let next_after = if commits.len() < SCRUB_PAGE {
+            db_commits
+        } else {
+            last_commit
+        };
+        self.tail = Some(TailState::SuffixReceipts {
+            after: next_after,
+            db_commits,
+            had_suffix: true,
+        });
+        self.start_append_range(engine, after, next_after, suffix_history, suffix_postings)?;
+        Ok(false)
+    }
+
+    fn finish_suffix<S: SqlEngine>(
+        &mut self,
+        engine: &S,
+        db_commits: u64,
+        target_boundary: Option<super::FormatBoundary>,
+        had_suffix: bool,
+    ) -> Result<bool, CellError> {
+        if had_suffix {
+            super::format_boundary(engine)?;
+        } else {
+            super::validate_boundary(engine, target_boundary)?;
+        }
+        let commits_i64 = to_i64(db_commits, "quantity scrub tail")?;
+        check_no_rows(
+            engine,
+            r#"SELECT 1 FROM "_norn_quantity_history" WHERE "commit_seq" > ?1 LIMIT 1"#,
+            &[commits_i64.into()],
+        )?;
+        check_no_rows(
+            engine,
+            r#"SELECT 1 FROM "_norn_quantity_posting" WHERE "commit_seq" > ?1 LIMIT 1"#,
+            &[commits_i64.into()],
+        )?;
+        if self.replay.is_live_empty() {
+            for sql in [
+                r#"SELECT 1 FROM "_norn_timer" WHERE "timer_id">='norn.quantity.expiry/' AND "timer_id"<'norn.quantity.expiry0' LIMIT 1"#,
+                r#"SELECT 1 FROM "_norn_quantity_ledger" LIMIT 1"#,
+                r#"SELECT 1 FROM "_norn_quantity_balance" LIMIT 1"#,
+                r#"SELECT 1 FROM "_norn_quantity_reservation" LIMIT 1"#,
+            ] {
+                check_no_rows(engine, sql, &[])?;
+            }
+            return Ok(true);
+        }
+        self.tail = Some(TailState::Live {
+            checked_db_commits: db_commits,
+            stage: LiveStage::Timers,
+            cursor: Vec::new(),
+            remaining: self.replay.live_rows(LiveStage::Timers),
+        });
+        Ok(false)
+    }
+
+    fn step_live_stage<S: SqlEngine>(
+        &mut self,
+        engine: &S,
+        reader: &crate::read::StoreReader<'_, S>,
+        mut checked_db_commits: u64,
+        stage: LiveStage,
+        cursor: Vec<SqlValue>,
+        remaining: Rows,
+    ) -> Result<bool, CellError> {
+        let live_db = reader.next_commit_seq()?.saturating_sub(1);
+        if live_db < checked_db_commits {
+            return Err(QuantityError::Corrupt.into());
+        }
+        if live_db > checked_db_commits {
+            if !query_quantity_commits(engine, checked_db_commits, live_db, 1)?.is_empty() {
+                self.tail = Some(TailState::SuffixReceipts {
+                    after: checked_db_commits,
+                    db_commits: live_db,
+                    had_suffix: true,
+                });
+                return Ok(false);
+            }
+            checked_db_commits = live_db;
+        }
+        match verify_live_page(engine, stage, &cursor, remaining)? {
+            PageStep::More {
+                next_cursor,
+                remaining,
+            } => {
+                self.tail = Some(TailState::Live {
+                    checked_db_commits,
+                    stage,
+                    cursor: next_cursor,
+                    remaining,
+                });
+                Ok(false)
+            }
+            PageStep::Done => match stage.next() {
+                Some(next_stage) => {
+                    self.tail = Some(TailState::Live {
+                        checked_db_commits,
+                        stage: next_stage,
+                        cursor: Vec::new(),
+                        remaining: self.replay.live_rows(next_stage),
+                    });
+                    Ok(false)
+                }
+                None => Ok(true),
+            },
+        }
+    }
+}
+
+fn query_quantity_commits<S: SqlEngine>(
+    engine: &S,
+    after: u64,
+    through: u64,
+    limit: i64,
+) -> Result<Vec<u64>, CellError> {
+    let rows = engine.query(
+        QUANTITY_RECEIPT_RANGE_SQL,
+        &[
+            to_i64(after, "quantity receipt after")?.into(),
+            to_i64(through, "quantity receipt through")?.into(),
+            limit.into(),
+        ],
+    )?;
+    rows.into_iter()
+        .map(|row| crate::read::to_u64(crate::engine::SqlRow(row).get(0)?, "quantity commit"))
+        .collect()
 }
 
 fn row_limit(expected_len: usize) -> Result<i64, CellError> {
@@ -438,11 +792,11 @@ fn check_no_rows<S: SqlEngine>(
     Ok(())
 }
 
-fn verify_rows_match(
+fn remove_matching_rows(
     rows: Vec<Vec<SqlValue>>,
     count: usize,
     is_history: bool,
-    mut expected: Rows,
+    expected: &mut Rows,
 ) -> Result<(), CellError> {
     for row in rows {
         let mut row_key = key(&row, count)?;
@@ -454,10 +808,119 @@ fn verify_rows_match(
             return Err(QuantityError::Corrupt.into());
         }
     }
+    Ok(())
+}
+
+fn match_page_rows(
+    rows: Vec<Vec<SqlValue>>,
+    count: usize,
+    is_history: bool,
+    mut expected: Rows,
+    cursor_indices: &[usize],
+) -> Result<PageStep, CellError> {
+    let page_full = rows.len() >= SCRUB_PAGE;
+    let mut next_cursor = Vec::new();
+    if page_full {
+        let last = rows.last().ok_or(QuantityError::Corrupt)?;
+        next_cursor.reserve(cursor_indices.len());
+        for &index in cursor_indices {
+            next_cursor.push(last.get(index).ok_or(QuantityError::Corrupt)?.clone());
+        }
+    }
+    remove_matching_rows(rows, count, is_history, &mut expected)?;
+    if page_full {
+        return Ok(PageStep::More {
+            next_cursor,
+            remaining: expected,
+        });
+    }
     if !expected.is_empty() {
         return Err(QuantityError::Corrupt.into());
     }
-    Ok(())
+    Ok(PageStep::Done)
+}
+
+fn verify_append_page<S: SqlEngine>(
+    engine: &S,
+    is_history: bool,
+    after: u64,
+    through: u64,
+    cursor: &[SqlValue],
+    expected: Rows,
+) -> Result<PageStep, CellError> {
+    let (sql_first, sql_next, count, indices): (&str, &str, usize, &[usize]) = if is_history {
+        (
+            r#"SELECT world,ledger,account,unit,layer,posted,held,version,commit_seq FROM "_norn_quantity_history" WHERE "commit_seq">?1 AND "commit_seq"<=?2 ORDER BY "commit_seq","world","ledger","account","unit","layer","version" LIMIT ?3"#,
+            r#"SELECT world,ledger,account,unit,layer,posted,held,version,commit_seq FROM "_norn_quantity_history" WHERE "commit_seq">?1 AND "commit_seq"<=?2 AND ("commit_seq","world","ledger","account","unit","layer","version")>(?3,?4,?5,?6,?7,?8,?9) ORDER BY "commit_seq","world","ledger","account","unit","layer","version" LIMIT ?10"#,
+            5,
+            &[8, 0, 1, 2, 3, 4, 7],
+        )
+    } else {
+        (
+            r#"SELECT world,ledger,id,record,reverses,version,commit_seq FROM "_norn_quantity_posting" WHERE "commit_seq">?1 AND "commit_seq"<=?2 ORDER BY "commit_seq","world","ledger","id" LIMIT ?3"#,
+            r#"SELECT world,ledger,id,record,reverses,version,commit_seq FROM "_norn_quantity_posting" WHERE "commit_seq">?1 AND "commit_seq"<=?2 AND ("commit_seq","world","ledger","id")>(?3,?4,?5,?6) ORDER BY "commit_seq","world","ledger","id" LIMIT ?7"#,
+            3,
+            &[6, 0, 1, 2],
+        )
+    };
+    let after_i64 = to_i64(after, "quantity append after")?;
+    let through_i64 = to_i64(through, "quantity append through")?;
+    let rows = if cursor.is_empty() {
+        engine.query(
+            sql_first,
+            &[after_i64.into(), through_i64.into(), SCRUB_PAGE_I64.into()],
+        )?
+    } else {
+        let mut params = Vec::with_capacity(cursor.len().saturating_add(3));
+        params.push(after_i64.into());
+        params.push(through_i64.into());
+        params.extend(cursor.iter().cloned());
+        params.push(SCRUB_PAGE_I64.into());
+        engine.query(sql_next, &params)?
+    };
+    match_page_rows(rows, count, is_history, expected, indices)
+}
+
+fn verify_live_page<S: SqlEngine>(
+    engine: &S,
+    stage: LiveStage,
+    cursor: &[SqlValue],
+    expected: Rows,
+) -> Result<PageStep, CellError> {
+    let (sql_first, sql_next, count, indices): (&str, &str, usize, &[usize]) = match stage {
+        LiveStage::Timers => (
+            r#"SELECT timer_id,due,timer,commit_seq FROM "_norn_timer" WHERE "timer_id">='norn.quantity.expiry/' AND "timer_id"<'norn.quantity.expiry0' ORDER BY "timer_id" LIMIT ?1"#,
+            r#"SELECT timer_id,due,timer,commit_seq FROM "_norn_timer" WHERE "timer_id">='norn.quantity.expiry/' AND "timer_id"<'norn.quantity.expiry0' AND "timer_id">?1 ORDER BY "timer_id" LIMIT ?2"#,
+            1,
+            &[0],
+        ),
+        LiveStage::Ledgers => (
+            r#"SELECT world,ledger,version,pack,unrestricted,defined_at FROM "_norn_quantity_ledger" ORDER BY "world","ledger" LIMIT ?1"#,
+            r#"SELECT world,ledger,version,pack,unrestricted,defined_at FROM "_norn_quantity_ledger" WHERE ("world","ledger")>(?1,?2) ORDER BY "world","ledger" LIMIT ?3"#,
+            2,
+            &[0, 1],
+        ),
+        LiveStage::Balances => (
+            r#"SELECT world,ledger,account,unit,layer,posted,held,version FROM "_norn_quantity_balance" ORDER BY "world","ledger","account","unit","layer" LIMIT ?1"#,
+            r#"SELECT world,ledger,account,unit,layer,posted,held,version FROM "_norn_quantity_balance" WHERE ("world","ledger","account","unit","layer")>(?1,?2,?3,?4,?5) ORDER BY "world","ledger","account","unit","layer" LIMIT ?6"#,
+            5,
+            &[0, 1, 2, 3, 4],
+        ),
+        LiveStage::Reservations => (
+            r#"SELECT world,ledger,id,record,version,commit_seq,created_at FROM "_norn_quantity_reservation" ORDER BY "world","ledger","id" LIMIT ?1"#,
+            r#"SELECT world,ledger,id,record,version,commit_seq,created_at FROM "_norn_quantity_reservation" WHERE ("world","ledger","id")>(?1,?2,?3) ORDER BY "world","ledger","id" LIMIT ?4"#,
+            3,
+            &[0, 1, 2],
+        ),
+    };
+    let rows = if cursor.is_empty() {
+        engine.query(sql_first, &[SCRUB_PAGE_I64.into()])?
+    } else {
+        let mut params = cursor.to_vec();
+        params.push(SCRUB_PAGE_I64.into());
+        engine.query(sql_next, &params)?
+    };
+    match_page_rows(rows, count, false, expected, indices)
 }
 
 fn verify_table_rows<S: SqlEngine>(
@@ -466,57 +929,18 @@ fn verify_table_rows<S: SqlEngine>(
     columns: &str,
     count: usize,
     is_history: bool,
-    expected: Rows,
+    mut expected: Rows,
 ) -> Result<(), CellError> {
     let limit = row_limit(expected.len())?;
     let rows = engine.query(
         &format!("SELECT {columns} FROM \"{table}\" LIMIT ?1"),
         &[limit.into()],
     )?;
-    verify_rows_match(rows, count, is_history, expected)
-}
-
-fn verify_append_range<S: SqlEngine>(
-    engine: &S,
-    after: u64,
-    through: u64,
-    history: Rows,
-    postings: Rows,
-) -> Result<(), CellError> {
-    let after_i64 = to_i64(after, "quantity history after")?;
-    let through_i64 = to_i64(through, "quantity history through")?;
-    let hist_limit = row_limit(history.len())?;
-    let hist_rows = engine.query(
-        r#"SELECT world,ledger,account,unit,layer,posted,held,version,commit_seq FROM "_norn_quantity_history" WHERE "commit_seq" > ?1 AND "commit_seq" <= ?2 LIMIT ?3"#,
-        &[after_i64.into(), through_i64.into(), hist_limit.into()],
-    )?;
-    verify_rows_match(hist_rows, 5, true, history)?;
-    let post_limit = row_limit(postings.len())?;
-    let post_rows = engine.query(
-        r#"SELECT world,ledger,id,record,reverses,version,commit_seq FROM "_norn_quantity_posting" WHERE "commit_seq" > ?1 AND "commit_seq" <= ?2 LIMIT ?3"#,
-        &[after_i64.into(), through_i64.into(), post_limit.into()],
-    )?;
-    verify_rows_match(post_rows, 3, false, postings)
-}
-
-fn verify_append_after<S: SqlEngine>(
-    engine: &S,
-    after_i64: i64,
-    history: Rows,
-    postings: Rows,
-) -> Result<(), CellError> {
-    let hist_limit = row_limit(history.len())?;
-    let hist_rows = engine.query(
-        r#"SELECT world,ledger,account,unit,layer,posted,held,version,commit_seq FROM "_norn_quantity_history" WHERE "commit_seq" > ?1 LIMIT ?2"#,
-        &[after_i64.into(), hist_limit.into()],
-    )?;
-    verify_rows_match(hist_rows, 5, true, history)?;
-    let post_limit = row_limit(postings.len())?;
-    let post_rows = engine.query(
-        r#"SELECT world,ledger,id,record,reverses,version,commit_seq FROM "_norn_quantity_posting" WHERE "commit_seq" > ?1 LIMIT ?2"#,
-        &[after_i64.into(), post_limit.into()],
-    )?;
-    verify_rows_match(post_rows, 3, false, postings)
+    remove_matching_rows(rows, count, is_history, &mut expected)?;
+    if !expected.is_empty() {
+        return Err(QuantityError::Corrupt.into());
+    }
+    Ok(())
 }
 
 #[allow(
@@ -535,7 +959,23 @@ pub(crate) fn verify<S: SqlEngine>(
         let receipt = receipt?;
         replay.step_receipt(&receipt, &mut history, &mut postings)?;
     }
-    replay.verify_live_tables(engine)?;
+    for stage in [
+        LiveStage::Timers,
+        LiveStage::Ledgers,
+        LiveStage::Balances,
+        LiveStage::Reservations,
+    ] {
+        let mut cursor = Vec::new();
+        let mut remaining = replay.live_rows(stage);
+        while let PageStep::More {
+            next_cursor,
+            remaining: rest,
+        } = verify_live_page(engine, stage, &cursor, remaining)?
+        {
+            cursor = next_cursor;
+            remaining = rest;
+        }
+    }
     verify_table_rows(
         engine,
         "_norn_quantity_history",
@@ -552,25 +992,4 @@ pub(crate) fn verify<S: SqlEngine>(
         false,
         postings,
     )
-}
-
-/// Verify quantity projections for a bounded catch-up scrub chunk starting from
-/// an already-validated checkpoint (mirrors `read::ledger`'s base > 0 check).
-pub(crate) fn verify_catch_up_chunk<S: SqlEngine>(
-    engine: &S,
-    receipts: &[Receipt],
-) -> Result<(), CellError> {
-    for receipt in receipts {
-        if let Some(requests) = &receipt.body.quantity {
-            for request in requests.iter() {
-                super::verify_transition_projection(
-                    engine,
-                    &receipt.body.world,
-                    receipt.body.commit_seq,
-                    request,
-                )?;
-            }
-        }
-    }
-    Ok(())
 }

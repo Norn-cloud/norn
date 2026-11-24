@@ -247,6 +247,30 @@ fn add_open_checkpoint(
         .as_array_mut()
         .expect("schema")
         .push(entry);
+    for (index_name, table_name) in [
+        (
+            "_norn_quantity_history/commit_seq",
+            "_norn_quantity_history",
+        ),
+        (
+            "_norn_quantity_posting/commit_seq",
+            "_norn_quantity_posting",
+        ),
+    ] {
+        let index = after["schema"]
+            .as_array()
+            .expect("schema")
+            .iter()
+            .find(|entry| entry["name"] == index_name)
+            .unwrap_or_else(|| panic!("the v6 upgrade adds {index_name}"))
+            .clone();
+        assert_eq!(index["type"], "index");
+        assert_eq!(index["table"], table_name);
+        expected["schema"]
+            .as_array_mut()
+            .expect("schema")
+            .push(index);
+    }
     expected["tables"].as_object_mut().expect("tables").insert(
         "_norn_open_checkpoint".to_owned(),
         serde_json::json!({

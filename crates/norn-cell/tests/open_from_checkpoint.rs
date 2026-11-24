@@ -2364,6 +2364,11 @@ fn existing_store_reader_refuses_when_sibling_fences_after_acquire() {
     let reader = sibling.read();
     assert!(reader.flow_run(MAIN_WORLD, "run-1").is_ok());
     assert!(reader.object(MAIN_WORLD, "fixture.Item", "c0").is_ok());
+    assert!(
+        reader
+            .source_event_mapping_bundles("conn", "p0", "src", "s1", "e1")
+            .is_ok()
+    );
 
     assert!(matches!(first.scrub_to_end(), ScrubStatus::Fenced { .. }));
 
@@ -2381,6 +2386,22 @@ fn existing_store_reader_refuses_when_sibling_fences_after_acquire() {
             Err(CellError::Fenced(_))
         ),
         "existing StoreReader must refuse object after sibling durable fence"
+    );
+    assert!(
+        matches!(
+            reader.source_event_mapping_bundles("conn", "p0", "src", "s1", "e1"),
+            Err(CellError::Fenced(_))
+        ),
+        "existing StoreReader must refuse source_event_mapping_bundles after sibling durable fence"
+    );
+    assert!(
+        matches!(
+            sibling
+                .read()
+                .source_event_mapping_bundles("conn", "p0", "src", "s1", "e1"),
+            Err(CellError::Fenced(_))
+        ),
+        "fresh StoreReader must refuse source_event_mapping_bundles on a fenced cell"
     );
 }
 
@@ -2412,11 +2433,7 @@ fn restart_scrub_detects_corrupt_suffix_quantity_history_and_fences() {
 
     // Commit a suffix quantity transition mid-scrub, then corrupt its history row externally.
     let suffix_commit = EVERY.saturating_add(1);
-    commit_quantity(
-        &mut store,
-        suffix_commit,
-        &post(0, "mid-scrub", "mid-scrub", 5),
-    );
+    commit_quantity(&mut store, suffix_commit, &post(0, "mid-scrub", "fund", 5));
     execute(
         &path,
         &format!(

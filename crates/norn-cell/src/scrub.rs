@@ -160,6 +160,8 @@ pub(crate) struct Scrub {
     fence_persisted: bool,
     /// Last `PRAGMA data_version` at which no sibling durable fence existed (S12).
     fence_checked_dv: Option<u64>,
+    /// `PRAGMA data_version` at open or last verified checkpoint (S10 catch-up baseline).
+    baseline_dv: Option<u64>,
     transient: u32,
     fork: bool,
 }
@@ -168,6 +170,7 @@ pub(crate) struct Scrub {
 enum Phase {
     Receipts,
     History,
+    QuantityTail,
     Seed,
 }
 
@@ -197,7 +200,7 @@ struct Run {
     ledger: LedgerHead,
     boundary: Option<FormatBoundary>,
     walk: Option<DefinitionWalk>,
-    quantity_replay: crate::quantity::QuantityReplay,
+    quantity_scrub: crate::quantity::QuantityScrub,
     verified_pins: Option<VerifiedPins>,
     data_version: Option<u64>,
     restarts: u32,
@@ -231,6 +234,7 @@ impl Run {
                 .map_or_else(LedgerHead::genesis, |start| start.head.clone()),
             boundary: start.as_ref().and_then(|start| start.boundary),
             quantity: start.as_ref().map(|start| start.quantity_receipts.clone()),
+            quantity_scrub: crate::quantity::QuantityScrub::new(start.as_ref(), target_boundary),
             start,
             anchor,
             target,
@@ -239,7 +243,6 @@ impl Run {
             phase: Phase::Receipts,
             tree: crate::transparency::ReceiptLog::new(),
             walk: None,
-            quantity_replay: crate::quantity::QuantityReplay::default(),
             verified_pins: None,
             data_version,
             restarts: 0,
@@ -265,7 +268,7 @@ impl Run {
         self.ledger = LedgerHead::genesis();
         self.boundary = None;
         self.walk = None;
-        self.quantity_replay = crate::quantity::QuantityReplay::default();
+        self.quantity_scrub = crate::quantity::QuantityScrub::new(None, target_boundary);
         self.verified_pins = None;
         self.data_version = data_version;
         self.restarts = self.restarts.saturating_add(1);
@@ -274,7 +277,7 @@ impl Run {
     fn status(&self, history_ready: bool) -> ScrubStatus {
         let (phase, verified) = match self.phase {
             Phase::Receipts => ("receipts", self.receipts_at),
-            Phase::History => ("history", self.ledger.commits),
+            Phase::History | Phase::QuantityTail => ("history", self.ledger.commits),
             Phase::Seed => ("seed", self.target.commits),
         };
         ScrubStatus::Verifying {
@@ -331,8 +334,12 @@ enum StepOutcome {
         head: LedgerHead,
         boundary: Option<FormatBoundary>,
         walk: DefinitionWalk,
-        quantity_replay: Option<crate::quantity::QuantityReplay>,
+        quantity_scrub: crate::quantity::QuantityScrub,
         verified_pins: Option<VerifiedPins>,
+        done: bool,
+    },
+    QuantityStep {
+        quantity_scrub: crate::quantity::QuantityScrub,
         done: bool,
     },
     Seeded(Option<OpenCheckpoint>),
@@ -354,6 +361,7 @@ impl Scrub {
     ) -> Self {
         let mut scrub = Self {
             fence_checked_dv: data_version,
+            baseline_dv: data_version,
             ..Self::default()
         };
         if !keyed {
@@ -399,6 +407,20 @@ impl Scrub {
             fork: true,
             ..Self::default()
         }
+    }
+
+    pub(crate) fn pending_fence_finding(&self) -> Option<String> {
+        self.needs_fence_persist()
+            .then(|| self.finding.clone())
+            .flatten()
+    }
+
+    pub(crate) const fn mark_fence_persisted(&mut self) {
+        self.fence_persisted = true;
+    }
+
+    pub(crate) const fn is_fenced(&self) -> bool {
+        self.finding.is_some()
     }
 
     pub(crate) const fn needs_fence_persist(&self) -> bool {
@@ -473,8 +495,11 @@ impl Scrub {
         self.validated.clone().map_or(Advance::Seed, Advance::From)
     }
 
-    pub(crate) fn validated(&mut self, checkpoint: OpenCheckpoint) {
+    pub(crate) fn validated(&mut self, checkpoint: OpenCheckpoint, data_version: Option<u64>) {
         self.validated = Some(checkpoint);
+        if data_version.is_some() {
+            self.baseline_dv = data_version;
+        }
     }
 
     pub(crate) fn invalidate(&mut self) {
@@ -482,7 +507,8 @@ impl Scrub {
     }
 
     /// Start closing the gap from the validated checkpoint (genesis with
-    /// none) to `target` off the commit path.
+    /// none) to `target` off the commit path, pinned to the open/validated
+    /// `PRAGMA data_version` baseline so any external write before wake 1 restarts (S10).
     pub(crate) fn catch_up(&mut self, target: LedgerHead, boundary: Option<FormatBoundary>) {
         if self.fork || self.finding.is_some() || self.run.is_some() {
             return;
@@ -493,7 +519,7 @@ impl Scrub {
             target,
             boundary,
             true,
-            None,
+            self.baseline_dv,
         ));
     }
 
@@ -510,42 +536,6 @@ impl Scrub {
 }
 
 impl<E: SqlEngine> CellStore<E> {
-    /// Retry persisting a local fence marker that previously failed transiently
-    /// (S12, #1551 round 5).
-    pub(crate) fn persist_pending_fence(&self) {
-        let finding = {
-            let scrub = self.scrub.borrow();
-            if !scrub.needs_fence_persist() {
-                return;
-            }
-            scrub.finding.clone()
-        };
-        let Some(finding) = finding else {
-            return;
-        };
-        match open_checkpoint::fence_durably(&self.conn, &finding) {
-            Ok(()) => {
-                self.scrub.borrow_mut().fence_persisted = true;
-            }
-            Err(fence_error) => {
-                tracing::warn!(%fence_error, "history scrub: durable fence write failed; will retry");
-            }
-        }
-    }
-
-    /// Observe any durable fence recorded by a sibling handle (S12).
-    fn sync_durable_fence(&self) {
-        if self.scrub.borrow().finding.is_some() {
-            return;
-        }
-        if let Ok(Some(finding)) = open_checkpoint::read_fence(&self.conn) {
-            let mut scrub = self.scrub.borrow_mut();
-            scrub.finding = Some(finding);
-            scrub.fence_persisted = true;
-            scrub.run = None;
-        }
-    }
-
     /// Where the history scrub stands (OPEN-CHECKPOINT-1, #1551 round 4).
     #[must_use]
     pub fn scrub_status(&self) -> ScrubStatus {
@@ -606,6 +596,9 @@ impl<E: SqlEngine> CellStore<E> {
                 scrub.idempotency_unproven = false;
                 if checkpoint.is_some() {
                     scrub.validated = checkpoint;
+                }
+                if run.data_version.is_some() {
+                    scrub.baseline_dv = run.data_version;
                 }
                 tracing::info!(
                     commits = run.target.commits,
@@ -691,6 +684,7 @@ impl<E: SqlEngine> CellStore<E> {
         let outcome = match run.phase {
             Phase::Receipts => self.scrub_receipts(run)?,
             Phase::History => self.scrub_history(run)?,
+            Phase::QuantityTail => self.scrub_quantity_tail(run)?,
             Phase::Seed => self.scrub_seed(run)?,
         };
         Ok((outcome, dv))
@@ -813,6 +807,14 @@ impl<E: SqlEngine> CellStore<E> {
     /// verifies them. Stages progress into [`StepOutcome::HistoryChunk`].
     fn scrub_history(&self, run: &Run) -> Result<StepOutcome, CellError> {
         let reader = self.verifier();
+        if run.quantity_scrub.has_pending_work() {
+            let mut quantity_scrub = run.quantity_scrub.clone();
+            quantity_scrub.step_pending(&self.conn, &reader)?;
+            return Ok(StepOutcome::QuantityStep {
+                quantity_scrub,
+                done: false,
+            });
+        }
         let versions = reader.installed_definition_versions()?;
         let mut walk = match &run.walk {
             Some(walk) => walk.clone(),
@@ -846,24 +848,9 @@ impl<E: SqlEngine> CellStore<E> {
             chunk_receipts.push(receipt);
         }
         reader.verify_value_history_range(after, through)?;
+        let mut quantity_scrub = run.quantity_scrub.clone();
+        quantity_scrub.verify_chunk(&self.conn, &chunk_receipts, after, through)?;
         let done = through == run.target.commits;
-        let quantity_replay = if run.start.is_none() {
-            let mut replay = run.quantity_replay.clone();
-            replay.verify_chunk(&self.conn, &chunk_receipts, after, through)?;
-            if done && !replay.verify_tail(&self.conn, &reader, through, boundary)? {
-                let (target, boundary) =
-                    self.restart_scrub_target(self.transparency.borrow().len())?;
-                return Ok(StepOutcome::Restart {
-                    data_version: run.data_version,
-                    target,
-                    boundary,
-                });
-            }
-            Some(replay)
-        } else {
-            crate::quantity::verify_catch_up_chunk(&self.conn, &chunk_receipts)?;
-            None
-        };
         let verified_pins = if done {
             if head != run.target || boundary != run.target_boundary {
                 return Err(defect(
@@ -892,8 +879,24 @@ impl<E: SqlEngine> CellStore<E> {
             head,
             boundary,
             walk,
-            quantity_replay,
+            quantity_scrub,
             verified_pins,
+            done,
+        })
+    }
+
+    /// Phase 2b: bounded (`<= 512`-row) tail quantity projection verification (S10).
+    fn scrub_quantity_tail(&self, run: &Run) -> Result<StepOutcome, CellError> {
+        let reader = self.verifier();
+        let mut quantity_scrub = run.quantity_scrub.clone();
+        let done = quantity_scrub.step_tail(
+            &self.conn,
+            &reader,
+            run.target.commits,
+            run.target_boundary,
+        )?;
+        Ok(StepOutcome::QuantityStep {
+            quantity_scrub,
             done,
         })
     }
@@ -959,18 +962,26 @@ fn apply_step(
             head,
             boundary,
             walk,
-            quantity_replay,
+            quantity_scrub,
             verified_pins,
             done,
         } => {
             run.ledger = head;
             run.boundary = boundary;
             run.walk = Some(walk);
-            if let Some(replay) = quantity_replay {
-                run.quantity_replay = replay;
-            }
+            run.quantity_scrub = quantity_scrub;
             if done {
                 run.verified_pins = verified_pins;
+                run.phase = Phase::QuantityTail;
+            }
+            Ok(StepProgress::Continue)
+        }
+        StepOutcome::QuantityStep {
+            quantity_scrub,
+            done,
+        } => {
+            run.quantity_scrub = quantity_scrub;
+            if done {
                 run.phase = Phase::Seed;
             }
             Ok(StepProgress::Continue)

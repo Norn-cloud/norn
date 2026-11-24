@@ -423,6 +423,8 @@ pub const SYSTEM_DDL: &[&str] = &[
       "held" TEXT NOT NULL, "version" INTEGER NOT NULL, "commit_seq" INTEGER NOT NULL,
       PRIMARY KEY ("world", "ledger", "account", "unit", "layer", "version")
     )"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_quantity_history/commit_seq"
+      ON "_norn_quantity_history" ("commit_seq", "world", "ledger", "account", "unit", "layer", "version")"#,
     r#"CREATE TABLE IF NOT EXISTS "_norn_quantity_reservation" (
       "world" TEXT NOT NULL, "ledger" TEXT NOT NULL, "id" TEXT NOT NULL,
       "record" TEXT NOT NULL, "version" INTEGER NOT NULL, "commit_seq" INTEGER NOT NULL,
@@ -436,6 +438,8 @@ pub const SYSTEM_DDL: &[&str] = &[
     )"#,
     r#"CREATE UNIQUE INDEX IF NOT EXISTS "_norn_quantity_posting/reversal"
       ON "_norn_quantity_posting" ("world", "ledger", "reverses")"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_quantity_posting/commit_seq"
+      ON "_norn_quantity_posting" ("commit_seq", "world", "ledger", "id")"#,
     r#"CREATE TABLE IF NOT EXISTS "_norn_meta" (
   "key" TEXT NOT NULL,
   "value" TEXT NOT NULL,
