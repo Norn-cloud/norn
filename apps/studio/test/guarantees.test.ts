@@ -1,8 +1,13 @@
 import { expect, test } from "bun:test"
+import { QueryClient } from "@tanstack/react-query"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { cases, field, heldCountText, heldGroupKey, heldKpiSub, heldRuleTechnicalId, heldRuleTitle, heldTabSummary, levelWords, openAfterHash, scalar, targetsGuarantee, verdictWords } from "../src/lib/guarantees.ts"
-import { draftValueFromJson, suggestedFixInputs, type ActionSummary } from "../src/lib/actions.ts"
+import { createElement } from "react"
+import { renderToStaticMarkup } from "react-dom/server"
+import { ActionForm } from "../src/actions/action-form.tsx"
+import { actionsQueryOptions } from "../src/actions/action-sheet.tsx"
+import { cases, field, heldCountText, heldGroupKey, heldKpiSub, heldRuleTechnicalId, heldRuleTitle, heldTabSummary, levelWords, openAfterHash, scalar, targetsGuarantee, uniqueLaws, uniqueRuleCount, verdictWords } from "../src/lib/guarantees.ts"
+import { draftAt, draftValueFromJson, encodeObject, fieldsOf, seedDraft, suggestedFixInputs, type ActionSummary, type Draft } from "../src/lib/actions.ts"
 import type { Guarantees } from "../src/lib/transport.ts"
 
 // Recorded model-checker documents (fixtures/demo/guarantees).
@@ -158,9 +163,10 @@ test("suggestedFixInputs locks record identity and seeds editable server argumen
     arguments: { id: "SCAN-INV-0042", total: "72.00", currency: "USD", correction_evidence: "SCAN-INV-0042~total", verified: true, unknown_field: "ignored" },
     needs: ["correction_reason"],
   })
-  expect(inputs.prefill).toEqual({ id: "SCAN-INV-0042" })
-  expect(inputs.defaults).toEqual({ total: "72.00", correction_evidence: "SCAN-INV-0042~total", verified: "true" })
-  // Even when a fixture leaves arguments empty, the expected property/value and record id still seed the form.
+  expect(inputs).not.toBeNull()
+  expect(inputs?.prefill).toEqual({ id: "SCAN-INV-0042" })
+  expect(inputs?.defaults).toEqual({ total: "72.00", correction_evidence: "SCAN-INV-0042~total", verified: "true" })
+  // Even when a fixture leaves arguments empty or sets an empty identity string, recordId fills prefill.
   expect(suggestedFixInputs(action, "SCAN-INV-0042", {
     actionId: "docs.scanned_document.correct",
     title: "Correct an extracted total",
@@ -170,7 +176,241 @@ test("suggestedFixInputs locks record identity and seeds editable server argumen
     arguments: {},
     needs: ["correction_reason"],
   })).toEqual({ prefill: { id: "SCAN-INV-0042" }, defaults: { total: "72.00" } })
+  expect(suggestedFixInputs(action, "SCAN-INV-0042", {
+    actionId: "docs.scanned_document.correct",
+    title: "Correct an extracted total",
+    label: "Use 72.00",
+    property: "total",
+    value: "72.00",
+    arguments: { id: "", total: "72.00" },
+    needs: ["correction_reason"],
+  })).toEqual({ prefill: { id: "SCAN-INV-0042" }, defaults: { total: "72.00" } })
+  // A fix whose identity argument or target property names a different record is rejected,
+  // regardless of what `action.objectIdField` is named.
+  expect(suggestedFixInputs(action, "SCAN-INV-0042", {
+    actionId: "docs.scanned_document.correct",
+    title: "Correct an extracted total",
+    label: "Use 72.00",
+    property: "total",
+    value: "72.00",
+    arguments: { id: "SCAN-INV-OTHER", total: "72.00" },
+    needs: [],
+  })).toBeNull()
+  expect(suggestedFixInputs(action, "SCAN-INV-0042", {
+    actionId: "docs.scanned_document.correct",
+    title: "Correct an extracted total",
+    label: "Use 72.00",
+    property: "total",
+    value: "72.00",
+    arguments: { id: 99, total: "72.00" },
+    needs: [],
+  })).toBeNull()
+  expect(suggestedFixInputs(action, "SCAN-INV-0042", {
+    actionId: "docs.scanned_document.correct",
+    title: "Correct an extracted total",
+    label: "Use SCAN-INV-OTHER",
+    property: "id",
+    value: "SCAN-INV-OTHER",
+    arguments: {},
+    needs: [],
+  })).toBeNull()
+  const customIdAction: ActionSummary = {
+    ...action,
+    actionId: "purchasing.request.correct",
+    objectKind: "purchasing.PurchaseRequest",
+    objectIdField: "request_id",
+    inputSchema: {
+      type: "object",
+      required: ["request_id", "amount"],
+      properties: { request_id: { type: "string" }, amount: { type: "string" } },
+    },
+  }
+  expect(suggestedFixInputs(customIdAction, "REQ-1", {
+    actionId: "purchasing.request.correct",
+    title: "Correct request",
+    label: "Use 50.00",
+    property: "amount",
+    value: "50.00",
+    arguments: { request_id: "REQ-2", amount: "50.00" },
+    needs: [],
+  })).toBeNull()
+  expect(suggestedFixInputs(customIdAction, "REQ-1", {
+    actionId: "purchasing.request.correct",
+    title: "Correct request",
+    label: "Use REQ-2",
+    property: "request_id",
+    value: "REQ-2",
+    arguments: {},
+    needs: [],
+  })).toBeNull()
+  expect(suggestedFixInputs(customIdAction, "REQ-1", {
+    actionId: "purchasing.request.correct",
+    title: "Correct request",
+    label: "Use 50.00",
+    property: "amount",
+    value: "50.00",
+    arguments: { request_id: "", amount: "50.00" },
+    needs: [],
+  })).toEqual({ prefill: { request_id: "REQ-1" }, defaults: { amount: "50.00" } })
   expect(draftValueFromJson(42, { kind: "integer" })).toBe("42")
   expect(draftValueFromJson(false, { kind: "boolean" })).toBe("false")
   expect(draftValueFromJson(null, { kind: "text" })).toBeNull()
+})
+
+test("JSON defaults preserve string literals and all JSON types through draftValueFromJson and encodeObject", () => {
+  const jsonDomain = ["array", "boolean", "null", "number", "object", "string"]
+  const action: ActionSummary = {
+    actionId: "docs.note.set_payload",
+    title: "Set payload",
+    description: null,
+    objectKind: "docs.Note",
+    effect: "upsert_input_object",
+    objectIdField: "id",
+    uiEffects: { irreversible: false, destructive: false, money: [] },
+    inputSchema: {
+      type: "object",
+      required: ["id", "payload"],
+      properties: {
+        id: { type: "string" },
+        payload: { type: jsonDomain },
+      },
+    },
+  }
+  const fields = fieldsOf(action.inputSchema)
+  for (const original of ["true", "42", "{}", "", null, true, 42, { a: 1 }, [1, "x"]] as const) {
+    expect(draftValueFromJson(original, { kind: "json" })).toBe(JSON.stringify(original))
+    const inputs = suggestedFixInputs(action, "NOTE-1", {
+      actionId: action.actionId,
+      title: action.title,
+      label: "Apply",
+      property: "payload",
+      value: String(original),
+      arguments: { id: "NOTE-1", payload: original },
+      needs: [],
+    })
+    expect(inputs).not.toBeNull()
+    const draft = seedDraft(fields, inputs!.defaults, inputs!.prefill) as { readonly [name: string]: Draft }
+    const encoded = JSON.parse(encodeObject(fields, draft)) as { id: string; payload: unknown }
+    expect(encoded.id).toBe("NOTE-1")
+    expect(encoded.payload).toEqual(original)
+    expect(typeof encoded.payload).toBe(typeof original)
+  }
+})
+
+test("seedDraft and ActionForm escape RFC 6901 ~ and / characters in top-level default and prefill field names", () => {
+  const action: ActionSummary = {
+    actionId: "docs.custom.update",
+    title: "Update custom fields",
+    description: null,
+    objectKind: "docs.Custom",
+    effect: "upsert_input_object",
+    objectIdField: "id/key~1",
+    uiEffects: { irreversible: false, destructive: false, money: [] },
+    inputSchema: {
+      type: "object",
+      required: ["id/key~1", "a/b", "x~y"],
+      properties: {
+        "id/key~1": { type: "string", title: "Record key" },
+        "a/b": { type: "string", title: "Ratio" },
+        "x~y": { type: "string", title: "Tilde note" },
+      },
+    },
+  }
+  const fields = fieldsOf(action.inputSchema)
+  const prefill = { "id/key~1": "REC-1" }
+  const defaults = { "a/b": "slash-value", "x~y": "tilde-value" }
+  const draft = seedDraft(fields, defaults, prefill) as { readonly [name: string]: Draft }
+  expect(draftAt(draft, "/id~1key~01")).toBe("REC-1")
+  expect(draftAt(draft, "/a~1b")).toBe("slash-value")
+  expect(draftAt(draft, "/x~0y")).toBe("tilde-value")
+  expect(JSON.parse(encodeObject(fields, draft))).toEqual({
+    "id/key~1": "REC-1",
+    "a/b": "slash-value",
+    "x~y": "tilde-value",
+  })
+  const html = renderToStaticMarkup(createElement(ActionForm, { action, objectTitle: "Custom", prefill, defaults }))
+  expect(html).toContain('data-pointer="/id~1key~01"')
+  expect(html).toContain('readOnly=""')
+  expect(html).toContain('aria-readonly="true"')
+  expect(html).toContain('value="REC-1"')
+  expect(html).toContain('data-pointer="/a~1b"')
+  expect(html).toContain('value="slash-value"')
+  expect(html).toContain('data-pointer="/x~0y"')
+  expect(html).toContain('value="tilde-value"')
+})
+
+test("uniqueLaws and uniqueRuleCount count inherited laws once while keeping per-type non-law invariants separate", () => {
+  const sharedErrorLaw = {
+    id: "canon.ItemizedDocument.total_matches_lines",
+    artifactId: "canon.ItemizedDocument.total_matches_lines.law",
+    subject: "canon.ItemizedDocument",
+    rationale: "Total equals the sum of lines.",
+    severity: "error" as const,
+    modality: "always",
+    response: "predicate",
+    owner: "canon",
+    inheritedFrom: "canon.ItemizedDocument",
+  }
+  const warningLaw = {
+    id: "docs.ScannedDocument.vendor_present",
+    artifactId: "docs.ScannedDocument.vendor_present.law",
+    subject: "docs.ScannedDocument",
+    rationale: "Vendor must be present.",
+    severity: "warning" as const,
+    modality: "always",
+    response: "predicate",
+    owner: "docs",
+  }
+  const concepts = [
+    {
+      laws: [sharedErrorLaw, warningLaw],
+      // First entry duplicates the shared law's rationale (not counted separately); second is an object-type invariant.
+      rules: ["Total equals the sum of lines.", "Quantity must be non-negative."],
+    },
+    {
+      laws: [sharedErrorLaw],
+      // Separate non-law invariant on a second type implementing the same interface.
+      rules: ["Ledger balance must stay posted."],
+    },
+  ]
+  const laws = uniqueLaws(concepts)
+  expect(laws.map((law) => law.id)).toEqual([
+    "canon.ItemizedDocument.total_matches_lines",
+    "docs.ScannedDocument.vendor_present",
+  ])
+  expect(laws.filter((law) => law.severity === "error")).toHaveLength(1)
+  expect(laws.filter((law) => law.severity === "warning")).toHaveLength(1)
+  // 2 distinct laws + 2 per-type non-law invariants = 4.
+  expect(uniqueRuleCount(concepts)).toBe(4)
+})
+
+test("record-scoped actionsQueryOptions always reads the live catalog even when cached data exists", async () => {
+  const client = new QueryClient()
+  const opts = actionsQueryOptions("docs.ScannedDocument", "SCAN-INV-0042")
+  expect(opts.staleTime).toBe(0)
+  // Seed cache with an earlier empty read for the same record.
+  client.setQueryData(opts.queryKey, { kind: "catalog", items: [] })
+  let calls = 0
+  const live = await client.fetchQuery({
+    ...opts,
+    queryFn: async () => {
+      calls += 1
+      return {
+        kind: "catalog" as const,
+        items: [{
+          actionId: "docs.scanned_document.correct",
+          title: "Correct an extracted total",
+          description: null,
+          objectKind: "docs.ScannedDocument",
+          effect: "upsert_input_object" as const,
+          objectIdField: "id",
+          inputSchema: { type: "object", properties: { id: { type: "string" } } },
+          uiEffects: { irreversible: false, destructive: false, money: [] },
+        }],
+      }
+    },
+  })
+  expect(calls).toBe(1)
+  expect(live.kind).toBe("catalog")
+  if (live.kind === "catalog") expect(live.items.map((item) => item.actionId)).toEqual(["docs.scanned_document.correct"])
 })

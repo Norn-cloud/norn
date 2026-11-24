@@ -13,7 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { useView } from "@/lib/view"
 import { conceptTitle, type Concept } from "./lib/catalog.ts"
-import { cases, field, heldKpiSub, heldTabSummary, levelWords, openAfterHash, scalar, targetsGuarantee, verdictWords } from "./lib/guarantees.ts"
+import { cases, field, heldKpiSub, heldTabSummary, levelWords, openAfterHash, scalar, targetsGuarantee, uniqueLaws, uniqueRuleCount, verdictWords } from "./lib/guarantees.ts"
 import { transport, type Guarantees } from "./lib/transport.ts"
 import type { MenuEntry } from "./shell.tsx"
 import { ENFORCED, HeldRuleRow, heldCountText, heldGroupKey, LawsPanel, useHeldBack } from "./laws.tsx"
@@ -203,10 +203,6 @@ export function useRulesMenu(): readonly MenuEntry[] | undefined {
   return read.data?.map(({ name }) => ({ href: `#guarantee-${name}`, label: TITLE[name] ?? name }))
 }
 
-/** How many distinct rules a concept carries (its laws plus any non-law invariants). */
-const ruleCountOf = (concept: Concept) =>
-  concept.laws.length + concept.rules.filter((rule) => !concept.laws.some(({ rationale }) => rationale === rule)).length
-
 /** A type heading linking to its Workspace records view, with its technical id under Technical view. */
 function TypeHeading({ concept, technical }: { readonly concept: Concept; readonly technical: boolean }) {
   return (
@@ -240,10 +236,11 @@ function LiveRules() {
   // In the held-work view, follow the server's inbox order (largest held groups first).
   const heldTypes = [...new Set(groups.map(({ objectType }) => objectType))]
 
-  const businessRuleCount = governed.reduce((sum, concept) => sum + ruleCountOf(concept), 0)
-  const errorSeverityCount = governed.reduce((sum, { laws }) => sum + laws.filter(({ severity }) => severity === "error").length, 0)
-  const warningSeverityCount = governed.reduce((sum, { laws }) => sum + laws.filter(({ severity }) => severity === "warning").length, 0)
-  const systemRuleCount = system.reduce((sum, concept) => sum + ruleCountOf(concept), 0)
+  const businessLaws = uniqueLaws(governed)
+  const businessRuleCount = uniqueRuleCount(governed)
+  const errorSeverityCount = businessLaws.filter(({ severity }) => severity === "error").length
+  const warningSeverityCount = businessLaws.filter(({ severity }) => severity === "warning").length
+  const systemRuleCount = uniqueRuleCount(system)
   const heldBadge = section && (section.count > 0 || section.approximate) ? heldCountText(section.count, section.approximate) : undefined
   const technical = view === "technical"
 

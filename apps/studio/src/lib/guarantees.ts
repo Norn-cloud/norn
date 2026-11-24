@@ -1,3 +1,4 @@
+import type { Concept, Law } from "./catalog.ts"
 import type { Schemas } from "./transport.ts"
 
 type Scalar = Schemas["NornGuaranteesGuaranteeScalar"]
@@ -164,4 +165,28 @@ export function heldTabSummary(
   }
   const holdNoun = section.count === 1 && !section.approximate ? "per-rule hold" : "per-rule holds"
   return `Showing ${shownGroups} of ${heldCountText(shownGroups, section.approximate)} ${groupWord(shownGroups)} (${totalText} ${holdNoun}; a record held by two rules counts once per rule${bound}).`
+}
+
+/** Distinct laws across `concepts`, deduplicated by law id so inherited laws count once. */
+export function uniqueLaws(concepts: readonly Pick<Concept, "laws">[]): readonly Law[] {
+  const seen = new Set<string>()
+  const out: Law[] = []
+  for (const concept of concepts) {
+    for (const law of concept.laws) {
+      if (seen.has(law.id)) continue
+      seen.add(law.id)
+      out.push(law)
+    }
+  }
+  return out
+}
+
+/** Distinct rules across `concepts`: each unique law once, plus each concept's own non-law invariants. */
+export function uniqueRuleCount(concepts: readonly Pick<Concept, "laws" | "rules">[]): number {
+  const laws = uniqueLaws(concepts).length
+  const invariants = concepts.reduce(
+    (sum, concept) => sum + concept.rules.filter((rule) => !concept.laws.some(({ rationale }) => rationale === rule)).length,
+    0,
+  )
+  return laws + invariants
 }

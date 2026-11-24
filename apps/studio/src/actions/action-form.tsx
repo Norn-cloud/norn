@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import {
-  ACTIONS_UNAVAILABLE, callAction, decimalExample, instantText, isDiagnosticPlaced, offsetSuffix, pickerDateTime, rebaseFields, resolveDateTime, selectedAlternative, sentMembers, inputPointer, itemNoun, newIdempotencyKey, receiptVerb, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
+  ACTIONS_UNAVAILABLE, callAction, decimalExample, escapePointer, instantText, isDiagnosticPlaced, offsetSuffix, pickerDateTime, rebaseFields, resolveDateTime, seedDraft, selectedAlternative, sentMembers, inputPointer, itemNoun, newIdempotencyKey, receiptVerb, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
   type ActionReceipt, type ActionSummary, type Diagnostic, type Draft, type FormField, type Section, type Spec,
 } from "../lib/actions.ts"
 import { parkedOf, type ParkedCall, type Phase } from "../lib/screen/call.ts"
@@ -69,10 +69,7 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   const fields = useMemo(() => fieldsOf(action.inputSchema), [action])
   const sections = useMemo(() => sectionsOf(fields, groupsOf(action.inputSchema), action.objectIdField), [fields, action])
   const blocked = useMemo(() => unsupported(fields), [fields])
-  const initial = useMemo(() => {
-    const seeded = Object.entries(defaults).reduce<Draft>((draft, [name, value]) => withDraftAt(draft, `/${name}`, value), emptyDraft(fields))
-    return Object.entries(prefill).reduce<Draft>((draft, [name, value]) => withDraftAt(draft, `/${name}`, value), seeded)
-  }, [fields, defaults, prefill])
+  const initial = useMemo(() => seedDraft(fields, defaults, prefill), [fields, defaults, prefill])
   const [draft, setDraft] = useState<Draft>(remembered ?? initial)
   // A kept draft is unsent work: the sheet treats it as dirty from the start.
   useEffect(() => { if (remembered !== undefined && JSON.stringify(remembered) !== JSON.stringify(initial)) onDirty?.(true) }, [])
@@ -161,7 +158,7 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
       onAgain={writesWhole(action) && phase.kind !== "undoing" ? () => { setDraft(initial); setStep(0); setReached(0); dispatch({ kind: "again", key: newKey() }) } : undefined} onClose={onClose} />
   }
 
-  const links = new Map((action.inputLinks ?? []).map(({ field, objectKind }) => [`/${field}`, objectKind] as const))
+  const links = new Map((action.inputLinks ?? []).map(({ field, objectKind }) => [`/${escapePointer(field)}`, objectKind] as const))
   const counts = problemsBySection(sections, diagnostics, draft)
   const go = (to: number) => { moved.current = true; setStep(to); setReached((r) => Math.max(r, to)); dispatch({ kind: "back" }) }
   const shown = wizard ? (step < review ? [sections[step]!] : []) : sections
@@ -196,7 +193,7 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
             {heading !== null && <h3 id={headingId} className={cn("text-sm font-medium", section.title === null && "text-muted-foreground")}>{heading}</h3>}
             {section.fields.map((field) => (
               <FieldRow key={field.pointer} field={field} label={sectionLabel(fields, field)} draft={draft} diagnostics={diagnostics}
-                locked={prefill[field.name] !== undefined && field.pointer === `/${field.name}`} onEdit={edit} />
+                locked={prefill[field.name] !== undefined && field.pointer === `/${escapePointer(field.name)}`} onEdit={edit} />
             ))}
           </section>
         )
@@ -503,7 +500,7 @@ function Review({ sections, fields, draft, counts, prefill, onEdit }: {
               <div key={field.pointer} className="contents">
                 <dt className="text-muted-foreground">{sectionLabel(fields, field)}</dt>
                 <dd className="min-w-0 break-words">
-                  {prefill[field.name] !== undefined && field.pointer === `/${field.name}` && <Lock className="mr-1 inline size-3 text-muted-foreground" aria-label="This record" />}
+                  {prefill[field.name] !== undefined && field.pointer === `/${escapePointer(field.name)}` && <Lock className="mr-1 inline size-3 text-muted-foreground" aria-label="This record" />}
                   {shownValue(field, draftAt(draft, field.pointer))}
                 </dd>
               </div>

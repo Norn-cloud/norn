@@ -12,12 +12,20 @@ import { keptDrafts, sessionKey } from "./kept-drafts.ts"
 import { parkedCalls } from "./parked-calls.ts"
 import type { ParkedCall } from "../lib/screen/call.ts"
 
+/** Query options for a type- or record-scoped action catalog read. */
+export const actionsQueryOptions = (objectKind: string, objectId?: string) => ({
+  queryKey: ["actions", objectKind, objectId ?? null] as const,
+  queryFn: () => listActions(objectKind, undefined, objectId),
+  retry: false as const,
+  staleTime: objectId === undefined ? 60_000 : 0,
+})
+
 /**
  * The actions the cell offers this reader for one object type, or for one record in its current
  * state (the server filters; Studio shows what it gets).
  */
 export function useActions(objectKind: string, objectId?: string, enabled = true) {
-  return useQuery<CatalogRead>({ queryKey: ["actions", objectKind, objectId ?? null], queryFn: () => listActions(objectKind, undefined, objectId), retry: false, staleTime: objectId === undefined ? 60_000 : 0, enabled })
+  return useQuery<CatalogRead>({ ...actionsQueryOptions(objectKind, objectId), enabled })
 }
 
 const draftKey = (open: OpenAction) =>

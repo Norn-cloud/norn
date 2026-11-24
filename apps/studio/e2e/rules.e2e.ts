@@ -221,10 +221,12 @@ async function shoot(page: Page, name: string) {
 interface CellOptions {
   readonly inbox?: unknown
   readonly profile?: { readonly rows: number; readonly quarantinedRows: number; readonly approximate: boolean; readonly scanLimit: number }
+  readonly actionsFor?: (kind: string | null, callCount: number) => readonly unknown[]
 }
 
 async function cell(page: Page, options: CellOptions = {}) {
   const actionCalls: { readonly actionId: string; readonly body: { readonly input: Record<string, unknown>; readonly idempotencyKey: string } }[] = []
+  let catalogReads = 0
   await session(page)
   await page.route("**/api/host/v1/**", (route) => {
     const url = new URL(route.request().url())
@@ -235,8 +237,11 @@ async function cell(page: Page, options: CellOptions = {}) {
     if (path.endsWith("/v1/decisions")) return route.fulfill({ json: { items: [], total: 0, approximate: false, serverNowMs: Date.UTC(2026, 10, 23, 12, 0, 0) } })
     if (path.endsWith("/v1/decisions/requested")) return route.fulfill({ json: { items: [], serverNowMs: Date.UTC(2026, 10, 23, 12, 0, 0) } })
     if (path.endsWith("/v1/actions") && route.request().method() === "GET") {
+      catalogReads += 1
       const kind = url.searchParams.get("objectKind")
-      const items = kind === null || kind === "docs.ScannedDocument" ? [correctActionSummary] : []
+      const items = options.actionsFor
+        ? options.actionsFor(kind, catalogReads)
+        : (kind === null || kind === "docs.ScannedDocument" ? [correctActionSummary] : [])
       return route.fulfill({ json: { items } })
     }
     if (path.includes("/v1/actions/") && route.request().method() === "POST") {
@@ -552,4 +557,37 @@ test("rules: the record page and object type page both expose a Rules tab leadin
   await expect(rule).toContainText("500+ held back")
   await expect(rule.getByRole("link", { name: "Use 72.00" })).toHaveAttribute("href", "/sources/docs.ScannedDocument/SCAN-INV-0042")
   await shoot(page, "rules-type-tab")
+})
+
+test("rules: suggested-fix navigation reads the live action catalog instead of consuming a stale cached read", async ({ page }) => {
+  // First visit caches an empty action catalog for SCAN-INV-0042; later live reads offer the fix action.
+  let offerAction = false
+  await cell(page, {
+    actionsFor: (kind) => (offerAction && (kind === null || kind === "docs.ScannedDocument") ? [correctActionSummary] : []),
+  })
+  await page.goto("/sources/docs.ScannedDocument/SCAN-INV-0042")
+  await expect(page.getByRole("heading", { name: "SCAN-INV-0042", level: 1 })).toBeVisible()
+  await expect(page.getByRole("button", { name: "Correct an extracted total" })).toHaveCount(0)
+
+  // Navigate via SPA (keeping QueryClient cache warm) to Rules, flip the server to offer the action, and follow Use 72.00.
+  offerAction = true
+  await page.getByRole("link", { name: "All rules" }).click()
+  await expect(page).toHaveURL((url) => url.pathname === "/rules")
+  const rule = page.locator('[data-law="canon.ItemizedDocument.total_matches_lines"]').first()
+  await rule.locator('[data-held-record="SCAN-INV-0042"]').getByRole("link", { name: "Use 72.00" }).click()
+  await expect(page).toHaveURL(/\/sources\/docs\.ScannedDocument\/SCAN-INV-0042$/)
+  const sheet = page.getByRole("dialog")
+  await expect(sheet.getByRole("heading", { name: "Correct an extracted total" })).toBeVisible()
+  await expect(sheet.locator('[data-pointer="/total"] input')).toHaveValue("72.00")
+
+  // Reverse direction: cache now holds the action, but server withdraws it before the next fix navigation.
+  await sheet.getByRole("button", { name: "Close" }).click()
+  await expect(sheet).toBeHidden()
+  offerAction = false
+  await page.getByRole("link", { name: "All rules" }).click()
+  await expect(page).toHaveURL((url) => url.pathname === "/rules")
+  await rule.locator('[data-held-record="SCAN-INV-0042"]').getByRole("link", { name: "Use 72.00" }).click()
+  await expect(page).toHaveURL(/\/sources\/docs\.ScannedDocument\/SCAN-INV-0042$/)
+  await expect(page.getByRole("button", { name: "Correct an extracted total" })).toHaveCount(0)
+  await expect(page.getByRole("dialog")).toHaveCount(0)
 })

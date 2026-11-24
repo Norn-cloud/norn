@@ -224,7 +224,8 @@ export interface FormField {
   readonly spec: Spec
 }
 
-const escapePointer = (name: string) => name.replaceAll("~", "~0").replaceAll("/", "~1")
+/** Escape one object member name into an RFC 6901 JSON Pointer segment (`~` → `~0`, `/` → `~1`). */
+export const escapePointer = (name: string) => name.replaceAll("~", "~0").replaceAll("/", "~1")
 const JSON_DOMAIN = ["array", "boolean", "null", "number", "object", "string"]
 
 function specOf(schema: unknown, pointer: string): { spec: Spec; nullable: boolean } {
@@ -691,7 +692,7 @@ export function sectionsOf(fields: readonly FormField[], groups: readonly Group[
   }
   place(fields)
   // The record's id leads the form when it is required and no group places it; declared groups are never regrouped.
-  const id = idField === undefined ? undefined : rest.find((f) => f.pointer === `/${idField}` && f.required)
+  const id = idField === undefined ? undefined : rest.find((f) => f.pointer === `/${escapePointer(idField)}` && f.required)
   const others = id === undefined ? rest : rest.filter((f) => f !== id)
   const sections: Section[] = named.filter((section) => section.fields.length > 0)
   if (others.length > 0) sections.push({ id: null, title: null, fields: others })
@@ -753,11 +754,27 @@ export interface SuggestedFixIntent {
   readonly fix: SuggestedFix
 }
 
+/** Build a form's initial draft by seeding top-level `defaults` and `prefill` over `emptyDraft(fields)`. */
+export function seedDraft(
+  fields: readonly FormField[],
+  defaults: Readonly<Record<string, Draft>> = {},
+  prefill: Readonly<Record<string, string>> = {},
+): Draft {
+  const seeded = Object.entries(defaults).reduce<Draft>(
+    (draft, [name, value]) => withDraftAt(draft, `/${escapePointer(name)}`, value),
+    emptyDraft(fields),
+  )
+  return Object.entries(prefill).reduce<Draft>(
+    (draft, [name, value]) => withDraftAt(draft, `/${escapePointer(name)}`, value),
+    seeded,
+  )
+}
+
 /** Convert one JSON argument from the server into a form Draft matching `spec`. */
 export function draftValueFromJson(value: unknown, spec?: Spec): Draft | undefined {
   if (value === undefined) return undefined
+  if (spec?.kind === "json") return JSON.stringify(value)
   if (value === null) return null
-  if (spec?.kind === "json") return typeof value === "string" ? value : JSON.stringify(value)
   if (typeof value === "string") return value
   if (typeof value === "number") return String(value)
   if (typeof value === "boolean") return value ? "true" : "false"
@@ -780,18 +797,21 @@ export function draftValueFromJson(value: unknown, spec?: Spec): Draft | undefin
 
 /**
  * Derive locked `prefill` (record identity) and editable `defaults` (server-supplied arguments and
- * expected value) for opening a server-offered `SuggestedFix` on `action`.
+ * expected value) for opening a server-offered `SuggestedFix` on `action`. Returns `null` if the
+ * fix targets a different record identity than `recordId`.
  */
 export function suggestedFixInputs(
   action: ActionSummary,
   recordId: string,
   fix: SuggestedFix,
-): { readonly prefill: Readonly<Record<string, string>>; readonly defaults: Readonly<Record<string, Draft>> } {
-  const fields = new Map(fieldsOf(action.inputSchema).map((field) => [field.name, field] as const))
-  const rawId = fix.arguments[action.objectIdField]
-  const prefill: Record<string, string> = {
-    [action.objectIdField]: typeof rawId === "string" && rawId !== "" ? rawId : recordId,
+): { readonly prefill: Readonly<Record<string, string>>; readonly defaults: Readonly<Record<string, Draft>> } | null {
+  if (fix.property === action.objectIdField && fix.value !== recordId) return null
+  if (Object.hasOwn(fix.arguments, action.objectIdField)) {
+    const rawId = fix.arguments[action.objectIdField]
+    if (rawId !== undefined && rawId !== "" && rawId !== recordId) return null
   }
+  const fields = new Map(fieldsOf(action.inputSchema).map((field) => [field.name, field] as const))
+  const prefill: Record<string, string> = { [action.objectIdField]: recordId }
   const merged: Record<string, unknown> = {
     ...fix.arguments,
     ...(Object.hasOwn(fix.arguments, fix.property) ? {} : { [fix.property]: fix.value }),
