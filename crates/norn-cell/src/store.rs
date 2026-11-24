@@ -39,7 +39,7 @@ use crate::read::{
 use crate::system::{
     DEFINITION_ACTIVE, DEFINITION_ADMISSION_RECEIPT, DEFINITION_LAYOUT, DEFINITION_REGISTRY,
     DEFINITION_VERSION, INBOX, MARKING_CURRENT, MARKING_SNAPSHOT, MARKING_VERSION, META, OUTBOX,
-    RUN, STORE_FORMAT, SYSTEM_DDL, ensure_marking_subject, marking_subject,
+    RUN, STORE_FORMAT, ensure_marking_subject, marking_subject,
 };
 use crate::write::Writer;
 
@@ -2453,15 +2453,7 @@ impl<E: SqlEngine> CellStore<E> {
         // Ordered migrations see the layout they were written for: before
         // this engine's schema statements, inside the open transaction.
         crate::engine_release::upgrade(conn)?;
-        for statement in SYSTEM_DDL
-            .iter()
-            .chain(&crate::flow_run::DDL)
-            .chain(&crate::decision_ledger::DDL)
-            .chain(&crate::due_retry::DDL)
-        {
-            conn.execute_batch(statement)?;
-        }
-        conn.execute_batch(crate::decision_ledger::BACKFILL_APPROVED_CALLS)?;
+        crate::system::init_core_tables(conn)?;
         // Claim endpoints of bundles consumed before the table existed; a
         // no-op for every bundle already indexed.
         conn.execute(&crate::system::claim_endpoints_of("1"), params![])?;
@@ -3227,14 +3219,7 @@ impl<E: SqlEngine> CellStore<E> {
                     crate::engine_release::upgrade(&self.conn)?;
                     // A file provisioned before a system table existed gains it here,
                     // so the next run start or write finds it (idempotent DDL).
-                    for statement in SYSTEM_DDL
-            .iter()
-            .chain(&crate::flow_run::DDL)
-            .chain(&crate::decision_ledger::DDL)
-            .chain(&crate::due_retry::DDL) {
-                        self.conn.execute_batch(statement)?;
-                    }
-                    self.conn.execute_batch(crate::decision_ledger::BACKFILL_APPROVED_CALLS)?;
+                    crate::system::init_core_tables(&self.conn)?;
                     crate::retained::init(&self.conn)?;
                     crate::compute::materialize::init(&self.conn)?;
                     let binding = |key: &str| self.conn.query_optional(
@@ -3482,9 +3467,18 @@ impl<E: SqlEngine> CellStore<E> {
             }
             crate::flow_run::check_starts(&writer.reader(), effective_batch)?;
             crate::decision_ledger::check(&writer.reader(), effective_batch)?;
+            let automation_watch =
+                crate::automation_outbox::capture_before(&writer.reader(), effective_batch)?;
             let written = writer.apply_writes()?;
             crate::flow_run::apply(&writer.reader(), effective_batch, &written, commit_seq)?;
             crate::decision_ledger::apply(&writer.reader(), effective_batch, commit_seq)?;
+            crate::automation_outbox::record(
+                &writer.reader(),
+                effective_batch,
+                &written,
+                commit_seq,
+                automation_watch,
+            )?;
             let quantity_result = writer.apply_quantity()?;
             probe(CommitPoint::FactsApplied)?;
             let linked = writer.apply_links()?;

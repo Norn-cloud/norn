@@ -70,6 +70,12 @@ where
         (self.build_request)(request)
             .is_some_and(|access| pdp_discloses(&self.pdp, request, &access))
     }
+    fn authorize_automation_grant(
+        &self,
+        request: &crate::authz::AutomationGrantRequest<'_>,
+    ) -> Result<(), Refusal> {
+        self.inner.authorize_automation_grant(request)
+    }
 }
 
 /// DIAG-DISCLOSE-1: whether `pdp` allows the trusted `access` request to

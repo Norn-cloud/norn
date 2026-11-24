@@ -21,9 +21,12 @@
 
 use std::collections::BTreeSet;
 
+use norn_cell::engine::SqlEngine;
+use norn_cell::retained::RetainedDefinition;
 use serde_json::Value;
 
-use crate::refusal::RefusalDiagnostic;
+use crate::host::DevHost;
+use crate::refusal::{Refusal, RefusalDiagnostic};
 
 /// The payload's members; any other is a finding.
 const MEMBERS: [&str; 6] = [
@@ -256,6 +259,74 @@ pub fn restate(canonical: &str) -> Result<String, String> {
         text("/risk").unwrap_or("medium")
     ));
     Ok(lines.join("\n"))
+}
+
+/// The admitted action ids of the active definitions, and the actions an
+/// active approval other than `id` already gates.
+pub(crate) fn approval_context<E: SqlEngine>(
+    host: &DevHost<E>,
+    id: &str,
+) -> Result<(BTreeSet<String>, BTreeSet<String>), Refusal> {
+    let actions = {
+        let cell = host.cell()?;
+        let reader = cell.store().read();
+        reader
+            .installed_definitions(None)
+            .map_err(Refusal::host)?
+            .map(|active| serde_json::from_str::<Vec<Value>>(&active.canonical_set))
+            .transpose()
+            .map_err(Refusal::host)?
+            .unwrap_or_default()
+            .iter()
+            .filter(|artifact| artifact.get("kind").and_then(Value::as_str) == Some("action"))
+            .filter_map(|artifact| {
+                artifact
+                    .pointer("/payload/actionId")?
+                    .as_str()
+                    .map(str::to_owned)
+            })
+            .collect()
+    };
+    Ok((actions, gated_except(host, &|other| other == id)?))
+}
+
+fn gated_except<E: SqlEngine>(
+    host: &DevHost<E>,
+    skip: &dyn Fn(&str) -> bool,
+) -> Result<BTreeSet<String>, Refusal> {
+    let mut gated = BTreeSet::new();
+    for record in active_approvals(host)? {
+        if skip(&record.id) {
+            continue;
+        }
+        let payload: Value = serde_json::from_str(&record.payload).map_err(Refusal::host)?;
+        if let Some(action) = payload.get("action").and_then(Value::as_str) {
+            gated.insert(action.to_owned());
+        }
+    }
+    Ok(gated)
+}
+
+/// Every active approval revision, ordered by id.
+pub(crate) fn active_approvals<E: SqlEngine>(
+    host: &DevHost<E>,
+) -> Result<Vec<RetainedDefinition>, Refusal> {
+    let limit = crate::definition_routes::MAX_LIST_LIMIT;
+    let cell = host.cell()?;
+    let reader = cell.store().read();
+    let mut approvals = Vec::new();
+    let mut after: Option<String> = None;
+    loop {
+        let page = reader
+            .retained_definitions("approval", false, after.as_deref(), limit)
+            .map_err(Refusal::host)?;
+        let full = page.len() >= usize::try_from(limit).unwrap_or(usize::MAX);
+        after = page.last().map(|record| record.definition.id.clone());
+        approvals.extend(page.into_iter().map(|record| record.definition));
+        if !full {
+            return Ok(approvals);
+        }
+    }
 }
 
 #[cfg(test)]

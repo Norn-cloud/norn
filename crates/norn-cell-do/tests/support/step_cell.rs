@@ -254,6 +254,30 @@ impl Authorizer for StepPolicy {
             ActionDenial::Invisible,
         )
     }
+    fn authorize_automation_grant(
+        &self,
+        request: &norn_api::authz::AutomationGrantRequest<'_>,
+    ) -> Result<(), Refusal> {
+        if self
+            .caller
+            .current()
+            .is_none_or(|caller| caller.subject_id != request.actor)
+        {
+            return Err(norn_api::authz::read_denied());
+        }
+        match self.decide(
+            &request.action.action_id,
+            &FactKey::new(request.object_type, ""),
+            ActionDenial::Forbidden {
+                reason: norn_api::refusal::codes::AUTHZ_DENIED.into(),
+            },
+        ) {
+            Ok(()) => Ok(()),
+            Err(ActionDenial::Forbidden { .. } | ActionDenial::Invisible) => {
+                Err(norn_api::authz::read_denied())
+            }
+        }
+    }
 }
 
 /// The cell's disclosure runtime: its handle key only.

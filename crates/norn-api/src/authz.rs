@@ -84,6 +84,20 @@ pub struct RefusalDetailRequest<'a> {
     pub action_id: &'a str,
 }
 
+/// Trusted author and target action checked when admitting or installing an
+/// automation definition (Core 05 `AUTH-ATTENUATE-1`).
+#[derive(Debug, Clone, Copy)]
+pub struct AutomationGrantRequest<'a> {
+    /// Physical cell scope.
+    pub scope: &'a CellScope,
+    /// Authenticated author resolved by the trusted transport.
+    pub actor: &'a str,
+    /// Admitted action the automation would invoke.
+    pub action: &'a norn_ir::ActionRoot,
+    /// Declared object type the automation watches.
+    pub object_type: &'a str,
+}
+
 /// HOST-AUTH-1: trusted server policy; every kernel callback denies by default.
 pub trait Authorizer: Send + Sync {
     /// HOST-READ-1: metadata/action authority supplies no data disclosure grant.
@@ -163,6 +177,20 @@ pub trait Authorizer: Send + Sync {
     /// Action/read grants do not imply this decision; absent policy denies.
     fn disclose_refusal_detail(&self, _request: &RefusalDetailRequest<'_>) -> bool {
         false
+    }
+
+    /// Core 05 `AUTH-ATTENUATE-1`: whether `request.actor` holds an explicit
+    /// grant for `request.action` on `request.object_type`, permitting them to
+    /// bind an attenuated, revocable automation delegation for it. Defaults to
+    /// deny; never borrowed from a later triggering actor.
+    ///
+    /// # Errors
+    /// Denies unless the host policy explicitly verifies the author's grant.
+    fn authorize_automation_grant(
+        &self,
+        _request: &AutomationGrantRequest<'_>,
+    ) -> Result<(), Refusal> {
+        Err(read_denied())
     }
 
     /// Decide before any target is loaded.
@@ -342,5 +370,14 @@ mod tests {
             norn_kernel::ActionAuthorizer::authorize_read_type(&kernel, &read_type),
             ReadMetadata.action_read_type(&read_type)
         );
+        let grant_refusal = ReadMetadata
+            .authorize_automation_grant(&AutomationGrantRequest {
+                scope: &cell_scope,
+                actor: "viewer",
+                action: &action,
+                object_type: "demo.Order",
+            })
+            .expect_err("automation author grant must deny by default");
+        assert_eq!(grant_refusal.code, codes::AUTHZ_DENIED);
     }
 }

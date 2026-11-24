@@ -38,6 +38,68 @@ const STORAGE_V2: &str = include_str!("fixtures/engine-storage-v2.json");
 const STORAGE_V3: &str = include_str!("fixtures/engine-storage-v3.json");
 const STORAGE_V4: &str = include_str!("fixtures/engine-storage-v4.json");
 
+/// Storage version 6 (#1424 U1) adds the transactional automation trigger
+/// outbox and the server-bound retained authority table, both initially empty
+/// on older cells.
+fn add_automation_tables(image: &mut Value) {
+    let objects = [
+        (
+            "table",
+            "_norn_automation_outbox",
+            "_norn_automation_outbox",
+            "CREATE TABLE \"_norn_automation_outbox\" (\n  \"world\" TEXT NOT NULL,\n  \"automation_id\" TEXT NOT NULL,\n  \"revision\" INTEGER NOT NULL,\n  \"trigger_commit_seq\" INTEGER NOT NULL,\n  \"object_type\" TEXT NOT NULL,\n  \"object_id\" TEXT NOT NULL,\n  \"object_version\" INTEGER NOT NULL,\n  \"trigger_kind\" TEXT NOT NULL,\n  \"action_id\" TEXT,\n  \"before_values\" TEXT,\n  \"after_values\" TEXT,\n  \"recorded_at_ms\" INTEGER NOT NULL,\n  \"consumed_commit_seq\" INTEGER,\n  PRIMARY KEY (\"world\", \"automation_id\", \"revision\", \"trigger_commit_seq\", \"object_type\", \"object_id\", \"object_version\")\n)",
+        ),
+        (
+            "index",
+            "_norn_automation_outbox/pending",
+            "_norn_automation_outbox",
+            "CREATE INDEX \"_norn_automation_outbox/pending\" ON \"_norn_automation_outbox\" (\"world\", \"trigger_commit_seq\", \"automation_id\", \"revision\", \"object_type\", \"object_id\", \"object_version\") WHERE \"consumed_commit_seq\" IS NULL",
+        ),
+        (
+            "table",
+            "_norn_retained_authority",
+            "_norn_retained_authority",
+            "CREATE TABLE \"_norn_retained_authority\" (\n  \"id\" TEXT NOT NULL,\n  \"revision\" INTEGER NOT NULL,\n  \"authority\" TEXT NOT NULL,\n  PRIMARY KEY (\"id\", \"revision\")\n)",
+        ),
+    ];
+    for (kind, name, table, sql) in objects {
+        image["schema"]
+            .as_array_mut()
+            .expect("schema")
+            .push(serde_json::json!({ "type": kind, "name": name, "table": table, "sql": sql }));
+    }
+    let tables = image["tables"].as_object_mut().expect("tables");
+    tables.insert(
+        "_norn_automation_outbox".to_owned(),
+        serde_json::json!({
+            "columns": [
+                "rowid",
+                "world",
+                "automation_id",
+                "revision",
+                "trigger_commit_seq",
+                "object_type",
+                "object_id",
+                "object_version",
+                "trigger_kind",
+                "action_id",
+                "before_values",
+                "after_values",
+                "recorded_at_ms",
+                "consumed_commit_seq"
+            ],
+            "rows": [],
+        }),
+    );
+    tables.insert(
+        "_norn_retained_authority".to_owned(),
+        serde_json::json!({
+            "columns": ["rowid", "id", "revision", "authority"],
+            "rows": [],
+        }),
+    );
+}
+
 /// The marking history storage version (#1547) adds the partial index of the
 /// version marking labels that are not empty to every older cell; no row
 /// changes.
@@ -307,6 +369,7 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
     // The v1 fixture holds no decision, so nothing is backfilled.
     add_approval_recovery_tables(&mut expected, &serde_json::json!([]));
     add_marking_history_index(&mut expected);
+    add_automation_tables(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -429,6 +492,7 @@ fn a_storage_v2_cell_opens_on_this_engine_with_identical_receipts() {
     expected["storage"] = STORAGE_VERSION.into();
     add_approval_recovery_tables(&mut expected, approved);
     add_marking_history_index(&mut expected);
+    add_automation_tables(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -525,6 +589,7 @@ fn a_storage_v3_cell_opens_on_this_engine_with_identical_receipts() {
     stamp_row[2] = stamp.into();
     expected["storage"] = STORAGE_VERSION.into();
     add_marking_history_index(&mut expected);
+    add_automation_tables(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -588,6 +653,7 @@ fn a_storage_v4_cell_opens_on_this_engine_with_identical_receipts() {
     stamp_row[2] = stamp.into();
     expected["storage"] = STORAGE_VERSION.into();
     add_marking_history_index(&mut expected);
+    add_automation_tables(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);

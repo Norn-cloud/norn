@@ -52,6 +52,7 @@
 //!    had the same idempotency key and binding, this one replays after current
 //!    state authorization.
 
+mod automation_input;
 mod input;
 mod owned_rows;
 mod parameter;
@@ -73,7 +74,7 @@ use norn_ir::{ActionEffectProgram, FactChange, ObjectTypeName};
 use crate::action::{ActionCommandRejection, ActionCommandShape, check_action_command};
 use crate::cell_host::{
     CellCommit, CellHost, CommitError, FactKey, FactMutation, FactState, FactWrite, JsonObject,
-    JsonValue, LinkKey, LinkMutation, LinkWrite,
+    LinkKey, LinkMutation, LinkWrite,
 };
 use crate::decision_commit::{
     DecisionRefusal, FactEvent, TypeCatalog, prepare_decision_with_limits, widen_effect,
@@ -81,6 +82,7 @@ use crate::decision_commit::{
 use crate::envelope::{EnvelopeCounts, TurnEnvelopeMeter, check_decision_envelope};
 use crate::limits::EnvelopeLimits;
 
+pub use automation_input::{AutomationInputViolation, validate_automation_static_input};
 pub use input::{actor_derived_fields, prepare_action_input, prepare_action_input_for_call};
 pub use types::{
     ACTION_CALL_TYPE, ACTION_EFFECT_MUTATE_PARENT_WITH_ROWS, ActionAuthorizer, ActionAuthzRequest,
@@ -90,7 +92,7 @@ pub use types::{
     OWNED_ROWS_TYPE, owned_rows_manifest_key,
 };
 
-use input::{build_action_commands, check_action_record_size};
+use input::{action_link_endpoint, build_action_commands, check_action_record_size};
 use owned_rows::commit_parent_rows;
 use receipt::consume_receipt;
 use slice::{authorize_slice_type, reference_read_proof};
@@ -1065,19 +1067,4 @@ fn replay<X>(
             key: key.to_owned(),
         }),
     }
-}
-
-fn action_link_endpoint<X>(
-    input: &JsonObject,
-    object_type: &str,
-    field: &str,
-) -> Result<FactKey, ActionRefusal<X>> {
-    input
-        .get(field)
-        .and_then(JsonValue::as_str)
-        .filter(|key| !key.trim().is_empty())
-        .map(|key| FactKey::new(object_type, key))
-        .ok_or_else(|| ActionRefusal::InvalidInput {
-            field: field.to_owned(),
-        })
 }

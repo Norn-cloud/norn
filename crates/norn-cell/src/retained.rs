@@ -18,6 +18,9 @@ use crate::{
 
 /// The table holding every revision of every retained definition.
 pub(crate) const RETAINED_DEFINITION: &str = "_norn_retained_definition";
+/// The table holding server-bound author grants for retained definitions
+/// (`AUTH-ATTENUATE-1`). Written only inside `SqlEngine::definition_writes`.
+pub(crate) const RETAINED_AUTHORITY: &str = "_norn_retained_authority";
 
 const RETAINED_DDL: &[&str] = &[
     r#"CREATE TABLE IF NOT EXISTS "_norn_retained_definition" (
@@ -32,6 +35,12 @@ const RETAINED_DDL: &[&str] = &[
   "definitions_version" INTEGER NOT NULL,
   "commit_seq" INTEGER NOT NULL,
   "recorded_at" INTEGER NOT NULL,
+  PRIMARY KEY ("id", "revision")
+)"#,
+    r#"CREATE TABLE IF NOT EXISTS "_norn_retained_authority" (
+  "id" TEXT NOT NULL,
+  "revision" INTEGER NOT NULL,
+  "authority" TEXT NOT NULL,
   PRIMARY KEY ("id", "revision")
 )"#,
     // One revision per id per definitions version: a kernel set install
@@ -103,6 +112,10 @@ pub struct RetainedDefinition {
     /// The host-verified sign-off of this revision's plain-words restatement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub signoff: Option<RetainedSignoff>,
+    /// The host-verified, attenuated, revocable author grant bound to this
+    /// revision at install (`AUTH-ATTENUATE-1`). Never from a client.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authority: Option<RetainedAuthority>,
 }
 
 /// A sign-off the host verified: the installing principal, the install
@@ -116,6 +129,34 @@ pub struct RetainedSignoff {
     pub signed_at: u64,
     /// Lower-case hex SHA-256 of the recomputed restatement.
     pub restatement_sha256: String,
+}
+
+/// A server-verified, attenuated, revocable author grant bound to a retained
+/// definition revision (Core 05 `AUTH-ATTENUATE-1`). Never supplied by a
+/// client; never borrowed from a later triggering actor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RetainedAuthority {
+    /// Stable delegation id derived from the definition id, revision, author,
+    /// scope, and bound action.
+    pub delegation_id: String,
+    /// The verified principal who authored and installed this revision.
+    pub author: crate::flow_run::RunStarter,
+    /// Explicit cell scope (`org/environment`) this grant is attenuated to.
+    pub scope: String,
+    /// The single admitted action capability this grant is attenuated to.
+    pub action_id: String,
+    /// The object type this grant is attenuated to.
+    pub object_type: String,
+    /// Digest of the bound action definition at install time.
+    pub action_digest: String,
+    /// Host logical time (ms) when the author grant was verified and bound.
+    pub bound_at: u64,
+    /// Cell definitions version active when the grant was verified and bound.
+    pub definitions_version: u64,
+    /// Whether this delegation is revocable (always `true`; retiring or
+    /// revising the definition revokes this revision's delegation).
+    pub revocable: bool,
 }
 
 /// A retained-definition revision to install, compare-and-set on the id's
@@ -175,6 +216,23 @@ pub(crate) fn preflight(
             "retained definition payload digest mismatch".to_owned(),
         ));
     }
+    if definition.kind == "automation" && definition.lifecycle == RetainedLifecycle::Active {
+        let valid = definition.authority.as_ref().is_some_and(|authority| {
+            authority.revocable
+                && !authority.delegation_id.trim().is_empty()
+                && !authority.author.subject.trim().is_empty()
+                && !authority.scope.trim().is_empty()
+                && !authority.action_id.trim().is_empty()
+                && !authority.object_type.trim().is_empty()
+                && !authority.action_digest.trim().is_empty()
+        });
+        if !valid {
+            return Err(CellError::Engine(
+                "active automation definition requires a server-bound revocable author grant"
+                    .to_owned(),
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -210,6 +268,15 @@ pub(crate) fn insert(
             signoff,
         ],
     )?;
+    if let Some(authority) = &definition.authority {
+        let encoded = serde_json::to_string(authority).map_err(CellError::Json)?;
+        engine.execute(
+            &format!(
+                "INSERT INTO \"{RETAINED_AUTHORITY}\" (\"id\", \"revision\", \"authority\") VALUES (?1, ?2, ?3)"
+            ),
+            params![definition.id, to_i64(definition.revision)?, encoded],
+        )?;
+    }
     Ok(())
 }
 
@@ -244,7 +311,7 @@ fn current_revision(engine: &impl SqlEngine, id: &str) -> Result<Option<u64>, Ce
     revision.flatten().map(to_u64).transpose()
 }
 
-const COLUMNS: &str = "\"id\", \"revision\", \"kind\", \"lifecycle\", \"title\", \"payload\", \"payload_sha256\", \"definitions_version\", \"commit_seq\", \"recorded_at\", \"signoff\"";
+const COLUMNS: &str = "\"d\".\"id\", \"d\".\"revision\", \"d\".\"kind\", \"d\".\"lifecycle\", \"d\".\"title\", \"d\".\"payload\", \"d\".\"payload_sha256\", \"d\".\"definitions_version\", \"d\".\"commit_seq\", \"d\".\"recorded_at\", \"d\".\"signoff\", \"a\".\"authority\"";
 
 type Row = (
     String,
@@ -258,12 +325,30 @@ type Row = (
     i64,
     i64,
     Option<String>,
+    Option<String>,
 );
 
 fn record(row: Row) -> Result<RetainedDefinitionRecord, CellError> {
-    let (id, revision, kind, lifecycle, title, payload, payload_sha256, version, seq, at, signoff) =
-        row;
+    let (
+        id,
+        revision,
+        kind,
+        lifecycle,
+        title,
+        payload,
+        payload_sha256,
+        version,
+        seq,
+        at,
+        signoff,
+        authority,
+    ) = row;
     let signoff = signoff
+        .as_deref()
+        .map(serde_json::from_str)
+        .transpose()
+        .map_err(CellError::Json)?;
+    let authority = authority
         .as_deref()
         .map(serde_json::from_str)
         .transpose()
@@ -278,6 +363,7 @@ fn record(row: Row) -> Result<RetainedDefinitionRecord, CellError> {
             payload,
             payload_sha256,
             signoff,
+            authority,
         },
         definitions_version: to_u64(version)?,
         commit_seq: to_u64(seq)?,
@@ -299,6 +385,7 @@ macro_rules! row {
             $row.get(8)?,
             $row.get(9)?,
             $row.get(10)?,
+            $row.get(11)?,
         ))
     };
 }
@@ -310,7 +397,9 @@ fn at(
 ) -> Result<Option<RetainedDefinitionRecord>, CellError> {
     let row: Option<Row> = engine.query_optional(
         &format!(
-            "SELECT {COLUMNS} FROM \"{RETAINED_DEFINITION}\" WHERE \"id\" = ?1 AND \"revision\" = ?2"
+            "SELECT {COLUMNS} FROM \"{RETAINED_DEFINITION}\" AS \"d\" \
+             LEFT JOIN \"{RETAINED_AUTHORITY}\" AS \"a\" ON \"a\".\"id\" = \"d\".\"id\" AND \"a\".\"revision\" = \"d\".\"revision\" \
+             WHERE \"d\".\"id\" = ?1 AND \"d\".\"revision\" = ?2"
         ),
         params![id, to_i64(revision)?],
         |row| row!(row),
@@ -351,9 +440,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ) -> Result<Vec<RetainedDefinitionRecord>, CellError> {
         let rows = self.conn.query(
             &format!(
-                "SELECT {COLUMNS} FROM \"{RETAINED_DEFINITION}\" AS \"d\" WHERE \"kind\" = ?1 AND \"id\" > ?2 \
-                 AND \"revision\" = (SELECT MAX(\"revision\") FROM \"{RETAINED_DEFINITION}\" WHERE \"id\" = \"d\".\"id\") \
-                 AND (?3 OR \"lifecycle\" = 'active') ORDER BY \"id\" LIMIT ?4"
+                "SELECT {COLUMNS} FROM \"{RETAINED_DEFINITION}\" AS \"d\" \
+                 LEFT JOIN \"{RETAINED_AUTHORITY}\" AS \"a\" ON \"a\".\"id\" = \"d\".\"id\" AND \"a\".\"revision\" = \"d\".\"revision\" \
+                 WHERE \"d\".\"kind\" = ?1 AND \"d\".\"id\" > ?2 \
+                 AND \"d\".\"revision\" = (SELECT MAX(\"revision\") FROM \"{RETAINED_DEFINITION}\" WHERE \"id\" = \"d\".\"id\") \
+                 AND (?3 OR \"d\".\"lifecycle\" = 'active') ORDER BY \"d\".\"id\" LIMIT ?4"
             ),
             params![kind, after.unwrap_or(""), include_retired, i64::from(limit)],
         )?;

@@ -102,10 +102,11 @@ pub use action_commit::{
     ACTION_CALL_TYPE, ACTION_EFFECT_MUTATE_PARENT_WITH_ROWS, ActionAuthorizer, ActionAuthzRequest,
     ActionCall, ActionCallRecord, ActionDenial, ActionDerivedValue, ActionInputPreparation,
     ActionOutcome, ActionParameterPin, ActionPreconditionOutcome, ActionReadAuthzRequest,
-    ActionReadTypeAuthzRequest, ActionRefusal, NamingSeriesInspectionRequest, OWNED_ROWS_TYPE,
-    actor_derived_fields, commit_action, commit_action_with_limits, commit_action_with_meter,
-    commit_action_with_preparation, owned_rows_manifest_key, prepare_action_input,
-    prepare_action_input_for_call,
+    ActionReadTypeAuthzRequest, ActionRefusal, AutomationInputViolation,
+    NamingSeriesInspectionRequest, OWNED_ROWS_TYPE, actor_derived_fields, commit_action,
+    commit_action_with_limits, commit_action_with_meter, commit_action_with_preparation,
+    owned_rows_manifest_key, prepare_action_input, prepare_action_input_for_call,
+    validate_automation_static_input,
 };
 pub use cell_host::{Authorized, Checked, Committed, Proposed};
 pub use cell_host::{

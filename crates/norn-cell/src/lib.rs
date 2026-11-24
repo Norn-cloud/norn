@@ -30,6 +30,7 @@
 //!   commit consumes.
 
 pub mod analytics;
+pub mod automation_outbox;
 pub mod catalog;
 pub mod cell_identity;
 pub mod classification;

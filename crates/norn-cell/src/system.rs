@@ -642,3 +642,21 @@ pub const SYSTEM_DDL: &[&str] = &[
     MARKING_NONEMPTY_DDL,
     MARKING_VERSION_NONEMPTY_DDL,
 ];
+
+/// Ensure every core, flow, decision-ledger, due-retry, and automation-outbox
+/// system table exists (idempotent DDL).
+pub(crate) fn init_core_tables<E: crate::engine::SqlEngine>(
+    conn: &E,
+) -> Result<(), crate::CellError> {
+    for statement in SYSTEM_DDL
+        .iter()
+        .chain(&crate::flow_run::DDL)
+        .chain(&crate::decision_ledger::DDL)
+        .chain(&crate::due_retry::DDL)
+        .chain(&crate::automation_outbox::DDL)
+    {
+        conn.execute_batch(statement)?;
+    }
+    conn.execute_batch(crate::decision_ledger::BACKFILL_APPROVED_CALLS)?;
+    Ok(())
+}

@@ -483,6 +483,72 @@ impl ActionPolicy {
         self.callable.contains(action_id)
     }
 
+    /// Core 05 `AUTH-ATTENUATE-1`: whether the verified principal `caller`
+    /// holds a grant under this revision's Cedar policy to invoke `action_id`
+    /// on `object_type` (unconditionally, or under a resource/context-conditional
+    /// rule whose role requirements `caller` satisfies; row-level PDP checks
+    /// still run on every firing). Fails closed for uncallable actions, empty
+    /// roles, or unsupported actor kinds.
+    #[must_use]
+    pub fn author_holds_grant(&self, caller: &Caller, action_id: &str, object_type: &str) -> bool {
+        if !self.callable(action_id) || caller.roles.is_empty() {
+            return false;
+        }
+        let actor_kind = match caller.actor_kind {
+            "user" => ActorKind::User,
+            "service" => ActorKind::Service,
+            _ => return false,
+        };
+        let Ok(pdp) = self.caller_pdp(&caller.subject_id, caller.actor_kind, actor_kind) else {
+            return false;
+        };
+        let principal_attributes = if self.principal_id {
+            BTreeMap::from([(
+                PRINCIPAL_ID_ATTRIBUTE.to_owned(),
+                AttrValue::String(caller.subject_id.clone()),
+            )])
+        } else {
+            BTreeMap::new()
+        };
+        let permitted = authz::authorize(
+            &pdp,
+            &AccessRequest {
+                principal: PrincipalInput {
+                    subject_id: caller.subject_id.clone(),
+                    actor_kind,
+                    agent_session_id: None,
+                    roles: caller.roles.clone(),
+                    attributes: principal_attributes,
+                },
+                scope: Some(self.key.clone()),
+                capability: action_id.to_owned(),
+                action_id: action_id.to_owned(),
+                resource: ResourceInput {
+                    object_type: object_type.to_owned(),
+                    id: String::new(),
+                    scope: self.key.clone(),
+                    attributes: BTreeMap::new(),
+                },
+                context: BTreeMap::new(),
+                binding: None,
+                delegation: Delegation::Direct,
+            },
+        )
+        .is_ok();
+        if permitted {
+            return true;
+        }
+        self.conditional.get(action_id).is_some_and(|rules| {
+            rules.iter().any(|lists| {
+                lists.iter().all(|any_of| {
+                    any_of
+                        .iter()
+                        .any(|required| caller.roles.iter().any(|held| held == required))
+                })
+            })
+        })
+    }
+
     /// The PDP deciding `subject`'s calls: the base rules and the call
     /// capability for exactly the callable actions, compiled on its first
     /// call under this revision (ADMIT-CACHE-1).
@@ -576,5 +642,35 @@ impl ActionPolicy {
             })
         })
         .authorize(request)
+    }
+}
+
+pub(crate) fn collection_access_key(
+    key: &ScopeKey,
+    subject: &str,
+    capability: norn_api::authz::ReadCapability,
+    object_type: &str,
+) -> AccessRequest {
+    let key = key.clone();
+    AccessRequest {
+        principal: PrincipalInput {
+            subject_id: subject.into(),
+            actor_kind: ActorKind::User,
+            agent_session_id: None,
+            roles: vec![],
+            attributes: BTreeMap::new(),
+        },
+        scope: Some(key.clone()),
+        capability: crate::policy::capability_name(capability).into(),
+        action_id: crate::policy::READ_ACTION.into(),
+        resource: ResourceInput {
+            object_type: object_type.into(),
+            id: object_type.into(),
+            scope: key,
+            attributes: BTreeMap::new(),
+        },
+        context: BTreeMap::new(),
+        binding: None,
+        delegation: Delegation::Direct,
     }
 }

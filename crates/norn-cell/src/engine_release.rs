@@ -74,10 +74,14 @@ pub const CHANNEL: &[StorageVersion] = &[
         version: 5,
         change: "#1547 S2: the partial index _norn_marking_version_nonempty, the bounded probe of whether a cell's history holds a marking label; an engine of the storage version before it refuses a marking table with an index it does not know",
     },
+    StorageVersion {
+        version: 6,
+        change: "#1424 U1: transactional automation trigger outbox (_norn_automation_outbox) and server-bound retained definition authority (_norn_retained_authority)",
+    },
 ];
 
 /// The storage version this engine writes.
-pub const STORAGE_VERSION: u32 = 5;
+pub const STORAGE_VERSION: u32 = 6;
 
 /// The oldest storage version this engine upgrades in place. Raising it
 /// retires the steps below it; an older cell must first open on a bridge

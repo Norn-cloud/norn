@@ -470,7 +470,7 @@ fn prepare_action_input_inner<'a, X>(
 }
 
 /// ACTION-ACTOR-1: caller JSON cannot supply identity or approval claims.
-fn check_action_identity_input<X>(
+pub(super) fn check_action_identity_input<X>(
     action: &ActionRoot,
     raw_input: &JsonObject,
     actor: Option<&str>,
@@ -679,7 +679,7 @@ fn canonical_object_bytes<X>(object: &JsonObject) -> Result<usize, ActionRefusal
         })
 }
 
-fn check_canonical_object_bound<X>(
+pub(super) fn check_canonical_object_bound<X>(
     subject: &str,
     object: &JsonObject,
     max_bytes: usize,
@@ -817,4 +817,19 @@ pub fn actor_derived_fields(action: &ActionRoot) -> std::collections::BTreeSet<S
         })
         .map(|step| step.field.clone())
         .collect()
+}
+
+pub(super) fn action_link_endpoint<X>(
+    input: &JsonObject,
+    object_type: &str,
+    field: &str,
+) -> Result<crate::cell_host::FactKey, ActionRefusal<X>> {
+    input
+        .get(field)
+        .and_then(crate::cell_host::JsonValue::as_str)
+        .filter(|key| !key.trim().is_empty())
+        .map(|key| crate::cell_host::FactKey::new(object_type, key))
+        .ok_or_else(|| ActionRefusal::InvalidInput {
+            field: field.to_owned(),
+        })
 }

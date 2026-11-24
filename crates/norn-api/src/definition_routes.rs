@@ -30,6 +30,7 @@ use serde_json::Value;
 use serde_json::value::RawValue;
 use utoipa::{IntoParams, ToSchema};
 
+pub(crate) use crate::approval_definitions::active_approvals;
 use crate::authz::{AccessRequest, Operation, read_denied};
 use crate::host::DevHost;
 use crate::question_routes::{AdHocQuestions, check_ad_hoc, disclosed_receipt};
@@ -233,6 +234,7 @@ pub fn checker_restatement(
         }
         "flow" => crate::flow_definitions::restate(canonical),
         "approval" => crate::approval_definitions::restate(canonical),
+        "automation" => crate::automation_definitions::restate(canonical),
         other => Err(format!("{other} has no restatement")),
     }
 }
@@ -616,6 +618,7 @@ struct Admitted {
     title: String,
     canonical: String,
     flow: Option<crate::flow_definitions::Flow>,
+    automation: Option<crate::automation_definitions::CheckedAutomation>,
 }
 
 /// Canonical JSON text of `payload`.
@@ -658,6 +661,7 @@ fn validate<E: SqlEngine>(
     let value: Value = serde_json::from_str(&canonical).map_err(Refusal::host)?;
     let mut findings = Vec::new();
     let mut flow = None;
+    let mut automation = None;
     match kind {
         "flow" => {
             let (flow_findings, checked) = crate::flow_definitions::check(
@@ -708,10 +712,18 @@ fn validate<E: SqlEngine>(
         }
         "approval" => {
             let roles: Vec<&str> = kinds.roles.iter().map(String::as_str).collect();
-            let (actions, gated) = approval_context(host, id)?;
+            let (actions, gated) = crate::approval_definitions::approval_context(host, id)?;
             findings.extend(crate::approval_definitions::check(
                 &value, &actions, &roles, &gated,
             ));
+        }
+        "automation" => {
+            let roles: Vec<&str> = kinds.roles.iter().map(String::as_str).collect();
+            let (auto_findings, checked) = crate::automation_definitions::validate_for_host(
+                host, actor, &roles, &canonical, &value,
+            )?;
+            findings.extend(auto_findings);
+            automation = checked;
         }
         other => return Err(kind_unknown(other)),
     }
@@ -737,6 +749,7 @@ fn validate<E: SqlEngine>(
             title,
             canonical,
             flow,
+            automation,
         },
         findings,
     ))
@@ -768,74 +781,6 @@ fn active_binding_versions<E: SqlEngine>(
 ) -> Result<std::collections::BTreeMap<String, u64>, Refusal> {
     let cell = host.cell()?;
     binding_versions(&cell.store().read())
-}
-
-/// The admitted action ids of the active definitions, and the actions an
-/// active approval other than `id` already gates.
-fn approval_context<E: SqlEngine>(
-    host: &DevHost<E>,
-    id: &str,
-) -> Result<(BTreeSet<String>, BTreeSet<String>), Refusal> {
-    let actions = {
-        let cell = host.cell()?;
-        let reader = cell.store().read();
-        reader
-            .installed_definitions(None)
-            .map_err(Refusal::host)?
-            .map(|active| serde_json::from_str::<Vec<Value>>(&active.canonical_set))
-            .transpose()
-            .map_err(Refusal::host)?
-            .unwrap_or_default()
-            .iter()
-            .filter(|artifact| artifact.get("kind").and_then(Value::as_str) == Some("action"))
-            .filter_map(|artifact| {
-                artifact
-                    .pointer("/payload/actionId")?
-                    .as_str()
-                    .map(str::to_owned)
-            })
-            .collect()
-    };
-    Ok((actions, gated_except(host, &|other| other == id)?))
-}
-
-/// The actions an active approval gates, skipping the approvals `skip` names.
-fn gated_except<E: SqlEngine>(
-    host: &DevHost<E>,
-    skip: &dyn Fn(&str) -> bool,
-) -> Result<BTreeSet<String>, Refusal> {
-    let mut gated = BTreeSet::new();
-    for record in active_approvals(host)? {
-        if skip(&record.id) {
-            continue;
-        }
-        let payload: Value = serde_json::from_str(&record.payload).map_err(Refusal::host)?;
-        if let Some(action) = payload.get("action").and_then(Value::as_str) {
-            gated.insert(action.to_owned());
-        }
-    }
-    Ok(gated)
-}
-
-/// Every active approval revision, ordered by id.
-pub(crate) fn active_approvals<E: SqlEngine>(
-    host: &DevHost<E>,
-) -> Result<Vec<RetainedDefinition>, Refusal> {
-    let cell = host.cell()?;
-    let reader = cell.store().read();
-    let mut approvals = Vec::new();
-    let mut after: Option<String> = None;
-    loop {
-        let page = reader
-            .retained_definitions("approval", false, after.as_deref(), MAX_LIST_LIMIT)
-            .map_err(Refusal::host)?;
-        let full = page.len() >= usize::try_from(MAX_LIST_LIMIT).unwrap_or(usize::MAX);
-        after = page.last().map(|record| record.definition.id.clone());
-        approvals.extend(page.into_iter().map(|record| record.definition));
-        if !full {
-            return Ok(approvals);
-        }
-    }
 }
 
 /// As [`active_binding_versions`], from a reader the caller already holds.
@@ -1440,6 +1385,7 @@ fn append<E: SqlEngine>(
     pinned: Option<u64>,
     signed: Option<(&str, String)>,
     flow: Option<&crate::flow_definitions::Flow>,
+    automation: Option<&crate::automation_definitions::CheckedAutomation>,
     now_ms: u64,
 ) -> Result<InstallDefinitionResponse, Refusal> {
     let _epoch = host.definition_write()?;
@@ -1482,6 +1428,17 @@ fn append<E: SqlEngine>(
             signed_at: installed_at,
             restatement_sha256,
         });
+        if let Some(checked) = automation {
+            definition.authority = Some(crate::automation_definitions::bind_authority(
+                host,
+                &cell,
+                actor,
+                &definition,
+                checked,
+                installed_at,
+                active.version,
+            )?);
+        }
         // A flow is installed into the kernel set, admitted against the set
         // active now, under the definitions write lock; anything else
         // carries the active set, receipt and model unchanged.
@@ -1547,6 +1504,9 @@ fn append<E: SqlEngine>(
                         "signer": signoff.signer,
                         "restatementSha256": signoff.restatement_sha256,
                     })),
+                    "authority": crate::automation_definitions::authority_diff(
+                        definition.authority.as_ref(),
+                    ),
                 },
             }),
             installed_at,
@@ -1608,9 +1568,9 @@ pub fn install_definition<E: SqlEngine>(
     authorize(host, scope, actor, Operation::WriteDefinitions)?;
     let actor = actor.ok_or_else(read_denied)?;
     check_new_id(host, &request.id)?;
-    // An agent is admitted against the bindings of this definitions version;
+    // An agent or automation is admitted against the active definitions version;
     // it commits only if no definition was written since.
-    let pinned = if request.kind == "agent" {
+    let pinned = if matches!(request.kind.as_str(), "agent" | "automation") {
         Some(definitions_version(host)?)
     } else {
         None
@@ -1632,15 +1592,21 @@ pub fn install_definition<E: SqlEngine>(
     // Fable S7: nothing checks a sign-off when a run starts, so a flow is
     // installed only once a signer signs its words. A cell that cannot
     // restate a flow cannot install one (fail closed).
-    // An approval changes who may complete an action: signed, like a flow.
-    if matches!(request.kind.as_str(), "flow" | "approval") && request.signoff.is_none() {
+    // An approval or automation changes what the system does: signed, like a flow.
+    if matches!(request.kind.as_str(), "flow" | "approval" | "automation")
+        && request.signoff.is_none()
+    {
         return Err(if kinds.restater.is_some() {
-            Refusal::new(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                codes::SIGNOFF_REQUIRED,
-                "a flow is installed by signing the server's words for it",
-                "admit the flow, read its restatement, and install it with signoff.restatementSha256",
-            )
+            if request.kind == "automation" {
+                crate::automation_definitions::signoff_required()
+            } else {
+                Refusal::new(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    codes::SIGNOFF_REQUIRED,
+                    "a flow is installed by signing the server's words for it",
+                    "admit the flow, read its restatement, and install it with signoff.restatementSha256",
+                )
+            }
         } else {
             Refusal::new(
                 StatusCode::UNPROCESSABLE_ENTITY,
@@ -1678,11 +1644,13 @@ pub fn install_definition<E: SqlEngine>(
             payload_sha256: payload_sha256(&payload.canonical),
             payload: payload.canonical,
             signoff: None,
+            authority: None,
         },
         request.expected_version,
         pinned,
         signed,
         payload.flow.as_ref(),
+        payload.automation.as_ref(),
         now_ms,
     )
 }
@@ -1860,6 +1828,7 @@ fn signed_approval(
                 signed_at,
                 restatement_sha256: verified,
             }),
+            authority: None,
         },
         expected_revision: from_revision,
     })
@@ -1964,12 +1933,14 @@ pub fn retire_definition<E: SqlEngine>(
         .ok_or_else(version_conflict)?;
     definition.lifecycle = RetainedLifecycle::Retired;
     definition.signoff = None;
+    definition.authority = None;
     append(
         host,
         questions,
         actor,
         definition,
         Some(request.expected_version),
+        None,
         None,
         None,
         None,
