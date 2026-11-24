@@ -1377,12 +1377,12 @@ impl Lowering<'_> {
             // by its column, so a key aliased to an id has no plan: it refuses
             // rather than grouping by the id.
             let mut columns: Vec<Value> = Vec::new();
-            let mut named: BTreeMap<String, String> = BTreeMap::new();
+            let mut value_of: BTreeMap<String, String> = BTreeMap::new();
             let ids = grain_columns
                 .iter()
                 .map(|id| (id.clone(), format!("input.{id}"), 0));
             for (name, expression, at) in ids.chain(prepared) {
-                match named.insert(name.clone(), expression.clone()) {
+                match value_of.insert(name.clone(), expression.clone()) {
                     None => columns.push(json!({"name": name, "expression": expression})),
                     Some(earlier) if earlier == expression => {}
                     Some(_) => {

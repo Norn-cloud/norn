@@ -374,44 +374,39 @@ fn a_join_on_a_declared_key_named_id_is_refused() {
     );
 }
 
+/// Every query is refused with `SQL_UNSUPPORTED`.
+#[track_caller]
+fn assert_unsupported(queries: &[&str]) {
+    for sql in queries {
+        let found = compile(sql).expect_err("refused");
+        assert!(
+            found.iter().any(|d| d.code == SQL_UNSUPPORTED),
+            "{sql}: {found:#?}"
+        );
+    }
+}
+
 #[test]
 fn a_modifier_on_a_group_key_or_coalesce_is_refused_never_dropped() {
-    // #1706 r1: `OVER`/`DISTINCT` on a calendar key lowered to plain weekly grouping.
-    refused(
+    assert_unsupported(&[
+        // #1706 r1: `OVER`/`DISTINCT` on a calendar key lowered to plain weekly grouping.
         "SELECT COUNT(*) AS n FROM \"shop.Order\" o GROUP BY DATE_TRUNC('week', o.placed_at) OVER (ORDER BY o.id)",
-        SQL_UNSUPPORTED,
-    );
-    refused(
         "SELECT COUNT(*) AS n FROM \"shop.Order\" o GROUP BY DATE_TRUNC(DISTINCT 'week', o.placed_at)",
-        SQL_UNSUPPORTED,
-    );
-    // #1706 r1: `DISTINCT` and `OVER` on COALESCE were dropped by the parser.
-    refused(
+        // #1706 r1: `DISTINCT` and `OVER` on COALESCE were dropped by the parser.
         "SELECT COUNT(*) AS n FROM \"shop.Customer\" c GROUP BY COALESCE(DISTINCT c.region, c.email)",
-        SQL_UNSUPPORTED,
-    );
-    refused(
         "SELECT COALESCE(c.region, c.email) OVER (ORDER BY c.id) AS k FROM \"shop.Customer\" c",
-        SQL_UNSUPPORTED,
-    );
+    ]);
 }
 
 #[test]
 fn a_group_key_or_column_selected_under_two_names_is_refused_never_dropped() {
-    // #1706 r1: `b` was silently left out of the output.
-    refused(
+    assert_unsupported(&[
+        // #1706 r1: `b` was silently left out of the output.
         "SELECT region AS a, region AS b, COUNT(*) AS n FROM \"shop.Customer\" GROUP BY region",
-        SQL_UNSUPPORTED,
-    );
-    // #1706 r2: the same key under one name twice dropped the second `a`.
-    refused(
+        // #1706 r2: the same key under one name twice dropped the second `a`.
         "SELECT region AS a, region AS a, COUNT(*) AS n FROM \"shop.Customer\" GROUP BY region",
-        SQL_UNSUPPORTED,
-    );
-    refused(
         "SELECT c.region AS a, c.email AS a FROM \"shop.Customer\" c",
-        SQL_UNSUPPORTED,
-    );
+    ]);
 }
 
 #[test]
