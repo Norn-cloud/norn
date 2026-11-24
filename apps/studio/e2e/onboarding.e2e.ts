@@ -313,7 +313,7 @@ test("#1414: switcher separates real workspaces from Examples, never renders raw
   await archivedDialog.getByRole("button", { name: "Delete" }).click()
   await archivedDialog.getByRole("button", { name: "Delete permanently" }).click()
   await expect(archivedDialog).toContainText("No archived workspaces.")
-  await archivedDialog.getByRole("button", { name: "Close" }).click()
+  await archivedDialog.getByRole("button", { name: "Close" }).first().click()
   await expect(undoBanner).toHaveCount(0)
   expect(pageErrors).toEqual([])
 })
