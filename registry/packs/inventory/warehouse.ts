@@ -106,7 +106,7 @@ export const LotBatch = Norn.type({
   properties: Schema.Struct({
     id: Schema.String,
     lot_code: Norn.ref("core.code"),
-    manufactured_on: Schema.NullOr(Norn.date()),
+    manufactured_on: Norn.date(),
     expires_on: Schema.NullOr(Norn.date()),
     status: LotBatchStatus,
   }),
@@ -244,23 +244,23 @@ export const LotBatchValidDates = Norn.law({
     id: "inventory.LotBatch.valid_dates",
     owner: "inventory",
     severity: "error",
-    rationale: "When both manufacture and expiry dates are recorded on a lot, manufactured_on must be on or before expires_on.",
+    rationale: "When an expiry date is recorded on a lot, manufactured_on must be on or before expires_on.",
     provenance: { source: "authoring_sdk", sourcePath: "registry/packs/inventory/warehouse.ts" },
     subject: "inventory.LotBatch",
     scope: { root: { kind: "entity", id: "inventory.LotBatch" }, objectTypes: ["inventory.LotBatch"] },
-    condition: "self.manufactured_on != null and self.expires_on != null",
+    condition: "self.expires_on != null",
     modality: { kind: "always" },
-    response: { kind: "predicate", expression: "date(self.manufactured_on) <= date(self.expires_on)" },
+    response: { kind: "predicate", expression: "date(self.manufactured_on) <= date(self.expires_on ?? self.manufactured_on)" },
   },
 })
 
-export const LotBatchOpenDatesNotApplicable = Norn.example("lot with unset manufacture date is not applicable", {
+export const LotBatchOpenDatesNotApplicable = Norn.example("non-perishable lot without expiry date is not applicable", {
   of: LotBatchValidDates,
   given: {
     id: "lot_open",
     lot_code: "LOT-2026-OPEN",
-    manufactured_on: null,
-    expires_on: "2028-11-01",
+    manufactured_on: "2026-11-01",
+    expires_on: null,
     status: "active",
   },
   expect: "not_applicable",

@@ -93,9 +93,6 @@
           }
         },
         {
-          "constraints": {
-            "nullable": true
-          },
           "id": "manufactured_on",
           "type": {
             "kind": "date"

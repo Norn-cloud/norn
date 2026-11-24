@@ -14,7 +14,7 @@
   "name": "Lot manufacture date does not exceed expiry date",
   "namespace": "inventory",
   "payload": {
-    "condition": "self.manufactured_on != null and self.expires_on != null",
+    "condition": "self.expires_on != null",
     "id": "inventory.LotBatch.valid_dates",
     "lawVersion": "0.1",
     "modality": {
@@ -25,9 +25,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/inventory/warehouse.ts"
     },
-    "rationale": "When both manufacture and expiry dates are recorded on a lot, manufactured_on must be on or before expires_on.",
+    "rationale": "When an expiry date is recorded on a lot, manufactured_on must be on or before expires_on.",
     "response": {
-      "expression": "date(self.manufactured_on) <= date(self.expires_on)",
+      "expression": "date(self.manufactured_on) <= date(self.expires_on ?? self.manufactured_on)",
       "kind": "predicate"
     },
     "scope": {
