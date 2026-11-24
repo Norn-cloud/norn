@@ -19,8 +19,8 @@ use norn_kernel::cell_host::{FactKey, FactState, JsonObject};
 use norn_kernel::norn_checker::law_examples::Verdict;
 use norn_kernel::{
     BoundedFact, CellCommit, CellHost, CommitError, CommitReceipt, DueTimer, FactEvent, LinkKey,
-    LinkReadTarget, LinkState, LogicalTime, ObservationAuthorization, ObservationEvent, Observed,
-    OwnedRowsCommitProof, Performed, PredicateObject, PredicateQuery,
+    LinkReadTarget, LinkState, LogicalTime, Observed, OwnedRowsCommitProof, Performed,
+    PredicateObject, PredicateQuery,
 };
 use norn_testkit::pack_mbt::driver::run_pack_mbt;
 use norn_testkit::pack_mbt::dst::{PackDstConfig, run_pack_dst};
@@ -190,16 +190,6 @@ impl CellHost for SqlitePackHost {
             .commit_owned_rows(commit, proof)
     }
 
-    fn commit_observed(
-        &mut self,
-        commit: CellCommit<FactEvent, JsonObject, JsonObject>,
-        authorization: ObservationAuthorization,
-    ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.cell_mut()
-            .map_err(CommitError::Host)?
-            .commit_observed(commit, authorization)
-    }
-
     fn perform(&mut self) -> Result<Option<Performed<JsonObject>>, CellError> {
         self.cell_mut()?.perform()
     }
@@ -222,7 +212,7 @@ impl PackHost for SqlitePackHost {
         self.cell
             .as_ref()
             .and_then(|c| c.inner().store().read().receipts().ok())
-            .map_or(0, Vec::len)
+            .map_or(0, |receipts| receipts.len())
     }
 
     fn logical_now(&self) -> LogicalTime {
