@@ -62,14 +62,28 @@ function typed(node: Json, name: string): string {
   const allowed = typeof type === "string" ? TYPE_KEYS[type] : undefined
   if (allowed === undefined || Object.keys(node).some((key) => !allowed.includes(key))) return `unmodelled:${JSON.stringify(node)}`
   if (type === "null") return "null"
-  if (Array.isArray(node["enum"])) return `enum:${name}:${sorted(node["enum"] as string[])}`
+  if (Array.isArray(node["enum"])) {
+    // An enum with any other constraint beside it (`pattern`, bounds) is not one this test models.
+    if (Object.keys(node).some((key) => key !== "type" && key !== "enum")) return `unmodelled:${JSON.stringify(node)}`
+    return `enum:${name}:${sorted(node["enum"] as string[])}`
+  }
   if (type === "string") return stringText(node)
   if (type === "boolean") return "boolean"
   if (type === "integer") return node["minimum"] === 0 ? "count" : `integer(${JSON.stringify(node["minimum"] ?? null)})`
   if (type === "array") return `array(${contract(node["items"] as Json)})`
+  // `additionalProperties` is modelled only as closed (`false`) or unconstrained (absent, `true`, or
+  // a schema of annotations only, such as `{ description }`): a typed value schema would narrow the
+  // map, so it fails the test until it is modelled.
+  const extra = node["additionalProperties"]
+  const unconstrained = extra === undefined || extra === true
+    || (typeof extra === "object" && extra !== null && !Array.isArray(extra) && Object.keys(extra).every((key) => ANNOTATIONS.has(key)))
+  if (extra !== false && !unconstrained) return `unmodelled:${JSON.stringify(node)}`
   const properties = node["properties"] as Readonly<Record<string, Json>> | undefined
-  if (properties === undefined) return node["additionalProperties"] === false ? "object(closed){}" : "record"
-  const mandatory = new Set((node["required"] as string[] | undefined) ?? [])
+  const requiredNames = (node["required"] as string[] | undefined) ?? []
+  // A required member the object does not declare is a constraint this description cannot render.
+  if (requiredNames.some((member) => properties === undefined || !Object.hasOwn(properties, member))) return `unmodelled:${JSON.stringify(node)}`
+  if (properties === undefined) return extra === false ? "object(closed){}" : "record"
+  const mandatory = new Set(requiredNames)
   // Null-prototype maps: a member named `__proto__` is a member, never a prototype.
   const required: Record<string, string> = Object.create(null), optional: Record<string, string> = Object.create(null)
   for (const [member, child] of Object.entries(properties)) (mandatory.has(member) ? required : optional)[member] = contract(child)
@@ -169,4 +183,12 @@ test("SDK-SHAPES-3: the contract description keeps every constraint, whatever a 
   // A constraint the description does not model fails loudly.
   expect(contract({ type: "string", format: "date-time" })).toStartWith("unmodelled:")
   expect(contract({ type: "integer", minimum: 0, maximum: 5 })).toStartWith("unmodelled:")
+  // An enum's sibling constraint, a typed map value, and a required member with no declaration.
+  expect(contract({ type: "string", enum: ["committed"], pattern: "^committed$" })).toStartWith("unmodelled:")
+  expect(contract({ type: "object", additionalProperties: { type: "string" } })).toStartWith("unmodelled:")
+  expect(contract({ type: "object", properties: {}, additionalProperties: { type: "string" } })).toStartWith("unmodelled:")
+  expect(contract({ type: "object", required: ["missing"], properties: { x: { type: "boolean" } } })).toStartWith("unmodelled:")
+  expect(contract({ type: "object", required: ["missing"] })).toStartWith("unmodelled:")
+  // The unconstrained forms stay one description.
+  for (const open of [{ type: "object" }, { type: "object", additionalProperties: true }, { type: "object", additionalProperties: {} }, { type: "object", additionalProperties: { description: "any JSON" } }]) expect(contract(open)).toBe("record")
 })
