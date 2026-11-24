@@ -138,7 +138,6 @@ interface FacetsState {
 
 interface FacetsSubscription {
   readonly id: string
-  readonly path: string
   readonly property: string
   readonly socket: WebSocketRoute
   readonly sendSnapshot: (digest?: string) => void
@@ -150,7 +149,7 @@ async function lifecycleCell(
   initial: Record<string, FacetsState>,
   options: {
     readonly includeWidget?: boolean
-    readonly onSubscribe?: (sub: FacetsSubscription) => void
+    readonly onFacetsSubscribe?: (sub: FacetsSubscription) => void
   } = {},
 ) {
   await session(page)
@@ -236,9 +235,10 @@ async function lifecycleCell(
         const current = snapshotFor(msg.path)
         ws.send(JSON.stringify({ type: "snapshot", id: msg.id, status: current.status, digest, body: current.body }))
       }
-      if (options.onSubscribe) {
-        const parsed = new URL(msg.path, "https://cell")
-        options.onSubscribe({ id: msg.id, path: msg.path, property: parsed.searchParams.get("properties") ?? "status", socket: ws, sendSnapshot })
+      const parsed = new URL(msg.path, "https://cell")
+      const property = parsed.searchParams.get("properties")
+      if (options.onFacetsSubscribe && parsed.pathname === "/v1/objects/commerce.PurchaseOrder:facets" && property !== null) {
+        options.onFacetsSubscribe({ id: msg.id, property, socket: ws, sendSnapshot })
       } else {
         sendSnapshot()
       }
@@ -530,7 +530,7 @@ test.describe("Records page Lifecycle view mode", () => {
       },
       {
         includeWidget: false,
-        onSubscribe: (sub) => {
+        onFacetsSubscribe: (sub) => {
           sub.sendSnapshot()
           if (sub.property === "status") resolveSocketSent()
         },
@@ -567,7 +567,7 @@ test.describe("Records page Lifecycle view mode", () => {
       },
       {
         includeWidget: false,
-        onSubscribe: (sub) => {
+        onFacetsSubscribe: (sub) => {
           if (sub.property === "status") {
             sendHeldSnapshot = sub.sendSnapshot
           } else {
@@ -626,15 +626,16 @@ test.describe("Records page Lifecycle view mode", () => {
 
   test("records page: recovery from live subscription capacity refreshes counts when the digest repeats", async ({ page }) => {
     const original = okFacets("status", { draft: 1 })
-    const statusSockets: WebSocketRoute[] = []
-    const cell = await lifecycleCell(page, { status: original }, {
+    const statusSubscriptions: FacetsSubscription[] = []
+    const cell = await lifecycleCell(page, { status: okFacets("status", { draft: 0 }) }, {
       includeWidget: false,
-      onSubscribe: ({ id, property, socket, sendSnapshot }) => {
+      onFacetsSubscribe: (subscription) => {
+        const { id, property, socket, sendSnapshot } = subscription
         if (property !== "status") return sendSnapshot()
-        statusSockets.push(socket)
-        if (statusSockets.length === 2) {
+        statusSubscriptions.push(subscription)
+        if (statusSubscriptions.length === 2) {
           socket.send(JSON.stringify({ type: "refused", id, code: "live.too_many_subscriptions", message: "this socket's subscriptions are full" }))
-        } else {
+        } else if (statusSubscriptions.length > 2) {
           sendSnapshot("original")
         }
       },
@@ -644,9 +645,12 @@ test.describe("Records page Lifecycle view mode", () => {
     const view = page.locator('[data-testid="lifecycle-view"] norn-lifecycle-view').first()
     const count = card(view, "draft").locator("[data-count]")
     const banner = view.locator('[data-region="live-off"]')
+    await expect(count).toHaveText("0")
+    await expect.poll(() => statusSubscriptions.length).toBe(1)
+    cell.setFacets("status", original)
+    statusSubscriptions[0]!.sendSnapshot("original")
     await expect(count).toHaveText("1")
-    await expect.poll(() => statusSockets.length).toBe(1)
-    await statusSockets[0]!.close({ code: 4401 })
+    await statusSubscriptions[0]!.socket.close({ code: 4401 })
     await expect(banner).toBeVisible()
 
     cell.setFacets("status", okFacets("status", { draft: 2 }))
@@ -655,7 +659,7 @@ test.describe("Records page Lifecycle view mode", () => {
     await shoot(page, "records-live-capacity-refused")
 
     cell.setFacets("status", original)
-    await statusSockets[1]!.close({ code: 4401 })
+    await statusSubscriptions[1]!.socket.close({ code: 4401 })
     await expect(banner).toBeHidden()
     await expect(count).toHaveText("1")
     await shoot(page, "records-live-capacity-recovered")
