@@ -119,13 +119,27 @@ export function refusalOf(text: string): Refusal | null {
   return { ...refusal, retryable: refusal.retryable === true }
 }
 
-/** `route` with its `{name}` segments filled, each percent-encoded. */
+/** `route` with its `{name}` segments filled, each percent-encoded. One linear pass. */
 export function fillRoute(route: string, path: Readonly<Record<string, unknown>> | undefined): string {
-  return route.replace(/\{([^}]+)\}/g, (_, name: string) => {
+  let filled = ""
+  let at = 0
+  for (let open = route.indexOf("{"); open !== -1; open = route.indexOf("{", at)) {
+    const close = route.indexOf("}", open + 1)
+    if (close === -1) throw new TypeError(`${route} has an unclosed path parameter`)
+    const name = route.slice(open + 1, close)
     const value = path?.[name]
     if (value === undefined || value === null) throw new TypeError(`${route} needs the path parameter ${name}`)
-    return encodeURIComponent(String(value))
-  })
+    filled += `${route.slice(at, open)}${encodeURIComponent(String(value))}`
+    at = close + 1
+  }
+  return filled + route.slice(at)
+}
+
+/** `url` without its trailing slashes. */
+function trimSlashes(url: string): string {
+  let end = url.length
+  while (end > 0 && url.charCodeAt(end - 1) === 47) end -= 1
+  return url.slice(0, end)
 }
 
 /** The query string: the call's own members in order, then the scope. Absent members are left out; a list repeats its key. */
@@ -172,7 +186,7 @@ interface LooseOptions {
 /** A client for one cell scope. */
 export function createNornClient(options: NornClientOptions): NornClient {
   const fetcher: FetchLike = options.fetch ?? ((input, init) => fetch(input, init))
-  const base = options.baseUrl.replace(/\/+$/, "")
+  const base = trimSlashes(options.baseUrl)
   const scopeOf = async () => typeof options.scope === "function" ? options.scope() : options.scope
 
   async function route(template: string, call: LooseOptions = {}): Promise<string> {

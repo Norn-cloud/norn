@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { createNornClient, NornRefusalError, NornUnavailableError, type FetchLike, type NornDocument, type Schemas } from "../src/index.ts"
+import { createNornClient, fillRoute, NornRefusalError, NornUnavailableError, type FetchLike, type NornDocument, type Schemas } from "../src/index.ts"
 
 const scope = { orgId: "org_1", environmentId: "dev" }
 
@@ -101,4 +101,15 @@ test("an answer that is no Norn refusal, or no answer at all, is unavailable, ne
   expect(failed).toBeInstanceOf(NornUnavailableError)
   expect((failed as NornUnavailableError).status).toBe(0)
   expect((failed as NornUnavailableError).cause).toBe(down)
+})
+
+test("route templates fill in one pass and refuse a missing or unclosed parameter", () => {
+  expect(fillRoute("/v1/objects/{type}:facets", { type: "a b" })).toBe("/v1/objects/a%20b:facets")
+  expect(fillRoute("/v1/cell:provision", undefined)).toBe("/v1/cell:provision")
+  expect(() => fillRoute("/v1/runs/{id}", {})).toThrow("needs the path parameter id")
+  expect(() => fillRoute("/v1/runs/{id", { id: "r" })).toThrow("unclosed")
+  const hostile = "{".repeat(50_000)
+  const started = performance.now()
+  expect(() => fillRoute(hostile, {})).toThrow()
+  expect(performance.now() - started).toBeLessThan(1_000)
 })
