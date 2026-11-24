@@ -427,3 +427,72 @@ for (const theme of ["light", "dark"] as const) {
     expect(resolveClasses(perspectiveClass!, theme, "rest", trackHex).ratio, `${theme} PerspectiveSwitch resting`).toBeGreaterThanOrEqual(4.5)
   })
 }
+
+/** Parse any CSS token block by exact selector and layer overrides over a base token map. */
+function parseRawBlock(selectorPattern: RegExp): Record<string, string> {
+  const body = selectorPattern.exec(css)?.[1]
+  if (!body) return {}
+  const out: Record<string, string> = {}
+  for (const [, name, value] of body.matchAll(/--([a-z0-9-]+):\s*([^;]+);/g)) {
+    out[name!] = value!.trim()
+  }
+  return out
+}
+
+/** Resolve a hex or `rgb(r g b / a)` color value over a backing hex color. */
+function resolveSurfaceColor(value: string, backdropHex: string): string {
+  if (/^#[0-9a-fA-F]{6}$/.test(value)) return value
+  const rgbAlpha = /^rgb\(\s*(\d+)\s+(\d+)\s+(\d+)\s*\/\s*([\d.]+)\s*\)$/.exec(value)
+  if (rgbAlpha) {
+    const fg = "#" + [1, 2, 3].map((i) => Number(rgbAlpha[i]!).toString(16).padStart(2, "0")).join("")
+    return mix(fg, backdropHex, Number(rgbAlpha[4]!))
+  }
+  throw new Error(`unsupported color format in skin tokens: ${value}`)
+}
+
+const SKIN_SELECTORS: readonly { readonly skin: "open" | "polar" | "luma" | "glass"; readonly theme: Theme }[] = [
+  { skin: "open", theme: "light" },
+  { skin: "open", theme: "dark" },
+  { skin: "polar", theme: "light" },
+  { skin: "polar", theme: "dark" },
+  { skin: "luma", theme: "light" },
+  { skin: "luma", theme: "dark" },
+  { skin: "glass", theme: "light" },
+  { skin: "glass", theme: "dark" },
+]
+
+for (const { skin, theme } of SKIN_SELECTORS) {
+  test(`skin=${skin} (${theme}): composited surfaces, foreground, muted-foreground, primary button, and focus ring pass WCAG AA`, () => {
+    const base = { ...THEME_TOKENS[theme] }
+    const skinLight = skin === "open" ? {} : parseRawBlock(new RegExp(`(?<!\\.dark)\\[data-skin="${skin}"\\]\\s*\\{([^}]+)\\}`))
+    const skinDark = skin === "open" || theme === "light" ? {} : parseRawBlock(new RegExp(`\\.dark\\[data-skin="${skin}"\\]\\s*\\{([^}]+)\\}`))
+    const merged: Record<string, string> = { ...base, ...skinLight, ...skinDark }
+    const resolveVar = (name: string, depth = 0): string => {
+      if (depth > 8) throw new Error(`cyclic skin token --${name}`)
+      const raw = merged[name]
+      if (!raw) throw new Error(`missing token --${name} in ${skin}/${theme}`)
+      const alias = /^var\(--([a-z0-9-]+)\)$/.exec(raw)
+      return alias ? resolveVar(alias[1]!, depth + 1) : raw
+    }
+
+    const shellHex = resolveSurfaceColor(resolveVar("shell"), theme === "dark" ? "#0b0b0e" : "#ffffff")
+    const fgHex = resolveSurfaceColor(resolveVar("foreground"), shellHex)
+    const mutedFgHex = resolveSurfaceColor(resolveVar("muted-foreground"), shellHex)
+    const primaryBgHex = resolveSurfaceColor(resolveVar("primary"), shellHex)
+    const primaryFgHex = resolveSurfaceColor(resolveVar("primary-foreground"), primaryBgHex)
+    const ringHex = resolveSurfaceColor(resolveVar("ring"), shellHex)
+
+    expect(ratio(primaryFgHex, primaryBgHex), `${skin}/${theme} primary button`).toBeGreaterThanOrEqual(4.5)
+
+    for (const surface of ["shell", "background", "card", "surface-subtle", "muted", "popover", "accent"] as const) {
+      const bgHex = resolveSurfaceColor(resolveVar(surface), shellHex)
+      expect(ratio(fgHex, bgHex), `${skin}/${theme} foreground on ${surface} (${fgHex} on ${bgHex})`).toBeGreaterThanOrEqual(4.5)
+      expect(ratio(mutedFgHex, bgHex), `${skin}/${theme} muted-foreground on ${surface} (${mutedFgHex} on ${bgHex})`).toBeGreaterThanOrEqual(4.5)
+    }
+
+    for (const surface of ["shell", "background", "card", "popover"] as const) {
+      const bgHex = resolveSurfaceColor(resolveVar(surface), shellHex)
+      expect(ratio(ringHex, bgHex), `${skin}/${theme} focus ring on ${surface} (${ringHex} on ${bgHex})`).toBeGreaterThanOrEqual(3)
+    }
+  })
+}

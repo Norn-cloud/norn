@@ -6,10 +6,12 @@ import { PopoverTitle, PopoverTrigger } from "@ui-sdk/react/popover"
 import { Toolbar, ToolbarButton, ToolbarLink } from "@ui-sdk/react/toolbar"
 import { Tree, TreeGroup, TreeItem, TreeItemIndicator, TreeItemLabel } from "@ui-sdk/react/tree"
 import { AssistantPanel, AssistantProvider, useAssistant, type AssistantContent } from "@/assistant-slot"
-import { Bell, ChevronLeft, ChevronRight, ChevronsUpDown, CloudOff, Keyboard, LayoutGrid, LogOut, Search, SlidersHorizontal, Sparkles, Wrench, type LucideIcon } from "lucide-react"
+import { Bell, ChevronLeft, ChevronRight, ChevronsUpDown, CloudOff, Keyboard, LayoutGrid, LogOut, Palette, PanelBottom, PanelLeft, Search, SlidersHorizontal, Sparkles, Wrench, type LucideIcon } from "lucide-react"
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react"
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
+import { ChromeDock, ChromeDockOption, ChromeDockTray, ChromeDockTrigger } from "@/components/ui/chrome-dock"
+import { AppearanceProvider, SHELLS, SKINS, isShellChrome, isSkin, useAppearance } from "@/lib/appearance"
 import { PERSPECTIVES, PerspectiveProvider, isPerspective, usePerspective, type Perspective } from "@/lib/perspective"
 import { Sidebar, SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
@@ -172,10 +174,11 @@ function ScopeSwitcher() {
   )
 }
 
-/** The view (Business or Technical) and the language, as menu choices; choosing one closes the menu. */
+/** The view (Business or Technical), language, skin and chrome layout as menu choices. */
 function ViewAndLanguage() {
   const { view, setView } = useView()
   const { locale, setLocale } = useLocale()
+  const { skin, setSkin, shell, setShell } = useAppearance()
   return <>
     <MenuRadioGroup value={view} onValueChange={(next) => { if (next === "business" || next === "technical") setView(next) }}>
       <KitMenuLabel>View</KitMenuLabel>
@@ -187,7 +190,91 @@ function ViewAndLanguage() {
       <KitMenuLabel>Language</KitMenuLabel>
       {LOCALES.map(({ tag, name }) => <KitMenuRadioItem key={tag} value={tag} lang={tag} closeOnSelect>{name}</KitMenuRadioItem>)}
     </MenuRadioGroup>
+    <KitMenuSeparator />
+    <MenuRadioGroup value={skin} onValueChange={(next) => { if (isSkin(next)) setSkin(next) }}>
+      <KitMenuLabel>Skin</KitMenuLabel>
+      {SKINS.map(({ id, label }) => <KitMenuRadioItem key={id} value={id} closeOnSelect>{label}</KitMenuRadioItem>)}
+    </MenuRadioGroup>
+    <KitMenuSeparator />
+    <MenuRadioGroup value={shell} onValueChange={(next) => { if (isShellChrome(next)) setShell(next) }}>
+      <KitMenuLabel>Chrome</KitMenuLabel>
+      {SHELLS.map(({ id, label }) => <KitMenuRadioItem key={id} value={id} closeOnSelect>{label}</KitMenuRadioItem>)}
+    </MenuRadioGroup>
   </>
+}
+
+/** Interactive skin & shell chrome tray powered by the first-party `@ui-sdk/core` + `@ui-sdk/react` ChromeDock primitive. */
+function AppearanceTray({ side = "bottom", variant = "bar" }: { readonly side?: "top" | "bottom"; readonly variant?: "bar" | "dock" }) {
+  const { skin, setSkin, shell, setShell } = useAppearance()
+  return (
+    <ChromeDock
+      value={skin}
+      items={SKINS.map(({ id }) => id)}
+      onValueChange={(next) => { if (isSkin(next)) setSkin(next) }}
+      className="relative inline-flex"
+    >
+      <ChromeDockTrigger
+        aria-label="Appearance"
+        className={variant === "dock"
+          ? "flex size-8 items-center justify-center rounded-full text-(--dock-muted) transition-colors outline-none hover:bg-(--dock-active) hover:text-(--dock-foreground) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring data-open:bg-(--dock-active) data-open:text-(--dock-foreground) [&_svg]:size-4"
+          : cn(iconButton, "hidden @xl:flex")}
+      >
+        <Palette aria-hidden />
+      </ChromeDockTrigger>
+      <ChromeDockTray
+        side={side}
+        align="end"
+        sideOffset={8}
+        aria-label="Appearance settings"
+        className="w-72 origin-(--transform-origin) rounded-2xl bg-popover p-3.5 text-popover-foreground shadow-float ring-1 ring-border outline-none transition-[opacity,scale] duration-150 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0"
+      >
+        <div className="space-y-3">
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-xs font-medium text-muted-foreground">
+              <span>Skin</span>
+              <span className="capitalize text-foreground">{skin}</span>
+            </div>
+            <div role="group" aria-label="Skin" className="grid grid-cols-2 gap-1.5">
+              {SKINS.map((option) => (
+                <ChromeDockOption
+                  key={option.id}
+                  value={option.id}
+                  data-skin-option={option.id}
+                  className="flex items-center gap-2 rounded-lg border border-border/80 bg-background/70 px-2.5 py-2 text-start text-xs font-medium text-foreground transition-colors outline-none hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring data-[state=selected]:border-action data-[state=selected]:bg-action/10 data-[state=selected]:text-foreground"
+                >
+                  <span aria-hidden className="size-3.5 shrink-0 rounded-full border border-border/90 shadow-xs" style={{ backgroundColor: option.swatch }} />
+                  <span className="truncate">{option.label}</span>
+                </ChromeDockOption>
+              ))}
+            </div>
+          </div>
+          <div className="h-px bg-border/80" />
+          <div className="space-y-1.5">
+            <div className="text-xs font-medium text-muted-foreground">Shell chrome</div>
+            <div role="group" aria-label="Shell chrome" className="grid grid-cols-2 gap-1.5">
+              {SHELLS.map((option) => {
+                const active = shell === option.id
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    aria-pressed={active}
+                    data-shell-option={option.id}
+                    data-state={active ? "selected" : "idle"}
+                    onClick={() => setShell(option.id)}
+                    className="flex items-center gap-1.5 rounded-lg border border-border/80 bg-background/70 px-2.5 py-2 text-xs font-medium text-foreground transition-colors outline-none hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring aria-pressed:border-action aria-pressed:bg-action/10"
+                  >
+                    {option.id === "sidebar" ? <PanelLeft aria-hidden className="size-3.5 shrink-0" /> : <PanelBottom aria-hidden className="size-3.5 shrink-0" />}
+                    <span className="truncate">{option.label}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      </ChromeDockTray>
+    </ChromeDock>
+  )
 }
 
 /** The signed-in user, their organization and role, and sign-out. The role is shown, never used to hide or allow anything. */
@@ -538,6 +625,7 @@ function PerspectiveSwitch({ perspective, onChange }: { readonly perspective: Pe
 function CommandMenu({ sections, navigation, onPerspective }: { readonly sections: readonly Section[]; readonly navigation: Navigation; readonly onPerspective: (next: Perspective) => void }) {
   const [open, setOpen] = useState(false)
   const navigate = useNavigate()
+  const { setSkin, setShell } = useAppearance()
   const lists = sections.map((section) => ({ section, entries: navigation.menus.get(section.path) ?? [] }))
   const routes = new Map<string, { to: string; hash?: string }>([
     ...sections.map(({ path }) => [`section:${path}`, { to: path }] as const),
@@ -553,6 +641,16 @@ function CommandMenu({ sections, navigation, onPerspective }: { readonly section
         <DialogTitle className="sr-only">Search Studio</DialogTitle>
         <Command onAction={(value) => {
           setOpen(false)
+          if (value.startsWith("skin:")) {
+            const next = value.slice("skin:".length)
+            if (isSkin(next)) setSkin(next)
+            return
+          }
+          if (value.startsWith("shell:")) {
+            const next = value.slice("shell:".length)
+            if (isShellChrome(next)) setShell(next)
+            return
+          }
           const perspective = value.startsWith("perspective:") ? value.slice("perspective:".length) : undefined
           if (isPerspective(perspective)) return onPerspective(perspective)
           const to = routes.get(value)
@@ -578,6 +676,21 @@ function CommandMenu({ sections, navigation, onPerspective }: { readonly section
               {PERSPECTIVES.map(({ id, label }) => (
                 <CommandItem key={id} value={`perspective:${id}`} label={`Switch to ${label}`} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm data-highlighted:bg-accent">
                   <CommandItemIcon className="flex text-muted-foreground [&_svg]:size-4">{id === "workspace" ? <LayoutGrid /> : <Wrench />}</CommandItemIcon>Switch to {label}
+                </CommandItem>
+              ))}
+            </CommandGroup>
+            <CommandGroup>
+              <CommandGroupLabel className="px-2 pt-3 pb-1 text-xs text-muted-foreground">Appearance</CommandGroupLabel>
+              {SKINS.map(({ id, label, detail }) => (
+                <CommandItem key={id} value={`skin:${id}`} label={`Skin: ${label}`} keywords={[detail]} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm data-highlighted:bg-accent">
+                  <CommandItemIcon className="flex text-muted-foreground [&_svg]:size-4"><Palette /></CommandItemIcon>Skin: {label}
+                  <span className="ms-auto text-xs text-muted-foreground">{detail}</span>
+                </CommandItem>
+              ))}
+              {SHELLS.map(({ id, label, detail }) => (
+                <CommandItem key={id} value={`shell:${id}`} label={`Chrome: ${label}`} keywords={[detail]} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm data-highlighted:bg-accent">
+                  <CommandItemIcon className="flex text-muted-foreground [&_svg]:size-4">{id === "sidebar" ? <PanelLeft /> : <PanelBottom />}</CommandItemIcon>Chrome: {label}
+                  <span className="ms-auto text-xs text-muted-foreground">{detail}</span>
                 </CommandItem>
               ))}
             </CommandGroup>
@@ -632,6 +745,7 @@ function BarButtons({ tools }: { readonly tools?: ReactNode }) {
         <KitMenuContent align="end" className="w-52"><ViewAndLanguage /></KitMenuContent>
       </Menu>}
       {tools}
+      <AppearanceTray />
       <Popover>
         <PopoverTrigger aria-label="Keyboard shortcuts" className={cn(iconButton, "hidden @xl:flex")}><Keyboard aria-hidden /></PopoverTrigger>
         <KitPopoverContent align="end" className="w-60">
@@ -655,13 +769,73 @@ function BarButtons({ tools }: { readonly tools?: ReactNode }) {
   )
 }
 
+/** Centered floating dark pill dock rendered in `dock` shell mode (`data-shell="dock"`). */
+function FloatingDock({ sections, perspective, navigation, current, assistant }: {
+  readonly sections: readonly Section[]
+  readonly perspective: Perspective
+  readonly navigation: Navigation
+  readonly current: Section | undefined
+  readonly assistant?: AssistantContent
+}) {
+  const { open, toggle } = useAssistant()
+  const global = sections.filter((section) => section.perspective === "global")
+  const own = sections.filter((section) => section.perspective === perspective).slice(0, 5)
+  const firstHref = (section: Section) => navigation.menus.get(section.path)?.find(({ href }) => !href.startsWith("#"))?.href
+  const dockLink = "relative flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium text-(--dock-muted) transition-colors outline-none hover:bg-(--dock-active) hover:text-(--dock-foreground) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring data-[active=true]:bg-(--dock-active) data-[active=true]:text-(--dock-foreground) [&_svg]:size-4"
+
+  return (
+    <nav
+      data-slot="floating-dock"
+      aria-label="Floating dock"
+      className="fixed bottom-5 left-1/2 z-40 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-1 rounded-full border border-(--dock-border) bg-(--dock-surface) px-2 py-1.5 text-(--dock-foreground) shadow-float backdrop-blur-xl"
+    >
+      <Link to="/" aria-label="Norn Studio home" className="flex size-8 shrink-0 items-center justify-center rounded-full outline-none hover:bg-(--dock-active) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">
+        <img src={nornMark} alt="" width={20} height={20} className="size-5 object-contain" />
+      </Link>
+      {global.map((section) => {
+        const Icon = section.icon
+        const count = navigation.badges.get(section.path)
+        const active = current?.path === section.path
+        return (
+          <Link key={section.path} to={section.path} data-active={active || undefined} className={dockLink}>
+            <Icon aria-hidden />
+            <span className="hidden sm:inline">{section.label}</span>
+            {count && <span className="rounded-full bg-destructive px-1.5 text-[0.625rem] leading-4 font-semibold text-destructive-foreground tabular-nums">{count}</span>}
+          </Link>
+        )
+      })}
+      <span aria-hidden className="mx-0.5 h-4 w-px bg-(--dock-border)" />
+      {own.map((section) => {
+        const Icon = section.icon
+        const to = section.index === false ? firstHref(section) : section.path
+        if (to === undefined) return null
+        const active = current?.path === section.path
+        return (
+          <Link key={section.path} to={to} data-active={active || undefined} className={dockLink}>
+            <Icon aria-hidden />
+            <span className="hidden md:inline">{section.label}</span>
+          </Link>
+        )
+      })}
+      <span aria-hidden className="mx-0.5 h-4 w-px bg-(--dock-border)" />
+      {assistant && (
+        <button type="button" aria-label={assistant.title} aria-pressed={open} onClick={toggle}
+          className="flex size-8 items-center justify-center rounded-full text-(--dock-muted) transition-colors outline-none hover:bg-(--dock-active) hover:text-(--dock-foreground) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring aria-pressed:bg-(--dock-active) aria-pressed:text-(--dock-foreground)">
+          <Sparkles aria-hidden className="size-4" />
+        </button>
+      )}
+      <AppearanceTray side="top" variant="dock" />
+    </nav>
+  )
+}
+
 /**
  * The workbench shell: a slim rail and the perspective's sidebar on one quiet tint, the page flat on
  * the background beside them under one bar (breadcrumbs, search, the perspective switch), and the
  * inspector and assistant docked on the end side.
  */
 export function Shell(props: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly assistant?: AssistantContent; readonly account: Account; readonly onSignOut: () => void }) {
-  return <LocaleProvider><PerspectiveProvider><AssistantProvider available={props.assistant !== undefined}><LocalizedShell {...props} /></AssistantProvider></PerspectiveProvider></LocaleProvider>
+  return <AppearanceProvider><LocaleProvider><PerspectiveProvider><AssistantProvider available={props.assistant !== undefined}><LocalizedShell {...props} /></AssistantProvider></PerspectiveProvider></LocaleProvider></AppearanceProvider>
 }
 
 /**
@@ -745,24 +919,32 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale
     }
   }, [open, isMobile])
 
+  const { shell } = useAppearance()
+  const isDock = shell === "dock"
+
   return (
     <>
-      <Sidebar collapsible="icon" side={directionOf(locale) === "rtl" ? "right" : "left"} className="overflow-hidden border-none!">
-        <div className="flex size-full min-w-0 flex-row bg-shell">
-          <Rail sections={sections} perspective={perspective} navigation={navigation} current={current} account={account}
-            onSignOut={onSignOut} assistant={assistant} railRef={railRef}
-            onExpandSection={expandSection} />
-          <div ref={sidebarPanelRef} className="flex min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
-            <SectionSidebar key={perspective} sections={sections} perspective={perspective} navigation={navigation} pathname={pathname}
-              chosen={chosenByPerspective[perspective]} onChosenChange={updateChosen} />
+      {!isDock && (
+        <Sidebar collapsible="icon" side={directionOf(locale) === "rtl" ? "right" : "left"} className="overflow-hidden border-none!">
+          <div className="flex size-full min-w-0 flex-row bg-shell">
+            <Rail sections={sections} perspective={perspective} navigation={navigation} current={current} account={account}
+              onSignOut={onSignOut} assistant={assistant} railRef={railRef}
+              onExpandSection={expandSection} />
+            <div ref={sidebarPanelRef} className="flex min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
+              <SectionSidebar key={perspective} sections={sections} perspective={perspective} navigation={navigation} pathname={pathname}
+                chosen={chosenByPerspective[perspective]} onChosenChange={updateChosen} />
+            </div>
           </div>
-        </div>
-      </Sidebar>
-      <SidebarInset className="min-w-0 flex-row overflow-clip bg-background md:my-2 md:me-2 md:ms-0 md:rounded-shell md:border md:border-border/90 md:shadow-shell">
+        </Sidebar>
+      )}
+      <SidebarInset className={cn(
+        "min-w-0 flex-row overflow-clip bg-background",
+        !isDock && "md:my-2 md:me-2 md:ms-0 md:rounded-shell md:border md:border-border/90 md:shadow-shell",
+      )}>
         <div className="@container flex min-w-0 flex-1 flex-col">
           <header className="flex h-12 shrink-0 items-center justify-between gap-1 border-b border-border/80 bg-background/95 px-2 @sm:gap-2 @sm:px-3 @2xl:gap-3 @2xl:px-4 @4xl:grid @4xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
             <div className="flex min-w-0 flex-1 items-center gap-1.5">
-              <SidebarTrigger ref={triggerRef} className="-ms-1 size-8 shrink-0 rounded-lg text-muted-foreground" />
+              {!isDock && <SidebarTrigger ref={triggerRef} className="-ms-1 size-8 shrink-0 rounded-lg text-muted-foreground" />}
               <div className="hidden min-w-0 overflow-hidden @[17rem]:block">{current && <Crumbs key={current.path} section={current} entries={navigation.menus.get(current.path) ?? []} pathname={pathname} />}</div>
             </div>
             <div className="flex shrink-0 justify-center @2xl:w-48 @4xl:w-72 @5xl:w-96"><CommandMenu sections={sections} navigation={navigation} onPerspective={switchTo} /></div>
@@ -772,11 +954,12 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale
             </div>
           </header>
           <ConnectionBanner />
-          <div className="mx-auto w-full max-w-7xl px-5 py-7 md:px-9 md:py-8"><Outlet /></div>
+          <div className={cn("mx-auto w-full max-w-7xl px-5 py-7 md:px-9 md:py-8", isDock && "pb-28")}><Outlet /></div>
         </div>
         <Inspector />
         <AssistantPanel assistant={assistant} />
       </SidebarInset>
+      {isDock && <FloatingDock sections={sections} perspective={perspective} navigation={navigation} current={current} assistant={assistant} />}
     </>
   )
 }
@@ -784,6 +967,7 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale
 /** The shell in the reader's direction: in Arabic the rail docks on the right. */
 function LocalizedShell({ sections, tools, assistant, account, onSignOut }: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly assistant?: AssistantContent; readonly account: Account; readonly onSignOut: () => void }) {
   const { locale } = useLocale()
+  const { skin, shell } = useAppearance()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const navigate = useNavigate()
   const chosen = usePerspective()
@@ -799,7 +983,7 @@ function LocalizedShell({ sections, tools, assistant, account, onSignOut }: { re
   useHashScroll()
   return (
     <ViewProvider><InspectorProvider><TooltipProvider>
-      <SidebarProvider data-shell="workbench" data-density={density} className="bg-shell" style={{ "--sidebar-width": "17rem", "--sidebar-width-icon": "3rem" } as CSSProperties}>
+      <SidebarProvider data-skin={skin} data-shell={shell} data-density={density} className="bg-shell" style={{ "--sidebar-width": "17rem", "--sidebar-width-icon": "3rem" } as CSSProperties}>
         <WorkbenchFrame sections={sections} tools={tools} assistant={assistant} account={account} onSignOut={onSignOut}
           locale={locale} pathname={pathname} perspective={perspective} navigation={navigation} current={current} switchTo={switchTo} />
       </SidebarProvider>

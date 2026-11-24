@@ -44,7 +44,7 @@ function AskBar() {
   }
   return (
     <form onSubmit={(event) => { event.preventDefault(); submit() }}>
-      <InputGroup className="h-11 rounded-lg border-border bg-card dark:bg-card">
+      <InputGroup className="h-11 rounded-xl border-(--panel-border) bg-card shadow-(--panel-shadow) dark:bg-card">
         <InputGroupAddon><Sparkles aria-hidden /></InputGroupAddon>
         <InputGroupInput aria-label="Ask or tell Norn anything" placeholder="Ask or tell Norn anything" value={text} onChange={(event) => setText(event.target.value)} />
         <InputGroupAddon align="inline-end">
@@ -97,7 +97,7 @@ function KeyNumbers() {
       <h2 id="key-numbers" className="text-section font-medium">Key numbers</h2>
       {metrics.isPending && <Skeleton className="h-28 rounded-lg" />}
       {metrics.isError && <p className="text-sm text-muted-foreground">{metrics.error.message}</p>}
-      {metrics.data && picked.length === 0 && <div className="rounded-lg border"><EmptyState icon={Sigma}>No admitted measure adds up on its own yet.</EmptyState></div>}
+      {metrics.data && picked.length === 0 && <div className="rounded-xl border border-(--panel-border) bg-card"><EmptyState icon={Sigma}>No admitted measure adds up on its own yet.</EmptyState></div>}
       {shown.length > 0 && (
         <StatStrip>
           {shown.map(({ metric, answer }) => {

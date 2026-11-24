@@ -17,5 +17,5 @@ export function KpiTile({ icon: Icon, label, value, sub }: { icon?: LucideIcon; 
 
 /** Figures in one row under one panel frame with hairline dividers; they stack on narrow screens. */
 export function StatStrip({ children }: { children: ReactNode }) {
-  return <div data-slot="stat-strip" className="grid divide-y divide-border/80 overflow-hidden rounded-xl border border-border/90 bg-card shadow-elevation sm:auto-cols-fr sm:grid-flow-col sm:divide-x sm:divide-y-0">{children}</div>
+  return <div data-slot="stat-strip" className="grid divide-y divide-(--panel-border) overflow-hidden rounded-xl border border-(--panel-border) bg-card shadow-(--panel-shadow) sm:auto-cols-fr sm:grid-flow-col sm:divide-x sm:divide-y-0">{children}</div>
 }

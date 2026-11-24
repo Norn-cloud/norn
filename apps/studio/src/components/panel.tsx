@@ -85,14 +85,14 @@ export function Panel({ icon: Icon, label, action, children, className, id }: {
   id?: string
 }) {
   return (
-    <section id={id} data-slot="panel" className={cn("min-w-0 overflow-hidden rounded-xl border border-border/90 bg-card",
+    <section id={id} data-slot="panel" className={cn("min-w-0 overflow-hidden rounded-xl border border-(--panel-border) bg-card shadow-(--panel-shadow)",
       // A panel inside another panel is a section of it, not a card in a card: one hairline above, no frame.
-      "[[data-slot=well]_&]:rounded-none [[data-slot=well]_&]:border-x-0 [[data-slot=well]_&]:border-b-0 [[data-slot=well]_&]:bg-transparent [[data-slot=well]_&>header]:px-0",
+      "[[data-slot=well]_&]:rounded-none [[data-slot=well]_&]:border-x-0 [[data-slot=well]_&]:border-b-0 [[data-slot=well]_&]:bg-transparent [[data-slot=well]_&]:shadow-none [[data-slot=well]_&>header]:px-0",
       className)}>
       <header className="flex min-h-11 flex-wrap items-center gap-x-2 gap-y-0.5 px-4 py-2 text-sm">
         {Icon && <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />}
         {/* A title wraps (two lines at most) rather than losing its end; a hint goes to the next line when both don't fit. */}
-        <h2 className="line-clamp-2 min-w-0 flex-1 basis-40 text-panel font-semibold tracking-[-0.01em] text-foreground [overflow-wrap:anywhere]" title={typeof label === "string" ? label : undefined}>{label}</h2>
+        <h2 className="line-clamp-2 min-w-0 flex-1 basis-40 text-panel font-medium tracking-[-0.015em] text-foreground [overflow-wrap:anywhere]" title={typeof label === "string" ? label : undefined}>{label}</h2>
         {/* A hint (text) gives way on a phone; a control (an element) stays. */}
         {action && <div className={cn("ms-auto shrink-0 text-meta text-muted-foreground", typeof action === "string" && "max-sm:hidden")}>{action}</div>}
       </header>
@@ -103,7 +103,7 @@ export function Panel({ icon: Icon, label, action, children, className, id }: {
 
 /** The body of a panel: flush with the card under one hairline, so a panel reads as one calm surface. */
 export function Well({ children, className }: { children: ReactNode; className?: string }) {
-  return <div data-slot="well" className={cn("border-t border-border/80 bg-card", className)}>{children}</div>
+  return <div data-slot="well" className={cn("border-t border-(--panel-border) bg-card", className)}>{children}</div>
 }
 
 /**
