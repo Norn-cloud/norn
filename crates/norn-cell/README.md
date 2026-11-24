@@ -54,7 +54,7 @@ Correspondence: `definitions_install::host_provision_atomic_at_every_storage_bou
 injects errors and abrupt subprocess exit after every SQL operation, before
 commit and after commit, then reopens, retries and checks conflicting retries.
 
-The wasm32 `workers::WorkersEngine` uses DO SQLite on celld and workerd.
+The wasm32 `workers::WorkersEngine` uses DO SQLite on workerd.
 The storage handle is trusted host configuration. TXN-ATOMIC-1 throws typed
 Rust refusals through the platform callback to roll back. Nested/SQL transaction
 control is refused, cursors are drained, and exact wide values use text.
@@ -73,7 +73,5 @@ wasm-bindgen "$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release/examples/wor
 python3 crates/norn-cell/examples/workers-sql/check.py
 ```
 
-Use matching wasm-bindgen, esbuild on PATH, and celld v0.6.3 (pin/checksum in
-[#728](https://github.com/Norn-cloud/norn/issues/728#issuecomment-6604974784)).
+Use matching wasm-bindgen, esbuild on PATH, and Wrangler 4.157.0 on PATH.
 The probe compares semantic SQLite/alarm state after refusal and restart.
-Pass `wrangler` to the probe for parity with Wrangler 4.157.0 on PATH.

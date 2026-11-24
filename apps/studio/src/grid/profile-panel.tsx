@@ -5,8 +5,9 @@ import { EmptyState, Panel, Well } from "@/components/panel"
 import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import type { Read } from "@/lib/exact"
+import { useStudioScope } from "@/lib/definitions"
 import { NotServed } from "@/lib/live-transport"
-import { profiled, readProfile, type ObjectProfile, type PropertyProfile } from "@/lib/profile"
+import { profiled, profileQueryKey, readProfile, type ObjectProfile, type PropertyProfile } from "@/lib/profile"
 import { atScale } from "@/lib/objects"
 
 const percent = (part: number, whole: number) => whole === 0 ? "—" : `${((part / whole) * 100).toFixed(part === 0 || part === whole ? 0 : 1)}%`
@@ -60,7 +61,9 @@ function quantile(read: Read<ObjectProfile>, at: string, property: PropertyProfi
  * whose values it withholds from this reader are counted apart and add nothing to the figures.
  */
 export function ProfilePanel({ objectType, scales = new Map() }: { readonly objectType: string; readonly scales?: ReadonlyMap<string, number> }) {
-  const profile = useQuery({ queryKey: ["profile", objectType], queryFn: () => readProfile(objectType), retry: false })
+  const scope = useStudioScope()
+  const boundScope = scope.data ?? null
+  const profile = useQuery({ queryKey: profileQueryKey(objectType, boundScope), queryFn: () => readProfile(objectType, boundScope), enabled: scope.isSuccess, retry: false })
   if (profile.isPending) return <p className="text-sm text-muted-foreground">Profiling the records…</p>
   if (profile.isError) return profile.error instanceof NotServed
     ? <EmptyState icon={BarChart3} title="Not served">{profile.error.message}</EmptyState>

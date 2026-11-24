@@ -25,11 +25,11 @@ export function useLearningScope(): StudioScope | null {
 export function useBoundLearningRead(): {
   readonly scope: StudioScope | null
   readonly scopeKey: string
-  readonly onScopeMismatch: (actual: StudioScope | null) => void
+  readonly onScopeMismatch: (actual: StudioScope | null | undefined) => void
 } {
   const scope = useLearningScope()
   const client = useQueryClient()
-  const onScopeMismatch = useCallback((actual: StudioScope | null) => {
+  const onScopeMismatch = useCallback((actual: StudioScope | null | undefined) => {
     syncStudioScopeChange(client, actual)
   }, [client])
   return { scope, scopeKey: studioScopeKey(scope), onScopeMismatch }

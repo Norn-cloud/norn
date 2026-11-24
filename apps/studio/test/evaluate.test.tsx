@@ -86,8 +86,8 @@ test("a typed compute refusal keeps the cell's reason while an unavailable respo
     const scope = { orgId: "org_demo", environmentId: "analytics" }
     client.setQueryData(["studio-scope"], scope)
     client.setQueryData(["studio-mode", studioScopeKey(scope)], { kind: "live", scope })
-    client.setQueryData(["metrics"], { document: { metrics: [metric] } })
-    client.setQueryData(["key-number", metric.name, recentWindow(Date.now()).start], evaluation)
+    client.setQueryData(["metrics", "org_demo:analytics"], { document: { metrics: [metric] } })
+    client.setQueryData(["key-number", "org_demo:analytics", metric.name, recentWindow(Date.now()).start], evaluation)
     return renderToStaticMarkup(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>)
   }
   expect(home(computed)).toContain(`Record · Total amount (not shown). ${refusal.message}`)

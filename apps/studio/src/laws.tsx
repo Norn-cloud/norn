@@ -6,7 +6,8 @@ import { EmptyState, Panel, Well } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useMode } from "@/lib/live-transport"
-import { readProfile } from "@/lib/profile"
+import { useStudioScope } from "@/lib/definitions"
+import { profileQueryKey, readProfile } from "@/lib/profile"
 import { useView } from "@/lib/view"
 import { conceptTitle, lawHeadline, type Concept, type Law } from "./lib/catalog.ts"
 import { heldCountText, heldGroupKey, heldRuleTechnicalId, heldRuleTitle } from "./lib/guarantees.ts"
@@ -169,7 +170,9 @@ export function HeldRuleRow({ held, scanLimit }: { readonly held: Group; readonl
 
 /** A type's records the cell holds back, from the cell's own profile of what this reader may see. */
 function Quarantined({ objectType }: { readonly objectType: string }) {
-  const profile = useQuery({ queryKey: ["profile", objectType], queryFn: () => readProfile(objectType), retry: false })
+  const scope = useStudioScope()
+  const boundScope = scope.data ?? null
+  const profile = useQuery({ queryKey: profileQueryKey(objectType, boundScope), queryFn: () => readProfile(objectType, boundScope), enabled: scope.isSuccess, retry: false })
   if (!profile.data) return null
   const { quarantinedRows, rows, approximate, scanLimit } = profile.data.document
   const bound = scanLimit > 0 ? ` of ${scanLimit.toLocaleString("en-US")} rows` : ""

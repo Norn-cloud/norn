@@ -89,9 +89,15 @@ const isDashboard = (value: unknown): value is Dashboard =>
 
 const KIND = "dashboard"
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>
+/** Canonical browser fetch wrapper shared across Studio clients so `scopedHostFetch` recognizes it. */
+export const defaultFetch: Fetch = (input, init) => fetch(input, init)
+export const isDefaultFetch = (fetcher: Fetch): boolean => fetcher === fetch || fetcher === defaultFetch
+export interface WorkspaceScope { readonly orgId: string; readonly environmentId: string | null }
 export interface StudioScope { readonly orgId: string; readonly environmentId: string }
-export type ScopeProvider = () => Promise<StudioScope | null>
+export type ScopeProvider = (signal?: AbortSignal) => Promise<StudioScope | null>
 export const NO_DATA_CELL = "This workspace has no data cell yet."
+export const EXPECTED_ORG_HEADER = "x-norn-expected-org"
+export const EXPECTED_ENV_HEADER = "x-norn-expected-env"
 export class StudioScopeError extends Error {}
 const accountScope = z.object({ organization: z.object({ id: z.string().min(1) }).nullable(), environmentId: z.string().min(1).nullable() })
 
@@ -335,6 +341,65 @@ export async function fetchWithTimeout(
   return wrapped
 }
 
+/**
+ * The workspace scope currently displayed by this tab, populated whenever `accountQuery` loads or
+ * refreshes `/api/me`. Undefined until a browser session loads (so isolated unit tests passing
+ * custom fetchers keep calling `readStudioScope(fetcher)`). Writes stay bound to the scope that
+ * loaded the form/workflow (or this displayed scope) and send it explicitly so a workspace switch
+ * in another tab cannot redirect a stale form.
+ */
+let currentDisplayedScope: StudioScope | null | undefined
+let currentDisplayedWorkspaceScope: WorkspaceScope | null | undefined
+
+export function getDisplayedScope(): StudioScope | null | undefined {
+  return currentDisplayedScope
+}
+
+export function getDisplayedWorkspaceScope(): WorkspaceScope | null | undefined {
+  return currentDisplayedWorkspaceScope
+}
+
+export function setDisplayedScope(scope: StudioScope | null | undefined): void {
+  currentDisplayedScope = scope
+  currentDisplayedWorkspaceScope = scope
+}
+
+export function setDisplayedWorkspaceScope(scope: WorkspaceScope | null | undefined): void {
+  currentDisplayedWorkspaceScope = scope
+  currentDisplayedScope = scope === undefined
+    ? undefined
+    : scope === null || scope.environmentId === null
+      ? null
+      : { orgId: scope.orgId, environmentId: scope.environmentId }
+}
+
+export function workspaceScopeFromAccount(account: {
+  readonly organization?: { readonly id: string } | null
+  readonly environmentId?: string | null
+} | null | undefined): WorkspaceScope | null {
+  const orgId = account?.organization?.id
+  if (typeof orgId !== "string" || orgId === "") return null
+  const environmentId = typeof account?.environmentId === "string" && account.environmentId !== "" ? account.environmentId : null
+  return { orgId, environmentId }
+}
+
+export function scopeFromAccount(account: {
+  readonly organization?: { readonly id: string } | null
+  readonly environmentId?: string | null
+} | null | undefined): StudioScope | null {
+  const ws = workspaceScopeFromAccount(account)
+  return ws !== null && ws.environmentId !== null ? { orgId: ws.orgId, environmentId: ws.environmentId } : null
+}
+
+/** Expected-scope headers sent on cookie-authenticated mutations. */
+export function scopeHeaders(scope: WorkspaceScope | StudioScope | null | undefined): Record<string, string> {
+  if (scope === null || scope === undefined) return {}
+  return {
+    [EXPECTED_ORG_HEADER]: scope.orgId,
+    ...scope.environmentId !== null && scope.environmentId !== "" ? { [EXPECTED_ENV_HEADER]: scope.environmentId } : {},
+  }
+}
+
 /** Stable cache key for one server-reported `(orgId, environmentId)` scope. */
 export function studioScopeKey(scope: StudioScope | null | undefined): string {
   return scope == null ? "none" : JSON.stringify([scope.orgId, scope.environmentId])
@@ -346,8 +411,36 @@ export function sameStudioScope(a: StudioScope | null | undefined, b: StudioScop
   return a.orgId === b.orgId && a.environmentId === b.environmentId
 }
 
+/** Shown when a scope-bound read or write is refused because the active workspace diverged. */
+export const WORKSPACE_CHANGED_MESSAGE = "This workspace changed; reload to edit this view."
+
+/**
+ * Run a scope-pinned read only while `readScope()` matches `expectedScope` before dispatch and
+ * after resolution, discarding any late result if the workspace changed in flight.
+ */
+export async function readAtScope<T>(
+  expectedScope: StudioScope,
+  readScope: ScopeProvider,
+  read: () => Promise<T>,
+  signal?: AbortSignal,
+  mismatchMessage = WORKSPACE_CHANGED_MESSAGE,
+): Promise<T> {
+  if (signal?.aborted) throw new StudioScopeError(mismatchMessage)
+  const before = await readScope(signal)
+  if (signal?.aborted || !sameStudioScope(before, expectedScope)) {
+    throw new StudioScopeError(mismatchMessage)
+  }
+  const result = await read()
+  if (signal?.aborted) throw new StudioScopeError(mismatchMessage)
+  const after = await readScope(signal)
+  if (signal?.aborted || !sameStudioScope(after, expectedScope)) {
+    throw new StudioScopeError(mismatchMessage)
+  }
+  return result
+}
+
 /** Read the active workspace and its cell from the signed-in server session. */
-export async function readStudioScope(fetcher: Fetch = (input, init) => fetch(input, init), signal?: AbortSignal): Promise<StudioScope | null> {
+export async function readStudioScope(fetcher: Fetch = defaultFetch, signal?: AbortSignal): Promise<StudioScope | null> {
   signal?.throwIfAborted()
   let response: Response
   let text: string
@@ -391,14 +484,32 @@ export function useCachedStudioScope(): StudioScope | null {
 }
 
 /**
- * Every scoped host call uses a fresh server-reported scope. The host still authorizes the request.
- * Idempotent reads (`GET`/`HEAD`/`OPTIONS`) are bounded by the read deadline (`CELL_FETCH_TIMEOUT_MS`
- * or `init.timeoutMs`) through body completion. Mutating writes (`POST`/`PUT`/`PATCH`/`DELETE`)
- * are never cut off by the 12 s read deadline and keep their own declared deadline and signal.
+ * Resolve the originating scope for a mutating host call. Browser callers (`defaultFetch` / `fetch`)
+ * fail closed if neither an explicit `boundScope` nor the tab's displayed scope is present, so a
+ * write can never silently re-read `/api/me` and adopt a workspace switched in another tab.
  */
-export function scopedHostFetch(fetcher: Fetch, base = "/api/host", scope: ScopeProvider = () => readStudioScope()): (input: string, init?: ScopedRequestInit) => Promise<Response> {
+export async function resolveWriteScope(fetcher: Fetch, boundScope?: StudioScope | null): Promise<StudioScope | null> {
+  if (boundScope !== undefined) return boundScope
+  if (currentDisplayedScope !== undefined) return currentDisplayedScope
+  if (isDefaultFetch(fetcher)) throw new StudioScopeError("Workspace scope must be loaded before submitting.")
+  return readStudioScope(fetcher)
+}
+
+/**
+ * Every scoped host call carries `orgId` and `environmentId`. Idempotent reads (`GET`/`HEAD`/`OPTIONS`)
+ * are bounded by the read deadline (`CELL_FETCH_TIMEOUT_MS` or `init.timeoutMs`) through body
+ * completion. Mutating writes (`POST`/`PUT`/`PATCH`/`DELETE`) carry `x-norn-expected-org` and
+ * `x-norn-expected-env` bound to the pinned or displayed scope so the Worker refuses stale-tab
+ * submissions if the session's active workspace changed elsewhere, and keep their own deadline.
+ */
+export function scopedHostFetch(fetcher: Fetch, base = "/api/host", scope?: ScopeProvider): (input: string, init?: ScopedRequestInit) => Promise<Response> {
   return async (path, init) => {
-    const active = await scope()
+    const read = isReadMethod(init?.method)
+    const active = scope !== undefined
+      ? await scope()
+      : read
+        ? await readStudioScope(fetcher, init?.signal ?? undefined)
+        : await resolveWriteScope(fetcher)
     if (active === null) throw new StudioScopeError(NO_DATA_CELL)
     const [pathname, search] = path.split("?", 2)
     const query = new URLSearchParams(search)
@@ -406,10 +517,13 @@ export function scopedHostFetch(fetcher: Fetch, base = "/api/host", scope: Scope
     query.set("environmentId", active.environmentId)
     const url = `${base}${pathname}?${query}`
     const { timeoutMs, ...requestInit } = init ?? {}
-    if (isReadMethod(requestInit.method)) {
+    if (read) {
       return fetchWithTimeout(fetcher, url, init === undefined ? undefined : requestInit, timeoutMs ?? CELL_FETCH_TIMEOUT_MS, () => recordCellReachable(active))
     }
-    const response = await fetcher(url, init === undefined ? undefined : requestInit)
+    const headers = new Headers(requestInit.headers)
+    headers.set(EXPECTED_ORG_HEADER, active.orgId)
+    headers.set(EXPECTED_ENV_HEADER, active.environmentId)
+    const response = await fetcher(url, { ...requestInit, headers })
     if (response.ok) recordCellReachable(active)
     return response
   }
@@ -449,7 +563,7 @@ export class CellUnavailable extends Error {
  * GET /v1/definitions:list?kind= (paged) and /v1/definitions/{id} read them
  * back; reading needs Population, so viewers can open dashboards.
  */
-export function cellDefinitions(fetcher: Fetch = fetch, base = "/api/host", scope?: ScopeProvider): DefinitionStore {
+export function cellDefinitions(fetcher: Fetch = defaultFetch, base = "/api/host", scope?: ScopeProvider): DefinitionStore {
   const scoped = scopedHostFetch(fetcher, base, scope)
   const post = async (path: string, body: unknown) => {
     let response: Response
@@ -535,7 +649,8 @@ export const disconnected: DefinitionStore = {
   retire: async () => { throw new NotConnected() },
 }
 
-export const DefinitionsContext = createContext<DefinitionStore>(cellDefinitions())
+export const defaultDefinitions: DefinitionStore = cellDefinitions(defaultFetch)
+export const DefinitionsContext = createContext<DefinitionStore>(defaultDefinitions)
 export const useDefinitions = () => use(DefinitionsContext)
 
 /** A copy of a dashboard under a new title, with fresh tile ids. */
