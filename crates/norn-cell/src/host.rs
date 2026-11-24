@@ -82,21 +82,17 @@ pub enum PerformClaim<C, I> {
 /// A `CellHost` over a [`CellStore`], using its selected SQL engine.
 pub struct SqliteCell<E, C, I, S: SqlEngine = DefaultEngine> {
     store: CellStore<S>,
-    scope: String,
+    pub(crate) scope: String,
     now: LogicalTime,
     responder: Responder<C, I>,
     published: Vec<CommitReceipt>,
     /// S6c, S5a: the bookkeeping events the next commit carries, set only
     /// for the span of [`Self::attributed`].
     attached: Vec<norn_ir::RuntimeValue>,
-    /// RECEIPT-CONSUME-1: the Function command-authority recheck run when a
-    /// retained receipt is resolved. Without one, receipts never resolve.
-    result_authorizer: Option<ResultAuthority>,
+    /// RECEIPT-CONSUME-1: the host's Function receipt authority state.
+    pub(crate) receipts: crate::function_receipt::ReceiptHost,
     events: PhantomData<fn() -> E>,
 }
-
-/// A host's Function command-authority recheck (T2-RES-1 step 8).
-pub type ResultAuthority = Box<dyn norn_kernel::result_reconciliation::ResultAuthorizer + Send>;
 
 impl<E, C, I, S> std::fmt::Debug for SqliteCell<E, C, I, S>
 where
@@ -136,7 +132,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             responder: Box::new(responder),
             published: Vec::new(),
             attached: Vec::new(),
-            result_authorizer: None,
+            receipts: crate::function_receipt::ReceiptHost::default(),
             events: PhantomData,
         })
     }
@@ -167,22 +163,9 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             responder: self.responder,
             published: self.published,
             attached: self.attached,
-            result_authorizer: self.result_authorizer,
+            receipts: self.receipts,
             events: PhantomData,
         }
-    }
-
-    /// The tenant scope this cell is bound to.
-    pub(crate) fn bound_scope(&self) -> &str {
-        &self.scope
-    }
-
-    /// RECEIPT-CONSUME-1: install (or, with `None`, remove) the command
-    /// authority recheck that resolving a retained Function receipt runs at
-    /// the cell's current clock (T2-RES-1 step 8). A cell without one serves
-    /// no receipt effect (`action.receipt_effect_unsupported`).
-    pub fn set_result_authorizer(&mut self, authorizer: Option<ResultAuthority>) {
-        self.result_authorizer = authorizer;
     }
 
     /// The store, for in-crate captures the cell makes itself
@@ -1956,15 +1939,21 @@ where
             crate::function_receipt::check_consumption(
                 reader,
                 &commit,
-                self.result_authorizer.as_deref(),
+                &self.receipts,
                 &self.scope,
                 self.now,
             )?;
             Ok((versions, mapping_proof))
         };
+        let follow_floor = crate::function_receipt::consumes_function_result(
+            &self.store,
+            commit.consumes.as_ref(),
+        )
+        .map_err(CommitError::Host)?;
         match self.store.commit_guarded_submitted(
             &batch,
             submitted.as_ref(),
+            follow_floor,
             guard,
             &mut |_point| Ok(()),
         ) {
@@ -2129,18 +2118,7 @@ where
         Option<norn_kernel::receipt_binding::ReceiptBinding<JsonObject>>,
         norn_kernel::receipt_binding::ReceiptBindingError<CellError>,
     > {
-        let Some(authorizer) = self.result_authorizer.as_deref() else {
-            return Ok(None);
-        };
-        crate::function_receipt::resolve(
-            &self.store,
-            &self.scope,
-            self.now,
-            authorizer,
-            reference,
-            manifest,
-        )
-        .map(Some)
+        crate::function_receipt::resolve(self, reference, manifest)
     }
 
     fn load_link(&self, key: &LinkKey) -> Result<LinkState, CellError> {

@@ -41,9 +41,10 @@ use norn_kernel::result_reconciliation::{
     RefusalReason, ResultAuthorizer, ResultAuthzRequest, ResultChecks, StateView, reconcile,
 };
 use norn_kernel::{
-    CellCommit, CommandId, CommitError, Consumed, FactExpectation, FactKey, FactVersion,
-    Generation, LogicalTime,
+    CellCommit, CellHost, CommandId, CommitError, CommitReceipt, Consumed, FactExpectation,
+    FactKey, FactVersion, Generation, LogicalTime,
 };
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
 use crate::engine::{SqlEngine, params};
@@ -109,6 +110,19 @@ impl From<CellError> for ReceiptIntakeError {
     }
 }
 
+/// A host's Function command-authority recheck (T2-RES-1 step 8).
+pub type ResultAuthority = Box<dyn ResultAuthorizer + Send>;
+
+/// A cell's receipt authority state.
+#[derive(Default)]
+pub(crate) struct ReceiptHost {
+    /// The command-authority recheck; without one no receipt resolves and
+    /// no commit accepts a Function result.
+    authorizer: Option<ResultAuthority>,
+    /// Set only for the span of [`SqliteCell::commit_result_refusal`].
+    refusal_record: bool,
+}
+
 /// What a retained row holds: the receipt and the dispatch it reconciled
 /// against. Intake authenticated the receipt's own `provenance.executor`.
 #[derive(Debug, Serialize, Deserialize)]
@@ -119,6 +133,15 @@ struct Retained {
 }
 
 impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
+    /// RECEIPT-CONSUME-1: install (or, with `None`, remove) the command
+    /// authority recheck that resolving a retained Function receipt, and the
+    /// commit accepting it, run at the cell's effective clock (T2-RES-1 step
+    /// 8). Without one the cell serves no receipt effect
+    /// (`action.receipt_effect_unsupported`) and accepts no Function result.
+    pub fn set_result_authorizer(&mut self, authorizer: Option<ResultAuthority>) {
+        self.receipts.authorizer = authorizer;
+    }
+
     /// RECEIPT-STORE-1: reconcile an authenticated completion of a pending
     /// Function delivery and retain its receipt as action evidence.
     ///
@@ -148,12 +171,39 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
     {
         retain(
             self.store(),
-            self.bound_scope(),
+            &self.scope,
             self.now(),
             dispatched,
             completion,
             checks,
         )
+    }
+}
+
+impl<E, C, I, S> SqliteCell<E, C, I, S>
+where
+    S: SqlEngine,
+    E: Serialize,
+    C: Serialize + DeserializeOwned,
+    I: Serialize + DeserializeOwned,
+{
+    /// T2-RES-1: commit the record of a refused Function result. It consumes
+    /// the delivery and carries only events and effects (a reschedule), never
+    /// writes or links. Every other commit that consumes a `norn.function/v1`
+    /// delivery applies the result, and is accepted only under the installed
+    /// command-authority recheck (RECEIPT-CONSUME-1).
+    ///
+    /// # Errors
+    /// [`CommitError::ReceiptNotAccepted`] for a record that writes or links;
+    /// otherwise as [`CellHost::commit`].
+    pub fn commit_result_refusal(
+        &mut self,
+        commit: CellCommit<E, C, I>,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        self.receipts.refusal_record = true;
+        let committed = CellHost::commit(self, commit);
+        self.receipts.refusal_record = false;
+        committed
     }
 }
 
@@ -349,65 +399,83 @@ fn command_state<S: SqlEngine>(
         .map(|state| (state, FactVersion(record.version))))
 }
 
-/// RECEIPT-CONSUME-1, inside the commit transaction: an action commit that
-/// consumes a `norn.function/v1` delivery applies only while the dispatch's
-/// scope, deadline and the host's command-authority recheck still hold at
-/// the commit's effective clock, `now` raised to the durable clock floor
-/// (T2-RES-1 step 8). Every other commit passes; a delivery that is no
-/// longer pending is the kernel's refusal.
+/// The `norn.function/v1` invocation whose recorded result `consumes`
+/// names, if it is still pending.
+fn pending_invocation<S: SqlEngine>(
+    reader: &StoreReader<'_, S>,
+    consumes: Option<&Consumed>,
+) -> Result<Option<Value>, CellError> {
+    let Some(Consumed::Result {
+        command,
+        generation,
+    }) = consumes
+    else {
+        return Ok(None);
+    };
+    let Some(pending) = reader.pending_result(&command.0, generation.0)? else {
+        return Ok(None);
+    };
+    let Some(payload) = pending.command.command.get("payload") else {
+        return Ok(None);
+    };
+    if payload.get("type").and_then(Value::as_str) != Some(FUNCTION_PAYLOAD_TYPE) {
+        return Ok(None);
+    }
+    Ok(Some(
+        payload.get("invocation").cloned().unwrap_or(Value::Null),
+    ))
+}
+
+/// Whether a commit consuming `consumes` applies a Function result, so its
+/// clock follows the durable floor inside its transaction.
+///
+/// # Errors
+/// The host's read failure.
+pub(crate) fn consumes_function_result<S: SqlEngine>(
+    store: &CellStore<S>,
+    consumes: Option<&Consumed>,
+) -> Result<bool, CellError> {
+    Ok(pending_invocation(&store.read(), consumes)?.is_some())
+}
+
+/// RECEIPT-CONSUME-1, inside the commit transaction: every commit consuming
+/// a pending `norn.function/v1` delivery applies its result, through an
+/// action or [`Acceptance::commit`], and applies only while the dispatch's
+/// scope, deadline and the installed command-authority recheck hold at the
+/// commit's effective clock, `now` raised to the durable clock floor
+/// (T2-RES-1 step 8). The one exception is a refusal record
+/// ([`SqliteCell::commit_result_refusal`]), which may write nothing. A
+/// delivery that is no longer pending is the kernel's refusal.
 ///
 /// # Errors
 /// [`CommitError::ReceiptNotAccepted`], or the host's read failure.
-pub(crate) fn check_consumption<S, A, E, C, I>(
+pub(crate) fn check_consumption<S: SqlEngine, E, C, I>(
     reader: &StoreReader<'_, S>,
     commit: &CellCommit<E, C, I>,
-    authorizer: Option<&A>,
+    receipts: &ReceiptHost,
     scope: &str,
     now: LogicalTime,
-) -> Result<(), CommitError<CellError>>
-where
-    S: SqlEngine,
-    A: ResultAuthorizer + ?Sized,
-{
+) -> Result<(), CommitError<CellError>> {
     let Some(consumed) = &commit.consumes else {
         return Ok(());
     };
-    let Consumed::Result {
-        command,
-        generation,
-    } = consumed
+    let Some(invocation) = pending_invocation(reader, Some(consumed)).map_err(CommitError::Host)?
     else {
         return Ok(());
     };
-    if !commit
-        .writes
-        .iter()
-        .any(|write| write.key.object_type.as_str() == norn_kernel::ACTION_CALL_TYPE)
-    {
-        return Ok(());
-    }
-    let Some(pending) = reader
-        .pending_result(&command.0, generation.0)
-        .map_err(CommitError::Host)?
-    else {
-        return Ok(());
-    };
-    let payload = pending.command.command.get("payload");
-    if payload
-        .and_then(|payload| payload.get("type"))
-        .and_then(Value::as_str)
-        != Some(FUNCTION_PAYLOAD_TYPE)
-    {
-        return Ok(());
-    }
     let refused = || CommitError::ReceiptNotAccepted {
         consumed: consumed.clone(),
     };
-    let invocation = payload
-        .and_then(|payload| payload.get("invocation"))
-        .and_then(|value| norn_ir::runtime::decode::<FunctionInvocation>(value).ok())
-        .ok_or_else(refused)?;
-    let authorizer = authorizer.ok_or_else(refused)?;
+    if receipts.refusal_record {
+        return if commit.writes.is_empty() && commit.links.is_empty() {
+            Ok(())
+        } else {
+            Err(refused())
+        };
+    }
+    let invocation = norn_ir::runtime::decode::<FunctionInvocation>(&invocation)
+        .map_err(|_invalid| refused())?;
+    let authorizer = receipts.authorizer.as_deref().ok_or_else(refused)?;
     // A sibling handle may have committed past this handle's clock.
     let floor = reader.clock_floor().map_err(CommitError::Host)?;
     let now = now.max(LogicalTime::from_millis(floor));
@@ -495,27 +563,28 @@ impl AcceptedReceiptStore for Resolved {
     }
 }
 
-/// RECEIPT-CONSUME-1: resolve `reference` to a checked binding under this
-/// cell's scope, `main`, `manifest`, current clock and state, and the
-/// command authority `authorizer` grants now.
+/// RECEIPT-CONSUME-1: resolve `reference` to a checked binding under the
+/// cell's scope, `main`, `manifest`, effective clock and state, and the
+/// command authority its installed recheck grants now; `None` without one.
 ///
 /// # Errors
 /// A typed binding refusal, or [`ReceiptBindingError::Store`] for a host
 /// failure.
-pub(crate) fn resolve<S: SqlEngine>(
-    store: &CellStore<S>,
-    scope: &str,
-    now: LogicalTime,
-    authorizer: &dyn ResultAuthorizer,
+pub(crate) fn resolve<E, C, I, S: SqlEngine>(
+    cell: &SqliteCell<E, C, I, S>,
     reference: &ReceiptReference,
     manifest: &Digest,
-) -> Result<ReceiptBinding<JsonObject>, ReceiptBindingError<CellError>> {
+) -> Result<Option<ReceiptBinding<JsonObject>>, ReceiptBindingError<CellError>> {
+    let Some(authorizer) = cell.receipts.authorizer.as_deref() else {
+        return Ok(None);
+    };
+    let store = cell.store();
     if store.fork_pin().is_some() {
-        return bind_receipt(&Resolved::Unknown, reference);
+        return bind_receipt(&Resolved::Unknown, reference).map(Some);
     }
     let lookup = Lookup {
-        scope,
-        now,
+        scope: &cell.scope,
+        now: cell.now(),
         authorizer,
     };
     // One transaction: the retained row, the pending delivery, the command
@@ -524,7 +593,7 @@ pub(crate) fn resolve<S: SqlEngine>(
     let resolved = store
         .write_tx(|| Ok(evidence(store, &lookup, reference.digest(), manifest)))
         .map_err(ReceiptBindingError::Store)?;
-    bind_receipt(&resolved?, reference)
+    bind_receipt(&resolved?, reference).map(Some)
 }
 
 /// The cell context a lookup resolves under.

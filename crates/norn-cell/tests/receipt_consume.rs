@@ -13,7 +13,6 @@
     clippy::unwrap_used,
     clippy::panic,
     clippy::indexing_slicing,
-    clippy::arithmetic_side_effects,
     missing_docs,
     reason = "durable receipt scenarios"
 )]
@@ -37,8 +36,8 @@ use norn_ir::{ActionRoot, ObjectTypeDef, RuntimeValue};
 use norn_kernel::cell_host::{JsonObject, JsonValue};
 use norn_kernel::receipt_binding::{ReceiptBinding, ReceiptBindingError, ReceiptReference};
 use norn_kernel::result_reconciliation::{
-    CommandState, Completion, DispatchedCommand, InvalidReceipt, ReceiptValidator, RefusalReason,
-    ResultAuthorizer, ResultAuthzRequest, ResultChecks, ResultDenial,
+    Acceptance, CommandState, Completion, DispatchedCommand, InvalidReceipt, ReceiptValidator,
+    RefusalReason, ResultAuthorizer, ResultAuthzRequest, ResultChecks, ResultDenial,
 };
 use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionOutcome, CellCommit,
@@ -55,6 +54,7 @@ const OTHER_SCOPE: &str = "org_other/dev";
 const EXECUTOR: &str = "pool.carrier-confirmations";
 const DEADLINE: u64 = 1_000_000;
 const PAST_DEADLINE: u64 = 1_000_001;
+const WITHIN_DEADLINE: u64 = 500_000;
 
 type Sqlite = SqliteCell<FactEvent, JsonObject, JsonObject>;
 
@@ -570,14 +570,14 @@ fn retained_receipt_commits_its_transition_and_consumption_atomically_across_a_c
     );
     assert_eq!(
         cell.commits().unwrap().len(),
-        base + 1,
+        base.saturating_add(1),
         "one consuming commit"
     );
     // RECEIPT-CONSUME-ONCE: a lost acknowledgement's exact retry replays the
     // original outcome and consumes nothing.
     let retried = commit_action(&mut cell, &catalog, &call, &Allow).expect("exact retry");
     assert!(matches!(retried, ActionOutcome::Replayed { .. }));
-    assert_eq!(cell.commits().unwrap().len(), base + 1);
+    assert_eq!(cell.commits().unwrap().len(), base.saturating_add(1));
     // The disk image a crash just after it leaves (WAL included).
     common::crash_image(&path, &after);
     drop(cell);
@@ -602,7 +602,7 @@ fn retained_receipt_commits_its_transition_and_consumption_atomically_across_a_c
             image.display()
         );
         let commits = reopened.commits().unwrap().len();
-        assert_eq!(commits, base + 1, "one consuming commit");
+        assert_eq!(commits, base.saturating_add(1), "one consuming commit");
         // Put the run back in its waiting state: only the fence stops a replay.
         let version = reopened.load(&FactKey::new(RUN, "run-1")).unwrap().version;
         reopened
@@ -624,7 +624,7 @@ fn retained_receipt_commits_its_transition_and_consumption_atomically_across_a_c
         .unwrap_err();
         assert_eq!(refused.code(), "action.receipt_replayed", "{refused}");
         assert_eq!(status(&reopened, "run-1"), waiting());
-        assert_eq!(reopened.commits().unwrap().len(), commits + 1);
+        assert_eq!(reopened.commits().unwrap().len(), commits.saturating_add(1));
     }
 }
 
@@ -1014,13 +1014,13 @@ fn concurrent_consumptions_have_exactly_one_winner() {
     assert_eq!(status(&cell, "run-1"), confirmed());
     assert_eq!(
         cell.commits().unwrap().len(),
-        base + 1,
+        base.saturating_add(1),
         "exactly one winner"
     );
     // The winner's exact retry still replays its own outcome.
     let retried = commit_action(&mut cell, &catalog, &winner, &Allow).unwrap();
     assert!(matches!(retried, ActionOutcome::Replayed { .. }));
-    assert_eq!(cell.commits().unwrap().len(), base + 1);
+    assert_eq!(cell.commits().unwrap().len(), base.saturating_add(1));
 }
 
 #[test]
@@ -1265,7 +1265,12 @@ async fn a_restored_cell_holds_no_retained_evidence() {
     } = fixture(&dir.path().join("cell.sqlite"), "delivered");
     let digest = retain(&mut cell, &dispatched, &receipt).unwrap();
     let mut exporter = Exporter::local(&dir.path().join("export")).expect("exporter");
-    let start = exporter.verify().await.expect("verify").head_commit_seq + 1;
+    let start = exporter
+        .verify()
+        .await
+        .expect("verify")
+        .head_commit_seq
+        .saturating_add(1);
     for seq in start..=cell.store().export_commit_count().expect("count") {
         exporter
             .append(
@@ -1348,12 +1353,27 @@ fn a_sibling_command_state_change_after_resolution_refuses_consumption() {
         &catalog,
         &confirm(&action, "run-1", &digest.0, "k1"),
         &Allow,
-    );
-    assert!(refused.is_err(), "a moved command state refuses the commit");
-    let cell = host.cell.into_inner();
+    )
+    .unwrap_err();
+    assert_eq!(refused.code(), "decision.stale_state", "{refused}");
+    let mut cell = host.cell.into_inner();
     assert_eq!(status(&cell, "run-1"), waiting());
     assert_eq!(cell.pending_commands().unwrap().len(), 1);
-    assert_eq!(cell.commits().unwrap().len(), base + 1, "only the cancel");
+    assert_eq!(
+        cell.commits().unwrap().len(),
+        base.saturating_add(1),
+        "only the cancel"
+    );
+    // A retry resolves against the cancelled command and is refused.
+    let refused = commit_action(
+        &mut cell,
+        &catalog,
+        &confirm(&action, "run-1", &digest.0, "k2"),
+        &Allow,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code(), "action.receipt_not_accepted", "{refused}");
+    assert_eq!(status(&cell, "run-1"), waiting());
 }
 
 #[test]
@@ -1393,20 +1413,24 @@ fn authority_revoked_between_resolution_and_commit_refuses() {
     assert!(still_accepted(&cell, &digest));
 }
 
-/// Another handle on the same file commits at a clock past the deadline.
-fn advance_sibling(path: &Path, receipt: &FunctionReceipt) {
+/// Another handle on the same file commits at logical time `millis`.
+fn advance_sibling(path: &Path, receipt: &FunctionReceipt, millis: u64) {
     let mut sibling = open(path, SCOPE, &[receipt]);
-    sibling.advance_to(LogicalTime::from_millis(PAST_DEADLINE));
+    sibling.advance_to(LogicalTime::from_millis(millis));
+    let run = format!("run-{millis}");
     sibling
         .commit(CellCommit {
             writes: vec![put(
-                FactKey::new(RUN, "run-9"),
+                FactKey::new(RUN, run.as_str()),
                 FactVersion::ABSENT,
-                &[("run_id", "run-9"), ("status", "awaiting_perform_confirm")],
+                &[
+                    ("run_id", run.as_str()),
+                    ("status", "awaiting_perform_confirm"),
+                ],
             )],
             ..CellCommit::empty()
         })
-        .expect("the sibling commits past the deadline");
+        .expect("the sibling commits at its clock");
 }
 
 #[test]
@@ -1424,7 +1448,7 @@ fn a_sibling_clock_past_the_deadline_fails_intake_and_resolution() {
         receipt,
     } = fixture(&path, "delivered");
     let digest = retain(&mut cell, &dispatched, &receipt).unwrap();
-    advance_sibling(&path, &receipt);
+    advance_sibling(&path, &receipt, PAST_DEADLINE);
     assert!(
         cell.now() < LogicalTime::from_millis(DEADLINE),
         "a stale handle clock"
@@ -1449,7 +1473,7 @@ fn a_sibling_clock_past_the_deadline_fails_intake_and_resolution() {
         dispatched,
         receipt,
     } = fixture(&path, "delivered");
-    advance_sibling(&path, &receipt);
+    advance_sibling(&path, &receipt, PAST_DEADLINE);
     let refused = retain(&mut cell, &dispatched, &receipt).unwrap_err();
     assert!(
         matches!(
@@ -1469,4 +1493,110 @@ fn a_sibling_clock_past_the_deadline_fails_intake_and_resolution() {
     )
     .unwrap_err();
     assert_eq!(refused.code(), "action.receipt_unknown", "{refused}");
+}
+
+#[test]
+fn a_sibling_clock_moving_between_resolution_and_commit() {
+    let types = run_types();
+    let catalog = TypeCatalog::new(&types);
+    let action = confirm_action(&manifest());
+    // The commit follows the durable clock: still valid within the deadline,
+    // refused past it, and never a clock regression of this handle.
+    for (millis, accepted) in [(WITHIN_DEADLINE, true), (PAST_DEADLINE, false)] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("cell.sqlite");
+        let Fixture {
+            mut cell,
+            dispatched,
+            receipt,
+        } = fixture(&path, "delivered");
+        let digest = retain(&mut cell, &dispatched, &receipt).unwrap();
+        let base = cell.commits().unwrap().len();
+        let (sibling_path, sibling_receipt) = (path.clone(), receipt.clone());
+        let race: Race<'_> = Box::new(move |_cell: &mut Sqlite| {
+            advance_sibling(&sibling_path, &sibling_receipt, millis);
+        });
+        let mut host = Host {
+            cell: RefCell::new(cell),
+            race: RefCell::new(Some(race)),
+        };
+        let outcome = commit_action(
+            &mut host,
+            &catalog,
+            &confirm(&action, "run-1", &digest.0, "k1"),
+            &Allow,
+        );
+        let cell = host.cell.into_inner();
+        if accepted {
+            assert!(
+                matches!(outcome, Ok(ActionOutcome::Committed { .. })),
+                "{millis}"
+            );
+            assert_eq!(status(&cell, "run-1"), confirmed());
+            assert_eq!(cell.pending_commands().unwrap().len(), 0);
+        } else {
+            let refused = outcome.unwrap_err();
+            assert_eq!(refused.code(), "action.receipt_not_accepted", "{refused}");
+            assert_eq!(status(&cell, "run-1"), waiting());
+            assert_eq!(cell.commits().unwrap().len(), base.saturating_add(1));
+        }
+    }
+}
+
+#[test]
+fn an_embedded_acceptance_rechecks_authority_and_a_refusal_record_does_not() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let Fixture {
+        mut cell,
+        dispatched,
+        receipt,
+    } = fixture(&dir.path().join("cell.sqlite"), "delivered");
+    let digest = retain(&mut cell, &dispatched, &receipt).unwrap();
+    // An embedded host prepares the acceptance itself, outside any action.
+    let (_, _, acceptance) = cell
+        .resolve_accepted_receipt(&reference(&digest), &manifest())
+        .unwrap()
+        .expect("resolves")
+        .into_parts();
+    let apply = |acceptance: &Acceptance| {
+        acceptance
+            .commit::<FactEvent, JsonObject, JsonObject>(
+                vec![put(
+                    FactKey::new(RUN, "run-1"),
+                    FactVersion(1),
+                    &[
+                        ("run_id", "run-1"),
+                        ("status", "awaiting_perform_confirm"),
+                        ("outcome", "delivered"),
+                    ],
+                )],
+                Vec::new(),
+                Vec::new(),
+            )
+            .expect("no pinned write")
+    };
+    let base = cell.commits().unwrap().len();
+    // Authority revoked between preparation and commit.
+    cell.set_result_authorizer(Some(Box::new(Revoked)));
+    let refused = cell.commit(apply(&acceptance)).unwrap_err();
+    assert!(
+        matches!(refused, CommitError::ReceiptNotAccepted { .. }),
+        "{refused}"
+    );
+    // A refusal record consumes without the recheck, but applies nothing.
+    let refused = cell.commit_result_refusal(apply(&acceptance)).unwrap_err();
+    assert!(
+        matches!(refused, CommitError::ReceiptNotAccepted { .. }),
+        "{refused}"
+    );
+    assert_eq!(status(&cell, "run-1"), waiting());
+    assert_eq!(cell.commits().unwrap().len(), base);
+    assert_eq!(cell.pending_commands().unwrap().len(), 1);
+    cell.commit_result_refusal(CellCommit {
+        consumes: Some(acceptance.consumed.clone()),
+        ..CellCommit::empty()
+    })
+    .expect("the refusal record consumes the delivery");
+    assert_eq!(cell.pending_commands().unwrap().len(), 0);
+    assert_eq!(status(&cell, "run-1"), waiting());
 }

@@ -1866,6 +1866,8 @@ pub struct CellStore<E: SqlEngine = DefaultEngine> {
     /// OPEN-CHECKPOINT-1 (#1551 round 4): the history scrub, the reads it
     /// holds back, and the checkpoint this handle validated.
     pub(crate) scrub: RefCell<crate::scrub::Scrub>,
+    /// RECEIPT-CONSUME-1: this host commit's time follows the clock floor.
+    follow_clock_floor: Cell<bool>,
 }
 
 #[derive(Clone, Copy)]
@@ -2430,6 +2432,7 @@ impl<E: SqlEngine> CellStore<E> {
             fork: None,
             law_checked: Cell::new(0),
             scrub: RefCell::default(),
+            follow_clock_floor: Cell::new(false),
         }
     }
 
@@ -2891,17 +2894,23 @@ impl<E: SqlEngine> CellStore<E> {
         )
     }
 
-    // Driver-only input; verified replay uses record-bound input.
+    // Driver-only input; verified replay uses record-bound input. With
+    // `follow_floor` a lagging batch time commits at the in-transaction floor.
     pub(crate) fn commit_guarded_submitted<T: Default, X>(
         &mut self,
         batch: &CommitBatch,
         submitted: Option<&Value>,
+        follow_floor: bool,
         guard: impl FnOnce(
             &StoreReader<'_, E>,
         ) -> Result<(T, Option<crate::link_guard::VerifiedMappingProof>), X>,
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<(T, CommitOutcome), GuardedError<X>> {
-        self.commit_guarded_inner(batch, None, submitted, CommitOrigin::Host, guard, probe)
+        self.follow_clock_floor.set(follow_floor);
+        let outcome =
+            self.commit_guarded_inner(batch, None, submitted, CommitOrigin::Host, guard, probe);
+        self.follow_clock_floor.set(false);
+        outcome
     }
 
     /// The verified-prefix callers compare the full resulting receipt and journal.
@@ -3283,9 +3292,12 @@ impl<E: SqlEngine> CellStore<E> {
             if prior_receipt.is_none() && effective_batch.idempotency_key.is_some() {
                 self.scrub.borrow().refuse_unproven_miss()?;
             }
-            crate::quantity::clock_floor(&self.conn)?;
+            let floor = crate::quantity::clock_floor(&self.conn)?;
             // Reconcile host time only after the transaction-local retry lookup.
             let mut reconciled = effective_batch.clone();
+            if self.follow_clock_floor.get() && prior_receipt.is_none() {
+                reconciled.logical_time = reconciled.logical_time.max(floor);
+            }
             if let Some(prior) = &prior_receipt
                 && prior.body.quantity.is_some() != reconciled.quantity.is_some()
             {

@@ -687,10 +687,8 @@ pub enum CommitError<X> {
         /// The reference the commit named.
         consumed: Consumed,
     },
-    /// RECEIPT-CONSUME-1: inside the commit, the host no longer accepts the
-    /// consumed Function result into an action: its command authority or
-    /// deadline does not hold at the commit's clock, or the host has no
-    /// authority recheck.
+    /// RECEIPT-CONSUME-1: inside the commit, the host refuses to accept the
+    /// consumed Function result (authority, deadline, or no recheck).
     #[error("action.receipt_not_accepted: {consumed} is no longer accepted")]
     ReceiptNotAccepted {
         /// The delivery the commit named.
@@ -943,6 +941,9 @@ impl<X> CommitError<X> {
             }
             Self::DuplicateKey { .. } => "commit.duplicate_key",
             Self::NotPending { .. } => "commit.not_pending",
+            Self::ReceiptNotAccepted { .. } => {
+                crate::receipt_binding::ReceiptRefusal::NotAccepted.code()
+            }
             Self::Conflict { .. } => "commit.conflict",
             Self::DuplicateLink { .. } => "commit.duplicate_link",
             Self::IdentifierTooLong { .. } => "commit.identifier_too_long",
