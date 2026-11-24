@@ -1,11 +1,21 @@
 """Norn `perform` / `FunctionManifest` HTTP worker for `norn.solver.rostering@0.1.0`.
 
-Uses Python stdlib `http.server.ThreadingHTTPServer` (zero web-framework dependencies):
-- `GET /health`
-- `GET /manifest` — canonical `FunctionManifest` for `norn.solver.rostering@0.1.0`
-  aligned with `registry/packs/hr/rostering.ts` (`SolveRosterFn`) and Core 07 (`FunctionManifest`).
-- `POST /v1/functions/norn.solver.rostering/invoke` — strict JSON boundary ->
-  deterministic OR-Tools CP-SAT -> independent hard-law post-verifier -> canonical receipt.
+Unmarked Slice Execution Contract:
+  In the HR domain pack (`registry/packs/hr/rostering.ts`), `SolveRosterFn` declares the
+  cell-level handle `{ rosterId, unitId, preferenceProfileId }`. Before invoking this HTTP
+  worker, the cell host adapter resolves those handles, enforces `V2Markings` / `AccessIR`
+  stripping, and submits the resulting unmarked operational slice (`SolveRequest` JSON
+  containing ONLY opaque identifiers, exact integer/decimal quantities, and pinned
+  `iana_timezone`) to `POST /v1/functions/norn.solver.rostering/invoke`.
+
+Endpoints (stdlib `http.server.ThreadingHTTPServer`, bounded concurrency & timeouts):
+- `GET /health` — liveness + operational metadata (`source_digest`, `manifest_digest`, `endpoints`).
+- `GET /manifest` — strict canonical `FunctionManifest` JSON matching
+  `crates/norn-ir/src/function.rs` (`#[serde(deny_unknown_fields)]`, exact 16 fields,
+  zero extra keys; `implementation.format == "host"` pinned by source-tree digest).
+- `POST /v1/functions/norn.solver.rostering/invoke` — duplicate-key-proof strict UTF-8
+  JSON boundary -> cardinality bounds -> deterministic OR-Tools CP-SAT -> independent
+  hard-law post-verifier -> full-payload canonical receipt.
 """
 
 from __future__ import annotations
@@ -14,6 +24,8 @@ import argparse
 import hashlib
 import platform
 import sys
+import threading
+from decimal import DecimalException
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.metadata import PackageNotFoundError
@@ -22,6 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from .boundary import (
+    ModelInvalidError,
     PostVerificationError,
     SolverContractError,
     canonical_json,
@@ -40,14 +53,26 @@ from .solver import compare_what_if, solve_roster
 
 FUNCTION_ABI_V1 = "norn.function-abi/1"
 MAX_INPUT_BYTES = 4 * 1024 * 1024  # 4 MiB hard ingress cap
-MAX_OUTPUT_BYTES = 8 * 1024 * 1024
+MAX_RESPONSE_BYTES = 8 * 1024 * 1024  # 8 MiB hard egress cap
+MAX_OUTPUT_BYTES = MAX_RESPONSE_BYTES
+SOCKET_READ_TIMEOUT_SECONDS = 10.0
+DEFAULT_MAX_CONCURRENT_SOLVES = 4
+DEFAULT_ACQUIRE_TIMEOUT_SECONDS = 0.05
 
 _MANIFEST_DOMAIN = b"norn.function/manifest/v1\0"
 _DEPENDENCY_CLOSURE_DOMAIN = b"norn.function/dependency-closure/v1\0"
 _SOURCE_TREE_DOMAIN = b"norn.function/source-tree/v1\0"
 
+_BAD_REQUEST_CODES: frozenset[str] = frozenset(
+    {
+        "NORN-SOLVER-DECIMAL",
+        "NORN-SOLVER-DUPLICATE-KEY",
+        "NORN-SOLVER-JSON",
+    }
+)
 
-def _package_source_digest() -> str:
+
+def package_source_digest() -> str:
     """Deterministic source-tree digest (HOST-TREE-1 shape) of `norn_rostering_solver/`."""
     pkg_dir = Path(__file__).resolve().parent
     entries: list[dict[str, object]] = []
@@ -79,21 +104,27 @@ def _input_schema_doc() -> dict[str, object]:
         "id": "norn.solver.rostering.input",
         "version": 1,
         "contract": CONTRACT_ID,
+        "execution_contract": "unmarked_slice",
+        "cell_adapter_note": (
+            "Cell host adapter resolves SolveRosterFn handle (rosterId, unitId, preferenceProfileId) "
+            "into this unmarked SolveRequest slice before invoking the worker."
+        ),
         "required": ["roster_id", "unit_id", "profile", "employees", "shifts"],
+        "optional": ["iana_timezone", "allow_cross_branch_transfers", "authorized_transfer_employee_ids"],
         "envelope": {
             "direct": "SolveRequest",
             "perform": {"input": "SolveRequest", "alt_profile": "optional PreferenceProfileInput"},
         },
-        "perform_handle_input": {
-            "rosterId": "string",
-            "unitId": "string",
-            "preferenceProfileId": "string",
-        },
         "refusals": [
-            "NORN-SOLVER-PII-FORBIDDEN",
-            "NORN-SOLVER-UNKNOWN-FIELD",
+            "NORN-SOLVER-DECIMAL",
+            "NORN-SOLVER-DUPLICATE-KEY",
             "NORN-SOLVER-FLOAT-FORBIDDEN",
+            "NORN-SOLVER-INTERVAL",
+            "NORN-SOLVER-JSON",
+            "NORN-SOLVER-LIMIT-EXCEEDED",
+            "NORN-SOLVER-PII-FORBIDDEN",
             "NORN-SOLVER-SCHEMA",
+            "NORN-SOLVER-UNKNOWN-FIELD",
         ],
     }
 
@@ -104,26 +135,30 @@ def _output_schema_doc() -> dict[str, object]:
         "version": 1,
         "contract": CONTRACT_ID,
         "perform_summary": {
-            "status": "optimal | feasible | infeasible",
+            "status": "optimal | feasible | infeasible | unknown",
             "assignmentCount": "int",
             "solverDigest": "sha256:<64 hex>",
         },
         "fields": [
-            "contract",
-            "roster_id",
-            "profile_id",
-            "status",
-            "backend",
-            "assignments",
-            "assignment_count",
-            "metrics",
-            "repair_suggestions",
             "alternative_repairs",
+            "assignment_count",
+            "assignments",
+            "backend",
+            "contract",
+            "evidence_label",
+            "function_id",
+            "input_digest",
+            "metrics",
+            "perform_summary",
+            "profile_id",
+            "repair_optimality",
+            "repair_suggestions",
+            "roster_id",
+            "solver_receipt_digest",
+            "status",
             "unsat_summary",
             "verification",
-            "input_digest",
-            "solver_receipt_digest",
-            "perform_summary",
+            "version",
         ],
     }
 
@@ -133,21 +168,35 @@ def _error_schema_doc() -> dict[str, object]:
         "id": "norn.solver.rostering.error",
         "version": 1,
         "codes": [
+            "NORN-SOLVER-BUSY",
+            "NORN-SOLVER-DECIMAL",
+            "NORN-SOLVER-DUPLICATE-KEY",
             "NORN-SOLVER-FLOAT-FORBIDDEN",
             "NORN-SOLVER-INTERVAL",
             "NORN-SOLVER-JSON",
+            "NORN-SOLVER-LIMIT-EXCEEDED",
+            "NORN-SOLVER-MODEL-INVALID",
+            "NORN-SOLVER-NOT-FOUND",
             "NORN-SOLVER-PAYLOAD-TOO-LARGE",
             "NORN-SOLVER-PII-FORBIDDEN",
             "NORN-SOLVER-POSTVERIFY-FAILED",
+            "NORN-SOLVER-RESPONSE-TOO-LARGE",
             "NORN-SOLVER-SCHEMA",
+            "NORN-SOLVER-TIMEOUT",
             "NORN-SOLVER-UNKNOWN-FIELD",
         ],
     }
 
 
 def build_function_manifest() -> dict[str, object]:
-    """Build the canonical `FunctionManifest` for `norn.solver.rostering@0.1.0`."""
-    impl_digest = _package_source_digest()
+    """Build the strict canonical `FunctionManifest` for `norn.solver.rostering`.
+
+    Emits ONLY the exact 16 camelCase fields accepted by `FunctionManifest`
+    (`crates/norn-ir/src/function.rs`, `#[serde(deny_unknown_fields)]`):
+    uses `implementation.format = "host"` pinned by the Python package `source_digest`
+    and `determinism.effectful` (never faking an OCI image or hermetic container claim).
+    """
+    source_digest = package_source_digest()
     ortools_ver = _ortools_version()
     py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
 
@@ -178,44 +227,40 @@ def build_function_manifest() -> dict[str, object]:
 
     runtime_digest = domain_sha256_digest(
         b"norn.function/runtime/v1\0",
-        {"id": "python-worker", "ortools": ortools_ver, "python": py_ver, "workers": 1, "seed": 0},
+        {
+            "id": "norn-python-cpsat-worker",
+            "ortools": ortools_ver,
+            "python": py_ver,
+            "seed": 0,
+            "source_digest": source_digest,
+            "workers": 1,
+        },
     )
 
     arch_raw = platform.machine().lower()
     arch = "amd64" if arch_raw in ("x86_64", "amd64") else ("arm64" if arch_raw in ("aarch64", "arm64") else arch_raw)
 
-    manifest_body: dict[str, object] = {
+    return {
         "abi": FUNCTION_ABI_V1,
         "bounds": {
             "maxCpuMillis": 30_000,
             "maxDecodedBytes": 16 * 1024 * 1024,
             "maxInputBytes": MAX_INPUT_BYTES,
             "maxMemoryBytes": 512 * 1024 * 1024,
-            "maxOutputBytes": MAX_OUTPUT_BYTES,
+            "maxOutputBytes": MAX_RESPONSE_BYTES,
             "maxWallMillis": 30_000,
         },
         "cache": "none",
         "capabilities": [],
-        "contractId": CONTRACT_ID,
         "dependencyClosure": {
             "digest": dep_closure_digest,
             "entries": dep_entries,
         },
         "determinism": {
-            "hermetic_container": {
-                "credentials": False,
-                "goldenRuns": [],
-                "isolatedScratch": True,
-                "locale": "C.UTF-8",
-                "network": False,
-                "qualified": False,
-                "timezone": "UTC",
+            "effectful": {
+                "maxAttempts": 1,
+                "providerIdempotency": True,
             }
-        },
-        "endpoints": {
-            "health": "/health",
-            "invoke": f"/v1/functions/{FUNCTION_ID}/invoke",
-            "manifest": "/manifest",
         },
         "errorSchema": {
             "digest": domain_sha256_digest(b"norn.schema/v1\0", err_doc),
@@ -224,10 +269,10 @@ def build_function_manifest() -> dict[str, object]:
         },
         "functionId": FUNCTION_ID,
         "implementation": {
-            "digest": impl_digest,
+            "digest": source_digest,
             "entryPoint": "norn_rostering_solver.worker:handle_invoke_payload",
-            "format": "oci_image",
-            "locator": f"norn-rostering-solver/{FUNCTION_VERSION}@{impl_digest}",
+            "format": "host",
+            "locator": f"norn-rostering-solver/{FUNCTION_VERSION}@{source_digest}",
         },
         "inputSchema": {
             "digest": domain_sha256_digest(b"norn.schema/v1\0", in_doc),
@@ -249,18 +294,22 @@ def build_function_manifest() -> dict[str, object]:
             "id": "norn-python-cpsat-worker",
             "version": py_ver,
         },
-        "semver": FUNCTION_VERSION,
         "steps": [],
         "version": 1,
     }
-    manifest_digest = domain_sha256_digest(_MANIFEST_DOMAIN, manifest_body)
-    return {
-        **manifest_body,
-        "manifestDigest": manifest_digest,
-    }
 
 
-def handle_invoke_payload(raw_bytes: bytes) -> tuple[int, dict[str, object]]:
+def compute_manifest_digest(manifest: dict[str, object] | None = None) -> str:
+    """Compute `FunctionManifest::content_digest` (`MANIFEST_DOMAIN || canonical_json`)."""
+    doc = build_function_manifest() if manifest is None else manifest
+    return domain_sha256_digest(_MANIFEST_DOMAIN, doc)
+
+
+def handle_invoke_payload(
+    raw_bytes: bytes,
+    *,
+    max_response_bytes: int = MAX_RESPONSE_BYTES,
+) -> tuple[int, dict[str, object]]:
     """Process one `/v1/functions/norn.solver.rostering/invoke` request body deterministically."""
     if len(raw_bytes) > MAX_INPUT_BYTES:
         return (
@@ -290,6 +339,17 @@ def handle_invoke_payload(raw_bytes: bytes) -> tuple[int, dict[str, object]]:
         if alt_profile is not None:
             payload["what_if"] = compare_what_if(request, alt_profile).to_dict()
 
+        encoded_len = len((canonical_json(payload) + "\n").encode("utf-8"))
+        if encoded_len > max_response_bytes:
+            return (
+                int(HTTPStatus.INTERNAL_SERVER_ERROR),
+                {
+                    "code": "NORN-SOLVER-RESPONSE-TOO-LARGE",
+                    "error": f"response size {encoded_len} exceeds max_response_bytes ({max_response_bytes})",
+                    "status": "refused",
+                },
+            )
+
         return int(HTTPStatus.OK), payload
     except PostVerificationError as exc:
         return (
@@ -301,8 +361,17 @@ def handle_invoke_payload(raw_bytes: bytes) -> tuple[int, dict[str, object]]:
                 "violations": list(exc.violations),
             },
         )
+    except ModelInvalidError as exc:
+        return (
+            int(HTTPStatus.INTERNAL_SERVER_ERROR),
+            {
+                "code": exc.code,
+                "error": exc.message,
+                "status": "error",
+            },
+        )
     except SolverContractError as exc:
-        http_status = HTTPStatus.BAD_REQUEST if exc.code == "NORN-SOLVER-JSON" else HTTPStatus.UNPROCESSABLE_ENTITY
+        http_status = HTTPStatus.BAD_REQUEST if exc.code in _BAD_REQUEST_CODES else HTTPStatus.UNPROCESSABLE_ENTITY
         return (
             int(http_status),
             {
@@ -311,42 +380,130 @@ def handle_invoke_payload(raw_bytes: bytes) -> tuple[int, dict[str, object]]:
                 "status": "refused",
             },
         )
+    except UnicodeDecodeError as exc:
+        return (
+            int(HTTPStatus.BAD_REQUEST),
+            {
+                "code": "NORN-SOLVER-JSON",
+                "error": f"invalid UTF-8 payload: {exc}",
+                "status": "refused",
+            },
+        )
+    except DecimalException as exc:
+        return (
+            int(HTTPStatus.BAD_REQUEST),
+            {
+                "code": "NORN-SOLVER-DECIMAL",
+                "error": f"invalid decimal value: {exc}",
+                "status": "refused",
+            },
+        )
+
+
+class RosteringWorkerServer(ThreadingHTTPServer):
+    """Bounded `ThreadingHTTPServer` with socket timeout, concurrency semaphore, and response byte cap."""
+
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def __init__(
+        self,
+        server_address: tuple[str, int],
+        *,
+        max_concurrent_solves: int = DEFAULT_MAX_CONCURRENT_SOLVES,
+        socket_timeout: float = SOCKET_READ_TIMEOUT_SECONDS,
+        max_response_bytes: int = MAX_RESPONSE_BYTES,
+        acquire_timeout: float = DEFAULT_ACQUIRE_TIMEOUT_SECONDS,
+    ) -> None:
+        if max_concurrent_solves < 1:
+            raise ValueError("max_concurrent_solves must be >= 1")
+        if socket_timeout <= 0:
+            raise ValueError("socket_timeout must be > 0")
+        if max_response_bytes < 256:
+            raise ValueError("max_response_bytes must be >= 256")
+        self.socket_timeout = socket_timeout
+        self.max_response_bytes = max_response_bytes
+        self.acquire_timeout = acquire_timeout
+        self.concurrency_semaphore = threading.BoundedSemaphore(max_concurrent_solves)
+        super().__init__(server_address, RosteringWorkerHandler)
 
 
 class RosteringWorkerHandler(BaseHTTPRequestHandler):
     """HTTP handler for `norn.solver.rostering@0.1.0`."""
 
     server_version = f"norn-rostering-worker/{FUNCTION_VERSION}"
+    server: RosteringWorkerServer
+
+    def setup(self) -> None:
+        timeout = getattr(self.server, "socket_timeout", SOCKET_READ_TIMEOUT_SECONDS)
+        self.request.settimeout(timeout)
+        super().setup()
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
         # Suppress noisy stderr access logs during embedded/test runs.
         return
 
-    def _send_canonical_json(self, status_code: int, payload: dict[str, object]) -> None:
+    def _send_canonical_json(
+        self,
+        status_code: int,
+        payload: dict[str, object],
+        *,
+        extra_headers: dict[str, str] | None = None,
+    ) -> None:
+        max_resp = getattr(self.server, "max_response_bytes", MAX_RESPONSE_BYTES)
         body = (canonical_json(payload) + "\n").encode("utf-8")
+        if len(body) > max_resp:
+            status_code = int(HTTPStatus.INTERNAL_SERVER_ERROR)
+            body = (
+                canonical_json(
+                    {
+                        "code": "NORN-SOLVER-RESPONSE-TOO-LARGE",
+                        "error": f"response size {len(body)} exceeds max_response_bytes ({max_resp})",
+                        "status": "refused",
+                    }
+                )
+                + "\n"
+            ).encode("utf-8")
         self.send_response(status_code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("X-Norn-Contract", CONTRACT_ID)
+        if extra_headers:
+            for h_key, h_val in sorted(extra_headers.items()):
+                self.send_header(h_key, h_val)
         self.end_headers()
         self.wfile.write(body)
 
     def do_GET(self) -> None:
         path = self.path.split("?", 1)[0]
         if path == "/health":
+            manifest = build_function_manifest()
             self._send_canonical_json(
                 int(HTTPStatus.OK),
                 {
                     "backend": "ortools_cpsat",
                     "contract": CONTRACT_ID,
+                    "endpoints": {
+                        "health": "/health",
+                        "invoke": f"/v1/functions/{FUNCTION_ID}/invoke",
+                        "manifest": "/manifest",
+                    },
+                    "execution_contract": "unmarked_slice",
                     "functionId": FUNCTION_ID,
+                    "manifest_digest": compute_manifest_digest(manifest),
+                    "source_digest": package_source_digest(),
                     "status": "ok",
                     "version": FUNCTION_VERSION,
                 },
             )
             return
         if path == "/manifest":
-            self._send_canonical_json(int(HTTPStatus.OK), build_function_manifest())
+            manifest = build_function_manifest()
+            self._send_canonical_json(
+                int(HTTPStatus.OK),
+                manifest,
+                extra_headers={"X-Norn-Manifest-Digest": compute_manifest_digest(manifest)},
+            )
             return
         self._send_canonical_json(
             int(HTTPStatus.NOT_FOUND),
@@ -388,23 +545,98 @@ class RosteringWorkerHandler(BaseHTTPRequestHandler):
             )
             return
 
-        raw_bytes = self.rfile.read(content_len)
-        status_code, payload = handle_invoke_payload(raw_bytes)
+        try:
+            raw_bytes = self.rfile.read(content_len)
+        except TimeoutError:
+            self._send_canonical_json(
+                int(HTTPStatus.REQUEST_TIMEOUT),
+                {
+                    "code": "NORN-SOLVER-TIMEOUT",
+                    "error": "socket read timed out while receiving request body",
+                    "status": "refused",
+                },
+            )
+            return
+
+        if len(raw_bytes) != content_len:
+            self._send_canonical_json(
+                int(HTTPStatus.BAD_REQUEST),
+                {
+                    "code": "NORN-SOLVER-JSON",
+                    "error": f"truncated request body: expected {content_len} bytes, got {len(raw_bytes)}",
+                    "status": "refused",
+                },
+            )
+            return
+
+        sem = self.server.concurrency_semaphore
+        acquire_timeout = self.server.acquire_timeout
+        acquired = sem.acquire(blocking=True, timeout=acquire_timeout) if acquire_timeout > 0 else sem.acquire(blocking=False)
+        if not acquired:
+            self._send_canonical_json(
+                int(HTTPStatus.SERVICE_UNAVAILABLE),
+                {
+                    "code": "NORN-SOLVER-BUSY",
+                    "error": "solver concurrency limit reached; retry later",
+                    "status": "refused",
+                },
+            )
+            return
+
+        try:
+            status_code, payload = handle_invoke_payload(
+                raw_bytes,
+                max_response_bytes=self.server.max_response_bytes,
+            )
+        finally:
+            sem.release()
+
         self._send_canonical_json(status_code, payload)
 
 
-def create_worker_server(host: str = "127.0.0.1", port: int = 8091) -> ThreadingHTTPServer:
-    """Create a configured `ThreadingHTTPServer` bound to `(host, port)` (port=0 picks an ephemeral port)."""
-    return ThreadingHTTPServer((host, port), RosteringWorkerHandler)
+def create_worker_server(
+    host: str = "127.0.0.1",
+    port: int = 8091,
+    *,
+    max_concurrent_solves: int = DEFAULT_MAX_CONCURRENT_SOLVES,
+    socket_timeout: float = SOCKET_READ_TIMEOUT_SECONDS,
+    max_response_bytes: int = MAX_RESPONSE_BYTES,
+    acquire_timeout: float = DEFAULT_ACQUIRE_TIMEOUT_SECONDS,
+) -> RosteringWorkerServer:
+    """Create a configured bounded `RosteringWorkerServer` bound to `(host, port)` (port=0 picks an ephemeral port)."""
+    return RosteringWorkerServer(
+        (host, port),
+        max_concurrent_solves=max_concurrent_solves,
+        socket_timeout=socket_timeout,
+        max_response_bytes=max_response_bytes,
+        acquire_timeout=acquire_timeout,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the Norn OR-Tools CP-SAT rostering worker HTTP server.")
     parser.add_argument("--host", default="127.0.0.1", help="Bind host (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8091, help="Bind port (default: 8091)")
+    parser.add_argument(
+        "--max-concurrent",
+        type=int,
+        default=DEFAULT_MAX_CONCURRENT_SOLVES,
+        help=f"Maximum concurrent solves (default: {DEFAULT_MAX_CONCURRENT_SOLVES})",
+    )
+    parser.add_argument(
+        "--socket-timeout",
+        type=float,
+        default=SOCKET_READ_TIMEOUT_SECONDS,
+        help=f"Socket read timeout in seconds (default: {SOCKET_READ_TIMEOUT_SECONDS})",
+    )
     args = parser.parse_args(argv)
 
-    server = create_worker_server(args.host, args.port)
+    server = create_worker_server(
+        args.host,
+        args.port,
+        max_concurrent_solves=args.max_concurrent,
+        socket_timeout=args.socket_timeout,
+    )
     bound_host, bound_port = server.server_address[:2]
     sys.stdout.write(
         canonical_json(

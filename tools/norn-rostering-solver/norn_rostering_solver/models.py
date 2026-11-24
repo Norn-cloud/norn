@@ -1,28 +1,35 @@
 """Strict, PII-free, exact-integer wire models for `norn.solver.rostering@0.1.0`.
 
-All time quantities are represented internally as exact integer minutes, and all
-currency quantities are represented as exact integer minor units (1/100 of the
-currency unit, with scale-2 `Decimal` wire views). Zero IEEE `float` values exist
-in any business calculation or serialized output.
+All time quantities are stored and processed internally as exact integer minutes
+(never lossily round-tripped through 2-decimal hours), and all currency quantities
+are stored as exact integer minor units (1/100 of the currency unit). Zero IEEE
+`float` values and zero free-text label fields exist in any solver input or
+business calculation.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import date, datetime
+from dataclasses import InitVar, dataclass
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any, Literal
+from zoneinfo import ZoneInfo
 
 from .boundary import (
+    MAX_EMPLOYEES,
+    MAX_HORIZON_DAYS,
+    MAX_LEAVE_BLOCKS,
+    MAX_SHIFTS,
+    LimitExceededError,
     SolverContractError,
-    decimal_to_minor_units,
     format_utc,
-    hours_to_minutes,
     minor_units_to_decimal,
     minutes_to_hours,
     parse_bool,
-    parse_decimal,
+    parse_hours_to_minutes,
+    parse_iana_timezone,
     parse_int,
+    parse_money_to_minor_units,
     parse_str,
     parse_str_list,
     parse_utc_timestamp,
@@ -37,10 +44,12 @@ FUNCTION_VERSION = "0.1.0"
 CONTRACT_ID = f"{FUNCTION_ID}@{FUNCTION_VERSION}"
 
 Priority = Literal["low", "medium", "high"]
-SolveStatus = Literal["optimal", "feasible", "infeasible"]
+SolveStatus = Literal["optimal", "feasible", "infeasible", "unknown"]
+EvidenceLabel = Literal["exhaustive-finite", "bounded", "unknown"]
 SolverBackend = Literal["ortools_cpsat"]
 RepairKind = Literal["relax_coverage", "approve_overtime", "allow_transfer"]
 TransferMode = Literal["cross_branch", "cross_skill"]
+RepairOptimality = Literal["minimum_slack", "feasible_slack"]
 
 
 def _parse_priority(raw: Any, path: str) -> Priority:
@@ -51,6 +60,62 @@ def _parse_priority(raw: Any, path: str) -> Priority:
     if raw == "high":
         return "high"
     raise SolverContractError("NORN-SOLVER-SCHEMA", f"{path} must be 'low', 'medium', or 'high', got {raw!r}")
+
+
+def _next_local_midnight_utc(cur_utc: datetime, tz: ZoneInfo) -> datetime:
+    """Return the exact UTC instant when the local calendar date in `tz` advances past `cur_utc`'s date."""
+    cur_local = cur_utc.astimezone(tz)
+    local_day = cur_local.date()
+    next_day = local_day + timedelta(days=1)
+
+    for fold in (0, 1):
+        candidate = datetime(next_day.year, next_day.month, next_day.day, 0, 0, tzinfo=tz, fold=fold).astimezone(UTC)
+        if candidate > cur_utc and candidate.astimezone(tz).date() >= next_day:
+            return candidate
+
+    # Defensive fallback for theoretical pathological offset jumps: advance hour-by-hour until date changes.
+    probe = cur_utc + timedelta(minutes=1)
+    while probe.astimezone(tz).date() == local_day:
+        probe += timedelta(minutes=1)
+    return probe
+
+
+def split_interval_by_local_day(starts_at: datetime, ends_at: datetime, tz: ZoneInfo) -> dict[date, int]:
+    """Split a half-open UTC interval `[starts_at, ends_at)` into exact integer minutes per local calendar day.
+
+    Preserves exact minute conservation across midnight and DST transitions:
+    `sum(result.values()) == timedelta_exact_minutes(ends_at - starts_at)`.
+    """
+    cur_utc = starts_at.astimezone(UTC)
+    end_utc = ends_at.astimezone(UTC)
+    if end_utc <= cur_utc:
+        raise SolverContractError("NORN-SOLVER-INTERVAL", "interval ends_at must be strictly after starts_at")
+
+    by_day: dict[date, int] = {}
+    while cur_utc < end_utc:
+        local_day = cur_utc.astimezone(tz).date()
+        next_mid_utc = _next_local_midnight_utc(cur_utc, tz)
+        seg_end_utc = end_utc if end_utc < next_mid_utc else next_mid_utc
+        seg_minutes = timedelta_exact_minutes(seg_end_utc - cur_utc, "local_day_split")
+        if seg_minutes > 0:
+            by_day[local_day] = by_day.get(local_day, 0) + seg_minutes
+        cur_utc = seg_end_utc
+    return by_day
+
+
+def split_interval_by_iso_week(
+    starts_at: datetime,
+    ends_at: datetime,
+    tz: ZoneInfo,
+) -> dict[tuple[int, int], int]:
+    """Split a half-open UTC interval `[starts_at, ends_at)` into exact integer minutes per local ISO week."""
+    by_day = split_interval_by_local_day(starts_at, ends_at, tz)
+    by_week: dict[tuple[int, int], int] = {}
+    for day, mins in by_day.items():
+        iso = day.isocalendar()
+        wk = (iso.year, iso.week)
+        by_week[wk] = by_week.get(wk, 0) + mins
+    return by_week
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,7 +133,6 @@ class TimeWindow:
                 "NORN-SOLVER-INTERVAL",
                 f"interval ends_at ({format_utc(self.ends_at)}) must be strictly after starts_at ({format_utc(self.starts_at)})",
             )
-        # Validate exact whole-minute boundary and zero microseconds.
         _ = timedelta_exact_minutes(self.ends_at - self.starts_at, "TimeWindow")
 
     @property
@@ -99,31 +163,112 @@ class TimeWindow:
         return {"ends_at": format_utc(self.ends_at), "starts_at": format_utc(self.starts_at)}
 
 
+def _resolve_exact_minutes(
+    explicit_minutes: int,
+    hours_init: Decimal | int | str | None,
+    *,
+    path: str,
+    default_minutes: int | None,
+) -> int:
+    has_min = explicit_minutes >= 0
+    has_hr = hours_init is not None
+    if has_min and has_hr:
+        from_hr = parse_hours_to_minutes(hours_init, path)
+        if explicit_minutes != from_hr:
+            raise SolverContractError(
+                "NORN-SOLVER-SCHEMA",
+                f"{path} conflicting minutes ({explicit_minutes}) and hours ({hours_init} -> {from_hr} min)",
+            )
+        return explicit_minutes
+    if has_min:
+        return parse_int(explicit_minutes, path, minimum=0)
+    if has_hr:
+        return parse_hours_to_minutes(hours_init, path)
+    if default_minutes is not None:
+        return default_minutes
+    raise SolverContractError("NORN-SOLVER-SCHEMA", f"missing required time quantity for {path}")
+
+
+def _resolve_exact_minor_units(
+    explicit_minor: int,
+    money_init: Decimal | int | str | None,
+    *,
+    path: str,
+    default_minor: int | None,
+) -> int:
+    has_minor = explicit_minor >= 0
+    has_money = money_init is not None
+    if has_minor and has_money:
+        from_money = parse_money_to_minor_units(money_init, path)
+        if explicit_minor != from_money:
+            raise SolverContractError(
+                "NORN-SOLVER-SCHEMA",
+                f"{path} conflicting minor units ({explicit_minor}) and money ({money_init} -> {from_money} minor)",
+            )
+        return explicit_minor
+    if has_minor:
+        return parse_int(explicit_minor, path, minimum=0)
+    if has_money:
+        return parse_money_to_minor_units(money_init, path)
+    if default_minor is not None:
+        return default_minor
+    raise SolverContractError("NORN-SOLVER-SCHEMA", f"missing required monetary quantity for {path}")
+
+
 @dataclass(frozen=True, slots=True)
 class EmployeeInput:
-    """Unmarked operational employee slice for rostering (never PII or base salary)."""
+    """Unmarked operational employee slice for rostering (opaque IDs only — never PII or free-text labels)."""
 
     employee_id: str
     home_unit_id: str
     skills: tuple[str, ...]
-    max_regular_weekly_hours: Decimal
-    max_overtime_weekly_hours: Decimal
-    overtime_cost_per_hour: Decimal
+    max_regular_weekly_minutes: int = -1
+    max_overtime_weekly_minutes: int = -1
+    overtime_cost_minor_per_hour: int = -1
+    max_regular_weekly_hours: InitVar[Decimal | int | str | None] = None
+    max_overtime_weekly_hours: InitVar[Decimal | int | str | None] = None
+    overtime_cost_per_hour: InitVar[Decimal | int | str | None] = None
     eligible_unit_ids: tuple[str, ...] = ()
     cross_trainable_skills: tuple[str, ...] = ()
     approved_leave: tuple[TimeWindow, ...] = ()
     preferred_shift_ids: tuple[str, ...] = ()
     avoid_shift_ids: tuple[str, ...] = ()
     prior_weekend_shifts: int = 0
-    display_label: str = ""
 
-    def __post_init__(self) -> None:
+    def __post_init__(
+        self,
+        max_regular_weekly_hours: Decimal | int | str | None,
+        max_overtime_weekly_hours: Decimal | int | str | None,
+        overtime_cost_per_hour: Decimal | int | str | None,
+    ) -> None:
         if not self.employee_id:
             raise SolverContractError("NORN-SOLVER-SCHEMA", "employee_id must be non-empty")
         if not self.home_unit_id:
-            raise SolverContractError("NORN-SOLVER-SCHEMA", f"employee {self.employee_id!r} home_unit_id must be non-empty")
-        if not self.display_label:
-            object.__setattr__(self, "display_label", self.employee_id)
+            raise SolverContractError(
+                "NORN-SOLVER-SCHEMA",
+                f"employee {self.employee_id!r} home_unit_id must be non-empty",
+            )
+        reg_min = _resolve_exact_minutes(
+            self.max_regular_weekly_minutes,
+            max_regular_weekly_hours,
+            path=f"employee[{self.employee_id}].max_regular_weekly",
+            default_minutes=None,
+        )
+        ot_min = _resolve_exact_minutes(
+            self.max_overtime_weekly_minutes,
+            max_overtime_weekly_hours,
+            path=f"employee[{self.employee_id}].max_overtime_weekly",
+            default_minutes=0,
+        )
+        ot_cost_minor = _resolve_exact_minor_units(
+            self.overtime_cost_minor_per_hour,
+            overtime_cost_per_hour,
+            path=f"employee[{self.employee_id}].overtime_cost_per_hour",
+            default_minor=0,
+        )
+        object.__setattr__(self, "max_regular_weekly_minutes", reg_min)
+        object.__setattr__(self, "max_overtime_weekly_minutes", ot_min)
+        object.__setattr__(self, "overtime_cost_minor_per_hour", ot_cost_minor)
         object.__setattr__(self, "skills", tuple(sorted(set(self.skills))))
         object.__setattr__(
             self,
@@ -138,45 +283,32 @@ class EmployeeInput:
             )
         else:
             object.__setattr__(self, "eligible_unit_ids", tuple(sorted(set(self.eligible_unit_ids))))
-        # Validate exact integer conversions eagerly.
-        _ = self.max_regular_weekly_minutes
-        _ = self.max_overtime_weekly_minutes
-        _ = self.overtime_cost_minor_per_hour
-
-    @property
-    def max_regular_weekly_minutes(self) -> int:
-        return hours_to_minutes(self.max_regular_weekly_hours, f"employee[{self.employee_id}].max_regular_weekly_hours")
-
-    @property
-    def max_overtime_weekly_minutes(self) -> int:
-        return hours_to_minutes(self.max_overtime_weekly_hours, f"employee[{self.employee_id}].max_overtime_weekly_hours")
+        if self.prior_weekend_shifts < 0:
+            raise SolverContractError(
+                "NORN-SOLVER-SCHEMA",
+                f"employee {self.employee_id!r} prior_weekend_shifts must be >= 0",
+            )
 
     @property
     def max_total_weekly_minutes(self) -> int:
         return self.max_regular_weekly_minutes + self.max_overtime_weekly_minutes
 
     @property
-    def overtime_cost_minor_per_hour(self) -> int:
-        return decimal_to_minor_units(
-            self.overtime_cost_per_hour,
-            f"employee[{self.employee_id}].overtime_cost_per_hour",
-        )
+    def overtime_cost_decimal(self) -> Decimal:
+        return minor_units_to_decimal(self.overtime_cost_minor_per_hour)
 
     def to_dict(self) -> dict[str, object]:
         return {
             "approved_leave": [w.to_dict() for w in sorted(self.approved_leave, key=lambda x: (x.starts_at, x.ends_at))],
             "avoid_shift_ids": sorted(self.avoid_shift_ids),
             "cross_trainable_skills": sorted(self.cross_trainable_skills),
-            "display_label": self.display_label,
             "eligible_unit_ids": sorted(self.eligible_unit_ids),
             "employee_id": self.employee_id,
             "home_unit_id": self.home_unit_id,
-            "max_overtime_weekly_hours": format(self.max_overtime_weekly_hours.quantize(Decimal("0.01")), "f"),
             "max_overtime_weekly_minutes": self.max_overtime_weekly_minutes,
-            "max_regular_weekly_hours": format(self.max_regular_weekly_hours.quantize(Decimal("0.01")), "f"),
             "max_regular_weekly_minutes": self.max_regular_weekly_minutes,
             "overtime_cost_minor_per_hour": self.overtime_cost_minor_per_hour,
-            "overtime_cost_per_hour": format(self.overtime_cost_per_hour.quantize(Decimal("0.01")), "f"),
+            "overtime_cost_per_hour": format(self.overtime_cost_decimal, "f"),
             "preferred_shift_ids": sorted(self.preferred_shift_ids),
             "prior_weekend_shifts": self.prior_weekend_shifts,
             "skills": sorted(self.skills),
@@ -202,10 +334,16 @@ class ShiftRequirementInput:
             raise SolverContractError("NORN-SOLVER-SCHEMA", f"shift {self.shift_id!r} unit_id must be non-empty")
         if not self.role_code:
             raise SolverContractError("NORN-SOLVER-SCHEMA", f"shift {self.shift_id!r} role_code must be non-empty")
+        if self.starts_at.tzinfo is None or self.ends_at.tzinfo is None:
+            raise SolverContractError("NORN-SOLVER-INTERVAL", f"shift {self.shift_id!r} timestamps must be timezone-aware")
         if self.ends_at <= self.starts_at:
             raise SolverContractError("NORN-SOLVER-INTERVAL", f"shift {self.shift_id!r} ends_at must be > starts_at")
         if self.required_count < 1:
             raise SolverContractError("NORN-SOLVER-SCHEMA", f"shift {self.shift_id!r} required_count must be >= 1")
+        if (self.ends_at - self.starts_at).days > MAX_HORIZON_DAYS:
+            raise LimitExceededError(
+                f"shift {self.shift_id!r} spans more than MAX_HORIZON_DAYS ({MAX_HORIZON_DAYS})"
+            )
         _ = self.duration_minutes
 
     @property
@@ -220,14 +358,16 @@ class ShiftRequirementInput:
     def duration_hours(self) -> Decimal:
         return minutes_to_hours(self.duration_minutes)
 
-    @property
-    def work_date(self) -> date:
-        return self.starts_at.date()
+    def local_start_date(self, tz: ZoneInfo) -> date:
+        return self.starts_at.astimezone(tz).date()
 
-    @property
-    def iso_week(self) -> tuple[int, int]:
-        iso = self.starts_at.isocalendar()
-        return (iso.year, iso.week)
+    def daily_minutes(self, tz: ZoneInfo) -> dict[date, int]:
+        """Exact integer minutes of this shift falling on each local calendar day in `tz`."""
+        return split_interval_by_local_day(self.starts_at, self.ends_at, tz)
+
+    def weekly_minutes(self, tz: ZoneInfo) -> dict[tuple[int, int], int]:
+        """Exact integer minutes of this shift falling in each local ISO week `(year, week)` in `tz`."""
+        return split_interval_by_iso_week(self.starts_at, self.ends_at, tz)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -244,66 +384,87 @@ class ShiftRequirementInput:
 
 @dataclass(frozen=True, slots=True)
 class PreferenceProfileInput:
-    """Governed business-terms trade-offs (matches `hr.PreferenceProfile` + statutory floors)."""
+    """Governed business-terms trade-offs and statutory floors (opaque profile_id, zero free-text labels)."""
 
     profile_id: str
-    label: str
     currency: str
-    weekly_overtime_budget: Decimal
-    min_rest_hours: Decimal
-    max_daily_hours: Decimal
     max_consecutive_days: int
-    max_weekly_hours: Decimal = Decimal("48.00")
+    weekly_overtime_budget_minor: int = -1
+    min_rest_minutes: int = -1
+    max_daily_minutes: int = -1
+    max_weekly_minutes: int = -1
+    weekly_overtime_budget: InitVar[Decimal | int | str | None] = None
+    min_rest_hours: InitVar[Decimal | int | str | None] = None
+    max_daily_hours: InitVar[Decimal | int | str | None] = None
+    max_weekly_hours: InitVar[Decimal | int | str | None] = None
     weekend_fairness_priority: Priority = "high"
     staff_preference_priority: Priority = "medium"
     avoid_split_shifts: bool = True
 
-    def __post_init__(self) -> None:
+    def __post_init__(
+        self,
+        weekly_overtime_budget: Decimal | int | str | None,
+        min_rest_hours: Decimal | int | str | None,
+        max_daily_hours: Decimal | int | str | None,
+        max_weekly_hours: Decimal | int | str | None,
+    ) -> None:
         if not self.profile_id:
             raise SolverContractError("NORN-SOLVER-SCHEMA", "profile_id must be non-empty")
+        if not self.currency:
+            raise SolverContractError("NORN-SOLVER-SCHEMA", "currency must be non-empty")
         if self.max_consecutive_days < 1:
             raise SolverContractError("NORN-SOLVER-SCHEMA", "max_consecutive_days must be >= 1")
-        if self.max_weekly_hours <= Decimal("0"):
-            raise SolverContractError("NORN-SOLVER-SCHEMA", "max_weekly_hours must be > 0")
-        if self.max_daily_hours <= Decimal("0"):
-            raise SolverContractError("NORN-SOLVER-SCHEMA", "max_daily_hours must be > 0")
-        _ = self.min_rest_minutes
-        _ = self.max_daily_minutes
-        _ = self.max_weekly_minutes
-        _ = self.weekly_overtime_budget_minor
+
+        budget_minor = _resolve_exact_minor_units(
+            self.weekly_overtime_budget_minor,
+            weekly_overtime_budget,
+            path="profile.weekly_overtime_budget",
+            default_minor=None,
+        )
+        rest_min = _resolve_exact_minutes(
+            self.min_rest_minutes,
+            min_rest_hours,
+            path="profile.min_rest",
+            default_minutes=None,
+        )
+        daily_min = _resolve_exact_minutes(
+            self.max_daily_minutes,
+            max_daily_hours,
+            path="profile.max_daily",
+            default_minutes=600,
+        )
+        weekly_min = _resolve_exact_minutes(
+            self.max_weekly_minutes,
+            max_weekly_hours,
+            path="profile.max_weekly",
+            default_minutes=2_880,
+        )
+        if daily_min <= 0:
+            raise SolverContractError("NORN-SOLVER-SCHEMA", "max_daily_minutes must be > 0")
+        if weekly_min <= 0:
+            raise SolverContractError("NORN-SOLVER-SCHEMA", "max_weekly_minutes must be > 0")
+
+        object.__setattr__(self, "weekly_overtime_budget_minor", budget_minor)
+        object.__setattr__(self, "min_rest_minutes", rest_min)
+        object.__setattr__(self, "max_daily_minutes", daily_min)
+        object.__setattr__(self, "max_weekly_minutes", weekly_min)
 
     @property
-    def min_rest_minutes(self) -> int:
-        return hours_to_minutes(self.min_rest_hours, "profile.min_rest_hours")
-
-    @property
-    def max_daily_minutes(self) -> int:
-        return hours_to_minutes(self.max_daily_hours, "profile.max_daily_hours")
-
-    @property
-    def max_weekly_minutes(self) -> int:
-        return hours_to_minutes(self.max_weekly_hours, "profile.max_weekly_hours")
-
-    @property
-    def weekly_overtime_budget_minor(self) -> int:
-        return decimal_to_minor_units(self.weekly_overtime_budget, "profile.weekly_overtime_budget")
+    def weekly_overtime_budget_decimal(self) -> Decimal:
+        return minor_units_to_decimal(self.weekly_overtime_budget_minor)
 
     def to_dict(self) -> dict[str, object]:
         return {
             "avoid_split_shifts": self.avoid_split_shifts,
             "currency": self.currency,
-            "label": self.label,
             "max_consecutive_days": self.max_consecutive_days,
-            "max_daily_hours": format(self.max_daily_hours.quantize(Decimal("0.01")), "f"),
             "max_daily_minutes": self.max_daily_minutes,
-            "max_weekly_hours": format(self.max_weekly_hours.quantize(Decimal("0.01")), "f"),
             "max_weekly_minutes": self.max_weekly_minutes,
-            "min_rest_hours": format(self.min_rest_hours.quantize(Decimal("0.01")), "f"),
             "min_rest_minutes": self.min_rest_minutes,
             "profile_id": self.profile_id,
             "staff_preference_priority": self.staff_preference_priority,
             "weekend_fairness_priority": self.weekend_fairness_priority,
-            "weekly_overtime_budget": format(self.weekly_overtime_budget.quantize(Decimal("0.01")), "f"),
+            "weekly_overtime_budget": format(self.weekly_overtime_budget_decimal, "f"),
             "weekly_overtime_budget_minor": self.weekly_overtime_budget_minor,
         }
 
@@ -314,7 +475,7 @@ class PreferenceProfileInput:
 
 @dataclass(frozen=True, slots=True)
 class SolveRequest:
-    """Canonical rostering request payload."""
+    """Canonical unmarked rostering slice request payload."""
 
     roster_id: str
     unit_id: str
@@ -323,21 +484,66 @@ class SolveRequest:
     profile: PreferenceProfileInput
     allow_cross_branch_transfers: bool = False
     authorized_transfer_employee_ids: tuple[str, ...] = ()
+    iana_timezone: str = "UTC"
 
     def __post_init__(self) -> None:
         if not self.roster_id:
             raise SolverContractError("NORN-SOLVER-SCHEMA", "roster_id must be non-empty")
+        if not self.unit_id:
+            raise SolverContractError("NORN-SOLVER-SCHEMA", "unit_id must be non-empty")
+        validated_tz = parse_iana_timezone(self.iana_timezone, "$.iana_timezone")
+        object.__setattr__(self, "iana_timezone", validated_tz)
+
+        if len(self.employees) > MAX_EMPLOYEES:
+            raise LimitExceededError(
+                f"employees count ({len(self.employees)}) exceeds MAX_EMPLOYEES ({MAX_EMPLOYEES})"
+            )
+        if len(self.shifts) > MAX_SHIFTS:
+            raise LimitExceededError(
+                f"shifts count ({len(self.shifts)}) exceeds MAX_SHIFTS ({MAX_SHIFTS})"
+            )
+        total_leave = sum(len(e.approved_leave) for e in self.employees)
+        if total_leave > MAX_LEAVE_BLOCKS:
+            raise LimitExceededError(
+                f"total approved_leave blocks ({total_leave}) exceeds MAX_LEAVE_BLOCKS ({MAX_LEAVE_BLOCKS})"
+            )
+
         emp_ids = [e.employee_id for e in self.employees]
         if len(emp_ids) != len(set(emp_ids)):
             raise SolverContractError("NORN-SOLVER-SCHEMA", "duplicate employee_id in request.employees")
         shift_ids = [s.shift_id for s in self.shifts]
         if len(shift_ids) != len(set(shift_ids)):
             raise SolverContractError("NORN-SOLVER-SCHEMA", "duplicate shift_id in request.shifts")
+
+        if self.shifts:
+            tz = ZoneInfo(validated_tz)
+            min_day: date | None = None
+            max_day: date | None = None
+            for sh in self.shifts:
+                days = sh.daily_minutes(tz).keys()
+                d_lo = min(days)
+                d_hi = max(days)
+                if min_day is None or d_lo < min_day:
+                    min_day = d_lo
+                if max_day is None or d_hi > max_day:
+                    max_day = d_hi
+            if min_day is not None and max_day is not None:
+                span_days = (max_day - min_day).days + 1
+                if span_days > MAX_HORIZON_DAYS:
+                    raise LimitExceededError(
+                        f"roster horizon spans {span_days} local calendar days ({min_day.isoformat()}..{max_day.isoformat()}), "
+                        f"exceeding MAX_HORIZON_DAYS ({MAX_HORIZON_DAYS})"
+                    )
+
         object.__setattr__(
             self,
             "authorized_transfer_employee_ids",
             tuple(sorted(set(self.authorized_transfer_employee_ids))),
         )
+
+    @property
+    def tz(self) -> ZoneInfo:
+        return ZoneInfo(self.iana_timezone)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -345,6 +551,7 @@ class SolveRequest:
             "authorized_transfer_employee_ids": list(self.authorized_transfer_employee_ids),
             "contract": CONTRACT_ID,
             "employees": [e.to_dict() for e in sorted(self.employees, key=lambda x: x.employee_id)],
+            "iana_timezone": self.iana_timezone,
             "profile": self.profile.to_dict(),
             "roster_id": self.roster_id,
             "shifts": [
@@ -366,6 +573,11 @@ class SolveRequest:
         except KeyError as exc:
             raise SolverContractError("NORN-SOLVER-SCHEMA", f"missing required field {path}.{exc.args[0]}") from exc
 
+        iana_timezone = (
+            parse_iana_timezone(raw["iana_timezone"], f"{path}.iana_timezone")
+            if "iana_timezone" in raw
+            else "UTC"
+        )
         profile = PreferenceProfileInput.from_dict(raw_profile, f"{path}.profile")
 
         employees: list[EmployeeInput] = []
@@ -375,12 +587,12 @@ class SolveRequest:
                 employee_id = parse_str(emp["employee_id"], f"{p}.employee_id")
                 home_unit_id = parse_str(emp["home_unit_id"], f"{p}.home_unit_id")
                 skills = parse_str_list(emp["skills"], f"{p}.skills")
-                max_reg = _parse_hours_or_minutes(
+                max_reg_min = _parse_exact_minutes_field(
                     emp,
                     hours_key="max_regular_weekly_hours",
                     minutes_key="max_regular_weekly_minutes",
                     path=p,
-                    default_hours=None,
+                    default_minutes=None,
                 )
             except KeyError as exc:
                 raise SolverContractError("NORN-SOLVER-SCHEMA", f"missing required field {p}.{exc.args[0]}") from exc
@@ -399,21 +611,20 @@ class SolveRequest:
                     ) from exc
                 leave_windows_list.append(TimeWindow(starts_at=leave_start, ends_at=leave_end))
 
-            max_ot = _parse_hours_or_minutes(
+            max_ot_min = _parse_exact_minutes_field(
                 emp,
                 hours_key="max_overtime_weekly_hours",
                 minutes_key="max_overtime_weekly_minutes",
                 path=p,
-                default_hours=Decimal("0.00"),
+                default_minutes=0,
             )
-            ot_cost = _parse_money_or_minor(
+            ot_cost_minor = _parse_exact_money_minor_field(
                 emp,
                 money_key="overtime_cost_per_hour",
                 minor_key="overtime_cost_minor_per_hour",
                 path=p,
-                default_money=Decimal("0.00"),
+                default_minor=0,
             )
-            display_label = parse_str(emp["display_label"], f"{p}.display_label") if "display_label" in emp else employee_id
             eligible_unit_ids = (
                 parse_str_list(emp["eligible_unit_ids"], f"{p}.eligible_unit_ids")
                 if "eligible_unit_ids" in emp
@@ -422,7 +633,6 @@ class SolveRequest:
             employees.append(
                 EmployeeInput(
                     employee_id=employee_id,
-                    display_label=display_label,
                     home_unit_id=home_unit_id,
                     eligible_unit_ids=eligible_unit_ids,
                     skills=skills,
@@ -430,9 +640,9 @@ class SolveRequest:
                         emp.get("cross_trainable_skills", []),
                         f"{p}.cross_trainable_skills",
                     ),
-                    max_regular_weekly_hours=max_reg,
-                    max_overtime_weekly_hours=max_ot,
-                    overtime_cost_per_hour=ot_cost,
+                    max_regular_weekly_minutes=max_reg_min,
+                    max_overtime_weekly_minutes=max_ot_min,
+                    overtime_cost_minor_per_hour=ot_cost_minor,
                     approved_leave=tuple(leave_windows_list),
                     preferred_shift_ids=parse_str_list(
                         emp.get("preferred_shift_ids", []),
@@ -484,42 +694,63 @@ class SolveRequest:
                 raw.get("authorized_transfer_employee_ids", []),
                 f"{path}.authorized_transfer_employee_ids",
             ),
+            iana_timezone=iana_timezone,
         )
 
 
-def _parse_hours_or_minutes(
+def _parse_exact_minutes_field(
     raw: dict[str, Any],
     *,
     hours_key: str,
     minutes_key: str,
     path: str,
-    default_hours: Decimal | None,
-) -> Decimal:
-    if minutes_key in raw:
+    default_minutes: int | None,
+) -> int:
+    has_min = minutes_key in raw
+    has_hr = hours_key in raw
+    if has_min and has_hr:
         mins = parse_int(raw[minutes_key], f"{path}.{minutes_key}", minimum=0)
-        return minutes_to_hours(mins)
-    if hours_key in raw:
-        return parse_decimal(raw[hours_key], f"{path}.{hours_key}")
-    if default_hours is not None:
-        return default_hours
+        from_hr = parse_hours_to_minutes(raw[hours_key], f"{path}.{hours_key}")
+        if mins != from_hr:
+            raise SolverContractError(
+                "NORN-SOLVER-SCHEMA",
+                f"{path} conflicting {minutes_key} ({mins}) and {hours_key} ({raw[hours_key]} -> {from_hr} min)",
+            )
+        return mins
+    if has_min:
+        return parse_int(raw[minutes_key], f"{path}.{minutes_key}", minimum=0)
+    if has_hr:
+        return parse_hours_to_minutes(raw[hours_key], f"{path}.{hours_key}")
+    if default_minutes is not None:
+        return default_minutes
     raise KeyError(hours_key)
 
 
-def _parse_money_or_minor(
+def _parse_exact_money_minor_field(
     raw: dict[str, Any],
     *,
     money_key: str,
     minor_key: str,
     path: str,
-    default_money: Decimal | None,
-) -> Decimal:
-    if minor_key in raw:
+    default_minor: int | None,
+) -> int:
+    has_minor = minor_key in raw
+    has_money = money_key in raw
+    if has_minor and has_money:
         minor = parse_int(raw[minor_key], f"{path}.{minor_key}", minimum=0)
-        return minor_units_to_decimal(minor)
-    if money_key in raw:
-        return parse_decimal(raw[money_key], f"{path}.{money_key}")
-    if default_money is not None:
-        return default_money
+        from_money = parse_money_to_minor_units(raw[money_key], f"{path}.{money_key}")
+        if minor != from_money:
+            raise SolverContractError(
+                "NORN-SOLVER-SCHEMA",
+                f"{path} conflicting {minor_key} ({minor}) and {money_key} ({raw[money_key]} -> {from_money} minor)",
+            )
+        return minor
+    if has_minor:
+        return parse_int(raw[minor_key], f"{path}.{minor_key}", minimum=0)
+    if has_money:
+        return parse_money_to_minor_units(raw[money_key], f"{path}.{money_key}")
+    if default_minor is not None:
+        return default_minor
     raise KeyError(money_key)
 
 
@@ -528,47 +759,45 @@ def _preference_profile_from_dict(raw_profile: Any, path: str = "$.profile") -> 
     try:
         profile_id = parse_str(raw_profile["profile_id"], f"{path}.profile_id")
         currency = parse_str(raw_profile["currency"], f"{path}.currency")
-        budget = _parse_money_or_minor(
+        budget_minor = _parse_exact_money_minor_field(
             raw_profile,
             money_key="weekly_overtime_budget",
             minor_key="weekly_overtime_budget_minor",
             path=path,
-            default_money=None,
+            default_minor=None,
         )
-        min_rest = _parse_hours_or_minutes(
+        min_rest_min = _parse_exact_minutes_field(
             raw_profile,
             hours_key="min_rest_hours",
             minutes_key="min_rest_minutes",
             path=path,
-            default_hours=None,
+            default_minutes=None,
         )
         max_consec = parse_int(raw_profile["max_consecutive_days"], f"{path}.max_consecutive_days", minimum=1)
     except KeyError as exc:
         raise SolverContractError("NORN-SOLVER-SCHEMA", f"missing required field {path}.{exc.args[0]}") from exc
 
-    max_daily = _parse_hours_or_minutes(
+    max_daily_min = _parse_exact_minutes_field(
         raw_profile,
         hours_key="max_daily_hours",
         minutes_key="max_daily_minutes",
         path=path,
-        default_hours=Decimal("10.00"),
+        default_minutes=600,
     )
-    max_weekly = _parse_hours_or_minutes(
+    max_weekly_min = _parse_exact_minutes_field(
         raw_profile,
         hours_key="max_weekly_hours",
         minutes_key="max_weekly_minutes",
         path=path,
-        default_hours=Decimal("48.00"),
+        default_minutes=2_880,
     )
-    label = parse_str(raw_profile["label"], f"{path}.label") if "label" in raw_profile else profile_id
     return PreferenceProfileInput(
         profile_id=profile_id,
-        label=label,
         currency=currency,
-        weekly_overtime_budget=budget,
-        min_rest_hours=min_rest,
-        max_daily_hours=max_daily,
-        max_weekly_hours=max_weekly,
+        weekly_overtime_budget_minor=budget_minor,
+        min_rest_minutes=min_rest_min,
+        max_daily_minutes=max_daily_min,
+        max_weekly_minutes=max_weekly_min,
         max_consecutive_days=max_consec,
         weekend_fairness_priority=_parse_priority(
             raw_profile.get("weekend_fairness_priority", "high"),
@@ -648,7 +877,7 @@ class RosterMetrics:
 
 @dataclass(frozen=True, slots=True)
 class RepairSuggestion:
-    """Typed, minimal, concrete UNSAT repair emitted by the minimum-slack CP-SAT repair model."""
+    """Typed, concrete UNSAT repair emitted by the slack-variable CP-SAT repair model."""
 
     kind: RepairKind
     target_shift_id: str | None
@@ -665,6 +894,8 @@ class RepairSuggestion:
     requires_approval: bool
     hint: str
     diagnostic_code: str
+    optimality: RepairOptimality = "minimum_slack"
+    is_minimum_slack: bool = True
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -677,7 +908,9 @@ class RepairSuggestion:
             "employee_id": self.employee_id,
             "from_unit_id": self.from_unit_id,
             "hint": self.hint,
+            "is_minimum_slack": self.is_minimum_slack,
             "kind": self.kind,
+            "optimality": self.optimality,
             "requires_approval": self.requires_approval,
             "role_code": self.role_code,
             "target_shift_id": self.target_shift_id,
@@ -710,15 +943,17 @@ class VerificationSummary:
 
 @dataclass(frozen=True, slots=True)
 class SolveResponse:
-    """Canonical deterministic solver response and receipt."""
+    """Canonical deterministic solver response and full-payload receipt."""
 
     contract: str
     roster_id: str
     profile_id: str
     status: SolveStatus
+    evidence_label: EvidenceLabel
     backend: SolverBackend
     assignments: tuple[Assignment, ...]
     metrics: RosterMetrics | None
+    repair_optimality: RepairOptimality | None
     repair_suggestions: tuple[RepairSuggestion, ...]
     alternative_repairs: tuple[RepairSuggestion, ...]
     unsat_summary: str | None
@@ -758,11 +993,13 @@ class SolveResponse:
             "assignments": [a.to_dict() for a in self.assignments],
             "backend": self.backend,
             "contract": self.contract,
+            "evidence_label": self.evidence_label,
             "function_id": FUNCTION_ID,
             "input_digest": self.input_digest,
             "metrics": self.metrics.to_dict() if self.metrics is not None else None,
             "perform_summary": self.perform_summary(),
             "profile_id": self.profile_id,
+            "repair_optimality": self.repair_optimality,
             "repair_suggestions": [r.to_dict() for r in self.repair_suggestions],
             "roster_id": self.roster_id,
             "solver_receipt_digest": self.solver_receipt_digest,

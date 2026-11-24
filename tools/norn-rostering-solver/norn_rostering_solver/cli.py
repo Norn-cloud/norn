@@ -1,4 +1,4 @@
-"""CLI entrypoint for `norn.solver.rostering@0.1.0` (reads strict JSON on stdin, writes canonical JSON)."""
+"""CLI entrypoint for `norn.solver.rostering@0.1.0` (reads strict UTF-8 JSON on stdin, writes canonical JSON)."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from .solver import solve_roster
 
 def main() -> int:
     try:
-        raw = parse_strict_json(sys.stdin.read())
+        raw = parse_strict_json(sys.stdin.buffer.read())
         if not isinstance(raw, dict):
             raise SolverContractError("NORN-SOLVER-SCHEMA", "request payload must be a JSON object")
         request = SolveRequest.from_dict(raw)

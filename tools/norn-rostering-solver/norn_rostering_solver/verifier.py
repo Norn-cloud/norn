@@ -1,8 +1,19 @@
 """Independent hard-law post-verifier for `norn.solver.rostering@0.1.0`.
 
 This module NEVER imports or trusts OR-Tools CP-SAT. Every candidate schedule emitted
-by the solver is independently verified against all statutory and HR hard laws
-(`HR-SH-01..04`) using exact integer arithmetic; any violation fails closed.
+by the solver is independently verified against all statutory and HR hard laws using
+exact integer arithmetic and timezone-aware local calendar day / ISO week splitting;
+any violation fails closed.
+
+Diagnostic code alignment with `registry/packs/frappe-hr/ORACLE-CHECKLIST.md`:
+- `HR-SH-01`: Non-overlapping shifts & no duplicate assignment on the same shift
+- `HR-SH-02`: Approved leave exclusion
+- `HR-SH-03`: Minimum rest gap between consecutive shifts
+- `HR-SH-04`: Infeasibility repair discipline (emitted by `solver.py`, never relaxing statutory laws)
+- `HR-SH-COV`: Exact shift headcount coverage & metadata integrity
+- `HR-SH-ELIG`: Role/skill and branch/unit eligibility
+- `HR-SH-STAT`: Statutory daily hours, statutory weekly hours, and max consecutive working days
+- `HR-SH-BUDGET`: Weekly overtime budget cap
 """
 
 from __future__ import annotations
@@ -21,23 +32,24 @@ from .models import (
 )
 
 ALL_HARD_LAW_CHECKS: tuple[str, ...] = (
-    "HR-SH-01:exact_shift_coverage",
-    "HR-SH-02:role_and_unit_eligibility",
-    "HR-SH-03:non_overlapping_intervals",
+    "HR-SH-01:non_overlapping_intervals",
+    "HR-SH-02:approved_leave_exclusion",
     "HR-SH-03:minimum_rest_gap",
-    "HR-SH-04:max_daily_hours",
-    "HR-SH-04:max_weekly_hours",
-    "HR-SH-04:max_consecutive_days",
-    "HR-SH-04:approved_leave_exclusion",
-    "HR-SH-04:overtime_budget_cap",
+    "HR-SH-COV:exact_shift_coverage",
+    "HR-SH-ELIG:role_and_unit_eligibility",
+    "HR-SH-STAT:max_daily_hours",
+    "HR-SH-STAT:max_weekly_hours",
+    "HR-SH-STAT:max_consecutive_days",
+    "HR-SH-BUDGET:overtime_budget_cap",
 )
 
 STATUTORY_CHECKS: tuple[str, ...] = (
-    "HR-SH-03:non_overlapping_intervals",
+    "HR-SH-01:non_overlapping_intervals",
+    "HR-SH-02:approved_leave_exclusion",
     "HR-SH-03:minimum_rest_gap",
-    "HR-SH-04:max_daily_hours",
-    "HR-SH-04:max_consecutive_days",
-    "HR-SH-04:approved_leave_exclusion",
+    "HR-SH-STAT:max_daily_hours",
+    "HR-SH-STAT:max_weekly_hours",
+    "HR-SH-STAT:max_consecutive_days",
 )
 
 
@@ -91,31 +103,36 @@ def verify_roster(
     *,
     enforce_coverage: bool = True,
     enforce_eligibility: bool = True,
-    enforce_weekly_cap: bool = True,
+    enforce_employee_weekly_cap: bool = True,
+    enforce_statutory_weekly_cap: bool = True,
     enforce_budget: bool = True,
 ) -> VerificationResult:
-    """Independently check all hard laws over `(request, assignments)`."""
+    """Independently check hard laws over `(request, assignments)` using exact local day/week splitting."""
     violations: list[HardLawViolation] = []
     shifts_by_id: dict[str, ShiftRequirementInput] = {s.shift_id: s for s in request.shifts}
     emps_by_id: dict[str, EmployeeInput] = {e.employee_id: e for e in request.employees}
     profile = request.profile
+    tz = request.tz
     authorized_transfers = frozenset(request.authorized_transfer_employee_ids)
 
     assigned_per_shift: dict[str, list[str]] = defaultdict(list)
     shifts_per_emp: dict[str, list[ShiftRequirementInput]] = defaultdict(list)
 
-    # 1. Structural integrity + eligibility + approved leave exclusion
+    # 1. Structural integrity + eligibility + approved leave exclusion (HR-SH-02)
     for a in assignments:
         shift = shifts_by_id.get(a.shift_id)
         if shift is None:
             violations.append(
-                HardLawViolation("HR-SH-01:unknown_shift", f"assignment references unknown shift {a.shift_id!r}")
+                HardLawViolation("HR-SH-COV:unknown_shift", f"assignment references unknown shift {a.shift_id!r}")
             )
             continue
         emp = emps_by_id.get(a.employee_id)
         if emp is None:
             violations.append(
-                HardLawViolation("HR-SH-02:unknown_employee", f"assignment references unknown employee {a.employee_id!r}")
+                HardLawViolation(
+                    "HR-SH-ELIG:unknown_employee",
+                    f"assignment references unknown employee {a.employee_id!r}",
+                )
             )
             continue
 
@@ -129,7 +146,7 @@ def verify_roster(
         ):
             violations.append(
                 HardLawViolation(
-                    "HR-SH-01:metadata_mismatch",
+                    "HR-SH-COV:metadata_mismatch",
                     f"assignment ({a.shift_id}, {a.employee_id}) metadata disagrees with ShiftRequirement",
                 )
             )
@@ -141,7 +158,7 @@ def verify_roster(
             if shift.role_code not in emp.skills:
                 violations.append(
                     HardLawViolation(
-                        "HR-SH-02:role_ineligible",
+                        "HR-SH-ELIG:role_ineligible",
                         f"employee {emp.employee_id!r} lacks required role {shift.role_code!r} for shift {shift.shift_id!r}",
                     )
                 )
@@ -153,23 +170,23 @@ def verify_roster(
                 if not transfer_ok:
                     violations.append(
                         HardLawViolation(
-                            "HR-SH-02:unit_ineligible",
+                            "HR-SH-ELIG:unit_ineligible",
                             f"employee {emp.employee_id!r} (home {emp.home_unit_id!r}) is not authorized for unit {shift.unit_id!r} on shift {shift.shift_id!r}",
                         )
                     )
 
-        # Approved leave exclusion (statutory — ALWAYS enforced)
+        # HR-SH-02: Approved leave exclusion (statutory — ALWAYS enforced)
         for leave_win in emp.approved_leave:
             if shift.window.overlaps(leave_win):
                 violations.append(
                     HardLawViolation(
-                        "HR-SH-04:approved_leave_overlap",
+                        "HR-SH-02:approved_leave_overlap",
                         f"employee {emp.employee_id!r} assigned to shift {shift.shift_id!r} overlapping approved leave "
                         f"[{format_utc(leave_win.starts_at)}, {format_utc(leave_win.ends_at)})",
                     )
                 )
 
-    # 2. Exact shift coverage & duplicate assignment on same shift
+    # 2. Duplicate assignment on same shift (HR-SH-01) & exact shift coverage (HR-SH-COV)
     for shift in sorted(request.shifts, key=lambda s: s.shift_id):
         assigned = assigned_per_shift.get(shift.shift_id, [])
         if len(assigned) != len(set(assigned)):
@@ -182,19 +199,19 @@ def verify_roster(
         if enforce_coverage and len(assigned) != shift.required_count:
             violations.append(
                 HardLawViolation(
-                    "HR-SH-01:coverage_mismatch",
+                    "HR-SH-COV:coverage_mismatch",
                     f"shift {shift.shift_id!r} requires {shift.required_count} staff, got {len(assigned)}",
                 )
             )
 
-    # 3. Per-employee temporal laws (overlap, min rest, daily hours, weekly hours, consecutive days)
+    # 3. Per-employee temporal laws (HR-SH-01 overlap, HR-SH-03 min rest, HR-SH-STAT daily/weekly/streak)
     weekly_ot_sub_minor: dict[tuple[int, int], int] = defaultdict(int)
 
     for emp_id in sorted(emps_by_id.keys()):
         emp = emps_by_id[emp_id]
         emp_shifts = sorted(shifts_per_emp.get(emp_id, []), key=lambda s: (s.starts_at, s.ends_at, s.shift_id))
 
-        # Overlap & minimum rest gap (pairwise over sorted shifts)
+        # Pairwise overlap (HR-SH-01) & minimum rest gap (HR-SH-03)
         for i in range(len(emp_shifts)):
             for j in range(i + 1, len(emp_shifts)):
                 s1 = emp_shifts[i]
@@ -202,7 +219,7 @@ def verify_roster(
                 if s1.window.overlaps(s2.window):
                     violations.append(
                         HardLawViolation(
-                            "HR-SH-03:overlapping_shifts",
+                            "HR-SH-01:overlapping_shifts",
                             f"employee {emp_id!r} has overlapping shifts {s1.shift_id!r} and {s2.shift_id!r}",
                         )
                     )
@@ -217,41 +234,51 @@ def verify_roster(
                             )
                         )
 
-        # Daily hours & consecutive working days
+        # Exact overnight splitting across local calendar days & ISO weeks in `request.iana_timezone`
         daily_minutes: dict[date, int] = defaultdict(int)
         weekly_minutes: dict[tuple[int, int], int] = defaultdict(int)
         for sh in emp_shifts:
-            daily_minutes[sh.work_date] += sh.duration_minutes
-            weekly_minutes[sh.iso_week] += sh.duration_minutes
+            for work_day, day_mins in sh.daily_minutes(tz).items():
+                daily_minutes[work_day] += day_mins
+            for week_key, week_mins in sh.weekly_minutes(tz).items():
+                weekly_minutes[week_key] += week_mins
 
         for work_day, mins in sorted(daily_minutes.items()):
             if mins > profile.max_daily_minutes:
                 violations.append(
                     HardLawViolation(
-                        "HR-SH-04:max_daily_hours_exceeded",
-                        f"employee {emp_id!r} works {mins} min on {work_day.isoformat()} "
+                        "HR-SH-STAT:max_daily_hours_exceeded",
+                        f"employee {emp_id!r} works {mins} min on {work_day.isoformat()} ({request.iana_timezone}) "
                         f"(> {profile.max_daily_minutes} min daily cap)",
                     )
                 )
 
-        max_streak = _max_consecutive_working_days(set(daily_minutes.keys()))
+        worked_days = {d for d, mins in daily_minutes.items() if mins > 0}
+        max_streak = _max_consecutive_working_days(worked_days)
         if max_streak > profile.max_consecutive_days:
             violations.append(
                 HardLawViolation(
-                    "HR-SH-04:max_consecutive_days_exceeded",
-                    f"employee {emp_id!r} works {max_streak} consecutive days "
+                    "HR-SH-STAT:max_consecutive_days_exceeded",
+                    f"employee {emp_id!r} works {max_streak} consecutive local days "
                     f"(> {profile.max_consecutive_days} day cap)",
                 )
             )
 
-        effective_weekly_cap = min(profile.max_weekly_minutes, emp.max_total_weekly_minutes)
         for week_key, mins in sorted(weekly_minutes.items()):
-            if enforce_weekly_cap and mins > effective_weekly_cap:
+            if enforce_statutory_weekly_cap and mins > profile.max_weekly_minutes:
                 violations.append(
                     HardLawViolation(
-                        "HR-SH-04:max_weekly_hours_exceeded",
+                        "HR-SH-STAT:max_weekly_hours_exceeded",
                         f"employee {emp_id!r} works {mins} min in ISO week {week_key[0]}-W{week_key[1]:02d} "
-                        f"(> {effective_weekly_cap} min weekly cap)",
+                        f"(> {profile.max_weekly_minutes} min statutory weekly cap)",
+                    )
+                )
+            elif enforce_employee_weekly_cap and mins > emp.max_total_weekly_minutes:
+                violations.append(
+                    HardLawViolation(
+                        "HR-SH-STAT:max_weekly_hours_exceeded",
+                        f"employee {emp_id!r} works {mins} min in ISO week {week_key[0]}-W{week_key[1]:02d} "
+                        f"(> {emp.max_total_weekly_minutes} min employee weekly cap)",
                     )
                 )
             ot_min = max(0, mins - emp.max_regular_weekly_minutes)
@@ -264,13 +291,20 @@ def verify_roster(
             if total_sub_minor > budget_sub_minor:
                 violations.append(
                     HardLawViolation(
-                        "HR-SH-04:overtime_budget_exceeded",
+                        "HR-SH-BUDGET:overtime_budget_exceeded",
                         f"ISO week {week_key[0]}-W{week_key[1]:02d} overtime cost ({total_sub_minor} sub-minor units) "
                         f"exceeds weekly budget ({budget_sub_minor} sub-minor units)",
                     )
                 )
 
-    checks = ALL_HARD_LAW_CHECKS if (enforce_coverage and enforce_eligibility and enforce_weekly_cap and enforce_budget) else STATUTORY_CHECKS
+    full_mode = (
+        enforce_coverage
+        and enforce_eligibility
+        and enforce_employee_weekly_cap
+        and enforce_statutory_weekly_cap
+        and enforce_budget
+    )
+    checks = ALL_HARD_LAW_CHECKS if full_mode else STATUTORY_CHECKS
     return VerificationResult(
         passed=len(violations) == 0,
         checks_run=checks,
@@ -293,12 +327,13 @@ def verify_statutory_laws(
     request: SolveRequest,
     assignments: tuple[Assignment, ...] | list[Assignment],
 ) -> VerificationResult:
-    """Verify statutory hard laws (non-overlap, min rest, daily hours, consecutive days, approved leave)."""
+    """Verify statutory hard laws (non-overlap, approved leave, min rest, daily/weekly statutory caps, consecutive days)."""
     return verify_roster(
         request,
         assignments,
         enforce_coverage=False,
         enforce_eligibility=False,
-        enforce_weekly_cap=False,
+        enforce_employee_weekly_cap=False,
+        enforce_statutory_weekly_cap=True,
         enforce_budget=False,
     )

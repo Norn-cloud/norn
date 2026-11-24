@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import copy
 import json
+import socket
 import threading
 import time
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pytest
+from ortools.sat.python import cp_model
 
 from norn_rostering_solver import (
     ALLOWED_EMPLOYEE_FIELDS,
@@ -24,9 +29,16 @@ from norn_rostering_solver import (
     FORBIDDEN_PII_FIELDS,
     FUNCTION_ID,
     FUNCTION_VERSION,
+    MAX_EMPLOYEES,
+    MAX_HORIZON_DAYS,
+    MAX_LEAVE_BLOCKS,
+    MAX_SHIFTS,
     Assignment,
+    DuplicateKeyError,
     EmployeeInput,
     FloatRefusalError,
+    LimitExceededError,
+    ModelInvalidError,
     PiiViolationError,
     PostVerificationError,
     PreferenceProfileInput,
@@ -39,13 +51,19 @@ from norn_rostering_solver import (
     build_function_manifest,
     canonical_json,
     compare_what_if,
+    compute_manifest_digest,
     create_worker_server,
     handle_invoke_payload,
     normalize_field_key,
+    package_source_digest,
     parse_strict_json,
     solve_roster,
+    split_interval_by_iso_week,
+    split_interval_by_local_day,
     verify_or_raise,
+    verify_receipt_digest,
     verify_roster,
+    verify_statutory_laws,
 )
 
 
@@ -56,7 +74,6 @@ def _utc(year: int, month: int, day: int, hour: int, minute: int = 0) -> datetim
 def _cairo_profile(
     *,
     profile_id: str = "prof_cairo_balanced",
-    label: str = "Balanced Cairo Retail",
     budget: str = "1500.00",
     weekend_fairness: Priority = "high",
     staff_pref: Priority = "medium",
@@ -68,7 +85,6 @@ def _cairo_profile(
 ) -> PreferenceProfileInput:
     return PreferenceProfileInput(
         profile_id=profile_id,
-        label=label,
         currency="EGP",
         weekly_overtime_budget=Decimal(budget),
         min_rest_hours=Decimal(min_rest),
@@ -85,9 +101,9 @@ def _valid_raw_payload() -> dict[str, Any]:
     return {
         "roster_id": "ros_2026_w48",
         "unit_id": "branch_maadi",
+        "iana_timezone": "Africa/Cairo",
         "profile": {
             "profile_id": "prof_1",
-            "label": "Cairo Balanced",
             "currency": "EGP",
             "weekly_overtime_budget": "500.00",
             "min_rest_hours": "11.00",
@@ -101,7 +117,6 @@ def _valid_raw_payload() -> dict[str, Any]:
         "employees": [
             {
                 "employee_id": "emp_01",
-                "display_label": "Staff #01",
                 "home_unit_id": "branch_maadi",
                 "skills": ["cashier"],
                 "max_regular_weekly_hours": "40.00",
@@ -124,7 +139,7 @@ def _valid_raw_payload() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# 1. Fail-Closed PII & IEEE Float Boundary Tests
+# 1. Fail-Closed PII, Duplicate-Key, Closed-Schema & IEEE Float Boundary Tests
 # ---------------------------------------------------------------------------
 
 
@@ -149,6 +164,58 @@ def test_pii_fields_fail_closed_recursively(pii_field: str, val: str) -> None:
     with pytest.raises(PiiViolationError) as exc_info:
         SolveRequest.from_dict(payload)
     assert exc_info.value.code == "NORN-SOLVER-PII-FORBIDDEN"
+
+
+def test_duplicate_json_keys_and_shadowed_pii_fail_closed() -> None:
+    # 1. Plain duplicate non-PII key fails closed with NORN-SOLVER-DUPLICATE-KEY
+    dup_json = '{"roster_id":"r1","roster_id":"r2"}'
+    with pytest.raises(DuplicateKeyError) as exc_dup:
+        parse_strict_json(dup_json)
+    assert exc_dup.value.code == "NORN-SOLVER-DUPLICATE-KEY"
+
+    # 2. Duplicate key alongside PII fails closed with NORN-SOLVER-PII-FORBIDDEN
+    dup_with_pii = '{"employee_ref":"e1","name":"Alice","employee_ref":"e2"}'
+    with pytest.raises(PiiViolationError) as exc_pii_sib:
+        parse_strict_json(dup_with_pii)
+    assert exc_pii_sib.value.code == "NORN-SOLVER-PII-FORBIDDEN"
+
+    # 3. Overwritten subtree hiding PII fails closed with NORN-SOLVER-PII-FORBIDDEN
+    shadowed_pii = '{"meta":{"national_id":"29901010100001"},"meta":{}}'
+    with pytest.raises(PiiViolationError) as exc_shadow:
+        parse_strict_json(shadowed_pii)
+    assert exc_shadow.value.code == "NORN-SOLVER-PII-FORBIDDEN"
+
+    # 4. Duplicate PII key fails closed with NORN-SOLVER-PII-FORBIDDEN
+    dup_pii = '{"name":"Alice","name":"Bob"}'
+    with pytest.raises(PiiViolationError) as exc_dup_pii:
+        parse_strict_json(dup_pii)
+    assert exc_dup_pii.value.code == "NORN-SOLVER-PII-FORBIDDEN"
+
+    # 5. Over HTTP invoke: duplicate key -> 400 NORN-SOLVER-DUPLICATE-KEY
+    status, body = handle_invoke_payload(dup_json.encode("utf-8"))
+    assert status == 400
+    assert body["code"] == "NORN-SOLVER-DUPLICATE-KEY"
+    assert body["status"] == "refused"
+
+
+def test_free_text_labels_rejected_by_closed_schema() -> None:
+    assert "display_label" not in ALLOWED_EMPLOYEE_FIELDS
+    assert "display_label" not in ALLOWED_SHIFT_FIELDS
+    assert "label" not in ALLOWED_PROFILE_FIELDS
+
+    payload_emp = _valid_raw_payload()
+    payload_emp["employees"][0]["display_label"] = "Alice (Cashier)"
+    with pytest.raises(UnknownFieldError) as exc_emp:
+        SolveRequest.from_dict(payload_emp)
+    assert exc_emp.value.code == "NORN-SOLVER-UNKNOWN-FIELD"
+    assert exc_emp.value.field_path == "$.employees[0].display_label"
+
+    payload_prof = _valid_raw_payload()
+    payload_prof["profile"]["label"] = "Cairo Retail"
+    with pytest.raises(UnknownFieldError) as exc_prof:
+        SolveRequest.from_dict(payload_prof)
+    assert exc_prof.value.code == "NORN-SOLVER-UNKNOWN-FIELD"
+    assert exc_prof.value.field_path == "$.profile.label"
 
 
 def test_float_inputs_refused_in_dict_and_strict_json() -> None:
@@ -185,13 +252,11 @@ def test_pii_denylist_disjoint_from_all_closed_schema_allowlists() -> None:
 @pytest.mark.parametrize(
     ("pii_field", "val"),
     [
-        # Known core PII keys
         ("name", "SYNTH_TOKEN_NAME"),
         ("national_id", "SYNTH_NID_0001"),
         ("phone", "SYNTH_PHONE_0001"),
         ("salary", "10000.00"),
         ("medical_note", "SYNTH_NOTE_0001"),
-        # Previously missed / audit PII variants & casing normalizations
         ("mobile_no", "SYNTH_MOBILE_0001"),
         ("mobileNo", "SYNTH_MOBILE_0002"),
         ("full_name_ar", "SYNTH_NAME_AR_0001"),
@@ -254,7 +319,6 @@ def test_closed_schema_rejects_unknown_keys_at_every_object_level(
 
 
 def test_closed_schema_rejects_unknown_keys_in_worker_envelopes_and_alt_profile() -> None:
-    # 1. Unknown key on perform envelope
     env_extra: dict[str, Any] = {
         "invocation_id": "inv_adv_1",
         "input": _valid_raw_payload(),
@@ -265,7 +329,6 @@ def test_closed_schema_rejects_unknown_keys_in_worker_envelopes_and_alt_profile(
     assert body["code"] == "NORN-SOLVER-UNKNOWN-FIELD"
     assert "$.shadow_header" in str(body["error"])
 
-    # 2. Unknown key nested inside `input` of perform envelope
     env_nested: dict[str, Any] = {
         "invocation_id": "inv_adv_2",
         "input": _valid_raw_payload(),
@@ -276,7 +339,6 @@ def test_closed_schema_rejects_unknown_keys_in_worker_envelopes_and_alt_profile(
     assert body["code"] == "NORN-SOLVER-UNKNOWN-FIELD"
     assert "$.input.employees[0].custom_badge_code" in str(body["error"])
 
-    # 3. Unknown key inside `alt_profile`
     direct_alt = _valid_raw_payload()
     direct_alt["alt_profile"] = {
         **direct_alt["profile"],
@@ -288,7 +350,6 @@ def test_closed_schema_rejects_unknown_keys_in_worker_envelopes_and_alt_profile(
     assert body["code"] == "NORN-SOLVER-UNKNOWN-FIELD"
     assert "$.alt_profile.unlisted_override" in str(body["error"])
 
-    # 4. Previously missed PII key via HTTP invoke payload
     pii_req = _valid_raw_payload()
     pii_req["employees"][0]["iqama"] = "SYNTH_IQAMA_999"
     status, body = handle_invoke_payload(canonical_json(pii_req).encode("utf-8"))
@@ -331,6 +392,7 @@ def test_closed_schema_rejects_unknown_keys_in_worker_envelopes_and_alt_profile(
             "employees": [{**_valid_raw_payload()["employees"][0], "approved_leave": [{"starts_at": "2026-11-29T00:00:00Z"}]}],
         },
         lambda: {**_valid_raw_payload(), "roster_id": ["not-a-string"]},
+        lambda: {**_valid_raw_payload(), "iana_timezone": "Mars/Olympus_Mons"},
     ],
 )
 def test_unexpected_container_shapes_fail_closed_cleanly(bad_payload_factory: Any) -> None:
@@ -357,11 +419,11 @@ def test_valid_full_allowlist_payload_solves_deterministically_and_passes_verifi
     payload: dict[str, Any] = {
         "roster_id": "ros_allowlist_full",
         "unit_id": "branch_maadi",
+        "iana_timezone": "Africa/Cairo",
         "allow_cross_branch_transfers": False,
         "authorized_transfer_employee_ids": [],
         "profile": {
             "profile_id": "prof_allowlist",
-            "label": "Full Allowlist Cairo Profile",
             "currency": "EGP",
             "weekly_overtime_budget": "500.00",
             "min_rest_hours": "11.00",
@@ -375,7 +437,6 @@ def test_valid_full_allowlist_payload_solves_deterministically_and_passes_verifi
         "employees": [
             {
                 "employee_id": "emp_token_01",
-                "display_label": "Staff Token #01",
                 "home_unit_id": "branch_maadi",
                 "eligible_unit_ids": ["branch_maadi"],
                 "skills": ["cashier"],
@@ -412,15 +473,705 @@ def test_valid_full_allowlist_payload_solves_deterministically_and_passes_verifi
     res2 = solve_roster(SolveRequest.from_dict(parse_strict_json(canonical_json(payload))))
 
     assert res1.status == "optimal"
+    assert res1.evidence_label == "exhaustive-finite"
     assert res1.verification.checked and res1.verification.passed and res1.verification.violation_count == 0
     assert len(res1.assignments) == 1
     assert res1.assignments[0].employee_id == "emp_token_01"
     assert res1.solver_receipt_digest == res2.solver_receipt_digest
     assert canonical_json(res1.to_dict()) == canonical_json(res2.to_dict())
+    assert verify_receipt_digest(res1.to_dict()) is True
 
 
 # ---------------------------------------------------------------------------
-# 2. Determinism & Hard-Law Enforcement Tests
+# 2. Exact Minutes / Money Parsing & Full-Payload Receipt Integrity
+# ---------------------------------------------------------------------------
+
+
+def test_exact_integer_minutes_preserved_without_lossy_hour_rounding() -> None:
+    # 470 min (7h50m), 50 min rest, 550 min daily, 1000 min weekly — none divisible by 3!
+    payload: dict[str, Any] = {
+        "roster_id": "ros_exact_min",
+        "unit_id": "branch_maadi",
+        "profile": {
+            "profile_id": "prof_exact_min",
+            "currency": "EGP",
+            "weekly_overtime_budget_minor": 50_000,
+            "min_rest_minutes": 50,
+            "max_daily_minutes": 550,
+            "max_weekly_minutes": 1_000,
+            "max_consecutive_days": 6,
+        },
+        "employees": [
+            {
+                "employee_id": "emp_exact",
+                "home_unit_id": "branch_maadi",
+                "skills": ["cashier"],
+                "max_regular_weekly_minutes": 470,
+                "max_overtime_weekly_minutes": 50,
+                "overtime_cost_minor_per_hour": 12_000,
+            }
+        ],
+        "shifts": [
+            {
+                "shift_id": "sh_490m",
+                "unit_id": "branch_maadi",
+                "role_code": "cashier",
+                "starts_at": "2026-11-28T06:00:00Z",
+                "ends_at": "2026-11-28T14:10:00Z",  # 490 minutes = 470 regular + 20 overtime!
+                "required_count": 1,
+            }
+        ],
+    }
+
+    req = SolveRequest.from_dict(payload)
+    assert req.employees[0].max_regular_weekly_minutes == 470
+    assert req.employees[0].max_overtime_weekly_minutes == 50
+    assert req.profile.min_rest_minutes == 50
+    assert req.profile.max_daily_minutes == 550
+
+    res = solve_roster(req)
+    assert res.status == "optimal"
+    assert res.metrics is not None
+    assert res.metrics.total_regular_minutes == 470
+    assert res.metrics.total_overtime_minutes == 20
+    # 20 min OT at 120.00 EGP/h = exactly 40.00 EGP (4000 minor units)
+    assert res.metrics.total_overtime_cost_minor == 4_000
+    assert res.metrics.total_overtime_cost == Decimal("40.00")
+    assert verify_receipt_digest(res.to_dict()) is True
+
+    # Round-tripping serialized employee/profile dicts preserves exact minutes losslessly.
+    rt_dict: dict[str, Any] = {
+        "roster_id": req.roster_id,
+        "unit_id": req.unit_id,
+        "iana_timezone": req.iana_timezone,
+        "profile": req.profile.to_dict(),
+        "employees": [e.to_dict() for e in req.employees],
+        "shifts": [{k: v for k, v in s.to_dict().items() if k != "duration_minutes"} for s in req.shifts],
+    }
+    req_rt = SolveRequest.from_dict(rt_dict)
+    assert req_rt.employees[0].max_regular_weekly_minutes == 470
+    assert req_rt.profile.min_rest_minutes == 50
+
+
+@pytest.mark.parametrize(
+    ("field_path", "bad_val"),
+    [
+        (("profile", "weekly_overtime_budget"), "500.125"),  # over-scale money (> 2 decimals)
+        (("employees", 0, "overtime_cost_per_hour"), "120.999"),  # over-scale money
+        (("profile", "weekly_overtime_budget"), "not-a-number"),  # invalid decimal
+        (("profile", "weekly_overtime_budget"), "9" * 40),  # huge decimal (was uncaught InvalidOperation)
+        (("profile", "weekly_overtime_budget"), "1e999999999"),  # huge exponent
+        (("profile", "min_rest_hours"), "1.125"),  # 67.5 minutes (non-whole minute)
+    ],
+)
+def test_bad_or_overscale_decimal_strings_fail_closed_with_400(
+    field_path: tuple[str | int, ...],
+    bad_val: str,
+) -> None:
+    payload = _valid_raw_payload()
+    cur: Any = payload
+    for seg in field_path[:-1]:
+        cur = cur[seg]
+    cur[field_path[-1]] = bad_val
+
+    status, body = handle_invoke_payload(canonical_json(payload).encode("utf-8"))
+    assert status == 400
+    assert body["code"] == "NORN-SOLVER-DECIMAL"
+    assert body["status"] == "refused"
+
+
+def test_full_payload_receipt_tamper_detection() -> None:
+    # 1. Feasible/optimal receipt tamper tests (metrics, assignments, status, verification, perform_summary)
+    req = SolveRequest.from_dict(_valid_raw_payload())
+    res = solve_roster(req)
+    valid_doc = res.to_dict()
+    assert verify_receipt_digest(valid_doc) is True
+
+    tampered_metrics = copy.deepcopy(valid_doc)
+    assert isinstance(tampered_metrics["metrics"], dict)
+    tampered_metrics["metrics"]["total_overtime_cost"] = "9999.00"
+    assert verify_receipt_digest(tampered_metrics) is False
+
+    tampered_score = copy.deepcopy(valid_doc)
+    assert isinstance(tampered_score["metrics"], dict)
+    tampered_score["metrics"]["objective_score"] = 123_456
+    assert verify_receipt_digest(tampered_score) is False
+
+    tampered_assignments = copy.deepcopy(valid_doc)
+    assert isinstance(tampered_assignments["assignments"], list)
+    tampered_assignments["assignments"][0]["employee_id"] = "emp_tampered"
+    assert verify_receipt_digest(tampered_assignments) is False
+
+    tampered_status = copy.deepcopy(valid_doc)
+    tampered_status["status"] = "feasible"
+    assert verify_receipt_digest(tampered_status) is False
+
+    tampered_verification = copy.deepcopy(valid_doc)
+    assert isinstance(tampered_verification["verification"], dict)
+    tampered_verification["verification"]["passed"] = False
+    assert verify_receipt_digest(tampered_verification) is False
+
+    tampered_summary = copy.deepcopy(valid_doc)
+    assert isinstance(tampered_summary["perform_summary"], dict)
+    tampered_summary["perform_summary"]["assignmentCount"] = 99
+    assert verify_receipt_digest(tampered_summary) is False
+
+    # 2. Infeasible receipt tamper test (`unsat_summary` and `repair_optimality`)
+    unsat_raw = _valid_raw_payload()
+    unsat_raw["shifts"][0]["required_count"] = 2
+    unsat_res = solve_roster(SolveRequest.from_dict(unsat_raw))
+    unsat_doc = unsat_res.to_dict()
+    assert verify_receipt_digest(unsat_doc) is True
+
+    tampered_unsat = copy.deepcopy(unsat_doc)
+    tampered_unsat["unsat_summary"] = "tampered summary text"
+    assert verify_receipt_digest(tampered_unsat) is False
+
+    tampered_opt = copy.deepcopy(unsat_doc)
+    tampered_opt["repair_optimality"] = "feasible_slack"
+    assert verify_receipt_digest(tampered_opt) is False
+
+
+# ---------------------------------------------------------------------------
+# 3. Exact Overnight Shift & ISO-Week Boundary Accounting Tests
+# ---------------------------------------------------------------------------
+
+
+def test_overnight_shift_counts_both_calendar_days_and_splits_daily_hours() -> None:
+    tz = ZoneInfo("UTC")
+    overnight = ShiftRequirementInput(
+        "sh_sat_night",
+        "branch_maadi",
+        "cashier",
+        _utc(2026, 11, 28, 22),  # Sat 22:00 UTC
+        _utc(2026, 11, 29, 6),   # Sun 06:00 UTC
+        1,
+    )
+    assert overnight.daily_minutes(tz) == {
+        datetime(2026, 11, 28, tzinfo=UTC).date(): 120,
+        datetime(2026, 11, 29, tzinfo=UTC).date(): 360,
+    }
+
+    solo = (
+        EmployeeInput(
+            employee_id="emp_solo",
+            home_unit_id="branch_maadi",
+            skills=("cashier",),
+            max_regular_weekly_hours=Decimal("60.00"),
+            max_overtime_weekly_hours=Decimal("0.00"),
+            overtime_cost_per_hour=Decimal("100.00"),
+        ),
+    )
+
+    # Mon..Fri day shifts (5 days: Nov 23..27) + Sat 22:00 -> Sun 06:00 spans Nov 28 AND Nov 29 => 7 consecutive days!
+    base = datetime(2026, 11, 23, 8, 0, tzinfo=UTC)
+    shifts_5_plus_overnight = tuple(
+        ShiftRequirementInput(
+            f"sh_d{d}",
+            "branch_maadi",
+            "cashier",
+            base + timedelta(days=d),
+            base + timedelta(days=d, hours=6),
+            1,
+        )
+        for d in range(5)
+    ) + (overnight,)
+
+    req_streak = SolveRequest(
+        "ros_overnight_streak",
+        "branch_maadi",
+        solo,
+        shifts_5_plus_overnight,
+        _cairo_profile(max_weekly="60.00", max_daily="10.00", max_consec=6),
+        iana_timezone="UTC",
+    )
+    res_streak = solve_roster(req_streak)
+    assert res_streak.status == "infeasible"
+
+    # Independent verifier also catches the 7-day streak caused by the overnight shift!
+    forced_assignments = tuple(
+        Assignment(
+            sh.shift_id,
+            "emp_solo",
+            sh.unit_id,
+            sh.role_code,
+            sh.starts_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            sh.ends_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            sh.duration_minutes,
+            sh.duration_hours,
+        )
+        for sh in shifts_5_plus_overnight
+    )
+    ver = verify_roster(req_streak, forced_assignments)
+    assert not ver.passed
+    assert "HR-SH-STAT:max_consecutive_days_exceeded" in {v.code for v in ver.violations}
+
+    # Daily cap split across midnight: Sat 20:00->Sun 04:00 (4h on Sun) + Sun 16:00->Sun 23:00 (7h on Sun) = 11h on Sun > 10h!
+    sh_overnight_4h_sun = ShiftRequirementInput("sh_ov", "branch_maadi", "cashier", _utc(2026, 11, 28, 20), _utc(2026, 11, 29, 4), 1)
+    sh_sun_evening_7h = ShiftRequirementInput("sh_sun_ev", "branch_maadi", "cashier", _utc(2026, 11, 29, 16), _utc(2026, 11, 29, 23), 1)
+    req_daily_split = SolveRequest(
+        "ros_overnight_daily",
+        "branch_maadi",
+        solo,
+        (sh_overnight_4h_sun, sh_sun_evening_7h),
+        _cairo_profile(min_rest="11.00", max_daily="10.00", max_weekly="48.00", max_consec=6),
+        iana_timezone="UTC",
+    )
+    assert solve_roster(req_daily_split).status == "infeasible"
+
+
+def test_sunday_to_monday_iso_week_boundary_split_utc_and_cairo() -> None:
+    # Sun Nov 29 22:00Z -> Mon Nov 30 06:00Z:
+    # - In UTC: 120 min in 2026-W48 (Sun) + 360 min in 2026-W49 (Mon)
+    # - In Africa/Cairo (UTC+2): Mon Nov 30 00:00+02:00 -> Mon Nov 30 08:00+02:00 = ALL 480 min in 2026-W49!
+    sun_mon_shift = ShiftRequirementInput(
+        "sh_sun_mon",
+        "branch_maadi",
+        "cashier",
+        _utc(2026, 11, 29, 22),
+        _utc(2026, 11, 30, 6),
+        1,
+    )
+    assert split_interval_by_iso_week(sun_mon_shift.starts_at, sun_mon_shift.ends_at, ZoneInfo("UTC")) == {
+        (2026, 48): 120,
+        (2026, 49): 360,
+    }
+    assert split_interval_by_iso_week(sun_mon_shift.starts_at, sun_mon_shift.ends_at, ZoneInfo("Africa/Cairo")) == {
+        (2026, 49): 480,
+    }
+
+    # Shift starting Sun Nov 29 21:00Z (= 23:00 Cairo) -> Mon Nov 30 05:00Z (= 07:00 Cairo):
+    # - In Africa/Cairo: 60 min in W48 + 420 min in W49!
+    cairo_boundary = ShiftRequirementInput(
+        "sh_cairo_wk_cross",
+        "branch_maadi",
+        "cashier",
+        _utc(2026, 11, 29, 21),
+        _utc(2026, 11, 30, 5),
+        1,
+    )
+    assert split_interval_by_iso_week(cairo_boundary.starts_at, cairo_boundary.ends_at, ZoneInfo("Africa/Cairo")) == {
+        (2026, 48): 60,
+        (2026, 49): 420,
+    }
+
+    # Build 46h of work Mon..Fri in W48 (5 × 9h = 45h + 1h? Even cleaner: 4 × 10h + 1 × 6h = 46h in W48, 5 days Mon..Fri).
+    # Then add Sun 22:00Z -> Mon 06:00Z (2h in W48, 6h in W49 under UTC):
+    # Total in W48 = 46h + 2h = 48h <= 48h cap -> OPTIMAL!
+    # Consecutive days = Mon..Fri (5 days), Sat OFF, Sun..Mon (2 days) -> max streak 5 <= 6!
+    w48_shifts_46h = (
+        ShiftRequirementInput("sh_mon", "branch_maadi", "cashier", _utc(2026, 11, 23, 8), _utc(2026, 11, 23, 18), 1),  # 10h
+        ShiftRequirementInput("sh_tue", "branch_maadi", "cashier", _utc(2026, 11, 24, 8), _utc(2026, 11, 24, 18), 1),  # 10h
+        ShiftRequirementInput("sh_wed", "branch_maadi", "cashier", _utc(2026, 11, 25, 8), _utc(2026, 11, 25, 18), 1),  # 10h
+        ShiftRequirementInput("sh_thu", "branch_maadi", "cashier", _utc(2026, 11, 26, 8), _utc(2026, 11, 26, 18), 1),  # 10h
+        ShiftRequirementInput("sh_fri", "branch_maadi", "cashier", _utc(2026, 11, 27, 8), _utc(2026, 11, 27, 14), 1),  # 6h
+    )
+    emp = (
+        EmployeeInput(
+            employee_id="emp_wk",
+            home_unit_id="branch_maadi",
+            skills=("cashier",),
+            max_regular_weekly_hours=Decimal("40.00"),
+            max_overtime_weekly_hours=Decimal("8.00"),
+            overtime_cost_per_hour=Decimal("100.00"),
+        ),
+    )
+
+    req_fits_48h = SolveRequest(
+        "ros_wk_fits",
+        "branch_maadi",
+        emp,
+        (*w48_shifts_46h, sun_mon_shift),
+        _cairo_profile(max_weekly="48.00", max_daily="10.00", max_consec=6, budget="2000.00"),
+        iana_timezone="UTC",
+    )
+    res_fits = solve_roster(req_fits_48h)
+    assert res_fits.status == "optimal"
+    assert res_fits.verification.passed is True
+    assert res_fits.metrics is not None
+    # W48: 48h = 40h regular + 8h OT; W49: 6h = 6h regular + 0h OT => total 46h regular + 8h OT!
+    assert res_fits.metrics.total_regular_minutes == 46 * 60
+    assert res_fits.metrics.total_overtime_minutes == 8 * 60
+
+    # Now add 1 more hour on Friday (47h in W48 + 2h from Sun 22:00Z->Mon 06:00Z = 49h > 48h in W48 under UTC -> INFEASIBLE!).
+    # Yet under Africa/Cairo (where Sun 22:00Z is Mon 00:00+02:00), W48 has 47h <= 48h and W49 has 8h -> OPTIMAL!
+    w48_shifts_47h = (
+        *w48_shifts_46h[:4],
+        ShiftRequirementInput("sh_fri", "branch_maadi", "cashier", _utc(2026, 11, 27, 8), _utc(2026, 11, 27, 15), 1),  # 7h
+    )
+    req_exceeds_utc = SolveRequest(
+        "ros_wk_exceeds_utc",
+        "branch_maadi",
+        emp,
+        (*w48_shifts_47h, sun_mon_shift),
+        _cairo_profile(max_weekly="48.00", max_daily="10.00", max_consec=6, budget="2000.00"),
+        iana_timezone="UTC",
+    )
+    res_exceeds_utc = solve_roster(req_exceeds_utc)
+    assert res_exceeds_utc.status == "infeasible"
+    # Overtime repair MUST NOT violate the 48h statutory weekly cap — only `relax_coverage` is legal!
+    assert all(r.kind == "relax_coverage" for r in res_exceeds_utc.repair_suggestions)
+
+    req_fits_cairo = SolveRequest(
+        "ros_wk_fits_cairo",
+        "branch_maadi",
+        emp,
+        (*w48_shifts_47h, sun_mon_shift),
+        _cairo_profile(max_weekly="48.00", max_daily="10.00", max_consec=6, budget="2000.00"),
+        iana_timezone="Africa/Cairo",
+    )
+    res_fits_cairo = solve_roster(req_fits_cairo)
+    assert res_fits_cairo.status == "optimal"
+    assert res_fits_cairo.verification.passed is True
+
+
+def test_overtime_repair_never_relaxes_statutory_weekly_cap() -> None:
+    # 6 shifts of 9h = 54h in one ISO week; statutory `profile.max_weekly_hours = 48.00`.
+    # Even though overtime repair is enabled, statutory 48h ceiling MUST NEVER be violated!
+    base_day = datetime(2026, 11, 23, 8, 0, tzinfo=UTC)
+    six_9h_shifts = tuple(
+        ShiftRequirementInput(
+            f"sh_9h_{d}",
+            "branch_maadi",
+            "cashier",
+            base_day + timedelta(days=d),
+            base_day + timedelta(days=d, hours=9),
+            1,
+        )
+        for d in range(6)
+    )
+    solo = (
+        EmployeeInput(
+            employee_id="emp_solo",
+            home_unit_id="branch_maadi",
+            skills=("cashier",),
+            max_regular_weekly_hours=Decimal("40.00"),
+            max_overtime_weekly_hours=Decimal("8.00"),
+            overtime_cost_per_hour=Decimal("100.00"),
+        ),
+    )
+    req = SolveRequest(
+        "ros_stat_weekly_cap",
+        "branch_maadi",
+        solo,
+        six_9h_shifts,
+        _cairo_profile(max_weekly="48.00", max_daily="10.00", max_consec=6, budget="5000.00"),
+    )
+    res = solve_roster(req)
+    assert res.status == "infeasible"
+    assert res.repair_suggestions
+    # Must NEVER suggest `approve_overtime` above 48h statutory cap!
+    assert all(r.kind == "relax_coverage" for r in res.repair_suggestions)
+    assert all(r.kind != "approve_overtime" for r in res.minimal_repairs)
+
+    # Independent `verify_statutory_laws` MUST also reject 54h > 48h!
+    illegal_54h = tuple(
+        Assignment(
+            sh.shift_id,
+            "emp_solo",
+            sh.unit_id,
+            sh.role_code,
+            sh.starts_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            sh.ends_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            sh.duration_minutes,
+            sh.duration_hours,
+        )
+        for sh in six_9h_shifts
+    )
+    stat_ver = verify_statutory_laws(req, illegal_54h)
+    assert not stat_ver.passed
+    assert "HR-SH-STAT:max_weekly_hours_exceeded" in {v.code for v in stat_ver.violations}
+
+
+# ---------------------------------------------------------------------------
+# 4. Honest Solver Statuses & Repair Optimality Tests
+# ---------------------------------------------------------------------------
+
+
+def test_honest_unknown_feasible_and_model_invalid_statuses(monkeypatch: pytest.MonkeyPatch) -> None:
+    req = SolveRequest.from_dict(_valid_raw_payload())
+
+    # 1. UNKNOWN -> status="unknown", evidence_label="unknown", NO false infeasibility, NO repair run!
+    repair_called = False
+
+    def _fail_if_repair_called(*_args: Any, **_kwargs: Any) -> Any:
+        nonlocal repair_called
+        repair_called = True
+        raise AssertionError("UNSAT repair must NEVER be called when primary status is UNKNOWN")
+
+    monkeypatch.setattr("norn_rostering_solver.solver._find_unsat_repairs", _fail_if_repair_called)
+    monkeypatch.setattr(cp_model.CpSolver, "solve", lambda self, model, callback=None: cp_model.UNKNOWN)
+
+    res_unk = solve_roster(req)
+    assert res_unk.status == "unknown"
+    assert res_unk.evidence_label == "unknown"
+    assert res_unk.assignments == ()
+    assert res_unk.metrics is None
+    assert res_unk.repair_suggestions == ()
+    assert res_unk.alternative_repairs == ()
+    assert res_unk.unsat_summary is None
+    assert res_unk.repair_optimality is None
+    assert repair_called is False
+    assert verify_receipt_digest(res_unk.to_dict()) is True
+
+    # 2. MODEL_INVALID -> raises ModelInvalidError (NORN-SOLVER-MODEL-INVALID) & HTTP 500 status="error"
+    monkeypatch.setattr(cp_model.CpSolver, "solve", lambda self, model, callback=None: cp_model.MODEL_INVALID)
+    with pytest.raises(ModelInvalidError) as exc_inv:
+        solve_roster(req)
+    assert exc_inv.value.code == "NORN-SOLVER-MODEL-INVALID"
+
+    status, body = handle_invoke_payload(canonical_json(_valid_raw_payload()).encode("utf-8"))
+    assert status == 500
+    assert body["code"] == "NORN-SOLVER-MODEL-INVALID"
+    assert body["status"] == "error"
+
+
+def test_honest_feasible_primary_and_feasible_slack_repair(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 1. Primary returns FEASIBLE (non-proven-optimal) -> status="feasible", evidence_label="bounded"
+    real_solve = cp_model.CpSolver.solve
+
+    def _primary_as_feasible(self: cp_model.CpSolver, model: cp_model.CpModel, callback: Any = None) -> Any:
+        res = real_solve(self, model, callback)
+        return cp_model.FEASIBLE if res == cp_model.OPTIMAL else res
+
+    req = SolveRequest.from_dict(_valid_raw_payload())
+    monkeypatch.setattr(cp_model.CpSolver, "solve", _primary_as_feasible)
+    res_feas = solve_roster(req)
+    assert res_feas.status == "feasible"
+    assert res_feas.evidence_label == "bounded"
+    assert res_feas.verification.passed is True
+    assert verify_receipt_digest(res_feas.to_dict()) is True
+
+    # 2. Repair returns FEASIBLE (not OPTIMAL) -> repair_optimality="feasible_slack", is_minimum_slack=False!
+    unsat_payload = _valid_raw_payload()
+    unsat_payload["shifts"][0]["required_count"] = 2
+    unsat_req = SolveRequest.from_dict(unsat_payload)
+    res_unsat_feas = solve_roster(unsat_req)
+    assert res_unsat_feas.status == "infeasible"
+    assert res_unsat_feas.evidence_label == "exhaustive-finite"
+    assert res_unsat_feas.repair_optimality == "feasible_slack"
+    assert res_unsat_feas.unsat_summary is not None
+    assert "not proven minimum-slack" in res_unsat_feas.unsat_summary
+    assert len(res_unsat_feas.repair_suggestions) == 1
+    assert res_unsat_feas.repair_suggestions[0].optimality == "feasible_slack"
+    assert res_unsat_feas.repair_suggestions[0].is_minimum_slack is False
+    assert verify_receipt_digest(res_unsat_feas.to_dict()) is True
+
+
+# ---------------------------------------------------------------------------
+# 5. Bounded Cardinality, Invalid UTF-8, Concurrency, Timeout & Output Cap
+# ---------------------------------------------------------------------------
+
+
+def test_cardinality_limits_enforced_before_model_construction() -> None:
+    # 1. Exceed MAX_EMPLOYEES
+    too_many_emps = _valid_raw_payload()
+    too_many_emps["employees"] = [
+        {
+            "employee_id": f"emp_{i:04d}",
+            "home_unit_id": "branch_maadi",
+            "skills": ["cashier"],
+            "max_regular_weekly_minutes": 2400,
+        }
+        for i in range(MAX_EMPLOYEES + 1)
+    ]
+    with pytest.raises(LimitExceededError) as exc_e:
+        SolveRequest.from_dict(too_many_emps)
+    assert exc_e.value.code == "NORN-SOLVER-LIMIT-EXCEEDED"
+
+    status, body = handle_invoke_payload(canonical_json(too_many_emps).encode("utf-8"))
+    assert status == 422
+    assert body["code"] == "NORN-SOLVER-LIMIT-EXCEEDED"
+
+    # 2. Exceed MAX_SHIFTS
+    too_many_shifts = _valid_raw_payload()
+    too_many_shifts["shifts"] = [
+        {
+            "shift_id": f"sh_{i:04d}",
+            "unit_id": "branch_maadi",
+            "role_code": "cashier",
+            "starts_at": "2026-11-28T06:00:00Z",
+            "ends_at": "2026-11-28T14:00:00Z",
+            "required_count": 1,
+        }
+        for i in range(MAX_SHIFTS + 1)
+    ]
+    with pytest.raises(LimitExceededError) as exc_s:
+        SolveRequest.from_dict(too_many_shifts)
+    assert exc_s.value.code == "NORN-SOLVER-LIMIT-EXCEEDED"
+
+    # 3. Exceed MAX_HORIZON_DAYS
+    too_wide_horizon = _valid_raw_payload()
+    too_wide_horizon["shifts"] = [
+        {
+            "shift_id": "sh_start",
+            "unit_id": "branch_maadi",
+            "role_code": "cashier",
+            "starts_at": "2026-01-01T08:00:00Z",
+            "ends_at": "2026-01-01T16:00:00Z",
+            "required_count": 1,
+        },
+        {
+            "shift_id": "sh_end",
+            "unit_id": "branch_maadi",
+            "role_code": "cashier",
+            "starts_at": (datetime(2026, 1, 1, 8, 0, tzinfo=UTC) + timedelta(days=MAX_HORIZON_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "ends_at": (datetime(2026, 1, 1, 16, 0, tzinfo=UTC) + timedelta(days=MAX_HORIZON_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "required_count": 1,
+        },
+    ]
+    with pytest.raises(LimitExceededError) as exc_h:
+        SolveRequest.from_dict(too_wide_horizon)
+    assert exc_h.value.code == "NORN-SOLVER-LIMIT-EXCEEDED"
+
+    # 4. Exceed MAX_LEAVE_BLOCKS
+    too_many_leaves = _valid_raw_payload()
+    too_many_leaves["employees"][0]["approved_leave"] = [
+        {
+            "starts_at": "2026-11-29T00:00:00Z",
+            "ends_at": "2026-11-29T01:00:00Z",
+        }
+        for _ in range(MAX_LEAVE_BLOCKS + 1)
+    ]
+    with pytest.raises(LimitExceededError) as exc_l:
+        SolveRequest.from_dict(too_many_leaves)
+    assert exc_l.value.code == "NORN-SOLVER-LIMIT-EXCEEDED"
+
+
+def test_invalid_utf8_and_response_byte_cap_fail_closed() -> None:
+    # 1. Invalid UTF-8 bytes -> 400 NORN-SOLVER-JSON (never 500 traceback!)
+    status, body = handle_invoke_payload(b"\xff\xfe\x80\x81")
+    assert status == 400
+    assert body["code"] == "NORN-SOLVER-JSON"
+    assert body["status"] == "refused"
+
+    # 2. Output response byte cap -> 500 NORN-SOLVER-RESPONSE-TOO-LARGE
+    status, body = handle_invoke_payload(
+        canonical_json(_valid_raw_payload()).encode("utf-8"),
+        max_response_bytes=64,
+    )
+    assert status == 500
+    assert body["code"] == "NORN-SOLVER-RESPONSE-TOO-LARGE"
+    assert body["status"] == "refused"
+
+
+def test_http_worker_concurrency_semaphore_and_socket_timeout() -> None:
+    server = create_worker_server(
+        "127.0.0.1",
+        0,
+        max_concurrent_solves=1,
+        socket_timeout=0.15,
+        acquire_timeout=0.0,
+    )
+    port = int(server.server_address[1])
+    base_url = f"http://127.0.0.1:{port}"
+    invoke_path = f"/v1/functions/{FUNCTION_ID}/invoke"
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    try:
+        # 1. Concurrency semaphore exhaustion -> 503 NORN-SOLVER-BUSY
+        assert server.concurrency_semaphore.acquire(blocking=False) is True
+        try:
+            status, busy = _http_request(
+                base_url,
+                "POST",
+                invoke_path,
+                canonical_json(_valid_raw_payload()).encode("utf-8"),
+            )
+            assert status == 503
+            assert busy["code"] == "NORN-SOLVER-BUSY"
+            assert busy["status"] == "refused"
+        finally:
+            server.concurrency_semaphore.release()
+
+        # 2. Socket read timeout on slow/stalled body -> 408 NORN-SOLVER-TIMEOUT
+        with socket.create_connection(("127.0.0.1", port), timeout=2.0) as sock:
+            sock.sendall(
+                (
+                    f"POST {invoke_path} HTTP/1.1\r\n"
+                    f"Host: 127.0.0.1:{port}\r\n"
+                    "Content-Type: application/json\r\n"
+                    "Content-Length: 500\r\n"
+                    "Connection: close\r\n"
+                    "\r\n"
+                    '{"partial":'
+                ).encode("ascii")
+            )
+            chunks: list[bytes] = []
+            while True:
+                data = sock.recv(4096)
+                if not data:
+                    break
+                chunks.append(data)
+            raw_resp = b"".join(chunks).decode("utf-8")
+            assert "408" in raw_resp.splitlines()[0]
+            body_text = raw_resp.split("\r\n\r\n", 1)[1]
+            parsed_timeout = json.loads(body_text)
+            assert parsed_timeout["code"] == "NORN-SOLVER-TIMEOUT"
+            assert parsed_timeout["status"] == "refused"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+# ---------------------------------------------------------------------------
+# 6. Empty-Roster Edge Cases
+# ---------------------------------------------------------------------------
+
+
+def test_empty_rosters_zero_shifts_and_zero_employees() -> None:
+    profile = _cairo_profile()
+    emp = EmployeeInput(
+        employee_id="emp_1",
+        home_unit_id="branch_maadi",
+        skills=("cashier",),
+        max_regular_weekly_hours=Decimal("40.00"),
+        max_overtime_weekly_hours=Decimal("8.00"),
+        overtime_cost_per_hour=Decimal("100.00"),
+    )
+    shift = ShiftRequirementInput(
+        "sh_1",
+        "branch_maadi",
+        "cashier",
+        _utc(2026, 11, 28, 6),
+        _utc(2026, 11, 28, 14),
+        2,
+    )
+
+    # 1. 0 shifts, 1 employee -> optimal empty schedule
+    res_no_shifts = solve_roster(SolveRequest("ros_0sh", "branch_maadi", (emp,), (), profile))
+    assert res_no_shifts.status == "optimal"
+    assert res_no_shifts.evidence_label == "exhaustive-finite"
+    assert res_no_shifts.assignments == ()
+    assert res_no_shifts.metrics is not None
+    assert res_no_shifts.metrics.total_shifts_filled == 0
+    assert res_no_shifts.verification.passed is True
+    assert verify_receipt_digest(res_no_shifts.to_dict()) is True
+
+    # 2. 0 shifts, 0 employees -> optimal empty schedule
+    res_all_empty = solve_roster(SolveRequest("ros_empty", "branch_maadi", (), (), profile))
+    assert res_all_empty.status == "optimal"
+    assert res_all_empty.assignments == ()
+    assert res_all_empty.metrics is not None
+    assert res_all_empty.metrics.total_shifts_filled == 0
+    assert res_all_empty.verification.passed is True
+    assert verify_receipt_digest(res_all_empty.to_dict()) is True
+
+    # 3. 1 shift requiring 2 staff, 0 employees -> infeasible with minimum-slack relax_coverage (-2)
+    res_no_emps = solve_roster(SolveRequest("ros_0emp", "branch_maadi", (), (shift,), profile))
+    assert res_no_emps.status == "infeasible"
+    assert res_no_emps.repair_optimality == "minimum_slack"
+    assert len(res_no_emps.repair_suggestions) == 1
+    assert res_no_emps.repair_suggestions[0].kind == "relax_coverage"
+    assert res_no_emps.repair_suggestions[0].coverage_shortfall == 2
+    assert res_no_emps.repair_suggestions[0].diagnostic_code == "HR-SH-04:repair_coverage"
+    assert verify_receipt_digest(res_no_emps.to_dict()) is True
+
+
+# ---------------------------------------------------------------------------
+# 7. Determinism & Hard-Law Enforcement Tests
 # ---------------------------------------------------------------------------
 
 
@@ -433,7 +1184,6 @@ def test_deterministic_repeated_and_permuted_solves() -> None:
     employees = (
         EmployeeInput(
             employee_id="emp_a",
-            display_label="Cashier A",
             home_unit_id="branch_maadi",
             skills=("cashier",),
             max_regular_weekly_hours=Decimal("40.00"),
@@ -443,7 +1193,6 @@ def test_deterministic_repeated_and_permuted_solves() -> None:
         ),
         EmployeeInput(
             employee_id="emp_b",
-            display_label="Cashier B",
             home_unit_id="branch_maadi",
             skills=("cashier",),
             max_regular_weekly_hours=Decimal("40.00"),
@@ -453,7 +1202,6 @@ def test_deterministic_repeated_and_permuted_solves() -> None:
         ),
         EmployeeInput(
             employee_id="emp_c",
-            display_label="Cashier C",
             home_unit_id="branch_maadi",
             skills=("cashier",),
             max_regular_weekly_hours=Decimal("40.00"),
@@ -462,7 +1210,6 @@ def test_deterministic_repeated_and_permuted_solves() -> None:
         ),
     )
     req1 = SolveRequest("ros_w48", "branch_maadi", employees, shifts, _cairo_profile())
-    # Reversed employee & shift order must produce byte-identical output and receipt digest!
     req2 = SolveRequest("ros_w48", "branch_maadi", tuple(reversed(employees)), tuple(reversed(shifts)), _cairo_profile())
 
     r1 = solve_roster(req1)
@@ -472,12 +1219,14 @@ def test_deterministic_repeated_and_permuted_solves() -> None:
     assert r1.contract == CONTRACT_ID
     assert r1.backend == "ortools_cpsat"
     assert r1.status == "optimal"
+    assert r1.evidence_label == "exhaustive-finite"
     assert r1.verification.checked and r1.verification.passed and r1.verification.violation_count == 0
     assert r1.solver_receipt_digest.startswith("sha256:")
     assert len(r1.solver_receipt_digest) == len("sha256:") + 64
     assert canonical_json(r1.to_dict()) == canonical_json(r2.to_dict())
     assert canonical_json(r1.to_dict()) == canonical_json(r3.to_dict())
     assert r1.solver_receipt_digest == r2.solver_receipt_digest == r3.solver_receipt_digest
+    assert verify_receipt_digest(r1.to_dict()) is True
 
     by_shift = {a.shift_id: a.employee_id for a in r1.assignments}
     assert by_shift["sh_fri_pm"] == "emp_a"
@@ -488,8 +1237,6 @@ def test_deterministic_repeated_and_permuted_solves() -> None:
 
 
 def test_hard_laws_max_consecutive_days_and_max_daily_and_weekly_hours() -> None:
-    # 7 consecutive days (Mon Nov 23 .. Sun Nov 29), 1 shift of 8h/day.
-    # Single employee cannot work all 7 days because Egypt max_consecutive_days == 6 AND max_weekly_hours == 48h!
     base_day = datetime(2026, 11, 23, 8, 0, tzinfo=UTC)
     seven_shifts = tuple(
         ShiftRequirementInput(
@@ -513,7 +1260,6 @@ def test_hard_laws_max_consecutive_days_and_max_daily_and_weekly_hours() -> None
             overtime_cost_per_hour=Decimal("100.00"),
         ),
     )
-    # Even with generous 60h weekly cap, 7 consecutive days MUST be INFEASIBLE under max_consecutive_days=6!
     req_7days = SolveRequest(
         "ros_7d",
         "branch_maadi",
@@ -524,7 +1270,6 @@ def test_hard_laws_max_consecutive_days_and_max_daily_and_weekly_hours() -> None
     res_7d = solve_roster(req_7days)
     assert res_7d.status == "infeasible"
 
-    # Max daily hours (10h): two 6h shifts on the same day with 0h rest = 12h > 10h -> INFEASIBLE for 1 person.
     two_same_day = (
         ShiftRequirementInput("sh_m", "branch_maadi", "cashier", _utc(2026, 11, 23, 6), _utc(2026, 11, 23, 12), 1),
         ShiftRequirementInput("sh_e", "branch_maadi", "cashier", _utc(2026, 11, 23, 12), _utc(2026, 11, 23, 18), 1),
@@ -538,7 +1283,6 @@ def test_hard_laws_max_consecutive_days_and_max_daily_and_weekly_hours() -> None
     )
     assert solve_roster(req_daily).status == "infeasible"
 
-    # Profile max_weekly_hours (48h) caps employee even if employee record permits 56h.
     six_9h_shifts = tuple(
         ShiftRequirementInput(
             shift_id=f"sh_9h_{d}",
@@ -561,7 +1305,7 @@ def test_hard_laws_max_consecutive_days_and_max_daily_and_weekly_hours() -> None
 
 
 # ---------------------------------------------------------------------------
-# 3. Independent Hard-Law Post-Verifier Negative Tests
+# 8. Independent Hard-Law Post-Verifier Negative Tests (ORACLE-CHECKLIST aligned)
 # ---------------------------------------------------------------------------
 
 
@@ -596,28 +1340,27 @@ def test_independent_post_verifier_rejects_every_hard_law_violation() -> None:
     )
 
     bad_assignments = (
-        # emp_1 works s1 (overlaps approved leave [15, 20)), s2 (overlaps s1 & daily > 10h & weekly > 8h),
-        # and s3 (missing barista skill, < 11h rest after s2, 2 consecutive days > max_consec=1).
         Assignment("sh_1", "emp_1", "branch_maadi", "cashier", "2026-11-23T08:00:00Z", "2026-11-23T16:00:00Z", 480, Decimal("8.00")),
         Assignment("sh_2", "emp_1", "branch_maadi", "cashier", "2026-11-23T14:00:00Z", "2026-11-23T22:00:00Z", 480, Decimal("8.00")),
         Assignment("sh_3", "emp_1", "branch_maadi", "barista", "2026-11-24T00:00:00Z", "2026-11-24T08:00:00Z", 480, Decimal("8.00")),
-        # Unauthorized cross-branch + over-coverage on sh_1
         Assignment("sh_1", "emp_2", "branch_maadi", "cashier", "2026-11-23T08:00:00Z", "2026-11-23T16:00:00Z", 480, Decimal("8.00"), is_cross_branch=True),
     )
 
     res = verify_roster(req, bad_assignments)
     assert not res.passed
     codes = {v.code for v in res.violations}
-    assert "HR-SH-01:coverage_mismatch" in codes
-    assert "HR-SH-02:role_ineligible" in codes
-    assert "HR-SH-02:unit_ineligible" in codes
-    assert "HR-SH-03:overlapping_shifts" in codes
+    # Oracle-aligned HR-SH-01..03 codes
+    assert "HR-SH-01:overlapping_shifts" in codes
+    assert "HR-SH-02:approved_leave_overlap" in codes
     assert "HR-SH-03:min_rest_violated" in codes
-    assert "HR-SH-04:max_daily_hours_exceeded" in codes
-    assert "HR-SH-04:max_weekly_hours_exceeded" in codes
-    assert "HR-SH-04:max_consecutive_days_exceeded" in codes
-    assert "HR-SH-04:approved_leave_overlap" in codes
-    assert "HR-SH-04:overtime_budget_exceeded" in codes
+    # Coverage, eligibility, statutory caps & overtime budget
+    assert "HR-SH-COV:coverage_mismatch" in codes
+    assert "HR-SH-ELIG:role_ineligible" in codes
+    assert "HR-SH-ELIG:unit_ineligible" in codes
+    assert "HR-SH-STAT:max_daily_hours_exceeded" in codes
+    assert "HR-SH-STAT:max_weekly_hours_exceeded" in codes
+    assert "HR-SH-STAT:max_consecutive_days_exceeded" in codes
+    assert "HR-SH-BUDGET:overtime_budget_exceeded" in codes
 
     with pytest.raises(PostVerificationError) as exc_info:
         verify_or_raise(req, bad_assignments)
@@ -625,7 +1368,7 @@ def test_independent_post_verifier_rejects_every_hard_law_violation() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 4. Realistic 25-Staff × 50-Shift Cairo Multi-Branch Benchmark (< 2s)
+# 9. Realistic 25-Staff × 50-Shift Cairo Multi-Branch Benchmark (< 2s)
 # ---------------------------------------------------------------------------
 
 
@@ -634,12 +1377,7 @@ def _build_cairo_25x50_benchmark() -> SolveRequest:
     branches = ("branch_maadi", "branch_zamalek", "branch_new_cairo")
     employees: list[EmployeeInput] = []
 
-    # 25 employees distributed across 3 Cairo branches:
-    # - branch_maadi: 9 staff (4 cashiers, 3 baristas, 2 shift_leads — some dual-skilled)
-    # - branch_zamalek: 8 staff (3 cashiers, 3 baristas, 2 shift_leads)
-    # - branch_new_cairo: 8 staff (3 cashiers, 3 baristas, 2 shift_leads)
     roster_spec: list[tuple[str, tuple[str, ...], int]] = [
-        # Maadi (9)
         ("branch_maadi", ("cashier",), 0),
         ("branch_maadi", ("cashier", "barista"), 1),
         ("branch_maadi", ("cashier",), 2),
@@ -649,7 +1387,6 @@ def _build_cairo_25x50_benchmark() -> SolveRequest:
         ("branch_maadi", ("barista", "cashier"), 1),
         ("branch_maadi", ("shift_lead", "cashier"), 1),
         ("branch_maadi", ("shift_lead", "barista"), 0),
-        # Zamalek (8)
         ("branch_zamalek", ("cashier",), 1),
         ("branch_zamalek", ("cashier", "barista"), 0),
         ("branch_zamalek", ("cashier",), 2),
@@ -658,7 +1395,6 @@ def _build_cairo_25x50_benchmark() -> SolveRequest:
         ("branch_zamalek", ("barista", "cashier"), 2),
         ("branch_zamalek", ("shift_lead", "cashier"), 0),
         ("branch_zamalek", ("shift_lead", "barista"), 1),
-        # New Cairo (8)
         ("branch_new_cairo", ("cashier",), 0),
         ("branch_new_cairo", ("cashier", "barista"), 2),
         ("branch_new_cairo", ("cashier",), 1),
@@ -670,9 +1406,8 @@ def _build_cairo_25x50_benchmark() -> SolveRequest:
     ]
     assert len(roster_spec) == 25
 
-    week_start = datetime(2026, 11, 23, 0, 0, tzinfo=UTC)  # Monday 2026-W48
+    week_start = datetime(2026, 11, 23, 0, 0, tzinfo=UTC)
     for idx, (home, skills, prior_wk) in enumerate(roster_spec, start=1):
-        # Add realistic approved leave for 4 employees on specific days.
         leave: tuple[TimeWindow, ...] = ()
         if idx == 1:
             leave = (TimeWindow(week_start + timedelta(days=2), week_start + timedelta(days=3)),)
@@ -686,7 +1421,6 @@ def _build_cairo_25x50_benchmark() -> SolveRequest:
         employees.append(
             EmployeeInput(
                 employee_id=f"emp_cairo_{idx:02d}",
-                display_label=f"Cairo Staff #{idx:02d}",
                 home_unit_id=home,
                 eligible_unit_ids=branches,
                 skills=skills,
@@ -698,13 +1432,9 @@ def _build_cairo_25x50_benchmark() -> SolveRequest:
             )
         )
 
-    # Exactly 50 shifts across 7 days and 3 Cairo branches:
-    # - 7 days × 3 branches × 2 slots (AM 06-14 cashier, PM 14-22 barista) = 42 shifts
-    # - Plus 8 peak shift_lead shifts (Fri/Sat across all 3 branches = 6, plus Thu Maadi & Zamalek = 2) => 50 shifts!
     shifts: list[ShiftRequirementInput] = []
     shift_seq = 0
     for day_offset in range(7):
-        # Egypt weekend: Friday (day_offset=4) and Saturday (day_offset=5).
         is_wk = day_offset in (4, 5)
         day_dt = week_start + timedelta(days=day_offset)
         for branch in branches:
@@ -767,13 +1497,13 @@ def _build_cairo_25x50_benchmark() -> SolveRequest:
         shifts=tuple(shifts),
         profile=_cairo_profile(
             profile_id="prof_cairo_eg_statutory",
-            label="Cairo Multi-Branch Egypt Statutory",
             budget="3000.00",
             min_rest="11.00",
             max_daily="10.00",
             max_weekly="48.00",
             max_consec=6,
         ),
+        iana_timezone="Africa/Cairo",
     )
 
 
@@ -788,8 +1518,8 @@ def test_cairo_25_staff_50_shift_multibranch_benchmark_under_2s() -> None:
     assert res1.status in ("optimal", "feasible")
     assert elapsed_s < 2.0, f"25×50 Cairo benchmark took {elapsed_s:.3f}s (budget < 2.0s)"
     assert res1.verification.checked and res1.verification.passed and res1.verification.violation_count == 0
+    assert verify_receipt_digest(res1.to_dict()) is True
 
-    # Double-check independently via verifier.
     ver = verify_or_raise(req, res1.assignments)
     assert ver.passed
 
@@ -798,24 +1528,17 @@ def test_cairo_25_staff_50_shift_multibranch_benchmark_under_2s() -> None:
     assert res1.metrics is not None
     assert res1.metrics.total_shifts_filled == expected_slots
 
-    # Determinism check on the 25×50 benchmark: second solve yields byte-identical digest.
     res2 = solve_roster(req)
     assert res1.solver_receipt_digest == res2.solver_receipt_digest
     assert canonical_json(res1.to_dict()) == canonical_json(res2.to_dict())
 
 
 # ---------------------------------------------------------------------------
-# 5. Multi-Repair Slack-Variable UNSAT Diagnostics Tests
+# 10. Multi-Repair Slack-Variable UNSAT Diagnostics Tests
 # ---------------------------------------------------------------------------
 
 
 def test_multi_repair_unsat_simultaneous_coverage_shortfall_and_overtime_constraint() -> None:
-    # Two simultaneous bottlenecks in one roster:
-    # 1. Understaffed cashier shift `sh_sat_cashier` requires 2 cashiers, but ONLY 1 cashier exists anywhere!
-    #    -> MUST emit `relax_coverage` (-1 cashier on `sh_sat_cashier`).
-    # 2. Overtime-constrained barista team: 2 barista shifts (Fri AM 8h + Sat PM 8h), only 1 home barista
-    #    capped at 8h regular / 0h OT, no transfer barista available!
-    #    -> MUST emit `approve_overtime` (+8h for `emp_barista`).
     shifts = (
         ShiftRequirementInput("sh_sat_cashier", "branch_maadi", "cashier", _utc(2026, 11, 28, 6), _utc(2026, 11, 28, 14), 2, is_weekend=True),
         ShiftRequirementInput("sh_fri_barista", "branch_maadi", "barista", _utc(2026, 11, 27, 6), _utc(2026, 11, 27, 14), 1, is_weekend=True),
@@ -824,7 +1547,6 @@ def test_multi_repair_unsat_simultaneous_coverage_shortfall_and_overtime_constra
     employees = (
         EmployeeInput(
             employee_id="emp_cashier_1",
-            display_label="Mona (Cashier)",
             home_unit_id="branch_maadi",
             skills=("cashier",),
             max_regular_weekly_hours=Decimal("40.00"),
@@ -833,7 +1555,6 @@ def test_multi_repair_unsat_simultaneous_coverage_shortfall_and_overtime_constra
         ),
         EmployeeInput(
             employee_id="emp_barista_1",
-            display_label="Youssef (Barista)",
             home_unit_id="branch_maadi",
             skills=("barista",),
             max_regular_weekly_hours=Decimal("8.00"),
@@ -845,8 +1566,11 @@ def test_multi_repair_unsat_simultaneous_coverage_shortfall_and_overtime_constra
     res = solve_roster(req)
 
     assert res.status == "infeasible"
+    assert res.evidence_label == "exhaustive-finite"
+    assert res.repair_optimality == "minimum_slack"
     assert res.assignments == ()
     assert res.unsat_summary is not None
+    assert verify_receipt_digest(res.to_dict()) is True
 
     kinds = {r.kind for r in res.repair_suggestions}
     assert kinds == {"relax_coverage", "approve_overtime"}
@@ -855,6 +1579,8 @@ def test_multi_repair_unsat_simultaneous_coverage_shortfall_and_overtime_constra
     assert cov_repair.target_shift_id == "sh_sat_cashier"
     assert cov_repair.coverage_shortfall == 1
     assert cov_repair.requires_approval is True
+    assert cov_repair.is_minimum_slack is True
+    assert cov_repair.diagnostic_code == "HR-SH-04:repair_coverage"
 
     ot_repair = next(r for r in res.repair_suggestions if r.kind == "approve_overtime")
     assert ot_repair.employee_id == "emp_barista_1"
@@ -863,8 +1589,10 @@ def test_multi_repair_unsat_simultaneous_coverage_shortfall_and_overtime_constra
     assert ot_repair.cost_delta == Decimal("1000.00")
     assert ot_repair.cost_delta_minor == 100_000
     assert ot_repair.requires_approval is True
+    assert ot_repair.is_minimum_slack is True
+    assert ot_repair.diagnostic_code == "HR-SH-04:repair_overtime"
+    assert "emp_barista_1" in ot_repair.hint
 
-    # Deterministic repeat check on UNSAT diagnostics.
     res_repeat = solve_roster(req)
     assert res.solver_receipt_digest == res_repeat.solver_receipt_digest
 
@@ -877,7 +1605,6 @@ def test_unsat_single_shortage_returns_transfer_and_alternatives() -> None:
     employees = (
         EmployeeInput(
             employee_id="emp_a",
-            display_label="Nadia (Maadi)",
             home_unit_id="branch_maadi",
             skills=("cashier",),
             max_regular_weekly_hours=Decimal("8.00"),
@@ -886,7 +1613,6 @@ def test_unsat_single_shortage_returns_transfer_and_alternatives() -> None:
         ),
         EmployeeInput(
             employee_id="emp_b",
-            display_label="Karim (Maadi)",
             home_unit_id="branch_maadi",
             skills=("cashier",),
             max_regular_weekly_hours=Decimal("8.00"),
@@ -895,7 +1621,6 @@ def test_unsat_single_shortage_returns_transfer_and_alternatives() -> None:
         ),
         EmployeeInput(
             employee_id="emp_c",
-            display_label="Omar (Zamalek)",
             home_unit_id="branch_zamalek",
             eligible_unit_ids=("branch_zamalek", "branch_maadi"),
             skills=("cashier",),
@@ -908,7 +1633,7 @@ def test_unsat_single_shortage_returns_transfer_and_alternatives() -> None:
     res = solve_roster(req)
 
     assert res.status == "infeasible"
-    # Joint minimal repair picks zero-cost cross-branch transfer of Omar.
+    assert res.repair_optimality == "minimum_slack"
     assert len(res.repair_suggestions) == 1
     transfer = res.repair_suggestions[0]
     assert transfer.kind == "allow_transfer"
@@ -917,21 +1642,20 @@ def test_unsat_single_shortage_returns_transfer_and_alternatives() -> None:
     assert transfer.from_unit_id == "branch_zamalek"
     assert transfer.to_unit_id == "branch_maadi"
     assert transfer.cost_delta == Decimal("0.00")
+    assert transfer.diagnostic_code == "HR-SH-04:repair_transfer"
+    assert "emp_c" in transfer.hint
 
-    # Single-axis alternatives also include overtime and coverage options.
     all_kinds = {r.kind for r in res.minimal_repairs}
     assert all_kinds == {"allow_transfer", "approve_overtime", "relax_coverage"}
 
 
 def test_unsat_cross_skill_transfer_and_leave_protection() -> None:
-    # 1. Cross-skill repair when employee declares cross_trainable_skills.
     shifts = (
         ShiftRequirementInput("sh_cash", "branch_maadi", "cashier", _utc(2026, 11, 28, 6), _utc(2026, 11, 28, 14), 1),
     )
     emp_cross = (
         EmployeeInput(
             employee_id="emp_bar",
-            display_label="Hana (Barista)",
             home_unit_id="branch_maadi",
             skills=("barista",),
             cross_trainable_skills=("cashier",),
@@ -947,8 +1671,6 @@ def test_unsat_cross_skill_transfer_and_leave_protection() -> None:
     assert res_cross.repair_suggestions[0].transfer_mode == "cross_skill"
     assert res_cross.repair_suggestions[0].employee_id == "emp_bar"
 
-    # 2. Statutory leave protection: if sole cashier is on approved leave, repair MUST ONLY suggest `relax_coverage`,
-    #    NEVER violating approved leave!
     emp_on_leave = (
         EmployeeInput(
             employee_id="emp_leave",
@@ -968,7 +1690,7 @@ def test_unsat_cross_skill_transfer_and_leave_protection() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 6. What-If Profile Comparison (Fairness-First vs Cost-First)
+# 11. What-If Profile Comparison (Fairness-First vs Cost-First)
 # ---------------------------------------------------------------------------
 
 
@@ -996,8 +1718,8 @@ def test_what_if_fairness_first_vs_cost_first() -> None:
             prior_weekend_shifts=3,
         ),
     )
-    cost_first = _cairo_profile(profile_id="cost_first", label="Cost First", budget="0.00", weekend_fairness="low")
-    fairness_first = _cairo_profile(profile_id="fairness_first", label="Fairness First", budget="1000.00", weekend_fairness="high")
+    cost_first = _cairo_profile(profile_id="cost_first", budget="0.00", weekend_fairness="low")
+    fairness_first = _cairo_profile(profile_id="fairness_first", budget="1000.00", weekend_fairness="high")
 
     diff = compare_what_if(
         SolveRequest("ros_whatif", "branch_maadi", employees, shifts, cost_first),
@@ -1019,8 +1741,71 @@ def test_what_if_fairness_first_vs_cost_first() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 7. Live HTTP Worker Tests (/health, /manifest, /v1/functions/.../invoke)
+# 12. Strict `FunctionManifest` Schema Alignment & Live HTTP Worker Tests
 # ---------------------------------------------------------------------------
+
+
+def test_function_manifest_strictly_matches_norn_ir_schema() -> None:
+    manifest = build_function_manifest()
+
+    # Load the authoritative checked-in JSON Schema generated from `crates/norn-ir/src/function.rs`
+    repo_root = Path(__file__).resolve().parents[3]
+    schema_path = repo_root / "crates" / "norn-ir" / "schema" / "function_manifest.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    allowed_top_keys = set(schema["properties"].keys())
+    required_top_keys = set(schema["required"])
+    assert set(manifest.keys()) <= allowed_top_keys, f"extra keys rejected by deny_unknown_fields: {set(manifest.keys()) - allowed_top_keys}"
+    assert required_top_keys <= set(manifest.keys()), f"missing required keys: {required_top_keys - set(manifest.keys())}"
+
+    # Verify nested closed schemas (`additionalProperties: false`)
+    defs = schema["$defs"]
+    impl = manifest["implementation"]
+    assert isinstance(impl, dict)
+    assert set(impl.keys()) <= set(defs["Implementation"]["properties"].keys())
+    assert set(defs["Implementation"]["required"]) <= set(impl.keys())
+    assert impl["format"] == "host"  # Never fake oci_image from Python source digest!
+    assert impl["digest"] == package_source_digest()
+    assert str(impl["locator"]).endswith(f"@{package_source_digest()}")
+
+    det = manifest["determinism"]
+    assert isinstance(det, dict)
+    assert set(det.keys()) == {"effectful"}
+    eff = det["effectful"]
+    assert isinstance(eff, dict)
+    assert set(eff.keys()) == set(defs["EffectfulPolicy"]["properties"].keys())
+    assert eff["maxAttempts"] == 1
+    assert eff["providerIdempotency"] is True
+
+    bounds = manifest["bounds"]
+    assert isinstance(bounds, dict)
+    assert set(bounds.keys()) == set(defs["ResourceBounds"]["properties"].keys())
+    assert all(isinstance(v, int) and v > 0 for v in bounds.values())
+
+    for schema_field in ("inputSchema", "outputSchema", "errorSchema"):
+        sref = manifest[schema_field]
+        assert isinstance(sref, dict)
+        assert set(sref.keys()) == set(defs["SchemaRef"]["properties"].keys())
+        assert str(sref["digest"]).startswith("sha256:")
+
+    dep = manifest["dependencyClosure"]
+    assert isinstance(dep, dict)
+    assert set(dep.keys()) == set(defs["DependencyClosure"]["properties"].keys())
+    entries = dep["entries"]
+    assert isinstance(entries, list)
+    for entry in entries:
+        assert isinstance(entry, dict)
+        assert set(entry.keys()) == set(defs["DependencyEntry"]["properties"].keys())
+    dep_names = [e["name"] for e in entries]
+    assert dep_names == sorted(dep_names)
+
+    runtime = manifest["runtime"]
+    assert isinstance(runtime, dict)
+    assert set(runtime.keys()) == set(defs["RuntimeIdentity"]["properties"].keys())
+
+    plat = manifest["platform"]
+    assert isinstance(plat, dict)
+    assert set(plat.keys()) == set(defs["Platform"]["properties"].keys())
 
 
 def _http_request(
@@ -1029,6 +1814,16 @@ def _http_request(
     path: str,
     body: bytes | None = None,
 ) -> tuple[int, dict[str, Any]]:
+    status, _headers, parsed = _http_request_with_headers(base_url, method, path, body)
+    return status, parsed
+
+
+def _http_request_with_headers(
+    base_url: str,
+    method: str,
+    path: str,
+    body: bytes | None = None,
+) -> tuple[int, dict[str, str], dict[str, Any]]:
     req = urllib.request.Request(
         f"{base_url}{path}",
         data=body,
@@ -1037,9 +1832,11 @@ def _http_request(
     )
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:
-            return int(resp.status), json.loads(resp.read().decode("utf-8"))
+            headers = {k.lower(): v for k, v in resp.headers.items()}
+            return int(resp.status), headers, json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as err:
-        return int(err.code), json.loads(err.read().decode("utf-8"))
+        headers = {k.lower(): v for k, v in err.headers.items()}
+        return int(err.code), headers, json.loads(err.read().decode("utf-8"))
 
 
 def test_live_http_worker_endpoints() -> None:
@@ -1058,16 +1855,22 @@ def test_live_http_worker_endpoints() -> None:
         assert health["contract"] == CONTRACT_ID
         assert health["functionId"] == FUNCTION_ID
         assert health["version"] == FUNCTION_VERSION
+        assert health["execution_contract"] == "unmarked_slice"
+        assert health["source_digest"] == package_source_digest()
+        assert health["manifest_digest"] == compute_manifest_digest()
+        assert health["endpoints"]["invoke"] == f"/v1/functions/{FUNCTION_ID}/invoke"
 
-        # 2. GET /manifest
-        status, manifest = _http_request(base_url, "GET", "/manifest")
+        # 2. GET /manifest — strict FunctionManifest (zero unknown fields) + digest header
+        status, headers, manifest = _http_request_with_headers(base_url, "GET", "/manifest")
         assert status == 200
         assert manifest["abi"] == "norn.function-abi/1"
         assert manifest["functionId"] == FUNCTION_ID
-        assert manifest["contractId"] == CONTRACT_ID
-        assert manifest["semver"] == FUNCTION_VERSION
-        assert manifest["manifestDigest"].startswith("sha256:")
-        assert manifest["endpoints"]["invoke"] == f"/v1/functions/{FUNCTION_ID}/invoke"
+        assert manifest["implementation"]["format"] == "host"
+        assert "manifestDigest" not in manifest
+        assert "contractId" not in manifest
+        assert "endpoints" not in manifest
+        assert "semver" not in manifest
+        assert headers["x-norn-manifest-digest"] == compute_manifest_digest(manifest)
         dep_names = [e["name"] for e in manifest["dependencyClosure"]["entries"]]
         assert dep_names == sorted(dep_names)
         assert "ortools" in dep_names
@@ -1079,9 +1882,11 @@ def test_live_http_worker_endpoints() -> None:
         status, result = _http_request(base_url, "POST", invoke_path, canonical_json(envelope).encode("utf-8"))
         assert status == 200
         assert result["status"] == "optimal"
+        assert result["evidence_label"] == "exhaustive-finite"
         assert result["backend"] == "ortools_cpsat"
         assert result["invocation_id"] == "inv_001"
         assert result["solver_receipt_digest"].startswith("sha256:")
+        assert verify_receipt_digest(result) is True
         assert result["perform_summary"] == {
             "assignmentCount": 1,
             "solverDigest": result["solver_receipt_digest"],
@@ -1103,23 +1908,32 @@ def test_live_http_worker_endpoints() -> None:
         assert status == 422
         assert float_err["code"] == "NORN-SOLVER-FLOAT-FORBIDDEN"
 
-        # 6. POST /invoke — UNSAT multi-repair response
+        # 6. POST /invoke — Invalid UTF-8 & duplicate JSON keys -> 400 (never 500!)
+        status, utf8_err = _http_request(base_url, "POST", invoke_path, b"\xff\xfe")
+        assert status == 400
+        assert utf8_err["code"] == "NORN-SOLVER-JSON"
+
+        status, dup_err = _http_request(base_url, "POST", invoke_path, b'{"roster_id":"a","roster_id":"b"}')
+        assert status == 400
+        assert dup_err["code"] == "NORN-SOLVER-DUPLICATE-KEY"
+
+        # 7. POST /invoke — UNSAT multi-repair response
         unsat_payload = _valid_raw_payload()
         unsat_payload["shifts"][0]["required_count"] = 2
         status, unsat_res = _http_request(base_url, "POST", invoke_path, json.dumps(unsat_payload).encode("utf-8"))
         assert status == 200
         assert unsat_res["status"] == "infeasible"
+        assert unsat_res["repair_optimality"] == "minimum_slack"
         assert len(unsat_res["repair_suggestions"]) == 1
         assert unsat_res["repair_suggestions"][0]["kind"] == "relax_coverage"
         assert unsat_res["repair_suggestions"][0]["coverage_shortfall"] == 1
-        assert unsat_res["solver_receipt_digest"].startswith("sha256:")
+        assert verify_receipt_digest(unsat_res) is True
 
-        # 7. POST /invoke — what-if comparison over HTTP
+        # 8. POST /invoke — what-if comparison over HTTP
         what_if_envelope = _valid_raw_payload()
         what_if_envelope["alt_profile"] = {
             **what_if_envelope["profile"],
             "profile_id": "prof_2",
-            "label": "Low Fairness",
             "weekend_fairness_priority": "low",
         }
         status, wi_res = _http_request(base_url, "POST", invoke_path, canonical_json(what_if_envelope).encode("utf-8"))
@@ -1127,7 +1941,7 @@ def test_live_http_worker_endpoints() -> None:
         assert wi_res["what_if"]["base_profile_id"] == "prof_1"
         assert wi_res["what_if"]["alt_profile_id"] == "prof_2"
 
-        # 8. Unknown route returns 404
+        # 9. Unknown route returns 404
         status, not_found = _http_request(base_url, "GET", "/nonexistent")
         assert status == 404
         assert not_found["code"] == "NORN-SOLVER-NOT-FOUND"
@@ -1138,8 +1952,6 @@ def test_live_http_worker_endpoints() -> None:
 
 
 def test_split_shift_avoidance_soft_objective() -> None:
-    # Two non-contiguous 4h shifts on the same day (06-10 and 14-18, 4h gap) with min_rest=2h.
-    # Two employees available: with avoid_split_shifts=True, solver assigns each employee 1 shift (0 split shifts).
     shifts = (
         ShiftRequirementInput("sh_am", "branch_maadi", "cashier", _utc(2026, 11, 23, 6), _utc(2026, 11, 23, 10), 1),
         ShiftRequirementInput("sh_pm", "branch_maadi", "cashier", _utc(2026, 11, 23, 14), _utc(2026, 11, 23, 18), 1),
@@ -1176,3 +1988,17 @@ def test_split_shift_avoidance_soft_objective() -> None:
     assert res.metrics.split_shift_count == 0
     assigned_emps = {a.employee_id for a in res.assignments}
     assert assigned_emps == {"emp_1", "emp_2"}
+
+
+def test_split_interval_by_local_day_conservation_across_dst() -> None:
+    # America/New_York spring forward on 2026-03-08 (02:00 EST -> 03:00 EDT): 23-hour local day!
+    ny = ZoneInfo("America/New_York")
+    # 2026-03-08T04:00:00Z (= Sat Mar 7 23:00 EST) -> 2026-03-08T12:00:00Z (= Sun Mar 8 08:00 EDT) = 8h = 480 min
+    s = _utc(2026, 3, 8, 4)
+    e = _utc(2026, 3, 8, 12)
+    split = split_interval_by_local_day(s, e, ny)
+    assert sum(split.values()) == 480
+    assert split == {
+        datetime(2026, 3, 7, tzinfo=UTC).date(): 60,   # 23:00..24:00 EST
+        datetime(2026, 3, 8, tzinfo=UTC).date(): 420,  # 00:00 EST..08:00 EDT (7 elapsed hours across spring forward)
+    }

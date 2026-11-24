@@ -6,17 +6,24 @@ Architecture:
      sorted ordering of all entities, variables, and constraints.
    - Strict integer arithmetic only (exact integer minutes and integer sub-minor currency
      units; zero IEEE `float`).
-   - Enforces ALL hard laws (`HR-SH-01..04` + statutory baselines).
-   - Optimizes governed `PreferenceProfile` business-terms trade-offs.
+   - Splits overnight shifts cleanly across local calendar days and ISO weeks using the
+     pinned `request.iana_timezone` (`ZoneInfo`).
+   - Enforces ALL hard laws (`HR-SH-01..04` + statutory baselines) and maps CP-SAT
+     statuses honestly (`OPTIMAL` -> `optimal`/`exhaustive-finite`, `FEASIBLE` ->
+     `feasible`/`bounded`, `INFEASIBLE` -> `infeasible`/`exhaustive-finite`,
+     `UNKNOWN` -> `unknown`/`unknown`, `MODEL_INVALID` -> `NORN-SOLVER-MODEL-INVALID`).
 2. Independent hard-law post-verification (`verifier.verify_or_raise`):
    - Never trusts CP-SAT; independently checks every emitted assignment before returning
      a receipt, failing closed on any discrepancy.
-3. Secondary minimum-slack CP-SAT UNSAT repair model:
-   - When primary model is INFEASIBLE, solves a deterministic minimum-slack CP-SAT model
-     with bounded slack variables for `relax_coverage`, `approve_overtime`, and
-     `allow_transfer` (cross-branch and cross-skill), while keeping statutory laws
-     (non-overlap, min rest, max daily hours, max consecutive days, approved leave)
-     strictly enforced and independently post-verified.
+3. Secondary slack-variable CP-SAT UNSAT repair model:
+   - Runs ONLY when the primary model is proven `INFEASIBLE` (never on `UNKNOWN`).
+   - Uses bounded integer slack variables for `relax_coverage`, `approve_overtime`, and
+     `allow_transfer` (cross-branch and cross-skill), while keeping ALL statutory laws
+     (non-overlap, approved leave, min rest, max daily hours, statutory `max_weekly_minutes`,
+     and max consecutive local days) strictly enforced and independently post-verified.
+   - Reports repair optimality honestly (`minimum_slack` ONLY when repair status is
+     `OPTIMAL`, otherwise `feasible_slack` with `is_minimum_slack=False`).
+4. Full-payload canonical receipt digest (`receipts.compute_receipt_digest`).
 """
 
 from __future__ import annotations
@@ -25,17 +32,20 @@ from collections import defaultdict
 from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from ortools.sat.python import cp_model
 
-from .boundary import format_utc, minor_units_to_decimal, minutes_to_hours, sha256_digest
+from .boundary import ModelInvalidError, format_utc, minor_units_to_decimal, minutes_to_hours, sha256_digest
 from .models import (
     CONTRACT_ID,
     Assignment,
     AssignmentDiff,
     EmployeeInput,
+    EvidenceLabel,
     PreferenceProfileInput,
     Priority,
+    RepairOptimality,
     RepairSuggestion,
     RosterMetrics,
     ShiftRequirementInput,
@@ -46,6 +56,7 @@ from .models import (
     VerificationSummary,
     WhatIfComparison,
 )
+from .receipts import compute_receipt_digest
 from .verifier import verify_or_raise, verify_statutory_laws
 
 # Exact integer minor-unit weights per business priority (100 minor units = 1 currency unit).
@@ -74,10 +85,6 @@ _REPAIR_W_OVERTIME_EMP = 100_000_000
 _REPAIR_W_CROSS_BRANCH = 50_000_000
 _REPAIR_W_OVERTIME_MINUTE = 100_000
 _REPAIR_W_BUDGET_SUB_MINOR = 10
-
-# Maximum extra overtime overflow per employee/week explored in repair pass (24h = 1440 min;
-# still strictly bounded by statutory daily hours, rest gaps, and max consecutive days).
-_MAX_REPAIR_OVERTIME_OVERFLOW_MINUTES = 1_440
 
 # Deterministic CP-SAT search budget (integer deterministic time units).
 _PRIMARY_MAX_DETERMINISTIC_TIME = 30
@@ -147,8 +154,14 @@ def _add_statutory_temporal_constraints(
     shifts: list[ShiftRequirementInput],
     x: dict[tuple[int, int], cp_model.IntVar],
     profile: PreferenceProfileInput,
+    tz: ZoneInfo,
 ) -> None:
-    """Add non-negotiable statutory hard laws: non-overlap, min rest, max daily hours, max consecutive days."""
+    """Add non-negotiable statutory hard laws: non-overlap, min rest, max daily hours, max consecutive local days.
+
+    Overnight shifts crossing local midnight split their exact minutes across every
+    local calendar day they span AND mark every spanned local day as worked for
+    consecutive-day streak enforcement.
+    """
     if not shifts:
         return
 
@@ -165,41 +178,43 @@ def _add_statutory_temporal_constraints(
             if s1.window.overlaps(s2.window) or s1.window.gap_minutes(s2.window) < min_rest_min:
                 conflict_pairs.append((i, j))
 
-    all_dates = sorted({s.work_date for s in shifts})
+    # Precompute exact local calendar day minute splits for every shift.
+    day_contributions: dict[date, list[tuple[int, int]]] = defaultdict(list)
+    for s_idx, sh in enumerate(shifts):
+        for local_day, mins in sorted(sh.daily_minutes(tz).items()):
+            if mins > 0:
+                day_contributions[local_day].append((s_idx, mins))
+
+    all_dates = sorted(day_contributions.keys())
     d_min = all_dates[0]
     d_max = all_dates[-1]
     span_days = (d_max - d_min).days + 1
     calendar_dates = [d_min + timedelta(days=offset) for offset in range(span_days)]
 
-    shifts_by_date: dict[date, list[int]] = defaultdict(list)
-    for s_idx, sh in enumerate(shifts):
-        shifts_by_date[sh.work_date].append(s_idx)
-
     for e_idx in range(len(employees)):
-        # 1. Pairwise non-overlap + minimum rest gap
+        # 1. Pairwise non-overlap (HR-SH-01) + minimum rest gap (HR-SH-03)
         for s1_idx, s2_idx in conflict_pairs:
             v1 = x.get((e_idx, s1_idx))
             v2 = x.get((e_idx, s2_idx))
             if v1 is not None and v2 is not None:
                 model.add(v1 + v2 <= 1)
 
-        # 2. Maximum daily hours + daily working indicators
+        # 2. Maximum daily hours + daily working indicators across ALL spanned local calendar days
         worked_day: dict[date, cp_model.IntVar] = {}
         for day in calendar_dates:
-            s_indices = shifts_by_date.get(day, [])
             day_terms: list[tuple[int, cp_model.IntVar]] = []
-            for s_idx in s_indices:
+            for s_idx, day_mins in day_contributions.get(day, ()):
                 v = x.get((e_idx, s_idx))
                 if v is not None:
-                    day_terms.append((shifts[s_idx].duration_minutes, v))
+                    day_terms.append((day_mins, v))
             if not day_terms:
                 continue
-            model.add(sum(dur * var for dur, var in day_terms) <= max_daily_min)
+            model.add(sum(mins * var for mins, var in day_terms) <= max_daily_min)
             w_var = model.new_bool_var(f"worked_e{e_idx}_{day.isoformat()}")
             model.add_max_equality(w_var, [var for _, var in day_terms])
             worked_day[day] = w_var
 
-        # 3. Maximum consecutive working days (sliding window of length max_consec + 1)
+        # 3. Maximum consecutive working local days (sliding window of length max_consec + 1)
         window_len = max_consec + 1
         if len(calendar_dates) >= window_len:
             for start_i in range(len(calendar_dates) - window_len + 1):
@@ -218,6 +233,7 @@ def _compute_exact_metrics(
     assigned_pairs: list[tuple[int, int]],
     active_emp_indices: list[int],
     profile: PreferenceProfileInput,
+    tz: ZoneInfo,
 ) -> RosterMetrics:
     """Compute exact integer/Decimal business metrics directly from an assignment set."""
     by_emp: dict[int, list[ShiftRequirementInput]] = {i: [] for i in range(len(employees))}
@@ -237,11 +253,12 @@ def _compute_exact_metrics(
     for e_idx, emp in enumerate(employees):
         emp_shifts = by_emp[e_idx]
         by_week: dict[tuple[int, int], int] = defaultdict(int)
-        by_day: dict[date, list[ShiftRequirementInput]] = defaultdict(list)
+        by_start_day: dict[date, list[ShiftRequirementInput]] = defaultdict(list)
 
         for sh in emp_shifts:
-            by_week[sh.iso_week] += sh.duration_minutes
-            by_day[sh.work_date].append(sh)
+            for week_key, week_mins in sh.weekly_minutes(tz).items():
+                by_week[week_key] += week_mins
+            by_start_day[sh.local_start_date(tz)].append(sh)
             if sh.shift_id in emp.preferred_shift_ids:
                 pref_hits += 1
             if sh.shift_id in emp.avoid_shift_ids:
@@ -259,7 +276,7 @@ def _compute_exact_metrics(
             wk = emp.prior_weekend_shifts + sum(1 for sh in emp_shifts if sh.is_weekend)
             weekend_counts.append(wk)
 
-        for day_shifts in by_day.values():
+        for day_shifts in by_start_day.values():
             if len(day_shifts) > 1:
                 ordered = sorted(day_shifts, key=lambda s: (s.starts_at, s.ends_at))
                 for i in range(1, len(ordered)):
@@ -301,10 +318,13 @@ def _compute_exact_metrics(
 
 def _solve_primary_cpsat(
     request: SolveRequest,
-) -> tuple[SolveStatus, tuple[Assignment, ...], RosterMetrics | None]:
+    *,
+    max_deterministic_time: int = _PRIMARY_MAX_DETERMINISTIC_TIME,
+) -> tuple[SolveStatus, EvidenceLabel, tuple[Assignment, ...], RosterMetrics | None]:
     """Build and solve the deterministic primary hard-law OR-Tools CP-SAT model."""
     employees, shifts = _sorted_inputs(request)
     profile = request.profile
+    tz = request.tz
     auth_transfers = frozenset(request.authorized_transfer_employee_ids)
 
     model = cp_model.CpModel()
@@ -325,37 +345,39 @@ def _solve_primary_cpsat(
                 eligible_emps_per_shift[s_idx].append(e_idx)
                 active_emp_set.add(e_idx)
 
-    # Fast exact infeasibility detection if any shift lacks enough eligible staff.
+    # Exact structural infeasibility detection if any shift lacks enough eligible staff.
     for s_idx, sh in enumerate(shifts):
         if len(eligible_emps_per_shift[s_idx]) < sh.required_count:
-            return "infeasible", (), None
+            return "infeasible", "exhaustive-finite", (), None
         model.add(sum(x[(e_idx, s_idx)] for e_idx in eligible_emps_per_shift[s_idx]) == sh.required_count)
 
-    # Statutory temporal hard laws (non-overlap, min rest, max daily hours, max consecutive days).
-    _add_statutory_temporal_constraints(model, employees, shifts, x, profile)
+    # Statutory temporal hard laws (non-overlap, min rest, max daily hours, max consecutive local days).
+    _add_statutory_temporal_constraints(model, employees, shifts, x, profile, tz)
 
-    # Weekly hour caps + exact overtime minutes + weekly overtime budget cap.
-    weeks = sorted({sh.iso_week for sh in shifts})
-    shifts_by_week: dict[tuple[int, int], list[int]] = defaultdict(list)
+    # Weekly hour caps + exact overtime minutes + weekly overtime budget cap (split cleanly across ISO weeks).
+    week_contributions: dict[tuple[int, int], list[tuple[int, int]]] = defaultdict(list)
     for s_idx, sh in enumerate(shifts):
-        shifts_by_week[sh.iso_week].append(s_idx)
+        for week_key, week_mins in sorted(sh.weekly_minutes(tz).items()):
+            if week_mins > 0:
+                week_contributions[week_key].append((s_idx, week_mins))
+    weeks = sorted(week_contributions.keys())
 
     budget_sub_minor = profile.weekly_overtime_budget_minor * _SUB_MINOR_PER_MINOR
     ot_cost_terms: list[cp_model.LinearExpr] = []
 
     for w_idx, week_key in enumerate(weeks):
-        week_shift_indices = shifts_by_week[week_key]
+        week_shift_contribs = week_contributions[week_key]
         week_sub_minor_terms: list[cp_model.LinearExpr] = []
         for e_idx, emp in enumerate(employees):
             emp_week_terms = [
-                shifts[s_idx].duration_minutes * x[(e_idx, s_idx)]
-                for s_idx in week_shift_indices
+                week_mins * x[(e_idx, s_idx)]
+                for s_idx, week_mins in week_shift_contribs
                 if (e_idx, s_idx) in x
             ]
             if not emp_week_terms:
                 continue
             max_possible_min = sum(
-                shifts[s_idx].duration_minutes for s_idx in week_shift_indices if (e_idx, s_idx) in x
+                week_mins for s_idx, week_mins in week_shift_contribs if (e_idx, s_idx) in x
             )
             effective_cap = min(profile.max_weekly_minutes, emp.max_total_weekly_minutes)
             total_w = model.new_int_var(0, min(max_possible_min, effective_cap), f"tot_e{e_idx}_w{w_idx}")
@@ -412,13 +434,13 @@ def _solve_primary_cpsat(
             if sh.shift_id in avoid_set:
                 objective_terms.append((2 * pref_weight) * var)
 
-    # 3. Split-shift avoidance (two non-contiguous shifts on the same UTC date).
+    # 3. Split-shift avoidance (two non-contiguous shifts starting on the same local calendar day).
     if profile.avoid_split_shifts:
         split_weight = _SPLIT_SHIFT_PENALTY_MINOR * _SUB_MINOR_PER_MINOR
-        shifts_by_date: dict[date, list[int]] = defaultdict(list)
+        shifts_by_start_date: dict[date, list[int]] = defaultdict(list)
         for s_idx, sh in enumerate(shifts):
-            shifts_by_date[sh.work_date].append(s_idx)
-        for day_indices in shifts_by_date.values():
+            shifts_by_start_date[sh.local_start_date(tz)].append(s_idx)
+        for day_indices in shifts_by_start_date.values():
             if len(day_indices) < 2:
                 continue
             for a_i in range(len(day_indices)):
@@ -427,7 +449,6 @@ def _solve_primary_cpsat(
                     s2_idx = day_indices[b_i]
                     s1 = shifts[s1_idx]
                     s2 = shifts[s2_idx]
-                    # Only non-contiguous pairs whose gap satisfies min_rest can both be worked.
                     if s1.ends_at < s2.starts_at and s1.window.gap_minutes(s2.window) >= profile.min_rest_minutes:
                         for e_idx in range(len(employees)):
                             v1 = x.get((e_idx, s1_idx))
@@ -439,11 +460,17 @@ def _solve_primary_cpsat(
 
     model.minimize(sum(objective_terms))
 
-    solver = _new_deterministic_solver(_PRIMARY_MAX_DETERMINISTIC_TIME)
+    solver = _new_deterministic_solver(max_deterministic_time)
     raw_status = solver.solve(model)
 
+    if raw_status == cp_model.INFEASIBLE:
+        return "infeasible", "exhaustive-finite", (), None
+    if raw_status == cp_model.UNKNOWN:
+        return "unknown", "unknown", (), None
+    if raw_status == cp_model.MODEL_INVALID:
+        raise ModelInvalidError(f"CP-SAT reported MODEL_INVALID on primary roster model for {request.roster_id!r}")
     if raw_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        return "infeasible", (), None
+        raise ModelInvalidError(f"CP-SAT returned unexpected status {raw_status!r} for {request.roster_id!r}")
 
     assigned_pairs: list[tuple[int, int]] = []
     assignments_list: list[Assignment] = []
@@ -468,9 +495,10 @@ def _solve_primary_cpsat(
             )
 
     assignments_list.sort(key=lambda a: (a.starts_at, a.shift_id, a.employee_id))
-    metrics = _compute_exact_metrics(employees, shifts, assigned_pairs, active_emp_indices, profile)
-    status: SolveStatus = "optimal" if raw_status == cp_model.OPTIMAL else "feasible"
-    return status, tuple(assignments_list), metrics
+    metrics = _compute_exact_metrics(employees, shifts, assigned_pairs, active_emp_indices, profile, tz)
+    if raw_status == cp_model.OPTIMAL:
+        return "optimal", "exhaustive-finite", tuple(assignments_list), metrics
+    return "feasible", "bounded", tuple(assignments_list), metrics
 
 
 def _solve_repair_cpsat(
@@ -479,18 +507,21 @@ def _solve_repair_cpsat(
     allow_coverage_slack: bool,
     allow_overtime_slack: bool,
     allow_transfer_slack: bool,
-) -> tuple[RepairSuggestion, ...] | None:
-    """Deterministic minimum-slack CP-SAT repair model.
+    max_deterministic_time: int = _REPAIR_MAX_DETERMINISTIC_TIME,
+) -> tuple[RepairOptimality, tuple[RepairSuggestion, ...]] | None:
+    """Deterministic slack-variable CP-SAT repair model.
 
-    Strictly preserves statutory labor laws (non-overlap, min rest, max daily hours,
-    max consecutive days, approved leave) while adding bounded integer slack variables
-    across the enabled repair axes:
+    Strictly preserves ALL statutory labor laws (non-overlap, approved leave, min rest,
+    max daily hours, statutory `profile.max_weekly_minutes`, and max consecutive local days)
+    while adding bounded integer slack variables across the enabled repair axes:
       - `relax_coverage`: per-shift headcount shortfall `shortfall[s] in [0, required_count]`
-      - `approve_overtime`: per-employee/week cap overflow + overtime budget overflow
+      - `approve_overtime`: employee weekly cap overflow UP TO `profile.max_weekly_minutes`
+        (NEVER above statutory weekly ceiling!) + weekly overtime budget overflow
       - `allow_transfer`: cross-branch and cross-skill transfer assignments
     """
     employees, shifts = _sorted_inputs(request)
     profile = request.profile
+    tz = request.tz
     auth_transfers = frozenset(request.authorized_transfer_employee_ids)
 
     model = cp_model.CpModel()
@@ -529,15 +560,19 @@ def _solve_repair_cpsat(
             model.add(assigned_sum == sh.required_count)
 
     # Non-negotiable statutory temporal laws (NEVER relaxed).
-    _add_statutory_temporal_constraints(model, employees, shifts, x, profile)
+    _add_statutory_temporal_constraints(model, employees, shifts, x, profile, tz)
 
-    # Weekly hours & overtime budget constraints (with bounded overflow slack when enabled).
-    weeks = sorted({sh.iso_week for sh in shifts})
-    shifts_by_week: dict[tuple[int, int], list[int]] = defaultdict(list)
+    # Weekly hours & overtime budget constraints (split cleanly across ISO weeks).
+    # Statutory `profile.max_weekly_minutes` is NEVER relaxed by overtime repair.
+    week_contributions: dict[tuple[int, int], list[tuple[int, int]]] = defaultdict(list)
     for s_idx, sh in enumerate(shifts):
-        shifts_by_week[sh.iso_week].append(s_idx)
+        for week_key, week_mins in sorted(sh.weekly_minutes(tz).items()):
+            if week_mins > 0:
+                week_contributions[week_key].append((s_idx, week_mins))
+    weeks = sorted(week_contributions.keys())
 
     budget_sub_minor = profile.weekly_overtime_budget_minor * _SUB_MINOR_PER_MINOR
+    statutory_weekly_cap = profile.max_weekly_minutes
     ot_overflow_vars: dict[tuple[int, int], cp_model.IntVar] = {}
     ot_used_vars: dict[tuple[int, int], cp_model.IntVar] = {}
     ot_min_vars: dict[tuple[int, int], cp_model.IntVar] = {}
@@ -545,27 +580,29 @@ def _solve_repair_cpsat(
     total_ot_sub_minor_terms: list[cp_model.LinearExpr] = []
 
     for w_idx, week_key in enumerate(weeks):
-        week_shift_indices = shifts_by_week[week_key]
+        week_shift_contribs = week_contributions[week_key]
         week_sub_minor_terms: list[cp_model.LinearExpr] = []
         max_week_sub_minor = 0
 
         for e_idx, emp in enumerate(employees):
             emp_week_terms = [
-                shifts[s_idx].duration_minutes * x[(e_idx, s_idx)]
-                for s_idx in week_shift_indices
+                week_mins * x[(e_idx, s_idx)]
+                for s_idx, week_mins in week_shift_contribs
                 if (e_idx, s_idx) in x
             ]
             if not emp_week_terms:
                 continue
 
             max_possible_min = sum(
-                shifts[s_idx].duration_minutes for s_idx in week_shift_indices if (e_idx, s_idx) in x
+                week_mins for s_idx, week_mins in week_shift_contribs if (e_idx, s_idx) in x
             )
-            base_cap = min(profile.max_weekly_minutes, emp.max_total_weekly_minutes)
+            base_cap = min(statutory_weekly_cap, emp.max_total_weekly_minutes)
             reg_cap = emp.max_regular_weekly_minutes
 
             if allow_overtime_slack:
-                upper_cap = min(max_possible_min, base_cap + _MAX_REPAIR_OVERTIME_OVERFLOW_MINUTES)
+                # Overtime repair may relax the employee's personal OT allocation up to the
+                # governed statutory weekly ceiling (`profile.max_weekly_minutes`), NEVER above it.
+                upper_cap = min(max_possible_min, statutory_weekly_cap)
                 total_w = model.new_int_var(0, upper_cap, f"rtot_e{e_idx}_w{w_idx}")
                 model.add(total_w == sum(emp_week_terms))
 
@@ -627,12 +664,17 @@ def _solve_repair_cpsat(
 
     model.minimize(sum(repair_obj))
 
-    solver = _new_deterministic_solver(_REPAIR_MAX_DETERMINISTIC_TIME)
+    solver = _new_deterministic_solver(max_deterministic_time)
     raw_status = solver.solve(model)
+    if raw_status == cp_model.MODEL_INVALID:
+        raise ModelInvalidError(f"CP-SAT reported MODEL_INVALID on repair model for {request.roster_id!r}")
     if raw_status not in (cp_model.OPTIMAL, cp_model.FEASIBLE):
         return None
 
-    # Independently verify that the repaired schedule respects ALL statutory laws!
+    repair_optimality: RepairOptimality = "minimum_slack" if raw_status == cp_model.OPTIMAL else "feasible_slack"
+    is_min_slack = raw_status == cp_model.OPTIMAL
+
+    # Independently verify that the repaired schedule respects ALL statutory laws (including statutory weekly cap)!
     repaired_assignments: list[Assignment] = []
     assigned_by_emp_week: dict[tuple[int, int], list[ShiftRequirementInput]] = defaultdict(list)
     week_index_by_key = {wk: idx for idx, wk in enumerate(weeks)}
@@ -656,7 +698,8 @@ def _solve_repair_cpsat(
                     is_cross_skill=(mode == "cross_skill"),
                 )
             )
-            assigned_by_emp_week[(e_idx, week_index_by_key[sh.iso_week])].append(sh)
+            for wk in sh.weekly_minutes(tz):
+                assigned_by_emp_week[(e_idx, week_index_by_key[wk])].append(sh)
 
     statutory_check = verify_statutory_laws(request, repaired_assignments)
     if not statutory_check.passed:
@@ -664,7 +707,7 @@ def _solve_repair_cpsat(
 
     suggestions: list[RepairSuggestion] = []
 
-    # 1. Coverage shortfall repairs (`relax_coverage`)
+    # 1. Coverage shortfall repairs (`relax_coverage`, HR-SH-04)
     for s_idx, sf_var in sorted(shortfall_vars.items()):
         sf_val = int(solver.value(sf_var))
         if sf_val > 0:
@@ -691,30 +734,34 @@ def _solve_repair_cpsat(
                         f"({format_utc(sh.starts_at)}–{format_utc(sh.ends_at)}) "
                         f"from {sh.required_count} to {new_count} (-{sf_val} headcount)"
                     ),
-                    diagnostic_code="NORN-ROSTER-REPAIR-COVERAGE",
+                    diagnostic_code="HR-SH-04:repair_coverage",
+                    optimality=repair_optimality,
+                    is_minimum_slack=is_min_slack,
                 )
             )
 
-    # 2. Cross-branch / cross-skill transfer repairs (`allow_transfer`)
+    # 2. Cross-branch / cross-skill transfer repairs (`allow_transfer`, HR-SH-04)
     for (e_idx, s_idx), mode in sorted(transfer_vars.items()):
         if solver.value(x[(e_idx, s_idx)]) == 1:
             emp = employees[e_idx]
             sh = shifts[s_idx]
-            w_idx = week_index_by_key[sh.iso_week]
-            ot_min_var = ot_min_vars.get((e_idx, w_idx))
-            ot_min = int(solver.value(ot_min_var)) if ot_min_var is not None else 0
-            cost_sub = min(sh.duration_minutes, ot_min) * emp.overtime_cost_minor_per_hour
+            cost_sub = 0
+            for wk, wk_mins in sorted(sh.weekly_minutes(tz).items()):
+                w_idx = week_index_by_key[wk]
+                ot_min_var = ot_min_vars.get((e_idx, w_idx))
+                ot_min = int(solver.value(ot_min_var)) if ot_min_var is not None else 0
+                cost_sub += min(wk_mins, ot_min) * emp.overtime_cost_minor_per_hour
             cost_dec = (Decimal(cost_sub) / Decimal(6000)).quantize(Decimal("0.01"))
             cost_minor = int(cost_dec * Decimal(100))
 
             if mode == "cross_branch":
                 hint = (
-                    f"Transfer {emp.display_label} from {emp.home_unit_id} to {sh.unit_id} "
+                    f"Transfer {emp.employee_id} from {emp.home_unit_id} to {sh.unit_id} "
                     f"to cover {sh.role_code} shift {sh.shift_id} ({format_utc(sh.starts_at)}–{format_utc(sh.ends_at)})"
                 )
             else:
                 hint = (
-                    f"Authorize cross-skill assignment for {emp.display_label} ({emp.home_unit_id}) "
+                    f"Authorize cross-skill assignment for {emp.employee_id} ({emp.home_unit_id}) "
                     f"to cover {sh.role_code} shift {sh.shift_id} at {sh.unit_id} "
                     f"({format_utc(sh.starts_at)}–{format_utc(sh.ends_at)})"
                 )
@@ -735,11 +782,13 @@ def _solve_repair_cpsat(
                     cost_delta=cost_dec,
                     requires_approval=True,
                     hint=hint,
-                    diagnostic_code="NORN-ROSTER-REPAIR-TRANSFER",
+                    diagnostic_code="HR-SH-04:repair_transfer",
+                    optimality=repair_optimality,
+                    is_minimum_slack=is_min_slack,
                 )
             )
 
-    # 3. Overtime cap / budget overflow repairs (`approve_overtime`)
+    # 3. Overtime cap / budget overflow repairs (`approve_overtime`, HR-SH-04)
     for w_idx in range(len(weeks)):
         b_ov_var = budget_overflow_vars.get(w_idx)
         b_ov_val = int(solver.value(b_ov_var)) if b_ov_var is not None else 0
@@ -750,7 +799,7 @@ def _solve_repair_cpsat(
             ov_min = int(solver.value(ov_var)) if ov_var is not None else 0
             ot_min = int(solver.value(ot_var)) if ot_var is not None else 0
 
-            # Emit overtime repair if employee exceeded their weekly cap OR incurred overtime driving budget overflow.
+            # Emit overtime repair if employee exceeded their weekly allocation OR incurred OT driving budget overflow.
             if ov_min <= 0 and not (b_ov_val > 0 and ot_min > 0):
                 continue
 
@@ -780,11 +829,12 @@ def _solve_repair_cpsat(
                     cost_delta=cost_dec,
                     requires_approval=True,
                     hint=(
-                        f"Approve +{minutes_to_hours(reported_min)}h ({reported_min} min) overtime for "
-                        f"{emp.display_label} (+{cost_dec} {profile.currency}; "
-                        f"statutory rest, daily & leave laws satisfied)"
+                        f"Approve +{reported_min} min overtime for {emp.employee_id} "
+                        f"(+{cost_dec} {profile.currency}; statutory rest, daily, weekly & leave laws satisfied)"
                     ),
-                    diagnostic_code="NORN-ROSTER-REPAIR-OVERTIME",
+                    diagnostic_code="HR-SH-04:repair_overtime",
+                    optimality=repair_optimality,
+                    is_minimum_slack=is_min_slack,
                 )
             )
 
@@ -798,20 +848,28 @@ def _solve_repair_cpsat(
             r.delta_minutes or 0,
         )
     )
-    return tuple(suggestions)
+    return repair_optimality, tuple(suggestions)
 
 
 def _find_unsat_repairs(
     request: SolveRequest,
-) -> tuple[tuple[RepairSuggestion, ...], tuple[RepairSuggestion, ...]]:
-    """Run the joint minimum-slack CP-SAT repair model plus single-axis alternatives."""
+    *,
+    max_deterministic_time: int = _REPAIR_MAX_DETERMINISTIC_TIME,
+) -> tuple[RepairOptimality | None, tuple[RepairSuggestion, ...], tuple[RepairSuggestion, ...]]:
+    """Run the joint slack-variable CP-SAT repair model plus single-axis alternatives."""
     joint = _solve_repair_cpsat(
         request,
         allow_coverage_slack=True,
         allow_overtime_slack=True,
         allow_transfer_slack=True,
+        max_deterministic_time=max_deterministic_time,
     )
-    primary_repairs: tuple[RepairSuggestion, ...] = joint if joint is not None else ()
+    if joint is not None:
+        repair_optimality: RepairOptimality | None = joint[0]
+        primary_repairs: tuple[RepairSuggestion, ...] = joint[1]
+    else:
+        repair_optimality = None
+        primary_repairs = ()
 
     primary_keys = {
         (r.kind, r.target_shift_id, r.employee_id, r.coverage_shortfall, r.delta_minutes)
@@ -830,10 +888,12 @@ def _find_unsat_repairs(
             allow_coverage_slack=cov,
             allow_overtime_slack=ot,
             allow_transfer_slack=tr,
+            max_deterministic_time=max_deterministic_time,
         )
-        if not probe:
+        if probe is None:
             continue
-        for r in probe:
+        _probe_opt, probe_suggestions = probe
+        for r in probe_suggestions:
             key = (r.kind, r.target_shift_id, r.employee_id, r.coverage_shortfall, r.delta_minutes)
             if key not in seen_alt:
                 seen_alt.add(key)
@@ -849,23 +909,32 @@ def _find_unsat_repairs(
             r.delta_minutes or 0,
         )
     )
-    return primary_repairs, tuple(alternatives)
+    return repair_optimality, primary_repairs, tuple(alternatives)
 
 
-def solve_roster(request: SolveRequest) -> SolveResponse:
+def solve_roster(
+    request: SolveRequest,
+    *,
+    max_deterministic_time: int = _PRIMARY_MAX_DETERMINISTIC_TIME,
+    repair_max_deterministic_time: int = _REPAIR_MAX_DETERMINISTIC_TIME,
+) -> SolveResponse:
     """Solve one shift-rostering problem deterministically with OR-Tools CP-SAT."""
     input_digest = sha256_digest(request.to_dict())
-    status, assignments, metrics = _solve_primary_cpsat(request)
+    status, evidence_label, assignments, metrics = _solve_primary_cpsat(
+        request,
+        max_deterministic_time=max_deterministic_time,
+    )
+
+    repair_optimality: RepairOptimality | None = None
+    repair_suggestions: tuple[RepairSuggestion, ...] = ()
+    alternative_repairs: tuple[RepairSuggestion, ...] = ()
+    unsat_summary: str | None = None
 
     if status in ("optimal", "feasible") and metrics is not None:
         # Independent hard-law post-verification (fails closed on any violation).
         ver_result = verify_or_raise(request, assignments)
         verification = ver_result.to_summary()
-        repair_suggestions: tuple[RepairSuggestion, ...] = ()
-        alternative_repairs: tuple[RepairSuggestion, ...] = ()
-        unsat_summary: str | None = None
-    else:
-        status = "infeasible"
+    elif status == "infeasible":
         assignments = ()
         metrics = None
         verification = VerificationSummary(
@@ -874,48 +943,58 @@ def solve_roster(request: SolveRequest) -> SolveResponse:
             checks_run=(),
             violation_count=0,
         )
-        repair_suggestions, alternative_repairs = _find_unsat_repairs(request)
+        repair_optimality, repair_suggestions, alternative_repairs = _find_unsat_repairs(
+            request,
+            max_deterministic_time=repair_max_deterministic_time,
+        )
         if repair_suggestions:
             kinds_summary = ", ".join(sorted({r.kind for r in repair_suggestions}))
-            unsat_summary = (
-                f"No legal roster satisfies all hard constraints for unit {request.unit_id}; "
-                f"minimum-slack CP-SAT repair plan requires {len(repair_suggestions)} action(s) ({kinds_summary})."
-            )
+            if repair_optimality == "minimum_slack":
+                unsat_summary = (
+                    f"No legal roster satisfies all hard constraints for unit {request.unit_id}; "
+                    f"minimum-slack CP-SAT repair plan requires {len(repair_suggestions)} action(s) ({kinds_summary})."
+                )
+            else:
+                unsat_summary = (
+                    f"No legal roster satisfies all hard constraints for unit {request.unit_id}; "
+                    f"bounded feasible-slack CP-SAT repair plan (not proven minimum-slack) requires "
+                    f"{len(repair_suggestions)} action(s) ({kinds_summary})."
+                )
         else:
             unsat_summary = (
                 f"No legal roster satisfies all hard constraints for unit {request.unit_id}, "
                 "and no bounded statutory-compliant repair plan was found."
             )
+    else:
+        # `status == "unknown"`: search budget exhausted — NEVER claim infeasibility or run UNSAT repair!
+        assignments = ()
+        metrics = None
+        verification = VerificationSummary(
+            checked=False,
+            passed=False,
+            checks_run=(),
+            violation_count=0,
+        )
 
-    receipt_payload: dict[str, object] = {
-        "alternative_repairs": [r.to_dict() for r in alternative_repairs],
-        "assignments": [a.to_dict() for a in assignments],
-        "backend": "ortools_cpsat",
-        "contract": CONTRACT_ID,
-        "input_digest": input_digest,
-        "profile_id": request.profile.profile_id,
-        "repair_suggestions": [r.to_dict() for r in repair_suggestions],
-        "roster_id": request.roster_id,
-        "status": status,
-        "verification": verification.to_dict(),
-    }
-    solver_receipt_digest = sha256_digest(receipt_payload)
-
-    return SolveResponse(
+    draft = SolveResponse(
         contract=CONTRACT_ID,
         roster_id=request.roster_id,
         profile_id=request.profile.profile_id,
         status=status,
+        evidence_label=evidence_label,
         backend="ortools_cpsat",
         assignments=assignments,
         metrics=metrics,
+        repair_optimality=repair_optimality,
         repair_suggestions=repair_suggestions,
         alternative_repairs=alternative_repairs,
         unsat_summary=unsat_summary,
         verification=verification,
         input_digest=input_digest,
-        solver_receipt_digest=solver_receipt_digest,
+        solver_receipt_digest="",
     )
+    solver_receipt_digest = compute_receipt_digest(draft.to_dict())
+    return replace(draft, solver_receipt_digest=solver_receipt_digest)
 
 
 def compare_what_if(base_request: SolveRequest, alt_profile: PreferenceProfileInput) -> WhatIfComparison:
@@ -923,7 +1002,6 @@ def compare_what_if(base_request: SolveRequest, alt_profile: PreferenceProfileIn
     base_res = solve_roster(base_request)
     alt_res = solve_roster(replace(base_request, profile=alt_profile))
 
-    # Build deterministic per-shift assignment diff.
     shifts_by_id = {s.shift_id: s for s in base_request.shifts}
     base_by_shift: dict[str, list[str]] = defaultdict(list)
     alt_by_shift: dict[str, list[str]] = defaultdict(list)
@@ -960,10 +1038,10 @@ def compare_what_if(base_request: SolveRequest, alt_profile: PreferenceProfileIn
         pref_delta = alt_res.metrics.preference_hits - base_res.metrics.preference_hits
         obj_delta = alt_res.metrics.objective_score - base_res.metrics.objective_score
         summary = (
-            f"Switching from {base_request.profile.label!r} to {alt_profile.label!r}: "
+            f"Switching from {base_request.profile.profile_id!r} to {alt_profile.profile_id!r}: "
             f"{len(diffs)} shift(s) changed, "
             f"overtime cost {cost_delta:+} {alt_profile.currency}, "
-            f"overtime hours {hours_delta:+}h, "
+            f"overtime minutes {ot_min_delta:+d}m ({hours_delta:+}h), "
             f"weekend spread {spread_delta:+d}, "
             f"staff preference hits {pref_delta:+d}, "
             f"objective delta {obj_delta:+d}."
@@ -977,8 +1055,8 @@ def compare_what_if(base_request: SolveRequest, alt_profile: PreferenceProfileIn
         pref_delta = None
         obj_delta = None
         summary = (
-            f"{base_request.profile.label!r} -> {base_res.status}; "
-            f"{alt_profile.label!r} -> {alt_res.status} ({len(diffs)} shift(s) changed)."
+            f"{base_request.profile.profile_id!r} -> {base_res.status}; "
+            f"{alt_profile.profile_id!r} -> {alt_res.status} ({len(diffs)} shift(s) changed)."
         )
 
     return WhatIfComparison(

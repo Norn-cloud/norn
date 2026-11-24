@@ -1,18 +1,26 @@
-"""Fail-closed PII, closed-schema allowlist, IEEE-float, and canonical JSON boundary for `norn.solver.rostering@0.1.0`.
+"""Fail-closed PII, duplicate-key, closed-schema, cardinality, IEEE-float, and canonical JSON boundary.
 
 Every ingress payload passes through this boundary before reaching the solver:
+- Raw UTF-8 JSON is decoded with a custom `object_pairs_hook` (`reject_duplicate_keys`)
+  BEFORE schema/PII validation so duplicate keys and overwritten subtrees fail closed with
+  `NORN-SOLVER-DUPLICATE-KEY` (or `NORN-SOLVER-PII-FORBIDDEN` if any duplicate/overwritten
+  key or subtree carries PII).
 - Any marked PII key anywhere in the payload (recursively, case-insensitively and
   normalized across snake_case / camelCase / kebab-case) is refused with
   `NORN-SOLVER-PII-FORBIDDEN`.
 - Every JSON object level (perform envelope, top-level request, employee, leave window,
   shift requirement, preference profile) is checked against a strict closed schema
-  allowlist; any unallowlisted key fails closed with `NORN-SOLVER-UNKNOWN-FIELD` and
-  its exact dotted JSON path.
-- Unexpected non-dict / non-list container shapes fail closed with `NORN-SOLVER-SCHEMA`.
+  allowlist containing ONLY opaque operational identifiers and typed quantities (zero
+  free-text labels); any unallowlisted key fails closed with `NORN-SOLVER-UNKNOWN-FIELD`
+  and its exact dotted JSON path.
+- Strict cardinality bounds (`MAX_EMPLOYEES`, `MAX_SHIFTS`, `MAX_HORIZON_DAYS`,
+  `MAX_LEAVE_BLOCKS`) are enforced before model construction with
+  `NORN-SOLVER-LIMIT-EXCEEDED`.
 - Any IEEE 754 `float` (including JSON decimal literals, `NaN`, `Infinity`) is refused
   with `NORN-SOLVER-FLOAT-FORBIDDEN`.
 - All business quantities are parsed into exact integers (minutes, minor currency units)
-  or exact `Decimal` values.
+  without silent rounding or lossy hour round-trips; malformed or over-scale decimal
+  strings fail closed with `NORN-SOLVER-DECIMAL`.
 """
 
 from __future__ import annotations
@@ -21,12 +29,23 @@ import hashlib
 import json
 import re
 from datetime import UTC, datetime, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, DecimalException
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 _CAMEL_BOUNDARY_1 = re.compile(r"([a-z0-9])([A-Z])")
 _CAMEL_BOUNDARY_2 = re.compile(r"([A-Z]+)([A-Z][a-z])")
 _NON_ALNUM = re.compile(r"[^a-z0-9]+")
+
+# Strict pre-model cardinality bounds (enforced before CP-SAT construction).
+MAX_EMPLOYEES = 250
+MAX_SHIFTS = 1_000
+MAX_HORIZON_DAYS = 62
+MAX_LEAVE_BLOCKS = 2_000
+
+# Upper bound on exact decimal magnitude / exponent to prevent Decimal DoS / InvalidOperation.
+_MAX_DECIMAL_ABS = Decimal("1000000000000")
+_MAX_DECIMAL_TEXT_LEN = 64
 
 
 def normalize_field_key(key: str) -> str:
@@ -150,6 +169,7 @@ FORBIDDEN_PII_FIELDS: frozenset[str] = frozenset(
 )
 
 # Strict closed schema allowlists for every raw JSON object level.
+# Zero free-text label fields cross the unmarked solver boundary.
 ALLOWED_PERFORM_ENVELOPE_FIELDS: frozenset[str] = frozenset(
     {
         "alt_profile",
@@ -163,6 +183,7 @@ ALLOWED_SOLVE_REQUEST_FIELDS: frozenset[str] = frozenset(
         "allow_cross_branch_transfers",
         "authorized_transfer_employee_ids",
         "employees",
+        "iana_timezone",
         "profile",
         "roster_id",
         "shifts",
@@ -175,7 +196,6 @@ ALLOWED_EMPLOYEE_FIELDS: frozenset[str] = frozenset(
         "approved_leave",
         "avoid_shift_ids",
         "cross_trainable_skills",
-        "display_label",
         "eligible_unit_ids",
         "employee_id",
         "home_unit_id",
@@ -214,7 +234,6 @@ ALLOWED_PROFILE_FIELDS: frozenset[str] = frozenset(
     {
         "avoid_split_shifts",
         "currency",
-        "label",
         "max_consecutive_days",
         "max_daily_hours",
         "max_daily_minutes",
@@ -238,6 +257,31 @@ class SolverContractError(ValueError):
         self.code = code
         self.message = message
         super().__init__(f"[{code}] {message}")
+
+
+class DuplicateKeyError(SolverContractError):
+    """Raised when a JSON object contains duplicate keys."""
+
+    def __init__(self, key: str) -> None:
+        self.duplicate_key = key
+        super().__init__(
+            "NORN-SOLVER-DUPLICATE-KEY",
+            f"duplicate JSON object key {key!r} is refused",
+        )
+
+
+class LimitExceededError(SolverContractError):
+    """Raised when a request exceeds pre-model cardinality or horizon limits."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__("NORN-SOLVER-LIMIT-EXCEEDED", detail)
+
+
+class ModelInvalidError(SolverContractError):
+    """Raised when CP-SAT reports `MODEL_INVALID` or an unrecognized status."""
+
+    def __init__(self, detail: str) -> None:
+        super().__init__("NORN-SOLVER-MODEL-INVALID", detail)
 
 
 class PiiViolationError(SolverContractError):
@@ -329,57 +373,123 @@ def _refuse_json_constant(raw_token: str) -> Any:
     raise FloatRefusalError("$", raw_token)
 
 
+def reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """`json.loads` `object_pairs_hook` that fails closed on any duplicate JSON object key.
+
+    If a duplicate key is detected, all raw pairs (including shadowed/overwritten subtrees)
+    are scanned for marked PII first so a duplicate key can never hide a PII violation.
+    """
+    obj: dict[str, Any] = {}
+    seen: set[str] = set()
+    duplicates: list[str] = []
+    for key, value in pairs:
+        if key in seen:
+            duplicates.append(key)
+        seen.add(key)
+        obj[key] = value
+    if duplicates:
+        for key, value in pairs:
+            if normalize_field_key(key) in FORBIDDEN_PII_FIELDS:
+                raise PiiViolationError(f"$.{key}")
+            reject_pii_and_floats(value, f"$.{key}")
+        raise DuplicateKeyError(duplicates[0])
+    return obj
+
+
 def parse_strict_json(raw: str | bytes) -> Any:
-    """Decode JSON while refusing IEEE floats, NaN/Infinity, and marked PII keys."""
-    text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+    """Decode UTF-8 JSON while refusing duplicate keys, IEEE floats, NaN/Infinity, and marked PII keys."""
     try:
+        text = raw.decode("utf-8") if isinstance(raw, bytes) else raw
         parsed = json.loads(
             text,
             parse_float=_refuse_json_float,
             parse_constant=_refuse_json_constant,
+            object_pairs_hook=reject_duplicate_keys,
         )
     except SolverContractError:
         raise
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except UnicodeDecodeError as exc:
+        raise SolverContractError("NORN-SOLVER-JSON", f"invalid UTF-8 payload: {exc}") from exc
+    except json.JSONDecodeError as exc:
         raise SolverContractError("NORN-SOLVER-JSON", f"invalid JSON payload: {exc}") from exc
     reject_pii_and_floats(parsed, "$")
     return parsed
 
 
-def parse_decimal(raw: Any, path: str, *, allow_negative: bool = False) -> Decimal:
-    """Parse an exact scale-2 Decimal from Decimal, int, or string; refuse floats and bools."""
+def parse_exact_decimal(
+    raw: Any,
+    path: str,
+    *,
+    allow_negative: bool = False,
+    max_scale: int | None = None,
+) -> Decimal:
+    """Parse an exact Decimal from Decimal, int, or str without silent rounding; refuse floats and bools."""
     if isinstance(raw, float):
         raise FloatRefusalError(path, raw)
     if isinstance(raw, bool):
-        raise SolverContractError("NORN-SOLVER-SCHEMA", f"{path} must be a decimal string or int, got bool")
+        raise SolverContractError("NORN-SOLVER-DECIMAL", f"{path} must be a decimal string or int, got bool")
     if isinstance(raw, Decimal):
         val = raw
-    elif isinstance(raw, (int, str)):
+    elif isinstance(raw, int):
+        val = Decimal(raw)
+    elif isinstance(raw, str):
+        text = raw.strip()
+        if not text or len(text) > _MAX_DECIMAL_TEXT_LEN or text != raw:
+            raise SolverContractError("NORN-SOLVER-DECIMAL", f"{path} is not a valid decimal: {raw!r}")
         try:
-            val = Decimal(str(raw))
-        except InvalidOperation as exc:
-            raise SolverContractError("NORN-SOLVER-SCHEMA", f"{path} is not a valid decimal: {raw!r}") from exc
+            val = Decimal(text)
+        except DecimalException as exc:
+            raise SolverContractError("NORN-SOLVER-DECIMAL", f"{path} is not a valid decimal: {raw!r}") from exc
     else:
         raise SolverContractError(
-            "NORN-SOLVER-SCHEMA",
+            "NORN-SOLVER-DECIMAL",
             f"{path} must be Decimal, int, or str, got {type(raw).__name__}",
         )
+
     if not val.is_finite():
-        raise SolverContractError("NORN-SOLVER-SCHEMA", f"{path} must be finite, got {val!r}")
-    if not allow_negative and val < Decimal("0"):
-        raise SolverContractError("NORN-SOLVER-SCHEMA", f"{path} must be non-negative, got {val}")
-    return val.quantize(Decimal("0.01"))
+        raise SolverContractError("NORN-SOLVER-DECIMAL", f"{path} must be finite, got {val!r}")
+    if val != 0 and (val.adjusted() > 12 or val.adjusted() < -12):
+        raise SolverContractError("NORN-SOLVER-DECIMAL", f"{path} exceeds bounded decimal magnitude/scale: {raw!r}")
+    try:
+        if not allow_negative and val < Decimal("0"):
+            raise SolverContractError("NORN-SOLVER-DECIMAL", f"{path} must be non-negative, got {val}")
+        if abs(val) > _MAX_DECIMAL_ABS:
+            raise SolverContractError("NORN-SOLVER-DECIMAL", f"{path} exceeds bounded decimal magnitude: {raw!r}")
+
+        if max_scale is not None:
+            scaled = val * (Decimal(10) ** max_scale)
+            is_exact = scaled == scaled.to_integral_value()
+            if not is_exact:
+                raise SolverContractError(
+                    "NORN-SOLVER-DECIMAL",
+                    f"{path} must have at most {max_scale} decimal place(s) (no silent rounding), got {raw!r}",
+                )
+    except DecimalException as exc:
+        raise SolverContractError("NORN-SOLVER-DECIMAL", f"{path} decimal arithmetic error: {raw!r}") from exc
+    return val
+
+
+def parse_decimal(raw: Any, path: str, *, allow_negative: bool = False) -> Decimal:
+    """Parse an exact scale-2 Decimal without silent rounding; refuses over-scale strings (> 2 decimal places)."""
+    val = parse_exact_decimal(raw, path, allow_negative=allow_negative, max_scale=2)
+    try:
+        return val.quantize(Decimal("0.01"))
+    except DecimalException as exc:
+        raise SolverContractError("NORN-SOLVER-DECIMAL", f"{path} cannot be represented at scale 2: {raw!r}") from exc
+
+
+def parse_money_to_minor_units(raw: Any, path: str, *, allow_negative: bool = False) -> int:
+    """Parse an exact currency amount (at most 2 decimal places) directly to integer minor units."""
+    val = parse_exact_decimal(raw, path, allow_negative=allow_negative, max_scale=2)
+    try:
+        return int(val * Decimal(100))
+    except DecimalException as exc:
+        raise SolverContractError("NORN-SOLVER-DECIMAL", f"{path} cannot be converted to minor units: {raw!r}") from exc
 
 
 def decimal_to_minor_units(value: Decimal, path: str) -> int:
-    """Convert an exact Decimal currency amount (2 decimal places) to integer minor units."""
-    scaled = value * Decimal(100)
-    if scaled != scaled.to_integral_value():
-        raise SolverContractError(
-            "NORN-SOLVER-SCHEMA",
-            f"{path} must have at most 2 decimal places for exact minor units, got {value}",
-        )
-    return int(scaled)
+    """Convert an exact Decimal currency amount (at most 2 decimal places) to integer minor units."""
+    return parse_money_to_minor_units(value, path)
 
 
 def minor_units_to_decimal(minor: int) -> Decimal:
@@ -387,19 +497,29 @@ def minor_units_to_decimal(minor: int) -> Decimal:
     return (Decimal(minor) / Decimal(100)).quantize(Decimal("0.01"))
 
 
-def hours_to_minutes(hours: Decimal, path: str) -> int:
-    """Convert exact Decimal hours to exact integer minutes (refuses fractional minutes)."""
-    scaled = hours * Decimal(60)
-    if scaled != scaled.to_integral_value():
+def parse_hours_to_minutes(raw: Any, path: str) -> int:
+    """Parse exact hours (Decimal, int, or decimal string) to exact integer minutes (refuses fractional minutes)."""
+    val = parse_exact_decimal(raw, path, allow_negative=False)
+    try:
+        scaled = val * Decimal(60)
+        is_exact = scaled == scaled.to_integral_value()
+    except DecimalException as exc:
+        raise SolverContractError("NORN-SOLVER-DECIMAL", f"{path} cannot be converted to minutes: {raw!r}") from exc
+    if not is_exact:
         raise SolverContractError(
-            "NORN-SOLVER-SCHEMA",
-            f"{path} must correspond to an exact whole number of minutes, got {hours}h",
+            "NORN-SOLVER-DECIMAL",
+            f"{path} must correspond to an exact whole number of minutes, got {raw!r}h",
         )
     return int(scaled)
 
 
+def hours_to_minutes(hours: Decimal, path: str) -> int:
+    """Convert exact Decimal hours to exact integer minutes (refuses fractional minutes)."""
+    return parse_hours_to_minutes(hours, path)
+
+
 def minutes_to_hours(minutes: int) -> Decimal:
-    """Convert exact integer minutes to scale-2 Decimal hours."""
+    """Display-only conversion of integer minutes to a scale-2 Decimal hour summary."""
     return (Decimal(minutes) / Decimal(60)).quantize(Decimal("0.01"))
 
 
@@ -431,6 +551,21 @@ def parse_str(raw: Any, path: str) -> str:
             f"{path} must be a string, got {type(raw).__name__}",
         )
     return raw
+
+
+def parse_iana_timezone(raw: Any, path: str) -> str:
+    """Parse and validate a pinned IANA timezone identifier via `zoneinfo.ZoneInfo`."""
+    tz_name = parse_str(raw, path)
+    if not tz_name or tz_name != tz_name.strip():
+        raise SolverContractError("NORN-SOLVER-SCHEMA", f"{path} must be a valid IANA timezone, got {raw!r}")
+    try:
+        _ = ZoneInfo(tz_name)
+    except (ZoneInfoNotFoundError, KeyError, ValueError) as exc:
+        raise SolverContractError(
+            "NORN-SOLVER-SCHEMA",
+            f"{path} is not a recognized IANA timezone: {tz_name!r}",
+        ) from exc
+    return tz_name
 
 
 def parse_str_list(raw: Any, path: str) -> tuple[str, ...]:
@@ -496,7 +631,7 @@ def validate_preference_profile_payload(
     if not _skip_pii_scan:
         reject_pii_and_floats(raw, path)
     obj = _validate_object_keys(raw, ALLOWED_PROFILE_FIELDS, path)
-    for key in ("profile_id", "label", "currency", "weekend_fairness_priority", "staff_preference_priority"):
+    for key in ("profile_id", "currency", "weekend_fairness_priority", "staff_preference_priority"):
         if key in obj:
             parse_str(obj[key], f"{path}.{key}")
     if "avoid_split_shifts" in obj:
@@ -511,9 +646,11 @@ def validate_preference_profile_payload(
         if key in obj:
             min_val = 1 if key == "max_consecutive_days" else 0
             parse_int(obj[key], f"{path}.{key}", minimum=min_val)
-    for key in ("weekly_overtime_budget", "min_rest_hours", "max_daily_hours", "max_weekly_hours"):
+    if "weekly_overtime_budget" in obj:
+        parse_money_to_minor_units(obj["weekly_overtime_budget"], f"{path}.weekly_overtime_budget")
+    for key in ("min_rest_hours", "max_daily_hours", "max_weekly_hours"):
         if key in obj:
-            parse_decimal(obj[key], f"{path}.{key}")
+            parse_hours_to_minutes(obj[key], f"{path}.{key}")
 
 
 def validate_employee_payload(
@@ -521,12 +658,15 @@ def validate_employee_payload(
     path: str,
     *,
     _skip_pii_scan: bool = False,
-) -> None:
-    """Validate a raw EmployeeInput object against the strict closed schema allowlist."""
+) -> int:
+    """Validate a raw EmployeeInput object against the strict closed schema allowlist.
+
+    Returns the number of approved leave blocks declared on this employee.
+    """
     if not _skip_pii_scan:
         reject_pii_and_floats(raw, path)
     obj = _validate_object_keys(raw, ALLOWED_EMPLOYEE_FIELDS, path)
-    for key in ("employee_id", "display_label", "home_unit_id"):
+    for key in ("employee_id", "home_unit_id"):
         if key in obj:
             parse_str(obj[key], f"{path}.{key}")
     for key in (
@@ -546,9 +686,12 @@ def validate_employee_payload(
     ):
         if key in obj:
             parse_int(obj[key], f"{path}.{key}", minimum=0)
-    for key in ("max_regular_weekly_hours", "max_overtime_weekly_hours", "overtime_cost_per_hour"):
+    for key in ("max_regular_weekly_hours", "max_overtime_weekly_hours"):
         if key in obj:
-            parse_decimal(obj[key], f"{path}.{key}")
+            parse_hours_to_minutes(obj[key], f"{path}.{key}")
+    if "overtime_cost_per_hour" in obj:
+        parse_money_to_minor_units(obj["overtime_cost_per_hour"], f"{path}.overtime_cost_per_hour")
+    leave_count = 0
     if "approved_leave" in obj:
         raw_leave = obj["approved_leave"]
         if not isinstance(raw_leave, list):
@@ -556,8 +699,14 @@ def validate_employee_payload(
                 "NORN-SOLVER-SCHEMA",
                 f"{path}.approved_leave must be a list, got {type(raw_leave).__name__}",
             )
+        leave_count = len(raw_leave)
+        if leave_count > MAX_LEAVE_BLOCKS:
+            raise LimitExceededError(
+                f"{path}.approved_leave has {leave_count} blocks, exceeding MAX_LEAVE_BLOCKS ({MAX_LEAVE_BLOCKS})"
+            )
         for idx, win in enumerate(raw_leave):
             validate_time_window_payload(win, f"{path}.approved_leave[{idx}]", _skip_pii_scan=True)
+    return leave_count
 
 
 def validate_shift_payload(
@@ -591,13 +740,15 @@ def validate_solve_request_payload(
     *,
     _skip_pii_scan: bool = False,
 ) -> None:
-    """Validate a raw SolveRequest payload against the strict closed schema allowlist."""
+    """Validate a raw SolveRequest payload against the strict closed schema allowlist and cardinality bounds."""
     if not _skip_pii_scan:
         reject_pii_and_floats(raw, path)
     obj = _validate_object_keys(raw, ALLOWED_SOLVE_REQUEST_FIELDS, path)
     for key in ("roster_id", "unit_id"):
         if key in obj:
             parse_str(obj[key], f"{path}.{key}")
+    if "iana_timezone" in obj:
+        parse_iana_timezone(obj["iana_timezone"], f"{path}.iana_timezone")
     if "allow_cross_branch_transfers" in obj:
         parse_bool(obj["allow_cross_branch_transfers"], f"{path}.allow_cross_branch_transfers")
     if "authorized_transfer_employee_ids" in obj:
@@ -611,14 +762,27 @@ def validate_solve_request_payload(
                 "NORN-SOLVER-SCHEMA",
                 f"{path}.employees must be a list, got {type(raw_employees).__name__}",
             )
+        if len(raw_employees) > MAX_EMPLOYEES:
+            raise LimitExceededError(
+                f"{path}.employees has {len(raw_employees)} entries, exceeding MAX_EMPLOYEES ({MAX_EMPLOYEES})"
+            )
+        total_leave_blocks = 0
         for idx, emp in enumerate(raw_employees):
-            validate_employee_payload(emp, f"{path}.employees[{idx}]", _skip_pii_scan=True)
+            total_leave_blocks += validate_employee_payload(emp, f"{path}.employees[{idx}]", _skip_pii_scan=True)
+            if total_leave_blocks > MAX_LEAVE_BLOCKS:
+                raise LimitExceededError(
+                    f"{path}.employees total approved_leave blocks ({total_leave_blocks}) exceeds MAX_LEAVE_BLOCKS ({MAX_LEAVE_BLOCKS})"
+                )
     if "shifts" in obj:
         raw_shifts = obj["shifts"]
         if not isinstance(raw_shifts, list):
             raise SolverContractError(
                 "NORN-SOLVER-SCHEMA",
                 f"{path}.shifts must be a list, got {type(raw_shifts).__name__}",
+            )
+        if len(raw_shifts) > MAX_SHIFTS:
+            raise LimitExceededError(
+                f"{path}.shifts has {len(raw_shifts)} entries, exceeding MAX_SHIFTS ({MAX_SHIFTS})"
             )
         for idx, sh in enumerate(raw_shifts):
             validate_shift_payload(sh, f"{path}.shifts[{idx}]", _skip_pii_scan=True)
@@ -718,7 +882,7 @@ def format_utc(dt: datetime) -> str:
 
 def _json_default(obj: Any) -> str:
     if isinstance(obj, Decimal):
-        return format(obj.quantize(Decimal("0.01")), "f")
+        return format(obj, "f")
     if isinstance(obj, datetime):
         return format_utc(obj)
     raise TypeError(f"Non-serializable value of type {type(obj).__name__}")
