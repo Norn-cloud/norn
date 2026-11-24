@@ -204,6 +204,21 @@ impl<'a> TypeCatalog<'a> {
         self
     }
 
+    /// ACTOR-INDEPENDENT-1: whether `object_type`, an ancestor or a descendant
+    /// declares a protected property, the types a transition guard can cover.
+    pub(crate) fn related_protected(&self, object_type: &ObjectTypeName) -> bool {
+        let lineage = self.lineage(object_type);
+        self.effective_model().is_ok_and(|model| {
+            model.object_types.iter().any(|(name, effective)| {
+                (lineage.contains(name) || self.lineage(name).contains(object_type))
+                    && effective
+                        .properties
+                        .iter()
+                        .any(EffectiveProperty::protected)
+            })
+        })
+    }
+
     /// OBS-EVIDENCE-1: bind the retained law artifacts of this definition snapshot.
     #[must_use]
     pub fn with_governing_laws(mut self, artifacts: &'a [norn_ir::ArtifactEnvelope]) -> Self {

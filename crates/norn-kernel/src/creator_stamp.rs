@@ -13,8 +13,8 @@ use std::collections::BTreeSet;
 
 use crate::cell_host::{
     Admission, Authorized, CellCommit, CommitError, CommitVersions, Consumed, FactExpectation,
-    FactKey, FactMutation, FactWrite, JsonObject, JsonValue, LinkReadExpectation, ObjectTypeName,
-    OwnedRowsCommitProof, PredicateReadExpectation, Proposed,
+    FactKey, FactMutation, FactWrite, JsonObject, JsonValue, LinkMutation, LinkReadExpectation,
+    LinkWrite, ObjectTypeName, OwnedRowsCommitProof, PredicateReadExpectation, Proposed,
 };
 use crate::commit_check::{CommitModel, CommitView};
 use crate::snapshot_observe::ObservationAuthorization;
@@ -55,40 +55,69 @@ pub struct CreatorStampProof {
     consumes: Option<Consumed>,
     reads: Vec<FactExpectation>,
     writes: Vec<FactWrite>,
+    links: Vec<LinkWrite>,
     link_reads: Vec<LinkReadExpectation>,
     predicate_reads: Vec<PredicateReadExpectation>,
+    max_events: u32,
 }
 
 impl CreatorStampProof {
-    /// Bind `stamp` to the exact prepared transaction: its writes, read and
-    /// version fences, consumed delivery and link and predicate reads.
-    pub(crate) fn new<E, C, T>(stamp: CreatorStamp, commit: &CellCommit<E, C, T>) -> Self {
+    /// Bind `stamp` to the exact prepared transaction, as the owned-row
+    /// proof is: its fact and link writes, read and version fences, consumed
+    /// delivery, link and predicate reads, and the admitted event ceiling.
+    pub(crate) fn new<E, C, T>(
+        stamp: CreatorStamp,
+        commit: &CellCommit<E, C, T>,
+        max_events: u32,
+    ) -> Self {
         Self {
             stamp,
             consumes: commit.consumes.clone(),
             reads: commit.reads.clone(),
             writes: commit.writes.clone(),
+            links: commit.links.clone(),
             link_reads: commit.link_reads.clone(),
             predicate_reads: commit.predicate_reads.clone(),
+            max_events,
         }
     }
 
     /// Whether `commit` is the transaction this proof was issued for. A
     /// perimeter adapter may add reads, never drop or change a sealed one.
-    fn binds<E, C, T, X>(
+    fn binds<E, C, T, V: CommitView + ?Sized>(
         &self,
         commit: &CellCommit<E, C, T>,
         model: CommitModel<'_, '_>,
-    ) -> Result<bool, CommitError<X>> {
+        view: &V,
+    ) -> Result<bool, CommitError<V::Error>> {
         if self.consumes != commit.consumes
             || self.reads.iter().any(|read| !commit.reads.contains(read))
             || self.link_reads != commit.link_reads
             || self.predicate_reads != commit.predicate_reads
             || self.writes.len() != commit.writes.len()
+            || self.links.len() != commit.links.len()
         {
             return Ok(false);
         }
-        Ok(canonical_writes::<X>(model, &self.writes)? == commit.writes)
+        let links = self
+            .links
+            .iter()
+            .map(|write| {
+                let mutation = match &write.mutation {
+                    LinkMutation::Add { values } => LinkMutation::Add {
+                        values: model.effective_link_values(commit, view, &write.key, values)?,
+                    },
+                    LinkMutation::Remove => LinkMutation::Remove,
+                };
+                Ok(LinkWrite {
+                    key: write.key.clone(),
+                    expected: write.expected,
+                    mutation,
+                })
+            })
+            .collect::<Result<Vec<_>, CommitError<V::Error>>>()?;
+        Ok(links == commit.links
+            && canonical_writes::<V::Error>(model, &self.writes)? == commit.writes)
     }
 }
 
@@ -218,7 +247,15 @@ pub fn check_commit_stamped<E, C, T, V: CommitView + ?Sized>(
     view: &V,
     proof: &CreatorStampProof,
 ) -> Result<CommitVersions, CommitError<V::Error>> {
-    let trust = if proof.binds::<E, C, T, V::Error>(commit, *model)? {
+    // Perimeter adapters may append audit events after action preparation.
+    // Recheck the final ledger payload against the admitted envelope.
+    if u32::try_from(commit.events.len()).map_or(true, |actual| actual > proof.max_events) {
+        return Err(CommitError::EventLimitExceeded {
+            limit: proof.max_events,
+            actual: commit.events.len(),
+        });
+    }
+    let trust = if proof.binds(commit, *model, view)? {
         KernelTrust::Stamped(&proof.stamp)
     } else {
         KernelTrust::Plain

@@ -307,11 +307,10 @@ pub(super) fn transition_guard_findings(
         .collect();
     let mut findings = Vec::new();
     for (artifact, root, candidate) in &all {
-        let fired: Vec<&Guard<'_>> = guards
+        for guard in guards
             .iter()
             .filter(|guard| fires_unguarded(root, guard, model))
-            .collect();
-        for guard in fired {
+        {
             let message = format!(
                 "action {:?} fires {:?} transition {:?} without independentOf {:?}, which action {:?} guards; every action firing it declares the same guard",
                 root.action_id, guard.kind, guard.transition, guard.properties, guard.action
@@ -780,7 +779,7 @@ mod tests {
             .remove("independentOf");
         let installed: Vec<ArtifactEnvelope> =
             vec![serde_json::from_value(sibling).expect("installed sibling")];
-        let candidates = vec![(&approve_artifact, approve.clone())];
+        let candidates = vec![(&approve_artifact, approve)];
         let findings = transition_guard_findings(&candidates, &artifacts, &installed, &model);
         assert_eq!(
             codes_at(&findings),

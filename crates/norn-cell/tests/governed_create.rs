@@ -1101,3 +1101,198 @@ fn a_create_that_lost_a_race_is_a_conflict() {
     assert_eq!(refusal.code(), "commit.conflict", "{refusal}");
     assert_eq!(cell.store().read().dump().unwrap(), dump);
 }
+
+/// A perimeter host that forwards to the production cell, optionally
+/// dropping the prepared links of a stamped create before admission.
+struct Tamper<'a> {
+    inner: &'a mut Cell,
+    drop_links: bool,
+}
+
+impl CellHost for Tamper<'_> {
+    type Event = FactEvent;
+    type Command = JsonObject;
+    type Input = JsonObject;
+    type Error = norn_cell::CellError;
+    fn load(&self, key: &FactKey) -> Result<norn_kernel::FactState, Self::Error> {
+        self.inner.load(key)
+    }
+    fn supports_reference_reads(&self) -> bool {
+        self.inner.supports_reference_reads()
+    }
+    fn load_reference(
+        &self,
+        key: &FactKey,
+        max: u64,
+    ) -> Result<Option<norn_kernel::BoundedFact>, Self::Error> {
+        self.inner.load_reference(key, max)
+    }
+    fn load_bounded(
+        &self,
+        key: &FactKey,
+        max: u64,
+    ) -> Result<Option<norn_kernel::BoundedFact>, Self::Error> {
+        self.inner.load_bounded(key, max)
+    }
+    fn load_link(&self, key: &norn_kernel::LinkKey) -> Result<norn_kernel::LinkState, Self::Error> {
+        self.inner.load_link(key)
+    }
+    fn read_link_targets(
+        &self,
+        source: &FactKey,
+        link: &str,
+        max_targets: usize,
+        max_key_bytes: u64,
+    ) -> Result<Option<Vec<norn_kernel::LinkReadTarget>>, Self::Error> {
+        self.inner
+            .read_link_targets(source, link, max_targets, max_key_bytes)
+    }
+    fn commit(
+        &mut self,
+        commit: CellCommit<FactEvent, JsonObject, JsonObject>,
+    ) -> Result<norn_kernel::CommitReceipt, norn_kernel::CommitError<Self::Error>> {
+        self.inner.commit(commit)
+    }
+    fn commit_stamped(
+        &mut self,
+        mut commit: CellCommit<FactEvent, JsonObject, JsonObject>,
+        proof: norn_kernel::CreatorStampProof,
+        quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
+    ) -> Result<norn_kernel::CommitReceipt, norn_kernel::CommitError<Self::Error>> {
+        if self.drop_links {
+            commit.links.clear();
+        }
+        self.inner.commit_stamped(commit, proof, quantity)
+    }
+    fn perform(&mut self) -> Result<Option<norn_kernel::Performed<Self::Input>>, Self::Error> {
+        Ok(None)
+    }
+    fn observe(&mut self) -> Result<Option<norn_kernel::Observed<Self::Input>>, Self::Error> {
+        Ok(None)
+    }
+    fn clock(&mut self) -> Result<Option<norn_kernel::DueTimer<Self::Input>>, Self::Error> {
+        Ok(None)
+    }
+    fn publish(&mut self, receipt: &norn_kernel::CommitReceipt) -> Result<(), Self::Error> {
+        self.inner.publish(receipt)
+    }
+}
+
+/// ACTOR-STAMP-1 (Astra round 3): the stamp proof seals the prepared links
+/// as the owned-row proof does. A perimeter host that drops one gets the
+/// plain admission, which refuses the stamped creator; the untouched
+/// transaction commits with its link.
+#[test]
+fn a_stamped_create_whose_prepared_links_changed_refuses() {
+    let directory = tempfile::tempdir().unwrap();
+    let definitions = types();
+    let rules = [admit_rule(&rule_document(
+        "ledger.payable.match_writer.rule",
+    ))];
+    let guards = guards();
+    let catalog = TypeCatalog::new(&definitions)
+        .with_action_rules(&rules)
+        .with_transition_guards(&guards);
+    let mut cell = open(&directory.path().join("tamper.sqlite"), &definitions, &[]);
+    seed_receipt(&mut cell);
+    let members = Members::of(&[SUBMITTER]);
+    let raise = action("ledger.payable.raise");
+    let request = call(
+        &raise,
+        SUBMITTER,
+        json!({"payable_id": "PAY-1", "receipt_id": "GR-1", "amount": 50}),
+        "p-1",
+    );
+    let dump = cell.store().read().dump().unwrap();
+    let mut tampered = Tamper {
+        inner: &mut cell,
+        drop_links: true,
+    };
+    assert!(commit_action(&mut tampered, &catalog, &request, &members).is_err());
+    assert_eq!(cell.store().read().dump().unwrap(), dump);
+    let mut forwarded = Tamper {
+        inner: &mut cell,
+        drop_links: false,
+    };
+    assert!(matches!(
+        commit_action(&mut forwarded, &catalog, &request, &members).unwrap(),
+        ActionOutcome::Committed { .. }
+    ));
+    assert!(
+        cell.load_link(&norn_kernel::LinkKey::new(
+            FactKey::new(PAYABLE, "PAY-1"),
+            "receipt",
+            FactKey::new(RECEIPT, "GR-1"),
+        ))
+        .unwrap()
+        .exists()
+    );
+}
+
+/// ACTOR-INDEPENDENT-1 (Astra round 3): a guard reaches across ancestry. A
+/// base-type transition on an object whose subtype introduces a protected
+/// actor refuses with guards bound (the subtype action's guard applies) and
+/// with guards unbound (fail closed), never slipping through either path.
+#[test]
+fn a_base_transition_on_a_subtype_with_a_protected_actor_refuses_bound_or_unbound() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut definitions = types();
+    for definition in [
+        json!({"name": "ledger.Document", "properties": [
+            {"id": "doc_id", "type": {"kind": "text"}},
+            {"id": "status", "type": {"kind": "enum", "values": [{"value": "draft"}, {"value": "filed"}]},
+                "default": "draft"}],
+            "lifecycles": [{"property": "status", "initial": ["draft"], "terminal": ["filed"],
+                "transitions": [{"id": "file", "from": ["draft"], "to": "filed"}]}]}),
+        json!({"name": "ledger.Claim", "extends": "ledger.Document", "properties": [
+            {"id": "filed_by", "type": {"kind": "text"}, "protected": true}]}),
+    ] {
+        definitions.push(serde_json::from_value(definition).unwrap());
+    }
+    let action_of = |payload: Value| -> ActionRoot { serde_json::from_value(payload).unwrap() };
+    let fire = |kind: &str, guarded: bool| {
+        let mut payload = json!({"actionId": format!("{kind}.file"),
+            "scopeRequired": ["orgId", "environmentId"], "idempotent": true, "ledgered": true,
+            "inputSchema": {"type": "object", "additionalProperties": false,
+                "properties": {"doc_id": {"type": "string"}}, "required": ["doc_id"]},
+            "outputSchema": {"type": "object", "additionalProperties": false, "properties": {}},
+            "writes": [{"entityKind": kind, "change": "modified"}],
+            "effectProgram": {"kind": "fire_transition", "objectIdField": "doc_id",
+                "objectKind": kind, "entityArtifactId": format!("{kind}.entity"),
+                "entityArtifactVersion": "1.0.0", "lifecycle": "status", "transition": "file"}});
+        if guarded {
+            payload["independentOf"] = json!(["filed_by"]);
+        }
+        action_of(payload)
+    };
+    let open_claim = action_of(json!({"actionId": "ledger.claim.open",
+        "scopeRequired": ["orgId", "environmentId"], "idempotent": true, "ledgered": true,
+        "inputSchema": {"type": "object", "additionalProperties": false,
+            "properties": {"doc_id": {"type": "string"}, "filed_by": {"type": "string"}},
+            "required": ["doc_id", "filed_by"]},
+        "outputSchema": {"type": "object", "additionalProperties": false, "properties": {}},
+        "derive": [{"field": "filed_by", "expression": "actor.subjectId", "inputRequired": false}],
+        "writes": [{"entityKind": "ledger.Claim", "change": "created"}],
+        "effectProgram": {"kind": "upsert_input_object", "objectIdField": "doc_id",
+            "objectKind": "ledger.Claim", "entityArtifactId": "ledger.Claim.entity",
+            "entityArtifactVersion": "1.0.0", "writeMode": {"kind": "create_only"}}}));
+    let guards = transition_guards([&fire("ledger.Claim", true)]);
+    let base = fire("ledger.Document", false);
+    let unbound = TypeCatalog::new(&definitions);
+    let bound = TypeCatalog::new(&definitions).with_transition_guards(&guards);
+    let mut cell = open(&directory.path().join("claim.sqlite"), &definitions, &[]);
+    let members = Members::of(&[SUBMITTER]);
+    let opened = call(&open_claim, SUBMITTER, json!({"doc_id": "CL-1"}), "o-1");
+    commit_action(&mut cell, &bound, &opened, &members).unwrap();
+    let dump = cell.store().read().dump().unwrap();
+    for (catalog, key) in [(&unbound, "f-unbound"), (&bound, "f-bound")] {
+        let filed = call(&base, SUBMITTER, json!({"doc_id": "CL-1"}), key);
+        let refusal = commit_action(&mut cell, catalog, &filed, &members).unwrap_err();
+        assert_eq!(
+            refusal.code(),
+            "action.permission_denied",
+            "{key}: {refusal}"
+        );
+        assert_eq!(cell.store().read().dump().unwrap(), dump);
+    }
+}

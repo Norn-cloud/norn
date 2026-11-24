@@ -88,6 +88,7 @@ export const Payable = Norn.type({
   name: "ledger.Payable", title: "Payable", version: "1.0.0",
   properties: Schema.Struct({ payable_id: Schema.String, receipt_id: Schema.String, amount: Schema.Int, submitted_by: Schema.String }),
   protected: ["submitted_by"],
+  links: [{ id: "receipt", target: GoodsReceipt, cardinality: { to: "one", from: "many" } }],
 })
 const RaiseInput = Schema.Struct({ payable_id: Schema.String, receipt_id: Schema.String, amount: Schema.Int, submitted_by: Schema.String })
 export const MatchWriter = Norn.decision({
@@ -105,6 +106,7 @@ export const RaisePayable = Norn.action({
   fromCaller: ["submitted_by"],
   slice: [{ name: "receipt", type: GoodsReceipt, key: { property: { from: "input", property: "receipt_id" } } }],
   synchronousRule: MatchWriter,
+  createLinks: [{ link: "receipt", targetType: GoodsReceipt, targetIdField: "receipt_id" }],
   writes: [{ type: Payable, change: "created" }, { type: GoodsReceipt, change: "modified" }],
   effect: { kind: "upsert_input_object", type: Payable, objectIdField: "payable_id", writeMode: { kind: "create_only" } },
 })

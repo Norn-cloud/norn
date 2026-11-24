@@ -109,16 +109,10 @@ pub(crate) fn check_independent_actor<X>(
             .flat_map(|guard| &guard.independent_of),
     );
     let effective = catalog.effective_type(&target.object_type);
-    // Guards live only on protected actors. Without bound guards a type with
-    // protected properties fails closed: sibling guards are unknown, not absent.
-    if catalog.transition_guards.is_none()
-        && effective.is_some_and(|effective| {
-            effective
-                .properties
-                .iter()
-                .any(norn_checker::EffectiveProperty::protected)
-        })
-    {
+    // Guards live only on protected actors, of this type or a related one.
+    // Without bound guards such a transition fails closed: sibling guards
+    // are unknown, not absent.
+    if catalog.transition_guards.is_none() && catalog.related_protected(&target.object_type) {
         return Err(ActionRefusal::PermissionDenied {
             reason: "ACTOR-INDEPENDENT-1: transition guards are not bound for a type with protected actors".to_owned(),
         });

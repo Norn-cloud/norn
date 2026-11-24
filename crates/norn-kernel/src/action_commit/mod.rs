@@ -562,7 +562,8 @@ where
         .then(|| reference_read_proof(catalog, call.action, authorizer, &commit, &target))
         .flatten();
     // ACTOR-STAMP-1: the proof binds this exact transaction; only it admits the stamp.
-    let stamp = creator_stamp.map(|stamp| crate::CreatorStampProof::new(stamp, &commit));
+    let stamp =
+        creator_stamp.map(|stamp| crate::CreatorStampProof::new(stamp, &commit, limits.max_events));
     let result = if let Some(proof) = stamp {
         let quantity = quantity
             .as_ref()
