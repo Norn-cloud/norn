@@ -5,7 +5,7 @@
  */
 import { queryOptions, type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect } from "react"
-import { CellUnavailable, StudioScopeError, isReadMethod, parseUnavailableDetail, readStudioScope, recordCellReachable, sameStudioScope, scopedHostFetch, studioScopeKey, useStudioScope, type ScopedRequestInit, type StudioScope, type UnavailableDetail } from "./definitions.ts"
+import { CellUnavailable, StudioScopeError, defaultFetch, isReadMethod, parseUnavailableDetail, readAtScope, readStudioScope, recordCellReachable, resolveWriteScope, sameStudioScope, scopedHostFetch, studioScopeKey, useStudioScope, type ScopedRequestInit, type StudioScope, type UnavailableDetail } from "./definitions.ts"
 import { readDocument, type Read } from "./exact.ts"
 import { readsOf } from "./objects.ts"
 import type { Artifact, Envelope, LinkPage, ObjectPage, ObjectRecord, SourceLineage, Transport } from "./transport.ts"
@@ -188,6 +188,48 @@ export function liveTransport(catalog: Read<readonly Artifact[]>, fetcher: Fetch
   }
 }
 
+/**
+ * Read one live record, its links, and its lineage pinned explicitly to `scope`. Verifies `/api/me`
+ * matches `scope` before and after dispatch so a stale drawer cannot read from another workspace.
+ */
+export async function readObjectAtScope(
+  objectType: string,
+  id: string,
+  scope: StudioScope,
+  signal?: AbortSignal,
+  fetcher: Fetch = defaultFetch,
+) {
+  const call = scopedHostFetch(fetcher, "/api/host", async () => scope)
+  const read = async <T,>(path: string): Promise<Read<T> | null> => {
+    const response = await call(path, { headers: { accept: "application/json" }, ...(signal === undefined ? {} : { signal }) })
+    const text = await response.text()
+    if (response.status === 404) return null
+    if (!response.ok) {
+      let parsed: unknown = null
+      try { parsed = JSON.parse(text) } catch { /* not a refusal document */ }
+      const message = typeof (parsed as { message?: unknown } | null)?.message === "string" ? (parsed as { message: string }).message : undefined
+      throw new CellUnavailable(response.status, message, parseUnavailableDetail(parsed))
+    }
+    return readDocument<T>(text, "live")
+  }
+  const objectPath = (leaf?: string) => `/v1/objects/${encodeURIComponent(objectType)}/${encodeURIComponent(id)}${leaf ? `/${leaf}` : ""}`
+  return readAtScope(
+    scope,
+    (s) => readStudioScope(fetcher, s),
+    async () => {
+      const [object, links, source] = await Promise.all([
+        read<ObjectRecord>(objectPath()),
+        read<{ objectType: string; id: string; items: LinkPage["items"]; next?: string | null; counts?: LinkCounts | null }>(objectPath("links")),
+        read<SourceLineage>(objectPath("lineage")),
+      ])
+      if (object === null || links === null) return null
+      const page = linkPage(links)
+      return readsOf(objectType, id, object.document, page.document) ? { object, links: page, source } : null
+    },
+    signal,
+  )
+}
+
 /** Raised when an in-flight mode read settles after a newer scope or `refreshMode()` superseded it. */
 export class ScopeSupersededError extends Error {
   constructor() { super("The active workspace scope changed while reading cell capabilities.") }
@@ -230,7 +272,7 @@ function observeModeProbe(probe: ModeProbe, signal?: AbortSignal): Promise<Mode>
  * tried again on the next read.
  */
 export function currentMode(
-  fetcher: Fetch = browserFetch,
+  fetcher: Fetch = defaultFetch,
   knownScope?: StudioScope | null,
   signal?: AbortSignal,
 ): Promise<Mode> {
@@ -314,12 +356,23 @@ export class CellRefusal extends Error {
 /**
  * One scoped call to a cell route, with every number's exact text. A cell-level 503 on a read
  * preserves its refusal details as {@link CellUnavailable}. Writes retain their existing 503
- * handling as {@link NotServed}, including the dataset fallback to governed records.
+ * handling as {@link NotServed}, including the dataset fallback to governed records, and bind
+ * to the originating scope via {@link resolveWriteScope}.
  */
 export async function cellRead<T>(
-  path: string, what: string, init: ScopedRequestInit = {}, fetcher: Fetch = browserFetch, scope?: StudioScope,
+  path: string,
+  what: string,
+  init: ScopedRequestInit = {},
+  fetcher: Fetch = defaultFetch,
+  boundScope?: StudioScope | null,
 ): Promise<Read<T>> {
-  const call = scopedHostFetch(fetcher, "/api/host", async () => scope ?? readStudioScope(fetcher))
+  const write = !isReadMethod(init.method)
+  const scopeProvider = write
+    ? () => resolveWriteScope(fetcher, boundScope)
+    : boundScope !== undefined
+      ? async () => boundScope
+      : () => readStudioScope(fetcher, init.signal ?? undefined)
+  const call = scopedHostFetch(fetcher, "/api/host", scopeProvider)
   const response = await call(path, { ...init, headers: { accept: "application/json", ...init.body === undefined ? {} : { "content-type": "application/json" }, ...init.headers } })
   const text = await response.text()
   if (response.ok) return readDocument<T>(text, "live")
@@ -386,12 +439,22 @@ function maybeInvalidateSession(client: QueryClient, nextScope: StudioScope | nu
 }
 
 /**
- * Synchronize Studio's client caches when a scoped read discovers `/api/me` moved to a new scope
- * (org or environment): invalidates the old mode/catalog, cancels and drops old-scope queries,
- * updates `["studio-scope"]` so every capability gate closes immediately until the new scope's
- * catalog arrives, and refreshes the session query if needed.
+ * Synchronize Studio's client caches when a scoped read or write discovers `/api/me` moved to a new
+ * scope (org or environment): invalidates the old mode/catalog, cancels and drops old-scope queries,
+ * and closes capability gates immediately. When `nextScope` is `undefined` (for example, a write
+ * received `409 workspace.changed` but the follow-up `/api/me` read failed during an outage), stale
+ * caches are purged and `["studio-scope"]` is invalidated without writing `null` into the cache so
+ * Studio never falls back to recorded mode during an outage.
  */
-export function syncStudioScopeChange(client: QueryClient, nextScope: StudioScope | null): void {
+export function syncStudioScopeChange(client: QueryClient, nextScope: StudioScope | null | undefined): void {
+  if (nextScope === undefined) {
+    lastObservedScope.delete(client)
+    refreshMode()
+    purgeStaleScopeQueries(client, "")
+    void client.resetQueries({ queryKey: ["studio-scope"], exact: true })
+    void client.invalidateQueries({ queryKey: ["session"] })
+    return
+  }
   const nextKey = studioScopeKey(nextScope)
   lastObservedScope.set(client, nextKey)
   if (activeModeScopeKey !== nextKey) refreshMode()

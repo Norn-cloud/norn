@@ -1,7 +1,7 @@
 import { afterEach, expect, mock, spyOn, test } from "bun:test"
 import { QueryClient, QueryObserver, queryOptions } from "@tanstack/react-query"
 import { studioScopeQuery } from "../src/lib/definitions.ts"
-import { NotServed, ScopeSupersededError, currentMode, liveTransport, modeQuery, readMode, refreshMode, retryMode } from "../src/lib/live-transport.ts"
+import { NotServed, ScopeSupersededError, currentMode, liveTransport, modeQuery, readMode, refreshMode, retryMode, syncStudioScopeChange } from "../src/lib/live-transport.ts"
 
 const realFetch = globalThis.fetch
 afterEach(() => {
@@ -432,6 +432,34 @@ test("once the mode query settles on an outage, page reads reuse its error inste
     expect(definitionReads).toHaveLength(5)
   } finally {
     fetch.mockRestore()
+    client.clear()
+  }
+})
+
+test("syncStudioScopeChange(client, undefined) immediately flips mounted scope observers to pending without writing null", () => {
+  const client = new QueryClient()
+  const scopeA = { orgId: "org_a", environmentId: "env_a" }
+  client.setQueryData(["studio-scope"], scopeA)
+  client.setQueryData(["studio-mode", JSON.stringify([scopeA.orgId, scopeA.environmentId])], { kind: "live", scope: scopeA })
+  const pending = new Promise<typeof scopeA | null>(() => {})
+  const observer = new QueryObserver(client, {
+    queryKey: ["studio-scope"],
+    queryFn: () => pending,
+  })
+  const unsubscribe = observer.subscribe(() => {})
+  try {
+    expect(observer.getCurrentResult().status).toBe("success")
+    expect(observer.getCurrentResult().data).toEqual(scopeA)
+    syncStudioScopeChange(client, undefined)
+    const after = observer.getCurrentResult()
+    expect(after.status).toBe("pending")
+    expect(after.isPending).toBe(true)
+    expect(after.isSuccess).toBe(false)
+    expect(after.data).toBeUndefined()
+    expect(client.getQueryData(["studio-scope"])).toBeUndefined()
+    expect(client.getQueryData(["studio-mode", JSON.stringify([scopeA.orgId, scopeA.environmentId])])).toBeUndefined()
+  } finally {
+    unsubscribe()
     client.clear()
   }
 })

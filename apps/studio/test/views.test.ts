@@ -7,12 +7,12 @@ import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { catalogOf } from "../src/lib/catalog.ts"
 import type { Fetch } from "../src/lib/cell-read.ts"
-import { StudioScopeError, type StudioScope } from "../src/lib/definitions.ts"
+import { CellUnavailable, EXPECTED_ENV_HEADER, EXPECTED_ORG_HEADER, readAtScope, StudioScopeError, type StudioScope } from "../src/lib/definitions.ts"
 import { history } from "../src/lib/editor.ts"
 import { readDocument } from "../src/lib/exact.ts"
 import { facetsQuery } from "../src/lib/facets.ts"
 import { EMPTY_QUERY, recordsQueryParams, recordsQueryPrefix } from "../src/lib/records-query.ts"
-import type { RecordsRead } from "../src/lib/records-source.ts"
+import { readRecordsAtScope, type RecordsRead } from "../src/lib/records-source.ts"
 import { init, update } from "../src/lib/screen/call.ts"
 import type { Artifact, ObjectPage } from "../src/lib/transport.ts"
 import {
@@ -165,8 +165,8 @@ test("views list and get pin one scope, attach loaded scope, skip retired defs, 
 
 test("view writes send explicitly to their bound scope and refuse when the active workspace changed", async () => {
   let activeScope: StudioScope | null = SCOPE_A
-  const hostCalls: { readonly path: string; readonly orgId: string | null; readonly environmentId: string | null }[] = []
-  const fetcher: Fetch = async (input) => {
+  const hostCalls: { readonly path: string; readonly orgId: string | null; readonly environmentId: string | null; readonly expectedOrg: string | null; readonly expectedEnv: string | null }[] = []
+  const fetcher: Fetch = async (input, init) => {
     const url = String(input)
     if (url === "/api/me") {
       return new Response(JSON.stringify({
@@ -175,10 +175,13 @@ test("view writes send explicitly to their bound scope and refuse when the activ
       }), { status: 200 })
     }
     const parsed = new URL(url, "https://studio.test")
+    const headers = new Headers(init?.headers)
     hostCalls.push({
       path: parsed.pathname,
       orgId: parsed.searchParams.get("orgId"),
       environmentId: parsed.searchParams.get("environmentId"),
+      expectedOrg: headers.get(EXPECTED_ORG_HEADER),
+      expectedEnv: headers.get(EXPECTED_ENV_HEADER),
     })
     if (parsed.pathname.endsWith(":admit")) {
       return new Response(JSON.stringify({ admitted: true, restatement: "Saved view.", diagnostics: [] }), { status: 200 })
@@ -187,7 +190,7 @@ test("view writes send explicitly to their bound scope and refuse when the activ
   }
   const store = cellViews(fetcher)
 
-  // Matching scope dispatches explicitly to SCOPE_A.
+  // Matching scope dispatches explicitly to SCOPE_A with S1 expected-scope headers on every write.
   const admitted = await store.admit("studio.view.v1", SAMPLE_VIEW, SCOPE_A)
   expect(admitted.admitted).toBe(true)
   const saved = await store.save("studio.view.v1", SAMPLE_VIEW, 1, SCOPE_A)
@@ -195,9 +198,9 @@ test("view writes send explicitly to their bound scope and refuse when the activ
   const retired = await store.retire("studio.view.v1", 2, SCOPE_A)
   expect(retired).toEqual({ saved: true, id: "studio.view.v1", version: 2 })
   expect(hostCalls).toEqual([
-    { path: "/api/host/v1/definitions:admit", orgId: "org_a", environmentId: "prod" },
-    { path: "/api/host/v1/definitions:install", orgId: "org_a", environmentId: "prod" },
-    { path: "/api/host/v1/definitions/studio.view.v1:retire", orgId: "org_a", environmentId: "prod" },
+    { path: "/api/host/v1/definitions:admit", orgId: "org_a", environmentId: "prod", expectedOrg: "org_a", expectedEnv: "prod" },
+    { path: "/api/host/v1/definitions:install", orgId: "org_a", environmentId: "prod", expectedOrg: "org_a", expectedEnv: "prod" },
+    { path: "/api/host/v1/definitions/studio.view.v1:retire", orgId: "org_a", environmentId: "prod", expectedOrg: "org_a", expectedEnv: "prod" },
   ])
 
   // Switching org, switching environment, or losing the cell refuses before any host request is sent.
@@ -855,4 +858,94 @@ test("grid query edits preserve legacy columns while a displayed column change r
   expect(updated.sort).toBe(sortText(sort))
   const reordered = [...visible].reverse()
   expect(updateGridView(view, { ...EMPTY_QUERY, columns: reordered, initialColumns: visible }).columns).toEqual(reordered)
+})
+
+test("scoped reads thread AbortSignal to network fetches, reject abort during final probe, and preserve outages", async () => {
+  // 1. getAtScope forwards AbortSignal to both scope probes and the definition GET (linked through fetchWithTimeout),
+  //    aborting the in-flight GET when cancelled and rejecting if cancelled during the final probe.
+  const scopeSignals: (AbortSignal | null | undefined)[] = []
+  let getSignalAborted = false
+  const abortDuringGet = new AbortController()
+  const cancelStore = cellViews(
+    async (_input, init) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => {
+        getSignalAborted = true
+        reject(init.signal?.reason ?? new DOMException("Aborted", "AbortError"))
+      }, { once: true })
+      abortDuringGet.abort(new DOMException("Cancelled", "AbortError"))
+    }),
+    async (signal) => { scopeSignals.push(signal); return SCOPE_A },
+  )
+  await expect(cancelStore.getAtScope("studio.view.v1", SCOPE_A, abortDuringGet.signal)).rejects.toThrow()
+  expect(getSignalAborted).toBe(true)
+  expect(scopeSignals).toEqual([abortDuringGet.signal])
+
+  let probeCount = 0
+  const controller = new AbortController()
+  const seenProbeSignals: (AbortSignal | null | undefined)[] = []
+  const store = cellViews(
+    async () => Response.json({ id: "studio.view.v1", version: 1, lifecycle: "active", payload: SAMPLE_VIEW }),
+    async (signal) => {
+      seenProbeSignals.push(signal)
+      probeCount += 1
+      if (probeCount === 2) controller.abort(new DOMException("Cancelled", "AbortError"))
+      return SCOPE_A
+    },
+  )
+  await expect(store.getAtScope("studio.view.v1", SCOPE_A, controller.signal)).rejects.toThrow(WORKSPACE_CHANGED_MESSAGE)
+  expect(seenProbeSignals).toEqual([controller.signal, controller.signal])
+
+  // 2. readAtScope also rejects when signal aborts before the final probe resolves.
+  const lateAbort = new AbortController()
+  let scopeCalls = 0
+  await expect(readAtScope(
+    SCOPE_A,
+    async () => {
+      scopeCalls += 1
+      if (scopeCalls === 2) lateAbort.abort()
+      return SCOPE_A
+    },
+    async () => "ok",
+    lateAbort.signal,
+  )).rejects.toThrow(StudioScopeError)
+
+  // 3. A 200 definition response whose body stream fails preserves the stream error instead of substituting null.
+  const brokenStream = new ReadableStream<Uint8Array>({
+    start(ctrl) { ctrl.error(new CellUnavailable(0, "Stream timed out", { timedOut: true, retryable: true, code: "cell.timeout" })) },
+  })
+  const streamStore = cellViews(
+    async () => new Response(brokenStream, { status: 200, headers: { "content-type": "application/json" } }),
+    async () => SCOPE_A,
+  )
+  const streamErr = await streamStore.get("studio.view.v1", SCOPE_A).catch((e: unknown) => e)
+  expect(streamErr).toBeInstanceOf(CellUnavailable)
+  expect((streamErr as CellUnavailable).timedOut).toBe(true)
+
+  // 4. Scoped live records preview preserves structured 503 cell.unopenable instead of reporting unserved type/query.
+  const unopenableFetch: Fetch = async () => Response.json(
+    { code: "cell.unopenable", message: "Cell is temporarily sealed.", retryable: false },
+    { status: 503 },
+  )
+  const previewErr = await readRecordsAtScope("demo.Record", EMPTY_QUERY, SCOPE_A, unopenableFetch).catch((e: unknown) => e)
+  expect(previewErr).toBeInstanceOf(CellUnavailable)
+  expect((previewErr as CellUnavailable).status).toBe(503)
+  expect((previewErr as CellUnavailable).code).toBe("cell.unopenable")
+  expect((previewErr as CellUnavailable).retryable).toBe(false)
+
+  // 5. facetsQuery forwards the TanStack Query AbortSignal to /api/me and the facets fetch without misreporting FacetsTimedOut.
+  const facetSignals: (AbortSignal | null | undefined)[] = []
+  const facetAbort = new AbortController()
+  const facetQuery = facetsQuery(
+    { objectType: "demo.Record", filter: null, scope: SCOPE_A },
+    async (input, init) => {
+      facetSignals.push(init?.signal)
+      if (String(input) === "/api/me") return Response.json({ organization: { id: SCOPE_A.orgId }, environmentId: SCOPE_A.environmentId })
+      facetAbort.abort(new DOMException("Cancelled", "AbortError"))
+      throw facetAbort.signal.reason
+    },
+  )
+  const facetErr = await Promise.resolve(facetQuery.queryFn!({ signal: facetAbort.signal, queryKey: facetQuery.queryKey, meta: undefined, client: new QueryClient() } as never)).catch((e: unknown) => e)
+  expect((facetErr as Error).name).toBe("AbortError")
+  expect(facetSignals.length).toBeGreaterThanOrEqual(2)
+  expect(facetSignals.every((s) => s !== undefined)).toBe(true)
 })

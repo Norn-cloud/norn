@@ -16,6 +16,7 @@ import { sharedEngine } from "../lib/canvas/checker.ts"
 import { defaultFetch } from "../lib/cell-read.ts"
 import { scopedHostFetch } from "../lib/definitions.ts"
 import { flowTitle, remaining, stepTitle, urgent, type Decision, type Risk } from "../lib/decisions.ts"
+import { usePinnedScope } from "../lib/session.ts"
 import { useLearningCapabilities } from "../lib/learning/capabilities.ts"
 import sheetDocument from "./decision-sheet.widget.json"
 
@@ -65,6 +66,8 @@ export function DecisionSheet({ decision, now, onClose, onSettled }: {
   const { locale } = useLocale()
   const { view } = useView()
   const navigate = useNavigate()
+  // Pin the workspace scope that loaded this decision so a session switch/refresh cannot redirect submission.
+  const pinnedScope = usePinnedScope(decision?.id ?? false)
   const learning = useLearningCapabilities()
   const episodesAvailable = useRef(learning.episodes)
   episodesAvailable.current = learning.episodes
@@ -100,7 +103,7 @@ export function DecisionSheet({ decision, now, onClose, onSettled }: {
     if (decision === null || target === null) return
     defineDecisionSheet()
     const sheet = document.createElement("norn-decision-sheet") as NornDecisionSheet
-    const call = scopedHostFetch(defaultFetch)
+    const call = scopedHostFetch(defaultFetch, "/api/host", pinnedScope !== undefined ? async () => pinnedScope : undefined)
     sheet.options = {
       document: DOCUMENT,
       decision,
