@@ -338,7 +338,8 @@ test("buildSemanticMap marks counts as lower bounds when the inbox capped its gr
   expect(item.ruleHoldings).toBe(20)
   expect(item.ruleHoldingsApproximate).toBe(true)
   expect(map.islandsById.get(item.islandId)!.ruleHoldingsApproximate).toBe(true)
-  expect(map.totals.alerts).toMatchObject({ ruleHoldings: 21, ruleHoldingsApproximate: true, bounded: true })
+  // The section's own count is exact (21); only what the map places from the returned slice is a lower bound.
+  expect(map.totals.alerts).toMatchObject({ ruleHoldings: 21, ruleHoldingsApproximate: false, bounded: true })
 
   const sources: Inbox = {
     scanLimit: 500,
@@ -354,7 +355,7 @@ test("buildSemanticMap marks counts as lower bounds when the inbox capped its gr
   expect(gamma.sourceErrors).toBe(20)
   expect(gamma.sourceErrorsApproximate).toBe(true)
   expect(capped.islandsById.get(gamma.islandId)!.sourceErrorsApproximate).toBe(true)
-  expect(capped.totals.alerts?.sourceErrorsApproximate).toBe(true)
+  expect(capped.totals.alerts).toMatchObject({ sourceErrors: 21, sourceErrorsApproximate: false, bounded: true })
 })
 
 // #1705: a source error's own id is its connection record's id; only a named mapping or an unambiguous system places it.
@@ -374,7 +375,7 @@ test("buildSemanticMap never joins a source error on its connection id, and an u
   expect(alpha.sourceErrors).toBe(0)
   expect(alpha.attention).toBe("unknown")
   expect([...map.islandsById.values()].every((island) => island.attention === "unknown")).toBe(true)
-  expect(map.totals.alerts).toMatchObject({ sourceErrors: 1, sourceErrorsApproximate: true, bounded: true })
+  expect(map.totals.alerts).toMatchObject({ sourceErrors: 1, sourceErrorsApproximate: false, bounded: true })
 
   const named = buildSemanticMap(sampleCatalog(), { kind: "live", inbox: { ...inbox, items: [{ kind: "source_error", id: "conn_9", target: "/connections", values: { system: "Gamma Feed" } }] } })
   expect(named.nodesById.get("app.Item")!.sourceErrors).toBe(1)

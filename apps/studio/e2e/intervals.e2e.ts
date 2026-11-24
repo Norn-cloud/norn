@@ -144,6 +144,11 @@ test("picker: the search field and its list are named; arrows and Enter pick by 
   await expect(search).toBeFocused()
   const list = page.getByRole("listbox", { name: "Equipment records" })
   await expect(list.getByRole("option").first()).toBeVisible()
+  // The list opens under the field, as wide as it, inside the sheet: nothing scrolls the sheet sideways.
+  // The sheet is the outer dialog; the open list is a dialog inside it.
+  const [popup, field, panel] = await Promise.all([page.getByRole("dialog", { name: "Choose a equipment" }).boundingBox(), equipment.boundingBox(), form.first().boundingBox()])
+  expect(Math.abs(popup!.width - field!.width)).toBeLessThanOrEqual(1)
+  expect(popup!.x + popup!.width).toBeLessThanOrEqual(panel!.x + panel!.width + 1)
   await search.fill("fork")
   await expect(list.getByRole("option")).toHaveText([/Forklift\s*equipment\/2/, /Use the id/])
   await shoot(page, "picker-named")
@@ -158,7 +163,7 @@ test("picker: the search field and its list are named; arrows and Enter pick by 
   await page.keyboard.press("Escape")
   await expect(list).toBeHidden()
   await expect(equipment).toBeFocused()
-  await expect(form).toBeVisible()
+  await expect(form).toHaveCount(1)
   await expect(equipment).toContainText("Forklift")
 })
 

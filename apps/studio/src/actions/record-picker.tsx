@@ -235,7 +235,7 @@ export function RecordPicker({ objectKind, value, onPick, aria, read = readRecor
         <Combobox.Portal container={layer}>
           <Combobox.Positioner align="start" sideOffset={4} className="z-50 outline-none">
             <Combobox.Popup aria-label={`Choose a ${noun}`}
-              className="flex max-h-[min(24rem,var(--available-height))] w-[min(28rem,90vw)] origin-(--transform-origin) flex-col overflow-hidden rounded-node border border-node-border bg-popover p-1 text-popover-foreground shadow-float outline-none transition-[opacity,scale] duration-100 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0">
+              className="flex max-h-[min(24rem,var(--available-height))] w-(--anchor-width) max-w-(--available-width) min-w-64 origin-(--transform-origin) flex-col overflow-hidden rounded-node border border-node-border bg-popover p-1 text-popover-foreground shadow-float outline-none transition-[opacity,scale] duration-100 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0">
               <div className="flex items-center gap-2 border-b border-border/60 px-3">
                 <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden />
                 <Combobox.Input aria-label={`Search ${noun} records`}

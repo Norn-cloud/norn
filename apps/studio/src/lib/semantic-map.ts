@@ -454,9 +454,9 @@ export function buildSemanticMap(
   const alerts = liveInbox
     ? {
         ruleHoldings: heldSection?.count ?? 0,
-        ruleHoldingsApproximate: holdingsBounded,
+        ruleHoldingsApproximate: Boolean(heldSection?.approximate),
         sourceErrors: sourceSection?.count ?? 0,
-        sourceErrorsApproximate: sourcesBounded,
+        sourceErrorsApproximate: Boolean(sourceSection?.approximate),
         bounded: inboxBounded,
         scanLimit: liveInbox.scanLimit,
       }

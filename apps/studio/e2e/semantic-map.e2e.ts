@@ -71,12 +71,12 @@ test("map: a capped inbox reads as lower bounds, and a connection id is never ta
   await cell(page, truncatedInbox)
   await page.goto("/map")
   const erp = island(page, "ERPNext")
-  // 20 groups came back of 21: the count is at least 20, never exactly 20.
+  // 20 groups came back of 21: the island's count is at least 20, never exactly 20; the section's 21 is exact.
   await expect(erp.getByText("20+ rule holdings")).toBeVisible()
   // The failing connection named no mapping, so ERPNext shows no sync error for it, and no island reads clear.
   await expect(erp.getByText(/sync/)).toHaveCount(0)
   await expect(island(page, "Canon").getByText("None in returned slice")).toBeVisible()
-  await expect(page.locator('[data-slot="kpi"]').filter({ hasText: "Inbox alerts" })).toContainText("22+")
+  await expect(page.locator('[data-slot="kpi"]').filter({ hasText: "Inbox alerts" })).toContainText(/\b22(?!\+)\b/)
   await shoot(page, info, "overview")
 
   await erp.getByRole("button", { name: "Expand island" }).click()
