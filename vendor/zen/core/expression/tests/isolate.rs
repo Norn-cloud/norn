@@ -1185,15 +1185,17 @@ fn speculative_parses_reuse_nested_bracket_results() {
     let _ = isolate.run_standard(&chained);
 }
 
-/// Norn (#1711): the deterministic VM has no RNG; `rand` is not a built-in.
+/// Norn (#1711): the deterministic VM has no RNG; `rand` is not a built-in, so every
+/// call is refused by the parser (as `UnknownBuiltIn`, or as `Incomplete` when the
+/// parser cannot recover a complete expression).
 #[test]
 fn rand_is_not_a_built_in() {
     let mut isolate = Isolate::new();
     for expr in ["rand(1)", "rand(100) >= 0"] {
         let err = isolate.run_standard(expr).err();
         assert!(
-            format!("{err:?}").contains("rand"),
-            "{expr}: expected an unknown built-in error, got {err:?}"
+            matches!(err, Some(zen_expression::IsolateError::ParserError { .. })),
+            "{expr}: expected a parser refusal, got {err:?}"
         );
     }
     let unary = isolate.run_unary("rand(1)").err();
