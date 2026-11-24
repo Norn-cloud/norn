@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { GitBranch } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { Panel, Well } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -50,11 +50,10 @@ export function LifecycleView({ concept, lifecycle, filter = null }: {
   const checker = useQuery({ queryKey: ["checker"], queryFn: () => loadChecker(), staleTime: Infinity, retry: false })
   const [host, setHost] = useState<HTMLDivElement | null>(null)
   const field = concept.fields.find((candidate) => candidate.id === lifecycle.property)
-  const transitions = lifecycle.transitions ?? []
-  const terminal = lifecycle.terminal ?? []
-  const states = declaredLifecycleStates(lifecycle, field)
-  const findings = findingsFor(concept.name, lifecycle.property, definitions.data?.document, checker.data)
-  const findingsKey = JSON.stringify(findings.map(({ code, message, pageState, unattributed, witness }) => [code, message, pageState ?? "", Boolean(unattributed), witness?.steps.length ?? -1]))
+  const { name, title } = concept
+  const { property } = lifecycle
+  const artifacts = definitions.data?.document
+  const findings = useMemo(() => findingsFor(name, property, artifacts, checker.data), [name, property, artifacts, checker.data])
   const path = facetsPath(concept.name, filter, [lifecycle.property])
   const propertyLabel = field?.label ?? sentence(lifecycle.property)
   const filtered = filter !== null && filter.all.length > 0
@@ -66,8 +65,15 @@ export function LifecycleView({ concept, lifecycle, filter = null }: {
     const call = scope === null ? null : scopedHostFetch((input, init) => fetch(input, init), "/api/host", async () => scope)
     view.options = {
       document: DOCUMENT,
-      lifecycle: { property: lifecycle.property, states, initial: lifecycle.initial, terminal, transitions: transitions.map(({ id, from, to }) => ({ id, from, to })), endings: lifecycle.endings ?? [] },
-      title: concept.title,
+      lifecycle: {
+        property,
+        states: declaredLifecycleStates(lifecycle, field),
+        initial: lifecycle.initial,
+        terminal: lifecycle.terminal ?? [],
+        transitions: lifecycle.transitions ?? [],
+        endings: lifecycle.endings ?? [],
+      },
+      title,
       hideTitle: true,
       // When live, read the cell's scoped facets route; when recorded or without a cell, draw the declared lifecycle without calling the network.
       ...(call !== null && scope !== null ? {
@@ -88,8 +94,7 @@ export function LifecycleView({ concept, lifecycle, filter = null }: {
     }
     host.replaceChildren(view)
     return () => view.remove()
-    // A different type, property, filter, scope, language or set of findings draws a fresh view.
-  }, [host, waitingForScope, concept.name, lifecycle.property, path, scope?.orgId, scope?.environmentId, locale, findingsKey, mode])
+  }, [host, waitingForScope, lifecycle, field, property, title, path, scope, locale, findings, mode])
 
   return (
     <Panel icon={GitBranch} label={`${locale === "ar" ? "دورة الحياة" : "Lifecycle"} · ${propertyLabel}`}

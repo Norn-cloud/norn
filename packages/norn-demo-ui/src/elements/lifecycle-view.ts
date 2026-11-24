@@ -176,6 +176,10 @@ export function isFacetsAnswer(value: unknown): value is FacetsAnswer {
     && body.facets.every((facet) =>
       typeof facet?.property === "string"
       && Array.isArray(facet.values)
+      && facet.values.every((entry: unknown) =>
+        typeof entry === "object" && entry !== null
+        && "value" in entry && (typeof entry.value === "string" || typeof entry.value === "boolean")
+        && "count" in entry && typeof entry.count === "number" && Number.isFinite(entry.count))
       && typeof facet.otherRows === "number"
       && typeof facet.nulls === "number")
 }

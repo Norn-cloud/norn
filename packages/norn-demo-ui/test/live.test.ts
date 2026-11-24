@@ -105,6 +105,25 @@ test("the last listener leaving unsubscribes on the wire and closes the socket",
   expect(socket.closed).toBe(1000)
 })
 
+test("a resubscribed path is unsubscribed before its recovery snapshot arrives", async () => {
+  const { client, sockets, flush } = harness()
+  const stop = client.subscribe("/v1/a", () => {})
+  const keep = client.subscribe("/v1/b", () => {})
+  await flush()
+  const socket = sockets[0]!
+  socket.emit("open")
+  socket.refused("s1", "live.too_many_subscriptions", "this socket's subscriptions are full")
+  socket.emit("close", { code: 4401 })
+  await flush()
+  const reconnected = sockets[1]!
+  reconnected.emit("open")
+  expect(reconnected.sent).toContainEqual({ type: "subscribe", id: "s1", path: "/v1/a" })
+  stop()
+  expect(reconnected.sent.at(-1)).toEqual({ type: "unsubscribe", id: "s1" })
+  expect(reconnected.closed).toBeNull()
+  keep()
+})
+
 test("refused frames notify per-subscription and client-level listeners, late subscribers, and skip permanently unsubscribable paths on reconnect", async () => {
   const { client, sockets, refusals, flush } = harness()
   const subA: LiveRefusal[] = []

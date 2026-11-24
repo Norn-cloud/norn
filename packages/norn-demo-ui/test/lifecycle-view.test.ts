@@ -87,6 +87,17 @@ test("legacy approximate bodies without lowerBound are rejected as invalid facet
   expect([...rejected.states.values()].every((count) => count.kind === "pending")).toBe(true)
 })
 
+test.each([null, { value: "draft", count: "3" }, { count: 3 }])("a malformed facet value (%j) leaves counts pending", (entry) => {
+  const body = {
+    rows: 3, withheldRows: 0, quarantinedRows: 0, lowerBound: false,
+    facets: [{ property: "status", values: [entry], otherRows: 0, nulls: 0 }],
+  }
+  expect(isFacetsAnswer(body)).toBe(false)
+  const rejected = countsFrom(ORDER, { status: 200, body })
+  expect(rejected.refused).toBe("The cell did not answer.")
+  expect(rejected.states.get("draft")).toEqual({ kind: "pending" })
+})
+
 test("before an answer every count is pending; a refusal shows no number at all", () => {
   expect([...countsFrom(ORDER, null).states.values()].every((count) => count.kind === "pending")).toBe(true)
   const refused = countsFrom(ORDER, { status: 403, body: { code: "authz.denied" } }, "ar")

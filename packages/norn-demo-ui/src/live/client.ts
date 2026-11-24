@@ -119,7 +119,7 @@ export class LiveClient {
       if (held.subscribers.size > 0) return
       this.#entries.delete(held.path)
       this.#byId.delete(held.id)
-      if (!held.refused) this.#send({ type: "unsubscribe", id: held.id })
+      if (held.refused?.code !== "live.not_subscribable") this.#send({ type: "unsubscribe", id: held.id })
       if (this.#entries.size === 0) this.close()
     }
   }

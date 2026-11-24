@@ -46,7 +46,7 @@ export function LifecycleStepper({ lifecycle, record, concept, locale: explicitL
   const roleDoc = { initial: lifecycle.initial, terminal: terminalList, endings: lifecycle.endings ?? [] }
   const typeLabel = concept?.title ?? conceptTitle(record.objectType)
   const propertyLabel = field?.label ?? sentence(lifecycle.property)
-  const display = (id: string) => lifecycleLabel(id, field)
+  const stateLabel = (id: string) => lifecycleLabel(id, field)
   return (
     <div dir={rtl ? "rtl" : "ltr"} lang={locale} className="space-y-3">
       <ol aria-label={`${typeLabel} ${propertyLabel}`} className="flex flex-wrap items-stretch gap-2">
@@ -65,7 +65,7 @@ export function LifecycleStepper({ lifecycle, record, concept, locale: explicitL
                   ? "border-primary bg-card font-medium text-foreground shadow-elevation ring-2 ring-primary/25"
                   : "border-border/90 bg-surface-subtle/70 text-muted-foreground",
               )}>
-                <span className={cn("leading-snug", current && "text-foreground")}>{display(step)}</span>
+                <span className={cn("leading-snug", current && "text-foreground")}>{stateLabel(step)}</span>
                 {role !== "" && <span className="text-[11px] font-normal text-muted-foreground">{role}</span>}
               </span>
             </li>
@@ -77,7 +77,7 @@ export function LifecycleStepper({ lifecycle, record, concept, locale: explicitL
           ? copy.unset(propertyLabel)
           : terminal || next.length === 0
             ? copy.noStep
-            : <>{copy.nextLead}{next.map(({ id, to }, index) => <span key={id}>{index > 0 && (rtl ? "، " : ", ")}<b className="font-medium text-foreground">{display(id)}</b> ({copy.to(display(to))})</span>)}{copy.nextTail}</>}
+            : <>{copy.nextLead}{next.map(({ id, to }, index) => <span key={id}>{index > 0 && (rtl ? "، " : ", ")}<b className="font-medium text-foreground">{sentence(id)}</b> ({copy.to(stateLabel(to))})</span>)}{copy.nextTail}</>}
       </p>
     </div>
   )

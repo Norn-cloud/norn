@@ -91,6 +91,21 @@ test("stepper shares declared state labels, unreachable states, roles and RTL wi
   expect(arHtml).toContain("لا يعلن التعريف أي خطوة من هنا.")
 })
 
+test("a transition ID shared with a state uses its own name in the next step", () => {
+  const withSharedId: Lifecycle = {
+    ...lifecycle,
+    transitions: [{ id: "approved", from: ["ready"], to: "ready" }],
+  }
+  const html = renderToStaticMarkup(
+    <LifecycleStepper lifecycle={withSharedId} concept={{
+      ...concept,
+      fields: concept.fields.map((field) => ({ ...field, valueLabels: new Map([...field.valueLabels ?? [], ["approved", "Approval complete"]]) })),
+    }} record={{ objectType: "core.Example", id: "x", scope: "s", version: 1, values: { status: "ready" } }} />,
+  )
+  expect(html).toContain("Approval complete")
+  expect(html).toContain(">Approved</b> (to Ready for review)")
+})
+
 test("findingsFor matches the exact widget page machine by pointer and ignores null witnesses", () => {
   const widget = {
     artifactId: "commerce.orders.widget",

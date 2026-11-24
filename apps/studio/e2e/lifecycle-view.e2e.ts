@@ -136,6 +136,8 @@ interface FacetsState {
   body: unknown
 }
 
+const statusFacetReads = (urls: readonly URL[]) => urls.filter((url) => url.searchParams.get("properties") === "status")
+
 interface FacetsSubscription {
   readonly id: string
   readonly property: string
@@ -363,13 +365,12 @@ test("locale: Arabic runs right to left with Arabic digits, mirrored cards, and 
   expect(Number(match![1])).toBeCloseTo(draftBox!.x - stageBox!.x, 0)
 })
 
-test("not served: a cell without the facets route says so, never counting forever; Try again asks again", async ({ page }) => {
+test("not served: a cell without the facets route says so, never counting forever", async ({ page }) => {
   const view = await specimen(page, "lifecycle-view/not-served")
   await expect(view.getByText(/This cell does not serve lifecycle counts yet\./)).toBeVisible()
   await expect(view.locator(".norn-life")).toHaveAttribute("data-machine-state", "unavailable")
   await expect(card(view, "draft").locator("[data-count]")).toHaveText("—")
-  await view.getByRole("button", { name: "Try again" }).click()
-  await expect(view.locator(".norn-life")).toHaveAttribute("data-machine-state", "unavailable")
+  await expect(view.getByRole("button", { name: "Try again" })).toBeVisible()
 })
 
 // --- Full Studio Records & Record page rows ---
@@ -498,25 +499,52 @@ test.describe("Records page Lifecycle view mode", () => {
     await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("12")
   })
 
-  test("records page: a 409 object.snapshot_moved retries once and recovers instead of hanging", async ({ page }) => {
-    let statusReads = 0
-    await lifecycleCell(page, {
-      status: okFacets("status", { draft: 15, submitted: 5 }),
-      payment_status: okFacets("payment_status", { unpaid: 20 }),
-    })
-    await page.route("**/api/host/v1/objects/commerce.PurchaseOrder:facets**", (route: Route) => {
-      const url = new URL(route.request().url())
-      if (url.searchParams.get("properties") === "status" && statusReads++ === 0) {
-        return route.fulfill({ status: 409, json: { code: "object.snapshot_moved", message: "Snapshot moved" } })
-      }
-      return route.fallback()
+  test("records page: Try again reads the facets route after it becomes available", async ({ page }) => {
+    const cell = await lifecycleCell(page, {
+      status: { status: 404, body: { code: "route.not_found" } },
+    }, {
+      includeWidget: false,
+      onFacetsSubscribe: (sub) => { if (sub.property !== "status") sub.sendSnapshot() },
     })
     await page.goto("/objects/commerce.PurchaseOrder#lifecycle")
     const statusView = page.locator('[data-testid="lifecycle-view"] norn-lifecycle-view').first()
-    await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("15")
-    await expect(statusView.locator(".norn-life")).toHaveAttribute("data-machine-state", "showing")
-    expect(statusReads).toBeGreaterThanOrEqual(2)
+    await expect(statusView.getByText("This cell does not serve lifecycle counts yet.", { exact: false })).toBeVisible()
+    expect(statusFacetReads(cell.facetRequests)).toHaveLength(1)
+    cell.setFacets("status", okFacets("status", { draft: 15 }))
+    await statusView.getByRole("button", { name: "Try again" }).click()
+    await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("15", { timeout: 5_000 })
+    expect(statusFacetReads(cell.facetRequests)).toHaveLength(2)
   })
+
+  for (const failures of [1, 2]) {
+    test(`records page: snapshot moved retries once with ${failures} HTTP 409 response(s)`, async ({ page }) => {
+      let statusReads = 0
+      await lifecycleCell(page, {
+        status: okFacets("status", { draft: 15, submitted: 5 }),
+        payment_status: okFacets("payment_status", { unpaid: 20 }),
+      }, {
+        includeWidget: false,
+        onFacetsSubscribe: (sub) => { if (sub.property !== "status") sub.sendSnapshot() },
+      })
+      await page.route("**/api/host/v1/objects/commerce.PurchaseOrder:facets**", (route: Route) => {
+        const url = new URL(route.request().url())
+        if (url.searchParams.get("properties") === "status" && ++statusReads <= failures) {
+          return route.fulfill({ status: 409, json: { code: "object.snapshot_moved", message: "Snapshot moved" } })
+        }
+        return route.fallback()
+      })
+      await page.goto("/objects/commerce.PurchaseOrder#lifecycle")
+      const statusView = page.locator('[data-testid="lifecycle-view"] norn-lifecycle-view').first()
+      if (failures === 1) {
+        await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("15")
+        await expect(statusView.locator(".norn-life")).toHaveAttribute("data-machine-state", "showing")
+      } else {
+        await expect(statusView.locator(".norn-life")).toHaveAttribute("data-machine-state", "unavailable")
+        await expect(statusView.getByRole("button", { name: "Try again" })).toBeVisible()
+      }
+      expect(statusReads).toBe(2)
+    })
+  }
 
   test("records page: newer first socket snapshot arriving before older initial GET reconciles to newest count", async ({ page }) => {
     let resolveSocketSent!: () => void
@@ -595,6 +623,19 @@ test.describe("Records page Lifecycle view mode", () => {
     const cell = await lifecycleCell(page, {
       status: okFacets("status", { draft: 4, submitted: 2 }),
       payment_status: okFacets("payment_status", { unpaid: 6 }),
+    }, { includeWidget: false })
+    const values = Array.from({ length: 6 }, (_, index) => `PO-10${index + 1}`)
+    const expectedFilter = { all: values.map((value) => ({ property: "po_number", op: "eq", value })) }
+    const appliedFilters: unknown[] = []
+    let filtered = okFacets("status", { draft: 1, submitted: 2 })
+    await page.route("**/api/host/v1/objects/commerce.PurchaseOrder:facets**", async (route) => {
+      const url = new URL(route.request().url())
+      const filter = url.searchParams.get("filter")
+      if (url.searchParams.get("properties") !== "status" || filter === null) return route.fallback()
+      appliedFilters.push(JSON.parse(filter))
+      return filter === JSON.stringify(expectedFilter)
+        ? route.fulfill({ status: filtered.status, json: filtered.body })
+        : route.fallback()
     })
     await page.goto("/objects/commerce.PurchaseOrder#lifecycle")
     const statusView = page.locator('[data-testid="lifecycle-view"] norn-lifecycle-view').first()
@@ -604,8 +645,8 @@ test.describe("Records page Lifecycle view mode", () => {
     // Apply 6 short equality clauses via the real Filter editor (produces a >512-byte scoped live path).
     await page.getByRole("button", { name: /^Filter/ }).click()
     for (let i = 1; i < 6; i += 1) await page.getByRole("button", { name: "Add condition" }).click()
-    for (let i = 1; i <= 6; i += 1) {
-      await page.getByLabel(`Condition ${i} value`).fill(`PO-10${i}`)
+    for (const [index, value] of values.entries()) {
+      await page.getByLabel(`Condition ${index + 1} value`).fill(value)
     }
     await page.getByRole("button", { name: "Apply" }).click()
 
@@ -614,14 +655,16 @@ test.describe("Records page Lifecycle view mode", () => {
     await expect(statusView.locator(".norn-life")).toHaveAttribute("data-live-refusal-code", "live.not_subscribable")
     await expect(statusView.locator('[data-region="live-off"]')).toBeVisible()
     await expect(statusView.locator('[data-region="live-off"]')).toContainText("Live updates are off; counts show the last read.")
-    await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("4")
+    await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("1")
+    expect(appliedFilters).toEqual([expectedFilter])
     await shoot(page, "records-live-off")
 
     // Cell changes while live updates are off; clicking Refresh reads the latest counts.
-    cell.setFacets("status", okFacets("status", { draft: 9, submitted: 3 }))
+    filtered = okFacets("status", { draft: 9, submitted: 3 })
     await statusView.getByRole("button", { name: "Refresh" }).click()
     await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("9")
     await expect(card(statusView, "submitted").locator("[data-count]")).toHaveText("3")
+    expect(appliedFilters).toEqual([expectedFilter, expectedFilter])
   })
 
   test("records page: recovery from live subscription capacity refreshes counts when the digest repeats", async ({ page }) => {
