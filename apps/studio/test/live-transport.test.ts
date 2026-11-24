@@ -442,8 +442,8 @@ test("workspace A's settled refusal never reaches a read in workspace B, even du
   let me: { organization: { id: string }; environmentId: string } = { ...ME, organization: { ...ME.organization, id: scopeA.orgId }, environmentId: scopeA.environmentId }
   const definitionReads: string[] = []
   let bReads = 0
-  let markBFailed = () => {}
-  const bFailed = new Promise<void>((resolve) => { markBFailed = resolve })
+  let markBFirstRead = () => {}
+  const bFirstRead = new Promise<void>((resolve) => { markBFirstRead = resolve })
   const fetchProbe = async (...[input]: Parameters<typeof globalThis.fetch>) => {
     const url = String(input)
     if (url === "/api/me") return Response.json(me)
@@ -456,7 +456,7 @@ test("workspace A's settled refusal never reaches a read in workspace B, even du
     }
     bReads += 1
     if (bReads === 1) {
-      markBFailed()
+      markBFirstRead()
       return new Response("<html><body>502 Bad Gateway</body></html>", { status: 502, headers: { "content-type": "text/html" } })
     }
     return new Response(DEFINITIONS, { headers: { "content-type": "application/json" } })
@@ -473,8 +473,15 @@ test("workspace A's settled refusal never reaches a read in workspace B, even du
 
     // 2–3. B's mode query starts and its first definitions read is a transient 502, so B waits to retry.
     me = { ...me, organization: { ...me.organization, id: scopeB.orgId }, environmentId: scopeB.environmentId }
-    const modeB = client.fetchQuery({ ...modeQuery(scopeB), retryDelay: 60_000 }).catch((error: unknown) => error)
-    await bFailed
+    const queryB = { ...modeQuery(scopeB), retryDelay: 60_000 }
+    const modeB = client.fetchQuery(queryB).catch((error: unknown) => error)
+    await bFirstRead
+    // Wait until B's first attempt has failed and its probe is gone: B is now inside its retry delay.
+    for (let tick = 0; (client.getQueryState(queryB.queryKey)?.fetchFailureCount ?? 0) < 1; tick += 1) {
+      if (tick > 200) throw new Error("B's first mode read never failed")
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    expect(client.getQueryState(queryB.queryKey)?.fetchStatus).toBe("fetching")
 
     // 4. During B's retry delay, an unkeyed transport read is B's own: it never rejects with A's refusal.
     const outcome = await currentMode().then(
