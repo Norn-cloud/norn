@@ -11,12 +11,16 @@ const ToggleGroupContext = React.createContext<
   VariantProps<typeof toggleVariants> & {
     spacing?: number
     orientation?: "horizontal" | "vertical"
+    single?: boolean
+    selected?: readonly string[]
   }
 >({
   size: "default",
   variant: "default",
   spacing: 2,
   orientation: "horizontal",
+  single: false,
+  selected: [],
 })
 
 type ToggleGroupBaseProps = Omit<
@@ -95,6 +99,11 @@ function ToggleGroup(props: ToggleGroupProps) {
           ? []
           : [defaultValue]
 
+  const [uncontrolled, setUncontrolled] = React.useState<readonly string[]>(
+    () => normalizedDefaultValue ?? []
+  )
+  const selected = normalizedValue ?? uncontrolled
+
   return (
     <ToggleGroupPrimitive
       data-slot="toggle-group"
@@ -106,17 +115,15 @@ function ToggleGroup(props: ToggleGroupProps) {
       multiple={isSingle ? false : (multiple ?? true)}
       value={normalizedValue}
       defaultValue={normalizedDefaultValue}
-      onValueChange={
-        onValueChange
-          ? (next) => {
-              if (isSingle) {
-                ;(onValueChange as (value: string) => void)(next[0] ?? "")
-              } else {
-                ;(onValueChange as (value: string[]) => void)(next)
-              }
-            }
-          : undefined
-      }
+      onValueChange={(next) => {
+        if (normalizedValue === undefined) setUncontrolled(next)
+        if (!onValueChange) return
+        if (isSingle) {
+          ;(onValueChange as (value: string) => void)(next[0] ?? "")
+        } else {
+          ;(onValueChange as (value: string[]) => void)(next)
+        }
+      }}
       style={{ "--gap": spacing } as React.CSSProperties}
       className={cn(
         "group/toggle-group flex w-fit flex-row items-center gap-[--spacing(var(--gap))] data-[spacing=0]:data-[variant=outline]:rounded-3xl data-vertical:flex-col data-vertical:items-stretch",
@@ -125,7 +132,7 @@ function ToggleGroup(props: ToggleGroupProps) {
       {...rest}
     >
       <ToggleGroupContext.Provider
-        value={{ variant, size, spacing, orientation }}
+        value={{ variant, size, spacing, orientation, single: isSingle, selected }}
       >
         {children}
       </ToggleGroupContext.Provider>
@@ -138,10 +145,13 @@ function ToggleGroupItem({
   children,
   variant = "default",
   size = "default",
+  value,
   ...props
 }: React.ComponentProps<typeof TogglePrimitive> &
   VariantProps<typeof toggleVariants>) {
   const context = React.useContext(ToggleGroupContext)
+  const isRadio = Boolean(context.single)
+  const checked = value !== undefined && (context.selected?.includes(value) ?? false)
 
   return (
     <TogglePrimitive
@@ -149,8 +159,11 @@ function ToggleGroupItem({
       data-variant={context.variant || variant}
       data-size={context.size || size}
       data-spacing={context.spacing}
+      value={value}
+      role={isRadio ? "radio" : undefined}
+      aria-checked={isRadio ? checked : undefined}
       className={cn(
-        "shrink-0 group-data-[spacing=0]/toggle-group:rounded-none group-data-[spacing=0]/toggle-group:px-3 group-data-[spacing=0]/toggle-group:shadow-none focus:z-10 focus-visible:z-10 group-data-[spacing=0]/toggle-group:has-data-[icon=inline-end]:pr-2.5 group-data-[spacing=0]/toggle-group:has-data-[icon=inline-start]:pl-2.5 group-data-horizontal/toggle-group:data-[spacing=0]:first:rounded-l-3xl group-data-vertical/toggle-group:data-[spacing=0]:first:rounded-t-3xl group-data-horizontal/toggle-group:data-[spacing=0]:last:rounded-r-3xl group-data-vertical/toggle-group:data-[spacing=0]:last:rounded-b-3xl data-pressed:bg-muted aria-pressed:bg-muted group-data-horizontal/toggle-group:data-[spacing=0]:data-[variant=outline]:border-l-0 group-data-vertical/toggle-group:data-[spacing=0]:data-[variant=outline]:border-t-0 group-data-horizontal/toggle-group:data-[spacing=0]:data-[variant=outline]:first:border-l group-data-vertical/toggle-group:data-[spacing=0]:data-[variant=outline]:first:border-t",
+        "shrink-0 group-data-[spacing=0]/toggle-group:rounded-none group-data-[spacing=0]/toggle-group:px-3 group-data-[spacing=0]/toggle-group:shadow-none focus:z-10 focus-visible:z-10 group-data-[spacing=0]/toggle-group:has-data-[icon=inline-end]:pr-2.5 group-data-[spacing=0]/toggle-group:has-data-[icon=inline-start]:pl-2.5 group-data-horizontal/toggle-group:data-[spacing=0]:first:rounded-l-3xl group-data-vertical/toggle-group:data-[spacing=0]:first:rounded-t-3xl group-data-horizontal/toggle-group:data-[spacing=0]:last:rounded-r-3xl group-data-vertical/toggle-group:data-[spacing=0]:last:rounded-b-3xl data-pressed:bg-muted aria-pressed:bg-muted aria-checked:bg-muted group-data-horizontal/toggle-group:data-[spacing=0]:data-[variant=outline]:border-l-0 group-data-vertical/toggle-group:data-[spacing=0]:data-[variant=outline]:border-t-0 group-data-horizontal/toggle-group:data-[spacing=0]:data-[variant=outline]:first:border-l group-data-vertical/toggle-group:data-[spacing=0]:data-[variant=outline]:first:border-t",
         toggleVariants({
           variant: context.variant || variant,
           size: context.size || size,

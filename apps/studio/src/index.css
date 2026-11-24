@@ -398,19 +398,21 @@
   --dock-border: rgb(255 255 255 / 0.2);
 }
 
-[data-skin="glass"] body {
+[data-skin="glass"] body,
+[data-skin="glass"] [data-slot="sidebar-wrapper"] {
   background-image:
-    radial-gradient(62rem 36rem at 12% -6%, rgb(99 102 241 / 0.16), transparent 62%),
-    radial-gradient(50rem 34rem at 92% 10%, rgb(14 165 233 / 0.14), transparent 60%),
-    radial-gradient(48rem 32rem at 50% 105%, rgb(168 85 247 / 0.12), transparent 60%);
+    radial-gradient(62rem 36rem at 12% -6%, rgb(99 102 241 / 0.18), transparent 62%),
+    radial-gradient(50rem 34rem at 92% 10%, rgb(14 165 233 / 0.16), transparent 60%),
+    radial-gradient(48rem 32rem at 50% 105%, rgb(168 85 247 / 0.14), transparent 60%);
   background-attachment: fixed;
 }
 
-.dark[data-skin="glass"] body {
+.dark[data-skin="glass"] body,
+.dark[data-skin="glass"] [data-slot="sidebar-wrapper"] {
   background-image:
-    radial-gradient(62rem 36rem at 12% -6%, rgb(99 102 241 / 0.22), transparent 62%),
-    radial-gradient(50rem 34rem at 92% 10%, rgb(14 165 233 / 0.16), transparent 60%),
-    radial-gradient(48rem 32rem at 50% 105%, rgb(139 92 246 / 0.18), transparent 60%);
+    radial-gradient(62rem 36rem at 12% -6%, rgb(99 102 241 / 0.24), transparent 62%),
+    radial-gradient(50rem 34rem at 92% 10%, rgb(14 165 233 / 0.18), transparent 60%),
+    radial-gradient(48rem 32rem at 50% 105%, rgb(139 92 246 / 0.2), transparent 60%);
   background-attachment: fixed;
 }
 
@@ -423,7 +425,6 @@
 [data-skin="glass"] [data-slot="dropdown-menu-content"],
 [data-skin="glass"] [data-slot="chrome-dock-tray"] {
   backdrop-filter: blur(20px) saturate(165%);
-  -webkit-backdrop-filter: blur(20px) saturate(165%);
 }
 
 /*

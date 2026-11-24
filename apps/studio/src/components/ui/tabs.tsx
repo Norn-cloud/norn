@@ -1,4 +1,5 @@
 import * as React from "react"
+import { useDirection } from "@base-ui/react/direction-provider"
 import { Tabs as TabsPrimitive } from "@base-ui/react/tabs"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
@@ -6,13 +7,16 @@ import { cn } from "@/lib/utils"
 function Tabs({
   className,
   orientation = "horizontal",
+  dir,
   ...props
 }: React.ComponentProps<typeof TabsPrimitive.Root>) {
+  const direction = useDirection()
   return (
     <TabsPrimitive.Root
       data-slot="tabs"
       data-orientation={orientation}
       orientation={orientation}
+      dir={dir ?? direction}
       className={cn(
         "group/tabs flex gap-2 data-horizontal:flex-col",
         className

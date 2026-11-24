@@ -101,14 +101,14 @@ export const chromeDockPrimitive = definePrimitive({
       trigger: slot({
         ...trigger,
         attrs: (state, part) => ({
-          ...trigger.attrs(state, part),
+          ...(trigger.attrs?.(state, part) ?? {}),
           "data-state": state.open ? "open" : "closed",
         }),
       }),
       tray: slot({
         ...content,
         attrs: (state, part) => ({
-          ...content.attrs(state, part),
+          ...(content.attrs?.(state, part) ?? {}),
           "data-state": state.open ? "open" : "closed",
         }),
       }),

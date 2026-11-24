@@ -99,7 +99,7 @@ test("skins and floating dock: switch open, polar, luma, glass skins via ChromeD
   await expect(page.getByRole("heading", { name: "Home", level: 1 })).toBeVisible()
 
   await dock.locator('[data-slot="chrome-dock-trigger"]').click()
-  await page.locator('[data-slot="chrome-dock-tray"]').locator('[data-shell-option="sidebar"]').click()
+  await page.locator('[data-slot="chrome-dock-tray"][data-state="open"]').locator('[data-shell-option="sidebar"]').click()
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.shell)).toBe("sidebar")
   await expect(page.locator('[data-slot="floating-dock"]')).toHaveCount(0)
   await expect(page.locator('[data-slot="sidebar"]')).toBeVisible()
