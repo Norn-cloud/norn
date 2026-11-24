@@ -458,7 +458,7 @@ export async function workspaceCell(page: Page): Promise<WorkspaceCell> {
         const allowed = rec ? drawerActionsForRecord(rec) : []
         items = items.filter((a) => allowed.includes(a.actionId))
       }
-      return route.fulfill({ json: { items } })
+      return route.fulfill({ json: { definitionsVersion: 1, items } })
     }
     const actionId = decodeURIComponent(url.pathname.split("/v1/actions/")[1] ?? "")
     const body = route.request().postDataJSON() as { input: Record<string, unknown>; idempotencyKey: string }

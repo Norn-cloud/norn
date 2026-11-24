@@ -118,7 +118,7 @@ export async function actionCell(page: Page, objects: ObjectCell, options: Actio
     if (url.searchParams.get("orgId") !== "org_demo" || url.searchParams.get("environmentId") !== "analytics") return request.method() === "GET" ? route.fulfill({ status: 403, json: { code: "scope.denied", message: "Not your workspace." } }) : refuse(route, "denied")
     if (request.method() === "GET") {
       const kind = url.searchParams.get("objectKind")
-      return route.fulfill({ json: { items: ACTIONS.filter((a) => kind === null || a.objectKind === kind) } })
+      return route.fulfill({ json: { definitionsVersion: 1, items: ACTIONS.filter((a) => kind === null || a.objectKind === kind) } })
     }
     const actionId = decodeURIComponent(url.pathname.split("/v1/actions/")[1] ?? "")
     const body = request.postData() ?? ""

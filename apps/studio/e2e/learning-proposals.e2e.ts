@@ -182,7 +182,7 @@ async function mountCell(page: Page, options: { mode?: "fixture" | "unserved" | 
     const url = new URL(request.url())
     if (request.method() === "GET") {
       const objectId = url.searchParams.get("objectId")
-      if (!objectId) return route.fulfill({ json: { items: [DRAFT_PROPOSAL] } })
+      if (!objectId) return route.fulfill({ json: { definitionsVersion: 1, items: [DRAFT_PROPOSAL] } })
       const found = proposals.find((p) => p.id === objectId)
       const status = found?.values["status"]
       const items = status === "draft"
@@ -192,7 +192,7 @@ async function mountCell(page: Page, options: { mode?: "fixture" | "unserved" | 
           : status === "refused"
             ? [WITHDRAW_PROPOSAL]
             : []
-      return route.fulfill({ json: { items } })
+      return route.fulfill({ json: { definitionsVersion: 1, items } })
     }
 
     const actionId = decodeURIComponent(url.pathname.split("/v1/actions/")[1] ?? "")

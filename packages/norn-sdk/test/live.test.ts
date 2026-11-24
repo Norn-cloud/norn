@@ -10,7 +10,10 @@ class FakeSocket implements SocketLike {
   readonly sent: unknown[] = []
   readonly listeners = new Map<string, Listener[]>()
   closed: number | null = null
-  constructor(readonly url: string) {}
+  readonly url: string
+  constructor(url: string) {
+    this.url = url
+  }
   send(data: string) {
     this.sent.push(JSON.parse(data))
   }

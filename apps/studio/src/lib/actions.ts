@@ -92,6 +92,8 @@ export async function listActions(
     return unanswered(error)
   }
   if (options.signal?.aborted) return { kind: "scope-changed" }
+  // Studio pins no definitions version, so the client's own stale check never applies.
+  if (read.kind === "stale") throw new Error("Studio reads the catalog unpinned")
   return read.kind === "catalog" ? { kind: "catalog", items: read.items } : { kind: "refused", status: read.status, code: read.code, message: read.message }
 }
 
@@ -577,7 +579,7 @@ const IRREGULAR: Readonly<Record<string, string>> = { send: "sent", make: "made"
  * verb guessed from the action's title.
  */
 export function receiptVerb(action: ActionSummary, version: number): string {
-  if (action.effect === "fire_transition") return action.toState === undefined ? "updated" : `is now ${action.toState.replaceAll("_", " ")}`
+  if (action.effect === "fire_transition") return action.toState == null ? "updated" : `is now ${action.toState.replaceAll("_", " ")}`
   return version === 1 ? "created" : "updated"
 }
 

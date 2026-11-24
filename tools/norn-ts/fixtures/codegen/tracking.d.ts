@@ -4,19 +4,23 @@
 /** Any JSON value: an open `json` leaf. */
 export type NornJson = null | boolean | number | string | ReadonlyArray<NornJson> | { readonly [key: string]: NornJson }
 
-/** sha256 over the canonical JSON of the action and entity definitions this file types. */
-export type DefinitionsDigest = "sha256:5d05a0cb616e819c0e8167b2de05111d266461b96003e07c7cb57f386c2f1f59"
+/** sha256 over the canonical JSON of the definitions this file types and every base definition they resolve through. */
+export type DefinitionsDigest = "sha256:0f846326a297a7d676e2d810060129b2d3e71fa1c538396b5c8f2f71c7b012fa"
 
-/** Each action id → the input it takes and the output it declares. */
+/** Each action id → the input a caller sends (actor-derived fields excluded) and the output it declares. */
 export type ActionMap = {
-  /** Register a parcel */
+  /** Register a parcel — Starts tracking one parcel. */
   readonly "tracking.parcel.register": {
     readonly input: {
       readonly "carrier": "road" | "air" | "sea"
       readonly "fragile": boolean
+      readonly "label"?: string
       readonly "note": string | null
       readonly "parcel_id": string
       readonly "pieces": number
+      readonly "scanned_at": string | null
+      readonly "shipped_on": string
+      readonly "transit": string
       /** Exact decimal text, scale 3. */
       readonly "weight_kg": string
     }
@@ -28,12 +32,31 @@ export type ActionMap = {
 
 /** Each object type → its stored fields (every field present; nullable ones may be `null`). */
 export type ObjectMap = {
-  readonly "tracking.Parcel": {
+  readonly "tracking.CrossBorderParcel": {
     readonly "carrier": "road" | "air" | "sea"
+    readonly "customs_code": string
     readonly "fragile": boolean
+    readonly "label": string
     readonly "note": string | null
     readonly "parcel_id": string
     readonly "pieces": number
+    readonly "registered_by": string
+    readonly "scanned_at": string | null
+    readonly "shipped_on": string
+    readonly "transit": string
+    readonly "weight_kg": string
+  }
+  readonly "tracking.Parcel": {
+    readonly "carrier": "road" | "air" | "sea"
+    readonly "fragile": boolean
+    readonly "label": string
+    readonly "note": string | null
+    readonly "parcel_id": string
+    readonly "pieces": number
+    readonly "registered_by": string
+    readonly "scanned_at": string | null
+    readonly "shipped_on": string
+    readonly "transit": string
     readonly "weight_kg": string
   }
 }

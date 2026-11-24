@@ -1,11 +1,16 @@
 {
-  "sha256": "edbd74b92d011dd96c62f5e4c42a5cf9496f69bd74bb43409e92fbcf56264324",
-  "origin": "authored",
+  "sha256": "4133a8c6968e692db409b3dc9f99ed29b8b14d68bb134b465c11e68829db01a1",
+  "origin": "derived",
   "category": "synthetic-golden",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
-  "parents": [],
+  "parents": [
+    "registry/core/artifacts/core.time.json",
+    "registry/core/artifacts/std.value_types.entity.json",
+    "tools/norn-ts/fixtures/codegen/tracking/tracking.ts",
+    "tools/norn-ts/src/codegen.ts"
+  ],
   "rights_evidence": [
     {
       "path": "NOTICE",

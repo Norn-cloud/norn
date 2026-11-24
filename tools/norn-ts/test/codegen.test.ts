@@ -1,21 +1,30 @@
 import { expect, test } from "bun:test"
-import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { copyFileSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import ts from "typescript"
-import { CodegenError, generateTypes } from "../src/codegen.ts"
+import { CodegenError, generateTypes, readArtifactSet } from "../src/codegen.ts"
 import { admit, compilePack } from "../src/pack.ts"
 import { CHECKER_PKG_ENV, checker } from "./checker.ts"
 
 if (!checker && process.env.CI) throw new Error(`${CHECKER_PKG_ENV} is required in CI`)
 
 const ROOT = resolve(import.meta.dir, "..")
+const REPO = resolve(ROOT, "../..")
 const FIXTURES = join(ROOT, "fixtures/codegen")
+const CORE = join(REPO, "registry/core/artifacts")
 const DOMAINS = ["tracking", "ml"] as const
+/** The shared value-type catalogs the fixture packs reference (`iso8601.*`, `core.time.*`). */
+const CATALOGS = ["core.units", "core.value_types.entity", "std.value_types.entity", "core.time"]
+const catalogs = () => CATALOGS.map((id) => JSON.parse(readFileSync(join(CORE, `${id}.json`), "utf8")) as unknown)
 
+const packs = new Map<string, ReturnType<typeof compilePack>>()
 function compiled(domain: string) {
+  const cached = packs.get(domain)
+  if (cached?.ok) return cached
   const pack = compilePack(join(FIXTURES, domain), { scope: { orgId: "org_a", environmentId: "dev" }, root: ROOT })
   if (!pack.ok) throw new Error(JSON.stringify(pack.failures))
+  packs.set(domain, pack)
   return pack
 }
 
@@ -24,14 +33,19 @@ function cli(args: readonly string[]) {
   return { code: run.exitCode, stdout: run.stdout.toString(), stderr: run.stderr.toString() }
 }
 
+const refused = (artifacts: readonly unknown[], message: string, base: readonly unknown[] = catalogs()) => {
+  expect(() => generateTypes(artifacts, { base })).toThrow(CodegenError)
+  expect(() => generateTypes(artifacts, { base })).toThrow(message)
+}
+
 for (const domain of DOMAINS) {
   test(`CODEGEN-TS-1 (${domain}): one deterministic .d.ts per admitted set, byte for byte the committed golden`, () => {
     const pack = compiled(domain)
-    if (checker) expect(admit(checker, pack).report.admitted).toBe(true)
-    const text = generateTypes(pack.artifacts)
+    if (checker) expect(admit(checker, { ...pack, baseArtifacts: catalogs() as typeof pack.baseArtifacts }).report.admitted).toBe(true)
+    const text = generateTypes(pack.artifacts, { base: catalogs() })
     expect(text).toBe(readFileSync(join(FIXTURES, `${domain}.d.ts`), "utf8"))
-    // Artifact order and envelope provenance never move a byte.
-    expect(generateTypes([...pack.artifacts].reverse())).toBe(text)
+    // Neither artifact order nor base order moves a byte.
+    expect(generateTypes([...pack.artifacts].reverse(), { base: catalogs().reverse() })).toBe(text)
     // Types only: no runtime declaration of any kind.
     expect(text).not.toMatch(/^\s*export\s+(const|let|var|function|class|enum|default)\b/m)
     expect(text).not.toMatch(/\bdeclare\s+(const|let|var|function|class)\b/)
@@ -41,44 +55,133 @@ for (const domain of DOMAINS) {
 test("CODEGEN-TS-2: --check passes on the golden and fails on drift or a missing file", () => {
   const dir = mkdtempSync(join(tmpdir(), "norn-codegen-"))
   try {
-    const set = join(dir, "tracking.json")
+    const set = join(dir, "tracking.json"), base = join(dir, "base.json")
     writeFileSync(set, JSON.stringify(compiled("tracking").artifacts))
+    writeFileSync(base, JSON.stringify(catalogs()))
     const out = join(dir, "tracking.d.ts")
     copyFileSync(join(FIXTURES, "tracking.d.ts"), out)
-    expect(cli(["--ts", set, "--out", out, "--check"]).code).toBe(0)
+    expect(cli(["--ts", set, "--base", base, "--out", out, "--check"]).code).toBe(0)
 
     writeFileSync(out, readFileSync(out, "utf8").replace('"tracking.Parcel"', '"tracking.Parcel2"'))
-    const drift = cli(["--ts", set, "--out", out, "--check"])
+    const drift = cli(["--ts", set, "--base", base, "--out", out, "--check"])
     expect(drift.code).toBe(1)
     expect(drift.stderr).toContain("is out of date")
     // --check never writes.
     expect(readFileSync(out, "utf8")).toContain('"tracking.Parcel2"')
 
-    const missing = cli(["--ts", set, "--out", join(dir, "absent.d.ts"), "--check"])
+    const missing = cli(["--ts", set, "--base", base, "--out", join(dir, "absent.d.ts"), "--check"])
     expect(missing.code).toBe(1)
     expect(missing.stderr).toContain("is missing")
 
     // Without --check the file is regenerated, after which --check passes again.
-    expect(cli(["--ts", set, "--out", out]).code).toBe(0)
+    expect(cli(["--ts", set, "--base", base, "--out", out]).code).toBe(0)
     expect(readFileSync(out, "utf8")).toBe(readFileSync(join(FIXTURES, "tracking.d.ts"), "utf8"))
-    expect(cli(["--ts", set, "--out", out, "--check"]).code).toBe(0)
+    expect(cli(["--ts", set, "--base", base, "--out", out, "--check"]).code).toBe(0)
 
-    // A changed definition is drift too: the digest pins the typed set.
-    const changed = compiled("ml").artifacts
-    writeFileSync(set, JSON.stringify(changed))
-    expect(cli(["--ts", set, "--out", out, "--check"]).code).toBe(1)
+    // Without the base, a shared value type does not resolve: the run fails, it never guesses.
+    const unresolved = cli(["--ts", set, "--out", out, "--check"])
+    expect(unresolved.code).toBe(1)
+    expect(unresolved.stderr).toMatch(/value type `iso8601\.[a-z]+` is in neither the set nor its base; pass its catalog with --base/)
     expect(cli(["--ts", set, "--check"]).code).toBe(2)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
 })
 
-test("CODEGEN-TS-3: a shape codegen does not model fails the run instead of widening to unknown", () => {
-  const artifacts = structuredClone(compiled("ml").artifacts) as Array<{ kind: string; payload: { inputSchema?: { properties: Record<string, unknown> } } }>
-  const action = artifacts.find((a) => a.kind === "action")!
-  action.payload.inputSchema!.properties["epochs"] = { oneOf: [{ type: "integer" }, { type: "string" }] }
-  expect(() => generateTypes(artifacts)).toThrow(CodegenError)
-  expect(() => generateTypes(artifacts)).toThrow("ml.run.record.action#/inputSchema/properties/epochs: schema member `oneOf` is not modelled by codegen")
+test("CODEGEN-TS-3: a shape outside the closed dialect, or two definitions of one name, fails the run", () => {
+  const ml = () => structuredClone(compiled("ml").artifacts) as Array<{ artifactId: string; kind: string; payload: any }>
+  const withInput = (field: string, schema: unknown) => {
+    const set = ml()
+    set.find((a) => a.artifactId === "ml.run.record.action")!.payload.inputSchema.properties[field] = schema
+    return set
+  }
+  refused(withInput("epochs", { oneOf: [{ type: "integer" }, { type: "string" }] }), "ml.run.record.action#/inputSchema/properties/epochs: schema type undefined is not in the closed dialect")
+  refused(withInput("epochs", { type: "integer", enum: [1, 2] }), "`enum` is not admitted in a closed `integer` schema")
+  refused(withInput("epochs", { type: "integer", nornType: { kind: "decimal", scale: 0 } }), "`nornType` is not admitted in a closed `integer` schema")
+  refused(withInput("model", { type: "string", nornType: { kind: "decimal", scale: 2 } }), "`nornType` is not admitted in a closed `string` schema")
+  refused(withInput("learning_rate", { type: "number", nornType: { kind: "money" } }), "`nornType` on a number is not a decimal")
+  refused(withInput("model", { type: "string", format: "date" }), "`format` is not admitted in a closed `string` schema")
+  refused(withInput("model", { type: ["object", "null"], properties: {}, additionalProperties: false }), "a nullable `object` is not admitted in an action input")
+  refused(withInput("model", { type: "object", properties: {} }), "an object schema is not closed")
+
+  const notObject = ml()
+  notObject.find((a) => a.kind === "action")!.payload = ["not", "an", "object"]
+  refused(notObject, "an action payload is not an object")
+  const strayEntity = ml()
+  strayEntity.find((a) => a.kind === "entity")!.payload.bogus = true
+  refused(strayEntity, "entity payload member `bogus` is not EntityIR v2")
+  const noShape = ml()
+  noShape.find((a) => a.kind === "entity")!.payload = { entityVersion: "2.0" }
+  refused(noShape, "an entity payload declares no object type, interface, extension or catalog")
+  const v1 = ml()
+  v1.find((a) => a.kind === "entity")!.payload = { fields: [], objectKind: "ml.TrainingRun" }
+  refused(v1, "EntityIR v1 is not typed by codegen")
+
+  // A second action or object type of one name, from any artifact, in any order.
+  const twice = ml()
+  const copy = structuredClone(twice.find((a) => a.artifactId === "ml.run.record.action")!)
+  copy.artifactId = "ml.run.record.again.action"
+  refused([...twice, copy], "action `ml.run.record` is also defined by")
+  refused([copy, ...twice], "action `ml.run.record` is also defined by")
+
+  // A value type defined twice with different content is refused, never resolved last-wins.
+  const clash = structuredClone(catalogs()[2]) as { artifactId: string; payload: { propertyTypes: Array<{ name: string; type: unknown }> } }
+  clash.artifactId = "fixture.value_types.entity"
+  clash.payload.propertyTypes = clash.payload.propertyTypes.filter((t) => t.name === "iso8601.date").map((t) => ({ ...t, type: { kind: "text" } }))
+  const tracking = compiled("tracking").artifacts
+  refused(tracking, "value type `iso8601.date` is also defined by", [...catalogs(), clash])
+  refused(tracking, "value type `iso8601.date` is also defined by", [clash, ...catalogs()])
+  // An identical redefinition is the same definition: the same types (the digest names its source).
+  const identical = structuredClone(catalogs()[2]) as { artifactId: string }
+  identical.artifactId = "fixture.identical.entity"
+  const types = (text: string) => text.replace(/^export type DefinitionsDigest = .*$/m, "")
+  expect(types(generateTypes(tracking, { base: [...catalogs(), identical] }))).toBe(types(readFileSync(join(FIXTURES, "tracking.d.ts"), "utf8")))
+
+  // Extension members never shadow a member of their target, whichever artifact comes first.
+  const entityV2 = readArtifactSet(join(REPO, "fixtures/ir/entity-v2/artifact-set")) as Array<{ artifactId: string; kind: string; payload: any }>
+  const shadow = structuredClone(entityV2.find((a) => a.payload.objectTypeExtension !== undefined)!)
+  shadow.artifactId = "acme.retail.Sku.extension.shadow"
+  shadow.payload.objectTypeExtension.namespace = "beta"
+  refused([...entityV2, shadow], "shadows a member of `retail.Sku`", [])
+  refused([shadow, ...entityV2], "shadows a member of `retail.Sku`", [])
+})
+
+test("CODEGEN-TS-5: registry packs type over their base: shared value types, extensions and JSON leaves resolve", () => {
+  const core = readArtifactSet(CORE)
+  const packs = join(REPO, "registry/packs")
+  const typed = readdirSync(packs, { withFileTypes: true }).filter((d) => d.isDirectory() && existsSync(join(packs, d.name, "artifacts"))).map((d) => d.name).sort()
+  expect(typed).toContain("sources")
+  expect(typed).toContain("time")
+  for (const pack of typed) {
+    const text = generateTypes(readArtifactSet(join(packs, pack, "artifacts")), { base: core })
+    expect(text.startsWith("// Generated by `norn codegen --ts`.")).toBe(true)
+  }
+  // registry/packs/sources reads `iso8601.timestamp` from registry/core; without the base it cannot.
+  expect(() => generateTypes(readArtifactSet(join(packs, "sources/artifacts")))).toThrow("value type `iso8601.timestamp` is in neither the set nor its base")
+  // A `json-ext` property is any JSON value.
+  const entitlement = core.filter((a) => (a as { artifactId: string }).artifactId === "core.Entitlement.entity")
+  expect(entitlement).toHaveLength(1)
+  expect(generateTypes(entitlement, { base: core })).toMatch(/readonly "[a-z_]+": NornJson/)
+  // An extension's members join their target type.
+  const sku = generateTypes(readArtifactSet(join(REPO, "fixtures/ir/entity-v2/artifact-set")))
+  expect(sku).toContain('    readonly "acme__shelf_label": string | null')
+  // A JSON value domain leaf in an action input.
+  const ml = structuredClone(compiled("ml").artifacts) as Array<{ artifactId: string; payload: any }>
+  ml.find((a) => a.artifactId === "ml.run.start.action")!.payload.inputSchema.properties.tags = { type: ["array", "boolean", "null", "number", "object", "string"] }
+  expect(generateTypes(ml, { base: catalogs() })).toContain('readonly "tags": NornJson')
+})
+
+test("CODEGEN-TS-6: the caller's input excludes actor-derived fields and makes derived ones optional (ACTION-ACTOR-1)", () => {
+  const text = readFileSync(join(FIXTURES, "tracking.d.ts"), "utf8")
+  const input = text.slice(text.indexOf("readonly input: {"), text.indexOf("readonly output: {"))
+  // `fromCaller: ["registered_by"]`: the kernel refuses any caller value, so the type offers none.
+  expect(input).not.toContain('"registered_by"')
+  // `inputRequired: false` derivation: the caller may leave it out.
+  expect(input).toContain('readonly "label"?: string')
+  // The stored object still carries both.
+  const objects = text.slice(text.indexOf("export type ObjectMap"))
+  expect(objects).toContain('readonly "registered_by": string')
+  expect(objects).toContain('readonly "label": string')
 })
 
 test("CODEGEN-TS-4: generated maps type the client: unknown actions, wrong fields and JS numbers for decimals do not compile", () => {
@@ -87,11 +190,10 @@ test("CODEGEN-TS-4: generated maps type the client: unknown actions, wrong field
     target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler,
     lib: ["lib.esnext.d.ts", "lib.dom.d.ts"], types: [], strict: true, noUncheckedIndexedAccess: true,
     exactOptionalPropertyTypes: true, noEmit: true, skipLibCheck: true, allowImportingTsExtensions: true, verbatimModuleSyntax: true,
-    noUnusedLocals: false,
+    erasableSyntaxOnly: true,
   })
   const diagnostics = ts.getPreEmitDiagnostics(program).map((d) => ts.flattenDiagnosticMessageText(d.messageText, "\n"))
   // Zero diagnostics means every `@ts-expect-error` line is a real error (TS2578 otherwise).
   expect(diagnostics).toEqual([])
-  const source = readFileSync(usage, "utf8")
-  expect(source.match(/^\/\/ @ts-expect-error/gm)?.length).toBe(11)
+  expect(readFileSync(usage, "utf8").match(/^\/\/ @ts-expect-error/gm)?.length).toBe(16)
 })

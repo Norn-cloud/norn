@@ -127,7 +127,7 @@ function cell(host: (url: URL, init?: RequestInit) => Response, me: unknown = ME
 }
 
 test("the catalog is read scoped, filtered by kind on the server, and absent routes read as unavailable", async () => {
-  const live = cell(() => Response.json({ items: [{ actionId: "a" }] }))
+  const live = cell(() => Response.json({ definitionsVersion: 1, items: [{ actionId: "a" }] }))
   expect(await listActions("canon.Holding", live.fetcher)).toMatchObject({ kind: "catalog", items: [{ actionId: "a" }] })
   expect(live.calls[0]?.url.pathname).toBe("/api/host/v1/actions")
   expect(Object.fromEntries(live.calls[0]!.url.searchParams)).toEqual({ objectKind: "canon.Holding", orgId: "org_demo", environmentId: "analytics" })
@@ -169,6 +169,8 @@ test("the cell's own receipt and refusal documents read as Studio's receipt and 
     code: "action.idempotency_conflict",
     message: "the request conflicts with current state",
     diagnostics: [],
+    category: "conflict",
+    retryable: false,
     explanation: conflictDoc.explanation,
     ...conflictDoc.decidedAt ? { decidedAt: conflictDoc.decidedAt } : {},
   })
@@ -219,11 +221,13 @@ test("a draft is read and written by pointer, nested records included", () => {
   expect(encodeObject(fields, { ...(draft as { [k: string]: Draft }), id: "h1", quantity: "10.500" })).toBe('{"id":"h1","quantity":"10.500","location":{"site":"vault-a"}}')
 })
 
-test("contract v1 as CELL-DO approved it: any 404 or 503 is not served, whatever its body", async () => {
+test("a 404, whatever its body, or a 503 that is not a Refusal@2, is not served; a 503 refusal is that refusal", async () => {
   const notFound = () => Response.json({ code: "route.not_found", message: "No such route." }, { status: 404 })
   expect(await listActions(undefined, cell(notFound).fetcher)).toEqual({ kind: "unavailable" })
   expect(await callAction("a", "{}", "k", cell(notFound).fetcher)).toEqual({ kind: "unavailable" })
   expect(await listActions(undefined, cell(() => Response.json({ code: "host.down", message: "down" }, { status: 503 })).fetcher)).toEqual({ kind: "unavailable" })
+  const unconfigured = { format: "norn/refusal@2", code: "action.receipts_unconfigured", category: "internal", retryable: true, message: "this cell cannot commit governed actions now", explanation: "no lineage key", reason: null }
+  expect(await callAction("a", "{}", "k", cell(() => Response.json(unconfigured, { status: 503 })).fetcher)).toMatchObject({ kind: "refused", status: 503, code: "action.receipts_unconfigured", retryable: true })
 })
 
 test("a parent with owned rows is offered as a whole-record write, like an upsert; a transition is not", () => {
@@ -255,7 +259,7 @@ test("a list names its entries: the items' own title, else its label made singul
 })
 
 test("a record's catalog is narrowed by the cell to what its state can take", async () => {
-  const live = cell(() => Response.json({ items: [] }))
+  const live = cell(() => Response.json({ definitionsVersion: 1, items: [] }))
   await listActions("purchasing.PurchaseRequest", live.fetcher, "PR-1")
   expect(Object.fromEntries(live.calls[0]!.url.searchParams)).toEqual({ objectKind: "purchasing.PurchaseRequest", objectId: "PR-1", orgId: "org_demo", environmentId: "analytics" })
 })

@@ -288,17 +288,17 @@ async function mountCell(page: Page, options: MountOptions = {}) {
       const kind = url.searchParams.get("objectKind")
       const objectId = url.searchParams.get("objectId")
       if (kind === "learning.CuratedCase") {
-        return route.fulfill({ json: { items: objectId ? [SET_PROTECTED, UNCURATE_CASE] : [CURATE_CASE] } })
+        return route.fulfill({ json: { definitionsVersion: 1, items: objectId ? [SET_PROTECTED, UNCURATE_CASE] : [CURATE_CASE] } })
       }
       if (kind === "learning.EvalSet") {
-        if (!objectId) return route.fulfill({ json: { items: [CREATE_EVAL_SET] } })
+        if (!objectId) return route.fulfill({ json: { definitionsVersion: 1, items: [CREATE_EVAL_SET] } })
         const found = evalSets.find((s) => s.id === objectId)
         const items = found?.values?.["status"] === "sealed"
           ? [NEW_VERSION]
           : [RENAME_EVAL_SET, ADD_CASE, REMOVE_CASE, SEAL_EVAL_SET, DELETE_EVAL_SET]
-        return route.fulfill({ json: { items } })
+        return route.fulfill({ json: { definitionsVersion: 1, items } })
       }
-      return route.fulfill({ json: { items: [] } })
+      return route.fulfill({ json: { definitionsVersion: 1, items: [] } })
     }
 
     const actionId = decodeURIComponent(url.pathname.split("/v1/actions/")[1] ?? "")

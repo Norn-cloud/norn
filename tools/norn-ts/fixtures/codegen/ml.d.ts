@@ -4,10 +4,10 @@
 /** Any JSON value: an open `json` leaf. */
 export type NornJson = null | boolean | number | string | ReadonlyArray<NornJson> | { readonly [key: string]: NornJson }
 
-/** sha256 over the canonical JSON of the action and entity definitions this file types. */
-export type DefinitionsDigest = "sha256:999a669ff991af5f8da216397a2fdd301b2940486a92be7f0a3e5181140c4d83"
+/** sha256 over the canonical JSON of the definitions this file types and every base definition they resolve through. */
+export type DefinitionsDigest = "sha256:159d9d53f3be7c8a856d1212efb4de7c4a033c569b22e298ce0e54b484bd8b9b"
 
-/** Each action id → the input it takes and the output it declares. */
+/** Each action id → the input a caller sends (actor-derived fields excluded) and the output it declares. */
 export type ActionMap = {
   /** Record a training run */
   readonly "ml.run.record": {
@@ -19,7 +19,22 @@ export type ActionMap = {
       readonly "learning_rate": string
       readonly "model": string
       readonly "run_id": string
-      readonly "stage": "queued" | "training" | "evaluated"
+    }
+    readonly output: {
+      readonly "run_id": string
+    }
+  }
+  /** Start a training run */
+  readonly "ml.run.start": {
+    readonly input: {
+      readonly "budget": {
+        /** Exact decimal text, scale 2. */
+        readonly "max_cost": string
+        readonly "max_epochs": number
+      }
+      readonly "reason"?: string
+      readonly "run_id": string
+      readonly "tags": ReadonlyArray<string>
     }
     readonly output: {
       readonly "run_id": string
@@ -36,6 +51,10 @@ export type ObjectMap = {
     readonly "model": string
     readonly "run_id": string
     readonly "stage": "queued" | "training" | "evaluated"
+    readonly "window": {
+      readonly "ends_at": string
+      readonly "starts_at": string
+    } | null
   }
 }
 

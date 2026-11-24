@@ -114,7 +114,7 @@ export async function intervalCell(page: Page, options: { readonly pointed?: boo
     if (!scoped(url)) return route.fulfill({ status: 403, json: { code: "authz.denied", message: "the action request is not authorized" } })
     if (request.method() === "GET") {
       const kind = url.searchParams.get("objectKind")
-      return route.fulfill({ json: { items: INTERVAL_ACTIONS.filter((a) => kind === null || a.objectKind === kind) } })
+      return route.fulfill({ json: { definitionsVersion: 1, items: INTERVAL_ACTIONS.filter((a) => kind === null || a.objectKind === kind) } })
     }
     const actionId = decodeURIComponent(url.pathname.split("/v1/actions/")[1] ?? "")
     const body = request.postData() ?? ""
