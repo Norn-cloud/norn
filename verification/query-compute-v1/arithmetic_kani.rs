@@ -8,24 +8,17 @@ mod arithmetic;
 
 #[kani::proof]
 fn sum_never_wraps() {
-    let values: [i64; 4] = kani::any();
-    let mut sum = ExactSum::ZERO;
-    let mut reference = 0i128;
-    let mut magnitude = 0u128;
-    for value in values {
-        if let Ok(next) = arithmetic::add(sum, value) {
-            sum = next;
-            reference += i128::from(value);
-            magnitude += u128::from(value.unsigned_abs());
-        } else {
-            assert!(value.unsigned_abs() > arithmetic::MAX_VALUE.unsigned_abs());
-            return;
-        }
-    }
-    assert_eq!(
-        arithmetic::decide(sum).ok(),
-        (magnitude <= arithmetic::MAX_SUM.unsigned_abs()).then_some(reference)
-    );
+    // Symbolic positive and negative subtotal, including cancellation and
+    // both sides of the magnitude boundary. Each fits the signed input type.
+    let pos: i128 = kani::any();
+    let neg: i128 = kani::any();
+    kani::assume(pos >= 0 && neg <= 0);
+    let sum = ExactSum::ZERO.add(pos).unwrap().add(neg).unwrap();
+    let magnitude = pos.unsigned_abs() + neg.unsigned_abs();
+    let admitted = magnitude <= arithmetic::MAX_SUM.unsigned_abs();
+    kani::cover!(admitted, "inside publication bound");
+    kani::cover!(!admitted, "outside publication bound");
+    assert_eq!(arithmetic::decide(sum).ok(), admitted.then_some(pos + neg));
 }
 
 #[kani::proof]

@@ -32,7 +32,14 @@ fn full_width_operations() {
         .flatten();
     assert_eq!(
         s.total(),
-        signed.map(|n| if s.pos < s.neg { -n } else { n })
+        if s.pos < s.neg
+            && diff == i128::MIN.unsigned_abs()
+            && larger.hi - smaller.hi == u32::from(borrow)
+        {
+            Some(i128::MIN)
+        } else {
+            signed.map(|n| if s.pos < s.neg { -n } else { n })
+        }
     );
     // On all reachable states each individual subtotal fits under this bound.
     kani::assume(s.pos.hi <= s.terms >> 1 && s.neg.hi <= s.terms >> 1);
@@ -49,7 +56,7 @@ fn full_width_operations() {
                 lo: if s.terms & 1 == 0 { 0 } else { 1u128 << 127 },
             },
     );
-    assert_eq!(next.is_none(), term == i128::MIN || s.terms == u32::MAX);
+    assert_eq!(next.is_none(), s.terms == u32::MAX);
     if let Some(next) = next {
         let (old, changed) = if term < 0 {
             assert_eq!(s.pos, next.pos);

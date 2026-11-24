@@ -435,7 +435,7 @@ fn coefficient_sum(text: &str) -> Result<i128, CellError> {
 }
 
 /// Recover the positive and negative subtotals of a summarized operand.
-fn publish_reported(total: &str, magnitude: &str) -> Result<i128, CellError> {
+fn publish_reported(total: &str, magnitude: &str, count: u64) -> Result<i128, CellError> {
     let total = coefficient_sum(total)?;
     let magnitude = coefficient_sum(magnitude)?;
     // From T=P-N and M=P+N recover the two nonnegative subtotals
@@ -457,6 +457,17 @@ fn publish_reported(total: &str, magnitude: &str) -> Result<i128, CellError> {
     } else {
         (greater, lesser)
     };
+    let limit = u128::from(math::MAX_VALUE.unsigned_abs());
+    let minimum_members = pos
+        .unsigned_abs()
+        .div_ceil(limit)
+        .checked_add(neg.unsigned_abs().div_ceil(limit))
+        .ok_or_else(|| refused("core.compute.bound_exceeded"))?;
+    if minimum_members > u128::from(count) {
+        return Err(CellError::Engine(
+            "bucket subtotals exceed member capacity".into(),
+        ));
+    }
     let sum = norn_ir::ExactSum::ZERO
         .add(pos)
         .and_then(|s| s.add(neg.wrapping_neg()))
@@ -483,7 +494,7 @@ fn assemble_row(
     }
     let mut totals = Vec::with_capacity(arity);
     for (total, magnitude) in bucket.totals.iter().zip(&bucket.magnitude) {
-        totals.push(publish_reported(total, magnitude)?);
+        totals.push(publish_reported(total, magnitude, bucket.count)?);
     }
     let value_number = match totals.as_slice() {
         [sum] => Some(decimal(*sum)?),
@@ -594,6 +605,18 @@ mod exact_sum_tests {
             digest: MembershipDigest::of(&members),
             members: Some(members),
         }
+    }
+
+    #[test]
+    fn summarized_bucket_needs_members_for_both_subtotals() {
+        let mut reported = bucket(Vec::new(), 2);
+        reported.count = 1;
+        assert!(
+            matches!(assemble_row(&reported, RuntimeValue::Null, 1, false),
+            Err(CellError::Engine(reason)) if reason == "bucket subtotals exceed member capacity")
+        );
+        reported.count = 2;
+        assert!(assemble_row(&reported, RuntimeValue::Null, 1, false).is_ok());
     }
 
     #[test]
