@@ -1,12 +1,4 @@
 #![cfg(feature = "native")]
-#![allow(
-    clippy::expect_used,
-    clippy::unwrap_used,
-    clippy::indexing_slicing,
-    clippy::panic,
-    missing_docs,
-    reason = "inventory domain pack end-to-end kernel execution fixtures"
-)]
 //! End-to-end `norn-cell` execution suite for the Governed Inventory &
 //! Warehouse Domain Pack (`registry/packs/inventory/`): static admission
 //! against the Core REA + TimeInterval base, real SQLite cell definition
@@ -84,6 +76,7 @@ fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+#[allow(clippy::panic, reason = "inventory test fixture file reader")]
 fn read_json_value(path: &Path) -> Value {
     let text =
         fs::read_to_string(path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
@@ -98,6 +91,11 @@ fn load_core_base_values() -> Vec<Value> {
         .collect()
 }
 
+#[allow(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "inventory test fixture directory reader"
+)]
 fn load_inventory_pack_values() -> Vec<Value> {
     let dir = repo_root().join("registry/packs/inventory/artifacts");
     let mut paths: Vec<PathBuf> = fs::read_dir(&dir)
@@ -109,6 +107,10 @@ fn load_inventory_pack_values() -> Vec<Value> {
     paths.iter().map(|path| read_json_value(path)).collect()
 }
 
+#[allow(
+    clippy::expect_used,
+    reason = "inventory test fixture artifact decoder"
+)]
 fn decode_envelopes(values: &[Value]) -> Vec<ArtifactEnvelope> {
     values
         .iter()
@@ -116,6 +118,7 @@ fn decode_envelopes(values: &[Value]) -> Vec<ArtifactEnvelope> {
         .collect()
 }
 
+#[allow(clippy::expect_used, reason = "inventory test fixture schema builder")]
 fn action_call_type() -> ObjectTypeDef {
     let required = ["actionId", "actor", "turn", "transition", "from", "to"];
     let nullable_text = [
@@ -162,6 +165,11 @@ struct ExtractedDefinitions {
     policies: Vec<AccessIr>,
 }
 
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "inventory test fixture artifact extractor"
+)]
 fn extract_definitions(base_values: &[Value], artifact_values: &[Value]) -> ExtractedDefinitions {
     let mut types = Vec::new();
     let mut properties = Vec::new();
@@ -221,6 +229,7 @@ fn extract_definitions(base_values: &[Value], artifact_values: &[Value]) -> Extr
     }
 }
 
+#[allow(clippy::expect_used, reason = "inventory test fixture admission check")]
 fn compute_admission_receipt(
     base_values: &[Value],
     artifact_values: &[Value],
@@ -296,6 +305,7 @@ fn actor_roles(actor: &str) -> Vec<String> {
     }
 }
 
+#[allow(clippy::expect_used, reason = "inventory test fixture PDP setup")]
 impl InventoryPrincipals {
     fn new(
         types: &[ObjectTypeDef],
@@ -433,6 +443,12 @@ struct InventoryFixture {
     principals: InventoryPrincipals,
 }
 
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    clippy::panic,
+    reason = "inventory test fixture cell runner"
+)]
 impl InventoryFixture {
     fn load() -> Self {
         let base_values = load_core_base_values();
@@ -571,6 +587,7 @@ impl InventoryFixture {
     }
 }
 
+#[allow(clippy::expect_used, reason = "inventory test fixture JSON helper")]
 fn decode_json_object(value: &Value) -> JsonObject {
     serde_json::from_value(value.clone()).expect("JSON object decodes")
 }
@@ -599,6 +616,11 @@ fn add_link(from_type: &str, from_id: &str, link: &str, to_type: &str, to_id: &s
     }
 }
 
+#[allow(
+    clippy::expect_used,
+    clippy::indexing_slicing,
+    reason = "inventory test fixture status assertion helper"
+)]
 fn status_of(cell: &Cell, object_type: &str, id: &str) -> String {
     cell.load(&FactKey::new(object_type, id))
         .expect("object loads")
@@ -609,6 +631,11 @@ fn status_of(cell: &Cell, object_type: &str, id: &str) -> String {
         .to_owned()
 }
 
+#[allow(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "inventory test assertion helper"
+)]
 fn assert_law_violation<T: std::fmt::Debug>(
     result: Result<T, CommitError<norn_cell::CellError>>,
     expected_law_id: &str,
@@ -633,6 +660,11 @@ fn assert_law_violation<T: std::fmt::Debug>(
     );
 }
 
+#[allow(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "inventory test assertion helper"
+)]
 fn assert_proper_interval_violation<T: std::fmt::Debug>(
     result: Result<T, CommitError<norn_cell::CellError>>,
 ) {
@@ -649,6 +681,7 @@ fn assert_proper_interval_violation<T: std::fmt::Debug>(
     assert_eq!(id.as_str(), "proper_interval");
 }
 
+#[allow(clippy::panic, reason = "inventory test assertion helper")]
 fn assert_precondition_failed(
     result: Result<ActionOutcome, Box<ActionRefusal<norn_cell::CellError>>>,
     expected_fragment: &str,
@@ -674,6 +707,11 @@ fn assert_precondition_failed(
     );
 }
 
+#[allow(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "inventory test assertion helper"
+)]
 fn assert_immutable_state_refusal(
     fixture: &InventoryFixture,
     cell: &Cell,
@@ -1014,6 +1052,7 @@ fn operational_record_links() -> Vec<LinkWrite> {
     ]
 }
 
+#[allow(clippy::expect_used, reason = "inventory test fixture world seeder")]
 fn seed_operational_world(cell: &mut Cell) {
     let mut seed = CellCommit::empty();
     seed.writes.extend(operational_facts());
@@ -1325,6 +1364,7 @@ fn assert_reservation_and_movement_laws_refuse(cell: &mut Cell) {
 }
 
 #[test]
+#[allow(clippy::expect_used, reason = "inventory E2E test")]
 fn inventory_laws_and_time_interval_enforce_in_real_cell() {
     let fixture = InventoryFixture::load();
     let dir = tempfile::tempdir().expect("tempdir");
@@ -1558,6 +1598,7 @@ fn movement_availability_and_bin_refusals() -> Vec<(&'static str, &'static str, 
 }
 
 #[test]
+#[allow(clippy::expect_used, reason = "inventory E2E test")]
 fn inventory_movement_preconditions_enforce() {
     let fixture = InventoryFixture::load();
     let dir = tempfile::tempdir().expect("tempdir");
@@ -1581,6 +1622,7 @@ fn inventory_movement_preconditions_enforce() {
     }
 }
 
+#[allow(clippy::expect_used, reason = "inventory test assertion helper")]
 fn assert_transfer_links(cell: &Cell, movement_id: &str) {
     for (link, target_type, target_id) in [
         ("resource", "inventory.StockBalance", "bal_central_valve"),
@@ -1600,6 +1642,7 @@ fn assert_transfer_links(cell: &Cell, movement_id: &str) {
 }
 
 #[test]
+#[allow(clippy::expect_used, reason = "inventory E2E test")]
 fn inventory_movement_create_only_and_recorded_immutability_enforce() {
     let fixture = InventoryFixture::load();
     let dir = tempfile::tempdir().expect("tempdir");
@@ -1758,6 +1801,7 @@ fn reservation_refusal_cases() -> Vec<(&'static str, &'static str, Value)> {
 }
 
 #[test]
+#[allow(clippy::expect_used, reason = "inventory E2E test")]
 fn inventory_reservation_guards_and_lifecycle_enforce() {
     let fixture = InventoryFixture::load();
     let dir = tempfile::tempdir().expect("tempdir");
@@ -1825,6 +1869,7 @@ fn inventory_reservation_guards_and_lifecycle_enforce() {
 }
 
 #[test]
+#[allow(clippy::expect_used, reason = "inventory E2E test")]
 fn inventory_lot_quarantine_and_recall_enforce() {
     let fixture = InventoryFixture::load();
     let dir = tempfile::tempdir().expect("tempdir");
@@ -1921,6 +1966,7 @@ fn inventory_lot_quarantine_and_recall_enforce() {
     );
 }
 
+#[allow(clippy::expect_used, reason = "inventory test assertion helper")]
 fn assert_cross_scope_denials(fixture: &InventoryFixture, cell: &mut Cell) {
     let wrong_org = BTreeMap::from([
         ("orgId".to_owned(), "org_other_tenant".to_owned()),
@@ -1991,6 +2037,11 @@ fn assert_cross_scope_denials(fixture: &InventoryFixture, cell: &mut Cell) {
     assert_eq!(xorg_result.code(), "action.target_not_found");
 }
 
+#[allow(
+    clippy::expect_used,
+    clippy::panic,
+    reason = "inventory test assertion helper"
+)]
 fn assert_durable_reopen(fixture: &InventoryFixture, path: &Path, cell: Cell) {
     let dump = cell.store().read().dump().expect("final dump");
     let head = cell
@@ -2018,6 +2069,7 @@ fn assert_durable_reopen(fixture: &InventoryFixture, path: &Path, cell: Cell) {
     );
 }
 
+#[allow(clippy::expect_used, reason = "inventory test assertion helper")]
 fn assert_cycle_count_submit_and_approve(fixture: &InventoryFixture, cell: &mut Cell) {
     let cc_input = json!({"cycleCountId": "cc_nov_2026"});
     fixture
@@ -2069,6 +2121,7 @@ fn assert_cycle_count_submit_and_approve(fixture: &InventoryFixture, cell: &mut 
 }
 
 #[test]
+#[allow(clippy::expect_used, reason = "inventory E2E test")]
 fn inventory_cycle_count_immutability_and_scope_cedar_enforce() {
     let fixture = InventoryFixture::load();
     let dir = tempfile::tempdir().expect("tempdir");
