@@ -279,8 +279,10 @@ export class CellRefusal extends Error {
  * serve (a 404 `route.not_found`, or a 503) is {@link NotServed} under `what`; any other refusal
  * is the cell's {@link CellRefusal}.
  */
-export async function cellRead<T>(path: string, what: string, init: RequestInit = {}, fetcher: Fetch = browserFetch): Promise<Read<T>> {
-  const call = scopedHostFetch(fetcher, "/api/host", () => readStudioScope(fetcher))
+export async function cellRead<T>(
+  path: string, what: string, init: RequestInit = {}, fetcher: Fetch = browserFetch, scope?: StudioScope,
+): Promise<Read<T>> {
+  const call = scopedHostFetch(fetcher, "/api/host", async () => scope ?? readStudioScope(fetcher))
   const response = await call(path, { ...init, headers: { accept: "application/json", ...init.body === undefined ? {} : { "content-type": "application/json" }, ...init.headers } })
   const text = await response.text()
   if (response.ok) return readDocument<T>(text, "live")

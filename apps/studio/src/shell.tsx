@@ -45,6 +45,8 @@ export interface Section {
   readonly paths?: readonly string[]
   /** False when the destination has no page of its own and only groups its items (Records). */
   readonly index?: false
+  /** True when menu entries carrying `group` pin directly into that Space in the sidebar. */
+  readonly pinned?: boolean
 }
 
 export interface MenuEntry {
@@ -409,7 +411,12 @@ function SectionSidebar({ sections, perspective, navigation, pathname, chosen, o
   const own = sections.filter((section) => section.perspective === perspective)
   const open = destinationOf(own, pathname, navigation.menus)
   const current = currentOf(own, navigation, pathname)
-  const spaces = [...new Set(own.map(({ group }) => group ?? ""))]
+  const spaces = [
+    ...new Set([
+      ...own.map(({ group }) => group ?? ""),
+      ...own.filter((section) => section.pinned).flatMap((section) => (navigation.menus.get(section.path) ?? []).map((entry) => entry.group ?? "").filter(Boolean)),
+    ]),
+  ]
   // Spaces start open, the open destination's items show, and a destination's first group of items starts open;
   // the reader's own choices win, except that the current page's row is never hidden.
   const defaults = new Map<string, boolean>()
@@ -417,15 +424,20 @@ function SectionSidebar({ sections, perspective, navigation, pathname, chosen, o
   for (const space of spaces) defaults.set(`space:${space}`, true)
   for (const section of own) {
     const entries = navigation.menus.get(section.path) ?? []
+    const destEntries = section.pinned ? entries.filter((entry) => !entry.group) : entries
     const active = section === open
-    if (entries.length > 0) defaults.set(`dest:${section.path}`, active || section.index === false)
-    const headings = [...new Set(entries.map(({ group }) => group ?? ""))].filter((heading) => heading !== "")
+    if (destEntries.length > 0) defaults.set(`dest:${section.path}`, active || section.index === false)
+    const headings = [...new Set(destEntries.map(({ group }) => group ?? ""))].filter((heading) => heading !== "")
     headings.forEach((heading, index) => defaults.set(`group:${section.path}:${heading}`, index === 0))
     if (active) holding.add(`space:${section.group ?? ""}`)
     const at = entries.find(({ href }) => href === current)
     if (at) {
-      holding.add(`space:${section.group ?? ""}`).add(`dest:${section.path}`)
-      if (at.group) holding.add(`group:${section.path}:${at.group}`)
+      if (section.pinned && at.group) {
+        holding.add(`space:${at.group}`)
+      } else {
+        holding.add(`space:${section.group ?? ""}`).add(`dest:${section.path}`)
+        if (at.group) holding.add(`group:${section.path}:${at.group}`)
+      }
     }
   }
   const values = [...defaults.keys()]
@@ -440,7 +452,28 @@ function SectionSidebar({ sections, perspective, navigation, pathname, chosen, o
           onExpandedChange={(next) => onChosenChange((previous) => diffExpanded(expanded, next, previous))}>
           {spaces.map((space) => {
             const members = own.filter((section) => (section.group ?? "") === space)
-            const items = members.map((section) => <Destination key={section.path} section={section} entries={navigation.menus.get(section.path) ?? []} badge={navigation.badges.get(section.path)} close={close} />)
+            const pinnedItems = own.filter((section) => section.pinned).flatMap((section) =>
+              (navigation.menus.get(section.path) ?? [])
+                .filter((entry) => entry.group === space)
+                .map((entry) => {
+                  const Icon = entry.icon ?? section.icon
+                  return (
+                    <TreeItem key={entry.href} value={entry.href} label={typeof entry.label === "string" ? entry.label : undefined} className={focusRow}>
+                      <TreeItemLabel render={<Link {...target(section, entry.href)} onClick={close} />} className={row}>
+                        <Icon aria-hidden /><span className="truncate">{entry.label}</span>
+                      </TreeItemLabel>
+                    </TreeItem>
+                  )
+                }),
+            )
+            const items = [
+              ...members.map((section) => {
+                const entries = navigation.menus.get(section.path) ?? []
+                const shownEntries = section.pinned ? entries.filter((entry) => !entry.group) : entries
+                return <Destination key={section.path} section={section} entries={shownEntries} badge={navigation.badges.get(section.path)} close={close} />
+              }),
+              ...pinnedItems,
+            ]
             if (space === "") return items
             return (
               <TreeItem key={space} value={`space:${space}`} label={space} className={cn("mt-4 first:mt-2", focusRow)}>
