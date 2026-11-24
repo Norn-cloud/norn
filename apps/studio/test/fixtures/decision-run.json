@@ -113,7 +113,8 @@
       "code": "scope.denied",
       "category": "permission",
       "message": "the request scope is not authorized",
-      "explanation": "access to the requested scope is denied"
+      "explanation": "access to the requested scope is denied",
+      "decidedAt": "2027-01-15T08:00:00Z"
     }
   },
   "invalidBody": {
@@ -125,7 +126,8 @@
       "code": "request.invalid",
       "category": "invalid",
       "message": "the request is malformed",
-      "explanation": "the request body is not a decision: EOF while parsing an object at line 1 column 1"
+      "explanation": "the request body is not a decision: EOF while parsing an object at line 1 column 1",
+      "decidedAt": "2027-01-15T08:00:00Z"
     }
   },
   "decisionMissing": {
@@ -137,7 +139,8 @@
       "code": "decision.not_found",
       "category": "visibility",
       "message": "no such decision",
-      "explanation": "no open decision with this id is waiting on the caller"
+      "explanation": "no open decision with this id is waiting on the caller",
+      "decidedAt": "2027-01-15T08:00:00Z"
     }
   },
   "resolved": {
@@ -150,6 +153,7 @@
       "category": "conflict",
       "message": "the decision was already resolved",
       "explanation": "someone resolved it first",
+      "decidedAt": "2027-01-15T08:00:00Z",
       "resolution": {
         "resolution": "decided",
         "by": "another decider",
@@ -167,7 +171,8 @@
       "code": "decision.expired",
       "category": "invalid",
       "message": "the decision expired",
-      "explanation": "its deadline passed before anyone decided"
+      "explanation": "its deadline passed before anyone decided",
+      "decidedAt": "2027-01-17T08:00:00Z"
     }
   },
   "law": {
@@ -175,11 +180,16 @@
     "json": {
       "format": "norn/refusal@2",
       "retryable": false,
-      "reason": null,
+      "reason": {
+        "law": "ops.refund.review",
+        "subject": "decision/dec_17fe23626739ebb875dc8529dbeba59e",
+        "values": {}
+      },
       "code": "decision.law_not_satisfied",
       "category": "permission",
       "message": "the decider law is not satisfied",
-      "explanation": "this decision names a law the cell cannot evaluate for the caller"
+      "explanation": "this decision names a law the cell cannot evaluate for the caller",
+      "decidedAt": "2027-01-15T08:00:00Z"
     }
   },
   "unknownChoice": {
@@ -201,7 +211,8 @@
             "pointer": "/choice"
           }
         }
-      ]
+      ],
+      "decidedAt": "2027-01-15T08:00:00Z"
     }
   },
   "noteTooLong": {
@@ -223,7 +234,8 @@
             "pointer": "/note"
           }
         }
-      ]
+      ],
+      "decidedAt": "2027-01-15T08:00:00Z"
     }
   },
   "invalidKey": {
@@ -245,7 +257,8 @@
             "pointer": "/idempotencyKey"
           }
         }
-      ]
+      ],
+      "decidedAt": "2027-01-15T08:00:00Z"
     }
   },
   "conflict": {
@@ -257,7 +270,8 @@
       "code": "decision.idempotency_conflict",
       "category": "conflict",
       "message": "the idempotency key was used for another answer",
-      "explanation": "use a new idempotencyKey for a different choice or note"
+      "explanation": "use a new idempotencyKey for a different choice or note",
+      "decidedAt": "2027-01-15T08:00:00Z"
     }
   },
   "runStarted": {
@@ -421,7 +435,8 @@
       "code": "scope.denied",
       "category": "permission",
       "message": "the request scope is not authorized",
-      "explanation": "access to the requested scope is denied"
+      "explanation": "access to the requested scope is denied",
+      "decidedAt": "2027-01-15T08:00:00Z"
     }
   },
   "runStartDenied": {
@@ -433,7 +448,8 @@
       "code": "authz.denied",
       "category": "permission",
       "message": "the run request is not authorized",
-      "explanation": "starting a run of this flow is denied"
+      "explanation": "starting a run of this flow is denied",
+      "decidedAt": "2027-01-15T08:00:00Z"
     }
   },
   "runMissing": {
@@ -445,7 +461,8 @@
       "code": "run.not_found",
       "category": "visibility",
       "message": "no such run",
-      "explanation": "no run with this id is visible to the caller in this scope"
+      "explanation": "no run with this id is visible to the caller in this scope",
+      "decidedAt": "2027-01-15T08:00:00Z"
     }
   }
 }

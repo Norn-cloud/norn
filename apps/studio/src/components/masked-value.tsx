@@ -42,10 +42,12 @@ interface MaskedValueProps {
   readonly masked: Masked
   readonly projected: unknown
   readonly className?: string
+  /** Single-line truncation for fixed-height table rows; detail views wrap cleanly instead of clipping. */
+  readonly compact?: boolean
 }
 
 /** One reveal context's instance; it never outlives its context (see [`MaskedValue`]). */
-function Reveal({ objectType, id, property, masked, projected, className, context }: MaskedValueProps & { readonly context: string }) {
+function Reveal({ objectType, id, property, masked, projected, className, compact = false, context }: MaskedValueProps & { readonly context: string }) {
   const [revealed, setRevealed] = useState<Revealed | null>(null)
   const [open, setOpen] = useState(false)
   const [purpose, setPurpose] = useState("")
@@ -66,14 +68,18 @@ function Reveal({ objectType, id, property, masked, projected, className, contex
   const Icon = masked.mode === "pseudonym" ? Fingerprint : masked.mode === "refuse" ? EyeOff : ShieldCheck
   const chip = (
     <span title={maskHint(masked)} data-masked={masked.mode} style={tintOf(masked.mode === "pseudonym" ? "CUSTOMER" : undefined)}
-      className={cn("inline-flex min-w-0 max-w-full items-center gap-1.5 overflow-hidden rounded-md px-1.5 py-0.5 text-xs", TINTED)}>
+      className={cn(
+        "inline-flex min-w-0 max-w-full items-center gap-x-1.5 gap-y-0.5 rounded-md px-1.5 py-0.5 text-xs",
+        compact ? "overflow-hidden" : "flex-wrap",
+        TINTED,
+      )}>
       <Icon className="size-3 shrink-0" aria-hidden />
-      <span className={cn("min-w-0 truncate font-mono", masked.revealable && "blur-[3px] select-none")} aria-hidden={masked.revealable || undefined}>{projection(masked, projected)}</span>
+      <span className={cn("min-w-0 font-mono", compact ? "truncate" : "[overflow-wrap:anywhere]", masked.revealable && "blur-[3px] select-none")} aria-hidden={masked.revealable || undefined}>{projection(masked, projected)}</span>
       {masked.revealable && <span className="sr-only">Masked; you may reveal it</span>}
-      <span data-mask-hint="" className="min-w-0 shrink-[4] truncate text-[10px] font-normal opacity-75">{maskWord(masked)}</span>
+      <span data-mask-hint="" className={cn("text-[10px] font-normal opacity-75", compact ? "min-w-0 shrink-[4] truncate" : "whitespace-normal [overflow-wrap:anywhere]")}>{maskWord(masked)}</span>
     </span>
   )
-  if (!masked.revealable) return <span className={cn("inline-flex min-w-0", className)}>{chip}</span>
+  if (!masked.revealable) return <span className={cn("inline-flex min-w-0 max-w-full", className)}>{chip}</span>
 
   const reveal = async () => {
     setState({ kind: "busy" })
@@ -86,7 +92,7 @@ function Reveal({ objectType, id, property, masked, projected, className, contex
   }
 
   return (
-    <span className={cn("inline-flex min-w-0 items-center gap-1.5", className)} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+    <span className={cn("inline-flex min-w-0 max-w-full items-center gap-1.5", !compact && "flex-wrap", className)} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
       {chip}
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>

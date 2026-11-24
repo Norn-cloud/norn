@@ -1,8 +1,11 @@
 import { useQuery } from "@tanstack/react-query"
+import { Link } from "@tanstack/react-router"
+import { Database, Workflow as WorkflowIcon } from "lucide-react"
 import { guardsWords } from "./lib/guard-words.ts"
 import { createContext, use, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { Background, Handle, MarkerType, Position, ReactFlow, type Edge, type Node, type NodeProps, type ReactFlowInstance } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
+import { LoadState } from "@/components/load-state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { PageHeader, Panel, Well } from "@/components/panel"
@@ -355,11 +358,30 @@ export function WorkflowsPage() {
     <section className="space-y-6">
       <PageHeader title="Workflows" description="How each business process moves: its states, the steps between them, the condition each step requires, and the laws that govern it." />
       <Automations />
-      {definitions.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
-      {definitions.isError && <p className="text-destructive">{definitions.error.message}</p>}
-      {definitions.data && workflows(definitions.data.map(({ document }) => document)).map((workflow) => (
-        <WorkflowCard key={`${workflow.objectType}:${workflow.lifecycle.property}`} workflow={workflow} title={titleOf(workflow, flows)} flow={flows.get(workflow.objectType)} recorded={definitions.data.some(({ origin }) => origin === "recorded")} />
-      ))}
+      <LoadState
+        status={definitions.status}
+        data={definitions.data}
+        error={definitions.error}
+        isFetching={definitions.isFetching}
+        onRetry={() => void definitions.refetch()}
+        skeleton="cards"
+        loadingLabel="Reading workflows"
+        isEmpty={(docs) => workflows(docs.map(({ document }) => document)).length === 0}
+        empty={{
+          icon: WorkflowIcon,
+          title: "No workflows yet",
+          description: "No record type in this workspace declares lifecycle states yet.",
+          next: <Button asChild size="sm" variant="outline"><Link to="/sources"><Database />Open Sources</Link></Button>,
+        }}
+      >
+        {(docs) => (
+          <div className="space-y-6">
+            {workflows(docs.map(({ document }) => document)).map((workflow) => (
+              <WorkflowCard key={`${workflow.objectType}:${workflow.lifecycle.property}`} workflow={workflow} title={titleOf(workflow, flows)} flow={flows.get(workflow.objectType)} recorded={docs.some(({ origin }) => origin === "recorded")} />
+            ))}
+          </div>
+        )}
+      </LoadState>
     </section>
   )
 }

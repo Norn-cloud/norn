@@ -70,14 +70,36 @@ test("disclosed: the request, each value the law compared with where it came fro
   // The refusal carries no provenance for the values it compared, so no value claims a source:
   // a record read now may not be what the law evaluated.
   await expect(check.locator("[data-checked-from], [data-source]")).toHaveCount(0)
-  // The result: the verified caller as the cell named them, when the answer arrived, and the law's sentence.
+  // The result: the verified caller as the cell named them, when the cell decided, and the law's sentence.
   const result = panel.getByRole("region", { name: "The result" })
   await expect(result).toContainText(principal("admin").subjectId)
+  await expect(result).toContainText("Decided at")
   await expect(result.locator("time")).toBeVisible()
   await expect(result).toContainText("Nothing was written.")
   // The replay answered this call because its whole input is the one the cell's refusal was recorded for.
   expect(cell.calls).toEqual([REQUESTS.refusal])
   await shoot(page, "disclosed")
+})
+
+test("time label: a refusal without server decidedAt falls back to honestly labelled Received at", async ({ page }) => {
+  await refusalCell(page, "admin")
+  // Strip decidedAt to simulate an older server response that carries no refusal timestamp.
+  const withoutTime = { ...retained("refusal.admin.json") }
+  delete withoutTime.decidedAt
+  await page.route(`**/api/host/v1/actions/${CORRECT}**`, (route) => {
+    if (route.request().method() === "POST") return route.fulfill({ status: 422, json: withoutTime })
+    return route.fallback()
+  })
+  await page.goto(`/sources/${RECORD.objectType}/${RECORD.id}`)
+  await page.getByRole("button", { name: actionTitle() }).click()
+  const form = page.getByRole("dialog")
+  await form.getByLabel("Corrected total").fill("30.00")
+  await form.getByLabel("Reason").fill("typo")
+  await form.getByLabel("Evidence").fill(`${RECORD.id}~total`)
+  await form.locator('button[type="submit"]').click()
+  const result = form.locator('[data-refusal="disclosed"]').getByRole("region", { name: "The result" })
+  await expect(result).toContainText("Received at")
+  await expect(result).not.toContainText("Decided at")
 })
 
 test("disclosed: Use puts the value the record holds into the form; the refusal stays, still naming what was sent, until the next send", async ({ page }) => {

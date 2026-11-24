@@ -5,6 +5,7 @@ import { useVirtualizer } from "@tanstack/react-virtual"
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Columns3, ExternalLink, Filter, Play, Plus, RefreshCw, Rows3 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react"
 import { CopyId, PathText } from "@/components/copy-id"
+import { LoadState, ReadErrorState, WorkspaceUnavailable, isWorkspaceUnavailableError, useBoundedWait } from "@/components/load-state"
 import { EmptyState } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -228,6 +229,8 @@ export function RecordsGrid({ concept, read = defaultRead, scope, initial, onQue
     else if ((event.key === "Enter" || event.key === " ") && rows[active]) { event.preventDefault(); setOpened(rows[active] ?? null) }
   }
 
+  const gridWait = useBoundedWait(result.isPending)
+
   if (data?.kind === "no-cell") return <Shell><EmptyState icon={Rows3} title="No data cell">{NO_DATA_CELL}</EmptyState></Shell>
   if (data?.kind === "none") return <Shell><EmptyState icon={Rows3}>Records for this object type are not served by this cell.</EmptyState></Shell>
 
@@ -255,13 +258,9 @@ export function RecordsGrid({ concept, read = defaultRead, scope, initial, onQue
             <Button variant="outline" size="sm" className={pill} onClick={() => { setDraft([]); changeQuery({ sort: [], filter: null }) }}>Reset sort and filter</Button>
           </div>
         )}
-        {result.isError && (
-          <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-            <span>{result.error instanceof Error ? result.error.message : "The records could not be read."}</span>
-            <span className="flex-1" />
-            <Button variant="outline" size="sm" className={pill} onClick={() => void result.refetch()}>Retry</Button>
-          </div>
-        )}
+        {result.isError && (isWorkspaceUnavailableError(result.error)
+          ? <WorkspaceUnavailable error={result.error} isFetching={result.isFetching} onRetry={() => void result.refetch()} compact />
+          : <ReadErrorState error={result.error} isFetching={result.isFetching} onRetry={() => void result.refetch()} />)}
         <div className="flex flex-wrap items-center gap-2">
           {hasViewModes && (
             <ToggleGroup type="single" variant="outline" size="sm" aria-label="Show as" value={layout}
@@ -378,12 +377,24 @@ export function RecordsGrid({ concept, read = defaultRead, scope, initial, onQue
                   )
                 })}
               </div>
-              {result.isPending && <div className="grid gap-1 p-3" aria-label="Reading records">{Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-6" />)}</div>}
+              {result.isPending && (gridWait === "timed-out"
+                ? <div className="sticky left-0 w-full max-w-[min(100%,64rem)] p-4"><LoadState status="pending" timeoutMs={0} slowAfterMs={0} onRetry={() => void result.refetch()}>{() => null}</LoadState></div>
+                : (
+                  <div className="grid gap-1 p-3" aria-label="Reading records" data-load-state={gridWait === "slow" ? "slow" : "loading"}>
+                    {Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-6" />)}
+                    {gridWait === "slow" && (
+                      <div role="status" className="flex items-center gap-2 pt-2 text-meta text-muted-foreground">
+                        <span>Taking longer than usual to reach the workspace…</span>
+                        <Button type="button" variant="ghost" size="xs" onClick={() => void result.refetch()}>Retry</Button>
+                      </div>
+                    )}
+                  </div>
+                ))}
               {page !== undefined && rows.length === 0 && (
                 <div className="sticky left-0 w-full max-w-[min(100%,64rem)] p-6">
                   {filterCount > 0
-                    ? <EmptyState icon={Filter} title="No matches">No records match this filter. <Button variant="link" className="h-auto p-0" onClick={clearFilter}>Clear filter</Button></EmptyState>
-                    : <EmptyState icon={Rows3} title="No records yet">No {concept.title.toLowerCase()} records are stored yet.</EmptyState>}
+                    ? <EmptyState icon={Filter} title="No matches" next={<Button size="sm" variant="outline" onClick={clearFilter}>Clear filter</Button>}>No records match this filter.</EmptyState>
+                    : <EmptyState icon={Rows3} title="No records yet" next={<Button asChild size="sm" variant="outline"><Link to="/sources">Connect a source or upload a CSV</Link></Button>}>No {concept.title.toLowerCase()} records are stored yet.</EmptyState>}
                 </div>
               )}
               <div className="relative" style={{ height: virtual.getTotalSize() }}>

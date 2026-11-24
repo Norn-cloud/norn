@@ -61,7 +61,8 @@ fn refused(code: &str, message: &str) -> Refusal {
 ///
 /// # Errors
 /// The run object is gone; the rule refused the turn (`run.turn_refused`,
-/// `run.flow_inadmissible`); the kernel refused its output; a host failure.
+/// `run.flow_inadmissible`); the kernel refused its output (`422` without
+/// disclosing flow run operands); a host failure.
 pub(crate) fn result_turn<E: SqlEngine>(
     cell: &ActionCell<E>,
     flow: &InstalledFlow,

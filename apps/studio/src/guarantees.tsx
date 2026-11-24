@@ -3,6 +3,7 @@ import { useState } from "react"
 import { Link, useNavigate, useRouterState, useSearch } from "@tanstack/react-router"
 import { ArrowRight, ChevronRight, CircleCheck, CircleHelp, CircleX, Scale, ShieldAlert, ShieldCheck } from "lucide-react"
 import { KpiTile, StatStrip } from "@/components/kpi-tile"
+import { LoadState, WorkspaceUnavailable } from "@/components/load-state"
 import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
 import { NotServed, useMode } from "@/lib/live-transport"
 import { TableCard } from "@/components/table-card"
@@ -223,27 +224,7 @@ function LiveRules() {
   const heldOnly = search.view === "held"
   const setHeldOnly = (next: boolean) => void navigate({ to: "/rules", search: next ? { view: "held" } as never : {}, replace: true })
 
-  if (read.isPending) return <p className="text-muted-foreground">Reading definitions…</p>
-  if (read.isError) return <p role="alert" className="text-destructive">{read.error.message}</p>
-
-  const all = catalog?.concepts.filter(({ laws, rules, definition }) => (laws.length > 0 || rules.length > 0) && definition === "object type") ?? []
-  // The platform's own types (core.*) keep rules a business reader never acts on: they fold under System.
-  const governed = all.filter(({ name }) => !name.startsWith("core."))
-  const system = all.filter(({ name }) => name.startsWith("core."))
-  const knownTypes = new Set(all.map(({ name }) => name))
-  // Any type holding back work without a declared catalog law (e.g. a built-in link rule) still surfaces.
-  const extraHeldTypes = [...new Set(groups.map(({ objectType }) => objectType))].filter((type) => !knownTypes.has(type))
-  // In the held-work view, follow the server's inbox order (largest held groups first).
-  const heldTypes = [...new Set(groups.map(({ objectType }) => objectType))]
-
-  const businessLaws = uniqueLaws(governed)
-  const businessRuleCount = uniqueRuleCount(governed)
-  const errorSeverityCount = businessLaws.filter(({ severity }) => severity === "error").length
-  const warningSeverityCount = businessLaws.filter(({ severity }) => severity === "warning").length
-  const systemRuleCount = uniqueRuleCount(system)
-  const heldBadge = section && (section.count > 0 || section.approximate) ? heldCountText(section.count, section.approximate) : undefined
   const technical = view === "technical"
-
   const unknownTypeHeading = (objectType: string) => (
     <span className="inline-flex flex-wrap items-baseline gap-2">
       <Link to="/objects/$type" params={{ type: objectType }} className="underline-offset-4 hover:underline">{conceptTitle(objectType)}</Link>
@@ -252,104 +233,135 @@ function LiveRules() {
   )
 
   return (
-    <div className="space-y-5">
-      {(governed.length > 0 || section !== undefined) && (
-        <StatStrip>
-          <KpiTile icon={Scale} label="Rules in force" value={businessRuleCount} sub={`over ${governed.length} ${governed.length === 1 ? "type" : "types"}`} />
-          <KpiTile icon={ShieldCheck} label="Reporting severity" value={`${errorSeverityCount} error`} sub={`${warningSeverityCount} warning · separate from enforcement`} />
-          {section !== undefined && (
-            <KpiTile
-              icon={ShieldAlert}
-              label="Held back (per rule)"
-              value={heldCountText(section.count, section.approximate)}
-              sub={heldKpiSub(section, groups, scanLimit)}
-            />
-          )}
-        </StatStrip>
-      )}
-      {inbox.isError && !(inbox.error instanceof NotServed) && (
-        <p role="alert" className="text-sm text-destructive">{inbox.error.message}</p>
-      )}
-      <Tabs value={heldOnly ? "held" : "all"} onValueChange={(next) => setHeldOnly(next === "held")}>
-        <TabsList>
-          <TabsTrigger value="all">All rules</TabsTrigger>
-          <TabsTrigger value="held">
-            Held back{heldBadge !== undefined && <span className="ms-1.5 text-xs text-muted-foreground tabular-nums">{heldBadge}</span>}
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="all" className="space-y-5 pt-3">
-          {all.length === 0 && extraHeldTypes.length === 0 && (
-            <div className="rounded-lg border"><EmptyState icon={Scale} title="No rules admitted">No admitted rule governs a type in this cell.</EmptyState></div>
-          )}
-          <p className="flex items-start gap-2 text-meta text-muted-foreground"><ShieldCheck aria-hidden className="mt-0.5 size-3.5 shrink-0" />{ENFORCED}</p>
-          {governed.map((concept) => (
-            <LawsPanel key={concept.name} concept={concept} enforced={false} heldGroups={groups} scanLimit={scanLimit}
-              label={<TypeHeading concept={concept} technical={technical} />} />
-          ))}
-          {extraHeldTypes.map((objectType) => {
-            const concept = catalog?.byName.get(objectType)
-            return concept
-              ? <LawsPanel key={objectType} concept={concept} enforced={false} heldGroups={groups} scanLimit={scanLimit} label={<TypeHeading concept={concept} technical={technical} />} />
-              : (
-                <Panel key={objectType} icon={Scale} label={unknownTypeHeading(objectType)}>
-                  <Well className="divide-y">
-                    {groups.filter((group) => group.objectType === objectType).map((group) => <HeldRuleRow key={heldGroupKey(group)} held={group} scanLimit={scanLimit} />)}
-                  </Well>
-                </Panel>
-              )
-          })}
-          {system.length > 0 && (
-            <details className="group/system">
-              <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded-md text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30 [&::-webkit-details-marker]:hidden">
-                <ChevronRight aria-hidden className="size-4 transition-transform group-open/system:rotate-90" />
-                System rules ({systemRuleCount}): how the platform keeps its own records
-              </summary>
-              <div className="space-y-4 pt-3">
-                {system.map((concept) => (
+    <LoadState
+      status={read.status}
+      data={catalog}
+      error={read.error}
+      isFetching={read.isFetching}
+      onRetry={() => void read.refetch()}
+      skeleton="cards"
+      loadingLabel="Reading rules"
+    >
+      {(data) => {
+        const all = data.concepts.filter(({ laws, rules, definition }) => (laws.length > 0 || rules.length > 0) && definition === "object type")
+        // The platform's own types (core.*) keep rules a business reader never acts on: they fold under System.
+        const governed = all.filter(({ name }) => !name.startsWith("core."))
+        const system = all.filter(({ name }) => name.startsWith("core."))
+        const knownTypes = new Set(all.map(({ name }) => name))
+        // Any type holding back work without a declared catalog law (e.g. a built-in link rule) still surfaces.
+        const extraHeldTypes = [...new Set(groups.map(({ objectType }) => objectType))].filter((type) => !knownTypes.has(type))
+        // In the held-work view, follow the server's inbox order (largest held groups first).
+        const heldTypes = [...new Set(groups.map(({ objectType }) => objectType))]
+
+        const businessLaws = uniqueLaws(governed)
+        const businessRuleCount = uniqueRuleCount(governed)
+        const errorSeverityCount = businessLaws.filter(({ severity }) => severity === "error").length
+        const warningSeverityCount = businessLaws.filter(({ severity }) => severity === "warning").length
+        const systemRuleCount = uniqueRuleCount(system)
+        const heldBadge = section && (section.count > 0 || section.approximate) ? heldCountText(section.count, section.approximate) : undefined
+
+        return (
+          <div className="space-y-5">
+            {(governed.length > 0 || section !== undefined) && (
+              <StatStrip>
+                <KpiTile icon={Scale} label="Rules in force" value={businessRuleCount} sub={`over ${governed.length} ${governed.length === 1 ? "type" : "types"}`} />
+                <KpiTile icon={ShieldCheck} label="Reporting severity" value={`${errorSeverityCount} error`} sub={`${warningSeverityCount} warning · separate from enforcement`} />
+                {section !== undefined && (
+                  <KpiTile
+                    icon={ShieldAlert}
+                    label="Held back (per rule)"
+                    value={heldCountText(section.count, section.approximate)}
+                    sub={heldKpiSub(section, groups, scanLimit)}
+                  />
+                )}
+              </StatStrip>
+            )}
+            {inbox.isError && !(inbox.error instanceof NotServed) && (
+              <p role="alert" className="text-sm text-destructive">{inbox.error.message}</p>
+            )}
+            <Tabs value={heldOnly ? "held" : "all"} onValueChange={(next) => setHeldOnly(next === "held")}>
+              <TabsList>
+                <TabsTrigger value="all">All rules</TabsTrigger>
+                <TabsTrigger value="held">
+                  Held back{heldBadge !== undefined && <span className="ms-1.5 text-xs text-muted-foreground tabular-nums">{heldBadge}</span>}
+                </TabsTrigger>
+              </TabsList>
+              <TabsContent value="all" className="space-y-5 pt-3">
+                {all.length === 0 && extraHeldTypes.length === 0 && (
+                  <div className="rounded-lg border"><EmptyState icon={Scale} title="No rules admitted">No admitted rule governs a type in this cell.</EmptyState></div>
+                )}
+                <p className="flex items-start gap-2 text-meta text-muted-foreground"><ShieldCheck aria-hidden className="mt-0.5 size-3.5 shrink-0" />{ENFORCED}</p>
+                {governed.map((concept) => (
                   <LawsPanel key={concept.name} concept={concept} enforced={false} heldGroups={groups} scanLimit={scanLimit}
                     label={<TypeHeading concept={concept} technical={technical} />} />
                 ))}
-              </div>
-            </details>
-          )}
-          <p className="text-meta text-muted-foreground">Proof status per rule (what the model checker proved, within which bounds) is not served by this cell yet.</p>
-        </TabsContent>
-        <TabsContent value="held" className="space-y-5 pt-3">
-          {inbox.isPending && <Skeleton className="h-28 rounded-lg" />}
-          {inbox.isError && inbox.error instanceof NotServed && (
-            <div className="rounded-lg border"><EmptyState icon={ShieldAlert} title="Not served yet">This cell does not serve held-back work yet.</EmptyState></div>
-          )}
-          {!inbox.isPending && !inbox.isError && heldTypes.length === 0 && (
-            <div className="rounded-lg border">
-              {section?.approximate ? (
-                <EmptyState icon={ShieldAlert} title="None found within the scan bound" next={<Button variant="outline" size="sm" onClick={() => setHeldOnly(false)}>Show all rules</Button>}>
-                  No held-back record was found within {scanLimit ? `the first ${scanLimit.toLocaleString("en-US")} scanned rows` : "the scan bound"}. More records were not scanned, so other records may still be held back.
-                </EmptyState>
-              ) : (
-                <EmptyState icon={ShieldCheck} title="Nothing held back" next={<Button variant="outline" size="sm" onClick={() => setHeldOnly(false)}>Show all rules</Button>}>
-                  No rule is holding back records right now.
-                </EmptyState>
-              )}
-            </div>
-          )}
-          {!inbox.isPending && !inbox.isError && section !== undefined && groups.length > 0 && (
-            <p className="text-meta text-muted-foreground tabular-nums">{heldTabSummary(section, groups, scanLimit)}</p>
-          )}
-          {heldTypes.map((objectType) => {
-            const concept = catalog?.byName.get(objectType)
-            return concept
-              ? <LawsPanel key={objectType} concept={concept} enforced={false} heldOnly heldGroups={groups} scanLimit={scanLimit} label={<TypeHeading concept={concept} technical={technical} />} />
-              : (
-                <Panel key={objectType} icon={Scale} label={unknownTypeHeading(objectType)}>
-                  <Well className="divide-y">
-                    {groups.filter((group) => group.objectType === objectType).map((group) => <HeldRuleRow key={heldGroupKey(group)} held={group} scanLimit={scanLimit} />)}
-                  </Well>
-                </Panel>
-              )
-          })}
-        </TabsContent>
-      </Tabs>
-    </div>
+                {extraHeldTypes.map((objectType) => {
+                  const concept = data.byName.get(objectType)
+                  return concept
+                    ? <LawsPanel key={objectType} concept={concept} enforced={false} heldGroups={groups} scanLimit={scanLimit} label={<TypeHeading concept={concept} technical={technical} />} />
+                    : (
+                      <Panel key={objectType} icon={Scale} label={unknownTypeHeading(objectType)}>
+                        <Well className="divide-y">
+                          {groups.filter((group) => group.objectType === objectType).map((group) => <HeldRuleRow key={heldGroupKey(group)} held={group} scanLimit={scanLimit} />)}
+                        </Well>
+                      </Panel>
+                    )
+                })}
+                {system.length > 0 && (
+                  <details className="group/system">
+                    <summary className="flex w-fit cursor-pointer list-none items-center gap-1.5 rounded-md text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30 [&::-webkit-details-marker]:hidden">
+                      <ChevronRight aria-hidden className="size-4 transition-transform group-open/system:rotate-90" />
+                      System rules ({systemRuleCount}): how the platform keeps its own records
+                    </summary>
+                    <div className="space-y-4 pt-3">
+                      {system.map((concept) => (
+                        <LawsPanel key={concept.name} concept={concept} enforced={false} heldGroups={groups} scanLimit={scanLimit}
+                          label={<TypeHeading concept={concept} technical={technical} />} />
+                      ))}
+                    </div>
+                  </details>
+                )}
+                <p className="text-meta text-muted-foreground">Proof status per rule (what the model checker proved, within which bounds) is not served by this cell yet.</p>
+              </TabsContent>
+              <TabsContent value="held" className="space-y-5 pt-3">
+                {inbox.isPending && <Skeleton className="h-28 rounded-lg" />}
+                {inbox.isError && inbox.error instanceof NotServed && (
+                  <div className="rounded-lg border"><EmptyState icon={ShieldAlert} title="Not served yet">This cell does not serve held-back work yet.</EmptyState></div>
+                )}
+                {!inbox.isPending && !inbox.isError && heldTypes.length === 0 && (
+                  <div className="rounded-lg border">
+                    {section?.approximate ? (
+                      <EmptyState icon={ShieldAlert} title="None found within the scan bound" next={<Button variant="outline" size="sm" onClick={() => setHeldOnly(false)}>Show all rules</Button>}>
+                        No held-back record was found within {scanLimit ? `the first ${scanLimit.toLocaleString("en-US")} scanned rows` : "the scan bound"}. More records were not scanned, so other records may still be held back.
+                      </EmptyState>
+                    ) : (
+                      <EmptyState icon={ShieldCheck} title="Nothing held back" next={<Button variant="outline" size="sm" onClick={() => setHeldOnly(false)}>Show all rules</Button>}>
+                        No rule is holding back records right now.
+                      </EmptyState>
+                    )}
+                  </div>
+                )}
+                {!inbox.isPending && !inbox.isError && section !== undefined && groups.length > 0 && (
+                  <p className="text-meta text-muted-foreground tabular-nums">{heldTabSummary(section, groups, scanLimit)}</p>
+                )}
+                {heldTypes.map((objectType) => {
+                  const concept = data.byName.get(objectType)
+                  return concept
+                    ? <LawsPanel key={objectType} concept={concept} enforced={false} heldOnly heldGroups={groups} scanLimit={scanLimit} label={<TypeHeading concept={concept} technical={technical} />} />
+                    : (
+                      <Panel key={objectType} icon={Scale} label={unknownTypeHeading(objectType)}>
+                        <Well className="divide-y">
+                          {groups.filter((group) => group.objectType === objectType).map((group) => <HeldRuleRow key={heldGroupKey(group)} held={group} scanLimit={scanLimit} />)}
+                        </Well>
+                      </Panel>
+                    )
+                })}
+              </TabsContent>
+            </Tabs>
+          </div>
+        )
+      }}
+    </LoadState>
   )
 }
 
@@ -362,7 +374,11 @@ export function RulesPage() {
     </section>
   )
   // The recording shows only once Studio has decided there is no cell: never while it is still connecting.
-  if (mode.data?.kind !== "recorded") return mode.isError ? <p role="alert" className="text-destructive">{mode.error.message}</p> : <p className="text-muted-foreground">Connecting to the cell…</p>
+  if (mode.data?.kind !== "recorded") {
+    return mode.isError
+      ? <WorkspaceUnavailable error={mode.error} isFetching={mode.isFetching} onRetry={() => void mode.refetch()} />
+      : <LoadState status="pending" skeleton="cards" loadingLabel="Connecting to workspace" onRetry={() => void mode.refetch()}>{() => null}</LoadState>
+  }
   return <RecordedRules />
 }
 
@@ -383,8 +399,8 @@ function RecordedRules() {
     <section className="space-y-8">
       <PageHeader title="Rules" meta={<Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
         description="The recorded rule, and how strongly it is checked. The model checker explores every case within stated bounds; a broken copy of the definition shows it catches a real mistake." />
-      {read.isPending && <p className="text-muted-foreground">Reading rules…</p>}
-      {read.isError && <p className="text-destructive">{read.error.message}</p>}
+      {read.isPending && <LoadState status="pending" skeleton="cards" loadingLabel="Reading rules" onRetry={() => void read.refetch()}>{() => null}</LoadState>}
+      {read.isError && <LoadState status="error" error={read.error} isFetching={read.isFetching} onRetry={() => void read.refetch()}>{() => null}</LoadState>}
       {declared && <Hero declared={declared} broken={document("mutant")} />}
       {read.data && (
         <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className="group/details">
