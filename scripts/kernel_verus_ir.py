@@ -132,7 +132,37 @@ def entries(body, section, item):
     return records
 
 
+def check_thir_record(body):
+    lines = body.rstrip().splitlines()
+    require(len(lines) >= 2 and lines[0] == "Thir {" and lines[-1] == "}",
+            "incomplete THIR record")
+    pairs = {"(": ")", "[": "]", "{": "}"}
+    closing = []
+    # Debug strings (including source paths) may contain literal delimiters.
+    for token in re.findall(r'"(?:\\.|[^"\\])*"|["(){}\[\]]', "\n".join(lines[1:-1])):
+        if token in pairs:
+            closing.append(pairs[token])
+        elif not token.startswith('"'):
+            require(closing and closing.pop() == token, "unbalanced THIR record")
+        else:
+            require(len(token) > 1, "unterminated THIR string")
+    require(not closing, "unbalanced THIR record")
+
+
+def callee(record, indent):
+    # A field ends at its next sibling, the enclosing struct's close, or the
+    # end of the extracted Expr. Keep multiline types intact for fullmatch.
+    prefix = " " * indent
+    ty = one(rf"^{prefix}ty: (.*?),\n(?={prefix}\w+:|{prefix[:-4]}\}},|\Z)", record)
+    match = re.fullmatch(
+        r"FnDef\(\s*DefId\((\d+:\d+) ~ (\w+)\[([0-9a-f]+)\]((?:::(?:\w+|\{impl#\d+\}))+)"
+        r"\),\s*Binder \{\s*value: \[\],\s*bound_vars: \[\],\s*\},\s*\)", ty)
+    require(match, f"expected a top-level THIR FnDef, got {ty!r}")
+    return match.groups()
+
+
 def thir_function(body):
+    check_thir_record(body)
     # G0's executable locals are the parameters. A nonempty stmt inventory
     # (including a let declaration) must never silently disappear from the comparison.
     require({"    stmts: [],", "    arms: [],"} <= set(body.splitlines()), "unsupported THIR statements")
@@ -157,14 +187,10 @@ def thir_function(body):
         used.add(index)
         return nodes[index]
 
-    def callee(record):
-        return one(r"FnDef\(\s*DefId\(\d+:\d+ ~ (\w+)\[[0-9a-f]+\](::[^)]+)\),\s*"
-                   r"Binder \{\s*value: \[\],\s*bound_vars: \[\],\s*\},\s*\)", record)
-
     for expr in entries(body, "exprs", "Expr"):
         kind = one(r"^            kind: (\w+) \{$", expr)
         if kind == "ZstLiteral":
-            nodes.append(("FnDef", "call:" + "".join(callee(expr)), []))
+            nodes.append(("FnDef", callee(expr, 12), []))
             continue
         ty = thir_type(one(r"^            ty: ([^\n]+),$", expr))
         if kind == "Scope":
@@ -186,8 +212,10 @@ def thir_function(body):
             fields = ["arg"] if kind == "Unary" else ["lhs", "rhs"]
             args = [child(one(rf"{key}: e(\d+),", expr)) for key in fields]
         elif kind == "Call":
-            op = "call:" + "".join(callee(expr))
-            require(child(one(r"fun: e(\d+),", expr)) == ("FnDef", op, []), "THIR callee mismatch")
+            identity = callee(expr, 16)
+            require(child(one(r"fun: e(\d+),", expr)) == ("FnDef", identity, []), "THIR callee mismatch")
+            _, crate, _, path = identity
+            op = "call:" + crate + path
             raw = one(r"args: \[\s*((?:e\d+,\s*)*)\],", expr)
             args = [child(i) for i in re.findall(r"e(\d+)", raw)]
         else:

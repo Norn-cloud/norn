@@ -117,6 +117,29 @@ Thir {
         self.assertEqual(ir["expr_types"], [("Block", "u64", 1), ("call", "u64", 0)])
         self.assertEqual(ir["local_types"], [("x", "u64")])
 
+    def test_callee_operand_must_be_a_function_item(self):
+        field = next(line for line in self.thir.splitlines() if line.startswith("            ty: FnDef("))
+        ty = field.strip().removeprefix("ty: ").removesuffix(",")
+        wrapped = self.thir.replace(field, f"            ty: ({ty},),", 1)
+        with self.assertRaisesRegex(ValueError, "top-level THIR FnDef"):
+            compare_ir(self.vir, wrapped.splitlines(True), ["probe"])
+
+    def test_call_and_operand_must_resolve_to_the_same_crate_instance(self):
+        changed = self.thir.replace("core[123a]", "core[123b]", 1)
+        with self.assertRaisesRegex(ValueError, "THIR callee mismatch"):
+            compare_ir(self.vir, changed.splitlines(True), ["probe"])
+
+    def test_truncated_target_at_record_boundaries(self):
+        truncated = self.thir.removesuffix("}\n")
+        for boundary in ("", "DefId(0:5 ~ norn_kernel[123a]::other):\n"):
+            with self.subTest(boundary=boundary), self.assertRaisesRegex(ValueError, "incomplete THIR"):
+                compare_ir(self.vir, (truncated + boundary).splitlines(True), ["probe"])
+
+    def test_unbalanced_nested_record(self):
+        broken = self.thir.replace("pat: Some(Pat {", "pat: Some(Pat ")
+        with self.assertRaisesRegex(ValueError, "unbalanced THIR"):
+            compare_ir(self.vir, broken.splitlines(True), ["probe"])
+
     def test_rejects_each_compiler_disagreement(self):
         exprs, params = self.thir.split("    params:")
         cases = {
