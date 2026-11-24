@@ -124,7 +124,7 @@ Every screen composes from declarative, IR-serializable primitives:
 - `ControlDock` — single floating dark pill dock for tools, lenses, modes, and Sidekick triggers.
 - `PromptComposer` — structured prompt, attachment, and parameter composer.
 - `SplitPane` — resizable multi-region workspace layout.
-- `DataGrid` — virtualized grid (`@tanstack/react-table` + `@tanstack/react-virtual`) reserved for genuinely dense tabular workflows.
+- `DataGrid` — virtualized grid (`@tanstack/react-virtual`) reserved for genuinely dense tabular workflows.
 - `ActionTrigger` — checked action invocation bound directly to a declared Norn action or transition.
 
 ### Layer 2 — Server-Only Authorization & Redaction (`norn-ui-checker` + Cell Host + Cedar + Markings)

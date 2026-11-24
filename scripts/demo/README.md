@@ -1,7 +1,7 @@
 # Jewelry demo
 
 Run the demo through the product: `norn capabilities` discovers the installed
-operations, `norn mcp` serves them over MCP, and the [demo UI](../../packages/norn-demo-ui/README.md)
+operations, `norn mcp` serves them over MCP, and Studio (`apps/studio`)
 renders the server's governed documents. Discover actual operations before
 invoking them; a checked definition is not a completed business transaction.
 
