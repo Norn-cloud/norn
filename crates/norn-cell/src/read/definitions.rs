@@ -368,11 +368,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     }
 
     /// O(1) latest retained definition version at or before `through` for
-    /// `Phase::Seed` pin verification (`ORDER BY version DESC LIMIT 1`, `<= 1` row).
+    /// `Phase::Seed` pin verification (`ORDER BY commit_seq DESC LIMIT 1`, `<= 1` row).
     pub(crate) fn latest_definition_version_through(&self, through: u64) -> Result<u64, CellError> {
         let max_version: Option<i64> = self.conn.query_optional(
             &format!(
-                "SELECT \"version\" FROM \"{DEFINITION_VERSION}\" WHERE \"commit_seq\" <= ?1 ORDER BY \"version\" DESC LIMIT 1"
+                "SELECT \"version\" FROM \"{DEFINITION_VERSION}\" WHERE \"commit_seq\" <= ?1 ORDER BY \"commit_seq\" DESC LIMIT 1"
             ),
             params![to_i64(through, "definitions commit_seq")?],
             |row| row.get(0),
