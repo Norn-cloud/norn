@@ -1,6 +1,19 @@
 {
   "artifactId": "core.Resource.interface",
-  "dependencies": [],
+  "dependencies": [
+    {
+      "artifactId": "core.value_types.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    },
+    {
+      "artifactId": "std.value_types.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.2.0"
+    }
+  ],
   "irVersion": "0.1",
   "kind": "entity",
   "lifecycle": "active",
@@ -10,6 +23,18 @@
     "entityVersion": "2.0",
     "interface": {
       "description": "Something of value that is conserved: goods, money, time, capacity or a right, held as a quantity in exactly one unit (a UCUM unit, or a currency for money). `valuation_method` is the governed parameter of core.law.stock_valuation (FIFO or moving average); it is null for a resource that is not valued.",
+      "invariants": [
+        {
+          "expression": "self.quantity >= 0",
+          "id": "non_negative_quantity",
+          "message": "A resource quantity must be non-negative."
+        },
+        {
+          "expression": "((self.unit != null) and (self.currency == null)) or ((self.unit == null) and (self.currency != null))",
+          "id": "single_measure",
+          "message": "A resource must carry either a unit or a currency, never both or neither."
+        }
+      ],
       "links": [
         {
           "cardinality": {
@@ -92,5 +117,5 @@
     "sourcePath": "registry/core/artifacts/core.Resource.interface.json"
   },
   "scope": {},
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

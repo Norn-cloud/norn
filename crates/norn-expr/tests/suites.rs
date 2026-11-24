@@ -22,6 +22,8 @@ mod check;
 mod corpus;
 #[path = "cost.rs"]
 mod cost;
+#[path = "decimal_binding_zero.rs"]
+mod decimal_binding_zero;
 #[path = "fixtures.rs"]
 mod fixtures;
 #[path = "profile_conformance.rs"]

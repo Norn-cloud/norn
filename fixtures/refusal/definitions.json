@@ -147,23 +147,23 @@
         "base": [
           {
             "artifactId": "core.Agent.interface",
-            "sha256": "1aa55ef589847ba5fae82bced2f299005024758de3c89f0601f5fe5a03c19653",
-            "version": "0.1.0"
+            "sha256": "f7ca4c743eceef44f7c67748551a03dff40b04e049e4f02a4544fec14fa5aebe",
+            "version": "0.2.0"
           },
           {
             "artifactId": "core.AgentRole.interface",
-            "sha256": "139640151f145081afc9bfb865f0c0302afeae891a4267740a4bd1ae0bce4fea",
-            "version": "0.1.0"
+            "sha256": "1fdf993857a4b3b05bca78cf360d56a87140162b0a844f27dab707b86437b697",
+            "version": "0.2.0"
           },
           {
             "artifactId": "core.Claim.interface",
-            "sha256": "80b068073d5798dcc8be463d586e3c802506b62e0f4de3637033473c2d87c522",
-            "version": "0.1.0"
+            "sha256": "8cc6c743d623460a70afa1d2b30e0c81ceb2342e4c13263b12df44b6c046b2f5",
+            "version": "0.2.0"
           },
           {
             "artifactId": "core.Commitment.interface",
-            "sha256": "f69d1b11a33dbc4b06c0ef03f55d4840e6f8088bf290e83927b20fbe9a790e6a",
-            "version": "0.1.0"
+            "sha256": "549799c81d777f0f22dc1a6877fc157600896ecfdd40cc283c0d74cbac94c0b2",
+            "version": "0.2.0"
           },
           {
             "artifactId": "core.Conversion.interface",
@@ -172,8 +172,8 @@
           },
           {
             "artifactId": "core.EconomicEvent.interface",
-            "sha256": "ce54c4ae053311179848b269a0f5d88c72d79c7513181596151fb4e2eeda5c1f",
-            "version": "0.1.0"
+            "sha256": "797c46f2829d68d67af6965264ea2ebe60de2a735705cfca9001d4ea7ccfbffc",
+            "version": "0.2.0"
           },
           {
             "artifactId": "core.Exchange.interface",
@@ -182,13 +182,13 @@
           },
           {
             "artifactId": "core.Hold.interface",
-            "sha256": "9df58904722088d943b142393d16864285ce441d5aa80357a77c3e8597c4fe30",
-            "version": "0.1.0"
+            "sha256": "e837ddc970305273a0f21ba7e123b19b36362d571ce5f51c88b8afd19110688b",
+            "version": "0.2.0"
           },
           {
             "artifactId": "core.LedgerEffect.interface",
-            "sha256": "b497f276a7ae3bb9051c54005a49d5fee0e64939fb33e0065346eda9d263f770",
-            "version": "0.1.0"
+            "sha256": "9b986ec7503f76cb823df1467f7a9ea8cbfe100b492d15a109858fc0a3886419",
+            "version": "0.2.0"
           },
           {
             "artifactId": "core.Process.interface",
@@ -197,8 +197,8 @@
           },
           {
             "artifactId": "core.Resource.interface",
-            "sha256": "7747c8df47f5b336ca525e3b8b8bde88f4d17b6de54bb49fdd6ee4c8f52381c1",
-            "version": "0.1.0"
+            "sha256": "fdc74e434e61a0b09cc29de4e6ede5069dbe3fe9515f639ed654775989caec6d",
+            "version": "0.2.0"
           },
           {
             "artifactId": "core.TimeInterval.interface",
@@ -247,16 +247,16 @@
           },
           {
             "artifactId": "core.value_types.entity",
-            "sha256": "713e9d398c623c7d8a19a37cd2de36d3a5e37c8f05b877ab63958efe10087f54",
+            "sha256": "39e6ad4cb108c096b3ee2a08a5b964331a41652ac251c89483f9eae9e0bd0694",
             "version": "0.2.0"
           },
           {
             "artifactId": "std.value_types.entity",
-            "sha256": "4296a0d1d737619ee2021c236dc2251a76296575e9d18220d4d5cea1bf22e027",
-            "version": "0.1.0"
+            "sha256": "33bb45a5c9230c48526ff12079602b304e851dae141ccbccbe4adc4dd3d55eb5",
+            "version": "0.2.0"
           }
         ],
-        "sha256": "f4720eaa91a8ab86248dcc2bb48df300fad2e4c48dc3eb51678ca71e7657ccf8"
+        "sha256": "29a0b52887f445173e20ca987dc9645d1f6101efd7c66756c2691ce90614cb8b"
       },
       "checker": {
         "name": "norn-checker",
@@ -277,11 +277,11 @@
       },
       "typeEnv": {
         "id": "norn.expr.env",
-        "sha256": "308b43508b93ba9583a9829ed7bf2e322102b73eedb561cc674d1609dbb67160",
-        "version": 2
+        "sha256": "0747c32c3e59d565a7852556f3d8e240e17137d5e11acfc6b89df3e0d4982805",
+        "version": 3
       }
     },
-    "receiptSha256": "11a2898c152c49583f5489e5dedc70c2a45179a0fe3f0de04d565ccaaa711db8",
+    "receiptSha256": "e9663a22209ceb725a82302b20c852e6f2766f1446d4628439225bf52c333389",
     "diagnostics": null,
     "registry": [],
     "baseArtifactIds": [
@@ -311,7 +311,14 @@
     "artifacts": [
       {
         "artifactId": "core.Agent.interface",
-        "dependencies": [],
+        "dependencies": [
+          {
+            "artifactId": "core.value_types.entity",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          }
+        ],
         "irVersion": "0.1",
         "kind": "entity",
         "lifecycle": "active",
@@ -356,11 +363,24 @@
           "sourcePath": "registry/core/artifacts/core.Agent.interface.json"
         },
         "scope": {},
-        "version": "0.1.0"
+        "version": "0.2.0"
       },
       {
         "artifactId": "core.AgentRole.interface",
-        "dependencies": [],
+        "dependencies": [
+          {
+            "artifactId": "core.value_types.entity",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          },
+          {
+            "artifactId": "std.value_types.entity",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          }
+        ],
         "irVersion": "0.1",
         "kind": "entity",
         "lifecycle": "active",
@@ -428,11 +448,24 @@
           "sourcePath": "registry/core/artifacts/core.AgentRole.interface.json"
         },
         "scope": {},
-        "version": "0.1.0"
+        "version": "0.2.0"
       },
       {
         "artifactId": "core.Claim.interface",
-        "dependencies": [],
+        "dependencies": [
+          {
+            "artifactId": "core.value_types.entity",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          },
+          {
+            "artifactId": "std.value_types.entity",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          }
+        ],
         "irVersion": "0.1",
         "kind": "entity",
         "lifecycle": "active",
@@ -442,6 +475,13 @@
           "entityVersion": "2.0",
           "interface": {
             "description": "An economic claim: a right to receive resources, such as an invoice or a receivable, settled by economic events. Not a catalog claim about definitions. Disjoint from core.Commitment (Commitment ⊓ Claim = ∅): a promise is not yet a right, and no type is both. A fulfilled or accepted commitment gives rise to claims (givesRiseTo); the relation is recorded on the claim as `arises_from`, because a commitment is not edited when a claim arises.",
+            "invariants": [
+              {
+                "expression": "self.amount > 0",
+                "id": "positive_amount",
+                "message": "A claim amount must be strictly positive."
+              }
+            ],
             "links": [
               {
                 "cardinality": {
@@ -505,11 +545,24 @@
           "sourcePath": "registry/core/artifacts/core.Claim.interface.json"
         },
         "scope": {},
-        "version": "0.1.0"
+        "version": "0.2.0"
       },
       {
         "artifactId": "core.Commitment.interface",
-        "dependencies": [],
+        "dependencies": [
+          {
+            "artifactId": "core.value_types.entity",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          },
+          {
+            "artifactId": "std.value_types.entity",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          }
+        ],
         "irVersion": "0.1",
         "kind": "entity",
         "lifecycle": "active",
@@ -519,6 +572,18 @@
           "entityVersion": "2.0",
           "interface": {
             "description": "A promise of a future economic event: an order line, a contract term, a subscription period. It ends fulfilled, cancelled or breached and is never dropped (DEMO request, promise, execute).",
+            "invariants": [
+              {
+                "expression": "self.quantity > 0",
+                "id": "positive_quantity",
+                "message": "A commitment quantity must be strictly positive."
+              },
+              {
+                "expression": "((self.unit != null) and (self.currency == null)) or ((self.unit == null) and (self.currency != null))",
+                "id": "single_measure",
+                "message": "A commitment must carry either a unit or a currency, never both or neither."
+              }
+            ],
             "links": [
               {
                 "cardinality": {
@@ -618,7 +683,7 @@
           "sourcePath": "registry/core/artifacts/core.Commitment.interface.json"
         },
         "scope": {},
-        "version": "0.1.0"
+        "version": "0.2.0"
       },
       {
         "artifactId": "core.Conversion.interface",
@@ -647,7 +712,20 @@
       },
       {
         "artifactId": "core.EconomicEvent.interface",
-        "dependencies": [],
+        "dependencies": [
+          {
+            "artifactId": "core.value_types.entity",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          },
+          {
+            "artifactId": "std.value_types.entity",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          }
+        ],
         "irVersion": "0.1",
         "kind": "entity",
         "lifecycle": "active",
@@ -657,6 +735,18 @@
           "entityVersion": "2.0",
           "interface": {
             "description": "A posted change of resources. A transfer moves ownership or custody from provider to receiver; a transformation consumes inputs and produces outputs. Posted events are immutable; a correction is a new event that reverses its original.",
+            "invariants": [
+              {
+                "expression": "self.quantity > 0",
+                "id": "positive_quantity",
+                "message": "An economic event quantity must be strictly positive."
+              },
+              {
+                "expression": "((self.unit != null) and (self.currency == null)) or ((self.unit == null) and (self.currency != null))",
+                "id": "single_measure",
+                "message": "An economic event must carry either a unit or a currency, never both or neither."
+              }
+            ],
             "links": [
               {
                 "cardinality": {
@@ -772,7 +862,7 @@
           "sourcePath": "registry/core/artifacts/core.EconomicEvent.interface.json"
         },
         "scope": {},
-        "version": "0.1.0"
+        "version": "0.2.0"
       },
       {
         "artifactId": "core.Exchange.interface",
@@ -801,7 +891,20 @@
       },
       {
         "artifactId": "core.Hold.interface",
-        "dependencies": [],
+        "dependencies": [
+          {
+            "artifactId": "core.value_types.entity",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          },
+          {
+            "artifactId": "std.value_types.entity",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          }
+        ],
         "irVersion": "0.1",
         "kind": "entity",
         "lifecycle": "active",
@@ -811,6 +914,18 @@
           "entityVersion": "2.0",
           "interface": {
             "description": "A quantity set aside against a balance: an escrow, a stock reservation or a use of a quota. A hold is released, consumed or expires, and never exceeds what is available (core.law.escrow_non_negative).",
+            "invariants": [
+              {
+                "expression": "self.quantity > 0",
+                "id": "positive_quantity",
+                "message": "A hold quantity must be strictly positive."
+              },
+              {
+                "expression": "((self.unit != null) and (self.currency == null)) or ((self.unit == null) and (self.currency != null))",
+                "id": "single_measure",
+                "message": "A hold must carry either a unit or a currency, never both or neither."
+              }
+            ],
             "links": [
               {
                 "cardinality": {
@@ -910,11 +1025,18 @@
           "sourcePath": "registry/core/artifacts/core.Hold.interface.json"
         },
         "scope": {},
-        "version": "0.1.0"
+        "version": "0.2.0"
       },
       {
         "artifactId": "core.LedgerEffect.interface",
-        "dependencies": [],
+        "dependencies": [
+          {
+            "artifactId": "core.value_types.entity",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          }
+        ],
         "irVersion": "0.1",
         "kind": "entity",
         "lifecycle": "active",
@@ -924,6 +1046,13 @@
           "entityVersion": "2.0",
           "interface": {
             "description": "The value view of an economic event: one signed amount on one account. A positive amount is a debit and a negative one a credit; the side is presentation only and is never stored. The effects posted together balance (core.law.value_conservation).",
+            "invariants": [
+              {
+                "expression": "self.amount != 0",
+                "id": "non_zero_amount",
+                "message": "A ledger effect amount must be non-zero."
+              }
+            ],
             "links": [
               {
                 "cardinality": {
@@ -968,7 +1097,7 @@
           "sourcePath": "registry/core/artifacts/core.LedgerEffect.interface.json"
         },
         "scope": {},
-        "version": "0.1.0"
+        "version": "0.2.0"
       },
       {
         "artifactId": "core.Process.interface",
@@ -994,7 +1123,20 @@
       },
       {
         "artifactId": "core.Resource.interface",
-        "dependencies": [],
+        "dependencies": [
+          {
+            "artifactId": "core.value_types.entity",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          },
+          {
+            "artifactId": "std.value_types.entity",
+            "kind": "entity",
+            "required": true,
+            "version": "0.2.0"
+          }
+        ],
         "irVersion": "0.1",
         "kind": "entity",
         "lifecycle": "active",
@@ -1004,6 +1146,18 @@
           "entityVersion": "2.0",
           "interface": {
             "description": "Something of value that is conserved: goods, money, time, capacity or a right, held as a quantity in exactly one unit (a UCUM unit, or a currency for money). `valuation_method` is the governed parameter of core.law.stock_valuation (FIFO or moving average); it is null for a resource that is not valued.",
+            "invariants": [
+              {
+                "expression": "self.quantity >= 0",
+                "id": "non_negative_quantity",
+                "message": "A resource quantity must be non-negative."
+              },
+              {
+                "expression": "((self.unit != null) and (self.currency == null)) or ((self.unit == null) and (self.currency != null))",
+                "id": "single_measure",
+                "message": "A resource must carry either a unit or a currency, never both or neither."
+              }
+            ],
             "links": [
               {
                 "cardinality": {
@@ -1086,7 +1240,7 @@
           "sourcePath": "registry/core/artifacts/core.Resource.interface.json"
         },
         "scope": {},
-        "version": "0.1.0"
+        "version": "0.2.0"
       },
       {
         "artifactId": "core.TimeInterval.interface",
@@ -2542,7 +2696,7 @@
         },
         "provenance": {
           "source": "system",
-          "sourcePath": "registry/core/artifacts/core.value_types.entity.json"
+          "sourcePath": "registry/core/src/value_types.rs"
         },
         "scope": {},
         "version": "0.2.0"
@@ -2578,6 +2732,543 @@
               "name": "iso8601.duration",
               "type": {
                 "kind": "duration"
+              }
+            },
+            {
+              "description": "An ISO 4217 active currency code (SIX list one, published 2026-09-17, excluding XTS and XXX).",
+              "name": "iso4217.currency_code",
+              "type": {
+                "kind": "enum",
+                "values": [
+                  {
+                    "value": "AED"
+                  },
+                  {
+                    "value": "AFN"
+                  },
+                  {
+                    "value": "ALL"
+                  },
+                  {
+                    "value": "AMD"
+                  },
+                  {
+                    "value": "AOA"
+                  },
+                  {
+                    "value": "ARS"
+                  },
+                  {
+                    "value": "AUD"
+                  },
+                  {
+                    "value": "AWG"
+                  },
+                  {
+                    "value": "AZN"
+                  },
+                  {
+                    "value": "BAM"
+                  },
+                  {
+                    "value": "BBD"
+                  },
+                  {
+                    "value": "BDT"
+                  },
+                  {
+                    "value": "BHD"
+                  },
+                  {
+                    "value": "BIF"
+                  },
+                  {
+                    "value": "BMD"
+                  },
+                  {
+                    "value": "BND"
+                  },
+                  {
+                    "value": "BOB"
+                  },
+                  {
+                    "value": "BOV"
+                  },
+                  {
+                    "value": "BRL"
+                  },
+                  {
+                    "value": "BSD"
+                  },
+                  {
+                    "value": "BTN"
+                  },
+                  {
+                    "value": "BWP"
+                  },
+                  {
+                    "value": "BYN"
+                  },
+                  {
+                    "value": "BZD"
+                  },
+                  {
+                    "value": "CAD"
+                  },
+                  {
+                    "value": "CDF"
+                  },
+                  {
+                    "value": "CHE"
+                  },
+                  {
+                    "value": "CHF"
+                  },
+                  {
+                    "value": "CHW"
+                  },
+                  {
+                    "value": "CLF"
+                  },
+                  {
+                    "value": "CLP"
+                  },
+                  {
+                    "value": "CNY"
+                  },
+                  {
+                    "value": "COP"
+                  },
+                  {
+                    "value": "COU"
+                  },
+                  {
+                    "value": "CRC"
+                  },
+                  {
+                    "value": "CUP"
+                  },
+                  {
+                    "value": "CVE"
+                  },
+                  {
+                    "value": "CZK"
+                  },
+                  {
+                    "value": "DJF"
+                  },
+                  {
+                    "value": "DKK"
+                  },
+                  {
+                    "value": "DOP"
+                  },
+                  {
+                    "value": "DZD"
+                  },
+                  {
+                    "value": "EGP"
+                  },
+                  {
+                    "value": "ERN"
+                  },
+                  {
+                    "value": "ETB"
+                  },
+                  {
+                    "value": "EUR"
+                  },
+                  {
+                    "value": "FJD"
+                  },
+                  {
+                    "value": "FKP"
+                  },
+                  {
+                    "value": "GBP"
+                  },
+                  {
+                    "value": "GEL"
+                  },
+                  {
+                    "value": "GHS"
+                  },
+                  {
+                    "value": "GIP"
+                  },
+                  {
+                    "value": "GMD"
+                  },
+                  {
+                    "value": "GNF"
+                  },
+                  {
+                    "value": "GTQ"
+                  },
+                  {
+                    "value": "GYD"
+                  },
+                  {
+                    "value": "HKD"
+                  },
+                  {
+                    "value": "HNL"
+                  },
+                  {
+                    "value": "HTG"
+                  },
+                  {
+                    "value": "HUF"
+                  },
+                  {
+                    "value": "IDR"
+                  },
+                  {
+                    "value": "ILS"
+                  },
+                  {
+                    "value": "INR"
+                  },
+                  {
+                    "value": "IQD"
+                  },
+                  {
+                    "value": "IRR"
+                  },
+                  {
+                    "value": "ISK"
+                  },
+                  {
+                    "value": "JMD"
+                  },
+                  {
+                    "value": "JOD"
+                  },
+                  {
+                    "value": "JPY"
+                  },
+                  {
+                    "value": "KES"
+                  },
+                  {
+                    "value": "KGS"
+                  },
+                  {
+                    "value": "KHR"
+                  },
+                  {
+                    "value": "KMF"
+                  },
+                  {
+                    "value": "KPW"
+                  },
+                  {
+                    "value": "KRW"
+                  },
+                  {
+                    "value": "KWD"
+                  },
+                  {
+                    "value": "KYD"
+                  },
+                  {
+                    "value": "KZT"
+                  },
+                  {
+                    "value": "LAK"
+                  },
+                  {
+                    "value": "LBP"
+                  },
+                  {
+                    "value": "LKR"
+                  },
+                  {
+                    "value": "LRD"
+                  },
+                  {
+                    "value": "LSL"
+                  },
+                  {
+                    "value": "LYD"
+                  },
+                  {
+                    "value": "MAD"
+                  },
+                  {
+                    "value": "MDL"
+                  },
+                  {
+                    "value": "MGA"
+                  },
+                  {
+                    "value": "MKD"
+                  },
+                  {
+                    "value": "MMK"
+                  },
+                  {
+                    "value": "MNT"
+                  },
+                  {
+                    "value": "MOP"
+                  },
+                  {
+                    "value": "MRU"
+                  },
+                  {
+                    "value": "MUR"
+                  },
+                  {
+                    "value": "MVR"
+                  },
+                  {
+                    "value": "MWK"
+                  },
+                  {
+                    "value": "MXN"
+                  },
+                  {
+                    "value": "MXV"
+                  },
+                  {
+                    "value": "MYR"
+                  },
+                  {
+                    "value": "MZN"
+                  },
+                  {
+                    "value": "NAD"
+                  },
+                  {
+                    "value": "NGN"
+                  },
+                  {
+                    "value": "NIO"
+                  },
+                  {
+                    "value": "NOK"
+                  },
+                  {
+                    "value": "NPR"
+                  },
+                  {
+                    "value": "NZD"
+                  },
+                  {
+                    "value": "OMR"
+                  },
+                  {
+                    "value": "PAB"
+                  },
+                  {
+                    "value": "PEN"
+                  },
+                  {
+                    "value": "PGK"
+                  },
+                  {
+                    "value": "PHP"
+                  },
+                  {
+                    "value": "PKR"
+                  },
+                  {
+                    "value": "PLN"
+                  },
+                  {
+                    "value": "PYG"
+                  },
+                  {
+                    "value": "QAR"
+                  },
+                  {
+                    "value": "RON"
+                  },
+                  {
+                    "value": "RSD"
+                  },
+                  {
+                    "value": "RUB"
+                  },
+                  {
+                    "value": "RWF"
+                  },
+                  {
+                    "value": "SAR"
+                  },
+                  {
+                    "value": "SBD"
+                  },
+                  {
+                    "value": "SCR"
+                  },
+                  {
+                    "value": "SDG"
+                  },
+                  {
+                    "value": "SEK"
+                  },
+                  {
+                    "value": "SGD"
+                  },
+                  {
+                    "value": "SHP"
+                  },
+                  {
+                    "value": "SLE"
+                  },
+                  {
+                    "value": "SOS"
+                  },
+                  {
+                    "value": "SRD"
+                  },
+                  {
+                    "value": "SSP"
+                  },
+                  {
+                    "value": "STN"
+                  },
+                  {
+                    "value": "SVC"
+                  },
+                  {
+                    "value": "SYP"
+                  },
+                  {
+                    "value": "SZL"
+                  },
+                  {
+                    "value": "THB"
+                  },
+                  {
+                    "value": "TJS"
+                  },
+                  {
+                    "value": "TMT"
+                  },
+                  {
+                    "value": "TND"
+                  },
+                  {
+                    "value": "TOP"
+                  },
+                  {
+                    "value": "TRY"
+                  },
+                  {
+                    "value": "TTD"
+                  },
+                  {
+                    "value": "TWD"
+                  },
+                  {
+                    "value": "TZS"
+                  },
+                  {
+                    "value": "UAH"
+                  },
+                  {
+                    "value": "UGX"
+                  },
+                  {
+                    "value": "USD"
+                  },
+                  {
+                    "value": "USN"
+                  },
+                  {
+                    "value": "UYI"
+                  },
+                  {
+                    "value": "UYU"
+                  },
+                  {
+                    "value": "UYW"
+                  },
+                  {
+                    "value": "UZS"
+                  },
+                  {
+                    "value": "VED"
+                  },
+                  {
+                    "value": "VES"
+                  },
+                  {
+                    "value": "VND"
+                  },
+                  {
+                    "value": "VUV"
+                  },
+                  {
+                    "value": "WST"
+                  },
+                  {
+                    "value": "XAD"
+                  },
+                  {
+                    "value": "XAF"
+                  },
+                  {
+                    "value": "XAG"
+                  },
+                  {
+                    "value": "XAU"
+                  },
+                  {
+                    "value": "XBA"
+                  },
+                  {
+                    "value": "XBB"
+                  },
+                  {
+                    "value": "XBC"
+                  },
+                  {
+                    "value": "XBD"
+                  },
+                  {
+                    "value": "XCD"
+                  },
+                  {
+                    "value": "XCG"
+                  },
+                  {
+                    "value": "XDR"
+                  },
+                  {
+                    "value": "XOF"
+                  },
+                  {
+                    "value": "XPD"
+                  },
+                  {
+                    "value": "XPF"
+                  },
+                  {
+                    "value": "XPT"
+                  },
+                  {
+                    "value": "XSU"
+                  },
+                  {
+                    "value": "XUA"
+                  },
+                  {
+                    "value": "YER"
+                  },
+                  {
+                    "value": "ZAR"
+                  },
+                  {
+                    "value": "ZMW"
+                  },
+                  {
+                    "value": "ZWG"
+                  }
+                ]
               }
             },
             {
@@ -2668,10 +3359,10 @@
         },
         "provenance": {
           "source": "system",
-          "sourcePath": "registry/core/artifacts/std.value_types.entity.json"
+          "sourcePath": "registry/core/src/value_types.rs"
         },
         "scope": {},
-        "version": "0.1.0"
+        "version": "0.2.0"
       },
       {
         "artifactId": "norn.SourceEvidence.interface",
