@@ -7,25 +7,34 @@
  * is found in this order:
  * 1. `NORN_DEV_HOST_BIN`, an override that wins whenever it is set;
  * 2. the platform package `@norn/dev-host-<platform>-<arch>`, when installed;
- * 3. the prebuilt host this release records for the platform
+ * 3. the local runtime cache (`~/.cache/norn/runtime/bin/norn-dev-host`, or
+ *    `$XDG_CACHE_HOME/norn/runtime/bin/norn-dev-host`), populated by `norn setup`,
+ *    when running from a checkout or when the release omits this platform;
+ * 4. the prebuilt host this release records for the platform
  *    (`generated/build.json`), downloaded once into the cache and kept only
  *    if its sha256 is the recorded one.
- * Otherwise `norn dev` refuses with `cli.setup.host_unavailable` and says how
- * to build the host from source.
+ * Otherwise `norn dev` refuses with `cli.setup.host_unavailable` and tells the
+ * user to run `norn setup` or build the host from source.
  *
  * `norn dev --json` events and `.norn/dev.json` (`norn-dev/1`) are
  * experimental: they carry `"stability": "experimental"` and are not a
  * frozen contract (D84) until they are enrolled in `scripts/ci/contract_diff.py`.
  */
 import { createHash } from "node:crypto"
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { accessSync, chmodSync, constants, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"
-import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { warnAuthoringVersion } from "./authoring-version.ts"
 import { buildInfo, type BuildInfo } from "./build-info.ts"
 import { TOOL_ROOT } from "./profile.ts"
 import { ProjectError, readProject } from "./project.ts"
+import {
+  RUNTIME_MANIFEST_FORMAT,
+  activeRuntimeDir,
+  defaultCacheRoot,
+  releasePlatformFor,
+  type ActiveRuntimeRoot,
+} from "./runtime-cache.ts"
 
 /** What finding the host depends on; a test replaces parts of it. */
 export interface HostLookup {
@@ -85,7 +94,7 @@ export function hostLookup(env: Readonly<Record<string, string | undefined>> = p
     env,
     platform: `${process.platform}-${process.arch}`,
     build: buildInfo(),
-    cacheDir: env.NORN_CACHE_DIR || join(homedir(), ".cache", "norn"),
+    cacheDir: defaultCacheRoot(env),
     packageDir: installedPackage,
     download,
   }
@@ -101,10 +110,11 @@ const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest(
  */
 function unavailable(detail: string, build: BuildInfo | undefined): ProjectError {
   const command = "`cargo build --release -p norn-cell-do --bin norn-dev-host`"
+  const setup = "Run `norn setup` (or `scripts/dev/fetch-local-runtime.sh`) to install the prebuilt local runtime."
   // A checkout knows where its own build lands; a release names the commit to build from.
   const how = build
-    ? `Build it from a clone of the Norn repository at commit ${build.commit} (\`git checkout ${build.commit}\`; Rust ${build.toolchain}) with ${command}, then set NORN_DEV_HOST_BIN to the binary's absolute path, for example \`export NORN_DEV_HOST_BIN="$PWD/target/release/norn-dev-host"\` from the repository root.`
-    : `Build it in this checkout with ${command}, then \`export NORN_DEV_HOST_BIN=${join(TOOL_ROOT, "..", "..", "target", "release", "norn-dev-host")}\`.`
+    ? `${setup} Build it from a clone of the Norn repository at commit ${build.commit} (\`git checkout ${build.commit}\`; Rust ${build.toolchain}) with ${command}, then set NORN_DEV_HOST_BIN to the binary's absolute path, for example \`export NORN_DEV_HOST_BIN="$PWD/target/release/norn-dev-host"\` from the repository root.`
+    : `${setup} Build it in this checkout with ${command}, then \`export NORN_DEV_HOST_BIN=${join(TOOL_ROOT, "..", "..", "target", "release", "norn-dev-host")}\`.`
   return new ProjectError("cli.setup.host_unavailable", `No native Norn host: ${detail} ${how}`, 3)
 }
 
@@ -113,12 +123,121 @@ function fetchable(url: string): boolean {
   return url.startsWith("https://") || /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//.test(url)
 }
 
+/** Normalize a release tag (`drop-28` -> `0.0.28`, `drop-test` -> `0.0.0-test`) to compare with semver. */
+function normalizeReleaseVersion(version: string): string {
+  const numericDrop = /^drop-([0-9]+)$/.exec(version)
+  if (numericDrop) return `0.0.${numericDrop[1]}`
+  const suffixDrop = /^drop-([A-Za-z0-9.-]+)$/.exec(version)
+  if (suffixDrop) return `0.0.0-${suffixDrop[1]}`
+  return version
+}
+
+function releaseVersionsMatch(recorded: string, expected: string): boolean {
+  return recorded === expected || normalizeReleaseVersion(recorded) === normalizeReleaseVersion(expected)
+}
+
+/**
+ * Validate a `norn-dev-host` binary discovered in a single snapshot of the
+ * local runtime cache (`runtimeRoot`):
+ * - must be a regular file (never a directory or special file);
+ * - on POSIX, must be executable;
+ * - on generation-based caches (`runtimeRoot.isGeneration === true`),
+ *   `manifest.json` in the SAME generation root is required;
+ * - whenever `manifest.json` is present, it must be valid metadata matching the
+ *   current platform (via the shared `detectPlatform` helper) and (when running
+ *   a release build) version.
+ */
+function validateCachedDevHost(
+  runtimeRoot: ActiveRuntimeRoot,
+  binaryPath: string,
+  nodePlatform: string,
+  build: BuildInfo | undefined,
+): string {
+  let stat: ReturnType<typeof statSync>
+  try {
+    stat = statSync(binaryPath)
+  } catch (error) {
+    throw unavailable(
+      `cached dev host at ${binaryPath} could not be inspected (${error instanceof Error ? error.message : String(error)}).`,
+      build,
+    )
+  }
+  if (!stat.isFile()) {
+    throw unavailable(`cached dev host at ${binaryPath} is not a regular file.`, build)
+  }
+  if (process.platform !== "win32") {
+    if ((stat.mode & 0o111) === 0) {
+      throw unavailable(`cached dev host at ${binaryPath} is not executable.`, build)
+    }
+    try {
+      accessSync(binaryPath, constants.X_OK)
+    } catch {
+      throw unavailable(`cached dev host at ${binaryPath} is not executable by the current user.`, build)
+    }
+  }
+  const manifestPath = join(runtimeRoot.dir, "manifest.json")
+  if (!existsSync(manifestPath)) {
+    if (runtimeRoot.isGeneration) {
+      throw unavailable(`cached runtime generation at ${runtimeRoot.dir} is missing manifest.json.`, build)
+    }
+    return binaryPath
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(readFileSync(manifestPath, "utf8"))
+  } catch (error) {
+    throw unavailable(
+      `cached runtime manifest at ${manifestPath} is invalid JSON (${error instanceof Error ? error.message : String(error)}).`,
+      build,
+    )
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw unavailable(`cached runtime manifest at ${manifestPath} is malformed.`, build)
+  }
+  const manifest = parsed as Record<string, unknown>
+  if (manifest.format !== RUNTIME_MANIFEST_FORMAT) {
+    throw unavailable(
+      `cached runtime manifest at ${manifestPath} has unsupported format ${String(manifest.format)}.`,
+      build,
+    )
+  }
+  let expectedPlatform: string
+  try {
+    expectedPlatform = releasePlatformFor(nodePlatform)
+  } catch (error) {
+    throw unavailable(
+      `cannot verify cached dev host platform for ${nodePlatform} (${error instanceof Error ? error.message : String(error)}).`,
+      build,
+    )
+  }
+  if (typeof manifest.platform !== "string" || manifest.platform.length === 0) {
+    throw unavailable(`cached runtime manifest at ${manifestPath} is missing platform metadata.`, build)
+  }
+  if (manifest.platform !== expectedPlatform) {
+    throw unavailable(
+      `cached dev host at ${binaryPath} is for platform ${manifest.platform}, not ${expectedPlatform}.`,
+      build,
+    )
+  }
+  if (typeof manifest.version !== "string" || manifest.version.length === 0) {
+    throw unavailable(`cached runtime manifest at ${manifestPath} is missing version metadata.`, build)
+  }
+  if (build && manifest.version !== "latest" && !releaseVersionsMatch(manifest.version, build.version)) {
+    throw unavailable(
+      `cached dev host at ${binaryPath} is for version ${manifest.version}, not ${build.version}.`,
+      build,
+    )
+  }
+  return binaryPath
+}
+
 /** The dev host binary to run, by the order in the module comment. */
 export async function hostBinary(lookup: HostLookup = hostLookup()): Promise<string> {
   const build = lookup.build
   const override = lookup.env.NORN_DEV_HOST_BIN
   if (override) {
     if (!existsSync(override)) throw unavailable(`NORN_DEV_HOST_BIN names ${override}, which does not exist.`, build)
+    if (!statSync(override).isFile()) throw unavailable(`NORN_DEV_HOST_BIN names ${override}, which is not a regular file.`, build)
     return override
   }
   const asset = build?.hosts[lookup.platform]
@@ -126,6 +245,9 @@ export async function hostBinary(lookup: HostLookup = hostLookup()): Promise<str
   const packaged = lookup.packageDir(packageName)
   if (packaged && existsSync(join(packaged, "bin", "norn-dev-host"))) {
     const binary = join(packaged, "bin", "norn-dev-host")
+    if (!statSync(binary).isFile()) {
+      throw unavailable(`${packageName} at ${packaged} has a non-file bin/norn-dev-host entry.`, build)
+    }
     // An installed host runs only if it is the one this release records: no record, no run.
     if (!asset) {
       throw unavailable(`${packageName} is installed at ${packaged}, but ${build ? `this release records no host for ${lookup.platform}` : "a checkout records no host digest"}, so it is not run.`, build)
@@ -135,8 +257,14 @@ export async function hostBinary(lookup: HostLookup = hostLookup()): Promise<str
     }
     return binary
   }
-  if (!build) throw unavailable("this is a checkout, which carries no prebuilt host.", build)
+  const runtimeRoot = activeRuntimeDir(lookup.cacheDir)
+  const runtimeCached = join(runtimeRoot.dir, "bin", "norn-dev-host")
+  if (!build) {
+    if (existsSync(runtimeCached)) return validateCachedDevHost(runtimeRoot, runtimeCached, lookup.platform, build)
+    throw unavailable("this is a checkout, which carries no prebuilt host.", build)
+  }
   if (!asset) {
+    if (existsSync(runtimeCached)) return validateCachedDevHost(runtimeRoot, runtimeCached, lookup.platform, build)
     throw unavailable(`this release has no prebuilt host for ${lookup.platform} (it has ${Object.keys(build.hosts).sort().join(", ") || "none"}).`, build)
   }
   const cached = join(lookup.cacheDir, "dev-host", build.version, lookup.platform, "norn-dev-host")
