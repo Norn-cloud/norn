@@ -2,6 +2,7 @@
 //! dialog close paths and restore targets, transition/control correspondence and
 //! keyboard reachability. Each rule has a positive and a negative document.
 
+use crate::{JsonAt, TestMust};
 use std::collections::BTreeSet;
 
 use norn_checker::{Diagnostic, EntityArtifactSetContext};
@@ -12,7 +13,7 @@ use serde_json::{Value, json};
 const WIDGET_ID: &str = "test.widget";
 const ACTION_ID: &str = "test.action";
 
-fn artifact(kind: &str, id: &str, payload: Value) -> Value {
+fn artifact(kind: &str, id: &str, payload: &Value) -> Value {
     json!({
         "irVersion": "0.1", "artifactId": id, "kind": kind,
         "namespace": "test", "name": id, "version": "0.1.0", "lifecycle": "draft",
@@ -25,7 +26,7 @@ fn action() -> Value {
     artifact(
         "action",
         ACTION_ID,
-        json!({
+        &json!({
             "actionId": "test.invoke", "scopeRequired": ["orgId", "environmentId"],
             "idempotent": false, "ledgered": true, "ledgerCategory": "test",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
@@ -61,7 +62,7 @@ fn widget() -> Value {
     let mut value = artifact(
         "widget",
         WIDGET_ID,
-        json!({
+        &json!({
             "widgetVersion": "0.1", "widgetId": WIDGET_ID,
             "dataDependencies": [], "viewStates": [{ "stateId": "ready", "kind": "ready" }],
             "actionBindings": [], "permissions": [],
@@ -81,9 +82,12 @@ fn widget() -> Value {
             }
         }),
     );
-    value["dependencies"] = json!([{
-        "artifactId": ACTION_ID, "kind": "action", "version": "0.1.0", "required": true
-    }]);
+    value.set(
+        "dependencies",
+        json!([{
+            "artifactId": ACTION_ID, "kind": "action", "version": "0.1.0", "required": true
+        }]),
+    );
     value
 }
 
@@ -94,7 +98,7 @@ fn findings(widget: Value) -> Vec<Diagnostic> {
 fn findings_of(values: impl IntoIterator<Item = Value>) -> Vec<Diagnostic> {
     let artifacts: Vec<ArtifactEnvelope> = values
         .into_iter()
-        .map(|value| serde_json::from_value(value).expect("artifact should decode"))
+        .map(|value| serde_json::from_value(value).req("artifact should decode"))
         .collect();
     check_artifact_set(
         &artifacts,
@@ -136,7 +140,7 @@ fn assert_none(found: &[Diagnostic]) {
 }
 
 fn ux(widget: &mut Value) -> &mut Value {
-    &mut widget["payload"]["ux"]
+    widget.at_mut("payload").at_mut("ux")
 }
 
 fn dialog(methods: &Value, children: &Value) -> Value {
@@ -246,8 +250,8 @@ fn nested_dialogs(depth: usize) -> Value {
     let mut inner = invoke_node();
     for level in (0..depth).rev() {
         let mut layer = dialog(&json!(["escape"]), &json!([inner]));
-        layer["nodeId"] = json!(format!("dialog{level}"));
-        layer["semanticId"] = json!(format!("dialog{level}"));
+        layer.set("nodeId", json!(format!("dialog{level}")));
+        layer.set("semanticId", json!(format!("dialog{level}")));
         inner = layer;
     }
     inner
@@ -269,24 +273,33 @@ fn dialogs_must_stay_within_the_verified_stack_depth() {
 
 fn two_page_app(widget: &mut Value) {
     let ux = ux(widget);
-    ux["pages"] = json!([
-        ux["pages"][0].clone(),
-        page(
-            "other",
-            "Other",
-            &node("other_root", &section("other", "Other"), &json!([]))
-        )
-    ]);
-    ux["app"] = json!({
-        "appId": "demo", "entryPageId": "main",
-        "pageRefs": [{ "pageId": "main" }, { "pageId": "other" }],
-        "routes": [], "navigationItemIds": []
-    });
-    ux["navigationItems"] = json!([{
-        "itemId": "go_other", "label": { "en": "Other" },
-        "destination": { "kind": "page", "pageId": "other", "parameters": {} },
-        "requiredCapability": "test.nav"
-    }]);
+    ux.set(
+        "pages",
+        json!([
+            ux.at("pages").at(0).clone(),
+            page(
+                "other",
+                "Other",
+                &node("other_root", &section("other", "Other"), &json!([]))
+            )
+        ]),
+    );
+    ux.set(
+        "app",
+        json!({
+            "appId": "demo", "entryPageId": "main",
+            "pageRefs": [{ "pageId": "main" }, { "pageId": "other" }],
+            "routes": [], "navigationItemIds": []
+        }),
+    );
+    ux.set(
+        "navigationItems",
+        json!([{
+            "itemId": "go_other", "label": { "en": "Other" },
+            "destination": { "kind": "page", "pageId": "other", "parameters": {} },
+            "requiredCapability": "test.nav"
+        }]),
+    );
 }
 
 #[test]
@@ -421,15 +434,19 @@ fn a_label_override_is_the_name_the_user_gets() {
 
 /// A field shown read-only in the baseline, labelled without a letter or digit.
 fn with_unnamed_display_field(value: &mut Value) {
-    ux(value)["fields"] = json!([{
+    ux(value).set("fields", json!([{
         "fieldId": "note",
         "target": { "kind": "property", "property": { "bindingId": "rows", "propertyId": "note" } },
         "label": { "en": "…" },
         "control": "display"
-    }]);
-    ux(value)["pages"][0]["root"]["children"]
+    }]));
+    ux(value)
+        .at_mut("pages")
+        .at_mut(0)
+        .at_mut("root")
+        .at_mut("children")
         .as_array_mut()
-        .expect("root children")
+        .req("root children")
         .push(node(
             "note",
             &json!({ "kind": "field", "fieldId": "note" }),
@@ -469,7 +486,7 @@ fn composing_host(baseline: &Value, overrides: &Value) -> Value {
     let mut host = artifact(
         "widget",
         "test.host",
-        json!({
+        &json!({
             "widgetVersion": "0.1", "widgetId": "test.host",
             "dataDependencies": [], "viewStates": [{ "stateId": "ready", "kind": "ready" }],
             "actionBindings": [], "permissions": [],
@@ -486,16 +503,16 @@ fn composing_host(baseline: &Value, overrides: &Value) -> Value {
             }
         }),
     );
-    host["dependencies"] = json!([{
-        "artifactId": baseline["artifactId"], "kind": "widget", "version": "0.1.0", "required": true
-    }]);
+    host.set("dependencies", json!([{
+        "artifactId": baseline.at("artifactId"), "kind": "widget", "version": "0.1.0", "required": true
+    }]));
     host
 }
 
 fn baseline() -> Value {
     let mut value = widget();
-    value["artifactId"] = json!(BASELINE_ID);
-    value["payload"]["widgetId"] = json!(BASELINE_ID);
+    value.set("artifactId", json!(BASELINE_ID));
+    value.at_mut("payload").set("widgetId", json!(BASELINE_ID));
     value
 }
 

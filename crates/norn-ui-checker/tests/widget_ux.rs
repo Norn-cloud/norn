@@ -1,5 +1,6 @@
 //! Artifact-set checks for the versioned Widget UX authoring contract (#3173).
 
+use crate::{JsonAt, TestMust};
 use std::collections::BTreeSet;
 
 use norn_checker::{Diagnostic, EntityArtifactSetContext};
@@ -11,11 +12,11 @@ const WIDGET_ID: &str = "commerce.widget.orders";
 const WIDGET_FIXTURE: &str = include_str!("../../../fixtures/ir/ux-orders-customer.widget.json");
 
 fn widget() -> Value {
-    serde_json::from_str(WIDGET_FIXTURE).expect("UX fixture should be JSON")
+    serde_json::from_str(WIDGET_FIXTURE).req("UX fixture should be JSON")
 }
 
 fn envelope(value: Value) -> ArtifactEnvelope {
-    serde_json::from_value(value).expect("artifact envelope should decode")
+    serde_json::from_value(value).req("artifact envelope should decode")
 }
 
 fn entity(
@@ -29,7 +30,7 @@ fn entity(
         "irVersion": "0.1",
         "artifactId": artifact_id,
         "kind": "entity",
-        "namespace": artifact_id.split('.').next().expect("namespace"),
+        "namespace": artifact_id.split('.').next().req("namespace"),
         "name": object_name,
         "version": "0.1.0",
         "lifecycle": "draft",
@@ -134,62 +135,111 @@ fn action_artifact() -> Value {
 
 fn transition_order_entity() -> Value {
     let mut entity = order_entity();
-    entity["payload"]["objectType"]["properties"][3] = json!({
+    *entity
+        .at_mut("payload")
+        .at_mut("objectType")
+        .at_mut("properties")
+        .at_mut(3) = json!({
         "id": "status",
         "type": { "kind": "enum", "values": [{ "value": "draft" }, { "value": "approved" }] },
         "default": "draft"
     });
-    entity["payload"]["objectType"]["lifecycles"] = json!([{
-        "property": "status",
-        "initial": ["draft"],
-        "terminal": ["approved"],
-        "transitions": [{ "id": "approve", "from": ["draft"], "to": "approved" }]
-    }]);
+    entity.at_mut("payload").at_mut("objectType").set(
+        "lifecycles",
+        json!([{
+            "property": "status",
+            "initial": ["draft"],
+            "terminal": ["approved"],
+            "transitions": [{ "id": "approve", "from": ["draft"], "to": "approved" }]
+        }]),
+    );
     entity
 }
 
 fn fixture_approve_transition_action() -> Value {
     let mut action = action_artifact();
-    action["payload"]["writes"] = json!([{
-        "entityKind": "commerce.Order",
-        "change": "modified"
-    }]);
-    action["payload"]["effectProgram"] = json!({
-        "kind": "fire_transition",
-        "objectIdField": "orderId",
-        "objectKind": "commerce.Order",
-        "entityArtifactId": "commerce.Order.entity",
-        "entityArtifactVersion": "0.1.0",
-        "lifecycle": "status",
-        "transition": "approve"
-    });
+    action.at_mut("payload").set(
+        "writes",
+        json!([{
+            "entityKind": "commerce.Order",
+            "change": "modified"
+        }]),
+    );
+    action.at_mut("payload").set(
+        "effectProgram",
+        json!({
+            "kind": "fire_transition",
+            "objectIdField": "orderId",
+            "objectKind": "commerce.Order",
+            "entityArtifactId": "commerce.Order.entity",
+            "entityArtifactVersion": "0.1.0",
+            "lifecycle": "status",
+            "transition": "approve"
+        }),
+    );
     action
 }
 
 fn zero_input_action_artifact() -> Value {
     let mut action = action_artifact();
-    action["artifactId"] = json!("commerce.order.noop.action");
-    action["name"] = json!("No-op order action");
-    action["payload"]["actionId"] = json!("commerce.order.noop");
-    action["payload"]["inputSchema"] = json!({
-        "type": "object",
-        "properties": {},
-        "additionalProperties": false
-    });
+    action.set("artifactId", json!("commerce.order.noop.action"));
+    action.set("name", json!("No-op order action"));
+    action
+        .at_mut("payload")
+        .set("actionId", json!("commerce.order.noop"));
+    action.at_mut("payload").set(
+        "inputSchema",
+        json!({
+            "type": "object",
+            "properties": {},
+            "additionalProperties": false
+        }),
+    );
     action
 }
 
 fn required_version_action_artifact() -> Value {
     let mut action = action_artifact();
-    action["artifactId"] = json!("commerce.order.edit.action");
-    action["name"] = json!("Edit order");
-    action["payload"]["actionId"] = json!("commerce.order.edit");
-    action["payload"]["inputSchema"]["required"] = json!(["orderId", "reason", "expectedVersion"]);
+    action.set("artifactId", json!("commerce.order.edit.action"));
+    action.set("name", json!("Edit order"));
+    action
+        .at_mut("payload")
+        .set("actionId", json!("commerce.order.edit"));
+    action
+        .at_mut("payload")
+        .at_mut("inputSchema")
+        .set("required", json!(["orderId", "reason", "expectedVersion"]));
     action
 }
 
 fn support_artifacts() -> Vec<Value> {
     vec![order_entity(), customer_entity(), action_artifact()]
+}
+
+fn ordered_rows_parent_entity() -> Value {
+    let mut parent = order_entity();
+    let object_type = parent.at_mut("payload").at_mut("objectType");
+    object_type
+        .at_mut("links")
+        .as_array_mut()
+        .req("order links")
+        .push(json!({
+            "id": "items",
+            "target": "commerce.OrderItem",
+            "cardinality": { "to": "many", "from": "one" }
+        }));
+    object_type.set(
+        "ownedCollections",
+        json!([{
+            "id": "items",
+            "childType": "commerce.OrderItem",
+            "rowIdProperty": "row_id",
+            "orderingKey": "idx",
+            "cascadeOnParentDelete": true,
+            "maxRows": 3
+        }]),
+    );
+    parent
 }
 
 fn ordered_rows_support() -> Vec<Value> {
@@ -206,25 +256,12 @@ fn ordered_rows_support() -> Vec<Value> {
         "row_id",
         &json!([]),
     );
-    let mut parent = order_entity();
-    parent["payload"]["objectType"]["links"]
-        .as_array_mut()
-        .expect("order links")
-        .push(json!({
-            "id": "items",
-            "target": "commerce.OrderItem",
-            "cardinality": { "to": "many", "from": "one" }
-        }));
-    parent["payload"]["objectType"]["ownedCollections"] = json!([{
-        "id": "items",
-        "childType": "commerce.OrderItem",
-        "rowIdProperty": "row_id",
-        "orderingKey": "idx",
-        "cascadeOnParentDelete": true,
-        "maxRows": 3
-    }]);
-
-    let mut artifacts = vec![parent, child, customer_entity(), action_artifact()];
+    let mut artifacts = vec![
+        ordered_rows_parent_entity(),
+        child,
+        customer_entity(),
+        action_artifact(),
+    ];
     for (artifact_id, action_id) in [
         (
             "commerce.order.create-with-rows.action",
@@ -293,14 +330,19 @@ fn ordered_rows_support() -> Vec<Value> {
 
 fn ordered_rows_with_display_only_properties() -> Vec<Value> {
     let mut artifacts = ordered_rows_support();
-    let parent = &mut artifacts[0]["payload"]["objectType"];
-    let parent_properties = parent["properties"]
+    let parent = artifacts
+        .first_mut()
+        .req("parent artifact")
+        .at_mut("payload")
+        .at_mut("objectType");
+    let parent_properties = parent
+        .at_mut("properties")
         .as_array_mut()
-        .expect("parent properties");
+        .req("parent properties");
     let status = parent_properties
         .iter_mut()
-        .find(|property| property["id"] == "status")
-        .expect("parent status property");
+        .find(|property| property.at("id") == "status")
+        .req("parent status property");
     *status = json!({
         "id": "status",
         "type": { "kind": "enum", "values": [{ "value": "draft" }, { "value": "approved" }] },
@@ -311,15 +353,22 @@ fn ordered_rows_with_display_only_properties() -> Vec<Value> {
         "type": { "kind": "text" },
         "computed": "self.order_number + \" view\""
     }));
-    parent["lifecycles"] = json!([{
-        "property": "status",
-        "initial": ["draft"],
-        "terminal": ["approved"],
-        "transitions": [{ "id": "approve", "from": ["draft"], "to": "approved" }]
-    }]);
+    parent.set(
+        "lifecycles",
+        json!([{
+            "property": "status",
+            "initial": ["draft"],
+            "terminal": ["approved"],
+            "transitions": [{ "id": "approve", "from": ["draft"], "to": "approved" }]
+        }]),
+    );
 
-    let child = &mut artifacts[1]["payload"]["objectType"];
-    child["properties"].as_array_mut().expect("child properties").extend([
+    let child = artifacts
+        .get_mut(1)
+        .req("child artifact")
+        .at_mut("payload")
+        .at_mut("objectType");
+    child.at_mut("properties").as_array_mut().req("child properties").extend([
         json!({
             "id": "display_label",
             "type": { "kind": "text" },
@@ -331,90 +380,20 @@ fn ordered_rows_with_display_only_properties() -> Vec<Value> {
             "default": "draft"
         }),
     ]);
-    child["lifecycles"] = json!([{
-        "property": "row_state",
-        "initial": ["draft"],
-        "terminal": ["archived"],
-        "transitions": [{ "id": "archive", "from": ["draft"], "to": "archived" }]
-    }]);
+    child.set(
+        "lifecycles",
+        json!([{
+            "property": "row_state",
+            "initial": ["draft"],
+            "terminal": ["archived"],
+            "transitions": [{ "id": "archive", "from": ["draft"], "to": "archived" }]
+        }]),
+    );
     artifacts
 }
 
-fn ordered_rows_widget() -> Value {
-    let mut value = widget();
-    for artifact_id in [
-        "commerce.OrderItem.entity",
-        "commerce.order.create-with-rows.action",
-        "commerce.order.edit-with-rows.action",
-    ] {
-        value["dependencies"]
-            .as_array_mut()
-            .expect("widget dependencies")
-            .push(json!({
-                "artifactId": artifact_id,
-                "kind": if artifact_id.ends_with(".entity") { "entity" } else { "action" },
-                "version": "0.1.0",
-                "required": true
-            }));
-    }
-    let ux = &mut value["payload"]["ux"];
-    ux["dataBindings"].as_array_mut().expect("data bindings").extend([
-        json!({
-            "bindingId": "edit-order-detail",
-            "object": { "id": "commerce.Order.entity", "version": "0.1.0" },
-            "query": { "kind": "object_detail", "key": [{ "propertyId": "order_id", "value": { "kind": "literal", "value": "ORD-1" } }] }
-        }),
-        json!({
-            "bindingId": "edit-order-items",
-            "object": { "id": "commerce.OrderItem.entity", "version": "0.1.0" },
-            "query": { "kind": "link_traversal", "sourceBindingId": "edit-order-detail", "linkId": "items", "maxDepth": 1, "maxRows": 3, "page": { "size": 3, "maxSize": 3 } }
-        }),
-    ]);
-    ux["actionBindings"].as_array_mut().expect("action bindings").extend([
-        json!({
-            "bindingId": "create-order-rows",
-            "action": { "id": "commerce.order.create-with-rows.action", "version": "0.1.0" },
-            "inputMapping": { "orderId": "input.draft.orderId", "parent": "input.draft.parent", "rows": "input.draft.rows", "expectedParentVersion": "\"0\"" },
-            "inputs": { "draftFormId": "create-order-form" },
-            "requiredCapability": "commerce.order.write"
-        }),
-        json!({
-            "bindingId": "edit-order-rows",
-            "action": { "id": "commerce.order.edit-with-rows.action", "version": "0.1.0" },
-            "inputMapping": { "orderId": "input.recordKey", "parent": "input.draft.parent", "rows": "input.draft.rows", "expectedParentVersion": "input.recordVersion" },
-            "inputs": { "draftFormId": "edit-order-form", "recordBindingId": "edit-order-detail" },
-            "requiredCapability": "commerce.order.write"
-        })
-    ]);
-    ux["forms"].as_array_mut().expect("forms").extend([
-        json!({
-            "formId": "create-order-form", "mode": "create", "inputNames": ["orderId", "parent", "rows"],
-            "submitBindingId": "create-order-rows", "submit": { "label": { "en": "Create order" }, "confirmation": { "severity": "destructive", "strength": "click" } }
-        }),
-        json!({
-            "formId": "edit-order-form", "mode": "edit", "dataBindingId": "edit-order-detail", "inputNames": ["parent", "rows"],
-            "submitBindingId": "edit-order-rows", "submit": { "label": { "en": "Save order" }, "confirmation": { "severity": "destructive", "strength": "click" } }
-        })
-    ]);
-    ux["fields"].as_array_mut().expect("fields").extend([
-        json!({ "fieldId": "create-order-id", "target": { "kind": "form_input", "formId": "create-order-form", "inputName": "orderId" }, "label": { "en": "Order id" }, "control": "text" }),
-        json!({ "fieldId": "create-order-number", "target": { "kind": "parent_property", "formId": "create-order-form", "inputName": "parent", "propertyId": "order_number" }, "label": { "en": "Order number" }, "control": "text" }),
-        json!({ "fieldId": "create-parent-order-id", "target": { "kind": "parent_property", "formId": "create-order-form", "inputName": "parent", "propertyId": "order_id" }, "label": { "en": "Stored order id" }, "control": "text" }),
-        json!({ "fieldId": "create-parent-customer", "target": { "kind": "parent_property", "formId": "create-order-form", "inputName": "parent", "propertyId": "customer_number" }, "label": { "en": "Customer number" }, "control": "text" }),
-        json!({ "fieldId": "create-parent-status", "target": { "kind": "parent_property", "formId": "create-order-form", "inputName": "parent", "propertyId": "status" }, "label": { "en": "Status" }, "control": "text" }),
-        json!({ "fieldId": "create-parent-revision", "target": { "kind": "parent_property", "formId": "create-order-form", "inputName": "parent", "propertyId": "revision" }, "label": { "en": "Revision" }, "control": "number" }),
-        json!({ "fieldId": "create-parent-priority", "target": { "kind": "parent_property", "formId": "create-order-form", "inputName": "parent", "propertyId": "is_priority" }, "label": { "en": "Priority" }, "control": "checkbox" }),
-        json!({ "fieldId": "create-item-code", "target": { "kind": "child_row_property", "formId": "create-order-form", "collectionId": "items", "propertyId": "item_code" }, "label": { "en": "Item code" }, "control": "text" }),
-        json!({ "fieldId": "create-item-quantity", "target": { "kind": "child_row_property", "formId": "create-order-form", "collectionId": "items", "propertyId": "quantity" }, "label": { "en": "Quantity" }, "control": "number" }),
-        json!({ "fieldId": "edit-order-number", "target": { "kind": "parent_property", "formId": "edit-order-form", "inputName": "parent", "propertyId": "order_number" }, "label": { "en": "Order number" }, "control": "text" }),
-        json!({ "fieldId": "edit-item-code", "target": { "kind": "child_row_property", "formId": "edit-order-form", "collectionId": "items", "propertyId": "item_code" }, "label": { "en": "Item code" }, "control": "text" }),
-        json!({ "fieldId": "edit-item-quantity", "target": { "kind": "child_row_property", "formId": "edit-order-form", "collectionId": "items", "propertyId": "quantity" }, "label": { "en": "Quantity" }, "control": "number" }),
-        json!({ "fieldId": "edit-item-note", "target": { "kind": "child_row_property", "formId": "edit-order-form", "collectionId": "items", "propertyId": "optional_note" }, "label": { "en": "Note" }, "control": "text", "readOnlyWhen": { "expression": "input.row.item_code == \"LOCKED\"", "inputs": { "rowGridId": "edit-order-grid" } } })
-    ]);
-    let page_children = ux["pages"][0]["root"]["children"]
-        .as_array_mut()
-        .expect("page root children");
-    page_children.extend([
+fn ordered_rows_page_nodes() -> [Value; 3] {
+    [
         json!({
             "nodeId": "create-order-form-node", "component": { "kind": "form", "formId": "create-order-form" },
             "children": [
@@ -437,22 +416,106 @@ fn ordered_rows_widget() -> Value {
                 { "nodeId": "edit-order-number-node", "component": { "kind": "field", "fieldId": "edit-order-number" }, "children": [] },
                 { "nodeId": "edit-order-grid", "component": { "kind": "child_grid", "formId": "edit-order-form", "label": { "en": "Items" }, "collectionId": "items", "orderingKey": "idx", "dataBindingId": "edit-order-items", "rowOpsInputName": "rows", "maxRows": 3, "fieldIds": ["edit-item-code", "edit-item-quantity", "edit-item-note"] }, "children": [] }
             ]
+        }),
+    ]
+}
+
+fn ordered_rows_widget() -> Value {
+    let mut value = widget();
+    for artifact_id in [
+        "commerce.OrderItem.entity",
+        "commerce.order.create-with-rows.action",
+        "commerce.order.edit-with-rows.action",
+    ] {
+        value
+            .at_mut("dependencies")
+            .as_array_mut()
+            .req("widget dependencies")
+            .push(json!({
+                "artifactId": artifact_id,
+                "kind": if artifact_id.ends_with(".entity") { "entity" } else { "action" },
+                "version": "0.1.0",
+                "required": true
+            }));
+    }
+    let ux = value.at_mut("payload").at_mut("ux");
+    ux.at_mut("dataBindings").as_array_mut().req("data bindings").extend([
+        json!({
+            "bindingId": "edit-order-detail",
+            "object": { "id": "commerce.Order.entity", "version": "0.1.0" },
+            "query": { "kind": "object_detail", "key": [{ "propertyId": "order_id", "value": { "kind": "literal", "value": "ORD-1" } }] }
+        }),
+        json!({
+            "bindingId": "edit-order-items",
+            "object": { "id": "commerce.OrderItem.entity", "version": "0.1.0" },
+            "query": { "kind": "link_traversal", "sourceBindingId": "edit-order-detail", "linkId": "items", "maxDepth": 1, "maxRows": 3, "page": { "size": 3, "maxSize": 3 } }
+        }),
+    ]);
+    ux.at_mut("actionBindings").as_array_mut().req("action bindings").extend([
+        json!({
+            "bindingId": "create-order-rows",
+            "action": { "id": "commerce.order.create-with-rows.action", "version": "0.1.0" },
+            "inputMapping": { "orderId": "input.draft.orderId", "parent": "input.draft.parent", "rows": "input.draft.rows", "expectedParentVersion": "\"0\"" },
+            "inputs": { "draftFormId": "create-order-form" },
+            "requiredCapability": "commerce.order.write"
+        }),
+        json!({
+            "bindingId": "edit-order-rows",
+            "action": { "id": "commerce.order.edit-with-rows.action", "version": "0.1.0" },
+            "inputMapping": { "orderId": "input.recordKey", "parent": "input.draft.parent", "rows": "input.draft.rows", "expectedParentVersion": "input.recordVersion" },
+            "inputs": { "draftFormId": "edit-order-form", "recordBindingId": "edit-order-detail" },
+            "requiredCapability": "commerce.order.write"
         })
     ]);
+    ux.at_mut("forms").as_array_mut().req("forms").extend([
+        json!({
+            "formId": "create-order-form", "mode": "create", "inputNames": ["orderId", "parent", "rows"],
+            "submitBindingId": "create-order-rows", "submit": { "label": { "en": "Create order" }, "confirmation": { "severity": "destructive", "strength": "click" } }
+        }),
+        json!({
+            "formId": "edit-order-form", "mode": "edit", "dataBindingId": "edit-order-detail", "inputNames": ["parent", "rows"],
+            "submitBindingId": "edit-order-rows", "submit": { "label": { "en": "Save order" }, "confirmation": { "severity": "destructive", "strength": "click" } }
+        })
+    ]);
+    ux.at_mut("fields").as_array_mut().req("fields").extend([
+        json!({ "fieldId": "create-order-id", "target": { "kind": "form_input", "formId": "create-order-form", "inputName": "orderId" }, "label": { "en": "Order id" }, "control": "text" }),
+        json!({ "fieldId": "create-order-number", "target": { "kind": "parent_property", "formId": "create-order-form", "inputName": "parent", "propertyId": "order_number" }, "label": { "en": "Order number" }, "control": "text" }),
+        json!({ "fieldId": "create-parent-order-id", "target": { "kind": "parent_property", "formId": "create-order-form", "inputName": "parent", "propertyId": "order_id" }, "label": { "en": "Stored order id" }, "control": "text" }),
+        json!({ "fieldId": "create-parent-customer", "target": { "kind": "parent_property", "formId": "create-order-form", "inputName": "parent", "propertyId": "customer_number" }, "label": { "en": "Customer number" }, "control": "text" }),
+        json!({ "fieldId": "create-parent-status", "target": { "kind": "parent_property", "formId": "create-order-form", "inputName": "parent", "propertyId": "status" }, "label": { "en": "Status" }, "control": "text" }),
+        json!({ "fieldId": "create-parent-revision", "target": { "kind": "parent_property", "formId": "create-order-form", "inputName": "parent", "propertyId": "revision" }, "label": { "en": "Revision" }, "control": "number" }),
+        json!({ "fieldId": "create-parent-priority", "target": { "kind": "parent_property", "formId": "create-order-form", "inputName": "parent", "propertyId": "is_priority" }, "label": { "en": "Priority" }, "control": "checkbox" }),
+        json!({ "fieldId": "create-item-code", "target": { "kind": "child_row_property", "formId": "create-order-form", "collectionId": "items", "propertyId": "item_code" }, "label": { "en": "Item code" }, "control": "text" }),
+        json!({ "fieldId": "create-item-quantity", "target": { "kind": "child_row_property", "formId": "create-order-form", "collectionId": "items", "propertyId": "quantity" }, "label": { "en": "Quantity" }, "control": "number" }),
+        json!({ "fieldId": "edit-order-number", "target": { "kind": "parent_property", "formId": "edit-order-form", "inputName": "parent", "propertyId": "order_number" }, "label": { "en": "Order number" }, "control": "text" }),
+        json!({ "fieldId": "edit-item-code", "target": { "kind": "child_row_property", "formId": "edit-order-form", "collectionId": "items", "propertyId": "item_code" }, "label": { "en": "Item code" }, "control": "text" }),
+        json!({ "fieldId": "edit-item-quantity", "target": { "kind": "child_row_property", "formId": "edit-order-form", "collectionId": "items", "propertyId": "quantity" }, "label": { "en": "Quantity" }, "control": "number" }),
+        json!({ "fieldId": "edit-item-note", "target": { "kind": "child_row_property", "formId": "edit-order-form", "collectionId": "items", "propertyId": "optional_note" }, "label": { "en": "Note" }, "control": "text", "readOnlyWhen": { "expression": "input.row.item_code == \"LOCKED\"", "inputs": { "rowGridId": "edit-order-grid" } } })
+    ]);
+    ux.at_mut("pages")
+        .at_mut(0)
+        .at_mut("root")
+        .at_mut("children")
+        .as_array_mut()
+        .req("page root children")
+        .extend(ordered_rows_page_nodes());
     value
 }
 
 fn ordered_rows_display_widget() -> Value {
     let mut value = ordered_rows_widget();
-    let fields = value["payload"]["ux"]["fields"]
+    let fields = value
+        .at_mut("payload")
+        .at_mut("ux")
+        .at_mut("fields")
         .as_array_mut()
-        .expect("fields");
+        .req("fields");
     for field_id in ["create-parent-status", "edit-order-number"] {
         let field = fields
             .iter_mut()
-            .find(|field| field["fieldId"] == field_id)
-            .expect("existing parent field");
-        field["control"] = json!("display");
+            .find(|field| field.at("fieldId") == field_id)
+            .req("existing parent field");
+        field.set("control", json!("display"));
     }
     fields.extend([
         json!({ "fieldId": "edit-parent-display-label", "target": { "kind": "parent_property", "formId": "edit-order-form", "inputName": "parent", "propertyId": "display_label" }, "label": { "en": "Parent display label" }, "control": "display" }),
@@ -460,30 +523,40 @@ fn ordered_rows_display_widget() -> Value {
         json!({ "fieldId": "edit-item-display-label", "target": { "kind": "child_row_property", "formId": "edit-order-form", "collectionId": "items", "propertyId": "display_label" }, "label": { "en": "Item display label" }, "control": "display" }),
         json!({ "fieldId": "edit-item-lifecycle-state", "target": { "kind": "child_row_property", "formId": "edit-order-form", "collectionId": "items", "propertyId": "row_state" }, "label": { "en": "Item lifecycle state" }, "control": "display" }),
     ]);
-    let edit_form = value["payload"]["ux"]["pages"][0]["root"]["children"]
+    let edit_form = value
+        .at_mut("payload")
+        .at_mut("ux")
+        .at_mut("pages")
+        .at_mut(0)
+        .at_mut("root")
+        .at_mut("children")
         .as_array_mut()
-        .expect("page children")
+        .req("page children")
         .iter_mut()
-        .find(|node| node["nodeId"] == "edit-order-form-node")
-        .expect("edit form node");
-    let children = edit_form["children"]
+        .find(|node| node.at("nodeId") == "edit-order-form-node")
+        .req("edit form node");
+    let children = edit_form
+        .at_mut("children")
         .as_array_mut()
-        .expect("edit form children");
+        .req("edit form children");
     children.extend([
         json!({ "nodeId": "edit-parent-display-label-node", "component": { "kind": "field", "fieldId": "edit-parent-display-label" }, "children": [] }),
         json!({ "nodeId": "edit-parent-lifecycle-state-node", "component": { "kind": "field", "fieldId": "edit-parent-lifecycle-state" }, "children": [] }),
     ]);
     let grid = children
         .iter_mut()
-        .find(|node| node["nodeId"] == "edit-order-grid")
-        .expect("edit grid node");
-    grid["component"]["fieldIds"] = json!([
-        "edit-item-code",
-        "edit-item-quantity",
-        "edit-item-note",
-        "edit-item-display-label",
-        "edit-item-lifecycle-state"
-    ]);
+        .find(|node| node.at("nodeId") == "edit-order-grid")
+        .req("edit grid node");
+    grid.at_mut("component").set(
+        "fieldIds",
+        json!([
+            "edit-item-code",
+            "edit-item-quantity",
+            "edit-item-note",
+            "edit-item-display-label",
+            "edit-item-lifecycle-state"
+        ]),
+    );
     value
 }
 
@@ -990,20 +1063,26 @@ fn traversal_requires_a_detail_or_single_selected_source_record() {
 }
 
 fn add_customer_detail_from_record(value: &mut Value, binding_id: &str, source_id: &str) {
-    let ux = &mut value["payload"]["ux"];
-    let mut binding = ux["dataBindings"][2].clone();
-    binding["bindingId"] = json!(binding_id);
-    binding["query"]["key"][0]["value"] = json!({
-        "kind": "record",
-        "property": { "bindingId": source_id, "propertyId": "customer_number" }
-    });
-    ux["dataBindings"]
+    let ux = value.at_mut("payload").at_mut("ux");
+    let mut binding = ux.at("dataBindings").at(2).clone();
+    binding.set("bindingId", json!(binding_id));
+    binding.at_mut("query").at_mut("key").at_mut(0).set(
+        "value",
+        json!({
+            "kind": "record",
+            "property": { "bindingId": source_id, "propertyId": "customer_number" }
+        }),
+    );
+    ux.at_mut("dataBindings")
         .as_array_mut()
-        .expect("data bindings array")
+        .req("data bindings array")
         .push(binding);
-    ux["pages"][1]["root"]["children"]
+    ux.at_mut("pages")
+        .at_mut(1)
+        .at_mut("root")
+        .at_mut("children")
         .as_array_mut()
-        .expect("customer page children")
+        .req("customer page children")
         .push(json!({
             "nodeId": format!("{binding_id}-node"),
             "component": { "kind": "detail", "dataBindingId": binding_id },
@@ -1342,9 +1421,23 @@ fn subtype_owned_sort_properties_are_refused_by_root_order_indexes() {
 
 fn integer_metadata_findings(expression: &str, member: &str, schema: Value) -> Vec<Diagnostic> {
     let mut value = widget();
-    value["payload"]["ux"]["actionBindings"][0]["inputMapping"]["metadata"] = json!(expression);
+    value
+        .at_mut("payload")
+        .at_mut("ux")
+        .at_mut("actionBindings")
+        .at_mut(0)
+        .at_mut("inputMapping")
+        .set("metadata", json!(expression));
     let mut support = support_artifacts();
-    support[2]["payload"]["inputSchema"]["properties"]["metadata"]["properties"][member] = schema;
+    support
+        .get_mut(2)
+        .req("action artifact")
+        .at_mut("payload")
+        .at_mut("inputSchema")
+        .at_mut("properties")
+        .at_mut("metadata")
+        .at_mut("properties")
+        .set(member, schema);
     findings_with_support(value, support, &[])
 }
 
@@ -1355,8 +1448,13 @@ fn assert_integer_proof_cases(cases: &[IntegerProofCase<'_>]) {
         let (found, pointer) = match metadata {
             None => {
                 let mut value = widget();
-                value["payload"]["ux"]["actionBindings"][0]["inputMapping"]["expectedVersion"] =
-                    json!(expression);
+                value
+                    .at_mut("payload")
+                    .at_mut("ux")
+                    .at_mut("actionBindings")
+                    .at_mut(0)
+                    .at_mut("inputMapping")
+                    .set("expectedVersion", json!(expression));
                 (
                     widget_findings(value),
                     "/actionBindings/0/inputMapping/expectedVersion",
@@ -1968,19 +2066,20 @@ fn multiple_selection_is_not_a_global_form_prefill_record() {
 
 fn edit_form_widget() -> Value {
     let mut value = widget();
-    value["dependencies"]
+    value
+        .at_mut("dependencies")
         .as_array_mut()
-        .expect("dependencies array")
+        .req("dependencies array")
         .push(json!({
             "artifactId": "commerce.order.edit.action",
             "kind": "action",
             "version": "0.1.0",
             "required": true
         }));
-    let ux = &mut value["payload"]["ux"];
-    ux["dataBindings"]
+    let ux = value.at_mut("payload").at_mut("ux");
+    ux.at_mut("dataBindings")
         .as_array_mut()
-        .expect("bindings array")
+        .req("bindings array")
         .push(json!({
             "bindingId": "order-detail",
             "object": { "id": "commerce.Order.entity", "version": "0.1.0" },
@@ -1992,36 +2091,70 @@ fn edit_form_widget() -> Value {
                 }]
             }
         }));
-    ux["actionBindings"][0]["action"] = json!({
-        "id": "commerce.order.edit.action",
-        "version": "0.1.0"
-    });
-    ux["forms"][0]["mode"] = json!("edit");
-    ux["forms"][0]["dataBindingId"] = json!("order-detail");
-    ux["forms"][0]["versionConflictBinding"] = json!({
-        "property": { "bindingId": "order-detail", "propertyId": "revision" },
-        "inputName": "expectedVersion",
-        "onConflict": "reject_and_retain_draft"
-    });
-    ux["actionBindings"][0]["inputs"]["recordBindingId"] = json!("order-detail");
-    ux["actionBindings"][0]["inputMapping"]["expectedVersion"] = json!("input.record.revision");
-    ux["actionPlacements"][0]["enabledWhen"]["inputs"]["recordBindingId"] = json!("order-detail");
-    ux["fields"][4]["target"]["initial"] = json!({
-        "bindingId": "order-detail",
-        "propertyId": "order_id"
-    });
-    ux["actionPlacements"][0]["location"] = json!("detail");
-    let _ = ux["actionPlacements"][0]
+    ux.at_mut("actionBindings").at_mut(0).set(
+        "action",
+        json!({
+            "id": "commerce.order.edit.action",
+            "version": "0.1.0"
+        }),
+    );
+    ux.at_mut("forms").at_mut(0).set("mode", json!("edit"));
+    ux.at_mut("forms")
+        .at_mut(0)
+        .set("dataBindingId", json!("order-detail"));
+    ux.at_mut("forms").at_mut(0).set(
+        "versionConflictBinding",
+        json!({
+            "property": { "bindingId": "order-detail", "propertyId": "revision" },
+            "inputName": "expectedVersion",
+            "onConflict": "reject_and_retain_draft"
+        }),
+    );
+    ux.at_mut("actionBindings")
+        .at_mut(0)
+        .at_mut("inputs")
+        .set("recordBindingId", json!("order-detail"));
+    ux.at_mut("actionBindings")
+        .at_mut(0)
+        .at_mut("inputMapping")
+        .set("expectedVersion", json!("input.record.revision"));
+    ux.at_mut("actionPlacements")
+        .at_mut(0)
+        .at_mut("enabledWhen")
+        .at_mut("inputs")
+        .set("recordBindingId", json!("order-detail"));
+    ux.at_mut("fields").at_mut(4).at_mut("target").set(
+        "initial",
+        json!({
+            "bindingId": "order-detail",
+            "propertyId": "order_id"
+        }),
+    );
+    ux.at_mut("actionPlacements")
+        .at_mut(0)
+        .set("location", json!("detail"));
+    let _ = ux
+        .at_mut("actionPlacements")
+        .at_mut(0)
         .as_object_mut()
-        .expect("placement object")
+        .req("placement object")
         .remove("selectionBindingId");
-    let action_node = ux["pages"][0]["root"]["children"][0]["children"]
+    let action_node = ux
+        .at_mut("pages")
+        .at_mut(0)
+        .at_mut("root")
+        .at_mut("children")
+        .at_mut(0)
+        .at_mut("children")
         .as_array_mut()
-        .expect("orders list children")
+        .req("orders list children")
         .remove(1);
-    ux["pages"][0]["root"]["children"]
+    ux.at_mut("pages")
+        .at_mut(0)
+        .at_mut("root")
+        .at_mut("children")
         .as_array_mut()
-        .expect("page root children")
+        .req("page root children")
         .push(json!({
             "nodeId": "order-detail-edit-surface-node",
             "semanticId": "order-detail-edit-surface",
@@ -2160,70 +2293,98 @@ fn baseline_widget(semantic_id: &str) -> Value {
 
 fn required_form_input_baseline() -> Value {
     let mut baseline = baseline_widget("baseline-form-surface");
-    baseline["dependencies"] = json!([{
-        "artifactId": "commerce.order.approve.action",
-        "kind": "action",
-        "version": "0.1.0",
-        "required": true
-    }]);
-    let ux = &mut baseline["payload"]["ux"];
-    ux["dataBindings"] = json!([]);
-    ux["actionBindings"] = json!([{
-        "bindingId": "baseline-submit",
-        "action": { "id": "commerce.order.approve.action", "version": "0.1.0" },
-        "inputMapping": {
-            "orderId": "\"ORD-100\"",
-            "reason": "input.draft.reason"
-        },
-        "inputs": { "draftFormId": "baseline-form" },
-        "requiredCapability": "commerce.order.approve"
-    }]);
-    ux["forms"] = json!([{
-        "formId": "baseline-form",
-        "mode": "action_input",
-        "inputNames": ["reason"],
-        "submitBindingId": "baseline-submit",
-        "submit": {
-            "label": { "en": "Approve" },
-            "confirmation": { "severity": "safe", "strength": "none" }
-        }
-    }]);
-    ux["fields"] = json!([{
-        "fieldId": "baseline-required-reason",
-        "target": {
-            "kind": "form_input",
+    baseline.set(
+        "dependencies",
+        json!([{
+            "artifactId": "commerce.order.approve.action",
+            "kind": "action",
+            "version": "0.1.0",
+            "required": true
+        }]),
+    );
+    let ux = baseline.at_mut("payload").at_mut("ux");
+    ux.set("dataBindings", json!([]));
+    ux.set(
+        "actionBindings",
+        json!([{
+            "bindingId": "baseline-submit",
+            "action": { "id": "commerce.order.approve.action", "version": "0.1.0" },
+            "inputMapping": {
+                "orderId": "\"ORD-100\"",
+                "reason": "input.draft.reason"
+            },
+            "inputs": { "draftFormId": "baseline-form" },
+            "requiredCapability": "commerce.order.approve"
+        }]),
+    );
+    ux.set(
+        "forms",
+        json!([{
             "formId": "baseline-form",
-            "inputName": "reason"
-        },
-        "label": { "en": "Reason" },
-        "control": "text_area"
-    }]);
-    ux["pages"][0]["root"]["component"] = json!({ "kind": "form", "formId": "baseline-form" });
-    ux["pages"][0]["root"]["children"] = json!([{
-        "nodeId": "baseline-required-reason-node",
-        "semanticId": "baseline-required-alias",
-        "component": { "kind": "field", "fieldId": "baseline-required-reason" },
-        "children": []
-    }]);
+            "mode": "action_input",
+            "inputNames": ["reason"],
+            "submitBindingId": "baseline-submit",
+            "submit": {
+                "label": { "en": "Approve" },
+                "confirmation": { "severity": "safe", "strength": "none" }
+            }
+        }]),
+    );
+    ux.set(
+        "fields",
+        json!([{
+            "fieldId": "baseline-required-reason",
+            "target": {
+                "kind": "form_input",
+                "formId": "baseline-form",
+                "inputName": "reason"
+            },
+            "label": { "en": "Reason" },
+            "control": "text_area"
+        }]),
+    );
+    ux.at_mut("pages").at_mut(0).at_mut("root").set(
+        "component",
+        json!({ "kind": "form", "formId": "baseline-form" }),
+    );
+    ux.at_mut("pages").at_mut(0).at_mut("root").set(
+        "children",
+        json!([{
+            "nodeId": "baseline-required-reason-node",
+            "semanticId": "baseline-required-alias",
+            "component": { "kind": "field", "fieldId": "baseline-required-reason" },
+            "children": []
+        }]),
+    );
     baseline
 }
 
 fn compose_baseline(mut value: Value) -> Value {
     // This helper tests overrides against imported baseline ids, not the
     // fixture's own customization target.
-    value["payload"]["ux"]["overrides"] = json!([]);
-    value["dependencies"]
+    value
+        .at_mut("payload")
+        .at_mut("ux")
+        .set("overrides", json!([]));
+    value
+        .at_mut("dependencies")
         .as_array_mut()
-        .expect("dependencies array")
+        .req("dependencies array")
         .push(json!({
             "artifactId": "commerce.widget.baseline",
             "kind": "widget",
             "version": "0.1.0",
             "required": true
         }));
-    value["payload"]["ux"]["pages"][0]["root"]["children"]
+    value
+        .at_mut("payload")
+        .at_mut("ux")
+        .at_mut("pages")
+        .at_mut(0)
+        .at_mut("root")
+        .at_mut("children")
         .as_array_mut()
-        .expect("page children")
+        .req("page children")
         .push(json!({
             "nodeId": "baseline-composition-node",
             "semanticId": "baseline-composition",
@@ -2285,10 +2446,25 @@ fn imported_select_override_uses_the_baseline_option_binding_context() {
 fn enum_select_baseline(control: &str, option_key_type: Option<Value>) -> (Value, Vec<Value>) {
     let mut baseline = baseline_widget("baseline-revision");
     let mut support = support_artifacts();
-    support[1]["payload"]["objectType"]["properties"][2]["type"] = json!({
-        "kind": "enum", "values": [{ "value": "draft" }, { "value": "approved" }]
-    });
-    baseline["payload"]["ux"]["fields"][0]["control"] = json!(control);
+    support
+        .get_mut(1)
+        .req("customer entity")
+        .at_mut("payload")
+        .at_mut("objectType")
+        .at_mut("properties")
+        .at_mut(2)
+        .set(
+            "type",
+            json!({
+                "kind": "enum", "values": [{ "value": "draft" }, { "value": "approved" }]
+            }),
+        );
+    baseline
+        .at_mut("payload")
+        .at_mut("ux")
+        .at_mut("fields")
+        .at_mut(0)
+        .set("control", json!(control));
     if let Some(key_type) = option_key_type {
         support.push(entity(
             "commerce.StatusOption.entity",
@@ -2297,16 +2473,20 @@ fn enum_select_baseline(control: &str, option_key_type: Option<Value>) -> (Value
             "status_id",
             &json!([]),
         ));
-        baseline["dependencies"]
+        baseline
+            .at_mut("dependencies")
             .as_array_mut()
-            .expect("dependencies array")
+            .req("dependencies array")
             .push(json!({
                 "artifactId": "commerce.StatusOption.entity", "kind": "entity",
                 "version": "0.1.0", "required": true
             }));
-        baseline["payload"]["ux"]["dataBindings"]
+        baseline
+            .at_mut("payload")
+            .at_mut("ux")
+            .at_mut("dataBindings")
             .as_array_mut()
-            .expect("data bindings array")
+            .req("data bindings array")
             .push(json!({
                 "bindingId": "status-options",
                 "object": { "id": "commerce.StatusOption.entity", "version": "0.1.0" },
@@ -2315,7 +2495,12 @@ fn enum_select_baseline(control: &str, option_key_type: Option<Value>) -> (Value
                     "page": { "size": 10, "maxSize": 10 }
                 }
             }));
-        baseline["payload"]["ux"]["fields"][0]["optionQueryBindingId"] = json!("status-options");
+        baseline
+            .at_mut("payload")
+            .at_mut("ux")
+            .at_mut("fields")
+            .at_mut(0)
+            .set("optionQueryBindingId", json!("status-options"));
     }
     (baseline, support)
 }
@@ -2461,10 +2646,10 @@ fn composing_one_page_keeps_unrelated_page_forms_and_action_mappings_valid() {
 
 fn widget_with_secondary_footer_action() -> Value {
     let mut value = widget();
-    let ux = &mut value["payload"]["ux"];
-    ux["actionBindings"]
+    let ux = value.at_mut("payload").at_mut("ux");
+    ux.at_mut("actionBindings")
         .as_array_mut()
-        .expect("action bindings array")
+        .req("action bindings array")
         .push(json!({
             "bindingId": "approve-secondary",
             "action": { "id": "commerce.order.approve.action", "version": "0.1.0" },
@@ -2475,9 +2660,9 @@ fn widget_with_secondary_footer_action() -> Value {
             "inputs": { "draftFormId": "approve-form" },
             "requiredCapability": "commerce.order.approve"
         }));
-    ux["actionPlacements"]
+    ux.at_mut("actionPlacements")
         .as_array_mut()
-        .expect("placements array")
+        .req("placements array")
         .push(json!({
             "placementId": "approve-secondary-footer",
             "bindingId": "approve-secondary",
@@ -2487,9 +2672,14 @@ fn widget_with_secondary_footer_action() -> Value {
             "selectionInputMapping": {},
             "confirmation": { "severity": "confirm", "strength": "click" }
         }));
-    ux["pages"][0]["root"]["children"][2]["children"]
+    ux.at_mut("pages")
+        .at_mut(0)
+        .at_mut("root")
+        .at_mut("children")
+        .at_mut(2)
+        .at_mut("children")
         .as_array_mut()
-        .expect("form children")
+        .req("form children")
         .push(json!({
             "nodeId": "approve-secondary-footer-node",
             "semanticId": "approve-secondary-footer-action",
@@ -2501,45 +2691,83 @@ fn widget_with_secondary_footer_action() -> Value {
 
 fn widget_with_toolbar_action() -> Value {
     let mut value = widget_with_secondary_footer_action();
-    let ux = &mut value["payload"]["ux"];
-    ux["actionBindings"][1]["inputMapping"] = json!({
-        "orderId": "\"ORD-100\"",
-        "reason": "\"Approved from toolbar\""
-    });
-    ux["actionBindings"][1]["inputs"] = json!({});
-    ux["actionPlacements"][1]["location"] = json!("toolbar");
-    ux["actionPlacements"][1]["confirmation"] = json!({
-        "severity": "safe",
-        "strength": "none"
-    });
-    let action_node = ux["pages"][0]["root"]["children"][2]["children"]
+    let ux = value.at_mut("payload").at_mut("ux");
+    ux.at_mut("actionBindings").at_mut(1).set(
+        "inputMapping",
+        json!({
+            "orderId": "\"ORD-100\"",
+            "reason": "\"Approved from toolbar\""
+        }),
+    );
+    ux.at_mut("actionBindings")
+        .at_mut(1)
+        .set("inputs", json!({}));
+    ux.at_mut("actionPlacements")
+        .at_mut(1)
+        .set("location", json!("toolbar"));
+    ux.at_mut("actionPlacements").at_mut(1).set(
+        "confirmation",
+        json!({
+            "severity": "safe",
+            "strength": "none"
+        }),
+    );
+    let action_node = ux
+        .at_mut("pages")
+        .at_mut(0)
+        .at_mut("root")
+        .at_mut("children")
+        .at_mut(2)
+        .at_mut("children")
         .as_array_mut()
-        .expect("form children")
+        .req("form children")
         .pop()
-        .expect("secondary action node");
-    ux["pages"][0]["root"]["children"]
+        .req("secondary action node");
+    ux.at_mut("pages")
+        .at_mut(0)
+        .at_mut("root")
+        .at_mut("children")
         .as_array_mut()
-        .expect("section children")
+        .req("section children")
         .push(action_node);
     value
 }
 
 fn widget_with_zero_input_toolbar_action() -> Value {
     let mut value = widget_with_toolbar_action();
-    value["dependencies"]
+    value
+        .at_mut("dependencies")
         .as_array_mut()
-        .expect("dependencies array")
+        .req("dependencies array")
         .push(json!({
             "artifactId": "commerce.order.noop.action",
             "kind": "action",
             "version": "0.1.0",
             "required": true
         }));
-    value["payload"]["ux"]["actionBindings"][1]["action"] = json!({
-        "id": "commerce.order.noop.action", "version": "0.1.0"
-    });
-    value["payload"]["ux"]["actionBindings"][1]["inputMapping"] = json!({});
-    value["payload"]["ux"]["actionBindings"][1]["inputs"] = json!({});
+    value
+        .at_mut("payload")
+        .at_mut("ux")
+        .at_mut("actionBindings")
+        .at_mut(1)
+        .set(
+            "action",
+            json!({
+                "id": "commerce.order.noop.action", "version": "0.1.0"
+            }),
+        );
+    value
+        .at_mut("payload")
+        .at_mut("ux")
+        .at_mut("actionBindings")
+        .at_mut(1)
+        .set("inputMapping", json!({}));
+    value
+        .at_mut("payload")
+        .at_mut("ux")
+        .at_mut("actionBindings")
+        .at_mut(1)
+        .set("inputs", json!({}));
     value
 }
 
@@ -2839,9 +3067,15 @@ fn field_selection_conditions_require_a_rendered_list_on_every_use_page() {
 }
 
 fn render_orders_list_on_customer_page(value: &mut Value) {
-    value["payload"]["ux"]["pages"][1]["root"]["children"]
+    value
+        .at_mut("payload")
+        .at_mut("ux")
+        .at_mut("pages")
+        .at_mut(1)
+        .at_mut("root")
+        .at_mut("children")
         .as_array_mut()
-        .expect("customer page children")
+        .req("customer page children")
         .push(json!({
             "nodeId": "customer-orders-list-node",
             "component": {
@@ -2874,35 +3108,61 @@ fn selected_record_conditions_require_a_rendered_list_on_every_use_page() {
 
 fn widget_with_unselected_orders() -> Value {
     let mut value = widget();
-    let ux = &mut value["payload"]["ux"];
-    ux["pages"][0]["root"]["children"][0]["component"]["selection"] = json!("none");
-    ux["dataBindings"][1]["query"] = json!({
-        "kind": "object_list", "filters": [], "sort": [],
-        "page": { "size": 10, "maxSize": 10 }
-    });
+    let ux = value.at_mut("payload").at_mut("ux");
+    ux.at_mut("pages")
+        .at_mut(0)
+        .at_mut("root")
+        .at_mut("children")
+        .at_mut(0)
+        .at_mut("component")
+        .set("selection", json!("none"));
+    ux.at_mut("dataBindings").at_mut(1).set(
+        "query",
+        json!({
+            "kind": "object_list", "filters": [], "sort": [],
+            "page": { "size": 10, "maxSize": 10 }
+        }),
+    );
     value
 }
 
 fn widget_with_unavailable_page_order_value(selection: &str, section: bool) -> Value {
     let mut value = widget();
-    let ux = &mut value["payload"]["ux"];
-    let order_list = &mut ux["pages"][0]["root"]["children"][0]["component"];
-    let _ = order_list["fields"]
+    let ux = value.at_mut("payload").at_mut("ux");
+    let order_list = ux
+        .at_mut("pages")
+        .at_mut(0)
+        .at_mut("root")
+        .at_mut("children")
+        .at_mut(0)
+        .at_mut("component");
+    let _ = order_list
+        .at_mut("fields")
         .as_array_mut()
-        .expect("list fields")
+        .req("list fields")
         .remove(0);
-    order_list["selection"] = json!(selection);
-    let _ = ux["fields"][0]
+    order_list.set("selection", json!(selection));
+    let _ = ux
+        .at_mut("fields")
+        .at_mut(0)
         .as_object_mut()
-        .expect("order number field")
+        .req("order number field")
         .remove("visibleWhen");
     let included_property = json!({ "bindingId": "orders", "propertyId": "order_number" });
     if section {
-        ux["pages"][0]["root"]["component"]["section"]["fields"] = json!([included_property]);
+        ux.at_mut("pages")
+            .at_mut(0)
+            .at_mut("root")
+            .at_mut("component")
+            .at_mut("section")
+            .set("fields", json!([included_property]));
     } else {
-        ux["pages"][0]["root"]["children"]
+        ux.at_mut("pages")
+            .at_mut(0)
+            .at_mut("root")
+            .at_mut("children")
             .as_array_mut()
-            .expect("page children")
+            .req("page children")
             .push(json!({
                 "nodeId": "page-order-number-node",
                 "component": { "kind": "field", "fieldId": "order-number" },
@@ -3220,10 +3480,10 @@ fn navigation_conditions_cannot_borrow_another_pages_selected_record() {
 
 fn runtime_key_navigation_widget(source: Value) -> Value {
     let mut value = widget();
-    let ux = &mut value["payload"]["ux"];
+    let ux = value.at_mut("payload").at_mut("ux");
     let mut parameters = serde_json::Map::new();
     parameters.insert("orderKey".to_owned(), source);
-    ux["pages"].as_array_mut().expect("pages").push(json!({
+    ux.at_mut("pages").as_array_mut().req("pages").push(json!({
         "pageId": "order-runtime-key",
         "name": "Order runtime key",
         "contextParams": [{
@@ -3244,13 +3504,14 @@ fn runtime_key_navigation_widget(source: Value) -> Value {
             "children": []
         }
     }));
-    ux["app"]["pageRefs"]
+    ux.at_mut("app")
+        .at_mut("pageRefs")
         .as_array_mut()
-        .expect("page refs")
+        .req("page refs")
         .push(json!({ "pageId": "order-runtime-key" }));
-    ux["navigationItems"]
+    ux.at_mut("navigationItems")
         .as_array_mut()
-        .expect("navigation items")
+        .req("navigation items")
         .push(json!({
             "itemId": "order-runtime-key-navigation",
             "label": { "en": "Open order runtime key" },
@@ -3261,9 +3522,14 @@ fn runtime_key_navigation_widget(source: Value) -> Value {
                 "parameters": parameters
             }
         }));
-    ux["pages"][0]["root"]["children"][0]["children"]
+    ux.at_mut("pages")
+        .at_mut(0)
+        .at_mut("root")
+        .at_mut("children")
+        .at_mut(0)
+        .at_mut("children")
         .as_array_mut()
-        .expect("order list children")
+        .req("order list children")
         .push(json!({
             "nodeId": "order-runtime-key-navigation-node",
             "component": { "kind": "navigation", "itemId": "order-runtime-key-navigation" },
@@ -3474,19 +3740,31 @@ fn runtime_keys_cannot_be_used_as_query_or_detail_identity_values() {
 }
 
 fn move_customer_navigation_to_page(value: &mut Value) {
-    let ux = &mut value["payload"]["ux"];
-    let navigation = ux["pages"][0]["root"]["children"][0]["children"]
+    let ux = value.at_mut("payload").at_mut("ux");
+    let navigation = ux
+        .at_mut("pages")
+        .at_mut(0)
+        .at_mut("root")
+        .at_mut("children")
+        .at_mut(0)
+        .at_mut("children")
         .as_array_mut()
-        .expect("list children")
+        .req("list children")
         .remove(0);
-    ux["pages"][0]["root"]["children"]
+    ux.at_mut("pages")
+        .at_mut(0)
+        .at_mut("root")
+        .at_mut("children")
         .as_array_mut()
-        .expect("page children")
+        .req("page children")
         .push(navigation);
-    ux["navigationItems"][0]["visibleWhen"] = json!({
-        "expression": "input.record.status == \"draft\"",
-        "inputs": { "recordBindingId": "orders" }
-    });
+    ux.at_mut("navigationItems").at_mut(0).set(
+        "visibleWhen",
+        json!({
+            "expression": "input.record.status == \"draft\"",
+            "inputs": { "recordBindingId": "orders" }
+        }),
+    );
 }
 
 #[test]
@@ -3546,20 +3824,31 @@ fn action_bindings_cannot_borrow_another_pages_context() {
 
 fn widget_with_no_input_form() -> Value {
     let mut value = widget();
-    let ux = &mut value["payload"]["ux"];
-    ux["forms"][0]["inputNames"] = json!([]);
-    ux["actionBindings"][0]["inputs"] = json!({
-        "recordBindingId": "orders"
-    });
-    ux["actionBindings"][0]["inputMapping"] = json!({
-        "orderId": "\"ORD-100\"",
-        "reason": "\"Approved\""
-    });
-    ux["fields"]
+    let ux = value.at_mut("payload").at_mut("ux");
+    ux.at_mut("forms").at_mut(0).set("inputNames", json!([]));
+    ux.at_mut("actionBindings").at_mut(0).set(
+        "inputs",
+        json!({
+            "recordBindingId": "orders"
+        }),
+    );
+    ux.at_mut("actionBindings").at_mut(0).set(
+        "inputMapping",
+        json!({
+            "orderId": "\"ORD-100\"",
+            "reason": "\"Approved\""
+        }),
+    );
+    ux.at_mut("fields")
         .as_array_mut()
-        .expect("fields array")
-        .retain(|field| field["target"]["kind"] != "form_input");
-    ux["pages"][0]["root"]["children"][2]["children"] = json!([]);
+        .req("fields array")
+        .retain(|field| field.at("target").at("kind") != "form_input");
+    ux.at_mut("pages")
+        .at_mut(0)
+        .at_mut("root")
+        .at_mut("children")
+        .at_mut(2)
+        .set("children", json!([]));
     value
 }
 
@@ -3975,19 +4264,46 @@ fn generated_parent_key_controls_require_display_including_inherited_keys() {
 
 fn metric_buckets_widget(nullable: bool) -> (Value, Vec<Value>) {
     let mut support = support_artifacts();
-    support[0]["payload"]["objectType"]["properties"]
+    support
+        .first_mut()
+        .req("order entity")
+        .at_mut("payload")
+        .at_mut("objectType")
+        .at_mut("properties")
         .as_array_mut()
-        .expect("order properties")
+        .req("order properties")
         .push(json!({
             "id": "buckets",
             "type": { "kind": "json-ext" },
             "constraints": { "nullable": nullable }
         }));
     let mut value = widget();
-    value["payload"]["ux"]["fields"][1]["target"]["property"]["propertyId"] = json!("buckets");
-    value["payload"]["ux"]["fields"][1]["format"] = json!("metric_buckets");
-    value["payload"]["ux"]["pages"][0]["root"]["children"][0]["component"]["fields"][1]["propertyId"] =
-        json!("buckets");
+    value
+        .at_mut("payload")
+        .at_mut("ux")
+        .at_mut("fields")
+        .at_mut(1)
+        .at_mut("target")
+        .at_mut("property")
+        .set("propertyId", json!("buckets"));
+    value
+        .at_mut("payload")
+        .at_mut("ux")
+        .at_mut("fields")
+        .at_mut(1)
+        .set("format", json!("metric_buckets"));
+    value
+        .at_mut("payload")
+        .at_mut("ux")
+        .at_mut("pages")
+        .at_mut(0)
+        .at_mut("root")
+        .at_mut("children")
+        .at_mut(0)
+        .at_mut("component")
+        .at_mut("fields")
+        .at_mut(1)
+        .set("propertyId", json!("buckets"));
     (value, support)
 }
 
@@ -4025,9 +4341,14 @@ fn metric_bucket_format_is_not_an_action_input_presentation() {
 
 fn with_comment_field(required_when: Option<Value>) -> Value {
     let mut value = widget();
-    let ux = &mut value["payload"]["ux"];
-    ux["forms"][0]["inputNames"] = json!(["orderId", "reason", "comment"]);
-    ux["actionBindings"][0]["inputMapping"]["comment"] = json!("input.draft.comment");
+    let ux = value.at_mut("payload").at_mut("ux");
+    ux.at_mut("forms")
+        .at_mut(0)
+        .set("inputNames", json!(["orderId", "reason", "comment"]));
+    ux.at_mut("actionBindings")
+        .at_mut(0)
+        .at_mut("inputMapping")
+        .set("comment", json!("input.draft.comment"));
     let mut field = json!({
         "fieldId": "approve-comment",
         "target": { "kind": "form_input", "formId": "approve-form", "inputName": "comment" },
@@ -4035,15 +4356,20 @@ fn with_comment_field(required_when: Option<Value>) -> Value {
         "control": "text_area"
     });
     if let Some(condition) = required_when {
-        field["requiredWhen"] = condition;
+        field.set("requiredWhen", condition);
     }
-    ux["fields"]
+    ux.at_mut("fields")
         .as_array_mut()
-        .expect("fields array")
+        .req("fields array")
         .push(field);
-    ux["pages"][0]["root"]["children"][2]["children"]
+    ux.at_mut("pages")
+        .at_mut(0)
+        .at_mut("root")
+        .at_mut("children")
+        .at_mut(2)
+        .at_mut("children")
         .as_array_mut()
-        .expect("form children")
+        .req("form children")
         .push(json!({
             "nodeId": "approve-comment-node",
             "semanticId": "approve-comment-field",
@@ -4084,13 +4410,20 @@ fn a_nullable_form_input_must_stay_clearable() {
 
 fn machine_widget(machine: Value) -> Value {
     let mut widget = widget();
-    let page = &mut widget["payload"]["ux"]["pages"][0];
-    page["machine"] = machine;
-    page["view"] = json!({
+    let page = widget
+        .at_mut("payload")
+        .at_mut("ux")
+        .at_mut("pages")
+        .at_mut(0);
+    page.set("machine", machine);
+    page.set("view", json!({
         "kind": "collection",
         "subject": { "kind": "object_type", "object": { "id": "commerce.Order.entity", "version": "0.1.0" } }
-    });
-    page["root"]["children"][0]["behaviors"] = json!(["selection", "roving_focus"]);
+    }));
+    page.at_mut("root")
+        .at_mut("children")
+        .at_mut(0)
+        .set("behaviors", json!(["selection", "roving_focus"]));
     widget
 }
 
@@ -4100,7 +4433,7 @@ fn approve_machine() -> Value {
     serde_json::from_str(include_str!(
         "../../../fixtures/ui/orders-approve.machine.json"
     ))
-    .expect("machine fixture should be JSON")
+    .req("machine fixture should be JSON")
 }
 
 fn ui_codes(widget: Value) -> Vec<(String, String)> {
@@ -4130,10 +4463,11 @@ fn edit(mut machine: Value, change: impl FnOnce(&mut Value)) -> Value {
 }
 
 fn drop_transition(machine: &mut Value, id: &str) {
-    machine["transitions"]
+    machine
+        .at_mut("transitions")
         .as_array_mut()
-        .expect("transitions")
-        .retain(|transition| transition["transitionId"] != id);
+        .req("transitions")
+        .retain(|transition| transition.at("transitionId") != id);
 }
 
 #[test]
@@ -4359,7 +4693,12 @@ fn studio_decision_sheet_is_admitted_clean() {
 }
 
 fn machine(sheet: &mut Value) -> &mut Value {
-    &mut sheet["payload"]["ux"]["pages"][0]["machine"]
+    sheet
+        .at_mut("payload")
+        .at_mut("ux")
+        .at_mut("pages")
+        .at_mut(0)
+        .at_mut("machine")
 }
 
 #[test]
@@ -4408,8 +4747,8 @@ fn a_control_raises_an_event_and_a_choice_carries_its_value() {
 
 fn catalog_widget() -> Value {
     let mut widget = machine_widget(approve_machine());
-    let ux = &mut widget["payload"]["ux"];
-    ux["catalog"] = json!([
+    let ux = widget.at_mut("payload").at_mut("ux");
+    ux.set("catalog", json!([
         {
             "entryId": "kpi-tile", "label": { "en": "KPI tile", "ar": "بطاقة مؤشر" }, "trust": "contract_checked",
             "framework": "foldkit", "density": "scan",
@@ -4424,26 +4763,26 @@ fn catalog_widget() -> Value {
             "events": [{ "eventId": "point-selected", "payload": [{ "fieldId": "siteId", "type": "text", "required": true }] }]
         },
         { "entryId": "money", "label": { "en": "Money", "ar": "مبلغ" }, "trust": "native", "renders": "number" }
-    ]);
-    let page = &mut ux["pages"][0];
-    page["root"]["children"].as_array_mut().expect("children").push(json!({
+    ]));
+    let page = ux.at_mut("pages").at_mut(0);
+    page.at_mut("root").at_mut("children").as_array_mut().req("children").push(json!({
         "nodeId": "kpi-node", "component": { "kind": "catalog", "entry": { "entryId": "kpi-tile" },
             "props": { "title": "\"Approvals\"", "note": "input.fields.lastCode" } },
         "children": []
     }));
-    page["root"]["children"].as_array_mut().expect("children").push(json!({
+    page.at_mut("root").at_mut("children").as_array_mut().req("children").push(json!({
         "nodeId": "map-node", "component": { "kind": "catalog", "entry": { "entryId": "yield-map" },
             "props": { "points": "input.fields.lastCode" } },
         "children": []
     }));
-    let machine = &mut page["machine"];
-    machine["events"].as_array_mut().expect("events").extend([
+    let machine = page.at_mut("machine");
+    machine.at_mut("events").as_array_mut().req("events").extend([
         json!({ "eventId": "drill", "source": { "kind": "user", "nodeId": "kpi-node", "emits": "drill" },
             "payload": [{ "fieldId": "period", "type": "text", "required": true }] }),
         json!({ "eventId": "site", "source": { "kind": "user", "nodeId": "map-node", "emits": "point-selected" },
             "payload": [{ "fieldId": "siteId", "type": "text", "required": true }] }),
     ]);
-    machine["transitions"].as_array_mut().expect("transitions").extend([
+    machine.at_mut("transitions").as_array_mut().req("transitions").extend([
         json!({ "transitionId": "drill-browsing", "from": "browsing", "on": "drill", "target": "browsing" }),
         json!({ "transitionId": "site-browsing", "from": "browsing", "on": "site", "target": "browsing" }),
     ]);
@@ -4452,7 +4791,7 @@ fn catalog_widget() -> Value {
 
 fn catalog_edit(change: impl FnOnce(&mut Value)) -> Value {
     let mut widget = catalog_widget();
-    change(&mut widget["payload"]["ux"]);
+    change(widget.at_mut("payload").at_mut("ux"));
     widget
 }
 

@@ -13,18 +13,21 @@ use norn_checker::envelope::helpers::{
     validate_string_array_field,
 };
 
-/// Payload-validator hook for [`norn_checker::check_artifact_with`] and
-/// [`norn_checker::validate_artifact_with`]: validates `ArtifactPayload::Widget`
-/// envelopes before typed-root agreement.
-pub fn validate_widget_extra(
-    artifact: &ArtifactEnvelope,
-    payload: &JsonValue,
-    diagnostics: &mut Vec<Diagnostic>,
-) {
+/// Strictly additive payload validator for [`norn_checker::UiValidator`]:
+/// validates `ArtifactPayload::Widget` envelopes before typed-root agreement
+/// and returns its findings without mutating Ring-0 diagnostics.
+#[must_use]
+pub fn validate_widget_extra(artifact: &ArtifactEnvelope, payload: &JsonValue) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
     if matches!(artifact.payload, norn_ir::ArtifactPayload::Widget(_)) {
-        validate_widget_payload(payload, diagnostics, Some(artifact.artifact_id.as_str()));
-        validate_widget_binding_dependencies(artifact, diagnostics);
+        validate_widget_payload(
+            payload,
+            &mut diagnostics,
+            Some(artifact.artifact_id.as_str()),
+        );
+        validate_widget_binding_dependencies(artifact, &mut diagnostics);
     }
+    diagnostics
 }
 
 /// Validate a widget artifact's JSON payload fields.

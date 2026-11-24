@@ -340,15 +340,17 @@ pub fn check_artifact_set_with_receipt(
     context: &EntityArtifactSetContext<'_>,
     limits: &ResourceLimitProfile,
 ) -> Result<CheckedArtifactSet, ReceiptError> {
-    check_artifact_set_with_profile(
-        &artifacts.artifacts,
-        &artifacts.context(context)?,
+    let context = artifacts.context(context)?;
+    check_artifact_set_with_profile(ReceiptCheckRequest {
+        artifacts: &artifacts.artifacts,
+        context: &context,
         limits,
-        artifacts.identity.clone(),
-        IDENTIFIER_ADMISSION_PROFILE,
-        None,
-        false,
-    )
+        artifact_set: artifacts.identity.clone(),
+        identifier_profile: IDENTIFIER_ADMISSION_PROFILE,
+        flow_source_map: None,
+        retained: false,
+        ui: None,
+    })
 }
 
 /// Check retained exact semantic sources and bind their Norn1 bytes.
@@ -387,15 +389,17 @@ pub fn check_artifact_set_with_flow_source_map(
     limits: &ResourceLimitProfile,
     flow_source_map: Option<&FlowSourceMap>,
 ) -> Result<CheckedArtifactSet, ReceiptError> {
-    check_artifact_set_with_profile(
-        &artifacts.artifacts,
-        &artifacts.context(context)?,
+    let context = artifacts.context(context)?;
+    check_artifact_set_with_profile(ReceiptCheckRequest {
+        artifacts: &artifacts.artifacts,
+        context: &context,
         limits,
-        artifacts.identity.clone(),
-        IDENTIFIER_ADMISSION_PROFILE,
+        artifact_set: artifacts.identity.clone(),
+        identifier_profile: IDENTIFIER_ADMISSION_PROFILE,
         flow_source_map,
-        false,
-    )
+        retained: false,
+        ui: None,
+    })
 }
 
 /// Re-check definitions using the identifier profile attested by a verified
@@ -417,15 +421,17 @@ pub fn check_artifact_set_with_verified_receipt(
             "verified receipt profile does not bind the supplied artifact set",
         ));
     }
-    check_artifact_set_with_profile(
-        &artifacts.artifacts,
-        &artifacts.context(context)?,
+    let context = artifacts.context(context)?;
+    check_artifact_set_with_profile(ReceiptCheckRequest {
+        artifacts: &artifacts.artifacts,
+        context: &context,
         limits,
-        artifacts.identity.clone(),
-        &version.identifier_profile,
-        version.flow_source_map.as_ref(),
-        true,
-    )
+        artifact_set: artifacts.identity.clone(),
+        identifier_profile: &version.identifier_profile,
+        flow_source_map: version.flow_source_map.as_ref(),
+        retained: true,
+        ui: None,
+    })
 }
 
 /// Check an install candidate, reusing an active receipt's identifier profile
@@ -487,16 +493,22 @@ pub fn check_artifact_set_for_install_with_flow_source_map(
 /// receipts preserve the profile tag and original source identity.
 const CURRENT_SETTING_VERSION: &str = "0.1";
 
-fn check_artifact_set_with_profile(
-    artifacts: &[ArtifactEnvelope],
-    context: &EntityArtifactSetContext<'_>,
-    limits: &ResourceLimitProfile,
-    artifact_set: ArtifactSetRef,
-    identifier_profile: &str,
-    flow_source_map: Option<&FlowSourceMap>,
-    retained: bool,
+/// Parameters for internal receipt issuance under a specific admission profile.
+pub(crate) struct ReceiptCheckRequest<'a> {
+    pub(crate) artifacts: &'a [ArtifactEnvelope],
+    pub(crate) context: &'a EntityArtifactSetContext<'a>,
+    pub(crate) limits: &'a ResourceLimitProfile,
+    pub(crate) artifact_set: ArtifactSetRef,
+    pub(crate) identifier_profile: &'a str,
+    pub(crate) flow_source_map: Option<&'a FlowSourceMap>,
+    pub(crate) retained: bool,
+    pub(crate) ui: Option<&'a dyn crate::UiValidator>,
+}
+
+pub(crate) fn check_artifact_set_with_profile(
+    request: ReceiptCheckRequest<'_>,
 ) -> Result<CheckedArtifactSet, ReceiptError> {
-    check_artifact_set_with_profile_using(
+    let ReceiptCheckRequest {
         artifacts,
         context,
         limits,
@@ -504,26 +516,10 @@ fn check_artifact_set_with_profile(
         identifier_profile,
         flow_source_map,
         retained,
-        crate::check_artifact_set,
-    )
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "internal receipt profile helper parameterized by caller check pass"
-)]
-pub(crate) fn check_artifact_set_with_profile_using(
-    artifacts: &[ArtifactEnvelope],
-    context: &EntityArtifactSetContext<'_>,
-    limits: &ResourceLimitProfile,
-    artifact_set: ArtifactSetRef,
-    identifier_profile: &str,
-    flow_source_map: Option<&FlowSourceMap>,
-    retained: bool,
-    check_set: impl FnOnce(&[ArtifactEnvelope], &EntityArtifactSetContext<'_>) -> Vec<Diagnostic>,
-) -> Result<CheckedArtifactSet, ReceiptError> {
+        ui,
+    } = request;
     let limit_profile = limits.reference()?;
-    let mut diagnostics = check_set(artifacts, context);
+    let mut diagnostics = crate::artifact_set::check_artifact_set_inner(artifacts, context, ui);
     if !retained {
         for artifact in artifacts {
             if matches!(&artifact.payload, norn_ir::ArtifactPayload::Setting(s) if s.setting_version.as_value() != Some(&norn_ir::JsonValue::String(CURRENT_SETTING_VERSION.into())))
@@ -854,15 +850,20 @@ pub fn recover_legacy_admission_receipt(
         base,
         tenant: None,
     };
-    let checked = check_artifact_set_with_profile(
-        artifacts,
-        &context,
-        limits,
-        ArtifactSetRef::of(artifacts, base)?,
-        IDENTIFIER_ADMISSION_PROFILE,
-        None,
-        false,
-    )?;
+    let artifact_set = ArtifactSetRef::of(artifacts, base)?;
+    let run_profile = |identifier_profile, retained| {
+        check_artifact_set_with_profile(ReceiptCheckRequest {
+            artifacts,
+            context: &context,
+            limits,
+            artifact_set: artifact_set.clone(),
+            identifier_profile,
+            flow_source_map: None,
+            retained,
+            ui: None,
+        })
+    };
+    let checked = run_profile(IDENTIFIER_ADMISSION_PROFILE, false)?;
     let current_sha256 = checked.receipt.content_sha256()?;
 
     if checked.receipt.admitted {
@@ -875,15 +876,7 @@ pub fn recover_legacy_admission_receipt(
         }
     }
 
-    let historical_check = check_artifact_set_with_profile(
-        artifacts,
-        &context,
-        limits,
-        ArtifactSetRef::of(artifacts, base)?,
-        HISTORICAL_IDENTIFIER_PROFILE,
-        None,
-        true,
-    )?;
+    let historical_check = run_profile(HISTORICAL_IDENTIFIER_PROFILE, true)?;
 
     let limit_profile = limits.reference()?;
     let type_env = derive_type_env(artifacts, base, limits)
@@ -1938,15 +1931,16 @@ mod retained_setting_tests {
                 .admitted,
             CURRENT_SETTING_VERSION == "0.1"
         );
-        let mut old = check_artifact_set_with_profile(
-            &sources.artifacts,
-            &context,
-            &limits,
-            sources.identity.clone(),
-            HISTORICAL_IDENTIFIER_PROFILE,
-            None,
-            true,
-        )
+        let mut old = check_artifact_set_with_profile(ReceiptCheckRequest {
+            artifacts: &sources.artifacts,
+            context: &context,
+            limits: &limits,
+            artifact_set: sources.identity.clone(),
+            identifier_profile: HISTORICAL_IDENTIFIER_PROFILE,
+            flow_source_map: None,
+            retained: true,
+            ui: None,
+        })
         .expect("historical validation")
         .receipt;
         assert!(old.admitted);

@@ -103,7 +103,8 @@ pub mod verification;
 pub use action_set::{check_action_firing, check_action_set};
 pub use agent::{AgentContext, check_agent};
 pub use artifact_set::{
-    ResolvedArtifactSet, check_artifact_set, may_reference, resolve_artifact_set, scope_conflict,
+    ResolvedArtifactSet, check_artifact_set, check_artifact_set_with_ui, may_reference,
+    resolve_artifact_set, scope_conflict,
 };
 pub use codes::{CodeEntry, Tier, conformance_manifest};
 pub use definitions_diff::{
@@ -133,7 +134,7 @@ pub use entity_model::{
     check_object_type_extension_local, check_object_type_local, effective_object_types,
 };
 pub use envelope::{
-    ArtifactValidation, plan_graph_load, validate_artifact, validate_artifact_with,
+    ArtifactValidation, plan_graph_load, validate_artifact, validate_artifact_with_ui,
 };
 pub use flow_source_map::validate_flow_source_map;
 pub use jdm_profile::{RuleClosure, RuleClosureError, rule_closure};
@@ -170,6 +171,32 @@ pub use sealing::{
 };
 pub use typed_roots::decode_artifact_json;
 
+/// Strictly additive Ring-1 UI validation hooks composed over Ring-0 checks.
+///
+/// Ring-0 always executes its own envelope, typed-root, entity-model, action,
+/// rule, lifecycle, mapping, law, and receipt checks unconditionally. Hooks may
+/// inspect inputs and return additional diagnostics to append; they can never
+/// mutate, clear, or suppress Ring-0 findings.
+pub trait UiValidator {
+    /// Validate an `ArtifactPayload::Widget` envelope payload before typed-root
+    /// agreement. Returned diagnostics are appended to Ring-0's envelope
+    /// findings.
+    fn validate_widget_payload(
+        &self,
+        artifact: &norn_ir::ArtifactEnvelope,
+        payload: &norn_ir::JsonValue,
+    ) -> Vec<norn_ir::Diagnostic>;
+
+    /// Run Ring-1 cross-artifact UI/widget checks over normalized artifacts
+    /// after Ring-0 resolution succeeds. Returned diagnostics are appended to
+    /// Ring-0's set findings.
+    fn check_ui_set(
+        &self,
+        artifacts: &[norn_ir::ArtifactEnvelope],
+        context: &EntityArtifactSetContext<'_>,
+    ) -> Vec<Diagnostic>;
+}
+
 /// Check one artifact envelope and return every finding in the checker
 /// [`Diagnostic`] model. The artifact is valid when no returned finding
 /// satisfies [`Diagnostic::is_error`]; informational notes may remain.
@@ -177,21 +204,27 @@ pub use typed_roots::decode_artifact_json;
 /// Same checks, codes, and messages as [`validate_artifact`]; only the
 /// location is re-expressed as a JSON-pointer [`Span`], resolved against the
 /// envelope's wire JSON (see [`Span::from_legacy_path_in`]).
+/// `ArtifactPayload::Widget` fails closed here because widget validation lives
+/// in Ring-1 `norn-ui-checker`.
 #[must_use]
 pub fn check_artifact(artifact: &norn_ir::ArtifactEnvelope) -> Vec<Diagnostic> {
-    check_artifact_with(artifact, |_, _, _| {})
+    check_artifact_inner(artifact, None)
 }
 
-/// Check one artifact envelope with an additional payload validator hook (for
-/// higher rings such as `norn-ui-checker`) before typed-root agreement.
+/// Check one artifact envelope with strictly additive Ring-1 UI validation
+/// composed over Ring-0 envelope and typed-root checks.
 #[must_use]
-pub fn check_artifact_with(
+pub fn check_artifact_with_ui(
     artifact: &norn_ir::ArtifactEnvelope,
-    extra_payload_validator: impl FnOnce(
-        &norn_ir::ArtifactEnvelope,
-        &norn_ir::JsonValue,
-        &mut Vec<norn_ir::Diagnostic>,
-    ),
+    ui: &dyn UiValidator,
+) -> Vec<Diagnostic> {
+    check_artifact_inner(artifact, Some(ui))
+}
+
+#[must_use]
+pub(crate) fn check_artifact_inner(
+    artifact: &norn_ir::ArtifactEnvelope,
+    ui: Option<&dyn UiValidator>,
 ) -> Vec<Diagnostic> {
     if let Some(finding) = definition_catalog::catalog_write(artifact) {
         return vec![finding];
@@ -200,8 +233,7 @@ pub fn check_artifact_with(
         Ok((normalized, _layout)) => (normalized, Vec::new()),
         Err(findings) => (artifact.clone(), findings),
     };
-    let legacy =
-        crate::envelope::collect_artifact_diagnostics_with(&normalized, extra_payload_validator);
+    let legacy = crate::envelope::collect_artifact_diagnostics_inner(&normalized, ui);
     // Resolve dotted paths against the envelope's wire JSON so keys that
     // contain `.` stay one pointer segment.
     let mut checked = match serde_json::to_value(artifact) {
@@ -228,27 +260,32 @@ pub fn check_artifact_with(
 /// admission path. Decode failures ([`decode_artifact_json`]) and envelope
 /// findings ([`check_artifact`]) are both returned in the checker
 /// [`Diagnostic`] model, with spans resolved against `value`.
+/// `ArtifactPayload::Widget` fails closed here; use [`check_artifact_json_with_ui`]
+/// via Ring-1 `norn-ui-checker` to validate widget envelopes.
 #[must_use]
 pub fn check_artifact_json(value: &serde_json::Value) -> Vec<Diagnostic> {
-    check_artifact_json_with(value, |_, _, _| {})
+    check_artifact_json_inner(value, None)
 }
 
-/// Decode an artifact envelope from its wire JSON and check it using
-/// [`check_artifact_with`].
+/// Decode an artifact envelope from its wire JSON and check it with strictly
+/// additive Ring-1 UI validation via [`check_artifact_with_ui`].
 #[must_use]
-pub fn check_artifact_json_with(
+pub fn check_artifact_json_with_ui(
     value: &serde_json::Value,
-    extra_payload_validator: impl FnOnce(
-        &norn_ir::ArtifactEnvelope,
-        &norn_ir::JsonValue,
-        &mut Vec<norn_ir::Diagnostic>,
-    ),
+    ui: &dyn UiValidator,
+) -> Vec<Diagnostic> {
+    check_artifact_json_inner(value, Some(ui))
+}
+
+fn check_artifact_json_inner(
+    value: &serde_json::Value,
+    ui: Option<&dyn UiValidator>,
 ) -> Vec<Diagnostic> {
     if let Some(finding) = definition_catalog::catalog_write_json(value) {
         return vec![finding];
     }
     match decode_artifact_json(value) {
-        Ok(artifact) => check_artifact_with(&artifact, extra_payload_validator),
+        Ok(artifact) => check_artifact_inner(&artifact, ui),
         Err(legacy) => legacy
             .into_iter()
             .map(|diagnostic| Diagnostic::from_legacy_in(diagnostic, value))
@@ -256,58 +293,54 @@ pub fn check_artifact_json_with(
     }
 }
 
-/// Check `artifacts` using a custom set-check function `check_set` and issue
-/// its [`CheckReceipt`]. Used by higher-ring checkers (`norn-ui-checker`) to
-/// compose Ring-0 and Ring-1 checks under one admission receipt.
+/// Check `artifacts` with Ring-0 checks plus strictly additive Ring-1 UI
+/// validation and issue its [`CheckReceipt`]. Ring-0 always runs
+/// unconditionally; `ui` can only append diagnostics.
 ///
 /// # Errors
 /// As [`check_artifact_set_with_receipt`].
-pub fn check_artifact_set_with_receipt_using(
+pub fn check_artifact_set_with_receipt_ui(
     artifacts: &ReceiptSources,
     context: &EntityArtifactSetContext<'_>,
     limits: &norn_ir::ResourceLimitProfile,
-    check_set: impl FnOnce(
-        &[norn_ir::ArtifactEnvelope],
-        &EntityArtifactSetContext<'_>,
-    ) -> Vec<Diagnostic>,
+    ui: &dyn UiValidator,
 ) -> Result<CheckedArtifactSet, ReceiptError> {
-    receipt::check_artifact_set_with_profile_using(
-        &artifacts.artifacts,
-        &artifacts.context(context)?,
+    let context = artifacts.context(context)?;
+    receipt::check_artifact_set_with_profile(receipt::ReceiptCheckRequest {
+        artifacts: &artifacts.artifacts,
+        context: &context,
         limits,
-        artifacts.identity.clone(),
-        IDENTIFIER_ADMISSION_PROFILE,
-        None,
-        false,
-        check_set,
-    )
+        artifact_set: artifacts.identity.clone(),
+        identifier_profile: IDENTIFIER_ADMISSION_PROFILE,
+        flow_source_map: None,
+        retained: false,
+        ui: Some(ui),
+    })
 }
 
-/// Check `artifacts` with an optional flow source map using a custom set-check
-/// function `check_set` and issue its [`CheckReceipt`].
+/// Check `artifacts` with an optional flow source map, running Ring-0 checks
+/// plus strictly additive Ring-1 UI validation, and issue its [`CheckReceipt`].
 ///
 /// # Errors
 /// As [`check_artifact_set_with_flow_source_map`].
-pub fn check_artifact_set_with_flow_source_map_using(
+pub fn check_artifact_set_with_flow_source_map_ui(
     artifacts: &ReceiptSources,
     context: &EntityArtifactSetContext<'_>,
     limits: &norn_ir::ResourceLimitProfile,
     flow_source_map: Option<&norn_ir::FlowSourceMap>,
-    check_set: impl FnOnce(
-        &[norn_ir::ArtifactEnvelope],
-        &EntityArtifactSetContext<'_>,
-    ) -> Vec<Diagnostic>,
+    ui: &dyn UiValidator,
 ) -> Result<CheckedArtifactSet, ReceiptError> {
-    receipt::check_artifact_set_with_profile_using(
-        &artifacts.artifacts,
-        &artifacts.context(context)?,
+    let context = artifacts.context(context)?;
+    receipt::check_artifact_set_with_profile(receipt::ReceiptCheckRequest {
+        artifacts: &artifacts.artifacts,
+        context: &context,
         limits,
-        artifacts.identity.clone(),
-        IDENTIFIER_ADMISSION_PROFILE,
+        artifact_set: artifacts.identity.clone(),
+        identifier_profile: IDENTIFIER_ADMISSION_PROFILE,
         flow_source_map,
-        false,
-        check_set,
-    )
+        retained: false,
+        ui: Some(ui),
+    })
 }
 
 /// Single-cell execution diagnostic shared with runtime admission.

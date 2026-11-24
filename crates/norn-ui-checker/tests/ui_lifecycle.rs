@@ -2,6 +2,7 @@
 //! order fixture's `status` lifecycle and its approval decision (which can emit `submit` and
 //! `approve`) back a page that submits an order.
 
+use crate::{JsonAt, TestMust};
 use std::collections::BTreeSet;
 
 use norn_checker::{Diagnostic, EntityArtifactSetContext};
@@ -14,11 +15,11 @@ const ACTION_ID: &str = "commerce.submit_purchase_order.action";
 const WIDGET_ID: &str = "commerce.submit_order.widget";
 
 fn read_json(path: &str) -> Value {
-    serde_json::from_str(&std::fs::read_to_string(format!("{FIXTURES}/{path}")).expect("fixture"))
-        .expect("fixture parses")
+    serde_json::from_str(&std::fs::read_to_string(format!("{FIXTURES}/{path}")).req("fixture"))
+        .req("fixture parses")
 }
 
-fn artifact(kind: &str, id: &str, payload: Value) -> Value {
+fn artifact(kind: &str, id: &str, payload: &Value) -> Value {
     json!({
         "irVersion": "0.1", "artifactId": id, "kind": kind,
         "namespace": "commerce", "name": id, "version": "0.1.0", "lifecycle": "draft",
@@ -32,7 +33,7 @@ fn action() -> Value {
     artifact(
         "action",
         ACTION_ID,
-        json!({
+        &json!({
             "actionId": "commerce.submit_purchase_order", "scopeRequired": ["orgId", "environmentId"],
             "idempotent": true, "ledgered": true, "ledgerCategory": "commerce",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
@@ -73,21 +74,21 @@ fn machine(lifecycle: &Value) -> Value {
 }
 
 fn widget(lifecycle: &Value) -> Value {
-    let node = |id: &str, component: Value, children: Value| json!({ "nodeId": id, "semanticId": id, "component": component, "children": children });
+    let node = |id: &str, component: &Value, children: &Value| json!({ "nodeId": id, "semanticId": id, "component": component, "children": children });
     let mut value = artifact(
         "widget",
         WIDGET_ID,
-        json!({
+        &json!({
             "widgetVersion": "0.1", "widgetId": WIDGET_ID,
             "dataDependencies": [], "viewStates": [{ "stateId": "ready", "kind": "ready" }],
             "actionBindings": [], "permissions": [],
             "ux": {
                 "uxVersion": "0.1", "pages": [{
                     "pageId": "main", "name": "Main", "contextParams": [],
-                    "root": node("root", json!({ "kind": "section", "section": {
+                    "root": node("root", &json!({ "kind": "section", "section": {
                         "sectionId": "main", "kind": "section", "label": { "en": "Main" },
                         "fields": [], "order": 1
-                    }}), json!([node("invoke", json!({ "kind": "action", "placementId": "invoke" }), json!([]))])),
+                    }}), &json!([node("invoke", &json!({ "kind": "action", "placementId": "invoke" }), &json!([]))])),
                     "machine": machine(lifecycle)
                 }],
                 "dataBindings": [], "fields": [], "forms": [], "navigationItems": [], "overrides": [],
@@ -103,9 +104,12 @@ fn widget(lifecycle: &Value) -> Value {
             }
         }),
     );
-    value["dependencies"] = json!([{
-        "artifactId": ACTION_ID, "kind": "action", "version": "0.1.0", "required": true
-    }]);
+    value.set(
+        "dependencies",
+        json!([{
+            "artifactId": ACTION_ID, "kind": "action", "version": "0.1.0", "required": true
+        }]),
+    );
     value
 }
 
@@ -145,7 +149,7 @@ fn lifecycle_diagnostics(lifecycle: &Value, edit: impl FnOnce(&mut Value)) -> Ve
         widget(lifecycle),
     ]
     .into_iter()
-    .map(|value| serde_json::from_value(value).expect("artifact decodes"))
+    .map(|value| serde_json::from_value(value).req("artifact decodes"))
     .collect();
     let found: Vec<Diagnostic> = check_artifact_set(
         &artifacts,

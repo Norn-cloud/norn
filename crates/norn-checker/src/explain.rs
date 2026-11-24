@@ -53,12 +53,37 @@ pub fn explain(
     kind: ExplainKind,
     id: &str,
 ) -> Result<ExplainReport, Vec<Diagnostic>> {
+    explain_inner(artifacts, context, kind, id, None)
+}
+
+/// EXPLAIN-CLOSURE-1 with strictly additive Ring-1 UI validation composed over
+/// Ring-0 admission.
+///
+/// # Errors
+/// As [`explain`].
+pub fn explain_with_ui(
+    artifacts: &[ArtifactEnvelope],
+    context: &EntityArtifactSetContext<'_>,
+    kind: ExplainKind,
+    id: &str,
+    ui: &dyn crate::UiValidator,
+) -> Result<ExplainReport, Vec<Diagnostic>> {
+    explain_inner(artifacts, context, kind, id, Some(ui))
+}
+
+fn explain_inner(
+    artifacts: &[ArtifactEnvelope],
+    context: &EntityArtifactSetContext<'_>,
+    kind: ExplainKind,
+    id: &str,
+    ui: Option<&dyn crate::UiValidator>,
+) -> Result<ExplainReport, Vec<Diagnostic>> {
     if artifacts.len().saturating_add(context.base.len()) > 16_384 {
         return Err(closure_error(
             "definition count exceeds the graph node budget",
         ));
     }
-    let diagnostics = crate::check_artifact_set(artifacts, context);
+    let diagnostics = crate::artifact_set::check_artifact_set_inner(artifacts, context, ui);
     if diagnostics.iter().any(Diagnostic::is_error) {
         return Err(diagnostics);
     }

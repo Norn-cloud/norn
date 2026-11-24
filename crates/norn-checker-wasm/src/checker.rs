@@ -941,7 +941,7 @@ pub fn explain_artifact_set_json(
     let options: norn_ir::explain::ExplainOptions = serde_json::from_str(options_json)
         .map_err(|error| invalid("options", error.to_string()))?;
     let result = explain_sources(sources)
-        .and_then(|artifacts| norn_checker::explain::explain(&artifacts, &set, kind, id))
+        .and_then(|artifacts| norn_ui_checker::explain(&artifacts, &set, kind, id))
         .and_then(|mut report| {
             norn_checker::explain::render_wording(&mut report, &options)?;
             Ok(report)

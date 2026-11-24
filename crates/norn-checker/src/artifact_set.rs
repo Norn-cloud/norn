@@ -314,12 +314,27 @@ pub fn check_artifact_set(
     artifacts: &[ArtifactEnvelope],
     context: &EntityArtifactSetContext<'_>,
 ) -> Vec<Diagnostic> {
-    check_artifact_set_with(
-        artifacts,
-        context,
-        &mut crate::check_artifact,
-        &mut |_, _| Vec::new(),
-    )
+    check_artifact_set_inner(artifacts, context, None)
+}
+
+/// Resolve `artifacts` against `context.base` and run all Ring-0 set checks
+/// unconditionally together with strictly additive Ring-1 UI validation.
+#[must_use]
+pub fn check_artifact_set_with_ui(
+    artifacts: &[ArtifactEnvelope],
+    context: &EntityArtifactSetContext<'_>,
+    ui: &dyn crate::UiValidator,
+) -> Vec<Diagnostic> {
+    check_artifact_set_inner(artifacts, context, Some(ui))
+}
+
+pub(crate) fn check_artifact_set_inner(
+    artifacts: &[ArtifactEnvelope],
+    context: &EntityArtifactSetContext<'_>,
+    ui: Option<&dyn crate::UiValidator>,
+) -> Vec<Diagnostic> {
+    let mut local = |artifact: &ArtifactEnvelope| crate::check_artifact_inner(artifact, ui);
+    check_artifact_set_core(artifacts, context, &mut local, ui)
 }
 
 pub(crate) fn check_artifact_set_using(
@@ -327,18 +342,14 @@ pub(crate) fn check_artifact_set_using(
     context: &EntityArtifactSetContext<'_>,
     local: &mut impl FnMut(&ArtifactEnvelope) -> Vec<Diagnostic>,
 ) -> Vec<Diagnostic> {
-    check_artifact_set_with(artifacts, context, local, &mut |_, _| Vec::new())
+    check_artifact_set_core(artifacts, context, local, None)
 }
 
-/// Resolve `artifacts` against `context.base` and run the Ring-0 set checks
-/// together with caller-provided `local` per-artifact checks and `extra_set`
-/// post-resolution checks (used by higher-ring checkers such as `norn-ui-checker`).
-#[must_use]
-pub fn check_artifact_set_with(
+fn check_artifact_set_core(
     artifacts: &[ArtifactEnvelope],
     context: &EntityArtifactSetContext<'_>,
     local: &mut impl FnMut(&ArtifactEnvelope) -> Vec<Diagnostic>,
-    extra_set: &mut impl FnMut(&[ArtifactEnvelope], &EntityArtifactSetContext<'_>) -> Vec<Diagnostic>,
+    ui: Option<&dyn crate::UiValidator>,
 ) -> Vec<Diagnostic> {
     let mut layout_findings = Vec::new();
     let normalized_artifacts = normalize_artifacts(artifacts, &mut layout_findings);
@@ -379,7 +390,9 @@ pub fn check_artifact_set_with(
                     &normalized_base,
                     normalized_context.registry,
                 ))
-                .chain(extra_set(&normalized_artifacts, &normalized_context))
+                .chain(ui.map_or_else(Vec::new, |validator| {
+                    validator.check_ui_set(&normalized_artifacts, &normalized_context)
+                }))
                 .chain(crate::markings::check_references(
                     &normalized_artifacts,
                     &normalized_base,

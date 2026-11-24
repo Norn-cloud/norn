@@ -1,5 +1,6 @@
 //! Admission tests for UI effect subtraction and invocation provenance (#3178).
 
+use crate::{JsonAt, TestMust};
 use std::collections::BTreeSet;
 
 use norn_checker::{Diagnostic, EffectiveCatalog, EntityArtifactSetContext};
@@ -11,7 +12,7 @@ const WIDGET_ID: &str = "test.widget";
 const ACTION_ID: &str = "test.action";
 const ACTION_PATH: &str = "/payload/ux/pages/0/root/children/0";
 
-fn artifact(kind: &str, id: &str, payload: Value) -> Value {
+fn artifact(kind: &str, id: &str, payload: &Value) -> Value {
     json!({
         "irVersion": "0.1", "artifactId": id, "kind": kind,
         "namespace": "test", "name": id, "version": "0.1.0", "lifecycle": "draft",
@@ -24,7 +25,7 @@ fn action() -> Value {
     artifact(
         "action",
         ACTION_ID,
-        json!({
+        &json!({
             "actionId": "test.invoke", "scopeRequired": ["orgId", "environmentId"],
             "idempotent": false, "ledgered": true, "ledgerCategory": "test",
             "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
@@ -35,16 +36,19 @@ fn action() -> Value {
 
 fn external_action() -> Value {
     let mut value = action();
-    value["payload"]["commands"] = json!([{
-        "connector": "test.remote", "operation": "create", "doctype": "Order", "fields": {}
-    }]);
+    value.at_mut("payload").set(
+        "commands",
+        json!([{
+            "connector": "test.remote", "operation": "create", "doctype": "Order", "fields": {}
+        }]),
+    );
     value
 }
 
 fn confirmation(strength: &str) -> Value {
     let mut value = json!({ "severity": "safe", "strength": strength });
     if strength == "typed" {
-        value["phrase"] = json!({ "en": "DELETE" });
+        value.set("phrase", json!({ "en": "DELETE" }));
     }
     value
 }
@@ -61,7 +65,7 @@ fn widget() -> Value {
     let mut value = artifact(
         "widget",
         WIDGET_ID,
-        json!({
+        &json!({
             "widgetVersion": "0.1", "widgetId": WIDGET_ID,
             "dataDependencies": [], "viewStates": [{ "stateId": "ready", "kind": "ready" }],
             "actionBindings": [], "permissions": [],
@@ -86,14 +90,17 @@ fn widget() -> Value {
             }
         }),
     );
-    value["dependencies"] = json!([{
-        "artifactId": ACTION_ID, "kind": "action", "version": "0.1.0", "required": true
-    }]);
+    value.set(
+        "dependencies",
+        json!([{
+            "artifactId": ACTION_ID, "kind": "action", "version": "0.1.0", "required": true
+        }]),
+    );
     value
 }
 
 fn decode(value: Value) -> ArtifactEnvelope {
-    serde_json::from_value(value).expect("artifact should decode")
+    serde_json::from_value(value).req("artifact should decode")
 }
 
 fn findings(widget: Value, action: Value) -> Vec<Diagnostic> {
@@ -271,11 +278,27 @@ fn currencies_and_shell_codes_match_exactly() {
 }
 
 fn dialog(widget: &mut Value, blocking: bool, binding: Option<&str>, methods: &Value) {
-    widget["payload"]["ux"]["pages"][0]["root"]["component"] = json!({
-        "kind": "dialog", "blocking": blocking, "dismissalMethods": methods
-    });
+    widget
+        .at_mut("payload")
+        .at_mut("ux")
+        .at_mut("pages")
+        .at_mut(0)
+        .at_mut("root")
+        .set(
+            "component",
+            json!({
+                "kind": "dialog", "blocking": blocking, "dismissalMethods": methods
+            }),
+        );
     if let Some(binding) = binding {
-        widget["payload"]["ux"]["pages"][0]["root"]["component"]["bindingId"] = json!(binding);
+        widget
+            .at_mut("payload")
+            .at_mut("ux")
+            .at_mut("pages")
+            .at_mut(0)
+            .at_mut("root")
+            .at_mut("component")
+            .set("bindingId", json!(binding));
     }
 }
 
@@ -338,15 +361,20 @@ fn blocking_dialog_requires_a_real_external_invocation_and_local_unknown_surface
 }
 
 fn with_form(mut widget: Value) -> Value {
-    let ux = &mut widget["payload"]["ux"];
-    ux["actionPlacements"][0]["formId"] = json!("input");
-    ux["forms"] = json!([{
+    let ux = widget.at_mut("payload").at_mut("ux");
+    ux.at_mut("actionPlacements")
+        .at_mut(0)
+        .set("formId", json!("input"));
+    ux.set("forms", json!([{
         "formId": "input", "mode": "action_input", "inputNames": [], "submitBindingId": "invoke",
         "submit": { "label": { "en": "Submit" }, "confirmation": confirmation("none") }
-    }]);
-    ux["pages"][0]["root"]["children"]
+    }]));
+    ux.at_mut("pages")
+        .at_mut(0)
+        .at_mut("root")
+        .at_mut("children")
         .as_array_mut()
-        .expect("children")
+        .req("children")
         .push(node(
             "form",
             &json!({ "kind": "form", "formId": "input" }),
@@ -396,28 +424,42 @@ fn form_submit_confirmation_cannot_be_supplied_by_the_opener() {
 
 fn composing_widget(baseline: &Value) -> Value {
     let mut host = widget();
-    host["dependencies"].as_array_mut().expect("dependencies").push(json!({
-        "artifactId": baseline["artifactId"], "kind": "widget", "version": "0.1.0", "required": true
+    host.at_mut("dependencies").as_array_mut().req("dependencies").push(json!({
+        "artifactId": baseline.at("artifactId"), "kind": "widget", "version": "0.1.0", "required": true
     }));
-    let ux = &mut host["payload"]["ux"];
-    ux["actionBindings"] = json!([]);
-    ux["actionPlacements"] = json!([]);
-    ux["pages"][0]["root"]["children"] = json!([node(
+    let ux = host.at_mut("payload").at_mut("ux");
+    ux.set("actionBindings", json!([]));
+    ux.set("actionPlacements", json!([]));
+    ux.at_mut("pages").at_mut(0).at_mut("root").set("children", json!([node(
         "composed",
         &json!({
-            "kind": "composition", "widget": { "id": baseline["artifactId"], "version": "0.1.0" }, "pageId": "main"
+            "kind": "composition", "widget": { "id": baseline.at("artifactId"), "version": "0.1.0" }, "pageId": "main"
         }),
         &json!([])
-    )]);
+    )]));
     host
 }
 
 fn baseline() -> Value {
     let mut baseline = widget();
-    baseline["artifactId"] = json!("test.baseline");
-    baseline["payload"]["widgetId"] = json!("test.baseline");
-    baseline["payload"]["ux"]["pages"][0]["root"]["nodeId"] = json!("baseline-root");
-    baseline["payload"]["ux"]["pages"][0]["root"]["semanticId"] = json!("baseline-root");
+    baseline.set("artifactId", json!("test.baseline"));
+    baseline
+        .at_mut("payload")
+        .set("widgetId", json!("test.baseline"));
+    baseline
+        .at_mut("payload")
+        .at_mut("ux")
+        .at_mut("pages")
+        .at_mut(0)
+        .at_mut("root")
+        .set("nodeId", json!("baseline-root"));
+    baseline
+        .at_mut("payload")
+        .at_mut("ux")
+        .at_mut("pages")
+        .at_mut(0)
+        .at_mut("root")
+        .set("semanticId", json!("baseline-root"));
     baseline
 }
 
@@ -476,7 +518,7 @@ fn transition_entity() -> Value {
     artifact(
         "entity",
         "test.Record.entity",
-        json!({
+        &json!({
             "entityVersion": "2.0", "objectType": {
                 "name": "test.Record", "properties": [
                     { "id": "id", "type": { "kind": "text" } },
@@ -502,114 +544,156 @@ fn transition_entity() -> Value {
 
 fn transition_action() -> Value {
     let mut action = action();
-    action["payload"]["inputSchema"] = json!({
-        "type": "object", "properties": { "id": { "type": "string" } },
-        "required": ["id"], "additionalProperties": false
-    });
-    action["payload"]["writes"] = json!([{ "entityKind": "test.Record", "change": "modified" }]);
-    action["payload"]["effectProgram"] = json!({
-        "kind": "fire_transition", "objectIdField": "id", "objectKind": "test.Record",
-        "entityArtifactId": "test.Record.entity", "entityArtifactVersion": "0.1.0",
-        "lifecycle": "status", "transition": "finish"
-    });
+    action.at_mut("payload").set(
+        "inputSchema",
+        json!({
+            "type": "object", "properties": { "id": { "type": "string" } },
+            "required": ["id"], "additionalProperties": false
+        }),
+    );
+    action.at_mut("payload").set(
+        "writes",
+        json!([{ "entityKind": "test.Record", "change": "modified" }]),
+    );
+    action.at_mut("payload").set(
+        "effectProgram",
+        json!({
+            "kind": "fire_transition", "objectIdField": "id", "objectKind": "test.Record",
+            "entityArtifactId": "test.Record.entity", "entityArtifactVersion": "0.1.0",
+            "lifecycle": "status", "transition": "finish"
+        }),
+    );
     action
 }
 
 fn transition_widget() -> Value {
     let mut widget = widget();
-    widget["dependencies"].as_array_mut().expect("dependencies").push(json!({
+    widget.at_mut("dependencies").as_array_mut().req("dependencies").push(json!({
         "artifactId": "test.Record.entity", "kind": "entity", "version": "0.1.0", "required": true
     }));
-    let ux = &mut widget["payload"]["ux"];
-    ux["pages"][0]["root"]["component"] = json!({ "kind": "detail", "dataBindingId": "record" });
-    ux["actionPlacements"][0]["location"] = json!("detail");
-    ux["dataBindings"] = json!([{
+    let ux = widget.at_mut("payload").at_mut("ux");
+    ux.at_mut("pages").at_mut(0).at_mut("root").set(
+        "component",
+        json!({ "kind": "detail", "dataBindingId": "record" }),
+    );
+    ux.at_mut("actionPlacements")
+        .at_mut(0)
+        .set("location", json!("detail"));
+    ux.set("dataBindings", json!([{
         "bindingId": "record", "object": { "id": "test.Record.entity", "version": "0.1.0" },
         "query": { "kind": "object_detail", "key": [{ "propertyId": "id", "value": { "kind": "literal", "value": "1" } }] }
-    }]);
-    ux["actionBindings"][0]["inputMapping"] = json!({ "id": "input.recordKey" });
-    ux["actionBindings"][0]["inputs"] = json!({ "recordBindingId": "record" });
+    }]));
+    ux.at_mut("actionBindings")
+        .at_mut(0)
+        .set("inputMapping", json!({ "id": "input.recordKey" }));
+    ux.at_mut("actionBindings")
+        .at_mut(0)
+        .set("inputs", json!({ "recordBindingId": "record" }));
     widget
 }
 
 fn transition_context_widget() -> Value {
     let mut widget = transition_widget();
-    let ux = &mut widget["payload"]["ux"];
-    ux["pages"][0]["contextParams"] = json!([{
-        "paramId": "runtimeId",
-        "type": "text",
-        "required": true,
-        "runtimeKeyOf": { "id": "test.Record.entity", "version": "0.1.0" }
-    }]);
-    ux["actionBindings"][0]["inputs"]["contextPageId"] = json!("main");
-    ux["actionBindings"][0]["inputMapping"]["id"] = json!("input.context.runtimeId");
+    let ux = widget.at_mut("payload").at_mut("ux");
+    ux.at_mut("pages").at_mut(0).set(
+        "contextParams",
+        json!([{
+            "paramId": "runtimeId",
+            "type": "text",
+            "required": true,
+            "runtimeKeyOf": { "id": "test.Record.entity", "version": "0.1.0" }
+        }]),
+    );
+    ux.at_mut("actionBindings")
+        .at_mut(0)
+        .at_mut("inputs")
+        .set("contextPageId", json!("main"));
+    ux.at_mut("actionBindings")
+        .at_mut(0)
+        .at_mut("inputMapping")
+        .set("id", json!("input.context.runtimeId"));
     widget
 }
 
 fn transition_form_widget(location: &str) -> Value {
     let mut widget = transition_widget();
-    let ux = &mut widget["payload"]["ux"];
-    ux["forms"] = json!([{
-        "formId": "transition-form",
-        "mode": "action_input",
-        "inputNames": [],
-        "dataBindingId": "record",
-        "submitBindingId": "invoke",
-        "submit": {
-            "label": { "en": "Submit transition" },
+    let ux = widget.at_mut("payload").at_mut("ux");
+    ux.set(
+        "forms",
+        json!([{
+            "formId": "transition-form",
+            "mode": "action_input",
+            "inputNames": [],
+            "dataBindingId": "record",
+            "submitBindingId": "invoke",
+            "submit": {
+                "label": { "en": "Submit transition" },
+                "confirmation": { "severity": "safe", "strength": "none" }
+            }
+        }]),
+    );
+    ux.set(
+        "actionPlacements",
+        json!([{
+            "placementId": "open-transition-form",
+            "bindingId": "invoke",
+            "label": { "en": "Open transition form" },
+            "formId": "transition-form",
+            "location": location,
+            "order": 1,
+            "selectionBindingId": "record",
+            "selectionInputMapping": {},
             "confirmation": { "severity": "safe", "strength": "none" }
-        }
-    }]);
-    ux["actionPlacements"] = json!([{
-        "placementId": "open-transition-form",
-        "bindingId": "invoke",
-        "label": { "en": "Open transition form" },
-        "formId": "transition-form",
-        "location": location,
-        "order": 1,
-        "selectionBindingId": "record",
-        "selectionInputMapping": {},
-        "confirmation": { "severity": "safe", "strength": "none" }
-    }]);
-    ux["dataBindings"][0]["query"] = json!({
-        "kind": "object_list",
-        "filters": [],
-        "sort": [],
-        "page": { "size": 10, "maxSize": 10 }
-    });
-    let root = &mut ux["pages"][0]["root"];
-    root["component"] = json!({
-        "kind": "section",
-        "section": {
-            "sectionId": "transition-section",
+        }]),
+    );
+    ux.at_mut("dataBindings").at_mut(0).set(
+        "query",
+        json!({
+            "kind": "object_list",
+            "filters": [],
+            "sort": [],
+            "page": { "size": 10, "maxSize": 10 }
+        }),
+    );
+    let root = ux.at_mut("pages").at_mut(0).at_mut("root");
+    root.set(
+        "component",
+        json!({
             "kind": "section",
-            "label": { "en": "Transition" },
-            "fields": [],
-            "order": 1
-        }
-    });
-    root["children"] = json!([
-        {
-            "nodeId": "transition-list-node",
-            "semanticId": "transition-list",
-            "component": {
-                "kind": "list",
-                "dataBindingId": "record",
+            "section": {
+                "sectionId": "transition-section",
+                "kind": "section",
+                "label": { "en": "Transition" },
                 "fields": [],
-                "selection": if location == "selection" { "single" } else { "none" }
+                "order": 1
+            }
+        }),
+    );
+    root.set(
+        "children",
+        json!([
+            {
+                "nodeId": "transition-list-node",
+                "semanticId": "transition-list",
+                "component": {
+                    "kind": "list",
+                    "dataBindingId": "record",
+                    "fields": [],
+                    "selection": if location == "selection" { "single" } else { "none" }
+                },
+                "children": [node(
+                    "open-transition-form-node",
+                    &json!({ "kind": "action", "placementId": "open-transition-form" }),
+                    &json!([])
+                )]
             },
-            "children": [node(
-                "open-transition-form-node",
-                &json!({ "kind": "action", "placementId": "open-transition-form" }),
+            node(
+                "transition-form-node",
+                &json!({ "kind": "form", "formId": "transition-form" }),
                 &json!([])
-            )]
-        },
-        node(
-            "transition-form-node",
-            &json!({ "kind": "form", "formId": "transition-form" }),
-            &json!([])
-        )
-    ]);
+            )
+        ]),
+    );
     widget
 }
 
@@ -901,7 +985,7 @@ fn generated_lifecycle_conditions_use_effective_inherited_narrowing() {
     let child = artifact(
         "entity",
         "test.NarrowRecord.entity",
-        json!({
+        &json!({
             "entityVersion": "2.0", "objectType": {
                 "name": "test.NarrowRecord", "extends": "test.Record",
                 "properties": [{ "id": "status", "type": { "kind": "enum", "values": [
