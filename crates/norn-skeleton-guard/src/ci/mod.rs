@@ -68,14 +68,14 @@ const GATE_FILES: [&str; 32] = [
 /// another user's pull request runs hosted instead of queueing forever. The main-push arm
 /// (#1369) gives the shared compiler cache, which only a push to main may write, a writer on
 /// Boat: a push of `refs/heads/main` made and started by the merge queue's bot, only while
-/// `NORN_MAIN_RUNNER` is `boat`. Trusted-policy jobs stay hosted. The gate plan is a hosted job
-/// of its own: it needs only git and Python, so no `plan` job may take a Boat start.
+/// `NORN_MAIN_RUNNER` is `boat`. Only the `test` bundles take a Boat start: `plan`, `core`,
+/// `full` and `trusted-policy` stay hosted on `ubuntu-24.04`.
 const BOAT_RUNNER: &str = "${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat') || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}";
 
 fn runner_is_admitted(path: &str, job: &str, runner: Option<&str>) -> bool {
     matches!(runner, Some("ubuntu-latest" | "ubuntu-24.04"))
         || (path == ".github/workflows/ci-policy.yml"
-            && matches!(job, "core" | "test" | "full")
+            && job == "test"
             && runner == Some(BOAT_RUNNER))
 }
 
@@ -168,8 +168,7 @@ fn concurrency_error(path: &str, document: &yaml::Value) -> Option<String> {
     None
 }
 
-/// A same-repository pull request that fell back to hosted runners says so on its
-/// checks; fork pull requests run hosted by design and stay quiet.
+/// Warns when same-repo PR bundles fall back to hosted runners (`core` is hosted; unchanged for base's `PINNED_STEPS`).
 const HOSTED_PR_WARNING: &str = r#"name: Warn that pull request CI fell back to hosted runners
 if: ${{ runner.environment == 'github-hosted' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.NORN_PR_RUNNER != 'boat' }}
 run: |
@@ -201,9 +200,7 @@ with:
   disable_annotations: true
 ";
 
-/// Steps `ci-policy.yml` carries exactly once per job: the Boat-capable jobs make
-/// libclang loadable on Boat and set up sccache without fatal post-job stats, and
-/// `core` warns when pull request CI fell back to hosted runners.
+/// Pinned `ci-policy.yml` steps (`core` keeps `BOAT_LIBCLANG` as a skipped no-op for base's guard).
 const PINNED_STEPS: [(&str, &str); 5] = [
     ("core", HOSTED_PR_WARNING),
     ("core", BOAT_LIBCLANG),
@@ -1185,7 +1182,7 @@ mod tests {
         }
         assert!(!super::runner_is_admitted(
             ".github/workflows/other.yml",
-            "core",
+            "test",
             Some(super::BOAT_RUNNER)
         ));
     }
@@ -1200,76 +1197,69 @@ mod tests {
                 "{job}: {changed}"
             );
         };
-        // The gate plan is a hosted job: a plan job on Boat is one start too many.
-        assert!(!super::runner_is_admitted(
-            path,
-            "plan",
-            Some(super::BOAT_RUNNER)
-        ));
-        for job in ["core", "test", "full"] {
-            assert!(super::runner_is_admitted(
-                path,
-                job,
-                Some(super::BOAT_RUNNER)
-            ));
-            for removed in [
-                "github.event_name == 'merge_group' && ",
-                " && vars.NORN_MERGE_RUNNER == 'boat'",
-                "github.event_name == 'pull_request' && ",
-                // A fork head must never reach a Boat VM.
-                "github.event.pull_request.head.repo.full_name == github.repository && ",
-                " && vars.NORN_PR_RUNNER == 'boat'",
-                // Boat CI runs public-repository jobs only for its allowlisted user.
-                " && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26'",
-                " && github.actor == 'Youssef-Tarek-Ali-26'",
-                " && github.triggering_actor == 'Youssef-Tarek-Ali-26'",
-            ] {
-                reject(job, &super::BOAT_RUNNER.replace(removed, ""));
-            }
-            for event in [
-                "pull_request_target",
-                "issue_comment",
-                "push",
-                "workflow_dispatch",
-            ] {
-                reject(
-                    job,
-                    &super::BOAT_RUNNER.replace("'merge_group'", &format!("'{event}'")),
-                );
-                reject(
-                    job,
-                    &super::BOAT_RUNNER.replace("'pull_request'", &format!("'{event}'")),
-                );
-            }
-            for (before, after) in [
-                ("== 'boat'", "== 'self-hosted'"),
-                ("|| 'ubuntu-24.04'", "|| 'boat'"),
-                ("== github.repository", "!= ''"),
-                ("vars.NORN_PR_RUNNER", "vars.NORN_MERGE_RUNNER"),
-                ("'Youssef-Tarek-Ali-26'", "'dependabot[bot]'"),
-                (
-                    "github.actor == 'Youssef-Tarek-Ali-26'",
-                    "github.actor != 'dependabot[bot]'",
-                ),
-                (
-                    "github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26'",
-                    "github.event.pull_request.user.type != 'Bot'",
-                ),
-            ] {
-                reject(job, &super::BOAT_RUNNER.replace(before, after));
-            }
-        }
-        // Trusted-policy evaluation stays hosted.
-        for job in ["trusted-policy", "phase", "unknown"] {
+        // Only the bundle job (`test`) runs on Boat; plan, core, full and control jobs stay hosted.
+        for job in ["plan", "core", "full", "trusted-policy", "phase", "unknown"] {
             assert!(!super::runner_is_admitted(
                 path,
                 job,
                 Some(super::BOAT_RUNNER)
             ));
         }
+        let job = "test";
+        assert!(super::runner_is_admitted(
+            path,
+            job,
+            Some(super::BOAT_RUNNER)
+        ));
+        for removed in [
+            "github.event_name == 'merge_group' && ",
+            " && vars.NORN_MERGE_RUNNER == 'boat'",
+            "github.event_name == 'pull_request' && ",
+            // A fork head must never reach a Boat VM.
+            "github.event.pull_request.head.repo.full_name == github.repository && ",
+            " && vars.NORN_PR_RUNNER == 'boat'",
+            // Boat CI runs public-repository jobs only for its allowlisted user.
+            " && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26'",
+            " && github.actor == 'Youssef-Tarek-Ali-26'",
+            " && github.triggering_actor == 'Youssef-Tarek-Ali-26'",
+        ] {
+            reject(job, &super::BOAT_RUNNER.replace(removed, ""));
+        }
+        for event in [
+            "pull_request_target",
+            "issue_comment",
+            "push",
+            "workflow_dispatch",
+        ] {
+            reject(
+                job,
+                &super::BOAT_RUNNER.replace("'merge_group'", &format!("'{event}'")),
+            );
+            reject(
+                job,
+                &super::BOAT_RUNNER.replace("'pull_request'", &format!("'{event}'")),
+            );
+        }
+        for (before, after) in [
+            ("== 'boat'", "== 'self-hosted'"),
+            ("|| 'ubuntu-24.04'", "|| 'boat'"),
+            ("== github.repository", "!= ''"),
+            ("vars.NORN_PR_RUNNER", "vars.NORN_MERGE_RUNNER"),
+            ("'Youssef-Tarek-Ali-26'", "'dependabot[bot]'"),
+            (
+                "github.actor == 'Youssef-Tarek-Ali-26'",
+                "github.actor != 'dependabot[bot]'",
+            ),
+            (
+                "github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26'",
+                "github.event.pull_request.user.type != 'Bot'",
+            ),
+        ] {
+            reject(job, &super::BOAT_RUNNER.replace(before, after));
+        }
         assert!(!super::runner_is_admitted(
             ".github/workflows/trusted-merge-group.yml",
-            "core",
+            "test",
             Some(super::BOAT_RUNNER)
         ));
     }
@@ -1293,44 +1283,42 @@ mod tests {
                 "{job}: {changed}"
             );
         };
-        assert!(!super::runner_is_admitted(path, "plan", Some(main)));
-        for job in ["trusted-policy", "phase", "unknown"] {
+        for job in ["plan", "core", "full", "trusted-policy", "phase", "unknown"] {
             assert!(!super::runner_is_admitted(path, job, Some(main)));
         }
         assert!(!super::runner_is_admitted(
             ".github/workflows/trusted-merge-group.yml",
-            "core",
+            "test",
             Some(main)
         ));
-        for job in ["core", "test", "full"] {
-            assert!(super::runner_is_admitted(path, job, Some(main)));
-            for removed in [
-                "github.event_name == 'push' && ",
-                " && github.ref == 'refs/heads/main'",
-                " && github.actor == 'github-merge-queue[bot]'",
-                " && github.triggering_actor == 'github-merge-queue[bot]'",
-                " && vars.NORN_MAIN_RUNNER == 'boat'",
-            ] {
-                reject(job, &main.replace(removed, ""));
-            }
-            for (before, after) in [
-                ("'push'", "'workflow_dispatch'"),
-                ("'push'", "'pull_request_target'"),
-                ("'refs/heads/main'", "'refs/heads/demo/robin'"),
-                ("github.ref == 'refs/heads/main'", "github.ref != ''"),
-                (
-                    "github.actor == 'github-merge-queue[bot]'",
-                    "github.actor != 'dependabot[bot]'",
-                ),
-                (
-                    "github.triggering_actor == 'github-merge-queue[bot]'",
-                    "github.triggering_actor == 'dependabot[bot]'",
-                ),
-                ("vars.NORN_MAIN_RUNNER", "vars.NORN_PR_RUNNER"),
-                ("NORN_MAIN_RUNNER == 'boat'", "NORN_MAIN_RUNNER != ''"),
-            ] {
-                reject(job, &main.replace(before, after));
-            }
+        let job = "test";
+        assert!(super::runner_is_admitted(path, job, Some(main)));
+        for removed in [
+            "github.event_name == 'push' && ",
+            " && github.ref == 'refs/heads/main'",
+            " && github.actor == 'github-merge-queue[bot]'",
+            " && github.triggering_actor == 'github-merge-queue[bot]'",
+            " && vars.NORN_MAIN_RUNNER == 'boat'",
+        ] {
+            reject(job, &main.replace(removed, ""));
+        }
+        for (before, after) in [
+            ("'push'", "'workflow_dispatch'"),
+            ("'push'", "'pull_request_target'"),
+            ("'refs/heads/main'", "'refs/heads/demo/robin'"),
+            ("github.ref == 'refs/heads/main'", "github.ref != ''"),
+            (
+                "github.actor == 'github-merge-queue[bot]'",
+                "github.actor != 'dependabot[bot]'",
+            ),
+            (
+                "github.triggering_actor == 'github-merge-queue[bot]'",
+                "github.triggering_actor == 'dependabot[bot]'",
+            ),
+            ("vars.NORN_MAIN_RUNNER", "vars.NORN_PR_RUNNER"),
+            ("NORN_MAIN_RUNNER == 'boat'", "NORN_MAIN_RUNNER != ''"),
+        ] {
+            reject(job, &main.replace(before, after));
         }
     }
 
@@ -1609,8 +1597,6 @@ mod tests {
             assert_ne!(mutated, source, "{label}: no-op mutation");
             assert_ne!(pinned_steps(&mutated).len(), 0, "{label} was admitted");
         }
-        let test_only = source.replacen(libclang, "      - name: Renamed\n", 2);
-        assert_eq!(pinned_steps(&test_only).len(), 2);
         let stats = "          disable_annotations: true\n";
         assert_eq!(source.matches(stats).count(), 2);
         assert_eq!(pinned_steps(&source.replace(stats, "")).len(), 2);

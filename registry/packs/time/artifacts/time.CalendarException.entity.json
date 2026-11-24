@@ -1,0 +1,82 @@
+{
+  "artifactId": "time.CalendarException.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Calendar exception",
+  "namespace": "time",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "A public holiday, working-day override, or blackout date attached to a calendar.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Calendar this exception belongs to.",
+          "id": "calendar",
+          "target": "time.Calendar"
+        }
+      ],
+      "name": "time.CalendarException",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "calendar_date",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.date"
+          }
+        },
+        {
+          "id": "kind",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "holiday"
+              },
+              {
+                "value": "working_override"
+              },
+              {
+                "value": "blackout"
+              }
+            ]
+          }
+        },
+        {
+          "id": "label",
+          "type": {
+            "kind": "ref",
+            "name": "core.display_name"
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/time/artifacts/time.CalendarException.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

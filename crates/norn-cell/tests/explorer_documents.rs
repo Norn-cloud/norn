@@ -44,9 +44,11 @@ fn artifacts() -> Vec<ArtifactEnvelope> {
         "core.Order.interface",
         "core.Entitlement.entity",
         "identity.BusinessUnit.entity",
+        "identity.Directory.interface",
         "location.Region.entity",
         "location.Space.entity",
         "party.Brand.entity",
+        "party.Organization.entity",
     ];
     // packs/locale-ar labels the model in Arabic; it changes no model or object document.
     let mut paths: Vec<PathBuf> = [

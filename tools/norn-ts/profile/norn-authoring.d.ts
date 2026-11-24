@@ -884,8 +884,12 @@ declare module "@norn/authoring" {
     function parseTimestamp(text: string): string
     /** UTF-8 byte count, matching the canonical ZEN profile. */
     function byteLength(text: string): number
+    /** First `maxScalars` Unicode scalar values of `text` (`take`, literal integer cap 0..=16384). */
+    function take(text: string, maxScalars: number): string
     /** Sum of a list of numbers (`sum`); an empty list sums to 0. */
     function sum(values: ReadonlyArray<number>): number
+    /** Exact greatest integer less than or equal to `value` (`floor`). */
+    function floor(value: number): number
     /** Signed calendar days from `start` to `end` (`days_between`); raw date text is parsed. */
     function daysBetween(start: string, end: string): number
     /** The calendar date `days` after `date` (`add_days`); a parsed date, comparable with other parsed dates. */
