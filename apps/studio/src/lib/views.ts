@@ -1,5 +1,5 @@
 import type { Fetch } from "./cell-read.ts"
-import { CellUnavailable, readStudioScope, scopedHostFetch, type Finding, type StudioScope } from "./definitions.ts"
+import { CellUnavailable, NO_DATA_CELL, readStudioScope, scopedHostFetch, StudioScopeError, type Finding, type ScopeProvider, type StudioScope } from "./definitions.ts"
 import type { Predicate, SortKey } from "./records-query.ts"
 
 /** A saved records view as the cell keeps it (definition kind `view`, VIEW-DEF-1). */
@@ -13,21 +13,26 @@ export interface SavedView {
   /** The grid's sort, `property:asc|desc` comma separated. */
   readonly sort?: string
   readonly columns?: readonly string[]
-  /** Admitted actions offered as inline row buttons (only rendered when the cell offers them for the row). */
-  readonly rowActions?: readonly string[]
-  /** Admitted actions offered on multi-row selection (only run when offered by the cell). */
-  readonly bulkActions?: readonly string[]
 }
 
 export interface StoredView {
   readonly id: string
   readonly version: number
+  /** The workspace scope this view was loaded from; writes refuse if the active scope diverges. */
+  readonly scope: StudioScope
   readonly updatedAtMs?: number
   readonly view: SavedView
 }
 
 /** Suggested Workspace Spaces a view can pin into; custom space names are also accepted. */
 export const DEFAULT_SPACES = ["Operations", "Data", "Analysis"] as const
+
+/** Shown when a saved-view write is refused because the active workspace no longer matches the draft's scope. */
+export const WORKSPACE_CHANGED_MESSAGE = "This workspace changed; reload to edit this view."
+
+/** True when two scopes identify the same organization and environment. */
+export const sameScope = (a: StudioScope | null | undefined, b: StudioScope | null | undefined): boolean =>
+  a != null && b != null && a.orgId === b.orgId && a.environmentId === b.environmentId
 
 /** What the cell said to a save: the new version, its checker's findings, or that someone saved first. */
 export type ViewSaved =
@@ -39,7 +44,16 @@ export type ViewAdmission =
   | { readonly admitted: true; readonly restatement: string | null }
   | { readonly admitted: false; readonly findings: readonly Finding[] }
 
+export interface SaveViewDraftOutcome {
+  readonly view: SavedView
+  readonly result: ViewSaved
+  /** Confirmed server revision read after a 409 conflict on an existing view, or null if it could not be obtained. */
+  readonly conflictVersion: number | null
+}
+
 const KIND = "view"
+const MAX_TITLE_CHARS = 120
+const COPY_SUFFIX = " (copy)"
 
 /** Every view id for one type starts with this, so a type's views list cleanly. */
 export const viewPrefix = (objectType: string) => `studio.view.${objectType.toLowerCase().replaceAll(/[^a-z0-9]+/g, "_")}.`
@@ -58,9 +72,11 @@ export function sortKeys(text: string | undefined): readonly SortKey[] {
   })
 }
 
-/** A copy of a view under a new title, preserving its space, filter, sort, columns and actions. */
+/** A copy of a view under a new title within the admitted title bound, preserving space, filter, sort and columns. */
 export function duplicateView(view: SavedView): SavedView {
-  return { ...structuredClone(view), title: `${view.title} (copy)` }
+  const maxBase = MAX_TITLE_CHARS - COPY_SUFFIX.length
+  const base = [...view.title.trim()].slice(0, maxBase).join("").trimEnd()
+  return { ...structuredClone(view), title: `${base}${COPY_SUFFIX}` }
 }
 
 /** Map a server JSON pointer into a view payload onto its editor `data-field`. */
@@ -69,7 +85,7 @@ export function viewField(pointer: string | null): string | null {
   const at = parts[0] === "payload" ? parts.slice(1) : parts
   const head = at[0]
   if (head === "title" || head === "description" || head === "space" || head === "objectType"
-    || head === "filter" || head === "sort" || head === "columns" || head === "rowActions" || head === "bulkActions") {
+    || head === "filter" || head === "sort" || head === "columns") {
     return head
   }
   return null
@@ -82,8 +98,6 @@ export function cleanView(view: SavedView): SavedView {
   const filter = view.filter && view.filter.all.length > 0 ? view.filter : undefined
   const sort = view.sort?.trim() || undefined
   const columns = view.columns && view.columns.length > 0 ? view.columns : undefined
-  const rowActions = view.rowActions && view.rowActions.length > 0 ? view.rowActions : undefined
-  const bulkActions = view.bulkActions && view.bulkActions.length > 0 ? view.bulkActions : undefined
   return {
     title: view.title.trim(),
     ...(description ? { description } : {}),
@@ -92,8 +106,6 @@ export function cleanView(view: SavedView): SavedView {
     ...(filter ? { filter } : {}),
     ...(sort ? { sort } : {}),
     ...(columns ? { columns } : {}),
-    ...(rowActions ? { rowActions } : {}),
-    ...(bulkActions ? { bulkActions } : {}),
   }
 }
 
@@ -111,7 +123,10 @@ const isSavedView = (value: unknown): value is SavedView =>
   value !== null && typeof value === "object" && typeof (value as SavedView).title === "string" && typeof (value as SavedView).objectType === "string"
 
 /** The cell's saved views, through the Studio Worker's host route as the signed-in account. */
-export function cellViews(fetcher: Fetch = (input, init) => fetch(input, init)) {
+export function cellViews(
+  fetcher: Fetch = (input, init) => fetch(input, init),
+  readScope: ScopeProvider = () => readStudioScope(fetcher),
+) {
   const callWith = (scopedFetch: Fetch) => async (path: string, init?: RequestInit) => {
     const response = await scopedFetch(path, {
       ...init,
@@ -119,7 +134,16 @@ export function cellViews(fetcher: Fetch = (input, init) => fetch(input, init)) 
     })
     return { status: response.status, body: await response.json().catch(() => null) as Record<string, unknown> | null }
   }
-  const call = callWith(scopedHostFetch(fetcher))
+  const callAt = (scope: StudioScope) => callWith(scopedHostFetch(fetcher, "/api/host", async () => scope))
+  const verifiedWriteCall = async (expectedScope: StudioScope | null | undefined) => {
+    if (!expectedScope) throw new StudioScopeError(NO_DATA_CELL)
+    const active = await readScope()
+    if (!sameScope(active, expectedScope)) {
+      throw new StudioScopeError(WORKSPACE_CHANGED_MESSAGE)
+    }
+    return callAt(expectedScope)
+  }
+
   const saved = ({ status, body }: { status: number; body: Record<string, unknown> | null }): ViewSaved => {
     if (status === 200 && body?.installed === true && typeof body.id === "string" && typeof body.version === "number") {
       return { saved: true, id: body.id, version: body.version }
@@ -129,28 +153,49 @@ export function cellViews(fetcher: Fetch = (input, init) => fetch(input, init)) 
     throw new CellUnavailable(status, typeof body?.message === "string" ? body.message : undefined)
   }
 
-  const getWith = (read: typeof call) => async (id: string): Promise<StoredView | undefined> => {
+  const getWith = (read: ReturnType<typeof callWith>, scope: StudioScope) => async (id: string): Promise<StoredView | undefined> => {
     const { status, body } = await read(`/v1/definitions/${encodeURIComponent(id)}`)
     if (status === 404 && body?.code === "definition.not_found") return undefined
     if (status !== 200 || typeof body?.version !== "number" || !isSavedView(body.payload)) {
       throw new CellUnavailable(status, typeof body?.message === "string" ? body.message : undefined)
     }
+    if (body.lifecycle === "retired") return undefined
     return {
       id: typeof body.id === "string" ? body.id : id,
       version: body.version,
+      scope,
       ...(typeof body.updatedAtMs === "number" ? { updatedAtMs: body.updatedAtMs } : {}),
       view: body.payload,
     }
   }
-  const get = getWith(call)
+
+  const get = async (id: string, pinnedScope?: StudioScope | null): Promise<StoredView | undefined> => {
+    const active = pinnedScope !== undefined ? pinnedScope : await readScope()
+    if (active === null) throw new StudioScopeError(NO_DATA_CELL)
+    return getWith(callAt(active), active)(id)
+  }
+
+  /**
+   * Read the confirmed current revision of a definition (active or retired) in `expectedScope`
+   * after checking that the active workspace still matches. Used for compare-and-set overwrites.
+   */
+  const currentVersion = async (id: string, expectedScope: StudioScope): Promise<number | undefined> => {
+    const scopedCall = await verifiedWriteCall(expectedScope)
+    const { status, body } = await scopedCall(`/v1/definitions/${encodeURIComponent(id)}`)
+    if (status === 404 && body?.code === "definition.not_found") return undefined
+    if (status !== 200 || typeof body?.version !== "number") {
+      throw new CellUnavailable(status, typeof body?.message === "string" ? body.message : undefined)
+    }
+    return body.version
+  }
 
   const listAll = async (pinnedScope?: StudioScope | null): Promise<readonly StoredView[]> => {
     // Pin one workspace scope for the entire list + per-id fetch sequence so workspace switches
     // cannot mix IDs from one scope with payloads from another.
-    const active = pinnedScope !== undefined ? pinnedScope : await readStudioScope(fetcher)
+    const active = pinnedScope !== undefined ? pinnedScope : await readScope()
     if (active === null) return []
-    const pinnedCall = callWith(scopedHostFetch(fetcher, "/api/host", async () => active))
-    const pinnedGet = getWith(pinnedCall)
+    const pinnedCall = callAt(active)
+    const pinnedGet = getWith(pinnedCall, active)
     const ids: { readonly id: string; readonly updatedAtMs?: number }[] = []
     let cursor: string | null = null
     for (let page = 0; page < 10; page += 1) {
@@ -169,7 +214,7 @@ export function cellViews(fetcher: Fetch = (input, init) => fetch(input, init)) 
       if (cursor === null) break
     }
     const read = await Promise.all(ids.map(async ({ id, updatedAtMs }) => {
-      // Only explicit 404 definition.not_found returns undefined; transport/5xx errors propagate.
+      // Only explicit 404 definition.not_found (or retired) returns undefined; transport/5xx errors propagate.
       const stored = await pinnedGet(id)
       return stored === undefined ? [] : [{ ...stored, ...(updatedAtMs !== undefined && stored.updatedAtMs === undefined ? { updatedAtMs } : {}) }]
     }))
@@ -182,11 +227,14 @@ export function cellViews(fetcher: Fetch = (input, init) => fetch(input, init)) 
     /** One object type's active views, in the cell's id order; retired ones are left out. */
     list: async (objectType: string, pinnedScope?: StudioScope | null): Promise<readonly StoredView[]> =>
       (await listAll(pinnedScope)).filter(({ view }) => view.objectType === objectType),
-    /** Read one view by id; `undefined` when not found or retired. */
+    /** Read one view by id in `pinnedScope` (or current active scope); `undefined` when not found or retired. */
     get,
-    /** Side-effect free server check + plain-words restatement. */
-    admit: async (id: string, view: SavedView): Promise<ViewAdmission> => {
-      const { status, body } = await call("/v1/definitions:admit", {
+    /** Read the confirmed server revision for compare-and-set overwrite in `expectedScope`. */
+    currentVersion,
+    /** Side-effect free server check + plain-words restatement bound to `expectedScope`. */
+    admit: async (id: string, view: SavedView, expectedScope: StudioScope): Promise<ViewAdmission> => {
+      const scopedCall = await verifiedWriteCall(expectedScope)
+      const { status, body } = await scopedCall("/v1/definitions:admit", {
         method: "POST",
         body: JSON.stringify({ kind: KIND, id, payload: cleanView(view) }),
       })
@@ -197,15 +245,51 @@ export function cellViews(fetcher: Fetch = (input, init) => fetch(input, init)) 
         ? { admitted: true, restatement: typeof body.restatement === "string" ? body.restatement : null }
         : { admitted: false, findings: findingsOf(body) }
     },
-    save: async (id: string, view: SavedView, expectedVersion?: number): Promise<ViewSaved> =>
-      saved(await call("/v1/definitions:install", {
+    /** Install a view in `expectedScope`; refuses before dispatch if the active workspace changed. */
+    save: async (id: string, view: SavedView, expectedVersion: number | undefined, expectedScope: StudioScope): Promise<ViewSaved> => {
+      const scopedCall = await verifiedWriteCall(expectedScope)
+      return saved(await scopedCall("/v1/definitions:install", {
         method: "POST",
         body: JSON.stringify({ kind: KIND, id, payload: cleanView(view), ...expectedVersion === undefined ? {} : { expectedVersion } }),
-      })),
-    retire: async (id: string, expectedVersion: number): Promise<ViewSaved> =>
-      saved(await call(`/v1/definitions/${encodeURIComponent(id)}:retire`, {
+      }))
+    },
+    /** Retire a view in `expectedScope`; refuses before dispatch if the active workspace changed. */
+    retire: async (id: string, expectedVersion: number, expectedScope: StudioScope): Promise<ViewSaved> => {
+      const scopedCall = await verifiedWriteCall(expectedScope)
+      return saved(await scopedCall(`/v1/definitions/${encodeURIComponent(id)}:retire`, {
         method: "POST",
         body: JSON.stringify({ expectedVersion }),
-      })),
+      }))
+    },
   }
+}
+
+export type ViewsClient = ReturnType<typeof cellViews>
+
+/**
+ * Save a view draft bound to `scope`. On a 409 conflict for an existing view (`existingId !== undefined`),
+ * confirms the server's current revision in the same scope so an explicit overwrite sends a real
+ * compare-and-set `expectedVersion` (and withholds overwrite if no revision can be confirmed).
+ */
+export async function saveViewDraft(
+  store: Pick<ViewsClient, "save" | "currentVersion">,
+  params: {
+    readonly id: string
+    readonly existing: boolean
+    readonly view: SavedView
+    readonly expectedVersion: number | undefined
+    readonly scope: StudioScope
+  },
+): Promise<SaveViewDraftOutcome> {
+  const result = await store.save(params.id, params.view, params.expectedVersion, params.scope)
+  if (!result.saved && "conflict" in result && params.existing) {
+    try {
+      const latest = await store.currentVersion(params.id, params.scope)
+      return { view: params.view, result, conflictVersion: typeof latest === "number" ? latest : null }
+    } catch (error) {
+      if (error instanceof StudioScopeError) throw error
+      return { view: params.view, result, conflictVersion: null }
+    }
+  }
+  return { view: params.view, result, conflictVersion: null }
 }

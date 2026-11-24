@@ -42,7 +42,7 @@ export function RecordsPage() {
             <TabsList><TabsTrigger value="records">Records</TabsTrigger><TabsTrigger value="profile">Profile</TabsTrigger><TabsTrigger value="quarantine">Quarantine</TabsTrigger><TabsTrigger value="rules">Rules</TabsTrigger></TabsList>
             <TabsContent value="records" className="grid gap-3 pt-3">
               <ViewsBar objectType={concept.name} open={view} query={query} onOpen={setView} />
-              <RecordsGrid key={`${concept.name}:${view?.id ?? "all"}:${view?.version ?? 0}`} concept={concept} initial={view ? openedQuery(view) : undefined} rowActions={view?.view.rowActions} bulkActions={view?.view.bulkActions} onQuery={setQuery} timeline={timeline} />
+              <RecordsGrid key={`${concept.name}:${view?.id ?? "all"}:${view?.version ?? 0}`} concept={concept} initial={view ? openedQuery(view) : undefined} onQuery={setQuery} timeline={timeline} />
             </TabsContent>
             <TabsContent value="profile" className="pt-3"><ProfilePanel objectType={concept.name} scales={new Map(concept.fields.flatMap(({ id, decimal }) => decimal?.scale === undefined ? [] : [[id, decimal.scale] as const]))} /></TabsContent>
             <TabsContent value="quarantine" className="pt-3"><QuarantinePanel objectType={concept.name} /></TabsContent>

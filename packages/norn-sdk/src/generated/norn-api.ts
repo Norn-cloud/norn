@@ -12412,13 +12412,6 @@ export interface components {
             };
             /** @description The concrete object type. */
             objectType: string;
-            /**
-             * @description ACTION-CATALOG-STATE-1: admitted action ids the caller may call on this
-             *     record in its current lifecycle state. Omitted for withheld rows and
-             *     when the cell serves no actions for the caller. Convenience only, never
-             *     a grant: every call is decided again at call time.
-             */
-            offers?: string[] | null;
             /** @description The tenant scope. */
             scope: string;
             /** @description Every stored property by property id; decimals are exact JSON number tokens. Null when the row is withheld. */

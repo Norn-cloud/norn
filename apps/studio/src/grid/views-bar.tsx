@@ -5,13 +5,13 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
-import { useStudioScope } from "../lib/definitions.ts"
+import { NO_DATA_CELL, useStudioScope } from "../lib/definitions.ts"
 import { cellViews, newViewId, sortKeys, sortText, type SavedView, type StoredView, type ViewSaved } from "../lib/views.ts"
 import type { GridQuery } from "./records-grid.tsx"
 
 const views = cellViews()
 
-/** The view a grid query saves as, keeping any space/description/actions already on the view. */
+/** The view a grid query saves as, keeping any space or description already on the view. */
 const asView = (title: string, objectType: string, query: GridQuery, existing?: SavedView): SavedView => ({
   ...existing,
   title,
@@ -80,42 +80,45 @@ export function ViewsBar({ objectType, open, query, onOpen }: {
   const reread = () => client.invalidateQueries({ queryKey: ["views"] })
   const create = async (title: string) => {
     if (query === undefined) return "The grid has not answered yet."
+    if (activeScope === null) return NO_DATA_CELL
+    const targetScope = activeScope
     const id = newViewId(objectType, title)
     const view = asView(title, objectType, query)
-    const result = await views.save(id, view).catch((error: unknown) => error instanceof Error ? error : new Error(String(error)))
+    const result = await views.save(id, view, undefined, targetScope).catch((error: unknown) => error instanceof Error ? error : new Error(String(error)))
     if (result instanceof Error) return result.message
     if (!result.saved) return problemOf(result)
     await reread()
     setCreating(false)
-    onOpen({ id, version: result.version, view })
+    onOpen({ id, version: result.version, scope: targetScope, view })
     setNotice({ text: `Saved “${title}”.` })
     return null
   }
   const update = async (view: SavedView) => {
     if (open === null) return "No view is open."
-    const result = await views.save(open.id, view, open.version).catch((error: unknown) => error instanceof Error ? error : new Error(String(error)))
+    const result = await views.save(open.id, view, open.version, open.scope).catch((error: unknown) => error instanceof Error ? error : new Error(String(error)))
     if (result instanceof Error) return result.message
     if (!result.saved) return problemOf(result)
     await reread()
-    onOpen({ id: open.id, version: result.version, view })
+    onOpen({ id: open.id, version: result.version, scope: open.scope, view })
     return null
   }
   const remove = async () => {
     if (open === null) return
     const gone = open
-    const result = await views.retire(gone.id, gone.version).catch((error: unknown) => error instanceof Error ? error : new Error(String(error)))
+    const result = await views.retire(gone.id, gone.version, gone.scope).catch((error: unknown) => error instanceof Error ? error : new Error(String(error)))
     if (result instanceof Error) { setNotice({ text: result.message }); return }
     if (!result.saved) { setNotice({ text: problemOf(result) ?? "Not deleted." }); return }
     await reread()
     onOpen(null)
-    // A retired view is installed again as its next version: the undo.
+    // A retired view is installed again as its next version in the same scope: the undo.
     setNotice({
       text: `Deleted “${gone.view.title}”.`,
       undo: async () => {
-        const back = await views.save(gone.id, gone.view, result.version)
+        const back = await views.save(gone.id, gone.view, result.version, gone.scope).catch((error: unknown) => error instanceof Error ? error : new Error(String(error)))
+        if (back instanceof Error) { setNotice({ text: back.message }); return }
         if (!back.saved) { setNotice({ text: problemOf(back) ?? "Not restored." }); return }
         await reread()
-        onOpen({ id: gone.id, version: back.version, view: gone.view })
+        onOpen({ id: gone.id, version: back.version, scope: gone.scope, view: gone.view })
         setNotice({ text: `Restored “${gone.view.title}”.` })
       },
     })
@@ -145,7 +148,7 @@ export function ViewsBar({ objectType, open, query, onOpen }: {
           <Button type="button" variant="ghost" size="sm" className="h-8 text-destructive hover:text-destructive" onClick={() => void remove()}><Trash2 />Delete</Button>
         </>}
         <Popover open={creating} onOpenChange={setCreating}>
-          <PopoverTrigger asChild><Button type="button" variant="outline" size="sm" className="h-8" disabled={query === undefined}><Bookmark />Save as view</Button></PopoverTrigger>
+          <PopoverTrigger asChild><Button type="button" variant="outline" size="sm" className="h-8" disabled={query === undefined || activeScope === null}><Bookmark />Save as view</Button></PopoverTrigger>
           <PopoverContent align="end" className="w-72 rounded-node border-node-border shadow-float">
             <TitleForm initial="" submit="Save view" onDone={create} />
           </PopoverContent>

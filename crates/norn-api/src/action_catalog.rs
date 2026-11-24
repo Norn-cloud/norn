@@ -51,18 +51,6 @@ pub fn callable_actions<E: SqlEngine>(
     query: &ActionQuery,
     actor: Option<&str>,
 ) -> Result<CallableActions, Refusal> {
-    let epoch = host.definition_read()?;
-    callable_actions_in_epoch(host, &epoch, query, actor)
-}
-
-/// [`callable_actions`] when the caller already holds a definitions read epoch,
-/// avoiding recursive `RwLock::read()` acquisition on the same thread.
-pub(crate) fn callable_actions_in_epoch<E: SqlEngine>(
-    host: &DevHost<E>,
-    _epoch: &std::sync::RwLockReadGuard<'_, ()>,
-    query: &ActionQuery,
-    actor: Option<&str>,
-) -> Result<CallableActions, Refusal> {
     let actor = actor
         .filter(|actor| !actor.trim().is_empty())
         .ok_or_else(action_denied)?;
@@ -70,6 +58,7 @@ pub(crate) fn callable_actions_in_epoch<E: SqlEngine>(
         .admit(query.org_id.as_deref(), query.environment_id.as_deref())
         .map_err(|_refused| action_denied())?;
     let (version, retained) = {
+        let _epoch = host.definition_read()?;
         let cell = host.cell()?;
         // ADMIT-CACHE-1 (#1533): verified once per definitions version.
         host.retained(&cell.store().read())?
@@ -407,133 +396,6 @@ pub fn list_actions_on<E: SqlEngine>(
         definitions_version: callable.version,
         items,
     })
-}
-
-/// ACTION-CATALOG-STATE-1: compute the callable action ids offered for each
-/// readable record in `rows` in its current lifecycle state, checking both
-/// lifecycle transitions and per-row action authorization
-/// (`Authorizer::action`) against the record's committed values. Returns `None`
-/// when the cell serves no callable actions for `actor` (or has no actions
-/// installed for `object_type`), so callers without actions omit `offers`. A
-/// withheld record receives `None` so lifecycle state and policy decisions are
-/// never disclosed (D67).
-pub(crate) fn offers_for_records<E: SqlEngine>(
-    host: &DevHost<E>,
-    epoch: &std::sync::RwLockReadGuard<'_, ()>,
-    scope: &crate::scope::ScopeQuery,
-    actor: &str,
-    object_type: &str,
-    rows: &[(bool, &norn_cell::ObjectRecord)],
-) -> Result<Option<Vec<Option<Vec<String>>>>, Refusal> {
-    let Ok(callable) = callable_actions_in_epoch(
-        host,
-        epoch,
-        &ActionQuery {
-            org_id: scope.org_id.clone(),
-            environment_id: scope.environment_id.clone(),
-            version: None,
-        },
-        Some(actor),
-    ) else {
-        return Ok(None);
-    };
-    let targeting: Vec<&ActionRoot> = callable
-        .actions
-        .iter()
-        .filter_map(|(_, action)| {
-            let kind = match &action.effect_program {
-                Some(
-                    ActionEffectProgram::UpsertInputObject { object_kind, .. }
-                    | ActionEffectProgram::FireTransition { object_kind, .. }
-                    | ActionEffectProgram::MutateParentWithRows { object_kind, .. },
-                ) => Some(object_kind.as_str()),
-                None => None,
-            };
-            (kind == Some(object_type)).then_some(action)
-        })
-        .collect();
-    if targeting.is_empty() {
-        return Ok(None);
-    }
-    let lifecycles: Vec<(String, Vec<norn_ir::entity_v2::lifecycle::Transition>)> = {
-        let cell = host.cell()?;
-        let reader = cell.store().read();
-        reader
-            .model()
-            .object_types()
-            .filter(|def| def.name.as_str() == object_type)
-            .flat_map(|def| def.lifecycles.iter())
-            .map(|lifecycle| {
-                (
-                    lifecycle.property.as_str().to_owned(),
-                    lifecycle.transitions.clone(),
-                )
-            })
-            .collect()
-    };
-    let scope_map = std::collections::BTreeMap::from([
-        ("orgId".to_owned(), host.scope().org_id.clone()),
-        (
-            "environmentId".to_owned(),
-            host.scope().environment_id.clone(),
-        ),
-    ]);
-    let result = rows
-        .iter()
-        .map(|(readable, record)| {
-            readable.then(|| row_offers(host, actor, &scope_map, &targeting, &lifecycles, record))
-        })
-        .collect();
-    Ok(Some(result))
-}
-
-/// Per-row offered actions: lifecycle eligibility AND current-state PDP
-/// authorization (`Authorizer::action`) against `record.values`.
-fn row_offers<E: SqlEngine>(
-    host: &DevHost<E>,
-    actor: &str,
-    scope: &std::collections::BTreeMap<String, String>,
-    targeting: &[&ActionRoot],
-    lifecycles: &[(String, Vec<norn_ir::entity_v2::lifecycle::Transition>)],
-    record: &norn_cell::ObjectRecord,
-) -> Vec<String> {
-    let states: Vec<LifecycleState> = lifecycles
-        .iter()
-        .map(|(property, transitions)| {
-            let state = record
-                .values
-                .get(property)
-                .and_then(norn_ir::RuntimeValue::as_str)
-                .map(str::to_owned);
-            (property.clone(), transitions.clone(), state)
-        })
-        .collect();
-    let target = norn_kernel::FactKey {
-        object_type: norn_ir::ObjectTypeName(record.object_type.clone()),
-        key: record.id.clone(),
-    };
-    let empty_input = norn_ir::RuntimeObject::new();
-    let mut offered: Vec<String> = targeting
-        .iter()
-        .copied()
-        .filter(|action| {
-            fires_from(action, &states)
-                && host
-                    .authorizer
-                    .action(&norn_kernel::ActionAuthzRequest {
-                        action,
-                        scope,
-                        actor,
-                        input: &empty_input,
-                        target: &target,
-                        target_values: Some(&record.values),
-                    })
-                    .is_ok()
-        })
-        .map(|action| action.action_id.clone())
-        .collect();
-    offered.sort();
-    offered
 }
 
 /// One lifecycle of an object: its property, its declared transitions and

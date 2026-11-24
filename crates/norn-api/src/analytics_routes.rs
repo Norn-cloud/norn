@@ -1956,9 +1956,8 @@ fn queried(
 ) -> Result<crate::objects::NornQueriedRecord, Refusal> {
     let mut masked = BTreeMap::new();
     let mut withheld_properties = Vec::new();
-    let mut read = None;
-    if values {
-        let mut map = row
+    let read = if values {
+        let mut read = row
             .values
             .iter()
             .map(|(id, value)| Ok((id.clone(), norn_cell::analytics::runtime_value(value)?)))
@@ -1967,22 +1966,27 @@ fn queried(
         for (column, ids) in &marks.columns {
             let mask = crate::privacy::strongest(&marks.catalog, ids)
                 .unwrap_or(norn_ir::MaskPolicy::Refuse {});
-            if let Some(value) = map.get_mut(column) {
-                let mode = crate::privacy::apply(&mask, marks.key.as_ref(), value);
-                if mode == crate::privacy::NornMaskMode::Refuse {
-                    map.remove(column);
-                    withheld_properties.push(column.clone());
-                }
-                let prop = crate::privacy::NornMaskedProperty {
+            let Some(value) = read.get_mut(column) else {
+                continue;
+            };
+            let mode = crate::privacy::apply(&mask, marks.key.as_ref(), value);
+            if mode == crate::privacy::NornMaskMode::Refuse {
+                read.remove(column);
+                withheld_properties.push(column.clone());
+            }
+            masked.insert(
+                column.clone(),
+                crate::privacy::NornMaskedProperty {
                     mode,
                     markings: ids.clone(),
                     revealable: false,
-                };
-                masked.insert(column.clone(), prop);
-            }
+                },
+            );
         }
-        read = Some(map);
-    }
+        Some(read)
+    } else {
+        None
+    };
     Ok(crate::objects::NornQueriedRecord {
         object_type: object_type.to_owned(),
         id: row.id,
@@ -1992,7 +1996,6 @@ fn queried(
         values: read,
         withheld_properties,
         masked,
-        offers: None,
     })
 }
 

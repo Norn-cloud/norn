@@ -3,9 +3,9 @@ import type { ActionSummary } from "../src/lib/actions.ts"
 import type { Clause, Predicate } from "../src/lib/records-query.ts"
 
 /**
- * Deterministic two-domain stand-in for CELL-DO's view, object, and action routes so Playwright
- * exercises Studio's complete Workspace Views and Bulk Action flows across two unrelated domains:
- *   1. Application Funnel (`funnel.Application`) — issue #1424's exact scenario
+ * Deterministic two-domain stand-in for CELL-DO's view, object, and per-record action routes so
+ * Playwright exercises Studio's Workspace Views flows across two unrelated domains:
+ *   1. Application Funnel (`funnel.Application`) — issue #1424's scenario
  *   2. Equipment Fleet Tickets (`fleet.Ticket`) — unrelated second domain proving genericity
  */
 
@@ -38,7 +38,13 @@ export interface RecordedActionCall {
   readonly input: Record<string, unknown>
 }
 
-const SCOPE = { orgId: "org_demo", environmentId: "prod" }
+export interface RecordedInstallCall {
+  readonly id: string
+  readonly orgId: string | null
+  readonly environmentId: string | null
+  readonly expectedVersion: number | undefined
+}
+
 const BASE_NOW = 1_800_000_000_000
 
 const ARTIFACTS = [
@@ -200,7 +206,7 @@ function initialRecords(): DemoRecord[] {
   ]
 }
 
-function offersForRecord(record: DemoRecord): string[] {
+function drawerActionsForRecord(record: DemoRecord): string[] {
   if (record.objectType === "funnel.Application") {
     const stage = String(record.values.stage ?? "")
     const out: string[] = []
@@ -242,26 +248,22 @@ function matchClause(record: DemoRecord, clause: Clause): boolean {
   }
 }
 
-export interface WorkspaceCellOptions {
-  /** Record IDs whose list entries omit `offers` (to verify fail-closed grid rendering). */
-  readonly omitOffersFor?: readonly string[]
-}
-
 export interface WorkspaceCell {
   readonly records: DemoRecord[]
   readonly defs: Map<string, StoredDef>
   readonly actionCalls: RecordedActionCall[]
-  /** Commit the next action call targeting `recordId`, then drop the HTTP reply to simulate a lost response. */
-  dropReplyOnce(recordId: string): void
+  readonly installCalls: RecordedInstallCall[]
+  /** Simulate switching the signed-in server session to another workspace/environment. */
+  switchScope(orgId: string, environmentId: string): void
 }
 
-export async function workspaceCell(page: Page, options: WorkspaceCellOptions = {}): Promise<WorkspaceCell> {
+export async function workspaceCell(page: Page): Promise<WorkspaceCell> {
+  let activeScope = { orgId: "org_demo", environmentId: "prod" }
   const records = initialRecords()
   const defs = new Map<string, StoredDef>()
   const actionCalls: RecordedActionCall[] = []
+  const installCalls: RecordedInstallCall[] = []
   const receiptsByKey = new Map<string, { readonly inputJson: string; readonly receipt: ActionReceiptDocument }>()
-  const dropOnce = new Set<string>()
-  const omitOffers = new Set(options.omitOffersFor ?? [])
   let commitSeq = 10
 
   const runActionOnRecord = (actionId: string, input: Record<string, unknown>, idempotencyKey: string) => {
@@ -278,7 +280,7 @@ export async function workspaceCell(page: Page, options: WorkspaceCellOptions = 
     const action = ACTIONS.find((a) => a.actionId === actionId)
     const rec = records.find((r) => r.objectType === action?.objectKind && r.id === id)
     if (!action || !rec) return { ok: false as const, status: 403, code: "authz.denied", message: "Action not permitted." }
-    if (!offersForRecord(rec).includes(actionId)) {
+    if (!drawerActionsForRecord(rec).includes(actionId)) {
       return { ok: false as const, status: 409, code: "action.precondition_failed", message: `${action.title} is not offered in the current state.` }
     }
     if (actionId === "funnel.application.offer_assistance" && Number(rec.values.score ?? 0) >= 80) {
@@ -308,8 +310,8 @@ export async function workspaceCell(page: Page, options: WorkspaceCellOptions = 
   await page.route("**/api/me", (route) => route.fulfill({
     json: {
       user: { id: "u_ops", name: "Operator Admin", email: "ops@example.com" },
-      organization: { id: SCOPE.orgId, name: "Workspace Demo", role: "admin" },
-      environmentId: SCOPE.environmentId,
+      organization: { id: activeScope.orgId, name: "Workspace Demo", role: "admin" },
+      environmentId: activeScope.environmentId,
     },
   }))
 
@@ -345,8 +347,15 @@ export async function workspaceCell(page: Page, options: WorkspaceCellOptions = 
       const id = String(body?.id ?? "")
       const payload = (body?.payload ?? {}) as Record<string, unknown>
       const expected = typeof body?.expectedVersion === "number" ? body.expectedVersion : undefined
+      installCalls.push({
+        id,
+        orgId: url.searchParams.get("orgId"),
+        environmentId: url.searchParams.get("environmentId"),
+        expectedVersion: expected,
+      })
       const existing = defs.get(id)
-      if (expected !== undefined && existing?.version !== expected) {
+      // Matches crates/norn-api/src/definition_routes.rs:1376: omitting expectedVersion on an existing definition conflicts.
+      if (existing?.version !== expected) {
         return route.fulfill({ status: 409, json: { code: "definition.version_conflict", message: "Version conflict." } })
       }
       const version = (existing?.version ?? 0) + 1
@@ -369,8 +378,17 @@ export async function workspaceCell(page: Page, options: WorkspaceCellOptions = 
 
     const id = decodeURIComponent(tail.slice(1))
     const existing = defs.get(id)
-    if (!existing || existing.retired) return route.fulfill({ status: 404, json: { code: "definition.not_found", message: "Not found." } })
-    return route.fulfill({ json: { id, kind: existing.kind, version: existing.version, payload: existing.payload, updatedAtMs: existing.updatedAtMs } })
+    if (!existing) return route.fulfill({ status: 404, json: { code: "definition.not_found", message: "Not found." } })
+    return route.fulfill({
+      json: {
+        id,
+        kind: existing.kind,
+        version: existing.version,
+        lifecycle: existing.retired ? "retired" : "active",
+        payload: existing.payload,
+        updatedAtMs: existing.updatedAtMs,
+      },
+    })
   })
 
   await page.route("**/api/host/v1/objects/**", async (route: Route) => {
@@ -386,8 +404,7 @@ export async function workspaceCell(page: Page, options: WorkspaceCellOptions = 
     if (parts.length === 2) {
       const rec = records.find((r) => r.objectType === objectType && r.id === decodeURIComponent(parts[1]!))
       if (!rec) return route.fulfill({ status: 404, json: { code: "object.not_found" } })
-      // Single-record GET preserves its retained wire shape without `offers`.
-      return route.fulfill({ json: { objectType: rec.objectType, id: rec.id, scope: `${SCOPE.orgId}/${SCOPE.environmentId}`, version: rec.version, withheld: false, withheldProperties: [], values: rec.values } })
+      return route.fulfill({ json: { objectType: rec.objectType, id: rec.id, scope: `${activeScope.orgId}/${activeScope.environmentId}`, version: rec.version, withheld: false, withheldProperties: [], values: rec.values } })
     }
     if (parts.length === 3 && parts[2] === "links") {
       return route.fulfill({ json: { objectType, id: decodeURIComponent(parts[1]!), items: [] } })
@@ -415,12 +432,11 @@ export async function workspaceCell(page: Page, options: WorkspaceCellOptions = 
         records: matched.map((r) => ({
           objectType: r.objectType,
           id: r.id,
-          scope: `${SCOPE.orgId}/${SCOPE.environmentId}`,
+          scope: `${activeScope.orgId}/${activeScope.environmentId}`,
           version: r.version,
           withheld: false,
           withheldProperties: [],
           values: r.values,
-          ...(omitOffers.has(r.id) ? {} : { offers: offersForRecord(r) }),
         })),
         quarantineCount: 0,
         scannedThrough: null,
@@ -439,19 +455,15 @@ export async function workspaceCell(page: Page, options: WorkspaceCellOptions = 
       let items = objectKind ? ACTIONS.filter((a) => a.objectKind === objectKind) : [...ACTIONS]
       if (objectKind && objectId) {
         const rec = records.find((r) => r.objectType === objectKind && r.id === objectId)
-        const allowed = rec ? offersForRecord(rec) : []
+        const allowed = rec ? drawerActionsForRecord(rec) : []
         items = items.filter((a) => allowed.includes(a.actionId))
       }
       return route.fulfill({ json: { items } })
     }
     const actionId = decodeURIComponent(url.pathname.split("/v1/actions/")[1] ?? "")
     const body = route.request().postDataJSON() as { input: Record<string, unknown>; idempotencyKey: string }
-    const targetId = String(body.input.id ?? "")
     actionCalls.push({ actionId, idempotencyKey: body.idempotencyKey, input: body.input })
     const res = runActionOnRecord(actionId, body.input, body.idempotencyKey)
-    if (dropOnce.delete(targetId)) {
-      return route.abort("failed")
-    }
     if (!res.ok) return route.fulfill({ status: res.status, json: { code: res.code, category: "law", message: res.message, explanation: res.message } })
     return route.fulfill({ json: res.receipt })
   })
@@ -468,6 +480,9 @@ export async function workspaceCell(page: Page, options: WorkspaceCellOptions = 
     records,
     defs,
     actionCalls,
-    dropReplyOnce: (recordId: string) => { dropOnce.add(recordId) },
+    installCalls,
+    switchScope: (orgId: string, environmentId: string) => {
+      activeScope = { orgId, environmentId }
+    },
   }
 }

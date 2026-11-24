@@ -1,4 +1,4 @@
-import { CellUnavailable, readStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
+import { CellUnavailable, readStudioScope, scopedHostFetch } from "./definitions.ts"
 
 /**
  * Governed actions from Studio: the catalog the cell offers this reader, and one call.
@@ -158,17 +158,9 @@ export async function listActions(objectKind: string | undefined, fetcher: Fetch
   throw new CellUnavailable(response.status)
 }
 
-/** Send one call. `input` is already-encoded JSON text, so exact numbers reach the cell as typed. Pass `pinnedScope` to bind the request to a captured scope without rereading the session. */
-export async function callAction(
-  actionId: string,
-  input: string,
-  idempotencyKey: string,
-  fetcher: Fetch = defaultFetch,
-  pinnedScope?: StudioScope,
-): Promise<CallResult> {
-  const call = pinnedScope !== undefined
-    ? scopedHostFetch(fetcher, "/api/host", async () => pinnedScope)
-    : await scoped(fetcher)
+/** Send one call. `input` is already-encoded JSON text, so exact numbers reach the cell as typed. */
+export async function callAction(actionId: string, input: string, idempotencyKey: string, fetcher: Fetch = defaultFetch): Promise<CallResult> {
+  const call = await scoped(fetcher)
   if (call === null) return { kind: "no-cell" }
   const response = await call(`/v1/actions/${encodeURIComponent(actionId)}`, {
     method: "POST",

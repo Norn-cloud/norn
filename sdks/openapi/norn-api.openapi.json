@@ -34054,16 +34054,6 @@
             "type": "string",
             "description": "The concrete object type."
           },
-          "offers": {
-            "type": [
-              "array",
-              "null"
-            ],
-            "items": {
-              "type": "string"
-            },
-            "description": "ACTION-CATALOG-STATE-1: admitted action ids the caller may call on this\nrecord in its current lifecycle state. Omitted for withheld rows and\nwhen the cell serves no actions for the caller. Convenience only, never\na grant: every call is decided again at call time."
-          },
           "scope": {
             "type": "string",
             "description": "The tenant scope."

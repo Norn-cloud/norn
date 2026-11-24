@@ -4,16 +4,14 @@
 //! A saved view is a pure projection over an admitted pack with zero business
 //! authority: it names a title, optional description and workspace `space` to
 //! pin into, an `objectType`, a `filter` and `sort` checked by the grid's own
-//! parser (`object_query::parse`), visible `columns` (declared properties of
-//! the type), and optional `rowActions` / `bulkActions` (admitted actions
-//! targeting `objectType`). At runtime the cell still decides every read and
-//! every action offer (`offers` / `GET /v1/actions`) and enforces laws and
+//! parser (`object_query::parse`), and visible `columns` (declared properties
+//! of the type in display order). At runtime the cell still decides every read
+//! and every action offer (`GET /v1/actions`) and enforces laws and
 //! authorization on every call.
 
 use std::collections::BTreeSet;
 
 use norn_cell::engine::SqlEngine;
-use norn_ir::ActionEffectProgram;
 use serde_json::Value;
 
 use crate::definition_routes::{MAX_TITLE_CHARS, codes};
@@ -26,10 +24,8 @@ pub const MAX_SPACE_CHARS: usize = 60;
 pub const MAX_DESCRIPTION_CHARS: usize = 280;
 /// Maximum columns a saved view may list.
 pub const MAX_VIEW_COLUMNS: usize = 64;
-/// Maximum row or bulk actions a saved view may pin.
-pub const MAX_VIEW_ACTIONS: usize = 16;
 
-const MEMBERS: [&str; 9] = [
+const MEMBERS: [&str; 7] = [
     "title",
     "description",
     "space",
@@ -37,19 +33,16 @@ const MEMBERS: [&str; 9] = [
     "filter",
     "sort",
     "columns",
-    "rowActions",
-    "bulkActions",
 ];
 
 fn pointer_token(key: &str) -> String {
     key.replace('~', "~0").replace('/', "~1")
 }
 
-/// Check a retained `kind: "view"` payload against the cell's active model and
-/// admitted actions.
+/// Check a retained `kind: "view"` payload against the cell's active model.
 ///
 /// # Errors
-/// A host failure reading the cell's model or active definitions.
+/// A host failure reading the cell's model.
 pub(crate) fn check<E: SqlEngine>(
     host: &DevHost<E>,
     value: &Value,
@@ -91,19 +84,19 @@ pub(crate) fn check<E: SqlEngine>(
             let cell = host.cell()?;
             let reader = cell.store().read();
             if reader.model().has_type(object_type) {
-                let properties = reader
-                    .model()
-                    .effective_property_types(object_type)
-                    .map_err(Refusal::host)?;
-                let target_actions = actions_for_type(host, &reader, object_type)?;
-                Some((object_type, properties, target_actions))
+                Some(
+                    reader
+                        .model()
+                        .effective_property_types(object_type)
+                        .map_err(Refusal::host)?,
+                )
             } else {
                 None
             }
         }
         None => None,
     };
-    let Some((object_type, properties, target_actions)) = declared else {
+    let Some(properties) = declared else {
         findings.push(RefusalDiagnostic::error(
             codes::INVALID_PAYLOAD,
             "objectType names a declared object type",
@@ -132,20 +125,6 @@ pub(crate) fn check<E: SqlEngine>(
         findings.extend(refusal.diagnostics);
     }
     check_columns(object.get("columns"), &properties, findings);
-    check_actions(
-        object.get("rowActions"),
-        "/rowActions",
-        object_type,
-        &target_actions,
-        findings,
-    );
-    check_actions(
-        object.get("bulkActions"),
-        "/bulkActions",
-        object_type,
-        &target_actions,
-        findings,
-    );
     Ok(())
 }
 
@@ -178,22 +157,6 @@ pub fn restate(canonical: &str) -> Result<String, String> {
         .filter(|c| !c.is_empty())
     {
         parts.push(format!("with {} filter condition(s)", clauses.len()));
-    }
-    if let Some(actions) = value
-        .get("rowActions")
-        .and_then(Value::as_array)
-        .filter(|a| !a.is_empty())
-    {
-        let names: Vec<&str> = actions.iter().filter_map(Value::as_str).collect();
-        parts.push(format!("row actions: {}", names.join(", ")));
-    }
-    if let Some(actions) = value
-        .get("bulkActions")
-        .and_then(Value::as_array)
-        .filter(|a| !a.is_empty())
-    {
-        let names: Vec<&str> = actions.iter().filter_map(Value::as_str).collect();
-        parts.push(format!("bulk actions: {}", names.join(", ")));
     }
     Ok(format!("{}.", parts.join(", ")))
 }
@@ -284,85 +247,4 @@ fn check_columns(
             "/columns",
         )),
     }
-}
-
-fn check_actions(
-    value: Option<&Value>,
-    at: &str,
-    object_type: &str,
-    admitted: &BTreeSet<String>,
-    findings: &mut Vec<RefusalDiagnostic>,
-) {
-    match value {
-        None => {}
-        Some(Value::Array(items)) => {
-            if items.len() > MAX_VIEW_ACTIONS {
-                findings.push(RefusalDiagnostic::error(
-                    codes::INVALID_PAYLOAD,
-                    format!("at most {MAX_VIEW_ACTIONS} actions may be listed"),
-                    at,
-                ));
-                return;
-            }
-            let mut seen = BTreeSet::new();
-            for (index, item) in items.iter().enumerate() {
-                let pointer = format!("{at}/{index}");
-                match item.as_str() {
-                    Some(action_id) if admitted.contains(action_id) => {
-                        if !seen.insert(action_id) {
-                            findings.push(RefusalDiagnostic::error(
-                                codes::INVALID_PAYLOAD,
-                                format!("action {action_id:?} is listed more than once"),
-                                pointer,
-                            ));
-                        }
-                    }
-                    Some(action_id) => findings.push(RefusalDiagnostic::error(
-                        codes::INVALID_PAYLOAD,
-                        format!(
-                            "action {action_id:?} is not an admitted action targeting {object_type}"
-                        ),
-                        pointer,
-                    )),
-                    None => findings.push(RefusalDiagnostic::error(
-                        codes::INVALID_PAYLOAD,
-                        "each action entry must be an admitted action id string",
-                        pointer,
-                    )),
-                }
-            }
-        }
-        Some(_) => findings.push(RefusalDiagnostic::error(
-            codes::INVALID_PAYLOAD,
-            "expected a list of admitted action ids",
-            at,
-        )),
-    }
-}
-
-/// Admitted action ids in the active definitions whose effect program targets
-/// `object_type`.
-pub(crate) fn actions_for_type<E: SqlEngine>(
-    host: &DevHost<E>,
-    reader: &norn_cell::StoreReader<'_, E>,
-    object_type: &str,
-) -> Result<BTreeSet<String>, Refusal> {
-    let Some((_, retained)) = host.retained(reader)? else {
-        return Ok(BTreeSet::new());
-    };
-    let mut ids = BTreeSet::new();
-    for (_, action) in &retained.actions {
-        let target = match &action.effect_program {
-            Some(
-                ActionEffectProgram::UpsertInputObject { object_kind, .. }
-                | ActionEffectProgram::FireTransition { object_kind, .. }
-                | ActionEffectProgram::MutateParentWithRows { object_kind, .. },
-            ) => Some(object_kind.as_str()),
-            None => None,
-        };
-        if target == Some(object_type) {
-            ids.insert(action.action_id.clone());
-        }
-    }
-    Ok(ids)
 }

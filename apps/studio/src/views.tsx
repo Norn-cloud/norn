@@ -8,19 +8,33 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { useActions } from "./actions/action-sheet.tsx"
 import { FilterEditor, fromPredicate, toPredicate, type DraftClause } from "./grid/filter-editor.tsx"
 import { RecordsGrid } from "./grid/records-grid.tsx"
 import { openedQuery } from "./grid/views-bar.tsx"
 import type { Concept } from "./lib/catalog.ts"
-import { NO_DATA_CELL, useStudioScope, type Finding } from "./lib/definitions.ts"
+import { NO_DATA_CELL, StudioScopeError, useStudioScope, type Finding, type StudioScope } from "./lib/definitions.ts"
 import type { Issue } from "./lib/editor.ts"
 import { useMode } from "./lib/live-transport.ts"
 import { recordName } from "./lib/objects.ts"
 import { LIMITS, sortable, totalText, type SortKey } from "./lib/records-query.ts"
 import { readRecords } from "./lib/records-source.ts"
 import { offersTimeline } from "./lib/timeline.ts"
-import { cellViews, cleanView, DEFAULT_SPACES, duplicateView, newViewId, sortKeys, sortText, viewField, type SavedView, type StoredView, type ViewSaved } from "./lib/views.ts"
+import {
+  cellViews,
+  cleanView,
+  DEFAULT_SPACES,
+  duplicateView,
+  newViewId,
+  sameScope,
+  saveViewDraft,
+  sortKeys,
+  sortText,
+  viewField,
+  WORKSPACE_CHANGED_MESSAGE,
+  type SavedView,
+  type StoredView,
+  type ViewSaved,
+} from "./lib/views.ts"
 import type { MenuEntry } from "./shell.tsx"
 import { useCatalog } from "./sources.tsx"
 
@@ -42,7 +56,13 @@ const issuesOf = (findings: readonly Finding[]): readonly Issue[] =>
 interface RemovedView {
   readonly id: string
   readonly version: number
+  readonly scope: StudioScope
   readonly view: SavedView
+}
+
+interface ConflictState {
+  /** Confirmed server revision read after a 409 conflict, or null when unavailable. */
+  readonly currentVersion: number | null
 }
 
 function UndoDeleteView({ removed, pending, error, onUndo }: {
@@ -144,29 +164,29 @@ export function ViewsPage() {
     mutationFn: async (stored: StoredView) => {
       const copy = duplicateView(stored.view)
       const id = newViewId(copy.objectType, copy.title)
-      return settled(await views.save(id, copy))
+      return settled(await views.save(id, copy, undefined, stored.scope))
     },
     onSuccess: refresh,
   })
 
   const remove = useMutation({
     mutationFn: async (stored: StoredView) => {
-      const retired = settled(await views.retire(stored.id, stored.version))
-      return retired.saved ? { id: stored.id, version: retired.version, view: stored.view } : undefined
+      const retired = settled(await views.retire(stored.id, stored.version, stored.scope))
+      return retired.saved ? { id: stored.id, version: retired.version, scope: stored.scope, view: stored.view } : undefined
     },
     onSuccess: setRemoved,
     onSettled: refresh,
   })
 
   const undo = useMutation({
-    mutationFn: async (gone: RemovedView) => settled(await views.save(gone.id, gone.view, gone.version)),
+    mutationFn: async (gone: RemovedView) => settled(await views.save(gone.id, gone.view, gone.version, gone.scope)),
     onSuccess: () => setRemoved(undefined),
     onSettled: refresh,
   })
 
   const rename = async (stored: StoredView, title: string): Promise<string | null> => {
     try {
-      const res = await views.save(stored.id, { ...stored.view, title }, stored.version)
+      const res = await views.save(stored.id, { ...stored.view, title }, stored.version, stored.scope)
       if (!res.saved) return "conflict" in res ? "Someone changed this view; reload and try again." : res.findings.map((f) => f.message).join(" ")
       await refresh()
       return null
@@ -190,7 +210,7 @@ export function ViewsPage() {
     <section className="space-y-6">
       <PageHeader
         title="Views"
-        description="Declarative projections over admitted record types, pinned into Spaces. Actions always come from the cell."
+        description="Declarative projections over admitted record types, pinned into Spaces."
         primary={<Button disabled={!cellAvailable} onClick={() => void navigate({ to: "/views/new" })}><Plus />New view</Button>}
       />
       {scope.isSuccess && scope.data === null && <p role="status" className="text-muted-foreground">{NO_DATA_CELL}</p>}
@@ -206,7 +226,7 @@ export function ViewsPage() {
           title="No views yet"
           next={cellAvailable && <Button size="sm" variant="outline" onClick={() => void navigate({ to: "/views/new" })}><Plus />New view</Button>}
         >
-          Build a filtered view over any record type, pick its columns and offered actions, and pin it into a Space.
+          Build a filtered view over any record type, pick its columns and sort order, and pin it into a Space.
         </EmptyState>
       )}
       {grouped.map(([space, items]) => (
@@ -216,8 +236,6 @@ export function ViewsPage() {
             {items.map((stored) => {
               const concept = catalog?.byName.get(stored.view.objectType)
               const filterCount = stored.view.filter?.all.length ?? 0
-              const rowActionCount = stored.view.rowActions?.length ?? 0
-              const bulkActionCount = stored.view.bulkActions?.length ?? 0
               return (
                 <Panel
                   key={stored.id}
@@ -237,8 +255,6 @@ export function ViewsPage() {
                     <Badge variant="secondary">{concept?.title ?? stored.view.objectType}</Badge>
                     {stored.view.space && <Badge variant="outline">Space: {stored.view.space}</Badge>}
                     <span>{filterCount === 0 ? "All records" : `${filterCount} filter${filterCount === 1 ? "" : "s"}`}</span>
-                    {rowActionCount > 0 && <span>· {rowActionCount} row action{rowActionCount === 1 ? "" : "s"}</span>}
-                    {bulkActionCount > 0 && <span>· {bulkActionCount} bulk action{bulkActionCount === 1 ? "" : "s"}</span>}
                     <span>· Version {stored.version}</span>
                   </div>
                   {stored.view.description && <p className="mt-1.5 text-sm text-muted-foreground">{stored.view.description}</p>}
@@ -252,17 +268,18 @@ export function ViewsPage() {
   )
 }
 
-/** `/views/$id`: open a saved view with its filtered list, row & bulk actions, record drawer and action sheet. */
+/** `/views/$id`: open a saved view with its filtered list, record drawer and action sheet. */
 export function ViewDetailPage() {
   const scope = useStudioScope()
-  const cellAvailable = scope.isSuccess && scope.data !== null
+  const activeScope = scope.data ?? null
+  const cellAvailable = scope.isSuccess && activeScope !== null
   const { id = "" } = useParams({ strict: false }) as { id?: string }
   const { catalog } = useCatalog()
   const navigate = useNavigate()
   const client = useQueryClient()
   const stored = useQuery({
-    queryKey: ["view", id, scope.data?.orgId, scope.data?.environmentId],
-    queryFn: async () => (await views.get(id)) ?? null,
+    queryKey: ["view", id, activeScope?.orgId, activeScope?.environmentId],
+    queryFn: async () => (await views.get(id, activeScope)) ?? null,
     enabled: cellAvailable && id !== "",
     retry: false,
   })
@@ -276,7 +293,7 @@ export function ViewDetailPage() {
     mutationFn: async (from: StoredView) => {
       const copy = duplicateView(from.view)
       const nextId = newViewId(copy.objectType, copy.title)
-      settled(await views.save(nextId, copy))
+      settled(await views.save(nextId, copy, undefined, from.scope))
       return nextId
     },
     onSuccess: (copied) => {
@@ -287,20 +304,20 @@ export function ViewDetailPage() {
 
   const remove = useMutation({
     mutationFn: async (from: StoredView) => {
-      const retired = settled(await views.retire(from.id, from.version))
-      return retired.saved ? { id: from.id, version: retired.version, view: from.view } : undefined
+      const retired = settled(await views.retire(from.id, from.version, from.scope))
+      return retired.saved ? { id: from.id, version: retired.version, scope: from.scope, view: from.view } : undefined
     },
     onSuccess: (gone) => { setRemoved(gone); void client.invalidateQueries({ queryKey: ["views"] }) },
   })
 
   const undo = useMutation({
-    mutationFn: async (gone: RemovedView) => settled(await views.save(gone.id, gone.view, gone.version)),
+    mutationFn: async (gone: RemovedView) => settled(await views.save(gone.id, gone.view, gone.version, gone.scope)),
     onSuccess: () => { setRemoved(undefined); invalidate(); void stored.refetch() },
   })
 
   const rename = async (from: StoredView, title: string): Promise<string | null> => {
     try {
-      const res = await views.save(from.id, { ...from.view, title }, from.version)
+      const res = await views.save(from.id, { ...from.view, title }, from.version, from.scope)
       if (!res.saved) return "conflict" in res ? "Someone changed this view; reload and try again." : res.findings.map((f) => f.message).join(" ")
       invalidate()
       return null
@@ -352,8 +369,6 @@ export function ViewDetailPage() {
           key={`${active.id}:${active.version}`}
           concept={concept}
           initial={openedQuery(active)}
-          rowActions={active.view.rowActions}
-          bulkActions={active.view.bulkActions}
           timeline={timeline}
         />
       )}
@@ -369,32 +384,48 @@ function defaultViewFor(concept: Concept | undefined): SavedView {
     space: DEFAULT_SPACES[0],
     objectType: concept?.name ?? "",
     columns: cols,
-    rowActions: [],
-    bulkActions: [],
   }
 }
 
-function ViewEditor({ concepts, stored, cellAvailable, onSaved, onReload }: {
+export function ViewEditor({ concepts, stored, activeScope, cellAvailable, onSaved, onReload }: {
   readonly concepts: readonly Concept[]
   readonly stored?: StoredView
+  readonly activeScope: StudioScope | null
   readonly cellAvailable: boolean
   readonly onSaved: (saved: { readonly id: string; readonly version: number }) => void
   readonly onReload?: () => void
 }) {
+  // Bind this draft once to the first workspace scope it was loaded from; never silently retarget a write.
+  const [draftScope, setDraftScope] = useState<StudioScope | null>(() => stored?.scope ?? activeScope)
+  useEffect(() => {
+    if (draftScope === null && activeScope !== null) setDraftScope(activeScope)
+  }, [draftScope, activeScope])
+  const scopeMismatch = draftScope !== null && !sameScope(activeScope, draftScope)
   const [at, setAt] = useState(stored ? { id: stored.id, version: stored.version } : undefined)
   const [findings, setFindings] = useState<readonly Finding[]>([])
   const [restatement, setRestatement] = useState<string | null>(null)
-  const [conflict, setConflict] = useState(false)
+  const [conflict, setConflict] = useState<ConflictState | null>(null)
+  const [scopeError, setScopeError] = useState<string | null>(null)
   const initial = useMemo(() => stored?.view ?? defaultViewFor(concepts[0]), [stored, concepts])
   const saving = useRef(false)
   const [pendingNav, setPendingNav] = useState<{ readonly id: string; readonly version: number } | null>(null)
   const save = useMutation({
-    mutationFn: async ({ view, overwrite }: { readonly view: SavedView; readonly overwrite?: boolean }) => {
+    mutationFn: async ({ view, confirmedVersion }: { readonly view: SavedView; readonly confirmedVersion?: number }) => {
+      if (draftScope === null) throw new StudioScopeError(NO_DATA_CELL)
+      if (scopeMismatch) throw new StudioScopeError(WORKSPACE_CHANGED_MESSAGE)
       const id = at?.id ?? newViewId(view.objectType, view.title)
-      return { view, result: await views.save(id, view, overwrite ? undefined : at?.version) }
+      const expectedVersion = confirmedVersion !== undefined ? confirmedVersion : at?.version
+      return saveViewDraft(views, {
+        id,
+        existing: at !== undefined,
+        view,
+        expectedVersion,
+        scope: draftScope,
+      })
     },
-    onSuccess: ({ view, result }) => {
-      setConflict("conflict" in result)
+    onSuccess: ({ view, result, conflictVersion }) => {
+      setScopeError(null)
+      setConflict(!result.saved && "conflict" in result ? { currentVersion: conflictVersion } : null)
       setFindings("findings" in result ? result.findings : [])
       if (result.saved) {
         setAt({ id: result.id, version: result.version })
@@ -402,11 +433,22 @@ function ViewEditor({ concepts, stored, cellAvailable, onSaved, onReload }: {
         setPendingNav({ id: result.id, version: result.version })
       }
     },
+    onError: (error) => {
+      if (error instanceof StudioScopeError && error.message === WORKSPACE_CHANGED_MESSAGE) {
+        setScopeError(error.message)
+        setConflict(null)
+      }
+    },
   })
-  const requestSave = (next: SavedView, overwrite = false) => {
-    if (!cellAvailable || saving.current || (!overwrite && !editor.dirty)) return
+  const requestSave = (next: SavedView, confirmedVersion?: number) => {
+    const overwriting = confirmedVersion !== undefined
+    if (!cellAvailable || draftScope === null || saving.current || (!overwriting && !editor.dirty)) return
+    if (scopeMismatch) {
+      setScopeError(WORKSPACE_CHANGED_MESSAGE)
+      return
+    }
     saving.current = true
-    save.mutate({ view: next, overwrite }, { onSettled: () => { saving.current = false } })
+    save.mutate({ view: next, confirmedVersion }, { onSettled: () => { saving.current = false } })
   }
   const editor = useEditor<SavedView>({ initial, onSave: (v) => requestSave(v) })
   const { value: view, set } = editor
@@ -422,8 +464,6 @@ function ViewEditor({ concepts, stored, cellAvailable, onSaved, onReload }: {
   const concept = concepts.find(({ name }) => name === view.objectType) ?? concepts[0]
   const fields = useMemo(() => (concept?.fields ?? []).filter(({ id }) => !HIDDEN_FIELDS.has(id)), [concept])
   const sortableFields = useMemo(() => fields.filter(sortable), [fields])
-  const actionsQuery = useActions(view.objectType, undefined, cellAvailable && view.objectType !== "")
-  const offeredActions = actionsQuery.data?.kind === "catalog" ? actionsQuery.data.items : []
 
   const [draftFilter, setDraftFilter] = useState<readonly DraftClause[]>(() => fromPredicate(view.filter ?? null))
   const lastEmittedFilter = useRef<SavedView["filter"]>(view.filter)
@@ -450,9 +490,9 @@ function ViewEditor({ concepts, stored, cellAvailable, onSaved, onReload }: {
     !view.space || (DEFAULT_SPACES as readonly string[]).includes(view.space) ? "preset" : "custom",
   )
 
-  // Live server admission check (side-effect free).
+  // Live server admission check (side-effect free), bound to `draftScope`.
   useEffect(() => {
-    if (!cellAvailable || view.title.trim() === "" || view.objectType === "") {
+    if (!cellAvailable || draftScope === null || scopeMismatch || view.title.trim() === "" || view.objectType === "") {
       setFindings([])
       setRestatement(null)
       return
@@ -460,7 +500,7 @@ function ViewEditor({ concepts, stored, cellAvailable, onSaved, onReload }: {
     let cancelled = false
     const timer = setTimeout(() => {
       const id = at?.id ?? newViewId(view.objectType, view.title, () => "check")
-      views.admit(id, view).then(
+      views.admit(id, view, draftScope).then(
         (admission) => {
           if (cancelled) return
           if (admission.admitted) {
@@ -471,22 +511,25 @@ function ViewEditor({ concepts, stored, cellAvailable, onSaved, onReload }: {
             setRestatement(null)
           }
         },
-        () => {},
+        (error: unknown) => {
+          if (cancelled) return
+          if (error instanceof StudioScopeError && error.message === WORKSPACE_CHANGED_MESSAGE) {
+            setScopeError(error.message)
+          }
+        },
       )
     }, 350)
     return () => { cancelled = true; clearTimeout(timer) }
-  }, [cellAvailable, at?.id, view])
+  }, [cellAvailable, draftScope, scopeMismatch, at?.id, view])
 
   const sort = sortKeys(view.sort)
   const columns = view.columns ?? fields.slice(0, 6).map(({ id }) => id)
-  const rowActions = view.rowActions ?? []
-  const bulkActions = view.bulkActions ?? []
 
   // Live bounded preview of matching records.
   const previewQuery = useQuery({
-    queryKey: ["view-preview", view.objectType, JSON.stringify(view.filter ?? null), view.sort ?? ""],
+    queryKey: ["view-preview", draftScope?.orgId, draftScope?.environmentId, view.objectType, JSON.stringify(view.filter ?? null), view.sort ?? ""],
     queryFn: () => readRecords(view.objectType, { filter: view.filter ?? null, sort, limit: 5 }),
-    enabled: cellAvailable && view.objectType !== "",
+    enabled: cellAvailable && draftScope !== null && !scopeMismatch && view.objectType !== "",
     retry: false,
   })
   const previewPage = previewQuery.data?.kind === "page" ? previewQuery.data : undefined
@@ -499,7 +542,7 @@ function ViewEditor({ concepts, stored, cellAvailable, onSaved, onReload }: {
     const nextConcept = concepts.find(({ name }) => name === nextType)
     const nextCols = (nextConcept?.fields ?? []).filter(({ id }) => !HIDDEN_FIELDS.has(id)).slice(0, 6).map(({ id }) => id)
     setDraftFilter([])
-    set((cur) => ({ ...cur, objectType: nextType, filter: undefined, sort: undefined, columns: nextCols, rowActions: [], bulkActions: [] }))
+    set((cur) => ({ ...cur, objectType: nextType, filter: undefined, sort: undefined, columns: nextCols }))
   }
 
   const toggleColumn = (fieldId: string, checked: boolean) => {
@@ -516,26 +559,38 @@ function ViewEditor({ concepts, stored, cellAvailable, onSaved, onReload }: {
     set((cur) => ({ ...cur, columns: next }))
   }
 
-  const toggleAction = (kind: "rowActions" | "bulkActions", actionId: string, checked: boolean) => {
-    const list = kind === "rowActions" ? rowActions : bulkActions
-    const next = checked ? (list.includes(actionId) ? list : [...list, actionId]) : list.filter((a) => a !== actionId)
-    set((cur) => ({ ...cur, [kind]: next }))
-  }
-
   const setSort = (next: readonly SortKey[]) => set((cur) => ({ ...cur, sort: sortText(next) }))
+  const workspaceAlert = scopeMismatch ? WORKSPACE_CHANGED_MESSAGE : scopeError
 
   return (
     <div className="space-y-6">
       <DirtyGuard dirty={editor.dirty} />
-      <EditorToolbar editor={editor} onSave={() => requestSave(view)} saving={save.isPending || !cellAvailable}>
+      <EditorToolbar editor={editor} onSave={() => requestSave(view)} saving={save.isPending || !cellAvailable || scopeMismatch}>
         {at && <Badge variant="outline">Version {at.version}</Badge>}
       </EditorToolbar>
-      {save.isError && <p role="alert" className="text-destructive">Not saved. {failure(save.error)}</p>}
-      {conflict && (
+      {workspaceAlert && <p role="alert" className="text-destructive">{workspaceAlert}</p>}
+      {save.isError && !(save.error instanceof StudioScopeError && save.error.message === workspaceAlert) && (
+        <p role="alert" className="text-destructive">Not saved. {failure(save.error)}</p>
+      )}
+      {conflict && !workspaceAlert && (
         <div role="alert" className="flex flex-wrap items-center gap-2 rounded-xl border border-destructive/40 bg-card p-3 text-sm">
-          <span>Someone saved a newer version of this view since you opened it.</span>
+          <span>
+            {conflict.currentVersion !== null
+              ? `Someone saved version ${conflict.currentVersion} of this view since you opened it.`
+              : "Someone saved a newer version of this view since you opened it."}
+          </span>
           <Button type="button" size="sm" variant="outline" onClick={() => onReload?.()}>Reload theirs</Button>
-          <Button type="button" size="sm" variant="destructive" disabled={!cellAvailable} onClick={() => requestSave(view, true)}>Overwrite with mine</Button>
+          {at !== undefined && conflict.currentVersion !== null && (
+            <Button
+              type="button"
+              size="sm"
+              variant="destructive"
+              disabled={!cellAvailable || save.isPending}
+              onClick={() => requestSave(view, conflict.currentVersion!)}
+            >
+              Overwrite with mine
+            </Button>
+          )}
         </div>
       )}
       <ValidationPanel issues={issues} title="The cell refused this view" />
@@ -573,7 +628,7 @@ function ViewEditor({ concepts, stored, cellAvailable, onSaved, onReload }: {
           <span className="font-medium">Description <span className="font-normal text-muted-foreground">(optional)</span></span>
           <Input
             aria-label="Description"
-            placeholder="What this view helps an operator act on"
+            placeholder="What this view helps an operator track"
             value={view.description ?? ""}
             onChange={(e) => set((cur) => ({ ...cur, description: e.target.value }))}
           />
@@ -715,52 +770,6 @@ function ViewEditor({ concepts, stored, cellAvailable, onSaved, onReload }: {
         </div>
       </div>
 
-      <div data-field="rowActions">
-      <Panel label="Offered actions">
-        <div className="border-t px-4 py-3">
-        <p className="mb-3 text-meta text-muted-foreground">
-          Choose which server-offered actions appear as inline row buttons or bulk selection buttons. Each button renders only on records where the cell offers that action.
-        </p>
-        {offeredActions.length === 0 ? (
-          <p className="text-sm text-muted-foreground">The cell offers no actions on this record type.</p>
-        ) : (
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2">
-              <h3 className="text-sm font-medium">Row action buttons</h3>
-              {offeredActions.map((action) => (
-                <label key={`row:${action.actionId}`} className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    aria-label={`Row action ${action.title}`}
-                    checked={rowActions.includes(action.actionId)}
-                    onChange={(e) => toggleAction("rowActions", action.actionId, e.target.checked)}
-                  />
-                  <span>{action.title}</span>
-                  <span className="font-mono text-xs text-muted-foreground">{action.actionId}</span>
-                </label>
-              ))}
-            </div>
-            <div className="space-y-2" data-field="bulkActions">
-              <h3 className="text-sm font-medium">Bulk action buttons</h3>
-              {offeredActions.map((action) => (
-                <label key={`bulk:${action.actionId}`} className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    aria-label={`Bulk action ${action.title}`}
-                    checked={bulkActions.includes(action.actionId)}
-                    onChange={(e) => toggleAction("bulkActions", action.actionId, e.target.checked)}
-                  />
-                  <span>{action.title}</span>
-                  <span className="font-mono text-xs text-muted-foreground">{action.actionId}</span>
-                </label>
-              ))}
-            </div>
-          </div>
-        )}
-        </div>
-      </Panel>
-      </div>
-
       <Panel label={`Live preview${previewPage?.total ? ` · ${totalText(previewPage.total)}` : ""}`}>
         <div className="border-t px-4 py-3">
         {previewQuery.isPending && <p className="text-sm text-muted-foreground">Checking matching records…</p>}
@@ -798,15 +807,16 @@ function ViewEditor({ concepts, stored, cellAvailable, onSaved, onReload }: {
 /** `/views/new` and `/views/$id/edit`: build or update a server-admitted view. */
 export function ViewEditorPage() {
   const scope = useStudioScope()
-  const cellAvailable = scope.isSuccess && scope.data !== null
+  const activeScope = scope.data ?? null
+  const cellAvailable = scope.isSuccess && activeScope !== null
   const { id } = useParams({ strict: false }) as { id?: string }
   const { read, catalog } = useCatalog()
   const navigate = useNavigate()
   const client = useQueryClient()
   const concepts = useMemo(() => (catalog?.concepts ?? []).filter((c) => c.definition === "object type"), [catalog])
   const stored = useQuery({
-    queryKey: ["view-edit", id, scope.data?.orgId, scope.data?.environmentId],
-    queryFn: async () => (id === undefined ? null : (await views.get(id)) ?? null),
+    queryKey: ["view-edit", id, activeScope?.orgId, activeScope?.environmentId],
+    queryFn: async () => (id === undefined ? null : (await views.get(id, activeScope)) ?? null),
     enabled: id !== undefined && cellAvailable,
     retry: false,
     staleTime: Infinity,
@@ -816,11 +826,22 @@ export function ViewEditorPage() {
   })
   const [opened, setOpened] = useState(0)
   const fresh = id === undefined
+  // Latch the loaded view so a background scope refetch shows the workspace-changed warning
+  // instead of silently swapping the editor onto another workspace's definition.
+  const [latched, setLatched] = useState<StoredView | null>(null)
+  useEffect(() => { setLatched(null) }, [id])
+  useEffect(() => {
+    if (!fresh && (latched === null || latched.id !== id) && stored.data && stored.data.id === id && stored.isFetchedAfterMount) {
+      setLatched(stored.data)
+    }
+  }, [fresh, id, latched, stored.data, stored.isFetchedAfterMount])
+
+  const editorStored = fresh ? undefined : (latched?.id === id ? latched : null)
 
   return (
     <section className="space-y-6">
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-title font-semibold tracking-tight">{fresh ? "New view" : (stored.data?.view.title || "Edit view")}</h1>
+        <h1 className="text-title font-semibold tracking-tight">{fresh ? "New view" : (editorStored?.view.title || stored.data?.view.title || "Edit view")}</h1>
         {id !== undefined && (
           <Button asChild variant="outline" size="sm" className="ms-auto">
             <Link to="/views/$id" params={{ id }}><Eye />Open view</Link>
@@ -829,20 +850,26 @@ export function ViewEditorPage() {
       </div>
       {scope.isSuccess && scope.data === null && <p role="status" className="text-muted-foreground">{NO_DATA_CELL}</p>}
       {scope.isError && <p role="alert" className="text-destructive">{scope.error.message}</p>}
-      {(scope.isPending || read.isPending || (!fresh && cellAvailable && stored.isPending)) && <p className="text-muted-foreground">Reading view…</p>}
+      {(scope.isPending || read.isPending || (!fresh && cellAvailable && latched === null && stored.isPending)) && <p className="text-muted-foreground">Reading view…</p>}
       {read.isError && <EmptyState icon={Bookmark}>{read.error.message}</EmptyState>}
-      {stored.isError && <EmptyState icon={Bookmark}>{failure(stored.error)}</EmptyState>}
-      {!fresh && stored.isSuccess && stored.data === null && <EmptyState icon={Bookmark}>No view {id} is saved.</EmptyState>}
+      {latched === null && stored.isError && <EmptyState icon={Bookmark}>{failure(stored.error)}</EmptyState>}
+      {!fresh && latched === null && stored.isSuccess && stored.data === null && <EmptyState icon={Bookmark}>No view {id} is saved.</EmptyState>}
       {!scope.isPending && concepts.length === 0 && catalog && (
         <EmptyState icon={Shapes}>No record types are installed in this cell yet.</EmptyState>
       )}
-      {!scope.isPending && concepts.length > 0 && (fresh || (stored.data && stored.isFetchedAfterMount)) && (
+      {!scope.isPending && concepts.length > 0 && (fresh || editorStored !== null) && (
         <ViewEditor
-          key={`${scope.data?.orgId ?? "none"}:${scope.data?.environmentId ?? "none"}:${stored.data?.id ?? "new"}:${opened}`}
+          key={`${editorStored?.id ?? "new"}:${opened}`}
           concepts={concepts}
-          stored={stored.data ?? undefined}
+          stored={editorStored ?? undefined}
+          activeScope={activeScope}
           cellAvailable={cellAvailable}
-          onReload={() => void stored.refetch().then((r) => { if (r.isSuccess && r.data) setOpened((n) => n + 1) })}
+          onReload={() => void stored.refetch().then((r) => {
+            if (r.isSuccess && r.data) {
+              setLatched(r.data)
+              setOpened((n) => n + 1)
+            }
+          })}
           onSaved={(saved) => {
             void client.invalidateQueries({ queryKey: ["views"] })
             void client.invalidateQueries({ queryKey: ["view", saved.id] })

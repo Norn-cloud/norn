@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { QueryClient, QueryObserver } from "@tanstack/react-query"
 import type { ActionReceipt, ActionSummary, CallResult, CatalogRead } from "../src/lib/actions.ts"
-import { hasRecordOffers, inFlight, init, offeredFor, parkedOf, recordCatalog, resume, undoOf, update, type Cmd, type Msg, type State } from "../src/lib/screen/call.ts"
+import { inFlight, init, offeredFor, parkedOf, recordCatalog, resume, undoOf, update, type Cmd, type Msg, type State } from "../src/lib/screen/call.ts"
 
 // Properties of the renderer core over seeded random message sequences (D79: properties, not cases).
 
@@ -131,7 +131,7 @@ test("undo offers are decoded fail-closed: a missing, malformed or inexact offer
   expect(undoOf(receipt(1, { actionId: "a.undo", input: { id: "ep_1", n: 3 } }))).toEqual({ actionId: "a.undo", input: '{"id":"ep_1","n":3}' })
 })
 
-test("per-record offers only ever narrow the served catalog, in its order; missing or malformed offers fail closed", () => {
+test("per-record offers only ever narrow the served catalog, in its order; without them the catalog stands", () => {
   const catalog = ["a", "b", "c", "d"].map((actionId) => ({ actionId }) as ActionSummary)
   for (const seed of SEEDS) {
     const r = rng(seed)
@@ -139,15 +139,8 @@ test("per-record offers only ever narrow the served catalog, in its order; missi
     const shown = offeredFor(catalog, { id: "r", offers }).map((a) => a.actionId)
     expect(shown).toEqual(catalog.map((a) => a.actionId).filter((id) => offers.includes(id)))
   }
-  expect(hasRecordOffers({ id: "r", offers: ["a"] })).toBe(true)
-  expect(hasRecordOffers({ id: "r", offers: [] })).toBe(true)
-  expect(hasRecordOffers({ id: "r" })).toBe(false)
-  expect(hasRecordOffers({ id: "r", offers: "a" })).toBe(false)
-  expect(offeredFor(catalog, { id: "r" })).toEqual([])
-  expect(offeredFor(catalog, { id: "r", offers: undefined })).toEqual([])
-  expect(offeredFor(catalog, { id: "r", offers: null })).toEqual([])
-  expect(offeredFor(catalog, { id: "r", offers: "a" })).toEqual([])
-  expect(offeredFor(catalog, { id: "r", offers: [] })).toEqual([])
+  expect(offeredFor(catalog, { id: "r" })).toBe(catalog)
+  expect(offeredFor(catalog, { id: "r", offers: "a" })).toBe(catalog)
 })
 
 test("an approval-gated call commits nothing: it waits for a decider, reads nothing again, and a new draft may follow", () => {

@@ -1,12 +1,12 @@
 //! SAVED VIEWS (#1424): end-to-end integration tests over real provisioned
 //! tenant cells (`Tenant<NativeEngine>`) on two unrelated domains:
 //!
-//! 1. **Application Funnel (`funnel.Application`)**: issue #1424's exact
-//!    scenario ("Applications needing help" view, server-admitted Space and
-//!    offered actions, per-row `offers` filtered by lifecycle state AND the
-//!    tenant PDP, single-record GET wire preservation, retire & undo).
+//! 1. **Application Funnel (`funnel.Application`)**: issue #1424's scenario
+//!    ("Applications needing help" view, server-admitted Space/description/
+//!    filter/sort/columns, CAS version conflict and confirmed-revision
+//!    overwrite, record-drawer `/v1/actions` narrowing, retire & undo).
 //! 2. **Equipment Fleet Tickets (`fleet.Ticket`)**: an unrelated domain proving
-//!    zero domain coupling in saved views and per-row `offers`.
+//!    zero domain coupling in saved views.
 
 use std::error::Error;
 use std::path::Path;
@@ -505,14 +505,30 @@ fn assert_retire_and_undo(
     Ok(())
 }
 
-fn assert_assisted_row_drops_offer(cell: &mut Cell, id: &str) -> TestResult {
+fn assert_drawer_actions_narrow_on_transition(cell: &mut Cell, id: &str) -> TestResult {
+    let (status, actions_before) = cell.get(
+        "/v1/actions",
+        &format!("objectKind=funnel.Application&objectId={id}"),
+        "admin",
+    );
+    assert_eq!(status, 200, "{actions_before}");
+    assert!(
+        ptr_array(&actions_before, "/items")?.iter().any(|a| {
+            a.get("actionId").and_then(Value::as_str) == Some("funnel.application.offer_assistance")
+        }),
+        "stalled row should offer offer_assistance via /v1/actions: {actions_before}"
+    );
+    let (status, assisted) = cell.action(
+        "funnel.application.offer_assistance",
+        "admin",
+        &json!({ "id": id }),
+        &format!("assist-{id}"),
+    );
+    assert_eq!(status, 200, "{assisted}");
     let (status, single) = cell.get(&format!("/v1/objects/funnel.Application/{id}"), "", "admin");
     assert_eq!(status, 200, "{single}");
     assert_eq!(ptr_str(&single, "/values/stage")?, "assisted");
-    assert!(
-        single.get("offers").is_none(),
-        "single-record GET preserves its base wire shape without offers: {single}"
-    );
+    assert!(single.get("offers").is_none(), "{single}");
     let (status, actions_after) = cell.get(
         "/v1/actions",
         &format!("objectKind=funnel.Application&objectId={id}"),
@@ -525,54 +541,65 @@ fn assert_assisted_row_drops_offer(cell: &mut Cell, id: &str) -> TestResult {
         }),
         "assisted row should no longer be offered offer_assistance: {actions_after}"
     );
-    let (status, page_after) = cell.get("/v1/objects/funnel.Application", "", "admin");
-    assert_eq!(status, 200, "{page_after}");
-    let row = ptr_array(&page_after, "/records")?
-        .iter()
-        .find(|row| row.get("id").and_then(Value::as_str) == Some(id))
-        .ok_or("missing record in list after assist")?;
-    assert!(
-        !ptr_array(row, "/offers")?
-            .iter()
-            .any(|a| a == "funnel.application.offer_assistance"),
-        "assisted row should no longer have offer_assistance in list offers: {row}"
-    );
     Ok(())
 }
 
-fn assert_viewer_rows_omit_offers(cell: &mut Cell) -> TestResult {
-    let (status, viewer_page) = cell.get("/v1/objects/funnel.Application", "", "viewer");
-    assert_eq!(status, 200, "{viewer_page}");
-    for row in ptr_array(&viewer_page, "/records")? {
-        assert!(
-            row.get("offers").is_none(),
-            "withheld rows must omit offers: {row}"
-        );
-    }
-    Ok(())
+fn assert_cas_overwrite(
+    cell: &mut Cell,
+    view_id: &str,
+    v1: u64,
+    updated_payload: &Value,
+) -> TestResult<u64> {
+    // Omitting expectedVersion on an existing view conflicts; confirming current version succeeds.
+    let (status, conflict) = cell.post(
+        "/v1/definitions:install",
+        "admin",
+        &json!({ "kind": "view", "id": view_id, "payload": updated_payload }),
+    );
+    assert_eq!(status, 409, "{conflict}");
+    assert_eq!(ptr_str(&conflict, "/code")?, "definition.version_conflict");
+
+    let (status, current) = cell.get(&format!("/v1/definitions/{view_id}"), "", "admin");
+    assert_eq!(status, 200, "{current}");
+    let current_version = ptr_u64(&current, "/version")?;
+    assert_eq!(current_version, v1);
+
+    let (status, overwritten) = cell.post(
+        "/v1/definitions:install",
+        "admin",
+        &json!({ "kind": "view", "id": view_id, "payload": updated_payload, "expectedVersion": current_version }),
+    );
+    assert_eq!(status, 200, "{overwritten}");
+    let v2 = ptr_u64(&overwritten, "/version")?;
+    assert_eq!(v2, v1.saturating_add(1));
+    Ok(v2)
 }
 
 #[test]
-fn saved_view_admits_space_and_actions_and_objects_return_per_row_offers() -> TestResult {
+fn saved_view_admits_space_columns_cas_overwrite_and_retire_undo() -> TestResult {
     let dir = tempfile::tempdir()?;
     let mut cell = provisioned(&dir.path().join("funnel.sqlite"), &funnel_artifacts())?;
 
+    // Duplicate column and unknown member are refused at their exact pointers.
     let bad_view = json!({
         "kind": "view",
         "id": "studio.view.funnel_application.bad",
         "payload": {
-            "title": "Bad actions view",
+            "title": "Bad columns view",
             "objectType": "funnel.Application",
-            "rowActions": ["funnel.application.does_not_exist"]
+            "columns": ["score", "score"],
+            "rowActions": ["funnel.application.offer_assistance"]
         }
     });
     let (status, admitted) = cell.post("/v1/definitions:admit", "admin", &bad_view);
     assert_eq!(status, 200, "{admitted}");
     assert_eq!(ptr(&admitted, "/admitted")?, &json!(false));
-    assert_eq!(
-        ptr_str(&admitted, "/diagnostics/0/span/pointer")?,
-        "/rowActions/0"
-    );
+    let pointers: Vec<&str> = ptr_array(&admitted, "/diagnostics")?
+        .iter()
+        .filter_map(|d| d.pointer("/span/pointer").and_then(Value::as_str))
+        .collect();
+    assert!(pointers.contains(&"/columns/1"), "{admitted}");
+    assert!(pointers.contains(&"/rowActions"), "{admitted}");
 
     let view_payload = json!({
         "title": "Applications needing help",
@@ -584,9 +611,7 @@ fn saved_view_admits_space_and_actions_and_objects_return_per_row_offers() -> Te
             { "property": "score", "op": "lt", "value": "60" }
         ] },
         "sort": "score:asc",
-        "columns": ["applicant_name", "stage", "score"],
-        "rowActions": ["funnel.application.offer_assistance"],
-        "bulkActions": ["funnel.application.offer_assistance"]
+        "columns": ["score", "applicant_name", "stage"]
     });
     let view_id = "studio.view.funnel_application.needing_help";
     let (status, admitted) = cell.post(
@@ -605,6 +630,12 @@ fn saved_view_admits_space_and_actions_and_objects_return_per_row_offers() -> Te
     );
     assert_eq!(status, 200, "{installed}");
     let v1 = ptr_u64(&installed, "/version")?;
+
+    let mut updated_payload = view_payload;
+    if let Some(obj) = updated_payload.as_object_mut() {
+        obj.insert("description".to_owned(), json!("Confirmed CAS update."));
+    }
+    let v2 = assert_cas_overwrite(&mut cell, view_id, v1, &updated_payload)?;
 
     seed_funnel_applications(
         &mut cell,
@@ -627,109 +658,14 @@ fn saved_view_admits_space_and_actions_and_objects_return_per_row_offers() -> Te
     assert_eq!(status, 200, "{page}");
     assert_eq!(ptr_array(&page, "/records")?.len(), 1, "{page}");
     assert_eq!(ptr_str(&page, "/records/0/id")?, "app-1");
-    assert!(
-        ptr_array(&page, "/records/0/offers")?
-            .iter()
-            .any(|a| a == "funnel.application.offer_assistance"),
-        "expected offer_assistance in per-row offers: {page}"
-    );
+    assert!(ptr(&page, "/records/0")?.get("offers").is_none(), "{page}");
 
-    assert_viewer_rows_omit_offers(&mut cell)?;
-
-    let (status, assisted) = cell.action(
-        "funnel.application.offer_assistance",
-        "admin",
-        &json!({ "id": "app-1" }),
-        "assist-app-1",
-    );
-    assert_eq!(status, 200, "{assisted}");
-    assert_assisted_row_drops_offer(&mut cell, "app-1")?;
-    assert_retire_and_undo(&mut cell, "view", view_id, &view_payload, v1)
+    assert_drawer_actions_narrow_on_transition(&mut cell, "app-1")?;
+    assert_retire_and_undo(&mut cell, "view", view_id, &updated_payload, v2)
 }
 
 #[test]
-fn per_row_offers_enforce_pdp_role_and_resource_conditions() -> TestResult {
-    let dir = tempfile::tempdir()?;
-    let mut artifacts = funnel_artifacts();
-    // Replace the policy so:
-    // - `admin` may create/stall anything, and may `offer_assistance` ONLY on `app-1`
-    // - `member` has Values read via DEMO_GRANTS, but NO action grant at all.
-    artifacts.retain(|a| a.get("kind").and_then(Value::as_str) != Some("policy"));
-    artifacts.push(json!({
-        "artifactId": "funnel.application.access.policy",
-        "dependencies": [], "irVersion": "0.1", "kind": "policy",
-        "lifecycle": "active", "name": "funnel scoped access", "namespace": "funnel",
-        "payload": {
-            "accessVersion": "0.1", "policyId": "funnel.application.access",
-            "rules": [
-                {
-                    "ruleId": "admin_manage",
-                    "actions": ["funnel.application.create", "funnel.application.mark_stalled", "norn.read"],
-                    "resourceType": "funnel.Application",
-                    "scope": { "dimensions": ["org", "environment"] },
-                    "allOf": [{ "role": { "anyOf": ["admin"] } }]
-                },
-                {
-                    "ruleId": "admin_assist_app1_only",
-                    "actions": ["funnel.application.offer_assistance"],
-                    "resourceType": "funnel.Application",
-                    "scope": { "dimensions": ["org", "environment"] },
-                    "allOf": [
-                        { "role": { "anyOf": ["admin"] } },
-                        { "resource": { "name": "id", "op": "eq", "value": "app-1" } }
-                    ]
-                }
-            ]
-        },
-        "provenance": provenance(), "scope": scope_json(), "version": "1.0.0"
-    }));
-    let mut cell = provisioned(&dir.path().join("pdp.sqlite"), &artifacts)?;
-    seed_funnel_applications(
-        &mut cell,
-        &[("app-1", "Ada", 42), ("app-2", "Ben", 35)],
-        &["app-1", "app-2"],
-    );
-
-    // Admin sees `offer_assistance` ONLY on `app-1`, NOT on `app-2` (denied by resource PDP rule).
-    let (status, admin_page) = cell.get("/v1/objects/funnel.Application", "", "admin");
-    assert_eq!(status, 200, "{admin_page}");
-    let find_offers = |page: &Value, id: &str| -> TestResult<Vec<String>> {
-        let row = ptr_array(page, "/records")?
-            .iter()
-            .find(|r| r.get("id").and_then(Value::as_str) == Some(id))
-            .ok_or_else(|| format!("missing {id} in {page}"))?;
-        Ok(ptr_array(row, "/offers")?
-            .iter()
-            .filter_map(Value::as_str)
-            .map(str::to_owned)
-            .collect())
-    };
-    let app1_admin = find_offers(&admin_page, "app-1")?;
-    let app2_admin = find_offers(&admin_page, "app-2")?;
-    assert!(
-        app1_admin
-            .iter()
-            .any(|id| id == "funnel.application.offer_assistance"),
-        "expected offer_assistance for admin on app-1: {app1_admin:?}"
-    );
-    assert!(
-        !app2_admin
-            .iter()
-            .any(|id| id == "funnel.application.offer_assistance"),
-        "PDP-denied row app-2 must not be offered offer_assistance: {app2_admin:?}"
-    );
-
-    // Member can read record values (non-withheld) but has no PDP action grant:
-    // every row must report empty offers (never the full callable action list).
-    let (status, member_page) = cell.get("/v1/objects/funnel.Application", "", "member");
-    assert_eq!(status, 200, "{member_page}");
-    assert_eq!(find_offers(&member_page, "app-1")?, Vec::<String>::new());
-    assert_eq!(find_offers(&member_page, "app-2")?, Vec::<String>::new());
-    Ok(())
-}
-
-#[test]
-fn unrelated_fleet_domain_views_and_offers_work_identically() -> TestResult {
+fn unrelated_fleet_domain_views_work_identically() -> TestResult {
     let dir = tempfile::tempdir()?;
     let mut cell = provisioned(&dir.path().join("fleet.sqlite"), &fleet_artifacts())?;
 
@@ -742,16 +678,24 @@ fn unrelated_fleet_domain_views_and_offers_work_identically() -> TestResult {
             { "property": "downtime_hours", "op": "gt", "value": "24" }
         ] },
         "sort": "downtime_hours:desc",
-        "columns": ["asset_code", "status", "downtime_hours"],
-        "rowActions": ["fleet.ticket.escalate"],
-        "bulkActions": ["fleet.ticket.escalate"]
+        "columns": ["downtime_hours", "asset_code", "status"]
     });
+    let view_id = "studio.view.fleet_ticket.urgent";
     let (st, inst) = cell.post(
         "/v1/definitions:install",
         "admin",
-        &json!({ "kind": "view", "id": "studio.view.fleet_ticket.urgent", "payload": view_payload }),
+        &json!({ "kind": "view", "id": view_id, "payload": view_payload }),
     );
     assert_eq!(st, 200, "{inst}");
+    let v1 = ptr_u64(&inst, "/version")?;
+
+    let (st, read) = cell.get(&format!("/v1/definitions/{view_id}"), "", "admin");
+    assert_eq!(st, 200, "{read}");
+    assert_eq!(
+        ptr(&read, "/payload/columns")?,
+        &json!(["downtime_hours", "asset_code", "status"])
+    );
+    assert_eq!(ptr_str(&read, "/payload/space")?, "Fleet Ops");
 
     for (id, asset, hours) in [("tkt-1", "CRANE-07", 36), ("tkt-2", "PUMP-12", 8)] {
         let (st, r) = cell.action(
@@ -776,12 +720,8 @@ fn unrelated_fleet_domain_views_and_offers_work_identically() -> TestResult {
         "admin",
     );
     assert_eq!(st, 200, "{page}");
-    assert!(
-        ptr_array(&page, "/records/0/offers")?
-            .iter()
-            .any(|a| a == "fleet.ticket.escalate"),
-        "{page}"
-    );
+    assert_eq!(ptr_str(&page, "/records/0/id")?, "tkt-1");
+    assert!(ptr(&page, "/records/0")?.get("offers").is_none(), "{page}");
 
     let (st, escalated) = cell.action(
         "fleet.ticket.escalate",
@@ -795,5 +735,6 @@ fn unrelated_fleet_domain_views_and_offers_work_identically() -> TestResult {
     assert_eq!(st, 200, "{obj}");
     assert_eq!(ptr_str(&obj, "/values/status")?, "escalated");
     assert!(obj.get("offers").is_none(), "{obj}");
-    Ok(())
+
+    assert_retire_and_undo(&mut cell, "view", view_id, &view_payload, v1)
 }
