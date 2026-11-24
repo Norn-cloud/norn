@@ -235,6 +235,7 @@ pub fn checker_restatement(
         "flow" => crate::flow_definitions::restate(canonical),
         "approval" => crate::approval_definitions::restate(canonical),
         "automation" => crate::automation_definitions::restate(canonical),
+        "view" => crate::view_definitions::restate(canonical),
         other => Err(format!("{other} has no restatement")),
     }
 }
@@ -675,7 +676,12 @@ fn validate<E: SqlEngine>(
             flow = checked;
         }
         "dashboard" => dashboard(host, scope, actor, questions, &value, &mut findings)?,
-        "view" => saved_view(host, &value, &mut findings)?,
+        "view" => crate::view_definitions::check(
+            host,
+            &value,
+            retained_view_columns(host, id, replaces)?.as_ref(),
+            &mut findings,
+        )?,
         // A saved question: a bare QuestionIR, admitted as a tile's is.
         "question" => {
             question_findings(
@@ -823,6 +829,25 @@ fn retained_binding_anchor<E: SqlEngine>(
         .and_then(|record| crate::binding_definitions::retained_anchor(&record.definition.payload)))
 }
 
+/// The `objectType` and `columns` of view `id`'s retained revision `replaces`,
+/// when that revision exists and has `kind == "view"`.
+fn retained_view_columns<E: SqlEngine>(
+    host: &DevHost<E>,
+    id: &str,
+    replaces: Option<u64>,
+) -> Result<Option<crate::view_definitions::RetainedViewColumns>, Refusal> {
+    let Some(replaces) = replaces else {
+        return Ok(None);
+    };
+    let cell = host.cell()?;
+    let reader = cell.store().read();
+    Ok(reader
+        .retained_definition(id, Some(replaces))
+        .map_err(Refusal::host)?
+        .filter(|record| record.definition.kind == "view")
+        .and_then(|record| crate::view_definitions::retained_columns(&record.definition.payload)))
+}
+
 /// The id's current retained revision, if any: what an install would replace.
 fn current_revision<E: SqlEngine>(host: &DevHost<E>, id: &str) -> Result<Option<u64>, Refusal> {
     let cell = host.cell()?;
@@ -887,94 +912,6 @@ fn members<'v>(
         ));
     }
     Some(object)
-}
-
-/// VIEW-DEF-1: a saved records view, a title over one declared object type
-/// with the grid query it applies: a filter and sort in the grid's own
-/// grammar, checked by the grid's own parser against the type's properties,
-/// and the columns it shows, each a declared property.
-fn saved_view<E: SqlEngine>(
-    host: &DevHost<E>,
-    value: &Value,
-    findings: &mut Vec<RefusalDiagnostic>,
-) -> Result<(), Refusal> {
-    let Some(object) = members(
-        value,
-        "",
-        &["title", "objectType", "filter", "sort", "columns"],
-        findings,
-    ) else {
-        return Ok(());
-    };
-    title(object.get("title"), "/title", findings);
-    let declared = match object.get("objectType").and_then(Value::as_str) {
-        Some(object_type) => {
-            let cell = host.cell()?;
-            let reader = cell.store().read();
-            if reader.model().has_type(object_type) {
-                Some(
-                    reader
-                        .model()
-                        .effective_property_types(object_type)
-                        .map_err(Refusal::host)?,
-                )
-            } else {
-                None
-            }
-        }
-        None => None,
-    };
-    let Some(properties) = declared else {
-        findings.push(RefusalDiagnostic::error(
-            codes::INVALID_PAYLOAD,
-            "objectType names a declared object type",
-            "/objectType",
-        ));
-        return Ok(());
-    };
-    let sort = match object.get("sort") {
-        None => None,
-        Some(Value::String(text)) => Some(text.clone()),
-        Some(_) => {
-            findings.push(RefusalDiagnostic::error(
-                codes::INVALID_PAYLOAD,
-                "sort is the grid's `property:asc|desc` list, comma separated",
-                "/sort",
-            ));
-            None
-        }
-    };
-    let query = crate::object_query::ObjectQueryParams {
-        filter: object.get("filter").map(Value::to_string),
-        sort,
-        ..crate::object_query::ObjectQueryParams::default()
-    };
-    if let Err(refusal) = crate::object_query::parse(&query, &properties) {
-        findings.extend(refusal.diagnostics);
-    }
-    match object.get("columns") {
-        None => {}
-        Some(Value::Array(columns)) => {
-            for (index, column) in columns.iter().enumerate() {
-                let known = column
-                    .as_str()
-                    .is_some_and(|id| properties.iter().any(|(name, _)| name == id));
-                if !known {
-                    findings.push(RefusalDiagnostic::error(
-                        codes::INVALID_PAYLOAD,
-                        "a column is a declared property of the view's type",
-                        format!("/columns/{index}"),
-                    ));
-                }
-            }
-        }
-        Some(_) => findings.push(RefusalDiagnostic::error(
-            codes::INVALID_PAYLOAD,
-            "columns is a list of property ids",
-            "/columns",
-        )),
-    }
-    Ok(())
 }
 
 fn pointer_token(key: &str) -> String {
