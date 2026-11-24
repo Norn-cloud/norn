@@ -1,6 +1,11 @@
-//! VAL-ROUND: lower declared result sites into the one shared rescale opcode.
-use super::{AstMetadata, Node, Type, ZenTypeEnv, address};
+//! VAL-ROUND: lower declared result sites into the one shared rescale opcode
+//! and enforce exact-profile function/operator admission.
 use std::fmt::Write as _;
+
+use zen_expression::functions::{FunctionKind, InternalFunction};
+use zen_expression::lexer::{ArithmeticOperator, ComparisonOperator, Operator};
+
+use super::{AstMetadata, Diagnostic, Node, Type, ZenTypeEnv, address, bounds};
 
 pub(super) fn lower(
     root: &Node<'_>,
@@ -168,4 +173,161 @@ fn add_site(
         nullable,
     ));
     Ok(())
+}
+
+/// Builtins whose semantics are exact and non-rounding (no implicit numeric
+/// precision loss), so they may appear alongside `Decimal` operands in exact
+/// expressions without requiring an enclosing `round` site.
+const fn is_exact_supported_builtin(function: InternalFunction) -> bool {
+    match function {
+        InternalFunction::Len
+        | InternalFunction::CalendarDate
+        | InternalFunction::Timestamp
+        | InternalFunction::DaysBetween
+        | InternalFunction::AddDays
+        | InternalFunction::SecondsBetween
+        | InternalFunction::AddSeconds
+        | InternalFunction::IntervalsOverlap
+        | InternalFunction::IntervalGapSeconds
+        | InternalFunction::IntervalIntersectionSeconds
+        | InternalFunction::ResolveLocalTimestamp
+        | InternalFunction::Lower
+        | InternalFunction::Upper
+        | InternalFunction::Trim
+        | InternalFunction::Contains
+        | InternalFunction::StartsWith
+        | InternalFunction::EndsWith
+        | InternalFunction::Split
+        | InternalFunction::Tokens
+        | InternalFunction::Take
+        | InternalFunction::Join => true,
+        InternalFunction::Flatten
+        | InternalFunction::Merge
+        | InternalFunction::MergeDeep
+        | InternalFunction::Matches
+        | InternalFunction::Extract
+        | InternalFunction::FuzzyMatch
+        | InternalFunction::Abs
+        | InternalFunction::Sum
+        | InternalFunction::Avg
+        | InternalFunction::Min
+        | InternalFunction::Max
+        | InternalFunction::Rand
+        | InternalFunction::Median
+        | InternalFunction::Mode
+        | InternalFunction::Floor
+        | InternalFunction::Ceil
+        | InternalFunction::Round
+        | InternalFunction::Trunc
+        | InternalFunction::IsNumeric
+        | InternalFunction::String
+        | InternalFunction::Number
+        | InternalFunction::Bool
+        | InternalFunction::Type
+        | InternalFunction::Keys
+        | InternalFunction::Values
+        | InternalFunction::Date => false,
+    }
+}
+
+/// VAL-ROUND: no information-losing operation enters the exact runtime implicitly.
+pub(super) fn exact_admission<'n>(
+    root: &'n Node<'n>,
+    metadata: &AstMetadata,
+    destination: bool,
+) -> Vec<Diagnostic> {
+    let mut pending = vec![(root, destination)];
+    let mut out = Vec::new();
+    while let Some((node, destination)) = pending.pop() {
+        let round = matches!(
+            node,
+            Node::FunctionCall {
+                kind: FunctionKind::Internal(InternalFunction::Round),
+                arguments
+            } if arguments.len() >= 2
+        );
+        let site = destination
+            || matches!(
+                node,
+                Node::FunctionCall {
+                    kind: FunctionKind::Internal(InternalFunction::Round),
+                    arguments
+                } if arguments.len() == 3
+            );
+        let supported_builtin = matches!(
+            node,
+            Node::FunctionCall {
+                kind: FunctionKind::Internal(function),
+                ..
+            } if is_exact_supported_builtin(*function)
+        );
+        let reason = if matches!(
+            node,
+            Node::Binary {
+                operator: Operator::Arithmetic(ArithmeticOperator::Divide),
+                ..
+            }
+        ) && !destination
+        {
+            Some("division requires a declared Decimal destination or explicit round site")
+        } else if matches!(
+            node,
+            Node::Binary {
+                operator: Operator::Comparison(ComparisonOperator::In | ComparisonOperator::NotIn),
+                ..
+            }
+        ) {
+            Some("membership is outside the exact arithmetic profile")
+        } else if matches!(node, Node::FunctionCall { .. })
+            && !(supported_builtin || (round && site))
+        {
+            Some("function requires an explicit supported exact site")
+        } else if matches!(
+            node,
+            Node::FunctionCall {
+                kind: FunctionKind::Internal(InternalFunction::Round),
+                arguments
+            } if arguments.get(1).is_some_and(|value| matches!(
+                value,
+                Node::Number(scale) if scale.to_string().parse::<u32>().is_ok_and(|scale| scale > 18)
+            ))
+        ) {
+            Some("round exceeds the exact arithmetic scale bound")
+        } else if !destination && matches!(node, Node::Number(value) if value.scale() > 18) {
+            Some("numeric literal exceeds the exact arithmetic scale bound")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            out.push(Diagnostic {
+                code: "core.values.inexact",
+                message: reason.to_owned(),
+                span: metadata.get(&address(node)).map_or((0, 0), |m| m.span),
+            });
+        }
+        // Only an explicit `round` call (or transparent expression wrapper) propagates
+        // a rounding destination to its value operands; a conditional's condition and
+        // arguments to non-rounding builtins must supply their own exact site for
+        // division or over-scale literals.
+        if let Node::Conditional {
+            condition,
+            on_true,
+            on_false,
+        } = node
+        {
+            pending.push((condition, false));
+            pending.push((on_true, site));
+            pending.push((on_false, site));
+        } else {
+            let child_site = if matches!(node, Node::FunctionCall { .. }) && !round {
+                false
+            } else {
+                site
+            };
+            let mut children = Vec::new();
+            bounds::children(node, &mut children);
+            pending.extend(children.into_iter().map(|child| (child, child_site)));
+        }
+    }
+    out
 }
