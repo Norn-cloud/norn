@@ -192,11 +192,13 @@ impl Fingerprint {
 }
 
 /// The pre-2100 transitions of `zone`, with the offsets before and after.
-fn transitions(zone: &str) -> Vec<(Timestamp, Offset, Offset)> {
-    let data = TzdbBundle::v2025b().tzif(zone).expect("zone in tzdb 2025b");
-    let tz = TimeZone::tzif(zone, data).expect("TZif parses");
-    let from = Timestamp::from_second(FROM_SECOND).expect("1800");
-    let until = Timestamp::from_second(UNTIL_SECOND).expect("2100");
+fn transitions(zone: &str) -> Result<Vec<(Timestamp, Offset, Offset)>, Box<dyn std::error::Error>> {
+    let data = TzdbBundle::v2025b()
+        .tzif(zone)
+        .ok_or_else(|| format!("zone `{zone}` missing from tzdb 2025b"))?;
+    let tz = TimeZone::tzif(zone, data)?;
+    let from = Timestamp::from_second(FROM_SECOND)?;
+    let until = Timestamp::from_second(UNTIL_SECOND)?;
     let mut before = tz.to_offset(from);
     let mut out = Vec::new();
     for transition in tz.following(from) {
@@ -207,7 +209,7 @@ fn transitions(zone: &str) -> Vec<(Timestamp, Offset, Offset)> {
         out.push((at, before, transition.offset()));
         before = transition.offset();
     }
-    out
+    Ok(out)
 }
 
 fn date(epoch_millis: i64, zone: &str) -> String {
@@ -232,14 +234,12 @@ fn ordering_key(value: &str) -> String {
 }
 
 /// RFC 3339 spellings: transition instants and a fractional-second grid.
-fn timestamp_inputs() -> Vec<String> {
+fn timestamp_inputs() -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let mut inputs = Vec::new();
     for zone in ZONES {
-        for (at, before, after) in transitions(zone) {
+        for (at, before, after) in transitions(zone)? {
             for delta in [-1, 0, 1] {
-                let instant = at
-                    .checked_add(jiff::SignedDuration::from_millis(delta))
-                    .expect("in range");
+                let instant = at.checked_add(jiff::SignedDuration::from_millis(delta))?;
                 for offset in [before, after] {
                     inputs.push(instant.display_with_offset(offset).to_string());
                 }
@@ -279,17 +279,18 @@ fn timestamp_inputs() -> Vec<String> {
             }
         }
     }
-    inputs
+    Ok(inputs)
 }
 
 #[test]
-fn timezone_functions_reproduce_the_recorded_chrono_outputs() {
+fn timezone_functions_reproduce_the_recorded_chrono_outputs()
+-> Result<(), Box<dyn std::error::Error>> {
     let mut actual: BTreeMap<String, Fingerprint> = BTreeMap::new();
     for zone in ZONES {
         let entry = actual
             .entry(format!("naming_series_date_at {zone}"))
             .or_default();
-        let mut probes: Vec<i64> = transitions(zone)
+        let mut probes: Vec<i64> = transitions(zone)?
             .into_iter()
             .map(|(at, _, _)| at.as_millisecond())
             .flat_map(|ms| [ms - 1_000, ms - 1, ms, ms + 1, ms + 1_000])
@@ -300,7 +301,7 @@ fn timezone_functions_reproduce_the_recorded_chrono_outputs() {
             entry.add(&epoch_millis.to_string(), &date(epoch_millis, zone));
         }
     }
-    let inputs = timestamp_inputs();
+    let inputs = timestamp_inputs()?;
     let canonical_entry = actual.entry("canonical_timestamp".to_owned()).or_default();
     for input in &inputs {
         canonical_entry.add(input, &canonical(input));
@@ -322,8 +323,8 @@ fn timezone_functions_reproduce_the_recorded_chrono_outputs() {
             table,
             "    ({category:?}, {}, {:#018x}),",
             print.cases, print.fnv1a
-        )
-        .expect("write to a String");
+        )?;
     }
     assert!(actual == recorded, "actual:\n{table}");
+    Ok(())
 }

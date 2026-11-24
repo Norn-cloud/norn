@@ -10,8 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use sha2::{Digest, Sha256};
-use syn::visit::{self, Visit};
-use syn::{Expr, ExprCall, ExprLit, ExprMacro, ImplItem, Item, Lit, LitStr};
+use syn::{Expr, ExprLit, ExprMacro, ImplItem, Item, Lit, LitStr, Stmt, Type};
 
 use crate::{Violation, violation};
 
@@ -204,40 +203,115 @@ fn check_source_json(workspace_root: &Path, pin: &TzdbBundlePin, out: &mut Vec<V
     }
 }
 
-struct VerifiedCallCollector {
-    calls: Vec<(String, String)>,
+fn is_inherent_tzdb_bundle_impl(item_impl: &syn::ItemImpl) -> bool {
+    if item_impl.trait_.is_some() {
+        return false;
+    }
+    let Type::Path(type_path) = item_impl.self_ty.as_ref() else {
+        return false;
+    };
+    type_path.qself.is_none() && type_path.path.is_ident("TzdbBundle")
 }
 
-impl<'ast> Visit<'ast> for VerifiedCallCollector {
-    fn visit_expr_call(&mut self, node: &'ast ExprCall) {
-        if let Expr::Path(callee) = node.func.as_ref()
-            && callee
-                .path
-                .segments
-                .last()
-                .is_some_and(|seg| seg.ident == "from_bytes_verified")
-            && node.args.len() == 2
-            && let (Some(Expr::Path(arg0)), Some(Expr::Path(arg1))) =
-                (node.args.first(), node.args.iter().nth(1))
-            && let (Some(id0), Some(id1)) = (arg0.path.get_ident(), arg1.path.get_ident())
-        {
-            self.calls.push((id0.to_string(), id1.to_string()));
-        }
-        visit::visit_expr_call(self, node);
+fn extract_from_bytes_verified_args(expr: &Expr) -> Option<(String, String)> {
+    let call_expr = if let Expr::Call(call) = expr {
+        call
+    } else if let Expr::MethodCall(method_call) = expr
+        && method_call.method == "unwrap_or_else"
+        && let Expr::Call(call) = method_call.receiver.as_ref()
+    {
+        call
+    } else if let Expr::Block(block) = expr
+        && block.block.stmts.len() == 1
+        && let Some(Stmt::Expr(inner, None)) = block.block.stmts.first()
+    {
+        return extract_from_bytes_verified_args(inner);
+    } else {
+        return None;
+    };
+    let Expr::Path(callee) = call_expr.func.as_ref() else {
+        return None;
+    };
+    let segments: Vec<String> = callee
+        .path
+        .segments
+        .iter()
+        .map(|seg| seg.ident.to_string())
+        .collect();
+    if segments != ["Self", "from_bytes_verified"]
+        && segments != ["TzdbBundle", "from_bytes_verified"]
+    {
+        return None;
     }
+    if call_expr.args.len() != 2 {
+        return None;
+    }
+    let (Some(Expr::Path(arg0)), Some(Expr::Path(arg1))) =
+        (call_expr.args.first(), call_expr.args.iter().nth(1))
+    else {
+        return None;
+    };
+    let (Some(id0), Some(id1)) = (arg0.path.get_ident(), arg1.path.get_ident()) else {
+        return None;
+    };
+    Some((id0.to_string(), id1.to_string()))
+}
+
+/// Extracts the exact `(BYTES_CONST, SHA256_CONST)` returned by an inherent
+/// `TzdbBundle` loader method (`static BUNDLE: OnceLock<TzdbBundle> = OnceLock::new();
+/// BUNDLE.get_or_init(|| Self::from_bytes_verified(BYTES, SHA).unwrap_or_else(...))`),
+/// refusing any extra/decoy statements or alternative loaders.
+fn extract_sole_loader_binding(block: &syn::Block) -> Option<(String, String)> {
+    if block.stmts.len() != 2 {
+        return None;
+    }
+    let Some(Stmt::Item(Item::Static(static_item))) = block.stmts.first() else {
+        return None;
+    };
+    let static_name = static_item.ident.to_string();
+    let Type::Path(static_ty) = static_item.ty.as_ref() else {
+        return None;
+    };
+    if !static_ty
+        .path
+        .segments
+        .last()
+        .is_some_and(|seg| seg.ident == "OnceLock")
+    {
+        return None;
+    }
+    let Some(Stmt::Expr(Expr::MethodCall(get_or_init), None)) = block.stmts.get(1) else {
+        return None;
+    };
+    if get_or_init.method != "get_or_init" || get_or_init.args.len() != 1 {
+        return None;
+    }
+    let Expr::Path(recv) = get_or_init.receiver.as_ref() else {
+        return None;
+    };
+    if !recv.path.is_ident(&static_name) {
+        return None;
+    }
+    let Some(Expr::Closure(closure)) = get_or_init.args.first() else {
+        return None;
+    };
+    if !closure.inputs.is_empty() {
+        return None;
+    }
+    extract_from_bytes_verified_args(closure.body.as_ref())
 }
 
 struct RustTzdbPins {
     const_strs: BTreeMap<String, String>,
     const_includes: BTreeMap<String, String>,
-    loader_calls: BTreeMap<String, Vec<(String, String)>>,
+    loader_bindings: BTreeMap<String, Option<(String, String)>>,
 }
 
 fn collect_rust_tzdb_pins(parsed: &syn::File) -> RustTzdbPins {
     let mut pins = RustTzdbPins {
         const_strs: BTreeMap::new(),
         const_includes: BTreeMap::new(),
-        loader_calls: BTreeMap::new(),
+        loader_bindings: BTreeMap::new(),
     };
     for item in &parsed.items {
         if let Item::Const(item_const) = item {
@@ -253,17 +327,18 @@ fn collect_rust_tzdb_pins(parsed: &syn::File) -> RustTzdbPins {
             {
                 pins.const_includes.insert(name, lit.value());
             }
-        } else if let Item::Impl(item_impl) = item {
+        } else if let Item::Impl(item_impl) = item
+            && is_inherent_tzdb_bundle_impl(item_impl)
+        {
             for impl_item in &item_impl.items {
                 if let ImplItem::Fn(method) = impl_item {
-                    let mut collector = VerifiedCallCollector { calls: Vec::new() };
-                    collector.visit_block(&method.block);
-                    if !collector.calls.is_empty() {
-                        pins.loader_calls
-                            .entry(method.sig.ident.to_string())
-                            .or_default()
-                            .extend(collector.calls);
-                    }
+                    let fn_name = method.sig.ident.to_string();
+                    let binding = extract_sole_loader_binding(&method.block);
+                    // Any duplicate method definition invalidates the binding.
+                    pins.loader_bindings
+                        .entry(fn_name)
+                        .and_modify(|slot| *slot = None)
+                        .or_insert(binding);
                 }
             }
         }
@@ -339,18 +414,17 @@ fn check_rust_digest_pins(workspace_root: &Path, pins: &[TzdbBundlePin], out: &m
             ));
         }
         let binds_loader = ast_pins
-            .loader_calls
+            .loader_bindings
             .get(pin.loader_fn)
-            .is_some_and(|calls| {
-                calls.iter().any(|(bytes_id, sha_id)| {
-                    bytes_id == pin.bytes_const && sha_id == pin.sha256_const
-                })
+            .and_then(Option::as_ref)
+            .is_some_and(|(bytes_id, sha_id)| {
+                bytes_id == pin.bytes_const && sha_id == pin.sha256_const
             });
         if !binds_loader {
             out.push(violation(
                 "tzdb-rust-pin",
                 format!(
-                    "crates/norn-expr/src/tzdb.rs: `{}` must call from_bytes_verified({}, {})",
+                    "crates/norn-expr/src/tzdb.rs: inherent `TzdbBundle::{}` must return OnceLock::get_or_init(|| Self::from_bytes_verified({}, {})...)",
                     pin.loader_fn, pin.bytes_const, pin.sha256_const
                 ),
             ));

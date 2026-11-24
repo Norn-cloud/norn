@@ -623,19 +623,32 @@ fn guard_detects_tzdb_digest_source_and_swapped_rust_pins() -> Result<(), Box<dy
     assert!(rules.contains(&"tzdb-rust-pin"), "{}", render(&violations));
 
     // 2. Swapped 2025b / 2026c SHA-256 constants rejected even when both hashes appear.
-    let swapped_rust = format!(
-        "pub const TZDB_RELEASE_2025B: &str = \"2025b\";\n\
-         pub const TZDB_RELEASE_2026C: &str = \"2026c\";\n\
-         pub const TZDB_SHA256_2025B: &str = \"{}\";\n\
-         pub const TZDB_SHA256_2026C: &str = \"{}\";\n\
-         const BUILTIN_2025B_BYTES: &[u8] = include_bytes!(\"../data/tzdb/2025b.tzdb\");\n\
-         const BUILTIN_2026C_BYTES: &[u8] = include_bytes!(\"../data/tzdb/2026c.tzdb\");\n\
-         struct TzdbBundle;\n\
-         impl TzdbBundle {{\n\
-             fn v2025b() {{ Self::from_bytes_verified(BUILTIN_2025B_BYTES, TZDB_SHA256_2025B); }}\n\
-             fn v2026c() {{ Self::from_bytes_verified(BUILTIN_2026C_BYTES, TZDB_SHA256_2026C); }}\n\
-         }}\n",
-        pin_26.sha256, pin.sha256
+    let make_rust = |sha25: &str, sha26: &str, inc25: &str, inc26: &str| {
+        format!(
+            "pub const TZDB_RELEASE_2025B: &str = \"2025b\";\n\
+             pub const TZDB_RELEASE_2026C: &str = \"2026c\";\n\
+             pub const TZDB_SHA256_2025B: &str = \"{sha25}\";\n\
+             pub const TZDB_SHA256_2026C: &str = \"{sha26}\";\n\
+             const BUILTIN_2025B_BYTES: &[u8] = include_bytes!(\"{inc25}\");\n\
+             const BUILTIN_2026C_BYTES: &[u8] = include_bytes!(\"{inc26}\");\n\
+             struct TzdbBundle;\n\
+             impl TzdbBundle {{\n\
+                 pub fn v2025b() -> &'static Self {{\n\
+                     static BUNDLE: OnceLock<TzdbBundle> = OnceLock::new();\n\
+                     BUNDLE.get_or_init(|| Self::from_bytes_verified(BUILTIN_2025B_BYTES, TZDB_SHA256_2025B).unwrap_or_else(|_| Self::fail_closed_empty()))\n\
+                 }}\n\
+                 pub fn v2026c() -> &'static Self {{\n\
+                     static BUNDLE: OnceLock<TzdbBundle> = OnceLock::new();\n\
+                     BUNDLE.get_or_init(|| Self::from_bytes_verified(BUILTIN_2026C_BYTES, TZDB_SHA256_2026C).unwrap_or_else(|_| Self::fail_closed_empty()))\n\
+                 }}\n\
+             }}\n"
+        )
+    };
+    let swapped_rust = make_rust(
+        pin_26.sha256,
+        pin.sha256,
+        pin.include_rel_path,
+        pin_26.include_rel_path,
     );
     std::fs::write(&rust_dest, swapped_rust)?;
     let swapped_violations = check_tzdb_bundles_against(dir.path(), PINNED_TZDB_BUNDLES);
@@ -646,19 +659,11 @@ fn guard_detects_tzdb_digest_source_and_swapped_rust_pins() -> Result<(), Box<dy
     );
 
     // 3. Swapped include_bytes! paths rejected.
-    let swapped_paths = format!(
-        "pub const TZDB_RELEASE_2025B: &str = \"2025b\";\n\
-         pub const TZDB_RELEASE_2026C: &str = \"2026c\";\n\
-         pub const TZDB_SHA256_2025B: &str = \"{}\";\n\
-         pub const TZDB_SHA256_2026C: &str = \"{}\";\n\
-         const BUILTIN_2025B_BYTES: &[u8] = include_bytes!(\"../data/tzdb/2026c.tzdb\");\n\
-         const BUILTIN_2026C_BYTES: &[u8] = include_bytes!(\"../data/tzdb/2025b.tzdb\");\n\
-         struct TzdbBundle;\n\
-         impl TzdbBundle {{\n\
-             fn v2025b() {{ Self::from_bytes_verified(BUILTIN_2025B_BYTES, TZDB_SHA256_2025B); }}\n\
-             fn v2026c() {{ Self::from_bytes_verified(BUILTIN_2026C_BYTES, TZDB_SHA256_2026C); }}\n\
-         }}\n",
-        pin.sha256, pin_26.sha256
+    let swapped_paths = make_rust(
+        pin.sha256,
+        pin_26.sha256,
+        pin_26.include_rel_path,
+        pin.include_rel_path,
     );
     std::fs::write(&rust_dest, swapped_paths)?;
     let path_violations = check_tzdb_bundles_against(dir.path(), PINNED_TZDB_BUNDLES);
@@ -666,6 +671,77 @@ fn guard_detects_tzdb_digest_source_and_swapped_rust_pins() -> Result<(), Box<dy
         rules_of(&path_violations).contains(&"tzdb-rust-pin"),
         "swapped include_bytes! paths must fail tzdb-rust-pin: {}",
         render(&path_violations)
+    );
+    Ok(())
+}
+
+#[test]
+fn guard_rejects_decoy_and_non_inherent_tzdb_loaders() -> Result<(), Box<dyn std::error::Error>> {
+    use norn_skeleton_guard::tzdb_pin::{PINNED_TZDB_BUNDLES, check_tzdb_bundles_against};
+
+    let pin = *PINNED_TZDB_BUNDLES.first().ok_or("missing 2025b pin")?;
+    let pin_26 = *PINNED_TZDB_BUNDLES.get(1).ok_or("missing 2026c pin")?;
+    let dir = tempfile::tempdir()?;
+    let rust_dest = dir.path().join("crates/norn-expr/src/tzdb.rs");
+    std::fs::create_dir_all(rust_dest.parent().ok_or("rust parent")?)?;
+
+    // 1. Dead decoy statement preceding a different returned loader must be rejected.
+    let decoy = format!(
+        "pub const TZDB_RELEASE_2025B: &str = \"2025b\";\n\
+         pub const TZDB_RELEASE_2026C: &str = \"2026c\";\n\
+         pub const TZDB_SHA256_2025B: &str = \"{}\";\n\
+         pub const TZDB_SHA256_2026C: &str = \"{}\";\n\
+         const BUILTIN_2025B_BYTES: &[u8] = include_bytes!(\"../data/tzdb/2025b.tzdb\");\n\
+         const BUILTIN_2026C_BYTES: &[u8] = include_bytes!(\"../data/tzdb/2026c.tzdb\");\n\
+         struct TzdbBundle;\n\
+         impl TzdbBundle {{\n\
+             pub fn v2025b() -> &'static Self {{\n\
+                 let _ = Self::from_bytes_verified(BUILTIN_2025B_BYTES, TZDB_SHA256_2025B);\n\
+                 static BUNDLE: OnceLock<TzdbBundle> = OnceLock::new();\n\
+                 BUNDLE.get_or_init(|| Self::from_bytes_verified(BUILTIN_2026C_BYTES, TZDB_SHA256_2026C).unwrap_or_else(|_| Self::fail_closed_empty()))\n\
+             }}\n\
+             pub fn v2026c() -> &'static Self {{\n\
+                 static BUNDLE: OnceLock<TzdbBundle> = OnceLock::new();\n\
+                 BUNDLE.get_or_init(|| Self::from_bytes_verified(BUILTIN_2026C_BYTES, TZDB_SHA256_2026C).unwrap_or_else(|_| Self::fail_closed_empty()))\n\
+             }}\n\
+         }}\n",
+        pin.sha256, pin_26.sha256
+    );
+    std::fs::write(&rust_dest, decoy)?;
+    let decoy_violations = check_tzdb_bundles_against(dir.path(), PINNED_TZDB_BUNDLES);
+    assert!(
+        rules_of(&decoy_violations).contains(&"tzdb-rust-pin"),
+        "decoy statement must fail tzdb-rust-pin: {}",
+        render(&decoy_violations)
+    );
+
+    // 2. Non-inherent / wrong-type impl must be rejected even with exact loader body.
+    let wrong_impl = format!(
+        "pub const TZDB_RELEASE_2025B: &str = \"2025b\";\n\
+         pub const TZDB_RELEASE_2026C: &str = \"2026c\";\n\
+         pub const TZDB_SHA256_2025B: &str = \"{}\";\n\
+         pub const TZDB_SHA256_2026C: &str = \"{}\";\n\
+         const BUILTIN_2025B_BYTES: &[u8] = include_bytes!(\"../data/tzdb/2025b.tzdb\");\n\
+         const BUILTIN_2026C_BYTES: &[u8] = include_bytes!(\"../data/tzdb/2026c.tzdb\");\n\
+         struct DecoyBundle;\n\
+         impl DecoyBundle {{\n\
+             pub fn v2025b() -> &'static Self {{\n\
+                 static BUNDLE: OnceLock<TzdbBundle> = OnceLock::new();\n\
+                 BUNDLE.get_or_init(|| Self::from_bytes_verified(BUILTIN_2025B_BYTES, TZDB_SHA256_2025B).unwrap_or_else(|_| Self::fail_closed_empty()))\n\
+             }}\n\
+             pub fn v2026c() -> &'static Self {{\n\
+                 static BUNDLE: OnceLock<TzdbBundle> = OnceLock::new();\n\
+                 BUNDLE.get_or_init(|| Self::from_bytes_verified(BUILTIN_2026C_BYTES, TZDB_SHA256_2026C).unwrap_or_else(|_| Self::fail_closed_empty()))\n\
+             }}\n\
+         }}\n",
+        pin.sha256, pin_26.sha256
+    );
+    std::fs::write(&rust_dest, wrong_impl)?;
+    let wrong_impl_violations = check_tzdb_bundles_against(dir.path(), PINNED_TZDB_BUNDLES);
+    assert!(
+        rules_of(&wrong_impl_violations).contains(&"tzdb-rust-pin"),
+        "non-TzdbBundle impl must fail tzdb-rust-pin: {}",
+        render(&wrong_impl_violations)
     );
     Ok(())
 }

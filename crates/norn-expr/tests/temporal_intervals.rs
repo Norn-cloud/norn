@@ -567,7 +567,8 @@ fn tzdb_decoder_rejects_malformed_overlapping_trailing_and_oversized_bundles()
         })
     );
 
-    // Partially overlapping distinct payload intervals rejected (even if both slices are valid TZif).
+    // Partially overlapping distinct payload intervals fail deterministically with the partition error
+    // BEFORE any per-blob TZif parsing runs.
     let mut two_blobs = Vec::new();
     two_blobs.extend_from_slice(utc_tzif);
     two_blobs.extend_from_slice(utc_tzif);
@@ -578,10 +579,61 @@ fn tzdb_decoder_rejects_malformed_overlapping_trailing_and_oversized_bundles()
     )?;
     assert_eq!(
         TzdbBundle::from_bytes(&partial_overlap),
-        Err(TzdbBundleError::InvalidTzif {
-            zone: "UTC".to_owned()
-        })
+        Err(TzdbBundleError::OverlappingOrUnreferencedPayload)
     );
+
+    // RFC 9636 §3.3.2: TZif V2 rejects V3-only transition rule hours (< 0 or > 24),
+    // while TZif V3 accepts the exact same footer.
+    let make_tzif_with_footer = |version: u8, footer: &str| -> Vec<u8> {
+        let mut blob = Vec::new();
+        // V1 header (44 bytes): typecnt = 1, charcnt = 4 ("UTC\0"), all other counts = 0.
+        blob.extend_from_slice(b"TZif");
+        blob.push(version);
+        blob.extend_from_slice(&[0_u8; 15]);
+        blob.extend_from_slice(&0_u32.to_be_bytes()); // isutcnt
+        blob.extend_from_slice(&0_u32.to_be_bytes()); // isstdcnt
+        blob.extend_from_slice(&0_u32.to_be_bytes()); // leapcnt
+        blob.extend_from_slice(&0_u32.to_be_bytes()); // timecnt
+        blob.extend_from_slice(&1_u32.to_be_bytes()); // typecnt
+        blob.extend_from_slice(&4_u32.to_be_bytes()); // charcnt
+        // V1 data: 1 ttinfo (6 bytes) + "UTC\0" (4 bytes).
+        blob.extend_from_slice(&[0_u8; 6]);
+        blob.extend_from_slice(b"UTC\0");
+        // V2/V3 header + identical data.
+        blob.extend_from_slice(b"TZif");
+        blob.push(version);
+        blob.extend_from_slice(&[0_u8; 15]);
+        blob.extend_from_slice(&0_u32.to_be_bytes());
+        blob.extend_from_slice(&0_u32.to_be_bytes());
+        blob.extend_from_slice(&0_u32.to_be_bytes());
+        blob.extend_from_slice(&0_u32.to_be_bytes());
+        blob.extend_from_slice(&1_u32.to_be_bytes());
+        blob.extend_from_slice(&4_u32.to_be_bytes());
+        blob.extend_from_slice(&[0_u8; 6]);
+        blob.extend_from_slice(b"UTC\0");
+        // Footer: \n<POSIX TZ>\n
+        blob.push(b'\n');
+        blob.extend_from_slice(footer.as_bytes());
+        blob.push(b'\n');
+        blob
+    };
+    for v3_only_footer in ["EST5EDT,M3.2.0/26,M11.1.0/2", "EST5EDT,M3.2.0/-1,M11.1.0/2"] {
+        let v2_blob = make_tzif_with_footer(b'2', v3_only_footer);
+        let v2_bundle = encode_tzdb_synthetic("2099z", &[("Test/Zone", &v2_blob)])?;
+        assert_eq!(
+            TzdbBundle::from_bytes(&v2_bundle),
+            Err(TzdbBundleError::InvalidTzif {
+                zone: "Test/Zone".to_owned()
+            }),
+            "V2 must reject V3-only footer `{v3_only_footer}`"
+        );
+        let v3_blob = make_tzif_with_footer(b'3', v3_only_footer);
+        let v3_bundle = encode_tzdb_synthetic("2099z", &[("Test/Zone", &v3_blob)])?;
+        assert!(
+            TzdbBundle::from_bytes(&v3_bundle).is_ok(),
+            "V3 must accept footer `{v3_only_footer}`"
+        );
+    }
 
     // Unreferenced trailing byte in payload section rejected.
     let mut with_gap = utc_tzif.to_vec();

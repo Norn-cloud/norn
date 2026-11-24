@@ -375,8 +375,8 @@ fn parse_zone_entries(
     sections: &ParsedSections<'_>,
 ) -> Result<(Vec<ZoneEntry>, Arc<[TimeZone]>), TzdbBundleError> {
     let mut zones = Vec::with_capacity(sections.zone_count);
-    let mut blob_indices: BTreeMap<(usize, usize), usize> = BTreeMap::new();
-    let mut parsed_zones: Vec<TimeZone> = Vec::new();
+    // Maps distinct (offset, len) payload slices to (blob_index, representative_zone_name).
+    let mut blob_slots: BTreeMap<(usize, usize), (usize, String)> = BTreeMap::new();
     let mut previous_name: Option<String> = None;
 
     for index in 0..sections.zone_count {
@@ -421,26 +421,15 @@ fn parse_zone_entries(
         let tzif_end = tzif_offset
             .checked_add(tzif_len)
             .ok_or(TzdbBundleError::OutOfBoundsEntry { index })?;
-        let tzif_bytes = sections
-            .payload_slice
-            .get(tzif_offset..tzif_end)
-            .ok_or(TzdbBundleError::OutOfBoundsEntry { index })?;
+        if sections.payload_slice.get(tzif_offset..tzif_end).is_none() {
+            return Err(TzdbBundleError::OutOfBoundsEntry { index });
+        }
 
-        let blob_index = if let Some(&existing) = blob_indices.get(&(tzif_offset, tzif_len)) {
+        let blob_index = if let Some(&(existing, _)) = blob_slots.get(&(tzif_offset, tzif_len)) {
             existing
         } else {
-            if !validate_tzif_exact_framing(tzif_bytes) {
-                return Err(TzdbBundleError::InvalidTzif {
-                    zone: name.to_owned(),
-                });
-            }
-            let tz =
-                TimeZone::tzif(name, tzif_bytes).map_err(|_err| TzdbBundleError::InvalidTzif {
-                    zone: name.to_owned(),
-                })?;
-            let next_idx = parsed_zones.len();
-            parsed_zones.push(tz);
-            blob_indices.insert((tzif_offset, tzif_len), next_idx);
+            let next_idx = blob_slots.len();
+            blob_slots.insert((tzif_offset, tzif_len), (next_idx, name.to_owned()));
             next_idx
         };
 
@@ -452,8 +441,45 @@ fn parse_zone_entries(
         });
     }
 
-    verify_exact_payload_partition(&blob_indices, sections.payload_slice.len())?;
-    Ok((zones, Arc::from(parsed_zones)))
+    // Verify exact non-overlapping payload partitioning BEFORE per-blob TZif parsing
+    // so overlapping distinct ranges always fail deterministically with the partition error.
+    verify_exact_payload_partition(&blob_slots, sections.payload_slice.len())?;
+    let parsed_zones = parse_distinct_tzif_blobs(&blob_slots, sections.payload_slice)?;
+    Ok((zones, parsed_zones))
+}
+
+fn parse_distinct_tzif_blobs(
+    blob_slots: &BTreeMap<(usize, usize), (usize, String)>,
+    payload_slice: &[u8],
+) -> Result<Arc<[TimeZone]>, TzdbBundleError> {
+    let mut parsed_slots: Vec<Option<TimeZone>> = vec![None; blob_slots.len()];
+    for (&(tzif_offset, tzif_len), (blob_index, zone_name)) in blob_slots {
+        let tzif_end = tzif_offset
+            .checked_add(tzif_len)
+            .ok_or(TzdbBundleError::OverlappingOrUnreferencedPayload)?;
+        let tzif_bytes = payload_slice
+            .get(tzif_offset..tzif_end)
+            .ok_or(TzdbBundleError::OverlappingOrUnreferencedPayload)?;
+        if !validate_tzif_exact_framing(tzif_bytes) {
+            return Err(TzdbBundleError::InvalidTzif {
+                zone: zone_name.clone(),
+            });
+        }
+        let tz =
+            TimeZone::tzif(zone_name, tzif_bytes).map_err(|_err| TzdbBundleError::InvalidTzif {
+                zone: zone_name.clone(),
+            })?;
+        let slot = parsed_slots
+            .get_mut(*blob_index)
+            .ok_or(TzdbBundleError::OverlappingOrUnreferencedPayload)?;
+        *slot = Some(tz);
+    }
+
+    let parsed_zones: Vec<TimeZone> = parsed_slots
+        .into_iter()
+        .collect::<Option<Vec<_>>>()
+        .ok_or(TzdbBundleError::OverlappingOrUnreferencedPayload)?;
+    Ok(Arc::from(parsed_zones))
 }
 
 fn decode_zone_name(
@@ -484,12 +510,12 @@ fn decode_zone_name(
     Ok(name)
 }
 
-fn verify_exact_payload_partition(
-    blob_indices: &BTreeMap<(usize, usize), usize>,
+fn verify_exact_payload_partition<V>(
+    blob_slots: &BTreeMap<(usize, usize), V>,
     payload_len: usize,
 ) -> Result<(), TzdbBundleError> {
     let mut cursor = 0_usize;
-    for &(offset, len) in blob_indices.keys() {
+    for &(offset, len) in blob_slots.keys() {
         if offset != cursor {
             return Err(TzdbBundleError::OverlappingOrUnreferencedPayload);
         }
@@ -503,8 +529,9 @@ fn verify_exact_payload_partition(
     Ok(())
 }
 
-/// Validates RFC 8536 `TZif` framing so zero trailing bytes may hide after the
-/// `TZif` V1 data block or V2/V3/V4 POSIX TZ footer newline.
+/// Validates RFC 9636 `TZif` framing so zero trailing bytes may hide after the
+/// `TZif` V1 data block or V2/V3/V4 POSIX TZ footer newline, and enforces the
+/// RFC 9636 §3.3.2 V2 POSIX transition-time hour bound (`0..=24`).
 fn validate_tzif_exact_framing(data: &[u8]) -> bool {
     let Some((ver, v1_end)) = parse_tzif_block(data, 0, false) else {
         return false;
@@ -530,7 +557,39 @@ fn validate_tzif_exact_framing(data: &[u8]) -> bool {
     let Some(interior) = footer.get(1..interior_end) else {
         return false;
     };
-    !interior.contains(&b'\n') && !interior.contains(&0)
+    if interior.contains(&b'\n') || interior.contains(&0) {
+        return false;
+    }
+    if ver == b'2' && !interior.is_empty() {
+        let Ok(footer_str) = std::str::from_utf8(interior) else {
+            return false;
+        };
+        if !validate_v2_posix_tz_footer(footer_str) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Enforces RFC 9636 §3.3.2 for `TZif` V2 footers: transition-rule time hours
+/// must be in `0..=24` (rejecting V3+ negative hours and hours `> 24`).
+fn validate_v2_posix_tz_footer(footer: &str) -> bool {
+    for rule in footer.split(',').skip(1) {
+        if let Some((_, time_part)) = rule.split_once('/') {
+            let hour_str = time_part.split(':').next().unwrap_or("");
+            if hour_str.is_empty() || hour_str.starts_with('-') {
+                return false;
+            }
+            let digits = hour_str.strip_prefix('+').unwrap_or(hour_str);
+            let Ok(hour) = digits.parse::<u16>() else {
+                return false;
+            };
+            if hour > 24 {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 fn parse_tzif_block(data: &[u8], start: usize, v2: bool) -> Option<(u8, usize)> {
