@@ -107,15 +107,18 @@ export class BindingDefinitions {
   }
 
   /**
-   * What the cell holds for a definition id: its version and payload, `absent` when it holds none
-   * (or does not serve the kind or the route), or `local` without a cell host. Reconciliation
-   * reads it to settle a binding whose save did not finish.
+   * What the cell holds for a definition id: its version, lifecycle (`active` or `retired`), and
+   * payload, `absent` when it holds none (or does not serve the kind or the route), or `local`
+   * without a cell host. Reconciliation reads it to settle a binding whose save did not finish.
    */
-  async get(id: string): Promise<{ readonly kind: "found"; readonly version: number; readonly payload: Record<string, unknown> } | { readonly kind: "absent" } | { readonly kind: "local" }> {
+  async get(id: string): Promise<{ readonly kind: "found"; readonly version: number; readonly lifecycle: "active" | "retired"; readonly payload: Record<string, unknown> } | { readonly kind: "absent" } | { readonly kind: "local" }> {
     const answer = await this.call("GET", `/v1/definitions/${encodeURIComponent(id)}`)
     if (answer === null) return { kind: "local" }
-    const b = answer.body as { version?: unknown; payload?: unknown; code?: unknown } | null
-    if (answer.status === 200 && typeof b?.version === "number") return { kind: "found", version: b.version, payload: (typeof b.payload === "object" && b.payload !== null ? b.payload : {}) as Record<string, unknown> }
+    const b = answer.body as { version?: unknown; lifecycle?: unknown; payload?: unknown; code?: unknown } | null
+    if (answer.status === 200 && typeof b?.version === "number") {
+      const lifecycle = b.lifecycle === "retired" ? "retired" : "active"
+      return { kind: "found", version: b.version, lifecycle, payload: (typeof b.payload === "object" && b.payload !== null ? b.payload : {}) as Record<string, unknown> }
+    }
     if (answer.status === 404 || (answer.status === 422 && b?.code === "definition.kind_unknown")) return { kind: "absent" }
     throw new CellUnavailable(`The cell answered ${answer.status} reading ${id}.`)
   }

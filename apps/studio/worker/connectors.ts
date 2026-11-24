@@ -219,10 +219,15 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
    * completed save can never be overwritten. Both creates and edits are fenced against premature
    * abandon while their lease is still active (cell already holding a newer version is safe to adopt).
    */
+  const confirmedRetired = (outcome: Install | null): boolean =>
+    outcome !== null && (
+      outcome.kind === "installed"
+      || (outcome.kind === "refused" && outcome.findings.some((f) => f.code === "definition.already_retired"))
+    )
   const reconcile = async (binding: Binding, checkReady = false): Promise<Binding | null> => {
     if (binding.state !== "pending") {
       // On explicit POST /bindings:reconcile, also heal ready bindings if the cell already holds a
-      // newer committed version (e.g. a timed-out edit that committed after its intent was abandoned).
+      // newer committed active version (e.g. a timed-out edit that committed after its intent was abandoned).
       if (!checkReady || binding.definition === null || deps.host === undefined) return binding
       const cell = cellFor(environmentId)
       if (cell === null) return binding
@@ -233,7 +238,7 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
         if (error instanceof CellUnavailable) return binding
         throw error
       }
-      if (held.kind === "found" && held.version > binding.definition.version) {
+      if (held.kind === "found" && held.lifecycle === "active" && held.version > binding.definition.version) {
         await adoptReadyCell(db, actor.orgId, binding.id, binding.definition.id, held.version, held.payload, binding.definition.version)
         return await getBinding(db, actor.orgId, binding.id)
       }
@@ -255,7 +260,7 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
       if (error instanceof CellUnavailable) return binding
       throw error
     }
-    if (held.kind === "found" && (binding.definition === null || held.version > binding.definition.version)) {
+    if (held.kind === "found" && held.lifecycle === "active" && (binding.definition === null || held.version > binding.definition.version)) {
       await adoptCell(db, actor.orgId, binding.id, binding.pendingDefinition, held.version, held.payload, binding.pendingAttempt, binding.definition?.version ?? null)
     } else if (binding.pendingSave === "create") {
       // Record a durable orphan tombstone atomically with deleting the expired create row so any
@@ -266,7 +271,7 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
     }
     return await getBinding(db, actor.orgId, binding.id)
   }
-  /** Sweep abandoned create tombstones: retire any definition that committed late in the cell. */
+  /** Sweep abandoned create tombstones: retire any active definition that committed late in the cell. */
   const sweepOrphans = async (): Promise<void> => {
     if (deps.host === undefined) return
     const now = (deps.now ?? Date.now)()
@@ -283,14 +288,19 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
         throw error
       }
       if (held.kind === "found") {
+        if (held.lifecycle === "retired") {
+          await clearOrphan(db, actor.orgId, orphan.bindingId)
+          continue
+        }
         const retired = await cell.retire(orphan.definitionId, held.version).catch((error: unknown) => {
           if (error instanceof CellUnavailable) return null
           throw error
         })
-        if (retired !== null && (retired.kind === "installed" || retired.kind === "local")) {
+        // Clear the tombstone ONLY on affirmative retirement evidence (never on `local`/missing route).
+        if (confirmedRetired(retired)) {
           await clearOrphan(db, actor.orgId, orphan.bindingId)
         }
-      } else if (held.kind === "local" || now - orphan.abandonedAt >= ORPHAN_RETENTION_MS) {
+      } else if (held.kind === "absent" && now - orphan.abandonedAt >= ORPHAN_RETENTION_MS) {
         await clearOrphan(db, actor.orgId, orphan.bindingId)
       }
     }
@@ -480,7 +490,8 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
           }
           if (current === null) {
             const retired = await cell.retire(outcome.id, outcome.version).catch(() => null)
-            if (retired !== null && (retired.kind === "installed" || retired.kind === "local")) {
+            // Clear the tombstone ONLY when the cell affirmatively confirms retirement (never on `local`).
+            if (confirmedRetired(retired)) {
               await clearOrphan(db, actor.orgId, id).catch(() => undefined)
             }
           } else if (existing !== undefined) {
@@ -505,8 +516,8 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
       const runDecision = await ask([{ action: "connector.run", resource: toolBinding(binding.definition.id) }])
       if (runDecision instanceof AccessUnavailable) return unavailable(runDecision)
       if (runDecision[0]?.decision !== "permit") return denied(`run ${binding.label}`)
-      // Verify the local binding row's version matches the authoritative cell definition before
-      // merging fixed inputs so a stale D1 row can never run under a newer cell definition's policy.
+      // Verify the local binding row's version matches the authoritative active cell definition
+      // before merging fixed inputs so a stale or retired row can never run.
       if (deps.host !== undefined) {
         const cell = cellFor()
         if (cell === null) return noEnvironment()
@@ -517,7 +528,7 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
           if (error instanceof CellUnavailable) return refusal(503, "connectors.cell_unavailable", error.message)
           throw error
         }
-        if (held.kind === "absent") {
+        if (held.kind === "absent" || (held.kind === "found" && held.lifecycle === "retired")) {
           return refusal(409, "connectors.binding_not_in_cell", `${binding.label} is no longer stored in the cell.`)
         }
         if (held.kind === "found" && held.version !== binding.definition.version) {

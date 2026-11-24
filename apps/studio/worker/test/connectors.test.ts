@@ -499,27 +499,33 @@ test("the cell scope is the organization's declared environment, or null", async
   expect(scopeQuery({ orgId: "org_demo", environmentId: "analytics" })).toBe("orgId=org_demo&environmentId=analytics")
 })
 
-/** A cell that keeps what it installs, answers reads of it, and can be taken down. */
+/** A cell that keeps what it installs (including retired definitions with `lifecycle: "retired"`), answers reads, and can be taken down. */
 function liveCell() {
-  const held = new Map<string, { version: number; payload: Record<string, unknown> }>()
+  const held = new Map<string, { version: number; lifecycle: "active" | "retired"; payload: Record<string, unknown> }>()
   const state = { down: false }
   const { host, seen } = cellHost((path, body) => {
     if (state.down) throw new TypeError("connect refused")
     const read = /^\/v1\/definitions\/([^:/]+)$/.exec(path)
     if (read !== null) {
       const definition = held.get(decodeURIComponent(read[1] ?? ""))
-      return definition === undefined ? Response.json({ code: "definition.not_found" }, { status: 404 }) : Response.json({ id: read[1], version: definition.version, payload: definition.payload })
+      return definition === undefined
+        ? Response.json({ code: "definition.not_found" }, { status: 404 })
+        : Response.json({ id: read[1], version: definition.version, lifecycle: definition.lifecycle, payload: definition.payload })
     }
     const retire = /^\/v1\/definitions\/([^:/]+):retire$/.exec(path)
     if (retire !== null) {
       const id = decodeURIComponent(retire[1] ?? "")
       const current = held.get(id)
       if (current === undefined) return Response.json({ code: "definition.not_found" }, { status: 404 })
+      if (current.lifecycle === "retired") {
+        return Response.json({ code: "definition.refused", diagnostics: [{ code: "definition.already_retired", severity: "error", message: "the definition is already retired" }] }, { status: 422 })
+      }
       if (typeof body.expectedVersion === "number" && body.expectedVersion !== current.version) {
         return Response.json({ code: "definition.version_conflict" }, { status: 409 })
       }
-      held.delete(id)
-      return Response.json({ installed: true, id, version: current.version, receipt: {} })
+      const nextVersion = current.version + 1
+      held.set(id, { ...current, version: nextVersion, lifecycle: "retired" })
+      return Response.json({ installed: true, id, version: nextVersion, receipt: {} })
     }
     if (path === "/v1/definitions:install") {
       const id = String(body.id)
@@ -528,7 +534,7 @@ function liveCell() {
         return Response.json({ code: "definition.version_conflict" }, { status: 409 })
       }
       const version = (current?.version ?? 0) + 1
-      held.set(id, { version, payload: body.payload as Record<string, unknown> })
+      held.set(id, { version, lifecycle: "active", payload: body.payload as Record<string, unknown> })
       return Response.json({ installed: true, id, version, receipt: {} })
     }
     return Response.json({ installed: true, id: "x", version: 1, receipt: {} })
@@ -817,7 +823,8 @@ test("R3-3/R3-4/R3-8: edit lease fencing, finishSave conflict detection, scoped 
   expect(db.query("SELECT id FROM connector_binding WHERE id = ?").get(lateCreateId)).toBeNull()
   releaseCreate()
   expect(await creating).toMatchObject({ status: 409, body: { code: "connectors.binding_conflict" } })
-  expect(cell.held.has(`studio.binding.${lateCreateId}`)).toBe(false)
+  expect(cell.held.get(`studio.binding.${lateCreateId}`)?.lifecycle).toBe("retired")
+  expect(db.query("SELECT definition_id FROM connector_binding_orphan WHERE binding_id = ?").get(lateCreateId)).toBeNull()
 
   // R6-2: If a create commits in the cell and reconciliation ADOPTS it before the original response
   // returns, finishSave sees the adopted row and returns 200 WITHOUT retiring the adopted definition!
@@ -859,9 +866,33 @@ test("R3-3/R3-4/R3-8: edit lease fencing, finishSave conflict detection, scoped 
   expect(db.query("SELECT id FROM connector_binding WHERE id = ?").get(lostRow.id)).toBeNull()
   expect(db.query("SELECT definition_id FROM connector_binding_orphan WHERE binding_id = ?").get(lostRow.id)).toEqual({ definition_id: lostDefId })
   // Simulate the cell committing the lost-response install AFTER reconcile already deleted the binding row.
-  cell.held.set(lostDefId, { version: 1, payload: { label: "LostResponseCreate", runRole: "member" } })
+  cell.held.set(lostDefId, { version: 1, lifecycle: "active", payload: { label: "LostResponseCreate", runRole: "member" } })
+  // R8-1: If the retire route answers 404 route.not_found (`local`), the tombstone MUST NOT be cleared!
+  const missingRetireHost = {
+    fetch: async (request: Request) => {
+      if (new URL(request.url).pathname.endsWith(":retire")) return Response.json({ code: "route.not_found" }, { status: 404 })
+      return cell.host.fetch(request)
+    },
+  } as unknown as Fetcher
+  await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: missingRetireHost })
+  expect(cell.held.get(lostDefId)?.lifecycle).toBe("active")
+  expect(db.query("SELECT definition_id FROM connector_binding_orphan WHERE binding_id = ?").get(lostRow.id)).toEqual({ definition_id: lostDefId })
+  // R8-2: If retirement commits in the cell (leaving `lifecycle: "retired"` retained) AND its
+  // response is lost, the next reconcile reads `lifecycle: "retired"` and clears the tombstone
+  // with ZERO further `:retire` calls!
+  const lostRetireResponseHost = {
+    fetch: async (request: Request) => {
+      const response = await cell.host.fetch(request)
+      if (new URL(request.url).pathname.endsWith(":retire")) throw new TypeError("connection reset after commit")
+      return response
+    },
+  } as unknown as Fetcher
+  await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: lostRetireResponseHost })
+  expect(cell.held.get(lostDefId)?.lifecycle).toBe("retired")
+  expect(db.query("SELECT definition_id FROM connector_binding_orphan WHERE binding_id = ?").get(lostRow.id)).toEqual({ definition_id: lostDefId })
+  const retireCountBefore = cell.seen.filter((r) => r.path.endsWith(":retire")).length
   await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: cell.host })
-  expect(cell.held.has(lostDefId)).toBe(false)
+  expect(cell.seen.filter((r) => r.path.endsWith(":retire")).length).toBe(retireCountBefore)
   expect(db.query("SELECT definition_id FROM connector_binding_orphan WHERE binding_id = ?").get(lostRow.id)).toBeNull()
 
   // R5-5b: Even if a hard isolate crash leaves D1 behind the cell's committed version, POST /bindings/:id/run
