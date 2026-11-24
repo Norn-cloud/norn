@@ -5,6 +5,7 @@
     "norn-ir",
     "norn-cell",
     "norn-checker",
+    "norn-ui-checker",
     "norn-kernel"
   ],
   "dev_only_norn": [],

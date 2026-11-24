@@ -5545,6 +5545,14 @@
       "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
     },
     {
+      "code": "widget.validation.ring1_required",
+      "tier": "T2",
+      "severity": "error",
+      "message": "widget artifacts require Ring-1 norn-ui-checker validation and cannot be admitted by Ring-0 norn-checker alone",
+      "fix": "Validate widget artifacts with Ring-1 norn-ui-checker rather than Ring-0 norn-checker alone.",
+      "no_fix": null
+    },
+    {
       "code": "widget.validation.unsafe_action_binding",
       "tier": "T2",
       "severity": "error",

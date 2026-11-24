@@ -2081,6 +2081,9 @@
     "widget.validation.missing_dependency": {
       "message": "widget references '{$artifactId}' without declaring it as a dependency"
     },
+    "widget.validation.ring1_required": {
+      "message": "widget artifacts require Ring-1 norn-ui-checker validation and cannot be admitted by Ring-0 norn-checker alone"
+    },
     "widget.validation.unsafe_action_binding": {
       "message": "action binding must target a Norn action or process command, not a raw mutation"
     },
