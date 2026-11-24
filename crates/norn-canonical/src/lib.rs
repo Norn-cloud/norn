@@ -769,12 +769,28 @@ pub fn domain_hash_hex<T: Serialize + ?Sized>(
     domain: &[u8],
     value: &T,
 ) -> Result<String, CanonicalJsonError> {
-    let bytes = canonical_json_of(value)?;
+    Ok(domain_hash(domain, &canonical_json_of(value)?))
+}
+
+/// Lower-case hexadecimal SHA-256 of `domain || canonical_json_exact_of(value)`:
+/// [`domain_hash_hex`] for a commitment that must keep exact Unicode spelling.
+///
+/// # Errors
+///
+/// As [`canonical_json_exact_of`].
+pub fn domain_hash_exact_hex<T: Serialize + ?Sized>(
+    domain: &[u8],
+    value: &T,
+) -> Result<String, CanonicalJsonError> {
+    Ok(domain_hash(domain, &canonical_json_exact_of(value)?))
+}
+
+fn domain_hash(domain: &[u8], bytes: &[u8]) -> String {
     counters::bump(counters::Counter::Hashes);
     let mut hasher = Sha256::new();
     hasher.update(domain);
-    hasher.update(bytes.as_slice());
-    Ok(lower_hex(hasher.finalize().into()))
+    hasher.update(bytes);
+    lower_hex(hasher.finalize().into())
 }
 
 /// Hash one JSON document using an explicit profile.

@@ -282,8 +282,8 @@ pub use norn_canonical::counters;
 pub mod canonical {
     pub use norn_canonical::{
         CanonicalJsonError, HashProfile, JsonValue, canonical_json_of, canonicalize_json,
-        domain_hash_hex, legacy_hash_value, nfc, parse_json, parse_json_tokens,
-        parse_json_verbatim, serialize, write_canonical_string,
+        domain_hash_exact_hex, domain_hash_hex, legacy_hash_value, nfc, parse_json,
+        parse_json_tokens, parse_json_verbatim, serialize, write_canonical_string,
     };
 }
 

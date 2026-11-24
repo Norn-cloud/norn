@@ -1187,3 +1187,53 @@ fn parameter_slice_enforces_type_read_authz_when_optional_parent_is_omitted() {
         .expect_err("denied setting type must fail closed");
     assert!(matches!(denied, ActionRefusal::TargetNotFound));
 }
+
+/// AUTH-INDEPENDENT-PERSON (#618): an approval binds the parameter its commit
+/// pinned. A setting restated at a new version with the same value leaves the
+/// posted amounts as they were, yet the commit under the earlier approval is
+/// refused.
+#[test]
+fn approved_intent_binds_the_pinned_parameter() {
+    let types = types();
+    let rule = tax_rule();
+    let catalog = TypeCatalog::new(&types).with_action_rules(std::slice::from_ref(&rule));
+    let action = post_tax_action(
+        None,
+        &json!([{"orgId": "org_demo", "environmentId": "dev"}]),
+    );
+    let mut store = new_cell();
+    let (june_key, _july_key) = seed_june_july_settings(&mut store);
+    seed_invoice(&mut store, "inv-june", "100.00");
+    let june = invocation_for(
+        &action,
+        "inv-june",
+        "2026-06-30T23:59:59.999999999Z",
+        "post-inv-june",
+        None,
+    );
+    let granted =
+        norn_kernel::prepare_action_intent(&store, &catalog, &june, &Allow).expect("prepared");
+    let restated = store
+        .load(&june_key)
+        .expect("load")
+        .values
+        .expect("setting");
+    put(&mut store, june_key, restated);
+    let refused = commit_action(
+        &mut store,
+        &catalog,
+        &ActionCall {
+            approved_intent: Some(granted),
+            ..june
+        },
+        &Allow,
+    );
+    assert!(
+        matches!(refused, Err(ActionRefusal::ApprovedIntentChanged)),
+        "{refused:?}"
+    );
+    assert_eq!(
+        load_invoice(&store, "inv-june").get("tax"),
+        Some(&decimal("0"))
+    );
+}

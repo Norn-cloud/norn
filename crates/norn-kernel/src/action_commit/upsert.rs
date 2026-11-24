@@ -1,7 +1,7 @@
 use norn_ir::{ActionRoot, FactChange, ObjectTypeName, ResourceLimitProfile, UpsertWriteMode};
 
 use crate::cell_host::{CellHost, FactKey, JsonObject, JsonValue};
-use crate::decision_commit::{FactEvent, TypeCatalog};
+use crate::decision_commit::{DecisionRefusal, FactEvent, TypeCatalog};
 use crate::limits::SliceMeter;
 use crate::naming_series::type_series;
 
@@ -100,11 +100,21 @@ where
         // No honest target exists for some allocator failures. Conceal all
         // refusals alike unless diagnostic access was separately granted, so
         // denied calls cannot distinguish a healthy counter from a bad one.
-        return if disclose {
-            outcome
-        } else {
-            outcome.map_err(|_concealed_refusal| ActionRefusal::TargetNotFound)
-        };
+        // The host's own answer to the commit and the approval binding it are
+        // past the allocator and say nothing about the counter (#618).
+        return outcome.map_err(|refusal| {
+            if disclose
+                || matches!(
+                    refusal,
+                    ActionRefusal::ApprovedIntentChanged
+                        | ActionRefusal::Decision(DecisionRefusal::Host(_))
+                )
+            {
+                refusal
+            } else {
+                ActionRefusal::TargetNotFound
+            }
+        });
     }
     let Some(JsonValue::String(object_id)) = preparation.effective_input.get(object_id_field)
     else {

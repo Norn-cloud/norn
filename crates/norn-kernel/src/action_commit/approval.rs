@@ -13,16 +13,20 @@ use norn_ir::quantity_ledger::{QuantityOperation, QuantityRequest};
 use serde::Serialize;
 
 use crate::cell_host::{
-    BoundedFact, CellCommit, CellHost, CommitError, CommitReceipt, Consumed, DueTimer, FactKey,
-    FactState, FactWrite, JsonObject, LinkKey, LinkReadTarget, LinkState, LinkWrite, Observed,
-    OwnedRowsCommitProof, Performed, PredicateObject, PredicateQuery, SerializationLane,
+    BoundedFact, CellCommit, CellHost, CommitError, CommitReceipt, Consumed, DueTimer,
+    FactExpectation, FactKey, FactState, FactWrite, JsonObject, LinkKey, LinkReadExpectation,
+    LinkReadTarget, LinkState, LinkWrite, Observed, OwnedRowsCommitProof, Performed,
+    PredicateActionRead, PredicateObject, PredicateQuery, PredicateReadExpectation,
+    SerializationLane,
 };
 use crate::decision_commit::{DecisionRefusal, FactEvent, TypeCatalog};
 use crate::effect::Effect;
 use crate::limits::EnvelopeLimits;
 use crate::observations::World;
 
-use super::types::{ActionAuthorizer, ActionCall, ActionReferenceReads, ActionRefusal};
+use super::types::{
+    ActionAuthorizer, ActionCall, ActionParameterPin, ActionReferenceReads, ActionRefusal,
+};
 
 /// Maximum UTF-8 byte length of an accountable-person identifier.
 const MAX_ACCOUNTABLE_PERSON_BYTES: usize = 256;
@@ -79,13 +83,19 @@ pub fn retained_person_matches(recorded: Option<&str>, current: Option<&str>) ->
 }
 
 /// The commit an action call is about to hand to its host, as its approval
-/// digest binds it: everything that commit changes in the world.
+/// digest binds it: everything that commit changes in the world, and the
+/// evidence it was decided on (the versions and memberships it read, which
+/// also decide the markings its writes inherit, and the parameters it pinned).
 pub(super) struct PreparedCommit<'a> {
     pub(super) target: &'a FactKey,
     pub(super) effective_input: &'a JsonObject,
     /// The call's own idempotency record, which is bookkeeping, not intent.
     pub(super) record: &'a FactKey,
+    pub(super) parameter_pins: &'a [ActionParameterPin],
     pub(super) consumes: Option<&'a Consumed>,
+    pub(super) reads: &'a [FactExpectation],
+    pub(super) link_reads: &'a [LinkReadExpectation],
+    pub(super) predicate_reads: &'a [PredicateReadExpectation],
     pub(super) writes: &'a [FactWrite],
     pub(super) links: &'a [LinkWrite],
     pub(super) effects: &'a [Effect<JsonObject, JsonObject>],
@@ -104,7 +114,11 @@ struct PreparedIntentCanonical<'a> {
     target: &'a FactKey,
     raw_input: &'a JsonObject,
     effective_input: &'a JsonObject,
+    parameter_pins: &'a [ActionParameterPin],
     consumes: Option<&'a Consumed>,
+    reads: &'a [FactExpectation],
+    link_reads: &'a [LinkReadExpectation],
+    predicate_reads: &'a [PredicateReadExpectation],
     writes: Vec<&'a FactWrite>,
     links: &'a [LinkWrite],
     effects: &'a [Effect<JsonObject, JsonObject>],
@@ -135,7 +149,11 @@ fn prepared_intent_digest<X>(
         target: commit.target,
         raw_input: &call.input,
         effective_input: commit.effective_input,
+        parameter_pins: commit.parameter_pins,
         consumes: commit.consumes,
+        reads: commit.reads,
+        link_reads: commit.link_reads,
+        predicate_reads: commit.predicate_reads,
         writes: commit
             .writes
             .iter()
@@ -145,13 +163,14 @@ fn prepared_intent_digest<X>(
         effects: commit.effects,
         quantity: commit.quantity.map(|request| clock_relative(request, call)),
     };
-    let hex = norn_ir::canonical::domain_hash_hex(PREPARED_INTENT_DOMAIN, &canonical).map_err(
-        |error| {
+    // Exact spelling: the text a call writes is kept as written, so its
+    // commitment must not identify Unicode-equivalent spellings.
+    let hex = norn_ir::canonical::domain_hash_exact_hex(PREPARED_INTENT_DOMAIN, &canonical)
+        .map_err(|error| {
             ActionRefusal::Decision(DecisionRefusal::InvalidOutput {
                 reason: format!("failed to compute prepared intent digest: {error}"),
             })
-        },
-    )?;
+        })?;
     Ok(format!("sha256:{hex}"))
 }
 
@@ -243,6 +262,16 @@ where
         max_bytes: u64,
     ) -> Result<Option<Vec<PredicateObject>>, Self::Error> {
         self.0.read_predicate(predicate, max_members, max_bytes)
+    }
+    fn read_predicate_for_action(
+        &self,
+        predicate: &PredicateQuery,
+        max_members: usize,
+        max_bytes: u64,
+        authorize: &mut dyn FnMut(&PredicateObject) -> bool,
+    ) -> Result<PredicateActionRead, Self::Error> {
+        self.0
+            .read_predicate_for_action(predicate, max_members, max_bytes, authorize)
     }
     fn commit(
         &mut self,

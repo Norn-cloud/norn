@@ -483,6 +483,10 @@ fn refusal(refused: &Refusal) -> Response {
 pub(in crate::dev) mod action_cell;
 
 #[cfg(test)]
+#[path = "series_approval_tests.rs"]
+mod series_approval_tests;
+
+#[cfg(test)]
 #[allow(
     clippy::unwrap_used,
     clippy::expect_used,

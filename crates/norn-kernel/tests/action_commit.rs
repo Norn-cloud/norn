@@ -4879,3 +4879,42 @@ fn approved_intent_binds_the_prepared_commit_not_the_raw_input() {
     );
     assert_eq!(cell.outbox().len(), 1);
 }
+
+/// AUTH-INDEPENDENT-PERSON (#618): the intent digest keeps the exact Unicode
+/// spelling a call writes. NFC and NFD spellings of one text prepare distinct
+/// digests, and a commit under the other spelling's approval is refused.
+#[test]
+fn approved_intent_binds_the_exact_unicode_spelling() {
+    let types = order_types();
+    let catalog = TypeCatalog::new(&types);
+    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    seed(&mut cell, ORDER, "SO-1", "draft");
+    let action = approve_with_guarded_update_command("input.modified", "input.owner", "input.rows");
+    let spelled = |owner: &str| {
+        let mut call = guarded_update_call(&action, "approve-owner");
+        call.input
+            .insert("owner".to_owned(), JsonValue::String(owner.to_owned()));
+        call
+    };
+    let composed = spelled("caf\u{e9}");
+    let decomposed = spelled("cafe\u{301}");
+    let digest = |call: &ActionCall<'_>| {
+        norn_kernel::prepare_action_intent(&cell, &catalog, call, &Allow).ok()
+    };
+    let granted = digest(&composed);
+    assert!(granted.is_some() && granted != digest(&decomposed));
+    let refused = commit_action(
+        &mut cell,
+        &catalog,
+        &ActionCall {
+            approved_intent: granted,
+            ..decomposed
+        },
+        &Allow,
+    );
+    assert!(
+        matches!(&refused, Err(refusal) if refusal.code() == "action.approved_intent_changed"),
+        "{refused:?}"
+    );
+    assert!(cell.outbox().is_empty());
+}

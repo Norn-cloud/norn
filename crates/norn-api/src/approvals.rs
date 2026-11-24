@@ -769,12 +769,15 @@ pub(crate) fn approved_state<E: SqlEngine>(
         format!("{}/{}", held.call.action, held.call.idempotency_key),
     );
     let recorded = CellHost::load(cell, &key).map_err(Refusal::host)?;
-    // Exactly the approved call: its action, its requester, its input, its trace.
+    // Exactly the approved call: its action, its requester, its input, its
+    // trace. The parked command keeps its input in Norn1 form, as the
+    // command's own identity hashes it; the exact spelling the commit wrote
+    // is bound by the approval's intent digest (#618).
     let exact = recorded.values.as_ref().map(|values| {
         ActionCallRecord::from_values(values).filter(|record| {
             record.action_id == held.call.action
                 && record.actor == held.call.requester.subject
-                && record.input == held.call.input
+                && same_input(&record.input, &held.call.input)
                 && record.trace == held.call.trace
         })
     });
@@ -820,6 +823,13 @@ pub(crate) fn approved_state<E: SqlEngine>(
         (None, Some(None)) => conflict(),
     };
     Ok((held, state))
+}
+
+/// Whether two call inputs are one input under Norn1 equality, the rule the
+/// parked command stores and identifies its call by.
+fn same_input(recorded: &RuntimeObject, parked: &RuntimeObject) -> bool {
+    let norn1 = norn_ir::canonical::canonical_json_of::<RuntimeObject>;
+    matches!((norn1(recorded), norn1(parked)), (Ok(left), Ok(right)) if left == right)
 }
 
 /// The decision that approved the parked call `command`, if one did.
