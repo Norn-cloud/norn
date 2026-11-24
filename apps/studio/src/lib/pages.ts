@@ -34,7 +34,7 @@ export const PAGES = {
   "/automations/$id/edit": "/automations/studio.automation.missing/edit",
   "/workflows": "/workflows",
   "/canvas": "/canvas",
-  "/guarantees": "/guarantees",
+  "/rules": "/rules",
   "/markings": "/markings",
   "/connections": "/connections",
 } as const
