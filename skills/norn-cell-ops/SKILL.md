@@ -1,41 +1,44 @@
 ---
 name: norn-cell-ops
-description: Provision, update (plan/apply), subscribe to live updates (norn.live.v1), and operate Norn tenant cells hosted on Rivet Actors (norn-cell-rivet), Cloudflare Durable Objects (norn-cell-do), or the local dev host via CLI and MCP.
+description: Provision, update (plan/apply), subscribe to live updates (norn.live.v1), and operate Norn tenant cells hosted on Rivet Actors (norn-cell-rivet), Cloudflare Durable Objects (norn-cell-do), or the local norn dev host via CLI and HTTP MCP.
 ---
 
 # Norn Cell Operations (`norn-cell-ops`)
 
 Use this skill when provisioning, running, inspecting, upgrading, or troubleshooting a live Norn Cell.
 
-## Host Targets (Same Engine, Same HTTP Contract)
+## Host Capability Matrix
 
-All three hosts run the exact same `norn-cell` + `norn-api` Rust kernel and serve byte-identical routes:
+All three hosts run the `norn-cell` + `norn-api` Rust kernel, with explicit differences in live subscriptions and definition installation:
 
-| Host | Crate / App | Backing Store | Best For |
-| --- | --- | --- | --- |
-| **Rivet Actor Host (Ring 1)** | `crates/norn-cell-rivet`, `apps/norn-cell-rivet` | RivetKit 3.1.1 embedded SQLite (replicated VFS) | Self-hosted / Hetzner / cloud-portable production tenant cells (one actor per tenant cell) |
-| **Durable Object Host** | `crates/norn-cell-do`, `apps/norn-cell-do` | Cloudflare DO SQLite | Serverless edge deployment on Cloudflare Workers |
-| **Local Dev Host** | `norn dev` (`norn-dev-host`) | Local SQLite | Instant hot-reloading authoring loop |
+| Host | Crate / App | Backing Store | `/v1/subscribe` (`norn.live.v1`) | Hosted `:plan` / `:apply` |
+| --- | --- | --- | --- | --- |
+| **Rivet Actor Host (Ring 1)** | `crates/norn-cell-rivet`, `apps/norn-cell-rivet` | RivetKit `=3.1.1` SQLite | **Yes** (WebSocket upgrade + caller auth; Studio browsers connect via `/api/host/v1/subscribe`) | **Yes** |
+| **Durable Object Host** | `crates/norn-cell-do`, `apps/norn-cell-do` | Cloudflare DO SQLite | **Yes** (WebSocket upgrade + caller auth) | **Yes** |
+| **Local Dev Host** | `norn dev` (`norn-dev-host`) | Local SQLite | **No** WebSocket upgrade | **No** — returns `409 defs.dev_sources_only` (local project sources own installation) |
 
-## Core Cell Endpoints
+## Core Hosted Cell Endpoints
 
-Every host exposes the same scoped API (`?orgId=<org>&environmentId=<env>`):
+Scoped via `?orgId=<org>&environmentId=<env>`:
 
-- `POST /v1/cell:provision` — Atomically initializes a vacant scope (`HOST-PROVISION-ATOMIC`): submits `{ baseSha256, artifacts }` (<= 1 MiB) as an authorized `owner`. Replays identically on retry; conflicts return `409 cell.provision_conflict`.
-- `POST /v1/cell/definitions:plan` — Dry-runs candidate IR updates against live cell state and prints migration/law impact without writing.
-- `POST /v1/cell/definitions:apply` — Atomically admits and installs the checked update into the cell's SQLite store.
-- `POST /v1/actions/{actionId}` — Executes a governed action (checked against Cedar `AccessIR`, lifecycle transitions, preconditions, and immediate laws in one atomic commit).
-- `GET /v1/subscribe` (`norn.live.v1`) — Live WebSocket subscription naming GET routes; after every commit, the cell re-evaluates each subscribed route under the caller's principal and pushes only changed answers.
-- `POST /v1/access:decide` — Authoritative permission check for external connectors/surfaces.
-- `POST /v1/mcp` — Bounded MCP endpoint exposing the cell's installed capabilities to agents.
+- `POST /v1/cell:provision` — Atomically initializes a vacant scope (`HOST-PROVISION-ATOMIC`) as an authorized owner. Distinct from revision-checked updates:
+  - First provision conflicts return `409 cell.provision_conflict`.
+  - Revision-checked updates with a stale `baseSha256` return `409 cell.base_mismatch`.
+- `POST /v1/cell/definitions:plan` — Dry-runs candidate IR updates against live cell state without writing (hosted cells only).
+- `POST /v1/cell/definitions:apply` — Atomically admits and installs a checked update into the cell's SQLite store (hosted cells only).
+- `POST /v1/actions/{actionId}` — Executes a governed action with JSON body `{ input, idempotencyKey }` (header alone is insufficient). Mint one opaque `idempotencyKey` per user intent and reuse it on retry. Returns one of three public outcomes: **`receipt`** (committed), **`pending`** (HTTP `202` pending decision, not yet committed), or **`refused`** (`403`/`409`/`422`).
+- `GET /v1/subscribe` (`norn.live.v1`) — Authenticated WebSocket live read subscription on Rivet and DO hosts (re-evaluates subscribed GET routes under the caller's principal after commits and pushes changed answers).
+- `POST /v1/access:decide` — Bounded connector authorization checks for the verified principal.
+- `POST /v1/mcp` — HTTP MCP endpoint exposing the cell's installed capabilities to agents (distinct from local stdio `norn mcp`, which exposes `norn.capabilities` and `norn.check` only).
 
 ## Operating Rules
 
-1. **Where tenant artifacts live:**
-   - **Admitted IR & operational policy objects:** Inside the cell's SQLite store (atomic with business data; survives actor restarts via `HOST-REOPEN-1`).
-   - **Binary blobs (photos, scans, PDFs, CSV exports):** Object storage (S3 / R2), with only the SHA-256 digest and scoped object key stored in the cell.
-   - **Secrets (bot tokens, payment API keys):** Host/Worker secrets (Infisical / env), never in cell tables or git.
-   - **Authored TypeScript source:** Tenant's Git repo (linked GitHub App or S3-backed `enroute.sh` in hosted Lovable mode) — compiled and pushed via `:plan` / `:apply`.
+1. **Where artifacts, blobs, and secrets live:**
+   - **Admitted IR & operational state:** Inside the cell's SQLite store (atomic with business data; survives actor restarts via `HOST-REOPEN-1`).
+   - **Tenant connector credentials:** Sealed inside the cell vault (`_norn_vault_sealed`) — never store plaintext credentials in authored IR, ordinary business records, or Git.
+   - **Host secrets (signing keys, provider tokens, JWKS config):** Supplied via host/runtime secret management (env / secret store), never in cell tables or Git.
+   - **Binary blobs (documents, attachments, exports):** External object storage (e.g., S3/R2 as a deployment choice), storing only scoped references and digests inside the cell.
+   - **Authored TypeScript source:** Versioned in Git, checked locally with `norn check`, and deployed via `norn plan` / `norn apply`.
 2. **Debugging refusals:**
    - Never bypass a cell refusal (`403`, `409`, `422`). Read the structured refusal code (`core.*`, `cell.*`, `law.*`), run `norn explain`, fix the source definition or input, and re-check.
    - A vacant scope answers unverified callers with the same opaque denial as a provisioned cell (never leaks tenant existence); verified org members receive `404 cell.not_provisioned`.

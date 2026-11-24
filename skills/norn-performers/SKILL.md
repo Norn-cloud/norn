@@ -1,48 +1,65 @@
 ---
 name: norn-performers
-description: Write thin, stateless external world-boundary performers (payment rails, messaging bots, CP-SAT/ML solvers, read-only legacy syncs) for Norn Cells using Norn.fn, atomic outbox dispatch, durable idempotency, and inquiry-before-retry recovery.
+description: Write thin, stateless external world-boundary performers for Norn Cells behind Norn.fn / Norn.perform using Core-07 / D03 uncertainty recovery (outcome-unknown -> reconciliation), scoped principal identity binding, and authenticated Function receipts.
 ---
 
 # Norn World-Boundary Performers (`norn-performers`)
 
-Use this skill whenever a Norn application must talk to the outside world: payment/payout rails, messaging platforms (Telegram/WhatsApp/SMS), optimization/ML solvers, or read-only legacy ERP scrapers.
+Use this skill whenever a Norn application must interact with an external system: payment/transfer providers, messaging/webhook platforms, external compute/optimization solvers, or read-only legacy data sources.
 
 ## The Boundary Rule
 
 **Performers NEVER own business truth.**
-- A performer is **stateless glue** translating between an external wire protocol and the Norn Cell's checked actions/outbox.
-- **No shadow databases:** Performers must not maintain their own business tables, balances, or approval state. All durable truth lives in the Norn Cell.
-- **No policy shortcuts:** Performers never bypass cell authorization, law checks, or approval gates. Every inbound webhook (e.g., Telegram button click, payment callback) invokes a governed cell action with explicit actor/scope credentials.
+- A performer is **stateless glue** translating between an external wire protocol and governed Norn Cell actions/outbox steps.
+- **No shadow databases:** Performers must not maintain parallel business tables, balances, or approval state. All durable truth lives in the Norn Cell.
+- **No policy shortcuts:** Performers never bypass cell authorization, law checks, or approval gates.
 
-## Outbox & Money-Moving Safety (D03)
+## Authoring External Calls (`Norn.fn` + `Norn.perform`)
 
-For any non-idempotent external side effect (especially payments/payouts):
+Declare external capabilities with typed signatures and invoke them from compiled flows rather than ad-hoc side effects:
 
-1. **Stable operation identity:** Generate a deterministic `client_reference_id` / `merchantTransferId` derived from the immutable Norn object ID (e.g., `PAY-<period>-<employeeCode>`).
-2. **Neutral state machine inside the cell:** Map provider-specific status codes onto Norn's neutral states:
-   `created -> pending -> succeeded | failed | rejected | returned | unknown`
-3. **Never blindly retry on ambiguous outcomes:**
-   - Only a **documented pre-creation refusal** (e.g., an explicit HTTP 400 validation schema response proving nothing was created) transitions directly to `rejected`.
-   - Any timeout, network drop, HTTP 5xx, or unrecognized status **MUST** transition to `unknown` (`reconciliation-required`). Recovery happens **only via provider inquiry** by `client_reference_id` before any new attempt.
-4. **Reversible / returnable settlements stay open until final:**
-   - If a provider marks a transfer delivered with a returnable flag (e.g., `openForReturn: true`), keep it `pending` until settled; map post-delivery bank/wallet returns to `returned` so accounting reverses cleanly.
-5. **Transport guardrails:** Default to `simulated` or explicit `emulator` / `sandbox` origins unless live credentials and production environment pins are explicitly supplied via host secrets (Infisical / Worker Secrets).
+```ts
+const dispatchTransfer = Norn.fn<TransferInput, TransferOutput, TransferError>({
+  id: "acme.provider.dispatch_transfer",
+  version: 1,
+})
 
-## Solver & Compute Performers (e.g., OR-Tools CP-SAT)
+// Inside a compiled action/workflow:
+Norn.perform("dispatch", dispatchTransfer, input)
+```
 
-- Accept an unmarked operational snapshot from the cell (PII/salaries already stripped by `norn.reveal`).
-- Return a deterministic output + canonical SHA-256 **solver receipt digest** (or structured infeasibility diagnostics).
-- The cell's governed action verifies the receipt digest and checks every domain law before committing proposed assignments.
+## Outbox & External Effect Safety (Core-07 / D03)
 
-## Messaging & Webhook Performers (e.g., Telegram Bot / Mini App)
+For any non-idempotent external side effect:
 
-- Verify cryptographic signatures at the edge (webhook secret header + Mini App `initData` HMAC-SHA256).
-- Map verified user identities (e.g., shared mobile phone number) to their Norn principal.
-- Translate interactive button callbacks (`callback_data`) directly into `POST /v1/actions/{actionId}` calls against the Rivet/DO Cell, surfacing any cell refusal cleanly back to the user in their locale.
+1. **Neutral D03 lifecycle inside the cell:**
+   `requested -> dispatched -> succeeded | failed | outcome-unknown`
+   - Reserve `failed` strictly for documented pre-effect refusals proving the external side effect did not occur.
+   - Any transport timeout, dropped connection, HTTP 5xx, or ambiguous response **MUST** record **`outcome-unknown`** — never blindly retry a non-idempotent effect.
+2. **Preserve the operation ID across attempts:**
+   - Mint one stable **operation ID** (not merely the target object ID, which would conflate two separate effects on the same object) and preserve it across retries and inquiries.
+3. **Recovery and compensation:**
+   - Resolve `outcome-unknown` via the provider's explicit idempotency or status-lookup (`inquire`) contract, or require explicit reconciliation evidence before marking terminal.
+   - Post-settlement reversals or refunds require **separately authorized compensation** (never silent mutation of a completed effect).
+   - Label any provider-specific uncertainty limits honestly (e.g., if a provider lacks lookup-by-operation-ID, require manual reconciliation).
+4. **Transport guardrails:**
+   - Default adapters to explicit `emulator` / `sandbox` transports unless live credentials and production pins are explicitly supplied via host secrets.
+
+## Compute & Solver Performers
+
+- Pass only unmarked operational inputs authorized by the cell's reveal rules.
+- Return a scoped, **authenticated Function receipt** bound to the function manifest, run, and generation (Core-07 receipt acceptance).
+- Never trust a bare digest over arbitrary solver JSON as proof of authenticity or law satisfaction; the cell action must still verify the authenticated receipt binding and enforce all domain laws before committing.
+
+## Inbound Webhooks & Identity Binding
+
+- Verify cryptographic signatures at the edge (webhook secret header + constant-time HMAC verification + timestamp/freshness window to prevent replay).
+- Bind an **authenticated external provider subject** (verified user ID from the signed provider payload) to a scoped Norn principal — never rely on a shared or unverified phone number, which cannot distinguish two callers, and never reuse a single service-wide token for end-user actions.
+- Dispatch `POST /v1/actions/{actionId}` with `{ input, idempotencyKey }` in the JSON body (minting one opaque `idempotencyKey` per user intent and reusing it on retry) and handle all three public `CallResult` outcomes: **`receipt | pending | refused`** (HTTP `202` = pending decision, not committed).
 
 ## What to Test
 
-Unlike domain rules (which `norn-checker` proves), external wire adapters **do** merit small, fast contract tests covering:
-- Provider status/code normalization (`pending`, `succeeded`, `returned`, `unknown`)
-- Documented HTTP 400 refusal vs. ambiguous error handling
-- Request payload shaping, cryptographic signatures/HMACs, and CSV/export formatting.
+External wire adapters merit focused, fast contract tests covering:
+- Provider status/code normalization onto `requested | dispatched | succeeded | failed | outcome-unknown`
+- Pre-flight auth/validation refusal vs. post-dispatch `outcome-unknown` + `inquire` recovery
+- Payload shaping, constant-time HMAC + replay window checks, and injection-safe serialization (e.g., neutralizing spreadsheet formula prefixes on CSV exports).
