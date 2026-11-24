@@ -159,7 +159,8 @@ fn the_synthetic_snapshots_land_whole_on_a_hosted_style_tenant() {
         "NORN_S3_ACCESS_KEY_ID": "key-id",
         "NORN_S3_SECRET_ACCESS_KEY": "secret",
     });
-    let mut connect = Connect::new(&scope, "[]", &vars.to_string()).unwrap();
+    let mut connect = Connect::new(&scope, "[]", &vars.to_string())
+        .unwrap_or_else(|error| panic!("configuration: {error}"));
     let mut quarantined = BTreeMap::<String, u64>::new();
     let (mut landed, mut total) = (0_u64, 0_u64);
     let load = |connect: &mut Connect, tenant: &Tenant<NativeEngine>, body: &str| {

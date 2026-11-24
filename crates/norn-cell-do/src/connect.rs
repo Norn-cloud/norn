@@ -1197,7 +1197,8 @@ mod tests {
             "NORN_S3_DOCUMENTS_ACCESS_KEY_ID": "documents-key-id",
             "NORN_S3_DOCUMENTS_SECRET_ACCESS_KEY": secret,
         });
-        Connect::new(&demo_scope(), "[]", &vars.to_string()).expect("configuration")
+        Connect::new(&demo_scope(), "[]", &vars.to_string())
+            .unwrap_or_else(|error| unreachable!("the configuration is well formed: {error}"))
     }
 
     /// OLAP-01: no secretRef a connector can write reaches a deployment
@@ -1263,14 +1264,9 @@ mod tests {
                 connection_secrets(&stale).is_err_and(|e| e.contains(old)),
                 "{old}"
             );
-            assert!(
-                Connect::new(
-                    &demo_scope(),
-                    "[]",
-                    &serde_json::to_string(&stale).expect("json")
-                )
-                .is_err()
-            );
+            let refused = serde_json::to_string(&stale)
+                .is_ok_and(|vars| Connect::new(&demo_scope(), "[]", &vars).is_err());
+            assert!(refused, "{old}");
         }
     }
 

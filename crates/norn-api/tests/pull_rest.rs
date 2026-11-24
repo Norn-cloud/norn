@@ -390,7 +390,8 @@ fn sources() -> Sources {
 }
 
 fn sources_in(scope: &CellScope, config: &str) -> Sources {
-    Sources::with_allowed_hosts(scope, config, &secrets(), SANDBOX_HOSTS).expect("configuration")
+    Sources::with_allowed_hosts(scope, config, &secrets(), SANDBOX_HOSTS)
+        .unwrap_or_else(|error| panic!("configuration: {error}"))
 }
 
 /// Run one claimed sync of `id` against the recordings: each feed's first
@@ -607,16 +608,17 @@ fn failed_at_once(
 /// a cell it does not belong to fails before any request, manual or
 /// scheduled, and one secret bound in two scopes refuses the configuration.
 #[test]
-fn another_cell_never_syncs_with_this_cells_connection_or_secret() {
+fn another_cell_never_syncs_with_this_cells_connection_or_secret() -> Result<(), String> {
     let theirs = |other: &CellScope, refs: &[&str]| {
-        let mut config: Vec<Value> = serde_json::from_str(CONFIG).expect("config");
+        let mut config: Vec<Value> =
+            serde_json::from_str(CONFIG).map_err(|error| error.to_string())?;
         config.push(
             json!({"id": "erpnext.other", "system": "erpnext", "label": "Theirs",
             "connector": "erpnext.rest.connector", "mapping": "erpnext.rest.mapping",
             "instance": "sandbox", "baseUrl": "http://erpnext-rest:8000",
             "orgId": other.org_id, "environmentId": other.environment_id, "secretRefs": refs}),
         );
-        Value::Array(config).to_string()
+        Ok::<String, String>(Value::Array(config).to_string())
     };
     let t0 = EXTRACTED_AT_MS;
     for other in [
@@ -629,7 +631,7 @@ fn another_cell_never_syncs_with_this_cells_connection_or_secret() {
             environment_id: "prod".into(),
         },
     ] {
-        let config = theirs(&other, &[]);
+        let config = theirs(&other, &[])?;
         let host = host_in(&artifacts(), other.clone());
         // Manual: the first cell's connection is unknown here; their own
         // connection resolves no secret it does not bind.
@@ -642,7 +644,7 @@ fn another_cell_never_syncs_with_this_cells_connection_or_secret() {
         );
         manual
             .claim("erpnext.other", Trigger::Manual, "user:admin@other", t0)
-            .expect("their own connection");
+            .map_err(|error| format!("their own connection: {error:?}"))?;
         assert_eq!(
             failed_at_once(&host, &mut manual, "erpnext.other"),
             "source.secret_unbound"
@@ -658,26 +660,28 @@ fn another_cell_never_syncs_with_this_cells_connection_or_secret() {
         // The first cell's connection, stepped in their cell, never starts.
         let mut mine = sources_in(&cell_scope(), &config);
         mine.claim("erpnext.rest", Trigger::Manual, "user:owner@demo", t0)
-            .expect("claimed");
+            .map_err(|error| format!("claimed: {error:?}"))?;
         assert_eq!(
             failed_at_once(&host, &mut mine, "erpnext.rest"),
             "source.scope_mismatch"
         );
         let mut mine = sources_in(&cell_scope(), &config);
-        let due = mine.due(t0).expect("due");
+        let due = mine.due(t0).ok_or("nothing due")?;
         assert_eq!(
             failed_at_once(&host, &mut mine, &due),
             "source.scope_mismatch"
         );
         // One secret bound by connections of two scopes is refused outright.
-        let shared = theirs(&other, &["erpnext-rest-token"]);
+        let shared = theirs(&other, &["erpnext-rest-token"])?;
         let refused = Sources::with_allowed_hosts(&other, &shared, &secrets(), SANDBOX_HOSTS)
-            .expect_err("a secret in two scopes");
+            .err()
+            .ok_or("a secret in two scopes was accepted")?;
         assert!(
             refused.contains("NORN_SECRET_ERPNEXT_REST_TOKEN"),
             "{refused}"
         );
     }
+    Ok(())
 }
 
 #[test]
@@ -817,11 +821,13 @@ fn an_uploaded_csv_installs_its_type_and_loads_every_row() {
 fn configuration_refuses_the_cells_own_instance_and_a_public_http_base() {
     let one = |instance: &str, base: &str| {
         format!(
-            r#"[{{"id": "x", "system": "erpnext", "label": "X", "connector": "c", "mapping": "m", "instance": "{instance}", "baseUrl": "{base}", "orgId": "org_demo", "environmentId": "dev"}}]"#
+            r#"[{{"id": "x", "system": "erpnext", "label": "X", "connector": "c", "mapping": "m", "instance": "{instance}", "baseUrl": "{base}", "orgId": "org_demo", "environmentId": "dev", "secretRefs": []}}]"#
         )
     };
     let refused = |config: String| {
-        Sources::new(&cell_scope(), &config, &BTreeMap::new()).expect_err("refused")
+        Sources::new(&cell_scope(), &config, &BTreeMap::new())
+            .err()
+            .unwrap_or_else(|| panic!("accepted: {config}"))
     };
     assert!(refused(one("cell", "https://erp.example.test")).contains("the cell's own"));
     assert!(refused(one("sandbox", "http://erp.example.test")).contains("base URL"));
@@ -2034,9 +2040,10 @@ fn an_evicted_host_keeps_the_recorded_sync_schedule() {
     let config = serde_json::json!([{ "id": "upload.items", "system": "erpnext", "label": "items",
         "connector": "c", "mapping": "m", "instance": "i",
         "baseUrl": "https://erp.example.test", "everyMinutes": 15,
-        "orgId": "org_demo", "environmentId": "dev" }])
+        "orgId": "org_demo", "environmentId": "dev", "secretRefs": [] }])
     .to_string();
-    let mut evicted = Sources::new(&cell_scope(), &config, &BTreeMap::new()).expect("configured");
+    let mut evicted = Sources::new(&cell_scope(), &config, &BTreeMap::new())
+        .unwrap_or_else(|error| panic!("configuration: {error}"));
     let now = started_ms + 60_000;
     evicted.restore_schedule(&host).expect("restored");
     assert_eq!(evicted.next_due(now), Some(ended_ms + 15 * 60_000));
@@ -2072,9 +2079,10 @@ fn a_cell_without_connection_records_restores_no_schedule() {
     let config = serde_json::json!([{ "id": "erpnext.rest", "system": "erpnext", "label": "items",
         "connector": "c", "mapping": "m", "instance": "i",
         "baseUrl": "https://erp.example.test", "everyMinutes": 15,
-        "orgId": "org_demo", "environmentId": "dev" }])
+        "orgId": "org_demo", "environmentId": "dev", "secretRefs": [] }])
     .to_string();
-    let mut sources = Sources::new(&cell_scope(), &config, &BTreeMap::new()).expect("configured");
+    let mut sources = Sources::new(&cell_scope(), &config, &BTreeMap::new())
+        .unwrap_or_else(|error| panic!("configuration: {error}"));
     sources
         .restore_schedule(&host)
         .expect("no recorded schedule is not an error");

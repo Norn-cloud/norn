@@ -1252,16 +1252,17 @@ fn a_decision_list_charges_every_parked_command_it_reads() {
     };
     // Exactly the budget read, nothing left: the total is exact.
     let page = list(NOW);
-    assert_eq!(page["total"], json!(scan - half), "{page}");
+    assert_eq!(page["total"], json!(scan.saturating_sub(half)), "{page}");
     assert_eq!(page.get("totalCapped"), None, "{page}");
     // One more decision, parked later, lies past the budget.
     let path = format!("/v1/actions/{MELT_ACTION}");
     let body = melt_body("melt-last", "12", "10", "operator-last");
     let (status, parked) = call_at(&cell, ("POST", &path, SCOPE), OPERATOR, &body, NOW + 30);
     assert_eq!(status, 202, "{parked}");
-    let last = parked["decision"]["id"].as_str().unwrap().to_owned();
+    let last = parked["decision"]["id"].clone();
+    assert!(last.is_string(), "{parked}");
     let page = list(NOW + 30);
-    assert_eq!(page["total"], json!(scan - half), "{page}");
+    assert_eq!(page["total"], json!(scan.saturating_sub(half)), "{page}");
     assert_eq!(page["totalCapped"], json!(true), "{page}");
     // The operator's first calls have expired and the approver's are not
     // theirs: none is listed, yet each was read and charged, so the last
@@ -1270,7 +1271,7 @@ fn a_decision_list_charges_every_parked_command_it_reads() {
     assert_eq!(page["items"], json!([]), "{page}");
     assert_eq!(page["total"], json!(0), "{page}");
     assert_eq!(page["totalCapped"], json!(true), "{page}");
-    assert!(!page.to_string().contains(&last), "{page}");
+    assert!(!page.to_string().contains(&last.to_string()), "{page}");
 }
 
 /// #1587: an approval-gated action with optional `trace` context parks with

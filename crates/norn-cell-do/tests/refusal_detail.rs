@@ -200,7 +200,8 @@ fn loaded(path: &Path) -> Cell {
         "NORN_S3_ACCESS_KEY_ID": "key-id",
         "NORN_S3_SECRET_ACCESS_KEY": "secret",
     });
-    let mut connect = Connect::new(&scope(), "[]", &vars.to_string()).expect("configuration");
+    let mut connect = Connect::new(&scope(), "[]", &vars.to_string())
+        .unwrap_or_else(|error| unreachable!("the configuration is well formed: {error}"));
     let scans = std::fs::read_to_string(root().join("fixtures/documents/scans.snapshot.json"))
         .expect("snapshot");
     let admin = user("admin");

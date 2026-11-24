@@ -593,8 +593,8 @@ pub(crate) fn scan_open_decisions<E: SqlEngine>(
             Some(next) if left > 0 => after = next,
             // Spent: capped only when a command is left unread.
             Some(next) => {
-                let rest = store.read().parked_commands_page(next, 1);
-                return Ok((open, rest.map_err(Refusal::host)?.read > 0));
+                let rest = store.read().parked_command_after(next);
+                return Ok((open, rest.map_err(Refusal::host)?));
             }
             None => return Ok((open, false)),
         }

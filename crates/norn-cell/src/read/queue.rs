@@ -169,6 +169,29 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         })
     }
 
+    /// DECISION-SCAN-1 (#1702): whether a parked command is enqueued after
+    /// position `after`, by row existence alone: no row is read or decoded,
+    /// so an undecodable row past a bounded scan never fails the scan.
+    ///
+    /// Without an index of its own (a new outbox index is a storage version,
+    /// as `_norn_marking_version_nonempty` was) this walks the unconsumed rows
+    /// after `after` in position order until one is parked.
+    ///
+    /// # Errors
+    ///
+    /// SQL engine errors.
+    pub fn parked_command_after(&self, after: u64) -> Result<bool, CellError> {
+        self.check_live()?;
+        let found: Option<i64> = self.conn.query_optional(
+            &format!(
+                "SELECT 1 FROM \"{OUTBOX}\" WHERE \"consumed_commit_seq\" IS NULL AND \"position\" > ?1 AND {PARKED_SQL} LIMIT 1"
+            ),
+            params![to_i64(after, "position")?],
+            |row| row.get(0),
+        )?;
+        Ok(found.is_some())
+    }
+
     /// The pending result delivery of `command_id` at `generation`: the FIFO
     /// head, or a parked command, once its result is recorded and until a
     /// commit consumes it. Reads and decodes only that command's row (and the

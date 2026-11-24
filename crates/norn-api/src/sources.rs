@@ -75,7 +75,7 @@ pub struct ConnectionConfig {
     pub environment_id: String,
     /// SOURCE-SCOPE-1: the secret references (a connector's `secretRef` or
     /// `clientSecretRef`) the connection may resolve; any other is refused.
-    #[serde(default)]
+    /// Required: a connection without credentials lists none (`[]`).
     pub secret_refs: Vec<String>,
     /// The source system (`erpnext`, `odoo`, `shopify`).
     pub system: String,
@@ -985,6 +985,9 @@ pub struct UploadRun<'a> {
 pub fn report_upload<E: SqlEngine>(host: &DevHost<E>, upload: &UploadRun<'_>) {
     let config = ConnectionConfig {
         id: upload.id.to_owned(),
+        org_id: host.scope().org_id.clone(),
+        environment_id: host.scope().environment_id.clone(),
+        secret_refs: Vec::new(),
         system: "upload".to_owned(),
         label: upload.label.to_owned(),
         connector: String::new(),
@@ -1363,7 +1366,7 @@ mod tests {
     /// SOURCE-SCOPE-1: a cell keeps only its own connections and the secrets
     /// they bind, and one secret bound in two scopes refuses the configuration.
     #[test]
-    fn a_cell_keeps_only_its_own_connections_and_their_secrets() {
+    fn a_cell_keeps_only_its_own_connections_and_their_secrets() -> Result<(), String> {
         let one = |id: &str, org: &str, environment: &str, refs: &[&str]| {
             serde_json::json!({"id": id, "system": "erpnext", "label": id, "connector": "c",
                 "mapping": "m", "instance": "i", "baseUrl": "https://erp.example.test",
@@ -1380,7 +1383,7 @@ mod tests {
             ("NORN_SECRET_ERP_B".to_owned(), "b".to_owned()),
             ("NORN_SECRET_ERP_C".to_owned(), "c".to_owned()),
         ]);
-        let sources = Sources::new(&scope("org_a", "prod"), &config, &secrets).expect("bound");
+        let sources = Sources::new(&scope("org_a", "prod"), &config, &secrets)?;
         let ids: Vec<&str> = sources
             .connections()
             .iter()
@@ -1391,7 +1394,7 @@ mod tests {
             sources.secrets.keys().collect::<Vec<_>>(),
             ["NORN_SECRET_ERP_A"]
         );
-        let other = Sources::new(&scope("org_b", "dev"), &config, &secrets).expect("bound");
+        let other = Sources::new(&scope("org_b", "dev"), &config, &secrets)?;
         assert_eq!(other.connections().len(), 0);
         assert_eq!(other.secrets.len(), 0);
         let shared = serde_json::json!([
@@ -1399,18 +1402,28 @@ mod tests {
             one("b", "org_b", "prod", &["erp-shared"]),
         ])
         .to_string();
-        let refused =
-            Sources::new(&scope("org_a", "prod"), &shared, &secrets).expect_err("two scopes");
+        let refused = Sources::new(&scope("org_a", "prod"), &shared, &secrets)
+            .err()
+            .ok_or("a secret in two scopes was accepted")?;
         assert!(refused.contains("NORN_SECRET_ERP_SHARED"), "{refused}");
         let unscoped = r#"[{"id": "a", "system": "erpnext", "label": "a", "connector": "c",
             "mapping": "m", "instance": "i", "baseUrl": "https://erp.example.test"}]"#;
         assert!(Sources::new(&scope("org_a", "prod"), unscoped, &secrets).is_err());
+        // A connection that omits `secretRefs` is refused: `[]` says it has none.
+        let silent = r#"[{"id": "a", "system": "erpnext", "label": "a", "connector": "c",
+            "mapping": "m", "instance": "i", "baseUrl": "https://erp.example.test",
+            "orgId": "org_a", "environmentId": "prod"}]"#;
+        let refused = Sources::new(&scope("org_a", "prod"), silent, &secrets)
+            .err()
+            .ok_or("a connection without secretRefs was accepted")?;
+        assert!(refused.contains("secretRefs"), "{refused}");
+        Ok(())
     }
 
     /// SOURCE-SCOPE-1: a connector resolves only the secrets its connection
     /// binds, whatever the server holds.
     #[test]
-    fn a_connector_resolves_only_secrets_its_connection_binds() {
+    fn a_connector_resolves_only_secrets_its_connection_binds() -> Result<(), String> {
         let secrets = BTreeMap::from([
             ("NORN_SECRET_SHOP_TOKEN".to_owned(), "mine".to_owned()),
             ("NORN_SECRET_OTHER_CELL".to_owned(), "theirs".to_owned()),
@@ -1423,13 +1436,17 @@ mod tests {
             auth_headers(&header("shop_token"), &secrets, &config()),
             Ok(vec![("Authorization".to_owned(), "Bearer mine".to_owned())])
         );
-        let unbound =
-            auth_headers(&header("other_cell"), &secrets, &config()).expect_err("unbound");
+        let unbound = auth_headers(&header("other_cell"), &secrets, &config())
+            .err()
+            .ok_or("an unbound secret was resolved")?;
         assert_eq!(unbound.0, "source.secret_unbound");
         let oauth = serde_json::json!({"auth": {"kind": "oauth2", "tokenUrl": "/token",
             "clientSecretRef": "other_cell"}});
-        let unbound = client_credentials(&oauth, &secrets, &config()).expect_err("unbound");
+        let unbound = client_credentials(&oauth, &secrets, &config())
+            .err()
+            .ok_or("an unbound client secret was resolved")?;
         assert_eq!(unbound.0, "source.secret_unbound");
+        Ok(())
     }
 
     #[test]
@@ -1647,8 +1664,10 @@ mod tests {
                 found.contains(ALLOWED_HOSTS_VAR) && found.contains(&format!("{entry:?}")),
                 "{entry}: {found}"
             );
-            let refused = Sources::with_allowed_hosts("[]", BTreeMap::new(), entry)
-                .expect_err("configuration refused");
+            let refused =
+                Sources::with_allowed_hosts(&scope("org_a", "prod"), "[]", &BTreeMap::new(), entry)
+                    .err()
+                    .unwrap_or_default();
             assert!(
                 refused.contains(&format!("{entry:?}")),
                 "{entry}: {refused}"

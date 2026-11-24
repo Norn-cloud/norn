@@ -215,7 +215,10 @@ const GUARDED: &str = "privacy.guarded";
 
 /// A marked value found for tokenizing.
 struct Candidate {
+    /// The value as text; empty when it is not text (`text` is false).
     value: String,
+    /// Whether the value is text (a string or a number) the text may name.
+    text: bool,
     kind: String,
     label: String,
     row: ObjectRecord,
@@ -292,6 +295,7 @@ fn marked_fields<E: SqlEngine>(
             .filter_map(|(property, value)| {
                 text_of(value).map(|value| Candidate {
                     value,
+                    text: true,
                     kind: field_kind(catalog, &[], property),
                     label: title_case(&field_kind(catalog, &[], property)),
                     row: row.clone(),
@@ -309,6 +313,7 @@ fn marked_fields<E: SqlEngine>(
             let kind = field_kind(catalog, ids, property);
             Some(Candidate {
                 value,
+                text: true,
                 label: title_case(&kind),
                 kind,
                 row: row.clone(),
@@ -317,6 +322,46 @@ fn marked_fields<E: SqlEngine>(
             })
         })
         .collect())
+}
+
+/// GUARD-ORACLE-1: every marked field of a context `row`, whatever its value
+/// (null, a flag, a list or a record as much as text), so a field the caller
+/// may not reveal is tokenized from its identity alone. Unavailable markings
+/// (`None`) mark every field.
+fn context_candidates(
+    catalog: &MarkingCatalog,
+    row: &ObjectRecord,
+    markings: Option<&BTreeMap<String, Vec<String>>>,
+) -> Vec<Candidate> {
+    let unmarked: &[String] = &[];
+    let marked: BTreeMap<&String, &[String]> = match markings {
+        Some(markings) => markings
+            .iter()
+            .filter(|(_, ids)| !ids.is_empty())
+            .map(|(property, ids)| (property, ids.as_slice()))
+            .collect(),
+        None => row
+            .values
+            .keys()
+            .map(|property| (property, unmarked))
+            .collect(),
+    };
+    marked
+        .into_iter()
+        .map(|(property, ids)| {
+            let value = row.values.get(property).and_then(text_of);
+            let kind = field_kind(catalog, ids, property);
+            Candidate {
+                text: value.is_some(),
+                value: value.unwrap_or_default(),
+                label: title_case(&kind),
+                kind,
+                row: row.clone(),
+                property: property.clone(),
+                markings: ids.to_vec(),
+            }
+        })
+        .collect()
 }
 
 /// The tokens assigned so far, numbered per kind.
@@ -336,10 +381,31 @@ impl Tokens {
         value: &str,
         make: impl FnOnce(String) -> Entry,
     ) -> String {
-        let key = (
-            kind.to_owned(),
-            format!("{space}\u{0}{}", value.to_lowercase()),
+        let key = format!("{space}\u{0}{}", value.to_lowercase());
+        self.assign(kind, key, make)
+    }
+
+    /// GUARD-ORACLE-1: the token of a field the caller may not reveal, keyed
+    /// by its exact identity (never its value, never case-folded), so two
+    /// fields share a token only when they are the same field.
+    fn sealed(
+        &mut self,
+        kind: &str,
+        field: &FieldRef,
+        make: impl FnOnce(String) -> Entry,
+    ) -> String {
+        let (object_type, id, property) = field;
+        let key = format!(
+            "sealed\u{0}{}\u{0}{object_type}\u{0}{}\u{0}{id}\u{0}{property}",
+            object_type.len(),
+            id.len()
         );
+        self.assign(kind, key, make)
+    }
+
+    /// The token under `key` in `kind`'s numbering, assigned on first use.
+    fn assign(&mut self, kind: &str, key: String, make: impl FnOnce(String) -> Entry) -> String {
+        let key = (kind.to_owned(), key);
         if let Some(token) = self.by_value.get(&key) {
             return token.clone();
         }
@@ -385,12 +451,10 @@ struct Tokenized {
 struct Candidates {
     /// The context rows.
     rows: Vec<ObjectRecord>,
-    /// Their marked text fields.
+    /// Their marked fields, whatever their values.
     context_fields: Vec<Candidate>,
     /// Marked text values elsewhere in the cell (bounded).
     scanned: Vec<Candidate>,
-    /// Every marked property of the context rows, whatever its type.
-    marked: std::collections::BTreeSet<FieldRef>,
 }
 
 fn read_candidates<E: SqlEngine>(
@@ -450,24 +514,14 @@ fn read_candidates<E: SqlEngine>(
         }
     }
     let mut fields = Vec::new();
-    let mut marked = std::collections::BTreeSet::new();
     for row in &context {
-        fields.extend(marked_fields(&reader, &catalog, row)?);
         let markings = privacy::row_markings(&reader, &catalog, row)?;
-        for property in row.values.keys() {
-            let is_marked = markings
-                .as_ref()
-                .is_none_or(|markings| markings.get(property).is_some_and(|ids| !ids.is_empty()));
-            if is_marked {
-                marked.insert((row.object_type.clone(), row.id.clone(), property.clone()));
-            }
-        }
+        fields.extend(context_candidates(&catalog, row, markings.as_ref()));
     }
     Ok(Candidates {
         rows: context,
         context_fields: fields,
         scanned,
-        marked,
     })
 }
 
@@ -488,8 +542,9 @@ fn field_entry(candidate: &Candidate, token: String) -> Entry {
 }
 
 /// The context fields' tokens, in reading order, and the fields withheld.
-/// GUARD-ORACLE-1: a field the caller may reveal shares its value's token; any
-/// other is keyed by its identity alone, so its token says nothing of its value.
+/// GUARD-ORACLE-1: a text field the caller may reveal shares its value's
+/// token; any other is keyed by its exact identity alone, so neither its
+/// token nor its `withheld` entry says anything of its value or its type.
 fn context_tokens(
     tokens: &mut Tokens,
     context_fields: &[Candidate],
@@ -502,17 +557,18 @@ fn context_tokens(
             "{}/{}.{}",
             candidate.row.object_type, candidate.row.id, candidate.property
         );
-        let (space, key) = if revealed(candidate) {
-            ("field", candidate.value.as_str())
+        let identity = (
+            candidate.row.object_type.clone(),
+            candidate.row.id.clone(),
+            candidate.property.clone(),
+        );
+        let make = |token| field_entry(candidate, token);
+        let token = if candidate.text && revealed(candidate) {
+            tokens.token(("field", &candidate.kind), &candidate.value, make)
         } else {
-            ("sealed", field.as_str())
+            tokens.sealed(&candidate.kind, &identity, make)
         };
-        let token = tokens.token((space, &candidate.kind), key, |token| {
-            field_entry(candidate, token)
-        });
-        let property = candidate.property.clone();
-        let row = (candidate.row.object_type.clone(), candidate.row.id.clone());
-        field_tokens.insert((row.0, row.1, property), token);
+        field_tokens.insert(identity, token);
         withheld.push(field);
     }
     (field_tokens, withheld)
@@ -543,7 +599,7 @@ fn tokenize(
     // 1. Revealable marked values in the text (longest first, never inside a token).
     let mut values: Vec<&Candidate> = context_fields
         .iter()
-        .filter(|candidate| revealed(candidate))
+        .filter(|candidate| candidate.text && revealed(candidate))
         .chain(scanned.iter())
         .filter(|candidate| candidate.value.chars().count() >= MIN_MATCH_CHARS)
         .collect();
@@ -613,30 +669,32 @@ fn tokenize(
 }
 
 /// The context block: each record's fields, marked ones as tokens.
-fn context_block(
-    rows: &[ObjectRecord],
-    marked: &std::collections::BTreeSet<FieldRef>,
-    field_tokens: &BTreeMap<FieldRef, String>,
-) -> String {
+/// Every marked property, stored or not and whatever its type, shows as its
+/// token (GUARD-ORACLE-1); the rest as stored.
+fn context_block(rows: &[ObjectRecord], field_tokens: &BTreeMap<FieldRef, String>) -> String {
     let mut block = String::new();
-    // The context block: each record's fields, marked ones as tokens.
     for row in rows {
         block.push_str("\n\nRecord ");
         block.push_str(&row.object_type);
         block.push(' ');
         block.push_str(&row.id);
         block.push(':');
-        for (property, value) in &row.values {
-            let shown = field_tokens
-                .get(&(row.object_type.clone(), row.id.clone(), property.clone()))
-                .cloned()
-                .or_else(|| {
-                    // Any marked property, whatever its type, is withheld.
-                    let field = (row.object_type.clone(), row.id.clone(), property.clone());
-                    (!marked.contains(&field))
-                        .then(|| text_of(value).unwrap_or_else(|| format!("{value:?}")))
-                })
-                .unwrap_or_else(|| "[WITHHELD]".to_owned());
+        let mut properties: std::collections::BTreeSet<&str> =
+            row.values.keys().map(String::as_str).collect();
+        properties.extend(
+            field_tokens
+                .keys()
+                .filter(|(object_type, id, _)| *object_type == row.object_type && *id == row.id)
+                .map(|(_, _, property)| property.as_str()),
+        );
+        for property in properties {
+            let field = (row.object_type.clone(), row.id.clone(), property.to_owned());
+            let shown = field_tokens.get(&field).cloned().unwrap_or_else(|| {
+                row.values.get(property).map_or_else(
+                    || "[WITHHELD]".to_owned(),
+                    |value| text_of(value).unwrap_or_else(|| format!("{value:?}")),
+                )
+            });
             block.push_str("\n- ");
             block.push_str(property);
             block.push_str(": ");
@@ -644,6 +702,23 @@ fn context_block(
         }
     }
     block
+}
+
+/// A guard request's bounds; its idempotency key when they hold.
+fn checked_key(request: &NornGuardRequest) -> Result<&str, Refusal> {
+    if request.text.chars().count() > MAX_PROMPT_CHARS {
+        return Err(bad(format!(
+            "text is at most {MAX_PROMPT_CHARS} characters"
+        )));
+    }
+    if request.context.len() > MAX_CONTEXT {
+        return Err(bad(format!("at most {MAX_CONTEXT} context records")));
+    }
+    let key = request.idempotency_key.as_str();
+    if key.is_empty() || key.len() > 128 {
+        return Err(bad("idempotencyKey must be 1..=128 bytes"));
+    }
+    Ok(key)
 }
 
 /// PRIVACY-GUARD-1: tokenize a prompt for a model call (see the module docs).
@@ -659,25 +734,13 @@ pub fn guard<E: SqlEngine>(
     request: &NornGuardRequest,
     access: &dyn ObjectAccess,
 ) -> Result<NornGuarded, Refusal> {
-    if request.text.chars().count() > MAX_PROMPT_CHARS {
-        return Err(bad(format!(
-            "text is at most {MAX_PROMPT_CHARS} characters"
-        )));
-    }
-    if request.context.len() > MAX_CONTEXT {
-        return Err(bad(format!("at most {MAX_CONTEXT} context records")));
-    }
-    let key = request.idempotency_key.as_str();
-    if key.is_empty() || key.len() > 128 {
-        return Err(bad("idempotencyKey must be 1..=128 bytes"));
-    }
+    let key = checked_key(request)?;
     let actor = actor.ok_or_else(crate::authz::read_denied)?;
     scope_gate(host, scope, actor)?;
     let Candidates {
         rows,
         context_fields,
         scanned,
-        marked,
     } = read_candidates(host, request)?;
     // Only values this caller may reveal are matched in free text: matching
     // any other would confirm a value (and name its record) to someone who
@@ -702,7 +765,7 @@ pub fn guard<E: SqlEngine>(
         field_tokens,
         mut safe_prompt,
     } = tokenize(&request.text, &context_fields, &revealed, &scanned);
-    safe_prompt.push_str(&context_block(&rows, &marked, &field_tokens));
+    safe_prompt.push_str(&context_block(&rows, &field_tokens));
     let event = Guarded {
         kind: GUARDED.to_owned(),
         actor: actor.to_owned(),
