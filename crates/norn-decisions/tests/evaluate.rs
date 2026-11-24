@@ -1064,14 +1064,15 @@ fn folded(
 
 /// #1708: a fold carries its accumulator in the exact spelling its schema
 /// checked: a decomposed string survives the initial value (an empty fold
-/// returns it) and every step (a nonempty fold appends to it).
+/// returns it) and every step (each step returns it as a literal; fold
+/// arithmetic is numeric, so a step cannot concatenate).
 #[test]
 fn folds_keep_a_decomposed_accumulator_string_as_spelled() -> Built<()> {
     let decomposed = "e\u{301}";
     let mut rules = fold_rules(
         &closed(&json!({ "id": { "type": "string" } })),
         &closed(&json!({ "label": { "type": "string" } })),
-        &[vec![("label", "accumulator.label + 'e\u{301}'")]],
+        &[vec![("label", "'e\u{301}'")]],
     );
     let Some(norn_ir::JdmNode::DecisionNode { content, .. }) = rules
         .0
@@ -1083,12 +1084,10 @@ fn folds_keep_a_decomposed_accumulator_string_as_spelled() -> Built<()> {
     };
     content.ordered_fold.as_mut().ok_or("the fold")?.initial =
         norn_ir::ZenExpression("{label: 'e\u{301}'}".into());
-    for (items, label) in [
-        (json!([]), decomposed.to_owned()),
-        (json!([{ "id": "a" }, { "id": "b" }]), decomposed.repeat(3)),
-    ] {
+    for items in [json!([]), json!([{ "id": "a" }, { "id": "b" }])] {
         let state = folded(&rules, json!({ "label": "unused" }), items)?;
-        let expected = BTreeMap::from([("label".to_owned(), norn_ir::RuntimeValue::String(label))]);
+        let label = norn_ir::RuntimeValue::String(decomposed.to_owned());
+        let expected = BTreeMap::from([("label".to_owned(), label)]);
         assert_eq!(state, norn_ir::RuntimeValue::Object(expected));
     }
     Ok(())
