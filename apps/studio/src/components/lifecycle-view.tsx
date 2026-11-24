@@ -28,6 +28,7 @@ import { useView } from "../lib/view.tsx"
  * message. The checker loads after the view paints, and its findings join once it is here.
  */
 const DOCUMENT = viewDocument as unknown as LifecycleViewDocument
+const NO_FINDINGS: readonly LifecycleFinding[] = []
 
 /** Format a lifecycle state, transition, or page state id in words, preferring declared labels. */
 export function lifecycleLabel(id: string, field?: Field): string {
@@ -140,8 +141,8 @@ export function findingsFor(
   property: string,
   definitions: readonly unknown[] | undefined,
   checker: Checker | undefined,
-): LifecycleFinding[] {
-  if (!definitions || !checker) return []
+): readonly LifecycleFinding[] {
+  if (!definitions || !checker) return NO_FINDINGS
   const envelopes = definitions as readonly Envelope[]
   const widgets = new Map<string, readonly { readonly machine?: PageMachine }[]>()
   for (const artifact of envelopes) {
@@ -150,7 +151,7 @@ export function findingsFor(
     if (!pages?.some((page) => page.machine?.lifecycle?.objectType === objectType && page.machine.lifecycle.property === property)) continue
     widgets.set(artifact.artifactId, pages)
   }
-  if (widgets.size === 0) return []
+  if (widgets.size === 0) return NO_FINDINGS
   const results: LifecycleFinding[] = []
   for (const finding of checker(definitions).diagnostics.diagnostics) {
     if (!finding.code.startsWith("widget.lifecycle.") || finding.witness == null || !Array.isArray(finding.witness.steps)) continue
@@ -181,5 +182,5 @@ export function findingsFor(
       ...(pageState === undefined ? {} : { pageState }),
     })
   }
-  return results
+  return results.length === 0 ? NO_FINDINGS : results
 }
