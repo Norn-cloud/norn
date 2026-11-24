@@ -353,7 +353,7 @@ export function RecordsGrid({ concept, read = defaultRead, scope, initial, onQue
             ))}
           </div>
         )}
-        <div className={cn("relative overflow-hidden rounded-lg border bg-card", (shownTimeline || shownLifecycle) && "hidden")}>
+        <div data-slot="records-table-frame" className={cn("relative overflow-hidden rounded-xl border border-(--table-border) bg-card shadow-(--panel-shadow)", (shownTimeline || shownLifecycle) && "hidden")}>
           <div ref={scroller} role="grid" tabIndex={0} aria-label={`${concept.title} records`} aria-rowcount={rows.length + 1} aria-colcount={columns.length + 1}
             aria-busy={result.isFetching} aria-activedescendant={rows.length > 0 ? `row-${active}` : undefined} onKeyDown={onKey} onScroll={measureEdges}
             className={cn("max-h-[60vh] overflow-auto text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset", result.isFetching && "opacity-70")}>

@@ -1,23 +1,17 @@
-/* From shadcn@4.23.0 dist/tailwind.css (MIT): its keyframes, state variants and no-scrollbar utility. */
+/* Keyframes, state variants and no-scrollbar utility for Studio UI primitives (Base UI + UI SDK). */
 @theme inline {
   @keyframes accordion-down {
     from {
       height: 0;
     }
     to {
-      height: var(
-        --radix-accordion-content-height,
-        var(--accordion-panel-height, auto)
-      );
+      height: var(--accordion-panel-height, auto);
     }
   }
 
   @keyframes accordion-up {
     from {
-      height: var(
-        --radix-accordion-content-height,
-        var(--accordion-panel-height, auto)
-      );
+      height: var(--accordion-panel-height, auto);
     }
     to {
       height: 0;
@@ -28,7 +22,9 @@
 /* Custom variants */
 @custom-variant data-open {
   &:where([data-state="open"]),
-  &:where([data-open]:not([data-open="false"])) {
+  &:where([data-open]:not([data-open="false"])),
+  &:where([data-popup-open]),
+  &:where([data-panel-open]) {
     @slot;
   }
 }
@@ -55,7 +51,8 @@
 }
 
 @custom-variant data-selected {
-  &:where([data-selected="true"]) {
+  &:where([data-selected="true"]),
+  &:where([data-selected]:not([data-selected="false"])) {
     @slot;
   }
 }

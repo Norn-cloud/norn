@@ -238,7 +238,8 @@ const decisionTreeSource = readSrc("decision-tree.tsx")
 for (const theme of ["light", "dark"] as const) {
   test(`${theme}: surfaces stay distinct, text tokens pass 4.5:1, and edges/focus ring pass 3:1`, () => {
     expect(tokenHex(theme, "shell")).not.toBe(tokenHex(theme, "background"))
-    expect(tokenHex(theme, "card")).not.toBe(tokenHex(theme, "background"))
+    expect(tokenHex(theme, "well")).not.toBe(tokenHex(theme, "background"))
+    if (theme === "dark") expect(tokenHex(theme, "card")).not.toBe(tokenHex(theme, "background"))
     expect(tokenHex(theme, "surface-subtle")).not.toBe(tokenHex(theme, "background"))
 
     expect(ratio(tokenHex(theme, "edge"), tokenHex(theme, "canvas-surface")), `${theme} edge`).toBeGreaterThanOrEqual(3)
@@ -427,3 +428,96 @@ for (const theme of ["light", "dark"] as const) {
     expect(resolveClasses(perspectiveClass!, theme, "rest", trackHex).ratio, `${theme} PerspectiveSwitch resting`).toBeGreaterThanOrEqual(4.5)
   })
 }
+
+/** Parse any CSS token block by exact selector and layer overrides over a base token map. */
+function parseRawBlock(selectorPattern: RegExp): Record<string, string> {
+  const body = selectorPattern.exec(css)?.[1]
+  if (!body) return {}
+  const out: Record<string, string> = {}
+  for (const [, name, value] of body.matchAll(/--([a-z0-9-]+):\s*([^;]+);/g)) {
+    out[name!] = value!.trim()
+  }
+  return out
+}
+
+/** Resolve a hex or `rgb(r g b / a)` color value over a backing hex color. */
+function resolveSurfaceColor(value: string, backdropHex: string): string {
+  if (/^#[0-9a-fA-F]{6}$/.test(value)) return value
+  const rgbAlpha = /^rgb\(\s*(\d+)\s+(\d+)\s+(\d+)\s*\/\s*([\d.]+)\s*\)$/.exec(value)
+  if (rgbAlpha) {
+    const fg = "#" + [1, 2, 3].map((i) => Number(rgbAlpha[i]!).toString(16).padStart(2, "0")).join("")
+    return mix(fg, backdropHex, Number(rgbAlpha[4]!))
+  }
+  throw new Error(`unsupported color format in skin tokens: ${value}`)
+}
+
+const SKIN_SELECTORS: readonly { readonly skin: "open" | "polar" | "luma" | "glass"; readonly theme: Theme }[] = [
+  { skin: "open", theme: "light" },
+  { skin: "open", theme: "dark" },
+  { skin: "polar", theme: "light" },
+  { skin: "polar", theme: "dark" },
+  { skin: "luma", theme: "light" },
+  { skin: "luma", theme: "dark" },
+  { skin: "glass", theme: "light" },
+  { skin: "glass", theme: "dark" },
+]
+
+for (const { skin, theme } of SKIN_SELECTORS) {
+  test(`skin=${skin} (${theme}): composited surfaces, foreground, muted-foreground, primary button, and focus ring pass WCAG AA`, () => {
+    const base = { ...THEME_TOKENS[theme] }
+    const skinLight = skin === "open" ? {} : parseRawBlock(new RegExp(`:root\\[data-skin="${skin}"\\]\\s*\\{([^}]+)\\}`))
+    const skinDark = skin === "open" || theme === "light" ? {} : parseRawBlock(new RegExp(`:root\\.dark\\[data-skin="${skin}"\\]\\s*\\{([^}]+)\\}`))
+    if (skin !== "open") expect(Object.keys(skinLight).length, `missing :root[data-skin="${skin}"] block`).toBeGreaterThan(0)
+    if ((skin === "luma" || skin === "glass") && theme === "dark") {
+      expect(Object.keys(skinDark).length, `missing :root.dark[data-skin="${skin}"] block`).toBeGreaterThan(0)
+    }
+    const merged: Record<string, string> = { ...base, ...skinLight, ...skinDark }
+    const resolveVar = (name: string, depth = 0): string => {
+      if (depth > 8) throw new Error(`cyclic skin token --${name}`)
+      const raw = merged[name]
+      if (!raw) throw new Error(`missing token --${name} in ${skin}/${theme}`)
+      const alias = /^var\(--([a-z0-9-]+)\)$/.exec(raw)
+      return alias ? resolveVar(alias[1]!, depth + 1) : raw
+    }
+
+    const shellHex = resolveSurfaceColor(resolveVar("shell"), theme === "dark" ? "#0b0b0e" : "#ffffff")
+    const bgSurfaceHex = resolveSurfaceColor(resolveVar("background"), shellHex)
+    if (theme === "dark") {
+      expect(luminance(shellHex), `${skin}/${theme} shell must stay dark`).toBeLessThan(0.08)
+      expect(luminance(bgSurfaceHex), `${skin}/${theme} background must stay dark`).toBeLessThan(0.08)
+    }
+    const fgHex = resolveSurfaceColor(resolveVar("foreground"), shellHex)
+    const mutedFgHex = resolveSurfaceColor(resolveVar("muted-foreground"), shellHex)
+    const primaryBgHex = resolveSurfaceColor(resolveVar("primary"), shellHex)
+    const primaryFgHex = resolveSurfaceColor(resolveVar("primary-foreground"), primaryBgHex)
+    const ringHex = resolveSurfaceColor(resolveVar("ring"), shellHex)
+
+    if (skin === "polar") {
+      const [pr, pg, pb] = rgbOf(primaryBgHex)
+      expect(Math.max(pr, pg, pb) - Math.min(pr, pg, pb), `polar/${theme} primary must stay monochrome, not violet`).toBeLessThanOrEqual(8)
+    }
+
+    expect(ratio(primaryFgHex, primaryBgHex), `${skin}/${theme} primary button`).toBeGreaterThanOrEqual(4.5)
+
+    for (const surface of ["shell", "background", "card", "surface-subtle", "muted", "popover", "accent"] as const) {
+      const bgHex = resolveSurfaceColor(resolveVar(surface), shellHex)
+      expect(ratio(fgHex, bgHex), `${skin}/${theme} foreground on ${surface} (${fgHex} on ${bgHex})`).toBeGreaterThanOrEqual(4.5)
+      expect(ratio(mutedFgHex, bgHex), `${skin}/${theme} muted-foreground on ${surface} (${mutedFgHex} on ${bgHex})`).toBeGreaterThanOrEqual(4.5)
+    }
+
+    for (const surface of ["shell", "background", "card", "popover"] as const) {
+      const bgHex = resolveSurfaceColor(resolveVar(surface), shellHex)
+      expect(ratio(ringHex, bgHex), `${skin}/${theme} focus ring on ${surface} (${ringHex} on ${bgHex})`).toBeGreaterThanOrEqual(3)
+    }
+
+    const dockSurfaceHex = resolveSurfaceColor(resolveVar("dock-surface"), shellHex)
+    const dockRingHex = resolveSurfaceColor(resolveVar("dock-ring"), dockSurfaceHex)
+    const dockIndicatorHex = resolveSurfaceColor(resolveVar("dock-indicator"), dockSurfaceHex)
+    expect(ratio(dockRingHex, dockSurfaceHex), `${skin}/${theme} dock focus ring (${dockRingHex} on ${dockSurfaceHex})`).toBeGreaterThanOrEqual(3)
+    expect(ratio(dockIndicatorHex, dockSurfaceHex), `${skin}/${theme} dock unread indicator (${dockIndicatorHex} on ${dockSurfaceHex})`).toBeGreaterThanOrEqual(3)
+  })
+}
+
+test("shell never duplicates data-skin inside the document body, keeping :root.dark[data-skin=...] authoritative", () => {
+  expect(shellSource).not.toMatch(/data-skin=\{/)
+})
