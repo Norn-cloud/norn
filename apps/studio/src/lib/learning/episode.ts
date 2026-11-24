@@ -15,6 +15,10 @@ import {
  * NornObjectRecord, with the fields below in `values` (the shape requested on #1208). Decoding is
  * fail-closed: a record missing a field the timeline reads is not an episode, and the page says so
  * instead of guessing.
+ *
+ * PROVISIONAL CONTRACT: The `values` payload shape decoded below is provisional and gated behind
+ * S1 capability discovery (`learning.Episode` advertised by the scoped cell's catalog) until the
+ * backend learning-pack lane pins it with route-produced fixtures.
  */
 
 export const EPISODE_TYPE = "learning.Episode"
@@ -172,42 +176,39 @@ export async function readEpisode(id: string, fetcher: Fetch = defaultFetch): Pr
 export const listEpisodes = (query: RecordsQuery, fetcher: Fetch = defaultFetch): Promise<EpisodeListRead> =>
   listLearningObjects(EPISODE_TYPE, query, decodeAsItem, fetcher)
 
-// ---- Server-side filter contract (#1208) --------------------------------------------------------
+// ---- Server-side filter contract (#1208, PR #1631 S2) -------------------------------------------
 
-/** The five server-side filters requested for the episodes grid (#1208). */
+/**
+ * Server-side episode filters accepted by the real generic object query route today.
+ *
+ * Backend follow-up (#1220 / #1208): `crates/norn-api/src/object_query.rs` (`is_name`, lines 291
+ * and 505) only accepts single flat declared properties matching `[a-z][a-z0-9_]*` and rejects
+ * dotted paths. Until the backend learning-pack lane either exposes flat filterable properties on
+ * `learning.Episode` or extends the generic object-query grammar (with route-produced fixtures),
+ * Studio only sends `agreement`; the remaining four #1208 filters (outcome state, law id,
+ * producer manifest pin, and triage verdict / untriaged) are hidden.
+ */
 export interface EpisodeFilters {
   readonly agreement?: Agreement
-  readonly outcomeState?: OutcomeState
-  readonly lawId?: string
-  readonly manifestPin?: string
-  readonly verdict?: Verdict | "untriaged"
 }
 
 export const EMPTY_EPISODE_FILTERS: EpisodeFilters = {}
 
-/** Encode active episode filters as the generic object-query predicate sent to the cell. */
+/** Encode active episode filters as the generic object-query predicate accepted by the cell today. */
 export function episodeFilterPredicate(filters: EpisodeFilters): Predicate | null {
   const all: Clause[] = []
   if (filters.agreement !== undefined) all.push({ property: "agreement", op: "eq", value: filters.agreement })
-  if (filters.outcomeState !== undefined) all.push({ property: "outcome.state", op: "eq", value: filters.outcomeState })
-  if (filters.lawId !== undefined && filters.lawId.trim() !== "") all.push({ property: "ruleOutcomes.lawId", op: "eq", value: filters.lawId.trim() })
-  if (filters.manifestPin !== undefined && filters.manifestPin.trim() !== "") all.push({ property: "recommendation.producer.manifestPin", op: "eq", value: filters.manifestPin.trim() })
-  if (filters.verdict === "untriaged") all.push({ property: "triage.verdict", op: "empty" })
-  else if (filters.verdict !== undefined) all.push({ property: "triage.verdict", op: "eq", value: filters.verdict })
   return all.length === 0 ? null : { all }
 }
 
 /** Read back the episode filters the cell echoed in `page.query` (Studio never assumes a filter applied). */
 export function episodeFiltersFromServed(served: Served | null): EpisodeFilters {
   const clauses = served?.filter?.all ?? []
-  const out: { agreement?: Agreement; outcomeState?: OutcomeState; lawId?: string; manifestPin?: string; verdict?: Verdict | "untriaged" } = {}
+  const out: { agreement?: Agreement } = {}
   for (const clause of clauses) {
-    if (clause.property === "agreement" && clause.op === "eq" && typeof clause.value === "string" && AGREEMENTS.includes(clause.value as Agreement)) out.agreement = clause.value as Agreement
-    else if (clause.property === "outcome.state" && clause.op === "eq" && typeof clause.value === "string" && OUTCOME_STATES.includes(clause.value as OutcomeState)) out.outcomeState = clause.value as OutcomeState
-    else if (clause.property === "ruleOutcomes.lawId" && clause.op === "eq" && typeof clause.value === "string" && clause.value !== "") out.lawId = clause.value
-    else if (clause.property === "recommendation.producer.manifestPin" && clause.op === "eq" && typeof clause.value === "string" && clause.value !== "") out.manifestPin = clause.value
-    else if (clause.property === "triage.verdict" && clause.op === "empty") out.verdict = "untriaged"
-    else if (clause.property === "triage.verdict" && clause.op === "eq" && typeof clause.value === "string" && VERDICTS.includes(clause.value as Verdict)) out.verdict = clause.value as Verdict
+    if (clause.property === "agreement" && clause.op === "eq" && typeof clause.value === "string" && AGREEMENTS.includes(clause.value as Agreement)) {
+      out.agreement = clause.value as Agreement
+    }
   }
   return out
 }

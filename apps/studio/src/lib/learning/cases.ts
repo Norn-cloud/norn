@@ -18,6 +18,10 @@ import {
  * `learning.set_case_protected`, `learning.uncurate_case`, `learning.create_eval_set`,
  * `learning.rename_eval_set`, `learning.delete_eval_set`, `learning.add_case`,
  * `learning.remove_case`, `learning.seal_eval_set`, `learning.new_eval_set_version`).
+ *
+ * PROVISIONAL CONTRACT: The `values` payload shapes for `learning.CuratedCase` and
+ * `learning.EvalSet` are provisional and gated behind S1 capability discovery until the backend
+ * learning-pack lane pins them with route-produced fixtures.
  */
 
 export const CURATED_CASE_TYPE = "learning.CuratedCase"

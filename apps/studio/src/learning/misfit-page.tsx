@@ -19,17 +19,19 @@ import { useView } from "@/lib/view"
 import { SUPPRESSED } from "../lib/answer.ts"
 import { humanize } from "../lib/cell-read.ts"
 import { NO_DATA_CELL } from "../lib/definitions.ts"
-import { FRESHNESS, stamp } from "../lib/format.ts"
+import { FRESHNESS, groupDigits, stamp } from "../lib/format.ts"
 import { labelIndex, pick } from "../lib/labels.ts"
 import { writesWhole } from "../lib/actions.ts"
+import { useLearningCapabilities } from "../lib/learning/capabilities.ts"
 import { VERDICTS, type Verdict } from "../lib/learning/episode.ts"
 import {
-  MISFIT_UNAVAILABLE, TRIAGE_TREND_UNAVAILABLE, readMisfitByLaw, readTriageOverTime,
-  type AnswerMeta, type RateFigure,
+  MISFIT_UNAVAILABLE, TRIAGE_TREND_UNAVAILABLE, compareRateFigures, readMisfitByLaw, readTriageOverTime,
+  type AnswerMeta, type MisfitLawRow, type RateFigure,
 } from "../lib/learning/misfit.ts"
 import { GAP_PROPOSAL_TYPE } from "../lib/learning/proposals.ts"
 import { useCatalog } from "../lib/use-catalog.ts"
 import { VERDICT_LABEL } from "./episode-page.tsx"
+import { LearningGate } from "./gate.tsx"
 
 const MISFIT_CHART_CONFIG: ChartConfig = {
   overrideRate: { label: "Override rate", color: "var(--tone-amber)" },
@@ -63,33 +65,58 @@ function RateCell({ figure }: { readonly figure: RateFigure | null }) {
     <span className="inline-flex items-baseline justify-end gap-2 tabular-nums">
       <span className="font-medium">{figure.percent}</span>
       {figure.numerator !== null && figure.denominator !== null && (
-        <span className="text-xs text-muted-foreground">({figure.numerator}/{figure.denominator})</span>
+        <span className="text-xs text-muted-foreground">({groupDigits(figure.numerator)}/{groupDigits(figure.denominator)})</span>
       )}
     </span>
   )
 }
 
+/** Pick the KPI winner for override or exception rate using exact decimal/rational comparison (never rounded chart values). */
+function topRateRow(rows: readonly MisfitLawRow[], pickRate: (row: MisfitLawRow) => RateFigure | null): MisfitLawRow | undefined {
+  let best: MisfitLawRow | undefined
+  for (const row of rows) {
+    const figure = pickRate(row)
+    if (figure === null || figure.suppressed || figure.exact === null) continue
+    if (best === undefined) {
+      best = row
+      continue
+    }
+    const cmp = compareRateFigures(figure, pickRate(best))
+    if (cmp > 0 || (cmp === 0 && row.lawId.localeCompare(best.lawId) < 0)) {
+      best = row
+    }
+  }
+  return best
+}
+
 /**
  * `/learning/misfit`: the Misfit board and learning charts island (#1220 L-4).
  *
- * Reads the two pack questions through the generic question route:
- * - `learning.misfit_by_law`: override and exception rate per law over a window;
- * - `learning.triage_over_time`: verdict counts per week.
- *
- * Links every law to `/learning/episodes?law=<lawId>` and offers drafting a gap proposal only when
- * the cell's action catalog serves a create action for `learning.GapProposal`.
+ * Gated behind S1 capability discovery (both `learning.misfit_by_law` and
+ * `learning.triage_over_time` advertised by the scoped cell). Table rankings, KPI winners,
+ * episode counts and weekly totals use exact decimal/rational and BigInt arithmetic; floating-point
+ * numbers are confined to Recharts chart data.
  */
 export function MisfitPage() {
+  return (
+    <LearningGate surface="misfit" icon={BarChart3} title="Misfit board">
+      <MisfitPageContent />
+    </LearningGate>
+  )
+}
+
+function MisfitPageContent() {
   const { view } = useView()
   const { locale } = useLocale()
   const technical = view === "technical"
   const client = useQueryClient()
+  const capabilities = useLearningCapabilities()
   const { read: catalogRead, catalog } = useCatalog()
   const [acting, setActing] = useState<OpenAction | null>(null)
 
   const misfitRead = useQuery({ queryKey: ["learning", "misfit-by-law"], queryFn: () => readMisfitByLaw(), retry: false })
   const triageRead = useQuery({ queryKey: ["learning", "triage-over-time"], queryFn: () => readTriageOverTime(), retry: false })
-  const proposalCatalog = useActions(GAP_PROPOSAL_TYPE)
+  const proposalCatalog = useActions(GAP_PROPOSAL_TYPE, undefined, capabilities.proposals)
   const draftAction = proposalCatalog.data?.kind === "catalog"
     ? proposalCatalog.data.items.find((a) => a.actionId === "learning.draft_gap_proposal") ?? proposalCatalog.data.items.find(writesWhole)
     : undefined
@@ -113,14 +140,16 @@ export function MisfitPage() {
   const misfit = misfitRead.data?.kind === "ok" ? misfitRead.data.data : undefined
   const triage = triageRead.data?.kind === "ok" ? triageRead.data.data : undefined
 
-  const topOverride = misfit?.rows.find((r) => r.override !== null && !r.override.suppressed && r.override.percent !== null)
-  const topException = misfit?.rows
-    .filter((r) => r.exception !== null && !r.exception.suppressed && r.exception.plotPercent !== null)
-    .sort((a, b) => (b.exception?.plotPercent ?? -1) - (a.exception?.plotPercent ?? -1))[0]
-  const totalTriaged = triage && !triage.weeks.some((w) => w.anySuppressed)
-    ? triage.weeks.reduce((sum, w) => sum + (w.total ?? 0), 0)
+  const topOverride = misfit ? topRateRow(misfit.rows, (r) => r.override) : undefined
+  const topException = misfit ? topRateRow(misfit.rows, (r) => r.exception) : undefined
+  const totalTriaged = triage && triage.weeks.every((w) => w.total !== null)
+    ? triage.weeks.reduce((sum, w) => sum + BigInt(w.total!), 0n).toString()
     : null
+  const triageMissingLabel = triage
+    ? (triage.weeks.some((w) => w.anySuppressed) ? "Partial" : "Unknown")
+    : "—"
 
+  // Numeric conversions (`plotPercent` and `plot`) are kept strictly for Recharts series data.
   const misfitChartData = (misfit?.rows ?? [])
     .filter((r) => (r.override?.plotPercent ?? null) !== null || (r.exception?.plotPercent ?? null) !== null)
     .map((r) => ({
@@ -158,7 +187,7 @@ export function MisfitPage() {
           <KpiTile icon={Scale} label="Laws observed" value={misfit ? misfit.rows.length : "—"} sub="From learning.misfit_by_law" />
           <KpiTile icon={BarChart3} label="Highest override rate" value={topOverride?.override?.percent ?? "—"} sub={topOverride ? lawTitle(topOverride.lawId) : "No unsuppressed law"} />
           <KpiTile icon={BarChart3} label="Highest exception rate" value={topException?.exception?.percent ?? "—"} sub={topException ? lawTitle(topException.lawId) : "No unsuppressed law"} />
-          <KpiTile icon={TrendingUp} label="Triaged in window" value={totalTriaged === null ? (triage ? "Partial" : "—") : totalTriaged} sub={triage ? `${triage.weeks.length} weeks` : "From learning.triage_over_time"} />
+          <KpiTile icon={TrendingUp} label="Triaged in window" value={totalTriaged === null ? triageMissingLabel : groupDigits(totalTriaged)} sub={triage ? `${triage.weeks.length} weeks` : "From learning.triage_over_time"} />
         </StatStrip>
       )}
 
@@ -228,15 +257,22 @@ export function MisfitPage() {
                       <TableCell className="text-right"><RateCell figure={row.override} /></TableCell>
                       <TableCell className="text-right"><RateCell figure={row.exception} /></TableCell>
                       <TableCell className="text-right tabular-nums text-muted-foreground">
-                        {row.episodeCount === null ? "—" : row.episodeCount}
+                        {row.episodeCount === null ? "—" : groupDigits(row.episodeCount)}
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1.5">
-                          <Button asChild type="button" variant="ghost" size="xs">
-                            <Link to="/learning/episodes" search={{ law: row.lawId } as never}>
-                              <ExternalLink className="size-3" /> Episodes
-                            </Link>
-                          </Button>
+                          {/*
+                            Backend follow-up (#1220 / #1208): deep-linking `?law=` returns once
+                            `GET /v1/objects/learning.Episode` accepts a law-id filter without
+                            dotted property paths.
+                          */}
+                          {capabilities.episodes && (
+                            <Button asChild type="button" variant="ghost" size="xs">
+                              <Link to="/learning/episodes">
+                                <ExternalLink className="size-3" /> Episodes
+                              </Link>
+                            </Button>
+                          )}
                           {draftAction !== undefined && (
                             <Button type="button" variant="outline" size="xs"
                               onClick={() => setActing({ action: draftAction, prefill: { target: row.lawId } })}>
@@ -306,13 +342,28 @@ export function MisfitPage() {
                   {triage.weeks.map((w) => (
                     <TableRow key={w.weekStart} data-triage-week={w.weekStart}>
                       <TableCell className="font-medium">{w.label}</TableCell>
-                      {VERDICTS.map((v) => (
-                        <TableCell key={v} className="text-right tabular-nums">
-                          {w.counts[v].suppressed ? <Chip tone="gray" title={SUPPRESSED}>Suppressed</Chip> : (w.counts[v].exact ?? "0")}
-                        </TableCell>
-                      ))}
+                      {VERDICTS.map((v) => {
+                        const cell = w.counts[v]
+                        return (
+                          <TableCell key={v} className="text-right tabular-nums">
+                            {cell.status === "suppressed" ? (
+                              <Chip tone="gray" title={SUPPRESSED}>Suppressed</Chip>
+                            ) : cell.status === "unknown" ? (
+                              <span className="text-muted-foreground" data-missing-bucket="true" title="This verdict bucket was not returned by the cell.">Unknown</span>
+                            ) : (
+                              groupDigits(cell.exact!)
+                            )}
+                          </TableCell>
+                        )
+                      })}
                       <TableCell className="text-right font-medium tabular-nums">
-                        {w.total === null ? <Chip tone="gray" title="One or more verdict buckets in this week were suppressed.">Partial</Chip> : w.total}
+                        {w.total === null ? (
+                          <Chip tone="gray" title={w.anySuppressed ? "One or more verdict buckets in this week were suppressed." : "One or more verdict buckets in this week were not returned by the cell."}>
+                            {w.anySuppressed ? "Partial" : "Unknown"}
+                          </Chip>
+                        ) : (
+                          groupDigits(w.total)
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}

@@ -15,10 +15,15 @@ import type { ObjectRecord } from "../lib/transport.ts"
  * fabricates an action or hides one on its own: it renders only what `GET /v1/actions` serves,
  * and opens each in the server-built `ActionSheet`.
  */
-export function TypeActions({ objectKind, prefill, onChanged, label, primary = false, showUnavailable = false }: {
+export function TypeActions({ objectKind, prefill, onChanged, onOpen, label, primary = false, showUnavailable = false }: {
   readonly objectKind: string
   readonly prefill?: Readonly<Record<string, string>>
   readonly onChanged?: () => void
+  /**
+   * Optional parent-owned action sheet opener. When supplied, opening an action delegates to the
+   * parent so the sheet's receipt and Undo state stay mounted independently of list/detail state.
+   */
+  readonly onOpen?: (open: OpenAction) => void
   /** Override label when several create actions group behind one menu (e.g. "New eval set"). */
   readonly label?: string
   readonly primary?: boolean
@@ -32,7 +37,11 @@ export function TypeActions({ objectKind, prefill, onChanged, label, primary = f
       : catalog.data?.kind === "refused" ? catalog.data.message
         : catalog.data?.kind === "no-cell" ? NO_DATA_CELL : undefined
   const creates = catalog.data?.kind === "catalog" ? catalog.data.items.filter(writesWhole) : []
-  const open = (action: ActionSummary) => setActing({ action, ...(prefill === undefined ? {} : { prefill }) })
+  const open = (action: ActionSummary) => {
+    const next: OpenAction = { action, ...(prefill === undefined ? {} : { prefill }) }
+    if (onOpen !== undefined) onOpen(next)
+    else setActing(next)
+  }
   return (
     <>
       {off !== undefined
@@ -58,7 +67,7 @@ export function TypeActions({ objectKind, prefill, onChanged, label, primary = f
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
-      <ActionSheet open={acting} onClose={() => setActing(null)} onChanged={onChanged} />
+      {onOpen === undefined && <ActionSheet open={acting} onClose={() => setActing(null)} onChanged={onChanged} />}
     </>
   )
 }
@@ -69,13 +78,14 @@ export function TypeActions({ objectKind, prefill, onChanged, label, primary = f
  * further narrowed by `record.offers` when the record carries it. Studio holds no permission or
  * lifecycle logic; the cell decides which buttons appear and enforces every call at commit time.
  *
- * The `ActionSheet` stays mounted across catalog refetches so receipts and server-offered Undo
- * remain usable immediately after commit.
+ * When `onOpen` is supplied, the parent owns the `ActionSheet` so receipts and server-offered Undo
+ * stay independent of whether the record remains visible after a refetch or deletion.
  */
-export function RecordActions({ objectKind, record, onChanged, emptyText, ariaLabel = "Record actions", prefillExtra, icon = false }: {
+export function RecordActions({ objectKind, record, onChanged, onOpen, emptyText, ariaLabel = "Record actions", prefillExtra, icon = false }: {
   readonly objectKind: string
   readonly record: ObjectRecord
   readonly onChanged?: () => void
+  readonly onOpen?: (open: OpenAction) => void
   readonly emptyText?: string
   readonly ariaLabel?: string
   readonly prefillExtra?: Readonly<Record<string, string>>
@@ -95,6 +105,11 @@ export function RecordActions({ objectKind, record, onChanged, emptyText, ariaLa
     void client.invalidateQueries({ queryKey: ["actions", objectKind, record.id] })
     onChanged?.()
   }
+  const open = (action: ActionSummary) => {
+    const next: OpenAction = { action, prefill: { ...prefillExtra, [action.objectIdField]: record.id } }
+    if (onOpen !== undefined) onOpen(next)
+    else setActing(next)
+  }
   return (
     <div className="grid gap-2" aria-label={ariaLabel} role="group">
       {off !== undefined
@@ -107,13 +122,13 @@ export function RecordActions({ objectKind, record, onChanged, emptyText, ariaLa
               <div className="flex flex-wrap gap-2">
                 {actions.map((action) => (
                   <Button key={action.actionId} type="button" variant="outline" size="sm"
-                    onClick={() => setActing({ action, prefill: { ...prefillExtra, [action.objectIdField]: record.id } })}>
+                    onClick={() => open(action)}>
                     {icon && <Play aria-hidden />}{action.title}
                   </Button>
                 ))}
               </div>
             )}
-      <ActionSheet open={acting} onClose={() => setActing(null)} onChanged={handleChanged} />
+      {onOpen === undefined && <ActionSheet open={acting} onClose={() => setActing(null)} onChanged={handleChanged} />}
     </div>
   )
 }

@@ -1,12 +1,11 @@
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Link, useNavigate, useSearch } from "@tanstack/react-router"
+import { Link } from "@tanstack/react-router"
 import { AlertTriangle, CheckCircle2, CircleDashed, Clock, Filter, GitCompareArrows, Hourglass, RefreshCw, ShieldAlert, X } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { Chip, type Tone } from "@/components/chip"
 import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
 import { TableCard } from "@/components/table-card"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
@@ -14,12 +13,13 @@ import { useView } from "@/lib/view"
 import { humanize } from "../lib/cell-read.ts"
 import { NO_DATA_CELL } from "../lib/definitions.ts"
 import {
-  AGREEMENTS, EPISODES_UNAVAILABLE, OUTCOME_STATES, VERDICTS,
+  AGREEMENTS, EPISODES_UNAVAILABLE,
   episodeFilterPredicate, episodeFiltersFromServed, listEpisodes,
   type Agreement, type Episode, type EpisodeFilters, type OutcomeState, type Verdict,
 } from "../lib/learning/episode.ts"
 import { DATA_CHANGED, LIMITS, recordsQueryParams, SERVER_QUERY_UNAVAILABLE, totalText, type RecordsQuery } from "../lib/records-query.ts"
 import { AGREEMENT_STYLE, VERDICT_LABEL } from "./episode-page.tsx"
+import { LearningGate } from "./gate.tsx"
 
 const AGREEMENT_TONE: Readonly<Record<Agreement, Tone>> = {
   accepted: "green",
@@ -58,35 +58,30 @@ function rulesSummary(episode: Episode): { readonly text: string; readonly tone:
 /**
  * `/learning/episodes`: server-driven list of `learning.Episode` projections (#1220 L-2).
  *
- * All five filters (`agreement`, `outcome.state`, `ruleOutcomes.lawId`,
- * `recommendation.producer.manifestPin`, `triage.verdict` including "not triaged") are sent as
- * server query clauses to `GET /v1/objects/learning.Episode`. Studio never filters client-side
- * and reflects only what the server echoes back.
+ * Gated behind S1 capability discovery (`learning.Episode` advertised by the scoped cell).
+ * Sends only filters accepted by the real generic object query route (`agreement` today;
+ * see `crates/norn-api/src/object_query.rs:291`). The other four #1208 filters (outcome state,
+ * law id, producer manifest pin, and triage verdict / untriaged) are hidden until the backend
+ * follow-up exposes flat filterable properties or nested query grammar with route-produced
+ * fixtures. Studio never filters client-side and reflects only what the server echoes back.
  */
 export function EpisodesPage() {
+  return (
+    <LearningGate surface="episodes" icon={GitCompareArrows} title="Episodes">
+      <EpisodesPageContent />
+    </LearningGate>
+  )
+}
+
+function EpisodesPageContent() {
   const { view } = useView()
   const technical = view === "technical"
   const client = useQueryClient()
-  const navigate = useNavigate()
-  const search = useSearch({ strict: false }) as { law?: unknown }
-  const initialLaw = typeof search.law === "string" && search.law.trim() !== "" ? search.law.trim() : undefined
 
-  const [filters, setFilters] = useState<EpisodeFilters>(() => (initialLaw ? { lawId: initialLaw } : {}))
-  const [lawDraft, setLawDraft] = useState(initialLaw ?? "")
-  const [pinDraft, setPinDraft] = useState("")
+  const [filters, setFilters] = useState<EpisodeFilters>({})
   const [cursors, setCursors] = useState<readonly (string | undefined)[]>([undefined])
   const [pageIndex, setPageIndex] = useState(0)
   const [notice, setNotice] = useState<string | null>(null)
-
-  // Sync URL `?law=` changes (for example when arriving from the Misfit board).
-  useEffect(() => {
-    if (initialLaw !== undefined && initialLaw !== filters.lawId) {
-      setFilters((current) => ({ ...current, lawId: initialLaw }))
-      setLawDraft(initialLaw)
-      setCursors([undefined])
-      setPageIndex(0)
-    }
-  }, [initialLaw])
 
   const predicate = useMemo(() => episodeFilterPredicate(filters), [filters])
   const query: RecordsQuery = {
@@ -119,16 +114,9 @@ export function EpisodesPage() {
     setCursors([undefined])
     setPageIndex(0)
     setNotice(null)
-    if (next.lawId === undefined && initialLaw !== undefined) {
-      void navigate({ to: "/learning/episodes", search: {} as never, replace: true })
-    }
   }
 
-  const clearAll = () => {
-    setLawDraft("")
-    setPinDraft("")
-    applyFilters({})
-  }
+  const clearAll = () => applyFilters({})
 
   const page = data?.kind === "page" ? data : undefined
   const echoed = useMemo(() => (page ? episodeFiltersFromServed(page.served) : null), [page])
@@ -282,7 +270,14 @@ export function EpisodesPage() {
       {data?.kind !== "no-cell" && data?.kind !== "unavailable" && (
         <Panel icon={Filter} label="Server filters" action={hasFilters ? <Button type="button" variant="ghost" size="xs" onClick={clearAll}><X /> Clear filters</Button> : "Evaluated by the cell"}>
           <Well className="grid gap-3 p-4">
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+            {/*
+              Backend follow-up (#1220 / #1208): `crates/norn-api/src/object_query.rs` (`is_name`)
+              currently only admits single flat `[a-z][a-z0-9_]*` property names. Outcome state,
+              triage verdict, law id, and producer manifest pin filters stay hidden here until the
+              backend learning-pack lane exposes flat filterable properties or nested query grammar
+              with route-produced fixtures.
+            */}
+            <div className="grid gap-3 sm:max-w-xs">
               <label className="grid gap-1 text-xs text-muted-foreground">
                 <span>Agreement</span>
                 <select aria-label="Filter by agreement" className={selectClass} value={filters.agreement ?? ""}
@@ -291,56 +286,15 @@ export function EpisodesPage() {
                   {AGREEMENTS.map((a) => <option key={a} value={a}>{AGREEMENT_STYLE[a].short}</option>)}
                 </select>
               </label>
-
-              <label className="grid gap-1 text-xs text-muted-foreground">
-                <span>Outcome</span>
-                <select aria-label="Filter by outcome" className={selectClass} value={filters.outcomeState ?? ""}
-                  onChange={(e) => applyFilters({ ...filters, outcomeState: e.target.value === "" ? undefined : e.target.value as OutcomeState })}>
-                  <option value="">All outcomes</option>
-                  {OUTCOME_STATES.map((s) => (
-                    <option key={s} value={s}>{s === "recorded" ? "Recorded" : s === "open" ? "Not measured yet" : "Not measured in time"}</option>
-                  ))}
-                </select>
-              </label>
-
-              <label className="grid gap-1 text-xs text-muted-foreground">
-                <span>Triage verdict</span>
-                <select aria-label="Filter by triage verdict" className={selectClass} value={filters.verdict ?? ""}
-                  onChange={(e) => applyFilters({ ...filters, verdict: e.target.value === "" ? undefined : e.target.value as Verdict | "untriaged" })}>
-                  <option value="">All verdicts</option>
-                  <option value="untriaged">Not triaged</option>
-                  {VERDICTS.map((v) => <option key={v} value={v}>{VERDICT_LABEL[v]}</option>)}
-                </select>
-              </label>
-
-              <form className="grid gap-1 text-xs text-muted-foreground" onSubmit={(e) => { e.preventDefault(); applyFilters({ ...filters, lawId: lawDraft.trim() || undefined }) }}>
-                <label htmlFor="filter-law-id">Law id</label>
-                <div className="flex gap-1">
-                  <Input id="filter-law-id" className="h-8 text-sm" placeholder="e.g. demo.credit.hold_over_limit" value={lawDraft} onChange={(e) => setLawDraft(e.target.value)} />
-                  <Button type="submit" variant="outline" size="sm" className="h-8 px-2.5">Apply</Button>
-                </div>
-              </form>
-
-              <form className="grid gap-1 text-xs text-muted-foreground" onSubmit={(e) => { e.preventDefault(); applyFilters({ ...filters, manifestPin: pinDraft.trim() || undefined }) }}>
-                <label htmlFor="filter-manifest-pin">Producer pin</label>
-                <div className="flex gap-1">
-                  <Input id="filter-manifest-pin" className="h-8 font-mono text-xs" placeholder="sha256:…" value={pinDraft} onChange={(e) => setPinDraft(e.target.value)} />
-                  <Button type="submit" variant="outline" size="sm" className="h-8 px-2.5">Apply</Button>
-                </div>
-              </form>
             </div>
 
             {page !== undefined && page.served === null && (
               <p className="text-meta text-muted-foreground">{SERVER_QUERY_UNAVAILABLE}</p>
             )}
-            {echoed !== null && Object.values(echoed).some((v) => v !== undefined) && (
+            {echoed !== null && echoed.agreement !== undefined && (
               <div className="flex flex-wrap items-center gap-1.5" aria-label="Applied server filters">
                 <span className="text-xs text-muted-foreground">Applied by cell:</span>
-                {echoed.agreement && <Chip tone="blue">agreement: {echoed.agreement}</Chip>}
-                {echoed.outcomeState && <Chip tone="blue">outcome: {echoed.outcomeState}</Chip>}
-                {echoed.verdict && <Chip tone="blue">triage: {echoed.verdict === "untriaged" ? "not triaged" : echoed.verdict}</Chip>}
-                {echoed.lawId && <Chip tone="blue" mono>law: {echoed.lawId}</Chip>}
-                {echoed.manifestPin && <Chip tone="blue" mono>pin: {echoed.manifestPin.slice(0, 18)}…</Chip>}
+                <Chip tone="blue">agreement: {echoed.agreement}</Chip>
               </div>
             )}
           </Well>

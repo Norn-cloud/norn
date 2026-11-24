@@ -21,6 +21,7 @@ import {
 } from "../lib/learning/proposals.ts"
 import { DATA_CHANGED, LIMITS, recordsQueryParams, totalText, type RecordsQuery } from "../lib/records-query.ts"
 import type { ObjectRecord } from "../lib/transport.ts"
+import { LearningGate } from "./gate.tsx"
 import { RecordActions, TypeActions } from "./record-actions.tsx"
 
 const STATUS_STYLE: Readonly<Record<ProposalStatus, { readonly label: string; readonly tone: Tone }>> = {
@@ -44,8 +45,17 @@ const selectClass = "h-8 rounded-md border border-input bg-background px-2.5 tex
 
 /**
  * `/learning/proposals`: server-driven list of `learning.GapProposal` records (#1220 L-5).
+ * Gated behind S1 capability discovery (`learning.GapProposal` advertised by the scoped cell).
  */
 export function ProposalsPage() {
+  return (
+    <LearningGate surface="proposals" icon={FileDiff} title="Proposals">
+      <ProposalsPageContent />
+    </LearningGate>
+  )
+}
+
+function ProposalsPageContent() {
   const { view } = useView()
   const technical = view === "technical"
   const client = useQueryClient()
@@ -223,12 +233,21 @@ export function ProposalsPage() {
 /**
  * `/learning/proposals/$id`: proposal review and replay table island (#1220 L-5).
  *
+ * Gated behind S1 capability discovery (`learning.GapProposal` advertised by the scoped cell).
  * Shows the proposed definition diff, cited episodes, checker admission diagnostics, the replay
  * table of curated cases (highlighting past cases a tightened limit would have refused and any
  * flipped protected case that refuses admission), the Ruling receipt when ratified, and only the
  * governed actions the cell offers for this proposal in its current state.
  */
 export function ProposalDetailPage() {
+  return (
+    <LearningGate surface="proposals" icon={FileDiff} title="Proposal">
+      <ProposalDetailPageContent />
+    </LearningGate>
+  )
+}
+
+function ProposalDetailPageContent() {
   const { id = "" } = useParams({ strict: false })
   const read = useQuery({ queryKey: ["learning", "proposal", id], queryFn: () => readGapProposal(id), retry: false })
   const result = read.data

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs"
 import { expect, test, type Page } from "@playwright/test"
+import { advertiseLearning } from "./learning-cell.ts"
 import { session } from "./object-cell.ts"
 
 // Curated cases and eval sets (#1220 L-3): create, protect, uncurate, eval set CRUD, seal,
@@ -208,25 +209,74 @@ test.beforeEach(({ }, info) => {
   test.skip(Boolean(process.env.E2E_BASE), `${info.title}: uses the learning cases/eval-sets stand-in`)
 })
 
-async function mountCell(page: Page, options: { unserved?: boolean } = {}) {
+interface StandInRecord {
+  objectType: string
+  id: string
+  scope: string
+  version: number | null
+  values: Record<string, unknown> | null
+  withheld?: boolean
+  withheldProperties?: readonly string[]
+}
+
+interface MountOptions {
+  readonly unserved?: boolean
+  readonly pageSize?: number
+  readonly initialCases?: readonly StandInRecord[]
+  readonly initialEvalSets?: readonly StandInRecord[]
+}
+
+async function mountCell(page: Page, options: MountOptions = {}) {
   await session(page)
-  const cases = structuredClone(fixture.cases)
-  const evalSets = structuredClone(fixture.evalSets)
-  const removedCases = new Map<string, (typeof cases)[number]>()
+  await advertiseLearning(page, { objectTypes: ["learning.CuratedCase", "learning.EvalSet"] })
+  const cases: StandInRecord[] = structuredClone(options.initialCases ?? fixture.cases) as StandInRecord[]
+  const evalSets: StandInRecord[] = structuredClone(options.initialEvalSets ?? fixture.evalSets) as StandInRecord[]
+  const removedCases = new Map<string, StandInRecord>()
+  const removedEvalSets = new Map<string, StandInRecord>()
+  const withheldCaseIds = new Set<string>()
+  const withheldSetIds = new Set<string>()
   const calls: { actionId: string; input: Record<string, unknown> }[] = []
+  const caseQueries: URL[] = []
+  const evalSetQueries: URL[] = []
   let seq = 7000
 
+  function projectRecord(r: StandInRecord, withheld: ReadonlySet<string>): StandInRecord {
+    return withheld.has(r.id)
+      ? { objectType: r.objectType, id: r.id, scope: r.scope, version: null, values: null, withheld: true, withheldProperties: [] }
+      : r
+  }
+
+  function paginate(records: readonly StandInRecord[], url: URL, prefix: string, withheld: ReadonlySet<string>) {
+    const requestedLimit = Number(url.searchParams.get("limit") ?? "50")
+    const size = options.pageSize ?? requestedLimit
+    const after = url.searchParams.get("after")
+    let offset = 0
+    if (after !== null) {
+      const m = new RegExp(`^${prefix}:(\\d+)$`).exec(after)
+      offset = m ? Number(m[1]) : 0
+    }
+    const slice = records.slice(offset, offset + size).map((r) => projectRecord(r, withheld))
+    const next = offset + size < records.length ? `${prefix}:${offset + size}` : null
+    return { slice, next }
+  }
+
   await page.route("**/api/host/v1/objects/learning.CuratedCase**", (route) => {
+    const url = new URL(route.request().url())
+    caseQueries.push(url)
     if (options.unserved) return route.fulfill({ status: 404, json: { code: "object.type_unknown", message: "Not served" } })
+    const { slice, next } = paginate(cases, url, "cases", withheldCaseIds)
     return route.fulfill({
-      json: { objectType: "learning.CuratedCase", records: cases, total: { count: cases.length, approximate: false }, next: null, quarantineCount: 0 },
+      json: { objectType: "learning.CuratedCase", records: slice, total: { count: cases.length, approximate: false }, next, quarantineCount: 0 },
     })
   })
 
   await page.route("**/api/host/v1/objects/learning.EvalSet**", (route) => {
+    const url = new URL(route.request().url())
+    evalSetQueries.push(url)
     if (options.unserved) return route.fulfill({ status: 404, json: { code: "object.type_unknown", message: "Not served" } })
+    const { slice, next } = paginate(evalSets, url, "sets", withheldSetIds)
     return route.fulfill({
-      json: { objectType: "learning.EvalSet", records: evalSets, total: { count: evalSets.length, approximate: false }, next: null, quarantineCount: 0 },
+      json: { objectType: "learning.EvalSet", records: slice, total: { count: evalSets.length, approximate: false }, next, quarantineCount: 0 },
     })
   })
 
@@ -243,7 +293,7 @@ async function mountCell(page: Page, options: { unserved?: boolean } = {}) {
       if (kind === "learning.EvalSet") {
         if (!objectId) return route.fulfill({ json: { items: [CREATE_EVAL_SET] } })
         const found = evalSets.find((s) => s.id === objectId)
-        const items = found?.values["status"] === "sealed"
+        const items = found?.values?.["status"] === "sealed"
           ? [NEW_VERSION]
           : [RENAME_EVAL_SET, ADD_CASE, REMOVE_CASE, SEAL_EVAL_SET, DELETE_EVAL_SET]
         return route.fulfill({ json: { items } })
@@ -275,7 +325,7 @@ async function mountCell(page: Page, options: { unserved?: boolean } = {}) {
           json: { ...served.committed, objectType: "learning.CuratedCase", objectId: restored.id, receipt: { ...served.committed.receipt, commitSeq: seq, recordedAtMs: Date.now() } },
         })
       }
-      const created = {
+      const created: StandInRecord = {
         objectType: "learning.CuratedCase",
         id: `case_new_${seq}`,
         scope: "org_demo/analytics",
@@ -302,8 +352,8 @@ async function mountCell(page: Page, options: { unserved?: boolean } = {}) {
 
     if (actionId === SET_PROTECTED.actionId) {
       const target = cases.find((c) => c.id === input["caseId"])!
-      target.values["protected"] = Boolean(input["protected"])
-      target.version += 1
+      target.values!["protected"] = Boolean(input["protected"])
+      target.version = (target.version ?? 0) + 1
       return route.fulfill({
         json: { ...served.committed, objectType: "learning.CuratedCase", objectId: target.id, receipt: { ...served.committed.receipt, commitSeq: seq, recordedAtMs: Date.now() } },
       })
@@ -319,13 +369,21 @@ async function mountCell(page: Page, options: { unserved?: boolean } = {}) {
           objectType: "learning.CuratedCase",
           objectId: String(input["caseId"]),
           receipt: { ...served.committed.receipt, commitSeq: seq, recordedAtMs: Date.now() },
-          undo: { actionId: CURATE_CASE.actionId, input: { restoreCaseId: String(input["caseId"]), episodeId: removed?.values["episodeId"] ?? "ep_demo_overridden", note: "Restored" } },
+          undo: { actionId: CURATE_CASE.actionId, input: { restoreCaseId: String(input["caseId"]), episodeId: removed?.values?.["episodeId"] ?? "ep_demo_overridden", note: "Restored" } },
         },
       })
     }
 
     if (actionId === CREATE_EVAL_SET.actionId) {
-      const created = {
+      const restored = typeof input["restoreEvalSetId"] === "string" ? removedEvalSets.get(input["restoreEvalSetId"]) : undefined
+      if (restored) {
+        evalSets.unshift(restored)
+        removedEvalSets.delete(restored.id)
+        return route.fulfill({
+          json: { ...served.committed, objectType: "learning.EvalSet", objectId: restored.id, receipt: { ...served.committed.receipt, commitSeq: seq, recordedAtMs: Date.now() } },
+        })
+      }
+      const created: StandInRecord = {
         objectType: "learning.EvalSet",
         id: `eval_new_${seq}`,
         scope: "org_demo/analytics",
@@ -351,8 +409,8 @@ async function mountCell(page: Page, options: { unserved?: boolean } = {}) {
 
     if (actionId === RENAME_EVAL_SET.actionId) {
       const target = evalSets.find((s) => s.id === input["evalSetId"])!
-      target.values["name"] = String(input["name"])
-      target.version += 1
+      target.values!["name"] = String(input["name"])
+      target.version = (target.version ?? 0) + 1
       return route.fulfill({
         json: { ...served.committed, objectType: "learning.EvalSet", objectId: target.id, receipt: { ...served.committed.receipt, commitSeq: seq, recordedAtMs: Date.now() } },
       })
@@ -360,16 +418,16 @@ async function mountCell(page: Page, options: { unserved?: boolean } = {}) {
 
     if (actionId === ADD_CASE.actionId) {
       const target = evalSets.find((s) => s.id === input["evalSetId"])!
-      const refs = target.values["caseRefs"] as { caseId: string; episodeId: string; receiptHash: string; protected: boolean; label: string | null }[]
+      const refs = target.values!["caseRefs"] as { caseId: string; episodeId: string; receiptHash: string; protected: boolean; label: string | null }[]
       const found = cases.find((c) => c.id === input["caseId"])
       refs.push({
         caseId: String(input["caseId"]),
-        episodeId: String(found?.values["episodeId"] ?? "ep_demo_overridden"),
+        episodeId: String(found?.values?.["episodeId"] ?? "ep_demo_overridden"),
         receiptHash: "sha256:5f0c9a1e7b2d4c6a8e0f1b3d5c7a9e2f4b6d8c0a1e3f5b7d9c2a4e6f8b0d1c3a",
-        protected: Boolean(found?.values["protected"] ?? false),
-        label: String(found?.values["question"] ?? input["caseId"]),
+        protected: Boolean(found?.values?.["protected"] ?? false),
+        label: String(found?.values?.["question"] ?? input["caseId"]),
       })
-      target.version += 1
+      target.version = (target.version ?? 0) + 1
       return route.fulfill({
         json: { ...served.committed, objectType: "learning.EvalSet", objectId: target.id, receipt: { ...served.committed.receipt, commitSeq: seq, recordedAtMs: Date.now() } },
       })
@@ -377,9 +435,9 @@ async function mountCell(page: Page, options: { unserved?: boolean } = {}) {
 
     if (actionId === REMOVE_CASE.actionId) {
       const target = evalSets.find((s) => s.id === input["evalSetId"])!
-      const refs = target.values["caseRefs"] as { caseId: string }[]
-      target.values["caseRefs"] = refs.filter((r) => r.caseId !== input["caseId"])
-      target.version += 1
+      const refs = target.values!["caseRefs"] as { caseId: string }[]
+      target.values!["caseRefs"] = refs.filter((r) => r.caseId !== input["caseId"])
+      target.version = (target.version ?? 0) + 1
       return route.fulfill({
         json: { ...served.committed, objectType: "learning.EvalSet", objectId: target.id, receipt: { ...served.committed.receipt, commitSeq: seq, recordedAtMs: Date.now() } },
       })
@@ -387,10 +445,10 @@ async function mountCell(page: Page, options: { unserved?: boolean } = {}) {
 
     if (actionId === SEAL_EVAL_SET.actionId) {
       const target = evalSets.find((s) => s.id === input["evalSetId"])!
-      target.values["status"] = "sealed"
-      target.values["sealedAtMs"] = Date.now()
-      target.values["sealedBy"] = "you"
-      target.version += 1
+      target.values!["status"] = "sealed"
+      target.values!["sealedAtMs"] = Date.now()
+      target.values!["sealedBy"] = "you"
+      target.version = (target.version ?? 0) + 1
       return route.fulfill({
         json: { ...served.committed, objectType: "learning.EvalSet", objectId: target.id, receipt: { ...served.committed.receipt, commitSeq: seq, recordedAtMs: Date.now() } },
       })
@@ -398,14 +456,14 @@ async function mountCell(page: Page, options: { unserved?: boolean } = {}) {
 
     if (actionId === NEW_VERSION.actionId) {
       const parent = evalSets.find((s) => s.id === input["evalSetId"])!
-      const nextVer = Number(parent.values["setVersion"]) + 1
-      const created = {
+      const nextVer = Number(parent.values!["setVersion"]) + 1
+      const created: StandInRecord = {
         objectType: "learning.EvalSet",
         id: `${parent.id}_v${nextVer}`,
         scope: "org_demo/analytics",
         version: 1,
         values: {
-          ...structuredClone(parent.values),
+          ...structuredClone(parent.values!),
           setVersion: nextVer,
           status: "unsealed",
           sealedAtMs: null,
@@ -423,9 +481,23 @@ async function mountCell(page: Page, options: { unserved?: boolean } = {}) {
 
     if (actionId === DELETE_EVAL_SET.actionId) {
       const idx = evalSets.findIndex((s) => s.id === input["evalSetId"])
-      if (idx >= 0) evalSets.splice(idx, 1)
+      const [removed] = idx >= 0 ? evalSets.splice(idx, 1) : []
+      if (removed) removedEvalSets.set(removed.id, removed)
       return route.fulfill({
-        json: { ...served.committed, objectType: "learning.EvalSet", objectId: String(input["evalSetId"]), receipt: { ...served.committed.receipt, commitSeq: seq, recordedAtMs: Date.now() } },
+        json: {
+          ...served.committed,
+          objectType: "learning.EvalSet",
+          objectId: String(input["evalSetId"]),
+          receipt: { ...served.committed.receipt, commitSeq: seq, recordedAtMs: Date.now() },
+          undo: {
+            actionId: CREATE_EVAL_SET.actionId,
+            input: {
+              restoreEvalSetId: String(input["evalSetId"]),
+              name: String(removed?.values?.["name"] ?? "Restored set"),
+              splitKey: String(removed?.values?.["splitKey"] ?? "restored"),
+            },
+          },
+        },
       })
     }
 
@@ -433,7 +505,7 @@ async function mountCell(page: Page, options: { unserved?: boolean } = {}) {
   })
 
   await page.goto("/learning/cases")
-  return { calls }
+  return { calls, cases, evalSets, withheldCaseIds, withheldSetIds, caseQueries, evalSetQueries }
 }
 
 const dialog = (page: Page) => page.getByRole("dialog").last()
@@ -542,6 +614,119 @@ test("eval sets: create, rename, add/remove case, seal (immutable), new version 
   await dialog(page).getByRole("button", { name: "Yes, delete eval set" }).click()
   await dialog(page).getByRole("button", { name: "Done" }).click()
   await expect(page.getByRole("list", { name: "Eval sets list" }).getByRole("button", { name: /Q4 Credit Regression Canary.*v2/ })).toHaveCount(0)
+})
+
+test("S3: refetching a withheld case or eval set clears stale details and offers immediately", async ({ page }) => {
+  const { withheldCaseIds, withheldSetIds } = await mountCell(page)
+  const table = page.getByRole("table", { name: "Curated cases" })
+
+  // Open a curated case sheet and verify live details and actions render.
+  await table.getByRole("button", { name: "Approve the restock order?" }).click()
+  const caseSheet = page.getByRole("dialog", { name: "Approve the restock order?" })
+  await expect(caseSheet.locator('[data-case-sheet-state="ok"]')).toBeVisible()
+  await expect(caseSheet.getByRole("button", { name: "Set protection" })).toBeVisible()
+
+  // Trigger a refetch while the sheet stays open (via Set protection → refreshAll) with the case now withheld.
+  await caseSheet.getByRole("button", { name: "Set protection" }).click()
+  await dialog(page).getByLabel("Protected").selectOption("true")
+  withheldCaseIds.add("case_credit_overdue_02")
+  await dialog(page).getByRole("button", { name: "Set protection", exact: true }).click()
+  await expect(dialog(page).getByRole("status")).toBeVisible()
+  await dialog(page).getByRole("button", { name: "Done" }).click()
+
+  // Stale details and offers are gone immediately; the open sheet renders the withheld state.
+  const updatedSheet = page.getByRole("dialog", { name: "Case withheld" })
+  await expect(updatedSheet.locator('[data-case-sheet-state="withheld"]')).toBeVisible()
+  await expect(updatedSheet).toContainText("Withheld by cell policy")
+  await expect(updatedSheet.getByRole("button", { name: "Set protection" })).toHaveCount(0)
+  await expect(updatedSheet).not.toContainText("Approve the restock order?")
+  await page.keyboard.press("Escape")
+
+  // Switch to Eval sets, verify live details + actions, then withhold the selected set and click Refresh.
+  await page.getByRole("tab", { name: "Eval sets" }).click()
+  await expect(page.locator('[data-selected-eval-set="eval_credit_draft_v2"]')).toBeVisible()
+  await expect(page.getByRole("group", { name: "Eval set actions" })).toBeVisible()
+  withheldSetIds.add("eval_credit_draft_v2")
+  await page.getByRole("button", { name: "Refresh" }).click()
+
+  const withheldPanel = page.locator('[data-eval-set-state="withheld"]')
+  await expect(withheldPanel).toBeVisible()
+  await expect(withheldPanel).toContainText("Withheld by cell policy")
+  await expect(page.locator('[data-selected-eval-set="eval_credit_draft_v2"]')).toHaveCount(0)
+  await expect(page.getByRole("group", { name: "Eval set actions" })).toHaveCount(0)
+})
+
+test("S3: deleting a selected eval set (including the last remaining eval set) keeps ActionSheet receipt and Undo mounted without jumping selection", async ({ page }) => {
+  // Part 1: with 2 eval sets, deleting the selected set shows omitted state (no silent jump) and Undo restores it.
+  await mountCell(page)
+  await page.getByRole("tab", { name: "Eval sets" }).click()
+  await expect(page.locator('[data-selected-eval-set="eval_credit_draft_v2"]')).toBeVisible()
+
+  await page.getByRole("group", { name: "Eval set actions" }).getByRole("button", { name: "Delete eval set" }).click()
+  await dialog(page).getByRole("button", { name: "Delete eval set", exact: true }).click()
+  await dialog(page).getByRole("button", { name: "Yes, delete eval set" }).click()
+  await expect(dialog(page).getByRole("status")).toBeVisible()
+  // Behind the open ActionSheet, the detail panel reports omitted rather than switching to eval_credit_holdout_v1.
+  await expect(page.locator('[data-eval-set-state="omitted"]')).toBeVisible()
+  await expect(page.locator('[data-selected-eval-set]')).toHaveCount(0)
+  // Server-offered Undo stays mounted and restores the deleted set.
+  await dialog(page).getByRole("button", { name: "Undo" }).click()
+  await expect(dialog(page).getByText(/^Undone · /)).toBeVisible()
+  await dialog(page).getByRole("button", { name: "Done" }).click()
+  await expect(page.locator('[data-selected-eval-set="eval_credit_draft_v2"]')).toBeVisible()
+
+  // Part 2: deleting the LAST remaining eval set empties the list to "No eval sets yet",
+  // yet ActionSheet stays mounted with its receipt and server-offered Undo.
+  await page.unrouteAll({ behavior: "ignoreErrors" })
+  await mountCell(page, { initialEvalSets: [fixture.evalSets[0]!] })
+  await page.getByRole("tab", { name: "Eval sets" }).click()
+  await expect(page.locator('[data-selected-eval-set="eval_credit_draft_v2"]')).toBeVisible()
+
+  await page.getByRole("group", { name: "Eval set actions" }).getByRole("button", { name: "Delete eval set" }).click()
+  await dialog(page).getByRole("button", { name: "Delete eval set", exact: true }).click()
+  await dialog(page).getByRole("button", { name: "Yes, delete eval set" }).click()
+  await expect(dialog(page).getByRole("status")).toBeVisible()
+  // The list behind the dialog emptied completely to "No eval sets yet", with zero stale details.
+  await expect(page.locator("text=No eval sets yet")).toBeVisible()
+  await expect(page.locator('[data-selected-eval-set]')).toHaveCount(0)
+  // ActionSheet remained mounted and its Undo restores the last set.
+  await dialog(page).getByRole("button", { name: "Undo" }).click()
+  await expect(dialog(page).getByText(/^Undone · /)).toBeVisible()
+  await dialog(page).getByRole("button", { name: "Done" }).click()
+  await expect(page.getByRole("list", { name: "Eval sets list" })).toContainText("Credit release regression")
+})
+
+test("S4: cursor pagination pages through curated cases and eval sets and opens page-2 items", async ({ page }) => {
+  const { caseQueries, evalSetQueries } = await mountCell(page, { pageSize: 1 })
+  const table = page.getByRole("table", { name: "Curated cases" })
+
+  // Curated cases: page 1 shows the first case, Next requests `after=cases:1` and shows page 2.
+  await expect(table.locator("tbody tr")).toHaveCount(1)
+  await expect(table).toContainText("Release the held shipment?")
+  const casesNav = page.getByRole("navigation", { name: "Curated cases pages" })
+  await expect(casesNav.getByRole("button", { name: "Previous" })).toBeDisabled()
+  await casesNav.getByRole("button", { name: "Next" }).click()
+  await expect(casesNav).toContainText("Page 2")
+  await expect(table).toContainText("Approve the restock order?")
+  expect(caseQueries.some((u) => u.searchParams.get("after") === "cases:1")).toBe(true)
+
+  // Open the page-2 curated case in the detail sheet.
+  await table.getByRole("button", { name: "Approve the restock order?" }).click()
+  await expect(page.getByRole("dialog", { name: "Approve the restock order?" })).toContainText("case_credit_overdue_02")
+  await page.keyboard.press("Escape")
+
+  // Eval sets: page 1 shows the first set, Next requests `after=sets:1` and selects page-2 set.
+  await page.getByRole("tab", { name: "Eval sets" }).click()
+  const setsList = page.getByRole("list", { name: "Eval sets list" })
+  await expect(setsList).toContainText("Credit release regression")
+  await expect(setsList).not.toContainText("Credit release holdout")
+  const setsNav = page.getByRole("navigation", { name: "Eval sets pages" })
+  await setsNav.getByRole("button", { name: "Next" }).click()
+  await expect(setsNav).toContainText("Page 2")
+  await expect(setsList).toContainText("Credit release holdout")
+  expect(evalSetQueries.some((u) => u.searchParams.get("after") === "sets:1")).toBe(true)
+  await expect(page.locator('[data-selected-eval-set="eval_credit_holdout_v1"]')).toBeVisible()
+  await expect(page.getByRole("group", { name: "Eval set actions" }).getByRole("button", { name: "New version" })).toBeVisible()
 })
 
 test("unserved: when the cell doesn't serve curated cases or eval sets, both tabs say so cleanly", async ({ page }) => {

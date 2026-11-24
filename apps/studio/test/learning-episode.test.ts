@@ -95,31 +95,27 @@ test("reading an episode: scoped to the session, each answer kept apart, no cell
   expect(none.calls).toHaveLength(0)
 })
 
-test("listing episodes: server filters encode all five clauses, echo back cleanly, and keep withheld/malformed/restart apart", async () => {
-  const pred = episodeFilterPredicate({
-    agreement: "overridden",
-    outcomeState: "recorded",
-    lawId: "demo.credit.hold_over_limit",
-    manifestPin: "sha256:9d8c",
-    verdict: "untriaged",
-  })
+test("listing episodes: server filter encodes only flat agreement clause accepted by object_query.rs, echoes cleanly, and keeps withheld/malformed/restart apart", async () => {
+  const pred = episodeFilterPredicate({ agreement: "overridden" })
   expect(pred).toEqual({
     all: [
       { property: "agreement", op: "eq", value: "overridden" },
-      { property: "outcome.state", op: "eq", value: "recorded" },
-      { property: "ruleOutcomes.lawId", op: "eq", value: "demo.credit.hold_over_limit" },
-      { property: "recommendation.producer.manifestPin", op: "eq", value: "sha256:9d8c" },
-      { property: "triage.verdict", op: "empty" },
     ],
   })
   expect(episodeFiltersFromServed({ sort: [], filter: pred })).toEqual({
     agreement: "overridden",
-    outcomeState: "recorded",
-    lawId: "demo.credit.hold_over_limit",
-    manifestPin: "sha256:9d8c",
-    verdict: "untriaged",
   })
-  expect(episodeFilterPredicate({ verdict: "gap" })).toEqual({ all: [{ property: "triage.verdict", op: "eq", value: "gap" }] })
+  // Dotted/nested clauses are not emitted and are ignored if echoed.
+  expect(episodeFiltersFromServed({
+    sort: [],
+    filter: {
+      all: [
+        { property: "agreement", op: "eq", value: "overridden" },
+        { property: "outcome.state", op: "eq", value: "recorded" },
+        { property: "triage.verdict", op: "empty" },
+      ],
+    },
+  })).toEqual({ agreement: "overridden" })
   expect(episodeFilterPredicate({})).toBeNull()
 
   const ok = cell(() => Response.json({

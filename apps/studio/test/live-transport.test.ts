@@ -35,6 +35,12 @@ test("the catalog's per-type counts are the cell's, kept only when well formed; 
   expect(await liveTransport(mode.catalog, server({}).fetcher, mode.counts).objectCounts()).toEqual(mode.counts)
   const plain = await readMode(server({ "/v1/definitions": [200, DEFINITIONS] }).fetcher)
   expect(plain.kind === "live" && plain.counts).toEqual({})
+  expect(plain.kind === "live" && plain.publishedQuestions.size).toBe(0)
+
+  const withQuestions = '{"admitted":true,"version":3,"artifacts":[],"publishedQuestions":["learning.misfit_by_law","",42,"learning.triage_over_time"]}'
+  const qMode = await readMode(server({ "/v1/definitions": [200, withQuestions] }).fetcher)
+  if (qMode.kind !== "live") throw new Error("expected live")
+  expect([...qMode.publishedQuestions]).toEqual(["learning.misfit_by_law", "learning.triage_over_time"])
 })
 
 test("no session, no cell, no host or a page that is not a document reads the recording; a refusal is the cell's error", async () => {

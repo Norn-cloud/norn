@@ -16,6 +16,10 @@ import {
  * Served through `GET /v1/objects/learning.GapProposal[/{id}]`; every mutation goes through the
  * cell's governed action catalog (`learning.draft_gap_proposal`, `learning.edit_gap_proposal`,
  * `learning.withdraw_gap_proposal`, `learning.submit_gap_proposal`, `learning.ratify_gap_proposal`).
+ *
+ * PROVISIONAL CONTRACT: The `values` payload shape (including `replay` and `ruling`) is
+ * provisional and gated behind S1 capability discovery until the backend learning-pack lane pins
+ * it with route-produced fixtures.
  */
 
 export const GAP_PROPOSAL_TYPE = "learning.GapProposal"

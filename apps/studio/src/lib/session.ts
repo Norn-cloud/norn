@@ -1,6 +1,7 @@
 import { type QueryClient, queryOptions, useQuery, useQueryClient } from "@tanstack/react-query"
 import { forgetDrafts, sessionKey } from "../actions/kept-drafts.ts"
 import { forgetParkedCalls } from "../actions/parked-calls.ts"
+import { refreshMode } from "./live-transport.ts"
 
 /** Who is signed in, as the Worker reports it (/api/me). Display only: the server decides every permission. */
 export interface Account {
@@ -24,6 +25,8 @@ async function readAccount(fetcher: Fetch): Promise<Account | null> {
 
 /** Forget every read made as the reader who made it (records, picker choices, the inbox): all but the session itself. */
 function forgetReads(client: QueryClient): void {
+  // Drop the cached live/recorded mode so the next scoped cell's catalog and capabilities are read fresh.
+  refreshMode()
   client.removeQueries({ predicate: (query) => query.queryKey[0] !== SESSION[0] })
 }
 

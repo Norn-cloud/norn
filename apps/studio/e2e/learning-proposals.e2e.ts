@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs"
 import { expect, test, type Page } from "@playwright/test"
+import { advertiseLearning } from "./learning-cell.ts"
 import { session } from "./object-cell.ts"
 
 // Proposal review and replay table island (#1220 L-5): server-filtered proposal list, draft/edit/
@@ -133,6 +134,7 @@ test.beforeEach(({ }, info) => {
 
 async function mountCell(page: Page, options: { mode?: "fixture" | "unserved" | "malformed-replay" } = {}) {
   await session(page)
+  await advertiseLearning(page, { objectTypes: ["learning.GapProposal"] })
   const mode = options.mode ?? "fixture"
   const proposals = structuredClone(fixture.records)
   const queries: URL[] = []

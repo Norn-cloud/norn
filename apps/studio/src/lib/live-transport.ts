@@ -32,7 +32,18 @@ function linkPage(read: Read<{ readonly objectType: string; readonly id: string;
 }
 
 /** Where Studio's documents come from: the connected cell, or the recording when no cell is connected. */
-export type Mode = { readonly kind: "live"; readonly catalog: Read<readonly Artifact[]>; readonly counts: ObjectCounts } | { readonly kind: "recorded" }
+export type Mode =
+  | {
+    readonly kind: "live"
+    readonly catalog: Read<readonly Artifact[]>
+    readonly counts: ObjectCounts
+    /**
+     * Named questions advertised on `GET /v1/definitions` (`publishedQuestions`, provisional
+     * capability metadata until the backend lane pins published question discovery on the catalog).
+     */
+    readonly publishedQuestions: ReadonlySet<string>
+  }
+  | { readonly kind: "recorded" }
 
 /**
  * Each object type's record count, as the cell counted it for this caller with the records list's own
@@ -48,6 +59,16 @@ export function countsOf(document: unknown): ObjectCounts {
     const counted = totalOf({ total })
     return counted ? [[objectType, counted] as const] : []
   }))
+}
+
+/**
+ * Named published questions advertised on `GET /v1/definitions` (`publishedQuestions`, provisional
+ * capability metadata). Fails closed to an empty set when absent or malformed.
+ */
+export function publishedQuestionsOf(document: unknown): ReadonlySet<string> {
+  const raw = (document as { publishedQuestions?: unknown } | null)?.publishedQuestions
+  if (!Array.isArray(raw)) return new Set()
+  return new Set(raw.filter((name): name is string => typeof name === "string" && name !== ""))
 }
 
 /**
@@ -83,7 +104,12 @@ export async function readMode(fetcher: Fetch): Promise<Mode> {
   const artifacts = (parsed as { artifacts?: unknown } | null)?.artifacts
   if (!Array.isArray(artifacts)) throw new CellUnavailable(response.status, "The cell's definitions read carried no artifacts.")
   const read = readDocument<{ readonly artifacts: readonly Artifact[] }>(text, "live")
-  return { kind: "live", catalog: subRead(read, "/artifacts", read.document.artifacts), counts: countsOf(read.document) }
+  return {
+    kind: "live",
+    catalog: subRead(read, "/artifacts", read.document.artifacts),
+    counts: countsOf(read.document),
+    publishedQuestions: publishedQuestionsOf(read.document),
+  }
 }
 
 /** The live transport over one connected cell's routes. */

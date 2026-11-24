@@ -12,14 +12,24 @@ import { NO_DATA_CELL } from "../lib/definitions.ts"
 import { humanize } from "../lib/cell-read.ts"
 import { EPISODE_TYPE, EPISODES_UNAVAILABLE, readEpisode, type Agreement, type Episode, type OutcomeState, type RuleOutcome, type Verdict } from "../lib/learning/episode.ts"
 import type { ObjectRecord } from "../lib/transport.ts"
+import { LearningGate } from "./gate.tsx"
 import { RecordActions } from "./record-actions.tsx"
 
 /**
  * `/episodes/$id`: one decision episode as a timeline (#1220 L-1, L-2): what was known, what was
  * suggested, what the person decided, which rules applied, and what happened. Triage and any other
- * action offered by the cell open through the server-driven `ActionSheet`.
+ * action offered by the cell open through the server-driven `ActionSheet`. Gated behind S1
+ * capability discovery (`learning.Episode` advertised by the scoped cell).
  */
 export function EpisodePage() {
+  return (
+    <LearningGate surface="episodes" icon={GitCompareArrows} title="Episode">
+      <EpisodePageContent />
+    </LearningGate>
+  )
+}
+
+function EpisodePageContent() {
   const { id = "" } = useParams({ strict: false })
   const read = useQuery({ queryKey: ["episode", id], queryFn: () => readEpisode(id), retry: false })
   const result = read.data

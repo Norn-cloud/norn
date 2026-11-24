@@ -68,6 +68,12 @@ export interface SheetOptions {
   readonly onClose?: () => void
   /** Follow an in-app link (the run). */
   readonly navigate?: (path: string) => void
+  /**
+   * PROVISIONAL CONTRACT (#1208, PR #1631 S1/S2): whether the current scoped cell advertises
+   * `learning.Episode` so a server-supplied `episodeId` on `:decide` may link to `/episodes/$id`.
+   * Defaults to false (fail-closed behind the S1 capability gate).
+   */
+  readonly canOpenEpisode?: () => boolean
   /** Every step, for telemetry and tests. */
   readonly onStep?: (snapshot: Snapshot, msg: Msg | null) => void
 }
@@ -350,8 +356,9 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
         run.href = `/runs/${encodeURIComponent(runId)}`
         run.hidden = false
       }
+      // PROVISIONAL CONTRACT (#1208, PR #1631 S1/S2): only link when the cell advertises learning.Episode and supplies episodeId.
       const episodeId = text(doc.episodeId)
-      if (episode && episodeId) {
+      if (episode && episodeId && options.canOpenEpisode?.() === true) {
         episode.href = `/episodes/${encodeURIComponent(episodeId)}`
         episode.hidden = false
       }

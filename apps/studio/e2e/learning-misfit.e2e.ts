@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs"
 import { expect, test, type Page } from "@playwright/test"
+import { advertiseLearning } from "./learning-cell.ts"
 import { session } from "./object-cell.ts"
 
 // Misfit board and learning charts (#1220 L-4): learning.misfit_by_law and
@@ -52,21 +53,32 @@ test.beforeEach(({ }, info) => {
   test.skip(Boolean(process.env.E2E_BASE), `${info.title}: uses the learning misfit/triage question stand-in`)
 })
 
-async function openMisfit(page: Page, mode: "fixture" | "unserved" | "refused" = "fixture") {
+interface MisfitOpenOptions {
+  readonly mode?: "fixture" | "unserved" | "refused"
+  readonly misfitByLaw?: object
+  readonly triageOverTime?: object
+}
+
+async function openMisfit(page: Page, options: MisfitOpenOptions = {}) {
+  const mode = options.mode ?? "fixture"
   await session(page)
+  await advertiseLearning(page, {
+    objectTypes: ["learning.Episode", "learning.GapProposal"],
+    publishedQuestions: ["learning.misfit_by_law", "learning.triage_over_time"],
+  })
   const actionCalls: { actionId: string; input: Record<string, unknown> }[] = []
   const episodeQueries: URL[] = []
 
   await page.route("**/api/host/v1/questions/learning.misfit_by_law/answer**", (route) => {
     if (mode === "unserved") return route.fulfill({ status: 404, body: "not found" })
     if (mode === "refused") return route.fulfill({ status: 403, json: { code: "authz.denied", message: "Your role may not read misfit metrics." } })
-    return route.fulfill({ json: fixture.misfitByLaw })
+    return route.fulfill({ json: options.misfitByLaw ?? fixture.misfitByLaw })
   })
 
   await page.route("**/api/host/v1/questions/learning.triage_over_time/answer**", (route) => {
     if (mode === "unserved") return route.fulfill({ status: 404, body: "not found" })
     if (mode === "refused") return route.fulfill({ status: 403, json: { code: "authz.denied", message: "Your role may not read triage trends." } })
-    return route.fulfill({ json: fixture.triageOverTime })
+    return route.fulfill({ json: options.triageOverTime ?? fixture.triageOverTime })
   })
 
   await page.route("**/api/host/v1/actions**", (route) => {
@@ -91,7 +103,7 @@ async function openMisfit(page: Page, mode: "fixture" | "unserved" | "refused" =
         objectType: "learning.Episode",
         records: [episodesFixture.records[0]],
         query: { sort: [], filter },
-        total: { count: 1, exact: true },
+        total: { count: 1, approximate: false },
         next: null,
         quarantineCount: 0,
       },
@@ -102,7 +114,7 @@ async function openMisfit(page: Page, mode: "fixture" | "unserved" | "refused" =
   return { actionCalls, episodeQueries }
 }
 
-test("misfit board & learning charts: renders both charts, exact tables, D53 suppression, deep-link to episodes, and draft proposal", async ({ page }) => {
+test("misfit board & learning charts: renders both charts, exact tables, D53 suppression, link to episodes, and draft proposal", async ({ page }) => {
   const { actionCalls, episodeQueries } = await openMisfit(page)
 
   // Both charts mount with SVG surfaces.
@@ -145,23 +157,71 @@ test("misfit board & learning charts: renders both charts, exact tables, D53 sup
     },
   }])
 
-  // Clicking "Episodes" on a law navigates to /learning/episodes?law=... and sends the server filter.
+  // Clicking "Episodes" navigates to /learning/episodes without sending a dotted law filter (S2).
   await creditRow.getByRole("link", { name: "Episodes" }).click()
-  await expect(page).toHaveURL(/\/learning\/episodes\?law=demo\.credit\.hold_over_limit/)
-  await expect(page.getByText("law: demo.credit.hold_over_limit")).toBeVisible()
-  expect(episodeQueries.some((u) => {
-    const f = u.searchParams.get("filter")
-    return f !== null && f.includes('"ruleOutcomes.lawId"') && f.includes('"demo.credit.hold_over_limit"')
-  })).toBe(true)
+  await expect(page).toHaveURL(/\/learning\/episodes$/)
+  expect(episodeQueries.length).toBeGreaterThan(0)
+  expect(episodeQueries.every((u) => !(u.searchParams.get("filter") ?? "").includes("."))).toBe(true)
+})
+
+test("misfit board (S5 & S6): ranks close rates by exact decimal, marks omitted triage buckets Unknown, and fails closed on duplicate buckets", async ({ page }) => {
+  const closeMisfit = structuredClone(fixture.misfitByLaw) as {
+    rows: Record<string, unknown>
+  }
+  closeMisfit.rows = {
+    '["demo.law.low","override"]': {
+      bucket: ["demo.law.low", "override"],
+      totals: [41701, 100000],
+      value: 0.41701,
+      members: { ep_1: { version: 1, amounts: [1, 1] } },
+    },
+    '["demo.law.high","override"]': {
+      bucket: ["demo.law.high", "override"],
+      totals: [41704, 100000],
+      value: 0.41704,
+      members: { ep_2: { version: 1, amounts: [1, 1] } },
+    },
+  }
+  const partialTriage = structuredClone(fixture.triageOverTime) as {
+    rows: Record<string, unknown>
+  }
+  // Omit the `noise` bucket in week 2026-11-02 — Studio must render Unknown, never 0.
+  delete partialTriage.rows['["2026-11-02","noise"]']
+
+  await openMisfit(page, { misfitByLaw: closeMisfit, triageOverTime: partialTriage })
+
+  const misfitRows = page.getByRole("table", { name: "Misfit by law" }).locator("tbody tr")
+  await expect(misfitRows.nth(0)).toHaveAttribute("data-misfit-law", "demo.law.high")
+  await expect(misfitRows.nth(1)).toHaveAttribute("data-misfit-law", "demo.law.low")
+  const highestOverrideKpi = page.locator('[data-slot="kpi"]', { hasText: "Highest override rate" })
+  await expect(highestOverrideKpi).toContainText("41.70%")
+  await expect(highestOverrideKpi).toContainText("High")
+
+  const triageRow = page.getByRole("table", { name: "Triage verdicts per week" }).locator('tr[data-triage-week="2026-11-02"]')
+  await expect(triageRow.locator('[data-missing-bucket="true"]')).toHaveText("Unknown")
+  await expect(triageRow).toContainText("Unknown")
+  await expect(page.locator('[data-slot="kpi"]', { hasText: "Triaged in window" })).toContainText("Unknown")
+
+  // Duplicate [weekStart, verdict] bucket fails closed instead of overwriting silently (S6).
+  const dupTriage = structuredClone(fixture.triageOverTime) as { rows: Record<string, unknown> }
+  dupTriage.rows["dup_bucket"] = {
+    bucket: ["2026-11-02", "exception"],
+    totals: [9],
+    value: 9,
+    members: { ep_99: { version: 1, amounts: [1] } },
+  }
+  await page.unrouteAll({ behavior: "ignoreErrors" })
+  await openMisfit(page, { triageOverTime: dupTriage })
+  await expect(page.getByText("Can't read triage trend")).toBeVisible()
 })
 
 test("misfit board: refused and unserved answers say so honestly", async ({ page }) => {
-  await openMisfit(page, "refused")
+  await openMisfit(page, { mode: "refused" })
   await expect(page.getByText("Your role may not read misfit metrics.").first()).toBeVisible()
   await expect(page.getByText("Your role may not read triage trends.").first()).toBeVisible()
 
   await page.unrouteAll({ behavior: "ignoreErrors" })
-  await openMisfit(page, "unserved")
+  await openMisfit(page, { mode: "unserved" })
   await expect(page.getByText("This cell doesn't serve the learning.misfit_by_law question yet.")).toBeVisible()
   await expect(page.getByText("This cell doesn't serve the learning.triage_over_time question yet.")).toBeVisible()
 })

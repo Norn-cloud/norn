@@ -1,9 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-router"
 import { BarChart3, Blend, BookMarked, ChartLine, Columns2, Database, FileDiff, Fingerprint, GitCompareArrows, House, Inbox, LayoutDashboard, Network, Plug, Rows3, ShieldCheck, Workflow } from "lucide-react"
-import { StrictMode } from "react"
+import { StrictMode, useMemo } from "react"
 import { Button } from "@/components/ui/button"
-import { endSession, useAccount } from "@/lib/session"
+import { endSession, useAccount, type Account } from "@/lib/session"
+import { isSectionVisible, useLearningCapabilities } from "@/lib/learning/capabilities"
 import { LoginPage } from "./login.tsx"
 import { oauthPage } from "./oauth.tsx"
 import { createRoot } from "react-dom/client"
@@ -45,6 +46,17 @@ const SECTIONS: readonly Section[] = [
 ]
 
 /**
+ * Signed-in shell: reads Learning capabilities once from the current scoped cell's catalog
+ * (`GET /v1/definitions`, shared with every route gate via `useMode()`). Learning entries carry no
+ * menu/badge hooks, so omitting unavailable ones keeps Shell's hook order invariant.
+ */
+function SignedInShell({ account, sidekick }: { readonly account: Account; readonly sidekick: boolean }) {
+  const learning = useLearningCapabilities()
+  const sections = useMemo(() => SECTIONS.filter((section) => isSectionVisible(section.path, learning)), [learning])
+  return <Shell sections={sections} assistant={sidekick ? { title: "Sidekick", content: <Sidekick /> } : undefined} account={account} onSignOut={() => void signOut()} />
+}
+
+/**
  * Signed out (an explicit 401), a visitor sees only the sign-in page; signed in, the Studio.
  * A failed check keeps the last known account; with none, it offers a retry, never the sign-in page.
  */
@@ -52,7 +64,7 @@ function Root() {
   const account = useAccount()
   // Sidekick is offered only where a bridge serves it (a private deployment); elsewhere the rail shows no entry for it.
   const sidekick = useSidekickServed()
-  if (account.data != null) return <Shell sections={SECTIONS} assistant={sidekick ? { title: "Sidekick", content: <Sidekick /> } : undefined} account={account.data} onSignOut={() => void signOut()} />
+  if (account.data != null) return <SignedInShell account={account.data} sidekick={sidekick} />
   if (account.isPending) return null
   if (account.isError) {
     return (
