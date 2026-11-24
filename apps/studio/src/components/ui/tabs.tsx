@@ -26,7 +26,7 @@ const tabsListVariants = cva(
   {
     variants: {
       variant: {
-        default: "border border-border/80 bg-surface-subtle",
+        default: "border border-border/80 bg-surface-subtle dark:bg-shell/90",
         line: "gap-1 border-b border-border/80 bg-transparent",
       },
     },
@@ -62,7 +62,7 @@ function TabsTrigger({
       className={cn(
         "relative inline-flex h-[calc(100%-1px)] flex-1 items-center justify-center gap-2 rounded-md border border-transparent px-3 py-1 text-sm font-medium whitespace-nowrap text-muted-foreground transition-[color,background-color,box-shadow] duration-150 group-data-vertical/tabs:w-full group-data-vertical/tabs:justify-start group-data-vertical/tabs:rounded-lg group-data-vertical/tabs:px-3 group-data-vertical/tabs:py-1.5 hover:text-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/40 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 has-data-[icon=inline-end]:pr-2 has-data-[icon=inline-start]:pl-2 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         "group-data-[variant=line]/tabs-list:rounded-none group-data-[variant=line]/tabs-list:border-0 group-data-[variant=line]/tabs-list:bg-transparent group-data-[variant=line]/tabs-list:px-3 group-data-[variant=line]/tabs-list:pb-2 group-data-[variant=line]/tabs-list:shadow-none group-data-[variant=line]/tabs-list:data-active:bg-transparent group-data-[variant=line]/tabs-list:data-active:shadow-none group-data-[variant=line]/tabs-list:data-active:ring-0",
-        "data-active:bg-background data-active:text-foreground data-active:shadow-control data-active:ring-1 data-active:ring-border/70 dark:data-active:bg-card dark:data-active:text-foreground data-active:[&_svg]:text-action",
+        "data-active:bg-background data-active:text-foreground data-active:shadow-control data-active:ring-1 data-active:ring-border/70 dark:data-active:bg-accent dark:data-active:ring-border dark:data-active:text-foreground data-active:[&_svg]:text-action",
         "after:absolute after:rounded-full after:bg-action after:opacity-0 after:transition-opacity after:duration-150 group-data-horizontal/tabs:after:inset-x-1 group-data-horizontal/tabs:after:bottom-[-1px] group-data-horizontal/tabs:after:h-0.5 group-data-vertical/tabs:after:inset-y-1 group-data-vertical/tabs:after:-right-1 group-data-vertical/tabs:after:w-0.5 group-data-[variant=line]/tabs-list:data-active:after:opacity-100",
         className
       )}

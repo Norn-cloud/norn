@@ -26,6 +26,9 @@ for (const scheme of ["light", "dark"] as const) {
     await recorded(page)
     await page.goto("/sources")
     await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible()
+    await expect(page.locator('[data-slot="stat-strip"]')).toBeVisible()
+    await expect(page.locator('[data-slot="panel"]').first()).toBeVisible()
+    await expect(page.locator('[data-slot="table-header"]').first()).toBeVisible()
 
     // HTML scheme class matches system color scheme.
     await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains("dark"))).toBe(scheme === "dark")
@@ -38,6 +41,8 @@ for (const scheme of ["light", "dark"] as const) {
       const primary = document.querySelector<HTMLElement>('[data-slot="button"][data-variant="default"]')!
       const thRow = document.querySelector<HTMLElement>('[data-slot="table-header"] tr')!
       const kpiValue = document.querySelector<HTMLElement>('[data-slot="kpi"] > div')!
+      const perspTrack = document.querySelector<HTMLElement>('[role="group"][aria-label="Perspective"]')!
+      const perspActive = perspTrack.querySelector<HTMLElement>('button[aria-pressed="true"]')!
 
       const cs = (el: HTMLElement) => getComputedStyle(el)
       return {
@@ -54,6 +59,8 @@ for (const scheme of ["light", "dark"] as const) {
         primaryRadius: Number.parseFloat(cs(primary).borderTopLeftRadius),
         thBg: cs(thRow).backgroundColor,
         kpiVariantNumeric: cs(kpiValue).fontVariantNumeric,
+        perspTrackBg: cs(perspTrack).backgroundColor,
+        perspActiveBg: cs(perspActive).backgroundColor,
       }
     })
 
@@ -63,17 +70,21 @@ for (const scheme of ["light", "dark"] as const) {
     expect(metrics.pageBorder).toBeGreaterThanOrEqual(0.5)
     expect(metrics.pageShadow).not.toBe("none")
 
-    // Dark mode layers progress upward in luminance: shell < page < card.
+    // Dark mode layers progress upward in luminance: shell < page < card, and active segment sits above its track.
     // Light mode lifts pure white page above soft shell ground, with subtly tinted cards.
     const shellLum = luminance(rgb(metrics.shellBg))
     const pageLum = luminance(rgb(metrics.pageBg))
     const panelLum = luminance(rgb(metrics.panelBg))
+    const trackLum = luminance(rgb(metrics.perspTrackBg))
+    const activeLum = luminance(rgb(metrics.perspActiveBg))
     if (scheme === "dark") {
       expect(shellLum).toBeLessThan(pageLum)
       expect(pageLum).toBeLessThan(panelLum)
+      expect(activeLum).toBeGreaterThan(trackLum)
     } else {
       expect(shellLum).toBeLessThan(pageLum)
       expect(panelLum).toBeLessThan(pageLum)
+      expect(activeLum).toBeGreaterThan(trackLum)
     }
 
     // 2. Panels and StatStrip sit on a subtly tinted card surface at 10-12px radius (at 90% root font-size).
