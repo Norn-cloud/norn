@@ -21,14 +21,20 @@
  * frozen contract (D84) until they are enrolled in `scripts/ci/contract_diff.py`.
  */
 import { createHash } from "node:crypto"
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs"
+import { accessSync, chmodSync, constants, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { createRequire } from "node:module"
 import { dirname, join } from "node:path"
 import { warnAuthoringVersion } from "./authoring-version.ts"
 import { buildInfo, type BuildInfo } from "./build-info.ts"
 import { TOOL_ROOT } from "./profile.ts"
 import { ProjectError, readProject } from "./project.ts"
-import { cachedDevHostPath, defaultCacheRoot } from "./runtime-cache.ts"
+import {
+  RUNTIME_MANIFEST_FORMAT,
+  cachedDevHostPath,
+  cachedRuntimeManifestPath,
+  defaultCacheRoot,
+  toReleasePlatform,
+} from "./runtime-cache.ts"
 
 /** What finding the host depends on; a test replaces parts of it. */
 export interface HostLookup {
@@ -117,12 +123,105 @@ function fetchable(url: string): boolean {
   return url.startsWith("https://") || /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//.test(url)
 }
 
+/** Normalize a release tag (`drop-28` -> `0.0.28`, `drop-test` -> `0.0.0-test`) to compare with semver. */
+function normalizeReleaseVersion(version: string): string {
+  const numericDrop = /^drop-([0-9]+)$/.exec(version)
+  if (numericDrop) return `0.0.${numericDrop[1]}`
+  const suffixDrop = /^drop-([A-Za-z0-9.-]+)$/.exec(version)
+  if (suffixDrop) return `0.0.0-${suffixDrop[1]}`
+  return version
+}
+
+function releaseVersionsMatch(recorded: string, expected: string): boolean {
+  return recorded === expected || normalizeReleaseVersion(recorded) === normalizeReleaseVersion(expected)
+}
+
+/**
+ * Validate a `norn-dev-host` binary discovered in the local runtime cache:
+ * - must be a regular file (never a directory or special file);
+ * - on POSIX, must be executable;
+ * - if `<activeRuntimeDir>/manifest.json` exists, it must be valid metadata
+ *   matching the current platform and (when running a release build) version.
+ */
+function validateCachedDevHost(
+  cacheDir: string,
+  binaryPath: string,
+  nodePlatform: string,
+  build: BuildInfo | undefined,
+): string {
+  let stat: ReturnType<typeof statSync>
+  try {
+    stat = statSync(binaryPath)
+  } catch (error) {
+    throw unavailable(
+      `cached dev host at ${binaryPath} could not be inspected (${error instanceof Error ? error.message : String(error)}).`,
+      build,
+    )
+  }
+  if (!stat.isFile()) {
+    throw unavailable(`cached dev host at ${binaryPath} is not a regular file.`, build)
+  }
+  if (process.platform !== "win32") {
+    if ((stat.mode & 0o111) === 0) {
+      throw unavailable(`cached dev host at ${binaryPath} is not executable.`, build)
+    }
+    try {
+      accessSync(binaryPath, constants.X_OK)
+    } catch {
+      throw unavailable(`cached dev host at ${binaryPath} is not executable by the current user.`, build)
+    }
+  }
+  const manifestPath = cachedRuntimeManifestPath(cacheDir)
+  if (existsSync(manifestPath)) {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(readFileSync(manifestPath, "utf8"))
+    } catch (error) {
+      throw unavailable(
+        `cached runtime manifest at ${manifestPath} is invalid JSON (${error instanceof Error ? error.message : String(error)}).`,
+        build,
+      )
+    }
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw unavailable(`cached runtime manifest at ${manifestPath} is malformed.`, build)
+    }
+    const manifest = parsed as Record<string, unknown>
+    if (manifest.format !== RUNTIME_MANIFEST_FORMAT) {
+      throw unavailable(
+        `cached runtime manifest at ${manifestPath} has unsupported format ${String(manifest.format)}.`,
+        build,
+      )
+    }
+    const expectedPlatform = toReleasePlatform(nodePlatform)
+    if (typeof manifest.platform !== "string" || manifest.platform.length === 0) {
+      throw unavailable(`cached runtime manifest at ${manifestPath} is missing platform metadata.`, build)
+    }
+    if (manifest.platform !== expectedPlatform) {
+      throw unavailable(
+        `cached dev host at ${binaryPath} is for platform ${manifest.platform}, not ${expectedPlatform}.`,
+        build,
+      )
+    }
+    if (typeof manifest.version !== "string" || manifest.version.length === 0) {
+      throw unavailable(`cached runtime manifest at ${manifestPath} is missing version metadata.`, build)
+    }
+    if (build && manifest.version !== "latest" && !releaseVersionsMatch(manifest.version, build.version)) {
+      throw unavailable(
+        `cached dev host at ${binaryPath} is for version ${manifest.version}, not ${build.version}.`,
+        build,
+      )
+    }
+  }
+  return binaryPath
+}
+
 /** The dev host binary to run, by the order in the module comment. */
 export async function hostBinary(lookup: HostLookup = hostLookup()): Promise<string> {
   const build = lookup.build
   const override = lookup.env.NORN_DEV_HOST_BIN
   if (override) {
     if (!existsSync(override)) throw unavailable(`NORN_DEV_HOST_BIN names ${override}, which does not exist.`, build)
+    if (!statSync(override).isFile()) throw unavailable(`NORN_DEV_HOST_BIN names ${override}, which is not a regular file.`, build)
     return override
   }
   const asset = build?.hosts[lookup.platform]
@@ -130,6 +229,9 @@ export async function hostBinary(lookup: HostLookup = hostLookup()): Promise<str
   const packaged = lookup.packageDir(packageName)
   if (packaged && existsSync(join(packaged, "bin", "norn-dev-host"))) {
     const binary = join(packaged, "bin", "norn-dev-host")
+    if (!statSync(binary).isFile()) {
+      throw unavailable(`${packageName} at ${packaged} has a non-file bin/norn-dev-host entry.`, build)
+    }
     // An installed host runs only if it is the one this release records: no record, no run.
     if (!asset) {
       throw unavailable(`${packageName} is installed at ${packaged}, but ${build ? `this release records no host for ${lookup.platform}` : "a checkout records no host digest"}, so it is not run.`, build)
@@ -141,11 +243,11 @@ export async function hostBinary(lookup: HostLookup = hostLookup()): Promise<str
   }
   const runtimeCached = cachedDevHostPath(lookup.cacheDir)
   if (!build) {
-    if (existsSync(runtimeCached)) return runtimeCached
+    if (existsSync(runtimeCached)) return validateCachedDevHost(lookup.cacheDir, runtimeCached, lookup.platform, build)
     throw unavailable("this is a checkout, which carries no prebuilt host.", build)
   }
   if (!asset) {
-    if (existsSync(runtimeCached)) return runtimeCached
+    if (existsSync(runtimeCached)) return validateCachedDevHost(lookup.cacheDir, runtimeCached, lookup.platform, build)
     throw unavailable(`this release has no prebuilt host for ${lookup.platform} (it has ${Object.keys(build.hosts).sort().join(", ") || "none"}).`, build)
   }
   const cached = join(lookup.cacheDir, "dev-host", build.version, lookup.platform, "norn-dev-host")
