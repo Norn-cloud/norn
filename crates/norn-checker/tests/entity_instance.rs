@@ -325,12 +325,10 @@ fn defaults_are_materialized_in_instance_encoding() {
             }
         }
     });
-    let catalog = ScopedView::uniform(
-        &[serde_json::from_value(artifact)
-            .unwrap_or_else(|error| panic!("envelope should decode: {error}"))],
-        &std::collections::BTreeSet::new(),
-    )
-    .into_catalog();
+    let decoded = serde_json::from_value::<ArtifactEnvelope>(artifact);
+    assert!(decoded.is_ok(), "envelope should decode: {decoded:?}");
+    let typed: Vec<_> = decoded.into_iter().collect();
+    let catalog = ScopedView::uniform(&typed, &std::collections::BTreeSet::new()).into_catalog();
     let bin = catalog
         .object_type("retail.Bin.entity.v2")
         .expect("the artifact defines an object type")

@@ -766,7 +766,7 @@ fn quantity_inputs(mut schema: Value) -> Value {
 }
 
 // Typed Rust composition reuses the generated writer and the existing quantity contract.
-fn quantity_action() -> (ActionRoot, SynchronousRule) {
+fn quantity_action() -> Result<(ActionRoot, SynchronousRule), Box<dyn std::error::Error>> {
     let mut artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(include_str!(
         "../../norn-kernel/tests/fixtures/action-writer.json"
     ))
@@ -835,9 +835,9 @@ fn quantity_action() -> (ActionRoot, SynchronousRule) {
     );
     let environment_hash = ScopedView::uniform(&artifacts, &BTreeSet::new())
         .receipt_env(&norn_ir::ResourceLimitProfile::norn_limits_v1())
-        .ok()
-        .and_then(|env| env.reference().ok())
-        .map_or_default(|reference| reference.sha256);
+        .map_err(|errors| format!("type environment: {errors:?}"))?
+        .reference()?
+        .sha256;
     let rule = SynchronousRule::admit(
         action.synchronous_rule.clone().unwrap(),
         &writer,
@@ -848,7 +848,7 @@ fn quantity_action() -> (ActionRoot, SynchronousRule) {
         },
     )
     .unwrap();
-    (action, rule)
+    Ok((action, rule))
 }
 
 /// TXN-ALL: facts, links, postings, outbox and timer cancellation share one receipt.
@@ -857,11 +857,12 @@ fn quantity_action() -> (ActionRoot, SynchronousRule) {
     clippy::too_many_lines,
     reason = "one witness compares all effects before refusal and after successful reopen/retry"
 )]
-fn txn_all_refuses_atomically_and_preserves_the_retained_receipt_after_reopen() {
+fn txn_all_refuses_atomically_and_preserves_the_retained_receipt_after_reopen()
+-> Result<(), Box<dyn std::error::Error>> {
     use norn_ir::quantity_ledger::{EvaluatedLedgerLeg, QuantityOperation, QuantityResolution};
     let directory = tempfile::tempdir().unwrap();
     let definitions = types();
-    let (action, rule) = quantity_action();
+    let (action, rule) = quantity_action()?;
     let rules = [rule];
     let catalog = TypeCatalog::new(&definitions).with_action_rules(&rules);
     for occupied in [true, false] {
@@ -992,4 +993,5 @@ fn txn_all_refuses_atomically_and_preserves_the_retained_receipt_after_reopen() 
         );
         assert_eq!(cell.store().read().dump().unwrap(), committed);
     }
+    Ok(())
 }

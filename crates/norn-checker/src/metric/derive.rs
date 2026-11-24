@@ -950,12 +950,20 @@ mod ontology_derived_measures {
         LawRoot::Entity("demo.Conversion".to_owned())
     }
 
-    fn space(artifacts: &[ArtifactEnvelope]) -> MetricSpace {
-        derive_metric_space(
-            &crate::entity_scopes::ScopedView::uniform(artifacts, &BTreeSet::new()),
-            &scope(),
+    /// [`super::derive_metric_space`] as the fixtures' one shared scope sees them.
+    fn derive_metric_space(
+        artifacts: &[ArtifactEnvelope],
+        registry: &BTreeSet<norn_ir::PropertyTypeName>,
+        scope: &LawRoot,
+    ) -> Result<MetricSpace, Vec<Diagnostic>> {
+        super::derive_metric_space(
+            &crate::entity_scopes::ScopedView::uniform(artifacts, registry),
+            scope,
         )
-        .unwrap_or_else(|findings| panic!("derived space: {findings:?}"))
+    }
+
+    fn space(artifacts: &[ArtifactEnvelope]) -> MetricSpace {
+        derive_metric_space(artifacts, &BTreeSet::new(), &scope()).expect("derived space")
     }
 
     fn yield_question(space: &MetricSpace) -> QuestionIR {

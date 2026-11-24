@@ -521,13 +521,14 @@ pub(crate) fn model_set(model: &Model, scope: &serde_json::Value) -> String {
             "payload": {"entityVersion": "2.0", "interface": interface}
         })
     }));
-    String::from_utf8_lossy(
-        &Value::from_json(json!(artifacts))
+    let canonical_set = String::from_utf8(
+        Value::from_json(json!(artifacts))
             .expect("artifact set is exact JSON")
             .canonical_json()
             .expect("artifact set canonicalizes"),
-    )
-    .into_owned()
+    );
+    assert!(canonical_set.is_ok(), "canonical artifact set is UTF-8");
+    canonical_set.unwrap_or_default()
 }
 
 fn install_input(

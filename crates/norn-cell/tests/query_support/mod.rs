@@ -258,8 +258,9 @@ pub(crate) fn loss_plan() -> QuestionPlan {
     artifact["name"] = json!(TYPE);
     artifact["namespace"] = json!("demo");
     artifact["payload"] = json!({"entityVersion":"2.0","objectType":store.model().object_types().next().expect("conversion")});
-    let typed: Vec<norn_ir::ArtifactEnvelope> =
-        serde_json::from_value(artifact).ok().into_iter().collect();
+    let decoded = serde_json::from_value::<norn_ir::ArtifactEnvelope>(artifact);
+    assert!(decoded.is_ok(), "typed model: {decoded:?}");
+    let typed: Vec<_> = decoded.into_iter().collect();
     let catalog = ScopedView::uniform(&typed, &std::collections::BTreeSet::new()).into_catalog();
     let mut metric = base
         .definitions()
