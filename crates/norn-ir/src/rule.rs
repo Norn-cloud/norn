@@ -565,7 +565,7 @@ pub enum SliceKey {
             deserialize_with = "deserialize_optional_u32",
             skip_serializing_if = "Option::is_none"
         )]
-        #[schemars(with = "u32")]
+        #[schemars(with = "u32", range(min = 1))]
         max_items: Option<u32>,
     },
 }

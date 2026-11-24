@@ -1,60 +1,12 @@
 //! APPROVAL-1: a call of an approval-gated action parks as a decision.
 //!
 //! While an active `approval` definition gates an action, the shared action
-//! dispatch runs the kernel's action pipeline for the call (the caller's
-//! authorization, input admission, target visibility, preconditions) against
-//! `WouldCommit`, a host that serves every read but stops at the commit
-//! point. Only a call that reaches it parks: one `norn.decision@1` command
-//! carrying the admitted call and the requester's verified principal,
-//! committed alone. A caller who could not commit the call gets exactly the
-//! refusal an ungated call would, and creates nothing.
-//!
-//! A decider who holds one of the approval's roles and is not the requester
-//! approves or rejects it (DECISIONS-1). The resolution is the record: once
-//! approved, exactly that call (the same action, input, idempotency key and
-//! requester) commits through the same dispatch, under the requester's own
-//! authority, with everything decided again at that commit, including the
-//! laws the cell checks only when it commits. Nothing bypasses the dispatch:
-//! the approver's decision executes the call by calling it as the requester.
-//!
-//! APPROVAL-REVISION-1: an approval is given for the action as it was
-//! defined when the call parked. The parked call carries the action
-//! definition's digest, and its command id hashes it, so an approval never
-//! lets the call commit under a changed action: approving a call whose action
-//! changed since it parked refuses it (`approval.definition_changed`), and
-//! the requester's call under the new definition parks anew for a fresh
-//! approval.
-//!
-//! APPROVAL-PIN-1: a call pinned to a definitions version (`?version=`)
-//! parks with that pin, and its approval commits it pinned the same way: a
-//! catalog that changed between parking and approval refuses the commit
-//! (`defs.stale`) and commits nothing. The pin is part of the call's
-//! identity: the requester's retry under another catalog parks anew and
-//! waits for a fresh decision.
-//!
-//! APPROVAL-RECOVERY-1: the approval of a parked call is recorded first and
-//! the call commits after it, so a host can stop in between. Nothing ever
-//! runs the call without a request: an approved call that did not commit
-//! stays visibly approved and not executed (`not_executed`), and only the
-//! requester's own retry runs it, once, under the requester's current
-//! authority (no other request can establish it), only as exactly the
-//! approved call (its command id: requester, input, idempotency key, action
-//! digest, gate definition and revision, definitions pin), and only for the
-//! authenticated principal of the request that runs it: the parked
-//! requester's subject, actor kind and role table, compared under the
-//! dispatch's own hold (S2). The commit that runs it names the approval it
-//! consumed, so whether this approval's call committed is that record (S6c);
-//! a refusal decided while it ran is recorded on the ledger and is final,
-//! whatever commits under the same key later. A call a flow step parked
-//! carries that exact step attempt (its run, its parked command and
-//! generation) from the moment it parks, named by the flow's own dispatch
-//! and never derived from the idempotency key, and runs only while that
-//! attempt waits on it (S6b), and only by that dispatch (S5a): no other
-//! invocation, a direct call or an approval's dispatch of one, runs a call
-//! under a step's call key. A step's call parked before attempts were
-//! recorded is bound, under the dispatch's hold, to its approval's recorded
-//! run's pending attempt that makes exactly that call. A denial of
-//! authority is not recorded: authority is decided anew on every try.
+//! dispatch runs the kernel's action pipeline against `WouldCommit`, a host
+//! that serves every read but stops at the commit point. Only calls that reach
+//! commit park as one `norn.decision@1` command. Approved calls execute under
+//! the requester's own authority, pinned to the action digest
+//! (APPROVAL-REVISION-1) and definitions version (APPROVAL-PIN-1), and recover
+//! only on the requester's own retry (APPROVAL-RECOVERY-1).
 
 use std::collections::BTreeMap;
 
@@ -1190,6 +1142,16 @@ impl<E: SqlEngine> CellHost for WouldCommit<'_, E> {
         max_bytes: u64,
     ) -> Result<Option<Vec<PredicateObject>>, CellError> {
         self.cell.read_predicate(predicate, max_members, max_bytes)
+    }
+    fn read_predicate_for_action(
+        &self,
+        predicate: &PredicateQuery,
+        max_members: usize,
+        max_bytes: u64,
+        authorize: &mut dyn FnMut(&PredicateObject) -> bool,
+    ) -> Result<norn_kernel::PredicateActionRead, CellError> {
+        self.cell
+            .read_predicate_for_action(predicate, max_members, max_bytes, authorize)
     }
     fn commit(
         &mut self,

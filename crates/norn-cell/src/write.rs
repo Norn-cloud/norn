@@ -219,6 +219,7 @@ pub(crate) struct Writer<'a, E: SqlEngine> {
     /// The effective-values catalog, built once per commit: its effective
     /// model is derived on first use, so a catalog per write re-derived it.
     catalog: std::cell::OnceCell<TypeCatalog<'a>>,
+    link_read_markings: BTreeSet<String>,
 }
 
 impl<'a, E: SqlEngine> Writer<'a, E> {
@@ -237,6 +238,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             batch_output_facts: None,
             pending_snapshot_digests: BTreeMap::new(),
             catalog: std::cell::OnceCell::new(),
+            link_read_markings: BTreeSet::new(),
         }
     }
 
@@ -271,6 +273,9 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         }
         let occurrence_inherited = self.occurrence_lineage_markings(&inherited)?;
         let destination_markings = self.value_lineage_markings()?;
+        self.link_read_markings.clone_from(&occurrence_inherited);
+        self.link_read_markings
+            .extend(destination_markings.values().flatten().cloned());
         let mapped = self.mapped_properties();
         self.batch_output_facts = Some(self.emitted_fact_versions()?);
         if let Some(consumption) = &self.batch.consumes {
@@ -2986,6 +2991,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         reason = "link state, version and original creation evidence are written atomically"
     )]
     pub(crate) fn apply_links(&mut self) -> Result<Vec<LinkedRow>, CellError> {
+        crate::link_guard::check_link_read_markings(&self.batch.links, &self.link_read_markings)?;
         let mut linked = Vec::with_capacity(self.batch.links.len());
         for change in &self.batch.links {
             let (object_type, link, source, target, target_type, values) = match change {
@@ -3075,6 +3081,16 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     Some(to_i64(version, "link version")?),
                 ))
             };
+            if values.is_none() {
+                crate::link_guard::check_remove_slot_match(
+                    &self.reader(),
+                    self.world,
+                    &table_name,
+                    source,
+                    target,
+                    &target_type,
+                )?;
+            }
             self.conn.execute(
                 &format!(
                     "DELETE FROM {} WHERE {} = ?1 AND {} = ?2 AND {} = ?3",
@@ -3111,7 +3127,14 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     to_i64(version, "link version")?
                 ],
             )?;
-            self.record_link_creation(&table_name, source, target, creation)?;
+            crate::link_guard::record_link_creation(
+                self.conn,
+                self.world,
+                &table_name,
+                source,
+                target,
+                creation,
+            )?;
             linked.push(LinkedRow {
                 object_type: object_type.clone(),
                 link: link.clone(),
@@ -3122,30 +3145,6 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             });
         }
         Ok(linked)
-    }
-
-    fn record_link_creation(
-        &self,
-        table: &str,
-        source: &str,
-        target: &str,
-        creation: Option<(Option<i64>, Option<i64>)>,
-    ) -> Result<(), CellError> {
-        self.conn.execute(
-            &format!(
-                "DELETE FROM \"{LINK_CREATION}\" WHERE \"world\" = ?1 AND \"link_table\" = ?2 AND \"source\" = ?3 AND \"target\" = ?4"
-            ),
-            params![self.world, table, source, target],
-        )?;
-        if let Some((commit, version)) = creation {
-            self.conn.execute(
-                &format!(
-                    "INSERT INTO \"{LINK_CREATION}\" (\"world\", \"link_table\", \"source\", \"target\", \"created_commit\", \"creation_version\") VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
-                ),
-                params![self.world, table, source, target, commit, version],
-            )?;
-        }
-        Ok(())
     }
 
     fn add_link(

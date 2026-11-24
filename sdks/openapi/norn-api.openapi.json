@@ -27289,7 +27289,7 @@
             "type": "integer",
             "format": "uint32",
             "description": "Optional cap on matching objects (further bounded by the limit\nprofile's `slice.max_records`). Exceeding refuses; never truncates.",
-            "minimum": 0
+            "minimum": 1
           },
           "window": {
             "$ref": "#/components/schemas/NornIrAggregateWindow",

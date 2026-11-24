@@ -1782,7 +1782,7 @@
                   "description": "Optional cap on matching objects (further bounded by the limit\nprofile's `slice.max_records`). Exceeding refuses; never truncates.",
                   "type": "integer",
                   "format": "uint32",
-                  "minimum": 0
+                  "minimum": 1
                 },
                 "window": {
                   "description": "Optional window over one date or timestamp property.",

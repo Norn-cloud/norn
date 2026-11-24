@@ -153,7 +153,7 @@ pub(crate) fn query_expressions(
     Ok(rows)
 }
 
-fn query_projected(
+pub(crate) fn query_projected(
     engine: &impl SqlEngine,
     table: &str,
     columns: &[(&str, bool)],

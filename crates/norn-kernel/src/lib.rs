@@ -113,9 +113,9 @@ pub use cell_host::{
     BoundedFact, CellCommit, CellHost, CommitError, CommitModel, CommitReceipt, CommitVersions,
     CommitView, Consumed, DueTimer, FactExpectation, FactKey, FactMutation, FactState, FactVersion,
     FactWrite, LedgerSeq, LinkKey, LinkMutation, LinkReadExpectation, LinkReadTarget, LinkState,
-    LinkWrite, ObservationId, Observed, OwnedRowsCommitProof, Performed, PredicateObject,
-    PredicateQuery, PredicateReadExpectation, PredicateReadMember, Provenance, SerializationLane,
-    WrittenLinkVersion, WrittenVersion, check_commit,
+    LinkWrite, ObservationId, Observed, OwnedRowsCommitProof, Performed, PredicateActionRead,
+    PredicateObject, PredicateQuery, PredicateReadExpectation, PredicateReadMember, Provenance,
+    SerializationLane, WrittenLinkVersion, WrittenVersion, check_commit,
 };
 pub use decider::{
     Decider, Decision, DecisionOf, EnvelopeKind, Step, StepError, StepOf, StepResult, fold, replay,
@@ -127,7 +127,9 @@ pub use decision_commit::{
     commit_decision_with_limits, commit_decision_with_meter, decision_cell_commit, load_slice,
     prepare_decision, prepare_decision_with_limits, prepare_decision_with_source_owned_targets,
 };
-pub use decision_links::{HostCellCommit, decision_cell_commit_with_host};
+pub use decision_links::{
+    HostCellCommit, decision_cell_commit_with_host, decision_cell_commit_with_host_and_meter,
+};
 pub use effect::{
     Command, CommandId, DependencyToken, Effect, FreshnessPolicy, Generation, IdempotencyKey,
     InputIdentity, OwnerVersion, Timer, TimerId,

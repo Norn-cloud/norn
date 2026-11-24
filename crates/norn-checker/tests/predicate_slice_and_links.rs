@@ -6,14 +6,15 @@ use norn_checker::{EntityArtifactSetContext, check_artifact_set};
 use norn_ir::ArtifactEnvelope;
 use serde_json::{Value, json};
 
-#[allow(clippy::expect_used, reason = "test fixture helper")]
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
 fn envelope(
     kind: &str,
     artifact_id: &str,
     payload: &Value,
     dependencies: &Value,
-) -> ArtifactEnvelope {
-    serde_json::from_value(json!({
+) -> TestResult<ArtifactEnvelope> {
+    Ok(serde_json::from_value(json!({
         "irVersion": "0.1",
         "artifactId": artifact_id,
         "kind": kind,
@@ -25,11 +26,10 @@ fn envelope(
         "dependencies": dependencies,
         "provenance": {"source": "authoring_sdk", "sourcePath": "test.ts"},
         "payload": payload
-    }))
-    .expect("valid envelope")
+    }))?)
 }
 
-fn entity_artifacts() -> Vec<ArtifactEnvelope> {
+fn entity_artifacts() -> TestResult<Vec<ArtifactEnvelope>> {
     let agent = envelope(
         "entity",
         "schedule.Agent.entity",
@@ -43,7 +43,7 @@ fn entity_artifacts() -> Vec<ArtifactEnvelope> {
             }
         }),
         &json!([]),
-    );
+    )?;
     let plan = envelope(
         "entity",
         "schedule.Plan.entity",
@@ -64,7 +64,7 @@ fn entity_artifacts() -> Vec<ArtifactEnvelope> {
             }
         }),
         &json!([]),
-    );
+    )?;
     let commitment = envelope(
         "entity",
         "schedule.Commitment.entity",
@@ -85,11 +85,11 @@ fn entity_artifacts() -> Vec<ArtifactEnvelope> {
             }
         }),
         &json!([]),
-    );
-    vec![agent, plan, commitment]
+    )?;
+    Ok(vec![agent, plan, commitment])
 }
 
-fn rule_artifact(rule_links_schema: Option<Value>) -> ArtifactEnvelope {
+fn rule_artifact(rule_links_schema: Option<Value>) -> TestResult<ArtifactEnvelope> {
     let mut output_props = serde_json::Map::from_iter([
         (
             "facts".to_owned(),
@@ -172,9 +172,12 @@ fn rule_artifact(rule_links_schema: Option<Value>) -> ArtifactEnvelope {
     )
 }
 
-fn base_artifacts(slice_entry: &Value, rule_links_schema: Option<Value>) -> Vec<ArtifactEnvelope> {
-    let mut artifacts = entity_artifacts();
-    artifacts.push(rule_artifact(rule_links_schema));
+fn base_artifacts(
+    slice_entry: &Value,
+    rule_links_schema: Option<Value>,
+) -> TestResult<Vec<ArtifactEnvelope>> {
+    let mut artifacts = entity_artifacts()?;
+    artifacts.push(rule_artifact(rule_links_schema)?);
     artifacts.push(envelope(
         "action",
         "schedule.plan.commit.action",
@@ -222,8 +225,8 @@ fn base_artifacts(slice_entry: &Value, rule_links_schema: Option<Value>) -> Vec<
             }
         }),
         &json!([{"artifactId": "schedule.batch.rule", "kind": "rule", "version": "1.0.0", "required": true}]),
-    ));
-    artifacts
+    )?);
+    Ok(artifacts)
 }
 
 fn valid_predicate_slice() -> Value {
@@ -266,20 +269,22 @@ fn valid_links_schema() -> Value {
 }
 
 #[test]
-fn admits_valid_predicate_slice_and_checked_decision_links() {
+fn admits_valid_predicate_slice_and_checked_decision_links() -> TestResult {
     let registry = BTreeSet::new();
     let ctx = EntityArtifactSetContext {
         base: &[],
         registry: &registry,
         tenant: None,
     };
-    let artifacts = base_artifacts(&valid_predicate_slice(), Some(valid_links_schema()));
+    let artifacts = base_artifacts(&valid_predicate_slice(), Some(valid_links_schema()))?;
     let findings = check_artifact_set(&artifacts, &ctx);
     assert_eq!(findings, [], "{findings:?}");
+    Ok(())
 }
 
 #[test]
-fn rejects_computed_property_type_mismatch_optional_and_out_of_range_predicate_slices() {
+fn rejects_computed_property_type_mismatch_optional_and_out_of_range_predicate_slices() -> TestResult
+{
     let registry = BTreeSet::new();
     let ctx = EntityArtifactSetContext {
         base: &[],
@@ -293,7 +298,7 @@ fn rejects_computed_property_type_mismatch_optional_and_out_of_range_predicate_s
         "key": {"predicate": {"filter": {"derived_label": "agent_id"}}}
     });
     assert!(
-        !check_artifact_set(&base_artifacts(&computed, None), &ctx).is_empty(),
+        !check_artifact_set(&base_artifacts(&computed, None)?, &ctx).is_empty(),
         "computed property must fail closed"
     );
 
@@ -303,7 +308,7 @@ fn rejects_computed_property_type_mismatch_optional_and_out_of_range_predicate_s
         "key": {"predicate": {"filter": {"agent_id": "count_limit"}}}
     });
     assert!(
-        !check_artifact_set(&base_artifacts(&mismatch, None), &ctx).is_empty(),
+        !check_artifact_set(&base_artifacts(&mismatch, None)?, &ctx).is_empty(),
         "type mismatch must fail closed"
     );
 
@@ -314,7 +319,7 @@ fn rejects_computed_property_type_mismatch_optional_and_out_of_range_predicate_s
         "key": {"predicate": {"filter": {"agent_id": "agent_id"}}}
     });
     assert!(
-        !check_artifact_set(&base_artifacts(&optional, None), &ctx).is_empty(),
+        !check_artifact_set(&base_artifacts(&optional, None)?, &ctx).is_empty(),
         "optional predicate slice must fail closed"
     );
 
@@ -325,14 +330,15 @@ fn rejects_computed_property_type_mismatch_optional_and_out_of_range_predicate_s
             "key": {"predicate": {"filter": {"agent_id": "agent_id"}, "maxItems": bad_cap}}
         });
         assert!(
-            !check_artifact_set(&base_artifacts(&capped, None), &ctx).is_empty(),
+            !check_artifact_set(&base_artifacts(&capped, None)?, &ctx).is_empty(),
             "maxItems={bad_cap} must fail closed"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn rejects_undeclared_or_uncaptured_decision_links() {
+fn rejects_undeclared_or_uncaptured_decision_links() -> TestResult {
     let registry = BTreeSet::new();
     let ctx = EntityArtifactSetContext {
         base: &[],
@@ -344,14 +350,14 @@ fn rejects_undeclared_or_uncaptured_decision_links() {
     let mut bad_link = valid_links_schema();
     bad_link["items"]["properties"]["link"]["enum"] = json!(["nonexistent_link"]);
     assert!(
-        !check_artifact_set(&base_artifacts(&valid_slice, Some(bad_link)), &ctx).is_empty(),
+        !check_artifact_set(&base_artifacts(&valid_slice, Some(bad_link))?, &ctx).is_empty(),
         "undeclared link must fail closed"
     );
 
     let mut no_enum = valid_links_schema();
     no_enum["items"]["properties"]["link"] = json!({"type": "string"});
     assert!(
-        !check_artifact_set(&base_artifacts(&valid_slice, Some(no_enum)), &ctx).is_empty(),
+        !check_artifact_set(&base_artifacts(&valid_slice, Some(no_enum))?, &ctx).is_empty(),
         "unbounded link schema must fail closed"
     );
 
@@ -361,16 +367,17 @@ fn rejects_undeclared_or_uncaptured_decision_links() {
         json!({"type": "object", "additionalProperties": false, "properties": {}});
     assert!(
         !check_artifact_set(
-            &base_artifacts(&valid_slice, Some(remove_with_values)),
+            &base_artifacts(&valid_slice, Some(remove_with_values))?,
             &ctx
         )
         .is_empty(),
         "values on remove-only links must fail closed"
     );
+    Ok(())
 }
 
 #[test]
-fn rejects_slice_only_link_source_without_write_authority() {
+fn rejects_slice_only_link_source_without_write_authority() -> TestResult {
     let registry = BTreeSet::new();
     let ctx = EntityArtifactSetContext {
         base: &[],
@@ -397,16 +404,16 @@ fn rejects_slice_only_link_source_without_write_authority() {
                 "required": ["op", "sourceType", "sourceKey", "link", "targetType", "targetKey"]
             }
         })),
-    );
+    )?;
     // Add `preferred_plan` link to `schedule.Agent`.
-    let agent_payload = serde_json::to_value(artifacts[0].payload.to_json_value()).expect("json");
-    let mut agent_json = serde_json::to_value(&artifacts[0]).expect("envelope json");
+    let agent_payload = serde_json::to_value(artifacts[0].payload.to_json_value())?;
+    let mut agent_json = serde_json::to_value(&artifacts[0])?;
     let mut payload = agent_payload;
     payload["objectType"]["links"] = json!([
         {"id": "preferred_plan", "target": "schedule.Plan", "cardinality": {"to": "one", "from": "many"}}
     ]);
     agent_json["payload"] = payload;
-    artifacts[0] = serde_json::from_value(agent_json).expect("updated agent");
+    artifacts[0] = serde_json::from_value(agent_json)?;
 
     let findings = check_artifact_set(&artifacts, &ctx);
     assert!(
@@ -415,10 +422,11 @@ fn rejects_slice_only_link_source_without_write_authority() {
             .contains("must be covered by the action's declared writes")),
         "slice-only link sourceType must be refused without write authority; got {findings:?}"
     );
+    Ok(())
 }
 
 #[test]
-fn validates_link_values_properties_against_declared_non_computed_link_properties() {
+fn validates_link_values_properties_against_declared_non_computed_link_properties() -> TestResult {
     let registry = BTreeSet::new();
     let ctx = EntityArtifactSetContext {
         base: &[],
@@ -435,18 +443,18 @@ fn validates_link_values_properties_against_declared_non_computed_link_propertie
         "properties": {"bogus": {"type": "string"}},
         "required": ["bogus"]
     });
-    let findings = check_artifact_set(&base_artifacts(&valid_slice, Some(unknown_on_empty)), &ctx);
+    let findings = check_artifact_set(&base_artifacts(&valid_slice, Some(unknown_on_empty))?, &ctx);
     assert!(
         findings.iter().any(|d| d.message.contains("not declared")),
         "unknown link values key on empty-property link must fail closed; got {findings:?}"
     );
 
     // Build an entity set where `for_agent` declares stored `role: text` and computed `tag: text`.
-    let with_link_props = |values_schema: Value| {
+    let with_link_props = |values_schema: Value| -> TestResult<Vec<ArtifactEnvelope>> {
         let mut links = valid_links_schema();
         links["items"]["properties"]["values"] = values_schema;
-        let mut artifacts = base_artifacts(&valid_slice, Some(links));
-        let mut commitment_json = serde_json::to_value(&artifacts[2]).expect("commitment json");
+        let mut artifacts = base_artifacts(&valid_slice, Some(links))?;
+        let mut commitment_json = serde_json::to_value(&artifacts[2])?;
         commitment_json["payload"]["objectType"]["links"] = json!([{
             "id": "for_agent",
             "target": "schedule.Agent",
@@ -456,8 +464,8 @@ fn validates_link_values_properties_against_declared_non_computed_link_propertie
                 {"id": "tag", "type": {"kind": "text"}, "computed": "self.role"}
             ]
         }]);
-        artifacts[2] = serde_json::from_value(commitment_json).expect("updated commitment");
-        artifacts
+        artifacts[2] = serde_json::from_value(commitment_json)?;
+        Ok(artifacts)
     };
 
     // 2. Valid stored link property with matching type is admitted.
@@ -466,7 +474,7 @@ fn validates_link_values_properties_against_declared_non_computed_link_propertie
         "additionalProperties": false,
         "properties": {"role": {"type": "string"}},
         "required": ["role"]
-    }));
+    }))?;
     let ok_findings = check_artifact_set(&ok_artifacts, &ctx);
     assert_eq!(
         ok_findings,
@@ -480,7 +488,7 @@ fn validates_link_values_properties_against_declared_non_computed_link_propertie
         "additionalProperties": false,
         "properties": {"tag": {"type": "string"}},
         "required": ["tag"]
-    }));
+    }))?;
     let computed_findings = check_artifact_set(&computed_artifacts, &ctx);
     assert!(
         computed_findings
@@ -495,7 +503,7 @@ fn validates_link_values_properties_against_declared_non_computed_link_propertie
         "additionalProperties": false,
         "properties": {"role": {"type": "integer"}},
         "required": ["role"]
-    }));
+    }))?;
     let mismatch_findings = check_artifact_set(&mismatch_artifacts, &ctx);
     assert!(
         mismatch_findings
@@ -503,10 +511,11 @@ fn validates_link_values_properties_against_declared_non_computed_link_propertie
             .any(|d| d.message.contains("schema type does not match")),
         "type mismatch in link values must fail closed; got {mismatch_findings:?}"
     );
+    Ok(())
 }
 
 #[test]
-fn rejects_non_scalar_action_input_fields_in_predicate_slice_filter_and_window() {
+fn rejects_non_scalar_action_input_fields_in_predicate_slice_filter_and_window() -> TestResult {
     let registry = BTreeSet::new();
     let ctx = EntityArtifactSetContext {
         base: &[],
@@ -535,15 +544,15 @@ fn rejects_non_scalar_action_input_fields_in_predicate_slice_filter_and_window()
             "objectType": "schedule.Commitment",
             "key": {"predicate": {"filter": {"agent_id": field_name}}}
         });
-        let mut filter_artifacts = base_artifacts(&filter_slice, None);
+        let mut filter_artifacts = base_artifacts(&filter_slice, None)?;
         let action_idx = filter_artifacts.len() - 1;
-        let mut action_json = serde_json::to_value(&filter_artifacts[action_idx]).expect("action");
+        let mut action_json = serde_json::to_value(&filter_artifacts[action_idx])?;
         action_json["payload"]["inputSchema"]["properties"][field_name] = field_schema.clone();
         action_json["payload"]["inputSchema"]["required"]
             .as_array_mut()
-            .expect("required")
+            .ok_or("required array")?
             .push(json!(field_name));
-        filter_artifacts[action_idx] = serde_json::from_value(action_json).expect("updated action");
+        filter_artifacts[action_idx] = serde_json::from_value(action_json)?;
         let findings = check_artifact_set(&filter_artifacts, &ctx);
         assert!(
             findings
@@ -568,15 +577,15 @@ fn rejects_non_scalar_action_input_fields_in_predicate_slice_filter_and_window()
                 }
             }
         });
-        let mut window_artifacts = base_artifacts(&window_slice, None);
+        let mut window_artifacts = base_artifacts(&window_slice, None)?;
         let action_idx = window_artifacts.len() - 1;
-        let mut action_json = serde_json::to_value(&window_artifacts[action_idx]).expect("action");
+        let mut action_json = serde_json::to_value(&window_artifacts[action_idx])?;
         action_json["payload"]["inputSchema"]["properties"][field_name] = field_schema;
         action_json["payload"]["inputSchema"]["required"]
             .as_array_mut()
-            .expect("required")
+            .ok_or("required array")?
             .push(json!(field_name));
-        window_artifacts[action_idx] = serde_json::from_value(action_json).expect("updated action");
+        window_artifacts[action_idx] = serde_json::from_value(action_json)?;
         let findings = check_artifact_set(&window_artifacts, &ctx);
         assert!(
             findings
@@ -585,10 +594,11 @@ fn rejects_non_scalar_action_input_fields_in_predicate_slice_filter_and_window()
             "non-scalar window input {field_name} must fail closed; got {findings:?}"
         );
     }
+    Ok(())
 }
 
 #[test]
-fn rejects_unmatched_source_or_target_in_multi_source_multi_link_schema() {
+fn rejects_unmatched_source_or_target_in_multi_source_multi_link_schema() -> TestResult {
     let registry = BTreeSet::new();
     let ctx = EntityArtifactSetContext {
         base: &[],
@@ -600,7 +610,7 @@ fn rejects_unmatched_source_or_target_in_multi_source_multi_link_schema() {
     multi_source["items"]["properties"]["sourceType"]["enum"] =
         json!(["schedule.Commitment", "schedule.Plan"]);
     let findings = check_artifact_set(
-        &base_artifacts(&valid_predicate_slice(), Some(multi_source)),
+        &base_artifacts(&valid_predicate_slice(), Some(multi_source))?,
         &ctx,
     );
     assert!(
@@ -614,16 +624,17 @@ fn rejects_unmatched_source_or_target_in_multi_source_multi_link_schema() {
     multi_link["items"]["properties"]["link"]["enum"] = json!(["for_agent", "for_plan"]);
     multi_link["items"]["properties"]["targetType"]["enum"] =
         json!(["schedule.Agent", "schedule.Plan", "schedule.Commitment"]);
-    let mut artifacts = base_artifacts(&valid_predicate_slice(), Some(multi_link));
-    let mut commitment_json = serde_json::to_value(&artifacts[2]).expect("commitment json");
+    let mut artifacts = base_artifacts(&valid_predicate_slice(), Some(multi_link))?;
+    let mut commitment_json = serde_json::to_value(&artifacts[2])?;
     commitment_json["payload"]["objectType"]["links"] = json!([
         {"id": "for_agent", "target": "schedule.Agent", "cardinality": {"to": "one", "from": "many"}},
         {"id": "for_plan", "target": "schedule.Plan", "cardinality": {"to": "one", "from": "many"}}
     ]);
-    artifacts[2] = serde_json::from_value(commitment_json).expect("updated commitment");
+    artifacts[2] = serde_json::from_value(commitment_json)?;
     let findings = check_artifact_set(&artifacts, &ctx);
     assert!(
         findings.iter().any(|d| d.message.contains("targetType")),
         "unmatched targetType in multi-link schema must fail closed; got {findings:?}"
     );
+    Ok(())
 }

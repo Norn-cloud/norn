@@ -4050,3 +4050,840 @@ proptest! {
         }
     }
 }
+
+// =========================================================================
+// Round-2 adversarial regression tests for PR #1628 (Blockers 1, 2, 4, 5)
+// =========================================================================
+
+fn r2_put_fact<S: SqlEngine>(
+    cell: &mut SqliteCell<norn_kernel::FactEvent, JsonObject, JsonObject, S>,
+    object_type: &str,
+    key: &str,
+    values: serde_json::Value,
+) {
+    let fact_key = FactKey::new(object_type, key);
+    let expected = cell.load(&fact_key).expect("load").version;
+    let mut commit = CellCommit::empty();
+    commit.writes.push(FactWrite {
+        key: fact_key,
+        expected,
+        mutation: FactMutation::Put {
+            values: serde_json::from_value(values).expect("values"),
+        },
+    });
+    cell.commit(commit).expect("seed fact");
+}
+
+struct R2AllowAll;
+
+impl norn_kernel::ActionAuthorizer for R2AllowAll {
+    fn authorize(
+        &self,
+        _: &norn_kernel::ActionAuthzRequest<'_>,
+    ) -> Result<(), norn_kernel::ActionDenial> {
+        Ok(())
+    }
+    fn authorize_read(
+        &self,
+        _: &norn_kernel::ActionReadAuthzRequest<'_>,
+    ) -> Result<(), norn_kernel::ActionDenial> {
+        Ok(())
+    }
+    fn authorize_read_type(
+        &self,
+        _: &norn_kernel::ActionReadTypeAuthzRequest<'_>,
+    ) -> Result<(), norn_kernel::ActionDenial> {
+        Ok(())
+    }
+}
+
+fn r2_turn(id: &str) -> norn_kernel::DecisionTurn {
+    norn_kernel::DecisionTurn {
+        id: id.to_owned(),
+        now: LogicalTime::from_millis(1_000),
+        world: norn_kernel::World::Main,
+        consumes: None,
+    }
+}
+
+fn r2_iface_fixture() -> (
+    Model,
+    SqliteCell<norn_kernel::FactEvent, JsonObject, JsonObject>,
+    norn_kernel::FactSlice,
+) {
+    let definitions: Vec<norn_ir::ObjectTypeDef> = serde_json::from_value(json!([
+        {
+            "name": "iface.Node",
+            "properties": [{"id": "id", "type": {"kind": "text"}}],
+            "links": [{
+                "id": "rel",
+                "target": "iface.Party",
+                "cardinality": {"to": "many", "from": "many"},
+                "properties": [{"id": "note", "type": {"kind": "text"}}]
+            }]
+        },
+        {"name": "iface.TargetA", "implements": ["iface.Party"], "properties": [{"id": "id", "type": {"kind": "text"}}]},
+        {"name": "iface.TargetAChild", "extends": "iface.TargetA", "properties": []},
+        {"name": "iface.TargetB", "implements": ["iface.Party"], "properties": [{"id": "id", "type": {"kind": "text"}}]}
+    ]))
+    .expect("definitions");
+    let interface: norn_ir::InterfaceDef =
+        serde_json::from_value(json!({"name": "iface.Party", "properties": []}))
+            .expect("interface");
+    let model =
+        Model::from_definitions_with_interfaces(&definitions, &[], &[interface]).expect("model");
+    let store = CellStore::open_in_memory(model.clone()).expect("store");
+    let mut cell: SqliteCell<norn_kernel::FactEvent, JsonObject, JsonObject> = SqliteCell::new(
+        store,
+        "org_demo/dev",
+        |cmd: &norn_kernel::Command<JsonObject>| cmd.payload.clone(),
+    )
+    .expect("cell");
+    r2_put_fact(&mut cell, "iface.Node", "S1", json!({"id": "S1"}));
+    r2_put_fact(&mut cell, "iface.TargetAChild", "K1", json!({"id": "K1"}));
+    r2_put_fact(&mut cell, "iface.TargetB", "K1", json!({"id": "K1"}));
+    r2_put_fact(&mut cell, "iface.TargetB", "K2", json!({"id": "K2"}));
+    let slice = norn_kernel::load_slice(
+        &cell,
+        [
+            FactKey::new("iface.Node", "S1"),
+            FactKey::new("iface.TargetAChild", "K1"),
+            FactKey::new("iface.TargetB", "K1"),
+            FactKey::new("iface.TargetB", "K2"),
+        ],
+    )
+    .expect("slice");
+    (model, cell, slice)
+}
+
+/// Blocker 1: distinct subtypes implementing a shared target interface sharing
+/// a raw target key can never collide, bypass CAS, leak values, or delete each
+/// other's physical edge.
+#[test]
+fn r2_blocker1_interface_target_subtypes_unify_cas_and_physical_link_identity() {
+    let (model, mut cell, slice) = r2_iface_fixture();
+    let catalog = model.type_catalog();
+
+    // 1. Add S1 --rel--> TargetAChild/K1.
+    let add_a: norn_ir::DecisionOutput = serde_json::from_value(json!({
+        "facts": [],
+        "links": [{
+            "op": "add", "sourceType": "iface.Node", "sourceKey": "S1",
+            "link": "rel", "targetType": "iface.TargetAChild", "targetKey": "K1",
+            "values": {"note": "from-a"}
+        }],
+        "commands": [], "timers": []
+    }))
+    .expect("add_a");
+    norn_kernel::commit_decision(&mut cell, &catalog, &slice, &r2_turn("t1"), &add_a)
+        .expect("add TargetAChild/K1");
+
+    let key_a = LinkKey::new(
+        FactKey::new("iface.Node", "S1"),
+        "rel",
+        FactKey::new("iface.TargetAChild", "K1"),
+    );
+    let key_b = LinkKey::new(
+        FactKey::new("iface.Node", "S1"),
+        "rel",
+        FactKey::new("iface.TargetB", "K1"),
+    );
+    let state_a = cell.load_link(&key_a).expect("load_link A");
+    assert_eq!(state_a.version, FactVersion(1));
+    assert_eq!(
+        state_a
+            .values
+            .as_ref()
+            .and_then(|v| v.get("note"))
+            .and_then(norn_ir::RuntimeValue::as_str),
+        Some("from-a")
+    );
+    // Point lookup for TargetB/K1 must NOT return TargetA's values.
+    let state_b = cell.load_link(&key_b).expect("load_link B");
+    assert_eq!(state_b.version, FactVersion(0));
+    assert!(state_b.values.is_none());
+
+    // 2. Remove(TargetB/K1) and Add(TargetB/K1) must BOTH refuse and leave TargetAChild/K1 intact.
+    for payload in [
+        json!({"op": "remove", "sourceType": "iface.Node", "sourceKey": "S1", "link": "rel", "targetType": "iface.TargetB", "targetKey": "K1"}),
+        json!({"op": "add", "sourceType": "iface.Node", "sourceKey": "S1", "link": "rel", "targetType": "iface.TargetB", "targetKey": "K1", "values": {"note": "clobber"}}),
+    ] {
+        let out: norn_ir::DecisionOutput = serde_json::from_value(
+            json!({"facts": [], "links": [payload], "commands": [], "timers": []}),
+        )
+        .expect("out");
+        assert!(
+            norn_kernel::commit_decision(&mut cell, &catalog, &slice, &r2_turn("t2"), &out)
+                .is_err()
+        );
+        let intact = cell.load_link(&key_a).expect("intact");
+        assert_eq!(intact.version, FactVersion(1));
+        assert_eq!(
+            intact
+                .values
+                .as_ref()
+                .and_then(|v| v.get("note"))
+                .and_then(norn_ir::RuntimeValue::as_str),
+            Some("from-a")
+        );
+    }
+
+    // 3. Adding TargetB with a distinct key K2 succeeds alongside TargetAChild/K1.
+    let add_b_k2: norn_ir::DecisionOutput = serde_json::from_value(json!({
+        "facts": [],
+        "links": [{"op": "add", "sourceType": "iface.Node", "sourceKey": "S1", "link": "rel", "targetType": "iface.TargetB", "targetKey": "K2", "values": {"note": "from-b"}}],
+        "commands": [], "timers": []
+    }))
+    .expect("add_b_k2");
+    norn_kernel::commit_decision(&mut cell, &catalog, &slice, &r2_turn("t4"), &add_b_k2)
+        .expect("distinct target key succeeds");
+
+    // 4. Same-hierarchy alias (TargetA/K1 for TargetAChild/K1) enforces CAS: stale v0 refuses.
+    let mut stale_alias = CellCommit::empty();
+    stale_alias.links.push(LinkWrite {
+        key: LinkKey::new(
+            FactKey::new("iface.Node", "S1"),
+            "rel",
+            FactKey::new("iface.TargetA", "K1"),
+        ),
+        expected: FactVersion(0),
+        mutation: LinkMutation::Remove,
+    });
+    assert!(matches!(
+        cell.commit(stale_alias),
+        Err(CommitError::LinkConflict {
+            expected: FactVersion(0),
+            current: FactVersion(1),
+            ..
+        })
+    ));
+}
+
+fn r2_action_call_type() -> norn_ir::ObjectTypeDef {
+    let mut object: norn_ir::ObjectTypeDef =
+        serde_json::from_value(json!({"name": norn_kernel::ACTION_CALL_TYPE})).expect("audit type");
+    object.properties = [
+        "actionId",
+        "actionArtifactId",
+        "actionVersion",
+        "effectKind",
+        "object",
+        "input",
+        "effectiveInput",
+        "derivedValues",
+        "preconditionOutcomes",
+        "parameterPins",
+        "ruleBinding",
+        "trace",
+        "actor",
+        "turn",
+        "transition",
+        "from",
+        "to",
+        "rowOperations",
+    ]
+    .into_iter()
+    .map(|id| norn_ir::Property {
+        id: norn_ir::PropertyId(id.into()),
+        description: None,
+        property_type: norn_ir::PropertyType::JsonExt { schema: None },
+        constraints: norn_ir::PropertyConstraints {
+            nullable: true,
+            ..norn_ir::PropertyConstraints::default()
+        },
+        default: None,
+        markings: Vec::new(),
+        computed: None,
+        protected: false,
+    })
+    .collect();
+    object
+}
+
+fn r2_ifc_fixture() -> (
+    Model,
+    SqliteCell<norn_kernel::FactEvent, JsonObject, JsonObject>,
+) {
+    let mut definitions: Vec<norn_ir::ObjectTypeDef> = serde_json::from_value(json!([
+        {
+            "name": "ifc.Secret",
+            "properties": [
+                {"id": "id", "type": {"kind": "text"}},
+                {"id": "ssn", "type": {"kind": "text"}, "markings": ["pii.ssn"]}
+            ]
+        },
+        {
+            "name": "ifc.Public",
+            "properties": [
+                {"id": "id", "type": {"kind": "text"}},
+                {"id": "status", "type": {"kind": "enum", "values": [{"value": "open"}, {"value": "done"}]}}
+            ],
+            "lifecycles": [{
+                "property": "status",
+                "initial": ["open"],
+                "terminal": ["done"],
+                "transitions": [
+                    {"id": "finish", "from": ["open"], "to": "done"}
+                ]
+            }],
+            "links": [{"id": "linked", "target": "ifc.Public", "cardinality": {"to": "many", "from": "many"}}]
+        }
+    ]))
+    .expect("definitions");
+    definitions.push(r2_action_call_type());
+    let model = common::model_of(&definitions);
+    let store = CellStore::open_in_memory(model.clone()).expect("store");
+    let mut cell: SqliteCell<norn_kernel::FactEvent, JsonObject, JsonObject> = SqliteCell::new(
+        store,
+        "org_demo/dev",
+        |cmd: &norn_kernel::Command<JsonObject>| cmd.payload.clone(),
+    )
+    .expect("cell");
+    r2_put_fact(
+        &mut cell,
+        "ifc.Secret",
+        "SEC1",
+        json!({"id": "SEC1", "ssn": "123-45-6789"}),
+    );
+    r2_put_fact(
+        &mut cell,
+        "ifc.Public",
+        "P1",
+        json!({"id": "P1", "status": "open"}),
+    );
+    r2_put_fact(
+        &mut cell,
+        "ifc.Public",
+        "P2",
+        json!({"id": "P2", "status": "open"}),
+    );
+    (model, cell)
+}
+
+fn r2_ifc_leak_rule() -> norn_kernel::SynchronousRule {
+    let rule_root: norn_ir::RuleRoot = serde_json::from_value(json!({
+        "ruleId": "ifc.leak_rule",
+        "ruleVersion": "2.0",
+        "contract": "decide",
+        "scopeRequired": ["orgId", "environmentId"],
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "slice": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "secret": {"type": "object", "additionalProperties": false, "properties": {"id": {"type": "string"}, "ssn": {"type": "string"}}, "required": ["id", "ssn"]},
+                        "target": {"type": "object", "additionalProperties": false, "properties": {"id": {"type": "string"}, "status": {"type": "string"}}, "required": ["id", "status"]},
+                        "other": {"type": "object", "additionalProperties": false, "properties": {"id": {"type": "string"}, "status": {"type": "string"}}, "required": ["id", "status"]}
+                    },
+                    "required": ["secret", "target", "other"]
+                },
+                "event": {"type": "object", "additionalProperties": false, "properties": {"input": {"type": "object", "additionalProperties": false, "properties": {"id": {"type": "string"}, "p1": {"type": "string"}, "p2": {"type": "string"}, "sec": {"type": "string"}}, "required": ["id", "p1", "p2", "sec"]}, "actor": {"type": "string"}, "operationId": {"type": "string"}}, "required": ["input", "actor", "operationId"]}
+            },
+            "required": ["slice", "event"]
+        },
+        "outputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "facts": {"type": "array", "items": {"type": "object", "additionalProperties": false, "properties": {}}},
+                "links": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                            "op": {"type": "string", "enum": ["remove"]},
+                            "sourceType": {"type": "string", "enum": ["ifc.Public"]},
+                            "sourceKey": {"type": "string"},
+                            "link": {"type": "string", "enum": ["linked"]},
+                            "targetType": {"type": "string", "enum": ["ifc.Public"]},
+                            "targetKey": {"type": "string"}
+                        },
+                        "required": ["op", "sourceType", "sourceKey", "link", "targetType", "targetKey"]
+                    }
+                },
+                "commands": {"type": "array", "items": {"type": "object", "additionalProperties": false, "properties": {}}},
+                "timers": {"type": "array", "items": {"type": "object", "additionalProperties": false, "properties": {}}}
+            },
+            "required": ["facts", "links", "commands", "timers"]
+        },
+        "graph": {
+            "contentType": "application/vnd.gorules.decision",
+            "nodes": [
+                {"id": "in", "name": "input", "type": "inputNode"},
+                {
+                    "id": "decision", "name": "decision", "type": "decisionTableNode",
+                    "content": {
+                        "hitPolicy": "first",
+                        "inputs": [{"id": "c", "name": "c", "type": "expression"}],
+                        "outputs": [
+                            {"id": "f", "name": "facts", "field": "facts"},
+                            {"id": "l", "name": "links", "field": "links"},
+                            {"id": "cm", "name": "commands", "field": "commands"},
+                            {"id": "t", "name": "timers", "field": "timers"}
+                        ],
+                        "rules": [{
+                            "_id": "r0", "c": "", "f": "[]",
+                            "l": "[{op: 'remove', sourceType: 'ifc.Public', sourceKey: event.input.p1, link: 'linked', targetType: 'ifc.Public', targetKey: event.input.p2}]",
+                            "cm": "[]", "t": "[]"
+                        }]
+                    }
+                },
+                {"id": "out", "name": "output", "type": "outputNode"}
+            ],
+            "edges": [
+                {"id": "e0", "sourceId": "in", "targetId": "decision", "type": "edge"},
+                {"id": "e1", "sourceId": "decision", "targetId": "out", "type": "edge"}
+            ]
+        }
+    }))
+    .expect("rule");
+    norn_kernel::SynchronousRule::admit(
+        norn_ir::ActionRuleRef {
+            artifact_id: "ifc.leak_rule.rule".to_owned(),
+            version: "1.0.0".to_owned(),
+        },
+        &rule_root,
+        &std::collections::BTreeMap::new(),
+        norn_kernel::DecisionBinding {
+            profile_id: "norn.limits/1".to_owned(),
+            environment_hash: "env-ifc".to_owned(),
+        },
+    )
+    .expect("admit rule")
+}
+
+fn r2_ifc_link_output(op: &str, src: &str, dst: &str) -> norn_ir::DecisionOutput {
+    serde_json::from_value(json!({
+        "facts": [],
+        "links": [{"op": op, "sourceType": "ifc.Public", "sourceKey": src, "link": "linked", "targetType": "ifc.Public", "targetKey": dst}],
+        "commands": [], "timers": []
+    }))
+    .expect("link output")
+}
+
+/// Blocker 2a: IFC — a decision reading a classified fact cannot emit a dynamic
+/// link (Add or Remove) between unmarked endpoints, even when creating endpoints.
+#[test]
+fn r2_blocker2a_classified_decision_cannot_emit_dynamic_link_between_unmarked_endpoints() {
+    let (model, mut cell) = r2_ifc_fixture();
+    let catalog = model.type_catalog();
+    let classified_slice = norn_kernel::load_slice(
+        &cell,
+        [
+            FactKey::new("ifc.Secret", "SEC1"),
+            FactKey::new("ifc.Public", "P1"),
+            FactKey::new("ifc.Public", "P2"),
+        ],
+    )
+    .expect("slice");
+    let add_link = r2_ifc_link_output("add", "P1", "P2");
+    let refusal = norn_kernel::commit_decision(
+        &mut cell,
+        &catalog,
+        &classified_slice,
+        &r2_turn("t1"),
+        &add_link,
+    )
+    .expect_err("classified decision must not link unmarked endpoints");
+    assert!(matches!(
+        refusal,
+        norn_kernel::DecisionRefusal::Host(CellError::MarkingDeclassificationInvalid(_))
+    ));
+    let edge = LinkKey::new(
+        FactKey::new("ifc.Public", "P1"),
+        "linked",
+        FactKey::new("ifc.Public", "P2"),
+    );
+    assert!(!cell.load_link(&edge).expect("load_link").exists());
+
+    let public_slice = norn_kernel::load_slice(
+        &cell,
+        [
+            FactKey::new("ifc.Public", "P1"),
+            FactKey::new("ifc.Public", "P2"),
+        ],
+    )
+    .expect("public");
+    norn_kernel::commit_decision(
+        &mut cell,
+        &catalog,
+        &public_slice,
+        &r2_turn("t2"),
+        &add_link,
+    )
+    .expect("unclassified add");
+    assert!(cell.load_link(&edge).expect("exists").exists());
+
+    let remove_link = r2_ifc_link_output("remove", "P1", "P2");
+    let refusal = norn_kernel::commit_decision(
+        &mut cell,
+        &catalog,
+        &classified_slice,
+        &r2_turn("t3"),
+        &remove_link,
+    )
+    .expect_err("classified decision must not remove link between unmarked endpoints");
+    assert!(matches!(
+        refusal,
+        norn_kernel::DecisionRefusal::Host(CellError::MarkingDeclassificationInvalid(_))
+    ));
+    assert!(cell.load_link(&edge).expect("still exists").exists());
+
+    let create_and_link: norn_ir::DecisionOutput = serde_json::from_value(json!({
+        "facts": [
+            {"op": "create", "objectType": "ifc.Public", "key": "C1", "values": {"id": "C1", "status": "open"}},
+            {"op": "create", "objectType": "ifc.Public", "key": "C2", "values": {"id": "C2", "status": "open"}}
+        ],
+        "links": [{"op": "add", "sourceType": "ifc.Public", "sourceKey": "C1", "link": "linked", "targetType": "ifc.Public", "targetKey": "C2"}],
+        "commands": [], "timers": []
+    }))
+    .expect("create_and_link");
+    let create_slice = norn_kernel::load_slice(
+        &cell,
+        [
+            FactKey::new("ifc.Secret", "SEC1"),
+            FactKey::new("ifc.Public", "C1"),
+            FactKey::new("ifc.Public", "C2"),
+        ],
+    )
+    .expect("slice");
+    let refusal = norn_kernel::commit_decision(
+        &mut cell,
+        &catalog,
+        &create_slice,
+        &r2_turn("t5"),
+        &create_and_link,
+    )
+    .expect_err("classified decision must still refuse dynamic link materialization");
+    assert!(matches!(
+        refusal,
+        norn_kernel::DecisionRefusal::Host(CellError::MarkingDeclassificationInvalid(_))
+    ));
+}
+
+/// Blocker 2b: IFC — `commit_action` with `synchronousRule` reading a classified
+/// fact in its slice cannot emit dynamic links between unmarked endpoints.
+#[test]
+fn r2_blocker2b_classified_action_cannot_emit_dynamic_link_between_unmarked_endpoints() {
+    let (model, mut cell) = r2_ifc_fixture();
+    let catalog = model.type_catalog();
+    let public_slice = norn_kernel::load_slice(
+        &cell,
+        [
+            FactKey::new("ifc.Public", "P1"),
+            FactKey::new("ifc.Public", "P2"),
+        ],
+    )
+    .expect("public");
+    let add_link: norn_ir::DecisionOutput = serde_json::from_value(json!({
+        "facts": [],
+        "links": [{"op": "add", "sourceType": "ifc.Public", "sourceKey": "P1", "link": "linked", "targetType": "ifc.Public", "targetKey": "P2"}],
+        "commands": [], "timers": []
+    }))
+    .expect("add");
+    norn_kernel::commit_decision(
+        &mut cell,
+        &catalog,
+        &public_slice,
+        &r2_turn("t1"),
+        &add_link,
+    )
+    .expect("seed link");
+
+    let sync_rule = r2_ifc_leak_rule();
+    let action: norn_ir::ActionRoot = serde_json::from_value(json!({
+        "actionId": "ifc.leak_action",
+        "scopeRequired": ["orgId", "environmentId"],
+        "idempotent": true,
+        "ledgered": true,
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {"id": {"type": "string"}, "p1": {"type": "string"}, "p2": {"type": "string"}, "sec": {"type": "string"}},
+            "required": ["id", "p1", "p2", "sec"]
+        },
+        "outputSchema": {"type": "object", "additionalProperties": false, "properties": {}},
+        "slice": [
+            {"name": "secret", "objectType": "ifc.Secret", "key": {"property": {"from": "input", "property": "sec"}}},
+            {"name": "target", "objectType": "ifc.Public", "key": {"property": {"from": "input", "property": "p1"}}},
+            {"name": "other", "objectType": "ifc.Public", "key": {"property": {"from": "input", "property": "p2"}}}
+        ],
+        "synchronousRule": {"artifactId": "ifc.leak_rule.rule", "version": "1.0.0"},
+        "writes": [{"entityKind": "ifc.Public", "change": "modified"}],
+        "effectProgram": {
+            "kind": "fire_transition",
+            "objectIdField": "id",
+            "objectKind": "ifc.Public",
+            "entityArtifactId": "ifc.Public.entity",
+            "entityArtifactVersion": "1.0.0",
+            "lifecycle": "status",
+            "transition": "finish"
+        }
+    }))
+    .expect("action");
+    let action_catalog = model
+        .type_catalog()
+        .with_action_rules(std::slice::from_ref(&sync_rule));
+    let request = norn_kernel::ActionCall {
+        action: &action,
+        action_artifact_id: "ifc.leak_action.action",
+        action_version: "1.0.0",
+        scope: std::collections::BTreeMap::from([
+            ("orgId".to_owned(), "org_demo".to_owned()),
+            ("environmentId".to_owned(), "dev".to_owned()),
+        ]),
+        actor: "operator".to_owned(),
+        input: serde_json::from_value(json!({"id": "P1", "p1": "P1", "p2": "P2", "sec": "SEC1"}))
+            .expect("input"),
+        idempotency_key: "ifc-act-1".to_owned(),
+        object_type: None,
+        turn: r2_turn("t4"),
+        trace: None,
+    };
+    let refusal = norn_kernel::commit_action(&mut cell, &action_catalog, &request, &R2AllowAll)
+        .expect_err("action reading Secret must not remove link between unmarked endpoints");
+    assert!(
+        matches!(
+            refusal,
+            norn_kernel::ActionRefusal::Decision(norn_kernel::DecisionRefusal::Host(
+                CellError::MarkingDeclassificationInvalid(_)
+            ))
+        ),
+        "expected MarkingDeclassificationInvalid, got {refusal:?}"
+    );
+    let edge = LinkKey::new(
+        FactKey::new("ifc.Public", "P1"),
+        "linked",
+        FactKey::new("ifc.Public", "P2"),
+    );
+    assert!(cell.load_link(&edge).expect("edge preserved").exists());
+}
+
+/// Blocker 4: `StoreReader::link` / `SqliteCell::load_link` executes a direct
+/// SQL point lookup (`WHERE _world = ?1 AND _source = ?2 AND _target = ?3`)
+/// without scanning unrelated targets.
+#[test]
+fn r2_blocker4_load_link_uses_point_sql_lookup_without_scanning_unrelated_targets() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    #[derive(Debug)]
+    struct SpyEngine {
+        inner: NativeEngine,
+        queries: Rc<RefCell<Vec<String>>>,
+    }
+
+    impl SqlEngine for SpyEngine {
+        fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+            self.inner.read_isolation()
+        }
+        fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
+            self.inner.read_cache_revision()
+        }
+        fn definition_writes<T>(
+            &self,
+            f: impl FnOnce() -> Result<T, CellError>,
+        ) -> Result<T, CellError> {
+            self.inner.definition_writes(f)
+        }
+        fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
+            self.inner.execute(sql, params)
+        }
+        fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+            self.queries.borrow_mut().push(sql.to_owned());
+            self.inner.query(sql, params)
+        }
+        fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
+            self.inner.execute_batch(sql)
+        }
+        fn transaction<T, X: From<CellError>>(
+            &self,
+            f: impl FnOnce() -> Result<T, X>,
+        ) -> Result<T, X> {
+            self.inner.transaction(f)
+        }
+    }
+
+    let queries = Rc::new(RefCell::new(Vec::new()));
+    let spy = SpyEngine {
+        inner: NativeEngine::open_in_memory().expect("engine"),
+        queries: Rc::clone(&queries),
+    };
+    let store = CellStore::from_engine(spy, law_model()).expect("store");
+    let mut cell: SqliteCell<norn_kernel::FactEvent, JsonObject, JsonObject, SpyEngine> =
+        SqliteCell::new(
+            store,
+            "org_demo/dev",
+            |cmd: &norn_kernel::Command<JsonObject>| cmd.payload.clone(),
+        )
+        .expect("cell");
+
+    r2_put_fact(&mut cell, "law.Thing", "S", json!({"v": 0}));
+    let mut link_commit = CellCommit::empty();
+    for idx in 0..40 {
+        let tid = format!("T{idx:02}");
+        r2_put_fact(&mut cell, "law.Thing", &tid, json!({"v": idx}));
+        link_commit.links.push(LinkWrite {
+            key: LinkKey::new(
+                FactKey::new("law.Thing", "S"),
+                "rel",
+                FactKey::new("law.Thing", tid),
+            ),
+            expected: FactVersion(0),
+            mutation: LinkMutation::Add {
+                values: JsonObject::new(),
+            },
+        });
+    }
+    cell.commit(link_commit).expect("40 links");
+
+    queries.borrow_mut().clear();
+    let hit = cell
+        .load_link(&LinkKey::new(
+            FactKey::new("law.Thing", "S"),
+            "rel",
+            FactKey::new("law.Thing", "T25"),
+        ))
+        .expect("hit");
+    assert_eq!(hit.version, FactVersion(1));
+    assert!(hit.exists());
+    let miss = cell
+        .load_link(&LinkKey::new(
+            FactKey::new("law.Thing", "S"),
+            "rel",
+            FactKey::new("law.Thing", "T99"),
+        ))
+        .expect("miss");
+    assert_eq!(miss.version, FactVersion(0));
+    assert!(!miss.exists());
+
+    let link_table_queries: Vec<String> = queries
+        .borrow()
+        .iter()
+        .filter(|sql| sql.contains("\"_source\"") && !sql.contains("_norn_link_version"))
+        .cloned()
+        .collect();
+    assert!(
+        !link_table_queries.is_empty()
+            && link_table_queries
+                .iter()
+                .all(|sql| sql.contains("\"_target\" = ?3")),
+        "every link table lookup during load_link must filter by _target = ?3; got {link_table_queries:?}"
+    );
+}
+
+/// Blocker 5: nullable properties are represented identically by SQL predicate
+/// reads and point reads so reading the same row through BOTH paths in one
+/// action reconciles cleanly without `StalePreconditionRead`.
+#[test]
+fn r2_blocker5_nullable_row_reconciles_across_predicate_and_point_slice_reads() {
+    let mut definitions: Vec<norn_ir::ObjectTypeDef> = serde_json::from_value(json!([{
+        "name": "doc.Task",
+        "properties": [
+            {"id": "task_id", "type": {"kind": "text"}},
+            {"id": "group", "type": {"kind": "text"}},
+            {"id": "note", "type": {"kind": "text"}, "constraints": {"nullable": true}}
+        ]
+    }]))
+    .expect("definitions");
+    definitions.push(r2_action_call_type());
+    let model = common::model_of(&definitions);
+    let store = CellStore::open_in_memory(model.clone()).expect("store");
+    let mut cell: SqliteCell<norn_kernel::FactEvent, JsonObject, JsonObject> = SqliteCell::new(
+        store,
+        "org_demo/dev",
+        |cmd: &norn_kernel::Command<JsonObject>| cmd.payload.clone(),
+    )
+    .expect("cell");
+
+    r2_put_fact(
+        &mut cell,
+        "doc.Task",
+        "T1",
+        json!({"task_id": "T1", "group": "alpha", "note": null}),
+    );
+
+    // Confirm canonical equality between point read and predicate read.
+    let point = cell
+        .load_bounded(&FactKey::new("doc.Task", "T1"), 65_536)
+        .expect("point")
+        .expect("fits");
+    let predicate: PredicateQuery =
+        serde_json::from_value(json!({"objectType": "doc.Task", "filter": {"group": "alpha"}}))
+            .expect("predicate");
+    let matches = cell
+        .read_predicate(&predicate, 10, 65_536)
+        .expect("read_predicate")
+        .expect("admitted");
+    assert_eq!(matches.len(), 1);
+    assert_eq!(point.state.values.as_ref(), Some(&matches[0].values));
+    assert_eq!(
+        matches[0].values.get("note"),
+        Some(&norn_ir::RuntimeValue::Null)
+    );
+
+    // Run an action that reads T1 via BOTH SliceKey::Predicate AND point SliceKey::Input.
+    let action: norn_ir::ActionRoot = serde_json::from_value(json!({
+        "actionId": "doc.task.reconcile",
+        "scopeRequired": ["orgId", "environmentId"],
+        "idempotent": true,
+        "ledgered": true,
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "task_id": {"type": "string"},
+                "group": {"type": "string"},
+                "note": {"type": "string"}
+            },
+            "required": ["task_id", "group", "note"]
+        },
+        "outputSchema": {"type": "object", "additionalProperties": false, "properties": {}},
+        "slice": [
+            {"name": "by_group", "objectType": "doc.Task", "key": {"predicate": {"filter": {"group": "group"}, "maxItems": 10}}},
+            {"name": "by_id", "objectType": "doc.Task", "key": {"property": {"from": "input", "property": "task_id"}}}
+        ],
+        "preconditions": ["len(slice.by_group) == 1"],
+        "writes": [{"entityKind": "doc.Task", "change": "modified"}],
+        "effectProgram": {
+            "kind": "upsert_input_object",
+            "objectIdField": "task_id",
+            "objectKind": "doc.Task",
+            "entityArtifactId": "doc.Task.entity",
+            "entityArtifactVersion": "1.0.0"
+        }
+    }))
+    .expect("action");
+    let request = norn_kernel::ActionCall {
+        action: &action,
+        action_artifact_id: "doc.task.reconcile.action",
+        action_version: "1.0.0",
+        scope: std::collections::BTreeMap::from([
+            ("orgId".to_owned(), "org_demo".to_owned()),
+            ("environmentId".to_owned(), "dev".to_owned()),
+        ]),
+        actor: "operator".to_owned(),
+        input: serde_json::from_value(json!({"task_id": "T1", "group": "alpha", "note": "ok"}))
+            .expect("input"),
+        idempotency_key: "reconcile-1".to_owned(),
+        object_type: None,
+        turn: norn_kernel::DecisionTurn {
+            id: "turn-reconcile".to_owned(),
+            now: LogicalTime::from_millis(2_000),
+            world: norn_kernel::World::Main,
+            consumes: None,
+        },
+        trace: None,
+    };
+    let catalog = model.type_catalog();
+    let outcome = norn_kernel::commit_action(&mut cell, &catalog, &request, &R2AllowAll)
+        .expect("nullable row must reconcile cleanly across predicate and point reads");
+    assert!(matches!(
+        outcome,
+        norn_kernel::ActionOutcome::Committed { .. }
+    ));
+}

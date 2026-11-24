@@ -76,7 +76,7 @@ use crate::cell_host::{
     CellCommit, CellHost, CommitError, FactKey, FactMutation, FactState, FactWrite, JsonObject,
 };
 use crate::decision_commit::{
-    DecisionRefusal, FactEvent, TypeCatalog, prepare_decision_with_limits, widen_effect,
+    DecisionRefusal, FactEvent, TypeCatalog, prepare_decision_with_links_validated, widen_effect,
 };
 use crate::envelope::{EnvelopeCounts, TurnEnvelopeMeter, check_decision_envelope};
 use crate::limits::EnvelopeLimits;
@@ -471,7 +471,8 @@ where
         commands,
         timers: Vec::new(),
     };
-    let mut prepared = prepare_decision_with_limits(catalog, &slice, &call.turn, &output, limits)?;
+    let mut prepared =
+        prepare_decision_with_links_validated(catalog, &slice, &call.turn, &output, limits)?;
     for write in &mut prepared.writes {
         let key = write.key.clone();
         authorize_proposed_target(

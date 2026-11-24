@@ -49,7 +49,7 @@ use crate::snapshot_observe::ObservationAuthorization;
 /// [`TypeCatalog`].
 #[derive(Debug, Clone, Copy)]
 pub struct CommitModel<'m, 'a> {
-    catalog: &'m TypeCatalog<'a>,
+    pub(crate) catalog: &'m TypeCatalog<'a>,
 }
 
 impl<'m, 'a> CommitModel<'m, 'a> {
@@ -2474,19 +2474,16 @@ impl<V: CommitView + ?Sized> CurrentVersion<&LinkKey, V::Error> for LinkVersions
     }
 }
 
-/// The canonical live links of every object the commit's links and deletes
-/// touch, once the commit's link writes apply.
+/// The canonical live links of every object whose deletes, incoming-one
+/// cardinality, or required owned collections need full adjacency once the
+/// commit's link writes apply.
 fn live_links_after<E, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
     view: &V,
 ) -> Result<BTreeMap<FactKey, BTreeSet<LinkKey>>, CommitError<V::Error>> {
     let mut objects = BTreeSet::new();
-    for write in &commit.links {
-        let key = model.canonical_link(&write.key);
-        objects.insert(key.source);
-        objects.insert(key.target);
-    }
+    crate::decision_links::collect_link_adjacency_objects(commit, model, view, &mut objects)?;
     for write in &commit.writes {
         // Scalar puts need no adjacency unless a required owned collection
         // must remain populated. Link writes and deletes still check all ends.
@@ -2845,30 +2842,19 @@ fn check_cardinality<E, C, T, V: CommitView + ?Sized>(
         else {
             continue;
         };
-        for (multiplicity, outgoing) in [
-            (declared.cardinality.to, true),
-            (declared.cardinality.from, false),
-        ] {
-            if multiplicity != Multiplicity::One {
-                continue;
-            }
-            let endpoint = if outgoing { &key.source } else { &key.target };
-            let count = links.get(endpoint).map_or(0, |live| {
+        if declared.cardinality.to == Multiplicity::One {
+            crate::decision_links::check_to_one_cardinality(commit, model, view, write, &key)?;
+        }
+        if declared.cardinality.from == Multiplicity::One {
+            let count = links.get(&key.target).map_or(0, |live| {
                 live.iter()
-                    .filter(|link| {
-                        link.link == key.link
-                            && if outgoing {
-                                link.source == *endpoint
-                            } else {
-                                link.target == *endpoint
-                            }
-                    })
+                    .filter(|link| link.link == key.link && link.target == key.target)
                     .count()
             });
             if count > 1 {
                 return Err(CommitError::LinkCardinality {
                     key: Box::new(write.key.clone()),
-                    endpoint: endpoint.clone(),
+                    endpoint: key.target,
                 });
             }
         }

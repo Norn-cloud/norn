@@ -35,8 +35,9 @@ use norn_kernel::{
     CommitReceipt, CommitVersions, CommitView, Consumed, DueTimer, Effect, FactKey, FactMutation,
     FactState, FactVersion, Generation, LedgerSeq, LinkKey, LinkMutation, LinkReadTarget,
     LinkState, LogicalTime, ObservationAuthorization, ObservationEvent, ObservationId, Observed,
-    OwnedRowsCommitProof, Performed, PredicateObject, PredicateQuery, PredicateReadMember,
-    Proposed, TimerId, WrittenLinkVersion, WrittenVersion, check_commit_identifiers,
+    OwnedRowsCommitProof, Performed, PredicateActionRead, PredicateObject, PredicateQuery,
+    PredicateReadMember, Proposed, TimerId, WrittenLinkVersion, WrittenVersion,
+    check_commit_identifiers,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -759,16 +760,10 @@ fn predicate_objects<S: SqlEngine>(
     let candidates: Vec<(FactKey, FactVersion, JsonObject)> = records
         .into_iter()
         .map(|record| {
-            let values = record
-                .values
-                .into_iter()
-                // A stored null is an absent property.
-                .filter(|(_, value)| !value.is_null())
-                .collect::<JsonObject>();
             (
                 FactKey::new(record.object_type, record.id),
                 FactVersion(record.version),
-                values,
+                record.values,
             )
         })
         .collect();
@@ -786,35 +781,7 @@ fn link_state<S: SqlEngine>(
     reader: &StoreReader<'_, S>,
     key: &LinkKey,
 ) -> Result<LinkState, CellError> {
-    let source_type = key.source.object_type.as_str();
-    let version = reader.link_version(
-        MAIN_WORLD,
-        source_type,
-        &key.link,
-        &key.source.key,
-        key.target.object_type.as_str(),
-        &key.target.key,
-    )?;
-    let values = reader
-        .link(
-            MAIN_WORLD,
-            source_type,
-            &key.link,
-            &key.source.key,
-            &key.target.key,
-        )?
-        .map(|record| {
-            record
-                .values
-                .into_iter()
-                // A stored null is an absent property.
-                .filter(|(_, value)| !value.is_null())
-                .collect::<JsonObject>()
-        });
-    Ok(LinkState {
-        version: FactVersion(version),
-        values,
-    })
+    crate::link_guard::link_state(reader, key)
 }
 
 /// What the kernel's admission check reads, inside the commit transaction.
@@ -1278,6 +1245,7 @@ where
         // decisions may fold reads of written targets into their expectations,
         // so retain that full set for attributed rule/action turns.
         if attributed_rule
+            || !commit.links.is_empty()
             || commit
                 .writes
                 .iter()
@@ -2002,6 +1970,7 @@ where
                     }
                 }
             }
+            crate::link_guard::check_commit_link_slots(reader, &commit)?;
             let model = reader.model();
             let catalog = model
                 .type_catalog()
@@ -2189,6 +2158,23 @@ where
             }
         }
         Ok(objects)
+    }
+
+    fn read_predicate_for_action(
+        &self,
+        predicate: &PredicateQuery,
+        max_members: usize,
+        max_bytes: u64,
+        authorize: &mut dyn FnMut(&PredicateObject) -> bool,
+    ) -> Result<PredicateActionRead, CellError> {
+        crate::link_guard::read_predicate_for_action(
+            &self.store.read(),
+            predicate,
+            max_members,
+            max_bytes,
+            authorize,
+            predicate_objects,
+        )
     }
 
     fn read_link_targets(

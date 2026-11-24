@@ -22,7 +22,7 @@ use crate::commit_check::CommitModel;
 use crate::decider::EnvelopeKind;
 use crate::decision_commit::{
     DecisionRefusal, DecisionTurn, EffectiveValuesError, FactEvent, FactSlice, TypeCatalog,
-    prepare_decision_with_limits,
+    prepare_decision_with_links_validated,
 };
 use crate::effect::{Command, Effect, Timer};
 use crate::envelope::{EnvelopeCounts, TurnEnvelopeMeter};
@@ -86,7 +86,7 @@ pub(crate) fn validate_decision_links<X>(
 
     let model = CommitModel::new(catalog);
     let mut seen = BTreeSet::new();
-    let mut materialized_bytes = output_bytes;
+    let mut materialized_links = Vec::with_capacity(links.len());
     for change in links {
         let (source, link_name, target, add_values) = unpack_link_change(change);
         if source.key.trim().is_empty() || target.key.trim().is_empty() {
@@ -121,12 +121,19 @@ pub(crate) fn validate_decision_links<X>(
             )));
         }
         let link_key = LinkKey::new(source, link_name, target);
-        let extra_bytes =
-            validate_link_endpoints(catalog, model, slice, writes, &link_key, add_values)?;
-        materialized_bytes = materialized_bytes.saturating_add(extra_bytes);
-        check_envelope_bytes(limits, materialized_bytes)
-            .map_err(|exceeded| invalid_link(exceeded.to_string()))?;
+        let materialized =
+            validate_link_endpoints(catalog, model, slice, writes, &link_key, change, add_values)?;
+        materialized_links.push(materialized);
     }
+    let materialized_output = DecisionOutput {
+        facts: output.facts.clone(),
+        links: materialized_links,
+        commands: output.commands.clone(),
+        timers: output.timers.clone(),
+    };
+    let materialized_bytes = canonical_len(&materialized_output)?;
+    check_envelope_bytes(limits, materialized_bytes)
+        .map_err(|exceeded| invalid_link(exceeded.to_string()))?;
     Ok(())
 }
 
@@ -136,8 +143,9 @@ fn validate_link_endpoints<X>(
     slice: &FactSlice,
     writes: &[FactWrite],
     link: &LinkKey,
+    change: &LinkChange,
     add_values: Option<&JsonObject>,
-) -> Result<u64, DecisionRefusal<X>> {
+) -> Result<LinkChange, DecisionRefusal<X>> {
     let source = &link.source;
     let target = &link.target;
     let link_name = link.link.as_str();
@@ -182,15 +190,31 @@ fn validate_link_endpoints<X>(
             effective_link.target.as_str()
         )));
     }
-    if let Some(values) = add_values {
+    if let (
+        Some(values),
+        LinkChange::Add {
+            source_type,
+            source_key,
+            link,
+            target_type,
+            target_key,
+            ..
+        },
+    ) = (add_values, change)
+    {
         let effective = catalog
             .effective_link_values(&source_concrete, link_name, values)
             .map_err(|error| invalid_link(format!("link {link_name:?}: {error}")))?;
-        let submitted_bytes = canonical_len(values)?;
-        let effective_bytes = canonical_len(&effective)?;
-        return Ok(effective_bytes.saturating_sub(submitted_bytes));
+        return Ok(LinkChange::Add {
+            source_type: source_type.clone(),
+            source_key: source_key.clone(),
+            link: link.clone(),
+            target_type: target_type.clone(),
+            target_key: target_key.clone(),
+            values: effective,
+        });
     }
-    Ok(0)
+    Ok(change.clone())
 }
 
 /// Resolve [`LinkChange`]s against the host's current link versions to produce
@@ -551,7 +575,7 @@ where
     C: From<JsonObject>,
     T: From<JsonObject>,
 {
-    let prepared = prepare_decision_with_limits(catalog, slice, turn, output, limits)?;
+    let prepared = prepare_decision_with_links_validated(catalog, slice, turn, output, limits)?;
     Ok(CellCommit {
         consumes: prepared.consumes,
         reads: prepared.reads,
@@ -590,8 +614,36 @@ where
 {
     let mut commit =
         build_decision_cell_commit::<_, _, _, H::Error>(catalog, slice, turn, output, limits)?;
-    commit.links =
-        prepare_decision_link_writes(host, catalog, slice, &commit.writes, &output.links)?;
+    let _counts = finalize_decision_commit(host, catalog, slice, output, None, &mut commit)?;
+    Ok(commit)
+}
+
+/// Build the complete [`CellCommit`] for a decision while enforcing and
+/// charging the aggregate [`TurnEnvelopeMeter`] (including `commit.links`).
+///
+/// # Errors
+///
+/// A [`DecisionRefusal`] if preparation, link validation, host link loading, or
+/// the aggregate turn envelope meter refuses; on error `meter` is unchanged.
+pub fn decision_cell_commit_with_host_and_meter<H>(
+    host: &H,
+    catalog: &TypeCatalog<'_>,
+    slice: &FactSlice,
+    turn: &DecisionTurn,
+    output: &DecisionOutput,
+    meter: &mut TurnEnvelopeMeter,
+) -> Result<HostCellCommit<H>, DecisionRefusal<H::Error>>
+where
+    H: CellHost + ?Sized,
+    H::Event: From<FactEvent>,
+    H::Command: From<JsonObject>,
+    H::Input: From<JsonObject>,
+{
+    let limits = meter.decision_limits();
+    let mut commit =
+        build_decision_cell_commit::<_, _, _, H::Error>(catalog, slice, turn, output, &limits)?;
+    let counts = finalize_decision_commit(host, catalog, slice, output, Some(meter), &mut commit)?;
+    meter.charge(counts);
     Ok(commit)
 }
 
@@ -716,6 +768,134 @@ pub(crate) fn prepare_action_commit_links<H: CellHost + ?Sized>(
     let decision_link_writes =
         prepare_decision_link_writes(host, catalog, slice, prepared_writes, decision_links)?;
     merge_action_link_writes(catalog, created_links, decision_link_writes, limits)
+}
+
+/// Refuse hostless preparation calls when `output.links` is non-empty so
+/// callers never receive a committable `CellCommit` that silently drops links.
+pub(crate) fn reject_hostless_links<X>(output: &DecisionOutput) -> Result<(), DecisionRefusal<X>> {
+    if output.links.is_empty() {
+        return Ok(());
+    }
+    Err(invalid_link(
+        "hostless decision preparation cannot materialize decision links; use commit_decision or decision_cell_commit_with_host",
+    ))
+}
+
+/// Select the canonical endpoint objects whose full adjacency must be loaded
+/// before commit checking (required owned collections and incoming `from: one`).
+/// Outgoing `to: one` checks use bounded `has_link_target` proofs instead.
+pub(crate) fn collect_link_adjacency_objects<E, C, T, V: crate::CommitView + ?Sized>(
+    commit: &CellCommit<E, C, T>,
+    model: CommitModel<'_, '_>,
+    view: &V,
+    objects: &mut BTreeSet<FactKey>,
+) -> Result<(), crate::CommitError<V::Error>> {
+    for write in &commit.links {
+        let key = model.canonical_link(&write.key);
+        let concrete = match commit
+            .writes
+            .iter()
+            .find(|f| f.key.key == key.source.key && model.canonical(&f.key) == key.source)
+        {
+            Some(fact) => match fact.mutation {
+                FactMutation::Put { .. } => Some(fact.key.object_type.clone()),
+                FactMutation::Delete => None,
+            },
+            None => view
+                .concrete(&key.source)
+                .map_err(crate::CommitError::Host)?,
+        };
+        if let Some(concrete) = concrete {
+            let needs_owned = model
+                .catalog
+                .owned_collections(&concrete)
+                .iter()
+                .any(|collection| {
+                    model
+                        .link(&concrete, collection.id.as_str())
+                        .is_some_and(|link| link.cardinality.required)
+                });
+            if needs_owned {
+                objects.insert(key.source);
+            }
+            if matches!(write.mutation, LinkMutation::Add { .. })
+                && model
+                    .link(&concrete, &write.key.link)
+                    .is_some_and(|d| d.cardinality.from == norn_ir::Multiplicity::One)
+            {
+                objects.insert(key.target);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Bounded outgoing `to: one` cardinality check using `CommitView::has_link_target`
+/// (`LIMIT (excluded.len() + 1)`), falling back to `links_of` only when the host
+/// cannot supply a bounded witness.
+pub(crate) fn check_to_one_cardinality<E, C, T, V: crate::CommitView + ?Sized>(
+    commit: &CellCommit<E, C, T>,
+    model: CommitModel<'_, '_>,
+    view: &V,
+    write: &LinkWrite,
+    key: &LinkKey,
+) -> Result<(), crate::CommitError<V::Error>> {
+    let mut added_for_role = 0_usize;
+    let mut excluded = BTreeSet::new();
+    for change in &commit.links {
+        let changed = model.canonical_link(&change.key);
+        if changed.source == key.source && changed.link == key.link {
+            if matches!(change.mutation, LinkMutation::Add { .. }) {
+                added_for_role = added_for_role.saturating_add(1);
+            }
+            excluded.insert(changed.target);
+        }
+    }
+    if added_for_role > 1 {
+        return Err(crate::CommitError::LinkCardinality {
+            key: Box::new(write.key.clone()),
+            endpoint: key.source.clone(),
+        });
+    }
+    if let Some(other_live) = view
+        .has_link_target(&key.source, &key.link, &excluded)
+        .map_err(crate::CommitError::Host)?
+    {
+        if other_live {
+            return Err(crate::CommitError::LinkCardinality {
+                key: Box::new(write.key.clone()),
+                endpoint: key.source.clone(),
+            });
+        }
+        return Ok(());
+    }
+    let mut live: BTreeSet<LinkKey> = view
+        .links_of(&key.source)
+        .map_err(crate::CommitError::Host)?
+        .iter()
+        .map(|link| model.canonical_link(link))
+        .filter(|link| link.source == key.source && link.link == key.link)
+        .collect();
+    for change in &commit.links {
+        let changed = model.canonical_link(&change.key);
+        if changed.source == key.source && changed.link == key.link {
+            match change.mutation {
+                LinkMutation::Add { .. } => {
+                    live.insert(changed);
+                }
+                LinkMutation::Remove => {
+                    live.remove(&changed);
+                }
+            }
+        }
+    }
+    if live.len() > 1 {
+        return Err(crate::CommitError::LinkCardinality {
+            key: Box::new(write.key.clone()),
+            endpoint: key.source.clone(),
+        });
+    }
+    Ok(())
 }
 
 fn action_link_endpoint<X>(

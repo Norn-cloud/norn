@@ -2453,13 +2453,10 @@ pub fn prepare_decision<X>(
     prepare_decision_with_source_owned_targets(catalog, slice, turn, output, &BTreeSet::new())
 }
 
-/// Prepares a rule decision while refusing direct fact changes to the
-/// source-owned targets resolved by its host. The protected set is supplied
-/// from persisted observation authority markers and trigger provenance.
-/// Native objects of the same type remain writable.
+/// Prepares a rule decision while refusing direct fact changes to
+/// host-supplied source-owned targets.
 ///
 /// # Errors
-///
 /// Refuses a direct change to a source-owned target, or returns the first
 /// ordinary decision admission refusal.
 pub fn prepare_decision_with_source_owned_targets<X>(
@@ -2481,12 +2478,7 @@ pub fn prepare_decision_with_source_owned_targets<X>(
 
 /// Prepares `output` under the supplied per-decision envelope limits.
 ///
-/// Counts are checked before resolving fact changes or allocating the commit
-/// vectors. Aggregate turn limits are enforced by [`commit_decision_with_meter`]
-/// and [`crate::commit_action_with_meter`].
-///
 /// # Errors
-///
 /// The first refusal, in order: world checks, envelope caps, then each fact
 /// change, commands, and timers.
 pub fn prepare_decision_with_limits<X>(
@@ -2514,6 +2506,7 @@ fn prepare_decision_with_limits_and_source_owned_targets<X>(
     limits: &EnvelopeLimits,
     source_owned_targets: &BTreeSet<FactKey>,
 ) -> Result<PreparedDecision, DecisionRefusal<X>> {
+    crate::decision_links::reject_hostless_links(output)?;
     prepare_decision_with_limits_for(
         catalog,
         slice,
@@ -2522,6 +2515,24 @@ fn prepare_decision_with_limits_and_source_owned_targets<X>(
         limits,
         AdmissionOrigin::Command,
         source_owned_targets,
+    )
+}
+
+pub(crate) fn prepare_decision_with_links_validated<X>(
+    catalog: &TypeCatalog<'_>,
+    slice: &FactSlice,
+    turn: &DecisionTurn,
+    output: &DecisionOutput,
+    limits: &EnvelopeLimits,
+) -> Result<PreparedDecision, DecisionRefusal<X>> {
+    prepare_decision_with_limits_for(
+        catalog,
+        slice,
+        turn,
+        output,
+        limits,
+        AdmissionOrigin::Command,
+        &BTreeSet::new(),
     )
 }
 
@@ -2861,11 +2872,7 @@ where
     C: From<JsonObject>,
     T: From<JsonObject>,
 {
-    if !output.links.is_empty() {
-        return Err(DecisionRefusal::InvalidOutput {
-            reason: "decision_cell_commit requires a host to materialize decision links; use decision_cell_commit_with_host".to_owned(),
-        });
-    }
+    crate::decision_links::reject_hostless_links(output)?;
     crate::decision_links::build_decision_cell_commit(catalog, slice, turn, output, limits)
 }
 

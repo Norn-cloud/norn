@@ -49,6 +49,7 @@ pub mod fork;
 mod history;
 mod history_selection;
 pub mod host;
+mod link_guard;
 mod link_laws;
 pub mod mapping_bundle;
 pub mod mapping_conflict;

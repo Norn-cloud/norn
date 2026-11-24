@@ -1,5 +1,5 @@
 //! The canonical result of one `decide` graph evaluation (ruling 2026-09-25
-//! §3: `decide(slice, event) -> { facts: [FactChange], commands, timers }`).
+//! §3: `decide(slice, event) -> { facts: [FactChange], links?: [LinkChange], commands, timers }`).
 //!
 //! [`DecisionOutput`] is the hand-off between `norn-decisions`, which produces
 //! it from an admitted graph (T3-DEC-2), and `norn-kernel`, which applies it
@@ -9,6 +9,8 @@
 //! The members mirror the graph's output record ([`crate::DECIDE_OUTPUT_MEMBERS`]):
 //!
 //! - `facts`: canonical [`FactChange`] records;
+//! - `links`: optional canonical [`LinkChange`] records, applied atomically
+//!   alongside `facts` (omitted when empty);
 //! - `commands`: the decision's own `Command` item records, each the payload
 //!   of one outbound command;
 //! - `timers`: the decision's own `Timer` item records. Two members are

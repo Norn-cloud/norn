@@ -18,20 +18,21 @@ use norn_kernel::{
     PredicateObject, PredicateQuery, SynchronousRule, TurnEnvelopeLimits, TurnEnvelopeMeter,
     TypeCatalog, World, commit_action, commit_action_with_meter, commit_decision,
     commit_decision_with_meter, decision_cell_commit, decision_cell_commit_with_host,
+    decision_cell_commit_with_host_and_meter, load_partition_slice, prepare_decision,
+    prepare_decision_with_limits, prepare_decision_with_source_owned_targets,
 };
 use norn_testkit::cell_host::MemoryCell;
 use serde_json::{Value, json};
 
 type Cell = MemoryCell<FactEvent, JsonObject, JsonObject>;
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
-#[allow(clippy::expect_used, reason = "test fixture helper")]
-fn object(value: Value) -> JsonObject {
-    serde_json::from_value(value).expect("exact fixture object")
+fn object(value: Value) -> TestResult<JsonObject> {
+    Ok(serde_json::from_value(value)?)
 }
 
-#[allow(clippy::expect_used, reason = "test fixture helper")]
-fn schedule_types() -> Vec<ObjectTypeDef> {
-    serde_json::from_value(json!([
+fn schedule_types() -> TestResult<Vec<ObjectTypeDef>> {
+    Ok(serde_json::from_value(json!([
         {
             "name": "schedule.Agent",
             "properties": [
@@ -74,8 +75,7 @@ fn schedule_types() -> Vec<ObjectTypeDef> {
                 {"id": "for_plan", "target": "schedule.Plan", "cardinality": {"to": "one", "from": "many"}}
             ]
         }
-    ]))
-    .expect("typed schedule entities")
+    ]))?)
 }
 
 fn writer_input_schema(include_all_agents: bool) -> Value {
@@ -226,7 +226,6 @@ fn writer_output_schema(op_enum: &[&str], link_enum: &[&str], target_enum: &[&st
     })
 }
 
-#[allow(clippy::expect_used, reason = "test fixture helper")]
 fn admit_writer_rule(
     facts_expr: &str,
     links_expr: &str,
@@ -234,7 +233,7 @@ fn admit_writer_rule(
     link_enum: &[&str],
     target_enum: &[&str],
     include_all_agents: bool,
-) -> SynchronousRule {
+) -> TestResult<SynchronousRule> {
     let root: RuleRoot = serde_json::from_value(json!({
         "ruleId": "schedule.batch_commitments",
         "ruleVersion": "2.0",
@@ -276,10 +275,9 @@ fn admit_writer_rule(
                 {"id": "edge_1", "sourceId": "decision", "targetId": "out", "type": "edge"}
             ]
         }
-    }))
-    .expect("typed rule root");
+    }))?;
 
-    SynchronousRule::admit(
+    Ok(SynchronousRule::admit(
         ActionRuleRef {
             artifact_id: "schedule.batch_commitments.rule".to_owned(),
             version: "1.0.0".to_owned(),
@@ -290,11 +288,14 @@ fn admit_writer_rule(
             profile_id: "norn.limits/1".to_owned(),
             environment_hash: "env-test".to_owned(),
         },
-    )
-    .expect("admitted synchronous rule")
+    )?)
 }
 
-fn batch_writer_rule(facts_expr: &str, links_expr: &str, link_enum: &[&str]) -> SynchronousRule {
+fn batch_writer_rule(
+    facts_expr: &str,
+    links_expr: &str,
+    link_enum: &[&str],
+) -> TestResult<SynchronousRule> {
     admit_writer_rule(
         facts_expr,
         links_expr,
@@ -305,8 +306,7 @@ fn batch_writer_rule(facts_expr: &str, links_expr: &str, link_enum: &[&str]) -> 
     )
 }
 
-#[allow(clippy::expect_used, reason = "test fixture helper")]
-fn schedule_action(max_items: u32, with_duplicate_aggregate: bool) -> ActionRoot {
+fn schedule_action(max_items: u32, with_duplicate_aggregate: bool) -> TestResult<ActionRoot> {
     let aggregates = if with_duplicate_aggregate {
         json!([{
             "name": "existing_count",
@@ -332,7 +332,7 @@ fn schedule_action(max_items: u32, with_duplicate_aggregate: bool) -> ActionRoot
     if with_duplicate_aggregate {
         preconditions.push("aggregates.existing_count >= 0");
     }
-    serde_json::from_value(json!({
+    Ok(serde_json::from_value(json!({
         "actionId": "schedule.plan.commit",
         "scopeRequired": ["orgId", "environmentId"],
         "idempotent": true,
@@ -396,17 +396,15 @@ fn schedule_action(max_items: u32, with_duplicate_aggregate: bool) -> ActionRoot
             "lifecycle": "status",
             "transition": "commit_plan"
         }
-    }))
-    .expect("typed schedule action")
+    }))?)
 }
 
-#[allow(clippy::expect_used, reason = "test fixture helper")]
-fn hhmm_minutes(iso_utc: &str) -> i64 {
-    let time = iso_utc.split('T').nth(1).expect("iso time");
+fn hhmm_minutes(iso_utc: &str) -> TestResult<i64> {
+    let time = iso_utc.split('T').nth(1).ok_or("missing iso time")?;
     let mut parts = time.split(':');
-    let hh: i64 = parts.next().expect("hh").parse().expect("hh");
-    let mm: i64 = parts.next().expect("mm").parse().expect("mm");
-    hh.saturating_mul(60).saturating_add(mm)
+    let hh: i64 = parts.next().ok_or("missing hh")?.parse()?;
+    let mm: i64 = parts.next().ok_or("missing mm")?.parse()?;
+    Ok(hh.saturating_mul(60).saturating_add(mm))
 }
 
 fn schedule_call<'a>(
@@ -414,8 +412,8 @@ fn schedule_call<'a>(
     plan_id: &str,
     slot_start: &str,
     slot_end: &str,
-) -> ActionCall<'a> {
-    ActionCall {
+) -> TestResult<ActionCall<'a>> {
+    Ok(ActionCall {
         action,
         action_artifact_id: "schedule.plan.commit.action",
         action_version: "1.0.0",
@@ -431,9 +429,9 @@ fn schedule_call<'a>(
             "window_end": "2026-11-24T00:00:00Z",
             "slot_start": slot_start,
             "slot_end": slot_end,
-            "slot_start_min": hhmm_minutes(slot_start),
-            "slot_end_min": hhmm_minutes(slot_end)
-        })),
+            "slot_start_min": hhmm_minutes(slot_start)?,
+            "slot_end_min": hhmm_minutes(slot_end)?
+        }))?,
         idempotency_key: format!("commit-{plan_id}"),
         object_type: None,
         turn: DecisionTurn {
@@ -443,7 +441,7 @@ fn schedule_call<'a>(
             consumes: None,
         },
         trace: None,
-    }
+    })
 }
 
 struct Authorizer {
@@ -467,31 +465,32 @@ impl ActionAuthorizer for Authorizer {
 
 const ALLOW: Authorizer = Authorizer { hidden_key: None };
 
-#[allow(clippy::expect_used, reason = "test fixture helper")]
-fn put_fact(cell: &mut Cell, object_type: &str, id: &str, values: Value) {
+fn put_fact(cell: &mut Cell, object_type: &str, id: &str, values: Value) -> TestResult {
     let key = FactKey::new(object_type, id);
-    let expected = cell.load(&key).expect("load").version;
+    let expected = cell.load(&key)?.version;
     let mut commit = CellCommit::empty();
     commit.writes.push(FactWrite {
         key,
         expected,
         mutation: FactMutation::Put {
-            values: object(values),
+            values: object(values)?,
         },
     });
-    cell.commit(commit).expect("seed commit");
+    cell.commit(commit)
+        .map_err(|err| format!("seed commit failed: {err:?}"))?;
+    Ok(())
 }
 
-fn seeded_cell() -> Cell {
+fn seeded_cell() -> TestResult<Cell> {
     let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
-        .with_types(schedule_types());
-    put_fact(&mut cell, "schedule.Agent", "A1", json!({"agent_id": "A1"}));
+        .with_types(schedule_types()?);
+    put_fact(&mut cell, "schedule.Agent", "A1", json!({"agent_id": "A1"}))?;
     put_fact(
         &mut cell,
         "schedule.Plan",
         "P1",
         json!({"plan_id": "P1", "status": "draft"}),
-    );
+    )?;
     put_fact(
         &mut cell,
         "schedule.Commitment",
@@ -505,8 +504,8 @@ fn seeded_cell() -> Cell {
             "end_min": 600,
             "hours": 1.00
         }),
-    );
-    cell
+    )?;
+    Ok(cell)
 }
 
 fn batch_expressions(count: usize) -> (String, String) {
@@ -524,8 +523,9 @@ fn batch_expressions(count: usize) -> (String, String) {
 }
 
 #[test]
-fn atomic_multi_object_rule_commits_above_16_links_under_v1_and_enforces_combined_budget() {
-    let types = schedule_types();
+fn atomic_multi_object_rule_commits_above_16_links_under_v1_and_enforces_combined_budget()
+-> TestResult {
+    let types = schedule_types()?;
 
     // 1. Under default `EnvelopeLimits::V1` (`max_events = 32`), 10 commitments x 2 links
     //    (20 links > old 16-link cap, total 1 + 10 + 20 = 31 <= 32) commits atomically.
@@ -539,27 +539,24 @@ fn atomic_multi_object_rule_commits_above_16_links_under_v1_and_enforces_combine
     let links_20 = format!(
         "flatten([map([{tags}], {{op: 'add', sourceType: 'schedule.Commitment', sourceKey: 'C-batch-' + #, link: 'for_agent', targetType: 'schedule.Agent', targetKey: event.input.agent_id}}), map([{tags}], {{op: 'add', sourceType: 'schedule.Commitment', sourceKey: 'C-batch-' + #, link: 'for_plan', targetType: 'schedule.Plan', targetKey: event.input.plan_id}})])"
     );
-    let rule_20 = batch_writer_rule(&facts_10, &links_20, &["for_agent", "for_plan"]);
+    let rule_20 = batch_writer_rule(&facts_10, &links_20, &["for_agent", "for_plan"])?;
     let catalog_20 = TypeCatalog::new(&types).with_action_rules(std::slice::from_ref(&rule_20));
-    let mut cell = seeded_cell();
+    let mut cell = seeded_cell()?;
 
     // Also verifies deduplication when both a predicate slice and an aggregate
     // read the exact same PredicateQuery.
-    let action = schedule_action(50, true);
+    let action = schedule_action(50, true)?;
     let request = schedule_call(
         &action,
         "P1",
         "2026-11-23T11:00:00Z",
         "2026-11-23T12:00:00Z",
-    );
-    let outcome =
-        commit_action(&mut cell, &catalog_20, &request, &ALLOW).expect("atomic batch commit");
+    )?;
+    let outcome = commit_action(&mut cell, &catalog_20, &request, &ALLOW)?;
     assert!(matches!(outcome, ActionOutcome::Committed { .. }));
 
     // Primary transition committed.
-    let plan = cell
-        .load(&FactKey::new("schedule.Plan", "P1"))
-        .expect("plan");
+    let plan = cell.load(&FactKey::new("schedule.Plan", "P1"))?;
     assert_eq!(
         plan.values
             .as_ref()
@@ -571,8 +568,7 @@ fn atomic_multi_object_rule_commits_above_16_links_under_v1_and_enforces_combine
     for idx in 1..=10 {
         let key = format!("C-batch-{idx:02}");
         assert!(
-            cell.load(&FactKey::new("schedule.Commitment", &key))
-                .expect("commitment")
+            cell.load(&FactKey::new("schedule.Commitment", &key))?
                 .exists(),
             "commitment {key} should exist"
         );
@@ -586,7 +582,7 @@ fn atomic_multi_object_rule_commits_above_16_links_under_v1_and_enforces_combine
                 FactKey::new(target_type, target_key),
             );
             assert!(
-                cell.load_link(&link).expect("link").exists(),
+                cell.load_link(&link)?.exists(),
                 "link {link_name} for {key} should exist"
             );
         }
@@ -595,17 +591,21 @@ fn atomic_multi_object_rule_commits_above_16_links_under_v1_and_enforces_combine
     // 2. Combined `events + links` budget: 1 plan + 18 commitments + 18 links = 37 > 32
     //    refuses under default `EnvelopeLimits::V1` and commits + charges 37 under a
     //    wider per-decision limit with `TurnEnvelopeMeter`.
-    verify_combined_events_and_links_budget(&types, &request);
+    verify_combined_events_and_links_budget(&types, &request)?;
+    Ok(())
 }
 
-#[allow(clippy::expect_used, reason = "test fixture helper")]
-fn verify_combined_events_and_links_budget(types: &[ObjectTypeDef], request: &ActionCall<'_>) {
+fn verify_combined_events_and_links_budget(
+    types: &[ObjectTypeDef],
+    request: &ActionCall<'_>,
+) -> TestResult {
     let (facts_18, links_18) = batch_expressions(18);
-    let rule_18 = batch_writer_rule(&facts_18, &links_18, &["for_agent"]);
+    let rule_18 = batch_writer_rule(&facts_18, &links_18, &["for_agent"])?;
     let catalog_18 = TypeCatalog::new(types).with_action_rules(std::slice::from_ref(&rule_18));
-    let mut cell_v1 = seeded_cell();
-    let refusal = commit_action(&mut cell_v1, &catalog_18, request, &ALLOW)
-        .expect_err("20 events + 18 links exceeds V1 max_events 32");
+    let mut cell_v1 = seeded_cell()?;
+    let Err(refusal) = commit_action(&mut cell_v1, &catalog_18, request, &ALLOW) else {
+        return Err("20 events + 18 links should exceed V1 max_events 32".into());
+    };
     assert!(
         matches!(
             refusal,
@@ -618,7 +618,7 @@ fn verify_combined_events_and_links_budget(types: &[ObjectTypeDef], request: &Ac
         "expected combined events+links EnvelopeExceeded, got {refusal:?}"
     );
 
-    let mut cell_wide = seeded_cell();
+    let mut cell_wide = seeded_cell()?;
     let mut meter = TurnEnvelopeMeter::with_limits(
         EnvelopeLimits {
             max_events: 64,
@@ -630,27 +630,29 @@ fn verify_combined_events_and_links_budget(types: &[ObjectTypeDef], request: &Ac
             max_timers: 32,
         },
     );
-    commit_action_with_meter(&mut cell_wide, &catalog_18, request, &ALLOW, &mut meter)
-        .expect("18 commitments + 18 links commits under explicit 64-event envelope");
+    commit_action_with_meter(&mut cell_wide, &catalog_18, request, &ALLOW, &mut meter).map_err(
+        |err| format!("18 commitments + 18 links should commit under 64-event cap: {err:?}"),
+    )?;
     assert_eq!(meter.used().events, 38);
+    Ok(())
 }
 
 #[test]
-fn overlapping_commitment_in_predicate_slice_refuses_with_zero_writes() {
-    let types = schedule_types();
+fn overlapping_commitment_in_predicate_slice_refuses_with_zero_writes() -> TestResult {
+    let types = schedule_types()?;
     let (facts_expr, links_expr) = batch_expressions(2);
-    let rule = batch_writer_rule(&facts_expr, &links_expr, &["for_agent"]);
+    let rule = batch_writer_rule(&facts_expr, &links_expr, &["for_agent"])?;
     let catalog = TypeCatalog::new(&types).with_action_rules(std::slice::from_ref(&rule));
-    let mut cell = seeded_cell();
+    let mut cell = seeded_cell()?;
 
-    let action = schedule_action(50, false);
+    let action = schedule_action(50, false)?;
     // Overlaps existing C0 (09:00..10:00).
     let request = schedule_call(
         &action,
         "P1",
         "2026-11-23T09:30:00Z",
         "2026-11-23T10:30:00Z",
-    );
+    )?;
     let refusal =
         commit_action(&mut cell, &catalog, &request, &ALLOW).expect_err("overlap refused");
     assert!(
@@ -662,13 +664,10 @@ fn overlapping_commitment_in_predicate_slice_refuses_with_zero_writes() {
     );
     assert!(
         !cell
-            .load(&FactKey::new("schedule.Commitment", "C-batch-01"))
-            .expect("load")
+            .load(&FactKey::new("schedule.Commitment", "C-batch-01"))?
             .exists()
     );
-    let plan = cell
-        .load(&FactKey::new("schedule.Plan", "P1"))
-        .expect("plan");
+    let plan = cell.load(&FactKey::new("schedule.Plan", "P1"))?;
     assert_eq!(
         plan.values
             .as_ref()
@@ -676,6 +675,7 @@ fn overlapping_commitment_in_predicate_slice_refuses_with_zero_writes() {
             .and_then(norn_ir::RuntimeValue::as_str),
         Some("draft")
     );
+    Ok(())
 }
 
 enum Race {
@@ -721,33 +721,39 @@ impl CellHost for RacingCell {
         commit: CellCommit<FactEvent, JsonObject, JsonObject>,
     ) -> Result<CommitReceipt, CommitError<Self::Error>> {
         match self.race.take() {
-            Some(Race::InsertInsideWindow) => put_fact(
-                self.cell.get_mut(),
-                "schedule.Commitment",
-                "C-phantom",
-                json!({
-                    "commitment_id": "C-phantom",
-                    "agent_id": "A1",
-                    "starts_at": "2026-11-23T11:15:00Z",
-                    "ends_at": "2026-11-23T11:45:00Z",
-                    "start_min": 675,
-                    "end_min": 705,
-                    "hours": 0.50
-                }),
+            Some(Race::InsertInsideWindow) => assert!(
+                put_fact(
+                    self.cell.get_mut(),
+                    "schedule.Commitment",
+                    "C-phantom",
+                    json!({
+                        "commitment_id": "C-phantom",
+                        "agent_id": "A1",
+                        "starts_at": "2026-11-23T11:15:00Z",
+                        "ends_at": "2026-11-23T11:45:00Z",
+                        "start_min": 675,
+                        "end_min": 705,
+                        "hours": 0.50
+                    }),
+                )
+                .is_ok()
             ),
-            Some(Race::InsertOutsideWindow) => put_fact(
-                self.cell.get_mut(),
-                "schedule.Commitment",
-                "C-next-day",
-                json!({
-                    "commitment_id": "C-next-day",
-                    "agent_id": "A1",
-                    "starts_at": "2026-11-25T11:15:00Z",
-                    "ends_at": "2026-11-25T11:45:00Z",
-                    "start_min": 675,
-                    "end_min": 705,
-                    "hours": 0.50
-                }),
+            Some(Race::InsertOutsideWindow) => assert!(
+                put_fact(
+                    self.cell.get_mut(),
+                    "schedule.Commitment",
+                    "C-next-day",
+                    json!({
+                        "commitment_id": "C-next-day",
+                        "agent_id": "A1",
+                        "starts_at": "2026-11-25T11:15:00Z",
+                        "ends_at": "2026-11-25T11:45:00Z",
+                        "start_min": 675,
+                        "end_min": 705,
+                        "hours": 0.50
+                    }),
+                )
+                .is_ok()
             ),
             None => {}
         }
@@ -768,15 +774,15 @@ impl CellHost for RacingCell {
 }
 
 #[test]
-fn concurrent_phantom_insertion_refuses_with_zero_partial_writes() {
-    let types = schedule_types();
+fn concurrent_phantom_insertion_refuses_with_zero_partial_writes() -> TestResult {
+    let types = schedule_types()?;
     let (facts_expr, links_expr) = batch_expressions(3);
-    let rule = batch_writer_rule(&facts_expr, &links_expr, &["for_agent"]);
+    let rule = batch_writer_rule(&facts_expr, &links_expr, &["for_agent"])?;
     let catalog = TypeCatalog::new(&types).with_action_rules(std::slice::from_ref(&rule));
-    let action = schedule_action(50, false);
+    let action = schedule_action(50, false)?;
 
     let mut inside = RacingCell {
-        cell: RefCell::new(seeded_cell()),
+        cell: RefCell::new(seeded_cell()?),
         race: Some(Race::InsertInsideWindow),
     };
     let request = schedule_call(
@@ -784,15 +790,14 @@ fn concurrent_phantom_insertion_refuses_with_zero_partial_writes() {
         "P1",
         "2026-11-23T11:00:00Z",
         "2026-11-23T12:00:00Z",
-    );
+    )?;
     let refusal = commit_action(&mut inside, &catalog, &request, &ALLOW)
         .expect_err("phantom inside window must conflict");
     assert_eq!(refusal.code(), "action.aggregate_stale_read");
     // ZERO partial writes: plan stays draft, none of C-batch-1..3 or links exist.
     let cell = inside.cell.borrow();
     assert_eq!(
-        cell.load(&FactKey::new("schedule.Plan", "P1"))
-            .expect("plan")
+        cell.load(&FactKey::new("schedule.Plan", "P1"))?
             .values
             .as_ref()
             .and_then(|v| v.get("status"))
@@ -803,8 +808,7 @@ fn concurrent_phantom_insertion_refuses_with_zero_partial_writes() {
         let key = format!("C-batch-{idx:02}");
         assert!(
             !cell
-                .load(&FactKey::new("schedule.Commitment", &key))
-                .expect("load")
+                .load(&FactKey::new("schedule.Commitment", &key))?
                 .exists()
         );
         assert!(
@@ -813,36 +817,34 @@ fn concurrent_phantom_insertion_refuses_with_zero_partial_writes() {
                     FactKey::new("schedule.Commitment", &key),
                     "for_agent",
                     FactKey::new("schedule.Agent", "A1"),
-                ))
-                .expect("link")
+                ))?
                 .exists()
         );
     }
 
     // Outside window does not conflict.
     let mut outside = RacingCell {
-        cell: RefCell::new(seeded_cell()),
+        cell: RefCell::new(seeded_cell()?),
         race: Some(Race::InsertOutsideWindow),
     };
-    commit_action(&mut outside, &catalog, &request, &ALLOW)
-        .expect("insertion outside window must not conflict");
+    commit_action(&mut outside, &catalog, &request, &ALLOW)?;
     assert!(
         outside
             .cell
             .borrow()
-            .load(&FactKey::new("schedule.Commitment", "C-batch-01"))
-            .expect("load")
+            .load(&FactKey::new("schedule.Commitment", "C-batch-01"))?
             .exists()
     );
+    Ok(())
 }
 
 #[test]
-fn predicate_slice_bound_and_byte_overflow_refuse_fail_closed_never_truncate() {
-    let types = schedule_types();
+fn predicate_slice_bound_and_byte_overflow_refuse_fail_closed_never_truncate() -> TestResult {
+    let types = schedule_types()?;
     let (facts_expr, links_expr) = batch_expressions(1);
-    let rule = batch_writer_rule(&facts_expr, &links_expr, &["for_agent"]);
+    let rule = batch_writer_rule(&facts_expr, &links_expr, &["for_agent"])?;
     let catalog = TypeCatalog::new(&types).with_action_rules(std::slice::from_ref(&rule));
-    let mut cell = seeded_cell();
+    let mut cell = seeded_cell()?;
     for id in ["C1", "C2"] {
         put_fact(
             &mut cell,
@@ -857,23 +859,22 @@ fn predicate_slice_bound_and_byte_overflow_refuse_fail_closed_never_truncate() {
                 "end_min": 510,
                 "hours": 0.50
             }),
-        );
+        )?;
     }
     // 3 matching commitments in window, maxItems = 2 -> refuse fail-closed.
-    let action = schedule_action(2, false);
+    let action = schedule_action(2, false)?;
     let request = schedule_call(
         &action,
         "P1",
         "2026-11-23T11:00:00Z",
         "2026-11-23T12:00:00Z",
-    );
+    )?;
     let refusal = commit_action(&mut cell, &catalog, &request, &ALLOW)
         .expect_err("3 matches exceed maxItems 2");
     assert_eq!(refusal.code(), "action.slice_unavailable");
     assert!(
         !cell
-            .load(&FactKey::new("schedule.Commitment", "C-batch-01"))
-            .expect("load")
+            .load(&FactKey::new("schedule.Commitment", "C-batch-01"))?
             .exists()
     );
 
@@ -894,9 +895,9 @@ fn predicate_slice_bound_and_byte_overflow_refuse_fail_closed_never_truncate() {
                 "hours": 0.50,
                 "note": padding
             }),
-        );
+        )?;
     }
-    let big_action = schedule_action(50, false);
+    let big_action = schedule_action(50, false)?;
     let refusal = commit_action(
         &mut cell,
         &catalog,
@@ -905,27 +906,29 @@ fn predicate_slice_bound_and_byte_overflow_refuse_fail_closed_never_truncate() {
             "P1",
             "2026-11-23T11:00:00Z",
             "2026-11-23T12:00:00Z",
-        ),
+        )?,
         &ALLOW,
     )
     .expect_err("oversized predicate slice must refuse");
     assert_eq!(refusal.code(), "action.slice_unavailable");
+    Ok(())
 }
 
 #[test]
-fn unauthorized_predicate_member_and_invalid_decision_links_refuse_with_zero_writes() {
-    let types = schedule_types();
+fn unauthorized_predicate_member_and_invalid_decision_links_refuse_with_zero_writes() -> TestResult
+{
+    let types = schedule_types()?;
     let (facts_expr, links_expr) = batch_expressions(2);
-    let rule = batch_writer_rule(&facts_expr, &links_expr, &["for_agent"]);
+    let rule = batch_writer_rule(&facts_expr, &links_expr, &["for_agent"])?;
     let catalog = TypeCatalog::new(&types).with_action_rules(std::slice::from_ref(&rule));
-    let mut cell = seeded_cell();
-    let action = schedule_action(50, false);
+    let mut cell = seeded_cell()?;
+    let action = schedule_action(50, false)?;
     let request = schedule_call(
         &action,
         "P1",
         "2026-11-23T11:00:00Z",
         "2026-11-23T12:00:00Z",
-    );
+    )?;
 
     // 1. Unauthorized predicate member refuses as target_not_found with zero writes.
     let hidden = Authorizer {
@@ -935,36 +938,31 @@ fn unauthorized_predicate_member_and_invalid_decision_links_refuse_with_zero_wri
     assert_eq!(refusal.code(), "action.target_not_found");
     assert!(
         !cell
-            .load(&FactKey::new("schedule.Commitment", "C-batch-01"))
-            .expect("load")
+            .load(&FactKey::new("schedule.Commitment", "C-batch-01"))?
             .exists()
     );
 
     // 2. Dangling link target (uncaptured agent A-MISSING) refuses with zero writes.
     let bad_target_links = "[{op: 'add', sourceType: 'schedule.Commitment', sourceKey: 'C-batch-01', link: 'for_agent', targetType: 'schedule.Agent', targetKey: 'A-MISSING'}]";
-    let bad_rule = batch_writer_rule(&facts_expr, bad_target_links, &["for_agent"]);
+    let bad_rule = batch_writer_rule(&facts_expr, bad_target_links, &["for_agent"])?;
     let bad_catalog = TypeCatalog::new(&types).with_action_rules(std::slice::from_ref(&bad_rule));
     let refusal = commit_action(&mut cell, &bad_catalog, &request, &ALLOW)
         .expect_err("dangling link target must refuse");
     assert_eq!(refusal.code(), "decision.invalid_output");
     assert!(
         !cell
-            .load(&FactKey::new("schedule.Commitment", "C-batch-01"))
-            .expect("load")
+            .load(&FactKey::new("schedule.Commitment", "C-batch-01"))?
             .exists()
     );
 
     // 3. Cardinality violation: `for_agent` is to-one, emitting two targets for the same commitment refuses with zero writes.
-    put_fact(&mut cell, "schedule.Agent", "A2", json!({"agent_id": "A2"}));
-    let mut two_agent_action = schedule_action(50, false);
-    two_agent_action.slice.push(
-        serde_json::from_value(json!({
-            "name": "all_agents",
-            "objectType": "schedule.Agent",
-            "key": {"predicate": {"maxItems": 10}}
-        }))
-        .expect("predicate slice for all agents"),
-    );
+    put_fact(&mut cell, "schedule.Agent", "A2", json!({"agent_id": "A2"}))?;
+    let mut two_agent_action = schedule_action(50, false)?;
+    two_agent_action.slice.push(serde_json::from_value(json!({
+        "name": "all_agents",
+        "objectType": "schedule.Agent",
+        "key": {"predicate": {"maxItems": 10}}
+    }))?);
     let card_links = "[{op: 'add', sourceType: 'schedule.Commitment', sourceKey: 'C-batch-01', link: 'for_agent', targetType: 'schedule.Agent', targetKey: 'A1'}, {op: 'add', sourceType: 'schedule.Commitment', sourceKey: 'C-batch-01', link: 'for_agent', targetType: 'schedule.Agent', targetKey: 'A2'}]";
     let card_rule = admit_writer_rule(
         &facts_expr,
@@ -973,14 +971,14 @@ fn unauthorized_predicate_member_and_invalid_decision_links_refuse_with_zero_wri
         &["for_agent"],
         &["schedule.Agent"],
         true,
-    );
+    )?;
     let card_catalog = TypeCatalog::new(&types).with_action_rules(std::slice::from_ref(&card_rule));
     let card_call = schedule_call(
         &two_agent_action,
         "P1",
         "2026-11-23T11:00:00Z",
         "2026-11-23T12:00:00Z",
-    );
+    )?;
     let refusal = commit_action(&mut cell, &card_catalog, &card_call, &ALLOW)
         .expect_err("to-one cardinality violation must refuse");
     assert_eq!(refusal.code(), "decision.invalid_output");
@@ -990,26 +988,24 @@ fn unauthorized_predicate_member_and_invalid_decision_links_refuse_with_zero_wri
     );
     assert!(
         !cell
-            .load(&FactKey::new("schedule.Commitment", "C-batch-01"))
-            .expect("load")
+            .load(&FactKey::new("schedule.Commitment", "C-batch-01"))?
             .exists()
     );
     assert_eq!(
-        cell.load(&FactKey::new("schedule.Plan", "P1"))
-            .expect("plan")
+        cell.load(&FactKey::new("schedule.Plan", "P1"))?
             .values
             .as_ref()
             .and_then(|v| v.get("status"))
             .and_then(norn_ir::RuntimeValue::as_str),
         Some("draft")
     );
+    Ok(())
 }
 
 // =========================================================================
 // Round-1 adversarial regression tests (Blockers 1, 2, 3, 4, 6, 7)
 // =========================================================================
 
-#[allow(clippy::expect_used, reason = "test fixture helper")]
 fn put_link(
     cell: &mut Cell,
     source_type: &str,
@@ -1017,13 +1013,13 @@ fn put_link(
     link: &str,
     target_type: &str,
     target_id: &str,
-) {
+) -> TestResult {
     let key = LinkKey::new(
         FactKey::new(source_type, source_id),
         link,
         FactKey::new(target_type, target_id),
     );
-    let expected = cell.load_link(&key).expect("load_link").version;
+    let expected = cell.load_link(&key)?.version;
     let mut commit = CellCommit::empty();
     commit.links.push(LinkWrite {
         key,
@@ -1032,7 +1028,9 @@ fn put_link(
             values: JsonObject::new(),
         },
     });
-    cell.commit(commit).expect("seed link");
+    cell.commit(commit)
+        .map_err(|err| format!("seed link failed: {err:?}"))?;
+    Ok(())
 }
 
 struct ReadOnlySourceAuthorizer {
@@ -1057,15 +1055,15 @@ impl ActionAuthorizer for ReadOnlySourceAuthorizer {
 }
 
 #[test]
-fn blocker1_read_only_actor_on_link_source_is_refused_for_add_and_remove() {
-    let types = schedule_types();
-    let action = schedule_action(50, false);
+fn blocker1_read_only_actor_on_link_source_is_refused_for_add_and_remove() -> TestResult {
+    let types = schedule_types()?;
+    let action = schedule_action(50, false)?;
     let request = schedule_call(
         &action,
         "P1",
         "2026-11-23T11:00:00Z",
         "2026-11-23T12:00:00Z",
-    );
+    )?;
     let authz = ReadOnlySourceAuthorizer {
         forbidden_write_key: "C0",
     };
@@ -1076,9 +1074,9 @@ fn blocker1_read_only_actor_on_link_source_is_refused_for_add_and_remove() {
         "[]",
         "[{op: 'add', sourceType: 'schedule.Commitment', sourceKey: 'C0', link: 'for_agent', targetType: 'schedule.Agent', targetKey: 'A1'}]",
         &["for_agent"],
-    );
+    )?;
     let add_catalog = TypeCatalog::new(&types).with_action_rules(std::slice::from_ref(&add_rule));
-    let mut cell = seeded_cell();
+    let mut cell = seeded_cell()?;
     let refusal = commit_action(&mut cell, &add_catalog, &request, &authz)
         .expect_err("read-only actor on link source must be refused for Add");
     assert!(
@@ -1091,8 +1089,7 @@ fn blocker1_read_only_actor_on_link_source_is_refused_for_add_and_remove() {
                 FactKey::new("schedule.Commitment", "C0"),
                 "for_agent",
                 FactKey::new("schedule.Agent", "A1"),
-            ))
-            .expect("link")
+            ))?
             .exists()
     );
 
@@ -1105,10 +1102,10 @@ fn blocker1_read_only_actor_on_link_source_is_refused_for_add_and_remove() {
         &["for_agent"],
         &["schedule.Agent"],
         false,
-    );
+    )?;
     let remove_catalog =
         TypeCatalog::new(&types).with_action_rules(std::slice::from_ref(&remove_rule));
-    let mut cell2 = seeded_cell();
+    let mut cell2 = seeded_cell()?;
     put_link(
         &mut cell2,
         "schedule.Commitment",
@@ -1116,7 +1113,7 @@ fn blocker1_read_only_actor_on_link_source_is_refused_for_add_and_remove() {
         "for_agent",
         "schedule.Agent",
         "A1",
-    );
+    )?;
     let refusal = commit_action(&mut cell2, &remove_catalog, &request, &authz)
         .expect_err("read-only actor on link source must be refused for Remove");
     assert!(
@@ -1129,11 +1126,11 @@ fn blocker1_read_only_actor_on_link_source_is_refused_for_add_and_remove() {
                 FactKey::new("schedule.Commitment", "C0"),
                 "for_agent",
                 FactKey::new("schedule.Agent", "A1"),
-            ))
-            .expect("link")
+            ))?
             .exists(),
         "seed link must remain intact after PermissionDenied"
     );
+    Ok(())
 }
 
 struct NonePredicateCell {
@@ -1188,12 +1185,13 @@ impl CellHost for NonePredicateCell {
 }
 
 #[test]
-fn blocker2_hidden_row_over_max_items_and_unenumerable_scan_refuse_as_target_not_found() {
-    let types = schedule_types();
+fn blocker2_hidden_row_over_max_items_and_unenumerable_scan_refuse_as_target_not_found()
+-> TestResult {
+    let types = schedule_types()?;
     let (facts_expr, links_expr) = batch_expressions(1);
-    let rule = batch_writer_rule(&facts_expr, &links_expr, &["for_agent"]);
+    let rule = batch_writer_rule(&facts_expr, &links_expr, &["for_agent"])?;
     let catalog = TypeCatalog::new(&types).with_action_rules(std::slice::from_ref(&rule));
-    let mut cell = seeded_cell();
+    let mut cell = seeded_cell()?;
     // Add a 2nd matching commitment C1 that is hidden from the actor.
     put_fact(
         &mut cell,
@@ -1208,17 +1206,17 @@ fn blocker2_hidden_row_over_max_items_and_unenumerable_scan_refuse_as_target_not
             "end_min": 510,
             "hours": 0.50
         }),
-    );
+    )?;
 
     // 1 readable row (C0) + 1 hidden row (C1) with maxItems = 1:
     // Must conceal as TargetNotFound, NEVER leak existence via SliceUnavailable.
-    let action = schedule_action(1, false);
+    let action = schedule_action(1, false)?;
     let request = schedule_call(
         &action,
         "P1",
         "2026-11-23T11:00:00Z",
         "2026-11-23T12:00:00Z",
-    );
+    )?;
     let hide_c1 = Authorizer {
         hidden_key: Some("C1"),
     };
@@ -1232,7 +1230,7 @@ fn blocker2_hidden_row_over_max_items_and_unenumerable_scan_refuse_as_target_not
     // 2. Host returning Ok(None) (byte overflow during scan before per-record authz)
     //    must also conceal as TargetNotFound.
     let mut none_host = NonePredicateCell {
-        cell: RefCell::new(seeded_cell()),
+        cell: RefCell::new(seeded_cell()?),
     };
     let refusal = commit_action(&mut none_host, &catalog, &request, &ALLOW)
         .expect_err("Ok(None) scan must conceal as TargetNotFound");
@@ -1240,10 +1238,10 @@ fn blocker2_hidden_row_over_max_items_and_unenumerable_scan_refuse_as_target_not
         matches!(refusal, ActionRefusal::TargetNotFound),
         "expected TargetNotFound on Ok(None) scan, got {refusal:?}"
     );
+    Ok(())
 }
 
-#[allow(clippy::expect_used, reason = "test fixture helper")]
-fn doc_node_fixture() -> (Vec<ObjectTypeDef>, Cell, FactSlice) {
+fn doc_node_fixture() -> TestResult<(Vec<ObjectTypeDef>, Cell, FactSlice)> {
     let types: Vec<ObjectTypeDef> = serde_json::from_value(json!([
         {
             "name": "doc.Node",
@@ -1255,27 +1253,24 @@ fn doc_node_fixture() -> (Vec<ObjectTypeDef>, Cell, FactSlice) {
                 "properties": [{"id": "note", "type": {"kind": "text"}}]
             }]
         }
-    ]))
-    .expect("node types");
+    ]))?;
     let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
         .with_types(types.clone());
     for id in ["N1", "N2", "N3", "N4"] {
-        put_fact(&mut cell, "doc.Node", id, json!({"node_id": id}));
+        put_fact(&mut cell, "doc.Node", id, json!({"node_id": id}))?;
     }
-    let slice: FactSlice = ["N1", "N2", "N3", "N4"]
-        .into_iter()
-        .map(|id| {
-            let key = FactKey::new("doc.Node", id);
-            let state = cell.load(&key).expect("load");
-            (key, state)
-        })
-        .collect();
-    (types, cell, slice)
+    let mut slice = FactSlice::new();
+    for id in ["N1", "N2", "N3", "N4"] {
+        let key = FactKey::new("doc.Node", id);
+        let state = cell.load(&key)?;
+        slice.insert(key, state);
+    }
+    Ok((types, cell, slice))
 }
 
 #[test]
-fn blocker3_decision_links_enforce_max_output_bytes_and_charge_turn_envelope_meter() {
-    let (types, mut cell, slice) = doc_node_fixture();
+fn blocker3_decision_links_enforce_max_output_bytes_and_charge_turn_envelope_meter() -> TestResult {
+    let (types, mut cell, slice) = doc_node_fixture()?;
     let catalog = TypeCatalog::new(&types);
 
     // 1. Oversized LinkChange::Add.values (> 32 KiB EnvelopeLimits::V1.max_output_bytes) refuses.
@@ -1293,8 +1288,7 @@ fn blocker3_decision_links_enforce_max_output_bytes_and_charge_turn_envelope_met
         }],
         "commands": [],
         "timers": []
-    }))
-    .expect("oversized output");
+    }))?;
     let turn = DecisionTurn {
         id: "turn-oversized".to_owned(),
         now: LogicalTime::from_millis(1_000),
@@ -1323,10 +1317,8 @@ fn blocker3_decision_links_enforce_max_output_bytes_and_charge_turn_envelope_met
         ],
         "commands": [],
         "timers": []
-    }))
-    .expect("two links");
-    commit_decision_with_meter(&mut cell, &catalog, &slice, &turn, &two_links, &mut meter)
-        .expect("first link-only commit within turn budget");
+    }))?;
+    commit_decision_with_meter(&mut cell, &catalog, &slice, &turn, &two_links, &mut meter)?;
     assert_eq!(meter.used().events, 2);
 
     let third_link: norn_ir::DecisionOutput = serde_json::from_value(json!({
@@ -1336,8 +1328,7 @@ fn blocker3_decision_links_enforce_max_output_bytes_and_charge_turn_envelope_met
         ],
         "commands": [],
         "timers": []
-    }))
-    .expect("third link");
+    }))?;
     let turn2 = DecisionTurn {
         id: "turn-link-exhausted".to_owned(),
         now: LogicalTime::from_millis(2_000),
@@ -1359,10 +1350,11 @@ fn blocker3_decision_links_enforce_max_output_bytes_and_charge_turn_envelope_met
         "expected TurnEnvelopeExceeded, got {refusal:?}"
     );
     assert_eq!(meter.used().events, 2);
+    Ok(())
 }
 
 #[test]
-fn blocker4_rejects_unknown_and_forged_computed_keys_in_link_values() {
+fn blocker4_rejects_unknown_and_forged_computed_keys_in_link_values() -> TestResult {
     let types: Vec<ObjectTypeDef> = serde_json::from_value(json!([
         {
             "name": "doc.Node",
@@ -1384,13 +1376,12 @@ fn blocker4_rejects_unknown_and_forged_computed_keys_in_link_values() {
                 }
             ]
         }
-    ]))
-    .expect("types");
+    ]))?;
     let catalog = TypeCatalog::new(&types);
     let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
         .with_types(types.clone());
-    put_fact(&mut cell, "doc.Node", "N1", json!({"node_id": "N1"}));
-    put_fact(&mut cell, "doc.Node", "N2", json!({"node_id": "N2"}));
+    put_fact(&mut cell, "doc.Node", "N1", json!({"node_id": "N1"}))?;
+    put_fact(&mut cell, "doc.Node", "N2", json!({"node_id": "N2"}))?;
     let slice: FactSlice = ["N1", "N2"]
         .into_iter()
         .map(|id| {
@@ -1415,8 +1406,7 @@ fn blocker4_rejects_unknown_and_forged_computed_keys_in_link_values() {
             "values": {"role": "owner", "sneaky": "injected"}
         }],
         "commands": [], "timers": []
-    }))
-    .expect("output");
+    }))?;
     let refusal = commit_decision(&mut cell, &catalog, &slice, &turn, &unknown_on_annotated)
         .expect_err("unknown key must refuse");
     assert_eq!(refusal.code(), "decision.invalid_output");
@@ -1430,8 +1420,7 @@ fn blocker4_rejects_unknown_and_forged_computed_keys_in_link_values() {
             "values": {"role": "owner", "computed_tag": "forged"}
         }],
         "commands": [], "timers": []
-    }))
-    .expect("output");
+    }))?;
     let refusal = commit_decision(&mut cell, &catalog, &slice, &turn, &computed_forged)
         .expect_err("forged computed key must refuse");
     assert_eq!(refusal.code(), "decision.invalid_output");
@@ -1445,18 +1434,18 @@ fn blocker4_rejects_unknown_and_forged_computed_keys_in_link_values() {
             "values": {"unexpected": 1}
         }],
         "commands": [], "timers": []
-    }))
-    .expect("output");
+    }))?;
     let refusal = commit_decision(&mut cell, &catalog, &slice, &turn, &unknown_on_bare)
         .expect_err("unknown key on bare link must refuse");
     assert_eq!(refusal.code(), "decision.invalid_output");
+    Ok(())
 }
 
 #[test]
-fn blocker6_decision_cell_commit_never_silently_drops_links() {
-    let types = schedule_types();
+fn blocker6_decision_cell_commit_never_silently_drops_links() -> TestResult {
+    let types = schedule_types()?;
     let catalog = TypeCatalog::new(&types);
-    let cell = seeded_cell();
+    let cell = seeded_cell()?;
     let slice: FactSlice = [
         FactKey::new("schedule.Commitment", "C0"),
         FactKey::new("schedule.Agent", "A1"),
@@ -1479,8 +1468,7 @@ fn blocker6_decision_cell_commit_never_silently_drops_links() {
         }],
         "commands": [],
         "timers": []
-    }))
-    .expect("output");
+    }))?;
     let turn = DecisionTurn {
         id: "turn-cell-commit".to_owned(),
         now: LogicalTime::from_millis(1_000),
@@ -1507,10 +1495,10 @@ fn blocker6_decision_cell_commit_never_silently_drops_links() {
         &turn,
         &output,
         &EnvelopeLimits::V1,
-    )
-    .expect("decision_cell_commit_with_host materializes links");
+    )?;
     assert_eq!(commit.links.len(), 1);
     assert_eq!(commit.links[0].key.link, "for_agent");
+    Ok(())
 }
 
 struct SpyLoadLinkCell {
@@ -1568,8 +1556,7 @@ impl CellHost for SpyLoadLinkCell {
     }
 }
 
-#[allow(clippy::expect_used, reason = "test fixture helper")]
-fn hierarchy_fixture() -> (Vec<ObjectTypeDef>, Cell, FactSlice) {
+fn hierarchy_fixture() -> TestResult<(Vec<ObjectTypeDef>, Cell, FactSlice)> {
     let types: Vec<ObjectTypeDef> = serde_json::from_value(json!([
         {
             "name": "hier.Base",
@@ -1604,32 +1591,32 @@ fn hierarchy_fixture() -> (Vec<ObjectTypeDef>, Cell, FactSlice) {
                 "maxRows": 10
             }]
         }
-    ]))
-    .expect("hierarchy types");
+    ]))?;
     let mut base_cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
         .with_types(types.clone());
-    put_fact(&mut base_cell, "hier.Base", "B1", json!({"id": "B1"}));
-    put_fact(&mut base_cell, "hier.Base", "B2", json!({"id": "B2"}));
-    put_fact(&mut base_cell, "hier.Parent", "P1", json!({"id": "P1"}));
+    put_fact(&mut base_cell, "hier.Base", "B1", json!({"id": "B1"}))?;
+    put_fact(&mut base_cell, "hier.Base", "B2", json!({"id": "B2"}))?;
+    put_fact(&mut base_cell, "hier.Parent", "P1", json!({"id": "P1"}))?;
     let mut slice = FactSlice::new();
     for (ty, id) in [("hier.Base", "B1"), ("hier.Parent", "P1")] {
         let key = FactKey::new(ty, id);
-        let state = base_cell.load(&key).expect("load");
+        let state = base_cell.load(&key)?;
         slice.insert(key, state);
     }
     slice.insert(
         FactKey::new("hier.OwnedSub", "O1"),
         FactState {
             version: norn_kernel::FactVersion(1),
-            values: Some(object(json!({"id": "O1", "seq": 1}))),
+            values: Some(object(json!({"id": "O1", "seq": 1}))?),
         },
     );
-    (types, base_cell, slice)
+    Ok((types, base_cell, slice))
 }
 
 #[test]
-fn blocker7_remove_validates_capture_subtypes_and_concrete_protected_and_owned_links() {
-    let (types, base_cell, slice) = hierarchy_fixture();
+fn blocker7_remove_validates_capture_subtypes_and_concrete_protected_and_owned_links() -> TestResult
+{
+    let (types, base_cell, slice) = hierarchy_fixture()?;
     let catalog = TypeCatalog::new(&types);
 
     let turn = DecisionTurn {
@@ -1651,8 +1638,7 @@ fn blocker7_remove_validates_capture_subtypes_and_concrete_protected_and_owned_l
             "link": "peer", "targetType": "hier.Base", "targetKey": "B2"
         }],
         "commands": [], "timers": []
-    }))
-    .expect("output");
+    }))?;
     let refusal = commit_decision(&mut spy, &catalog, &slice, &turn, &uncaptured_remove)
         .expect_err("uncaptured Remove must refuse");
     assert_eq!(refusal.code(), "decision.invalid_output");
@@ -1670,8 +1656,7 @@ fn blocker7_remove_validates_capture_subtypes_and_concrete_protected_and_owned_l
             "link": "peer", "targetType": "hier.Base", "targetKey": "B1"
         }],
         "commands": [], "timers": []
-    }))
-    .expect("output");
+    }))?;
     let refusal = commit_decision(&mut spy, &catalog, &slice, &turn, &subtype_mismatch_remove)
         .expect_err("subtype mismatch on Remove must refuse");
     assert_eq!(refusal.code(), "decision.invalid_output");
@@ -1687,8 +1672,7 @@ fn blocker7_remove_validates_capture_subtypes_and_concrete_protected_and_owned_l
                 "link": "related", "targetType": "hier.Base", "targetKey": "O1"
             }],
             "commands": [], "timers": []
-        }))
-        .expect("output");
+        }))?;
         let refusal = commit_decision(&mut spy, &catalog, &slice, &turn, &protected_concrete)
             .expect_err("protected concrete owned-child subtype must refuse");
         assert_eq!(refusal.code(), "decision.invalid_output");
@@ -1704,11 +1688,340 @@ fn blocker7_remove_validates_capture_subtypes_and_concrete_protected_and_owned_l
                 "link": "children", "targetType": "hier.OwnedSub", "targetKey": "O1"
             }],
             "commands": [], "timers": []
-        }))
-        .expect("output");
+        }))?;
         let refusal = commit_decision(&mut spy, &catalog, &slice, &turn, &owned_link)
             .expect_err("owned-collection owning link must refuse");
         assert_eq!(refusal.code(), "decision.invalid_output");
         assert_eq!(*spy.load_link_calls.borrow(), 0);
     }
+    Ok(())
+}
+
+// =========================================================================
+// Round-2 adversarial regression tests (Blockers 3b, 6, 7a, 7b)
+// =========================================================================
+
+fn r2_agg_only_action(max_items: u32) -> TestResult<ActionRoot> {
+    Ok(serde_json::from_value(json!({
+        "actionId": "schedule.plan.agg_only",
+        "scopeRequired": ["orgId", "environmentId"],
+        "idempotent": true,
+        "ledgered": true,
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "plan_id": {"type": "string"},
+                "agent_id": {"type": "string"},
+                "window_start": {"type": "string"},
+                "window_end": {"type": "string"}
+            },
+            "required": ["plan_id", "agent_id", "window_start", "window_end"]
+        },
+        "outputSchema": {"type": "object", "additionalProperties": false, "properties": {}},
+        "aggregates": [{
+            "name": "existing_count",
+            "objectType": "schedule.Commitment",
+            "filter": {"agent_id": "agent_id"},
+            "window": {
+                "property": "starts_at",
+                "start": "window_start",
+                "end": "window_end",
+                "startInclusive": true,
+                "endInclusive": false
+            },
+            "aggregate": {"kind": "count"},
+            "maxItems": max_items
+        }],
+        "preconditions": ["aggregates.existing_count >= 0"],
+        "writes": [{"entityKind": "schedule.Plan", "change": "modified"}],
+        "effectProgram": {
+            "kind": "fire_transition",
+            "objectKind": "schedule.Plan",
+            "objectIdField": "plan_id",
+            "entityArtifactId": "schedule.Plan.entity",
+            "entityArtifactVersion": "1.0.0",
+            "lifecycle": "status",
+            "transition": "commit_plan"
+        }
+    }))?)
+}
+
+#[test]
+fn r2_blocker3b_fresh_aggregate_authorizes_before_bound_and_byte_overflow() -> TestResult {
+    let types = schedule_types()?;
+    let catalog = TypeCatalog::new(&types);
+    let mut cell = seeded_cell()?;
+    put_fact(
+        &mut cell,
+        "schedule.Commitment",
+        "C1",
+        json!({
+            "commitment_id": "C1", "agent_id": "A1",
+            "starts_at": "2026-11-23T08:00:00Z", "ends_at": "2026-11-23T08:30:00Z",
+            "start_min": 480, "end_min": 510, "hours": 0.50
+        }),
+    )?;
+    let action = r2_agg_only_action(1)?;
+    let request = ActionCall {
+        action: &action,
+        action_artifact_id: "schedule.plan.agg_only.action",
+        action_version: "1.0.0",
+        scope: BTreeMap::from([
+            ("orgId".to_owned(), "org_demo".to_owned()),
+            ("environmentId".to_owned(), "dev".to_owned()),
+        ]),
+        actor: "scheduler:lead".to_owned(),
+        input: object(json!({
+            "plan_id": "P1", "agent_id": "A1",
+            "window_start": "2026-11-23T00:00:00Z", "window_end": "2026-11-24T00:00:00Z"
+        }))?,
+        idempotency_key: "agg-only-1".to_owned(),
+        object_type: None,
+        turn: DecisionTurn {
+            id: "turn-agg-only".to_owned(),
+            now: LogicalTime::from_millis(2_000),
+            world: World::Main,
+            consumes: None,
+        },
+        trace: None,
+    };
+    let hide_c1 = Authorizer {
+        hidden_key: Some("C1"),
+    };
+    // Hidden overflow row MUST refuse as TargetNotFound, NEVER AggregateBoundExceeded.
+    let refusal = commit_action(&mut cell, &catalog, &request, &hide_c1)
+        .expect_err("hidden aggregate overflow row must conceal as TargetNotFound");
+    assert!(
+        matches!(refusal, ActionRefusal::TargetNotFound),
+        "got {refusal:?}"
+    );
+
+    // Hidden oversized row MUST also conceal as TargetNotFound, NEVER AggregateBytesExceeded.
+    let big_action = r2_agg_only_action(10)?;
+    let big_request = ActionCall {
+        action: &big_action,
+        idempotency_key: "agg-only-bytes".to_owned(),
+        ..request
+    };
+    put_fact(
+        &mut cell,
+        "schedule.Commitment",
+        "C1",
+        json!({
+            "commitment_id": "C1", "agent_id": "A1",
+            "starts_at": "2026-11-23T08:00:00Z", "ends_at": "2026-11-23T08:30:00Z",
+            "start_min": 480, "end_min": 510, "hours": 0.50,
+            "note": "z".repeat(300_000)
+        }),
+    )?;
+    let refusal = commit_action(&mut cell, &catalog, &big_request, &hide_c1)
+        .expect_err("hidden oversized aggregate row must conceal as TargetNotFound");
+    assert!(
+        matches!(refusal, ActionRefusal::TargetNotFound),
+        "got {refusal:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn r2_blocker6_hostless_prepare_decision_and_partition_slice_refuse_non_empty_links() -> TestResult
+{
+    let types = schedule_types()?;
+    let catalog = TypeCatalog::new(&types);
+    let cell = seeded_cell()?;
+    let mut slice = FactSlice::new();
+    for key in [
+        FactKey::new("schedule.Commitment", "C0"),
+        FactKey::new("schedule.Agent", "A1"),
+    ] {
+        let state = cell.load(&key)?;
+        slice.insert(key, state);
+    }
+    let output: norn_ir::DecisionOutput = serde_json::from_value(json!({
+        "facts": [],
+        "links": [{
+            "op": "add", "sourceType": "schedule.Commitment", "sourceKey": "C0",
+            "link": "for_agent", "targetType": "schedule.Agent", "targetKey": "A1"
+        }],
+        "commands": [], "timers": []
+    }))?;
+    let turn = DecisionTurn {
+        id: "turn-hostless-prepare".to_owned(),
+        now: LogicalTime::from_millis(1_000),
+        world: World::Main,
+        consumes: None,
+    };
+
+    let err1 = prepare_decision::<Infallible>(&catalog, &slice, &turn, &output)
+        .expect_err("prepare_decision must refuse non-empty output.links");
+    assert_eq!(err1.code(), "decision.invalid_output");
+
+    let err2 = prepare_decision_with_limits::<Infallible>(
+        &catalog,
+        &slice,
+        &turn,
+        &output,
+        &EnvelopeLimits::V1,
+    )
+    .expect_err("prepare_decision_with_limits must refuse non-empty output.links");
+    assert_eq!(err2.code(), "decision.invalid_output");
+
+    let err3 = prepare_decision_with_source_owned_targets::<Infallible>(
+        &catalog,
+        &slice,
+        &turn,
+        &output,
+        &std::collections::BTreeSet::new(),
+    )
+    .expect_err("prepare_decision_with_source_owned_targets must refuse non-empty output.links");
+    assert_eq!(err3.code(), "decision.invalid_output");
+
+    let partition = load_partition_slice(
+        &cell,
+        &catalog,
+        [
+            FactKey::new("schedule.Commitment", "C0"),
+            FactKey::new("schedule.Agent", "A1"),
+        ],
+        &[],
+        norn_ir::ResourceLimitProfile::norn_limits_v1().slice,
+    )?;
+    let err4 = partition
+        .prepare::<Infallible>(&catalog, &turn, &output, &EnvelopeLimits::V1)
+        .expect_err("PartitionSlice::prepare must refuse non-empty output.links");
+    assert_eq!(err4.code(), "decision.invalid_output");
+    Ok(())
+}
+
+fn r2_default_link_node_fixture(
+    default_val: &str,
+) -> TestResult<(Vec<ObjectTypeDef>, Cell, FactSlice)> {
+    let types: Vec<ObjectTypeDef> = serde_json::from_value(json!([{
+        "name": "doc.Node",
+        "properties": [{"id": "node_id", "type": {"kind": "text"}}],
+        "links": [{
+            "id": "rel",
+            "target": "doc.Node",
+            "cardinality": {"to": "many", "from": "many"},
+            "properties": [{"id": "note", "type": {"kind": "text"}, "default": default_val}]
+        }]
+    }]))?;
+    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+        .with_types(types.clone());
+    let mut slice = FactSlice::new();
+    for id in ["N1", "N2", "N3", "N4"] {
+        put_fact(&mut cell, "doc.Node", id, json!({"node_id": id}))?;
+        let key = FactKey::new("doc.Node", id);
+        let state = cell.load(&key)?;
+        slice.insert(key, state);
+    }
+    Ok((types, cell, slice))
+}
+
+#[test]
+fn r2_blocker7a_omitted_link_values_default_overhead_charges_materialized_bytes() -> TestResult {
+    let default_val = "v".repeat(40);
+    let (types, cell, slice) = r2_default_link_node_fixture(&default_val)?;
+    let catalog = TypeCatalog::new(&types);
+    let omitted: norn_ir::DecisionOutput = serde_json::from_value(json!({
+        "facts": [],
+        "links": [{
+            "op": "add", "sourceType": "doc.Node", "sourceKey": "N1",
+            "link": "rel", "targetType": "doc.Node", "targetKey": "N2"
+        }],
+        "commands": [], "timers": []
+    }))?;
+    let materialized: norn_ir::DecisionOutput = serde_json::from_value(json!({
+        "facts": [],
+        "links": [{
+            "op": "add", "sourceType": "doc.Node", "sourceKey": "N1",
+            "link": "rel", "targetType": "doc.Node", "targetKey": "N2",
+            "values": {"note": default_val}
+        }],
+        "commands": [], "timers": []
+    }))?;
+    let exact_materialized_bytes =
+        u64::try_from(norn_ir::canonical::canonical_json_of(&materialized)?.len())?;
+    let turn = DecisionTurn {
+        id: "turn-default-overhead".to_owned(),
+        now: LogicalTime::from_millis(1_000),
+        world: World::Main,
+        consumes: None,
+    };
+    let too_tight = EnvelopeLimits {
+        max_output_bytes: exact_materialized_bytes.saturating_sub(1),
+        ..EnvelopeLimits::V1
+    };
+    let refusal =
+        decision_cell_commit_with_host(&cell, &catalog, &slice, &turn, &omitted, &too_tight)
+            .expect_err("omitted values default expansion must exceed tight cap");
+    assert_eq!(refusal.code(), "decision.invalid_output");
+    assert!(refusal.to_string().contains("envelope bytes"));
+
+    let exact_cap = EnvelopeLimits {
+        max_output_bytes: exact_materialized_bytes,
+        ..EnvelopeLimits::V1
+    };
+    let admitted =
+        decision_cell_commit_with_host(&cell, &catalog, &slice, &turn, &omitted, &exact_cap)?;
+    assert_eq!(admitted.links.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn r2_blocker7b_metered_host_commit_charges_turn_envelope() -> TestResult {
+    let (types, cell, slice) = r2_default_link_node_fixture("ok")?;
+    let catalog = TypeCatalog::new(&types);
+    let turn = DecisionTurn {
+        id: "turn-metered-host".to_owned(),
+        now: LogicalTime::from_millis(1_000),
+        world: World::Main,
+        consumes: None,
+    };
+    let mut meter = TurnEnvelopeMeter::new(TurnEnvelopeLimits {
+        max_events: 2,
+        max_commands: 4,
+        max_timers: 4,
+    });
+    let two_links: norn_ir::DecisionOutput = serde_json::from_value(json!({
+        "facts": [],
+        "links": [
+            {"op": "add", "sourceType": "doc.Node", "sourceKey": "N1", "link": "rel", "targetType": "doc.Node", "targetKey": "N2"},
+            {"op": "add", "sourceType": "doc.Node", "sourceKey": "N1", "link": "rel", "targetType": "doc.Node", "targetKey": "N3"}
+        ],
+        "commands": [], "timers": []
+    }))?;
+    let first = decision_cell_commit_with_host_and_meter(
+        &cell, &catalog, &slice, &turn, &two_links, &mut meter,
+    )?;
+    assert_eq!(first.links.len(), 2);
+    assert_eq!(meter.used().events, 2);
+
+    let third_link: norn_ir::DecisionOutput = serde_json::from_value(json!({
+        "facts": [],
+        "links": [
+            {"op": "add", "sourceType": "doc.Node", "sourceKey": "N1", "link": "rel", "targetType": "doc.Node", "targetKey": "N4"}
+        ],
+        "commands": [], "timers": []
+    }))?;
+    let refusal = decision_cell_commit_with_host_and_meter(
+        &cell,
+        &catalog,
+        &slice,
+        &turn,
+        &third_link,
+        &mut meter,
+    )
+    .expect_err("metered host commit past aggregate limit must refuse");
+    assert!(matches!(
+        refusal,
+        DecisionRefusal::TurnEnvelopeExceeded {
+            kind: EnvelopeKind::Events,
+            limit: 2,
+            actual: 3,
+        }
+    ));
+    assert_eq!(meter.used().events, 2);
+    Ok(())
 }

@@ -21,7 +21,7 @@ use norn_cell::engine::SqlEngine;
 use norn_ir::{RuntimeObject, RuntimeValue};
 use norn_kernel::{
     CellCommit, CommandId, Consumed, DecisionTurn, EnvelopeLimits, FactEvent, FactKey, Generation,
-    LogicalTime, World,
+    LogicalTime, TurnEnvelopeLimits, TurnEnvelopeMeter, World,
 };
 
 use norn_cell::flow_run::RunStarter;
@@ -110,13 +110,16 @@ pub(crate) fn result_turn<E: SqlEngine>(
             generation: delivery.generation,
         }),
     };
-    norn_kernel::decision_cell_commit_with_host(
-        cell,
-        &catalog,
-        &slice,
-        &turn,
-        &output,
-        &EnvelopeLimits::V1,
+    let mut meter = TurnEnvelopeMeter::with_limits(
+        EnvelopeLimits::V1,
+        TurnEnvelopeLimits {
+            max_events: u64::from(EnvelopeLimits::V1.max_events),
+            max_commands: u64::from(EnvelopeLimits::V1.max_commands),
+            max_timers: u64::from(EnvelopeLimits::V1.max_timers),
+        },
+    );
+    norn_kernel::decision_cell_commit_with_host_and_meter(
+        cell, &catalog, &slice, &turn, &output, &mut meter,
     )
     .map_err(|refusal| refused(refusal.code(), "the flow's result turn was refused"))
 }

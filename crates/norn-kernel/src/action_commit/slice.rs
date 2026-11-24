@@ -753,11 +753,11 @@ fn load_action_aggregates<H: CellHost + ?Sized>(
     snapshots: &mut Vec<(PredicateQuery, Vec<PredicateObject>)>,
 ) -> Result<JsonObject, ActionRefusal<H::Error>> {
     let ActionSliceContext {
-        host,
         catalog,
         call,
         effective_input,
         authorizer,
+        ..
     } = *context;
     let mut values = JsonObject::new();
     // Aggregates over the same predicate (or a predicate slice entry) fold one
@@ -774,61 +774,9 @@ fn load_action_aggregates<H: CellHost + ?Sized>(
             crate::action_aggregate::predicate_query(aggregate, effective_input, catalog)
                 .map_err(unavailable)?;
         let max_items = usize::try_from(aggregate.max_items).unwrap_or(usize::MAX);
-        let fresh = !snapshots.iter().any(|(read, _)| *read == predicate);
-        if fresh {
-            let remaining = limits.max_canonical_bytes.saturating_sub(meter.bytes());
-            let objects = host
-                .read_predicate(&predicate, max_items, remaining)
-                .map_err(host_failure)?
-                .ok_or_else(|| {
-                    unavailable(
-                        "the host cannot enumerate every match within the slice bounds".to_owned(),
-                    )
-                })?;
-            snapshots.push((predicate.clone(), objects));
-        }
-        let Some((_, objects)) = snapshots.iter().find(|(read, _)| *read == predicate) else {
-            return Err(unavailable(
-                "the predicate snapshot was not retained".to_owned(),
-            ));
-        };
-        if objects.len() > max_items {
-            return Err(ActionRefusal::AggregateBoundExceeded {
-                aggregate: aggregate.name.clone(),
-                max_items: aggregate.max_items,
-            });
-        }
-        if fresh {
-            for object in objects {
-                let bytes = norn_ir::canonical::canonical_json_of(&object.values)
-                    .map_err(|error| unavailable(error.to_string()))?
-                    .len();
-                meter
-                    .admit_record(u64::try_from(bytes).unwrap_or(u64::MAX), 0)
-                    .map_err(|exceeded| match exceeded.kind {
-                        crate::IngressLimit::SliceBytes => ActionRefusal::AggregateBytesExceeded {
-                            aggregate: aggregate.name.clone(),
-                            max_bytes: limits.max_canonical_bytes,
-                        },
-                        crate::IngressLimit::SliceRecords
-                        | crate::IngressLimit::SliceRelationDepth
-                        | crate::IngressLimit::EnvelopeBytes => unavailable(exceeded.to_string()),
-                    })?;
-            }
-        }
-        for object in objects {
-            authorizer
-                .authorize_read(&ActionReadAuthzRequest {
-                    action: call.action,
-                    scope: &call.scope,
-                    actor: &call.actor,
-                    input: effective_input,
-                    declared_type: &aggregate.object_type,
-                    target: &object.key,
-                    target_values: Some(&object.values),
-                })
-                .map_err(|_denied| ActionRefusal::TargetNotFound)?;
-        }
+        let objects = super::predicate::load_aggregate_predicate_objects(
+            context, aggregate, &predicate, max_items, meter, limits, snapshots,
+        )?;
         let value = norn_decisions::fold_aggregate(
             &aggregate.aggregate,
             objects.iter().map(|object| &object.values),
