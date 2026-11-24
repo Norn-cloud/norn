@@ -167,10 +167,12 @@ test("views: refuses to write when the active workspace changed after loading th
 
   await page.goto(`/views/${id}/edit`)
   await expect(page.getByLabel("View title")).toHaveValue("Scoped view")
+  await expect(page.getByText("Ada Reyes")).toBeVisible()
+  await page.getByLabel("View title").fill("Scoped view edit")
+  await expect(page.getByRole("status").filter({ hasText: "Saved view “Scoped view edit”" })).toBeVisible()
 
-  // Switch active workspace in the server session (as if switched in another tab).
+  // Let the preview and draft admission settle so Save is the first read to see the switch.
   cell.switchScope("org_other", "prod")
-  await page.getByLabel("Description").fill("Should not write to org_other")
   await page.getByRole("button", { name: "Save", exact: true }).click()
 
   await expect(page.getByRole("alert")).toContainText("This workspace changed; reload to edit this view.")
