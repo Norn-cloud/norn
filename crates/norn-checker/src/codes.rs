@@ -25,6 +25,8 @@ pub const IR_INVALID_ARTIFACT: &str = "ir.validation.invalid_artifact";
 pub const IR_INVALID_DEPENDENCY: &str = "ir.validation.invalid_dependency";
 /// An explicit layout entry took precedence over extracted legacy geometry.
 pub const LAYOUT_MERGE_CONFLICT: &str = "layout.validation.merge_conflict";
+/// A widget artifact was passed to Ring-0 `norn-checker` without Ring-1 `norn-ui-checker`.
+pub use crate::envelope::WIDGET_RING1_REQUIRED;
 /// A definition identifier exceeds the admission profile's byte budget.
 pub use crate::envelope::IDENTIFIER_TOO_LONG;
 

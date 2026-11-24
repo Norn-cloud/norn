@@ -1098,30 +1098,24 @@ fn ring0_refuses_widget_artifacts_without_ui_checker() {
         assert!(
             legacy_err
                 .iter()
-                .any(|d| d.code == "widget.validation.invalid_payload")
+                .any(|d| d.code == norn_checker::codes::WIDGET_RING1_REQUIRED)
         );
 
         let artifact_findings = norn_checker::check_artifact(&widget_env);
-        assert!(
-            artifact_findings.iter().any(|d| {
-                d.is_error() && d.code.as_str() == "widget.validation.invalid_payload"
-            })
-        );
+        assert!(artifact_findings.iter().any(|d| {
+            d.is_error() && d.code.as_str() == norn_checker::codes::WIDGET_RING1_REQUIRED
+        }));
 
         let json_findings = norn_checker::check_artifact_json(&widget_json);
-        assert!(
-            json_findings.iter().any(|d| {
-                d.is_error() && d.code.as_str() == "widget.validation.invalid_payload"
-            })
-        );
+        assert!(json_findings.iter().any(|d| {
+            d.is_error() && d.code.as_str() == norn_checker::codes::WIDGET_RING1_REQUIRED
+        }));
 
         let set_findings =
             norn_checker::check_artifact_set(std::slice::from_ref(&widget_env), &context);
-        assert!(
-            set_findings.iter().any(|d| {
-                d.is_error() && d.code.as_str() == "widget.validation.invalid_payload"
-            })
-        );
+        assert!(set_findings.iter().any(|d| {
+            d.is_error() && d.code.as_str() == norn_checker::codes::WIDGET_RING1_REQUIRED
+        }));
 
         let receipt =
             check_artifact_set_with_receipt(&sources, &context, &limits).expect("receipt builds");
@@ -1129,11 +1123,9 @@ fn ring0_refuses_widget_artifacts_without_ui_checker() {
             !receipt.receipt.admitted,
             "Ring-0 check_artifact_set_with_receipt must never admit an unchecked widget"
         );
-        assert!(
-            receipt.diagnostics.iter().any(|d| {
-                d.is_error() && d.code.as_str() == "widget.validation.invalid_payload"
-            })
-        );
+        assert!(receipt.diagnostics.iter().any(|d| {
+            d.is_error() && d.code.as_str() == norn_checker::codes::WIDGET_RING1_REQUIRED
+        }));
 
         let fsm_receipt =
             check_artifact_set_with_flow_source_map(&sources, &context, &limits, None)
@@ -1147,10 +1139,8 @@ fn ring0_refuses_widget_artifacts_without_ui_checker() {
             "anything",
         )
         .expect_err("Ring-0 explain must refuse widget artifacts");
-        assert!(
-            explain_err.iter().any(|d| {
-                d.is_error() && d.code.as_str() == "widget.validation.invalid_payload"
-            })
-        );
+        assert!(explain_err.iter().any(|d| {
+            d.is_error() && d.code.as_str() == norn_checker::codes::WIDGET_RING1_REQUIRED
+        }));
     }
 }

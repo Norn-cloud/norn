@@ -212,7 +212,8 @@ const fn severity_rank(severity: &DiagnosticSeverity) -> u8 {
 /// effects and composed render paths may share the same real JSON pointer. So
 /// do a lifecycle's unreachable and dead-end states: each is its own finding,
 /// all at the lifecycle's pointer, and the message is what names the state.
-pub(crate) fn dedupe_findings(findings: impl IntoIterator<Item = Diagnostic>) -> Vec<Diagnostic> {
+#[must_use]
+pub fn dedupe_findings(findings: impl IntoIterator<Item = Diagnostic>) -> Vec<Diagnostic> {
     let mut positions: std::collections::BTreeMap<_, usize> = std::collections::BTreeMap::new();
     let mut out: Vec<Diagnostic> = Vec::new();
     for diagnostic in findings {

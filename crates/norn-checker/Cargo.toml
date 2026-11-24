@@ -18,10 +18,6 @@ path = "tests/suites.rs"
 
 [features]
 native-proof-driver = []
-# Private seam enabling Ring-1 `norn-ui-checker` to compose additive UI
-# validation over Ring-0 admission receipts. Enforced by `norn-skeleton-guard`
-# (`ring0_boundary::check_ring1_ui_feature_seam`): no other crate may enable it.
-ring1-ui-internal = []
 
 [[bin]]
 name = "norn-proof-quint"

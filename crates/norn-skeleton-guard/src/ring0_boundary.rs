@@ -112,20 +112,21 @@ pub const NORN_IR_SCHEMA_WIDGET_MODULES: &[&str] = &[
 /// from `norn-checker` to `norn-ui-checker`.
 pub const RING0_UI_MIGRATION_ISSUE: &str = "#1613";
 
-/// Private feature on `norn-checker` that exposes the sealed Ring-1 UI seam.
-/// Only [`RING1_UI_OWNER_CRATE`] may enable it.
+/// Forbidden internal feature name on `norn-checker` that must never be
+/// declared, enabled, or forwarded by any workspace member. Ring-1
+/// `norn-ui-checker` composes strictly above Ring-0 with zero callback hooks.
 pub const RING1_UI_INTERNAL_FEATURE: &str = "ring1-ui-internal";
 
-/// Sole Ring-1 crate authorized to enable [`RING1_UI_INTERNAL_FEATURE`] and
-/// access `norn_checker::__ring1_ui`.
+/// Sole Ring-1 UI checker crate.
 pub const RING1_UI_OWNER_CRATE: &str = "norn-ui-checker";
 
-/// Sealed internal identifiers on `norn-checker`'s Ring-1 UI seam that may
-/// never be referenced outside `crates/norn-checker/` and `crates/norn-ui-checker/`.
+/// Forbidden Ring-1 UI callback/validator seam identifiers that must never be
+/// declared, imported, or re-exported by any workspace member or target.
 pub const RING1_UI_SEALED_IDENTS: &[&str] = &[
     "__ring1_ui_seam",
     "__ring1_ui",
     "Ring1UiSeal",
+    "Ring1UiHook",
     "UiValidator",
 ];
 
@@ -212,17 +213,53 @@ pub fn check_ring0_dependencies(metadata: &Metadata) -> Vec<Violation> {
         if !is_ring0(pkg_name) {
             continue;
         }
+        let mut forbidden_aliases: BTreeMap<&str, (&str, &'static str, &'static str, &'static str)> =
+            BTreeMap::new();
         for dep in &pkg.dependencies {
             let dep_name = dep.name.as_str();
             if let Some((rule, category, prefix)) = forbidden_ring0_category(dep_name, true) {
+                let alias = dep.rename.as_deref().unwrap_or(dep_name);
+                forbidden_aliases.insert(alias, (dep_name, rule, category, prefix));
+                let rename_note = dep
+                    .rename
+                    .as_deref()
+                    .map(|rename| format!(" (renamed as `{rename}`)"))
+                    .unwrap_or_default();
                 out.push(violation(
                     rule,
                     format!(
                         "ring-0 crate `{pkg_name}` directly depends on forbidden {category} crate \
-                         `{dep_name}` (matched `{prefix}`); Ring-0 must stay pure, sans-IO, and free \
-                         of host/OLAP/UI dependencies"
+                         `{dep_name}`{rename_note} (matched `{prefix}`); Ring-0 must stay pure, \
+                         sans-IO, and free of host/OLAP/UI dependencies"
                     ),
                 ));
+            }
+        }
+        for (feature_name, enables) in &pkg.features {
+            for entry in enables {
+                let Some(dep_alias) = feature_entry_dep_alias(entry) else {
+                    continue;
+                };
+                if let Some(&(dep_name, rule, category, prefix)) = forbidden_aliases.get(dep_alias)
+                {
+                    out.push(violation(
+                        rule,
+                        format!(
+                            "ring-0 crate `{pkg_name}` feature `{feature_name}` forwards `{entry}` \
+                             to forbidden {category} crate `{dep_name}` (matched `{prefix}`)"
+                        ),
+                    ));
+                } else if let Some((rule, category, prefix)) =
+                    forbidden_ring0_category(dep_alias, true)
+                {
+                    out.push(violation(
+                        rule,
+                        format!(
+                            "ring-0 crate `{pkg_name}` feature `{feature_name}` forwards `{entry}` \
+                             to forbidden {category} crate `{dep_alias}` (matched `{prefix}`)"
+                        ),
+                    ));
+                }
             }
         }
     }
@@ -532,51 +569,77 @@ pub fn check_ring0_ui_modules(
     Ok(out)
 }
 
-/// Checks `cargo metadata` to ensure NO workspace crate other than
-/// [`RING1_UI_OWNER_CRATE`] (`norn-ui-checker`) enables `norn-checker`'s
-/// private [`RING1_UI_INTERNAL_FEATURE`] (`ring1-ui-internal`) feature (either
-/// directly on a dependency or forwarded through `[features]`).
+fn feature_entry_dep_alias(entry: &str) -> Option<&str> {
+    if let Some((target, _feature)) = entry.split_once('/') {
+        let without_dep = target.strip_prefix("dep:").unwrap_or(target);
+        return Some(without_dep.strip_suffix('?').unwrap_or(without_dep));
+    }
+    entry.strip_prefix("dep:")
+}
+
+/// Checks `cargo metadata` across every workspace member (including members
+/// outside `crates/`, renamed dependencies, and `[features]` forwarding) to
+/// ensure no crate declares, enables, or forwards [`RING1_UI_INTERNAL_FEATURE`]
+/// (`ring1-ui-internal`). Ring-1 `norn-ui-checker` composes strictly above
+/// Ring-0 `norn-checker` without any internal feature seam.
 #[must_use]
 pub fn check_ring1_ui_feature_seam(metadata: &Metadata) -> Vec<Violation> {
     let mut out = Vec::new();
-    let forwarded_targets = [
-        format!("norn-checker/{RING1_UI_INTERNAL_FEATURE}"),
-        format!("norn-checker?/{RING1_UI_INTERNAL_FEATURE}"),
-    ];
     for pkg in metadata.workspace_packages() {
         let pkg_name = pkg.name.as_str();
-        if pkg_name == RING1_UI_OWNER_CRATE {
-            continue;
-        }
+        let mut checker_aliases: BTreeSet<&str> = BTreeSet::new();
         for dep in &pkg.dependencies {
-            if dep.name == "norn-checker"
-                && dep
+            if dep.name == "norn-checker" {
+                let alias = dep.rename.as_deref().unwrap_or(dep.name.as_str());
+                checker_aliases.insert(alias);
+                if dep
                     .features
                     .iter()
                     .any(|feature| feature == RING1_UI_INTERNAL_FEATURE)
-            {
-                out.push(violation(
-                    "ring1-ui-internal-feature-leak",
-                    format!(
-                        "crate `{pkg_name}` enables private `norn-checker` feature \
-                         `{RING1_UI_INTERNAL_FEATURE}`; only `{RING1_UI_OWNER_CRATE}` may \
-                         enable it ({RING0_UI_MIGRATION_ISSUE})"
-                    ),
-                ));
-            }
-        }
-        if pkg_name != "norn-checker" {
-            for (feature_name, enables) in &pkg.features {
-                if enables
-                    .iter()
-                    .any(|entry| forwarded_targets.iter().any(|target| entry == target))
                 {
+                    let rename_note = dep
+                        .rename
+                        .as_deref()
+                        .map(|rename| format!(" (renamed as `{rename}`)"))
+                        .unwrap_or_default();
                     out.push(violation(
                         "ring1-ui-internal-feature-leak",
                         format!(
-                            "crate `{pkg_name}` feature `{feature_name}` forwards private \
-                             `norn-checker/{RING1_UI_INTERNAL_FEATURE}`; only \
-                             `{RING1_UI_OWNER_CRATE}` may enable it ({RING0_UI_MIGRATION_ISSUE})"
+                            "crate `{pkg_name}` enables forbidden `norn-checker` feature \
+                             `{RING1_UI_INTERNAL_FEATURE}`{rename_note}; Ring-1 `{RING1_UI_OWNER_CRATE}` \
+                             must compose above pure Ring-0 with no feature seam ({RING0_UI_MIGRATION_ISSUE})"
+                        ),
+                    ));
+                }
+            }
+        }
+        for (feature_name, enables) in &pkg.features {
+            if feature_name == RING1_UI_INTERNAL_FEATURE {
+                out.push(violation(
+                    "ring1-ui-internal-feature-leak",
+                    format!(
+                        "crate `{pkg_name}` declares forbidden feature `{RING1_UI_INTERNAL_FEATURE}`; \
+                         Ring-0 must expose no Ring-1 UI callback seam ({RING0_UI_MIGRATION_ISSUE})"
+                    ),
+                ));
+            }
+            for entry in enables {
+                let direct_match = entry == RING1_UI_INTERNAL_FEATURE;
+                let forwarded_match = entry.split_once('/').is_some_and(|(target, feat)| {
+                    if feat != RING1_UI_INTERNAL_FEATURE {
+                        return false;
+                    }
+                    let without_dep = target.strip_prefix("dep:").unwrap_or(target);
+                    let alias = without_dep.strip_suffix('?').unwrap_or(without_dep);
+                    alias == "norn-checker" || checker_aliases.contains(alias)
+                });
+                if direct_match || forwarded_match {
+                    out.push(violation(
+                        "ring1-ui-internal-feature-leak",
+                        format!(
+                            "crate `{pkg_name}` feature `{feature_name}` enables or forwards \
+                             forbidden `{entry}`; Ring-0 must expose no Ring-1 UI feature seam \
+                             ({RING0_UI_MIGRATION_ISSUE})"
                         ),
                     ));
                 }
@@ -602,52 +665,75 @@ fn scan_tokens_for_sealed_idents(
                     }
                 }
             }
+            proc_macro2::TokenTree::Literal(literal) => {
+                let text = literal.to_string();
+                if text.contains(RING1_UI_INTERNAL_FEATURE) {
+                    found.insert(RING1_UI_INTERNAL_FEATURE);
+                }
+            }
             proc_macro2::TokenTree::Group(group) => {
                 scan_tokens_for_sealed_idents(group.stream(), found);
             }
-            proc_macro2::TokenTree::Punct(_) | proc_macro2::TokenTree::Literal(_) => {}
+            proc_macro2::TokenTree::Punct(_) => {}
         }
     }
 }
 
-/// Scans every `.rs` source file under `crates/` outside `crates/norn-checker/`,
-/// `crates/norn-ui-checker/`, and `crates/norn-skeleton-guard/` to ensure no
-/// crate references `norn-checker`'s sealed Ring-1 UI seam (`__ring1_ui`,
-/// `Ring1UiSeal`, `UiValidator`).
+fn collect_package_rust_files(
+    pkg: &cargo_metadata::Package,
+    files: &mut BTreeSet<PathBuf>,
+) -> Result<(), ScanError> {
+    if let Some(pkg_dir) = pkg.manifest_path.as_std_path().parent()
+        && pkg_dir.is_dir()
+    {
+        let walker = walkdir::WalkDir::new(pkg_dir)
+            .sort_by_file_name()
+            .into_iter()
+            .filter_entry(|entry| {
+                let name = entry.file_name();
+                name != "target" && name != ".git" && name != "node_modules"
+            });
+        for entry in walker {
+            let entry = entry.map_err(ScanError::Walk)?;
+            let path = entry.path();
+            if entry.file_type().is_file() && path.extension().is_some_and(|ext| ext == "rs") {
+                files.insert(path.to_path_buf());
+            }
+        }
+    }
+    for target in &pkg.targets {
+        let src = target.src_path.as_std_path();
+        if src.is_file() && src.extension().is_some_and(|ext| ext == "rs") {
+            files.insert(src.to_path_buf());
+        }
+    }
+    Ok(())
+}
+
+/// Scans every workspace member from `cargo metadata` (including members
+/// outside `crates/` and every Cargo target: `lib`, `bin`, `test`, `example`,
+/// `bench`, `build.rs`, excluding only `norn-skeleton-guard`) to ensure no
+/// crate declares, imports, or re-exports any Ring-1 UI callback/validator
+/// seam identifier ([`RING1_UI_SEALED_IDENTS`]) or [`RING1_UI_INTERNAL_FEATURE`].
 ///
 /// # Errors
 ///
-/// Returns [`ScanError`] if `crates/` cannot be walked or a `.rs` file cannot
-/// be read.
-pub fn check_ring1_ui_source_seam(workspace_root: &Path) -> Result<Vec<Violation>, ScanError> {
-    let crates_dir = workspace_root.join("crates");
-    if !crates_dir.is_dir() {
-        return Ok(Vec::new());
-    }
-    let mut out = Vec::new();
-    let walker = walkdir::WalkDir::new(&crates_dir)
-        .sort_by_file_name()
-        .into_iter()
-        .filter_entry(|entry| {
-            let name = entry.file_name();
-            if name == "target" {
-                return false;
-            }
-            if entry.depth() == 1 {
-                return name != "norn-checker"
-                    && name != RING1_UI_OWNER_CRATE
-                    && name != "norn-skeleton-guard";
-            }
-            true
-        });
-    for entry in walker {
-        let entry = entry.map_err(ScanError::Walk)?;
-        let path = entry.path();
-        if !entry.file_type().is_file() || path.extension().is_none_or(|ext| ext != "rs") {
+/// Returns [`ScanError`] if a workspace package directory cannot be walked or a
+/// `.rs` file cannot be read.
+pub fn check_ring1_ui_source_seam(metadata: &Metadata) -> Result<Vec<Violation>, ScanError> {
+    let workspace_root = metadata.workspace_root.as_std_path();
+    let mut files = BTreeSet::new();
+    for pkg in metadata.workspace_packages() {
+        if pkg.name == "norn-skeleton-guard" {
             continue;
         }
-        let source =
-            std::fs::read_to_string(path).map_err(|err| ScanError::Io(path.to_path_buf(), err))?;
+        collect_package_rust_files(pkg, &mut files)?;
+    }
+
+    let mut out = Vec::new();
+    for path in files {
+        let source = std::fs::read_to_string(&path)
+            .map_err(|err| ScanError::Io(path.clone(), err))?;
         let mut matched = BTreeSet::new();
         if let Ok(stream) = source.parse::<proc_macro2::TokenStream>() {
             scan_tokens_for_sealed_idents(stream, &mut matched);
@@ -657,20 +743,23 @@ pub fn check_ring1_ui_source_seam(workspace_root: &Path) -> Result<Vec<Violation
                     matched.insert(sealed);
                 }
             }
+            if source.contains(RING1_UI_INTERNAL_FEATURE) {
+                matched.insert(RING1_UI_INTERNAL_FEATURE);
+            }
         }
         if !matched.is_empty() {
             let rel = path
                 .strip_prefix(workspace_root)
-                .unwrap_or(path)
+                .unwrap_or(&path)
                 .to_string_lossy()
                 .replace('\\', "/");
             let idents: Vec<&str> = matched.into_iter().collect();
             out.push(violation(
                 "ring1-ui-internal-source-leak",
                 format!(
-                    "`{rel}` references sealed Ring-1 UI seam identifier(s) `{}` outside \
-                     `crates/norn-checker/` and `crates/{RING1_UI_OWNER_CRATE}/`; call \
-                     `{RING1_UI_OWNER_CRATE}` directly ({RING0_UI_MIGRATION_ISSUE})",
+                    "`{rel}` references forbidden Ring-1 UI seam token(s) `{}`; Ring-0 \
+                     `norn-checker` must stay free of UI callback hooks and `{RING1_UI_OWNER_CRATE}` \
+                     must compose strictly above Ring-0 ({RING0_UI_MIGRATION_ISSUE})",
                     idents.join(", ")
                 ),
             ));

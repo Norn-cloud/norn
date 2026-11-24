@@ -53,25 +53,52 @@ pub fn explain(
     kind: ExplainKind,
     id: &str,
 ) -> Result<ExplainReport, Vec<Diagnostic>> {
-    explain_inner(artifacts, context, kind, id, None)
+    if artifacts.len().saturating_add(context.base.len()) > 16_384 {
+        return Err(closure_error(
+            "definition count exceeds the graph node budget",
+        ));
+    }
+    let diagnostics = crate::check_artifact_set(artifacts, context);
+    if diagnostics.iter().any(Diagnostic::is_error) {
+        return Err(diagnostics);
+    }
+    project_report_body(artifacts, context, kind, id)
 }
 
-pub(crate) fn explain_inner(
+/// Read-only Ring-0 explain closure for higher rings that have already
+/// admitted widget artifacts. Still enforces the node budget and fails closed
+/// on every Ring-0 error (everything other than
+/// [`crate::codes::WIDGET_RING1_REQUIRED`]).
+///
+/// # Errors
+/// Returns checker diagnostics for invalid, ambiguous or oversized input.
+pub fn project_report(
     artifacts: &[ArtifactEnvelope],
     context: &EntityArtifactSetContext<'_>,
     kind: ExplainKind,
     id: &str,
-    ui: Option<&dyn crate::Ring1UiHook>,
 ) -> Result<ExplainReport, Vec<Diagnostic>> {
     if artifacts.len().saturating_add(context.base.len()) > 16_384 {
         return Err(closure_error(
             "definition count exceeds the graph node budget",
         ));
     }
-    let diagnostics = crate::artifact_set::check_artifact_set_inner(artifacts, context, ui);
-    if diagnostics.iter().any(Diagnostic::is_error) {
-        return Err(diagnostics);
+    let ring0_errors: Vec<Diagnostic> = crate::check_artifact_set(artifacts, context)
+        .into_iter()
+        .filter(|d| d.code.as_str() != crate::codes::WIDGET_RING1_REQUIRED)
+        .collect();
+    if ring0_errors.iter().any(Diagnostic::is_error) {
+        return Err(ring0_errors);
     }
+    project_report_body(artifacts, context, kind, id)
+}
+
+fn project_report_body(
+    artifacts: &[ArtifactEnvelope],
+    context: &EntityArtifactSetContext<'_>,
+    kind: ExplainKind,
+    id: &str,
+) -> Result<ExplainReport, Vec<Diagnostic>> {
     let catalog = crate::definition_catalog::project(artifacts, context.base, context.registry)
         .map_err(closure_error)?;
     let target = target(&catalog, artifacts, context.base, kind, id)?;

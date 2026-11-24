@@ -314,31 +314,13 @@ pub fn check_artifact_set(
     artifacts: &[ArtifactEnvelope],
     context: &EntityArtifactSetContext<'_>,
 ) -> Vec<Diagnostic> {
-    check_artifact_set_inner(artifacts, context, None)
-}
-
-pub(crate) fn check_artifact_set_inner(
-    artifacts: &[ArtifactEnvelope],
-    context: &EntityArtifactSetContext<'_>,
-    ui: Option<&dyn crate::Ring1UiHook>,
-) -> Vec<Diagnostic> {
-    let mut local = |artifact: &ArtifactEnvelope| crate::check_artifact_inner(artifact, ui);
-    check_artifact_set_core(artifacts, context, &mut local, ui)
+    check_artifact_set_using(artifacts, context, &mut crate::check_artifact)
 }
 
 pub(crate) fn check_artifact_set_using(
     artifacts: &[ArtifactEnvelope],
     context: &EntityArtifactSetContext<'_>,
     local: &mut impl FnMut(&ArtifactEnvelope) -> Vec<Diagnostic>,
-) -> Vec<Diagnostic> {
-    check_artifact_set_core(artifacts, context, local, None)
-}
-
-fn check_artifact_set_core(
-    artifacts: &[ArtifactEnvelope],
-    context: &EntityArtifactSetContext<'_>,
-    local: &mut impl FnMut(&ArtifactEnvelope) -> Vec<Diagnostic>,
-    ui: Option<&dyn crate::Ring1UiHook>,
 ) -> Vec<Diagnostic> {
     let mut layout_findings = Vec::new();
     let normalized_artifacts = normalize_artifacts(artifacts, &mut layout_findings);
@@ -348,10 +330,9 @@ fn check_artifact_set_core(
         ..*context
     };
 
-    let (resolved_ok, ring0_findings) =
+    let ring0_findings: Vec<Diagnostic> =
         match resolve_artifact_set(&normalized_artifacts, &normalized_base) {
-            Ok(_resolved) => (
-                true,
+            Ok(_resolved) => {
                 check_entity_artifacts_using(&normalized_artifacts, &normalized_context, local)
                     .into_iter()
                     .chain(scope_findings(&normalized_artifacts, &normalized_base))
@@ -407,42 +388,33 @@ fn check_artifact_set_core(
                         &normalized_artifacts,
                         &normalized_base,
                     ))
-                    .collect::<Vec<_>>(),
-            ),
-            Err(resolution) => (
-                false,
-                normalized_artifacts
-                    .iter()
-                    .flat_map(local)
-                    .chain(crate::markings::check_references(
-                        &normalized_artifacts,
-                        &normalized_base,
-                    ))
-                    .chain(resolution)
-                    .collect(),
-            ),
+                    .collect()
+            }
+            Err(resolution) => normalized_artifacts
+                .iter()
+                .flat_map(local)
+                .chain(crate::markings::check_references(
+                    &normalized_artifacts,
+                    &normalized_base,
+                ))
+                .chain(resolution)
+                .collect(),
         };
     let unit_findings = crate::unit_admission::check(&normalized_artifacts, &normalized_base);
-    let mut all_findings: Vec<Diagnostic> = ring0_findings
-        .into_iter()
-        .chain(layout_findings)
-        .chain(unit_findings)
-        .chain(crate::defined_concepts::check_cycles(
-            &normalized_artifacts,
-            &normalized_base,
-        ))
-        .chain(crate::defined_concepts::check_admission(
-            &normalized_artifacts,
-            &normalized_context,
-        ))
-        .collect();
-    // Ring-1 cross-artifact UI checks always run AFTER every Ring-0 check has
-    // completed, and `dedupe_findings` retains higher severity so Ring-1 output
-    // can never suppress or displace Ring-0 errors.
-    if resolved_ok && let Some(validator) = ui {
-        all_findings.extend(validator.check_ui_set(&normalized_artifacts, &normalized_context));
-    }
-    dedupe_findings(all_findings)
+    dedupe_findings(
+        ring0_findings
+            .into_iter()
+            .chain(layout_findings)
+            .chain(unit_findings)
+            .chain(crate::defined_concepts::check_cycles(
+                &normalized_artifacts,
+                &normalized_base,
+            ))
+            .chain(crate::defined_concepts::check_admission(
+                &normalized_artifacts,
+                &normalized_context,
+            )),
+    )
 }
 
 fn normalize_artifacts(

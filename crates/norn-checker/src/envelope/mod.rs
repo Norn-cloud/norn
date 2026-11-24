@@ -49,6 +49,10 @@ use setting::validate_setting_payload;
 /// Stable diagnostic for identifier lengths at new admission boundaries.
 pub const IDENTIFIER_TOO_LONG: &str = "identifier.validation.too_long";
 
+/// Stable Ring-0 fail-closed diagnostic emitted when a `Widget` artifact is
+/// checked by Ring-0 `norn-checker` alone without Ring-1 `norn-ui-checker`.
+pub const WIDGET_RING1_REQUIRED: &str = "widget.validation.ring1_required";
+
 /// Method-call sugar for [`validate_artifact`], so `artifact.validate()` keeps
 /// working for callers after the validator moved out of `norn-ir`.
 pub trait ArtifactValidation {
@@ -76,18 +80,11 @@ impl ArtifactValidation for ArtifactEnvelope {
 ///
 /// Returns every diagnostic found when the envelope is invalid.
 pub fn validate_artifact(artifact: &ArtifactEnvelope) -> Result<(), Vec<Diagnostic>> {
-    validate_artifact_inner(artifact, None)
-}
-
-pub(crate) fn validate_artifact_inner(
-    artifact: &ArtifactEnvelope,
-    ui: Option<&dyn crate::Ring1UiHook>,
-) -> Result<(), Vec<Diagnostic>> {
     let (normalized, layout_findings) = match crate::layout::normalize_artifact(artifact) {
         Ok((normalized, _layout)) => (normalized, Vec::new()),
         Err(findings) => (artifact.clone(), findings),
     };
-    let mut diagnostics = collect_artifact_diagnostics_inner(&normalized, ui);
+    let mut diagnostics = collect_artifact_diagnostics(&normalized);
     for diagnostic in layout_findings.into_iter().map(layout_finding_to_legacy) {
         if !diagnostics.iter().any(|existing| {
             existing.code == diagnostic.code
@@ -107,14 +104,9 @@ pub(crate) fn validate_artifact_inner(
     }
 }
 
-/// Collect legacy envelope diagnostics for one normalized artifact, running
-/// optional strictly-additive Ring-1 widget validation after Ring-0 envelope
-/// and typed-root checks complete independently.
+/// Collect legacy Ring-0 envelope and typed-root diagnostics for one normalized artifact.
 #[must_use]
-pub(crate) fn collect_artifact_diagnostics_inner(
-    artifact: &ArtifactEnvelope,
-    ui: Option<&dyn crate::Ring1UiHook>,
-) -> Vec<Diagnostic> {
+pub(crate) fn collect_artifact_diagnostics(artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
     if artifact.ir_version != SUPPORTED_IR_VERSION {
@@ -176,7 +168,7 @@ pub(crate) fn collect_artifact_diagnostics_inner(
         &mut diagnostics,
         Some(artifact.artifact_id.as_str()),
     );
-    validate_kind_payload(artifact, &mut diagnostics, ui);
+    validate_kind_payload(artifact, &mut diagnostics);
 
     diagnostics
 }
@@ -224,19 +216,7 @@ fn required_field(path: &str) -> Diagnostic {
     }
 }
 
-const fn legacy_severity_rank(severity: &DiagnosticSeverity) -> u8 {
-    match severity {
-        DiagnosticSeverity::Info => 0,
-        DiagnosticSeverity::Warning => 1,
-        DiagnosticSeverity::Error => 2,
-    }
-}
-
-fn validate_kind_payload(
-    artifact: &ArtifactEnvelope,
-    diagnostics: &mut Vec<Diagnostic>,
-    ui: Option<&dyn crate::Ring1UiHook>,
-) {
+fn validate_kind_payload(artifact: &ArtifactEnvelope, diagnostics: &mut Vec<Diagnostic>) {
     let artifact_id = Some(artifact.artifact_id.as_str());
     let before = diagnostics.len();
     let code = artifact_payload_validation_code(&artifact.kind());
@@ -275,22 +255,12 @@ fn validate_kind_payload(
             validate_business_pack_payload(&payload, diagnostics, artifact_id);
         }
         // Widget payload validation lives in Ring-1 `norn-ui-checker`. Ring-0
-        // fails closed when no Ring-1 UI validator is supplied; when one is
-        // supplied, Ring-0 envelope and typed-root checks still run to
-        // completion independently first, and Ring-1 findings are strictly
-        // appended afterward.
-        ArtifactPayload::Widget(_) => {
-            if ui.is_none() {
-                diagnostics.push(invalid_diagnostic(
-                    code,
-                    "widget artifacts require Ring-1 norn-ui-checker validation and cannot be admitted by Ring-0 norn-checker alone",
-                    "payload",
-                    artifact_id,
-                ));
-            }
-        }
+        // completes root-shape and typed-root validation first, then emits
+        // `WIDGET_RING1_REQUIRED` after `check_typed_root` so Ring-0 alone
+        // always fails closed on widget artifacts.
+        ArtifactPayload::Widget(_)
         // The remaining strict-serde roots are checked by their dedicated modules.
-        ArtifactPayload::SourceSchema(_)
+        | ArtifactPayload::SourceSchema(_)
         | ArtifactPayload::Mapping(_)
         | ArtifactPayload::Law(_)
         | ArtifactPayload::DefinedConcept(_)
@@ -314,31 +284,24 @@ fn validate_kind_payload(
         );
     }
     // Typed-root agreement: a payload Ring-0 accepts must decode into its
-    // strict typed root. Gated strictly on Ring-0's own findings so Ring-1
-    // output (such as a Warning) can never skip Ring-0 typed-root validation.
+    // strict typed root.
     if diagnostics.len() == before {
         crate::typed_roots::check_typed_root(&artifact.payload, diagnostics, artifact_id);
     }
-    if matches!(artifact.payload, ArtifactPayload::Widget(_))
-        && let Some(validator) = ui
-    {
-        for finding in validator.validate_widget_payload(artifact, &payload) {
-            if !diagnostics.iter().any(|existing| {
-                existing.code == finding.code
-                    && existing.artifact_id == finding.artifact_id
-                    && existing.path == finding.path
-                    && legacy_severity_rank(&existing.severity)
-                        >= legacy_severity_rank(&finding.severity)
-            }) {
-                diagnostics.push(finding);
-            }
-        }
+    if matches!(artifact.payload, ArtifactPayload::Widget(_)) {
+        diagnostics.push(invalid_diagnostic(
+            WIDGET_RING1_REQUIRED,
+            "widget artifacts require Ring-1 norn-ui-checker validation and cannot be admitted by Ring-0 norn-checker alone",
+            "payload",
+            artifact_id,
+        ));
     }
 }
 
 /// The payload object the kind validators walk: the bare payload without the
 /// reserved `extensions` slots (moved from the `norn-ir` payload roots).
-fn validation_json_value(payload: &ArtifactPayload) -> JsonValue {
+#[must_use]
+pub fn validation_json_value(payload: &ArtifactPayload) -> JsonValue {
     let mut value = payload.to_json_value();
     if let JsonValue::Object(object) = &mut value {
         object.remove("extensions");

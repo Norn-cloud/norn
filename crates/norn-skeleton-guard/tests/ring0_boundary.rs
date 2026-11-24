@@ -107,7 +107,7 @@ fn ring0_dependencies_and_ui_modules_match_boundary() {
     );
 
     let source_seam_violations =
-        check_ring1_ui_source_seam(&workspace_root()).expect("scan Ring-1 UI source seam");
+        check_ring1_ui_source_seam(&metadata).expect("scan Ring-1 UI source seam");
     assert!(
         source_seam_violations.is_empty(),
         "Ring-1 UI internal source seam leak:\n{}",
@@ -299,60 +299,128 @@ fn new_ui_or_widget_modules_in_ring0_are_rejected_and_removals_drain_baseline() 
     assert_eq!(rules_of(&v), ["stale-ring0-ui-baseline"], "{}", render(&v));
 }
 
-#[test]
-fn ring1_ui_internal_seam_is_restricted_to_norn_ui_checker() {
-    // 1. Metadata guard: enabling `ring1-ui-internal` on `norn-checker` from any
-    //    crate other than `norn-ui-checker` fails closed.
-    let base = resolved_metadata();
-    assert!(
-        check_ring1_ui_feature_seam(&base).is_empty(),
-        "live workspace should satisfy the Ring-1 UI feature seam"
-    );
+fn synthetic_workspace_metadata(base: &Metadata, root: &Path, packages: Vec<Value>) -> Metadata {
+    let mut value = serde_json::to_value(base).expect("serialize base metadata");
+    let member_ids: Vec<Value> = packages.iter().map(|pkg| pkg["id"].clone()).collect();
+    value["packages"] = Value::Array(packages);
+    value["workspace_members"] = Value::Array(member_ids.clone());
+    value["workspace_default_members"] = Value::Array(member_ids);
+    value["resolve"] = Value::Null;
+    value["target_directory"] = json!(root.join("target").display().to_string());
+    value["workspace_root"] = json!(root.display().to_string());
+    serde_json::from_value(value).expect("synthetic metadata")
+}
 
-    let mut leaked_dep = serde_json::to_value(&base).expect("serialize metadata");
-    let api_pkg = leaked_dep["packages"]
+fn synthetic_package(
+    base: &Metadata,
+    root: &Path,
+    name: &str,
+    rel_dir: &str,
+    targets: Vec<Value>,
+) -> Value {
+    let base_val = serde_json::to_value(base).expect("serialize base");
+    let mut pkg = base_val["packages"]
+        .as_array()
+        .expect("packages")
+        .iter()
+        .find(|p| p["name"] == "norn-checker")
+        .expect("template package")
+        .clone();
+    pkg["name"] = json!(name);
+    pkg["id"] = json!(format!(
+        "path+file://{}/{rel_dir}#{name}@0.1.0",
+        root.display()
+    ));
+    pkg["dependencies"] = json!([]);
+    pkg["features"] = json!({});
+    pkg["manifest_path"] = json!(root.join(rel_dir).join("Cargo.toml").display().to_string());
+    pkg["targets"] = Value::Array(targets);
+    pkg
+}
+
+fn synthetic_target(base: &Metadata, root: &Path, name: &str, kind: &str, rel_src: &str) -> Value {
+    let base_val = serde_json::to_value(base).expect("serialize base");
+    let mut target = base_val["packages"]
+        .as_array()
+        .expect("packages")
+        .iter()
+        .find(|p| p["name"] == "norn-checker")
+        .expect("template package")["targets"][0]
+        .clone();
+    target["kind"] = json!([kind]);
+    target["name"] = json!(name);
+    target["src_path"] = json!(root.join(rel_src).display().to_string());
+    target
+}
+
+#[test]
+fn ring0_renamed_dependency_and_feature_forwarding_are_rejected() {
+    let base = resolved_metadata();
+    let mut renamed_ring0 = serde_json::to_value(&base).expect("serialize metadata");
+    let checker_pkg = renamed_ring0["packages"]
         .as_array_mut()
         .expect("packages")
         .iter_mut()
-        .find(|pkg| pkg["name"] == "norn-api")
-        .expect("norn-api package");
-    let checker_dep = api_pkg["dependencies"]
+        .find(|pkg| pkg["name"] == "norn-checker")
+        .expect("norn-checker package");
+    checker_pkg["dependencies"]
         .as_array_mut()
         .expect("dependencies")
-        .iter_mut()
-        .find(|dep| dep["name"] == "norn-checker")
-        .expect("norn-checker dep");
-    checker_dep["features"]
-        .as_array_mut()
+        .push(json!({
+            "name": "norn-ui-checker",
+            "source": Value::Null,
+            "req": "*",
+            "kind": null,
+            "rename": "ui",
+            "optional": true,
+            "uses_default_features": true,
+            "features": [],
+            "target": null,
+            "registry": null,
+            "path": Value::Null
+        }));
+    checker_pkg["features"]
+        .as_object_mut()
         .expect("features")
-        .push(json!(RING1_UI_INTERNAL_FEATURE));
-    let leaked_dep_meta: Metadata = serde_json::from_value(leaked_dep).expect("deserialize");
-    let v = check_ring1_ui_feature_seam(&leaked_dep_meta);
-    assert_eq!(
-        rules_of(&v),
-        ["ring1-ui-internal-feature-leak"],
-        "{}",
+        .insert("sneaky-ui".to_owned(), json!(["ui?/extra"]));
+    let renamed_ring0_meta: Metadata = serde_json::from_value(renamed_ring0).expect("deserialize");
+    let v = check_ring0_dependencies(&renamed_ring0_meta);
+    assert!(
+        v.iter()
+            .any(|v| v.rule == "ring0-ui-crate" && v.message.contains("renamed as `ui`")),
+        "renamed dep on norn-ui-checker must fail closed: {}",
         render(&v)
     );
-    assert!(v[0].message.contains("norn-api"), "{}", render(&v));
+    assert!(
+        v.iter()
+            .any(|v| v.rule == "ring0-ui-crate" && v.message.contains("ui?/extra")),
+        "feature forwarding through renamed dep alias must fail closed: {}",
+        render(&v)
+    );
+}
 
-    // Forwarding `norn-checker/ring1-ui-internal` via `[features]` also fails closed.
-    let mut leaked_fwd = serde_json::to_value(&base).expect("serialize metadata");
-    let api_pkg = leaked_fwd["packages"]
+#[test]
+fn ring1_ui_internal_feature_is_forbidden_including_renamed_forwarding() {
+    let base = resolved_metadata();
+    assert_eq!(
+        check_ring1_ui_feature_seam(&base),
+        Vec::<Violation>::new(),
+        "live workspace must declare/enable zero ring1-ui-internal features"
+    );
+
+    let mut redeclared = serde_json::to_value(&base).expect("serialize metadata");
+    let checker_pkg = redeclared["packages"]
         .as_array_mut()
         .expect("packages")
         .iter_mut()
-        .find(|pkg| pkg["name"] == "norn-api")
-        .expect("norn-api package");
-    api_pkg["features"]
+        .find(|pkg| pkg["name"] == "norn-checker")
+        .expect("norn-checker");
+    checker_pkg["features"]
         .as_object_mut()
-        .expect("features map")
-        .insert(
-            "bypass".to_owned(),
-            json!([format!("norn-checker/{RING1_UI_INTERNAL_FEATURE}")]),
-        );
-    let leaked_fwd_meta: Metadata = serde_json::from_value(leaked_fwd).expect("deserialize");
-    let v = check_ring1_ui_feature_seam(&leaked_fwd_meta);
+        .expect("features")
+        .insert(RING1_UI_INTERNAL_FEATURE.to_owned(), json!([]));
+    let redeclared_meta: Metadata = serde_json::from_value(redeclared).expect("deserialize");
+    let v = check_ring1_ui_feature_seam(&redeclared_meta);
     assert_eq!(
         rules_of(&v),
         ["ring1-ui-internal-feature-leak"],
@@ -360,47 +428,181 @@ fn ring1_ui_internal_seam_is_restricted_to_norn_ui_checker() {
         render(&v)
     );
 
-    // 2. Source guard: referencing `__ring1_ui`, `Ring1UiSeal`, or `UiValidator`
-    //    in any crate outside `norn-checker` / `norn-ui-checker` fails closed.
+    for forwarded in [
+        format!("nc/{RING1_UI_INTERNAL_FEATURE}"),
+        format!("nc?/{RING1_UI_INTERNAL_FEATURE}"),
+    ] {
+        let mut renamed_fwd = serde_json::to_value(&base).expect("serialize metadata");
+        let api_pkg = renamed_fwd["packages"]
+            .as_array_mut()
+            .expect("packages")
+            .iter_mut()
+            .find(|pkg| pkg["name"] == "norn-api")
+            .expect("norn-api package");
+        api_pkg["dependencies"]
+            .as_array_mut()
+            .expect("dependencies")
+            .push(json!({
+                "name": "norn-checker",
+                "source": Value::Null,
+                "req": "*",
+                "kind": null,
+                "rename": "nc",
+                "optional": true,
+                "uses_default_features": true,
+                "features": [],
+                "target": null,
+                "registry": null,
+                "path": Value::Null
+            }));
+        api_pkg["features"]
+            .as_object_mut()
+            .expect("features")
+            .insert("bypass".to_owned(), json!([forwarded]));
+        let renamed_fwd_meta: Metadata = serde_json::from_value(renamed_fwd).expect("deserialize");
+        let v = check_ring1_ui_feature_seam(&renamed_fwd_meta);
+        assert_eq!(
+            rules_of(&v),
+            ["ring1-ui-internal-feature-leak"],
+            "{}",
+            render(&v)
+        );
+        assert!(v[0].message.contains("norn-api"), "{}", render(&v));
+    }
+}
+
+#[test]
+fn ring1_ui_source_seam_accepts_clean_workspace_and_comments() {
+    let base = resolved_metadata();
+    assert_eq!(
+        check_ring1_ui_source_seam(&base).expect("scan live workspace"),
+        Vec::<Violation>::new(),
+        "live workspace must contain zero Ring-1 UI callback seam tokens"
+    );
+
     let dir = tempfile::tempdir().expect("tempdir");
     write_file(
         dir.path(),
-        "crates/norn-ui-checker/src/lib.rs",
-        "use norn_checker::__ring1_ui::{Ring1UiSeal, UiValidator};\n",
-    );
-    write_file(
-        dir.path(),
         "crates/norn-checker/src/lib.rs",
-        "pub mod __ring1_ui { pub struct Ring1UiSeal; pub trait UiValidator {} }\n",
+        "// Comments mentioning UiValidator or Ring1UiHook are ignored by token scan.\npub fn ok() {}\n",
     );
-    write_file(
+    write_file(dir.path(), "tools/sneaky/src/lib.rs", "pub fn clean() {}\n");
+    let clean_meta = synthetic_workspace_metadata(
+        &base,
         dir.path(),
-        "crates/norn-api/src/lib.rs",
-        "// Comments mentioning __ring1_ui or UiValidator are ignored by token scan.\npub fn ok() {}\n",
+        vec![
+            synthetic_package(
+                &base,
+                dir.path(),
+                "norn-checker",
+                "crates/norn-checker",
+                vec![synthetic_target(
+                    &base,
+                    dir.path(),
+                    "norn_checker",
+                    "lib",
+                    "crates/norn-checker/src/lib.rs",
+                )],
+            ),
+            synthetic_package(
+                &base,
+                dir.path(),
+                "sneaky-tool",
+                "tools/sneaky",
+                vec![synthetic_target(
+                    &base,
+                    dir.path(),
+                    "sneaky_tool",
+                    "lib",
+                    "tools/sneaky/src/lib.rs",
+                )],
+            ),
+        ],
     );
     assert_eq!(
-        check_ring1_ui_source_seam(dir.path()).expect("scan clean"),
+        check_ring1_ui_source_seam(&clean_meta).expect("scan clean"),
         Vec::<Violation>::new()
     );
+}
 
-    write_file(
-        dir.path(),
-        "crates/norn-api/src/bypass.rs",
-        "use norn_checker::__ring1_ui::Ring1UiSeal;\nstruct Fake; impl UiValidator for Fake {}\n",
-    );
-    let v = check_ring1_ui_source_seam(dir.path()).expect("scan leak");
-    assert_eq!(
-        rules_of(&v),
-        ["ring1-ui-internal-source-leak"],
-        "{}",
-        render(&v)
-    );
-    assert!(
-        v[0].message.contains("crates/norn-api/src/bypass.rs")
-            && v[0].message.contains("__ring1_ui")
-            && v[0].message.contains("Ring1UiSeal")
-            && v[0].message.contains("UiValidator"),
-        "{}",
-        render(&v)
-    );
+#[test]
+fn ring1_ui_source_seam_rejects_leaks_across_all_members_and_targets() {
+    let base = resolved_metadata();
+    let leak_cases = [
+        (
+            "tools/sneaky/src/lib.rs",
+            "lib",
+            "pub use norn_checker::__ring1_ui_seam::UiValidator;\n",
+            "UiValidator",
+        ),
+        (
+            "tools/sneaky/tests/bypass.rs",
+            "test",
+            "fn bypass() { let _ = Ring1UiSeal::new_internal(); }\n",
+            "Ring1UiSeal",
+        ),
+        (
+            "tools/sneaky/examples/leak.rs",
+            "example",
+            "pub trait Leak: Ring1UiHook {}\n",
+            "Ring1UiHook",
+        ),
+        (
+            "tools/sneaky/benches/bench.rs",
+            "bench",
+            "use norn_checker::__ring1_ui;\n",
+            "__ring1_ui",
+        ),
+        (
+            "tools/sneaky/build.rs",
+            "custom-build",
+            "fn main() { println!(\"cargo:rustc-cfg=feature=\\\"ring1-ui-internal\\\"\"); }\n",
+            RING1_UI_INTERNAL_FEATURE,
+        ),
+        (
+            "crates/norn-checker/src/reexport.rs",
+            "lib",
+            "pub mod __ring1_ui_seam { pub trait UiValidator {} }\n",
+            "__ring1_ui_seam",
+        ),
+    ];
+
+    for (rel_path, kind, body, expected_token) in leak_cases {
+        let case_dir = tempfile::tempdir().expect("case tempdir");
+        write_file(case_dir.path(), rel_path, body);
+        let (pkg_name, pkg_dir) = if rel_path.starts_with("tools/sneaky/") {
+            ("sneaky-tool", "tools/sneaky")
+        } else {
+            ("norn-checker", "crates/norn-checker")
+        };
+        let meta = synthetic_workspace_metadata(
+            &base,
+            case_dir.path(),
+            vec![synthetic_package(
+                &base,
+                case_dir.path(),
+                pkg_name,
+                pkg_dir,
+                vec![synthetic_target(
+                    &base,
+                    case_dir.path(),
+                    pkg_name,
+                    kind,
+                    rel_path,
+                )],
+            )],
+        );
+        let v = check_ring1_ui_source_seam(&meta).expect("scan leak");
+        assert_eq!(
+            rules_of(&v),
+            ["ring1-ui-internal-source-leak"],
+            "case {rel_path}: {}",
+            render(&v)
+        );
+        assert!(
+            v[0].message.contains(rel_path) && v[0].message.contains(expected_token),
+            "case {rel_path}: {}",
+            render(&v)
+        );
+    }
 }
