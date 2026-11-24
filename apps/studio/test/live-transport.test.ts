@@ -64,6 +64,43 @@ test("currentMode keys cached catalogs by org + environment and rejects supersed
   refreshMode()
 })
 
+test.each([
+  { selectedEnvironment: "env-b", discoveryStatus: 200 },
+  { selectedEnvironment: "env-b", discoveryStatus: 404 },
+  { selectedEnvironment: "dev", discoveryStatus: 200 },
+])("unkeyed discovery with status $discoveryStatus respects the selected $selectedEnvironment scope", async ({ selectedEnvironment, discoveryStatus }) => {
+  refreshMode()
+  const scopeA = { orgId: "local", environmentId: "dev" }
+  const selected = { orgId: "local", environmentId: selectedEnvironment }
+  let startDiscovery!: () => void
+  let releaseDiscovery!: () => void
+  const started = new Promise<void>((resolve) => { startDiscovery = resolve })
+  const release = new Promise<void>((resolve) => { releaseDiscovery = resolve })
+  const discover = async (input: string) => {
+    if (input === "/api/me") return Response.json(ME)
+    expect(input).toBe("/api/host/v1/definitions?orgId=local&environmentId=dev")
+    startDiscovery()
+    await release
+    return new Response(DEFINITIONS, { status: discoveryStatus })
+  }
+  const pending = currentMode(discover)
+  await started
+  try {
+    const keyedFetch = async () => new Response(DEFINITIONS)
+    const keyed = await currentMode(keyedFetch, selected)
+    releaseDiscovery()
+    if (selectedEnvironment === scopeA.environmentId) {
+      await expect(pending).resolves.toMatchObject({ kind: "live", scope: scopeA })
+    } else {
+      await expect(pending).rejects.toBeInstanceOf(ScopeSupersededError)
+    }
+    expect(await currentMode(keyedFetch)).toBe(keyed)
+  } finally {
+    releaseDiscovery()
+    refreshMode()
+  }
+})
+
 test("the catalog's per-type counts are the cell's, kept only when well formed; none when it sends none", async () => {
   const counted = '{"admitted":true,"version":3,"artifacts":[],"objectCounts":{"shop.Product":{"count":12,"approximate":false},"shop.Order":{"count":500,"approximate":true},"shop.Bad":{"count":-1,"approximate":false},"shop.Odd":{"count":3}}}'
   const mode = await readMode(server({ "/v1/definitions": [200, counted] }).fetcher)
@@ -85,12 +122,25 @@ test("no session, no cell, no host or a page that is not a document reads the re
   expect(await readMode(server({}, [200, { ...ME, environmentId: null }]).fetcher)).toEqual({ kind: "recorded" })
   expect(await readMode(server({}, [200, "<!doctype html>"]).fetcher)).toEqual({ kind: "recorded" })
   expect(await readMode(server({ "/v1/definitions": [503, '{"error":"No Norn host is connected to this deployment."}'] }).fetcher)).toEqual({ kind: "recorded" })
+  expect(await readMode(server({ "/v1/definitions": [404, "<!doctype html>"] }).fetcher)).toEqual({ kind: "recorded" })
   expect(await readMode(server({ "/v1/definitions": [200, "<!doctype html>"] }).fetcher)).toEqual({ kind: "recorded" })
   // An outage is not "nothing connected": a session server that fails (5xx) or cannot be reached is raised, and retried.
   await expect(readMode(server({}, [503, { error: "upstream unavailable" }]).fetcher)).rejects.toThrow("did not answer (503)")
   await expect(readMode(async () => { throw new TypeError("Failed to fetch") })).rejects.toThrow("did not answer (network)")
   await expect(readMode(server({ "/v1/definitions": [503, '{"error":"norn dev at http://127.0.0.1:4174 did not answer; is it still running?"}'] }).fetcher)).rejects.toThrow("did not answer")
   await expect(readMode(server({ "/v1/definitions": [403, '{"code":"authz.denied","message":"the read request is not authorized"}'] }).fetcher)).rejects.toThrow("the read request is not authorized")
+})
+
+test("an HTML catalog outage rejects the mode read and the next attempt can connect", async () => {
+  refreshMode()
+  const { fetcher } = server({ "/v1/definitions": [502, "<!doctype html>Bad Gateway"] })
+  const recovered = server({ "/v1/definitions": [200, DEFINITIONS] })
+  try {
+    await expect(currentMode(fetcher)).rejects.toThrow("did not answer (502)")
+    await expect(currentMode(recovered.fetcher)).resolves.toMatchObject({ kind: "live" })
+  } finally {
+    refreshMode()
+  }
 })
 
 const live = async (routes: Record<string, readonly [number, string]>) => {

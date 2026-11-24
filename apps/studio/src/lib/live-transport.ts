@@ -84,44 +84,45 @@ export function publishedQuestionsOf(document: unknown): ReadonlySet<string> {
 /** What the Studio Worker answers when this deployment has no Norn host configured (worker/index.ts). */
 const NO_HOST = "No Norn host is connected to this deployment."
 
+async function discoverScope(fetcher: Fetch, signal?: AbortSignal): Promise<StudioScope | null> {
+  try { return await readStudioScope(fetcher, signal) } catch (error) {
+    if (signal?.aborted) throw error
+    // A session server outage must retry; a missing session or scope can use the recording.
+    if (error instanceof CellUnavailable && (error.status === 0 || error.status >= 500)) throw error
+    if (error instanceof CellUnavailable || error instanceof StudioScopeError) return null
+    throw error
+  }
+}
+
 export async function readMode(
   fetcher: Fetch,
   knownScope?: StudioScope | null,
   signal?: AbortSignal,
 ): Promise<Mode> {
-  let scope: StudioScope | null
-  if (knownScope !== undefined) {
-    scope = knownScope
-  } else {
-    try { scope = await readStudioScope(fetcher, signal) } catch (error) {
-      if (signal?.aborted) throw error
-      // No session server (a preview without the Worker, one that reports no scope, or no session): nothing is connected.
-      // A session server that failed to answer (a network error or a 5xx) is not "nothing connected": it is an
-      // outage, raised so Studio says it is reconnecting and retries, never swapping a live cell for the recording.
-      if (error instanceof CellUnavailable && (error.status === 0 || error.status >= 500)) throw error
-      if (error instanceof CellUnavailable || error instanceof StudioScopeError) return { kind: "recorded" }
-      throw error
-    }
-  }
+  const scope = knownScope === undefined ? await discoverScope(fetcher, signal) : knownScope
   if (scope === null) return { kind: "recorded" }
-  const active = scope
-  const response = await scopedHostFetch(fetcher, "/api/host", async () => active)(
+  const response = await scopedHostFetch(fetcher, "/api/host", async () => scope)(
     "/v1/definitions",
     { headers: { accept: "application/json" }, ...(signal === undefined ? {} : { signal }) },
   )
+  if (response.status === 404) return { kind: "recorded" }
+  if (!response.ok) {
+    const error: unknown = await response.json().catch(() => null)
+    if (error !== null && typeof error === "object") {
+      if (response.status === 503 && "error" in error && error.error === NO_HOST) return { kind: "recorded" }
+      if ("message" in error && typeof error.message === "string") throw new CellUnavailable(response.status, error.message)
+    }
+    throw new CellUnavailable(response.status)
+  }
   const text = await response.text()
-  // Only this deployment's own "no host connected" answer means there is no cell; any other 503 is a cell that
-  // did not answer (a busy or restarting host), raised and retried rather than replaced by the recording.
-  if (response.status === 404 || (response.status === 503 && (() => { try { return (JSON.parse(text) as { error?: unknown }).error === NO_HOST } catch { return false } })())) return { kind: "recorded" }
   let parsed: unknown
   try { parsed = JSON.parse(text) } catch { return { kind: "recorded" } }
-  if (!response.ok) throw new CellUnavailable(response.status, (parsed as { message?: unknown } | null)?.message as string | undefined)
   const artifacts = (parsed as { artifacts?: unknown } | null)?.artifacts
   if (!Array.isArray(artifacts)) throw new CellUnavailable(response.status, "The cell's definitions read carried no artifacts.")
   const read = readDocument<{ readonly artifacts: readonly Artifact[] }>(text, "live")
   return {
     kind: "live",
-    scope: active,
+    scope,
     catalog: subRead(read, "/artifacts", read.document.artifacts),
     counts: countsOf(read.document),
     publishedQuestions: publishedQuestionsOf(read.document),
@@ -193,8 +194,8 @@ export function currentMode(
     if (activeModeScopeKey !== null && activeModeScopeKey !== key) {
       modeGeneration += 1
       modeByScope.clear()
-      unkeyedMode = undefined
     }
+    unkeyedMode = undefined
     activeModeScopeKey = key
     const existing = modeByScope.get(key)
     if (existing !== undefined) return existing
@@ -218,21 +219,25 @@ export function currentMode(
   }
   if (unkeyedMode !== undefined) return unkeyedMode
   const gen = modeGeneration
-  const promise = readMode(fetcher, undefined, signal).then(
-    (result) => {
-      if (modeGeneration !== gen) throw new ScopeSupersededError()
-      if (result.kind === "live") {
-        const key = studioScopeKey(result.scope)
-        if (activeModeScopeKey === null) activeModeScopeKey = key
-        if (!modeByScope.has(key)) modeByScope.set(key, promise)
+  const promise = discoverScope(fetcher, signal).then(async (scope) => {
+    const key = studioScopeKey(scope)
+    const checkScope = () => {
+      if (modeGeneration !== gen || (activeModeScopeKey !== null && activeModeScopeKey !== key)) {
+        throw new ScopeSupersededError()
       }
-      return result
-    },
-    (error: unknown) => {
-      if (modeGeneration === gen && unkeyedMode === promise) unkeyedMode = undefined
-      throw error
-    },
-  )
+    }
+    checkScope()
+    const result = await readMode(fetcher, scope, signal)
+    checkScope()
+    if (result.kind === "live") {
+      activeModeScopeKey = key
+      if (!modeByScope.has(key)) modeByScope.set(key, promise)
+    }
+    return result
+  }).catch((error: unknown) => {
+    if (unkeyedMode === promise) unkeyedMode = undefined
+    throw error
+  })
   unkeyedMode = promise
   return promise
 }

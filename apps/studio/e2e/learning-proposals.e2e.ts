@@ -132,7 +132,7 @@ test.beforeEach(({ }, info) => {
   test.skip(Boolean(process.env.E2E_BASE), `${info.title}: uses the learning gap-proposal stand-in`)
 })
 
-async function mountCell(page: Page, options: { mode?: "fixture" | "unserved" | "malformed-replay" } = {}) {
+async function mountCell(page: Page, options: { mode?: "fixture" | "unserved" | "malformed-replay" | "withhold-withdrawn" } = {}) {
   await session(page)
   await advertiseLearning(page, { objectTypes: ["learning.GapProposal"] })
   const mode = options.mode ?? "fixture"
@@ -148,6 +148,9 @@ async function mountCell(page: Page, options: { mode?: "fixture" | "unserved" | 
       const id = decodeURIComponent(suffix.slice(1))
       const found = proposals.find((p) => p.id === id)
       if (!found) return route.fulfill({ status: 404, json: { code: "object.not_found", message: "No such proposal." } })
+      if (mode === "withhold-withdrawn" && found.values["status"] === "withdrawn") {
+        return route.fulfill({ status: 403, json: { code: "authz.denied", message: "The withdrawn proposal is withheld." } })
+      }
       if (mode === "malformed-replay" && found.values["replay"]) {
         const broken = structuredClone(found)
         ;(broken.values["replay"] as Record<string, unknown>)["admissionStatus"] = "admitted"
@@ -412,6 +415,23 @@ test("proposals lifecycle: server-filter list, draft, edit, withdraw + undo, sub
   await dialog(page).getByRole("button", { name: "Done" }).click()
   await expect(page.getByRole("complementary", { name: "Proposal details" })).toContainText("Ratified by")
   await expect(page.getByRole("complementary", { name: "Proposal details" })).toContainText("sha256:efef111")
+})
+
+test("proposal withdrawal keeps its receipt and Undo after the detail read is withheld", async ({ page }) => {
+  await mountCell(page, { mode: "withhold-withdrawn" })
+  await page.goto("/learning/proposals/prop_demo_credit_tighten")
+
+  await page.getByRole("group", { name: "Proposal actions" }).getByRole("button", { name: "Withdraw" }).click()
+  await dialog(page).getByRole("button", { name: "Withdraw", exact: true }).click()
+  await dialog(page).getByRole("button", { name: "Yes, withdraw" }).click()
+
+  await expect(page.getByText("The withdrawn proposal is withheld.")).toBeVisible()
+  await expect(dialog(page).getByRole("status")).toBeVisible()
+  await shoot(page, "proposal-withdrawal-receipt")
+  await dialog(page).getByRole("button", { name: "Undo" }).click()
+  await expect(dialog(page).getByText(/^Undone · /)).toBeVisible()
+  await dialog(page).getByRole("button", { name: "Done" }).click()
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Tighten credit over-limit threshold from 20% to 10%")
 })
 
 test("proposals: fail-closed when replay claims admitted with a flipped protected case, and unserved state says so", async ({ page }) => {

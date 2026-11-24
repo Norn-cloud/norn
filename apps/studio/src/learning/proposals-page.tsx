@@ -13,6 +13,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { cn } from "@/lib/utils"
 import { useView } from "@/lib/view"
+import { ActionSheet, type OpenAction } from "../actions/action-sheet.tsx"
 import { NO_DATA_CELL } from "../lib/definitions.ts"
 import {
   GAP_PROPOSAL_TYPE, PROPOSAL_STATUSES, PROPOSALS_UNAVAILABLE,
@@ -245,16 +246,36 @@ function ProposalsPageContent() {
  * governed actions the cell offers for this proposal in its current state.
  */
 export function ProposalDetailPage() {
+  const { id = "" } = useParams({ strict: false })
   return (
     <LearningGate surface="proposals" icon={FileDiff} title="Proposal">
-      <ProposalDetailPageContent />
+      <ProposalDetailPageContent key={id} id={id} />
     </LearningGate>
   )
 }
 
-function ProposalDetailPageContent() {
-  const { id = "" } = useParams({ strict: false })
+function ProposalDetailPageContent({ id }: { readonly id: string }) {
+  const client = useQueryClient()
   const bound = useBoundLearningRead()
+  const [acting, setActing] = useState<OpenAction | null>(null)
+  const refresh = () => {
+    void client.invalidateQueries({ queryKey: ["learning", "proposal"] })
+    void client.invalidateQueries({ queryKey: ["learning", "proposals"] })
+    void client.invalidateQueries({ queryKey: ["actions", GAP_PROPOSAL_TYPE, id] })
+  }
+  return (
+    <>
+      <ProposalDetail id={id} bound={bound} onOpen={setActing} />
+      <ActionSheet open={acting} onClose={() => setActing(null)} onChanged={refresh} scopeBinding={bound} />
+    </>
+  )
+}
+
+function ProposalDetail({ id, bound, onOpen }: {
+  readonly id: string
+  readonly bound: ReturnType<typeof useBoundLearningRead>
+  readonly onOpen: (action: OpenAction) => void
+}) {
   const read = useQuery({
     queryKey: ["learning", "proposal", bound.scopeKey, id],
     queryFn: ({ signal }) => readGapProposal(id, undefined, {
@@ -290,20 +311,19 @@ function ProposalDetailPageContent() {
     case "not-found": return <EmptyState icon={FileDiff} title="No such proposal">{result.message}</EmptyState>
     case "refused": return <EmptyState icon={FileDiff} title="Can't read this proposal">{result.message}</EmptyState>
     case "malformed": return <EmptyState icon={FileDiff} title="Can't show this proposal">The cell sent a proposal Studio can't read ({result.problem}). Nothing is guessed.</EmptyState>
-    case "ok": return <ProposalReview proposal={result.item} record={result.record} />
+    case "ok": return <ProposalReview proposal={result.item} record={result.record} onOpen={onOpen} />
     default: return null
   }
 }
 
-function ProposalReview({ proposal: p, record }: { readonly proposal: GapProposal; readonly record: ObjectRecord }) {
+function ProposalReview({ proposal: p, record, onOpen }: {
+  readonly proposal: GapProposal
+  readonly record: ObjectRecord
+  readonly onOpen: (action: OpenAction) => void
+}) {
   const { view } = useView()
   const technical = view === "technical"
-  const client = useQueryClient()
   const st = STATUS_STYLE[p.status]
-  const refresh = () => {
-    void client.invalidateQueries({ queryKey: ["learning", "proposal"] })
-    void client.invalidateQueries({ queryKey: ["learning", "proposals"] })
-  }
 
   return (
     <div className="mx-auto grid max-w-5xl gap-5">
@@ -388,7 +408,7 @@ function ProposalReview({ proposal: p, record }: { readonly proposal: GapProposa
                   record={record}
                   ariaLabel="Proposal actions"
                   emptyText="The cell offers you no actions on this proposal."
-                  onChanged={refresh}
+                  onOpen={onOpen}
                 />
               </div>
             </Well>
