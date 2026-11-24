@@ -1945,15 +1945,9 @@ where
             )?;
             Ok((versions, mapping_proof))
         };
-        let follow_floor = crate::function_receipt::consumes_function_result(
-            &self.store,
-            commit.consumes.as_ref(),
-        )
-        .map_err(CommitError::Host)?;
         match self.store.commit_guarded_submitted(
             &batch,
             submitted.as_ref(),
-            follow_floor,
             guard,
             &mut |_point| Ok(()),
         ) {

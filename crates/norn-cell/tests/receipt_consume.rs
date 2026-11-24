@@ -41,9 +41,10 @@ use norn_kernel::result_reconciliation::{
 };
 use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionOutcome, CellCommit,
-    CellHost, Command, CommitError, CommitReceipt, DecisionTurn, DueTimer, Effect, FactEvent,
-    FactKey, FactMutation, FactState, FactVersion, FactWrite, IdempotencyKey, LinkKey, LinkState,
-    LogicalTime, Observed, Performed, TypeCatalog, World, commit_action,
+    CellHost, Command, CommandId, CommitError, CommitReceipt, Consumed, DecisionTurn, DueTimer,
+    Effect, FactEvent, FactKey, FactMutation, FactState, FactVersion, FactWrite, Generation,
+    IdempotencyKey, LedgerSeq, LinkKey, LinkState, LogicalTime, Observed, Performed, TimerId,
+    TypeCatalog, World, commit_action,
 };
 use serde_json::json;
 
@@ -1544,7 +1545,7 @@ fn a_sibling_clock_moving_between_resolution_and_commit() {
 }
 
 #[test]
-fn an_embedded_acceptance_rechecks_authority_and_a_refusal_record_does_not() {
+fn an_embedded_acceptance_rechecks_authority_and_only_a_bare_refusal_record_skips_it() {
     let dir = tempfile::tempdir().expect("tempdir");
     let Fixture {
         mut cell,
@@ -1583,20 +1584,99 @@ fn an_embedded_acceptance_rechecks_authority_and_a_refusal_record_does_not() {
         matches!(refused, CommitError::ReceiptNotAccepted { .. }),
         "{refused}"
     );
-    // A refusal record consumes without the recheck, but applies nothing.
-    let refused = cell.commit_result_refusal(apply(&acceptance)).unwrap_err();
-    assert!(
-        matches!(refused, CommitError::ReceiptNotAccepted { .. }),
-        "{refused}"
-    );
+    // A commit carrying only an event, or only an effect, still applies
+    // something, so it needs the recheck too.
+    let event = FactEvent::CommandEnqueued {
+        command_id: "run-1/other".to_owned(),
+        generation: 1,
+        idempotency_key: "other".to_owned(),
+        action_call: "none".to_owned(),
+        payload: JsonObject::new(),
+    };
+    let unrelated = Effect::CancelTimer(TimerId("unrelated".to_owned()));
+    for (events, effects) in [(vec![event], Vec::new()), (Vec::new(), vec![unrelated])] {
+        let refused = cell
+            .commit(CellCommit {
+                consumes: Some(acceptance.consumed.clone()),
+                events,
+                effects,
+                ..CellCommit::empty()
+            })
+            .unwrap_err();
+        assert!(
+            matches!(refused, CommitError::ReceiptNotAccepted { .. }),
+            "{refused}"
+        );
+    }
+    // A refusal record must name a pending Function delivery.
+    for other in [
+        Consumed::Result {
+            command: CommandId("run-1/unknown".to_owned()),
+            generation: Generation(1),
+        },
+        Consumed::Timer {
+            id: TimerId("unrelated".to_owned()),
+            incarnation: LedgerSeq(1),
+        },
+    ] {
+        assert!(matches!(
+            cell.commit_result_refusal(other),
+            Err(CommitError::ReceiptNotAccepted { .. })
+        ));
+    }
     assert_eq!(status(&cell, "run-1"), waiting());
     assert_eq!(cell.commits().unwrap().len(), base);
     assert_eq!(cell.pending_commands().unwrap().len(), 1);
-    cell.commit_result_refusal(CellCommit {
-        consumes: Some(acceptance.consumed.clone()),
-        ..CellCommit::empty()
-    })
-    .expect("the refusal record consumes the delivery");
+    // The refusal record consumes the delivery without the recheck and
+    // applies nothing.
+    cell.commit_result_refusal(acceptance.consumed.clone())
+        .expect("the refusal record consumes the delivery");
     assert_eq!(cell.pending_commands().unwrap().len(), 0);
     assert_eq!(status(&cell, "run-1"), waiting());
+}
+
+#[test]
+fn a_losing_consumer_behind_a_later_sibling_clock_is_not_pending() {
+    let types = run_types();
+    let catalog = TypeCatalog::new(&types);
+    let action = confirm_action(&manifest());
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("cell.sqlite");
+    let Fixture {
+        mut cell,
+        dispatched,
+        receipt,
+    } = fixture(&path, "delivered");
+    let digest = retain(&mut cell, &dispatched, &receipt).unwrap();
+    let base = cell.commits().unwrap().len();
+    // Another handle, its clock later than this one's, consumes the
+    // delivery after this call resolved it and before this call commits.
+    let mut sibling = open(&path, SCOPE, &[&receipt]);
+    sibling.advance_to(LogicalTime::from_millis(WITHIN_DEADLINE));
+    let winner = confirm(&action, "run-1", &digest.0, "winner");
+    let shared = &catalog;
+    let race: Race<'_> = Box::new(move |_cell: &mut Sqlite| {
+        let outcome = commit_action(&mut sibling, shared, &winner, &Allow)
+            .unwrap_or_else(|refusal| panic!("the sibling consumes first: {refusal:?}"));
+        assert!(matches!(outcome, ActionOutcome::Committed { .. }));
+    });
+    let mut host = Host {
+        cell: RefCell::new(cell),
+        race: RefCell::new(Some(race)),
+    };
+    let refused = commit_action(
+        &mut host,
+        &catalog,
+        &confirm(&action, "run-1", &digest.0, "loser"),
+        &Allow,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code(), "action.receipt_not_pending", "{refused}");
+    let cell = host.cell.into_inner();
+    assert_eq!(status(&cell, "run-1"), confirmed());
+    assert_eq!(
+        cell.commits().unwrap().len(),
+        base.saturating_add(1),
+        "only the winner"
+    );
 }
