@@ -1,5 +1,5 @@
 import type { Fetch } from "./cell-read.ts"
-import { CellUnavailable, scopedHostFetch } from "./definitions.ts"
+import { CellUnavailable, defaultFetch, scopedHostFetch, type ScopeProvider } from "./definitions.ts"
 import type { Predicate, SortKey } from "./records-query.ts"
 
 /** A saved records view as the cell keeps it (definition kind `view`, VIEW-DEF-1). */
@@ -39,8 +39,8 @@ export function sortKeys(text: string | undefined): readonly SortKey[] {
 }
 
 /** The cell's views over one type, through the Studio Worker's host route as the signed-in account. */
-export function cellViews(fetcher: Fetch = (input, init) => fetch(input, init)) {
-  const scoped = scopedHostFetch(fetcher)
+export function cellViews(fetcher: Fetch = defaultFetch, scope?: ScopeProvider) {
+  const scoped = scopedHostFetch(fetcher, "/api/host", scope)
   const call = async (path: string, init?: RequestInit) => {
     const response = await scoped(path, { ...init, headers: { accept: "application/json", ...init?.body === undefined ? {} : { "content-type": "application/json" } } })
     return { status: response.status, body: await response.json().catch(() => null) as Record<string, unknown> | null }

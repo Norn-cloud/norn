@@ -1,4 +1,4 @@
-import { EXPECTED_ORG_HEADER, getDisplayedScope } from "./definitions.ts"
+import { defaultFetch, getDisplayedWorkspaceScope, isDefaultFetch, scopeHeaders, type WorkspaceScope } from "./definitions.ts"
 
 /**
  * The Studio Worker's `/api/connectors/*` as the Connections page uses it (#772). The page holds no
@@ -34,15 +34,26 @@ export function fixAction(value: unknown): FixAction | null {
   }
 }
 
-export async function api<T>(path: string, init?: { readonly method: string; readonly body?: unknown }, fetcher: typeof fetch = fetch): Promise<T> {
+export async function api<T>(
+  path: string,
+  init?: { readonly method: string; readonly body?: unknown; readonly scope?: WorkspaceScope | null },
+  fetcher: (input: string, init?: RequestInit) => Promise<Response> = defaultFetch,
+): Promise<T> {
   const method = (init?.method ?? "GET").toUpperCase()
-  const displayed = method !== "GET" && method !== "HEAD" && method !== "OPTIONS" && fetcher === fetch ? getDisplayedScope() : undefined
+  const write = method !== "GET" && method !== "HEAD" && method !== "OPTIONS"
+  const activeScope = !write
+    ? undefined
+    : init?.scope !== undefined
+      ? init.scope
+      : isDefaultFetch(fetcher)
+        ? getDisplayedWorkspaceScope()
+        : undefined
   const response = await fetcher(`/api/connectors${path}`, {
     method: init?.method ?? "GET",
     credentials: "same-origin",
     headers: {
       ...init?.body === undefined ? {} : { "content-type": "application/json" },
-      ...displayed ? { [EXPECTED_ORG_HEADER]: displayed.orgId } : {},
+      ...scopeHeaders(activeScope),
     },
     ...init?.body === undefined ? {} : { body: JSON.stringify(init.body) },
   })
@@ -95,7 +106,7 @@ export interface Tool {
   readonly bindings: readonly string[]
 }
 
-type Call = <T>(path: string, init?: { readonly method: string; readonly body?: unknown }) => Promise<T>
+type Call = <T>(path: string, init?: { readonly method: string; readonly body?: unknown; readonly scope?: WorkspaceScope | null }) => Promise<T>
 const enc = encodeURIComponent
 
 /** Kinds whose fix the page performs itself; `ask_admin` is advice, shown without a button. */
@@ -107,16 +118,17 @@ export const offersButton = (action: FixAction) => (EXECUTABLE_FIXES as readonly
  * fixes it (sign-in, or the account's connection form), or fails with the server's typed error.
  * A reconnect without its app finds the app from the account itself.
  */
-export async function startFix(action: FixAction, call: Call = api): Promise<string> {
+export async function startFix(action: FixAction, call: Call = api, scope?: WorkspaceScope | null): Promise<string> {
+  const scopeOpt = scope === undefined ? {} : { scope }
   switch (action.kind) {
-    case "sign_in_gateway": return (await call<{ url: string }>("/link", { method: "POST" })).url
-    case "connect_account": return (await call<{ url: string }>(`/apps/${enc(action.app)}/accounts/${enc(action.requirement)}/connect`, { method: "POST", body: {} })).url
+    case "sign_in_gateway": return (await call<{ url: string }>("/link", { method: "POST", ...scopeOpt })).url
+    case "connect_account": return (await call<{ url: string }>(`/apps/${enc(action.app)}/accounts/${enc(action.requirement)}/connect`, { method: "POST", body: {}, ...scopeOpt })).url
     case "reconnect_account": {
       const apps = action.app !== null ? [action.app] : (await call<{ apps: readonly string[] }>(`/accounts/${enc(action.account)}`)).apps
       for (const app of apps) {
         const { requirements } = await call<{ requirements: readonly Requirement[] }>(`/apps/${enc(app)}/accounts`)
         const requirement = requirements.find((entry) => entry.account === action.account)?.requirement
-        if (requirement !== undefined) return (await call<{ url: string }>(`/apps/${enc(app)}/accounts/${enc(requirement)}/connect`, { method: "POST", body: { account: action.account } })).url
+        if (requirement !== undefined) return (await call<{ url: string }>(`/apps/${enc(app)}/accounts/${enc(requirement)}/connect`, { method: "POST", body: { account: action.account }, ...scopeOpt })).url
       }
       throw new ConnectorError(409, "connectors.account_not_linked", "This account is no longer linked to any app; connect it again from its app.")
     }

@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate, useParams } from "@tanstack/react-router"
 import { Copy, Eye, LayoutDashboard, Pencil, Plus, Sparkles, Trash2, Undo2 } from "lucide-react"
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { DirtyGuard, EditorToolbar, RowActions, ValidationPanel, useEditor } from "@/components/editor"
 import { EmptyState, PageHeader, Panel } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { list, type Issue } from "@/lib/editor"
-import { dashboardField, dashboardId, duplicateDashboard, saveDashboard, useDefinitions, useStudioScope, NO_DATA_CELL, type Dashboard, type DefinitionStore, type DashboardSummary, type Finding, type Installed, type StoredDashboard, type Tile } from "@/lib/definitions"
+import { cellDefinitions, dashboardField, dashboardId, defaultDefinitions, defaultFetch, duplicateDashboard, saveDashboard, useDefinitions, useStudioScope, NO_DATA_CELL, type Dashboard, type DefinitionStore, type DashboardSummary, type Finding, type Installed, type StoredDashboard, type StudioScope, type Tile } from "@/lib/definitions"
 import { QuestionBuilder, UNEDITABLE, draftOf, questionFitsDraft, readCatalog, type QuestionCatalog } from "./builder.tsx"
 import { TileAnswer, VIEWS, ViewIcon, defaultView, viewIcon, viewKey, viewOf } from "./dashboards/tile-view.tsx"
 import { DashboardAssistant } from "./dashboards/assistant.tsx"
@@ -53,10 +53,19 @@ function UndoDelete({ removed, pending, error, onUndo }: { readonly removed: Rem
   )
 }
 
+/** Pin the default cell store to the scope that loaded this dashboard view/editor; keep test stores intact. */
+function useScopedStore(loadedScope: StudioScope | null | undefined): DefinitionStore {
+  const store = useDefinitions()
+  return useMemo(
+    () => store === defaultDefinitions && loadedScope !== undefined ? cellDefinitions(defaultFetch, "/api/host", async () => loadedScope) : store,
+    [store, loadedScope],
+  )
+}
+
 /** Every saved dashboard, with open, duplicate and delete. */
 export function DashboardsPage() {
-  const store = useDefinitions()
   const scope = useStudioScope()
+  const store = useScopedStore(scope.data)
   const cellAvailable = scope.isSuccess && scope.data !== null
   const client = useQueryClient()
   const navigate = useNavigate()
@@ -243,7 +252,7 @@ export function DashboardEditorPage() {
   const scope = useStudioScope()
   const cellAvailable = scope.isSuccess && scope.data !== null
   const { id } = useParams({ strict: false }) as { id?: string }
-  const store = useDefinitions()
+  const store = useScopedStore(scope.data)
   const navigate = useNavigate()
   const catalog = useQuery({ queryKey: ["question-catalog"], queryFn: readCatalog, retry: false, staleTime: Infinity })
   // A query may not resolve to undefined: a missing dashboard is null, and a new one reads nothing.
@@ -299,7 +308,7 @@ export function DashboardBoardPage() {
   const scope = useStudioScope()
   const cellAvailable = scope.isSuccess && scope.data !== null
   const { id } = useParams({ strict: false }) as { id: string }
-  const store = useDefinitions()
+  const store = useScopedStore(scope.data)
   const navigate = useNavigate()
   const client = useQueryClient()
   const catalog = useQuery({ queryKey: ["question-catalog"], queryFn: readCatalog, retry: false, staleTime: Infinity })

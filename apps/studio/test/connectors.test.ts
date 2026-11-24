@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import { api, BINDING_VERBS, ConnectorError, CONNECTION_VERBS, ERROR_VERBS, EXECUTABLE_FIXES, fixAction, fixLabel, MATRIX, matrixTable, offersButton, startFix } from "../src/lib/connectors.ts"
+import { defaultFetch, setDisplayedWorkspaceScope } from "../src/lib/definitions.ts"
 
 const answering = (status: number, body: unknown) => (async () => Response.json(body, { status })) as unknown as typeof fetch
 
@@ -65,4 +66,29 @@ test("every fix the page offers a button for executes: it reaches a gateway page
   // An account linked to no app fails with a typed error, never silently.
   const unlinked = (async (path: string) => path === "/accounts/gone" ? { apps: [] } : { requirements: [] }) as Parameters<typeof startFix>[1]
   expect(await startFix({ kind: "reconnect_account", app: null, account: "gone" }, unlinked).catch((e: unknown) => e)).toMatchObject({ code: "connectors.account_not_linked" })
+})
+
+test("connector mutations carry pinned workspace scope headers even after displayed workspace changes", async () => {
+  const original = globalThis.fetch
+  const seen: { url: string; method: string; headers: Headers }[] = []
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    seen.push({ url: String(input), method: init?.method ?? "GET", headers: new Headers(init?.headers) })
+    return Response.json({ url: "https://gateway.example/connect" })
+  }) as typeof fetch
+  try {
+    const pinned = { orgId: "org_a", environmentId: "env_a" }
+    setDisplayedWorkspaceScope({ orgId: "org_b", environmentId: "env_b" })
+    await api("/link", { method: "POST", scope: pinned }, defaultFetch)
+    await startFix({ kind: "sign_in_gateway" }, (path, init) => api(path, init, defaultFetch), pinned)
+    await api("/inventory", undefined, defaultFetch)
+    expect(seen[0]?.headers.get("x-norn-expected-org")).toBe("org_a")
+    expect(seen[0]?.headers.get("x-norn-expected-env")).toBe("env_a")
+    expect(seen[1]?.headers.get("x-norn-expected-org")).toBe("org_a")
+    expect(seen[1]?.headers.get("x-norn-expected-env")).toBe("env_a")
+    // GET reads carry no expected-scope write headers.
+    expect(seen[2]?.headers.get("x-norn-expected-org")).toBeNull()
+  } finally {
+    setDisplayedWorkspaceScope(undefined)
+    globalThis.fetch = original
+  }
 })

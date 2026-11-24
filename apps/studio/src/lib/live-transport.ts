@@ -4,7 +4,7 @@
  * apart from transport.ts, which finds recordings with Vite's import.meta.glob.
  */
 import { useQuery } from "@tanstack/react-query"
-import { CellUnavailable, StudioScopeError, getDisplayedScope, readStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
+import { CellUnavailable, StudioScopeError, defaultFetch, getDisplayedScope, isDefaultFetch, readStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
 import { readDocument, type Read } from "./exact.ts"
 import { readsOf } from "./objects.ts"
 import type { Artifact, Envelope, LinkPage, ObjectPage, ObjectRecord, SourceLineage, Transport } from "./transport.ts"
@@ -145,12 +145,14 @@ export class CellRefusal extends Error {
  * serve (a 404 `route.not_found`, or a 503) is {@link NotServed} under `what`; any other refusal
  * is the cell's {@link CellRefusal}.
  */
-export async function cellRead<T>(path: string, what: string, init: RequestInit = {}, fetcher: Fetch = browserFetch): Promise<Read<T>> {
+export async function cellRead<T>(path: string, what: string, init: RequestInit = {}, fetcher: Fetch = defaultFetch, boundScope?: StudioScope | null): Promise<Read<T>> {
   const method = (init.method ?? "GET").toUpperCase()
   const write = method !== "GET" && method !== "HEAD" && method !== "OPTIONS"
-  const scopeProvider = write && fetcher === browserFetch && getDisplayedScope() !== undefined
-    ? async () => getDisplayedScope()!
-    : () => readStudioScope(fetcher)
+  const scopeProvider = boundScope !== undefined
+    ? async () => boundScope
+    : write && isDefaultFetch(fetcher) && getDisplayedScope() !== undefined
+      ? async () => getDisplayedScope()!
+      : () => readStudioScope(fetcher)
   const call = scopedHostFetch(fetcher, "/api/host", scopeProvider)
   const response = await call(path, { ...init, headers: { accept: "application/json", ...init.body === undefined ? {} : { "content-type": "application/json" }, ...init.headers } })
   const text = await response.text()

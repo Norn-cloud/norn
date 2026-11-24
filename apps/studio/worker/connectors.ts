@@ -128,8 +128,8 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
   // Service keys cannot hold a person's gateway grant.
   if (actor.actorKind !== "user") return refusal(403, "connectors.user_only", "Connectors act for a signed-in person, not an API key.")
   if (!originAllowed(request, actor, env.trustedOrigins ?? [env.BETTER_AUTH_URL])) return refusal(403, "connectors.origin", "Cross-origin request refused.")
-  const scopeMismatch = await verifyWriteScope(request, auth, actor)
-  if (scopeMismatch !== null) return scopeMismatch
+  const scopeCheck = await verifyWriteScope(request, auth, actor)
+  if (!scopeCheck.ok) return scopeCheck.response
   // The cell scope is the session's: its active organization and that organization's environment.
   const { environmentId } = await cellScope(auth, actor.orgId)
   // Every connector verb is the host PDP's decision (#1036); the Worker holds no role logic.

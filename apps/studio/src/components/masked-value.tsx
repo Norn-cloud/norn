@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 import { CopyId } from "./copy-id.tsx"
 import { TINTED, tintOf } from "./safe-prompt.tsx"
 import { maskHint, revealContext, revealProperty, shownReveal, type Masked, type Revealed } from "../lib/privacy.ts"
+import { usePinnedScope } from "../lib/session.ts"
 
 /** The projection as text: what the server sent in the value's place. */
 const projection = (masked: Masked, projected: unknown): string =>
@@ -46,6 +47,7 @@ interface MaskedValueProps {
 
 /** One reveal context's instance; it never outlives its context (see [`MaskedValue`]). */
 function Reveal({ objectType, id, property, masked, projected, className, context }: MaskedValueProps & { readonly context: string }) {
+  const pinnedScope = usePinnedScope(`${objectType}:${id}:${property}:${context}`)
   const [revealed, setRevealed] = useState<Revealed | null>(null)
   const [open, setOpen] = useState(false)
   const [purpose, setPurpose] = useState("")
@@ -77,7 +79,7 @@ function Reveal({ objectType, id, property, masked, projected, className, contex
 
   const reveal = async () => {
     setState({ kind: "busy" })
-    const result = await revealProperty(objectType, id, property, purpose)
+    const result = await revealProperty(objectType, id, property, purpose, undefined, undefined, pinnedScope)
     // This instance is this context's alone: once the context changes it is unmounted, and its
     // state (this answer included) is gone.
     if (result.kind === "revealed") { setRevealed({ value: result.value, receipt: result.receipt, context }); setOpen(false); setState({ kind: "idle" }); return }

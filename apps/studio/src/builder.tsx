@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { list, modKey, sameValue, type Issue } from "@/lib/editor"
 import { questionVerdictOf, type QuestionVerdict } from "./agent/question.tsx"
-import { EXPECTED_ORG_HEADER, getDisplayedScope } from "./lib/definitions.ts"
+import { getDisplayedScope, scopeHeaders, type StudioScope } from "./lib/definitions.ts"
+import { usePinnedScope } from "./lib/session.ts"
 import { readDocument } from "./lib/exact.ts"
 import { readMetrics, recentWindow } from "./lib/metrics.ts"
 import type { UnitGroup } from "./lib/answer-anatomy.ts"
@@ -119,11 +120,11 @@ export async function readCatalog(): Promise<QuestionCatalog> {
 export const checkedFor = <D, R>(check: { readonly variables: D | undefined; readonly data: R | undefined; readonly error: Error | null }, draft: D, at?: { readonly ranAt: object | undefined; readonly revision: object }) =>
   check.variables === draft && (at === undefined || at.ranAt === at.revision) ? { data: check.data, error: check.error } : { data: undefined, error: null }
 
-async function checkQuestion(question: unknown): Promise<QuestionVerdict> {
-  const displayed = getDisplayedScope()
+async function checkQuestion(question: unknown, boundScope?: StudioScope | null): Promise<QuestionVerdict> {
+  const scope = boundScope !== undefined ? boundScope : getDisplayedScope()
   const response = await fetch("/api/questions/check", {
     method: "POST",
-    headers: { "content-type": "application/json", ...displayed ? { [EXPECTED_ORG_HEADER]: displayed.orgId } : {} },
+    headers: { "content-type": "application/json", ...scopeHeaders(scope) },
     body: JSON.stringify({ question }),
   })
   const verdict = questionVerdictOf(await response.json().catch(() => null))
@@ -227,7 +228,8 @@ export function QuestionBuilder({ catalog, guard, initial, onUse, unsupported, c
 }) {
   const probed = useCheckerServed()
   const served = checkerServed ?? probed
-  const check = useMutation({ mutationFn: (draft: Draft) => checkQuestion(buildQuestion(draft, catalog)) })
+  const pinnedScope = usePinnedScope(catalog.objectSet)
+  const check = useMutation({ mutationFn: (draft: Draft) => checkQuestion(buildQuestion(draft, catalog), pinnedScope) })
   // The editor revision each check ran at: a check shows only while the editor is still at that revision.
   const [ranAt, setRanAt] = useState<object>()
   const editor = useEditor<Draft>({ initial: initial ?? initialDraft(catalog), onRun: (draft) => run(draft) })

@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { BadgeCheck, ChartLine, ShieldCheck } from "lucide-react"
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { ChoiceColumn, PathSummary, pathNumbers, type ColumnOption } from "@/components/decision/choice-columns"
 import { DirtyGuard, EditorToolbar, ValidationPanel, useEditor } from "@/components/editor"
 import { EmptyState, Panel } from "@/components/panel"
@@ -10,7 +10,8 @@ import { questionVerdictOf, type QuestionVerdict } from "./agent/question.tsx"
 import { OPERATOR_WORDS, buildQuestion, draftOf, issuesOf, readCatalog, type Condition, type Draft, type QuestionCatalog } from "./builder.tsx"
 import { RunQuestion } from "./run.tsx"
 import { questionDefinitions, QuestionDefinitionError } from "./lib/question-definitions.ts"
-import { NO_DATA_CELL, useStudioScope } from "./lib/definitions.ts"
+import { NO_DATA_CELL, defaultFetch, getDisplayedScope, scopeHeaders, useStudioScope, type StudioScope } from "./lib/definitions.ts"
+import { usePinnedScope } from "./lib/session.ts"
 import { z } from "zod"
 import { useView } from "@/lib/view"
 
@@ -39,8 +40,13 @@ async function readRecommendations(): Promise<Recommendations> {
   return await response.json() as Recommendations
 }
 
-async function checkQuestion(question: unknown): Promise<CheckedQuestion> {
-  const response = await fetch("/api/questions/check", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question }) })
+async function checkQuestion(question: unknown, boundScope?: StudioScope | null): Promise<CheckedQuestion> {
+  const scope = boundScope !== undefined ? boundScope : getDisplayedScope()
+  const response = await fetch("/api/questions/check", {
+    method: "POST",
+    headers: { "content-type": "application/json", ...scopeHeaders(scope) },
+    body: JSON.stringify({ question }),
+  })
   const body = await response.json().catch(() => null) as { restatement?: CheckedQuestion["restatement"]; restatementError?: unknown } | null
   const verdict = questionVerdictOf(body)
   if (!response.ok || verdict === undefined || body?.restatement === undefined) throw new Error("The checker could not be reached.")
@@ -93,10 +99,14 @@ const savedQuestion = z.object({
   window: z.object({ start: z.string(), end: z.string() }).strict(), calendar: z.string(), freshness: z.unknown(),
 }).strict()
 const stable = (value: unknown): string => JSON.stringify(value, (_key, v: unknown) => v !== null && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b))) : v)
-const definitions = questionDefinitions()
 
 export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommendations; readonly catalog: QuestionCatalog; readonly guard?: (dirty: boolean) => ReactNode }) {
   const { view } = useView()
+  const pinnedScope = usePinnedScope(tree.basis)
+  const definitions = useMemo(
+    () => questionDefinitions(defaultFetch, pinnedScope !== undefined ? async () => pinnedScope : undefined),
+    [pinnedScope],
+  )
   const editor = useEditor<Draft>({ initial: recommendedDraft(tree) })
   const { value: draft, set } = editor
   const patch = (next: Partial<Draft>) => set((current) => ({ ...current, ...next }))
@@ -127,7 +137,7 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
   useEffect(() => {
     let current = true
     const timer = setTimeout(() => {
-      checkQuestion(question).then((result) => { if (current) { setChecked(result); setCheckedKey(questionKey); setCheckedRevision(editor.revision); setFailure(undefined) } }, (error: unknown) => { if (current) { setChecked(undefined); setFailure(error instanceof Error ? error.message : String(error)) } })
+      checkQuestion(question, pinnedScope).then((result) => { if (current) { setChecked(result); setCheckedKey(questionKey); setCheckedRevision(editor.revision); setFailure(undefined) } }, (error: unknown) => { if (current) { setChecked(undefined); setFailure(error instanceof Error ? error.message : String(error)) } })
     }, 300)
     return () => { current = false; clearTimeout(timer) }
   }, [questionKey, editor.revision])

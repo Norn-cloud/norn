@@ -2,7 +2,8 @@ import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
-import { createAuth } from "../auth.ts"
+import { resolveActor } from "../actor.ts"
+import { createAuth, DISABLED_ORG_PATHS, WORKSPACE_ACCESS_DENIED_MESSAGE } from "../auth.ts"
 import { billingModeStatement } from "../billing.ts"
 import worker, { type Env } from "../index.ts"
 import type { WorkspacesDocument } from "../workspaces.ts"
@@ -177,10 +178,12 @@ test("Better Auth organization/set-active validates organizationSlug, organizati
     expect({ body, status: res.status }).toEqual({ body, status: 403 })
   }
 
-  // Mismatched organizationId + organizationSlug is rejected 400.
+  // Mismatched organizationId + organizationSlug returns the same uniform 403 WORKSPACE_ACCESS_DENIED
+  // without clearing activeOrganizationId.
   const mismatch = await mutate(env, "POST", "/api/auth/organization/set-active", { organizationId: "org_ready", organizationSlug: "prov-slug" }, { cookie: alice.cookie })
-  expect(mismatch.status).toBe(400)
-  expect(await mismatch.json()).toMatchObject({ code: "ORGANIZATION_NOT_FOUND" })
+  expect(mismatch.status).toBe(403)
+  expect((await mismatch.json()) as Record<string, unknown>).toEqual({ code: "WORKSPACE_ACCESS_DENIED", message: WORKSPACE_ACCESS_DENIED_MESSAGE })
+  expect(db.query(`select "activeOrganizationId" from "session" where "userId" = ?`).get(alice.userId)).toEqual({ activeOrganizationId: alice.organizationId })
 
   // Valid member switching to a ready org by slug succeeds and updates session.
   const ok = await mutate(env, "POST", "/api/auth/organization/set-active", { organizationSlug: "ready-slug" }, { cookie: alice.cookie })
@@ -263,4 +266,195 @@ test("accepting an invitation to a provisioning workspace is refused at pre-chec
   expect(racedRes.status).toBe(409)
   expect(await racedRes.json()).toMatchObject({ code: "WORKSPACE_PROVISIONING" })
   expect(db.query(`select "status" from "invitation" where "id" = ?`).get(invId)).toEqual({ status: "pending" })
+  expect(db.query(`select "activeOrganizationId" from "session" where "userId" = ?`).get(invitee.userId)).toEqual({ activeOrganizationId: invitee.organizationId })
+})
+
+test("set-active leaks no org existence, never clears active org on refusal, and discovery endpoints are disabled", async () => {
+  const { db, env } = stage({ host: stubHost, defaultEnvironmentId: "prod" })
+  const alice = await enroll(env, "enum-alice@example.com", "Alice")
+  const bob = await enroll(env, "enum-bob@example.com", "Bob")
+  const now = new Date().toISOString()
+  db.run(`insert into "organization" ("id", "name", "slug", "metadata", "createdAt") values ('org_bob_ready', 'Bob Ready', 'bob-ready', '{"environmentId":"prod"}', ?)`, [now])
+  db.run(`insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values ('m_br', 'org_bob_ready', ?, 'owner', ?)`, [bob.userId, now])
+  db.run(`insert into "organization" ("id", "name", "slug", "metadata", "createdAt") values ('org_bob_prov', 'Bob Prov', 'bob-prov', '{"norn.provisioning":true}', ?)`, [now])
+  db.run(`insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values ('m_bp', 'org_bob_prov', ?, 'owner', ?)`, [bob.userId, now])
+
+  // Every unauthorized / nonexistent / mismatched combination yields the exact same 403 payload and preserves activeOrganizationId.
+  const bodies = [
+    { organizationId: "org_does_not_exist" },
+    { organizationId: "org_bob_ready" },
+    { organizationId: "org_bob_prov" },
+    { organizationSlug: "slug-does-not-exist" },
+    { organizationSlug: "bob-ready" },
+    { organizationSlug: "bob-prov" },
+    { organizationId: alice.organizationId, organizationSlug: "bob-ready" },
+    { organizationId: "org_bob_ready", organizationSlug: "slug-does-not-exist" },
+    { organizationId: null, organizationSlug: "bob-ready" },
+    { organizationId: "   " },
+    { organizationSlug: "" },
+  ]
+  for (const body of bodies) {
+    const res = await mutate(env, "POST", "/api/auth/organization/set-active", body, { cookie: alice.cookie })
+    expect({ body, status: res.status }).toEqual({ body, status: 403 })
+    expect((await res.json()) as Record<string, unknown>).toEqual({ code: "WORKSPACE_ACCESS_DENIED", message: WORKSPACE_ACCESS_DENIED_MESSAGE })
+    expect(db.query(`select "activeOrganizationId" from "session" where "userId" = ?`).get(alice.userId)).toEqual({ activeOrganizationId: alice.organizationId })
+  }
+
+  // Disabled Better Auth org discovery endpoints refuse 404 across GET/POST, trailing slashes, and mixed case.
+  for (const path of DISABLED_ORG_PATHS) {
+    for (const variant of [path, `${path}/`, path.toUpperCase()]) {
+      const getRes = await call(env, `/api/auth${variant}`, { headers: { cookie: alice.cookie } })
+      expect({ method: "GET", variant, status: getRes.status }).toEqual({ method: "GET", variant, status: 404 })
+      const postRes = await mutate(env, "POST", `/api/auth${variant}`, { slug: "bob-ready", organizationId: "org_bob_ready" }, { cookie: alice.cookie })
+      expect({ method: "POST", variant, status: postRes.status }).toEqual({ method: "POST", variant, status: 404 })
+    }
+  }
+})
+
+test("public Better Auth set-active and accept-invitation enforce commit-time predicates and preserve refreshed session cookies", async () => {
+  const { db, env } = stage({ host: stubHost, defaultEnvironmentId: "prod", billing: false })
+  const owner = await enroll(env, "s4-owner@example.com", "Owner")
+  const guest = await enroll(env, "s4-guest@example.com", "Guest")
+  const now = new Date().toISOString()
+  const agingExpiry = new Date(Date.now() + 3 * 24 * 3_600_000).toISOString()
+  db.run(`update "user" set "emailVerified" = 1 where "id" = ?`, [guest.userId])
+  db.run(`insert into "organization" ("id", "name", "slug", "metadata", "createdAt") values ('org_s4', 'S4 Org', 's4-org', '{"environmentId":"prod"}', ?)`, [now])
+  db.run(`insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values ('m_s4', 'org_s4', ?, 'member', ?)`, [owner.userId, now])
+
+  // 1. Public set-active concurrent membership revocation -> 403, session unchanged, refreshed Set-Cookie preserved on aging session.
+  db.run(`update "session" set "expiresAt" = ? where "userId" = ?`, [agingExpiry, owner.userId])
+  const origPrepare = db.prepare.bind(db)
+  let raced = false
+  db.prepare = ((sql: string, ...rest: unknown[]) => {
+    if (!raced && sql.includes(`update "session" set "activeOrganizationId"`)) {
+      raced = true
+      origPrepare(`delete from "member" where "id" = 'm_s4'`).run()
+    }
+    return (origPrepare as (...args: unknown[]) => ReturnType<typeof origPrepare>)(sql, ...rest)
+  }) as typeof db.prepare
+  const revoked = await mutate(env, "POST", "/api/auth/organization/set-active", { organizationId: "org_s4" }, { cookie: owner.cookie })
+  db.prepare = origPrepare
+  expect(raced).toBe(true)
+  expect(revoked.status).toBe(403)
+  expect(revoked.headers.getSetCookie().some((line) => line.includes("session_token="))).toBe(true)
+  expect(db.query(`select "activeOrganizationId" from "session" where "userId" = ?`).get(owner.userId)).toEqual({ activeOrganizationId: owner.organizationId })
+
+  // 2. Public set-active concurrent provisioning transition -> 409 WORKSPACE_PROVISIONING, session unchanged.
+  db.run(`insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values ('m_s4_2', 'org_s4', ?, 'member', ?)`, [owner.userId, now])
+  raced = false
+  db.prepare = ((sql: string, ...rest: unknown[]) => {
+    if (!raced && sql.includes(`update "session" set "activeOrganizationId"`)) {
+      raced = true
+      origPrepare(`update "organization" set "metadata" = '{"norn.provisioning":true}' where "id" = 'org_s4'`).run()
+    }
+    return (origPrepare as (...args: unknown[]) => ReturnType<typeof origPrepare>)(sql, ...rest)
+  }) as typeof db.prepare
+  const provRace = await mutate(env, "POST", "/api/auth/organization/set-active", { organizationSlug: "s4-org" }, { cookie: owner.cookie })
+  db.prepare = origPrepare
+  expect(raced).toBe(true)
+  expect(provRace.status).toBe(409)
+  expect(await provRace.json()).toMatchObject({ code: "WORKSPACE_PROVISIONING" })
+  expect(db.query(`select "activeOrganizationId" from "session" where "userId" = ?`).get(owner.userId)).toEqual({ activeOrganizationId: owner.organizationId })
+
+  // 3. Public accept-invitation (billing OFF): commit-time provisioning race -> 409, invitation stays pending, 0 members, refreshed cookie preserved.
+  db.run(`update "organization" set "metadata" = '{"environmentId":"prod"}' where "id" = 'org_s4'`)
+  const invId = crypto.randomUUID()
+  db.run(`insert into "invitation" ("id", "organizationId", "email", "role", "status", "expiresAt", "createdAt", "inviterId") values (?, 'org_s4', 's4-guest@example.com', 'member', 'pending', ?, ?, ?)`,
+    [invId, new Date(Date.now() + 3_600_000).toISOString(), now, owner.userId])
+  db.run(`update "session" set "expiresAt" = ? where "userId" = ?`, [agingExpiry, guest.userId])
+  raced = false
+  db.prepare = ((sql: string, ...rest: unknown[]) => {
+    if (!raced && sql.includes(`update "invitation" set "status" = 'accepted'`)) {
+      raced = true
+      origPrepare(`update "organization" set "metadata" = '{"norn.provisioning":true}' where "id" = 'org_s4'`).run()
+    }
+    return (origPrepare as (...args: unknown[]) => ReturnType<typeof origPrepare>)(sql, ...rest)
+  }) as typeof db.prepare
+  const invRace = await mutate(env, "POST", "/api/auth/organization/accept-invitation", { invitationId: invId }, { cookie: guest.cookie })
+  db.prepare = origPrepare
+  expect(raced).toBe(true)
+  expect(invRace.status).toBe(409)
+  expect(await invRace.json()).toMatchObject({ code: "WORKSPACE_PROVISIONING" })
+  expect(invRace.headers.getSetCookie().some((line) => line.includes("session_token="))).toBe(true)
+  expect(db.query(`select "status" from "invitation" where "id" = ?`).get(invId)).toEqual({ status: "pending" })
+  expect(db.query(`select count(*) as n from "member" where "organizationId" = 'org_s4' and "userId" = ?`).get(guest.userId)).toEqual({ n: 0 })
+  expect(db.query(`select "activeOrganizationId" from "session" where "userId" = ?`).get(guest.userId)).toEqual({ activeOrganizationId: guest.organizationId })
+
+  // 4. Ready org: public accept-invitation atomically accepts, inserts member, and activates org on session.
+  db.run(`update "organization" set "metadata" = '{"environmentId":"prod"}' where "id" = 'org_s4'`)
+  const accepted = await mutate(env, "POST", "/api/auth/organization/accept-invitation", { invitationId: invId }, { cookie: guest.cookie })
+  expect(accepted.status).toBe(200)
+  expect(await accepted.json()).toMatchObject({ invitation: { id: invId, status: "accepted" }, member: { organizationId: "org_s4", userId: guest.userId } })
+  expect(db.query(`select "activeOrganizationId" from "session" where "userId" = ?`).get(guest.userId)).toEqual({ activeOrganizationId: "org_s4" })
+})
+
+test("API-key creation enforces role and workspace readiness atomically at insertion and produces verifiable keys", async () => {
+  const { db, env } = stage({ host: stubHost, defaultEnvironmentId: "prod" })
+  const owner = await enroll(env, "s6-owner@example.com", "Owner")
+  const admin = await enroll(env, "s6-admin@example.com", "Admin")
+  const now = new Date().toISOString()
+  db.run(`insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values ('m_s6_admin', ?, ?, 'admin', ?)`, [owner.organizationId, admin.userId, now])
+  const countKeys = () => (db.query(`select count(*) as n from "apikey" where "referenceId" = ?`).get(owner.organizationId) as { n: number }).n
+  const origPrepare = db.prepare.bind(db)
+
+  // 1. Concurrent demotion of admin -> member right before INSERT writes 0 rows and returns 403.
+  let raced = false
+  db.prepare = ((sql: string, ...rest: unknown[]) => {
+    if (!raced && sql.includes(`insert into "apikey"`)) {
+      raced = true
+      origPrepare(`update "member" set "role" = 'member' where "id" = 'm_s6_admin'`).run()
+    }
+    return (origPrepare as (...args: unknown[]) => ReturnType<typeof origPrepare>)(sql, ...rest)
+  }) as typeof db.prepare
+  const demoted = await mutate(env, "POST", "/api/auth/api-key/create", { name: "raced-demote", organizationId: owner.organizationId }, { cookie: admin.cookie })
+  db.prepare = origPrepare
+  expect(raced).toBe(true)
+  expect(demoted.status).toBe(403)
+  expect(countKeys()).toBe(0)
+
+  // 2. Concurrent membership removal right before INSERT writes 0 rows and returns 403.
+  db.run(`update "member" set "role" = 'admin' where "id" = 'm_s6_admin'`)
+  raced = false
+  db.prepare = ((sql: string, ...rest: unknown[]) => {
+    if (!raced && sql.includes(`insert into "apikey"`)) {
+      raced = true
+      origPrepare(`delete from "member" where "id" = 'm_s6_admin'`).run()
+    }
+    return (origPrepare as (...args: unknown[]) => ReturnType<typeof origPrepare>)(sql, ...rest)
+  }) as typeof db.prepare
+  const removed = await mutate(env, "POST", "/api/auth/api-key/create", { name: "raced-remove", organizationId: owner.organizationId }, { cookie: admin.cookie })
+  db.prepare = origPrepare
+  expect(raced).toBe(true)
+  expect(removed.status).toBe(403)
+  expect(countKeys()).toBe(0)
+
+  // 3. Concurrent provisioning transition right before INSERT writes 0 rows and returns 409 WORKSPACE_PROVISIONING.
+  raced = false
+  db.prepare = ((sql: string, ...rest: unknown[]) => {
+    if (!raced && sql.includes(`insert into "apikey"`)) {
+      raced = true
+      origPrepare(`update "organization" set "metadata" = '{"norn.provisioning":true}' where "id" = ?`).run(owner.organizationId)
+    }
+    return (origPrepare as (...args: unknown[]) => ReturnType<typeof origPrepare>)(sql, ...rest)
+  }) as typeof db.prepare
+  const prov = await mutate(env, "POST", "/api/auth/api-key/create", { name: "raced-prov", organizationId: owner.organizationId }, { cookie: owner.cookie })
+  db.prepare = origPrepare
+  expect(raced).toBe(true)
+  expect(prov.status).toBe(409)
+  expect(await prov.json()).toMatchObject({ code: "WORKSPACE_PROVISIONING" })
+  expect(countKeys()).toBe(0)
+
+  // 4. Ready workspace: created key verifies via Better Auth verifyApiKey and resolves via resolveActor.
+  db.run(`update "organization" set "metadata" = '{"environmentId":"prod"}' where "id" = ?`, [owner.organizationId])
+  const created = await mutate(env, "POST", "/api/auth/api-key/create", { name: "valid-svc", organizationId: owner.organizationId }, { cookie: owner.cookie })
+  expect(created.status).toBe(200)
+  const payload = (await created.json()) as { id: string; key: string; referenceId: string }
+  expect(payload.referenceId).toBe(owner.organizationId)
+  expect(countKeys()).toBe(1)
+  const auth = createAuth({ clientIpHeader: "cf-connecting-ip", database: db, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN })
+  const verified = await auth.api.verifyApiKey({ body: { key: payload.key } })
+  expect(verified.valid).toBe(true)
+  expect(verified.key?.referenceId).toBe(owner.organizationId)
+  const actor = await resolveActor(new Request(ORIGIN, { headers: { "x-api-key": payload.key } }), auth)
+  expect(actor).toEqual({ actorKind: "service", subjectId: payload.id, orgId: owner.organizationId, role: "viewer", authMethod: "api_key" })
 })

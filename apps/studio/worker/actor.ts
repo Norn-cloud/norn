@@ -27,6 +27,8 @@ export const HOST_TOKEN_SECONDS = 300
 export const EXPECTED_ORG_HEADER = "x-norn-expected-org"
 export const EXPECTED_ENV_HEADER = "x-norn-expected-env"
 export const WORKSPACE_CHANGED_MESSAGE = "Your active workspace changed. Reload the page before submitting."
+export const SCOPE_REQUIRED_MESSAGE = "Workspace scope headers are required for mutations."
+export const NO_DATA_CELL_MESSAGE = "This workspace has no data cell yet."
 
 const USER_METHODS = new Set(["password", "magic_link"])
 
@@ -73,35 +75,97 @@ export async function hostToken(auth: Auth, actor: NornActor, now = Math.floor(D
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"])
 
+export interface ValidatedWriteScope {
+  readonly orgId: string
+  readonly environmentId: string | null
+}
+
+export type WriteScopeCheck =
+  | { readonly ok: true; readonly scope?: ValidatedWriteScope }
+  | { readonly ok: false; readonly response: Response }
+
+const nonEmpty = (value: string | null): string | null =>
+  value !== null && value.trim() !== "" ? value : null
+
 /**
- * Verify that a user-session write still targets the workspace the tab displayed.
- * Checks `x-norn-expected-org` (and `orgId` query param on `/api/host/*`) against `actor.orgId`,
- * plus `x-norn-expected-env` (when sent) against the active org's server-resolved environment.
- * Refuses stale-tab writes with 409 `workspace.changed` before reaching any host or database mutation.
+ * Verify that a mutation targets the exact workspace scope the caller displayed, and resolve
+ * the canonical server-validated scope to forward.
+ *
+ * Cookie-authenticated (`user`) mutations MUST supply `x-norn-expected-org` (and `x-norn-expected-env`
+ * when `requireEnv` is true, e.g. `/api/host/*` and cell-backed routes). Missing assertions are
+ * refused 400 `scope.required`; any disagreement between expected headers, forwarded query params,
+ * and the server-resolved active workspace/environment is refused 409 `workspace.changed` with zero
+ * calls to the host or database.
  */
 export async function verifyWriteScope(
   request: Request,
   auth: Auth,
   actor: NornActor,
-  options: { readonly checkHostQuery?: boolean } = {},
-): Promise<Response | null> {
-  if (actor.actorKind !== "user" || SAFE_METHODS.has(request.method)) return null
-  const mismatch = () => Response.json(
-    { code: "workspace.changed", message: WORKSPACE_CHANGED_MESSAGE, error: WORKSPACE_CHANGED_MESSAGE },
-    { status: 409, headers: { "cache-control": "no-store" } },
-  )
-  const headerOrg = request.headers.get(EXPECTED_ORG_HEADER)
-  if (headerOrg !== null && headerOrg !== actor.orgId) return mismatch()
-  if (options.checkHostQuery) {
-    const queryOrg = new URL(request.url).searchParams.get("orgId")
-    if (queryOrg !== null && queryOrg !== actor.orgId) return mismatch()
+  options: { readonly checkHostQuery?: boolean; readonly requireEnv?: boolean } = {},
+): Promise<WriteScopeCheck> {
+  if (SAFE_METHODS.has(request.method)) return { ok: true }
+  const mismatch = () => ({
+    ok: false as const,
+    response: Response.json(
+      { code: "workspace.changed", message: WORKSPACE_CHANGED_MESSAGE, error: WORKSPACE_CHANGED_MESSAGE },
+      { status: 409, headers: { "cache-control": "no-store" } },
+    ),
+  })
+  const required = () => ({
+    ok: false as const,
+    response: Response.json(
+      { code: "scope.required", message: SCOPE_REQUIRED_MESSAGE, error: SCOPE_REQUIRED_MESSAGE },
+      { status: 400, headers: { "cache-control": "no-store" } },
+    ),
+  })
+  const noCell = () => ({
+    ok: false as const,
+    response: Response.json(
+      { code: "workspace.no_cell", message: NO_DATA_CELL_MESSAGE, error: NO_DATA_CELL_MESSAGE },
+      { status: 409, headers: { "cache-control": "no-store" } },
+    ),
+  })
+
+  const url = options.checkHostQuery ? new URL(request.url) : null
+  if (actor.actorKind !== "user") {
+    // Service API keys are bound to a single organization (not a multi-tab session), but if the
+    // organization has a server-provisioned environment, never allow query smuggling to another env.
+    if (url !== null) {
+      const queryOrgs = url.searchParams.getAll("orgId")
+      if (queryOrgs.some((org) => org !== actor.orgId)) return mismatch()
+      const queryEnvs = url.searchParams.getAll("environmentId")
+      if (queryEnvs.length > 0) {
+        const scope = await cellScope(auth, actor.orgId)
+        if (scope.environmentId !== null && queryEnvs.some((env) => env !== scope.environmentId)) return mismatch()
+        if (scope.environmentId !== null) return { ok: true, scope: { orgId: actor.orgId, environmentId: scope.environmentId } }
+      }
+    }
+    return { ok: true }
   }
-  const headerEnv = request.headers.get(EXPECTED_ENV_HEADER)
-  if (headerEnv !== null) {
+
+  const headerOrg = nonEmpty(request.headers.get(EXPECTED_ORG_HEADER))
+  if (headerOrg === null) return required()
+  if (headerOrg !== actor.orgId) return mismatch()
+
+  const headerEnv = nonEmpty(request.headers.get(EXPECTED_ENV_HEADER))
+
+  let environmentId: string | null = null
+  if (options.requireEnv || headerEnv !== null || options.checkHostQuery) {
     const scope = await cellScope(auth, actor.orgId)
-    if (scope.environmentId !== headerEnv) return mismatch()
+    environmentId = scope.environmentId
+    if (options.requireEnv && environmentId === null) return noCell()
+    if (options.requireEnv && headerEnv === null) return required()
+    if (headerEnv !== null && environmentId !== headerEnv) return mismatch()
   }
-  return null
+
+  if (url !== null) {
+    const queryOrgs = url.searchParams.getAll("orgId")
+    if (queryOrgs.some((org) => org !== actor.orgId)) return mismatch()
+    const queryEnvs = url.searchParams.getAll("environmentId")
+    if (queryEnvs.some((env) => env !== environmentId)) return mismatch()
+  }
+
+  return { ok: true, scope: { orgId: actor.orgId, environmentId } }
 }
 
 /**
@@ -122,10 +186,24 @@ export function originAllowed(request: Request, actor: NornActor, studioOrigins:
 /**
  * Forward a request to the Norn host as its actor. Only the method, path,
  * query, body and content headers travel; cookies, the API key and any
- * client Authorization are replaced by the host token.
+ * client Authorization are replaced by the host token. When `validatedScope`
+ * is provided, `orgId` and `environmentId` on the forwarded URL are bound to
+ * that server-validated scope.
  */
-export async function forwardToHost(request: Request, host: Fetcher, auth: Auth, actor: NornActor, path: string): Promise<Response> {
+export async function forwardToHost(
+  request: Request,
+  host: Fetcher,
+  auth: Auth,
+  actor: NornActor,
+  path: string,
+  validatedScope?: ValidatedWriteScope,
+): Promise<Response> {
   const url = new URL(request.url)
+  const target = new URL(`https://norn-host${path}${url.search}`)
+  if (validatedScope !== undefined) {
+    target.searchParams.set("orgId", validatedScope.orgId)
+    if (validatedScope.environmentId !== null) target.searchParams.set("environmentId", validatedScope.environmentId)
+  }
   const headers = new Headers({ authorization: `Bearer ${await hostToken(auth, actor)}` })
   // A live socket (UI-LIVE-1) passes through with its handshake headers; the host answers it.
   if (request.headers.get("upgrade")?.toLowerCase() === "websocket") {
@@ -133,7 +211,7 @@ export async function forwardToHost(request: Request, host: Fetcher, auth: Auth,
       const value = request.headers.get(name)
       if (value !== null) headers.set(name, value)
     }
-    return host.fetch(new Request(`https://norn-host${path}${url.search}`, { method: "GET", headers }))
+    return host.fetch(new Request(target.href, { method: "GET", headers }))
   }
   for (const name of ["content-type", "accept"]) {
     const value = request.headers.get(name)
@@ -141,7 +219,7 @@ export async function forwardToHost(request: Request, host: Fetcher, auth: Auth,
   }
   // Streamed, never buffered in the Worker.
   const body = request.method === "GET" || request.method === "HEAD" ? null : request.body
-  const response = await host.fetch(new Request(`https://norn-host${path}${url.search}`, { method: request.method, headers, body }))
+  const response = await host.fetch(new Request(target.href, { method: request.method, headers, body }))
   // The cell has already authorized this definition read. Add a display-only name
   // without changing its recorded signer or exposing users from other organizations.
   if (request.method !== "GET" || !/^\/v1\/definitions\/[^/:]+$/.test(path) || !response.ok) return response

@@ -89,6 +89,10 @@ const isDashboard = (value: unknown): value is Dashboard =>
 
 const KIND = "dashboard"
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>
+/** Canonical browser fetch wrapper shared across Studio clients so `scopedHostFetch` recognizes it. */
+export const defaultFetch: Fetch = (input, init) => fetch(input, init)
+export const isDefaultFetch = (fetcher: Fetch): boolean => fetcher === fetch || fetcher === defaultFetch
+export interface WorkspaceScope { readonly orgId: string; readonly environmentId: string | null }
 export interface StudioScope { readonly orgId: string; readonly environmentId: string }
 export type ScopeProvider = () => Promise<StudioScope | null>
 export const NO_DATA_CELL = "This workspace has no data cell yet."
@@ -100,32 +104,64 @@ const accountScope = z.object({ organization: z.object({ id: z.string().min(1) }
 /**
  * The workspace scope currently displayed by this tab, populated whenever `accountQuery` loads or
  * refreshes `/api/me`. Undefined until a browser session loads (so isolated unit tests passing
- * custom fetchers keep calling `readStudioScope(fetcher)`). Writes stay bound to this displayed
- * scope and send it explicitly so a workspace switch in another tab cannot redirect a stale form.
+ * custom fetchers keep calling `readStudioScope(fetcher)`). Writes stay bound to the scope that
+ * loaded the form/workflow (or this displayed scope) and send it explicitly so a workspace switch
+ * in another tab cannot redirect a stale form.
  */
 let currentDisplayedScope: StudioScope | null | undefined
+let currentDisplayedWorkspaceScope: WorkspaceScope | null | undefined
 
 export function getDisplayedScope(): StudioScope | null | undefined {
   return currentDisplayedScope
 }
 
+export function getDisplayedWorkspaceScope(): WorkspaceScope | null | undefined {
+  return currentDisplayedWorkspaceScope
+}
+
 export function setDisplayedScope(scope: StudioScope | null | undefined): void {
   currentDisplayedScope = scope
+  currentDisplayedWorkspaceScope = scope
+}
+
+export function setDisplayedWorkspaceScope(scope: WorkspaceScope | null | undefined): void {
+  currentDisplayedWorkspaceScope = scope
+  currentDisplayedScope = scope === undefined
+    ? undefined
+    : scope === null || scope.environmentId === null
+      ? null
+      : { orgId: scope.orgId, environmentId: scope.environmentId }
+}
+
+export function workspaceScopeFromAccount(account: {
+  readonly organization?: { readonly id: string } | null
+  readonly environmentId?: string | null
+} | null | undefined): WorkspaceScope | null {
+  const orgId = account?.organization?.id
+  if (typeof orgId !== "string" || orgId === "") return null
+  const environmentId = typeof account?.environmentId === "string" && account.environmentId !== "" ? account.environmentId : null
+  return { orgId, environmentId }
 }
 
 export function scopeFromAccount(account: {
   readonly organization?: { readonly id: string } | null
   readonly environmentId?: string | null
 } | null | undefined): StudioScope | null {
-  const orgId = account?.organization?.id
-  const environmentId = account?.environmentId
-  return typeof orgId === "string" && orgId !== "" && typeof environmentId === "string" && environmentId !== ""
-    ? { orgId, environmentId }
-    : null
+  const ws = workspaceScopeFromAccount(account)
+  return ws !== null && ws.environmentId !== null ? { orgId: ws.orgId, environmentId: ws.environmentId } : null
+}
+
+/** Expected-scope headers sent on cookie-authenticated mutations. */
+export function scopeHeaders(scope: WorkspaceScope | StudioScope | null | undefined): Record<string, string> {
+  if (scope === null || scope === undefined) return {}
+  return {
+    [EXPECTED_ORG_HEADER]: scope.orgId,
+    ...scope.environmentId !== null && scope.environmentId !== "" ? { [EXPECTED_ENV_HEADER]: scope.environmentId } : {},
+  }
 }
 
 /** Read the active workspace and its cell from the signed-in server session. */
-export async function readStudioScope(fetcher: Fetch = (input, init) => fetch(input, init)): Promise<StudioScope | null> {
+export async function readStudioScope(fetcher: Fetch = defaultFetch): Promise<StudioScope | null> {
   let response: Response
   try { response = await fetcher("/api/me", { headers: { accept: "application/json" } }) }
   catch { throw new CellUnavailable(0) }
@@ -147,17 +183,17 @@ const isWriteMethod = (method?: string): boolean => {
 
 /**
  * Every scoped host call carries `orgId` and `environmentId`. Writes also carry
- * `x-norn-expected-org` and `x-norn-expected-env` bound to the displayed scope so the Worker
- * refuses stale-tab submissions if the session's active workspace changed elsewhere.
+ * `x-norn-expected-org` and `x-norn-expected-env` bound to the pinned or displayed scope so the
+ * Worker refuses stale-tab submissions if the session's active workspace changed elsewhere.
  */
 export function scopedHostFetch(fetcher: Fetch, base = "/api/host", scope?: ScopeProvider): Fetch {
   return async (path, init) => {
     const write = isWriteMethod(init?.method)
     const active = scope !== undefined
       ? await scope()
-      : write && fetcher === fetch && currentDisplayedScope !== undefined
+      : write && isDefaultFetch(fetcher) && currentDisplayedScope !== undefined
         ? currentDisplayedScope
-        : await readStudioScope()
+        : await readStudioScope(fetcher)
     if (active === null) throw new StudioScopeError(NO_DATA_CELL)
     const [pathname, search] = path.split("?", 2)
     const query = new URLSearchParams(search)
@@ -272,7 +308,8 @@ export const disconnected: DefinitionStore = {
   retire: async () => { throw new NotConnected() },
 }
 
-export const DefinitionsContext = createContext<DefinitionStore>(cellDefinitions())
+export const defaultDefinitions: DefinitionStore = cellDefinitions(defaultFetch)
+export const DefinitionsContext = createContext<DefinitionStore>(defaultDefinitions)
 export const useDefinitions = () => use(DefinitionsContext)
 
 /** A copy of a dashboard under a new title, with fresh tile ids. */

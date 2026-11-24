@@ -92,27 +92,40 @@ test("without a session or a connected host, Norn calls refuse", async () => {
 })
 
 test("a request body reaches the host unchanged", async () => {
-  const { env, seen } = stage(() => new Response(null, { status: 202 }))
+  const { env, db, seen, auth } = stage(() => new Response(null, { status: 202 }))
   const cookie = await signUp(env, "fe@example.com")
-  const response = await call(env, "/api/host/v1/actions", { method: "POST", headers: { cookie, origin: ORIGIN, "content-type": "application/json" }, body: JSON.stringify({ proposal: 1 }) })
+  const actor = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
+  if (!actor) throw new Error("no actor")
+  db.run(`update "organization" set "metadata" = ? where "id" = ?`, [JSON.stringify({ environmentId: "analytics" }), actor.orgId])
+  const response = await call(env, "/api/host/v1/actions", {
+    method: "POST",
+    headers: { cookie, origin: ORIGIN, "content-type": "application/json", [EXPECTED_ORG_HEADER]: actor.orgId, [EXPECTED_ENV_HEADER]: "analytics" },
+    body: JSON.stringify({ proposal: 1 }),
+  })
   expect(response.status).toBe(202)
   expect((await seen[0]?.json()) as unknown).toEqual({ proposal: 1 })
   expect(seen[0]?.headers.get("content-type")).toBe("application/json")
+  const forwardedUrl = new URL(seen[0]!.url)
+  expect(forwardedUrl.searchParams.get("orgId")).toBe(actor.orgId)
+  expect(forwardedUrl.searchParams.get("environmentId")).toBe("analytics")
 })
 
 test("a cookie-authenticated write from anywhere but the Studio origin never reaches the host", async () => {
-  const { env, seen } = stage(() => new Response(null, { status: 202 }))
+  const { env, db, seen, auth } = stage(() => new Response(null, { status: 202 }))
   const cookie = await signUp(env, "gu@example.com")
+  const actor = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
+  if (!actor) throw new Error("no actor")
+  db.run(`update "organization" set "metadata" = ? where "id" = ?`, [JSON.stringify({ environmentId: "analytics" }), actor.orgId])
   for (const origin of ["https://evil.norn.cloud", "null", undefined]) {
-    const headers: Record<string, string> = { cookie, "content-type": "text/plain" }
+    const headers: Record<string, string> = { cookie, "content-type": "text/plain", [EXPECTED_ORG_HEADER]: actor.orgId, [EXPECTED_ENV_HEADER]: "analytics" }
     if (origin !== undefined) headers.origin = origin
     const response = await call(env, "/api/host/v1/actions", { method: "POST", headers, body: "{}" })
     expect([origin, response.status]).toEqual([origin, 403])
   }
   expect(seen).toHaveLength(0)
-  // A read needs no Origin; a write from the Studio itself goes through.
+  // A read needs no Origin; a write from the Studio itself goes through with matching scope headers.
   expect((await call(env, "/api/host/v1/defs", { headers: { cookie } })).status).toBe(202)
-  expect((await call(env, "/api/host/v1/actions", { method: "POST", headers: { cookie, origin: ORIGIN }, body: "{}" })).status).toBe(202)
+  expect((await call(env, "/api/host/v1/actions", { method: "POST", headers: { cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: actor.orgId, [EXPECTED_ENV_HEADER]: "analytics" }, body: "{}" })).status).toBe(202)
   expect(seen).toHaveLength(2)
 })
 
@@ -236,16 +249,25 @@ test("stale-tab writes carrying another workspace's scope are refused with 409 w
   expect(staleHeaders.status).toBe(409)
   expect(await staleHeaders.json()).toMatchObject({ code: "workspace.changed", message: WORKSPACE_CHANGED_MESSAGE })
 
-  // Even without x-norn-expected-org, a stale orgId query param on a /api/host write is refused 409.
-  const staleQuery = await call(env, `/api/host/v1/actions/canon.holding.adjust?orgId=${org1}&environmentId=env_1`, {
+  // Omitting x-norn-expected-org on a cookie-authenticated write is refused 400 scope.required before reaching the host.
+  const missingOrg = await call(env, `/api/host/v1/actions/canon.holding.adjust?orgId=${org2}&environmentId=env_2`, {
     method: "POST",
     headers: { cookie, origin: ORIGIN, "content-type": "application/json" },
     body: JSON.stringify({ input: {}, idempotencyKey: "k2" }),
   })
-  expect(staleQuery.status).toBe(409)
-  expect(await staleQuery.json()).toMatchObject({ code: "workspace.changed" })
+  expect(missingOrg.status).toBe(400)
+  expect(await missingOrg.json()).toMatchObject({ code: "scope.required" })
 
-  // Matching org2 with a stale x-norn-expected-env (env_1 != env_2) is also refused 409.
+  // Omitting x-norn-expected-env on a cell-backed /api/host write is also refused 400 scope.required.
+  const missingEnv = await call(env, `/api/host/v1/actions/canon.holding.adjust?orgId=${org2}&environmentId=env_2`, {
+    method: "POST",
+    headers: { cookie, origin: ORIGIN, "content-type": "application/json", [EXPECTED_ORG_HEADER]: org2 },
+    body: JSON.stringify({ input: {}, idempotencyKey: "k2b" }),
+  })
+  expect(missingEnv.status).toBe(400)
+  expect(await missingEnv.json()).toMatchObject({ code: "scope.required" })
+
+  // Matching org2 with a stale x-norn-expected-env (env_1 != env_2) is refused 409.
   const staleEnv = await call(env, `/api/host/v1/actions/canon.holding.adjust?orgId=${org2}&environmentId=env_2`, {
     method: "POST",
     headers: { cookie, origin: ORIGIN, "content-type": "application/json", [EXPECTED_ORG_HEADER]: org2, [EXPECTED_ENV_HEADER]: "env_1" },
@@ -254,24 +276,52 @@ test("stale-tab writes carrying another workspace's scope are refused with 409 w
   expect(staleEnv.status).toBe(409)
   expect(await staleEnv.json()).toMatchObject({ code: "workspace.changed" })
 
-  // Other write endpoints (/api/questions/check, /api/sidekick/grant, /api/agent/dashboards/propose) also refuse stale org headers.
+  // Matching headers with a conflicting or duplicated query orgId/environmentId are refused 409 with zero host calls.
+  for (const query of [
+    `orgId=${org1}&environmentId=env_2`,
+    `orgId=${org2}&environmentId=env_1`,
+    `orgId=${org2}&orgId=${org1}&environmentId=env_2`,
+    `orgId=${org2}&environmentId=env_2&environmentId=env_1`,
+  ]) {
+    const res = await call(env, `/api/host/v1/actions/canon.holding.adjust?${query}`, {
+      method: "POST",
+      headers: { cookie, origin: ORIGIN, "content-type": "application/json", [EXPECTED_ORG_HEADER]: org2, [EXPECTED_ENV_HEADER]: "env_2" },
+      body: JSON.stringify({ input: {}, idempotencyKey: "k3b" }),
+    })
+    expect({ query, status: res.status }).toEqual({ query, status: 409 })
+    expect(await res.json()).toMatchObject({ code: "workspace.changed" })
+  }
+
+  // Other write endpoints (/api/questions/check, /api/sidekick/grant, /api/agent/dashboards/propose)
+  // require scope headers (400 when missing) and refuse stale scope headers (409).
   const mcpEnv: Env = { ...env, STUDIO_MCP: "on" }
   for (const path of ["/api/questions/check", "/api/sidekick/grant", "/api/agent/dashboards/propose"]) {
+    const missing = await call(mcpEnv, path, {
+      method: "POST",
+      headers: { cookie, origin: ORIGIN, "content-type": "application/json" },
+      body: "{}",
+    })
+    expect({ path, status: missing.status }).toEqual({ path, status: 400 })
+    expect(await missing.json()).toMatchObject({ code: "scope.required" })
+
     const res = await call(mcpEnv, path, {
       method: "POST",
-      headers: { cookie, origin: ORIGIN, "content-type": "application/json", [EXPECTED_ORG_HEADER]: org1 },
+      headers: { cookie, origin: ORIGIN, "content-type": "application/json", [EXPECTED_ORG_HEADER]: org1, [EXPECTED_ENV_HEADER]: "env_1" },
       body: "{}",
     })
     expect({ path, status: res.status }).toEqual({ path, status: 409 })
   }
   expect(seen).toHaveLength(0)
 
-  // A fresh write bound to org2 / env_2 goes through cleanly.
-  const fresh = await call(env, `/api/host/v1/actions/canon.holding.adjust?orgId=${org2}&environmentId=env_2`, {
+  // A fresh write bound to org2 / env_2 goes through cleanly, and the Worker forwards the validated scope even when query params are omitted.
+  const fresh = await call(env, "/api/host/v1/actions/canon.holding.adjust", {
     method: "POST",
     headers: { cookie, origin: ORIGIN, "content-type": "application/json", [EXPECTED_ORG_HEADER]: org2, [EXPECTED_ENV_HEADER]: "env_2" },
     body: JSON.stringify({ input: {}, idempotencyKey: "k4" }),
   })
   expect(fresh.status).toBe(202)
   expect(seen).toHaveLength(1)
+  const forwardedUrl = new URL(seen[0]!.url)
+  expect(forwardedUrl.searchParams.get("orgId")).toBe(org2)
+  expect(forwardedUrl.searchParams.get("environmentId")).toBe("env_2")
 })

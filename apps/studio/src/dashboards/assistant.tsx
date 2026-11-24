@@ -7,7 +7,8 @@ import { Well } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { EXPECTED_ORG_HEADER, dashboardField, getDisplayedScope, type Dashboard } from "@/lib/definitions"
+import { dashboardField, getDisplayedScope, scopeHeaders, type Dashboard, type StudioScope } from "@/lib/definitions"
+import { usePinnedScope } from "@/lib/session"
 import { SafePrompt, type GuardDocument } from "@/components/safe-prompt"
 import type { QuestionCatalog } from "../builder.tsx"
 import { conceptTitle } from "../lib/catalog.ts"
@@ -36,15 +37,16 @@ export interface Proposal {
 interface Listing { readonly proposals: readonly Proposal[]; readonly spentMicroUsd: number; readonly capMicroUsd: number; readonly model: string | null }
 
 const BASE = "/api/agent/dashboards"
-async function call<T>(path: string, init?: RequestInit): Promise<T> {
+async function call<T>(path: string, init?: RequestInit, boundScope?: StudioScope | null): Promise<T> {
   const method = (init?.method ?? "GET").toUpperCase()
-  const displayed = method !== "GET" && method !== "HEAD" && method !== "OPTIONS" ? getDisplayedScope() : undefined
+  const write = method !== "GET" && method !== "HEAD" && method !== "OPTIONS"
+  const scope = !write ? undefined : boundScope !== undefined ? boundScope : getDisplayedScope()
   const response = await fetch(`${BASE}${path}`, {
     ...init,
     headers: {
       accept: "application/json",
       ...init?.body ? { "content-type": "application/json" } : {},
-      ...displayed ? { [EXPECTED_ORG_HEADER]: displayed.orgId } : {},
+      ...scopeHeaders(scope),
     },
   })
   const body = await response.json().catch(() => null) as (T & { error?: string; message?: string }) | null
@@ -99,15 +101,16 @@ function Verdict({ proposal }: { readonly proposal: Proposal }) {
 export function ProposalCard({ proposal, preview }: { readonly proposal: Proposal; readonly preview: (dashboard: Dashboard) => React.ReactNode }) {
   const client = useQueryClient()
   const navigate = useNavigate()
+  const pinnedScope = usePinnedScope(proposal.id)
   const refresh = () => client.invalidateQueries({ queryKey: ["dashboard-proposals"] })
   const accept = useMutation({
-    mutationFn: () => call<Proposal>(`/${proposal.id}/accept`, { method: "POST", body: "{}" }),
+    mutationFn: () => call<Proposal>(`/${proposal.id}/accept`, { method: "POST", body: "{}" }, pinnedScope),
     onSuccess: (decided) => {
       void refresh(); void client.invalidateQueries({ queryKey: ["dashboards"] })
       if (decided.installed) void navigate({ to: "/dashboards/$id", params: { id: decided.installed.id } })
     },
   })
-  const decline = useMutation({ mutationFn: () => call<Proposal>(`/${proposal.id}/decline`, { method: "POST", body: "{}" }), onSuccess: () => void refresh() })
+  const decline = useMutation({ mutationFn: () => call<Proposal>(`/${proposal.id}/decline`, { method: "POST", body: "{}" }, pinnedScope), onSuccess: () => void refresh() })
   const state = STATES[proposal.state]
   return (
     <article className="space-y-3 rounded-xl border bg-card p-4 shadow-elevation" data-proposal={proposal.id} data-state={proposal.state}>
@@ -149,9 +152,10 @@ export function ProposalCard({ proposal, preview }: { readonly proposal: Proposa
 export function DashboardAssistant({ catalog, dashboardId, preview }: { readonly catalog: QuestionCatalog; readonly dashboardId?: string; readonly preview: (dashboard: Dashboard) => React.ReactNode }) {
   const client = useQueryClient()
   const [request, setRequest] = useState("")
+  const pinnedScope = usePinnedScope(dashboardId ?? "new")
   const listing = useQuery({ queryKey: ["dashboard-proposals"], queryFn: () => call<Listing>(""), retry: false })
   const ask = useMutation({
-    mutationFn: (text: string) => call<Proposal>("", { method: "POST", body: JSON.stringify({ request: text, ...dashboardId ? { dashboardId } : {} }) }),
+    mutationFn: (text: string) => call<Proposal>("", { method: "POST", body: JSON.stringify({ request: text, ...dashboardId ? { dashboardId } : {} }) }, pinnedScope),
     onSuccess: () => { setRequest(""); void client.invalidateQueries({ queryKey: ["dashboard-proposals"] }) },
   })
   // New dashboards here; on a board, only the changes proposed to it.

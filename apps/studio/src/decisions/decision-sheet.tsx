@@ -13,6 +13,7 @@ import { sharedEngine } from "../lib/canvas/checker.ts"
 import { defaultFetch } from "../lib/cell-read.ts"
 import { scopedHostFetch } from "../lib/definitions.ts"
 import { flowTitle, remaining, stepTitle, urgent, type Decision, type Risk } from "../lib/decisions.ts"
+import { usePinnedScope } from "../lib/session.ts"
 import sheetDocument from "./decision-sheet.widget.json"
 
 const RISK_TINT: Readonly<Record<Risk, string>> = { low: "--tint-route", medium: "--tint-wait", high: "--tint-law" }
@@ -60,6 +61,8 @@ export function DecisionSheet({ decision, now, onClose, onSettled }: {
 }) {
   const { locale } = useLocale()
   const navigate = useNavigate()
+  // Pin the workspace scope that loaded this decision so a session switch/refresh cannot redirect submission.
+  const pinnedScope = usePinnedScope(decision?.id ?? false)
   // Loaded once per page, starting when the inbox renders, so it compiles while the person reads.
   // The sheet draws its first state without it and takes input once it is here.
   const engine = useQuery({ queryKey: ["checker-engine"], queryFn: () => sharedEngine(), staleTime: Infinity, retry: false })
@@ -74,7 +77,7 @@ export function DecisionSheet({ decision, now, onClose, onSettled }: {
     if (decision === null || target === null) return
     defineDecisionSheet()
     const sheet = document.createElement("norn-decision-sheet") as NornDecisionSheet
-    const call = scopedHostFetch(defaultFetch)
+    const call = scopedHostFetch(defaultFetch, "/api/host", pinnedScope !== undefined ? async () => pinnedScope : undefined)
     sheet.options = {
       document: DOCUMENT,
       decision,

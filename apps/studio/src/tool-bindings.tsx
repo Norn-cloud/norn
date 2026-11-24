@@ -8,7 +8,9 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { ConnectorProblem } from "./connections.tsx"
 import { api, type Binding, type InputMapping, type Inventory, type RunRole, type Tool } from "./lib/connectors.ts"
+import type { WorkspaceScope } from "./lib/definitions.ts"
 import { buildInput, formFields, parseField, type FormField } from "./lib/schema-form.ts"
+import { usePinnedWorkspaceScope } from "./lib/session.ts"
 
 /**
  * Tool bindings (#772): the organization's record that a gateway tool may run from Norn, with
@@ -34,8 +36,10 @@ function FieldInput({ field, value, onChange }: { readonly field: FormField; rea
 }
 
 /** Add or edit: label, the least role that may run it, and which inputs it fixes to which values. */
-function BindingEditor({ tool, binding, onDone }: { readonly tool: Tool; readonly binding?: Binding; readonly onDone: () => void }) {
+function BindingEditor({ tool, binding, onDone, scope }: { readonly tool: Tool; readonly binding?: Binding; readonly onDone: () => void; readonly scope?: WorkspaceScope | null }) {
   const client = useQueryClient()
+  const pinnedScope = usePinnedWorkspaceScope(binding?.id ?? `${tool.app}:${tool.name}`)
+  const effectiveScope = scope !== undefined ? scope : pinnedScope
   const fields = formFields(tool.inputSchema) ?? []
   const [label, setLabel] = useState(binding?.label ?? tool.name)
   const [runRole, setRunRole] = useState<RunRole>(binding?.runRole ?? "member")
@@ -45,8 +49,8 @@ function BindingEditor({ tool, binding, onDone }: { readonly tool: Tool; readonl
   const dropped = Object.keys(binding?.inputMapping ?? {}).filter((name) => !fields.some((field) => field.name === name))
   const save = useMutation({
     mutationFn: (inputMapping: InputMapping) => binding === undefined
-      ? api<{ binding: Binding }>("/bindings", { method: "POST", body: { app: tool.app, tool: tool.name, label, runRole, inputMapping } })
-      : api<{ binding: Binding }>(`/bindings/${encode(binding.id)}`, { method: "PATCH", body: { label, runRole, inputMapping } }),
+      ? api<{ binding: Binding }>("/bindings", { method: "POST", body: { app: tool.app, tool: tool.name, label, runRole, inputMapping }, scope: effectiveScope })
+      : api<{ binding: Binding }>(`/bindings/${encode(binding.id)}`, { method: "PATCH", body: { label, runRole, inputMapping }, scope: effectiveScope }),
     // Close at once: the save is done. The lists refresh behind it (the gateway's tool list can be slow).
     onSuccess: () => { onDone(); void client.invalidateQueries({ queryKey: ["connectors"] }) },
   })
@@ -96,11 +100,13 @@ function BindingEditor({ tool, binding, onDone }: { readonly tool: Tool; readonl
 }
 
 /** A test run: the fields the binding leaves open, as a form from the tool's input schema. */
-function TestRun({ binding, tool }: { readonly binding: Binding; readonly tool: Tool | undefined }) {
+function TestRun({ binding, tool, scope }: { readonly binding: Binding; readonly tool: Tool | undefined; readonly scope?: WorkspaceScope | null }) {
+  const pinnedScope = usePinnedWorkspaceScope(binding.id)
+  const effectiveScope = scope !== undefined ? scope : pinnedScope
   const fields = (formFields(tool?.inputSchema) ?? []).filter((field) => !(Object.hasOwn(binding.inputMapping, field.name)))
   const [texts, setTexts] = useState<Record<string, string>>({})
   const [problem, setProblem] = useState<string | null>(null)
-  const run = useMutation({ mutationFn: (input: unknown) => api<{ result: unknown }>(`/bindings/${encode(binding.id)}/run`, { method: "POST", body: { input } }) })
+  const run = useMutation({ mutationFn: (input: unknown) => api<{ result: unknown }>(`/bindings/${encode(binding.id)}/run`, { method: "POST", body: { input }, scope: effectiveScope }) })
   const submit = () => {
     const built = buildInput(fields, texts)
     if (!built.ok) return setProblem(built.error)
@@ -126,12 +132,12 @@ function TestRun({ binding, tool }: { readonly binding: Binding; readonly tool: 
 
 const useTools = (app: string | null) => useQuery({ queryKey: ["connectors", "tools", app], queryFn: () => api<{ tools: readonly Tool[] }>(`/apps/${encode(app ?? "")}/tools`), enabled: app !== null })
 
-function BindingRow({ binding, manage }: { readonly binding: Binding; readonly manage: boolean }) {
+function BindingRow({ binding, manage, scope }: { readonly binding: Binding; readonly manage: boolean; readonly scope?: WorkspaceScope | null }) {
   const client = useQueryClient()
   const [mode, setMode] = useState<"view" | "edit" | "run" | null>(null)
   const tools = useTools(mode === null ? null : binding.app)
   const tool = tools.data?.tools.find((entry) => entry.name === binding.tool)
-  const remove = useMutation({ mutationFn: () => api(`/bindings/${encode(binding.id)}`, { method: "DELETE" }), onSuccess: () => client.invalidateQueries({ queryKey: ["connectors"] }) })
+  const remove = useMutation({ mutationFn: () => api(`/bindings/${encode(binding.id)}`, { method: "DELETE", scope }), onSuccess: () => client.invalidateQueries({ queryKey: ["connectors"] }) })
   const toggle = (next: "view" | "edit" | "run") => setMode(mode === next ? null : next)
   return (
     <div className="border-t first:border-t-0" data-binding={binding.id}>
@@ -164,20 +170,20 @@ function BindingRow({ binding, manage }: { readonly binding: Binding; readonly m
       {mode !== null && mode !== "view" && tools.isSuccess && tool === undefined && (
         <p role="alert" className="border-t px-4 py-3 text-sm text-destructive">The gateway no longer lists {binding.app}.{binding.tool}. Remove this binding, or bind the tool again once the app serves it.</p>
       )}
-      {mode === "edit" && tool && <BindingEditor tool={tool} binding={binding} onDone={() => setMode(null)} />}
-      {mode === "run" && tool && <TestRun binding={binding} tool={tool} />}
-      {remove.isError && <ConnectorProblem error={remove.error} />}
+      {mode === "edit" && tool && <BindingEditor tool={tool} binding={binding} onDone={() => setMode(null)} scope={scope} />}
+      {mode === "run" && tool && <TestRun binding={binding} tool={tool} scope={scope} />}
+      {remove.isError && <ConnectorProblem error={remove.error} scope={scope} />}
     </div>
   )
 }
 
 /** Add: pick an app, then a tool, then bind it. */
-function AddBinding() {
+function AddBinding({ scope }: { readonly scope?: WorkspaceScope | null }) {
   const inventory = useQuery({ queryKey: ["connectors", "inventory"], queryFn: () => api<Inventory>("/inventory"), retry: false })
   const [app, setApp] = useState<string | null>(null)
   const [binding, setBinding] = useState<string | null>(null)
   const tools = useTools(app)
-  if (inventory.isError) return <ConnectorProblem error={inventory.error} />
+  if (inventory.isError) return <ConnectorProblem error={inventory.error} scope={scope} />
   return (
     <div className="space-y-2 border-t px-4 py-3">
       <label className="flex items-center gap-2 text-sm">
@@ -187,7 +193,7 @@ function AddBinding() {
           {(inventory.data?.apps ?? []).map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
         </select>
       </label>
-      {tools.isError && <ConnectorProblem error={tools.error} />}
+      {tools.isError && <ConnectorProblem error={tools.error} scope={scope} />}
       {tools.data?.tools.map((tool) => (
         <div key={tool.name} className="rounded-md border">
           <div className="flex items-center gap-2 px-3 py-2">
@@ -195,7 +201,7 @@ function AddBinding() {
             {tool.bindings.length > 0 && <Badge variant="secondary">Bound</Badge>}
             <Button size="sm" variant="outline" aria-label={`Bind ${tool.name}`} onClick={() => setBinding(binding === tool.name ? null : tool.name)}>Bind</Button>
           </div>
-          {binding === tool.name && <BindingEditor tool={tool} onDone={() => setBinding(null)} />}
+          {binding === tool.name && <BindingEditor tool={tool} onDone={() => setBinding(null)} scope={scope} />}
         </div>
       ))}
     </div>
@@ -204,17 +210,18 @@ function AddBinding() {
 
 export function ToolBindings() {
   const bindings = useQuery({ queryKey: ["connectors", "bindings"], queryFn: () => api<{ bindings: readonly Binding[]; manage: boolean }>("/bindings") })
+  const pinnedScope = usePinnedWorkspaceScope(bindings.data !== undefined)
   return (
     <Panel icon={Link2} label="Tool bindings">
       <Well>
         {bindings.isPending ? <p className="px-4 py-3 text-sm text-muted-foreground">Loading…</p>
-          : bindings.isError ? <ConnectorProblem error={bindings.error} />
+          : bindings.isError ? <ConnectorProblem error={bindings.error} scope={pinnedScope} />
           : (
             <>
               {bindings.data.bindings.length === 0
                 ? <EmptyState icon={Wrench} title="No tools bound yet">No tool can run from Norn until an admin binds it.</EmptyState>
-                : bindings.data.bindings.map((binding) => <BindingRow key={binding.id} binding={binding} manage={bindings.data.manage} />)}
-              {bindings.data.manage && <AddBinding />}
+                : bindings.data.bindings.map((binding) => <BindingRow key={binding.id} binding={binding} manage={bindings.data.manage} scope={pinnedScope} />)}
+              {bindings.data.manage && <AddBinding scope={pinnedScope} />}
             </>
           )}
       </Well>

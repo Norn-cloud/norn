@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { CellUnavailable, NotConnected, cellDefinitions, readStudioScope, dashboardField, dashboardId, disconnected, duplicateDashboard, saveDashboard, type Dashboard } from "../src/lib/definitions.ts"
+import { CellUnavailable, NotConnected, cellDefinitions, defaultFetch, readStudioScope, scopedHostFetch, setDisplayedScope, dashboardField, dashboardId, disconnected, duplicateDashboard, saveDashboard, type Dashboard } from "../src/lib/definitions.ts"
 import { cellDouble, tile } from "./support/definitions.ts"
 
 const testDefinitions = (fetcher: Parameters<typeof cellDefinitions>[0]) => cellDefinitions(fetcher, "/api/host", async () => ({ orgId: "org_demo", environmentId: "analytics" }))
@@ -109,5 +109,45 @@ test("two new dashboards whose titles read alike get distinct ids", () => {
 test("a stored definition whose payload is not a dashboard is no dashboard: the cell did not answer", async () => {
   const reader = (body: unknown) => async () => new Response(JSON.stringify(body), { status: 200 })
   for (const payload of [null, "x", { tiles: [] }, { title: "t" }, { title: "t", tiles: {} }])
-    await expect(cellDefinitions(reader({ id: "d", kind: "dashboard", version: 1, payload })).get("d")).rejects.toBeInstanceOf(CellUnavailable)
+    await expect(testDefinitions(reader({ id: "d", kind: "dashboard", version: 1, payload })).get("d")).rejects.toBeInstanceOf(CellUnavailable)
+})
+
+test("defaultFetch wrappers use pinned/displayed scope headers without refetching /api/me and stay bound after displayed scope changes", async () => {
+  const original = globalThis.fetch
+  const seen: { url: string; headers: Headers }[] = []
+  let meCalls = 0
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input)
+    if (url === "/api/me") {
+      meCalls += 1
+      return Response.json({ organization: { id: "org_live" }, environmentId: "env_live" })
+    }
+    seen.push({ url, headers: new Headers(init?.headers) })
+    return Response.json({ installed: true, id: "x", version: 1, receipt: { receiptHash: "h", commitSeq: 1, recordedAtMs: 1 } })
+  }) as typeof fetch
+  try {
+    setDisplayedScope({ orgId: "org_a", environmentId: "env_a" })
+    // 1. defaultFetch wrapper (not raw globalThis.fetch) reads displayed scope without calling /api/me.
+    await cellDefinitions(defaultFetch).install("studio.dashboard.a", { title: "A", tiles: [] })
+    expect(meCalls).toBe(0)
+    expect(seen[0]?.url).toContain("orgId=org_a&environmentId=env_a")
+    expect(seen[0]?.headers.get("x-norn-expected-org")).toBe("org_a")
+    expect(seen[0]?.headers.get("x-norn-expected-env")).toBe("env_a")
+
+    // 2. A pinned scope stays bound even if the displayed scope switches mid-workflow.
+    const pinned = { orgId: "org_a", environmentId: "env_a" }
+    const store = cellDefinitions(defaultFetch, "/api/host", () => Promise.resolve(pinned))
+    setDisplayedScope({ orgId: "org_b", environmentId: "env_b" })
+    await store.install("studio.dashboard.b", { title: "B", tiles: [] })
+    await scopedHostFetch(defaultFetch, "/api/host", async () => pinned)("/v1/actions/test", { method: "POST", body: "{}" })
+    expect(meCalls).toBe(0)
+    for (const call of seen.slice(1)) {
+      expect(call.url).toContain("orgId=org_a&environmentId=env_a")
+      expect(call.headers.get("x-norn-expected-org")).toBe("org_a")
+      expect(call.headers.get("x-norn-expected-env")).toBe("env_a")
+    }
+  } finally {
+    setDisplayedScope(undefined)
+    globalThis.fetch = original
+  }
 })

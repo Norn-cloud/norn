@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
+import { EXPECTED_ORG_HEADER, resolveActor } from "../actor.ts"
 import { createAuth, gatewaySubject } from "../auth.ts"
 import { connectors, PENDING_CREATE_LEASE_MS, type ConnectorDeps } from "../connectors.ts"
 import { canonicalJson, connectorVersion, manifestDigest, readDraft, runInput, toolManifest } from "../bindings.ts"
@@ -66,10 +67,16 @@ function stage(gatewayClient = false) {
   // `clock.offset` moves the connectors' clock forward, past the pending-create lease.
   const clock = { offset: 0 }
   const deps: ConnectorDeps = { db: d1(db), grant: async () => TOKEN, fetch: fetcher, host: standInHost(cell.host), now: () => Date.now() + clock.offset }
-  const send = async (path: string, init: RequestInit & { cookie?: string } = {}, overrides: Partial<ConnectorDeps> = {}, gateway: string | null = GATEWAY) => {
+  const send = async (path: string, init: RequestInit & { cookie?: string; omitScope?: boolean } = {}, overrides: Partial<ConnectorDeps> = {}, gateway: string | null = GATEWAY) => {
     const headers = new Headers(init.headers)
     if (init.cookie !== undefined) headers.set("cookie", init.cookie)
-    if (init.method !== undefined && init.method !== "GET") headers.set("origin", ORIGIN)
+    if (init.method !== undefined && init.method !== "GET") {
+      headers.set("origin", ORIGIN)
+      if (init.omitScope !== true && init.cookie !== undefined && !headers.has(EXPECTED_ORG_HEADER)) {
+        const actor = await resolveActor(new Request(ORIGIN, { headers: { cookie: init.cookie } }), auth)
+        if (actor !== null) headers.set(EXPECTED_ORG_HEADER, actor.orgId)
+      }
+    }
     // A test that brings its own cell keeps the same stand-in PDP in front of it.
     const given = overrides.host as (Fetcher & { raw?: boolean }) | undefined
     const host = "host" in overrides ? (given === undefined ? undefined : given.raw === true ? given : standInHost(given)) : deps.host
@@ -426,7 +433,8 @@ test("the whole link round trip: state cookie, basic client auth, resource, intr
     return new Response("not found", { status: 404 })
   }) as typeof fetch
   try {
-    const link = await call("/api/connectors/link", { method: "POST" })
+    const orgId = (db.query("SELECT id FROM organization LIMIT 1").get() as { id: string }).id
+    const link = await call("/api/connectors/link", { method: "POST", headers: { [EXPECTED_ORG_HEADER]: orgId } })
     const state = new URL(((await link.json()) as { url: string }).url).searchParams.get("state") ?? ""
     const back = await call(`/api/auth/callback/executor?code=abc&state=${encodeURIComponent(state)}`)
     expect(back.status).toBe(302)
@@ -664,4 +672,15 @@ test("a binding kept only in Studio cannot run: who may run it is the cell's to 
   const local = (await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", inputMapping: { repo: { fixed: "norn" } } }), cookie: owner }, { host: noKind.host })).body.binding as { id: string; definition: unknown }
   expect(local.definition).toBeNull()
   expect((await send(`/bindings/${local.id}/run`, { ...body("POST", { input: {} }), cookie: owner }, { host: noKind.host })).body.code).toBe("connectors.binding_not_in_cell")
+})
+
+test("connector mutations require x-norn-expected-org and refuse mismatched workspaces before reaching gateway or cell", async () => {
+  const { send, signUp, calls } = stage()
+  const owner = await signUp("scope-conn@example.com")
+  const before = calls.length
+  const missing = await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner, omitScope: true })
+  expect(missing).toMatchObject({ status: 400, body: { code: "scope.required" } })
+  const stale = await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner, headers: { "content-type": "application/json", [EXPECTED_ORG_HEADER]: "org_other" } })
+  expect(stale).toMatchObject({ status: 409, body: { code: "workspace.changed" } })
+  expect(calls.length).toBe(before)
 })

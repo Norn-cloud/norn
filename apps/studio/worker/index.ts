@@ -1,5 +1,5 @@
 import { forwardToHost, originAllowed, resolveActor, verifyWriteScope } from "./actor.ts"
-import { activeMembership, createAuth, verifyMagicLinkOrigin, type Auth, type MagicLinkMail } from "./auth.ts"
+import { activeMembership, createAuth, DISABLED_ORG_PATHS, verifyMagicLinkOrigin, type Auth, type MagicLinkMail } from "./auth.ts"
 import { passwordScrypt } from "./password.ts"
 import { clientIpHeader } from "./client-ip.ts"
 import { connectors } from "./connectors.ts"
@@ -366,9 +366,13 @@ const handler = {
     // generic OAuth), so a linked gateway identity never yields a Studio session. Linking stays.
     if (SIGN_IN_ELSEWHERE.has(pathname)) return refuse(403, "Studio sign-in is by email and password or magic link.")
     if (pluginBillingPath(pathname)) return refuse(404, "No such endpoint; billing starts at /api/billing.")
-    const moved = SPLIT_WRITE_PATHS.get(routePath(pathname))
+    const normalizedPath = routePath(pathname)
+    if (normalizedPath.startsWith("/api/auth/") && DISABLED_ORG_PATHS.has(normalizedPath.slice("/api/auth".length))) {
+      return Response.json({ code: "NOT_FOUND", message: "No such endpoint." }, { status: 404, headers: { "cache-control": "no-store" } })
+    }
+    const moved = SPLIT_WRITE_PATHS.get(normalizedPath)
     if (moved !== undefined && await billingSettings(env) !== undefined) return Response.json({ code: "USE_STUDIO_ROUTE", message: `With billing on, this goes through ${moved}.`, route: moved }, { status: 404, headers: { "cache-control": "no-store" } })
-    if (routePath(pathname) === "/api/auth/organization/accept-invitation") return acceptInvitation(await auth(env).handler(request))
+    if (normalizedPath === "/api/auth/organization/accept-invitation") return acceptInvitation(await auth(env).handler(request))
     if (pathname === "/api/workspaces" || pathname.startsWith("/api/workspaces/")) return workspaceRoute(request, env, pathname)
     if (pathname.startsWith("/api/auth/")) return auth(env).handler(request)
     if (pathname === "/api/me") return me(request, env)
@@ -378,18 +382,18 @@ const handler = {
       const actor = await resolveActor(request, auth(env))
       if (actor === null) return refuse(401, "Sign in first.")
       if (!originAllowed(request, actor, trustedOrigins(env))) return refuse(403, "Cross-origin request refused.")
-      const mismatch = await verifyWriteScope(request, auth(env), actor, { checkHostQuery: true })
-      if (mismatch !== null) return mismatch
+      const scopeCheck = await verifyWriteScope(request, auth(env), actor, { checkHostQuery: true, requireEnv: true })
+      if (!scopeCheck.ok) return scopeCheck.response
       if (env.NORN_HOST === undefined) return refuse(503, "No Norn host is connected to this deployment.")
-      return forwardToHost(request, env.NORN_HOST, auth(env), actor, pathname.slice("/api/host".length))
+      return forwardToHost(request, env.NORN_HOST, auth(env), actor, pathname.slice("/api/host".length), scopeCheck.scope)
     }
     // The question builders' catalog and checker: the cell's, read as the resolved actor.
     if (pathname.startsWith("/api/questions/")) {
       const actor = await resolveActor(request, auth(env))
       if (actor === null) return refuse(401, "Sign in first.")
       if (!originAllowed(request, actor, trustedOrigins(env))) return refuse(403, "Cross-origin request refused.")
-      const mismatch = await verifyWriteScope(request, auth(env), actor)
-      if (mismatch !== null) return mismatch
+      const scopeCheck = await verifyWriteScope(request, auth(env), actor, { requireEnv: true })
+      if (!scopeCheck.ok) return scopeCheck.response
       if (env.NORN_HOST === undefined) return refuse(503, "No Norn host is connected to this deployment.")
       return questions(request, cellFor(env.NORN_HOST, auth(env), actor), pathname.slice("/api/questions".length))
     }
@@ -401,8 +405,8 @@ const handler = {
       if (actor === null) return refuse(401, "Sign in first.")
       if (actor.actorKind !== "user") return refuse(403, "Sidekick acts for a signed-in person only.")
       if (!originAllowed(request, actor, trustedOrigins(env))) return refuse(403, "Cross-origin request refused.")
-      const mismatch = await verifyWriteScope(request, auth(env), actor)
-      if (mismatch !== null) return mismatch
+      const scopeCheck = await verifyWriteScope(request, auth(env), actor, { requireEnv: true })
+      if (!scopeCheck.ok) return scopeCheck.response
       if ((await cellScope(auth(env), actor.orgId)).environmentId === null) return refuse(409, "This workspace has no data cell yet.")
       const { grantAllowed, sidekickGrant } = await import("./sidekick.ts")
       if (!grantAllowed(actor.subjectId)) return refuse(429, "Too many Sidekick grants; wait a few minutes.", { "retry-after": "60" })
@@ -414,8 +418,8 @@ const handler = {
       if (actor === null) return refuse(401, "Sign in first.")
       if (actor.actorKind !== "user") return refuse(403, "The assistant acts for a signed-in person only.")
       if (!originAllowed(request, actor, trustedOrigins(env))) return refuse(403, "Cross-origin request refused.")
-      const mismatch = await verifyWriteScope(request, auth(env), actor)
-      if (mismatch !== null) return mismatch
+      const scopeCheck = await verifyWriteScope(request, auth(env), actor, { requireEnv: true })
+      if (!scopeCheck.ok) return scopeCheck.response
       if (env.NORN_HOST === undefined) return refuse(503, "No Norn host is connected to this deployment.")
       const scope = await cellScope(auth(env), actor.orgId)
       if (scope.environmentId === null) return refuse(409, "This workspace has no data cell yet.")

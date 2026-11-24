@@ -1,14 +1,14 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Bookmark, Pencil, Save, Trash2, Undo2 } from "lucide-react"
-import { useState, type FormEvent } from "react"
+import { useMemo, useState, type FormEvent } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
+import { defaultFetch } from "../lib/definitions.ts"
+import { usePinnedScope } from "../lib/session.ts"
 import { cellViews, newViewId, sortKeys, sortText, type SavedView, type StoredView, type ViewSaved } from "../lib/views.ts"
 import type { GridQuery } from "./records-grid.tsx"
-
-const views = cellViews()
 
 /** The view a grid query saves as. */
 const asView = (title: string, objectType: string, query: GridQuery): SavedView => ({
@@ -64,6 +64,11 @@ export function ViewsBar({ objectType, open, query, onOpen }: {
   readonly onOpen: (view: StoredView | null) => void
 }) {
   const client = useQueryClient()
+  const pinnedScope = usePinnedScope(objectType)
+  const views = useMemo(
+    () => cellViews(defaultFetch, pinnedScope !== undefined ? async () => pinnedScope : undefined),
+    [pinnedScope],
+  )
   const list = useQuery({ queryKey: ["views", objectType], queryFn: () => views.list(objectType), retry: false })
   const [notice, setNotice] = useState<{ readonly text: string; readonly undo?: () => Promise<void> } | null>(null)
   const [creating, setCreating] = useState(false)

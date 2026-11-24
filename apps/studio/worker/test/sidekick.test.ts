@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
+import { EXPECTED_ENV_HEADER, EXPECTED_ORG_HEADER } from "../actor.ts"
 import worker, { type Env } from "../index.ts"
 import { GRANTS_PER_WINDOW, GRANT_SECONDS, GRANT_WINDOW_MS, SIDEKICK_CLIENT, grantAllowed } from "../sidekick.ts"
 
@@ -62,8 +63,29 @@ async function workspace(env: Env) {
   return { owner, analyst, org }
 }
 
-const mint = (env: Env, cookie: string, origin: string | null = ORIGIN) =>
-  call(env, "/api/sidekick/grant", { method: "POST", headers: { cookie, ...origin === null ? {} : { origin } } })
+const mint = async (
+  env: Env,
+  cookie: string,
+  origin: string | null = ORIGIN,
+  scope?: { orgId?: string | null; environmentId?: string | null } | null,
+) => {
+  const headers: Record<string, string> = { cookie, ...origin === null ? {} : { origin } }
+  if (scope !== null && cookie !== "") {
+    let orgId = scope?.orgId
+    let environmentId = scope?.environmentId
+    if (scope === undefined) {
+      const me = await call(env, "/api/me", { headers: { cookie } })
+      if (me.ok) {
+        const body = (await me.json()) as { organization?: { id?: string } | null; environmentId?: string | null }
+        orgId = body.organization?.id ?? null
+        environmentId = body.environmentId ?? null
+      }
+    }
+    if (typeof orgId === "string" && orgId !== "") headers[EXPECTED_ORG_HEADER] = orgId
+    if (typeof environmentId === "string" && environmentId !== "") headers[EXPECTED_ENV_HEADER] = environmentId
+  }
+  return call(env, "/api/sidekick/grant", { method: "POST", headers })
+}
 const mcp = (env: Env, token: string) =>
   call(env, "/mcp", { method: "POST", body: JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list", params: {} }), headers: { "content-type": "application/json", authorization: `Bearer ${token}` } })
 
@@ -118,10 +140,14 @@ test("no session, another origin, another method, or a stage without /mcp mints 
   expect((await mint(off, someone.cookie)).status).toBe(404)
 })
 
-test("a workspace without a cell gets no grant", async () => {
+test("a workspace without a cell gets no grant, and missing or mismatched scope headers are refused", async () => {
   const env = stage()
   const { cookie } = await signUp(env, "new@example.com")
   expect((await mint(env, cookie)).status).toBe(409)
+  const { owner, org } = await workspace(env)
+  expect((await mint(env, owner.cookie, ORIGIN, null)).status).toBe(400)
+  expect((await mint(env, owner.cookie, ORIGIN, { orgId: org })).status).toBe(400)
+  expect((await mint(env, owner.cookie, ORIGIN, { orgId: org, environmentId: "other" })).status).toBe(409)
 })
 
 test("a person mints a bounded number of grants per window, then gets 429 until it passes", async () => {

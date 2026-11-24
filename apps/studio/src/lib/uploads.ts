@@ -1,4 +1,5 @@
-import { CellRefusal, NotServed, cellRead } from "./live-transport.ts"
+import { defaultFetch, getDisplayedScope, readStudioScope, type StudioScope } from "./definitions.ts"
+import { CellRefusal, NotServed, cellRead, type Fetch } from "./live-transport.ts"
 
 /**
  * A CSV into the cell (L-connect's upload routes, L-bulk's dataset load): the bytes go straight to
@@ -51,30 +52,40 @@ export const columnId = (column: Column): string => column.id ?? column.name.tri
 /** The kind a column starts as: what the cell inferred, in the words `:define` takes. */
 export const kindOf = (inferred: Inferred): Kind => inferred === "string" ? "text" : inferred === "date" ? "datetime" : inferred
 
-/** Begin an upload, send the file to the URL the cell signed, and have the cell read it back. */
-export async function upload(file: File, put: Put = (url, init) => fetch(url, init)): Promise<{ readonly uploadId: string; readonly completed: Completed }> {
-  const begun = await step("cell", async (signal) => (await cellRead<Begun>("/v1/uploads:begin", "Uploads are", { method: "POST", body: JSON.stringify({ fileName: file.name, contentType: file.type || "text/csv", size: file.size }), signal })).document)
+/** Begin an upload, send the file to the URL the cell signed, and have the cell read it back under one pinned scope. */
+export async function upload(
+  file: File,
+  put: Put = (url, init) => fetch(url, init),
+  boundScope?: StudioScope | null,
+  cellFetcher: Fetch = defaultFetch,
+): Promise<{ readonly uploadId: string; readonly completed: Completed; readonly scope: StudioScope | null }> {
+  const scope = boundScope !== undefined
+    ? boundScope
+    : getDisplayedScope() !== undefined
+      ? getDisplayedScope()!
+      : await readStudioScope(cellFetcher)
+  const begun = await step("cell", async (signal) => (await cellRead<Begun>("/v1/uploads:begin", "Uploads are", { method: "POST", body: JSON.stringify({ fileName: file.name, contentType: file.type || "text/csv", size: file.size }), signal }, cellFetcher, scope)).document)
   const sent = await step("storage", (signal) => put(begun.putUrl, { method: "PUT", headers: begun.putHeaders, body: file, signal }))
   if (!sent.ok) throw new Error(`The storage refused the file (${sent.status}); nothing was loaded.`)
-  const completed = await step("cell", async (signal) => (await cellRead<Completed>(`/v1/uploads/${encodeURIComponent(begun.uploadId)}:complete`, "Uploads are", { method: "POST", body: "{}", signal })).document)
-  return { uploadId: begun.uploadId, completed }
+  const completed = await step("cell", async (signal) => (await cellRead<Completed>(`/v1/uploads/${encodeURIComponent(begun.uploadId)}:complete`, "Uploads are", { method: "POST", body: "{}", signal }, cellFetcher, scope)).document)
+  return { uploadId: begun.uploadId, completed, scope }
 }
 
 const typing = (typeName: string, key: readonly string[], columns: readonly DefineColumn[], sha256: string) =>
   JSON.stringify({ typeName, key, columns, sha256 })
 
 /** Ask the cell to admit a type for the upload, without writing any row. */
-export const define = async (uploadId: string, typeName: string, key: readonly string[], columns: readonly DefineColumn[], sha256: string): Promise<Defined> =>
-  (await cellRead<Defined>(`/v1/uploads/${encodeURIComponent(uploadId)}:define`, "Defining a type from an upload is", { method: "POST", body: typing(typeName, key, columns, sha256) })).document
+export const define = async (uploadId: string, typeName: string, key: readonly string[], columns: readonly DefineColumn[], sha256: string, boundScope?: StudioScope | null, cellFetcher: Fetch = defaultFetch): Promise<Defined> =>
+  (await cellRead<Defined>(`/v1/uploads/${encodeURIComponent(uploadId)}:define`, "Defining a type from an upload is", { method: "POST", body: typing(typeName, key, columns, sha256) }, cellFetcher, boundScope)).document
 
 /**
  * Load the upload's rows into the admitted type: into the analytical engine when the cell has one
  * (`/v1/datasets:load`), or, when it says it has none (`NotServed`, or 501 unconfigured), not at all:
  * the caller then offers the row-by-row load, never silently.
  */
-export async function loadDataset(uploadId: string, objectType: string): Promise<DatasetLoaded | "no-engine"> {
+export async function loadDataset(uploadId: string, objectType: string, boundScope?: StudioScope | null, cellFetcher: Fetch = defaultFetch): Promise<DatasetLoaded | "no-engine"> {
   try {
-    return (await cellRead<DatasetLoaded>("/v1/datasets:load", "Analysis datasets are", { method: "POST", body: JSON.stringify({ uploadId, objectType }) })).document
+    return (await cellRead<DatasetLoaded>("/v1/datasets:load", "Analysis datasets are", { method: "POST", body: JSON.stringify({ uploadId, objectType }) }, cellFetcher, boundScope)).document
   } catch (error) {
     if (error instanceof NotServed || (error instanceof CellRefusal && error.status === 501)) return "no-engine"
     throw error
@@ -82,5 +93,5 @@ export async function loadDataset(uploadId: string, objectType: string): Promise
 }
 
 /** Write each row through the cell as a governed record (L-connect's `:load`): checked one by one. */
-export const loadRecords = async (uploadId: string, typeName: string, key: readonly string[], columns: readonly DefineColumn[], sha256: string): Promise<RecordsLoaded> =>
-  (await cellRead<RecordsLoaded>(`/v1/uploads/${encodeURIComponent(uploadId)}:load`, "Uploads are", { method: "POST", body: typing(typeName, key, columns, sha256) })).document
+export const loadRecords = async (uploadId: string, typeName: string, key: readonly string[], columns: readonly DefineColumn[], sha256: string, boundScope?: StudioScope | null, cellFetcher: Fetch = defaultFetch): Promise<RecordsLoaded> =>
+  (await cellRead<RecordsLoaded>(`/v1/uploads/${encodeURIComponent(uploadId)}:load`, "Uploads are", { method: "POST", body: typing(typeName, key, columns, sha256) }, cellFetcher, boundScope)).document

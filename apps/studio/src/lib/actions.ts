@@ -1,4 +1,4 @@
-import { CellUnavailable, getDisplayedScope, readStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
+import { CellUnavailable, defaultFetch, getDisplayedScope, isDefaultFetch, readStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
 
 /**
  * Governed actions from Studio: the catalog the cell offers this reader, and one call.
@@ -100,7 +100,6 @@ export type CallResult =
 export const ACTIONS_UNAVAILABLE = "This cell doesn't take actions from Studio yet."
 
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>
-const defaultFetch: Fetch = (input, init) => fetch(input, init)
 
 /**
  * DIAG-REASON-1: what refused a call, disclosed with the caller's authority: the law (its pinned
@@ -172,7 +171,7 @@ export async function callAction(
 ): Promise<CallResult> {
   const scope = boundScope !== undefined
     ? boundScope
-    : fetcher === defaultFetch && getDisplayedScope() !== undefined
+    : isDefaultFetch(fetcher) && getDisplayedScope() !== undefined
       ? getDisplayedScope()!
       : await readStudioScope(fetcher)
   if (scope === null) return { kind: "no-cell" }

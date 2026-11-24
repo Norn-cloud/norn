@@ -1,4 +1,4 @@
-import { CellUnavailable, getDisplayedScope, readStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
+import { CellUnavailable, defaultFetch, getDisplayedScope, isDefaultFetch, readStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
 
 /**
  * One scoped call to a cell route, read into the shapes every RUNS route shares: a document, a
@@ -8,7 +8,7 @@ import { CellUnavailable, getDisplayedScope, readStudioScope, scopedHostFetch, t
  */
 
 export type Fetch = (input: string, init?: RequestInit) => Promise<Response>
-export const defaultFetch: Fetch = (input, init) => fetch(input, init)
+export { defaultFetch }
 
 export interface Diagnostic { readonly code: string; readonly message: string; readonly pointer: string | null }
 
@@ -53,7 +53,7 @@ export async function cellCall<T>(path: string, init: RequestInit = {}, fetcher:
   try {
     scope = boundScope !== undefined
       ? boundScope
-      : write && fetcher === defaultFetch && getDisplayedScope() !== undefined
+      : write && isDefaultFetch(fetcher) && getDisplayedScope() !== undefined
         ? getDisplayedScope()!
         : await readStudioScope(fetcher)
   } catch (error) { if (error instanceof CellUnavailable) return { kind: "unavailable" }; throw error }
