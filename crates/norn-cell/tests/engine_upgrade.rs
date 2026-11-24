@@ -39,21 +39,51 @@ const STORAGE_V3: &str = include_str!("fixtures/engine-storage-v3.json");
 const STORAGE_V4: &str = include_str!("fixtures/engine-storage-v4.json");
 
 /// Storage version 6 (#1424 U1) adds the transactional automation trigger
-/// outbox and the server-bound retained authority table, both initially empty
-/// on older cells.
+/// outbox, the indexed trigger projection, and the server-bound retained
+/// authority table, all initially empty on older cells (purely additive DDL).
 fn add_automation_tables(image: &mut Value) {
     let objects = [
         (
             "table",
             "_norn_automation_outbox",
             "_norn_automation_outbox",
-            "CREATE TABLE \"_norn_automation_outbox\" (\n  \"world\" TEXT NOT NULL,\n  \"automation_id\" TEXT NOT NULL,\n  \"revision\" INTEGER NOT NULL,\n  \"trigger_commit_seq\" INTEGER NOT NULL,\n  \"object_type\" TEXT NOT NULL,\n  \"object_id\" TEXT NOT NULL,\n  \"object_version\" INTEGER NOT NULL,\n  \"trigger_kind\" TEXT NOT NULL,\n  \"action_id\" TEXT,\n  \"before_values\" TEXT,\n  \"after_values\" TEXT,\n  \"recorded_at_ms\" INTEGER NOT NULL,\n  \"consumed_commit_seq\" INTEGER,\n  PRIMARY KEY (\"world\", \"automation_id\", \"revision\", \"trigger_commit_seq\", \"object_type\", \"object_id\", \"object_version\")\n)",
+            "CREATE TABLE \"_norn_automation_outbox\" (\n  \"world\" TEXT NOT NULL,\n  \"automation_id\" TEXT NOT NULL,\n  \"revision\" INTEGER NOT NULL,\n  \"trigger_commit_seq\" INTEGER NOT NULL,\n  \"object_type\" TEXT NOT NULL,\n  \"object_id\" TEXT NOT NULL,\n  \"object_version\" INTEGER NOT NULL,\n  \"trigger_kind\" TEXT NOT NULL,\n  \"action_id\" TEXT,\n  \"before_values\" TEXT,\n  \"after_values\" TEXT,\n  \"recorded_at_ms\" INTEGER NOT NULL,\n  \"consumed_commit_seq\" INTEGER,\n  \"voided_commit_seq\" INTEGER,\n  PRIMARY KEY (\"world\", \"automation_id\", \"revision\", \"trigger_commit_seq\", \"object_type\", \"object_id\", \"object_version\")\n)",
         ),
         (
             "index",
             "_norn_automation_outbox/pending",
             "_norn_automation_outbox",
-            "CREATE INDEX \"_norn_automation_outbox/pending\" ON \"_norn_automation_outbox\" (\"world\", \"trigger_commit_seq\", \"automation_id\", \"revision\", \"object_type\", \"object_id\", \"object_version\") WHERE \"consumed_commit_seq\" IS NULL",
+            "CREATE INDEX \"_norn_automation_outbox/pending\" ON \"_norn_automation_outbox\" (\"world\", \"trigger_commit_seq\", \"automation_id\", \"revision\", \"object_type\", \"object_id\", \"object_version\") WHERE \"consumed_commit_seq\" IS NULL AND \"voided_commit_seq\" IS NULL",
+        ),
+        (
+            "index",
+            "_norn_automation_outbox/automation",
+            "_norn_automation_outbox",
+            "CREATE INDEX \"_norn_automation_outbox/automation\" ON \"_norn_automation_outbox\" (\"automation_id\", \"revision\") WHERE \"consumed_commit_seq\" IS NULL AND \"voided_commit_seq\" IS NULL",
+        ),
+        (
+            "table",
+            "_norn_retained_automation_trigger",
+            "_norn_retained_automation_trigger",
+            "CREATE TABLE \"_norn_retained_automation_trigger\" (\n  \"automation_id\" TEXT NOT NULL,\n  \"revision\" INTEGER NOT NULL,\n  \"object_type\" TEXT NOT NULL,\n  \"root_type\" TEXT NOT NULL,\n  \"trigger_kind\" TEXT NOT NULL,\n  \"action_id\" TEXT,\n  \"lifecycle_property\" TEXT,\n  \"lifecycle_state\" TEXT,\n  PRIMARY KEY (\"automation_id\")\n)",
+        ),
+        (
+            "index",
+            "_norn_retained_automation_trigger/type",
+            "_norn_retained_automation_trigger",
+            "CREATE INDEX \"_norn_retained_automation_trigger/type\" ON \"_norn_retained_automation_trigger\" (\"object_type\", \"trigger_kind\", \"automation_id\")",
+        ),
+        (
+            "index",
+            "_norn_retained_automation_trigger/root",
+            "_norn_retained_automation_trigger",
+            "CREATE INDEX \"_norn_retained_automation_trigger/root\" ON \"_norn_retained_automation_trigger\" (\"root_type\", \"trigger_kind\")",
+        ),
+        (
+            "index",
+            "_norn_retained_automation_trigger/action",
+            "_norn_retained_automation_trigger",
+            "CREATE INDEX \"_norn_retained_automation_trigger/action\" ON \"_norn_retained_automation_trigger\" (\"action_id\", \"automation_id\") WHERE \"trigger_kind\" = 'event:action'",
         ),
         (
             "table",
@@ -86,7 +116,25 @@ fn add_automation_tables(image: &mut Value) {
                 "before_values",
                 "after_values",
                 "recorded_at_ms",
-                "consumed_commit_seq"
+                "consumed_commit_seq",
+                "voided_commit_seq"
+            ],
+            "rows": [],
+        }),
+    );
+    tables.insert(
+        "_norn_retained_automation_trigger".to_owned(),
+        serde_json::json!({
+            "columns": [
+                "rowid",
+                "automation_id",
+                "revision",
+                "object_type",
+                "root_type",
+                "trigger_kind",
+                "action_id",
+                "lifecycle_property",
+                "lifecycle_state"
             ],
             "rows": [],
         }),
@@ -664,6 +712,123 @@ fn a_storage_v4_cell_opens_on_this_engine_with_identical_receipts() {
     assert_eq!(
         engine_release::admission(&raw(&path)).expect("admission"),
         Admission::Current
+    );
+}
+
+/// Predecessor upgrade (storage v5 -> v6): a real storage version 5 cell
+/// (with #1547's marking history index already in place) opens on this engine,
+/// upgrades in place via purely additive DDL, preserves every ledger entry and
+/// receipt across reopen, and continues committing on the inherited chain.
+#[test]
+fn a_storage_v5_cell_opens_on_this_engine_with_identical_receipts() {
+    let mut v5_image: Value = serde_json::from_str(STORAGE_V4).expect("fixture");
+    add_marking_history_index(&mut v5_image);
+    let v5_stamp = serde_json::to_string(&EngineStamp {
+        format: STAMP_FORMAT.to_owned(),
+        storage: 5,
+        writer: "drop-v5".to_owned(),
+    })
+    .expect("v5 stamp");
+    let stamp_row = v5_image["tables"]["_norn_meta"]["rows"]
+        .as_array_mut()
+        .expect("meta rows")
+        .iter_mut()
+        .find(|row| row[1] == STAMP_KEY)
+        .expect("the v4 fixture is stamped");
+    stamp_row[2] = v5_stamp.into();
+    v5_image["storage"] = 5.into();
+
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    engine_fixture::load(&v5_image, &path);
+    let before = engine_fixture::image_of(&path);
+    assert_eq!(before, v5_image, "the v5 image loads losslessly");
+    assert_eq!(
+        engine_release::admission(&raw(&path)).expect("admission"),
+        Admission::Upgrade { from: 5 }
+    );
+
+    let mut store = open(&path).expect("a v5 cell opens on this engine");
+    let head = store.read().verify_ledger().expect("the ledger verifies");
+    assert_eq!(head.commits, engine_fixture::COMMITS);
+    let receipts = store.read().receipts().expect("receipts");
+    assert_eq!(
+        u64::try_from(receipts.len()).expect("count"),
+        engine_fixture::COMMITS
+    );
+    for (batch, receipt) in engine_fixture::batches().iter().zip(&receipts) {
+        match store.commit(batch).expect("replay") {
+            CommitOutcome::Replayed(replayed) => assert_eq!(&replayed, receipt),
+            CommitOutcome::Committed(_) => panic!("a recorded commit was committed again"),
+        }
+    }
+    assert_eq!(store.verified_head().expect("head"), head);
+    drop(store);
+
+    let after = engine_fixture::image_of(&path);
+    for table in [
+        "_norn_ledger",
+        "_norn_receipt",
+        "_norn_approved_call",
+        "_norn_step_call",
+    ] {
+        assert_eq!(
+            rows(&after, table),
+            rows(&before, table),
+            "{table} is unchanged across v5 -> v6 upgrade"
+        );
+    }
+
+    let stamp = serde_json::to_string(&EngineStamp::current()).expect("stamp");
+    let mut expected = before;
+    let expected_stamp_row = expected["tables"]["_norn_meta"]["rows"]
+        .as_array_mut()
+        .expect("meta rows")
+        .iter_mut()
+        .find(|row| row[1] == STAMP_KEY)
+        .expect("the v5 cell is stamped");
+    expected_stamp_row[2] = stamp.into();
+    expected["storage"] = STORAGE_VERSION.into();
+    add_automation_tables(&mut expected);
+    let mut catalog = after;
+    by_name(&mut catalog);
+    by_name(&mut expected);
+    assert_eq!(
+        catalog, expected,
+        "the v5 -> v6 upgrade writes the stamp and purely additive automation tables alone"
+    );
+    assert_eq!(
+        engine_release::admission(&raw(&path)).expect("admission"),
+        Admission::Current
+    );
+
+    // Reopen after upgrade: writes nothing, preserves receipts, and commits cleanly.
+    let store = open(&path).expect("reopen upgraded v5 cell");
+    assert_eq!(store.read().verify_ledger().expect("ledger"), head);
+    assert_eq!(
+        store.read().receipts().expect("reopened receipts"),
+        receipts
+    );
+    drop(store);
+    let mut reopened = engine_fixture::image_of(&path);
+    by_name(&mut reopened);
+    assert_eq!(
+        reopened, catalog,
+        "reopening at current version writes nothing"
+    );
+
+    let mut store = open(&path).expect("reopen for post-upgrade commit");
+    let mut next = engine_fixture::batches()[1].clone();
+    next.idempotency_key = Some("after-v5-upgrade".to_owned());
+    next.logical_time = 6_000;
+    let CommitOutcome::Committed(receipt) = store.commit(&next).expect("post-upgrade commit")
+    else {
+        panic!("expected a new commit after v5 upgrade");
+    };
+    assert_eq!(receipt.body.commit_seq, engine_fixture::COMMITS + 1);
+    assert_eq!(
+        store.read().verify_ledger().expect("ledger").commits,
+        engine_fixture::COMMITS + 1
     );
 }
 

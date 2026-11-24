@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "native")]
 use tokio::sync::Notify;
 
+use crate::automation_outbox;
 use crate::codec::{canonical_json, hash_json};
 #[cfg(feature = "native")]
 use crate::engine::NativeEngine;
@@ -3431,6 +3432,7 @@ impl<E: SqlEngine> CellStore<E> {
                     for change in record.retained.iter().chain(&record.riding) {
                         crate::retained::insert(
                             &self.conn,
+                            install.candidate_model,
                             &change.definition,
                             version,
                             commit_seq,
@@ -3449,6 +3451,7 @@ impl<E: SqlEngine> CellStore<E> {
                     )?;
                     Ok(())
                 })?;
+                automation_outbox::void_retired(&self.conn, record.retained.iter().chain(&record.riding), commit_seq)?;
                 self.conn.execute(
                     &format!("UPDATE \"{META}\" SET \"value\" = ?1 WHERE \"key\" = 'ddl_hash'"),
                     params![install.candidate_model.ddl_hash()],
@@ -3467,18 +3470,11 @@ impl<E: SqlEngine> CellStore<E> {
             }
             crate::flow_run::check_starts(&writer.reader(), effective_batch)?;
             crate::decision_ledger::check(&writer.reader(), effective_batch)?;
-            let automation_watch =
-                crate::automation_outbox::capture_before(&writer.reader(), effective_batch)?;
+            let watch = automation_outbox::capture_before(&writer.reader(), effective_batch)?;
             let written = writer.apply_writes()?;
             crate::flow_run::apply(&writer.reader(), effective_batch, &written, commit_seq)?;
             crate::decision_ledger::apply(&writer.reader(), effective_batch, commit_seq)?;
-            crate::automation_outbox::record(
-                &writer.reader(),
-                effective_batch,
-                &written,
-                commit_seq,
-                automation_watch,
-            )?;
+            automation_outbox::record(&writer.reader(), effective_batch, &written, commit_seq, &watch)?;
             let quantity_result = writer.apply_quantity()?;
             probe(CommitPoint::FactsApplied)?;
             let linked = writer.apply_links()?;

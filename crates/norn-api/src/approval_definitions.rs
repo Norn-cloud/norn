@@ -290,7 +290,7 @@ pub(crate) fn approval_context<E: SqlEngine>(
     Ok((actions, gated_except(host, &|other| other == id)?))
 }
 
-fn gated_except<E: SqlEngine>(
+pub(crate) fn gated_except<E: SqlEngine>(
     host: &DevHost<E>,
     skip: &dyn Fn(&str) -> bool,
 ) -> Result<BTreeSet<String>, Refusal> {

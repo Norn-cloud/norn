@@ -641,6 +641,19 @@ fn kernel_refusal<E: SqlEngine>(
     action_id: &str,
     error: &norn_kernel::ActionRefusal<norn_cell::CellError>,
 ) -> Refusal {
+    if matches!(
+        error,
+        norn_kernel::ActionRefusal::Decision(norn_kernel::DecisionRefusal::Host(
+            norn_cell::CellError::AutomationFanoutExceeded { .. }
+        ))
+    ) {
+        return Refusal::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "automation.fanout_exceeded",
+            "the commit matched too many automation triggers",
+            "this commit exceeded the per-commit automation trigger fan-out limit; nothing was committed",
+        );
+    }
     let refusal = error.refusal();
     if matches!(
         refusal.category,

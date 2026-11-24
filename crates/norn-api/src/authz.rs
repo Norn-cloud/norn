@@ -84,6 +84,16 @@ pub struct RefusalDetailRequest<'a> {
     pub action_id: &'a str,
 }
 
+/// Verified parent Cedar grant identities backing a newly bound automation
+/// delegation (Core 05 `AUTH-ATTENUATE-1`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedAutomationGrant {
+    /// Sorted, deduplicated, non-empty Cedar/AccessIR policy rule ids whose
+    /// explicit `Allow` decision authorized the installing author across every
+    /// type in [`AutomationGrantRequest::matched_types`].
+    pub parent_grant_ids: Vec<String>,
+}
+
 /// Trusted author and target action checked when admitting or installing an
 /// automation definition (Core 05 `AUTH-ATTENUATE-1`).
 #[derive(Debug, Clone, Copy)]
@@ -96,6 +106,10 @@ pub struct AutomationGrantRequest<'a> {
     pub action: &'a norn_ir::ActionRoot,
     /// Declared object type the automation watches.
     pub object_type: &'a str,
+    /// Every concrete object type the automation rule can match (the declared
+    /// `object_type` and every subtype extending it). The host policy must
+    /// obtain an explicit PDP `Allow` for every entry.
+    pub matched_types: &'a [String],
 }
 
 /// HOST-AUTH-1: trusted server policy; every kernel callback denies by default.
@@ -180,16 +194,18 @@ pub trait Authorizer: Send + Sync {
     }
 
     /// Core 05 `AUTH-ATTENUATE-1`: whether `request.actor` holds an explicit
-    /// grant for `request.action` on `request.object_type`, permitting them to
-    /// bind an attenuated, revocable automation delegation for it. Defaults to
-    /// deny; never borrowed from a later triggering actor.
+    /// scoped PDP grant for `request.action` on every concrete type in
+    /// `request.matched_types`, permitting them to bind an attenuated,
+    /// revocable automation delegation for it. Defaults to deny; never borrowed
+    /// from a later triggering actor and never satisfied by a non-PDP fallback.
     ///
     /// # Errors
-    /// Denies unless the host policy explicitly verifies the author's grant.
+    /// Denies unless the host policy explicitly verifies the author's grant
+    /// through the PDP and returns non-empty parent grant identities.
     fn authorize_automation_grant(
         &self,
         _request: &AutomationGrantRequest<'_>,
-    ) -> Result<(), Refusal> {
+    ) -> Result<VerifiedAutomationGrant, Refusal> {
         Err(read_denied())
     }
 
@@ -370,12 +386,14 @@ mod tests {
             norn_kernel::ActionAuthorizer::authorize_read_type(&kernel, &read_type),
             ReadMetadata.action_read_type(&read_type)
         );
+        let matched_types = vec!["demo.Order".to_owned()];
         let grant_refusal = ReadMetadata
             .authorize_automation_grant(&AutomationGrantRequest {
                 scope: &cell_scope,
                 actor: "viewer",
                 action: &action,
                 object_type: "demo.Order",
+                matched_types: &matched_types,
             })
             .expect_err("automation author grant must deny by default");
         assert_eq!(grant_refusal.code, codes::AUTHZ_DENIED);

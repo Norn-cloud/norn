@@ -1722,7 +1722,7 @@ pub(crate) fn riding_approval<E: SqlEngine>(
     let canonical = canonical(&request.payload)?;
     let value: Value = serde_json::from_str(&canonical).map_err(Refusal::host)?;
     let roles: Vec<&str> = kinds.roles.iter().map(String::as_str).collect();
-    let gated = gated_except(host, &|other| {
+    let gated = crate::approval_definitions::gated_except(host, &|other| {
         other == request.id || superseded.contains(other)
     })?;
     let findings = crate::approval_definitions::check(&value, actions, &roles, &gated);

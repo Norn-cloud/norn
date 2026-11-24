@@ -157,6 +157,10 @@ mod cases {
     }
 
     fn provisioned_tenant(path: &Path, roles: &[&str]) -> TenantCell {
+        provisioned_tenant_with_artifacts(path, melt_artifacts_with_policy(roles))
+    }
+
+    fn provisioned_tenant_with_artifacts(path: &Path, artifacts: Vec<Value>) -> TenantCell {
         let file = path.to_owned();
         let tenant = Tenant::open(
             tenant_scope(),
@@ -173,7 +177,7 @@ mod cases {
         let mut cell = TenantCell { tenant, tokens };
         let body = json!({
             "baseSha256": base::trusted_base().unwrap().sha256(),
-            "artifacts": melt_artifacts_with_policy(roles),
+            "artifacts": artifacts,
         })
         .to_string();
         let response = cell.call("POST", PROVISION_PATH, Some(&user_token("owner")), &body);
@@ -576,6 +580,18 @@ mod cases {
         assert!(authority.revocable);
         assert!(!authority.delegation_id.is_empty());
         assert!(!authority.action_digest.is_empty());
+        assert_eq!(
+            authority.parent_grant_ids.len(),
+            1,
+            "{:?}",
+            authority.parent_grant_ids
+        );
+        assert!(
+            authority.parent_grant_ids[0].contains(POLICY)
+                && authority.parent_grant_ids[0].contains("callers"),
+            "{:?}",
+            authority.parent_grant_ids
+        );
     }
 
     /// 6a. An author lacking the action grant cannot borrow a future trigger
@@ -645,6 +661,10 @@ mod cases {
             &melt_body("melt-by-member", "15", "12", "k-member-1"),
         );
         assert_eq!(trigger_write.status, 200, "{}", trigger_write.body);
+        let trigger_commit_seq =
+            serde_json::from_str::<Value>(&trigger_write.body).unwrap()["receipt"]["commitSeq"]
+                .as_u64()
+                .unwrap();
 
         let host = shared.tenant.serving_host().unwrap();
         let stored = host
@@ -679,6 +699,17 @@ mod cases {
             RetainedLifecycle::Retired
         );
         assert_eq!(after_retire.definition.authority, None);
+        assert_eq!(
+            pending_automation_trigger_count(host).unwrap(),
+            0,
+            "retiring an automation must void its pending outbox candidates in the same transaction"
+        );
+        let audited = automation_triggers_for_commit(host, trigger_commit_seq).unwrap();
+        assert_eq!(audited.len(), 1, "{audited:?}");
+        assert!(
+            audited[0].voided_commit_seq.is_some(),
+            "voided candidate must record its retire commit_seq"
+        );
 
         let second_write = shared.call(
             "POST",
@@ -689,8 +720,181 @@ mod cases {
         assert_eq!(second_write.status, 200, "{}", second_write.body);
         assert_eq!(
             pending_automation_trigger_count(shared.tenant.serving_host().unwrap()).unwrap(),
-            1,
-            "retired automation must not record new trigger candidates"
+            0,
+            "retired automation must neither keep pending candidates nor record new ones"
+        );
+    }
+
+    /// 6c. Conditional policy rules (requiring a resource/context predicate the
+    /// admission-time PDP check cannot establish) fail closed: there is no
+    /// role-conjunct fallback outside Cedar.
+    #[test]
+    fn conditional_grant_is_refused_at_admission_without_role_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut artifacts = melt_artifacts_with_policy(&["owner"]);
+        let policy = artifacts
+            .iter_mut()
+            .find(|artifact| artifact["kind"] == "policy")
+            .unwrap();
+        policy["payload"]["rules"][0]["allOf"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({ "resource": { "name": "id", "op": "eq", "value": "m" } }));
+        let mut cell =
+            provisioned_tenant_with_artifacts(&dir.path().join("conditional.sqlite"), artifacts);
+        let body = json!({
+            "kind": "automation",
+            "id": "ops.conditional_denied",
+            "payload": automation_payload(
+                "Conditional denied",
+                json!({ "kind": "event", "event": "created" }),
+            ),
+        });
+        let refused = cell.call(
+            "POST",
+            "/v1/definitions:admit",
+            Some(&user_token("owner")),
+            &body.to_string(),
+        );
+        assert_eq!(
+            refused.status, 403,
+            "conditional rule must not bypass Cedar via role fallback: {}",
+            refused.body
+        );
+    }
+
+    /// 6d. Watching a supertype requires an explicit Cedar grant across every
+    /// subtype the automation rule can match; granting only the supertype
+    /// refuses, while granting supertype and subtype binds both parent grant ids.
+    #[test]
+    fn supertype_automation_requires_author_grant_on_every_subtype() {
+        const SPECIAL_MELT: &str = "constitution.SpecialMelt";
+        let special_entity = json!({
+            "artifactId": "constitution.SpecialMelt.entity",
+            "dependencies": [
+                {
+                    "artifactId": "constitution.Melt.entity",
+                    "kind": "entity",
+                    "required": true,
+                    "version": "1.0.0"
+                }
+            ],
+            "irVersion": "0.1",
+            "kind": "entity",
+            "lifecycle": "draft",
+            "name": "Special fine-metal conversion",
+            "namespace": "constitution",
+            "payload": {
+                "entityVersion": "2.0",
+                "objectType": {
+                    "name": SPECIAL_MELT,
+                    "extends": MELT,
+                    "properties": []
+                }
+            },
+            "provenance": { "source": "authoring_sdk", "sourcePath": "tests/automations_u1.rs" },
+            "scope": { "orgId": "org_a", "environmentId": "prod" },
+            "version": "1.0.0"
+        });
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut parent_only_artifacts = melt_artifacts_with_policy(&["owner"]);
+        parent_only_artifacts.push(special_entity.clone());
+        let mut parent_only = provisioned_tenant_with_artifacts(
+            &dir.path().join("parent-only.sqlite"),
+            parent_only_artifacts,
+        );
+        let watch_parent = json!({
+            "kind": "automation",
+            "id": "ops.watch_parent",
+            "payload": automation_payload(
+                "Watch parent",
+                json!({ "kind": "event", "event": "created" }),
+            ),
+        });
+        let refused_parent = parent_only.call(
+            "POST",
+            "/v1/definitions:admit",
+            Some(&user_token("owner")),
+            &watch_parent.to_string(),
+        );
+        assert_eq!(
+            refused_parent.status, 403,
+            "missing subtype grant must refuse supertype automation: {}",
+            refused_parent.body
+        );
+
+        let mut both_artifacts = melt_artifacts_with_policy(&["owner"]);
+        both_artifacts.push(special_entity);
+        let policy = both_artifacts
+            .iter_mut()
+            .find(|artifact| artifact["kind"] == "policy")
+            .unwrap();
+        policy["payload"]["rules"] = json!([
+            {
+                "ruleId": "melt_parent",
+                "actions": [MELT_ACTION],
+                "resourceType": MELT,
+                "scope": { "dimensions": ["org", "environment"] },
+                "allOf": [{ "role": { "anyOf": ["owner"] } }]
+            },
+            {
+                "ruleId": "melt_special",
+                "actions": [MELT_ACTION],
+                "resourceType": SPECIAL_MELT,
+                "scope": { "dimensions": ["org", "environment"] },
+                "allOf": [{ "role": { "anyOf": ["owner"] } }]
+            }
+        ]);
+        let mut both =
+            provisioned_tenant_with_artifacts(&dir.path().join("both.sqlite"), both_artifacts);
+        let admitted = both.call(
+            "POST",
+            "/v1/definitions:admit",
+            Some(&user_token("owner")),
+            &watch_parent.to_string(),
+        );
+        assert_eq!(admitted.status, 200, "{}", admitted.body);
+        let digest =
+            serde_json::from_str::<Value>(&admitted.body).unwrap()["restatementSha256"].clone();
+        let mut signed = watch_parent;
+        signed["signoff"] = json!({ "restatementSha256": digest });
+        let installed = both.call(
+            "POST",
+            "/v1/definitions:install",
+            Some(&user_token("owner")),
+            &signed.to_string(),
+        );
+        assert_eq!(installed.status, 200, "{}", installed.body);
+        let stored = both
+            .tenant
+            .serving_host()
+            .unwrap()
+            .retained_definition("ops.watch_parent")
+            .unwrap()
+            .unwrap();
+        let authority = stored.definition.authority.expect("bound authority");
+        assert_eq!(
+            authority.parent_grant_ids.len(),
+            2,
+            "{:?}",
+            authority.parent_grant_ids
+        );
+        assert!(
+            authority
+                .parent_grant_ids
+                .iter()
+                .any(|id| id.contains("melt_parent")),
+            "{:?}",
+            authority.parent_grant_ids
+        );
+        assert!(
+            authority
+                .parent_grant_ids
+                .iter()
+                .any(|id| id.contains("melt_special")),
+            "{:?}",
+            authority.parent_grant_ids
         );
     }
 

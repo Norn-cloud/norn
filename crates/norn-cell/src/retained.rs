@@ -134,11 +134,17 @@ pub struct RetainedSignoff {
 /// A server-verified, attenuated, revocable author grant bound to a retained
 /// definition revision (Core 05 `AUTH-ATTENUATE-1`). Never supplied by a
 /// client; never borrowed from a later triggering actor.
+///
+/// U2 dispatch obligation: before firing any outbox candidate or parking a
+/// proposal, U2 must require that this revision is still the automation's
+/// current active revision and reauthorize both the author's live grant
+/// (checking revocation against `parent_grant_ids` and `author`) and the
+/// concrete target row under the dispatch hold.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RetainedAuthority {
     /// Stable delegation id derived from the definition id, revision, author,
-    /// scope, and bound action.
+    /// scope, bound action, and parent grant identities.
     pub delegation_id: String,
     /// The verified principal who authored and installed this revision.
     pub author: crate::flow_run::RunStarter,
@@ -150,6 +156,10 @@ pub struct RetainedAuthority {
     pub object_type: String,
     /// Digest of the bound action definition at install time.
     pub action_digest: String,
+    /// Sorted, deduplicated parent grant / Cedar policy identities returned by
+    /// the PDP when this revision's delegation was admitted. Retained so U2 can
+    /// detect grant revocation or policy replacement under the dispatch hold.
+    pub parent_grant_ids: Vec<String>,
     /// Host logical time (ms) when the author grant was verified and bound.
     pub bound_at: u64,
     /// Cell definitions version active when the grant was verified and bound.
@@ -225,6 +235,11 @@ pub(crate) fn preflight(
                 && !authority.action_id.trim().is_empty()
                 && !authority.object_type.trim().is_empty()
                 && !authority.action_digest.trim().is_empty()
+                && !authority.parent_grant_ids.is_empty()
+                && authority
+                    .parent_grant_ids
+                    .iter()
+                    .all(|grant_id| !grant_id.trim().is_empty())
         });
         if !valid {
             return Err(CellError::Engine(
@@ -236,9 +251,12 @@ pub(crate) fn preflight(
     Ok(())
 }
 
-/// Append `definition` as installed by `definitions_version` at `commit_seq`.
+/// Append `definition` as installed by `definitions_version` at `commit_seq`,
+/// maintaining the transactional automation trigger projection when `definition`
+/// is an automation.
 pub(crate) fn insert(
     engine: &impl SqlEngine,
+    model: &crate::Model,
     definition: &RetainedDefinition,
     definitions_version: u64,
     commit_seq: u64,
@@ -276,6 +294,9 @@ pub(crate) fn insert(
             ),
             params![definition.id, to_i64(definition.revision)?, encoded],
         )?;
+    }
+    if definition.kind == "automation" {
+        crate::automation_outbox::sync_trigger_index(engine, model, definition)?;
     }
     Ok(())
 }

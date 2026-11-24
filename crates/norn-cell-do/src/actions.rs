@@ -33,7 +33,7 @@ use norn_ir::access::{AccessCondition, AccessIr, AccessRule, PolicyRoot};
 use norn_ir::{ActionRoot, ArtifactEnvelope, ArtifactKind, IrVersion01, RuntimeValue};
 use norn_kernel::authz::{
     self, AccessRequest, ActorKind, AttrValue, AuthzSchema, CapabilityGrant, Delegation, Pdp,
-    PdpActionAuthorizer, PrincipalInput, ResourceInput, ScopeKey,
+    PdpActionAuthorizer, PdpDecision, PrincipalInput, ResourceInput, ScopeKey,
 };
 use norn_kernel::{ActionAuthorizer, ActionAuthzRequest, ActionDenial};
 use norn_projections::{CedarAttribute, CedarPrincipalAttribute};
@@ -483,25 +483,39 @@ impl ActionPolicy {
         self.callable.contains(action_id)
     }
 
-    /// Core 05 `AUTH-ATTENUATE-1`: whether the verified principal `caller`
-    /// holds a grant under this revision's Cedar policy to invoke `action_id`
-    /// on `object_type` (unconditionally, or under a resource/context-conditional
-    /// rule whose role requirements `caller` satisfies; row-level PDP checks
-    /// still run on every firing). Fails closed for uncallable actions, empty
-    /// roles, or unsupported actor kinds.
+    /// Core 05 `AUTH-ATTENUATE-1`: verify through this revision's scoped Cedar
+    /// PDP that the verified principal `caller` holds an explicit grant to
+    /// invoke `action_id` on every concrete type in `matched_types` (the
+    /// watched `objectType` and every subtype extending it).
+    ///
+    /// Returns the sorted, deduplicated, non-empty Cedar policy rule ids whose
+    /// `Allow` decisions authorized the grant, or `None` on any deny, empty
+    /// determining policy set, uncallable action, empty roles, empty
+    /// `matched_types`, or unsupported actor kind. Never falls back to
+    /// inspecting role conjuncts of conditional rules: rules requiring record
+    /// or context attributes fail closed here.
+    ///
+    /// U2 dispatch obligation: dispatch still must require the current active
+    /// automation revision and reauthorize `caller`'s live grant against the
+    /// live target row under the dispatch hold.
     #[must_use]
-    pub fn author_holds_grant(&self, caller: &Caller, action_id: &str, object_type: &str) -> bool {
-        if !self.callable(action_id) || caller.roles.is_empty() {
-            return false;
+    pub fn authorize_automation_grant(
+        &self,
+        caller: &Caller,
+        action_id: &str,
+        matched_types: &[String],
+    ) -> Option<Vec<String>> {
+        if !self.callable(action_id) || caller.roles.is_empty() || matched_types.is_empty() {
+            return None;
         }
         let actor_kind = match caller.actor_kind {
             "user" => ActorKind::User,
             "service" => ActorKind::Service,
-            _ => return false,
+            _ => return None,
         };
-        let Ok(pdp) = self.caller_pdp(&caller.subject_id, caller.actor_kind, actor_kind) else {
-            return false;
-        };
+        let pdp = self
+            .caller_pdp(&caller.subject_id, caller.actor_kind, actor_kind)
+            .ok()?;
         let principal_attributes = if self.principal_id {
             BTreeMap::from([(
                 PRINCIPAL_ID_ATTRIBUTE.to_owned(),
@@ -510,21 +524,21 @@ impl ActionPolicy {
         } else {
             BTreeMap::new()
         };
-        let permitted = authz::authorize(
-            &pdp,
-            &AccessRequest {
+        let mut parent_grant_ids = BTreeSet::new();
+        for resource_type in matched_types {
+            let explanation = pdp.explain(&AccessRequest {
                 principal: PrincipalInput {
                     subject_id: caller.subject_id.clone(),
                     actor_kind,
                     agent_session_id: None,
                     roles: caller.roles.clone(),
-                    attributes: principal_attributes,
+                    attributes: principal_attributes.clone(),
                 },
                 scope: Some(self.key.clone()),
                 capability: action_id.to_owned(),
                 action_id: action_id.to_owned(),
                 resource: ResourceInput {
-                    object_type: object_type.to_owned(),
+                    object_type: resource_type.clone(),
                     id: String::new(),
                     scope: self.key.clone(),
                     attributes: BTreeMap::new(),
@@ -532,21 +546,17 @@ impl ActionPolicy {
                 context: BTreeMap::new(),
                 binding: None,
                 delegation: Delegation::Direct,
-            },
-        )
-        .is_ok();
-        if permitted {
-            return true;
+            });
+            if !matches!(explanation.decision, PdpDecision::Allow)
+                || explanation.determining_policies.is_empty()
+            {
+                return None;
+            }
+            for policy in explanation.determining_policies {
+                parent_grant_ids.insert(policy.cedar_policy_id);
+            }
         }
-        self.conditional.get(action_id).is_some_and(|rules| {
-            rules.iter().any(|lists| {
-                lists.iter().all(|any_of| {
-                    any_of
-                        .iter()
-                        .any(|required| caller.roles.iter().any(|held| held == required))
-                })
-            })
-        })
+        (!parent_grant_ids.is_empty()).then(|| parent_grant_ids.into_iter().collect())
     }
 
     /// The PDP deciding `subject`'s calls: the base rules and the call

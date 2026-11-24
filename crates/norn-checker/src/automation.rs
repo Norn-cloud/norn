@@ -328,7 +328,7 @@ fn check_top_metadata(object: &serde_json::Map<String, Value>, issues: &mut Vec<
 
 fn resolve_object_type<'a>(
     object: &'a serde_json::Map<String, Value>,
-    ctx: &'a AutomationCheckContext<'a>,
+    ctx: &AutomationCheckContext<'a>,
     issues: &mut Vec<AutomationIssue>,
 ) -> Option<(&'a str, Vec<&'a ObjectTypeDef>)> {
     match object.get("objectType").and_then(Value::as_str) {
@@ -995,5 +995,68 @@ mod tests {
                 .iter()
                 .any(|item| item.kind == AutomationIssueKind::StalePropertyInvalid)
         );
+    }
+
+    #[test]
+    fn refuses_guard_referencing_computed_field_or_link() {
+        let owner: ObjectTypeDef = serde_json::from_value(json!({
+            "name": "demo.Applicant",
+            "properties": [
+                { "id": "email", "type": { "kind": "text" } }
+            ]
+        }))
+        .unwrap();
+        let app: ObjectTypeDef = serde_json::from_value(json!({
+            "name": "demo.Application",
+            "properties": [
+                { "id": "score", "type": { "kind": "integer" } },
+                {
+                    "id": "weightedScore",
+                    "type": { "kind": "integer" },
+                    "computed": "self.score * 2"
+                }
+            ],
+            "links": [
+                {
+                    "id": "applicant",
+                    "target": "demo.Applicant",
+                    "cardinality": { "to": "one", "from": "many", "required": true }
+                }
+            ]
+        }))
+        .unwrap();
+        let (_, actions) = sample_model();
+        let object_types = [owner, app];
+        let ctx = AutomationCheckContext {
+            object_types: &object_types,
+            interfaces: &[],
+            property_types: &[],
+            actions: &actions,
+            roles: &["admin"],
+        };
+
+        for (guard, expected_word) in [
+            ("self.weightedScore > 10", "computed property"),
+            ("self.applicant.email == 'a@example.com'", "link"),
+            ("actor.subjectId == 'admin'", "actor"),
+        ] {
+            let candidate = json!({
+                "title": "Unsupported guard shape",
+                "enabled": true,
+                "objectType": "demo.Application",
+                "when": { "kind": "event", "event": "updated" },
+                "guard": guard,
+                "then": { "actionId": "demo.app.offerAssistance", "mode": "auto" }
+            });
+            let (issues, _) = check_automation(&candidate, &ctx);
+            assert!(
+                issues
+                    .iter()
+                    .any(|item| item.kind == AutomationIssueKind::GuardInvalid
+                        && item.pointer == "/guard"
+                        && item.message.contains(expected_word)),
+                "{guard}: {issues:?}"
+            );
+        }
     }
 }

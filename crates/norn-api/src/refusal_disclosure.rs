@@ -73,7 +73,7 @@ where
     fn authorize_automation_grant(
         &self,
         request: &crate::authz::AutomationGrantRequest<'_>,
-    ) -> Result<(), Refusal> {
+    ) -> Result<crate::authz::VerifiedAutomationGrant, Refusal> {
         self.inner.authorize_automation_grant(request)
     }
 }

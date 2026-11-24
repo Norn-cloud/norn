@@ -1041,23 +1041,22 @@ impl Authorizer for ReadPolicy {
     fn authorize_automation_grant(
         &self,
         request: &norn_api::authz::AutomationGrantRequest<'_>,
-    ) -> Result<(), Refusal> {
-        let granted = scope_key(request.scope) == self.key
-            && self
-                .member(request.actor)
-                .zip(self.action_policy())
-                .is_some_and(|(caller, policy)| {
-                    policy.author_holds_grant(
-                        &caller,
-                        &request.action.action_id,
-                        request.object_type,
-                    )
-                });
-        if granted {
-            Ok(())
-        } else {
-            Err(norn_api::authz::read_denied())
+    ) -> Result<norn_api::authz::VerifiedAutomationGrant, Refusal> {
+        if scope_key(request.scope) != self.key {
+            return Err(norn_api::authz::read_denied());
         }
+        let parent_grant_ids = self
+            .member(request.actor)
+            .zip(self.action_policy())
+            .and_then(|(caller, policy)| {
+                policy.authorize_automation_grant(
+                    &caller,
+                    &request.action.action_id,
+                    request.matched_types,
+                )
+            })
+            .ok_or_else(norn_api::authz::read_denied)?;
+        Ok(norn_api::authz::VerifiedAutomationGrant { parent_grant_ids })
     }
 
     fn read(&self, request: &ReadRequest<'_>) -> Result<(), Refusal> {

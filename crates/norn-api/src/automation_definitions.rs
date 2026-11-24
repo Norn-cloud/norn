@@ -5,10 +5,17 @@
 //! validated against `norn-kernel`'s closed action input validator
 //! ([`norn_kernel::validate_automation_static_input`]).
 //!
-//! At admission and install, the host verifies and binds an attenuated,
-//! revocable delegation backed by the installing author's own grant for
-//! `then.actionId` (Core 05 `AUTH-ATTENUATE-1`). Authority is never borrowed
-//! from a later triggering actor.
+//! At admission and install, the host verifies the installing author's grant
+//! through the scoped Cedar PDP across the watched `objectType` and every
+//! subtype extending it, and binds an attenuated, revocable delegation citing
+//! the permitting parent Cedar policy ids (Core 05 `AUTH-ATTENUATE-1`).
+//! Authority is never borrowed from a later triggering actor, and retiring an
+//! automation voids its pending outbox candidates in the same transaction.
+//!
+//! Dispatch obligation (U2): before invoking `then.actionId` for a candidate,
+//! U2 must require the candidate's `(automation_id, revision)` to match the
+//! current active revision and must reauthorize the bound author's live grant
+//! and the target row under the dispatch hold.
 //!
 //! The runtime reserves the `norn.automation.` / `norn.automation/` idempotency
 //! key namespace (`S5a`-equivalent): the public `POST /v1/actions/{actionId}`
@@ -115,7 +122,8 @@ pub fn automation_approved_key(decision_id: &str) -> Result<String, Refusal> {
 }
 
 /// Deterministic revocable delegation id binding one automation revision to its
-/// installing author's attenuated grant (Core 05 `AUTH-ATTENUATE-1`).
+/// installing author's attenuated grant and permitting parent Cedar policy ids
+/// (Core 05 `AUTH-ATTENUATE-1`).
 ///
 /// # Errors
 /// Canonical JSON encoding failure.
@@ -126,6 +134,7 @@ pub fn delegation_id(
     scope: &str,
     action_id: &str,
     action_digest: &str,
+    parent_grant_ids: &[String],
 ) -> Result<String, Refusal> {
     let digest = norn_ir::canonical::domain_hash_hex(
         b"norn.automation.grant/1\0",
@@ -136,6 +145,7 @@ pub fn delegation_id(
             scope,
             action_id,
             action_digest,
+            parent_grant_ids,
         ),
     )
     .map_err(Refusal::host)?;
@@ -143,6 +153,47 @@ pub fn delegation_id(
         "norn.automation.grant/{}",
         digest.get(..AUTOMATION_KEY_DIGITS).unwrap_or(&digest)
     ))
+}
+
+/// Every concrete object type in `object_types` that matches `watched`
+/// (`watched` itself plus every subtype extending it), in sorted order.
+fn matched_subtypes(object_types: &[norn_ir::ObjectTypeDef], watched: &str) -> Vec<String> {
+    let parents: std::collections::BTreeMap<&str, Option<&str>> = object_types
+        .iter()
+        .map(|def| {
+            (
+                def.name.as_str(),
+                def.extends.as_ref().map(norn_ir::ObjectTypeName::as_str),
+            )
+        })
+        .collect();
+    let mut matched = std::collections::BTreeSet::new();
+    for def in object_types {
+        let mut cursor = Some(def.name.as_str());
+        let mut seen = std::collections::BTreeSet::new();
+        while let Some(name) = cursor {
+            if !seen.insert(name) {
+                break;
+            }
+            if name == watched {
+                matched.insert(def.name.as_str().to_owned());
+                break;
+            }
+            cursor = parents.get(name).copied().flatten();
+        }
+    }
+    matched.into_iter().collect()
+}
+
+fn canonical_parent_grants(grant_ids: Vec<String>) -> Result<Vec<String>, Refusal> {
+    let canonical: std::collections::BTreeSet<String> = grant_ids
+        .into_iter()
+        .filter(|id| !id.trim().is_empty())
+        .collect();
+    if canonical.is_empty() {
+        return Err(read_denied());
+    }
+    Ok(canonical.into_iter().collect())
 }
 
 /// Resolved `(objectType, then.actionId)` target of a checked automation.
@@ -367,13 +418,20 @@ pub(crate) fn validate_for_host<E: SqlEngine>(
             .iter()
             .find(|action| action.action_id == target.action_id)
     {
-        host.authorizer
+        let matched_types = matched_subtypes(&object_types, &target.object_type);
+        if matched_types.is_empty() {
+            return Err(read_denied());
+        }
+        let verified = host
+            .authorizer
             .authorize_automation_grant(&AutomationGrantRequest {
                 scope: host.scope(),
                 actor,
                 action,
                 object_type: &target.object_type,
+                matched_types: &matched_types,
             })?;
+        let _parent_grants = canonical_parent_grants(verified.parent_grant_ids)?;
         if host.authorizer.verified_principal(actor).is_none() {
             return Err(read_denied());
         }
@@ -381,9 +439,15 @@ pub(crate) fn validate_for_host<E: SqlEngine>(
     Ok((findings, checked))
 }
 
-/// Re-verify the author's grant under the definitions write lock and build the
-/// server-owned, attenuated, revocable [`RetainedAuthority`] record for an
-/// installed automation revision.
+/// Re-verify the author's grant under the definitions write lock across the
+/// watched `objectType` and every subtype extending it, and build the
+/// server-owned, attenuated, revocable [`RetainedAuthority`] record citing the
+/// permitting parent Cedar grant identities.
+///
+/// U2 dispatch obligation: before dispatching any outbox candidate under this
+/// authority, U2 must require the candidate's `(automation_id, revision)` to be
+/// the current active revision and must reauthorize `author`'s live grant
+/// against the live target row under the dispatch hold.
 pub(crate) fn bind_authority<E: SqlEngine>(
     host: &DevHost<E>,
     cell: &crate::host::ActionCell<E>,
@@ -408,18 +472,31 @@ pub(crate) fn bind_authority<E: SqlEngine>(
                 "read the current definition and retry with its version",
             )
         })?;
-    host.authorizer
+    let model_ref = cell.store().model();
+    let matched_types: Vec<String> = model_ref
+        .object_types()
+        .filter(|def| model_ref.is_a(def.name.as_str(), &checked.object_type))
+        .map(|def| def.name.as_str().to_owned())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    if matched_types.is_empty() {
+        return Err(read_denied());
+    }
+    let verified = host
+        .authorizer
         .authorize_automation_grant(&AutomationGrantRequest {
             scope: host.scope(),
             actor,
             action,
             object_type: &checked.object_type,
+            matched_types: &matched_types,
         })?;
+    let parent_grant_ids = canonical_parent_grants(verified.parent_grant_ids)?;
     let author = host
         .authorizer
         .verified_principal(actor)
         .ok_or_else(read_denied)?;
-    let model_ref = cell.store().model();
     let catalog = model_ref
         .type_catalog()
         .with_governing_laws(model_ref.law_artifacts())
@@ -434,9 +511,11 @@ pub(crate) fn bind_authority<E: SqlEngine>(
         &scope_key,
         &checked.action_id,
         &action_digest,
+        &parent_grant_ids,
     )?;
     Ok(RetainedAuthority {
         delegation_id,
+        parent_grant_ids,
         author,
         scope: scope_key,
         action_id: checked.action_id.clone(),
@@ -453,6 +532,7 @@ pub(crate) fn authority_diff(authority: Option<&RetainedAuthority>) -> Option<Va
     authority.map(|authority| {
         serde_json::json!({
             "delegationId": authority.delegation_id,
+            "parentGrantIds": authority.parent_grant_ids,
             "author": authority.author.subject,
             "actionId": authority.action_id,
             "objectType": authority.object_type,

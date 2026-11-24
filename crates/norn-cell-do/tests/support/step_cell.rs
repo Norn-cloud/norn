@@ -257,26 +257,39 @@ impl Authorizer for StepPolicy {
     fn authorize_automation_grant(
         &self,
         request: &norn_api::authz::AutomationGrantRequest<'_>,
-    ) -> Result<(), Refusal> {
+    ) -> Result<norn_api::authz::VerifiedAutomationGrant, Refusal> {
         if self
             .caller
             .current()
-            .is_none_or(|caller| caller.subject_id != request.actor)
+            .is_none_or(|caller| caller.subject_id != request.actor || caller.roles.is_empty())
+            || request.matched_types.is_empty()
         {
             return Err(norn_api::authz::read_denied());
         }
-        match self.decide(
-            &request.action.action_id,
-            &FactKey::new(request.object_type, ""),
-            ActionDenial::Forbidden {
-                reason: norn_api::refusal::codes::AUTHZ_DENIED.into(),
-            },
-        ) {
-            Ok(()) => Ok(()),
-            Err(ActionDenial::Forbidden { .. } | ActionDenial::Invisible) => {
-                Err(norn_api::authz::read_denied())
+        let mut parent_grant_ids = std::collections::BTreeSet::new();
+        for resource_type in request.matched_types {
+            let access = self
+                .request(
+                    &request.action.action_id,
+                    &FactKey::new(resource_type.as_str(), ""),
+                )
+                .ok_or_else(norn_api::authz::read_denied)?;
+            let explanation = self.pdp.explain(&access);
+            if !matches!(explanation.decision, PdpDecision::Allow)
+                || explanation.determining_policies.is_empty()
+            {
+                return Err(norn_api::authz::read_denied());
+            }
+            for policy in explanation.determining_policies {
+                parent_grant_ids.insert(policy.cedar_policy_id);
             }
         }
+        if parent_grant_ids.is_empty() {
+            return Err(norn_api::authz::read_denied());
+        }
+        Ok(norn_api::authz::VerifiedAutomationGrant {
+            parent_grant_ids: parent_grant_ids.into_iter().collect(),
+        })
     }
 }
 
