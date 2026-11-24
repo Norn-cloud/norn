@@ -244,6 +244,67 @@ fn a_window_modifier_without_a_typed_field_is_refused_never_dropped() {
 }
 
 #[test]
+fn a_window_reads_a_column_only_where_it_carries_that_value() {
+    // #1706 r1: `c.email` was read by its bare name, `email`, which holds the region.
+    for sql in [
+        "SELECT c.region AS email, LAG(c.email) OVER (ORDER BY c.id) AS prior FROM \"shop.Customer\" c",
+        "SELECT c.region AS email, ROW_NUMBER() OVER (PARTITION BY c.email ORDER BY c.id) AS n FROM \"shop.Customer\" c",
+        "SELECT c.region AS email, ROW_NUMBER() OVER (ORDER BY c.email, c.id) AS n FROM \"shop.Customer\" c",
+    ] {
+        refused(sql, SQL_UNSUPPORTED);
+    }
+    // The same source column under another name is read through that name.
+    let (artifact, _) = compile(
+        "SELECT c.region AS place, LAG(region) OVER (PARTITION BY c.region ORDER BY id) AS prior FROM \"shop.Customer\" c",
+    )
+    .expect("admitted");
+    let window = artifact["payload"]["calc"]["nodes"]
+        .as_object()
+        .expect("nodes")
+        .values()
+        .find(|node| node["op"] == "window")
+        .expect("a window node");
+    assert_eq!(window["columns"][0]["column"], "place");
+    assert_eq!(window["partitionBy"], json!(["place"]));
+    assert_eq!(window["orderBy"][0]["column"], "id");
+}
+
+#[test]
+fn a_modifier_on_a_group_key_or_coalesce_is_refused_never_dropped() {
+    // #1706 r1: `OVER`/`DISTINCT` on a calendar key lowered to plain weekly grouping.
+    refused(
+        "SELECT COUNT(*) AS n FROM \"shop.Order\" o GROUP BY DATE_TRUNC('week', o.placed_at) OVER (ORDER BY o.id)",
+        SQL_UNSUPPORTED,
+    );
+    refused(
+        "SELECT COUNT(*) AS n FROM \"shop.Order\" o GROUP BY DATE_TRUNC(DISTINCT 'week', o.placed_at)",
+        SQL_UNSUPPORTED,
+    );
+    // #1706 r1: `DISTINCT` and `OVER` on COALESCE were dropped by the parser.
+    refused(
+        "SELECT COUNT(*) AS n FROM \"shop.Customer\" c GROUP BY COALESCE(DISTINCT c.region, c.email)",
+        SQL_UNSUPPORTED,
+    );
+    refused(
+        "SELECT COALESCE(c.region, c.email) OVER (ORDER BY c.id) AS k FROM \"shop.Customer\" c",
+        SQL_UNSUPPORTED,
+    );
+}
+
+#[test]
+fn a_group_key_or_column_selected_under_two_names_is_refused_never_dropped() {
+    // #1706 r1: `b` was silently left out of the output.
+    refused(
+        "SELECT region AS a, region AS b, COUNT(*) AS n FROM \"shop.Customer\" GROUP BY region",
+        SQL_UNSUPPORTED,
+    );
+    refused(
+        "SELECT c.region AS a, c.email AS a FROM \"shop.Customer\" c",
+        SQL_UNSUPPORTED,
+    );
+}
+
+#[test]
 fn a_key_join_and_windows_lower_to_typed_operators() {
     compile(
         "SELECT l.email AS email, l.source AS source, c.region AS region

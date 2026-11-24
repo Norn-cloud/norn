@@ -759,6 +759,9 @@ impl Parser {
         }
         self.expect_symbol(")")?;
         if lower == "coalesce" {
+            if call.distinct || call.star || self.keyword("over") {
+                return Err(refusal("COALESCE takes plain values", at));
+            }
             // ZEN nests the values pairwise, one level per value.
             let height = taller([tallest], call.args.len().max(1), at)?;
             return Ok((Ex::Coalesce(call.args), height));
@@ -1298,11 +1301,15 @@ impl Lowering<'_> {
             let mut group_by = Vec::new();
             let mut measures = Vec::new();
             let mut keys: Vec<(Ex, String)> = Vec::new();
+            // What each plain key column carries, for windows over the groups.
+            let mut carried: Vec<(String, String)> = Vec::new();
             for (ex, at) in &select.group_by {
                 let (value, grain_unit) = if let Ex::Call(call) = ex
                     && call.name == "date_trunc"
                 {
-                    let [Ex::Text(unit), value] = call.args.as_slice() else {
+                    let ([Ex::Text(unit), value], None, false, false) =
+                        (call.args.as_slice(), &call.over, call.distinct, call.star)
+                    else {
                         return Err(refusal("DATE_TRUNC('week', column)", call.at));
                     };
                     (value.clone(), Some(unit.to_ascii_lowercase()))
@@ -1334,6 +1341,7 @@ impl Lowering<'_> {
                     }
                     group_by.push(json!({"column": name, "grain": unit}));
                 } else {
+                    carried.push((scope.zen(&value, *at)?, name.clone()));
                     group_by.push(json!({"column": name}));
                 }
                 keys.push((ex.clone(), name));
@@ -1341,7 +1349,15 @@ impl Lowering<'_> {
             let mut windows = Vec::new();
             for (index, item) in select.items.iter().enumerate() {
                 let name = name_of(item, index);
-                if keys.iter().any(|(ex, _)| *ex == item.ex) {
+                if let Some((_, key)) = keys.iter().find(|(ex, _)| *ex == item.ex) {
+                    if *key != name {
+                        return Err(refusal(
+                            format!(
+                                "group key {key:?} is selected again as {name:?}; select it once"
+                            ),
+                            item.at,
+                        ));
+                    }
                     continue;
                 }
                 if windowed(&item.ex) {
@@ -1420,13 +1436,15 @@ impl Lowering<'_> {
                     .enumerate()
                     .map(|(index, item)| (item.ex.clone(), name_of(item, index)))
                     .collect();
-                node = self.window(&node, &windows, &names)?;
+                node = self.window(&node, &windows, &names, &scope, &carried)?;
             }
             return Ok(node);
         }
         // A row-level SELECT: a projection that keeps the grain, then windows.
         let mut columns: Vec<Value> = Vec::new();
         let mut seen = std::collections::BTreeSet::new();
+        // What each projected column carries, for windows over the rows.
+        let mut carried: Vec<(String, String)> = Vec::new();
         let mut windows = Vec::new();
         for (index, item) in select.items.iter().enumerate() {
             let name = name_of(item, index);
@@ -1434,11 +1452,16 @@ impl Lowering<'_> {
                 windows.push((name, item.ex.clone(), item.at));
                 continue;
             }
-            seen.insert(name.clone());
-            columns.push(json!({"name": name, "expression": scope.zen(&item.ex, item.at)?}));
+            if !seen.insert(name.clone()) {
+                return Err(refusal(format!("{name:?} is selected twice"), item.at));
+            }
+            let expression = scope.zen(&item.ex, item.at)?;
+            carried.push((expression.clone(), name.clone()));
+            columns.push(json!({"name": name, "expression": expression}));
         }
         for column in &grain_columns {
             if !seen.contains(column) {
+                carried.push((format!("input.{column}"), column.clone()));
                 columns.insert(
                     0,
                     json!({"name": column, "expression": format!("input.{column}")}),
@@ -1458,7 +1481,7 @@ impl Lowering<'_> {
                 .enumerate()
                 .map(|(index, item)| (item.ex.clone(), name_of(item, index)))
                 .collect();
-            node = self.window(&node, &windows, &names)?;
+            node = self.window(&node, &windows, &names, &scope, &carried)?;
         }
         Ok(node)
     }

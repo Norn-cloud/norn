@@ -4,26 +4,34 @@
 
 use serde_json::json;
 
-use super::{Ex, Lowering, Over, Refusal, refusal};
+use super::{Ex, Lowering, Over, Refusal, Scope, refusal};
 
 impl Lowering<'_> {
     /// One window node over output columns named by the select list.
+    ///
+    /// A window reads a column of its input: the one a select item names, or
+    /// one that `carried` shows holds the same value (ZEN over the source
+    /// row: a projected column, a group key, a source id). A column is never
+    /// read by its bare name, which may hold another value
+    /// (`c.region AS email` is not `c.email`).
     pub(super) fn window(
         &mut self,
         input: &str,
         windows: &[(String, Ex, usize)],
         names: &[(Ex, String)],
+        scope: &Scope,
+        carried: &[(String, String)],
     ) -> Result<String, Refusal> {
         let column_of = |ex: &Ex, at: usize| -> Result<String, Refusal> {
-            let selected = names
-                .iter()
-                .find(|(selected, _)| selected == ex)
-                .map(|(_, name)| name.clone());
-            if let Ex::Column(_, column) = ex {
-                Ok(selected.unwrap_or_else(|| column.clone()))
-            } else {
-                selected.ok_or_else(|| refusal("a window reads a selected column", at))
+            if let Some((_, name)) = names.iter().find(|(selected, _)| selected == ex) {
+                return Ok(name.clone());
             }
+            let value = scope.zen(ex, at).ok();
+            carried
+                .iter()
+                .find(|(carries, _)| value.as_ref() == Some(carries))
+                .map(|(_, name)| name.clone())
+                .ok_or_else(|| refusal("a window reads a selected column or a source id", at))
         };
         let mut over: Option<&Over> = None;
         let mut columns = Vec::new();
