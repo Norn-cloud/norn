@@ -277,3 +277,110 @@ export const MaterializeWindow = Norn.decision({
     Norn.resolveLocalTimestamp(input.end_local_at, input.iana_timezone, input.dst_policy),
   ),
 }))
+
+export const MaterializeInterval = Norn.action({
+  id: "time.window.materialize_interval",
+  title: "Materialize working window into canonical UTC interval",
+  version: "0.1.0",
+  description: "Creates a time.MaterializedWindow bound to its linked Calendar and WorkingWindow, enforcing timezone, DST policy, tzdb 2025b pin, local wall bounds, and checked resolve_local_timestamp UTC resolution.",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  input: Schema.Struct({
+    id: Schema.String,
+    calendar_id: Schema.String,
+    working_window_id: Schema.String,
+    calendar_date: Schema.String,
+    start_local_at: Schema.String,
+    end_local_at: Schema.String,
+    starts_at: Schema.String,
+    ends_at: Schema.String,
+    timezone: Schema.String,
+    dst_policy: Schema.Literals(["reject", "earlier", "later"]),
+    tzdb_version: Schema.Literals(["2025b"]),
+  }),
+  output: Schema.Struct({
+    id: Schema.String,
+  }),
+  slice: [
+    { name: "calendar", type: Calendar, key: { property: { from: "input", property: "calendar_id" } } },
+    { name: "working_window", type: WorkingWindow, key: { property: { from: "input", property: "working_window_id" } } },
+    { name: "window_calendar", type: Calendar, key: { link: { from: "working_window", link: "calendar" } } },
+  ],
+  preconditions: [
+    Norn.expression(
+      Schema.Struct({
+        slice: Schema.Struct({
+          calendar: Schema.Struct({ id: Schema.String }),
+          window_calendar: Schema.Array(Schema.Struct({ id: Schema.String })),
+        }),
+      }),
+      (ctx) => ctx.slice.window_calendar.some((cal) => cal.id === ctx.slice.calendar.id),
+      { root: "context" },
+    ),
+    Norn.expression(
+      Schema.Struct({
+        input: Schema.Struct({ timezone: Schema.String, dst_policy: Schema.String, tzdb_version: Schema.String }),
+        slice: Schema.Struct({
+          calendar: Schema.Struct({ iana_timezone: Schema.String, dst_policy: Schema.String, tzdb_version: Schema.String }),
+        }),
+      }),
+      (ctx) =>
+        ctx.input.timezone === ctx.slice.calendar.iana_timezone &&
+        ctx.input.dst_policy === ctx.slice.calendar.dst_policy &&
+        ctx.input.tzdb_version === ctx.slice.calendar.tzdb_version,
+      { root: "context" },
+    ),
+    Norn.expression(
+      Schema.Struct({
+        input: Schema.Struct({ calendar_date: Schema.String, start_local_at: Schema.String, end_local_at: Schema.String }),
+        slice: Schema.Struct({
+          working_window: Schema.Struct({ start_local: Schema.String, end_local: Schema.String }),
+        }),
+      }),
+      (ctx) =>
+        ctx.input.start_local_at ===
+          ctx.input.calendar_date +
+            "T" +
+            (Norn.byteLength(ctx.slice.working_window.start_local) === 5
+              ? ctx.slice.working_window.start_local + ":00"
+              : ctx.slice.working_window.start_local) &&
+        ctx.input.end_local_at ===
+          ctx.input.calendar_date +
+            "T" +
+            (Norn.byteLength(ctx.slice.working_window.end_local) === 5
+              ? ctx.slice.working_window.end_local + ":00"
+              : ctx.slice.working_window.end_local),
+      { root: "context" },
+    ),
+    Norn.expression(
+      Schema.Struct({
+        input: Schema.Struct({ start_local_at: Schema.String, end_local_at: Schema.String, starts_at: Schema.String, ends_at: Schema.String }),
+        slice: Schema.Struct({
+          calendar: Schema.Struct({ iana_timezone: Schema.String, dst_policy: Schema.String }),
+        }),
+      }),
+      (ctx) =>
+        Norn.parseTimestamp(ctx.input.starts_at) ===
+          Norn.resolveLocalTimestamp(
+            ctx.input.start_local_at,
+            ctx.slice.calendar.iana_timezone,
+            ctx.slice.calendar.dst_policy,
+          ) &&
+        Norn.parseTimestamp(ctx.input.ends_at) ===
+          Norn.resolveLocalTimestamp(
+            ctx.input.end_local_at,
+            ctx.slice.calendar.iana_timezone,
+            ctx.slice.calendar.dst_policy,
+          ) &&
+        Norn.timestampBefore(ctx.input.starts_at, ctx.input.ends_at),
+      { root: "context" },
+    ),
+  ],
+  writes: [{ type: MaterializedWindow, change: "created" }],
+  createLinks: [
+    { link: "calendar", targetType: Calendar, targetIdField: "calendar_id" },
+    { link: "working_window", targetType: WorkingWindow, targetIdField: "working_window_id" },
+  ],
+  effect: { kind: "upsert_input_object", type: MaterializedWindow, objectIdField: "id", writeMode: { kind: "create_only" } },
+})

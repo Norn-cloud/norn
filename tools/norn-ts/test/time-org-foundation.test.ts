@@ -34,47 +34,6 @@ function compileFoundation() {
   return { artifacts, examples }
 }
 
-const BUSINESS_UNIT_CLOSURE = [
-  {
-    irVersion: "0.1",
-    artifactId: "identity.Directory.interface",
-    kind: "entity",
-    namespace: "identity",
-    name: "Directory",
-    version: "0.1.0",
-    lifecycle: "active",
-    scope: {},
-    dependencies: [],
-    provenance: { source: "system" },
-    payload: {
-      entityVersion: "2.0",
-      interface: {
-        name: "identity.Directory",
-        properties: [{ id: "name", type: { kind: "ref", name: "core.display_name" } }],
-      },
-    },
-  },
-  {
-    irVersion: "0.1",
-    artifactId: "party.Organization.entity",
-    kind: "entity",
-    namespace: "party",
-    name: "Organization",
-    version: "0.1.0",
-    lifecycle: "active",
-    scope: {},
-    dependencies: [],
-    provenance: { source: "system" },
-    payload: {
-      entityVersion: "2.0",
-      objectType: {
-        name: "party.Organization",
-        properties: [{ id: "display_name", type: { kind: "ref", name: "core.display_name" } }],
-      },
-    },
-  },
-]
-
 function loadBase(): any[] {
   const core = join(REPO, "registry/core/artifacts")
   const names = [
@@ -82,15 +41,14 @@ function loadBase(): any[] {
     "core.AgentRole.interface.json",
     "core.TimeInterval.interface.json",
     "identity.BusinessUnit.entity.json",
+    "identity.Directory.interface.json",
+    "party.Organization.entity.json",
     "core.value_types.entity.json",
     "std.value_types.entity.json",
     "core.units.json",
     "core.time.json",
   ]
-  return [
-    ...names.map((name) => JSON.parse(readFileSync(join(core, name), "utf8"))),
-    ...BUSINESS_UNIT_CLOSURE,
-  ]
+  return names.map((name) => JSON.parse(readFileSync(join(core, name), "utf8")))
 }
 
 /**
@@ -222,6 +180,33 @@ describe("time & org foundation packs", () => {
     const byKey = Object.fromEntries(tableNode.content.outputs.map((o: any) => [o.field, row[o.id]]))
     expect(byKey.starts_at).toBe("resolve_local_timestamp(start_local_at, iana_timezone, dst_policy)")
     expect(byKey.ends_at).toBe("resolve_local_timestamp(end_local_at, iana_timezone, dst_policy)")
+
+    const action = byId.get("time.window.materialize_interval.action")!.payload
+    expect(action.slice).toEqual([
+      { name: "calendar", objectType: "time.Calendar", key: { property: { from: "input", property: "calendar_id" } } },
+      { name: "working_window", objectType: "time.WorkingWindow", key: { property: { from: "input", property: "working_window_id" } } },
+      { name: "window_calendar", objectType: "time.Calendar", key: { link: { from: "working_window", link: "calendar" } } },
+    ])
+    expect(action.createLinks).toEqual([
+      { link: "calendar", targetType: "time.Calendar", targetIdField: "calendar_id" },
+      { link: "working_window", targetType: "time.WorkingWindow", targetIdField: "working_window_id" },
+    ])
+    expect(action.effectProgram).toMatchObject({
+      kind: "upsert_input_object",
+      objectKind: "time.MaterializedWindow",
+      objectIdField: "id",
+      writeMode: { kind: "create_only" },
+    })
+    expect(action.preconditions).toHaveLength(4)
+    const pre = (action.preconditions as string[]).join(" && ")
+    expect(pre).toContain("some(slice.window_calendar as cal, cal.id == slice.calendar.id)")
+    expect(pre).toContain("input.timezone == slice.calendar.iana_timezone")
+    expect(pre).toContain("input.dst_policy == slice.calendar.dst_policy")
+    expect(pre).toContain("input.tzdb_version == slice.calendar.tzdb_version")
+    expect(pre).toContain("slice.working_window.start_local")
+    expect(pre).toContain("slice.working_window.end_local")
+    expect(pre).toContain("resolve_local_timestamp(input.start_local_at, slice.calendar.iana_timezone, slice.calendar.dst_policy)")
+    expect(pre).toContain("resolve_local_timestamp(input.end_local_at, slice.calendar.iana_timezone, slice.calendar.dst_policy)")
   })
 
   test("workforce ontology pack pins exact upstream licenses/versions and validates membership projections against closed shape", () => {
