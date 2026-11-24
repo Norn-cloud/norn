@@ -166,8 +166,10 @@ pub(crate) fn held_call(approval: &RuntimeValue) -> Option<HeldCall> {
             .and_then(RuntimeValue::as_str)
             .map(str::to_owned)
     };
-    let input = match approval.get("exactInput").and_then(RuntimeValue::as_str) {
-        Some(encoded) => decode_exact(encoded)?,
+    // A call parked before exact spellings were kept has none; one that has
+    // any other `exactInput` than its encoding is no parked call (#618).
+    let input = match approval.get("exactInput") {
+        Some(exact) => decode_exact(exact.as_str()?)?,
         None => {
             let Some(RuntimeValue::Object(input)) = approval.get("input") else {
                 return None;
@@ -1168,6 +1170,29 @@ mod tests {
                 json!({ "amount": amount.clone(), "status": "submitted" }),
             ),
         ]
+    }
+
+    /// #618: a parked call keeps its input's exact spelling, and an
+    /// `exactInput` that is anything but that encoding never falls back to
+    /// the normalized `input`.
+    #[test]
+    fn a_parked_call_reads_back_its_exact_input_or_none() {
+        let parked = |exact: Value| {
+            RuntimeValue::from_json(json!({
+                "definition": "ops.gate", "revision": 1, "action": "ops.act",
+                "input": { "title": "caf\u{e9}" }, "idempotencyKey": "k1",
+                "requester": { "subject": "user:a", "actorKind": "user", "roles": [],
+                    "roleTable": "fixtures/1", "accountablePerson": "a" },
+                "exactInput": exact
+            }))
+            .unwrap()
+        };
+        let decomposed = URL_SAFE_NO_PAD.encode(r#"{"title":"cafe\u0301"}"#);
+        let read = held_call(&parked(json!(decomposed))).map(|held| held.call.input);
+        let title = read.as_ref().and_then(|input| input.get("title"));
+        assert_eq!(title, Some(&RuntimeValue::String("cafe\u{301}".to_owned())));
+        assert_eq!(held_call(&parked(Value::Null)), None);
+        assert_eq!(held_call(&parked(json!(1))), None);
     }
 
     /// #1469 S9: `when` reads the call's target, never whichever write sorts

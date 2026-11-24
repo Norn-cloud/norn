@@ -1733,6 +1733,7 @@ where
             values: record.to_values(),
         },
     });
+    super::check_action_turn_meter::<H::Error>(meter.as_deref(), counts)?;
     bind_approved_intent::<H::Error>(
         call,
         &PreparedCommit {
@@ -1761,7 +1762,6 @@ where
         link_reads: action_slice.link_reads,
         predicate_reads: action_slice.predicate_reads,
     };
-    super::check_action_turn_meter::<H::Error>(meter.as_deref(), counts)?;
     let proof = OwnedRowsCommitProof::new(&commit, limits.max_events, quantity);
     match host.commit_owned_rows(commit, proof) {
         Ok(receipt) => {

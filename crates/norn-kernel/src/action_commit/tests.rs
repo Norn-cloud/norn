@@ -217,20 +217,50 @@ fn decided_on<'a>(
     }
 }
 
-/// AUTH-INDEPENDENT-PERSON (#618), exhaustive over the evidence a commit was
-/// decided on: with everything else equal, a changed pinned parameter, fact
-/// read, link read or predicate membership alone is another prepared commit,
-/// and a commit under the unchanged one's approval is refused.
-#[test]
-fn approved_intent_binds_each_piece_of_decision_evidence() {
-    let action: ActionRoot = serde_json::from_str(
-        r#"{"actionId":"test.bind","scopeRequired":[],"idempotent":true,"ledgered":true,
-          "inputSchema":{"type":"object","properties":{},"additionalProperties":false},
-          "outputSchema":{"type":"object","properties":{},"additionalProperties":false}}"#,
+/// The evidence of one commit, with each piece at the version `at` names:
+/// `[pinned, read, linked, member]`.
+fn evidence_at(setting: &FactKey, [pinned, read, linked, member]: [u64; 4]) -> Evidence {
+    let owner = LinkKey::new(setting.clone(), "owner", FactKey::new("test.Owner", "W-1"));
+    let selected = PredicateQuery {
+        object_type: ObjectTypeName("test.Setting".to_owned()),
+        filter: BTreeMap::new(),
+        window: None,
+    };
+    (
+        vec![ActionParameterPin {
+            entry: "rate".to_owned(),
+            setting_key: "test.rate".to_owned(),
+            effective_at: "2026-06-30T00:00:00Z".to_owned(),
+            setting: setting.clone(),
+            version: pinned,
+            digest: format!("sha256:{}", "0".repeat(64)),
+        }],
+        vec![FactExpectation {
+            key: setting.clone(),
+            expected: FactVersion(read),
+        }],
+        vec![LinkReadExpectation {
+            source: setting.clone(),
+            link: "owner".to_owned(),
+            targets: vec![LinkReadTarget {
+                key: owner,
+                version: FactVersion(linked),
+            }],
+        }],
+        vec![PredicateReadExpectation {
+            predicate: selected,
+            members: vec![PredicateReadMember {
+                key: setting.clone(),
+                version: FactVersion(member),
+            }],
+        }],
     )
-    .expect("action");
-    let call = ActionCall {
-        action: &action,
+}
+
+/// A call of `action` with no input, on a fixed turn.
+fn bind_call(action: &ActionRoot) -> ActionCall<'_> {
+    ActionCall {
+        action,
         action_artifact_id: "test.bind.action",
         action_version: "1.0.0",
         scope: BTreeMap::new(),
@@ -246,7 +276,22 @@ fn approved_intent_binds_each_piece_of_decision_evidence() {
             consumes: None,
         },
         trace: None,
-    };
+    }
+}
+
+/// AUTH-INDEPENDENT-PERSON (#618), exhaustive over the evidence a commit was
+/// decided on: with everything else equal, a changed pinned parameter, fact
+/// read, link read or predicate membership alone is another prepared commit,
+/// and a commit under the unchanged one's approval is refused.
+#[test]
+fn approved_intent_binds_each_piece_of_decision_evidence() {
+    let action: ActionRoot = serde_json::from_str(
+        r#"{"actionId":"test.bind","scopeRequired":[],"idempotent":true,"ledgered":true,
+          "inputSchema":{"type":"object","properties":{},"additionalProperties":false},
+          "outputSchema":{"type":"object","properties":{},"additionalProperties":false}}"#,
+    )
+    .expect("action");
+    let call = bind_call(&action);
     let setting = FactKey::new("test.Setting", "S-1");
     let keys = (
         FactKey::new("test.Order", "O-1"),
@@ -260,41 +305,7 @@ fn approved_intent_binds_each_piece_of_decision_evidence() {
         [1, 1, 1, 2],
     ]
     .into_iter()
-    .map(|[pinned, read, linked, member]| {
-        (
-            vec![ActionParameterPin {
-                entry: "rate".to_owned(),
-                setting_key: "test.rate".to_owned(),
-                effective_at: "2026-06-30T00:00:00Z".to_owned(),
-                setting: setting.clone(),
-                version: pinned,
-                digest: format!("sha256:{}", "0".repeat(64)),
-            }],
-            vec![FactExpectation {
-                key: setting.clone(),
-                expected: FactVersion(read),
-            }],
-            vec![LinkReadExpectation {
-                source: setting.clone(),
-                link: "owner".to_owned(),
-                targets: vec![LinkReadTarget {
-                    key: LinkKey::new(setting.clone(), "owner", FactKey::new("test.Owner", "W-1")),
-                    version: FactVersion(linked),
-                }],
-            }],
-            vec![PredicateReadExpectation {
-                predicate: PredicateQuery {
-                    object_type: ObjectTypeName("test.Setting".to_owned()),
-                    filter: BTreeMap::new(),
-                    window: None,
-                },
-                members: vec![PredicateReadMember {
-                    key: setting.clone(),
-                    version: FactVersion(member),
-                }],
-            }],
-        )
-    })
+    .map(|at| evidence_at(&setting, at))
     .collect();
     let digests: Vec<String> = evidence
         .iter()
