@@ -40,12 +40,12 @@ export function ChoiceColumn({ title, options, selected, onSelect, invalid, fiel
           return (
             <li key={option.id}>
               <button type="button" aria-pressed={active} onClick={() => onSelect(option.id)}
-                className={cn("w-full rounded-lg border bg-card px-3 py-2 text-start text-sm transition-colors hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/30 focus-visible:outline-none",
-                  active ? "border-primary ring-2 ring-primary/20" : selected !== undefined && "opacity-60")}>
+                className={cn("w-full rounded-xl border border-border/90 bg-card px-3 py-2 text-start text-sm transition-[color,background-color,border-color,box-shadow] duration-150 hover:bg-surface-subtle focus-visible:ring-3 focus-visible:ring-ring/30 focus-visible:outline-none",
+                  active ? "border-action bg-background shadow-elevation ring-2 ring-action/20 dark:bg-card" : selected !== undefined && "opacity-60")}>
                 <span className="flex flex-wrap items-center gap-2">
-                  <span className="rounded border px-1.5 font-mono text-xs text-muted-foreground">{index + 1}</span>
+                  <span className="rounded-sm border border-border/90 bg-surface-subtle px-1.5 font-mono text-xs text-muted-foreground">{index + 1}</span>
                   <span className="font-medium">{option.label}</span>
-                  {(option.marks ?? []).map((mark) => <span key={mark} className="text-xs text-primary">{MARK_TEXT[mark]}</span>)}
+                  {(option.marks ?? []).map((mark) => <span key={mark} className="text-xs font-medium text-action">{MARK_TEXT[mark]}</span>)}
                 </span>
                 {option.detail && <span className="mt-1 block text-meta text-muted-foreground">{option.detail}</span>}
               </button>

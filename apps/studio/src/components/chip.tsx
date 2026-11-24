@@ -6,15 +6,15 @@ import { cn } from "@/lib/utils"
 export type Tone = "gray" | "green" | "amber" | "red" | "blue" | "violet" | "teal" | "pink" | "orange"
 
 const TONE: Readonly<Record<Tone, string>> = {
-  gray: "text-tone-gray bg-tone-gray/10 dark:bg-tone-gray/15",
-  green: "text-tone-green bg-tone-green/10 dark:bg-tone-green/15",
-  amber: "text-tone-amber bg-tone-amber/12 dark:bg-tone-amber/15",
-  red: "text-tone-red bg-tone-red/10 dark:bg-tone-red/15",
-  blue: "text-tone-blue bg-tone-blue/10 dark:bg-tone-blue/15",
-  violet: "text-tone-violet bg-tone-violet/10 dark:bg-tone-violet/15",
-  teal: "text-tone-teal bg-tone-teal/10 dark:bg-tone-teal/15",
-  pink: "text-tone-pink bg-tone-pink/10 dark:bg-tone-pink/15",
-  orange: "text-tone-orange bg-tone-orange/10 dark:bg-tone-orange/15",
+  gray: "text-tone-gray bg-tone-gray/10 ring-1 ring-inset ring-tone-gray/18 dark:bg-tone-gray/15 dark:ring-tone-gray/25",
+  green: "text-tone-green bg-tone-green/10 ring-1 ring-inset ring-tone-green/20 dark:bg-tone-green/15 dark:ring-tone-green/25",
+  amber: "text-tone-amber bg-tone-amber/12 ring-1 ring-inset ring-tone-amber/22 dark:bg-tone-amber/15 dark:ring-tone-amber/25",
+  red: "text-tone-red bg-tone-red/10 ring-1 ring-inset ring-tone-red/20 dark:bg-tone-red/15 dark:ring-tone-red/25",
+  blue: "text-tone-blue bg-tone-blue/10 ring-1 ring-inset ring-tone-blue/20 dark:bg-tone-blue/15 dark:ring-tone-blue/25",
+  violet: "text-tone-violet bg-tone-violet/10 ring-1 ring-inset ring-tone-violet/20 dark:bg-tone-violet/15 dark:ring-tone-violet/25",
+  teal: "text-tone-teal bg-tone-teal/10 ring-1 ring-inset ring-tone-teal/20 dark:bg-tone-teal/15 dark:ring-tone-teal/25",
+  pink: "text-tone-pink bg-tone-pink/10 ring-1 ring-inset ring-tone-pink/20 dark:bg-tone-pink/15 dark:ring-tone-pink/25",
+  orange: "text-tone-orange bg-tone-orange/10 ring-1 ring-inset ring-tone-orange/20 dark:bg-tone-orange/15 dark:ring-tone-orange/25",
 }
 
 const DOT: Readonly<Record<Tone, string>> = {
@@ -46,7 +46,7 @@ export function Chip({ tone = "gray", icon: Icon, dot = false, pulse = false, mo
   children: ReactNode
 } & Omit<ComponentProps<"span">, "children">) {
   return (
-    <span data-slot="chip" data-tone={tone} className={cn("inline-flex h-5 max-w-full shrink-0 items-center gap-1 rounded-md px-1.5 text-xs font-medium whitespace-nowrap", TONE[tone], mono && "font-mono text-[0.6875rem]", className)} {...props}>
+    <span data-slot="chip" data-tone={tone} className={cn("inline-flex h-[1.375rem] max-w-full shrink-0 items-center gap-1.5 rounded-md px-2 text-xs font-medium whitespace-nowrap", TONE[tone], mono && "font-mono text-[0.6875rem]", className)} {...props}>
       {Icon ? <Icon aria-hidden className="size-3 shrink-0" /> : dot && <Dot tone={tone} pulse={pulse} />}
       {children}
     </span>
@@ -56,7 +56,7 @@ export function Chip({ tone = "gray", icon: Icon, dot = false, pulse = false, mo
 /** A neutral chip for a fact: a muted label and a value, like "commit 2983" or "DuckDB". */
 export function FactChip({ icon: Icon, label, children, className, ...props }: { icon?: LucideIcon; label?: ReactNode; children: ReactNode } & Omit<ComponentProps<"span">, "children">) {
   return (
-    <span data-slot="fact-chip" className={cn("inline-flex h-6 max-w-full items-center gap-1 text-meta whitespace-nowrap tabular-nums", className)} {...props}>
+    <span data-slot="fact-chip" className={cn("inline-flex h-6 max-w-full items-center gap-1.5 rounded-md border border-border/80 bg-surface-subtle/80 px-2 text-meta whitespace-nowrap tabular-nums", className)} {...props}>
       {Icon && <Icon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />}
       {label !== undefined && <span className="text-muted-foreground">{label}</span>}
       <span className="min-w-0 truncate text-foreground">{children}</span>
