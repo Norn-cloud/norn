@@ -4415,7 +4415,7 @@ fn deleting_and_unlinking_a_law_governed_subject_rechecks_only_its_survivors() -
             links: vec![add_link(&task, "owner", &owner)],
             ..CellCommit::empty()
         })?;
-        let link = LinkKey::new(task.clone(), "owner", owner.clone());
+        let link = LinkKey::new(task.clone(), "owner", owner);
         let task_version = cell.load(&task)?.version;
         let link_version = cell.load_link(&link)?.version;
         let result = cell.commit(CellCommit {
