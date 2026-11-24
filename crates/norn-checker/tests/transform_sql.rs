@@ -270,6 +270,33 @@ fn a_window_reads_a_column_only_where_it_carries_that_value() {
 }
 
 #[test]
+fn a_source_column_is_never_read_through_another_sources_flattened_name() {
+    // #1706 r2: `o.c_region` does not exist; flattened it was `c.region`.
+    let joined = "FROM \"shop.Order\" o JOIN \"shop.Customer\" c ON o.customer = c.id";
+    refused(
+        &format!(
+            "SELECT c.region AS place, LAG(o.c_region) OVER (ORDER BY o.id, c.id) AS prior {joined}"
+        ),
+        SQL_UNSUPPORTED,
+    );
+    refused(
+        &format!("SELECT o.c_region AS place {joined}"),
+        SQL_UNSUPPORTED,
+    );
+    let (artifact, _) = compile(&format!(
+        "SELECT c.region AS place, LAG(c.region) OVER (ORDER BY o.id, c.id) AS prior {joined}"
+    ))
+    .expect("admitted");
+    let window = artifact["payload"]["calc"]["nodes"]
+        .as_object()
+        .expect("nodes")
+        .values()
+        .find(|node| node["op"] == "window")
+        .expect("a window node");
+    assert_eq!(window["columns"][0]["column"], "place");
+}
+
+#[test]
 fn a_modifier_on_a_group_key_or_coalesce_is_refused_never_dropped() {
     // #1706 r1: `OVER`/`DISTINCT` on a calendar key lowered to plain weekly grouping.
     refused(
@@ -296,6 +323,11 @@ fn a_group_key_or_column_selected_under_two_names_is_refused_never_dropped() {
     // #1706 r1: `b` was silently left out of the output.
     refused(
         "SELECT region AS a, region AS b, COUNT(*) AS n FROM \"shop.Customer\" GROUP BY region",
+        SQL_UNSUPPORTED,
+    );
+    // #1706 r2: the same key under one name twice dropped the second `a`.
+    refused(
+        "SELECT region AS a, region AS a, COUNT(*) AS n FROM \"shop.Customer\" GROUP BY region",
         SQL_UNSUPPORTED,
     );
     refused(

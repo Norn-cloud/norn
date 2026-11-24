@@ -1013,7 +1013,20 @@ impl Scope {
             .aliases
             .get(alias)
             .ok_or_else(|| refusal(format!("no source is named {alias:?}"), at))?;
-        Ok(format!("{prefix}{column}"))
+        let name = format!("{prefix}{column}");
+        // The joined row is flat: a name belongs to the source with the
+        // longest prefix it starts with, so `o.c_region` is never `c.region`.
+        if self
+            .aliases
+            .values()
+            .any(|(_, other)| other.len() > prefix.len() && name.starts_with(other.as_str()))
+        {
+            return Err(refusal(
+                format!("{alias}.{column} would read another source's column {name:?}"),
+                at,
+            ));
+        }
+        Ok(name)
     }
 
     /// ZEN over `input.<column>` for a row expression; aggregates and windows refuse.
@@ -1289,6 +1302,13 @@ impl Lowering<'_> {
                 }
             })
         };
+        let mut selected = BTreeSet::new();
+        for (index, item) in select.items.iter().enumerate() {
+            let name = name_of(item, index);
+            if !selected.insert(name.clone()) {
+                return Err(refusal(format!("{name:?} is selected twice"), item.at));
+            }
+        }
         // Columns computed before grouping: each needed value, its ZEN and where it is written.
         let mut prepared: Vec<(String, String, usize)> = Vec::new();
         // Every source's id passes through: whatever the joins make the grain,
@@ -1452,9 +1472,7 @@ impl Lowering<'_> {
                 windows.push((name, item.ex.clone(), item.at));
                 continue;
             }
-            if !seen.insert(name.clone()) {
-                return Err(refusal(format!("{name:?} is selected twice"), item.at));
-            }
+            seen.insert(name.clone());
             let expression = scope.zen(&item.ex, item.at)?;
             carried.push((expression.clone(), name.clone()));
             columns.push(json!({"name": name, "expression": expression}));
