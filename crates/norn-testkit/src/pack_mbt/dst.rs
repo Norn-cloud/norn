@@ -7,6 +7,7 @@
 //! refusals, and runs `verify_ledger()` after every crash/reopen and at run end.
 //! Evidence level: [`EvidenceLevel::Sampled`].
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_kernel::cell_host::{FactKey, JsonObject, JsonValue};
@@ -129,7 +130,7 @@ struct DstCaseState<'a, H> {
 pub fn run_pack_dst<H, F>(
     pack: &AdmittedPack,
     config: PackDstConfig,
-    mut make_host: F,
+    make_host: F,
 ) -> Result<PackDstReport, String>
 where
     H: PackHost,
@@ -171,14 +172,16 @@ where
     };
     let rng = TestRng::from_seed(RngAlgorithm::ChaCha, &config.seed);
     let mut runner = TestRunner::new_with_rng(proptest_cfg, rng);
-    let mut case_counter = 0u32;
-    let mut total_steps = 0usize;
-    let mut total_crashes = 0usize;
-    let mut total_coverage = DomainCoverage::default();
+    let factory = RefCell::new(make_host);
+    let accum = RefCell::new(DstRunAccum::default());
 
     let run_result = runner.run(&strategy, |steps| {
-        case_counter = case_counter.saturating_add(1);
-        let mut host = make_host(case_counter)
+        let case_id = {
+            let mut acc = accum.borrow_mut();
+            acc.cases_run = acc.cases_run.saturating_add(1);
+            acc.cases_run
+        };
+        let mut host = (factory.borrow_mut())(case_id)
             .map_err(|err| TestCaseError::fail(format!("host factory: {err}")))?;
         let mut state = DstCaseState {
             pack,
@@ -190,19 +193,21 @@ where
             crashes: 0,
         };
         state.execute_all(&steps).map_err(TestCaseError::fail)?;
-        total_steps = total_steps.saturating_add(steps.len());
-        total_crashes = total_crashes.saturating_add(state.crashes);
-        total_coverage.merge(&state.coverage);
+        let mut acc = accum.borrow_mut();
+        acc.steps_run = acc.steps_run.saturating_add(steps.len());
+        acc.crashes_recovered = acc.crashes_recovered.saturating_add(state.crashes);
+        acc.coverage.merge(&state.coverage);
         Ok(())
     });
 
+    let acc = accum.into_inner();
     match run_result {
         Ok(()) => Ok(PackDstReport {
             evidence: EvidenceLevel::Sampled,
-            cases_run: case_counter,
-            steps_run: total_steps,
-            crashes_recovered: total_crashes,
-            coverage: total_coverage,
+            cases_run: acc.cases_run,
+            steps_run: acc.steps_run,
+            crashes_recovered: acc.crashes_recovered,
+            coverage: acc.coverage,
         }),
         Err(TestError::Fail(reason, minimal_steps)) => Err(format!(
             "pack DST failed on pack '{}': {reason}; minimal sequence: {minimal_steps:?}",
@@ -213,6 +218,14 @@ where
             pack.name
         )),
     }
+}
+
+#[derive(Default)]
+struct DstRunAccum {
+    cases_run: u32,
+    steps_run: usize,
+    crashes_recovered: usize,
+    coverage: DomainCoverage,
 }
 
 fn dst_sequence_strategy(

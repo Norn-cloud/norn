@@ -125,84 +125,129 @@ where
         build_rule_attributes(rule, ctx.projected_attrs, ctx.principal_attrs, false);
     let mut count = 0usize;
 
+    let rule_ctx = RuleActionCtx {
+        cedar: ctx,
+        rule,
+        scope: &scope,
+        foreign_scope: &foreign_scope,
+        allowed_roles: &allowed_roles,
+        hint: &hint,
+        res_ok: &res_ok,
+        prin_ok: &prin_ok,
+    };
     for action_id in &rule.actions {
-        let pdp = build_rule_pdp(ctx.policy_set, action_id, &scope, &foreign_scope)?;
+        let checked = verify_rule_action_matrix(&rule_ctx, action_id, make_host, seq)?;
+        count = count.saturating_add(checked);
+    }
+    Ok(count)
+}
 
-        let allow_req = make_access_request(
-            "actor-allowed",
-            allowed_roles.clone(),
-            (&scope, &scope),
+struct RuleActionCtx<'a> {
+    cedar: &'a CedarCtx<'a>,
+    rule: &'a AccessRule,
+    scope: &'a ScopeKey,
+    foreign_scope: &'a ScopeKey,
+    allowed_roles: &'a [String],
+    hint: &'a PolicyRuleTarget,
+    res_ok: &'a BTreeMap<String, AttrValue>,
+    prin_ok: &'a BTreeMap<String, AttrValue>,
+}
+
+fn verify_rule_action_matrix<H, F>(
+    rc: &RuleActionCtx<'_>,
+    action_id: &str,
+    make_host: &mut F,
+    seq: &mut u64,
+) -> Result<usize, String>
+where
+    H: PackHost,
+    F: FnMut(&str) -> Result<H, String>,
+{
+    let ctx = rc.cedar;
+    let rule = rc.rule;
+    let scope = rc.scope;
+    let foreign_scope = rc.foreign_scope;
+    let allowed_roles = rc.allowed_roles;
+    let hint = rc.hint;
+    let res_ok = rc.res_ok;
+    let prin_ok = rc.prin_ok;
+    let pdp = build_rule_pdp(ctx.policy_set, action_id, scope, foreign_scope)?;
+    let mut count = 0usize;
+
+    let allow_req = make_access_request(
+        "actor-allowed",
+        allowed_roles.to_vec(),
+        (scope, scope),
+        (action_id, rule.resource_type.as_str(), "obj-1"),
+        (res_ok.clone(), prin_ok.clone()),
+    );
+    let allow_expl = pdp.explain(&allow_req);
+    if !allow_expl.decision.is_allow() {
+        return Err(format!(
+            "Cedar matrix: expected Allow for {}/{} action '{action_id}', got {:?}",
+            hint.policy_id, hint.rule_id, allow_expl.decision
+        ));
+    }
+    with_cov(ctx.coverage, |cov| {
+        cov.hit_cedar_allow(hint.policy_id.clone(), hint.rule_id.clone());
+    });
+    count = count.saturating_add(1);
+
+    if !allowed_roles.is_empty() {
+        let deny_req = make_access_request(
+            "actor-unauth",
+            vec!["__mbt_unauthorized_role__".to_owned()],
+            (scope, scope),
             (action_id, rule.resource_type.as_str(), "obj-1"),
             (res_ok.clone(), prin_ok.clone()),
         );
-        let allow_expl = pdp.explain(&allow_req);
-        if !allow_expl.decision.is_allow() {
-            return Err(format!(
-                "Cedar matrix: expected Allow for {}/{} action '{action_id}', got {:?}",
-                policy.policy_id, rule.rule_id, allow_expl.decision
-            ));
-        }
-        with_cov(ctx.coverage, |cov| {
-            cov.hit_cedar_allow(policy.policy_id.clone(), rule.rule_id.clone());
-        });
+        assert_denied(&pdp, &deny_req, "unauthorized role", hint, action_id)?;
+        verify_action_denied_zero_writes(
+            ctx,
+            action_id,
+            &pdp,
+            hint.clone(),
+            deny_req,
+            make_host,
+            seq,
+        )?;
         count = count.saturating_add(1);
+    }
 
-        if !allowed_roles.is_empty() {
-            let deny_req = make_access_request(
-                "actor-unauth",
-                vec!["__mbt_unauthorized_role__".to_owned()],
-                (&scope, &scope),
-                (action_id, rule.resource_type.as_str(), "obj-1"),
-                (res_ok.clone(), prin_ok.clone()),
-            );
-            assert_denied(&pdp, &deny_req, "unauthorized role", &hint, action_id)?;
-            verify_action_denied_zero_writes(
-                ctx,
-                action_id,
-                &pdp,
-                hint.clone(),
-                deny_req,
-                make_host,
-                seq,
-            )?;
-            count = count.saturating_add(1);
-        }
+    let foreign_req = make_access_request(
+        "actor-allowed",
+        allowed_roles.to_vec(),
+        (foreign_scope, scope),
+        (action_id, rule.resource_type.as_str(), "obj-1"),
+        (res_ok.clone(), prin_ok.clone()),
+    );
+    assert_denied(&pdp, &foreign_req, "foreign scope", hint, action_id)?;
+    with_cov(ctx.coverage, |cov| {
+        cov.hit_cedar_deny(hint.policy_id.clone(), hint.rule_id.clone());
+    });
+    count = count.saturating_add(1);
 
-        let foreign_req = make_access_request(
-            "actor-allowed",
-            allowed_roles.clone(),
-            (&foreign_scope, &scope),
+    if has_sod_condition(rule) {
+        let (res_self, prin_self) =
+            build_rule_attributes(rule, ctx.projected_attrs, ctx.principal_attrs, true);
+        let self_req = make_access_request(
+            "actor-requester",
+            allowed_roles.to_vec(),
+            (scope, scope),
             (action_id, rule.resource_type.as_str(), "obj-1"),
-            (res_ok.clone(), prin_ok.clone()),
+            (res_self, prin_self),
         );
-        assert_denied(&pdp, &foreign_req, "foreign scope", &hint, action_id)?;
-        with_cov(ctx.coverage, |cov| {
-            cov.hit_cedar_deny(policy.policy_id.clone(), rule.rule_id.clone());
-        });
+        assert_denied(&pdp, &self_req, "self-approver SoD", hint, action_id)?;
+        verify_action_denied_zero_writes(
+            ctx,
+            action_id,
+            &pdp,
+            hint.clone(),
+            self_req,
+            make_host,
+            seq,
+        )?;
         count = count.saturating_add(1);
-
-        if has_sod_condition(rule) {
-            let (res_self, prin_self) =
-                build_rule_attributes(rule, ctx.projected_attrs, ctx.principal_attrs, true);
-            let self_req = make_access_request(
-                "actor-requester",
-                allowed_roles.clone(),
-                (&scope, &scope),
-                (action_id, rule.resource_type.as_str(), "obj-1"),
-                (res_self, prin_self),
-            );
-            assert_denied(&pdp, &self_req, "self-approver SoD", &hint, action_id)?;
-            verify_action_denied_zero_writes(
-                ctx,
-                action_id,
-                &pdp,
-                hint.clone(),
-                self_req,
-                make_host,
-                seq,
-            )?;
-            count = count.saturating_add(1);
-        }
     }
     Ok(count)
 }
@@ -248,53 +293,40 @@ fn assert_denied(
     Ok(())
 }
 
-fn verify_action_denied_zero_writes<H, F>(
-    ctx: &CedarCtx<'_>,
+fn resolve_denied_action_target<'a>(
+    ctx: &'a CedarCtx<'_>,
     action_id: &str,
-    pdp: &Arc<Pdp>,
-    hint: PolicyRuleTarget,
-    template_request: AccessRequest,
-    make_host: &mut F,
-    seq: &mut u64,
-) -> Result<(), String>
-where
-    H: PackHost,
-    F: FnMut(&str) -> Result<H, String>,
-{
-    let Some(admitted) = ctx
+) -> Option<(
+    &'a super::AdmittedAction,
+    &'a ActionEffectProgram,
+    &'a norn_kernel::norn_ir::ObjectTypeDef,
+)> {
+    let admitted = ctx
         .pack
         .actions
         .iter()
-        .find(|a| a.root.action_id == action_id)
-    else {
-        with_cov(ctx.coverage, |cov| {
-            cov.hit_cedar_deny(hint.policy_id, hint.rule_id);
-        });
-        return Ok(());
-    };
-    let Some(effect) = &admitted.root.effect_program else {
-        with_cov(ctx.coverage, |cov| {
-            cov.hit_cedar_deny(hint.policy_id, hint.rule_id);
-        });
-        return Ok(());
-    };
+        .find(|a| a.root.action_id == action_id)?;
+    let effect = admitted.root.effect_program.as_ref()?;
     let target = effect.target();
-    let Some(object_type) = ctx
+    let object_type = ctx
         .pack
         .object_types
         .iter()
-        .find(|ty| ty.name.as_str() == target.object_kind)
-    else {
-        with_cov(ctx.coverage, |cov| {
-            cov.hit_cedar_deny(hint.policy_id, hint.rule_id);
-        });
-        return Ok(());
-    };
+        .find(|ty| ty.name.as_str() == target.object_kind)?;
+    Some((admitted, effect, object_type))
+}
 
-    *seq = seq.saturating_add(1);
-    let mut host = make_host(&format!("cedar-deny-{action_id}-{}", *seq))?;
-    let obj_id = format!("cedar-obj-{}", *seq);
-    let mut input = synthesize_object(ctx.pack, object_type, &obj_id, *seq);
+fn prepare_denied_action_input<H: PackHost>(
+    pack: &AdmittedPack,
+    admitted: &super::AdmittedAction,
+    effect: &ActionEffectProgram,
+    object_type: &norn_kernel::norn_ir::ObjectTypeDef,
+    host: &mut H,
+    seq: u64,
+) -> norn_kernel::cell_host::JsonObject {
+    let target = effect.target();
+    let obj_id = format!("cedar-obj-{seq}");
+    let mut input = synthesize_object(pack, object_type, &obj_id, seq);
     input.insert(
         target.object_id_field.to_owned(),
         JsonValue::String(obj_id.clone()),
@@ -308,7 +340,7 @@ where
         input.retain(|k, _| allowed_props.contains_key(k));
     }
     if matches!(effect, ActionEffectProgram::FireTransition { .. }) {
-        let seeded = synthesize_object(ctx.pack, object_type, &obj_id, *seq);
+        let seeded = synthesize_object(pack, object_type, &obj_id, seq);
         let _ = host.commit(CellCommit {
             writes: vec![FactWrite {
                 key: FactKey::new(object_type.name.as_str(), &obj_id),
@@ -318,6 +350,33 @@ where
             ..CellCommit::empty()
         });
     }
+    input
+}
+
+fn verify_action_denied_zero_writes<H, F>(
+    ctx: &CedarCtx<'_>,
+    action_id: &str,
+    pdp: &Arc<Pdp>,
+    hint: PolicyRuleTarget,
+    template_request: AccessRequest,
+    make_host: &mut F,
+    seq: &mut u64,
+) -> Result<(), String>
+where
+    H: PackHost,
+    F: FnMut(&str) -> Result<H, String>,
+{
+    let Some((admitted, effect, object_type)) = resolve_denied_action_target(ctx, action_id) else {
+        with_cov(ctx.coverage, |cov| {
+            cov.hit_cedar_deny(hint.policy_id, hint.rule_id);
+        });
+        return Ok(());
+    };
+
+    *seq = seq.saturating_add(1);
+    let mut host = make_host(&format!("cedar-deny-{action_id}-{}", *seq))?;
+    let input =
+        prepare_denied_action_input(ctx.pack, admitted, effect, object_type, &mut host, *seq);
 
     let ledger_before = host.ledger_len();
     let scope_map = scope_key_to_map(template_request.scope.as_ref());

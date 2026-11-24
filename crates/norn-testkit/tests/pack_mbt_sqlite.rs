@@ -50,8 +50,8 @@ impl SqlitePackHost {
         all_types.push(action_call_object_type());
         let base_model = Model::from_definitions_with_interfaces(
             &all_types,
-            &pack.interfaces,
             &pack.property_types,
+            &pack.interfaces,
         )
         .map_err(|err| format!("Model::from_definitions_with_interfaces: {err}"))?;
         let model = base_model
@@ -221,7 +221,7 @@ impl PackHost for SqlitePackHost {
     fn ledger_len(&self) -> usize {
         self.cell
             .as_ref()
-            .and_then(|c| c.inner().store().read().ledger_entries().ok())
+            .and_then(|c| c.inner().store().read().receipts().ok())
             .map_or(0, Vec::len)
     }
 
@@ -511,8 +511,8 @@ fn real_canon_pack_runs_static_gap_and_mbt_cleanly() -> Result<(), String> {
     Ok(())
 }
 
-fn build_o2c_sod_pack() -> Result<AdmittedPack, String> {
-    let raw_envelopes = vec![
+fn o2c_invoice_entity_and_law() -> Vec<serde_json::Value> {
+    vec![
         json!({
             "irVersion": "0.1", "artifactId": "o2c.Invoice.entity", "version": "1.0.0",
             "kind": "entity", "namespace": "o2c", "name": "Invoice", "lifecycle": "active",
@@ -575,6 +575,11 @@ fn build_o2c_sod_pack() -> Result<AdmittedPack, String> {
                 "response": {"kind": "predicate", "expression": "self.amount > 0"}
             }
         }),
+    ]
+}
+
+fn o2c_actions_and_policy() -> Vec<serde_json::Value> {
+    vec![
         json!({
             "irVersion": "0.1", "artifactId": "o2c.invoice.create.action", "version": "1.0.0",
             "kind": "action", "namespace": "o2c", "name": "Create invoice", "lifecycle": "active",
@@ -657,7 +662,12 @@ fn build_o2c_sod_pack() -> Result<AdmittedPack, String> {
                 ]
             }
         }),
-    ];
+    ]
+}
+
+fn build_o2c_sod_pack() -> Result<AdmittedPack, String> {
+    let mut raw_envelopes = o2c_invoice_entity_and_law();
+    raw_envelopes.extend(o2c_actions_and_policy());
     let envelopes: Vec<ArtifactEnvelope> = raw_envelopes
         .into_iter()
         .map(|val| serde_json::from_value(val).map_err(|err| format!("envelope: {err}")))
@@ -738,8 +748,7 @@ fn o2c_sod_pack_achieves_100_percent_domain_coverage_with_crash_reopen_dst() -> 
     Ok(())
 }
 
-#[test]
-fn static_gap_detector_catches_every_structural_gap_class() -> Result<(), String> {
+fn build_gap_pack() -> Result<AdmittedPack, String> {
     let raw_envelopes = vec![
         json!({
             "irVersion": "0.1", "artifactId": "gap.JournalEntry.entity", "version": "1.0.0",
@@ -812,7 +821,12 @@ fn static_gap_detector_catches_every_structural_gap_class() -> Result<(), String
         .into_iter()
         .map(|val| serde_json::from_value(val).map_err(|err| format!("envelope: {err}")))
         .collect::<Result<Vec<_>, _>>()?;
-    let pack = AdmittedPack::from_envelopes("gap_pack", &envelopes)?;
+    AdmittedPack::from_envelopes("gap_pack", &envelopes)
+}
+
+#[test]
+fn static_gap_detector_catches_every_structural_gap_class() -> Result<(), String> {
+    let pack = build_gap_pack()?;
     let report = analyze_static_gaps(&pack);
 
     assert!(report.gaps.iter().any(|g| matches!(
