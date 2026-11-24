@@ -264,7 +264,7 @@ export const JournalLine = Norn.type({
   identity: [{ name: "primary", properties: ["id"] }],
   links: [
     { id: "event", description: "Underlying financial event valued by this ledger effect.", target: FinancialEvent, cardinality: { to: "one", from: "many", required: true } },
-    { id: "entry", description: "Parent journal entry containing this posting line.", target: JournalEntry, cardinality: { to: "one", from: "many", required: true } },
+    { id: "entry", description: "Parent journal entry containing this posting line.", target: JournalEntry, cardinality: { to: "one", from: "many", required: true }, inverse: "lines" },
     { id: "account", description: "Chart-of-accounts node posted by this line.", target: Account, cardinality: { to: "one", from: "many", required: true } },
   ],
 })
@@ -273,15 +273,18 @@ export const JournalLine = Norn.type({
 
 export const JournalEntryBalanced = Norn.law({
   id: "accounting.JournalEntry.balanced.law",
-  title: "Every non-draft journal entry must have equal, strictly positive total debits and credits",
+  title: "Every non-draft journal entry must have equal, strictly positive total debits and credits reconciled against at least two linked lines",
   version: "0.1.0",
-  dependencies: [{ artifactId: "accounting.JournalEntry.entity", kind: "entity", version: "0.1.0", required: true }],
+  dependencies: [
+    { artifactId: "accounting.JournalEntry.entity", kind: "entity", version: "0.1.0", required: true },
+    { artifactId: "accounting.JournalLine.entity", kind: "entity", version: "0.1.0", required: true },
+  ],
   law: {
     lawVersion: "0.1",
     id: "accounting.JournalEntry.balanced",
     owner: "accounting",
     severity: "error",
-    rationale: "Every non-draft journal entry must have equal, strictly positive total debits and credits.",
+    rationale: "Every non-draft journal entry must have equal, strictly positive total debits and credits backed by at least two linked JournalLine rows whose debit_amount and credit_amount sums exactly match the header totals.",
     provenance: { source: "authoring_sdk", sourcePath: "registry/packs/accounting/ledger.ts" },
     subject: "accounting.JournalEntry",
     scope: { root: { kind: "entity", id: "accounting.JournalEntry" }, objectTypes: ["accounting.JournalEntry"] },
@@ -289,26 +292,67 @@ export const JournalEntryBalanced = Norn.law({
     modality: { kind: "always" },
     response: {
       kind: "predicate",
-      expression: "self.total_debit == self.total_credit and self.total_debit > 0",
+      expression: "self.total_debit == self.total_credit and self.total_debit > 0 and len(self.lines) >= 2 and sum(map(self.lines, #.debit_amount)) == self.total_debit and sum(map(self.lines, #.credit_amount)) == self.total_credit",
     },
   },
 })
 
-export const JournalEntryBalancedHolds = Norn.example("posted balanced journal entry holds", {
+export const JournalEntryBalancedHolds = Norn.example("posted balanced journal entry with matching lines holds", {
   of: JournalEntryBalanced,
-  given: { status: "posted", total_debit: 1000, total_credit: 1000 },
+  given: {
+    status: "posted",
+    total_debit: 1000,
+    total_credit: 1000,
+    lines: [
+      { debit_amount: 1000, credit_amount: 0 },
+      { debit_amount: 0, credit_amount: 1000 },
+    ],
+  },
   expect: "holds",
 })
 
 export const JournalEntryBalancedViolated = Norn.example("posted unbalanced journal entry is violated", {
   of: JournalEntryBalanced,
-  given: { status: "posted", total_debit: 1000, total_credit: 900 },
+  given: {
+    status: "posted",
+    total_debit: 1000,
+    total_credit: 900,
+    lines: [
+      { debit_amount: 1000, credit_amount: 0 },
+      { debit_amount: 0, credit_amount: 900 },
+    ],
+  },
+  expect: "violated",
+})
+
+export const JournalEntryBalancedNoLinesViolated = Norn.example("posted journal entry with zero linked lines is violated", {
+  of: JournalEntryBalanced,
+  given: {
+    status: "posted",
+    total_debit: 1000,
+    total_credit: 1000,
+    lines: [],
+  },
+  expect: "violated",
+})
+
+export const JournalEntryBalancedLineSumMismatchViolated = Norn.example("posted journal entry whose linked lines do not sum to header totals is violated", {
+  of: JournalEntryBalanced,
+  given: {
+    status: "posted",
+    total_debit: 1000,
+    total_credit: 1000,
+    lines: [
+      { debit_amount: 600, credit_amount: 0 },
+      { debit_amount: 0, credit_amount: 1000 },
+    ],
+  },
   expect: "violated",
 })
 
 export const JournalEntryBalancedDraftNotApplicable = Norn.example("draft journal entry is not applicable", {
   of: JournalEntryBalanced,
-  given: { status: "draft", total_debit: 1000, total_credit: 0 },
+  given: { status: "draft", total_debit: 1000, total_credit: 0, lines: [] },
   expect: "not_applicable",
 })
 
@@ -445,7 +489,7 @@ export const PostJournalEntry = Norn.action({
   id: "accounting.journal.post",
   title: "Post journal entry",
   version: "0.1.0",
-  description: "Post a balanced draft journal entry into its linked open fiscal period.",
+  description: "Post a balanced draft journal entry into its linked open fiscal period; commit-time LAW-LINK-MANY-1 governing law accounting.JournalEntry.balanced verifies at least two linked JournalLine rows summing to header totals.",
   scopeRequired: ["orgId", "environmentId"],
   idempotent: true,
   ledgered: true,

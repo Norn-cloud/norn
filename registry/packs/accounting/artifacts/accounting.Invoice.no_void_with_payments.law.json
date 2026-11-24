@@ -1,0 +1,57 @@
+{
+  "artifactId": "accounting.Invoice.no_void_with_payments.law",
+  "dependencies": [
+    {
+      "artifactId": "accounting.Invoice.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "accounting.Payment.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Voided invoices must have zero amount_paid and zero linked payment evidence",
+  "namespace": "accounting",
+  "payload": {
+    "condition": "self.status == \"voided\"",
+    "id": "accounting.Invoice.no_void_with_payments",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "accounting",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/accounting/settlement.ts"
+    },
+    "rationale": "An invoice cannot be voided once any amount is paid or any Payment economic event links to it via settles, and payment evidence cannot be attached to an already-voided invoice.",
+    "response": {
+      "expression": "self.amount_paid == 0 and len(self.payments) == 0",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "accounting.Invoice"
+      ],
+      "root": {
+        "id": "accounting.Invoice",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "accounting.Invoice"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/accounting/artifacts/accounting.Invoice.no_void_with_payments.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

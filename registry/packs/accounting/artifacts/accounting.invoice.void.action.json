@@ -12,7 +12,7 @@
       "version": "0.1.0"
     },
     "actionId": "accounting.invoice.void",
-    "description": "Void an unpaid draft or issued invoice with zero recorded payments.",
+    "description": "Void an unpaid draft or issued invoice with zero amount_paid and zero linked Payment evidence (enforced by precondition + commit-time LAW-LINK-MANY-1 law accounting.Invoice.no_void_with_payments).",
     "effectProgram": {
       "entityArtifactId": "accounting.Invoice.entity",
       "entityArtifactVersion": "0.1.0",

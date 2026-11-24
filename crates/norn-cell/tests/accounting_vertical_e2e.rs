@@ -25,9 +25,9 @@ use norn_checker::{
     check_artifact_set_with_receipt,
 };
 use norn_ir::{
-    AccessIr, ActionRoot, ArtifactEnvelope, ArtifactKind, DataQualityRuleRef, InterfaceDef,
-    InterfaceName, InvariantOwner, ObjectTypeDef, PropertyTypeDef, ResourceLimitProfile,
-    RuntimeValue,
+    AccessIr, ActionRoot, ArtifactEnvelope, ArtifactKind, DataQualityRuleRef, DecisionOutput,
+    FactChange, InterfaceDef, InterfaceName, InvariantOwner, ObjectTypeDef, ObjectTypeName,
+    PropertyId, PropertyTypeDef, ResourceLimitProfile, RuntimeValue,
 };
 use norn_kernel::authz::{
     self, AccessRequest, ActorKind, AttrValue, AuthzSchema, CapabilityGrant, Delegation, Pdp,
@@ -38,9 +38,9 @@ use norn_kernel::governing_laws::LawEvaluationError;
 use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionOutcome,
     ActionReadAuthzRequest, ActionReadTypeAuthzRequest, ActionRefusal, CellCommit, CellHost,
-    Command, CommitError, CommitReceipt, DecisionTurn, FactEvent, FactKey, FactMutation,
-    FactVersion, FactWrite, LinkKey, LinkMutation, LinkWrite, LogicalTime, TypeCatalog, World,
-    commit_action,
+    Command, CommitError, CommitReceipt, DecisionRefusal, DecisionTurn, FactEvent, FactKey,
+    FactMutation, FactSlice, FactVersion, FactWrite, LinkKey, LinkMutation, LinkWrite, LogicalTime,
+    TypeCatalog, World, commit_action, prepare_decision,
 };
 use norn_projections::CedarAttribute;
 use serde_json::{Value, json};
@@ -649,6 +649,32 @@ fn assert_law_refusal(
     }
 }
 
+fn assert_action_law_refusal(
+    result: Result<ActionOutcome, Box<ActionRefusal<norn_cell::CellError>>>,
+    expected_law_id: &str,
+) {
+    let err = *result.expect_err("expected action governing law refusal");
+    assert_eq!(
+        err.code(),
+        "core.laws.violated",
+        "unexpected action refusal for {expected_law_id}: {err}"
+    );
+    match err {
+        ActionRefusal::Decision(DecisionRefusal::Law {
+            reason: LawEvaluationError::Violated(failure),
+            ..
+        }) => match failure.rule_ref {
+            DataQualityRuleRef::Law { law_id, .. } => {
+                assert_eq!(law_id, expected_law_id);
+            }
+            other => panic!("expected Law rule_ref for {expected_law_id}, got {other:?}"),
+        },
+        other => panic!(
+            "expected ActionRefusal::Decision(DecisionRefusal::Law) for {expected_law_id}, got {other:?}"
+        ),
+    }
+}
+
 fn assert_time_interval_refusal(result: Result<CommitReceipt, CommitError<norn_cell::CellError>>) {
     let err = result.expect_err("expected core.TimeInterval invariant refusal");
     assert_eq!(
@@ -940,6 +966,7 @@ fn accounting_pack_admits_against_core_base_and_installs_with_receipt() {
         "accounting.JournalLine.one_sided.law",
         "accounting.Account.group_no_direct_posting.law",
         "accounting.Invoice.amount_conservation.law",
+        "accounting.Invoice.no_void_with_payments.law",
         "accounting.Payment.positive_amount.law",
         "accounting.MonetaryAccount.non_negative.law",
     ] {
@@ -1078,7 +1105,8 @@ fn accounting_ledger_laws_periods_and_separation_of_duties_enforce_in_real_cell(
         "accounting.MonetaryAccount.non_negative",
     );
 
-    // 4. Seed balanced and unbalanced draft JournalEntries plus valid one-sided signed lines.
+    // 4. Seed balanced and unbalanced draft JournalEntries plus valid one-sided signed lines,
+    //    including zero-line and line-sum-mismatch drafts to verify LAW-LINK-MANY-1 reconciliation.
     let mut journal_seed = CellCommit::empty();
     journal_seed.writes.extend([
         put_fact(
@@ -1127,6 +1155,36 @@ fn accounting_ledger_laws_periods_and_separation_of_duties_enforce_in_real_cell(
             }),
         ),
         put_fact(
+            "accounting.JournalEntry",
+            "je_no_lines",
+            &json!({
+                "id": "je_no_lines",
+                "entry_number": "JE-2026-0004",
+                "posting_date": "2026-11-15",
+                "currency": "USD",
+                "total_debit": 200,
+                "total_credit": 200,
+                "memo": "Balanced header with zero linked lines",
+                "created_by_user_id": "principal:accountant",
+                "status": "draft"
+            }),
+        ),
+        put_fact(
+            "accounting.JournalEntry",
+            "je_line_mismatch",
+            &json!({
+                "id": "je_line_mismatch",
+                "entry_number": "JE-2026-0005",
+                "posting_date": "2026-11-15",
+                "currency": "USD",
+                "total_debit": 1000,
+                "total_credit": 1000,
+                "memo": "Balanced header whose lines do not reconcile",
+                "created_by_user_id": "principal:accountant",
+                "status": "draft"
+            }),
+        ),
+        put_fact(
             "accounting.JournalLine",
             "jl_debit_1",
             &json!({
@@ -1154,93 +1212,119 @@ fn accounting_ledger_laws_periods_and_separation_of_duties_enforce_in_real_cell(
                 "description": "Credit product revenue (negative signed core.LedgerEffect amount)"
             }),
         ),
-    ]);
-    journal_seed.links.extend([
-        add_link(
-            "accounting.JournalEntry",
-            "je_balanced",
-            "book",
-            "accounting.Book",
-            "book_main",
-        ),
-        add_link(
-            "accounting.JournalEntry",
-            "je_balanced",
-            "period",
-            "accounting.FiscalPeriod",
-            "fp_2026_11",
-        ),
-        add_link(
-            "accounting.JournalEntry",
-            "je_second_balanced",
-            "book",
-            "accounting.Book",
-            "book_main",
-        ),
-        add_link(
-            "accounting.JournalEntry",
-            "je_second_balanced",
-            "period",
-            "accounting.FiscalPeriod",
-            "fp_2026_11",
-        ),
-        add_link(
-            "accounting.JournalEntry",
-            "je_unbalanced",
-            "book",
-            "accounting.Book",
-            "book_main",
-        ),
-        add_link(
-            "accounting.JournalEntry",
-            "je_unbalanced",
-            "period",
-            "accounting.FiscalPeriod",
-            "fp_2026_11",
-        ),
-        add_link(
+        put_fact(
             "accounting.JournalLine",
-            "jl_debit_1",
-            "event",
-            "accounting.FinancialEvent",
-            "fe_sale_001",
+            "jl_second_debit",
+            &json!({
+                "id": "jl_second_debit",
+                "account_code": "1010",
+                "side": "debit",
+                "amount": 500,
+                "currency": "USD",
+                "debit_amount": 500,
+                "credit_amount": 0,
+                "description": "Debit operating cash for second entry"
+            }),
         ),
-        add_link(
+        put_fact(
             "accounting.JournalLine",
-            "jl_debit_1",
-            "entry",
-            "accounting.JournalEntry",
-            "je_balanced",
+            "jl_second_credit",
+            &json!({
+                "id": "jl_second_credit",
+                "account_code": "4010",
+                "side": "credit",
+                "amount": -500,
+                "currency": "USD",
+                "debit_amount": 0,
+                "credit_amount": 500,
+                "description": "Credit product revenue for second entry"
+            }),
         ),
-        add_link(
+        put_fact(
             "accounting.JournalLine",
-            "jl_debit_1",
-            "account",
-            "accounting.Account",
-            "acct_cash",
+            "jl_mismatch_debit",
+            &json!({
+                "id": "jl_mismatch_debit",
+                "account_code": "1010",
+                "side": "debit",
+                "amount": 600,
+                "currency": "USD",
+                "debit_amount": 600,
+                "credit_amount": 0,
+                "description": "Under-stated debit line (600 vs 1000 header)"
+            }),
         ),
-        add_link(
+        put_fact(
             "accounting.JournalLine",
-            "jl_credit_1",
-            "event",
-            "accounting.FinancialEvent",
-            "fe_sale_001",
-        ),
-        add_link(
-            "accounting.JournalLine",
-            "jl_credit_1",
-            "entry",
-            "accounting.JournalEntry",
-            "je_balanced",
-        ),
-        add_link(
-            "accounting.JournalLine",
-            "jl_credit_1",
-            "account",
-            "accounting.Account",
-            "acct_revenue",
+            "jl_mismatch_credit",
+            &json!({
+                "id": "jl_mismatch_credit",
+                "account_code": "4010",
+                "side": "credit",
+                "amount": -1000,
+                "currency": "USD",
+                "debit_amount": 0,
+                "credit_amount": 1000,
+                "description": "Credit line matching header credit"
+            }),
         ),
     ]);
+    for entry_id in [
+        "je_balanced",
+        "je_second_balanced",
+        "je_unbalanced",
+        "je_no_lines",
+        "je_line_mismatch",
+    ] {
+        journal_seed.links.extend([
+            add_link(
+                "accounting.JournalEntry",
+                entry_id,
+                "book",
+                "accounting.Book",
+                "book_main",
+            ),
+            add_link(
+                "accounting.JournalEntry",
+                entry_id,
+                "period",
+                "accounting.FiscalPeriod",
+                "fp_2026_11",
+            ),
+        ]);
+    }
+    for (line_id, entry_id, account_id) in [
+        ("jl_debit_1", "je_balanced", "acct_cash"),
+        ("jl_credit_1", "je_balanced", "acct_revenue"),
+        ("jl_second_debit", "je_second_balanced", "acct_cash"),
+        ("jl_second_credit", "je_second_balanced", "acct_revenue"),
+        ("jl_mismatch_debit", "je_line_mismatch", "acct_cash"),
+        ("jl_mismatch_credit", "je_line_mismatch", "acct_revenue"),
+    ] {
+        journal_seed.links.extend([
+            add_link(
+                "accounting.JournalLine",
+                line_id,
+                "event",
+                "accounting.FinancialEvent",
+                "fe_sale_001",
+            ),
+            add_link(
+                "accounting.JournalLine",
+                line_id,
+                "entry",
+                "accounting.JournalEntry",
+                entry_id,
+            ),
+            add_link(
+                "accounting.JournalLine",
+                line_id,
+                "account",
+                "accounting.Account",
+                account_id,
+            ),
+        ]);
+    }
     cell.commit(journal_seed)
         .expect("draft journal entries and valid one-sided lines commit");
 
@@ -1383,6 +1467,40 @@ fn accounting_ledger_laws_periods_and_separation_of_duties_enforce_in_real_cell(
     assert_eq!(unbalanced_post.code(), "action.precondition_failed");
     assert_eq!(
         status_of(&cell, "accounting.JournalEntry", "je_unbalanced"),
+        "draft"
+    );
+
+    // 7b. Posting a balanced-header draft with zero linked JournalLines is refused by
+    //     commit-time LAW-LINK-MANY-1 law accounting.JournalEntry.balanced.
+    assert_action_law_refusal(
+        fixture.invoke(
+            &mut cell,
+            "accounting.journal.post",
+            &json!({"entryId": "je_no_lines", "periodId": "fp_2026_11"}),
+            "principal:controller",
+            "je-post-no-lines",
+        ),
+        "accounting.JournalEntry.balanced",
+    );
+    assert_eq!(
+        status_of(&cell, "accounting.JournalEntry", "je_no_lines"),
+        "draft"
+    );
+
+    // 7c. Posting a balanced-header draft whose linked lines do not sum to header totals
+    //     (600 debit / 1000 credit vs 1000 / 1000 header) is refused by accounting.JournalEntry.balanced.
+    assert_action_law_refusal(
+        fixture.invoke(
+            &mut cell,
+            "accounting.journal.post",
+            &json!({"entryId": "je_line_mismatch", "periodId": "fp_2026_11"}),
+            "principal:controller",
+            "je-post-line-mismatch",
+        ),
+        "accounting.JournalEntry.balanced",
+    );
+    assert_eq!(
+        status_of(&cell, "accounting.JournalEntry", "je_line_mismatch"),
         "draft"
     );
 
@@ -1909,6 +2027,11 @@ fn accounting_invoice_conservation_and_create_only_payment_enforce_in_real_cell(
         .exists()
     );
 
+    assert_eq!(
+        status_of(&cell, "accounting.Payment", "pay_001"),
+        "recorded"
+    );
+
     // Exact retry with the same idempotency key replays cleanly.
     let replayed = fixture
         .invoke(
@@ -1921,7 +2044,8 @@ fn accounting_invoice_conservation_and_create_only_payment_enforce_in_real_cell(
         .expect("exact retry replays");
     assert!(matches!(replayed, ActionOutcome::Replayed { .. }));
 
-    // A distinct call targeting the same Payment ID is refused (create-only immutability).
+    // A distinct call targeting the same Payment ID is refused by create_only write mode
+    // (duplicate-ID guard on accounting.payment.record).
     let duplicate_refused = fixture
         .invoke(
             &mut cell,
@@ -1932,6 +2056,121 @@ fn accounting_invoice_conservation_and_create_only_payment_enforce_in_real_cell(
         )
         .expect_err("duplicate Payment ID must be refused by create_only write mode");
     assert_eq!(duplicate_refused.code(), "action.write_mode_failed");
+
+    // Mutating any property on a recorded Payment through kernel decision preparation is
+    // refused by accounting.Payment's single-state lifecycle `immutable: ["recorded"]` guard
+    // (distinct from create_only duplicate-ID refusal; raw CellHost::commit writes and
+    // FactChange::Delete remain outside decision-preparation's lifecycle guard).
+    let payment_key = FactKey::new("accounting.Payment", "pay_001");
+    let payment_state = cell.load(&payment_key).expect("recorded payment loads");
+    let payment_slice = FactSlice::from([(payment_key.clone(), payment_state.clone())]);
+    let mutation_output = DecisionOutput {
+        facts: vec![FactChange::Set {
+            object_type: ObjectTypeName("accounting.Payment".into()),
+            key: "pay_001".into(),
+            property: PropertyId("reference_no".into()),
+            value: RuntimeValue::from("TAMPERED-WIRE"),
+        }],
+        commands: vec![],
+        timers: vec![],
+    };
+    let mutation_turn = DecisionTurn {
+        id: "turn:payment-immutable-mutation".to_owned(),
+        now: LogicalTime::from_millis(KNOWN_AT),
+        world: World::Main,
+        consumes: None,
+    };
+    let immutable_err = prepare_decision::<std::convert::Infallible>(
+        &fixture.catalog(),
+        &payment_slice,
+        &mutation_turn,
+        &mutation_output,
+    )
+    .expect_err("property mutation on recorded Payment must be refused by immutable lifecycle");
+    assert_eq!(immutable_err.code(), "lifecycle.immutable_state");
+    assert!(matches!(
+        immutable_err,
+        DecisionRefusal::ImmutableStateWrite {
+            ref lifecycle,
+            ref state,
+            ..
+        } if lifecycle == "status" && state == "recorded"
+    ));
+    assert_eq!(
+        cell.load(&payment_key)
+            .expect("payment reloads unchanged")
+            .version,
+        payment_state.version
+    );
+
+    // 4. Voiding an issued invoice that has linked Payment evidence (`pay_001 --settles--> inv_valid`)
+    //    must be refused even though inv_valid.amount_paid is still 0 (LAW-LINK-MANY-1).
+    assert_action_law_refusal(
+        fixture.invoke(
+            &mut cell,
+            "accounting.invoice.void",
+            &json!({"invoiceId": "inv_valid"}),
+            "principal:senior_accountant",
+            "inv-void-with-linked-payment-refused",
+        ),
+        "accounting.Invoice.no_void_with_payments",
+    );
+    assert_eq!(
+        status_of(&cell, "accounting.Invoice", "inv_valid"),
+        "issued"
+    );
+
+    // Attaching a Payment directly to an already-voided invoice is also refused by the same law.
+    let mut payment_on_voided = CellCommit::empty();
+    payment_on_voided.writes.push(put_fact(
+        "accounting.Payment",
+        "pay_on_voided_direct",
+        &json!({
+            "id": "pay_on_voided_direct",
+            "action": "transfer_ownership",
+            "occurred_at": "2026-11-20T11:00:00Z",
+            "quantity": 25,
+            "unit": null,
+            "currency": "USD",
+            "payment_method": "bank_transfer",
+            "reference_no": "WIRE-BAD-VOIDED",
+            "status": "recorded"
+        }),
+    ));
+    payment_on_voided.links.extend([
+        add_link(
+            "accounting.Payment",
+            "pay_on_voided_direct",
+            "provider",
+            "accounting.Counterparty",
+            "cp_customer",
+        ),
+        add_link(
+            "accounting.Payment",
+            "pay_on_voided_direct",
+            "receiver",
+            "accounting.Counterparty",
+            "cp_company",
+        ),
+        add_link(
+            "accounting.Payment",
+            "pay_on_voided_direct",
+            "resource",
+            "accounting.MonetaryAccount",
+            "ma_operating_usd",
+        ),
+        add_link(
+            "accounting.Payment",
+            "pay_on_voided_direct",
+            "settles",
+            "accounting.Invoice",
+            "inv_to_void",
+        ),
+    ]);
+    assert_law_refusal(
+        cell.commit(payment_on_voided),
+        "accounting.Invoice.no_void_with_payments",
+    );
 
     // Durable SQLite reopen preserves exact state and hash-chained ledger integrity.
     let dump = cell.store().read().dump().expect("final dump");

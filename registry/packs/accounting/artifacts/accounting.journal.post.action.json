@@ -12,7 +12,7 @@
       "version": "0.1.0"
     },
     "actionId": "accounting.journal.post",
-    "description": "Post a balanced draft journal entry into its linked open fiscal period.",
+    "description": "Post a balanced draft journal entry into its linked open fiscal period; commit-time LAW-LINK-MANY-1 governing law accounting.JournalEntry.balanced verifies at least two linked JournalLine rows summing to header totals.",
     "effectProgram": {
       "entityArtifactId": "accounting.JournalEntry.entity",
       "entityArtifactVersion": "0.1.0",

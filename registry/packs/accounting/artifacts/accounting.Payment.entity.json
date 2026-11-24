@@ -9,7 +9,7 @@
   "payload": {
     "entityVersion": "2.0",
     "objectType": {
-      "description": "An immutable, create-only payment or settlement economic event (implements core.EconomicEvent).",
+      "description": "A payment or settlement economic event (implements core.EconomicEvent) declaring a single-state immutable lifecycle (status: recorded) enforced during decision preparation in addition to create_only duplicate-ID refusal on accounting.payment.record.",
       "identity": [
         {
           "name": "primary",
@@ -20,6 +20,20 @@
       ],
       "implements": [
         "core.EconomicEvent"
+      ],
+      "lifecycles": [
+        {
+          "immutable": [
+            "recorded"
+          ],
+          "initial": [
+            "recorded"
+          ],
+          "property": "status",
+          "terminal": [
+            "recorded"
+          ]
+        }
       ],
       "links": [
         {
@@ -68,6 +82,7 @@
           },
           "description": "Optional invoice claim settled in whole or in part by this payment.",
           "id": "settles",
+          "inverse": "payments",
           "target": "accounting.Invoice"
         },
         {
@@ -180,6 +195,18 @@
           "type": {
             "kind": "ref",
             "name": "core.document_number"
+          }
+        },
+        {
+          "default": "recorded",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "recorded"
+              }
+            ]
           }
         }
       ],

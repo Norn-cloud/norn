@@ -40,6 +40,7 @@
           },
           "description": "Parent journal entry containing this posting line.",
           "id": "entry",
+          "inverse": "lines",
           "target": "accounting.JournalEntry"
         },
         {

@@ -61,13 +61,14 @@ export const Invoice = Norn.type({
 
 const PaymentAction = Schema.Literals(["transfer_ownership", "transfer_custody", "consume", "produce"])
 const PaymentMethod = Schema.Literals(["bank_transfer", "cash", "card", "check", "wire", "other"])
+const PaymentStatus = Schema.Literals(["recorded"])
 
 export const Payment = Norn.type({
   name: "accounting.Payment",
   role: "happening",
   title: "Payment",
   version: "0.1.0",
-  description: "An immutable, create-only payment or settlement economic event (implements core.EconomicEvent).",
+  description: "A payment or settlement economic event (implements core.EconomicEvent) declaring a single-state immutable lifecycle (status: recorded) enforced during decision preparation in addition to create_only duplicate-ID refusal on accounting.payment.record.",
   implements: [EconomicEvent],
   properties: Schema.Struct({
     id: Schema.String,
@@ -78,15 +79,28 @@ export const Payment = Norn.type({
     currency: Schema.NullOr(Norn.ref("core.code")),
     payment_method: PaymentMethod,
     reference_no: Norn.ref("core.document_number"),
+    status: PaymentStatus,
   }),
   identity: [{ name: "primary", properties: ["id"] }],
+  defaults: {
+    status: "recorded",
+  },
   links: [
     { id: "provider", description: "Counterparty remitting the payment.", target: Counterparty, cardinality: { to: "one", from: "many", required: true } },
     { id: "receiver", description: "Counterparty receiving the payment.", target: Counterparty, cardinality: { to: "one", from: "many", required: true } },
     { id: "resource", description: "Monetary account settled by this payment.", target: MonetaryAccount, cardinality: { to: "one", from: "many", required: true } },
     { id: "fulfils", description: "Optional commitment fulfilled by this payment.", target: "core.Commitment", cardinality: { to: "one", from: "many" } },
-    { id: "settles", description: "Optional invoice claim settled in whole or in part by this payment.", target: Invoice, cardinality: { to: "one", from: "many" } },
+    { id: "settles", description: "Optional invoice claim settled in whole or in part by this payment.", target: Invoice, cardinality: { to: "one", from: "many" }, inverse: "payments" },
     { id: "reverses", description: "Optional prior payment reversed by this payment.", target: "accounting.Payment", cardinality: { to: "one", from: "one" } },
+  ],
+  lifecycles: [
+    {
+      property: "status",
+      initial: ["recorded"],
+      terminal: ["recorded"],
+      immutable: ["recorded"],
+      transitions: [],
+    },
   ],
 })
 
@@ -136,6 +150,50 @@ export const InvoiceAmountConservationOverpaidViolated = Norn.example("overpaid 
   of: InvoiceAmountConservation,
   given: { subtotal: 1000, tax_amount: 0, amount: 1000, amount_paid: 1200, status: "paid" },
   expect: "violated",
+})
+
+export const InvoiceNoVoidWithPayments = Norn.law({
+  id: "accounting.Invoice.no_void_with_payments.law",
+  title: "Voided invoices must have zero amount_paid and zero linked payment evidence",
+  version: "0.1.0",
+  dependencies: [
+    { artifactId: "accounting.Invoice.entity", kind: "entity", version: "0.1.0", required: true },
+    { artifactId: "accounting.Payment.entity", kind: "entity", version: "0.1.0", required: true },
+  ],
+  law: {
+    lawVersion: "0.1",
+    id: "accounting.Invoice.no_void_with_payments",
+    owner: "accounting",
+    severity: "error",
+    rationale: "An invoice cannot be voided once any amount is paid or any Payment economic event links to it via settles, and payment evidence cannot be attached to an already-voided invoice.",
+    provenance: { source: "authoring_sdk", sourcePath: "registry/packs/accounting/settlement.ts" },
+    subject: "accounting.Invoice",
+    scope: { root: { kind: "entity", id: "accounting.Invoice" }, objectTypes: ["accounting.Invoice"] },
+    condition: "self.status == \"voided\"",
+    modality: { kind: "always" },
+    response: {
+      kind: "predicate",
+      expression: "self.amount_paid == 0 and len(self.payments) == 0",
+    },
+  },
+})
+
+export const InvoiceNoVoidWithPaymentsUnpaidHolds = Norn.example("voided invoice with zero paid and no linked payments holds", {
+  of: InvoiceNoVoidWithPayments,
+  given: { status: "voided", amount_paid: 0, payments: [] },
+  expect: "holds",
+})
+
+export const InvoiceNoVoidWithPaymentsLinkedViolated = Norn.example("voided invoice with linked payment evidence is violated", {
+  of: InvoiceNoVoidWithPayments,
+  given: { status: "voided", amount_paid: 0, payments: [{ quantity: 140.73 }] },
+  expect: "violated",
+})
+
+export const InvoiceNoVoidWithPaymentsIssuedNotApplicable = Norn.example("issued invoice with linked payment evidence is not applicable", {
+  of: InvoiceNoVoidWithPayments,
+  given: { status: "issued", amount_paid: 0, payments: [{ quantity: 140.73 }] },
+  expect: "not_applicable",
 })
 
 export const PaymentPositiveAmount = Norn.law({
@@ -231,7 +289,7 @@ export const VoidInvoice = Norn.action({
   id: "accounting.invoice.void",
   title: "Void invoice",
   version: "0.1.0",
-  description: "Void an unpaid draft or issued invoice with zero recorded payments.",
+  description: "Void an unpaid draft or issued invoice with zero amount_paid and zero linked Payment evidence (enforced by precondition + commit-time LAW-LINK-MANY-1 law accounting.Invoice.no_void_with_payments).",
   scopeRequired: ["orgId", "environmentId"],
   idempotent: true,
   ledgered: true,

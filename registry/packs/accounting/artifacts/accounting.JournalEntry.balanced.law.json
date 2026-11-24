@@ -6,12 +6,18 @@
       "kind": "entity",
       "required": true,
       "version": "0.1.0"
+    },
+    {
+      "artifactId": "accounting.JournalLine.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
     }
   ],
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "Every non-draft journal entry must have equal, strictly positive total debits and credits",
+  "name": "Every non-draft journal entry must have equal, strictly positive total debits and credits reconciled against at least two linked lines",
   "namespace": "accounting",
   "payload": {
     "condition": "self.status != \"draft\"",
@@ -25,9 +31,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/accounting/ledger.ts"
     },
-    "rationale": "Every non-draft journal entry must have equal, strictly positive total debits and credits.",
+    "rationale": "Every non-draft journal entry must have equal, strictly positive total debits and credits backed by at least two linked JournalLine rows whose debit_amount and credit_amount sums exactly match the header totals.",
     "response": {
-      "expression": "self.total_debit == self.total_credit and self.total_debit > 0",
+      "expression": "self.total_debit == self.total_credit and self.total_debit > 0 and len(self.lines) >= 2 and sum(map(self.lines, #.debit_amount)) == self.total_debit and sum(map(self.lines, #.credit_amount)) == self.total_credit",
       "kind": "predicate"
     },
     "scope": {
