@@ -278,6 +278,9 @@ export function cellViews(
       (await listAll(pinnedScope)).filter(({ view }) => view.objectType === objectType),
     /** Read one view by id in `pinnedScope` (or current active scope); `undefined` when not found or retired. */
     get,
+    /** Read a definition only while its source workspace is active. */
+    getAtScope: (id: string, expectedScope: StudioScope, signal?: AbortSignal) =>
+      readViewAtScope(expectedScope, readScope, () => getWith(callAt(expectedScope), expectedScope)(id), signal),
     /** Read the confirmed server revision and lifecycle for conflict handling in `expectedScope`. */
     currentRevision,
     /** Read a record page bound explicitly to `expectedScope`, refusing on workspace switch before or during fetch. */

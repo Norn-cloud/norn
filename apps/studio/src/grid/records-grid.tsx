@@ -68,6 +68,12 @@ const STICKY = "sticky left-0 z-10 shadow-[1px_0_0_var(--node-border)]"
 /** The query a grid shows, as a saved view keeps it. */
 export interface GridQuery { readonly filter: Predicate | null; readonly sort: readonly SortKey[]; readonly columns: readonly string[] }
 
+export type DisplayedGridQuery = GridQuery & { readonly initialColumns: readonly string[] }
+
+export function visibleDrawerRow(row: GridRow | null, error: Error | null): GridRow | null {
+  return error instanceof StudioScopeError ? null : row
+}
+
 export function RecordsGrid({ concept, read = defaultRead, scope, initial, onQuery, timeline = false }: {
   readonly concept: Concept
   readonly read?: Read
@@ -78,7 +84,7 @@ export function RecordsGrid({ concept, read = defaultRead, scope, initial, onQue
   /** The query to open with: a saved view's. */
   readonly initial?: Partial<GridQuery>
   /** Told the query the grid shows, whenever it changes. */
-  readonly onQuery?: (query: GridQuery) => void
+  readonly onQuery?: (query: DisplayedGridQuery) => void
 }) {
   const name = concept.name
   const fields = useMemo(() => concept.fields.filter(({ id }) => !HIDDEN_FIELDS.has(id)), [concept])
@@ -92,18 +98,19 @@ export function RecordsGrid({ concept, read = defaultRead, scope, initial, onQue
   const [limit, setLimit] = useState<number>(LIMITS.pageSize)
   const [cursors, setCursors] = useState<readonly (string | undefined)[]>([undefined])
   const [pageIndex, setPageIndex] = useState(0)
-  const [shownOrder, setShownOrder] = useState<readonly string[]>(() => {
+  const [initialColumns] = useState<readonly string[]>(() => {
     const valid = new Set(fields.map(({ id }) => id))
-    const saved = initial?.columns?.filter((id, idx, arr) => valid.has(id) && arr.indexOf(id) === idx)
-    return saved && saved.length > 0 ? saved : fields.slice(0, DEFAULT_COLUMNS).map(({ id }) => id)
+    const saved = [...new Set(initial?.columns)].filter((id) => valid.has(id))
+    return saved.length > 0 ? saved : fields.slice(0, DEFAULT_COLUMNS).map(({ id }) => id)
   })
+  const [shownOrder, setShownOrder] = useState(initialColumns)
   const shown = useMemo(() => new Set(shownOrder), [shownOrder])
   const fieldById = useMemo(() => new Map(fields.map((field) => [field.id, field])), [fields])
   // Preserve saved column order when configured; fall back to catalog order for default columns.
   const columns = useMemo(() => shownOrder.flatMap((id) => { const f = fieldById.get(id); return f ? [f] : [] }), [shownOrder, fieldById])
   const shownList = useMemo(() => columns.map(({ id }) => id), [columns])
   const reported = JSON.stringify({ filter, sort, shownList })
-  useEffect(() => { onQuery?.({ filter, sort, columns: shownList }) }, [reported])
+  useEffect(() => { onQuery?.({ filter, sort, columns: shownList, initialColumns }) }, [reported])
   const [active, setActive] = useState(0)
   const [opened, setOpened] = useState<GridRow | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -382,7 +389,7 @@ export function RecordsGrid({ concept, read = defaultRead, scope, initial, onQue
         </nav>
       </div>
       </div>
-      <RecordDrawer concept={concept} fields={fields} row={opened} origin={page?.origin} actions={actions} actionsOff={actionsOff} onClose={() => setOpened(null)}
+      <RecordDrawer concept={concept} fields={fields} row={visibleDrawerRow(opened, result.error)} origin={page?.origin} actions={actions} actionsOff={actionsOff} onClose={() => setOpened(null)}
         onAction={(action, id) => { setOpened(null); setActing({ action, prefill: { [action.objectIdField]: id } }) }} />
       <ActionSheet open={acting} onClose={() => setActing(null)} onView={(id) => setViewing({ id, since: Date.now() })} />
     </Shell>

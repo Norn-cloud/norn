@@ -141,7 +141,21 @@ test("views: Overwrite with mine sends the confirmed current revision as expecte
   await page.getByRole("button", { name: "Save", exact: true }).click()
 
   await expect(page.getByRole("alert")).toContainText("Someone saved version 2 of this view since you opened it.")
+  const install = "**/api/host/v1/definitions:install?*"
+  const saving = Promise.withResolvers<void>()
+  const releaseSave = Promise.withResolvers<void>()
+  await page.route(install, async (route) => {
+    saving.resolve()
+    await releaseSave.promise
+    await route.fallback()
+  }, { times: 1 })
   await page.getByRole("button", { name: "Overwrite with mine" }).click()
+  try {
+    await saving.promise
+    await expect(page.getByRole("button", { name: "Reload theirs" })).toBeDisabled()
+  } finally {
+    releaseSave.resolve()
+  }
 
   await expect(page).toHaveURL(new RegExp(`/views/${id}$`))
   await expect(page.getByText("My local edit")).toBeVisible()
@@ -177,6 +191,115 @@ test("views: refuses to write when the active workspace changed after loading th
 
   await expect(page.getByRole("alert")).toContainText("This workspace changed; reload to edit this view.")
   expect(cell.installCalls).toHaveLength(0)
+})
+
+test("views: an open detail stays in its source workspace until it is opened again", async ({ page }) => {
+  const cell = await workspaceCell(page)
+  const id = "studio.view.funnel_application.shared"
+  const definition = {
+    kind: "view" as const, version: 1, retired: false, updatedAtMs: Date.now(),
+    payload: { title: "First workspace view", objectType: "funnel.Application" },
+  }
+  cell.defs.set(id, definition)
+  await page.goto(`/views/${id}`)
+  await expect(page.getByRole("heading", { name: "First workspace view" })).toBeVisible()
+  await page.getByRole("grid", { name: "Application records" }).getByText("Ben Park").click()
+  const drawer = page.getByRole("dialog")
+  await expect(drawer).toBeVisible()
+  const refocus = () => page.evaluate(() => {
+    for (const visibility of ["hidden", "visible"]) {
+      Object.defineProperty(document, "visibilityState", { configurable: true, value: visibility })
+      window.dispatchEvent(new Event("visibilitychange"))
+    }
+  })
+  await Promise.all([
+    page.waitForResponse(/\/v1\/objects\/funnel\.Application\?/, { timeout: 5000 }),
+    refocus(),
+  ])
+  await expect(drawer).toBeVisible()
+
+  cell.defs.set(id, { ...definition, payload: { ...definition.payload, title: "Second workspace view" } })
+  cell.switchScope("org_other", "prod")
+  await refocus()
+  await expect(page.getByRole("alert").filter({ hasText: "This workspace changed; reload to edit this view." })).toBeVisible()
+  await expect(drawer).toHaveCount(0)
+  await expect(page.getByRole("heading", { name: /workspace view/ })).toHaveCount(0)
+  await shoot(page, "views-detail-workspace-changed")
+
+  await page.reload()
+  await expect(page.getByRole("heading", { name: "Second workspace view" })).toBeVisible()
+})
+
+test("views: undo restores the custom Space input and preview refusals show the cell's message", async ({ page }) => {
+  const cell = await workspaceCell(page)
+  const id = "studio.view.funnel_application.custom"
+  cell.defs.set(id, {
+    kind: "view" as const, version: 1, retired: false, updatedAtMs: Date.now(),
+    payload: { title: "Custom Space view", objectType: "funnel.Application", space: "Claims" },
+  })
+  await page.route(/\/v1\/objects\/funnel\.Application\?/, (route) => route.fulfill({
+    status: 422, json: { code: "query.refused", message: "The cell could not run this preview." },
+  }))
+  await page.goto(`/views/${id}/edit`)
+  const space = page.getByLabel("Space", { exact: true })
+  const custom = page.getByLabel("Custom space name")
+  await expect(custom).toHaveValue("Claims")
+  await space.selectOption("Operations")
+  await expect(custom).toHaveCount(0)
+  await page.getByRole("button", { name: "Undo", exact: true }).click()
+  await expect(custom).toHaveValue("Claims")
+  await expect(page.getByRole("alert").filter({ hasText: "The cell could not run this preview." })).toBeVisible()
+  await expect(page.getByText("No records currently match this filter.")).toHaveCount(0)
+  await shoot(page, "views-space-and-preview-refusal")
+  await space.selectOption("Operations")
+  await space.selectOption("__custom__")
+  await custom.fill("Another Space")
+  await expect(custom).toHaveValue("Another Space")
+})
+
+test("views: grid Updates preserve legacy columns and pending Undo preserves a newer deletion notice", async ({ page }) => {
+  const cell = await workspaceCell(page)
+  const first = "studio.view.funnel_application.first"
+  const second = "studio.view.funnel_application.second"
+  const columns = ["score", "stage", "score"]
+  const definition = {
+    kind: "view" as const, version: 1, retired: false, updatedAtMs: Date.now(),
+    payload: { title: "First view", objectType: "funnel.Application", columns },
+  }
+  cell.defs.set(first, definition)
+  cell.defs.set(second, { ...definition, payload: { ...definition.payload, title: "Second view" } })
+  await page.goto("/objects/funnel.Application")
+  await page.getByRole("tab", { name: "First view" }).click()
+  const update = page.getByRole("button", { name: "Update view" })
+  await expect(update).toBeDisabled()
+  await page.getByRole("columnheader").getByRole("button", { name: "score" }).click()
+  await update.click()
+  await expect.poll(() => cell.defs.get(first)?.version).toBe(2)
+  expect(cell.defs.get(first)?.payload.columns).toEqual(columns)
+  await expect(update).toBeDisabled()
+  await page.getByRole("button", { name: "Delete", exact: true }).click()
+  const undo = page.getByRole("button", { name: "Undo" })
+  await expect(page.getByText("Deleted “First view”.")).toBeVisible()
+  const restoring = Promise.withResolvers<void>()
+  const releaseRestore = Promise.withResolvers<void>()
+  await page.route("**/api/host/v1/definitions:install?*", async (route) => {
+    restoring.resolve()
+    await releaseRestore.promise
+    await route.fallback()
+  }, { times: 1 })
+  await undo.click()
+  try {
+    await restoring.promise
+    await page.getByRole("tab", { name: "Second view" }).click()
+    await page.getByRole("button", { name: "Delete", exact: true }).click()
+    await expect(page.getByText("Deleted “Second view”.")).toBeVisible()
+  } finally {
+    releaseRestore.resolve()
+  }
+  await expect(page.getByRole("tab", { name: "First view" })).toBeVisible()
+  await expect(page.getByText("Deleted “Second view”.")).toBeVisible()
+  await undo.click()
+  await expect(page.getByText("Restored “Second view”.")).toBeVisible()
 })
 
 test("views: Narrow by discards counts when the active workspace changes mid-read", async ({ page }) => {

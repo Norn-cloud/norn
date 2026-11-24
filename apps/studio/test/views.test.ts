@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import { catalogOf } from "../src/lib/catalog.ts"
 import type { Fetch } from "../src/lib/cell-read.ts"
 import { StudioScopeError, type StudioScope } from "../src/lib/definitions.ts"
+import { history } from "../src/lib/editor.ts"
 import { readDocument } from "../src/lib/exact.ts"
 import { facetsQuery } from "../src/lib/facets.ts"
 import { EMPTY_QUERY, recordsQueryParams, recordsQueryPrefix } from "../src/lib/records-query.ts"
@@ -27,15 +28,16 @@ import {
   WORKSPACE_CHANGED_MESSAGE,
   type SavedView,
   type StoredView,
+  type ViewSaved,
 } from "../src/lib/views.ts"
 import { WITHHELD_ROW } from "../src/grid/cells.tsx"
 import type { ViewsBarNotice } from "../src/grid/views-bar.tsx"
 
 mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
 const { invalidateActionReads } = await import("../src/actions/action-sheet.tsx")
-const { RecordsGrid } = await import("../src/grid/records-grid.tsx")
-const { deletedViewNotice } = await import("../src/grid/views-bar.tsx")
-const { reloadConflictingView, scopedDeletedView, ViewDetail, ViewEditor } = await import("../src/views.tsx")
+const { RecordsGrid, visibleDrawerRow } = await import("../src/grid/records-grid.tsx")
+const { deletedViewNotice, updateGridView } = await import("../src/grid/views-bar.tsx")
+const { reloadConflictingView, scopedDeletedView, selectViewSpace, viewEditorDraft, ViewConflictBanner, ViewDetail, ViewEditor } = await import("../src/views.tsx")
 
 const SCOPE_A: StudioScope = { orgId: "org_a", environmentId: "prod" }
 const SCOPE_B: StudioScope = { orgId: "org_b", environmentId: "prod" }
@@ -620,7 +622,7 @@ test("conflict-after-delete reports deletion, hides dead Reload/Overwrite button
   )).toBe("failed")
 })
 
-test("ViewEditor live preview renders withheld rows and withheld properties without crashing on values: null", async () => {
+test("ViewEditor live preview renders withheld records and distinguishes refusal from no matches", async () => {
   const raw = readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer/three-systems.definitions.json"), "utf8")
   const catalog = catalogOf(readDocument<readonly Artifact[]>(raw, "recorded").document)
   const hidden = new Set(["id", "label", "display_name"])
@@ -673,6 +675,14 @@ test("ViewEditor live preview renders withheld rows and withheld properties with
   expect(html).toContain("VISIBLE_PART")
   expect(html).toContain("OPEN_A")
   expect(html).toContain("OPEN_B")
+
+  const refusal: RecordsRead = {
+    kind: "refused", status: 422, code: "query.refused", message: "The cell refused this filter.", diagnostics: [],
+  }
+  client.setQueryData(viewPreviewQueryKey(SCOPE_A, view), refusal)
+  const refused = renderToStaticMarkup(createElement(QueryClientProvider, { client }, createElement(RouterProvider, { router })))
+  expect(refused).toContain("The cell refused this filter.")
+  expect(refused).not.toContain("No records currently match this filter.")
 })
 
 test("ViewDetailPage scopes deleted-view banner to the deleted view's id so navigating to another view renders it normally", async () => {
@@ -740,7 +750,7 @@ test("ViewsBar keeps Undo available when restoration fails and clears it only af
     store,
     gone,
     retiredVersion: 2,
-    setNotice: (next) => { current = next },
+    setNotice: (next) => { current = typeof next === "function" ? next(current) : next },
     onRestored: (next) => { restored.push(next) },
   })
   expect(current.text).toBe("Deleted “Items needing review”.")
@@ -766,4 +776,83 @@ test("ViewsBar keeps Undo available when restoration fails and clears it only af
   expect(current.text).toBe("Restored “Items needing review”.")
   expect(current.undo).toBeUndefined()
   expect(restored).toEqual([{ id: "studio.view.v1", version: 3, scope: SCOPE_A, view: SAMPLE_VIEW }])
+})
+
+test("a scope error blocks the open drawer, and a successful refetch still uses the open row", () => {
+  const opened = {
+    record: { objectType: "canon.Item", id: "a", scope: "s", version: 1, values: { label: "Alpha" }, withheld: false },
+    at: "/records/0",
+    numbers: new Map<string, string>(),
+  }
+  expect(visibleDrawerRow(opened, new StudioScopeError(WORKSPACE_CHANGED_MESSAGE))).toBeNull()
+  expect(visibleDrawerRow(opened, null)).toBe(opened)
+})
+
+test("a detail definition read stays pinned before dispatch and discards a late result from its former workspace", async () => {
+  let active = SCOPE_A
+  const fetched: (string | null)[] = []
+  const store = cellViews(async (input) => {
+    const url = new URL(String(input), "https://studio.test")
+    fetched.push(url.searchParams.get("orgId"))
+    active = SCOPE_B
+    return Response.json({ version: 1, payload: SAMPLE_VIEW })
+  }, async () => active)
+  const id = "studio.view.shared"
+  await expect(store.getAtScope(id, SCOPE_A)).rejects.toThrow(WORKSPACE_CHANGED_MESSAGE)
+  await expect(store.getAtScope(id, SCOPE_A)).rejects.toThrow(WORKSPACE_CHANGED_MESSAGE)
+  expect(fetched).toEqual([SCOPE_A.orgId])
+  expect((await store.getAtScope(id, SCOPE_B))?.scope).toEqual(SCOPE_B)
+  expect(fetched).toEqual([SCOPE_A.orgId, SCOPE_B.orgId])
+})
+
+test.each(["saved", "refused"] as const)("an older Undo that is %s leaves the newer deletion notice intact", async (outcome) => {
+  let current: ViewsBarNotice | null = null
+  const pending = Promise.withResolvers<ViewSaved>()
+  const remove = (id: string) => deletedViewNotice({
+    store: { save: () => pending.promise },
+    gone: { id, version: 1, scope: SCOPE_A, view: { ...SAMPLE_VIEW, title: id } },
+    retiredVersion: 2,
+    setNotice: (next) => { current = typeof next === "function" ? next(current) : next },
+    onRestored: () => {},
+  })
+  current = remove("A")
+  const undo = current.undo?.()
+  const newer = remove("B")
+  current = newer
+  pending.resolve(outcome === "saved" ? { saved: true, id: "A", version: 3 } : { saved: false, findings: [] })
+  await undo
+  expect(current).toBe(newer)
+  expect(current.undo).toBeDefined()
+})
+
+test.each([
+  { saving: true, reloading: false, reloadLabel: "Reload theirs" },
+  { saving: false, reloading: true, reloadLabel: "Reloading…" },
+])("both conflict actions stay disabled during the pending operation", ({ saving, reloading, reloadLabel }) => {
+  const html = renderToStaticMarkup(createElement(ViewConflictBanner, {
+    conflict: { kind: "updated", version: 2 }, canCreate: true, canReload: true, canOverwrite: true, saving, reloading,
+    reloadError: null, onReload: () => {}, onOverwrite: () => {}, onSaveAsNew: () => {},
+  }))
+  expect(html).toMatch(new RegExp(`<button[^>]*disabled=""[^>]*>${reloadLabel}</button>`))
+  expect(html).toMatch(/<button[^>]*disabled=""[^>]*>Overwrite with mine<\/button>/)
+})
+
+test("undoing a preset Space selection restores the custom Space control and name", () => {
+  const start = history.start(viewEditorDraft({ ...SAMPLE_VIEW, space: "Claims" }))
+  const changed = history.set(start, selectViewSpace(start.present, "Operations"))
+  expect(changed.present).toMatchObject({ spaceMode: "preset", view: { space: "Operations" } })
+  expect(history.undo(changed).present).toMatchObject({ spaceMode: "custom", view: { space: "Claims" } })
+  expect(selectViewSpace(changed.present, "__custom__")).toMatchObject({ spaceMode: "custom", view: { space: "" } })
+})
+
+test("grid query edits preserve legacy columns while a displayed column change replaces them", () => {
+  const visible = ["stage", "score"]
+  const columns = Array.from({ length: 33 }, () => visible).flat()
+  const view = { ...SAMPLE_VIEW, columns }
+  const sort = [{ property: "stage", direction: "asc" as const }]
+  const updated = updateGridView(view, { ...EMPTY_QUERY, sort, columns: visible, initialColumns: visible })
+  expect(updated.columns).toBe(columns)
+  expect(updated.sort).toBe(sortText(sort))
+  const reordered = [...visible].reverse()
+  expect(updateGridView(view, { ...EMPTY_QUERY, columns: reordered, initialColumns: visible }).columns).toEqual(reordered)
 })

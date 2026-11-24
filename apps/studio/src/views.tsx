@@ -138,7 +138,7 @@ export function ViewConflictBanner({
           : "Someone saved a newer version of this view since you opened it."}
       </span>
       {canReload && (
-        <Button type="button" size="sm" variant="outline" disabled={reloading} onClick={onReload}>
+        <Button type="button" size="sm" variant="outline" disabled={reloading || saving} onClick={onReload}>
           {reloading ? "Reloading…" : "Reload theirs"}
         </Button>
       )}
@@ -147,7 +147,7 @@ export function ViewConflictBanner({
           type="button"
           size="sm"
           variant="destructive"
-          disabled={!canCreate || saving}
+          disabled={!canCreate || saving || reloading}
           onClick={() => onOverwrite(conflict.version)}
         >
           Overwrite with mine
@@ -362,23 +362,37 @@ export function ViewsPage() {
 }
 
 /** `/views/$id`: open a saved view with its filtered list, record drawer and action sheet. */
-export function ViewDetail({ initialRemoved, store = views }: {
+export function ViewDetail(props: {
+  readonly initialRemoved?: RemovedView
+  readonly store?: ViewsClient
+}) {
+  const { id = "" } = useParams({ strict: false }) as { id?: string }
+  return <ScopedViewDetail key={id} id={id} {...props} />
+}
+
+function ScopedViewDetail({ id, initialRemoved, store = views }: {
+  readonly id: string
   readonly initialRemoved?: RemovedView
   readonly store?: ViewsClient
 }) {
   const scope = useStudioScope()
   const activeScope = scope.data ?? null
   const cellAvailable = scope.isSuccess && activeScope !== null
-  const { id = "" } = useParams({ strict: false }) as { id?: string }
   const { catalog } = useCatalog()
   const navigate = useNavigate()
   const client = useQueryClient()
+  const [sourceScope, setSourceScope] = useState<StudioScope | null>(null)
+  const readScope = sourceScope ?? activeScope
+  const scopeMismatch = sourceScope !== null && !sameScope(activeScope, sourceScope)
   const stored = useQuery({
-    queryKey: ["view", id, activeScope?.orgId, activeScope?.environmentId],
-    queryFn: async () => (await store.get(id, activeScope)) ?? null,
-    enabled: cellAvailable && id !== "",
+    queryKey: ["view", id, readScope?.orgId, readScope?.environmentId],
+    queryFn: async ({ signal }) => readScope === null ? null : (await store.getAtScope(id, readScope, signal)) ?? null,
+    enabled: cellAvailable && !scopeMismatch && id !== "",
     retry: false,
   })
+  if (sourceScope === null && stored.data != null) setSourceScope(stored.data.scope)
+  const detailScopeMismatch = scopeMismatch
+    || (stored.error instanceof StudioScopeError && stored.error.message === WORKSPACE_CHANGED_MESSAGE)
   const [removed, setRemoved] = useState<RemovedView | undefined>(initialRemoved)
   const invalidate = () => {
     void client.invalidateQueries({ queryKey: ["views"] })
@@ -422,14 +436,14 @@ export function ViewDetail({ initialRemoved, store = views }: {
     }
   }
 
-  const deleted = scopedDeletedView(removed, id, activeScope)
-  const active = deleted ? undefined : stored.data
-  const detailScopeMismatch = active != null && !sameScope(activeScope, active.scope)
+  const deleted = detailScopeMismatch ? undefined : scopedDeletedView(removed, id, activeScope)
+  const active = deleted || detailScopeMismatch ? undefined : stored.data
+  const loaded = stored.data
   useEffect(() => {
-    if (detailScopeMismatch && active != null) {
-      void client.cancelQueries({ queryKey: recordsQueryPrefix(active.view.objectType, active.scope) })
+    if (detailScopeMismatch && loaded != null) {
+      void client.cancelQueries({ queryKey: recordsQueryPrefix(loaded.view.objectType, loaded.scope) })
     }
-  }, [client, detailScopeMismatch, active])
+  }, [client, detailScopeMismatch, loaded])
   const detailRead = useCallback(
     (objectType: string, query: RecordsQuery, signal?: AbortSignal) =>
       active != null
@@ -467,15 +481,15 @@ export function ViewDetail({ initialRemoved, store = views }: {
       {detailScopeMismatch && <p role="alert" className="text-destructive">{WORKSPACE_CHANGED_MESSAGE}</p>}
       {duplicate.isError && <p role="alert" className="text-destructive">Not duplicated. {failure(duplicate.error)}</p>}
       {remove.isError && <p role="alert" className="text-destructive">Not deleted. {failure(remove.error)}</p>}
-      {(scope.isPending || (cellAvailable && stored.isPending)) && <p className="text-muted-foreground">Reading view…</p>}
-      {stored.isError && <EmptyState icon={Bookmark}>{failure(stored.error)}</EmptyState>}
+      {!detailScopeMismatch && (scope.isPending || (cellAvailable && stored.isPending)) && <p className="text-muted-foreground">Reading view…</p>}
+      {!detailScopeMismatch && stored.isError && <EmptyState icon={Bookmark}>{failure(stored.error)}</EmptyState>}
       {deleted && <UndoDeleteView removed={deleted} pending={undo.isPending} error={undo.isError ? failure(undo.error) : undefined} onUndo={() => undo.mutate(deleted)} />}
       {deleted && <Button asChild variant="ghost" size="sm"><Link to="/views">Back to views</Link></Button>}
       {stored.isSuccess && active === null && <EmptyState icon={Bookmark}>No view {id} is saved.</EmptyState>}
       {active && concept === undefined && catalog && (
         <EmptyState icon={Shapes}>Record type {active.view.objectType} is not installed in this cell.</EmptyState>
       )}
-      {active && concept !== undefined && !detailScopeMismatch && (
+      {active && concept !== undefined && (
         <RecordsGrid
           key={`${active.scope.orgId}:${active.scope.environmentId}:${active.id}:${active.version}`}
           concept={concept}
@@ -502,6 +516,19 @@ function defaultViewFor(concept: Concept | undefined): SavedView {
     objectType: concept?.name ?? "",
     columns: cols,
   }
+}
+
+type ViewEditorDraft = { readonly view: SavedView; readonly spaceMode: "preset" | "custom" }
+
+export function viewEditorDraft(view: SavedView): ViewEditorDraft {
+  return { view, spaceMode: view.space && !DEFAULT_SPACES.some((space) => space === view.space) ? "custom" : "preset" }
+}
+
+export function selectViewSpace(draft: ViewEditorDraft, selection: string): ViewEditorDraft {
+  if (selection === "__custom__") {
+    return { view: { ...draft.view, space: "" }, spaceMode: "custom" }
+  }
+  return { view: { ...draft.view, space: selection || undefined }, spaceMode: "preset" }
 }
 
 export function ViewEditor({
@@ -539,20 +566,21 @@ export function ViewEditor({
   const [scopeError, setScopeError] = useState<string | null>(null)
   const [reloading, setReloading] = useState(false)
   const [reloadError, setReloadError] = useState<string | null>(null)
-  const initial = useMemo(() => stored?.view ?? defaultViewFor(concepts[0]), [stored, concepts])
+  const initial = useMemo(() => viewEditorDraft(stored?.view ?? defaultViewFor(concepts[0])), [stored, concepts])
   const saving = useRef(false)
   const [pendingNav, setPendingNav] = useState<{ readonly id: string; readonly version: number } | null>(null)
   const [pendingDiscard, setPendingDiscard] = useState(false)
   const save = useMutation({
     mutationFn: async ({
-      view,
+      draft,
       confirmedVersion,
       asNew,
     }: {
-      readonly view: SavedView
+      readonly draft: ViewEditorDraft
       readonly confirmedVersion?: number
       readonly asNew?: boolean
     }) => {
+      const { view } = draft
       if (draftScope === null) throw new StudioScopeError(NO_DATA_CELL)
       if (scopeMismatch || scopeError === WORKSPACE_CHANGED_MESSAGE) {
         throw new StudioScopeError(WORKSPACE_CHANGED_MESSAGE)
@@ -570,14 +598,14 @@ export function ViewEditor({
         scope: draftScope,
       })
     },
-    onSuccess: ({ view, result, conflict: nextConflict }) => {
+    onSuccess: ({ result, conflict: nextConflict }, { draft }) => {
       setScopeError(null)
       setReloadError(null)
       setFindings("findings" in result ? result.findings : [])
       if (result.saved) {
         setConflict(null)
         setAt({ id: result.id, version: result.version })
-        editor.markSaved(view)
+        editor.markSaved(draft)
         setPendingNav({ id: result.id, version: result.version })
       } else if (nextConflict !== null) {
         setConflict(nextConflict)
@@ -592,21 +620,23 @@ export function ViewEditor({
       }
     },
   })
-  const requestSave = (next: SavedView, mode: { readonly confirmedVersion?: number; readonly asNew?: boolean } = {}) => {
+  const requestSave = (draft: ViewEditorDraft, mode: { readonly confirmedVersion?: number; readonly asNew?: boolean } = {}) => {
     const forced = mode.confirmedVersion !== undefined || mode.asNew === true
-    if (!cellAvailable || draftScope === null || saving.current || (!forced && (!editor.dirty || conflict?.kind === "deleted"))) return
+    if (!cellAvailable || draftScope === null || saving.current || reloading || (!forced && (!editor.dirty || conflict?.kind === "deleted"))) return
     if (scopeMismatch || scopeError === WORKSPACE_CHANGED_MESSAGE) {
       setScopeError(WORKSPACE_CHANGED_MESSAGE)
       return
     }
     saving.current = true
     save.mutate(
-      { view: next, confirmedVersion: mode.confirmedVersion, asNew: mode.asNew },
+      { draft, confirmedVersion: mode.confirmedVersion, asNew: mode.asNew },
       { onSettled: () => { saving.current = false } },
     )
   }
-  const editor = useEditor<SavedView>({ initial, onSave: (v) => requestSave(v) })
-  const { value: view, set } = editor
+  const editor = useEditor<ViewEditorDraft>({ initial, onSave: (draft) => requestSave(draft) })
+  const { view, spaceMode } = editor.value
+  const set = (update: (view: SavedView) => SavedView) =>
+    editor.set((draft) => ({ ...draft, view: update(draft.view) }))
   // Navigate only after React commits `editor.dirty === false` so DirtyGuard never blocks a completed save or discard.
   useEffect(() => {
     if (pendingNav !== null && !editor.dirty) {
@@ -625,12 +655,12 @@ export function ViewEditor({
   const discardChanges = () => {
     setConflict(null)
     setReloadError(null)
-    editor.markSaved(view)
+    editor.markSaved(editor.value)
     setPendingDiscard(true)
   }
 
   const reloadTheirs = async () => {
-    if (!onReload || reloading) return
+    if (!onReload || reloading || saving.current) return
     setReloading(true)
     setReloadError(null)
     try {
@@ -676,10 +706,6 @@ export function ViewEditor({
     lastEmittedFilter.current = predicate
     set((cur) => ({ ...cur, filter: predicate }))
   }
-
-  const [spaceMode, setSpaceMode] = useState<"preset" | "custom">(() =>
-    !view.space || (DEFAULT_SPACES as readonly string[]).includes(view.space) ? "preset" : "custom",
-  )
 
   // Live server admission check (side-effect free), bound to `draftScope`.
   useEffect(() => {
@@ -772,7 +798,7 @@ export function ViewEditor({
   return (
     <div className="space-y-6">
       <DirtyGuard dirty={editor.dirty} />
-      <EditorToolbar editor={editor} onSave={() => requestSave(view)} saving={save.isPending || !cellAvailable || workspaceAlert !== null || conflict?.kind === "deleted"}>
+      <EditorToolbar editor={editor} onSave={() => requestSave(editor.value)} saving={save.isPending || reloading || !cellAvailable || workspaceAlert !== null || conflict?.kind === "deleted"}>
         {at && <Badge variant="outline">Version {at.version}</Badge>}
       </EditorToolbar>
       {workspaceAlert && <p role="alert" className="text-destructive">{workspaceAlert}</p>}
@@ -789,8 +815,8 @@ export function ViewEditor({
           reloading={reloading}
           reloadError={reloadError}
           onReload={() => void reloadTheirs()}
-          onOverwrite={(version) => requestSave(view, { confirmedVersion: version })}
-          onSaveAsNew={() => requestSave(view, { asNew: true })}
+          onOverwrite={(version) => requestSave(editor.value, { confirmedVersion: version })}
+          onSaveAsNew={() => requestSave(editor.value, { asNew: true })}
           onDiscard={onDiscard ? discardChanges : undefined}
         />
       )}
@@ -842,17 +868,7 @@ export function ViewEditor({
               aria-label="Space"
               className={`${selectCls} min-w-44 flex-1`}
               value={spaceMode === "custom" ? "__custom__" : (view.space ?? "")}
-              onChange={(e) => {
-                if (e.target.value === "__custom__") {
-                  setSpaceMode("custom")
-                  if (!view.space || (DEFAULT_SPACES as readonly string[]).includes(view.space)) {
-                    set((cur) => ({ ...cur, space: "" }))
-                  }
-                } else {
-                  setSpaceMode("preset")
-                  set((cur) => ({ ...cur, space: e.target.value || undefined }))
-                }
-              }}
+              onChange={(e) => editor.set(selectViewSpace(editor.value, e.target.value))}
             >
               {DEFAULT_SPACES.map((sp) => <option key={sp} value={sp}>{sp}</option>)}
               <option value="">Unpinned (Views list only)</option>
@@ -976,6 +992,7 @@ export function ViewEditor({
         {workspaceAlert && <p className="text-sm text-destructive">{workspaceAlert}</p>}
         {!workspaceAlert && previewQuery.isPending && <p className="text-sm text-muted-foreground">Checking matching records…</p>}
         {!workspaceAlert && previewQuery.isError && <p className="text-sm text-muted-foreground">{failure(previewQuery.error)}</p>}
+        {!workspaceAlert && previewQuery.data?.kind === "refused" && <p role="alert" className="text-sm text-destructive">{previewQuery.data.message}</p>}
         {!workspaceAlert && previewPage && previewPage.read.document.records.length === 0 && (
           <p className="text-sm text-muted-foreground">No records currently match this filter.</p>
         )}

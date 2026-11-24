@@ -1,19 +1,18 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Bookmark, Pencil, Save, Trash2, Undo2 } from "lucide-react"
-import { useState, type FormEvent } from "react"
+import { useState, type Dispatch, type FormEvent, type SetStateAction } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
 import { NO_DATA_CELL, useStudioScope } from "../lib/definitions.ts"
 import { cellViews, newViewId, sortKeys, sortText, type SavedView, type StoredView, type ViewSaved, type ViewsClient } from "../lib/views.ts"
-import type { GridQuery } from "./records-grid.tsx"
+import type { DisplayedGridQuery, GridQuery } from "./records-grid.tsx"
 
 const views = cellViews()
 
-/** The view a grid query saves as, keeping any space or description already on the view. */
-const asView = (title: string, objectType: string, query: GridQuery, existing?: SavedView): SavedView => ({
-  ...existing,
+/** The view a grid query saves as. */
+const asView = (title: string, objectType: string, query: GridQuery): SavedView => ({
   title,
   objectType,
   filter: query.filter && query.filter.all.length > 0 ? query.filter : undefined,
@@ -21,11 +20,19 @@ const asView = (title: string, objectType: string, query: GridQuery, existing?: 
   columns: query.columns,
 })
 
+const sameColumns = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((column, index) => column === b[index])
+
+export const updateGridView = (view: SavedView, query: DisplayedGridQuery): SavedView => ({
+  ...view,
+  ...asView(view.title, view.objectType, query),
+  columns: sameColumns(query.initialColumns, query.columns) ? view.columns : query.columns,
+})
+
 /** Whether the grid shows something other than the view as saved. */
-const differs = (view: SavedView, query: GridQuery) =>
-  JSON.stringify(view.filter ?? null) !== JSON.stringify(query.filter && query.filter.all.length > 0 ? query.filter : null)
-  || (view.sort ?? "") !== (sortText(query.sort) ?? "")
-  || JSON.stringify(view.columns ?? []) !== JSON.stringify(query.columns)
+const differs = (view: SavedView, query: SavedView) =>
+  JSON.stringify(view.filter?.all.length ? view.filter : null) !== JSON.stringify(query.filter ?? null)
+  || (view.sort ?? "") !== (query.sort ?? "")
+  || !sameColumns(view.columns ?? [], query.columns ?? [])
 
 /** What the cell said, in a line: its checker's first finding, or that someone saved first. */
 function problemOf(result: ViewSaved): string | null {
@@ -68,11 +75,13 @@ export function deletedViewNotice(params: {
   readonly store: Pick<ViewsClient, "save">
   readonly gone: StoredView
   readonly retiredVersion: number
-  readonly setNotice: (notice: ViewsBarNotice) => void
+  readonly setNotice: Dispatch<SetStateAction<ViewsBarNotice | null>>
   readonly onRestored: (restored: StoredView) => Promise<void> | void
 }): ViewsBarNotice {
   const { store, gone, retiredVersion, setNotice, onRestored } = params
   let restoring = false
+  const updateNotice = (next: ViewsBarNotice) =>
+    setNotice((current) => current?.undo === undo ? next : current)
   const undo = async () => {
     if (restoring) return
     restoring = true
@@ -81,15 +90,15 @@ export function deletedViewNotice(params: {
         .save(gone.id, gone.view, retiredVersion, gone.scope)
         .catch((error: unknown) => error instanceof Error ? error : new Error(String(error)))
       if (back instanceof Error) {
-        setNotice({ text: `Not restored. ${back.message}`, undo })
+        updateNotice({ text: `Not restored. ${back.message}`, undo })
         return
       }
       if (!back.saved) {
-        setNotice({ text: problemOf(back) ?? "Not restored.", undo })
+        updateNotice({ text: problemOf(back) ?? "Not restored.", undo })
         return
       }
       await onRestored({ id: gone.id, version: back.version, scope: gone.scope, view: gone.view })
-      setNotice({ text: `Restored “${gone.view.title}”.` })
+      updateNotice({ text: `Restored “${gone.view.title}”.` })
     } finally {
       restoring = false
     }
@@ -105,7 +114,7 @@ export function deletedViewNotice(params: {
 export function ViewsBar({ objectType, open, query, onOpen }: {
   readonly objectType: string
   readonly open: StoredView | null
-  readonly query: GridQuery | undefined
+  readonly query: DisplayedGridQuery | undefined
   readonly onOpen: (view: StoredView | null) => void
 }) {
   const client = useQueryClient()
@@ -165,7 +174,8 @@ export function ViewsBar({ objectType, open, query, onOpen }: {
       },
     }))
   }
-  const changed = open !== null && query !== undefined && differs(open.view, query)
+  const updated = open !== null && query !== undefined ? updateGridView(open.view, query) : null
+  const changed = open !== null && updated !== null && differs(open.view, updated)
   const tab = (active: boolean) => cn("inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-sm transition-colors", active ? "bg-card font-medium shadow-node ring-1 ring-node-border" : "text-muted-foreground hover:text-foreground")
   return (
     <div className="grid gap-2">
@@ -180,7 +190,7 @@ export function ViewsBar({ objectType, open, query, onOpen }: {
         <span className="flex-1" />
         {open !== null && <>
           <Button type="button" variant="outline" size="sm" className="h-8" disabled={!changed} title={changed ? "Save the grid's filter, sort and columns into this view" : "The grid shows this view as saved"}
-            onClick={() => { if (query) void update(asView(open.view.title, objectType, query, open.view)).then((problem) => problem && setNotice({ text: problem })) }}><Save />Update view</Button>
+            onClick={() => { if (updated) void update(updated).then((problem) => problem && setNotice({ text: problem })) }}><Save />Update view</Button>
           <Popover open={renaming} onOpenChange={setRenaming}>
             <PopoverTrigger asChild><Button type="button" variant="ghost" size="sm" className="h-8"><Pencil />Rename</Button></PopoverTrigger>
             <PopoverContent align="end" className="w-72 rounded-node border-node-border shadow-float">
