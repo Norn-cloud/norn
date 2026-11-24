@@ -3,7 +3,8 @@
 use crate::{JsonAt, TestMust};
 use std::collections::BTreeSet;
 
-use norn_checker::{Diagnostic, EffectiveCatalog, EntityArtifactSetContext};
+use norn_checker::entity_scopes::ScopedView;
+use norn_checker::{Diagnostic, EntityArtifactSetContext};
 use norn_ir::{ActionRoot, ArtifactEnvelope};
 use norn_ui_checker::{check_artifact_set, generated_transition_enabled_when};
 use serde_json::{Value, json};
@@ -730,7 +731,9 @@ fn lifecycle_conditions_and_authoritative_runtime_targets_are_admitted() {
         .any(|finding| finding.message.contains("enabledWhen must exactly match"));
     assert!(!has_condition_mismatch);
     let artifacts = vec![decode(entity)];
-    let catalog = EffectiveCatalog::from_artifacts(&artifacts);
+    let catalog = ScopedView::uniform(&artifacts, &BTreeSet::new())
+        .expect("one scope")
+        .into_catalog();
     let object = catalog
         .object_type("test.Record.entity")
         .expect("object lookup")
@@ -995,7 +998,9 @@ fn generated_lifecycle_conditions_use_effective_inherited_narrowing() {
         }),
     );
     let artifacts = vec![decode(base.clone()), decode(child.clone())];
-    let catalog = EffectiveCatalog::from_artifacts(&artifacts);
+    let catalog = ScopedView::uniform(&artifacts, &BTreeSet::new())
+        .expect("one scope")
+        .into_catalog();
     let object = catalog
         .object_type("test.NarrowRecord.entity")
         .expect("lookup")

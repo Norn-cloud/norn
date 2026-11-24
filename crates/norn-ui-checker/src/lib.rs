@@ -319,12 +319,7 @@ fn check_artifact_set_with_receipt_inner(
     }
     let mut type_env = None;
     if !diagnostics.iter().any(Diagnostic::is_error) {
-        match norn_checker::entity_scopes::derive_receipt_type_env_ref_at_version(
-            artifacts,
-            context.base,
-            limits,
-            norn_expr::env::TypeEnvVersion::V3,
-        ) {
+        match norn_checker::entity_scopes::receipt_type_env(artifacts, context.base, limits) {
             Ok(env_ref) => type_env = Some(env_ref),
             Err(Ok(errors)) => diagnostics.extend(errors.iter().map(|error| Diagnostic {
                 witness: None,

@@ -27,10 +27,9 @@ use norn_ir::{
 };
 
 use crate::action_set::{Model, codes as action_codes};
-use crate::artifact_set::scope_finding;
 use crate::entity_artifacts::EntityArtifactSetContext;
 use crate::entity_instance::{EffectiveKind, EffectiveProperty};
-use crate::entity_scopes::{ScopeKey, scope_key};
+use crate::entity_scopes::ScopedViews;
 use crate::envelope::invalid_diagnostic;
 use crate::jdm_profile::codes as jdm_codes;
 use crate::lifecycle_writes::codes as lifecycle_codes;
@@ -208,19 +207,11 @@ pub fn check_decision_links_set(
     if decisions.is_empty() {
         return Vec::new();
     }
-    let mut models: BTreeMap<ScopeKey, Model<'_>> = BTreeMap::new();
+    let mut views = ScopedViews::new(artifacts, context.base, context.registry);
     let mut findings = Vec::new();
     for (artifact, output) in &decisions {
         if let Some(schema) = LinkSchema::of(output) {
-            let model = models.entry(scope_key(&artifact.scope)).or_insert_with(|| {
-                Model::for_scope(
-                    artifacts,
-                    context.base,
-                    context.registry,
-                    true,
-                    &artifact.scope,
-                )
-            });
+            let model = views.of(artifact).model();
             findings.extend(decision_links_findings(artifact, &schema, model));
         }
     }
@@ -509,22 +500,19 @@ fn resolve_endpoint_types<'a>(
     let mut resolved = Vec::new();
     for (index, kind) in kinds.iter().enumerate() {
         let pointer = format!("{ITEMS_POINTER}/properties/{field}/enum/{index}");
-        match model.object_type(kind) {
-            None => findings.push(finding(
+        let unknown = || {
+            finding(
                 lifecycle_codes::UNKNOWN_FACT_OBJECT_TYPE,
                 format!(
                     "the decision links {role} type {kind:?}, which is not an object type of the artifact set or the installed base"
                 ),
                 artifact,
                 &pointer,
-            )),
-            Some(defined) => {
-                if let Some(error) = scope_finding(artifact, defined.artifact, &pointer) {
-                    findings.push(error);
-                } else {
-                    resolved.push(*kind);
-                }
-            }
+            )
+        };
+        match model.resolve(artifact, kind, &pointer, unknown) {
+            Ok(_) => resolved.push(*kind),
+            Err(refusal) => findings.push(*refusal),
         }
     }
     resolved

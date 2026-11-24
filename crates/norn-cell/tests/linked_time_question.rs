@@ -16,6 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use norn_cell::compute::QueryContext;
 use norn_cell::{CellStore, CommitBatch, FactWriteRow, LinkChange, Model};
+use norn_checker::entity_scopes::ScopedView;
 use norn_checker::metric::compute::QuestionPlan;
 use norn_checker::metric::derive::derive_metric_space;
 use norn_ir::{ArtifactEnvelope, Decimal, LawRoot, ObjectTypeDef, QuestionIR, RuntimeValue as V};
@@ -54,8 +55,8 @@ fn envelope(object: &ObjectTypeDef) -> ArtifactEnvelope {
 fn fixture() -> (CellStore, QuestionPlan) {
     let [event, entry] = types();
     let space = derive_metric_space(
-        &[envelope(&event), envelope(&entry)],
-        &BTreeSet::new(),
+        &ScopedView::uniform(&[envelope(&event), envelope(&entry)], &BTreeSet::new())
+            .expect("one scope"),
         &LawRoot::Entity("demo.Entry".to_owned()),
     )
     .expect("derived space");

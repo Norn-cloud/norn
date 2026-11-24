@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 use std::fmt;
 
 use norn_checker::agent::{AgentContext, ToolBinding, agent_payload_syntax, check_agent};
+use norn_checker::entity_scopes::ScopedView;
 use norn_checker::function::{
     admit_function_manifest, check_function_invocation, check_function_receipt,
     decode_function_invocation, decode_function_manifest, decode_function_receipt,
@@ -12,7 +13,7 @@ use norn_checker::function::{
 use norn_checker::receipt::{CHECKER_VERSION, EXPR_PROFILE, RECEIPT_FORMAT};
 use norn_checker::{
     DIAGNOSTICS_FORMAT, Diagnostic, EntityArtifactSetContext, TenantLayer, declared_lifecycles,
-    decode_artifact_json, derive_type_env, diagnostics_to_json,
+    decode_artifact_json, diagnostics_to_json,
 };
 use norn_expr::{Expression, Type, ZenTypeEnv};
 use norn_ir::canonical::CanonicalJsonError;
@@ -418,7 +419,8 @@ fn environment(
     self_type: Option<&str>,
 ) -> Result<ZenTypeEnv, Vec<Value>> {
     let limits = ResourceLimitProfile::norn_limits_v1();
-    let env = derive_type_env(envelopes, &[], &limits).map_err(|errors| {
+    let view = ScopedView::declaring(self_type.unwrap_or_default(), envelopes, &BTreeSet::new());
+    let env = view.receipt_env(&limits).map_err(|errors| {
         errors
             .iter()
             .map(|error| {
@@ -1018,9 +1020,9 @@ pub fn admit_question_json(
     if has_errors(&set_findings) {
         return Ok(refused(&set_findings));
     }
-    let catalog = norn_checker::EffectiveCatalog::from_artifacts(&envelopes);
+    let view = ScopedView::declaring(question.object_set.as_str(), &envelopes, &registry);
     // The cell's bound for one question's population (norn-cell-do analytics).
-    match norn_checker::metric::compute::admit(&metrics, &question, &catalog, 100) {
+    match norn_checker::metric::compute::admit(&metrics, &question, view.catalog(), 100) {
         Err(findings) => Ok(refused(&findings)),
         Ok(plan) => {
             let output = json!({

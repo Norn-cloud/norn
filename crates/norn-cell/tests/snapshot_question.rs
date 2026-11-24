@@ -16,6 +16,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use norn_cell::compute::{QueryContext, QueryResult};
 use norn_cell::{CellStore, CommitBatch, FactWriteRow, KnowledgeCutoff, Model};
+use norn_checker::entity_scopes::ScopedView;
 use norn_checker::metric::derive::derive_metric_space;
 use norn_ir::{ArtifactEnvelope, Decimal, LawRoot, ObjectTypeDef, QuestionIR, RuntimeValue as V};
 use proptest::prelude::*;
@@ -68,8 +69,7 @@ fn grouped(
     }))
     .expect("artifact");
     let space = derive_metric_space(
-        &[artifact],
-        &BTreeSet::new(),
+        &ScopedView::uniform(&[artifact], &BTreeSet::new()).expect("one scope"),
         &LawRoot::Entity(TYPE.to_owned()),
     )
     .expect("derived space");

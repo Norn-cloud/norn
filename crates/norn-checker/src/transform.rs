@@ -20,13 +20,14 @@ use norn_expr::{EnvOptions, Expression, InferredType, ZenTypeEnv};
 use norn_ir::{
     AggregateFn, ArtifactEnvelope, ArtifactKind, ArtifactPayload, CalcExpr, DedupeKeep, JoinKind,
     JoinOn, Normalization, OrderKey, PropertyAdditivity, PropertyType, PropertyTypeName,
-    RefreshPolicy, ResourceLimitProfile, ScopeRef, SortDirection, ViewInputKind, ViewIrPayload,
+    RefreshPolicy, ResourceLimitProfile, SortDirection, ViewInputKind, ViewIrPayload,
     ViewMaintenance, ViewNode, WindowFn,
 };
 
 use norn_ir::metric::TimeGrain;
 
 use crate::entity_instance::{EffectiveCatalog, EffectiveKind};
+use crate::entity_scopes::{ScopedView, ScopedViews};
 use crate::{Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, Span};
 
 /// Stable codes of `ViewIR` v1 admission. The metric layer's additivity codes
@@ -464,17 +465,16 @@ pub fn check_transform_set(
     if !artifacts.iter().any(is_relational) {
         return Vec::new();
     }
-    let pool: Vec<ArtifactEnvelope> = base.iter().chain(artifacts).cloned().collect();
-    let mut contexts = BTreeMap::new();
+    let mut views = ScopedViews::new(artifacts, base, registry);
     let mut findings = Vec::new();
-    for a in artifacts.iter().filter(|a| is_relational(a)) {
-        let key = crate::entity_scopes::scope_key(&a.scope);
-        let ctx = contexts
-            .entry(key)
-            .or_insert_with(|| Context::new(&pool, registry, &a.scope));
-        for mut d in ctx.admit(a).err().unwrap_or_default() {
-            d.artifact_id = Some(a.artifact_id.clone());
-            findings.push(d);
+    for artifact in artifacts.iter().filter(|artifact| is_relational(artifact)) {
+        for mut finding in Context::new(views.of(artifact))
+            .admit(artifact)
+            .err()
+            .unwrap_or_default()
+        {
+            finding.artifact_id = Some(artifact.artifact_id.clone());
+            findings.push(finding);
         }
     }
     findings
@@ -490,25 +490,23 @@ pub fn admit(
     pool: &[ArtifactEnvelope],
     registry: &BTreeSet<PropertyTypeName>,
 ) -> Result<TransformPlan, Vec<Diagnostic>> {
-    Context::new(pool, registry, &artifact.scope).admit(artifact)
+    Context::new(&ScopedView::of(artifact, pool, &[], registry)).admit(artifact)
 }
 
 struct Context<'a> {
     pool: &'a [ArtifactEnvelope],
-    catalog: EffectiveCatalog,
-    env: Option<ZenTypeEnv>,
+    catalog: &'a EffectiveCatalog,
+    env: Option<&'a ZenTypeEnv>,
     limits: ResourceLimitProfile,
 }
 
 impl<'a> Context<'a> {
-    fn new(pool: &'a [ArtifactEnvelope], reg: &BTreeSet<PropertyTypeName>, s: &ScopeRef) -> Self {
-        let limits = ResourceLimitProfile::norn_limits_v1();
-        let (catalog, env) = crate::entity_scopes::transform_scope_parts(pool, reg, &limits, s);
+    fn new(view: &'a ScopedView<'_>) -> Self {
         Self {
-            pool,
-            catalog,
-            env,
-            limits,
+            pool: view.pool(),
+            catalog: view.catalog(),
+            env: view.env(),
+            limits: ResourceLimitProfile::norn_limits_v1(),
         }
     }
 
@@ -905,7 +903,7 @@ impl Builder<'_, '_> {
             );
             return None;
         }
-        let Some(env) = &self.context.env else {
+        let Some(env) = self.context.env else {
             self.fail(
                 codes::INVALID_PLAN,
                 "the input types have no supported expression environment",
@@ -1029,7 +1027,7 @@ impl Builder<'_, '_> {
     }
 
     fn env_for(&mut self, schema: &NodeSchema, at: &str) -> Option<ZenTypeEnv> {
-        let Some(base) = self.context.env.as_ref() else {
+        let Some(base) = self.context.env else {
             self.fail(
                 codes::INVALID_PLAN,
                 "the input types have no supported expression environment",

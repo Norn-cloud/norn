@@ -36,7 +36,7 @@ use norn_ir::{
 };
 
 use crate::artifact_set::scope_finding;
-use crate::entity_scopes::{ScopeKey, scope_key, scope_visible};
+use crate::entity_scopes::ScopedViews;
 use crate::envelope::invalid_diagnostic;
 use crate::object_types::{MEMBER_ID_GRAMMAR, OBJECT_NAME_GRAMMAR};
 use crate::property_types::{Decimal, matches_grammar};
@@ -701,19 +701,10 @@ pub(crate) fn check_model_set(
         return Vec::new();
     }
     let owners = crate::entity_scopes::entity_object_type_owners(artifacts, base);
-    let mut catalogs: BTreeMap<ScopeKey, Catalog> = BTreeMap::new();
+    let mut views = ScopedViews::new(artifacts, base, &BTreeSet::new());
     let mut findings = Vec::new();
     for (artifact, root) in &models {
-        let catalog = catalogs
-            .entry(scope_key(&artifact.scope))
-            .or_insert_with(|| {
-                Catalog::of(
-                    artifacts
-                        .iter()
-                        .chain(base)
-                        .filter(|candidate| scope_visible(&artifact.scope, &candidate.scope)),
-                )
-            });
+        let catalog = &Catalog::of(views.of(artifact).pool());
         check_predictions(catalog, &owners, root, artifact, &mut findings);
         let input = root.input.object_type().as_str();
         if let Some(owner) = owners.get(input)

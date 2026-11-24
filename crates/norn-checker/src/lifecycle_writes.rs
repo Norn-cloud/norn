@@ -88,10 +88,9 @@ use norn_ir::{
 };
 
 use crate::action_set::Model;
-use crate::artifact_set::scope_finding;
 use crate::entity_artifacts::EntityArtifactSetContext;
 use crate::entity_instance::EffectiveLifecycle;
-use crate::entity_scopes::{ScopeKey, scope_key};
+use crate::entity_scopes::ScopedViews;
 use crate::envelope::invalid_diagnostic;
 use crate::{Diagnostic, DiagnosticCode, LifecycleWrite, Span, check_lifecycle_writes};
 
@@ -362,21 +361,13 @@ pub fn check_lifecycle_write_set(
     if decisions.is_empty() {
         return Vec::new();
     }
-    let mut models: BTreeMap<ScopeKey, Model<'_>> = BTreeMap::new();
+    let mut views = ScopedViews::new(artifacts, context.base, context.registry);
     let mut findings = Vec::new();
     for (artifact, output) in &decisions {
         let Some(schema) = FactSchema::of(output) else {
             continue;
         };
-        let model = models.entry(scope_key(&artifact.scope)).or_insert_with(|| {
-            Model::for_scope(
-                artifacts,
-                context.base,
-                context.registry,
-                true,
-                &artifact.scope,
-            )
-        });
+        let model = views.of(artifact).model();
         check_decision_lifecycle_writes(artifact, &schema, model, &mut findings);
     }
     findings
@@ -397,21 +388,23 @@ fn check_decision_lifecycle_writes(
         .enumerate()
     {
         let pointer = enum_pointer("objectType", index);
-        let Some(defined) = model.object_type(kind) else {
-            findings.push(finding(
+        let unknown = || {
+            finding(
                 codes::UNKNOWN_FACT_OBJECT_TYPE,
                 format!(
                     "the decision writes {kind:?}, which is not an object type of the artifact set or the installed base"
                 ),
                 artifact,
                 &pointer,
-            ));
-            continue;
+            )
         };
-        if let Some(error) = scope_finding(artifact, defined.artifact, &pointer) {
-            findings.push(error);
-            continue;
-        }
+        let defined = match model.resolve(artifact, kind, &pointer, unknown) {
+            Ok(defined) => defined,
+            Err(refusal) => {
+                findings.push(*refusal);
+                continue;
+            }
+        };
         let lifecycles = match &defined.lifecycles {
             Ok(lifecycles) => lifecycles.as_slice(),
             Err(reason) => {

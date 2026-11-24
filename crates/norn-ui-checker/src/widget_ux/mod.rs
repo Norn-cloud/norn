@@ -32,9 +32,7 @@ use norn_ir::{
 
 use norn_checker::entity_instance::{EffectiveCatalog, EffectiveProperty};
 use norn_checker::entity_lowering::entity_object_type;
-use norn_checker::entity_scopes::{
-    ScopeKey, effective_catalog_for_scope, scope_key, scope_visible,
-};
+use norn_checker::entity_scopes::{ScopedViews, scope_visible};
 use norn_checker::{
     Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity,
     EntityArtifactSetContext, Span,
@@ -66,8 +64,7 @@ pub fn check_widget_ux_set(
     context: &EntityArtifactSetContext<'_>,
 ) -> Vec<Diagnostic> {
     let combined: Vec<ArtifactEnvelope> = context.base.iter().chain(artifacts).cloned().collect();
-    let mut catalogs: BTreeMap<ScopeKey, EffectiveCatalog> = BTreeMap::new();
-    let mut models: BTreeMap<ScopeKey, norn_checker::action_set::Model<'_>> = BTreeMap::new();
+    let mut views = ScopedViews::new(artifacts, context.base, context.registry);
     let mut diagnostics = Vec::new();
     for artifact in artifacts {
         let ArtifactPayload::Widget(payload) = &artifact.payload else {
@@ -88,14 +85,11 @@ pub fn check_widget_ux_set(
                     continue;
                 }
             };
-        let key = scope_key(&artifact.scope);
-        let catalog = catalogs.entry(key.clone()).or_insert_with(|| {
-            effective_catalog_for_scope(&combined, context.registry, &artifact.scope)
-        });
+        let view = views.of(artifact);
         let mut checker = UxChecker::new(
             artifact,
             &combined,
-            catalog,
+            view.catalog(),
             context.registry,
             &ux,
             &mut diagnostics,
@@ -130,16 +124,12 @@ pub fn check_widget_ux_set(
                 .is_some_and(|machine| machine.lifecycle.is_some())
         });
         if names_lifecycle {
-            let model = models.entry(key).or_insert_with(|| {
-                norn_checker::action_set::Model::for_scope(
-                    artifacts,
-                    context.base,
-                    context.registry,
-                    true,
-                    &artifact.scope,
-                )
-            });
-            diagnostics.extend(crate::ui_lifecycle::check(artifact, &ux, &combined, model));
+            diagnostics.extend(crate::ui_lifecycle::check(
+                artifact,
+                &ux,
+                view.pool(),
+                view.model(),
+            ));
         }
     }
     diagnostics

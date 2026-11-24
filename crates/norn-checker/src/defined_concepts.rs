@@ -269,14 +269,12 @@ pub(crate) fn qualify(
         }
     }
     let closure = entity_closure(artifact, target, pool)?;
-    let env = crate::entity_scopes::derive_type_env_for_scope(
-        &closure,
-        registry,
-        norn_expr::EnvOptions::from_limit_profile(&root.bounds),
-        &artifact.scope,
-        false,
-    )
-    .map_err(|_error| "the exact base closure must have a supported type environment")?;
+    let env = crate::entity_scopes::ScopedView::of(artifact, &closure, &[], registry)
+        .type_env(
+            norn_expr::EnvOptions::from_limit_profile(&root.bounds),
+            false,
+        )
+        .map_err(|_error| "the exact base closure must have a supported type environment")?;
     let env = if object {
         env.bind_self(&norn_ir::ObjectTypeName(type_name.clone()))
     } else {

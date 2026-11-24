@@ -166,7 +166,7 @@ pub use receipt::{
     IDENTIFIER_ADMISSION_PROFILE, ReceiptError, ReceiptSources, ReceiptVersion,
     admission_receipt_sha256, check_artifact_set_for_install,
     check_artifact_set_for_install_with_flow_source_map, check_artifact_set_with_flow_source_map,
-    check_artifact_set_with_receipt, check_artifact_set_with_verified_receipt, derive_type_env,
+    check_artifact_set_with_receipt, check_artifact_set_with_verified_receipt,
     recover_legacy_admission_receipt, verify_admission_receipt,
 };
 

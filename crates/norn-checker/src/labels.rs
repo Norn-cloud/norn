@@ -432,19 +432,12 @@ pub(crate) fn check_label_set<'a>(
     }
     let declared = declared_targets(artifacts.iter().chain(base));
     let mut findings = missing_labels(&declared, &installed, &catalogs);
-    let mut scoped_declared: BTreeMap<crate::entity_scopes::ScopeKey, BTreeSet<LabelTarget>> =
-        BTreeMap::new();
+    let mut views = crate::entity_scopes::ScopedViews::new(artifacts, base, &BTreeSet::new());
     let mut owners: BTreeMap<(String, String), &str> = BTreeMap::new();
     let mut sorted: Vec<_> = catalogs.iter().collect();
     sorted.sort_by(|a, b| (&a.0.artifact_id, &a.0.version).cmp(&(&b.0.artifact_id, &b.0.version)));
     for (artifact, root) in sorted {
-        let visible = scoped_declared
-            .entry(crate::entity_scopes::scope_key(&artifact.scope))
-            .or_insert_with(|| {
-                declared_targets(artifacts.iter().chain(base).filter(|candidate| {
-                    crate::entity_scopes::scope_visible(&artifact.scope, &candidate.scope)
-                }))
-            });
+        let visible = declared_targets(views.of(artifact).pool().iter());
         for (index, entry) in root.entries.iter().enumerate() {
             let key = entry.target.key();
             if !visible.contains(&entry.target) {

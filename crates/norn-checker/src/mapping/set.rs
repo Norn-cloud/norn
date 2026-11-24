@@ -2,15 +2,15 @@
 //! T8-MAP-1a): run by [`crate::check_artifact_set`] over the candidates and
 //! the installed base. See the [`super`] module docs.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::sync::LazyLock;
 
 use norn_ir::mapping::{LawInterpretationIr, MappingDocument, MappingIr};
 use norn_ir::source_schema::SourceSchemaIr;
-use norn_ir::{ArtifactEnvelope, ArtifactKind, ArtifactPayload, ScopeRef};
+use norn_ir::{ArtifactEnvelope, ArtifactKind, ArtifactPayload};
 
 use super::{CompiledMapping, MappingModel, check_mapping_local, codes, compile_mapping};
-use crate::entity_scopes::{ScopeKey, scope_key, scope_visible};
+use crate::entity_scopes::ScopedView;
 use crate::lint::mapping::codes as lint_codes;
 use crate::lint::{LintInput, lint_artifact_set};
 use crate::property_types::error;
@@ -90,19 +90,15 @@ pub fn check_mapping_artifacts(
     if mappings.is_empty() {
         return out;
     }
-    let mut models: BTreeMap<ScopeKey, Result<MappingModel, Vec<Diagnostic>>> = BTreeMap::new();
     let mut path_refused = false;
     for (artifact, mapping) in &mappings {
-        let model = models
-            .entry(scope_key(&artifact.scope))
-            .or_insert_with(|| scoped_model(artifacts, base, &artifact.scope));
-        if let Ok(model) = &*model {
-            out.extend(missing_path_bindings(
-                artifact, mapping, model, artifacts, base,
-            ));
+        let view = ScopedView::of(artifact, artifacts, base, &BTreeSet::new());
+        let model = MappingModel::of(&view);
+        if let Ok(model) = &model {
+            out.extend(missing_path_bindings(artifact, mapping, model, &view));
         }
         if !path_refused {
-            let findings = path_findings(artifact, mapping, artifacts, base, registry, &work);
+            let findings = path_findings(artifact, mapping, &view, registry, &work);
             path_refused = findings
                 .iter()
                 .any(|d| d.code == crate::consistency::codes::CHASE_REFUSED);
@@ -110,10 +106,10 @@ pub fn check_mapping_artifacts(
         }
         out.extend(key_findings(artifact));
         out.extend(dependency_findings(artifact, mapping));
-        let findings = match (&*model, resolve_source(mapping, artifacts, base)) {
+        let findings = match (&model, resolve_source(mapping, artifacts, base)) {
             (Ok(model), Ok(source)) => {
-                match compile_checked(artifact, mapping, &source, model, artifacts, base) {
-                    Ok(compiled) => coverage_findings(artifact, &compiled, artifacts, base),
+                match compile_checked(artifact, mapping, &source, model, &view) {
+                    Ok(compiled) => coverage_findings(artifact, &compiled, &view),
                     Err(findings) => findings,
                 }
             }
@@ -143,8 +139,7 @@ fn missing_path_bindings(
     artifact: &ArtifactEnvelope,
     mapping: &MappingIr,
     model: &MappingModel,
-    artifacts: &[ArtifactEnvelope],
-    base: &[ArtifactEnvelope],
+    view: &ScopedView<'_>,
 ) -> Vec<Diagnostic> {
     use crate::entity_artifacts::{Decoded, decode_v2};
     let mut out = Vec::new();
@@ -157,11 +152,7 @@ fn missing_path_bindings(
         };
         let mut equations = Vec::new();
         let mut owners = BTreeSet::new();
-        for declaration in artifacts
-            .iter()
-            .chain(base)
-            .filter(|declaration| scope_visible(&artifact.scope, &declaration.scope))
-        {
+        for declaration in view.pool() {
             let Decoded::Root(root) = decode_v2(declaration) else {
                 continue;
             };
@@ -218,8 +209,7 @@ fn missing_path_bindings(
 fn path_findings(
     artifact: &ArtifactEnvelope,
     mapping: &MappingIr,
-    artifacts: &[ArtifactEnvelope],
-    base: &[ArtifactEnvelope],
+    view: &ScopedView<'_>,
     registry: &BTreeSet<norn_ir::PropertyTypeName>,
     work: &crate::consistency::chase::AdmissionWork,
 ) -> Vec<Diagnostic> {
@@ -231,12 +221,11 @@ fn path_findings(
     let resolve = |ids: &[String]| -> Result<Vec<ArtifactEnvelope>, Vec<Diagnostic>> {
         ids.iter()
             .map(|id| {
-                let entity = artifacts
+                let entity = view
+                    .pool()
                     .iter()
-                    .chain(base)
                     .find(|a| {
                         a.artifact_id == *id
-                            && scope_visible(&artifact.scope, &a.scope)
                             && matches!(a.payload, ArtifactPayload::Entity(_))
                             && artifact
                                 .dependencies
@@ -364,8 +353,7 @@ fn interpretation_contracts(
     base: &[ArtifactEnvelope],
 ) -> bool {
     use norn_ir::definition_catalog::Member;
-    let catalog =
-        crate::entity_scopes::effective_catalog_for_scope(base, &BTreeSet::new(), &owner.scope);
+    let catalog = ScopedView::of(owner, &[], base, &BTreeSet::new()).into_catalog();
     document.members.iter().all(|binding| {
         let (Some(source_owner), Some(target_owner)) = (member_owner(&binding.source), member_owner(&binding.target)) else { return false; };
         if !document.members.iter().any(|b| b.source == source_owner && b.target == target_owner) { return false; }
@@ -508,8 +496,7 @@ fn layer_members(
     let BusinessPackRoot::Composition(pack) = root else {
         return None;
     };
-    let catalog =
-        crate::entity_scopes::effective_catalog_for_scope(base, &BTreeSet::new(), &layer.scope);
+    let catalog = ScopedView::of(layer, &[], base, &BTreeSet::new()).into_catalog();
     let mut members = BTreeSet::new();
     for reference in pack.artifacts {
         // Nested pack/extension contracts need retained closure, not guessed scope.
@@ -688,10 +675,11 @@ pub fn compile_mapping_artifact(
             Span::pointer(""),
         )]));
     };
-    let model = scoped_model(artifacts, base, &mapping.scope).map_err(locate)?;
+    let view = ScopedView::of(mapping, artifacts, base, &BTreeSet::new());
+    let model = MappingModel::of(&view).map_err(locate)?;
     let source =
         resolve_source(&document, artifacts, base).map_err(|finding| locate(vec![*finding]))?;
-    compile_checked(mapping, &document, &source, &model, artifacts, base).map_err(locate)
+    compile_checked(mapping, &document, &source, &model, &view).map_err(locate)
 }
 
 /// Reuse T2/T3 admission for the generated actions. Only entity artifacts
@@ -701,8 +689,7 @@ fn compile_checked(
     mapping: &MappingIr,
     source: &SourceSchemaIr,
     model: &MappingModel,
-    artifacts: &[ArtifactEnvelope],
-    base: &[ArtifactEnvelope],
+    view: &ScopedView<'_>,
 ) -> Result<CompiledMapping, Vec<Diagnostic>> {
     if artifact.provenance.source_path.as_deref() == Some(super::evidence::CORE_MAPPING_GENERATOR)
         && !matches!(super::evidence::read_evidence(mapping), Ok(Some(_)))
@@ -713,8 +700,7 @@ fn compile_checked(
             Span::pointer("/extensions"),
         )]);
     }
-    let complete: Vec<_> = artifacts.iter().chain(base).cloned().collect();
-    match super::evidence::evidence_impacts(mapping, &complete) {
+    match super::evidence::evidence_impacts(mapping, view.pool()) {
         Ok(impacted) if impacted.is_empty() => {}
         result => {
             return Err(vec![error(
@@ -725,7 +711,12 @@ fn compile_checked(
         }
     }
     let compiled = compile_mapping(artifact, mapping, source, model)?;
-    let entities = entity_artifacts(artifacts, base, &artifact.scope);
+    let entities: Vec<_> = view
+        .pool()
+        .iter()
+        .filter(|artifact| matches!(artifact.payload, ArtifactPayload::Entity(_)))
+        .cloned()
+        .collect();
     let findings = crate::check_artifact_set(
         compiled.action_artifacts(),
         &crate::EntityArtifactSetContext {
@@ -761,22 +752,12 @@ fn compile_checked(
 fn coverage_findings(
     artifact: &ArtifactEnvelope,
     compiled: &CompiledMapping,
-    artifacts: &[ArtifactEnvelope],
-    base: &[ArtifactEnvelope],
+    view: &ScopedView<'_>,
 ) -> Vec<Diagnostic> {
-    let visible_artifacts: Vec<_> = artifacts
-        .iter()
-        .filter(|candidate| scope_visible(&artifact.scope, &candidate.scope))
-        .cloned()
-        .collect();
-    let visible_base: Vec<_> = base
-        .iter()
-        .filter(|candidate| scope_visible(&artifact.scope, &candidate.scope))
-        .cloned()
-        .collect();
+    let owned = |set: &[&ArtifactEnvelope]| set.iter().map(|a| (*a).clone()).collect::<Vec<_>>();
     lint_artifact_set(&LintInput {
-        artifacts: &visible_artifacts,
-        base: &visible_base,
+        artifacts: &owned(view.candidates()),
+        base: &owned(view.installed()),
         coverage: compiled.coverage(),
     })
     .into_iter()
@@ -790,22 +771,6 @@ fn coverage_findings(
             .contains(&finding.code.as_str())
     })
     .collect()
-}
-
-/// Every `entity` artifact of the base and the set visible to `consumer`.
-fn entity_artifacts(
-    artifacts: &[ArtifactEnvelope],
-    base: &[ArtifactEnvelope],
-    consumer: &ScopeRef,
-) -> Vec<ArtifactEnvelope> {
-    base.iter()
-        .chain(artifacts)
-        .filter(|artifact| {
-            matches!(artifact.payload, ArtifactPayload::Entity(_))
-                && scope_visible(consumer, &artifact.scope)
-        })
-        .cloned()
-        .collect()
 }
 
 /// The strict root of a `source_schema` artifact's payload.
@@ -989,12 +954,4 @@ fn dependency_findings(artifact: &ArtifactEnvelope, mapping: &MappingIr) -> Vec<
         }
     }
     out
-}
-
-fn scoped_model(
-    artifacts: &[ArtifactEnvelope],
-    base: &[ArtifactEnvelope],
-    scope: &norn_ir::ScopeRef,
-) -> Result<MappingModel, Vec<Diagnostic>> {
-    MappingModel::from_artifacts_with_scope(&entity_artifacts(artifacts, base, scope), Some(scope))
 }

@@ -1,10 +1,10 @@
 //! Shared cell-scope validation for definition install, check, migration, and restore (#1376).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use norn_checker::EffectiveCatalog;
-use norn_checker::entity_scopes::check_entity_reference_scopes_all;
-use norn_ir::{ArtifactEnvelope, ScopeRef};
+use norn_checker::entity_scopes::{ScopedView, check_entity_reference_scopes_all};
+use norn_ir::{ArtifactEnvelope, ArtifactKind, EntityRoot, ObjectTypeDef, ScopeRef};
 
 use crate::engine::{SqlEngine, params};
 use crate::error::CellError;
@@ -60,12 +60,13 @@ pub(crate) fn parse_cell_scope(raw: &str) -> ScopeRef {
     }
 }
 
-/// Resolve the cell's authoritative [`ScopeRef`] from `explicit_scope` and any
-/// persisted `binding:scope` metadata in `engine`.
+/// The cell's authoritative [`ScopeRef`]: `explicit_scope`, which must agree
+/// with any persisted `binding:scope`, or that binding. A cell bound to no
+/// scope has no consumer to check definitions for, so it is refused.
 pub(crate) fn effective_cell_scope<E: SqlEngine>(
     engine: &E,
     explicit_scope: Option<&str>,
-) -> Result<Option<ScopeRef>, CellError> {
+) -> Result<ScopeRef, CellError> {
     let bound = engine.query_optional(
         &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
         params!["binding:scope"],
@@ -78,7 +79,12 @@ pub(crate) fn effective_cell_scope<E: SqlEngine>(
             "definition install scope {explicit:?} does not match bound cell scope {bound_val:?}"
         )));
     }
-    Ok(explicit_scope.or(bound.as_deref()).map(parse_cell_scope))
+    explicit_scope
+        .or(bound.as_deref())
+        .map(parse_cell_scope)
+        .ok_or_else(|| {
+            refused("definitions are checked only for a cell bound to a scope".to_owned())
+        })
 }
 
 fn decode_artifacts(canonical_set: &str, label: &str) -> Result<Vec<ArtifactEnvelope>, CellError> {
@@ -99,35 +105,16 @@ fn decode_artifacts(canonical_set: &str, label: &str) -> Result<Vec<ArtifactEnve
         .collect()
 }
 
-/// Validate that every artifact in `canonical_set` is compatible with
-/// `cell_scope` (when bound or supplied) and that no cross-scope entity
-/// references exist, then build the scope-validated [`EffectiveCatalog`].
+/// Validate that every artifact in `canonical_set` lies in `cell_scope` and
+/// that no cross-scope entity references exist, then build the cell's
+/// [`EffectiveCatalog`] through its bound view.
 pub(crate) fn validated_effective_catalog(
     canonical_set: &str,
     label: &str,
-    cell_scope: Option<&ScopeRef>,
+    cell_scope: &ScopeRef,
 ) -> Result<EffectiveCatalog, CellError> {
-    let artifacts = decode_artifacts(canonical_set, label)?;
-    if let Some(scope) = cell_scope {
-        for artifact in &artifacts {
-            if let Some((dim, _, _)) = norn_checker::scope_conflict(scope, &artifact.scope) {
-                return Err(refused(format!(
-                    "{label} artifact {:?} is scoped outside the cell scope ({dim})",
-                    artifact.artifact_id
-                )));
-            }
-        }
-    }
-    let scope_findings = check_entity_reference_scopes_all(&artifacts);
-    if !scope_findings.is_empty() {
-        return Err(refused(format!(
-            "{label} definition set contains cross-scope entity references: {scope_findings:?}"
-        )));
-    }
-    let catalog = match cell_scope {
-        Some(scope) => EffectiveCatalog::for_scope(&artifacts, &BTreeSet::new(), scope),
-        None => EffectiveCatalog::from_artifacts(&artifacts),
-    };
+    let artifacts = scoped_artifacts(canonical_set, label, cell_scope)?;
+    let catalog = ScopedView::bound(cell_scope, &artifacts, &[], &BTreeSet::new()).into_catalog();
     for artifact in &artifacts {
         let value = serde_json::to_value(artifact).map_err(CellError::Json)?;
         let Some(payload) = value.get("payload") else {
@@ -162,25 +149,115 @@ pub(crate) fn validated_effective_catalog(
     Ok(catalog)
 }
 
-/// Resolve the cell scope and validate `canonical_set` against it before
-/// definition migration or install.
+fn scoped_artifacts(
+    canonical_set: &str,
+    label: &str,
+    cell_scope: &ScopeRef,
+) -> Result<Vec<ArtifactEnvelope>, CellError> {
+    let artifacts = decode_artifacts(canonical_set, label)?;
+    for artifact in &artifacts {
+        if let Some((dim, _, _)) = norn_checker::scope_conflict(cell_scope, &artifact.scope) {
+            return Err(refused(format!(
+                "{label} artifact {:?} is scoped outside the cell scope ({dim})",
+                artifact.artifact_id
+            )));
+        }
+    }
+    let scope_findings = check_entity_reference_scopes_all(&artifacts);
+    if !scope_findings.is_empty() {
+        return Err(refused(format!(
+            "{label} definition set contains cross-scope entity references: {scope_findings:?}"
+        )));
+    }
+    Ok(artifacts)
+}
+
+/// Resolve the cell scope, validate `canonical_set` against it, and require
+/// `model` to be exactly the projection of that checked set, before
+/// definition migration, install or restore.
 pub(crate) fn preflight_candidate<E: SqlEngine>(
     engine: &E,
     canonical_set: &str,
+    model: &Model,
     cell_scope: Option<&str>,
-) -> Result<Option<ScopeRef>, CellError> {
-    let scope_ref = effective_cell_scope(engine, cell_scope)?;
-    let _ = validated_effective_catalog(canonical_set, "candidate", scope_ref.as_ref())?;
-    Ok(scope_ref)
+) -> Result<ScopeRef, CellError> {
+    let scope = effective_cell_scope(engine, cell_scope)?;
+    bind_model(
+        model,
+        &scoped_artifacts(canonical_set, "candidate", &scope)?,
+    )?;
+    Ok(scope)
+}
+
+/// Refuse a `model` whose definitions are not those `artifacts` declare: the
+/// same object types and interfaces, besides only the kernel's own record
+/// types, which stay unwired from tenant definitions, and only shared
+/// property types the set declares identically.
+fn bind_model(model: &Model, artifacts: &[ArtifactEnvelope]) -> Result<(), CellError> {
+    let (mut objects, mut interfaces, mut properties) =
+        (BTreeMap::new(), BTreeMap::new(), BTreeMap::new());
+    for artifact in artifacts
+        .iter()
+        .filter(|a| a.kind() == ArtifactKind::Entity)
+    {
+        let root = serde_json::to_value(artifact.payload.to_json_value())
+            .and_then(serde_json::from_value::<EntityRoot>)
+            .map_err(CellError::Json)?;
+        match root {
+            EntityRoot::V2(root) => {
+                objects.insert(root.object_type.name.0.clone(), root.object_type);
+            }
+            EntityRoot::V2Interface(root) => {
+                interfaces.insert(root.interface.name.0.clone(), root.interface);
+            }
+            EntityRoot::V2PropertyTypes(root) => properties.extend(
+                root.property_types
+                    .into_iter()
+                    .map(|def| (def.name.0.clone(), def)),
+            ),
+            EntityRoot::V2Extension(_) | EntityRoot::V2Markings(_) | EntityRoot::V1(_) => {}
+        }
+    }
+    let modelled: BTreeMap<_, _> = model
+        .object_types()
+        .filter(|def| objects.contains_key(def.name.as_str()) || !is_kernel_record_type(def))
+        .map(|def| (def.name.0.clone(), def.clone()))
+        .collect();
+    let model_interfaces: BTreeMap<_, _> = model
+        .interfaces()
+        .map(|def| (def.name.0.clone(), def.clone()))
+        .collect();
+    let foreign_property = model
+        .property_types()
+        .iter()
+        .any(|def| properties.get(def.name.as_str()) != Some(def));
+    if modelled != objects || model_interfaces != interfaces || foreign_property {
+        return Err(CellError::DefinitionReceiptInvalid(
+            "the candidate model is not the projection of its checked definition set".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
+fn is_kernel_record_type(def: &ObjectTypeDef) -> bool {
+    [norn_kernel::ACTION_CALL_TYPE, norn_kernel::OWNED_ROWS_TYPE].contains(&def.name.as_str())
+        && def.extends.is_none()
+        && def.implements.is_empty()
+        && def.links.is_empty()
+        && def.owned_collections.is_empty()
+        && def.lifecycles.is_empty()
+        && def.invariants.is_empty()
 }
 
 impl<E: SqlEngine> CellStore<E> {
     /// Check a definition candidate against the current version and live
-    /// values, returning the exact version/layout preview installation would
-    /// retain. This performs SQL reads only and does not enter a transaction.
+    /// values, under the cell's bound scope, returning the exact version/layout
+    /// preview installation would retain. This performs SQL reads only and
+    /// does not enter a transaction.
     ///
     /// # Errors
-    /// A version conflict, unsafe live-data migration, or store error.
+    /// A version conflict, a cell bound to no scope, a model that is not the
+    /// projection of its definition set, unsafe live-data migration, or store error.
     pub fn check_definitions(
         &self,
         candidate_model: &Model,

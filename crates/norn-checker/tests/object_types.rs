@@ -22,6 +22,7 @@
 
 use std::collections::BTreeSet;
 
+use norn_checker::entity_scopes::ScopedView;
 use norn_checker::{
     Diagnostic, DiagnosticSeverity, EntityContext, EntityModel, Span, check_entity_model,
     check_object_type_defs, check_property_type_defs, object_types::codes,
@@ -202,7 +203,9 @@ fn id_collision_admission_preserves_inherited_key_root_and_normalization() {
             artifact
         })
         .collect::<Vec<_>>();
-    let catalog = norn_checker::EffectiveCatalog::from_artifacts(&artifacts);
+    let catalog = ScopedView::uniform(&artifacts, &BTreeSet::new())
+        .expect("one scope")
+        .into_catalog();
     for name in ["identity.Root", "identity.Child", "identity.Sibling"] {
         let object = catalog
             .object_type_named(name)

@@ -158,14 +158,21 @@ impl<'a> EntityIndex<'a> {
         false
     }
 
-    fn check_named_object(
+    /// The definer of `name` in the one name space object types and
+    /// interfaces share (link targets, replacements, child types).
+    fn check_named(
         &self,
         owner: &ArtifactEnvelope,
         name: &str,
         pointer: &str,
         out: &mut Vec<Diagnostic>,
     ) {
-        if let Some((target, _)) = self.object_types.get(name) {
+        let target = self
+            .object_types
+            .get(name)
+            .map(|(target, _)| target)
+            .or_else(|| self.interfaces.get(name).map(|(target, _)| target));
+        if let Some(target) = target {
             out.extend(scope_finding(owner, target, pointer));
         }
     }
@@ -185,12 +192,7 @@ impl<'a> EntityIndex<'a> {
         else {
             return;
         };
-        let name = as_str(name);
-        if let Some((target, _)) = self.object_types.get(name) {
-            out.extend(scope_finding(owner, target, pointer));
-        } else if let Some((target, _)) = self.interfaces.get(name) {
-            out.extend(scope_finding(owner, target, pointer));
-        }
+        self.check_named(owner, as_str(name), pointer, out);
     }
 
     fn check_property_type(
@@ -258,7 +260,7 @@ impl<'a> EntityIndex<'a> {
         out: &mut Vec<Diagnostic>,
     ) {
         for (index, link) in links.iter().enumerate() {
-            self.check_named_object(
+            self.check_named(
                 owner,
                 link.target.as_str(),
                 &format!("{prefix}/links/{index}/target"),
@@ -299,7 +301,7 @@ impl<'a> EntityIndex<'a> {
         }
         self.check_links(artifact, "/payload/objectType", &def.links, out);
         for (i, coll) in def.owned_collections.iter().enumerate() {
-            self.check_named_object(
+            self.check_named(
                 artifact,
                 coll.child_type.as_str(),
                 &format!("/payload/objectType/ownedCollections/{i}/childType"),
@@ -338,7 +340,7 @@ impl<'a> EntityIndex<'a> {
             );
         }
         for (i, link) in def.links.iter().enumerate() {
-            self.check_named_object(
+            self.check_named(
                 artifact,
                 link.target.as_str(),
                 &format!("/payload/interface/links/{i}/target"),

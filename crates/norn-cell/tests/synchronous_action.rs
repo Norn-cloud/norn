@@ -13,6 +13,7 @@
 mod quantity_support;
 
 use norn_cell::{Model, SqliteCell, StoreOptions};
+use norn_checker::entity_scopes::ScopedView;
 use norn_ir::{
     ActionQuantityEffect, ActionQuantityOperation, ActionRoot, ArtifactEnvelope, ArtifactPayload,
     DiagnosticSeverity, ObjectTypeDef, RuleRoot,
@@ -832,12 +833,10 @@ fn quantity_action() -> (ActionRoot, SynchronousRule) {
             .all(|d| d.severity != DiagnosticSeverity::Error),
         "{findings:?}"
     );
-    let env = norn_checker::derive_type_env(
-        &artifacts,
-        &[],
-        &norn_ir::ResourceLimitProfile::norn_limits_v1(),
-    )
-    .unwrap();
+    let env = ScopedView::uniform(&artifacts, &BTreeSet::new())
+        .expect("one scope")
+        .receipt_env(&norn_ir::ResourceLimitProfile::norn_limits_v1())
+        .unwrap();
     let rule = SynchronousRule::admit(
         action.synchronous_rule.clone().unwrap(),
         &writer,

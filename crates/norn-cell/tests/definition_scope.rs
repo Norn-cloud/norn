@@ -187,3 +187,56 @@ fn install_definitions_refuses_cross_scope_supertype_inside_cell_set() -> TestRe
     );
     Ok(())
 }
+
+#[test]
+fn definitions_are_checked_for_a_bound_scope_against_the_model_their_set_projects() -> TestResult {
+    let model = item_model()?;
+    let mut store = CellStore::open_in_memory(model.clone())?;
+    let item = entity_envelope(
+        "defs.Item.entity",
+        "defs.Item",
+        &json!({ "orgId": "org_demo", "environmentId": "dev" }),
+        None,
+    )?;
+    let unbound =
+        store.check_definitions(&model, &input_for(std::slice::from_ref(&item))?, Some(0));
+    assert!(
+        matches!(&unbound, Err(CellError::DefinitionMigrationRefused(_))),
+        "a cell bound to no scope has no consumer to check for: {unbound:?}"
+    );
+    let widened: ObjectTypeDef = serde_json::from_value(json!({
+        "name": "defs.Item",
+        "properties": [
+            { "id": "code", "type": { "kind": "text" } },
+            { "id": "secret", "type": { "kind": "text" }, "constraints": { "nullable": true } }
+        ],
+        "identity": [{ "name": "primary", "properties": ["code"] }]
+    }))?;
+    let stray: ObjectTypeDef = serde_json::from_value(json!({
+        "name": "defs.Stray",
+        "properties": [{ "id": "code", "type": { "kind": "text" } }],
+        "identity": [{ "name": "primary", "properties": ["code"] }]
+    }))?;
+    let items: ObjectTypeDef = serde_json::from_value(json!({
+        "name": "defs.Item",
+        "properties": [{ "id": "code", "type": { "kind": "text" } }],
+        "identity": [{ "name": "primary", "properties": ["code"] }]
+    }))?;
+    for forged in [
+        Model::from_definitions(&[widened], &[])?,
+        Model::from_definitions(&[items, stray], &[])?,
+    ] {
+        let refused = store.install_definitions(
+            forged,
+            input_for(std::slice::from_ref(&item))?,
+            Some(0),
+            "org_demo/dev",
+        );
+        assert!(
+            matches!(&refused, Err(CellError::DefinitionReceiptInvalid(_))),
+            "a model other than its set's projection must not activate: {refused:?}"
+        );
+    }
+    store.install_definitions(model, input_for(&[item])?, Some(0), "org_demo/dev")?;
+    Ok(())
+}

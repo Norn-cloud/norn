@@ -67,24 +67,23 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_expr::{Expression, FieldSource, RecordType, Type, ZenTypeEnv};
+use norn_expr::{EnvOptions, Expression, FieldSource, RecordType, Type, ZenTypeEnv};
 use norn_ir::{
     ActionAggregateInput, ActionEffectProgram, ActionEffectTarget, ActionRoot, AggregateFunction,
     ArtifactEnvelope, ArtifactKind, ArtifactPayload, DiagnosticRemediation, DiagnosticSeverity,
     EntityMutationAuthority, JsonObject, JsonValue, ObjectTypeName, OwnedCollectionAction,
-    PropertyAdditivity, PropertyId, PropertyTypeName, ScopeRef, SliceKey, TransitionId,
-    UpsertWriteMode, WriteChange, ZenExpression,
+    PropertyAdditivity, PropertyId, SliceKey, TransitionId, UpsertWriteMode, WriteChange,
+    ZenExpression,
 };
 
 use crate::artifact_set::scope_finding;
 use crate::entity_artifacts::EntityArtifactSetContext;
 use crate::entity_instance::{
-    EffectiveKind, EffectiveLifecycle, EffectiveLink, EffectiveObjectType, EffectiveProperty,
+    EffectiveCatalog, EffectiveKind, EffectiveLifecycle, EffectiveLink, EffectiveObjectType,
+    EffectiveProperty,
 };
 use crate::entity_lowering::{EntityForm, entity_object_type};
-use crate::entity_scopes::{
-    ScopeKey, action_model_parts, scope_key, upsert_extension_scope_findings,
-};
+use crate::entity_scopes::{ScopedView, ScopedViews, upsert_extension_scope_findings};
 use crate::lifecycle_writes::{codes as codes_lifecycle, finding as lifecycle_finding};
 use crate::lifecycles::{check_transition_firing, codes::UNDECLARED_WRITE};
 use crate::predicate_property::{
@@ -205,12 +204,12 @@ pub fn check_action_set(
         .iter()
         .filter_map(|artifact| decode_action(artifact).map(|root| (artifact, root)))
         .collect();
-    let mut findings = Model::new(artifacts, base, context.registry, false).duplicate_findings();
+    let mut findings = Model::inventory(artifacts, base).duplicate_findings();
     if actions.is_empty() {
         return findings;
     }
 
-    let mut models: BTreeMap<ScopeKey, Model<'_>> = BTreeMap::new();
+    let mut views = ScopedViews::new(artifacts, base, context.registry);
     let mut action_ids: BTreeSet<String> = base
         .iter()
         .filter_map(decode_action)
@@ -228,9 +227,7 @@ pub fn check_action_set(
                 "/payload/actionId",
             ));
         }
-        let model = models.entry(scope_key(&artifact.scope)).or_insert_with(|| {
-            Model::for_scope(artifacts, base, context.registry, true, &artifact.scope)
-        });
+        let model = views.of(artifact).model();
         findings.extend(check_action(artifact, root, model, artifacts, base));
     }
     findings
@@ -525,19 +522,19 @@ fn declared_write_findings(
             ));
         }
 
-        match model.object_type(kind) {
-            None => findings.push(finding(
+        let unknown = || {
+            finding(
                 codes::UNKNOWN_WRITE_KIND,
                 format!(
                     "the write set names {kind:?}, which is not an object type of the artifact set or the installed base"
                 ),
                 artifact,
                 &pointer,
-            )),
-            Some(defined) => {
-                findings.extend(scope_finding(artifact, defined.artifact, &pointer));
-                findings.extend(defined.authority_finding(artifact, kind, &pointer));
-            }
+            )
+        };
+        match model.resolve(artifact, kind, &pointer, unknown) {
+            Err(refusal) => findings.push(*refusal),
+            Ok(defined) => findings.extend(defined.authority_finding(artifact, kind, &pointer)),
         }
     }
     findings
@@ -619,26 +616,26 @@ fn action_slice_types(
     for (index, entry) in root.slice.iter().enumerate() {
         let path = format!("/payload/slice/{index}");
         let kind = entry.object_type.as_str();
-        let Some(defined) = model.object_type(kind) else {
-            findings.push(finding(
+        let pointer = format!("{path}/objectType");
+        let unknown = || {
+            finding(
                 codes::UNKNOWN_SLICE_KIND,
                 format!(
                     "slice entry {:?} names {kind:?}, which is not an object type of the artifact set or the installed base",
                     entry.name
                 ),
                 artifact,
-                &format!("{path}/objectType"),
-            ));
-            typed_slice = false;
-            continue;
+                &pointer,
+            )
         };
-        if let Some(error) =
-            scope_finding(artifact, defined.artifact, &format!("{path}/objectType"))
-        {
-            findings.push(error);
-            typed_slice = false;
-            continue;
-        }
+        let defined = match model.resolve(artifact, kind, &pointer, unknown) {
+            Ok(defined) => defined,
+            Err(refusal) => {
+                findings.push(*refusal);
+                typed_slice = false;
+                continue;
+            }
+        };
         let Some(Ok(_)) = &defined.effective_object_type else {
             findings.push(finding(
                 codes::INVALID_SLICE,
@@ -803,21 +800,20 @@ fn aggregate_result_type(
 ) -> Option<Type> {
     let aggregate = site.aggregate;
     let kind = aggregate.object_type.as_str();
-    let Some(defined) = model.object_type(kind) else {
-        findings.push(site.finding(
+    let unknown = || {
+        site.finding(
             "/objectType",
             &format!("{kind:?} is not an object type of the artifact set or the installed base"),
-        ));
-        return None;
+        )
     };
-    if let Some(error) = scope_finding(
-        site.artifact,
-        defined.artifact,
-        &format!("{}/objectType", site.path),
-    ) {
-        findings.push(error);
-        return None;
-    }
+    let pointer = format!("{}/objectType", site.path);
+    let defined = match model.resolve(site.artifact, kind, &pointer, unknown) {
+        Ok(defined) => defined,
+        Err(refusal) => {
+            findings.push(*refusal);
+            return None;
+        }
+    };
     let (Some(Ok(effective)), Some(record)) =
         (&defined.effective_object_type, environment.record(kind))
     else {
@@ -1184,14 +1180,13 @@ fn effect_target_findings(
     });
     match pinned {
         Some(pinned) if matches!(pinned.payload, ArtifactPayload::Entity(_)) => {
-            let scope_error = scope_finding(artifact, pinned, "/payload/effectProgram/entityArtifactId");
-            let out_of_scope = scope_error.is_some();
-            findings.extend(scope_error);
+            if let Some(refusal) = scope_finding(artifact, pinned, "/payload/effectProgram/entityArtifactId") {
+                findings.push(refusal);
+                return findings;
+            }
             match model.defined_by(pinned) {
                 Some(defined) if defined.name == object_kind => {
-                    if !out_of_scope {
-                        findings.extend(defined.writability(artifact, root, program, model, artifacts, base));
-                    }
+                    findings.extend(defined.writability(artifact, root, program, model, artifacts, base));
                 }
                 defined => findings.push(finding(
                     codes::EFFECT_KIND_MISMATCH,
@@ -2291,47 +2286,54 @@ fn transition_findings(
 /// The object types of the set and the base, by name, in definition order (base first).
 pub struct Model<'a> {
     by_name: BTreeMap<String, Vec<Defined<'a>>>,
+    hidden: BTreeMap<String, &'a ArtifactEnvelope>,
     expression_environment: Result<ZenTypeEnv, Vec<norn_expr::EnvError>>,
 }
 
 impl<'a> Model<'a> {
-    /// Build the effective object-type model over candidate `artifacts` and installed `base`.
-    #[must_use]
-    pub fn new(
+    /// The object types of candidates `artifacts` and installed `base`, all
+    /// scopes together and unresolved: the inventory duplicate names are
+    /// found in. Admission reads a [`ScopedView::model`] instead.
+    pub(crate) fn inventory(
         artifacts: &'a [ArtifactEnvelope],
         base: &'a [ArtifactEnvelope],
-        registry: &BTreeSet<PropertyTypeName>,
-        effective: bool,
     ) -> Self {
-        Self::build(artifacts, base, registry, effective, None)
-    }
-
-    /// Build the effective object-type model visible from `consumer`.
-    #[must_use]
-    pub fn for_scope(
-        artifacts: &'a [ArtifactEnvelope],
-        base: &'a [ArtifactEnvelope],
-        registry: &BTreeSet<PropertyTypeName>,
-        effective: bool,
-        consumer: &ScopeRef,
-    ) -> Self {
-        Self::build(artifacts, base, registry, effective, Some(consumer))
-    }
-
-    fn build(
-        artifacts: &'a [ArtifactEnvelope],
-        base: &'a [ArtifactEnvelope],
-        registry: &BTreeSet<PropertyTypeName>,
-        effective: bool,
-        consumer: Option<&ScopeRef>,
-    ) -> Self {
-        let (catalog, expression_environment) =
-            action_model_parts(artifacts, base, registry, effective, consumer);
-        let mut by_name: BTreeMap<String, Vec<Defined<'a>>> = BTreeMap::new();
         let pool = base
             .iter()
             .map(|artifact| (artifact, false))
             .chain(artifacts.iter().map(|artifact| (artifact, true)));
+        Self::build(pool, None, Err(Vec::new()), BTreeMap::new())
+    }
+
+    /// The model of what `view`'s consumer sees.
+    pub(crate) fn scoped(view: &ScopedView<'a>) -> Self {
+        let pool = view
+            .installed()
+            .iter()
+            .map(|artifact| (*artifact, false))
+            .chain(view.candidates().iter().map(|artifact| (*artifact, true)));
+        let environment = view.type_env(EnvOptions::default(), true);
+        let hidden = view
+            .hidden()
+            .iter()
+            .filter_map(|artifact| {
+                let ArtifactPayload::Entity(payload) = &artifact.payload else {
+                    return None;
+                };
+                let object = entity_object_type(payload).ok().flatten()?;
+                Some((object.root.object_type.name.0, *artifact))
+            })
+            .collect();
+        Self::build(pool, Some(view.catalog()), environment, hidden)
+    }
+
+    fn build(
+        pool: impl Iterator<Item = (&'a ArtifactEnvelope, bool)>,
+        catalog: Option<&EffectiveCatalog>,
+        expression_environment: Result<ZenTypeEnv, Vec<norn_expr::EnvError>>,
+        hidden: BTreeMap<String, &'a ArtifactEnvelope>,
+    ) -> Self {
+        let mut by_name: BTreeMap<String, Vec<Defined<'a>>> = BTreeMap::new();
         for (artifact, candidate) in pool {
             let ArtifactPayload::Entity(payload) = &artifact.payload else {
                 continue;
@@ -2349,9 +2351,7 @@ impl<'a> Model<'a> {
                     .map(|property| property.id.0.clone())
                     .collect()
             };
-            let effective = catalog
-                .as_ref()
-                .and_then(|catalog| catalog.object_type(&artifact.artifact_id));
+            let effective = catalog.and_then(|catalog| catalog.object_type(&artifact.artifact_id));
             let (computed, lifecycles, effective_object_type) = match effective {
                 Some(Ok(effective)) => (
                     effective
@@ -2389,7 +2389,6 @@ impl<'a> Model<'a> {
             };
             let name = object_type.root.object_type.name.0.clone();
             let links = catalog
-                .as_ref()
                 .and_then(|catalog| catalog.links_for_object_type(&name))
                 .map_or_default(<[EffectiveLink]>::to_vec);
             by_name.entry(name.clone()).or_default().push(Defined {
@@ -2406,8 +2405,29 @@ impl<'a> Model<'a> {
         }
         Self {
             by_name,
+            hidden,
             expression_environment,
         }
+    }
+
+    /// The definition `name` binds to for the consumer `artifact`, or its
+    /// refusal at `pointer`: the scope finding when only a definition the
+    /// consumer cannot see declares it, `unknown` when none does.
+    pub(crate) fn resolve(
+        &self,
+        artifact: &ArtifactEnvelope,
+        name: &str,
+        pointer: &str,
+        unknown: impl FnOnce() -> Diagnostic,
+    ) -> Result<&Defined<'a>, Box<Diagnostic>> {
+        self.object_type(name).ok_or_else(|| {
+            Box::new(
+                self.hidden
+                    .get(name)
+                    .and_then(|owner| scope_finding(artifact, owner, pointer))
+                    .unwrap_or_else(unknown),
+            )
+        })
     }
 
     /// The (first) definition of `name`.
@@ -2508,40 +2528,18 @@ impl<'a> Model<'a> {
     }
 }
 
-/// The object types admission binds, through the same [`Model`] the action
-/// and lifecycle-write checks resolve with: the single source for consumers
-/// that must agree with admission, such as the definition catalog.
-pub(crate) struct Admission<'a> {
-    model: Model<'a>,
-    artifacts: &'a [ArtifactEnvelope],
-    base: &'a [ArtifactEnvelope],
-}
-
-/// One admitted object type definition.
+/// One admitted object type definition: what the definition catalog binds
+/// through the same [`Model`] the action and lifecycle-write checks resolve with.
 #[derive(Clone, Copy)]
 pub(crate) struct AdmittedType<'m, 'a> {
     defined: &'m Defined<'a>,
 }
 
-impl<'a> Admission<'a> {
-    pub(crate) fn for_scope(
-        artifacts: &'a [ArtifactEnvelope],
-        base: &'a [ArtifactEnvelope],
-        registry: &BTreeSet<PropertyTypeName>,
-        consumer: &ScopeRef,
-    ) -> Self {
-        Self {
-            model: Model::for_scope(artifacts, base, registry, true, consumer),
-            artifacts,
-            base,
-        }
-    }
-
+impl<'a> Model<'a> {
     /// The definition an object type name binds to (decide-graph
     /// `objectType` values, supertypes, owned-collection child types).
     pub(crate) fn named(&self, name: &str) -> Option<AdmittedType<'_, 'a>> {
-        self.model
-            .object_type(name)
+        self.object_type(name)
             .map(|defined| AdmittedType { defined })
     }
 
@@ -2551,7 +2549,7 @@ impl<'a> Admission<'a> {
         artifact_id: &str,
         version: Option<&str>,
     ) -> Option<AdmittedType<'_, 'a>> {
-        let mut definitions = self.model.by_name.values().flatten().filter(|defined| {
+        let mut definitions = self.by_name.values().flatten().filter(|defined| {
             defined.artifact.artifact_id == artifact_id
                 && version.is_none_or(|version| defined.artifact.version == version)
         });
@@ -2569,13 +2567,14 @@ impl<'a> Admission<'a> {
         program: &ActionEffectProgram,
     ) -> Option<AdmittedType<'_, 'a>> {
         let target = program.target();
-        let pinned = self.artifacts.iter().chain(self.base).find(|candidate| {
-            candidate.artifact_id == target.entity_artifact_id
-                && candidate.version == target.entity_artifact_version
-        })?;
-        self.model
-            .defined_by(pinned)
-            .filter(|defined| defined.name == target.object_kind)
+        self.by_name
+            .values()
+            .flatten()
+            .find(|defined| {
+                defined.artifact.artifact_id == target.entity_artifact_id
+                    && defined.artifact.version == target.entity_artifact_version
+                    && defined.name == target.object_kind
+            })
             .map(|defined| AdmittedType { defined })
     }
 }
@@ -2973,31 +2972,32 @@ mod writer_footprint_tests {
             "../../norn-kernel/tests/fixtures/action-writer.json"
         ))
         .expect("typed fixture");
-        let model = Model::new(&artifacts, &[], &BTreeSet::new(), true);
         let action = artifacts
             .iter()
             .find(|artifact| artifact.kind() == ArtifactKind::Action)
             .expect("typed action");
+        let view = ScopedView::of(action, &artifacts, &[], &BTreeSet::new());
+        let model = view.model();
         let mut root = decode_action(action).expect("root");
         root.create_links.truncate(1);
         root.create_links[0].source = Some(norn_ir::ActionLinkSource {
             object_type: "commerce.SalesOrder".into(),
             id_field: "so_number".into(),
         });
-        assert_eq!(create_link_findings(action, &root, &model), []);
+        assert_eq!(create_link_findings(action, &root, model), []);
         root.writes.clear();
-        assert_ne!(create_link_findings(action, &root, &model), []);
+        assert_ne!(create_link_findings(action, &root, model), []);
         root.writes.push(norn_ir::ActionWrite {
             entity_kind: "commerce.SalesOrder".into(),
             change: WriteChange::Modified,
         });
-        assert_ne!(create_link_findings(action, &root, &model), []);
+        assert_ne!(create_link_findings(action, &root, model), []);
         root.create_links[0]
             .source
             .as_mut()
             .expect("source")
             .id_field = "undeclared".into();
-        assert_ne!(create_link_findings(action, &root, &model), []);
+        assert_ne!(create_link_findings(action, &root, model), []);
     }
 
     #[test]

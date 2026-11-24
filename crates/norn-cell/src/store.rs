@@ -2007,6 +2007,7 @@ fn preflight_definition_install<E: SqlEngine>(
     let scope_ref = crate::definition_scope::preflight_candidate(
         engine,
         &install.input.canonical_set,
+        install.candidate_model,
         cell_scope,
     )?;
     install
@@ -2021,7 +2022,7 @@ fn preflight_definition_install<E: SqlEngine>(
             .map(|installed| installed.canonical_set.as_str()),
         &install.input.canonical_set,
         retained,
-        scope_ref.as_ref(),
+        &scope_ref,
     )?;
     preflight_marking_definition_changes(engine, previous_model, install.candidate_model)?;
     preflight_mask_policy_changes(

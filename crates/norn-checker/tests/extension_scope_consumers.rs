@@ -1,393 +1,222 @@
-//! Security #1376 regression suite (part 2): laws, models, views, labels,
-//! mappings, defined concepts, derived metrics, definition catalog, flow
-//! source maps, and scope-bound admission receipts.
+//! Security #1376 regression suite (part 2): consumers outside the entity
+//! model (laws, models, views, labels, mappings, defined concepts, derived
+//! metrics, the definition catalog, flow source maps and admission receipts)
+//! resolve only what their scope sees.
 
 use std::collections::BTreeSet;
 
-use norn_checker::entity_scopes::derive_receipt_type_env_for_scope;
-use norn_checker::metric::derive::{derive_metric_space, derive_metric_space_for_scope};
+use norn_checker::artifact_set::codes::INCOMPATIBLE_SCOPE;
+use norn_checker::entity_scopes::{
+    SCOPED_TYPE_ENV_ID, ScopedView, check_entity_reference_scopes_all,
+};
+use norn_checker::metric::derive::derive_metric_space;
 use norn_checker::{
-    ArtifactRef, Diagnostic, EffectiveCatalog, EntityArtifactSetContext, ReceiptSources,
-    check_artifact_set, check_artifact_set_with_receipt, definition_catalog, derive_type_env,
-    validate_flow_source_map, verify_admission_receipt,
+    ArtifactRef, EntityArtifactSetContext, ReceiptSources, check_artifact_set_with_receipt,
+    definition_catalog, validate_flow_source_map, verify_admission_receipt,
 };
 use norn_ir::{
-    ArtifactEnvelope, FlowSourceMap, LawRoot, PropertyTypeName, ResourceLimitProfile, RuntimeValue,
-    ScopeRef,
+    ArtifactEnvelope, FlowSourceMap, LawRoot, ResourceLimitProfile, RuntimeValue, ScopeRef,
 };
 use serde_json::{Value, json};
 
-type TestResult = Result<(), Box<dyn std::error::Error>>;
+use super::extension_scope::{
+    TestResult, assert_admitted, assert_refused, base_sku, check_set, envelope, has_scope_error,
+    partner_entity, sku_extension,
+};
 
-fn decode(value: Value) -> Result<ArtifactEnvelope, Box<dyn std::error::Error>> {
-    Ok(serde_json::from_value(value)?)
+type Built = Result<ArtifactEnvelope, Box<dyn std::error::Error>>;
+type Builder = fn(&str, &Value) -> Built;
+
+fn same_scope() -> Value {
+    json!({ "orgId": "org_a", "businessUnitId": "bu_a" })
 }
 
-fn envelope(
-    id: &str,
-    kind: &str,
-    scope: &Value,
-    dependencies: &Value,
-    payload: &Value,
-) -> Result<ArtifactEnvelope, Box<dyn std::error::Error>> {
-    let namespace = id.split('.').next().unwrap_or("shop");
-    decode(json!({
-        "irVersion": "0.1",
-        "artifactId": id,
-        "kind": kind,
-        "namespace": namespace,
-        "name": id,
-        "version": "1.0.0",
-        "lifecycle": "draft",
-        "scope": scope,
-        "dependencies": dependencies,
-        "provenance": { "source": "authoring_sdk" },
-        "payload": payload,
-    }))
+fn sku_dependency() -> Value {
+    json!([{ "artifactId": "retail.Sku.entity", "kind": "entity", "version": "1.0.0", "required": true }])
 }
 
-fn base_sku(scope: &Value) -> Result<ArtifactEnvelope, Box<dyn std::error::Error>> {
-    envelope(
-        "retail.Sku.entity",
-        "entity",
-        scope,
-        &json!([]),
-        &json!({
-            "entityVersion": "2.0",
-            "objectType": {
-                "name": "retail.Sku",
-                "properties": [
-                    { "id": "sku_code", "type": { "kind": "text" } },
-                    { "id": "title", "type": { "kind": "text" } },
-                    { "id": "recorded_at", "type": { "kind": "timestamp", "timezone": "utc" } },
-                    {
-                        "id": "unit_price",
-                        "type": {
-                            "kind": "decimal",
-                            "scale": 2,
-                            "additivity": { "kind": "additive" }
-                        }
-                    },
-                    {
-                        "id": "status",
-                        "type": {
-                            "kind": "enum",
-                            "values": [
-                                { "value": "draft" },
-                                { "value": "active" }
-                            ]
-                        },
-                        "default": "draft"
-                    }
-                ],
-                "identity": [{ "name": "primary", "properties": ["sku_code"] }],
-                "lifecycles": [{
-                    "property": "status",
-                    "initial": ["draft"],
-                    "terminal": ["active"],
-                    "transitions": [{
-                        "id": "activate",
-                        "from": ["draft"],
-                        "to": "active"
-                    }]
-                }]
-            }
-        }),
-    )
-}
-
-fn partner_entity(scope: &Value) -> Result<ArtifactEnvelope, Box<dyn std::error::Error>> {
-    envelope(
-        "retail.Partner.entity",
-        "entity",
-        scope,
-        &json!([]),
-        &json!({
-            "entityVersion": "2.0",
-            "objectType": {
-                "name": "retail.Partner",
-                "properties": [{ "id": "code", "type": { "kind": "text" } }],
-                "identity": [{ "name": "primary", "properties": ["code"] }]
-            }
-        }),
-    )
-}
-
-fn sku_extension(id: &str, scope: &Value) -> Result<ArtifactEnvelope, Box<dyn std::error::Error>> {
-    envelope(
-        id,
-        "entity",
-        scope,
-        &json!([]),
-        &json!({
-            "entityVersion": "2.0",
-            "objectTypeExtension": {
-                "namespace": "acme",
-                "target": "retail.Sku",
-                "properties": [
-                    {
-                        "id": "acme__secret_tag",
-                        "type": { "kind": "text" },
-                        "constraints": { "nullable": true }
-                    },
-                    {
-                        "id": "acme__secret_amount",
-                        "type": {
-                            "kind": "decimal",
-                            "scale": 2,
-                            "additivity": { "kind": "additive" }
-                        },
-                        "constraints": { "nullable": false },
-                        "default": "0.00"
-                    }
-                ],
-                "links": [{
-                    "id": "acme__secret_partner",
-                    "target": "retail.Partner",
-                    "cardinality": { "to": "one", "from": "many" }
-                }]
-            }
-        }),
-    )
-}
-
-fn check_set(candidates: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Vec<Diagnostic> {
-    let registry = BTreeSet::<PropertyTypeName>::new();
-    check_artifact_set(
-        candidates,
-        &EntityArtifactSetContext {
-            registry: &registry,
-            base,
-            tenant: None,
-        },
-    )
-}
-
-fn errors_for<'a>(findings: &'a [Diagnostic], artifact_id: &str) -> Vec<&'a Diagnostic> {
-    findings
-        .iter()
-        .filter(|d| d.is_error() && d.artifact_id.as_deref() == Some(artifact_id))
-        .collect()
-}
-
-fn assert_refused(findings: &[Diagnostic], artifact_id: &str, context: &str) {
-    let errors = errors_for(findings, artifact_id);
-    assert!(
-        !errors.is_empty(),
-        "{context}: expected refusal for {artifact_id}, got: {findings:#?}"
-    );
-}
-
-fn assert_admitted(findings: &[Diagnostic], artifact_id: &str, context: &str) {
-    let errors = errors_for(findings, artifact_id);
-    assert!(
-        errors.is_empty(),
-        "{context}: expected clean admission for {artifact_id}, got: {errors:#?}"
-    );
-}
-
+/// A consumer reading `extension` (a candidate, then installed) is admitted
+/// in the extension's scope or a narrower one and refused in a broader or a
+/// sibling one.
 fn assert_consumer_scopes(
-    build: impl Fn(&str, &Value) -> Result<ArtifactEnvelope, Box<dyn std::error::Error>>,
+    build: &dyn Fn(&str, &Value) -> Built,
     prefix: &str,
-    extra_base: &[ArtifactEnvelope],
+    extension: &ArtifactEnvelope,
+    base: &[ArtifactEnvelope],
 ) -> TestResult {
-    let global = json!({});
-    let sku = base_sku(&global)?;
-    let partner = partner_entity(&global)?;
-    let same = json!({ "orgId": "org_a", "businessUnitId": "bu_a" });
-    let ext_a = sku_extension("acme.SkuExt.entity", &same)?;
-    let broader = json!({ "orgId": "org_a" });
-    let sibling = json!({ "orgId": "org_a", "businessUnitId": "bu_b" });
-    let narrower = json!({
-        "orgId": "org_a",
-        "businessUnitId": "bu_a",
-        "workspaceId": "ws_child"
-    });
-
-    for in_base in [false, true] {
-        let mut base = vec![sku.clone(), partner.clone()];
-        base.extend(extra_base.iter().cloned());
-        if in_base {
-            base.push(ext_a.clone());
+    let cases = [
+        ("broader", json!({ "orgId": "org_a" }), false),
+        (
+            "sibling",
+            json!({ "orgId": "org_a", "businessUnitId": "bu_b" }),
+            false,
+        ),
+        ("same", same_scope(), true),
+        (
+            "narrow",
+            json!({ "orgId": "org_a", "businessUnitId": "bu_a", "workspaceId": "ws_child" }),
+            true,
+        ),
+    ];
+    for installed in [false, true] {
+        let mut base = base.to_vec();
+        if installed {
+            base.push(extension.clone());
         }
-        let run =
-            |suffix: &str, scope: &Value| -> Result<Vec<Diagnostic>, Box<dyn std::error::Error>> {
-                let id = format!("retail.{prefix}_{suffix}");
-                let consumer = build(&id, scope)?;
-                let cands = if in_base {
-                    vec![consumer]
-                } else {
-                    vec![ext_a.clone(), consumer]
-                };
-                Ok(check_set(&cands, &base))
+        for (suffix, scope, admitted) in &cases {
+            let id = format!("retail.{prefix}_{suffix}");
+            let consumer = build(&id, scope)?;
+            let candidates = if installed {
+                vec![consumer]
+            } else {
+                vec![extension.clone(), consumer]
             };
-
-        let id_broader = format!("retail.{prefix}_broader");
-        let id_sibling = format!("retail.{prefix}_sibling");
-        let id_same = format!("retail.{prefix}_same");
-        let id_narrow = format!("retail.{prefix}_narrow");
-
-        let f_broader = run("broader", &broader)?;
-        assert!(
-            !errors_for(&f_broader, &id_broader).is_empty(),
-            "{prefix} in_base={in_base}: broader must fail: {f_broader:#?}"
-        );
-        let f_sibling = run("sibling", &sibling)?;
-        assert!(
-            !errors_for(&f_sibling, &id_sibling).is_empty(),
-            "{prefix} in_base={in_base}: sibling must fail: {f_sibling:#?}"
-        );
-        let f_same = run("same", &same)?;
-        assert!(
-            errors_for(&f_same, &id_same).is_empty(),
-            "{prefix} in_base={in_base}: same scope must succeed: {f_same:#?}"
-        );
-        let f_narrow = run("narrow", &narrower)?;
-        assert!(
-            errors_for(&f_narrow, &id_narrow).is_empty(),
-            "{prefix} in_base={in_base}: narrower scope must succeed: {f_narrow:#?}"
-        );
+            let findings = check_set(&candidates, &base);
+            let context = format!("{prefix} {suffix}, extension installed: {installed}");
+            if *admitted {
+                assert_admitted(&findings, &id, &context);
+            } else {
+                assert_refused(&findings, &id, &context);
+            }
+        }
     }
     Ok(())
 }
 
-#[test]
-fn laws_cannot_observe_out_of_scope_extensions() -> TestResult {
-    let sku_dep = json!([{
-        "artifactId": "retail.Sku.entity",
-        "kind": "entity",
-        "version": "1.0.0",
-        "required": true
-    }]);
-    assert_consumer_scopes(
-        |id, scope| {
-            envelope(
-                id,
-                "law",
-                scope,
-                &sku_dep,
-                &json!({
-                    "lawVersion": "0.1",
-                    "id": id,
-                    "owner": "retail",
-                    "provenance": { "source": "authoring_sdk" },
-                    "scope": { "root": { "kind": "company", "id": "org_a" }, "objectTypes": ["retail.Sku"] },
-                    "subject": "retail.Sku",
-                    "modality": { "kind": "always" },
-                    "response": { "kind": "predicate", "expression": "self.acme__secret_amount >= 0" },
-                    "severity": "error",
-                    "rationale": "secret amount non-negative"
-                }),
-            )
-        },
+fn law(id: &str, scope: &Value) -> Built {
+    envelope(
+        id,
         "law",
-        &[],
+        scope,
+        &sku_dependency(),
+        &json!({
+            "lawVersion": "0.1",
+            "id": id,
+            "owner": "retail",
+            "provenance": { "source": "authoring_sdk" },
+            "scope": { "root": { "kind": "company", "id": "org_a" }, "objectTypes": ["retail.Sku"] },
+            "subject": "retail.Sku",
+            "modality": { "kind": "always" },
+            "response": { "kind": "predicate", "expression": "self.acme__secret_amount >= 0" },
+            "severity": "error",
+            "rationale": "secret amount non-negative"
+        }),
     )
 }
 
-#[test]
-fn models_cannot_observe_out_of_scope_extensions() -> TestResult {
-    assert_consumer_scopes(
-        |id, scope| {
-            envelope(
-                id,
-                "model",
-                scope,
-                &json!([]),
-                &json!({
-                    "modelId": id,
-                    "title": "Secret model",
-                    "version": "1.0.0",
-                    "input": { "kind": "objectType", "objectType": "retail.Sku" },
-                    "features": ["acme__secret_amount"],
-                    "outputs": [
-                        { "id": "score", "type": { "kind": "decimal", "scale": 2 }, "nullable": false }
-                    ],
-                    "trust": "opaque",
-                    "method": { "label": "linear" }
-                }),
-            )
-        },
+fn model(id: &str, scope: &Value) -> Built {
+    envelope(
+        id,
         "model",
-        &[],
+        scope,
+        &json!([]),
+        &json!({
+            "modelId": id,
+            "title": "Secret model",
+            "version": "1.0.0",
+            "input": { "kind": "objectType", "objectType": "retail.Sku" },
+            "features": ["acme__secret_amount"],
+            "outputs": [{ "id": "score", "type": { "kind": "decimal", "scale": 2 }, "nullable": false }],
+            "trust": "opaque",
+            "method": { "label": "linear" }
+        }),
     )
 }
 
-#[test]
-fn views_cannot_observe_out_of_scope_extensions() -> TestResult {
-    let sku_dep = json!([{
-        "artifactId": "retail.Sku.entity",
-        "kind": "entity",
-        "version": "1.0.0",
-        "required": true
-    }]);
-    assert_consumer_scopes(
-        |id, scope| {
-            envelope(
-                id,
-                "derived",
-                scope,
-                &sku_dep,
-                &json!({
-                    "viewVersion": "0.1",
-                    "viewId": id,
-                    "inputs": [{
-                        "alias": "skus",
-                        "kind": "entity",
-                        "artifactId": "retail.Sku.entity",
-                        "version": "1.0.0"
-                    }],
-                    "outputSchema": {},
-                    "maintenance": "recompute_on_read",
-                    "calc": {
-                        "kind": "relational",
-                        "output": "proj",
-                        "nodes": {
-                            "scan": { "op": "scan", "input": "skus" },
-                            "proj": {
-                                "op": "project",
-                                "input": "scan",
-                                "columns": [
-                                    { "name": "id", "expression": "input.id" },
-                                    { "name": "sku_code", "expression": "input.sku_code" },
-                                    { "name": "secret", "expression": "input.acme__secret_amount" }
-                                ]
-                            }
-                        }
+fn view(id: &str, scope: &Value) -> Built {
+    envelope(
+        id,
+        "derived",
+        scope,
+        &sku_dependency(),
+        &json!({
+            "viewVersion": "0.1",
+            "viewId": id,
+            "inputs": [{ "alias": "skus", "kind": "entity", "artifactId": "retail.Sku.entity", "version": "1.0.0" }],
+            "outputSchema": {},
+            "maintenance": "recompute_on_read",
+            "calc": {
+                "kind": "relational",
+                "output": "proj",
+                "nodes": {
+                    "scan": { "op": "scan", "input": "skus" },
+                    "proj": {
+                        "op": "project",
+                        "input": "scan",
+                        "columns": [
+                            { "name": "id", "expression": "input.id" },
+                            { "name": "secret", "expression": "input.acme__secret_amount" }
+                        ]
                     }
-                }),
-            )
-        },
-        "view",
-        &[],
+                }
+            }
+        }),
+    )
+}
+
+fn labels(id: &str, scope: &Value) -> Built {
+    envelope(
+        id,
+        "labels",
+        scope,
+        &json!([]),
+        &json!({
+            "labelsVersion": "0.1",
+            "entries": [{
+                "target": { "kind": "property", "objectType": "retail.Sku", "property": "acme__secret_tag" },
+                "label": { "en": "Secret tag" }
+            }]
+        }),
+    )
+}
+
+fn mapping(id: &str, scope: &Value) -> Built {
+    let source_hash = ArtifactRef::of(&mapping_source_schema()?)?.sha256;
+    envelope(
+        id,
+        "mapping",
+        scope,
+        &json!([
+            { "artifactId": "erp.source_schema", "kind": "source_schema", "version": "1.0.0", "required": true },
+            { "artifactId": "retail.CatalogItem.interface", "kind": "entity", "version": "1.0.0", "required": true },
+            { "artifactId": "retail.MappedSku.entity", "kind": "entity", "version": "1.0.0", "required": true }
+        ]),
+        &json!({
+            "format": "norn.mapping/1",
+            "source": { "schemaId": "erp.source_schema", "version": "1.0.0", "sha256": source_hash },
+            "interfaces": ["retail.CatalogItem.interface"],
+            "maps": [{
+                "id": "sku",
+                "source": { "dataset": "Item" },
+                "target": { "entity": "retail.MappedSku.entity", "interface": "retail.CatalogItem.interface" },
+                "subject": "input.name",
+                "sourceRecord": "input.name",
+                "properties": [
+                    { "property": "sku_code", "value": "input.name" },
+                    { "property": "title", "value": "input.item_name" },
+                    { "property": "acme__secret_tag", "value": "input.secret_tag" }
+                ]
+            }]
+        }),
     )
 }
 
 #[test]
-fn labels_cannot_target_out_of_scope_extensions() -> TestResult {
-    assert_consumer_scopes(
-        |id, scope| {
-            envelope(
-                id,
-                "labels",
-                scope,
-                &json!([]),
-                &json!({
-                    "labelsVersion": "0.1",
-                    "entries": [{
-                        "target": {
-                            "kind": "property",
-                            "objectType": "retail.Sku",
-                            "property": "acme__secret_tag"
-                        },
-                        "label": { "en": "Secret tag" }
-                    }]
-                }),
-            )
-        },
-        "labels",
-        &[],
-    )
+fn consumers_resolve_only_extensions_their_scope_sees() -> TestResult {
+    let base = [base_sku(&json!({}))?, partner_entity(&json!({}))?];
+    let extension = sku_extension("acme.SkuExt.entity", &same_scope())?;
+    let consumers: [(&str, Builder); 4] = [
+        ("law", law),
+        ("model", model),
+        ("view", view),
+        ("labels", labels),
+    ];
+    for (prefix, build) in consumers {
+        assert_consumer_scopes(&build, prefix, &extension, &base)?;
+    }
+    let (interface, mapped, mapped_extension) = mapping_entities(&same_scope())?;
+    let mapping_base = [interface, mapped, mapping_source_schema()?];
+    assert_consumer_scopes(&mapping, "map", &mapped_extension, &mapping_base)
 }
 
 fn mapping_source_schema() -> Result<ArtifactEnvelope, Box<dyn std::error::Error>> {
@@ -492,189 +321,85 @@ fn mapping_entities(
 }
 
 #[test]
-fn mappings_cannot_write_out_of_scope_extensions() -> TestResult {
-    let ext_same = json!({ "orgId": "org_a", "businessUnitId": "bu_a" });
-    let (iface, sku_impl, mapped_ext) = mapping_entities(&ext_same)?;
-    let source_schema = mapping_source_schema()?;
-    let source_hash = ArtifactRef::of(&source_schema)?.sha256;
-    let build = |id: &str, scope: &Value| {
+fn a_scoped_view_derives_catalog_environment_and_metrics_from_its_scope_alone() -> TestResult {
+    let tenant = |id: &str| ScopeRef {
+        tenant_id: Some(id.to_owned()),
+        ..ScopeRef::default()
+    };
+    let sku = base_sku(&json!({}))?;
+    let pool = vec![
+        sku.clone(),
+        partner_entity(&json!({}))?,
         envelope(
-            id,
-            "mapping",
-            scope,
-            &json!([
-                { "artifactId": "erp.source_schema", "kind": "source_schema", "version": "1.0.0", "required": true },
-                { "artifactId": "retail.CatalogItem.interface", "kind": "entity", "version": "1.0.0", "required": true },
-                { "artifactId": "retail.MappedSku.entity", "kind": "entity", "version": "1.0.0", "required": true }
-            ]),
-            &json!({
-                "format": "norn.mapping/1",
-                "source": {
-                    "schemaId": "erp.source_schema",
-                    "version": "1.0.0",
-                    "sha256": source_hash
-                },
-                "interfaces": ["retail.CatalogItem.interface"],
-                "maps": [{
-                    "id": "sku",
-                    "source": { "dataset": "Item" },
-                    "target": {
-                        "entity": "retail.MappedSku.entity",
-                        "interface": "retail.CatalogItem.interface"
-                    },
-                    "subject": "input.name",
-                    "sourceRecord": "input.name",
-                    "properties": [
-                        { "property": "sku_code", "value": "input.name" },
-                        { "property": "title", "value": "input.item_name" },
-                        { "property": "acme__secret_tag", "value": "input.secret_tag" }
-                    ]
-                }]
-            }),
-        )
-    };
-
-    let broader = json!({ "orgId": "org_a" });
-    let sibling = json!({ "orgId": "org_a", "businessUnitId": "bu_b" });
-    let narrower = json!({
-        "orgId": "org_a",
-        "businessUnitId": "bu_a",
-        "workspaceId": "ws_child"
-    });
-    for in_base in [false, true] {
-        let mut base = vec![iface.clone(), sku_impl.clone(), source_schema.clone()];
-        if in_base {
-            base.push(mapped_ext.clone());
-        }
-        let run =
-            |id: &str, scope: &Value| -> Result<Vec<Diagnostic>, Box<dyn std::error::Error>> {
-                let mapping = build(id, scope)?;
-                let cands = if in_base {
-                    vec![mapping]
-                } else {
-                    vec![mapped_ext.clone(), mapping]
-                };
-                Ok(check_set(&cands, &base))
-            };
-        assert_refused(
-            &run("retail.map_broader", &broader)?,
-            "retail.map_broader",
-            "broader mapping",
+            "acme.SkuTimed.entity",
+            "entity",
+            &json!({ "tenantId": "tenant_a" }),
+            &json!([]),
+            &json!({ "entityVersion": "2.0", "objectTypeExtension": {
+                "namespace": "acme",
+                "target": "retail.Sku",
+                "properties": [
+                    { "id": "acme__secret_amount", "type": { "kind": "decimal", "scale": 2, "additivity": { "kind": "additive" } },
+                      "constraints": { "nullable": false }, "default": "0.00" },
+                    { "id": "acme__seen_on", "type": { "kind": "date" }, "constraints": { "nullable": true } }
+                ]
+            } }),
+        )?,
+    ];
+    let registry = BTreeSet::new();
+    assert!(ScopedView::uniform(&pool, &registry).is_none());
+    let limits = ResourceLimitProfile::norn_limits_v1();
+    for (scope, sees) in [
+        (tenant("tenant_a"), true),
+        (tenant("tenant_b"), false),
+        (ScopeRef::default(), false),
+    ] {
+        let view = ScopedView::bound(&scope, &pool, &[], &registry);
+        let catalog_sku = view
+            .catalog()
+            .object_type_named("retail.Sku")
+            .ok_or("retail.Sku")?
+            .map_err(|finding| format!("{finding:?}"))?;
+        assert_eq!(
+            catalog_sku.property("acme__secret_amount").is_some(),
+            sees,
+            "{scope:?}"
         );
-        assert_refused(
-            &run("retail.map_sibling", &sibling)?,
-            "retail.map_sibling",
-            "sibling mapping",
+        let env = view
+            .receipt_env(&limits)
+            .map_err(|errors| format!("{errors:?}"))?;
+        let record = env.record("retail.Sku").ok_or("retail.Sku record")?;
+        assert_eq!(
+            record.fields.contains_key("acme__secret_amount"),
+            sees,
+            "{scope:?}"
         );
-        assert_admitted(
-            &run("retail.map_same", &ext_same)?,
-            "retail.map_same",
-            "same-scope mapping",
-        );
-        assert_admitted(
-            &run("retail.map_narrow", &narrower)?,
-            "retail.map_narrow",
-            "narrower mapping",
-        );
+        let space = derive_metric_space(&view, &LawRoot::Cell("global".to_owned()))
+            .map_err(|findings| format!("{findings:?}"))?;
+        let derived = space
+            .candidates()
+            .iter()
+            .any(|candidate| candidate.definition.name.contains("acme__secret_amount"));
+        assert_eq!(derived, sees, "{scope:?}");
     }
-    Ok(())
-}
-
-#[test]
-fn whole_set_catalog_metrics_definition_catalog_and_flow_map_do_not_leak_narrower_extensions()
--> TestResult {
-    let global = json!({});
-    let tenant_a = json!({ "tenantId": "tenant_a" });
-    let sku = base_sku(&global)?;
-    let partner = partner_entity(&global)?;
-    let ext_a = sku_extension("acme.SkuExt.entity", &tenant_a)?;
-    let pool = vec![sku.clone(), partner, ext_a];
-    let reg = BTreeSet::new();
-
-    // EffectiveCatalog::from_artifacts must not merge narrower extension into global retail.Sku.
-    let unscoped = EffectiveCatalog::from_artifacts(&pool);
-    let global_sku = unscoped
-        .object_type_named("retail.Sku")
-        .ok_or("missing retail.Sku")?
-        .map_err(|d| format!("unexpected blocking diagnostic: {d:?}"))?;
-    assert!(global_sku.property("acme__secret_amount").is_none());
-    assert!(
-        unscoped
-            .links_for_object_type("retail.Sku")
-            .unwrap_or_default()
-            .iter()
-            .all(|link| link.id.as_str() != "acme__secret_partner")
-    );
-
-    // EffectiveCatalog::for_scope(tenant_a) sees the extension; for_scope(tenant_b) does not.
-    let alpha_scope = ScopeRef {
-        tenant_id: Some("tenant_a".to_owned()),
-        ..ScopeRef::default()
-    };
-    let beta_scope = ScopeRef {
-        tenant_id: Some("tenant_b".to_owned()),
-        ..ScopeRef::default()
-    };
-    let alpha_cat = EffectiveCatalog::for_scope(&pool, &reg, &alpha_scope);
-    let alpha_sku = alpha_cat
-        .object_type_named("retail.Sku")
-        .ok_or("missing alpha retail.Sku")?
-        .map_err(|d| format!("alpha blocking: {d:?}"))?;
-    assert!(alpha_sku.property("acme__secret_amount").is_some());
-    let beta_cat = EffectiveCatalog::for_scope(&pool, &reg, &beta_scope);
-    let beta_sku = beta_cat
-        .object_type_named("retail.Sku")
-        .ok_or("missing beta retail.Sku")?
-        .map_err(|d| format!("beta blocking: {d:?}"))?;
-    assert!(beta_sku.property("acme__secret_amount").is_none());
-
-    // Metric derivation: unscoped derive_metric_space must not emit candidates for narrower extension.
-    let law_root = LawRoot::Cell("global".to_owned());
-    let unscoped_space = derive_metric_space(&pool, &reg, &law_root)
-        .map_err(|d| format!("unscoped metric derive failed: {d:?}"))?;
-    assert!(
-        unscoped_space
-            .candidates()
-            .iter()
-            .all(|c| !c.definition.name.contains("acme__secret_amount"))
-    );
-    let alpha_space = derive_metric_space_for_scope(&pool, &reg, &law_root, &alpha_scope)
-        .map_err(|d| format!("alpha metric derive failed: {d:?}"))?;
-    assert!(
-        alpha_space
-            .candidates()
-            .iter()
-            .any(|c| c.definition.name.contains("acme__secret_amount"))
-    );
-
-    // Definition catalog keeps extension properties owned by the extension artifact.
-    let def_catalog = definition_catalog::project(&pool, &[], &reg)?;
-    assert!(!def_catalog.properties.iter().any(|row| {
+    let projected = definition_catalog::project(&pool, &[], &registry)?;
+    assert!(!projected.properties.iter().any(|row| {
         row.at.artifact_id == "retail.Sku.entity"
-            && matches!(
-                &row.at.member,
-                norn_ir::definition_catalog::Member::Property { property, .. }
-                    if property == "acme__secret_amount"
-            )
+            && matches!(&row.at.member, norn_ir::definition_catalog::Member::Property { property, .. }
+                if property == "acme__secret_amount")
     }));
-
-    // Flow source map validates states strictly against each entity's own scope catalog.
-    let sku_hash = ArtifactRef::of(&sku)?.sha256;
     let flow_map: FlowSourceMap = serde_json::from_value(json!({
         "format": "norn-flow-source-map/1",
         "flows": [{
             "flowId": "sku-flow",
             "flowVersion": "1.0.0",
             "sourcePath": "flows/sku.ts",
-            "artifactRefs": [{ "artifactId": "retail.Sku.entity", "version": "1.0.0", "sha256": sku_hash }],
+            "artifactRefs": [{ "artifactId": "retail.Sku.entity", "version": "1.0.0", "sha256": ArtifactRef::of(&sku)?.sha256 }],
             "steps": [{ "id": "s1", "kind": "perform", "artifactIds": ["retail.Sku.entity"], "stateIds": ["draft"], "decisionRowIds": [] }],
             "edges": []
         }]
     }))?;
-    assert!(
-        validate_flow_source_map(&flow_map, &pool, &[]).is_empty(),
-        "valid global state in flow source map should pass"
-    );
+    assert_eq!(validate_flow_source_map(&flow_map, &pool, &[]), []);
     Ok(())
 }
 
@@ -785,180 +510,225 @@ fn defined_concepts_refuse_out_of_scope_transitive_dependencies_and_extensions()
 }
 
 #[test]
-fn receipt_type_env_is_scope_bound_and_never_leaks_narrower_extensions() -> TestResult {
-    let global = json!({});
-    let ws_a = json!({ "workspaceId": "ws_alpha" });
-    let ws_b = json!({ "workspaceId": "ws_beta" });
-    let sku = base_sku(&global)?;
-    let partner = partner_entity(&global)?;
-    let ext_a = sku_extension("acme.SkuExt.entity", &ws_a)?;
-    let ext_b = sku_extension("acme.SkuExt.entity", &ws_b)?;
+fn receipts_commit_to_each_scope_and_still_verify_whole_set_receipts() -> TestResult {
     let limits = ResourceLimitProfile::norn_limits_v1();
-
-    // Unscoped derive_type_env must NOT merge narrower extension into global retail.Sku.
-    let base = vec![sku, partner];
-    let unscoped_env = derive_type_env(std::slice::from_ref(&ext_a), &base, &limits)
-        .map_err(|e| format!("derive_type_env failed: {e:?}"))?;
-    assert!(
-        unscoped_env
-            .record("retail.Sku")
-            .and_then(|rec| rec.fields.get("acme__secret_amount"))
-            .is_none(),
-        "unscoped derive_type_env leaked narrower extension field onto global type"
-    );
-
-    // Consumer-scoped derive_receipt_type_env_for_scope exposes extension ONLY to visible scopes.
+    let base = vec![base_sku(&json!({}))?, partner_entity(&json!({}))?];
+    let alpha = sku_extension("acme.SkuExt.entity", &json!({ "workspaceId": "ws_alpha" }))?;
+    let beta = sku_extension("acme.SkuExt.entity", &json!({ "workspaceId": "ws_beta" }))?;
+    let to_runtime =
+        |artifact: &ArtifactEnvelope| -> Result<RuntimeValue, Box<dyn std::error::Error>> {
+            Ok(RuntimeValue::from_json(serde_json::to_value(artifact)?)?)
+        };
+    let base_values: Vec<RuntimeValue> = base.iter().map(to_runtime).collect::<Result<_, _>>()?;
+    let registry = BTreeSet::new();
+    let context = EntityArtifactSetContext {
+        registry: &registry,
+        base: &base,
+        tenant: None,
+    };
+    let admit = |extension: &ArtifactEnvelope| -> Result<_, Box<dyn std::error::Error>> {
+        let sources = ReceiptSources::new(&[to_runtime(extension)?], &base_values)?;
+        let checked = check_artifact_set_with_receipt(&sources, &context, &limits)?;
+        assert!(checked.receipt.admitted, "{:#?}", checked.diagnostics);
+        Ok(checked.receipt)
+    };
+    let (receipt_alpha, receipt_beta) = (admit(&alpha)?, admit(&beta)?);
+    let pinned = receipt_alpha.type_env.clone().ok_or("type environment")?;
+    assert_eq!(pinned.id, SCOPED_TYPE_ENV_ID);
+    assert_ne!(Some(pinned), receipt_beta.type_env);
+    let verify = |receipt: &norn_checker::CheckReceipt| -> TestResult {
+        let body = String::from_utf8(receipt.canonical_json()?)?;
+        verify_admission_receipt(
+            &body,
+            &receipt.content_sha256()?,
+            std::slice::from_ref(&alpha),
+            &base,
+            &limits,
+        )?;
+        Ok(())
+    };
+    verify(&receipt_alpha)?;
     let alpha_scope = ScopeRef {
         workspace_id: Some("ws_alpha".to_owned()),
         ..ScopeRef::default()
     };
-    let beta_scope = ScopeRef {
-        workspace_id: Some("ws_beta".to_owned()),
-        ..ScopeRef::default()
-    };
-    let alpha_env = derive_receipt_type_env_for_scope(
-        std::slice::from_ref(&ext_a),
-        &base,
-        &limits,
-        &alpha_scope,
-    )
-    .map_err(|e| format!("alpha env failed: {e:?}"))?;
-    assert!(
-        alpha_env
-            .record("retail.Sku")
-            .and_then(|rec| rec.fields.get("acme__secret_amount"))
-            .is_some()
-    );
-    let beta_env = derive_receipt_type_env_for_scope(
-        std::slice::from_ref(&ext_a),
-        &base,
-        &limits,
-        &beta_scope,
-    )
-    .map_err(|e| format!("beta env failed: {e:?}"))?;
-    assert!(
-        beta_env
-            .record("retail.Sku")
-            .and_then(|rec| rec.fields.get("acme__secret_amount"))
-            .is_none()
-    );
-
-    // Receipt binds the scope-keyed type_env digest (changes when extension scope changes) and verifies round-trip.
-    let to_rv = |a: &ArtifactEnvelope| -> Result<RuntimeValue, Box<dyn std::error::Error>> {
-        Ok(RuntimeValue::from_json(serde_json::to_value(a)?)?)
-    };
-    let base_rv: Vec<RuntimeValue> = base.iter().map(to_rv).collect::<Result<_, _>>()?;
-    let reg = BTreeSet::new();
-    let ctx = EntityArtifactSetContext {
-        registry: &reg,
-        base: &base,
-        tenant: None,
-    };
-    let checked_a = check_artifact_set_with_receipt(
-        &ReceiptSources::new(&[to_rv(&ext_a)?], &base_rv)?,
-        &ctx,
-        &limits,
-    )?;
-    assert!(checked_a.receipt.admitted, "{:#?}", checked_a.diagnostics);
-    let checked_b = check_artifact_set_with_receipt(
-        &ReceiptSources::new(&[to_rv(&ext_b)?], &base_rv)?,
-        &ctx,
-        &limits,
-    )?;
-    assert!(checked_b.receipt.admitted, "{:#?}", checked_b.diagnostics);
-    assert_ne!(
-        checked_a.receipt.type_env, checked_b.receipt.type_env,
-        "scope-bound receipt typeEnv digest must reflect extension scope"
-    );
-    let body_a = String::from_utf8(checked_a.receipt.canonical_json()?)?;
-    let sha_a = checked_a.receipt.content_sha256()?;
-    verify_admission_receipt(&body_a, &sha_a, &[ext_a], &base, &limits)?;
-    Ok(())
-}
-
-fn check_entities_only(cands: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Vec<Diagnostic> {
-    let reg = BTreeSet::<PropertyTypeName>::new();
-    norn_checker::check_artifact_set_entity_model(
-        cands,
+    let whole_set = ScopedView::bound(&alpha_scope, std::slice::from_ref(&alpha), &base, &registry)
+        .receipt_env(&limits)
+        .map_err(|errors| format!("{errors:?}"))?
+        .reference()?;
+    let mut historical = receipt_alpha;
+    historical.type_env = Some(whole_set);
+    verify(&historical)?;
+    let plain = check_artifact_set_with_receipt(
+        &ReceiptSources::new(&base_values, &[])?,
         &EntityArtifactSetContext {
-            registry: &reg,
-            base,
+            registry: &registry,
+            base: &[],
             tenant: None,
         },
-    )
-}
-
-#[test]
-fn installed_base_invalid_object_supertype_edge_is_refused() -> TestResult {
-    let (global, tenant_a) = (json!({}), json!({ "tenantId": "tenant_a" }));
-    let super_a = envelope(
-        "retail.SuperAlpha.entity",
-        "entity",
-        &tenant_a,
-        &json!([]),
-        &json!({
-            "entityVersion": "2.0",
-            "objectType": {
-                "name": "retail.SuperAlpha",
-                "properties": [{ "id": "code", "type": { "kind": "text" } }],
-                "identity": [{ "name": "primary", "properties": ["code"] }]
-            }
-        }),
+        &limits,
     )?;
-    let middle_global = envelope(
-        "retail.MiddleGlobal.entity",
-        "entity",
-        &global,
-        &json!([]),
-        &json!({ "entityVersion": "2.0", "objectType": { "name": "retail.MiddleGlobal", "extends": "retail.SuperAlpha", "properties": [] } }),
-    )?;
-    let child_a = envelope(
-        "retail.ChildAlpha.entity",
-        "entity",
-        &tenant_a,
-        &json!([]),
-        &json!({ "entityVersion": "2.0", "objectType": { "name": "retail.ChildAlpha", "extends": "retail.MiddleGlobal", "properties": [] } }),
-    )?;
-    let findings = check_entities_only(&[child_a], &[super_a, middle_global]);
-    assert!(
-        errors_for(&findings, "retail.ChildAlpha.entity")
-            .iter()
-            .any(|d| d.code.as_str() == norn_checker::artifact_set::codes::INCOMPATIBLE_SCOPE),
-        "narrower candidate must fail closed on installed broader->narrower edge: {findings:#?}"
+    assert_eq!(
+        plain.receipt.type_env.map(|reference| reference.id),
+        Some(norn_expr::env::TYPE_ENV_ID.to_owned())
     );
     Ok(())
 }
 
 #[test]
-fn installed_base_invalid_interface_supertype_edge_is_refused() -> TestResult {
+fn link_targets_are_checked_in_the_shared_type_and_interface_name_space() -> TestResult {
+    let interface = |scope: &Value| {
+        envelope(
+            "retail.Secret.interface",
+            "entity",
+            scope,
+            &json!([]),
+            &json!({ "entityVersion": "2.0", "interface": {
+                "name": "retail.Secret",
+                "properties": [{ "id": "code", "type": { "kind": "text" } }]
+            } }),
+        )
+    };
+    let link = |id: &str| json!([{ "id": id, "target": "retail.Secret", "cardinality": { "to": "one", "from": "many" } }]);
+    let holders = [
+        envelope(
+            "retail.Holder.entity",
+            "entity",
+            &json!({}),
+            &json!([]),
+            &json!({ "entityVersion": "2.0", "objectType": {
+            "name": "retail.Holder",
+            "properties": [{ "id": "code", "type": { "kind": "text" } }],
+            "identity": [{ "name": "primary", "properties": ["code"] }],
+            "links": link("secret")
+        } }),
+        )?,
+        envelope(
+            "acme.SkuSecret.entity",
+            "entity",
+            &json!({}),
+            &json!([]),
+            &json!({ "entityVersion": "2.0", "objectTypeExtension": {
+            "namespace": "acme",
+            "target": "retail.Sku",
+            "links": link("acme__secret")
+        } }),
+        )?,
+        envelope(
+            "retail.Holding.interface",
+            "entity",
+            &json!({}),
+            &json!([]),
+            &json!({ "entityVersion": "2.0", "interface": {
+            "name": "retail.Holding",
+            "properties": [],
+            "links": link("secret")
+        } }),
+        )?,
+    ];
+    for (scope, refused) in [
+        (json!({ "tenantId": "tenant_a" }), true),
+        (json!({}), false),
+    ] {
+        let base = [
+            base_sku(&json!({}))?,
+            partner_entity(&json!({}))?,
+            interface(&scope)?,
+        ];
+        for holder in &holders {
+            let id = holder.artifact_id.as_str();
+            let findings = check_set(std::slice::from_ref(holder), &base);
+            assert_eq!(
+                has_scope_error(&findings, id),
+                refused,
+                "{id} at {scope}: {findings:#?}"
+            );
+            let mut installed = base.to_vec();
+            installed.push(holder.clone());
+            let projected = check_entity_reference_scopes_all(&installed)
+                .iter()
+                .any(|finding| {
+                    finding.artifact_id.as_deref() == Some(id)
+                        && finding.code.as_str() == INCOMPATIBLE_SCOPE
+                });
+            assert_eq!(
+                projected, refused,
+                "{id} at {scope}: kernel projection check"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn installed_supertype_and_interface_edges_into_a_narrower_scope_are_refused() -> TestResult {
     let (global, tenant_a) = (json!({}), json!({ "tenantId": "tenant_a" }));
-    let iface_a = envelope(
-        "retail.IfaceAlpha.interface",
-        "entity",
-        &tenant_a,
-        &json!([]),
-        &json!({ "entityVersion": "2.0", "interface": { "name": "retail.IfaceAlpha", "properties": [{ "id": "code", "type": { "kind": "text" } }] } }),
-    )?;
-    let iface_mid_global = envelope(
-        "retail.IfaceMidGlobal.interface",
-        "entity",
-        &global,
-        &json!([]),
-        &json!({ "entityVersion": "2.0", "interface": { "name": "retail.IfaceMidGlobal", "extends": ["retail.IfaceAlpha"], "properties": [] } }),
-    )?;
-    let impl_a = envelope(
-        "retail.ImplAlpha.entity",
-        "entity",
-        &tenant_a,
-        &json!([]),
-        &json!({ "entityVersion": "2.0", "objectType": { "name": "retail.ImplAlpha", "implements": ["retail.IfaceMidGlobal"], "properties": [{ "id": "code", "type": { "kind": "text" } }] } }),
-    )?;
-    let findings = check_entities_only(&[impl_a], &[iface_a, iface_mid_global]);
-    assert!(
-        errors_for(&findings, "retail.ImplAlpha.entity")
-            .iter()
-            .any(|d| d.code.as_str() == norn_checker::artifact_set::codes::INCOMPATIBLE_SCOPE),
-        "narrower candidate must fail closed on installed interface broader->narrower edge: {findings:#?}"
-    );
+    let code = json!([{ "id": "code", "type": { "kind": "text" } }]);
+    let object = |id: &str, scope: &Value, body: Value| {
+        envelope(
+            id,
+            "entity",
+            scope,
+            &json!([]),
+            &json!({ "entityVersion": "2.0", "objectType": body }),
+        )
+    };
+    let interface = |id: &str, scope: &Value, body: Value| {
+        envelope(
+            id,
+            "entity",
+            scope,
+            &json!([]),
+            &json!({ "entityVersion": "2.0", "interface": body }),
+        )
+    };
+    let cases = [
+        (
+            object(
+                "retail.ChildAlpha.entity",
+                &tenant_a,
+                json!({ "name": "retail.ChildAlpha", "extends": "retail.MiddleGlobal", "properties": [] }),
+            )?,
+            vec![
+                object(
+                    "retail.SuperAlpha.entity",
+                    &tenant_a,
+                    json!({ "name": "retail.SuperAlpha", "properties": code, "identity": [{ "name": "primary", "properties": ["code"] }] }),
+                )?,
+                object(
+                    "retail.MiddleGlobal.entity",
+                    &global,
+                    json!({ "name": "retail.MiddleGlobal", "extends": "retail.SuperAlpha", "properties": [] }),
+                )?,
+            ],
+        ),
+        (
+            object(
+                "retail.ImplAlpha.entity",
+                &tenant_a,
+                json!({ "name": "retail.ImplAlpha", "implements": ["retail.IfaceMidGlobal"], "properties": code }),
+            )?,
+            vec![
+                interface(
+                    "retail.IfaceAlpha.interface",
+                    &tenant_a,
+                    json!({ "name": "retail.IfaceAlpha", "properties": code }),
+                )?,
+                interface(
+                    "retail.IfaceMidGlobal.interface",
+                    &global,
+                    json!({ "name": "retail.IfaceMidGlobal", "extends": ["retail.IfaceAlpha"], "properties": [] }),
+                )?,
+            ],
+        ),
+    ];
+    for (candidate, base) in cases {
+        let findings =
+            super::extension_scope::check_entities(std::slice::from_ref(&candidate), &base);
+        assert!(
+            has_scope_error(&findings, &candidate.artifact_id),
+            "{findings:#?}"
+        );
+    }
     Ok(())
 }

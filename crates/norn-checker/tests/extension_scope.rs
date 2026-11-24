@@ -10,9 +10,9 @@ use norn_checker::{
 use norn_ir::{ArtifactEnvelope, PropertyTypeName};
 use serde_json::{Value, json};
 
-type TestResult = Result<(), Box<dyn std::error::Error>>;
+pub(crate) type TestResult = Result<(), Box<dyn std::error::Error>>;
 
-const SCOPE_DIMENSIONS: [&str; 5] = [
+pub(crate) const SCOPE_DIMENSIONS: [&str; 5] = [
     "orgId",
     "tenantId",
     "workspaceId",
@@ -20,11 +20,11 @@ const SCOPE_DIMENSIONS: [&str; 5] = [
     "businessUnitId",
 ];
 
-fn decode(value: Value) -> Result<ArtifactEnvelope, Box<dyn std::error::Error>> {
+pub(crate) fn decode(value: Value) -> Result<ArtifactEnvelope, Box<dyn std::error::Error>> {
     Ok(serde_json::from_value(value)?)
 }
 
-fn envelope(
+pub(crate) fn envelope(
     id: &str,
     kind: &str,
     scope: &Value,
@@ -47,7 +47,7 @@ fn envelope(
     }))
 }
 
-fn base_sku(scope: &Value) -> Result<ArtifactEnvelope, Box<dyn std::error::Error>> {
+pub(crate) fn base_sku(scope: &Value) -> Result<ArtifactEnvelope, Box<dyn std::error::Error>> {
     envelope(
         "retail.Sku.entity",
         "entity",
@@ -96,7 +96,9 @@ fn base_sku(scope: &Value) -> Result<ArtifactEnvelope, Box<dyn std::error::Error
     )
 }
 
-fn partner_entity(scope: &Value) -> Result<ArtifactEnvelope, Box<dyn std::error::Error>> {
+pub(crate) fn partner_entity(
+    scope: &Value,
+) -> Result<ArtifactEnvelope, Box<dyn std::error::Error>> {
     envelope(
         "retail.Partner.entity",
         "entity",
@@ -113,7 +115,10 @@ fn partner_entity(scope: &Value) -> Result<ArtifactEnvelope, Box<dyn std::error:
     )
 }
 
-fn sku_extension(id: &str, scope: &Value) -> Result<ArtifactEnvelope, Box<dyn std::error::Error>> {
+pub(crate) fn sku_extension(
+    id: &str,
+    scope: &Value,
+) -> Result<ArtifactEnvelope, Box<dyn std::error::Error>> {
     envelope(
         id,
         "entity",
@@ -162,7 +167,10 @@ fn sku_extension(id: &str, scope: &Value) -> Result<ArtifactEnvelope, Box<dyn st
     )
 }
 
-fn check_set(candidates: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Vec<Diagnostic> {
+pub(crate) fn check_set(
+    candidates: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+) -> Vec<Diagnostic> {
     let registry = BTreeSet::<PropertyTypeName>::new();
     check_artifact_set(
         candidates,
@@ -174,7 +182,10 @@ fn check_set(candidates: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Vec<
     )
 }
 
-fn check_entities(candidates: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Vec<Diagnostic> {
+pub(crate) fn check_entities(
+    candidates: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+) -> Vec<Diagnostic> {
     let registry = BTreeSet::<PropertyTypeName>::new();
     check_artifact_set_entity_model(
         candidates,
@@ -186,14 +197,14 @@ fn check_entities(candidates: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) ->
     )
 }
 
-fn errors_for<'a>(findings: &'a [Diagnostic], artifact_id: &str) -> Vec<&'a Diagnostic> {
+pub(crate) fn errors_for<'a>(findings: &'a [Diagnostic], artifact_id: &str) -> Vec<&'a Diagnostic> {
     findings
         .iter()
         .filter(|d| d.is_error() && d.artifact_id.as_deref() == Some(artifact_id))
         .collect()
 }
 
-fn assert_refused(findings: &[Diagnostic], artifact_id: &str, context: &str) {
+pub(crate) fn assert_refused(findings: &[Diagnostic], artifact_id: &str, context: &str) {
     let errors = errors_for(findings, artifact_id);
     assert!(
         !errors.is_empty(),
@@ -201,7 +212,7 @@ fn assert_refused(findings: &[Diagnostic], artifact_id: &str, context: &str) {
     );
 }
 
-fn assert_admitted(findings: &[Diagnostic], artifact_id: &str, context: &str) {
+pub(crate) fn assert_admitted(findings: &[Diagnostic], artifact_id: &str, context: &str) {
     let errors = errors_for(findings, artifact_id);
     assert!(
         errors.is_empty(),
@@ -209,13 +220,13 @@ fn assert_admitted(findings: &[Diagnostic], artifact_id: &str, context: &str) {
     );
 }
 
-fn has_scope_error(findings: &[Diagnostic], artifact_id: &str) -> bool {
+pub(crate) fn has_scope_error(findings: &[Diagnostic], artifact_id: &str) -> bool {
     errors_for(findings, artifact_id)
         .iter()
         .any(|d| d.code.as_str() == INCOMPATIBLE_SCOPE)
 }
 
-fn scope_with(dim: &str, value: &str) -> Value {
+pub(crate) fn scope_with(dim: &str, value: &str) -> Value {
     let mut map = serde_json::Map::new();
     map.insert(dim.to_owned(), json!(value));
     Value::Object(map)

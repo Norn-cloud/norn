@@ -1,6 +1,6 @@
 //! Structural law admission and conservative whole-set impact closure. No proof claims.
 use crate::entity_artifacts::{Decoded, Layer, decode_v2};
-use crate::entity_scopes::{LawScopeEnv, ScopeKey, law_scope_env, scope_key};
+use crate::entity_scopes::ScopedViews;
 use crate::{
     Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, EffectiveCatalog, Span,
 };
@@ -9,7 +9,7 @@ use norn_expr::{Expression, Type, ZenTypeEnv, check_expression};
 use norn_graph::{Budget, Direction, Graph, reachability};
 use norn_ir::{
     ArtifactEnvelope, ArtifactKind, ArtifactPayload, LawIR, LawModality, LawResponse, LawRoot,
-    LawTiming, PropertyTypeName, ResourceLimitProfile,
+    LawTiming, PropertyTypeName,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -207,8 +207,7 @@ pub fn check_law_set(
     if !pool.iter().any(|a| a.kind() == ArtifactKind::Law) {
         return Vec::new();
     }
-    let limits = ResourceLimitProfile::norn_limits_v1();
-    let mut scoped_envs: BTreeMap<ScopeKey, LawScopeEnv> = BTreeMap::new();
+    let mut views = ScopedViews::new(artifacts, base, registry);
     // The whole-set inventory is identical for every law; compute it once.
     let closure_refused = pool
         .iter()
@@ -237,15 +236,13 @@ pub fn check_law_set(
             continue;
         };
         out.extend(local(&law, artifact));
-        let scoped = scoped_envs
-            .entry(scope_key(&artifact.scope))
-            .or_insert_with(|| law_scope_env(&pool, registry, &limits, &artifact.scope));
+        let view = views.of(artifact);
         let context = LawContext {
             base,
-            pool: &pool,
-            catalog: &scoped.catalog,
-            layer: &scoped.layer,
-            env: scoped.env.as_ref(),
+            pool: view.pool(),
+            catalog: view.catalog(),
+            layer: view.layer(),
+            env: view.env(),
         };
         context.check_bound_law(&law, artifact, &mut out);
         for (parent, inherited) in laws.get(&law.id).into_iter().flatten() {

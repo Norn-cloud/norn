@@ -238,20 +238,21 @@ fn widget_cannot_bind_out_of_scope_extension_property() -> TestResult {
     Ok(())
 }
 
-#[test]
-fn narrower_widget_cannot_compose_broader_widget_reading_narrower_extension() -> TestResult {
-    let ext_scope = json!({
-        "orgId": "org_demo",
-        "environmentId": "dev",
-        "tenantId": "tenant_alpha"
+fn host_composing_orders(scope: &Value) -> Result<ArtifactEnvelope, Box<dyn std::error::Error>> {
+    let fixture: Value = serde_json::from_str(WIDGET_FIXTURE)?;
+    let id = fixture.get("artifactId").ok_or("fixture id")?;
+    let version = fixture.get("version").ok_or("fixture version")?;
+    let compose = json!({
+        "nodeId": "host-compose",
+        "semanticId": "host-compose",
+        "component": {
+            "kind": "composition",
+            "widget": { "id": id, "version": version },
+            "pageId": "orders"
+        },
+        "children": []
     });
-    let broader_scope = json!({
-        "orgId": "org_demo",
-        "environmentId": "dev"
-    });
-    let ext = order_extension(&ext_scope)?;
-    let retained_broader_widget = widget_displaying_extension(broader_scope)?;
-    let composed_narrower_widget = decode(json!({
+    decode(json!({
         "irVersion": "0.1",
         "artifactId": "commerce.widget.alpha_host",
         "kind": "widget",
@@ -259,40 +260,35 @@ fn narrower_widget_cannot_compose_broader_widget_reading_narrower_extension() ->
         "name": "Alpha host",
         "version": "1.0.0",
         "lifecycle": "draft",
-        "scope": ext_scope,
+        "scope": scope,
         "dependencies": [{
-            "artifactId": "commerce.widget.orders",
+            "artifactId": id,
             "kind": "widget",
-            "version": "1.0.0",
+            "version": version,
             "required": true
         }],
         "provenance": { "source": "authoring_sdk" },
         "payload": {
             "widgetVersion": "0.1",
             "widgetId": "commerce.widget.alpha_host",
-            "title": "Alpha host",
+            "dataDependencies": [],
+            "viewStates": [{ "stateId": "ready", "kind": "ready" }],
+            "actionBindings": [],
+            "permissions": [],
             "ux": {
-                "uxVersion": "1.0",
-                "app": {
-                    "appId": "alpha-host",
-                    "title": { "en": "Alpha host" },
-                    "homePageId": "host-home",
-                    "shell": { "navigation": [] }
-                },
+                "uxVersion": "0.1",
                 "pages": [{
                     "pageId": "host-home",
-                    "title": { "en": "Host" },
-                    "route": "/host",
+                    "name": "Host",
                     "contextParams": [],
                     "root": {
-                        "nodeId": "host-compose",
-                        "semanticId": "host-compose",
-                        "component": {
-                            "kind": "compose",
-                            "widget": { "id": "commerce.widget.orders", "version": "1.0.0" },
-                            "pageId": "orders"
-                        },
-                        "children": []
+                        "nodeId": "host-root",
+                        "semanticId": "host-root",
+                        "component": { "kind": "section", "section": {
+                            "sectionId": "host", "kind": "section", "label": { "en": "Host" },
+                            "fields": [], "order": 1
+                        } },
+                        "children": [compose]
                     }
                 }],
                 "dataBindings": [],
@@ -300,29 +296,35 @@ fn narrower_widget_cannot_compose_broader_widget_reading_narrower_extension() ->
                 "fields": [],
                 "forms": [],
                 "actionPlacements": [],
-                "navigation": [],
+                "navigationItems": [],
                 "overrides": []
             }
         }
-    }))?;
+    }))
+}
 
-    let mut base = base_artifacts()?;
-    base.push(ext);
-    base.push(retained_broader_widget);
-    let findings = check_artifact_set(
-        &[composed_narrower_widget],
-        &EntityArtifactSetContext {
-            registry: &BTreeSet::new(),
-            base: &base,
-            tenant: None,
-        },
-    );
-    assert!(
-        findings
-            .iter()
-            .any(|d| d.is_error() && d.artifact_id.as_deref() == Some("commerce.widget.alpha_host")),
-        "narrower widget must not admit a retained broader widget that references a narrower extension: {findings:#?}"
-    );
+#[test]
+fn a_composed_retained_widget_is_read_under_its_own_scope() -> TestResult {
+    let ext_scope =
+        json!({ "orgId": "org_demo", "environmentId": "dev", "tenantId": "tenant_alpha" });
+    let broader_scope = json!({ "orgId": "org_demo", "environmentId": "dev" });
+    for (retained_scope, refused) in [(broader_scope, true), (ext_scope.clone(), false)] {
+        let mut base = base_artifacts()?;
+        base.push(order_extension(&ext_scope)?);
+        base.push(widget_displaying_extension(retained_scope)?);
+        let findings = check_artifact_set(
+            &[host_composing_orders(&ext_scope)?],
+            &EntityArtifactSetContext {
+                registry: &BTreeSet::new(),
+                base: &base,
+                tenant: None,
+            },
+        );
+        let host_refused = findings.iter().any(|d| {
+            d.is_error() && d.artifact_id.as_deref() == Some("commerce.widget.alpha_host")
+        });
+        assert_eq!(host_refused, refused, "{findings:#?}");
+    }
     Ok(())
 }
 

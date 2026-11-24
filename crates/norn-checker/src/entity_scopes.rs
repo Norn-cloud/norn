@@ -6,33 +6,36 @@
 //! definitions whose scope satisfies [`scope_visible`] — i.e.
 //! [`crate::artifact_set::scope_conflict`] returns `None` across every scope
 //! dimension (`orgId`, `tenantId`, `workspaceId`, `environmentId`,
-//! `businessUnitId`).
+//! `businessUnitId`). Admission resolves names only through a [`ScopedView`];
+//! the whole-set catalog and environment builders are crate-private
+//! inventory and historical receipt verification.
 
 mod refs;
+mod view;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_expr::{EntityDefinitions, EnvOptions, TypeEnvRef, ZenTypeEnv};
+use norn_canonical::CanonicalJsonError;
+use norn_expr::{EnvError, TypeEnvRef};
 use norn_ir::{
-    ArtifactEnvelope, ArtifactPayload, EntityRoot, JsonValue, PropertyTypeDef, PropertyTypeName,
-    ResourceLimitProfile, ScopeRef,
+    ArtifactEnvelope, EntityRoot, JsonValue, PropertyTypeName, ResourceLimitProfile, ScopeRef,
 };
 
 use crate::artifact_set::{scope_conflict, scope_finding};
-use crate::entity_artifacts::{Decoded, Layer, decode_v2};
+use crate::entity_artifacts::{Decoded, decode_v2};
 use crate::entity_instance::{EffectiveCatalog, EffectiveObjectType};
-use crate::entity_lowering::entity_object_type;
 use crate::{Diagnostic, Span};
 
 pub(crate) use refs::check_entity_reference_scopes;
 pub use refs::check_entity_reference_scopes_all;
+pub(crate) use view::definitions_env;
+pub use view::{ScopedView, ScopedViews};
 
-/// Deterministic map key for caching per-scope entity projections.
-pub type ScopeKey = [Option<String>; 5];
+pub use norn_expr::env::{SCOPED_TYPE_ENV_ID, SCOPED_TYPE_ENV_VERSION};
 
-/// Build the canonical cache key for `scope`.
-#[must_use]
-pub fn scope_key(scope: &ScopeRef) -> ScopeKey {
+pub(crate) type ScopeKey = [Option<String>; 5];
+
+pub(crate) fn scope_key(scope: &ScopeRef) -> ScopeKey {
     [
         scope.org_id.clone(),
         scope.tenant_id.clone(),
@@ -43,37 +46,23 @@ pub fn scope_key(scope: &ScopeRef) -> ScopeKey {
 }
 
 /// Whether a consumer in `consumer` may observe an artifact in `target`
-/// across all five scope dimensions (`orgId`, `tenantId`, `workspaceId`,
-/// `environmentId`, `businessUnitId`).
+/// across all five scope dimensions.
 #[must_use]
 pub fn scope_visible(consumer: &ScopeRef, target: &ScopeRef) -> bool {
     scope_conflict(consumer, target).is_none()
 }
 
-/// Return only the artifacts of `pool` visible to a consumer in `consumer`.
-#[must_use]
-pub fn visible_artifacts(pool: &[ArtifactEnvelope], consumer: &ScopeRef) -> Vec<ArtifactEnvelope> {
-    pool.iter()
-        .filter(|artifact| scope_visible(consumer, &artifact.scope))
-        .cloned()
-        .collect()
-}
-
 impl EffectiveCatalog {
-    /// Build the catalog of `artifacts` (see the type docs). Narrower
-    /// extensions are never merged into broader object types.
+    /// The inventory catalog of `artifacts`: each object type resolved
+    /// against what its own declaring scope sees.
     #[must_use]
-    pub fn from_artifacts(artifacts: &[ArtifactEnvelope]) -> Self {
+    pub(crate) fn from_artifacts(artifacts: &[ArtifactEnvelope]) -> Self {
         Self::from_artifacts_with_registry(artifacts, &BTreeSet::new())
     }
 
-    /// Build the catalog of `artifacts` against the registry (Norn Core)
-    /// value type names `registry`, so a type whose `ref` names a registry
-    /// type is available. Narrower extensions are never merged into broader
-    /// object types; each object type resolves against artifacts visible from
-    /// its own declaring scope.
+    /// [`Self::from_artifacts`] against the registry value type names `registry`.
     #[must_use]
-    pub fn from_artifacts_with_registry(
+    pub(crate) fn from_artifacts_with_registry(
         artifacts: &[ArtifactEnvelope],
         registry: &BTreeSet<PropertyTypeName>,
     ) -> Self {
@@ -82,28 +71,6 @@ impl EffectiveCatalog {
         }
         Self::build_single_layer(artifacts, registry)
     }
-
-    /// Build the catalog of `artifacts` visible to a consumer in `consumer`
-    /// against `registry`.
-    #[must_use]
-    pub fn for_scope(
-        artifacts: &[ArtifactEnvelope],
-        registry: &BTreeSet<PropertyTypeName>,
-        consumer: &ScopeRef,
-    ) -> Self {
-        let visible = visible_artifacts(artifacts, consumer);
-        Self::build_single_layer(&visible, registry)
-    }
-}
-
-/// Build an [`EffectiveCatalog`] visible to a consumer in `consumer`.
-#[must_use]
-pub fn effective_catalog_for_scope(
-    pool: &[ArtifactEnvelope],
-    registry: &BTreeSet<PropertyTypeName>,
-    consumer: &ScopeRef,
-) -> EffectiveCatalog {
-    EffectiveCatalog::for_scope(pool, registry, consumer)
 }
 
 /// Build an [`EffectiveCatalog`] where each `EntityIR` v2 object type is
@@ -137,7 +104,8 @@ pub(crate) fn catalog_by_declaring_scope(
     }
     let cross_findings = check_cross_scope_duplicates(artifacts, &[]);
     for (_, (scope, ids)) in by_scope {
-        let scoped = EffectiveCatalog::for_scope(artifacts, registry, &scope);
+        let view = ScopedView::bound(&scope, artifacts, &[], registry);
+        let scoped = view.catalog();
         for id in ids {
             let Some(entry) = scoped.by_artifact.get(id) else {
                 continue;
@@ -202,305 +170,51 @@ fn v2_object_type_scopes(artifacts: &[ArtifactEnvelope]) -> BTreeMap<String, &Sc
     scopes
 }
 
-fn bind_exact_schemas(
-    mut env: ZenTypeEnv,
-    artifacts: &[ArtifactEnvelope],
-) -> Result<ZenTypeEnv, Vec<norn_expr::EnvError>> {
-    for artifact in artifacts {
-        if matches!(
-            &artifact.payload,
-            ArtifactPayload::Rule(_) | ArtifactPayload::Action(_)
-        ) {
-            let payload_value = artifact.payload.to_json_value();
-            let Some(payload) = payload_value.as_object() else {
-                continue;
-            };
-            for member in ["inputSchema", "outputSchema"] {
-                if let Some(schema) = payload.get(member) {
-                    let name = format!(
-                        "exact.{}.{}.{}",
-                        artifact.artifact_id, artifact.version, member
-                    );
-                    let bound = if matches!(&artifact.payload, ArtifactPayload::Action(_))
-                        && member == "inputSchema"
-                    {
-                        env.bind_exact_action_schema(&name, schema)
-                    } else {
-                        env.bind_exact_schema(&name, schema)
-                    };
-                    env = bound.map_err(|reason| {
-                        vec![norn_expr::EnvError::Unresolved {
-                            site: name,
-                            name: reason,
-                        }]
-                    })?;
-                }
-            }
-        }
-    }
-    Ok(env)
-}
-
-/// Derive the ZEN Expression type environment of `base` and `artifacts` without
-/// merging narrower extensions into broader object types.
-///
-/// # Errors
-/// Every [`norn_expr::EnvError`] of the derivation.
-pub(crate) fn derive_unscoped_type_env(
-    artifacts: &[ArtifactEnvelope],
-    base: &[ArtifactEnvelope],
-    limits: &ResourceLimitProfile,
-) -> Result<ZenTypeEnv, Vec<norn_expr::EnvError>> {
-    let combined: Vec<ArtifactEnvelope> = base.iter().chain(artifacts).cloned().collect();
-    let target_scopes = v2_object_type_scopes(&combined);
-    let mut layer = Layer::default();
-    for (index, artifact) in combined.iter().enumerate() {
-        let Decoded::Root(root) = decode_v2(artifact) else {
-            continue;
-        };
-        if let EntityRoot::V2Extension(ext) = root.as_ref()
-            && target_scopes
-                .get(ext.object_type_extension.target.as_str())
-                .is_some_and(|target_scope| !scope_visible(target_scope, &artifact.scope))
-        {
-            continue;
-        }
-        layer.push(index, *root);
-    }
-    let catalog: Vec<PropertyTypeDef> = layer.catalog.iter().map(|(_, def)| def.clone()).collect();
-    let definitions = EntityDefinitions {
-        property_types: &catalog,
-        interfaces: &layer.interfaces,
-        object_types: &layer.object_types,
-        extensions: &layer.extensions,
-    };
-    let env = ZenTypeEnv::from_artifact_set(&definitions, EnvOptions::from_limit_profile(limits))?;
-    bind_exact_schemas(env, &combined)
-}
-
-/// Derive the ZEN Expression type environment visible to a consumer in `consumer`
-/// (including exact rule/action schemas visible to `consumer`).
-///
-/// # Errors
-/// Every [`norn_expr::EnvError`] of the derivation.
-pub fn derive_receipt_type_env_for_scope(
-    artifacts: &[ArtifactEnvelope],
-    base: &[ArtifactEnvelope],
-    limits: &ResourceLimitProfile,
-    consumer: &ScopeRef,
-) -> Result<ZenTypeEnv, Vec<norn_expr::EnvError>> {
-    let visible: Vec<ArtifactEnvelope> = base
-        .iter()
-        .chain(artifacts)
-        .filter(|artifact| scope_visible(consumer, &artifact.scope))
-        .cloned()
-        .collect();
-    let mut layer = Layer::default();
-    for (index, artifact) in visible.iter().enumerate() {
-        if let Decoded::Root(root) = decode_v2(artifact) {
-            layer.push(index, *root);
-        }
-    }
-    let catalog: Vec<PropertyTypeDef> = layer.catalog.iter().map(|(_, def)| def.clone()).collect();
-    let definitions = EntityDefinitions {
-        property_types: &catalog,
-        interfaces: &layer.interfaces,
-        object_types: &layer.object_types,
-        extensions: &layer.extensions,
-    };
-    let env = ZenTypeEnv::from_artifact_set(&definitions, EnvOptions::from_limit_profile(limits))?;
-    bind_exact_schemas(env, &visible)
-}
-
-/// Derive the scoped ZEN Expression type environment for every distinct scope
-/// present in `base` and `artifacts`.
-///
-/// # Errors
-/// Every [`norn_expr::EnvError`] from the first consumer scope that cannot derive.
-pub fn derive_scoped_type_envs(
-    artifacts: &[ArtifactEnvelope],
-    base: &[ArtifactEnvelope],
-    limits: &ResourceLimitProfile,
-) -> Result<BTreeMap<ScopeKey, ZenTypeEnv>, Vec<norn_expr::EnvError>> {
-    let mut scopes: BTreeMap<ScopeKey, ScopeRef> = BTreeMap::new();
-    for artifact in base.iter().chain(artifacts) {
-        scopes
-            .entry(scope_key(&artifact.scope))
-            .or_insert_with(|| artifact.scope.clone());
-    }
-    if scopes.is_empty() {
-        let global = ScopeRef::default();
-        scopes.insert(scope_key(&global), global);
-    }
-    let mut out = BTreeMap::new();
-    for (key, scope) in scopes {
-        let env = derive_receipt_type_env_for_scope(artifacts, base, limits, &scope)?;
-        out.insert(key, env);
-    }
-    Ok(out)
-}
-
-/// Derive the scope-bound [`TypeEnvRef`] pinned by an admission receipt at
-/// `version`.
-///
-/// Validates that every distinct consumer scope in `base` and `artifacts` has a
-/// derivable [`ZenTypeEnv`]. When no extension is narrower than its target type,
-/// returns the canonical single-environment reference verbatim; when narrower
-/// extensions cause scopes to observe distinct environments, hashes the sorted
-/// `(scope, typeEnv)` map together with the unscoped base reference under Norn1.
+/// The type-environment reference an admission receipt of `artifacts` over
+/// `base` pins: the whole-set environment when no extension is narrower than
+/// its target type (every consumer sees the same one), otherwise a
+/// [`SCOPED_TYPE_ENV_ID`] commitment to each consumer scope's environment.
 ///
 /// # Errors
 /// Derivation errors (`Err(Ok(errors))`) or canonical hashing errors
 /// (`Err(Err(error))`).
-pub fn derive_receipt_type_env_ref_at_version(
+pub fn receipt_type_env(
     artifacts: &[ArtifactEnvelope],
     base: &[ArtifactEnvelope],
     limits: &ResourceLimitProfile,
-    version: norn_expr::env::TypeEnvVersion,
-) -> Result<TypeEnvRef, Result<Vec<norn_expr::EnvError>, norn_canonical::CanonicalJsonError>> {
-    let scoped = derive_scoped_type_envs(artifacts, base, limits).map_err(Ok)?;
-    let base_env = derive_unscoped_type_env(artifacts, base, limits).map_err(Ok)?;
-    let base_ref = base_env.reference_at_version(version).map_err(Err)?;
-    let combined: Vec<ArtifactEnvelope> = base.iter().chain(artifacts).cloned().collect();
-    if !has_narrower_extension(&combined) {
-        return Ok(base_ref);
+) -> Result<TypeEnvRef, Result<Vec<EnvError>, CanonicalJsonError>> {
+    let pool: Vec<ArtifactEnvelope> = base.iter().chain(artifacts).cloned().collect();
+    if !has_narrower_extension(&pool) {
+        let env = crate::receipt::derive_type_env(artifacts, base, limits).map_err(Ok)?;
+        return env.reference().map_err(Err);
     }
-    let mut scopes_map: BTreeMap<ScopeKey, ScopeRef> = BTreeMap::new();
-    for artifact in &combined {
-        scopes_map
-            .entry(scope_key(&artifact.scope))
-            .or_insert_with(|| artifact.scope.clone());
-    }
+    let scopes: BTreeMap<ScopeKey, &ScopeRef> = pool
+        .iter()
+        .map(|artifact| (scope_key(&artifact.scope), &artifact.scope))
+        .collect();
     let mut entries = Vec::new();
-    for (key, env) in &scoped {
-        let Some(scope) = scopes_map.get(key) else {
-            continue;
-        };
-        let env_ref = env.reference_at_version(version).map_err(Err)?;
+    for scope in scopes.into_values() {
+        let view = ScopedView::bound(scope, artifacts, base, &BTreeSet::new());
+        let reference = view
+            .receipt_env(limits)
+            .map_err(Ok)?
+            .reference()
+            .map_err(Err)?;
         entries.push(serde_json::json!({
             "scope": scope,
             "typeEnv": {
-                "id": env_ref.id,
-                "version": env_ref.version,
-                "sha256": env_ref.sha256,
+                "id": reference.id,
+                "version": reference.version,
+                "sha256": reference.sha256,
             }
         }));
     }
-    let payload = serde_json::json!({
-        "base": {
-            "id": base_ref.id,
-            "version": base_ref.version,
-            "sha256": base_ref.sha256,
-        },
-        "scopes": entries,
-    });
-    let sha256 = crate::receipt::hash_serde_json(&payload).map_err(Err)?;
+    let commitment = serde_json::json!({ "scopes": entries });
     Ok(TypeEnvRef {
-        id: base_ref.id,
-        version: base_ref.version,
-        sha256,
+        id: SCOPED_TYPE_ENV_ID.to_owned(),
+        version: SCOPED_TYPE_ENV_VERSION,
+        sha256: crate::receipt::hash_serde_json(&commitment).map_err(Err)?,
     })
-}
-
-/// Build a [`ZenTypeEnv`] visible to a consumer in `consumer`.
-///
-/// # Errors
-/// Returns expression environment derivation errors from [`ZenTypeEnv`].
-pub fn derive_type_env_for_scope(
-    pool: &[ArtifactEnvelope],
-    registry: &BTreeSet<PropertyTypeName>,
-    options: EnvOptions,
-    consumer: &ScopeRef,
-    for_checking: bool,
-) -> Result<ZenTypeEnv, Vec<norn_expr::EnvError>> {
-    derive_type_env_from_parts(pool, &[], registry, options, Some(consumer), for_checking)
-}
-
-/// Build a [`ZenTypeEnv`] over `base` and `artifacts`, optionally restricted
-/// to artifacts visible to `consumer`.
-///
-/// # Errors
-/// Returns expression environment derivation errors from [`ZenTypeEnv`].
-pub(crate) fn derive_type_env_from_parts(
-    artifacts: &[ArtifactEnvelope],
-    base: &[ArtifactEnvelope],
-    registry: &BTreeSet<PropertyTypeName>,
-    options: EnvOptions,
-    consumer: Option<&ScopeRef>,
-    for_checking: bool,
-) -> Result<ZenTypeEnv, Vec<norn_expr::EnvError>> {
-    let mut layer = Layer::default();
-    let mut object_types = Vec::new();
-    for (index, artifact) in base.iter().chain(artifacts).enumerate() {
-        if consumer.is_some_and(|scope| !scope_visible(scope, &artifact.scope)) {
-            continue;
-        }
-        if let Decoded::Root(root) = decode_v2(artifact) {
-            layer.push(index, *root);
-        }
-        if for_checking
-            && let ArtifactPayload::Entity(payload) = &artifact.payload
-            && let Ok(Some(object)) = entity_object_type(payload)
-        {
-            object_types.push(object.root.object_type);
-        }
-    }
-    let property_types: Vec<_> = layer.catalog.iter().map(|(_, def)| def.clone()).collect();
-    let definitions = EntityDefinitions {
-        property_types: &property_types,
-        interfaces: &layer.interfaces,
-        object_types: if for_checking {
-            &object_types
-        } else {
-            &layer.object_types
-        },
-        extensions: &layer.extensions,
-    };
-    if for_checking {
-        ZenTypeEnv::from_artifact_set_for_checking(&definitions, registry, options)
-    } else {
-        ZenTypeEnv::from_artifact_set_with_registry(&definitions, registry, options)
-    }
-}
-
-/// Consumer-scoped catalog, v2 entity layer (indexed into `pool`), and ZEN
-/// type environment for law admission.
-pub(crate) struct LawScopeEnv {
-    pub(crate) catalog: EffectiveCatalog,
-    pub(crate) layer: Layer,
-    pub(crate) env: Option<ZenTypeEnv>,
-}
-
-/// Build a consumer-scoped [`LawScopeEnv`] over `pool` for `consumer`.
-pub(crate) fn law_scope_env(
-    pool: &[ArtifactEnvelope],
-    registry: &BTreeSet<PropertyTypeName>,
-    limits: &ResourceLimitProfile,
-    consumer: &ScopeRef,
-) -> LawScopeEnv {
-    let catalog = effective_catalog_for_scope(pool, registry, consumer);
-    let mut layer = Layer::default();
-    for (index, artifact) in pool.iter().enumerate() {
-        if !scope_visible(consumer, &artifact.scope) {
-            continue;
-        }
-        if let Decoded::Root(root) = decode_v2(artifact) {
-            layer.push(index, *root);
-        }
-    }
-    let env = derive_type_env_for_scope(
-        pool,
-        registry,
-        EnvOptions::from_limit_profile(limits),
-        consumer,
-        false,
-    )
-    .ok();
-    LawScopeEnv {
-        catalog,
-        layer,
-        env,
-    }
 }
 
 /// Lower path equations per candidate scope group so an entity in a broader or
@@ -522,11 +236,11 @@ pub(crate) fn scoped_path_equation_findings(
     if groups.is_empty() {
         return Vec::new();
     }
-    let complete: Vec<_> = base.iter().chain(artifacts).cloned().collect();
     let mut findings = Vec::new();
     for (scope, owned_ids) in groups.into_values() {
-        let visible = visible_artifacts(&complete, scope);
-        if let Err(group_findings) = crate::consistency::lower_path_equations(&visible, registry) {
+        let view = ScopedView::bound(scope, artifacts, base, registry);
+        if let Err(group_findings) = crate::consistency::lower_path_equations(view.pool(), registry)
+        {
             findings.extend(group_findings.into_iter().filter(|diagnostic| {
                 diagnostic
                     .artifact_id
@@ -793,83 +507,4 @@ pub(crate) fn is_redundant_unknown_after_scope(
         return false;
     };
     scope_sites.contains(&(artifact_id.clone(), span.pointer.clone()))
-}
-
-/// Build the scoped effective catalog and expression environment for relational transform admission.
-#[must_use]
-pub(crate) fn transform_scope_parts(
-    pool: &[ArtifactEnvelope],
-    registry: &BTreeSet<PropertyTypeName>,
-    limits: &norn_ir::ResourceLimitProfile,
-    scope: &ScopeRef,
-) -> (EffectiveCatalog, Option<ZenTypeEnv>) {
-    let catalog = effective_catalog_for_scope(pool, registry, scope);
-    let opts = EnvOptions::from_limit_profile(limits);
-    let env = derive_type_env_for_scope(pool, registry, opts, scope, false).ok();
-    (catalog, env)
-}
-
-/// Build the effective catalog and expression environment for `action_set::Model`.
-pub(crate) fn action_model_parts(
-    artifacts: &[ArtifactEnvelope],
-    base: &[ArtifactEnvelope],
-    registry: &BTreeSet<PropertyTypeName>,
-    effective: bool,
-    consumer: Option<&ScopeRef>,
-) -> (
-    Option<EffectiveCatalog>,
-    Result<ZenTypeEnv, Vec<norn_expr::EnvError>>,
-) {
-    let catalog = effective.then(|| {
-        let combined: Vec<ArtifactEnvelope> = base.iter().chain(artifacts).cloned().collect();
-        consumer.map_or_else(
-            || EffectiveCatalog::from_artifacts_with_registry(&combined, registry),
-            |scope| effective_catalog_for_scope(&combined, registry, scope),
-        )
-    });
-    let env = derive_type_env_from_parts(
-        artifacts,
-        base,
-        registry,
-        EnvOptions::default(),
-        consumer,
-        true,
-    );
-    (catalog, env)
-}
-
-/// Build the type environment and effective catalog for `MappingModel`.
-///
-/// # Errors
-/// Environment derivation failures as `ENVIRONMENT_UNDERIVABLE` diagnostics.
-pub(crate) fn mapping_model_parts(
-    artifacts: &[ArtifactEnvelope],
-    consumer: Option<&ScopeRef>,
-) -> Result<(ZenTypeEnv, EffectiveCatalog), Vec<Diagnostic>> {
-    let limits = ResourceLimitProfile::norn_limits_v1();
-    let env_res = match consumer {
-        Some(scope) => derive_receipt_type_env_for_scope(artifacts, &[], &limits, scope),
-        None => derive_unscoped_type_env(artifacts, &[], &limits),
-    };
-    let env = env_res.map_err(|errors| {
-        errors
-            .into_iter()
-            .map(|reason| Diagnostic {
-                witness: None,
-                code: crate::DiagnosticCode::new(crate::receipt::codes::ENVIRONMENT_UNDERIVABLE),
-                severity: norn_ir::DiagnosticSeverity::Error,
-                message: format!(
-                    "the mapping model's type environment cannot be derived: {reason}"
-                ),
-                span: Some(Span::pointer("")),
-                artifact_id: None,
-                remediation: Some(norn_ir::DiagnosticRemediation::FixDefinition),
-            })
-            .collect::<Vec<_>>()
-    })?;
-    let catalog = match consumer {
-        Some(scope) => EffectiveCatalog::for_scope(artifacts, &BTreeSet::new(), scope),
-        None => EffectiveCatalog::from_artifacts(artifacts),
-    };
-    Ok((env, catalog))
 }

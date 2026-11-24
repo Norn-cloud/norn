@@ -8,6 +8,7 @@
 
 //! MVP-MAP-THREE / MVP-MAP-GAP: admitted mappings preserve explicit identity,
 //! REA roles and source evidence; coverage gaps never invent valuation authority.
+use norn_checker::entity_scopes::ScopedView;
 use norn_checker::{
     ArtifactRef, EntityArtifactSetContext, check_artifact_set,
     lint::coverage::{MemberRef, MemberStatus},
@@ -556,8 +557,7 @@ fn obs_link_declared_outputs_retain_canonical_endpoints_and_rule_provenance() {
 #[test]
 fn three_systems_derive_exactly_the_canon_flow_sums() {
     let space = norn_checker::metric::derive::derive_metric_space(
-        &artifacts(),
-        &BTreeSet::new(),
+        &ScopedView::uniform(&artifacts(), &BTreeSet::new()).expect("one scope"),
         &norn_ir::LawRoot::Entity("canon.Delivery".to_owned()),
     )
     .unwrap_or_else(|d| panic!("{d:#?}"));
@@ -724,8 +724,7 @@ fn every_currency_enum_and_code_set_is_the_one_iso_4217_list() {
 #[test]
 fn the_stock_cost_is_summed_per_its_currency_each_week() {
     let space = norn_checker::metric::derive::derive_metric_space(
-        &artifacts(),
-        &BTreeSet::new(),
+        &ScopedView::uniform(&artifacts(), &BTreeSet::new()).expect("one scope"),
         &norn_ir::LawRoot::Entity("canon.Delivery".to_owned()),
     )
     .unwrap_or_else(|d| panic!("{d:#?}"));

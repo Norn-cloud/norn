@@ -7,9 +7,7 @@ use norn_ir::{
     FlowSourceMapEdgeKind, JdmGraph, JdmNode,
 };
 
-use crate::{
-    Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, EffectiveCatalog, Span,
-};
+use crate::{Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, Span};
 
 /// Diagnostic codes emitted by flow source-map admission.
 pub mod codes {
@@ -63,19 +61,13 @@ pub fn validate_flow_source_map(
         })
         .collect::<BTreeMap<_, _>>();
     let artifact_values = base.iter().chain(candidates).cloned().collect::<Vec<_>>();
-    let empty_registry = BTreeSet::new();
-    let mut scoped_catalogs: BTreeMap<crate::entity_scopes::ScopeKey, EffectiveCatalog> =
-        BTreeMap::new();
+    let mut views = crate::entity_scopes::ScopedViews::new(candidates, base, &BTreeSet::new());
 
     let mut artifacts_by_state = BTreeMap::<String, BTreeSet<String>>::new();
     let mut artifacts_by_row = BTreeMap::<String, BTreeSet<String>>::new();
     for artifact in &artifact_values {
         if matches!(artifact.payload, ArtifactPayload::Entity(_)) {
-            let catalog = scoped_catalogs
-                .entry(crate::entity_scopes::scope_key(&artifact.scope))
-                .or_insert_with(|| {
-                    EffectiveCatalog::for_scope(&artifact_values, &empty_registry, &artifact.scope)
-                });
+            let catalog = views.of(artifact).catalog();
             if let Some(Ok(object_type)) = catalog.object_type(&artifact.artifact_id) {
                 let states = object_type
                     .lifecycles

@@ -16,7 +16,7 @@
 //! The refusal names the input, each path that carries the marking, and what
 //! would pass: pseudonymizing the marking or dropping the input.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::{ArtifactEnvelope, ArtifactKind, MarkingIr, MaskPolicy, ModelRoot};
 use serde_json::Value;
@@ -347,21 +347,12 @@ pub(crate) fn check(
     base: &[ArtifactEnvelope],
     finding: impl Fn(&str, String, String, &ArtifactEnvelope) -> Diagnostic,
 ) -> Vec<Diagnostic> {
+    let mut views = crate::entity_scopes::ScopedViews::new(artifacts, base, &BTreeSet::new());
     let mut findings = Vec::new();
     for (artifact, root) in models {
-        let visible: Vec<&ArtifactEnvelope> = artifacts
-            .iter()
-            .chain(base)
-            .filter(|candidate| {
-                crate::entity_scopes::scope_visible(&artifact.scope, &candidate.scope)
-            })
-            .collect();
-        let lineage = Lineage::of(&visible);
-        let owned: Vec<ArtifactEnvelope> = visible
-            .iter()
-            .map(|candidate| (*candidate).clone())
-            .collect();
-        let catalog: BTreeMap<String, MarkingIr> = crate::marking_catalog_from_artifacts(&owned)
+        let pool = views.of(artifact).pool();
+        let lineage = Lineage::of(&pool.iter().collect::<Vec<_>>());
+        let catalog: BTreeMap<String, MarkingIr> = crate::marking_catalog_from_artifacts(pool)
             .into_iter()
             .map(|(id, marking)| (id.0, marking))
             .collect();

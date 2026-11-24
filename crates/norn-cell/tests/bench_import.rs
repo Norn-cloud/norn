@@ -12,6 +12,7 @@
     reason = "benchmark driver"
 )]
 use norn_cell::{CellStore, InstalledDefinitionInput, Model, SqliteCell, StoreOptions};
+use norn_checker::entity_scopes::ScopedView;
 use norn_checker::{ArtifactRef, EntityArtifactSetContext};
 use norn_ir::{ArtifactEnvelope, ResourceLimitProfile, RuntimeValue as Value};
 use norn_kernel::{LogicalTime, ObservationId, Observed, Provenance};
@@ -246,7 +247,9 @@ fn country_weekly_quantity(
     store: &mut CellStore,
     artifacts: &[ArtifactEnvelope],
 ) -> serde_json::Value {
-    let catalog = norn_checker::EffectiveCatalog::from_artifacts(artifacts);
+    let catalog = ScopedView::uniform(artifacts, &std::collections::BTreeSet::new())
+        .expect("one scope")
+        .into_catalog();
     let mut metric: norn_ir::MetricDefinition = serde_json::from_str(include_str!(
         "../../../fixtures/ir/metrics/net-sales.definition.json"
     ))

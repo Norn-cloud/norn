@@ -162,7 +162,7 @@ pub(crate) fn preflight_model_migration<E: SqlEngine>(
     previous_canonical_set: Option<&str>,
     candidate_canonical_set: &str,
     retained: Option<&crate::export::ExportRecord>,
-    cell_scope: Option<&norn_ir::ScopeRef>,
+    cell_scope: &norn_ir::ScopeRef,
 ) -> Result<MigrationPlan, CellError> {
     check_removed_types(engine, previous, candidate)?;
     check_removed_links(engine, previous, candidate)?;

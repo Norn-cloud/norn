@@ -7,6 +7,9 @@ use norn_ir::{
     WidgetNode, WidgetOverrideValue, WidgetUx,
 };
 
+use norn_checker::Diagnostic;
+use norn_checker::entity_scopes::ScopedView;
+
 use super::{ActionSurface, Usage, UxChecker};
 
 impl UxChecker<'_, '_, '_> {
@@ -173,16 +176,12 @@ impl UxChecker<'_, '_, '_> {
             &mut selected_stack,
             &mut selected_ids,
         );
-        let nested_catalog = norn_checker::entity_scopes::effective_catalog_for_scope(
-            self.all,
-            self.registry,
-            &artifact.scope,
-        );
-        let mut nested_findings = Vec::new();
+        let nested_view = ScopedView::of(artifact, &[], self.all, self.registry);
+        let mut nested_findings = lifecycle_findings(artifact, &ux, page_id, &nested_view);
         let mut nested = UxChecker::new(
             artifact,
             self.all,
-            &nested_catalog,
+            nested_view.catalog(),
             self.registry,
             &ux,
             &mut nested_findings,
@@ -402,4 +401,33 @@ fn collect_tree_semantic_ids(
     for child in &node.children {
         collect_tree_semantic_ids(all, ux, child, stack, out);
     }
+}
+
+/// The backend lifecycle composition findings of the composed page `page_id`
+/// of `widget`, read under the composed widget's own scope.
+fn lifecycle_findings(
+    widget: &ArtifactEnvelope,
+    ux: &WidgetUx,
+    page_id: &str,
+    view: &ScopedView<'_>,
+) -> Vec<Diagnostic> {
+    let Some(index) = ux.pages.iter().position(|page| {
+        page.page_id == page_id
+            && page
+                .machine
+                .as_ref()
+                .is_some_and(|machine| machine.lifecycle.is_some())
+    }) else {
+        return Vec::new();
+    };
+    let prefix = format!("/payload/ux/pages/{index}/");
+    crate::ui_lifecycle::check(widget, ux, view.pool(), view.model())
+        .into_iter()
+        .filter(|finding| {
+            finding
+                .span
+                .as_ref()
+                .is_some_and(|span| span.pointer.starts_with(&prefix))
+        })
+        .collect()
 }

@@ -13,6 +13,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use norn_checker::entity_scopes::ScopedView;
 use norn_checker::receipt::{
     CHECKER_NAME, CHECKER_VERSION, EXPR_PROFILE, RECEIPT_FORMAT, admission_receipt_sha256, codes,
     recover_legacy_admission_receipt,
@@ -20,7 +21,7 @@ use norn_checker::receipt::{
 use norn_checker::{
     ArtifactRef, ArtifactSetRef, CheckReceipt, CheckedArtifactSet, DiagnosticsDigest,
     EntityArtifactSetContext, IDENTIFIER_ADMISSION_PROFILE, TenantLayer,
-    check_artifact_set_with_flow_source_map, check_artifact_set_with_receipt, derive_type_env,
+    check_artifact_set_with_flow_source_map, check_artifact_set_with_receipt,
 };
 use norn_ir::{
     ArtifactEnvelope, ExtensionNamespace, FlowSourceMap, FlowSourceMapArtifactRef,
@@ -182,7 +183,12 @@ fn historical_env(
     base: &[ArtifactEnvelope],
     limits: &ResourceLimitProfile,
 ) -> norn_expr::TypeEnvRef {
-    derive_type_env(artifacts, base, limits)
+    let consumer = artifacts
+        .first()
+        .or_else(|| base.first())
+        .expect("a definition");
+    ScopedView::of(consumer, artifacts, base, &BTreeSet::new())
+        .receipt_env(limits)
         .expect("historical definitions")
         .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
         .expect("historical environment")
@@ -244,7 +250,9 @@ fn retail_receipt_matches_golden_and_pins_env_and_profiles() {
     let mut receipt = receipt(&values);
     assert_eq!(receipt.type_env.as_ref().unwrap().version, 3);
     receipt.type_env = Some(
-        derive_type_env(&artifacts, &[], &limits)
+        ScopedView::uniform(&artifacts, &BTreeSet::new())
+            .expect("one scope")
+            .receipt_env(&limits)
             .unwrap()
             .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
             .unwrap(),
@@ -472,7 +480,10 @@ fn bound_env_is_the_derived_environment_of_the_set() {
     let artifacts = registry_layer();
     let receipt = receipt(&artifacts);
     let limits = ResourceLimitProfile::norn_limits_v1();
-    let env = derive_type_env(&envelopes(&artifacts), &[], &limits).expect("environment");
+    let env = ScopedView::uniform(&envelopes(&artifacts), &BTreeSet::new())
+        .expect("one scope")
+        .receipt_env(&limits)
+        .expect("environment");
     assert_eq!(receipt.type_env, Some(env.reference().expect("hash")));
     // Only `actor` is bound at the set level; sites bind `self`/`input`.
     assert_eq!(
@@ -736,10 +747,16 @@ fn historical_receipt_verification_does_not_rerun_current_admission() {
     // by the cell's stored digest. Verification checks its integrity and
     // bindings; it must not use the current checker's refusal as a reason to
     // reinterpret that historical attestation.
-    let type_env = derive_type_env(&candidate_envelopes, &base_envelopes, &limits)
-        .expect("the entity base still supplies its type environment")
-        .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
-        .expect("environment hash");
+    let type_env = ScopedView::of(
+        &(&candidate_envelopes)[0],
+        &candidate_envelopes,
+        &base_envelopes,
+        &BTreeSet::new(),
+    )
+    .receipt_env(&limits)
+    .expect("the entity base still supplies its type environment")
+    .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
+    .expect("environment hash");
     let historical = CheckReceipt {
         checker: CHECKER_NAME.to_owned(),
         checker_version: "0.1.0".to_owned(),
@@ -1022,7 +1039,9 @@ fn val_env_action_json_leaf_and_exact_refinement_share_the_action_dialect() {
         "amount":{"type":"number","nornType":{"kind":"decimal","scale":2}}
     },"required":["payload","amount"],"additionalProperties":false});
     let artifacts = envelopes(&[action]);
-    let env = derive_type_env(&artifacts, &[], &ResourceLimitProfile::norn_limits_v1())
+    let env = ScopedView::uniform(&artifacts, &BTreeSet::new())
+        .expect("one scope")
+        .receipt_env(&ResourceLimitProfile::norn_limits_v1())
         .expect("action dialect binds both leaves");
     assert!(
         env.records()

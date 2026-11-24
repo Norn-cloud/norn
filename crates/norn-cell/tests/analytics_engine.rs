@@ -29,6 +29,7 @@ use norn_cell::compute::{QueryContext, QueryResult};
 use norn_cell::dataset_manifest::ManifestPins;
 use norn_cell::{CellError, CellStore, CommitBatch, FactWriteRow, Model};
 use norn_checker::EffectiveCatalog;
+use norn_checker::entity_scopes::ScopedView;
 use norn_checker::metric::compute::{QuestionPlan, admit};
 use norn_ir::{
     ArtifactEnvelope, ArtifactKind, ArtifactPayload, Decimal, EntityIrVersion, EntityRootV2,
@@ -203,7 +204,9 @@ fn declared(
         .expect("tree"),
     )
     .expect("payload");
-    let catalog = EffectiveCatalog::from_artifacts(&artifacts[..1]);
+    let catalog = ScopedView::uniform(&artifacts[..1], &std::collections::BTreeSet::new())
+        .expect("one scope")
+        .into_catalog();
     let mut question = plan.question().clone();
     question.filters.clear();
     question.dimensions = serde_json::from_value(dimensions.clone()).expect("dimensions");
@@ -1098,8 +1101,7 @@ mod snapshot {
         }))
         .expect("artifact");
         let space = norn_checker::metric::derive::derive_metric_space(
-            &[artifact],
-            &BTreeSet::new(),
+            &ScopedView::uniform(&[artifact], &BTreeSet::new()).expect("one scope"),
             &LawRoot::Entity(TYPE.to_owned()),
         )
         .expect("derived space");
@@ -1465,8 +1467,8 @@ mod linked_time {
     fn fixture(group_by: &serde_json::Value, debit_only: bool) -> (CellStore, QuestionPlan) {
         let [event, entry] = types();
         let space = derive_metric_space(
-            &[envelope(&event), envelope(&entry)],
-            &BTreeSet::new(),
+            &ScopedView::uniform(&[envelope(&event), envelope(&entry)], &BTreeSet::new())
+                .expect("one scope"),
             &LawRoot::Entity("demo.Entry".to_owned()),
         )
         .expect("derived space");

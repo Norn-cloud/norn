@@ -24,7 +24,7 @@ use norn_ir::{
     PropertyTypeName, ResourceLimitProfile, RuntimeValue,
 };
 
-use crate::entity_artifacts::EntityArtifactSetContext;
+use crate::entity_artifacts::{Decoded, EntityArtifactSetContext, Layer, decode_v2};
 use crate::{Diagnostic, DiagnosticCode, diagnostics_to_json};
 
 /// Diagnostic codes emitted by [`check_artifact_set_with_receipt`].
@@ -556,12 +556,7 @@ fn check_artifact_set_with_profile(
     }
     let mut type_env = None;
     if !has_errors(&diagnostics) {
-        match crate::entity_scopes::derive_receipt_type_env_ref_at_version(
-            artifacts,
-            context.base,
-            limits,
-            norn_expr::env::TypeEnvVersion::V3,
-        ) {
+        match crate::entity_scopes::receipt_type_env(artifacts, context.base, limits) {
             Ok(env_ref) => type_env = Some(env_ref),
             Err(Ok(errors)) => diagnostics.extend(errors.iter().map(|error| Diagnostic { witness: None,
                 code: DiagnosticCode::new(codes::ENVIRONMENT_UNDERIVABLE),
@@ -734,27 +729,15 @@ fn verify_receipt(
         ));
     }
 
-    let version = parsed
-        .type_env
-        .as_ref()
-        .and_then(|reference| norn_expr::env::TypeEnvVersion::from_number(reference.version))
-        .ok_or_else(|| invalid_receipt("unsupported receipt type-environment version"))?;
-    let expected_env = match crate::entity_scopes::derive_receipt_type_env_ref_at_version(
-        artifacts, base, limits, version,
-    ) {
-        Ok(env_ref) => env_ref,
-        Err(Ok(errors)) => {
-            return Err(invalid_receipt(format!(
-                "cannot derive the receipt's definition environment: {}",
-                errors
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            )));
-        }
-        Err(Err(error)) => return Err(error.into()),
-    };
+    let expected_env = expected_type_env(
+        parsed
+            .type_env
+            .as_ref()
+            .map(|pinned| (pinned.id.as_str(), pinned.version)),
+        artifacts,
+        base,
+        limits,
+    )?;
     if !parsed.type_env.as_ref().is_some_and(|reference| {
         profile_ref_matches(
             reference,
@@ -959,18 +942,62 @@ pub fn recover_legacy_admission_receipt(
     })
 }
 
-/// The ZEN Expression type environment of the `EntityIR` v2 definitions in
-/// `base` and `artifacts` together, with the link depth of `limits`.
-///
-/// # Errors
-///
-/// Every [`norn_expr::EnvError`] of the derivation.
-pub fn derive_type_env(
+/// The whole-set ZEN Expression type environment of the `EntityIR` v2
+/// definitions in `base` and `artifacts` together, with the link depth of
+/// `limits`: what receipts pinned before scoped admission attest.
+pub(crate) fn derive_type_env(
     artifacts: &[ArtifactEnvelope],
     base: &[ArtifactEnvelope],
     limits: &ResourceLimitProfile,
 ) -> Result<ZenTypeEnv, Vec<norn_expr::EnvError>> {
-    crate::entity_scopes::derive_unscoped_type_env(artifacts, base, limits)
+    let pool: Vec<ArtifactEnvelope> = base.iter().chain(artifacts).cloned().collect();
+    let mut layer = Layer::default();
+    for (index, artifact) in pool.iter().enumerate() {
+        if let Decoded::Root(root) = decode_v2(artifact) {
+            layer.push(index, *root);
+        }
+    }
+    crate::entity_scopes::definitions_env(&layer, &pool, limits)
+}
+
+/// The environment reference a stored receipt must match: the current
+/// [`crate::entity_scopes::SCOPED_TYPE_ENV_ID`] commitment, or, for a receipt
+/// pinned before scoped admission, the whole-set environment at its version
+/// once the set still passes the current cross-scope reference checks.
+fn expected_type_env(
+    pinned: Option<(&str, u32)>,
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+    limits: &ResourceLimitProfile,
+) -> Result<TypeEnvRef, ReceiptError> {
+    let underivable = |errors: Vec<norn_expr::EnvError>| {
+        invalid_receipt(format!(
+            "cannot derive the receipt's definition environment: {}",
+            errors
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; ")
+        ))
+    };
+    let (id, version) =
+        pinned.ok_or_else(|| invalid_receipt("unsupported receipt type-environment version"))?;
+    if id == crate::entity_scopes::SCOPED_TYPE_ENV_ID {
+        return crate::entity_scopes::receipt_type_env(artifacts, base, limits)
+            .map_err(|error| error.map_or_else(ReceiptError::from, underivable));
+    }
+    let version = norn_expr::env::TypeEnvVersion::from_number(version)
+        .ok_or_else(|| invalid_receipt("unsupported receipt type-environment version"))?;
+    if let Some(finding) =
+        crate::entity_scopes::check_entity_reference_scopes(artifacts, base).first()
+    {
+        return Err(invalid_receipt(format!(
+            "the receipt predates scoped admission and its set fails it: {}",
+            finding.message
+        )));
+    }
+    let env = derive_type_env(artifacts, base, limits).map_err(underivable)?;
+    Ok(env.reference_at_version(version)?)
 }
 
 fn has_errors(diagnostics: &[Diagnostic]) -> bool {

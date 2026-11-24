@@ -5,6 +5,7 @@
     reason = "integration-test assertions and fixture mutations"
 )]
 
+use norn_checker::entity_scopes::ScopedView;
 use norn_checker::metric::codes;
 use norn_checker::metric_interchange::{
     OntologyBinding, admit_metric_ir, export_osi, generate_metric_ir, import_metricflow, import_osi,
@@ -24,10 +25,12 @@ const CUSTOMERS: &str =
 
 fn catalog() -> EffectiveCatalog {
     let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(ONTOLOGY).expect("ontology");
-    EffectiveCatalog::from_artifacts_with_registry(
+    ScopedView::uniform(
         &artifacts,
         &BTreeSet::from([PropertyTypeName("iso4217.currency_code".into())]),
     )
+    .expect("one scope")
+    .into_catalog()
 }
 fn definition(source: &str) -> MetricDefinition {
     serde_json::from_str(source).expect("metric")

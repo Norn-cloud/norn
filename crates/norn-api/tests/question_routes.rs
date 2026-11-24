@@ -32,6 +32,7 @@ use norn_cell::{
     },
     engine::NativeEngine,
 };
+use norn_checker::entity_scopes::ScopedView;
 use norn_checker::metric::compute::QuestionPlan;
 use norn_kernel::{
     LogicalTime,
@@ -1717,8 +1718,7 @@ fn no_listed_metric_names_an_internal_encoding_in_any_pack() {
         set.extend(read(&format!("registry/packs/{name}/artifacts")));
     }
     let space = norn_checker::metric::derive::derive_metric_space(
-        &set,
-        &std::collections::BTreeSet::new(),
+        &ScopedView::uniform(&set, &std::collections::BTreeSet::new()).expect("one scope"),
         &norn_ir::LawRoot::Entity("canon.Holding".to_owned()),
     )
     .unwrap_or_else(|findings| panic!("the registry packs derive: {findings:#?}"));
