@@ -24,15 +24,16 @@ async function standIn(page: Page): Promise<StandIn> {
     reads.push(`${url.pathname.replace(/^\/api\/host/, "")}${url.search}`)
     return route.fulfill({ status: 200, contentType: "application/json", body: record(1, FIRST) })
   })
-  const subscribed = new Promise<{ socket: WebSocketRoute; id: string; path: string }>((resolve) => {
-    void page.routeWebSocket("**/api/host/v1/subscribe**", (socket) => {
-      socket.onMessage((raw) => {
-        const message = JSON.parse(String(raw)) as { type: string; id: string; path: string }
-        if (message.type !== "subscribe") return
-        // The cell answers a new subscription with the GET's own answer.
-        socket.send(`{"type":"snapshot","id":"${message.id}","status":200,"digest":"d1","body":${record(1, FIRST)}}`)
-        resolve({ socket, id: message.id, path: message.path })
-      })
+  let subscribe: (subscription: { socket: WebSocketRoute; id: string; path: string }) => void = () => {}
+  const subscribed = new Promise<{ socket: WebSocketRoute; id: string; path: string }>((resolve) => { subscribe = resolve })
+  // Routed before the page loads, so the page's one socket always reaches this stand-in.
+  await page.routeWebSocket("**/api/host/v1/subscribe**", (socket) => {
+    socket.onMessage((raw) => {
+      const message = JSON.parse(String(raw)) as { type: string; id: string; path: string }
+      if (message.type !== "subscribe") return
+      // The cell answers a new subscription with the GET's own answer.
+      socket.send(`{"type":"snapshot","id":"${message.id}","status":200,"digest":"d1","body":${record(1, FIRST)}}`)
+      subscribe({ socket, id: message.id, path: message.path })
     })
   })
   return { reads, subscribed }
