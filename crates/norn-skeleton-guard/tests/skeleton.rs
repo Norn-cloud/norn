@@ -830,6 +830,84 @@ fn guard_rejects_cfg_gated_and_qualified_wrong_tzdb_loaders()
 }
 
 #[test]
+fn guard_accepts_valid_qualified_tzdb_impl_and_flags_mismatched_loader()
+-> Result<(), Box<dyn std::error::Error>> {
+    use norn_skeleton_guard::tzdb_pin::{PINNED_TZDB_BUNDLES, check_tzdb_bundles_against};
+
+    let pin = *PINNED_TZDB_BUNDLES.first().ok_or("missing 2025b pin")?;
+    let pin_26 = *PINNED_TZDB_BUNDLES.get(1).ok_or("missing 2026c pin")?;
+    let dir = tempfile::tempdir()?;
+    let rust_dest = dir.path().join("crates/norn-expr/src/tzdb.rs");
+    std::fs::create_dir_all(rust_dest.parent().ok_or("rust parent")?)?;
+
+    let qualified_source = |v26_bytes: &str, v26_sha: &str| {
+        format!(
+            "pub const TZDB_RELEASE_2025B: &str = \"2025b\";\n\
+             pub const TZDB_RELEASE_2026C: &str = \"2026c\";\n\
+             pub const TZDB_SHA256_2025B: &str = \"{}\";\n\
+             pub const TZDB_SHA256_2026C: &str = \"{}\";\n\
+             const BUILTIN_2025B_BYTES: &[u8] = include_bytes!(\"../data/tzdb/2025b.tzdb\");\n\
+             const BUILTIN_2026C_BYTES: &[u8] = include_bytes!(\"../data/tzdb/2026c.tzdb\");\n\
+             struct TzdbBundle;\n\
+             impl crate::tzdb::TzdbBundle {{\n\
+                 pub fn v2025b() -> &'static Self {{\n\
+                     static BUNDLE: OnceLock<TzdbBundle> = OnceLock::new();\n\
+                     BUNDLE.get_or_init(|| Self::from_bytes_verified(BUILTIN_2025B_BYTES, TZDB_SHA256_2025B).unwrap_or_else(|_| Self::fail_closed_empty()))\n\
+                 }}\n\
+                 pub fn v2026c() -> &'static Self {{\n\
+                     static BUNDLE: OnceLock<TzdbBundle> = OnceLock::new();\n\
+                     BUNDLE.get_or_init(|| Self::from_bytes_verified({v26_bytes}, {v26_sha}).unwrap_or_else(|_| Self::fail_closed_empty()))\n\
+                 }}\n\
+             }}\n",
+            pin.sha256, pin_26.sha256
+        )
+    };
+
+    // 1. Valid qualified `impl crate::tzdb::TzdbBundle` produces zero `tzdb-rust-pin` violations.
+    std::fs::write(
+        &rust_dest,
+        qualified_source("BUILTIN_2026C_BYTES", "TZDB_SHA256_2026C"),
+    )?;
+    let valid_rust_pins: Vec<_> = check_tzdb_bundles_against(dir.path(), PINNED_TZDB_BUNDLES)
+        .into_iter()
+        .filter(|v| v.rule == "tzdb-rust-pin")
+        .collect();
+    assert_eq!(
+        valid_rust_pins,
+        [],
+        "valid qualified impl must produce zero tzdb-rust-pin violations:\n{}",
+        render(&valid_rust_pins)
+    );
+
+    // 2. Mutating only `v2026c` to load 2025b produces one exact `v2026c`-specific violation.
+    std::fs::write(
+        &rust_dest,
+        qualified_source("BUILTIN_2025B_BYTES", "TZDB_SHA256_2025B"),
+    )?;
+    let mismatched_rust_pins: Vec<_> = check_tzdb_bundles_against(dir.path(), PINNED_TZDB_BUNDLES)
+        .into_iter()
+        .filter(|v| v.rule == "tzdb-rust-pin")
+        .collect();
+    assert_eq!(
+        mismatched_rust_pins.len(),
+        1,
+        "expected exactly one tzdb-rust-pin violation for v2026c:\n{}",
+        render(&mismatched_rust_pins)
+    );
+    let only = mismatched_rust_pins
+        .first()
+        .ok_or("missing v2026c violation")?;
+    assert!(
+        only.message.contains("TzdbBundle::v2026c")
+            && only.message.contains("BUILTIN_2026C_BYTES")
+            && only.message.contains("TZDB_SHA256_2026C"),
+        "expected v2026c-specific mismatch detail, got: {}",
+        only.message
+    );
+    Ok(())
+}
+
+#[test]
 fn guard_enforces_expr_and_decisions_only_lists() {
     assert_eq!(
         check_dependencies(&with_dep("norn-expr", "zen-expression")),
