@@ -968,8 +968,14 @@ mod trace_tests {
             norn_kernel::cell_host::JsonObject,
             norn_kernel::cell_host::JsonObject,
             NativeEngine,
-        > = SqliteCell::new(store, scope.key(), |command| command.payload.clone())
-            .map_err(|e| format!("{e:?}"))?;
+        > = SqliteCell::new(
+            store,
+            scope.key(),
+            |command: &norn_kernel::Command<norn_kernel::cell_host::JsonObject>| {
+                command.payload.clone()
+            },
+        )
+        .map_err(|e| format!("{e:?}"))?;
         cell.advance_to(LogicalTime::from_millis(2));
         cell.commit(CellCommit {
             writes: vec![FactWrite {
