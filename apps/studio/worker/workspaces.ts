@@ -495,6 +495,9 @@ export async function restoreWorkspace(request: Request, context: WorkspaceConte
   if (existing === null) return failure(404, "NOT_ARCHIVED", "This workspace is not archived.")
   const input = await body(request)
   await run(context.db, `delete from "workspace_archive" where "organization_id" = ?`, organizationId)
+  if (await first(context.db, `select 1 as "found" from "organization" where "id" = ?`, organizationId) === null) {
+    return failure(404, "ORGANIZATION_NOT_FOUND", "Workspace no longer exists.")
+  }
   if (input?.activate === true || session.session.activeOrganizationId == null) {
     await activate(context.auth, session.session.token, organizationId)
   }
@@ -505,11 +508,12 @@ export async function restoreWorkspace(request: Request, context: WorkspaceConte
 export async function deleteWorkspace(request: Request, context: WorkspaceContext, organizationId: string): Promise<Response> {
   const session = await context.auth.api.getSession({ headers: request.headers })
   if (session === null) return failure(401, "UNAUTHORIZED", "Sign in first.")
-  const membership = await first<{ role: string }>(context.db,
-    `select "role" from "member" where "organizationId" = ? and "userId" = ?`, organizationId, session.user.id)
+  const membership = await first<{ role: string; metadata: string | null }>(context.db,
+    `select m."role", o."metadata" from "member" m join "organization" o on o."id" = m."organizationId" where m."organizationId" = ? and m."userId" = ?`, organizationId, session.user.id)
   if (membership === null || !isOwner(membership.role)) {
     return failure(403, "FORBIDDEN", "Only a workspace owner can delete a workspace.")
   }
+  if (isProvisioningMetadata(membership.metadata)) return failure(409, "WORKSPACE_PROVISIONING", "This workspace is still being provisioned.")
   if (context.defaultOrganizationId !== undefined && organizationId === context.defaultOrganizationId) {
     return failure(403, "FORBIDDEN", "The deployment's shared default workspace cannot be deleted.")
   }
@@ -524,11 +528,12 @@ export async function deleteWorkspace(request: Request, context: WorkspaceContex
   ]
   try {
     await atomically(context.db as unknown as ProvisionDb, [
+      { sql: `update "workspace_request" set "organization_id" = null where "organization_id" = ?`, params: [organizationId] },
       { sql: `delete from "workspace_archive" where "organization_id" = ?`, params: [organizationId] },
       ...statements,
     ])
   } catch (error) {
-    if (!missingTable(error, "workspace_archive")) throw error
+    if (!missingTable(error, "workspace_archive") && !missingTable(error, "workspace_request")) throw error
     await atomically(context.db as unknown as ProvisionDb, statements)
   }
   const nextId = await nextActiveWorkspace(context.db, session.user.id, organizationId)

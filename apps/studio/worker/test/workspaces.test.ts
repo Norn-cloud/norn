@@ -377,12 +377,15 @@ test("#1414: workspace is hidden and unactivatable while host cell provisioning 
   const pendingOrg = db.prepare(`select "id" from "organization" where "name" = 'In Flight Cell'`).get() as { id: string } | null
   expect(pendingOrg).not.toBeNull()
 
-  // While provisioning is in flight: list omits it and activate refuses with 409 WORKSPACE_PROVISIONING.
+  // While provisioning is in flight: list omits it and activate/delete refuse with 409 WORKSPACE_PROVISIONING.
   const listedMid = (await (await call(env, "/api/workspaces", { headers: { cookie: owner.cookie } })).json()) as WorkspacesDocument
   expect(listedMid.workspaces.some((w) => w.id === pendingOrg!.id)).toBe(false)
   const actMid = await mutate(env, "POST", `/api/workspaces/${pendingOrg!.id}/activate`, {}, { cookie: owner.cookie })
   expect(actMid.status).toBe(409)
   expect(((await actMid.json()) as { code: string }).code).toBe("WORKSPACE_PROVISIONING")
+  const delMid = await mutate(env, "DELETE", `/api/workspaces/${pendingOrg!.id}`, undefined, { cookie: owner.cookie })
+  expect(delMid.status).toBe(409)
+  expect(((await delMid.json()) as { code: string }).code).toBe("WORKSPACE_PROVISIONING")
 
   // Once provisioning resolves, creation completes and the workspace appears with hasCell: true.
   releaseProvision()
@@ -415,4 +418,49 @@ test("#1414: pending workspace requests stay visible ahead of 50+ newer decided 
   expect(doc.requests).toHaveLength(50)
   const pendingIds = doc.requests.filter((r) => r.status === "pending").map((r) => r.id).sort()
   expect(pendingIds).toEqual(["old-pending-0", "old-pending-1", "old-pending-2", "old-pending-3", "old-pending-4"])
+})
+
+test("#1414: Better Auth direct org routes cannot bypass request-only mode, archive state, or default-org protection", async () => {
+  // 1. Request-only deployment (NORN_HOST without STUDIO_DEFAULT_ENVIRONMENT_ID, billing off):
+  // direct /api/auth/organization/create is refused with 403 SELF_SERVE_UNAVAILABLE.
+  const { host: noEnvHost } = mockHost()
+  const requestOnly = stage({ host: noEnvHost })
+  const requester = await enroll(requestOnly.env, "req-direct@example.com", "Requester")
+  const directCreate = await mutate(requestOnly.env, "POST", "/api/auth/organization/create", { name: "Sneaky", slug: "sneaky-org" }, { cookie: requester.cookie })
+  expect(directCreate.status).toBe(403)
+  expect(await directCreate.json()).toMatchObject({ code: "SELF_SERVE_UNAVAILABLE" })
+
+  // 2. Archived org: direct Better Auth update, invite-member, and accept-invitation (billing off) all refuse 409.
+  const { host } = mockHost()
+  const { db, env } = stage({ host, defaultEnvironmentId: "prod", defaultOrg: "org_shared" })
+  const owner = await enroll(env, "direct-owner@example.com", "Owner")
+  const invitee = await enroll(env, "direct-invitee@example.com", "Invitee")
+  db.prepare(`update "user" set "emailVerified" = 1 where "id" = ?`).run(invitee.userId)
+  const target = (await (await mutate(env, "POST", "/api/workspaces", { name: "Direct Guarded" }, { cookie: owner.cookie })).json()) as { id: string }
+
+  // Seed a pending invitation before archiving.
+  const invId = crypto.randomUUID()
+  db.prepare(`insert into "invitation" ("id", "organizationId", "email", "role", "status", "expiresAt", "createdAt", "inviterId") values (?, ?, ?, 'member', 'pending', ?, ?, ?)`)
+    .run(invId, target.id, "direct-invitee@example.com", new Date(Date.now() + 3_600_000).toISOString(), new Date().toISOString(), owner.userId)
+  expect((await mutate(env, "POST", `/api/workspaces/${target.id}/archive`, {}, { cookie: owner.cookie })).status).toBe(200)
+
+  const directUpdate = await mutate(env, "POST", "/api/auth/organization/update", { organizationId: target.id, data: { name: "Hijacked" } }, { cookie: owner.cookie })
+  expect(directUpdate.status).toBe(409)
+  expect(await directUpdate.json()).toMatchObject({ code: "WORKSPACE_ARCHIVED" })
+
+  const directInvite = await mutate(env, "POST", "/api/auth/organization/invite-member", { organizationId: target.id, email: "third@example.com", role: "member" }, { cookie: owner.cookie })
+  expect(directInvite.status).toBe(409)
+  expect(await directInvite.json()).toMatchObject({ code: "WORKSPACE_ARCHIVED" })
+
+  const directAccept = await mutate(env, "POST", "/api/auth/organization/accept-invitation", { invitationId: invId }, { cookie: invitee.cookie })
+  expect(directAccept.status).toBe(409)
+  expect(await directAccept.json()).toMatchObject({ code: "WORKSPACE_ARCHIVED" })
+  expect(db.prepare(`select count(*) as n from "member" where "organizationId" = ? and "userId" = ?`).get(target.id, invitee.userId)).toEqual({ n: 0 })
+
+  // 3. Shared default org cannot be deleted via Better Auth's direct delete endpoint either.
+  db.prepare(`insert into "organization" ("id", "name", "slug", "metadata", "createdAt") values ('org_shared', 'Shared', 'shared', '{}', ?)`).run(new Date().toISOString())
+  db.prepare(`insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values ('m_shared_owner', 'org_shared', ?, 'owner', ?)`).run(owner.userId, new Date().toISOString())
+  const directDelete = await mutate(env, "POST", "/api/auth/organization/delete", { organizationId: "org_shared" }, { cookie: owner.cookie })
+  expect(directDelete.status).toBe(403)
+  expect(db.prepare(`select count(*) as n from "organization" where "id" = 'org_shared'`).get()).toEqual({ n: 1 })
 })

@@ -51,6 +51,8 @@ export interface AuthConfig {
   readonly baseURL: string
   /** Optional server-held default cell for newly provisioned workspaces. */
   readonly defaultEnvironmentId?: string
+  /** False on request-only deployments where NORN_HOST has no STUDIO_DEFAULT_ENVIRONMENT_ID. */
+  readonly selfServeOrganizationCreate?: boolean
   readonly trustedOrigins?: readonly string[]
   /** Absent when this deployment has no mail sender: magic links then refuse. */
   readonly sendMagicLink?: (mail: MagicLinkMail) => Promise<void>
@@ -432,20 +434,59 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       // sender verifies addresses, nobody can join an organization by claiming an invited email.
       organization({ ac, roles: ORG_ROLES, creatorRole: "owner", allowUserToCreateOrganization: true, requireEmailVerificationOnInvitation: true,
         organizationHooks: {
-          // Clients cannot set "norn." keys. With billing on, the HTTP route is refused (index.ts) and
-          // workspaces.ts creates workspaces; a server-side creation is billed to its creator the same way.
-          beforeCreateOrganization: async ({ organization, user }) =>
-            ({ data: { ...organization, metadata: { ...publicMetadata(organization.metadata), ...await billingModeOn(config.database as unknown as BillingDb) ? { [BILLING_PAYER]: user.id, [BILLED]: true } : {} } } }),
+          // Clients cannot set "norn." keys. On request-only stages (NORN_HOST without a default environment),
+          // direct Better Auth org creation is refused just like POST /api/workspaces. With billing on, the HTTP
+          // route is refused (index.ts) and workspaces.ts creates workspaces; a server-side creation is billed too.
+          beforeCreateOrganization: async ({ organization, user }) => {
+            if (config.selfServeOrganizationCreate === false) {
+              throw new APIError("FORBIDDEN", { code: "SELF_SERVE_UNAVAILABLE", message: "This deployment requires an admin to provision new workspaces. Submit a workspace request instead." })
+            }
+            return { data: { ...organization, metadata: { ...publicMetadata(organization.metadata), ...await billingModeOn(config.database as unknown as BillingDb) ? { [BILLING_PAYER]: user.id, [BILLED]: true } : {} } } }
+          },
           // Advisory: an admin is told before inviting someone the workspace could not take (members and
           // pending invitations). Invitations hold nothing; the member limit is enforced when one joins.
-          beforeCreateInvitation: async ({ organization, inviter }) => enforce(await admitMember(config.database as unknown as BillingDb, await billingOf(config.database as unknown as BillingDb, settingsOf(config.billing?.config)), config.baseURL, organization.id, inviter.id, true)),
+          beforeCreateInvitation: async ({ organization, inviter }) => {
+            const db = config.database as unknown as ProvisionDb
+            if (await isArchivedInDb(db, organization.id)) {
+              throw new APIError("CONFLICT", { code: "WORKSPACE_ARCHIVED", message: "Restore this workspace before inviting members." })
+            }
+            if (isProvisioningMetadata(organization.metadata)) {
+              throw new APIError("CONFLICT", { code: "WORKSPACE_PROVISIONING", message: "This workspace is still being provisioned." })
+            }
+            enforce(await admitMember(config.database as unknown as BillingDb, await billingOf(config.database as unknown as BillingDb, settingsOf(config.billing?.config)), config.baseURL, organization.id, inviter.id, true))
+          },
+          // Fail closed when billing is off and Better Auth handles accept-invitation directly.
+          beforeAcceptInvitation: async ({ organization }) => {
+            const db = config.database as unknown as ProvisionDb
+            if (await isArchivedInDb(db, organization.id)) {
+              throw new APIError("CONFLICT", { code: "WORKSPACE_ARCHIVED", message: "This workspace is archived. Ask an owner to restore it before joining." })
+            }
+            if (isProvisioningMetadata(organization.metadata)) {
+              throw new APIError("CONFLICT", { code: "WORKSPACE_PROVISIONING", message: "This workspace is still being provisioned." })
+            }
+          },
           beforeUpdateOrganization: async ({ organization, member }) => {
-            if (organization.metadata === undefined) return
+            const db = config.database as unknown as ProvisionDb
+            if (await isArchivedInDb(db, member.organizationId)) {
+              throw new APIError("CONFLICT", { code: "WORKSPACE_ARCHIVED", message: "Restore this workspace before updating it." })
+            }
             const adapter = await getCurrentAdapter((await self.auth?.$context)?.adapter as never)
             const stored = await adapter.findOne<{ metadata?: string | null }>({ model: "organization", where: [{ field: "id", value: member.organizationId }] })
             if (stored === null) throw new Error("Organization no longer exists")
+            if (isProvisioningMetadata(stored.metadata)) {
+              throw new APIError("CONFLICT", { code: "WORKSPACE_PROVISIONING", message: "This workspace is still being provisioned." })
+            }
+            if (organization.metadata === undefined) return
             const protectedFields = Object.fromEntries(Object.entries(metadataObject(stored.metadata)).filter(([key]) => reservedMetadata(key)))
             return { data: { ...organization, metadata: { ...publicMetadata(organization.metadata), ...protectedFields } } }
+          },
+          beforeDeleteOrganization: async ({ organization }) => {
+            if (config.defaultOrganizationId !== undefined && organization.id === config.defaultOrganizationId) {
+              throw new APIError("FORBIDDEN", { code: "FORBIDDEN", message: "The deployment's shared default workspace cannot be deleted." })
+            }
+            if (isProvisioningMetadata(organization.metadata)) {
+              throw new APIError("CONFLICT", { code: "WORKSPACE_PROVISIONING", message: "This workspace is still being provisioned." })
+            }
           },
         },
       }),
