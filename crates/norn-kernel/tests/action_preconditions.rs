@@ -1350,10 +1350,9 @@ fn materialize(
     call: &ActionCall<'_>,
     working_window: &str,
 ) -> Option<&'static str> {
-    let id = call
-        .idempotency_key
-        .strip_prefix("materialize-")
-        .expect("fixture idempotency key");
+    let Some(id) = call.idempotency_key.strip_prefix("materialize-") else {
+        panic!("fixture idempotency key: {}", call.idempotency_key);
+    };
     let before = host.ledger().len();
     match commit_action(host, catalog, call, &Allow) {
         Ok(outcome) => {
