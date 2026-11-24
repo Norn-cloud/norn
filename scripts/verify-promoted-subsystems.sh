@@ -666,6 +666,8 @@ run_gate fast core-value-ledger-lean \
   command \
   lean -DwarningAsError=true \
     verification/core-physics-v1/proofs/CoreValueLedger.lean
+run_gate full kernel-version-kani "bash scripts/verify-kernel-version-kani.sh" command \
+  bash scripts/verify-kernel-version-kani.sh
 run_gate full quantity-kani \
   "env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-tools/kani-home kani --fail-fast --output-format terse verification/stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs" \
   command \

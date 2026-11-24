@@ -5,14 +5,14 @@ use vstd::prelude::*;
 
 #[cfg(verus_keep_ghost)]
 verus! {
-    pub(crate) open spec fn successor(version: u64, result: Option<u64>) -> bool {
+    spec fn successor(version: u64, result: Option<u64>) -> bool {
         match result {
             Some(next) => next as int == version as int + 1,
             None => version == u64::MAX,
         }
     }
 
-    pub(crate) open spec fn deleted(version: u64, live: bool) -> bool {
+    spec fn deleted(version: u64, live: bool) -> bool {
         version != 0 && !live
     }
 

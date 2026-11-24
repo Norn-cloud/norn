@@ -40,7 +40,7 @@ What the gates use:
 | Lean | `*-lean` gates, plus the proofs inside the Aeneas gates |
 | Quint + Apalache | `*-quint` gates (bounded model checks, mostly `--max-steps 8`) and `*-quint-typecheck` |
 | Charon + Aeneas | nine `*-correspondence` gates. Each extracts production Rust and proves the Lean translation against a spec (`scripts/verify-*-aeneas.sh`). |
-| Kani | `quantity-kani` (`stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs`) |
+| Kani | `kernel-version-kani` (five direct-source version harnesses) and `quantity-kani` (`stripmine-2026-08-22/proofs/kani/quantity_ledger_harness.rs`) |
 | F* (via hax) | `artifact-governance-rust-extraction` (`scripts/verify-artifact-governance-extraction.sh`) |
 | Verus | `kernel-inline-verus` checks the successor and committed-deletion predicates in the shipped version module and runs their two mutants |
 
@@ -64,7 +64,7 @@ Every `quint verify --backend apalache` gate runs through `scripts/quint_apalach
 
 Every CI plan also runs the following checks.
 
-- In `guards`: install the pinned Verus bundle with `scripts/bootstrap-verification-tools.sh --verus-only`, then run `bash scripts/verify-kernel-inline-verus.sh all`. Each mutant must fail its own named postcondition. The separate Aeneas successor theorem and Kani harnesses target the ordinary Rust source.
+- In `guards`: install the pinned Verus bundle with `scripts/bootstrap-verification-tools.sh --verus-only`, then run `bash scripts/verify-kernel-inline-verus.sh all`. The gate checks the approved statement digests before running Verus. Each mutant must fail its own named postcondition. The separate Aeneas successor theorem and Kani harnesses target the ordinary Rust source.
 
 - In `cheap`: `scripts/proof_enrollment.py` and its tests (registry checks over the proof sources), and `coverage-v1/negative_canaries.py --workflow-contract`. These check the registries, not the proofs.
 - In the test shards: `crates/norn-cell/tests/kernel_quint.rs` replays the Quint ITF traces committed in `kernel-v2/traces/` against the Rust kernel. It reads the traces; it does not run Quint.

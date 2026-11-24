@@ -122,12 +122,14 @@
       "checked_next_version": {
         "postcondition": "successor",
         "mutant": "saturating_add",
-        "secondLens": "aeneas:VersionProof.lean"
+        "statementDigest": "0fe750e53a2e371852e251d9173a7c7a2887f7bc02493682ff78d582a76068df",
+        "secondLensGate": "kernel-l1-version-correspondence"
       },
       "has_committed_deletion": {
         "postcondition": "deleted",
         "mutant": "zero",
-        "secondLens": "kani:id_stable_genesis_and_live_rows_are_never_deleted,id_stable_retained_absence_is_a_deletion"
+        "statementDigest": "1598894695a78ab71d53bcb05e3ed424f6deb988eaa64d5202555cc78322d908",
+        "secondLensGate": "kernel-version-kani"
       }
     }
   }
