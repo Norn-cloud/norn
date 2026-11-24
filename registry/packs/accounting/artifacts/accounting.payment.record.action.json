@@ -34,7 +34,7 @@
         "targetType": "accounting.Invoice"
       }
     ],
-    "description": "Record a create-only immutable payment settling an invoice claim and updating conserved monetary custody.",
+    "description": "Record a create-only immutable monetary payment settling an open invoice claim without overpayment or currency mismatch.",
     "effectProgram": {
       "entityArtifactId": "accounting.Payment.entity",
       "entityArtifactVersion": "0.1.0",
@@ -140,7 +140,10 @@
       "type": "object"
     },
     "preconditions": [
-      "input.quantity > 0"
+      "((input.quantity > 0) and (input.unit == null)) and (input.currency != null)",
+      "(slice.invoice.status == 'issued') or (slice.invoice.status == 'partially_paid')",
+      "(input.currency ?? '') == slice.invoice.currency",
+      "input.quantity <= (slice.invoice.amount - slice.invoice.amount_paid)"
     ],
     "scopeRequired": [
       "orgId",

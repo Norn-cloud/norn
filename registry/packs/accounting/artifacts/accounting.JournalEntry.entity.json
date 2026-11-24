@@ -643,12 +643,11 @@
             "additivity": {
               "kind": "additive"
             },
-            "currencySource": {
-              "links": [],
-              "property": "currency"
-            },
-            "kind": "decimal",
-            "scale": 6
+            "kind": "ref",
+            "name": "core.money_amount",
+            "unitSource": [
+              "currency"
+            ]
           }
         },
         {
@@ -657,12 +656,11 @@
             "additivity": {
               "kind": "additive"
             },
-            "currencySource": {
-              "links": [],
-              "property": "currency"
-            },
-            "kind": "decimal",
-            "scale": 6
+            "kind": "ref",
+            "name": "core.money_amount",
+            "unitSource": [
+              "currency"
+            ]
           }
         },
         {

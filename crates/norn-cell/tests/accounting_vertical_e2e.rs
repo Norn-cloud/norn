@@ -25,19 +25,22 @@ use norn_checker::{
     check_artifact_set_with_receipt,
 };
 use norn_ir::{
-    AccessIr, ActionRoot, ArtifactEnvelope, ArtifactKind, InterfaceDef, ObjectTypeDef,
-    PropertyTypeDef, ResourceLimitProfile, RuntimeValue,
+    AccessIr, ActionRoot, ArtifactEnvelope, ArtifactKind, DataQualityRuleRef, InterfaceDef,
+    InterfaceName, InvariantOwner, ObjectTypeDef, PropertyTypeDef, ResourceLimitProfile,
+    RuntimeValue,
 };
 use norn_kernel::authz::{
     self, AccessRequest, ActorKind, AttrValue, AuthzSchema, CapabilityGrant, Delegation, Pdp,
     PdpActionAuthorizer, PrincipalInput, ResourceInput, ScopeKey,
 };
 use norn_kernel::cell_host::JsonObject;
+use norn_kernel::governing_laws::LawEvaluationError;
 use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionOutcome,
     ActionReadAuthzRequest, ActionReadTypeAuthzRequest, ActionRefusal, CellCommit, CellHost,
-    Command, DecisionTurn, FactEvent, FactKey, FactMutation, FactVersion, FactWrite, LinkKey,
-    LinkMutation, LinkWrite, LogicalTime, TypeCatalog, World, commit_action,
+    Command, CommitError, CommitReceipt, DecisionTurn, FactEvent, FactKey, FactMutation,
+    FactVersion, FactWrite, LinkKey, LinkMutation, LinkWrite, LogicalTime, TypeCatalog, World,
+    commit_action,
 };
 use norn_projections::CedarAttribute;
 use serde_json::{Value, json};
@@ -622,6 +625,49 @@ fn status_of(cell: &Cell, object_type: &str, id: &str) -> String {
         .to_owned()
 }
 
+fn assert_law_refusal(
+    result: Result<CommitReceipt, CommitError<norn_cell::CellError>>,
+    expected_law_id: &str,
+) {
+    let err = result.expect_err("expected governing law refusal");
+    assert_eq!(
+        err.code(),
+        "core.laws.violated",
+        "unexpected commit error for {expected_law_id}: {err}"
+    );
+    match err {
+        CommitError::Law {
+            reason: LawEvaluationError::Violated(failure),
+            ..
+        } => match failure.rule_ref {
+            DataQualityRuleRef::Law { law_id, .. } => {
+                assert_eq!(law_id, expected_law_id);
+            }
+            other => panic!("expected Law rule_ref for {expected_law_id}, got {other:?}"),
+        },
+        other => panic!("expected CommitError::Law for {expected_law_id}, got {other:?}"),
+    }
+}
+
+fn assert_time_interval_refusal(result: Result<CommitReceipt, CommitError<norn_cell::CellError>>) {
+    let err = result.expect_err("expected core.TimeInterval invariant refusal");
+    assert_eq!(
+        err.code(),
+        "commit.invariant_violation",
+        "unexpected commit error for core.TimeInterval: {err}"
+    );
+    match err {
+        CommitError::InvariantViolation { owner, id, .. } => {
+            assert_eq!(
+                owner,
+                InvariantOwner::Interface(InterfaceName("core.TimeInterval".to_owned()))
+            );
+            assert_eq!(id.as_str(), "proper_interval");
+        }
+        other => panic!("expected CommitError::InvariantViolation, got {other:?}"),
+    }
+}
+
 fn seed_base_ledger(cell: &mut Cell) {
     let mut seed = CellCommit::empty();
     seed.writes.extend([
@@ -944,10 +990,7 @@ fn accounting_ledger_laws_periods_and_separation_of_duties_enforce_in_real_cell(
             "accounting.Book",
             "book_main",
         ));
-        assert!(
-            cell.commit(invalid_period).is_err(),
-            "FiscalPeriod {period_id} with invalid interval must be refused by core.TimeInterval"
-        );
+        assert_time_interval_refusal(cell.commit(invalid_period));
     }
 
     // 2. Group account allowing direct posting is refused by accounting.Account.group_no_direct_posting.
@@ -974,9 +1017,9 @@ fn accounting_ledger_laws_periods_and_separation_of_duties_enforce_in_real_cell(
         "accounting.Book",
         "book_main",
     ));
-    assert!(
-        cell.commit(bad_group_account).is_err(),
-        "group account with allow_direct_posting=true must be refused"
+    assert_law_refusal(
+        cell.commit(bad_group_account),
+        "accounting.Account.group_no_direct_posting",
     );
 
     // 3. Negative MonetaryAccount balance is refused by accounting.MonetaryAccount.non_negative.
@@ -1011,12 +1054,12 @@ fn accounting_ledger_laws_periods_and_separation_of_duties_enforce_in_real_cell(
             "acct_cash",
         ),
     ]);
-    assert!(
-        cell.commit(negative_cash).is_err(),
-        "negative MonetaryAccount quantity must be refused"
+    assert_law_refusal(
+        cell.commit(negative_cash),
+        "accounting.MonetaryAccount.non_negative",
     );
 
-    // 4. Seed balanced and unbalanced draft JournalEntries plus valid one-sided lines.
+    // 4. Seed balanced and unbalanced draft JournalEntries plus valid one-sided signed lines.
     let mut journal_seed = CellCommit::empty();
     journal_seed.writes.extend([
         put_fact(
@@ -1027,9 +1070,9 @@ fn accounting_ledger_laws_periods_and_separation_of_duties_enforce_in_real_cell(
                 "entry_number": "JE-2026-0001",
                 "posting_date": "2026-11-15",
                 "currency": "USD",
-                "total_debit": 1000,
-                "total_credit": 1000,
-                "memo": "Record cash sale",
+                "total_debit": 140.73,
+                "total_credit": 140.73,
+                "memo": "Record fractional cash sale",
                 "created_by_user_id": "principal:senior_accountant",
                 "status": "draft"
             }),
@@ -1071,9 +1114,9 @@ fn accounting_ledger_laws_periods_and_separation_of_duties_enforce_in_real_cell(
                 "id": "jl_debit_1",
                 "account_code": "1010",
                 "side": "debit",
-                "amount": 1000,
+                "amount": 140.73,
                 "currency": "USD",
-                "debit_amount": 1000,
+                "debit_amount": 140.73,
                 "credit_amount": 0,
                 "description": "Debit operating cash"
             }),
@@ -1085,11 +1128,11 @@ fn accounting_ledger_laws_periods_and_separation_of_duties_enforce_in_real_cell(
                 "id": "jl_credit_1",
                 "account_code": "4010",
                 "side": "credit",
-                "amount": 1000,
+                "amount": -140.73,
                 "currency": "USD",
                 "debit_amount": 0,
-                "credit_amount": 1000,
-                "description": "Credit product revenue"
+                "credit_amount": 140.73,
+                "description": "Credit product revenue (negative signed core.LedgerEffect amount)"
             }),
         ),
     ]);
@@ -1221,9 +1264,53 @@ fn accounting_ledger_laws_periods_and_separation_of_duties_enforce_in_real_cell(
             "acct_cash",
         ),
     ]);
-    assert!(
-        cell.commit(two_sided_line).is_err(),
-        "two-sided JournalLine must be refused by accounting.JournalLine.one_sided.law"
+    assert_law_refusal(
+        cell.commit(two_sided_line),
+        "accounting.JournalLine.one_sided",
+    );
+
+    // 5b. Credit JournalLine with positive signed amount is refused by accounting.JournalLine.one_sided.
+    let mut positive_credit_line = CellCommit::empty();
+    positive_credit_line.writes.push(put_fact(
+        "accounting.JournalLine",
+        "jl_positive_credit",
+        &json!({
+            "id": "jl_positive_credit",
+            "account_code": "4010",
+            "side": "credit",
+            "amount": 100,
+            "currency": "USD",
+            "debit_amount": 0,
+            "credit_amount": 100,
+            "description": "Credit line violating core.LedgerEffect negative sign convention"
+        }),
+    ));
+    positive_credit_line.links.extend([
+        add_link(
+            "accounting.JournalLine",
+            "jl_positive_credit",
+            "event",
+            "accounting.FinancialEvent",
+            "fe_sale_001",
+        ),
+        add_link(
+            "accounting.JournalLine",
+            "jl_positive_credit",
+            "entry",
+            "accounting.JournalEntry",
+            "je_balanced",
+        ),
+        add_link(
+            "accounting.JournalLine",
+            "jl_positive_credit",
+            "account",
+            "accounting.Account",
+            "acct_revenue",
+        ),
+    ]);
+    assert_law_refusal(
+        cell.commit(positive_credit_line),
+        "accounting.JournalLine.one_sided",
     );
 
     // 6. Direct commit of a posted unbalanced JournalEntry is refused by accounting.JournalEntry.balanced.
@@ -1259,9 +1346,9 @@ fn accounting_ledger_laws_periods_and_separation_of_duties_enforce_in_real_cell(
             "fp_2026_11",
         ),
     ]);
-    assert!(
-        cell.commit(posted_unbalanced).is_err(),
-        "posted unbalanced JournalEntry must be refused by accounting.JournalEntry.balanced.law"
+    assert_law_refusal(
+        cell.commit(posted_unbalanced),
+        "accounting.JournalEntry.balanced",
     );
 
     // 7. Action-level refusal of unbalanced JournalEntry via accounting.journal.post.
@@ -1440,7 +1527,7 @@ fn accounting_invoice_conservation_and_create_only_payment_enforce_in_real_cell(
     let mut cell = fixture.open_installed_cell(&path);
     seed_base_ledger(&mut cell);
 
-    // 1. Invoice violating amount == subtotal + tax_amount is refused at commit.
+    // 1. Invoice violating exact fractional amount == subtotal + tax_amount is refused at commit.
     let mut mismatched_invoice = CellCommit::empty();
     mismatched_invoice.writes.push(put_fact(
         "accounting.Invoice",
@@ -1449,9 +1536,9 @@ fn accounting_invoice_conservation_and_create_only_payment_enforce_in_real_cell(
             "id": "inv_bad_sum",
             "invoice_number": "INV-2026-BAD1",
             "direction": "receivable",
-            "subtotal": 1000,
-            "tax_amount": 150,
-            "amount": 1100,
+            "subtotal": 123.45,
+            "tax_amount": 17.28,
+            "amount": 140.74,
             "amount_paid": 0,
             "currency": "USD",
             "due_date": "2026-12-15",
@@ -1481,12 +1568,13 @@ fn accounting_invoice_conservation_and_create_only_payment_enforce_in_real_cell(
             "book_main",
         ),
     ]);
-    assert!(
-        cell.commit(mismatched_invoice).is_err(),
-        "Invoice with amount != subtotal + tax_amount must be refused"
+    assert_law_refusal(
+        cell.commit(mismatched_invoice),
+        "accounting.Invoice.amount_conservation",
     );
 
-    // 2. Seed valid draft invoices (one positive, one zero-total draft, one to void).
+    // 2. Seed valid exact-decimal invoices (fractional receivable, zero-total draft,
+    //    unpaid draft to void, open draft that stays draft, and partially paid invoice).
     let mut invoice_seed = CellCommit::empty();
     invoice_seed.writes.extend([
         put_fact(
@@ -1496,9 +1584,9 @@ fn accounting_invoice_conservation_and_create_only_payment_enforce_in_real_cell(
                 "id": "inv_valid",
                 "invoice_number": "INV-2026-0001",
                 "direction": "receivable",
-                "subtotal": 1000,
-                "tax_amount": 150,
-                "amount": 1150,
+                "subtotal": 123.45,
+                "tax_amount": 17.28,
+                "amount": 140.73,
                 "amount_paid": 0,
                 "currency": "USD",
                 "due_date": "2026-12-15",
@@ -1537,8 +1625,46 @@ fn accounting_invoice_conservation_and_create_only_payment_enforce_in_real_cell(
                 "status": "draft"
             }),
         ),
+        put_fact(
+            "accounting.Invoice",
+            "inv_still_draft",
+            &json!({
+                "id": "inv_still_draft",
+                "invoice_number": "INV-2026-0004",
+                "direction": "receivable",
+                "subtotal": 250,
+                "tax_amount": 0,
+                "amount": 250,
+                "amount_paid": 0,
+                "currency": "USD",
+                "due_date": "2026-12-15",
+                "status": "draft"
+            }),
+        ),
+        put_fact(
+            "accounting.Invoice",
+            "inv_partially_paid",
+            &json!({
+                "id": "inv_partially_paid",
+                "invoice_number": "INV-2026-0005",
+                "direction": "receivable",
+                "subtotal": 100,
+                "tax_amount": 0,
+                "amount": 100,
+                "amount_paid": 50.25,
+                "currency": "USD",
+                "due_date": "2026-12-15",
+                "status": "partially_paid"
+            }),
+        ),
     ]);
-    for invoice_id in ["inv_valid", "inv_zero_draft", "inv_to_void"] {
+    for invoice_id in [
+        "inv_valid",
+        "inv_zero_draft",
+        "inv_to_void",
+        "inv_still_draft",
+        "inv_partially_paid",
+    ] {
         invoice_seed.links.extend([
             add_link(
                 "accounting.Invoice",
@@ -1565,7 +1691,7 @@ fn accounting_invoice_conservation_and_create_only_payment_enforce_in_real_cell(
     }
     cell.commit(invoice_seed).expect("draft invoices commit");
 
-    // Issuing a zero-total draft is refused; issuing positive invoice succeeds.
+    // Issuing a zero-total draft is refused; issuing positive fractional invoice succeeds.
     let zero_issue = fixture
         .invoke(
             &mut cell,
@@ -1585,7 +1711,7 @@ fn accounting_invoice_conservation_and_create_only_payment_enforce_in_real_cell(
             "principal:accountant",
             "inv-issue-valid",
         )
-        .expect("accountant issues positive draft invoice");
+        .expect("accountant issues positive fractional draft invoice");
     assert_eq!(
         status_of(&cell, "accounting.Invoice", "inv_valid"),
         "issued"
@@ -1602,6 +1728,22 @@ fn accounting_invoice_conservation_and_create_only_payment_enforce_in_real_cell(
         .expect_err("accountant cannot void invoice");
     assert_eq!(void_denied.code(), "action.permission_denied");
 
+    // Voiding a partially paid invoice (amount_paid > 0) is refused by precondition.
+    let void_paid_refused = fixture
+        .invoke(
+            &mut cell,
+            "accounting.invoice.void",
+            &json!({"invoiceId": "inv_partially_paid"}),
+            "principal:senior_accountant",
+            "inv-void-partially-paid-refused",
+        )
+        .expect_err("partially paid invoice with recorded payments cannot be voided");
+    assert_eq!(void_paid_refused.code(), "action.precondition_failed");
+    assert_eq!(
+        status_of(&cell, "accounting.Invoice", "inv_partially_paid"),
+        "partially_paid"
+    );
+
     fixture
         .invoke(
             &mut cell,
@@ -1610,43 +1752,93 @@ fn accounting_invoice_conservation_and_create_only_payment_enforce_in_real_cell(
             "principal:senior_accountant",
             "inv-void-senior-ok",
         )
-        .expect("senior_accountant voids invoice");
+        .expect("senior_accountant voids unpaid draft invoice");
     assert_eq!(
         status_of(&cell, "accounting.Invoice", "inv_to_void"),
         "voided"
     );
 
-    // 3. Payment create-only immutability, positive-quantity guard, replay, and duplicate-ID refusal.
-    let zero_payment = json!({
-        "id": "pay_zero",
-        "action": "transfer_ownership",
-        "occurred_at": "2026-11-20T10:00:00Z",
-        "quantity": "0",
-        "unit": null,
-        "currency": "USD",
-        "payment_method": "bank_transfer",
-        "reference_no": "WIRE-ZERO",
-        "providerId": "cp_customer",
-        "receiverId": "cp_company",
-        "resourceId": "ma_operating_usd",
-        "invoiceId": "inv_valid"
-    });
-    let zero_pay_refused = fixture
-        .invoke(
-            &mut cell,
-            "accounting.payment.record",
-            &zero_payment,
-            "principal:accountant",
-            "pay-record-zero-refused",
-        )
-        .expect_err("zero-quantity payment must be refused");
-    assert_eq!(zero_pay_refused.code(), "action.precondition_failed");
+    // 3. Payment settlement guards: zero quantity, non-monetary unit, draft/voided invoice,
+    //    currency mismatch, and fractional overpayment are all refused.
+    for (payment_id, invoice_id, quantity, unit, currency, idem_key) in [
+        ("pay_zero", "inv_valid", "0", None, Some("USD"), "pay-zero"),
+        (
+            "pay_non_monetary",
+            "inv_valid",
+            "10",
+            Some("EA"),
+            Some("USD"),
+            "pay-non-monetary",
+        ),
+        (
+            "pay_draft",
+            "inv_still_draft",
+            "50",
+            None,
+            Some("USD"),
+            "pay-draft",
+        ),
+        (
+            "pay_voided",
+            "inv_to_void",
+            "50",
+            None,
+            Some("USD"),
+            "pay-voided",
+        ),
+        (
+            "pay_wrong_ccy",
+            "inv_valid",
+            "100",
+            None,
+            Some("EUR"),
+            "pay-wrong-ccy",
+        ),
+        (
+            "pay_overpay",
+            "inv_valid",
+            "140.74",
+            None,
+            Some("USD"),
+            "pay-overpay",
+        ),
+    ] {
+        let invalid_payment = json!({
+            "id": payment_id,
+            "action": "transfer_ownership",
+            "occurred_at": "2026-11-20T10:00:00Z",
+            "quantity": quantity,
+            "unit": unit,
+            "currency": currency,
+            "payment_method": "bank_transfer",
+            "reference_no": format!("REF-{payment_id}"),
+            "providerId": "cp_customer",
+            "receiverId": "cp_company",
+            "resourceId": "ma_operating_usd",
+            "invoiceId": invoice_id
+        });
+        let refused = fixture
+            .invoke(
+                &mut cell,
+                "accounting.payment.record",
+                &invalid_payment,
+                "principal:accountant",
+                idem_key,
+            )
+            .expect_err("invalid settlement payment must be refused");
+        assert_eq!(
+            refused.code(),
+            "action.precondition_failed",
+            "expected precondition_failed for {payment_id}"
+        );
+    }
 
+    // Exact fractional payment matching subtotal + tax (123.45 + 17.28 = 140.73) succeeds.
     let valid_payment = json!({
         "id": "pay_001",
         "action": "transfer_ownership",
         "occurred_at": "2026-11-20T10:15:00Z",
-        "quantity": "1150",
+        "quantity": "140.73",
         "unit": null,
         "currency": "USD",
         "payment_method": "bank_transfer",

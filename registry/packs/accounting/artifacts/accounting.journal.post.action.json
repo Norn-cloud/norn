@@ -57,7 +57,7 @@
       "type": "object"
     },
     "preconditions": [
-      "((slice.period.status == 'open') and (slice.entry.total_debit == slice.entry.total_credit)) and (slice.entry.total_debit > 0)"
+      "(((slice.period.status == 'open') and (slice.entry.status == 'draft')) and (slice.entry.total_debit == slice.entry.total_credit)) and (slice.entry.total_debit > 0)"
     ],
     "scopeRequired": [
       "orgId",

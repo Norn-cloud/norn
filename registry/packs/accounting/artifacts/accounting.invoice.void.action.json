@@ -12,7 +12,7 @@
       "version": "0.1.0"
     },
     "actionId": "accounting.invoice.void",
-    "description": "Void an unpaid draft or issued invoice.",
+    "description": "Void an unpaid draft or issued invoice with zero recorded payments.",
     "effectProgram": {
       "entityArtifactId": "accounting.Invoice.entity",
       "entityArtifactVersion": "0.1.0",
@@ -52,9 +52,24 @@
       ],
       "type": "object"
     },
+    "preconditions": [
+      "slice.invoice.amount_paid == 0"
+    ],
     "scopeRequired": [
       "orgId",
       "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "invoiceId"
+          }
+        },
+        "name": "invoice",
+        "objectType": "accounting.Invoice"
+      }
     ],
     "title": "Void invoice",
     "writes": [

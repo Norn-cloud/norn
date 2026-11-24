@@ -48,7 +48,7 @@ export const Invoice = Norn.type({
       immutable: ["paid", "voided"],
       transitions: [
         { id: "issue", from: ["draft"], to: "issued" },
-        { id: "record_partial_payment", from: ["issued", "partially_paid"], to: "partially_paid" },
+        { id: "record_partial_payment", from: ["issued"], to: "partially_paid" },
         { id: "mark_paid", from: ["issued", "partially_paid"], to: "paid" },
         { id: "void", from: ["draft", "issued"], to: "voided" },
       ],
@@ -216,11 +216,19 @@ export const IssueInvoice = Norn.action({
   },
 })
 
+const VoidInvoiceSlice = Schema.Struct({
+  slice: Schema.Struct({
+    invoice: Schema.Struct({
+      amount_paid: Norn.decimal(6),
+    }),
+  }),
+})
+
 export const VoidInvoice = Norn.action({
   id: "accounting.invoice.void",
   title: "Void invoice",
   version: "0.1.0",
-  description: "Void an unpaid draft or issued invoice.",
+  description: "Void an unpaid draft or issued invoice with zero recorded payments.",
   scopeRequired: ["orgId", "environmentId"],
   idempotent: true,
   ledgered: true,
@@ -232,6 +240,16 @@ export const VoidInvoice = Norn.action({
     invoiceId: Schema.String,
     status: Schema.String,
   }),
+  slice: [
+    { name: "invoice", type: Invoice, key: { property: { from: "input", property: "invoiceId" } } },
+  ],
+  preconditions: [
+    Norn.expression(
+      VoidInvoiceSlice,
+      (ctx) => ctx.slice.invoice.amount_paid === 0,
+      { root: "context" },
+    ),
+  ],
   writes: [{ type: Invoice, change: "modified" }],
   effect: {
     kind: "fire_transition",
@@ -260,6 +278,16 @@ const RecordPaymentInput = Schema.Struct({
 const RecordPaymentContext = Schema.Struct({
   input: Schema.Struct({
     quantity: Norn.decimal(6),
+    unit: Schema.NullOr(Schema.String),
+    currency: Schema.NullOr(Schema.String),
+  }),
+  slice: Schema.Struct({
+    invoice: Schema.Struct({
+      status: InvoiceStatus,
+      currency: Schema.String,
+      amount: Norn.decimal(6),
+      amount_paid: Norn.decimal(6),
+    }),
   }),
 })
 
@@ -267,7 +295,7 @@ export const RecordPayment = Norn.action({
   id: "accounting.payment.record",
   title: "Record immutable payment",
   version: "0.1.0",
-  description: "Record a create-only immutable payment settling an invoice claim and updating conserved monetary custody.",
+  description: "Record a create-only immutable monetary payment settling an open invoice claim without overpayment or currency mismatch.",
   scopeRequired: ["orgId", "environmentId"],
   idempotent: true,
   ledgered: true,
@@ -285,7 +313,22 @@ export const RecordPayment = Norn.action({
   preconditions: [
     Norn.expression(
       RecordPaymentContext,
-      (ctx) => ctx.input.quantity > 0,
+      (ctx) => ctx.input.quantity > 0 && ctx.input.unit === null && ctx.input.currency !== null,
+      { root: "context" },
+    ),
+    Norn.expression(
+      RecordPaymentContext,
+      (ctx) => ctx.slice.invoice.status === "issued" || ctx.slice.invoice.status === "partially_paid",
+      { root: "context" },
+    ),
+    Norn.expression(
+      RecordPaymentContext,
+      (ctx) => (ctx.input.currency ?? "") === ctx.slice.invoice.currency,
+      { root: "context" },
+    ),
+    Norn.expression(
+      RecordPaymentContext,
+      (ctx) => ctx.input.quantity <= ctx.slice.invoice.amount - ctx.slice.invoice.amount_paid,
       { root: "context" },
     ),
   ],

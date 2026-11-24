@@ -9,7 +9,7 @@
   "payload": {
     "entityVersion": "2.0",
     "objectType": {
-      "description": "One strictly one-sided debit or credit posting line valuing a financial event (implements core.LedgerEffect).",
+      "description": "One strictly one-sided debit or credit posting line valuing a financial event (implements core.LedgerEffect; positive amount is debit, negative amount is credit).",
       "identity": [
         {
           "name": "primary",

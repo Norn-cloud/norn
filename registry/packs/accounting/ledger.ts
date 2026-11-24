@@ -215,8 +215,8 @@ export const JournalEntry = Norn.type({
     entry_number: Norn.ref("core.document_number"),
     posting_date: Norn.date(),
     currency: Schema.Literals(ISO_4217),
-    total_debit: Norn.decimal(6, { currency: "currency", additivity: { kind: "additive" } }),
-    total_credit: Norn.decimal(6, { currency: "currency", additivity: { kind: "additive" } }),
+    total_debit: Norn.ref("core.money_amount", { additivity: { kind: "additive" }, unitSource: ["currency"] }),
+    total_credit: Norn.ref("core.money_amount", { additivity: { kind: "additive" }, unitSource: ["currency"] }),
     memo: Schema.String,
     created_by_user_id: Schema.String,
     status: JournalEntryStatus,
@@ -249,7 +249,7 @@ export const JournalLine = Norn.type({
   role: "happening",
   title: "Journal line",
   version: "0.1.0",
-  description: "One strictly one-sided debit or credit posting line valuing a financial event (implements core.LedgerEffect).",
+  description: "One strictly one-sided debit or credit posting line valuing a financial event (implements core.LedgerEffect; positive amount is debit, negative amount is credit).",
   implements: [LedgerEffect],
   properties: Schema.Struct({
     id: Schema.String,
@@ -271,11 +271,27 @@ export const JournalLine = Norn.type({
 
 // ---------------------------------------------------------------- Governed Laws & Examples (LAW-EXAMPLE-1)
 
-export const JournalEntryBalanced = Norn.law("balanced", {
-  on: JournalEntry,
-  when: (self) => self.status !== "draft",
-  must: (self) => self.total_debit === self.total_credit && self.total_debit > 0,
-  because: "Every non-draft journal entry must have equal, strictly positive total debits and credits.",
+export const JournalEntryBalanced = Norn.law({
+  id: "accounting.JournalEntry.balanced.law",
+  title: "Every non-draft journal entry must have equal, strictly positive total debits and credits",
+  version: "0.1.0",
+  dependencies: [{ artifactId: "accounting.JournalEntry.entity", kind: "entity", version: "0.1.0", required: true }],
+  law: {
+    lawVersion: "0.1",
+    id: "accounting.JournalEntry.balanced",
+    owner: "accounting",
+    severity: "error",
+    rationale: "Every non-draft journal entry must have equal, strictly positive total debits and credits.",
+    provenance: { source: "authoring_sdk", sourcePath: "registry/packs/accounting/ledger.ts" },
+    subject: "accounting.JournalEntry",
+    scope: { root: { kind: "entity", id: "accounting.JournalEntry" }, objectTypes: ["accounting.JournalEntry"] },
+    condition: "self.status != \"draft\"",
+    modality: { kind: "always" },
+    response: {
+      kind: "predicate",
+      expression: "self.total_debit == self.total_credit and self.total_debit > 0",
+    },
+  },
 })
 
 export const JournalEntryBalancedHolds = Norn.example("posted balanced journal entry holds", {
@@ -298,7 +314,7 @@ export const JournalEntryBalancedDraftNotApplicable = Norn.example("draft journa
 
 export const JournalLineOneSided = Norn.law({
   id: "accounting.JournalLine.one_sided.law",
-  title: "Every journal line is strictly one-sided (debit or credit) with a matching positive amount",
+  title: "Every journal line is strictly one-sided (debit or credit) with a matching signed core.LedgerEffect amount",
   version: "0.1.0",
   dependencies: [{ artifactId: "accounting.JournalLine.entity", kind: "entity", version: "0.1.0", required: true }],
   law: {
@@ -306,14 +322,14 @@ export const JournalLineOneSided = Norn.law({
     id: "accounting.JournalLine.one_sided",
     owner: "accounting",
     severity: "error",
-    rationale: "A journal line must carry a strictly positive amount on exactly one side (debit or credit), zero on the opposite side, and match its canonical amount.",
+    rationale: "A journal line must carry a strictly positive amount on exactly one side (debit or credit), zero on the opposite side, and match core.LedgerEffect sign convention (+debit, -credit).",
     provenance: { source: "authoring_sdk", sourcePath: "registry/packs/accounting/ledger.ts" },
     subject: "accounting.JournalLine",
     scope: { root: { kind: "entity", id: "accounting.JournalLine" }, objectTypes: ["accounting.JournalLine"] },
     modality: { kind: "always" },
     response: {
       kind: "predicate",
-      expression: "(self.side == \"debit\" and self.debit_amount > 0 and self.credit_amount == 0 and self.amount == self.debit_amount) or (self.side == \"credit\" and self.credit_amount > 0 and self.debit_amount == 0 and self.amount == self.credit_amount)",
+      expression: "(self.side == \"debit\" and self.debit_amount > 0 and self.credit_amount == 0 and self.amount == self.debit_amount) or (self.side == \"credit\" and self.credit_amount > 0 and self.debit_amount == 0 and self.amount == -self.credit_amount)",
     },
   },
 })
@@ -324,15 +340,21 @@ export const JournalLineDebitHolds = Norn.example("debit journal line holds", {
   expect: "holds",
 })
 
-export const JournalLineCreditHolds = Norn.example("credit journal line holds", {
+export const JournalLineCreditHolds = Norn.example("credit journal line holds with signed negative amount", {
   of: JournalLineOneSided,
-  given: { side: "credit", amount: 500, debit_amount: 0, credit_amount: 500 },
+  given: { side: "credit", amount: -100, debit_amount: 0, credit_amount: 100 },
   expect: "holds",
 })
 
 export const JournalLineTwoSidedViolated = Norn.example("two-sided journal line is violated", {
   of: JournalLineOneSided,
   given: { side: "debit", amount: 500, debit_amount: 500, credit_amount: 100 },
+  expect: "violated",
+})
+
+export const JournalLinePositiveCreditViolated = Norn.example("credit journal line with positive amount is violated", {
+  of: JournalLineOneSided,
+  given: { side: "credit", amount: 100, debit_amount: 0, credit_amount: 100 },
   expect: "violated",
 })
 
@@ -405,6 +427,7 @@ export const MonetaryAccountNegativeViolated = Norn.example("negative monetary a
 const PostJournalSlice = Schema.Struct({
   slice: Schema.Struct({
     entry: Schema.Struct({
+      status: JournalEntryStatus,
       total_debit: Norn.decimal(6),
       total_credit: Norn.decimal(6),
     }),
@@ -439,6 +462,7 @@ export const PostJournalEntry = Norn.action({
     Norn.expression(
       PostJournalSlice,
       (ctx) => ctx.slice.period.status === "open"
+        && ctx.slice.entry.status === "draft"
         && ctx.slice.entry.total_debit === ctx.slice.entry.total_credit
         && ctx.slice.entry.total_debit > 0,
       { root: "context" },

@@ -45,8 +45,7 @@
             },
             {
               "from": [
-                "issued",
-                "partially_paid"
+                "issued"
               ],
               "id": "record_partial_payment",
               "to": "partially_paid"
