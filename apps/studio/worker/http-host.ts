@@ -83,7 +83,7 @@ export function httpHost(origin: string, fetcher: typeof fetch = fetch, deadline
         controller.abort(new Error("the Norn host did not answer in time"))
       }, limit)
       // A redirect from the host is its answer, never followed with the host token attached.
-      const outbound = new Request(`${base}${pathname}${search}`, new Request(request, { redirect: "manual", signal: controller.signal }))
+      const outbound: Request = new Request(`${base}${pathname}${search}`, new Request(request, { redirect: "manual", signal: controller.signal }))
       try {
         return await fetcher(outbound)
       } catch (error) {
