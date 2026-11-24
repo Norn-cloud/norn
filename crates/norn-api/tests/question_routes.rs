@@ -2132,7 +2132,7 @@ impl norn_cell::engine::SqlEngine for TxHookEngine {
         let fire = self
             .before_tx
             .lock()
-            .map_err(|_| norn_cell::CellError::Engine("hook mutex poisoned".into()))?
+            .map_err(|error| norn_cell::CellError::Engine(format!("hook mutex poisoned: {error}")))?
             .take();
         if let Some(fire) = fire {
             fire();
@@ -2203,7 +2203,7 @@ impl<E: norn_cell::engine::SqlEngine> QuestionRuntime<E> for RacingRuntime {
         let before = self
             .before_evaluate
             .lock()
-            .map_err(|_| norn_cell::CellError::Engine("hook mutex poisoned".into()))?
+            .map_err(|error| norn_cell::CellError::Engine(format!("hook mutex poisoned: {error}")))?
             .take();
         if let Some(fire) = before {
             fire();
@@ -2218,7 +2218,7 @@ impl<E: norn_cell::engine::SqlEngine> QuestionRuntime<E> for RacingRuntime {
         let after = self
             .after_evaluate
             .lock()
-            .map_err(|_| norn_cell::CellError::Engine("hook mutex poisoned".into()))?
+            .map_err(|error| norn_cell::CellError::Engine(format!("hook mutex poisoned: {error}")))?
             .take();
         if let Some(fire) = after {
             fire();
