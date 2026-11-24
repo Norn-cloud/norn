@@ -2097,3 +2097,413 @@ fn a_question_on_a_field_whose_values_carry_a_runtime_label_is_refused_at_answer
         "an unlabeled field answers"
     );
 }
+
+type TxHook = Arc<std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>>;
+
+/// Wraps `NativeEngine` to run a one-shot hook immediately before the next
+/// `transaction(...)` begins, outside SQLite's `IMMEDIATE` lock.
+struct TxHookEngine {
+    inner: NativeEngine,
+    before_tx: TxHook,
+}
+
+impl norn_cell::engine::SqlEngine for TxHookEngine {
+    fn execute(
+        &self,
+        sql: &str,
+        params: &[norn_cell::engine::SqlValue],
+    ) -> Result<(), norn_cell::CellError> {
+        self.inner.execute(sql, params)
+    }
+    fn query(
+        &self,
+        sql: &str,
+        params: &[norn_cell::engine::SqlValue],
+    ) -> Result<Vec<Vec<norn_cell::engine::SqlValue>>, norn_cell::CellError> {
+        self.inner.query(sql, params)
+    }
+    fn execute_batch(&self, sql: &str) -> Result<(), norn_cell::CellError> {
+        self.inner.execute_batch(sql)
+    }
+    fn transaction<T, X: From<norn_cell::CellError>>(
+        &self,
+        f: impl FnOnce() -> Result<T, X>,
+    ) -> Result<T, X> {
+        let fire = self
+            .before_tx
+            .lock()
+            .map_err(|error| norn_cell::CellError::Engine(format!("hook mutex poisoned: {error}")))?
+            .take();
+        if let Some(fire) = fire {
+            fire();
+        }
+        self.inner.transaction(f)
+    }
+    fn platform_table_globs(&self) -> &'static [&'static str] {
+        self.inner.platform_table_globs()
+    }
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.inner.read_isolation()
+    }
+    fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, norn_cell::CellError> {
+        self.inner.read_cache_revision()
+    }
+    fn external_data_version(&self) -> Result<Option<u64>, norn_cell::CellError> {
+        self.inner.external_data_version()
+    }
+    fn admitted(&self) -> Result<(), norn_cell::CellError> {
+        self.inner.admitted()
+    }
+    fn checkpoint_key(&self) -> Option<norn_cell::CheckpointKey> {
+        self.inner.checkpoint_key()
+    }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, norn_cell::CellError>,
+    ) -> Result<T, norn_cell::CellError> {
+        self.inner.definition_writes(f)
+    }
+}
+
+struct RacingRuntime {
+    inner: Runtime,
+    before_evaluate: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    after_evaluate: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    inject_eval_error: bool,
+}
+
+impl<E: norn_cell::engine::SqlEngine> QuestionRuntime<E> for RacingRuntime {
+    fn plan(&self, question: &str) -> Result<QuestionPlan, Refusal> {
+        self.inner.plan(question)
+    }
+    fn snapshot(
+        &self,
+        _: &CellStore<E>,
+        _: &QuestionPlan,
+        actor: &str,
+    ) -> Result<QuestionSnapshot, Refusal> {
+        let mut context = self.inner.context.clone();
+        context.population_pin = format!("fixture:{actor}");
+        Ok(QuestionSnapshot {
+            context,
+            cutoff: self.inner.cutoff,
+        })
+    }
+    fn access(
+        &self,
+        scope: &CellScope,
+        actor: &str,
+        question: &str,
+        capability: ReadCapability,
+        row: Option<&ObjectRecord>,
+    ) -> Result<PdpRequest, Refusal> {
+        self.inner.access(scope, actor, question, capability, row)
+    }
+    fn evaluate(
+        &self,
+        store: &CellStore<E>,
+        plan: &QuestionPlan,
+        context: QueryContext,
+        visible: &mut dyn FnMut(&ObjectRecord) -> Result<bool, norn_cell::CellError>,
+    ) -> Result<norn_cell::compute::QueryResult, norn_cell::CellError> {
+        let before = self
+            .before_evaluate
+            .lock()
+            .map_err(|error| norn_cell::CellError::Engine(format!("hook mutex poisoned: {error}")))?
+            .take();
+        if let Some(fire) = before {
+            fire();
+        }
+        let outcome = if self.inject_eval_error {
+            Err(norn_cell::CellError::ComputeRefused(
+                "core.compute.stale_input",
+            ))
+        } else {
+            store.evaluate_question(plan, context, visible)
+        };
+        let after = self
+            .after_evaluate
+            .lock()
+            .map_err(|error| norn_cell::CellError::Engine(format!("hook mutex poisoned: {error}")))?
+            .take();
+        if let Some(fire) = after {
+            fire();
+        }
+        outcome
+    }
+    fn min_disclosed_bucket(&self) -> usize {
+        self.inner.min_disclosed_bucket()
+    }
+    fn handle_key(&self) -> &[u8] {
+        self.inner.handle_key()
+    }
+    fn collection_access(
+        &self,
+        scope: &CellScope,
+        actor: &str,
+        capability: ReadCapability,
+        object_type: &str,
+    ) -> Result<PdpRequest, Refusal> {
+        self.inner
+            .collection_access(scope, actor, capability, object_type)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum MarkingRaceKind {
+    LiveAnswer,
+    LiveAnswerTransientDelete,
+    LiveAnswerRacedError,
+    HistoricalTrace,
+}
+
+fn commit_labelled_on_second_conn(
+    path: std::path::PathBuf,
+    model: norn_cell::Model,
+    scope_key: String,
+    metal: String,
+) -> Box<dyn FnOnce() + Send> {
+    Box::new(move || {
+        let mut writer = CellStore::open(&path, model, norn_cell::StoreOptions::default())
+            .expect("second connection");
+        writer
+            .commit(&CommitBatch {
+                world: norn_cell::MAIN_WORLD.into(),
+                scope: scope_key,
+                logical_time: CLOCK + 1000,
+                writes: vec![put(
+                    "SYN-SECRET-1",
+                    50_000,
+                    48_000,
+                    "2026-10-23T12:00:00Z",
+                    &metal,
+                )],
+                events: vec![
+                    norn_ir::RuntimeValue::from_json(serde_json::json!({
+                        "type": "observation.recorded",
+                        "mapped": [{
+                            "objectType": TYPE,
+                            "key": "SYN-SECRET-1",
+                            "propertyProvenance": {"metal": {"markings": ["pii.contact"]}}
+                        }]
+                    }))
+                    .expect("event"),
+                ],
+                ..CommitBatch::default()
+            })
+            .expect("concurrent labelled commit");
+    })
+}
+
+fn delete_labelled_on_second_conn(
+    path: std::path::PathBuf,
+    model: norn_cell::Model,
+    scope_key: String,
+) -> Box<dyn FnOnce() + Send> {
+    Box::new(move || {
+        let mut writer = CellStore::open(&path, model, norn_cell::StoreOptions::default())
+            .expect("second connection");
+        writer
+            .commit(&CommitBatch {
+                world: norn_cell::MAIN_WORLD.into(),
+                scope: scope_key,
+                logical_time: CLOCK + 2000,
+                writes: vec![FactWriteRow::Delete {
+                    object_type: TYPE.into(),
+                    key: "SYN-SECRET-1".into(),
+                }],
+                ..CommitBatch::default()
+            })
+            .expect("concurrent delete");
+    })
+}
+
+struct RaceFixture {
+    host: DevHost<TxHookEngine>,
+    before_tx: TxHook,
+    model: norn_cell::Model,
+    plan: QuestionPlan,
+    context: QueryContext,
+    initial_seq: u64,
+}
+
+fn open_race_fixture(path: &std::path::Path) -> RaceFixture {
+    let (base_store, plan, mut context) = fixture();
+    let model = base_store.model().clone();
+    context.scope = physical().key();
+    context.world = norn_cell::MAIN_WORLD.into();
+    let initial_seq = {
+        let mut store =
+            CellStore::open(path, model.clone(), norn_cell::StoreOptions::default()).expect("db");
+        install_runtime_marking(&mut store, &context.scope);
+        store
+            .commit(&CommitBatch {
+                world: norn_cell::MAIN_WORLD.into(),
+                scope: context.scope.clone(),
+                logical_time: CLOCK,
+                writes: fixture_writes(),
+                ..CommitBatch::default()
+            })
+            .expect("K1 clean rows")
+            .receipt()
+            .body
+            .commit_seq
+    };
+    let before_tx = Arc::new(std::sync::Mutex::new(None));
+    let engine = TxHookEngine {
+        inner: NativeEngine::open(path, norn_cell::StoreOptions::default()).expect("engine"),
+        before_tx: Arc::clone(&before_tx),
+    };
+    let store = CellStore::from_engine(engine, model.clone()).expect("store");
+    let host = DevHost::from_store(store, physical(), |_| BTreeMap::new())
+        .expect("host")
+        .with_authorizer(Policy);
+    RaceFixture {
+        host,
+        before_tx,
+        model,
+        plan,
+        context,
+        initial_seq,
+    }
+}
+
+fn run_marking_race(secret_metal: &str, kind: MarkingRaceKind) -> Refusal {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("cell.sqlite");
+    let RaceFixture {
+        host,
+        before_tx,
+        model,
+        plan,
+        context,
+        initial_seq,
+    } = open_race_fixture(&path);
+    let commit_labelled = commit_labelled_on_second_conn(
+        path.clone(),
+        model.clone(),
+        context.scope.clone(),
+        secret_metal.to_owned(),
+    );
+    let delete_labelled = delete_labelled_on_second_conn(path, model, context.scope.clone());
+    let actor = match kind {
+        MarkingRaceKind::HistoricalTrace => "auditor",
+        MarkingRaceKind::LiveAnswer
+        | MarkingRaceKind::LiveAnswerTransientDelete
+        | MarkingRaceKind::LiveAnswerRacedError => "reader",
+    };
+    let clean = RacingRuntime {
+        inner: Runtime {
+            bad_row: false,
+            plan,
+            context: context.clone(),
+            cutoff: None,
+            cutoff_receipt: None,
+            resolved: Arc::new(AtomicUsize::new(0)),
+            min_disclosed: norn_api::question_routes::DEFAULT_MIN_DISCLOSED_BUCKET,
+        },
+        before_evaluate: std::sync::Mutex::new(None),
+        after_evaluate: std::sync::Mutex::new(None),
+        inject_eval_error: false,
+    };
+    let baseline = get_answer(&host, &scope(), Some(actor), QUESTION, &clean)
+        .expect("clean cell answers before the race");
+    let lineage = match baseline {
+        QuestionAnswer::Live(result) => result.lineage_ref,
+        QuestionAnswer::Historical(hist) => hist.result.lineage_ref,
+    };
+
+    match kind {
+        MarkingRaceKind::LiveAnswer => {
+            *clean.before_evaluate.lock().expect("lock") = Some(commit_labelled);
+            get_answer(&host, &scope(), Some(actor), QUESTION, &clean)
+                .expect_err("raced answer must be discarded and refused")
+        }
+        MarkingRaceKind::LiveAnswerTransientDelete => {
+            *clean.before_evaluate.lock().expect("lock") = Some(commit_labelled);
+            *clean.after_evaluate.lock().expect("lock") = Some(delete_labelled);
+            get_answer(&host, &scope(), Some(actor), QUESTION, &clean)
+                .expect_err("transiently marked raced answer must be discarded")
+        }
+        MarkingRaceKind::LiveAnswerRacedError => {
+            let mut raced = clean;
+            raced.inject_eval_error = true;
+            *raced.before_evaluate.lock().expect("lock") = Some(commit_labelled);
+            get_answer(&host, &scope(), Some(actor), QUESTION, &raced)
+                .expect_err("raced evaluator error must still surface the marking refusal")
+        }
+        MarkingRaceKind::HistoricalTrace => {
+            *before_tx.lock().expect("lock") = Some(commit_labelled);
+            let mut query = trace_query(&lineage);
+            query.known_as_of = Some(initial_seq);
+            query.now_ms = Some(context.now_ms);
+            get_numeric_trace(&host, &query, Some(actor), QUESTION, &clean)
+                .expect_err("raced historical trace must be discarded and refused")
+        }
+    }
+}
+
+/// S2b (#1559): if another connection commits a labelled row between the
+/// pre-evaluation marking check and evaluation, both `get_answer` (including
+/// transient-delete and evaluator-error paths) and `get_numeric_trace` discard
+/// the raced result and refuse without leaking any bucket key. Two worlds
+/// differing only in the secret marked value refuse identically.
+#[test]
+fn a_concurrent_labelled_commit_between_check_and_evaluate_is_discarded_and_refused() {
+    let live_a = run_marking_race("secret-alpha", MarkingRaceKind::LiveAnswer);
+    let live_b = run_marking_race("secret-beta", MarkingRaceKind::LiveAnswer);
+    assert_eq!(
+        (live_a.status, live_a.code.as_str()),
+        (422, "question.refused"),
+        "{live_a:?}"
+    );
+    assert_eq!(
+        serde_json::to_string(&live_a).expect("json"),
+        serde_json::to_string(&live_b).expect("json"),
+        "two worlds differing only in a secret marked value must refuse identically"
+    );
+    assert!(
+        !serde_json::to_string(&live_a)
+            .expect("json")
+            .contains("secret-alpha")
+    );
+
+    let transient_a = run_marking_race("secret-alpha", MarkingRaceKind::LiveAnswerTransientDelete);
+    let transient_b = run_marking_race("secret-beta", MarkingRaceKind::LiveAnswerTransientDelete);
+    assert_eq!(
+        (transient_a.status, transient_a.code.as_str()),
+        (409, "core.projection.answer_moved"),
+        "{transient_a:?}"
+    );
+    assert_eq!(
+        serde_json::to_string(&transient_a).expect("json"),
+        serde_json::to_string(&transient_b).expect("json"),
+        "transient delete race must refuse identically across worlds"
+    );
+
+    let err_a = run_marking_race("secret-alpha", MarkingRaceKind::LiveAnswerRacedError);
+    let err_b = run_marking_race("secret-beta", MarkingRaceKind::LiveAnswerRacedError);
+    assert_eq!(
+        (err_a.status, err_a.code.as_str()),
+        (422, "question.refused"),
+        "{err_a:?}"
+    );
+    assert_eq!(
+        serde_json::to_string(&err_a).expect("json"),
+        serde_json::to_string(&err_b).expect("json"),
+        "raced evaluator errors must refuse identically across worlds"
+    );
+
+    let trace_a = run_marking_race("secret-alpha", MarkingRaceKind::HistoricalTrace);
+    let trace_b = run_marking_race("secret-beta", MarkingRaceKind::HistoricalTrace);
+    assert_eq!(
+        (trace_a.status, trace_a.code.as_str()),
+        (422, norn_api::question_routes::MARKED_HISTORY),
+        "{trace_a:?}"
+    );
+    assert_eq!(
+        serde_json::to_string(&trace_a).expect("json"),
+        serde_json::to_string(&trace_b).expect("json"),
+        "two worlds must refuse raced historical traces identically"
+    );
+}

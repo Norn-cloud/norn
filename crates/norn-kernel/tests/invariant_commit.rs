@@ -4090,3 +4090,128 @@ fn law_with_exceptions_refuses_until_the_fold_lands() {
     assert!(native.load(&key).unwrap().values.is_none());
     assert_eq!(native.ledger(), []);
 }
+
+#[test]
+fn val_exact_invariants_admit_and_evaluate_temporal_functions_with_decimals()
+-> Result<(), Box<dyn std::error::Error>> {
+    let definition: ObjectTypeDef = serde_json::from_value(json!({
+        "name": ITEM,
+        "properties": [
+            {"id": "count", "type": {"kind": "integer"}},
+            {"id": "hours", "type": {"kind": "decimal", "scale": 2}},
+            {"id": "start_date", "type": {"kind": "date"}},
+            {"id": "end_date", "type": {"kind": "date"}}
+        ],
+        "invariants": [
+            {
+                "id": "valid_shift_window",
+                "expression": "((self.count >= 0) and ((self.hours >= 0.00) and (self.hours <= 24.00))) and (date(self.start_date) < date(self.end_date))",
+                "message": "shift hours and date range must be valid"
+            }
+        ]
+    }))?;
+    let catalog = TypeCatalog::new([&definition]);
+
+    // Valid record satisfies the invariant cleanly through the exact VM.
+    let valid_values = object(json!({
+        "count": 1,
+        "hours": "8.50",
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-05"
+    }));
+    let mut remaining = 10_000;
+    let failures = norn_kernel::evaluate_invariants(
+        &catalog,
+        &FactKey::new(ITEM, "shift-ok"),
+        &valid_values,
+        &mut remaining,
+    )
+    .map_err(|err| format!("evaluate_invariants shift-ok: {err:?}"))?;
+    assert!(
+        failures.is_empty(),
+        "expected no failures, got {failures:?}"
+    );
+    assert!(remaining < 10_000);
+
+    // Date-order violation evaluates to NotSatisfied (not an admission EvaluationFailed).
+    let reversed_dates = object(json!({
+        "count": 1,
+        "hours": "8.50",
+        "start_date": "2026-01-05",
+        "end_date": "2026-01-01"
+    }));
+    let mut remaining = 10_000;
+    let date_failures = norn_kernel::evaluate_invariants(
+        &catalog,
+        &FactKey::new(ITEM, "shift-bad-dates"),
+        &reversed_dates,
+        &mut remaining,
+    )
+    .map_err(|err| format!("evaluate_invariants shift-bad-dates: {err:?}"))?;
+    let first_date_failure = date_failures
+        .first()
+        .ok_or("expected date-order invariant failure")?;
+    assert_eq!(date_failures.len(), 1);
+    assert_eq!(first_date_failure.outcome, DataQualityOutcome::NotSatisfied);
+
+    // Decimal-range violation also evaluates to NotSatisfied.
+    let bad_hours = object(json!({
+        "count": 1,
+        "hours": "25.00",
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-05"
+    }));
+    let mut remaining = 10_000;
+    let hour_failures = norn_kernel::evaluate_invariants(
+        &catalog,
+        &FactKey::new(ITEM, "shift-bad-hours"),
+        &bad_hours,
+        &mut remaining,
+    )
+    .map_err(|err| format!("evaluate_invariants shift-bad-hours: {err:?}"))?;
+    let first_hour_failure = hour_failures
+        .first()
+        .ok_or("expected decimal-hours invariant failure")?;
+    assert_eq!(hour_failures.len(), 1);
+    assert_eq!(first_hour_failure.outcome, DataQualityOutcome::NotSatisfied);
+
+    // Negative control: bare division alongside temporal/decimal still refuses at admission.
+    let bad_def: ObjectTypeDef = serde_json::from_value(json!({
+        "name": ITEM,
+        "properties": [
+            {"id": "hours", "type": {"kind": "decimal", "scale": 2}},
+            {"id": "start_date", "type": {"kind": "date"}},
+            {"id": "end_date", "type": {"kind": "date"}}
+        ],
+        "invariants": [
+            {
+                "id": "bare_division",
+                "expression": "(self.hours / 2 >= 0) and (date(self.start_date) < date(self.end_date))",
+                "message": "bare division must refuse"
+            }
+        ]
+    }))?;
+    let bad_catalog = TypeCatalog::new([&bad_def]);
+    let div_values = object(json!({
+        "hours": "8.50",
+        "start_date": "2026-01-01",
+        "end_date": "2026-01-05"
+    }));
+    let mut remaining = 10_000;
+    let div_failures = norn_kernel::evaluate_invariants(
+        &bad_catalog,
+        &FactKey::new(ITEM, "shift-div"),
+        &div_values,
+        &mut remaining,
+    )
+    .map_err(|err| format!("evaluate_invariants shift-div: {err:?}"))?;
+    let first_div_failure = div_failures
+        .first()
+        .ok_or("expected admission failure for bare division")?;
+    assert!(matches!(
+        first_div_failure.outcome,
+        DataQualityOutcome::EvaluationFailed { .. }
+    ));
+
+    Ok(())
+}

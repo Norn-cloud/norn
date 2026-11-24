@@ -49,6 +49,9 @@ use crate::scope::ScopeQuery;
 
 /// Most versions one history lists, newest first.
 pub const MAX_HISTORY_VERSIONS: u64 = 64;
+/// Most raw versions scanned backward to establish visible changes and skip
+/// hidden-only writes before declaring the history truncated (#1534 S7).
+const MAX_HISTORY_SCAN: u64 = 1_024;
 /// Most evidence links one findings read lists.
 pub const MAX_EVIDENCE: usize = 200;
 /// The core interface of evidence objects (`registry/core/src/evidence.ts`).
@@ -471,15 +474,33 @@ fn version_read<E: SqlEngine>(
     Ok(readable.then(|| (stored, permitted(host, access, actor, &decided_on, Sources))))
 }
 
-/// One version with its receipt and writer, or `None` when the caller may not
-/// read it ([`version_read`]); its source lineage only under that version's
-/// Sources.
+/// Disclosure-relevant state of one readable version (#1534 S6): two
+/// consecutive readable versions collapse only when all three match:
+/// - `values`: projected property map (`BTreeMap`, property order immaterial),
+///   or `None` for a tombstone.
+/// - `writer_json`: canonical serialization of the disclosed [`NornVersionWriter`]
+///   (including disclosed action id/actor/trace and disclosed mapping lineage).
+/// - `projected`: [`crate::privacy::Projected`] marking metadata (mask mode,
+///   effective markings, revealability, and withheld properties), preserved
+///   even though history entries do not serialize marking metadata separately,
+///   so marking changes with equal projected values are not over-merged.
+#[derive(PartialEq)]
+struct VisibleSignature {
+    values: Option<BTreeMap<String, RuntimeValue>>,
+    writer_json: String,
+    projected: crate::privacy::Projected,
+}
+
+/// One version with its receipt, writer, and disclosure-relevant signature, or
+/// `None` when the caller may not read it ([`version_read`]); its source
+/// lineage only under that version's Sources (skipped for tombstones, which
+/// carry no live instance provenance).
 fn version_entry<E: SqlEngine>(
     (host, access, actor): (&DevHost<E>, &dyn ObjectAccess, &str),
     reader: &StoreReader<'_, E>,
     row: &ObjectRecord,
     version: u64,
-) -> Result<Option<NornObjectVersion>, Refusal> {
+) -> Result<Option<(NornObjectVersion, VisibleSignature)>, Refusal> {
     let Some((stored, sources)) = version_read((host, access, actor), reader, row, version)? else {
         return Ok(None);
     };
@@ -490,19 +511,22 @@ fn version_entry<E: SqlEngine>(
     // PRIVACY-1: each version's values are projected under that version's
     // own markings; a marked version names no writer input or source row.
     let mut marked = false;
+    let mut projected = crate::privacy::Projected::default();
+    let is_tombstone = stored.is_none();
     let values = match stored {
         Some(mut record) => {
             let markings = crate::privacy::version_markings(reader, &catalog, &record)?;
             marked = markings
                 .as_ref()
                 .is_none_or(|markings| markings.values().any(|ids| !ids.is_empty()));
-            crate::privacy::project(host, actor, &catalog, markings.as_ref(), &mut record);
+            projected =
+                crate::privacy::project(host, actor, &catalog, markings.as_ref(), &mut record);
             Some(record.values.into_iter().collect())
         }
         None => None,
     };
     let fact = FactRef::new(row.object_type.as_str(), &row.id, version);
-    let lineage = if marked || !sources {
+    let lineage = if is_tombstone || marked || !sources {
         None
     } else {
         reader
@@ -515,13 +539,82 @@ fn version_entry<E: SqlEngine>(
         None => action_writer((host, access, actor), reader, &receipt)?
             .unwrap_or(NornVersionWriter::Other),
     };
-    Ok(Some(NornObjectVersion {
-        version,
-        commit: receipt.body.commit_seq,
-        logical_time: receipt.body.logical_time,
-        values,
-        writer,
-    }))
+    let writer_json = serde_json::to_string(&writer).map_err(Refusal::host)?;
+    let signature = VisibleSignature {
+        values: values.clone(),
+        writer_json,
+        projected,
+    };
+    Ok(Some((
+        NornObjectVersion {
+            version,
+            commit: receipt.body.commit_seq,
+            logical_time: receipt.body.logical_time,
+            values,
+            writer,
+        },
+        signature,
+    )))
+}
+
+/// Walk backward from `head_version` down to `1` (bounded by `scan_limit`) to
+/// collapse consecutive equal-signature runs onto their earliest version and
+/// suppress any boundary run whose predecessor could not be inspected (#1534
+/// S6, S7).
+fn collect_history_versions(
+    head_version: u64,
+    max_versions: usize,
+    scan_limit: u64,
+    mut load_entry: impl FnMut(u64) -> Result<Option<(NornObjectVersion, VisibleSignature)>, Refusal>,
+) -> Result<(Vec<NornObjectVersion>, bool), Refusal> {
+    let mut versions: Vec<NornObjectVersion> = Vec::new();
+    let mut current_run: Option<(NornObjectVersion, VisibleSignature)> = None;
+    let mut truncated = false;
+    let mut scanned = 0_u64;
+    let mut version = head_version;
+    while version >= 1 {
+        if scanned >= scan_limit {
+            // Stopped before version 1 without establishing whether
+            // `current_run` changed anything relative to `version`; fail
+            // closed by suppressing the unverified boundary run.
+            current_run = None;
+            truncated = true;
+            break;
+        }
+        scanned = scanned.saturating_add(1);
+        if let Some((entry, signature)) = load_entry(version)? {
+            match &mut current_run {
+                Some((earliest, run_sig)) if *run_sig == signature => {
+                    *earliest = entry;
+                }
+                Some(_) => {
+                    if let Some((earliest, _)) = current_run.replace((entry, signature)) {
+                        versions.push(earliest);
+                    }
+                    if versions.len() >= max_versions {
+                        current_run = None;
+                        truncated = true;
+                        break;
+                    }
+                }
+                None => {
+                    current_run = Some((entry, signature));
+                }
+            }
+        }
+        if version == 1 {
+            break;
+        }
+        version = version.saturating_sub(1);
+    }
+    if let Some((earliest, _)) = current_run {
+        if versions.len() < max_versions {
+            versions.push(earliest);
+        } else {
+            truncated = true;
+        }
+    }
+    Ok((versions, truncated))
 }
 
 /// HOST-READ-6: an object's proven versions, newest first, with what wrote each.
@@ -545,35 +638,17 @@ pub fn get_object_history<E: SqlEngine>(
     // current row to read it at all, then each version's own decision.
     let row = raw_row(host, access, (object_type, id), &mut start)?;
     let row = readable(host, access, &actor, row)?;
-    let oldest = row
-        .version
-        .saturating_sub(MAX_HISTORY_VERSIONS)
-        .saturating_add(1)
-        .max(1);
+    let max_versions = usize::try_from(MAX_HISTORY_VERSIONS).unwrap_or(usize::MAX);
     locked(host, access, &mut start, |reader| {
-        // Oldest first, so each version is compared with the last one listed.
-        let mut versions: Vec<NornObjectVersion> = Vec::new();
-        for version in oldest..=row.version {
-            let Some(entry) = version_entry((host, access, &actor), reader, &row, version)? else {
-                continue;
-            };
-            // A write that changed nothing the caller may see (only a withheld
-            // field, or nothing) is not listed: its version, commit and time
-            // would tell that a hidden value changed then.
-            if versions
-                .last()
-                .is_some_and(|last| last.values == entry.values)
-            {
-                continue;
-            }
-            versions.push(entry);
-        }
-        versions.reverse();
+        let (versions, truncated) =
+            collect_history_versions(row.version, max_versions, MAX_HISTORY_SCAN, |version| {
+                version_entry((host, access, &actor), reader, &row, version)
+            })?;
         Ok(NornObjectHistory {
             object_type: row.object_type.clone(),
             id: row.id.clone(),
             versions,
-            truncated: oldest > 1,
+            truncated,
         })
     })
 }
@@ -756,6 +831,192 @@ mod trace_tests {
                 "must fail closed on {bad}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn collect_history_suppresses_unverified_boundary_run_when_scan_limit_hits()
+    -> Result<(), String> {
+        let make = |version: u64, name: &str| {
+            let values = Some(BTreeMap::from([(
+                "name".to_owned(),
+                RuntimeValue::from(name),
+            )]));
+            let sig = VisibleSignature {
+                values: values.clone(),
+                writer_json: String::from(r#"{"kind":"other"}"#),
+                projected: crate::privacy::Projected::default(),
+            };
+            let entry = NornObjectVersion {
+                version,
+                commit: version,
+                logical_time: version.saturating_mul(10),
+                values,
+                writer: NornVersionWriter::Other,
+            };
+            (entry, sig)
+        };
+        // 5 versions with identical visible state (`v1`..`v5`) and scan_limit = 4:
+        // scanning `v5..=v2` cannot inspect `v1`, so `v2` is suppressed (never
+        // emitted as a false visible change) and `truncated` is true.
+        let (versions, truncated) =
+            collect_history_versions(5, 64, 4, |version| Ok(Some(make(version, "Ada"))))
+                .map_err(|err| format!("{err:?}"))?;
+        assert!(versions.is_empty(), "{versions:?}");
+        assert!(truncated);
+
+        // When `v5` visibly changed relative to `v4..=v1` and scan_limit = 4:
+        // `v5` IS proven to differ from `v4`, while the unverified `v4..=v2` run
+        // is suppressed at the scan cap with `truncated = true`.
+        let (versions, truncated) = collect_history_versions(5, 64, 4, |version| {
+            let name = if version == 5 { "Ada B." } else { "Ada" };
+            Ok(Some(make(version, name)))
+        })
+        .map_err(|err| format!("{err:?}"))?;
+        assert_eq!(
+            versions.iter().map(|v| v.version).collect::<Vec<_>>(),
+            vec![5]
+        );
+        assert!(truncated);
+        Ok(())
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    struct AllowAll;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    impl crate::authz::Authorizer for AllowAll {
+        fn authorize(&self, _: &crate::authz::AccessRequest<'_>) -> Result<(), Refusal> {
+            Ok(())
+        }
+        fn read(&self, _: &crate::authz::ReadRequest<'_>) -> Result<(), Refusal> {
+            Ok(())
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    struct TestAccess;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    impl ObjectAccess for TestAccess {
+        fn access(
+            &self,
+            scope: &crate::scope::CellScope,
+            actor: &str,
+            capability: crate::authz::ReadCapability,
+            object_type: &str,
+            row: Option<&ObjectRecord>,
+        ) -> Result<norn_kernel::authz::AccessRequest, Refusal> {
+            let key = norn_kernel::authz::ScopeKey {
+                org: scope.org_id.clone(),
+                environment: Some(scope.environment_id.clone()),
+                tenant: None,
+                workspace: None,
+                business_unit: None,
+            };
+            Ok(norn_kernel::authz::AccessRequest {
+                principal: norn_kernel::authz::PrincipalInput {
+                    subject_id: actor.into(),
+                    actor_kind: norn_kernel::authz::ActorKind::User,
+                    agent_session_id: None,
+                    roles: vec![],
+                    attributes: BTreeMap::new(),
+                },
+                scope: Some(key.clone()),
+                capability: format!("test.{capability:?}"),
+                action_id: "norn.read".into(),
+                resource: norn_kernel::authz::ResourceInput {
+                    object_type: row.map_or(object_type, |r| r.object_type.as_str()).into(),
+                    id: row.map_or(object_type, |r| r.id.as_str()).into(),
+                    scope: key,
+                    attributes: BTreeMap::new(),
+                },
+                context: BTreeMap::new(),
+                binding: None,
+                delegation: norn_kernel::authz::Delegation::Direct,
+            })
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn version_entry_serves_readable_tombstone_without_source_provenance_error()
+    -> Result<(), String> {
+        use crate::scope::CellScope;
+        use norn_cell::engine::NativeEngine;
+        use norn_cell::{CellStore, Model, SqliteCell, StoreOptions};
+        use norn_kernel::{
+            CellCommit, CellHost as _, FactKey, FactMutation, FactVersion, FactWrite, LogicalTime,
+        };
+
+        let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
+        let path = dir.path().join("cell.sqlite");
+        let item: norn_ir::ObjectTypeDef = serde_json::from_value(serde_json::json!({
+            "name": "shop.Item",
+            "properties": [{"id": "name", "type": {"kind": "text"}}]
+        }))
+        .map_err(|e| e.to_string())?;
+        let model = Model::from_definitions(&[item], &[]).map_err(|e| e.to_string())?;
+        let scope = CellScope {
+            org_id: "org_a".into(),
+            environment_id: "dev".into(),
+        };
+        let store =
+            CellStore::open(&path, model, StoreOptions::default()).map_err(|e| e.to_string())?;
+        let mut cell: SqliteCell<
+            RuntimeValue,
+            norn_kernel::cell_host::JsonObject,
+            norn_kernel::cell_host::JsonObject,
+            NativeEngine,
+        > = SqliteCell::new(
+            store,
+            scope.key(),
+            |command: &norn_kernel::Command<norn_kernel::cell_host::JsonObject>| {
+                command.payload.clone()
+            },
+        )
+        .map_err(|e| format!("{e:?}"))?;
+        cell.advance_to(LogicalTime::from_millis(2));
+        cell.commit(CellCommit {
+            writes: vec![FactWrite {
+                key: FactKey::new("shop.Item", "i1"),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: BTreeMap::from([("name".to_owned(), RuntimeValue::from("Lathe"))]),
+                },
+            }],
+            ..CellCommit::empty()
+        })
+        .map_err(|e| format!("{e:?}"))?;
+        cell.advance_to(LogicalTime::from_millis(3));
+        cell.commit(CellCommit {
+            writes: vec![FactWrite {
+                key: FactKey::new("shop.Item", "i1"),
+                expected: FactVersion(1),
+                mutation: FactMutation::Delete,
+            }],
+            ..CellCommit::empty()
+        })
+        .map_err(|e| format!("{e:?}"))?;
+        let store = cell.into_store();
+        let host = DevHost::from_store(store, scope.clone(), |command| command.payload.clone())
+            .map_err(|e| format!("{e:?}"))?
+            .with_authorizer(AllowAll);
+        let row = ObjectRecord {
+            object_type: "shop.Item".into(),
+            id: "i1".into(),
+            scope: scope.key(),
+            version: 2,
+            values: BTreeMap::new(),
+        };
+        let cell_ref = host.cell().map_err(|e| format!("{e:?}"))?;
+        let reader = cell_ref.store().read();
+        let (entry, _sig) = version_entry((&host, &TestAccess, "viewer"), &reader, &row, 2)
+            .map_err(|e| format!("{e:?}"))?
+            .ok_or_else(|| String::from("tombstone version must be readable"))?;
+        assert_eq!(entry.version, 2);
+        assert!(entry.values.is_none());
+        assert!(matches!(entry.writer, NornVersionWriter::Other));
         Ok(())
     }
 }
