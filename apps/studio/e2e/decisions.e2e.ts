@@ -119,10 +119,10 @@ test("edit (decide): a high-risk choice that starts an action confirms first; th
   const steps = page.getByRole("list", { name: "Steps" }).getByRole("listitem")
   await expect(steps.nth(1)).toContainText("Done")
   await expect(steps.nth(1)).toContainText("Done by you")
-  await expect(page.getByText("Live")).toBeVisible()
+  await expect(page.getByText("Live", { exact: true })).toBeVisible()
   // The run is read again while it works, until it succeeds.
   await expect(page.getByText("Succeeded")).toBeVisible({ timeout: 20_000 })
-  await expect(page.getByText("Live")).toHaveCount(0)
+  await expect(page.getByText("Live", { exact: true })).toHaveCount(0)
   await shoot(page, "run-succeeded")
 })
 
@@ -259,7 +259,7 @@ test("run view, first cut: a run the cell calls terminal reads as ended and is n
   page.on("request", (request) => { if (request.url().includes("/api/host/v1/runs/run_count_3")) reads += 1 })
   await page.goto("/runs/run_count_3")
   await expect(page.getByText("Ended", { exact: true })).toBeVisible()
-  await expect(page.getByText("Live")).toHaveCount(0)
+  await expect(page.getByText("Live", { exact: true })).toHaveCount(0)
   await page.waitForTimeout(7_000) // an ended run is not watched: no socket subscription, no read
   expect(reads).toBe(1)
 })

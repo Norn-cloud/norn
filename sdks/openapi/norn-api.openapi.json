@@ -652,6 +652,103 @@
         ]
       }
     },
+    "/v1/datasets/{type}/rows/{row}:lineage": {
+      "get": {
+        "tags": [
+          "crate::analytics_routes"
+        ],
+        "summary": "MANIFEST-LINEAGE-1: trace one dataset row, as a question answer or the\nrecords grid names it, to the manifest that admitted it, the source\nupload and the data file, each by content hash and row offset, with what\nheld it back. Held-back rows are traced too. Requires Population, Values\nand Sources on the type; no value is disclosed.",
+        "description": "# Errors\nA denied gate (one opaque 403), no dataset or no such row (404), or an\nunreachable engine.",
+        "operationId": "dataset_lineage",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "path",
+            "description": "The dataset's object type.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "row",
+            "in": "path",
+            "description": "The source row offset.",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The row's lineage.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NornDatasetLineage"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The request was refused: scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The request was refused: not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The request was refused: host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
     "/v1/datasets:load": {
       "post": {
         "tags": [
@@ -5086,6 +5183,10 @@
             "$ref": "#/components/schemas/ActionCommit",
             "description": "The original commit, the same on every replay."
           },
+          "trace": {
+            "$ref": "#/components/schemas/TraceContext",
+            "description": "Optional provenance trace context retained from the original call."
+          },
           "version": {
             "type": "integer",
             "format": "int64",
@@ -5108,6 +5209,10 @@
           },
           "input": {
             "$ref": "#/components/schemas/NornActionInput"
+          },
+          "trace": {
+            "$ref": "#/components/schemas/TraceContext",
+            "description": "Optional provenance trace context persisted on the committed receipt."
           }
         },
         "additionalProperties": false
@@ -5595,6 +5700,10 @@
             "propertyNames": {
               "type": "string"
             }
+          },
+          "trace": {
+            "$ref": "#/components/schemas/TraceContext",
+            "description": "Optional provenance trace context carried by the parked call."
           }
         }
       },
@@ -6564,6 +6673,47 @@
         },
         "additionalProperties": false
       },
+      "NornActionActionParameterPin": {
+        "type": "object",
+        "description": "One effective-dated parameter resolved and pinned during an action commit\n(D07, PARAM-EXACT-1, PARAM-BOUND-1).",
+        "required": [
+          "entry",
+          "settingKey",
+          "effectiveAt",
+          "setting",
+          "version",
+          "digest"
+        ],
+        "properties": {
+          "digest": {
+            "type": "string",
+            "description": "Canonical Norn1 SHA-256 digest (`sha256:...`) of the selected setting's\nexact values at commit time."
+          },
+          "effectiveAt": {
+            "type": "string",
+            "description": "The declared effective timestamp evaluated for this selection."
+          },
+          "entry": {
+            "type": "string",
+            "description": "The declared parameter slice entry name."
+          },
+          "setting": {
+            "$ref": "#/components/schemas/NornActionFactKey",
+            "description": "The selected setting fact's concrete object type and key."
+          },
+          "settingKey": {
+            "type": "string",
+            "description": "The stable parameter key."
+          },
+          "version": {
+            "type": "integer",
+            "format": "uint64",
+            "description": "The committed fact version of the selected setting at commit time.",
+            "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
       "NornActionActionPreconditionOutcome": {
         "type": "object",
         "description": "The successful outcome of one action precondition.",
@@ -6659,6 +6809,13 @@
             "$ref": "#/components/schemas/NornActionFactKey",
             "description": "The target object."
           },
+          "parameterPins": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornActionActionParameterPin"
+            },
+            "description": "Effective-dated parameter pins resolved by declared parameter slices\n(D07, PARAM-EXACT-1, PARAM-BOUND-1)."
+          },
           "preconditionOutcomes": {
             "type": "array",
             "items": {
@@ -6683,6 +6840,17 @@
           "to": {
             "type": "string",
             "description": "The state it entered."
+          },
+          "trace": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornActionTraceContext"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Optional provenance trace context supplied by the caller."
           },
           "transition": {
             "type": "string",
@@ -6717,6 +6885,11 @@
             "description": "The callable actions an effect program can run, ordered by identity."
           }
         }
+      },
+      "NornActionDigest": {
+        "type": "string",
+        "description": "A content digest, `sha256:<64 lower-case hex>`.\n\nDecoding accepts any string so that admission can report a mutable\nidentity (a tag, URI, or object key) as a finding;\n[`Digest::is_well_formed`] is the rule.",
+        "pattern": "^sha256:[0-9a-f]{64}$"
       },
       "NornActionEffect": {
         "type": "string",
@@ -6842,6 +7015,33 @@
             "description": "The effects a caller must handle."
           }
         }
+      },
+      "NornActionTraceContext": {
+        "type": "object",
+        "description": "Optional provenance trace context attached to an action call and persisted\non its committed receipt.\n\nStrictly optional and additive: callers without trace context are unaffected,\nand raw transcript text is never stored (`sessionDigest` admits only a\ncontent-addressed SHA-256 digest).",
+        "required": [
+          "traceId"
+        ],
+        "properties": {
+          "intentRef": {
+            "type": "string",
+            "description": "Optional reference to the goal, prompt, commitment, or decision that\ninitiated the action (1 to 512 UTF-8 bytes, no control characters or\nouter whitespace).",
+            "maxLength": 512,
+            "minLength": 1
+          },
+          "sessionDigest": {
+            "type": "string",
+            "description": "Optional content-addressed SHA-256 digest (`sha256:<64 lower-case hex>`)\nof an off-ledger agent or user session transcript. Raw transcript text\nis never stored in the ledger.",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "traceId": {
+            "type": "string",
+            "description": "Opaque correlation identifier tying multi-step causes and effects\ntogether (1 to 256 UTF-8 bytes, no control characters or outer whitespace).",
+            "maxLength": 256,
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
       },
       "NornActionUiEffects": {
         "type": "object",
@@ -8029,6 +8229,74 @@
           "uri": {
             "type": "string",
             "description": "The object's durable URI."
+          }
+        }
+      },
+      "NornDatasetLineage": {
+        "type": "object",
+        "description": "The outcome of `GET /v1/datasets/{type}/rows/{row}:lineage`.",
+        "required": [
+          "objectType",
+          "row",
+          "manifest",
+          "commitSeq",
+          "source",
+          "findings",
+          "held"
+        ],
+        "properties": {
+          "commitSeq": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The commit that admitted it.",
+            "minimum": 0
+          },
+          "data": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/NornLineageFile",
+                "description": "The data file, at the row; absent when the row was not typed."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornRowFinding"
+            },
+            "description": "Every rule the row fails."
+          },
+          "held": {
+            "type": "boolean",
+            "description": "Whether the row is held back (not typed, or failing a rule that holds)."
+          },
+          "manifest": {
+            "type": "string",
+            "description": "The manifest that admitted the dataset."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "The dataset's object type."
+          },
+          "refused": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why the row was not typed (`bulk.*`), if it was not."
+          },
+          "row": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The source row offset; dataset answers name rows by it.",
+            "minimum": 0
+          },
+          "source": {
+            "$ref": "#/components/schemas/NornLineageFile",
+            "description": "The source upload, at the row."
           }
         }
       },
@@ -32612,6 +32880,31 @@
         },
         "additionalProperties": false
       },
+      "NornLineageFile": {
+        "type": "object",
+        "description": "One file a dataset row is traced through, and the row's offset in it.",
+        "required": [
+          "uri",
+          "sha256",
+          "row"
+        ],
+        "properties": {
+          "row": {
+            "type": "integer",
+            "format": "int64",
+            "description": "The row's source offset (1-based, in source file order); the data\nfile carries it as its `:row` column.",
+            "minimum": 0
+          },
+          "sha256": {
+            "type": "string",
+            "description": "Its SHA-256."
+          },
+          "uri": {
+            "type": "string",
+            "description": "The object's durable URI."
+          }
+        }
+      },
       "NornLinkCount": {
         "type": "object",
         "description": "The visible links of one declared link type in one direction.",
@@ -34371,6 +34664,29 @@
           }
         }
       },
+      "NornRowFinding": {
+        "type": "object",
+        "description": "One law or invariant a dataset row fails.",
+        "required": [
+          "rule",
+          "label",
+          "holds"
+        ],
+        "properties": {
+          "holds": {
+            "type": "boolean",
+            "description": "Whether it holds the row back."
+          },
+          "label": {
+            "type": "string",
+            "description": "The law (`law:<id>`) or invariant (`invariant:<id>`)."
+          },
+          "rule": {
+            "type": "string",
+            "description": "The rule identity (canonical JSON of its reference)."
+          }
+        }
+      },
       "NornRuleFindings": {
         "type": "object",
         "description": "MANIFEST-LAWS-1: one law or invariant's findings over a dataset.",
@@ -35001,6 +35317,10 @@
                 "enum": [
                   "action"
                 ]
+              },
+              "trace": {
+                "$ref": "#/components/schemas/TraceContext",
+                "description": "Optional provenance trace context recorded on the action call."
               }
             }
           },
@@ -35522,6 +35842,10 @@
                 "type": "null"
               }
             ]
+          },
+          "trace": {
+            "$ref": "#/components/schemas/TraceContext",
+            "description": "Optional provenance trace context carried by the parked call."
           }
         }
       },
@@ -36017,6 +36341,33 @@
           "executor",
           "timer"
         ]
+      },
+      "TraceContext": {
+        "type": "object",
+        "description": "Optional provenance trace context attached to an action call and retained\non its committed receipt.",
+        "required": [
+          "traceId"
+        ],
+        "properties": {
+          "intentRef": {
+            "type": "string",
+            "description": "Optional reference to the goal, prompt, commitment, or decision that\ninitiated the action (1 to 512 UTF-8 bytes, no control characters or\nouter whitespace).",
+            "maxLength": 512,
+            "minLength": 1
+          },
+          "sessionDigest": {
+            "type": "string",
+            "description": "Optional content-addressed SHA-256 digest (`sha256:<64 lower-case hex>`)\nof an off-ledger agent or user session transcript. Raw transcript text\nis never stored in the ledger.",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "traceId": {
+            "type": "string",
+            "description": "Opaque correlation identifier tying multi-step causes and effects\ntogether (1 to 256 UTF-8 bytes, no control characters or outer whitespace).",
+            "maxLength": 256,
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
       }
     },
     "securitySchemes": {

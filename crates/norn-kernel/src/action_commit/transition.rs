@@ -115,6 +115,7 @@ where
     record
         .precondition_outcomes
         .clone_from(&preparation.precondition_outcomes);
+    record.parameter_pins.clone_from(&slice.parameter_pins);
     check_action_record_size::<H::Error>(call.action, &record, limits)?;
     let mut changes = if let Some(rule) = rule {
         let output = rule.evaluate(

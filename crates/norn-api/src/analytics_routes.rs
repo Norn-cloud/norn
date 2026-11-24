@@ -38,7 +38,7 @@ use utoipa::ToSchema;
 
 use crate::authz::{Operation, ReadCapability};
 use crate::host::DevHost;
-use crate::object_routes::{ObjectAccess, uniform_gate};
+use crate::object_routes::{ObjectAccess, uniform_gate, uniform_sources_gate};
 use crate::question_routes::{AdHocQuestions, QuestionRuntime, QuestionSnapshot};
 use crate::refusal::Refusal;
 use crate::scope::{CellScope, ScopeQuery};
@@ -1501,12 +1501,148 @@ fn commit_manifest<E: SqlEngine>(
             held_by_rules: land.held_by_rules,
         },
         valid_time: land.valid_time.clone(),
+        markings: host
+            .cell()?
+            .store()
+            .dataset_markings(object_type, table)
+            .map_err(Refusal::host)?,
     };
     let (hash, receipt) = host
         .cell()?
         .commit_dataset_manifest(&manifest, keyed)
         .map_err(manifest_refusal)?;
     Ok((manifest, hash, receipt))
+}
+
+/// One file a dataset row is traced through, and the row's offset in it.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornLineageFile {
+    /// The object's durable URI.
+    pub uri: String,
+    /// Its SHA-256.
+    pub sha256: String,
+    /// The row's source offset (1-based, in source file order); the data
+    /// file carries it as its `:row` column.
+    pub row: u64,
+}
+
+/// One law or invariant a dataset row fails.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornRowFinding {
+    /// The rule identity (canonical JSON of its reference).
+    pub rule: String,
+    /// The law (`law:<id>`) or invariant (`invariant:<id>`).
+    pub label: String,
+    /// Whether it holds the row back.
+    pub holds: bool,
+}
+
+/// The outcome of `GET /v1/datasets/{type}/rows/{row}:lineage`.
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct NornDatasetLineage {
+    /// The dataset's object type.
+    pub object_type: String,
+    /// The source row offset; dataset answers name rows by it.
+    pub row: u64,
+    /// The manifest that admitted the dataset.
+    pub manifest: String,
+    /// The commit that admitted it.
+    pub commit_seq: u64,
+    /// The source upload, at the row.
+    pub source: NornLineageFile,
+    /// The data file, at the row; absent when the row was not typed.
+    pub data: Option<NornLineageFile>,
+    /// Why the row was not typed (`bulk.*`), if it was not.
+    pub refused: Option<String>,
+    /// Every rule the row fails.
+    pub findings: Vec<NornRowFinding>,
+    /// Whether the row is held back (not typed, or failing a rule that holds).
+    pub held: bool,
+}
+
+/// MANIFEST-LINEAGE-1: trace one dataset row, as a question answer or the
+/// records grid names it, to the manifest that admitted it, the source
+/// upload and the data file, each by content hash and row offset, with what
+/// held it back. Held-back rows are traced too. Requires Population, Values
+/// and Sources on the type; no value is disclosed.
+///
+/// # Errors
+/// A denied gate (one opaque 403), no dataset or no such row (404), or an
+/// unreachable engine.
+#[utoipa::path(get, path = "/v1/datasets/{type}/rows/{row}:lineage", params(("type" = String, Path, description = "The dataset's object type."), ("row" = u64, Path, description = "The source row offset."), ScopeQuery), responses((status = 200, description = "The row's lineage.", body = NornDatasetLineage), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 404, description = "The request was refused: not found.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
+pub fn dataset_lineage<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: Option<&str>,
+    (object_type, row): (&str, &str),
+    access: &dyn ObjectAccess,
+    transport: &dyn Transport,
+) -> Result<NornDatasetLineage, Refusal> {
+    use norn_cell::analytics::{LineageRequest, LineageResponse};
+    uniform_sources_gate(host, scope, actor, object_type, access)?;
+    let row: u64 = row
+        .parse()
+        .ok()
+        .filter(|row| *row > 0)
+        .ok_or_else(crate::object_routes::not_found)?;
+    let guard = host.cell()?;
+    let store = guard.store();
+    let current = store
+        .dataset_manifest(norn_cell::MAIN_WORLD, object_type)
+        .map_err(Refusal::host)?
+        .ok_or_else(crate::object_routes::not_found)?;
+    let manifest = &current.manifest;
+    if row > manifest.counts.source {
+        return Err(crate::object_routes::not_found());
+    }
+    let tenant = TenantId::of_scope(&host.scope().key());
+    let call = EngineCall::new(
+        "lineage",
+        &LineageRequest {
+            tenant: tenant.clone(),
+            table: object_type.to_owned(),
+            load: manifest.load.clone(),
+            row,
+        },
+    )
+    .map_err(engine_failure)?;
+    let answer = exchange(store, transport, &tenant, None, &call).map_err(engine_failure)?;
+    if answer.status != 200 {
+        return Err(engine_failure(refused(&answer.body)));
+    }
+    let found: LineageResponse = decode(&answer.body).map_err(engine_failure)?;
+    let file = |file: &ManifestFile| NornLineageFile {
+        uri: file.uri.clone(),
+        sha256: file.sha256.clone(),
+        row,
+    };
+    let held = !found.admitted || found.findings.iter().any(|finding| finding.holds);
+    Ok(NornDatasetLineage {
+        object_type: object_type.to_owned(),
+        row,
+        manifest: current.hash.clone(),
+        commit_seq: current.commit_seq,
+        source: NornLineageFile {
+            uri: manifest.source.uri.clone(),
+            sha256: manifest.source.sha256.clone(),
+            row,
+        },
+        data: found.admitted.then(|| file(&manifest.data)),
+        refused: found.refused,
+        findings: found
+            .findings
+            .into_iter()
+            .map(|finding| NornRowFinding {
+                rule: finding.rule,
+                label: finding.label,
+                holds: finding.holds,
+            })
+            .collect(),
+        held,
+    })
 }
 
 /// MANIFEST-CURRENT-1: the current dataset manifest of `object_type`, if it is one.
@@ -1555,11 +1691,8 @@ fn dataset_not_found() -> Refusal {
 pub fn serves_records<E: SqlEngine>(host: &DevHost<E>, object_type: &str) -> Result<bool, Refusal> {
     let guard = host.cell()?;
     let has_type = guard.store().model().has_type(object_type);
-    // PRIVACY-1: the engine mirror holds stored values, so a cell that
-    // declares markings reads its records natively, where they are projected.
-    if has_type && !stored_values_leave(host, &guard.store().read(), object_type)? {
-        return Ok(false);
-    }
+    // MANIFEST-MARK-1: a dataset's rows live only in the engine; its marked
+    // columns are projected on every read (`dataset_marks`).
     Ok(has_type
         && guard
             .store()
@@ -1630,6 +1763,8 @@ pub fn page_objects<E: SqlEngine>(
     } else {
         (Vec::new(), Vec::new())
     };
+    let marks = dataset_marks(host, store, object_type)?;
+    marks.refuse_ordering(&filters, &sort)?;
     let page = if !values && !query.filter.is_empty() {
         PageResponse {
             total: 0,
@@ -1666,7 +1801,7 @@ pub fn page_objects<E: SqlEngine>(
     let records = page
         .rows
         .into_iter()
-        .map(|row| queried(object_type, &scope_key, row, values))
+        .map(|row| queried(object_type, &scope_key, row, values, &marks))
         .collect::<Result<Vec<_>, Refusal>>()?;
     Ok(NornObjectQueryPage {
         object_type: object_type.to_owned(),
@@ -1742,20 +1877,113 @@ fn engine_page<E: SqlEngine>(
 
 /// One dataset row as the grid shows it: withheld (no values, no version)
 /// for a caller without Values.
+/// MANIFEST-MARK-1: how a dataset's marked columns are projected for a reader.
+pub(crate) struct DatasetMarks {
+    catalog: crate::privacy::MarkingCatalog,
+    columns: BTreeMap<String, Vec<String>>,
+    key: Option<crate::privacy::PseudonymKey>,
+}
+
+impl DatasetMarks {
+    /// A filter or sort over a marked column would order or select rows by
+    /// its stored values, outside any projection: it refuses.
+    fn refuse_ordering(
+        &self,
+        filters: &[norn_cell::analytics::PageClause],
+        sort: &[norn_cell::analytics::PageKey],
+    ) -> Result<(), Refusal> {
+        match filters
+            .iter()
+            .map(|clause| clause.column.as_str())
+            .chain(sort.iter().map(|key| key.column.as_str()))
+            .find(|column| self.columns.contains_key(*column))
+        {
+            Some(column) => Err(marked_column(column)),
+            None => Ok(()),
+        }
+    }
+}
+
+/// The marks of the current dataset of `object_type`: the monotone union of
+/// its manifest's marked columns and the type's currently declared property
+/// markings, under the cell's marking catalog.
+fn dataset_marks<E: SqlEngine>(
+    host: &DevHost<E>,
+    store: &CellStore<E>,
+    object_type: &str,
+) -> Result<DatasetMarks, Refusal> {
+    let reader = store.read();
+    let columns = match reader
+        .dataset_manifest(norn_cell::MAIN_WORLD, object_type)
+        .map_err(Refusal::host)?
+    {
+        Some(current) => reader
+            .effective_dataset_markings(&current.manifest)
+            .map_err(Refusal::host)?,
+        None => reader
+            .model()
+            .effective_property_markings(object_type)
+            .map_err(Refusal::host)?
+            .into_iter()
+            .filter(|(_, markings)| !markings.is_empty())
+            .collect(),
+    };
+    Ok(DatasetMarks {
+        catalog: host.marking_catalog(&reader)?,
+        columns,
+        key: host.pseudonym_key().cloned(),
+    })
+}
+
+/// MANIFEST-MARK-1: a marked column on a path that would read its stored
+/// values outside a projection (a filter, a sort, a profile, an export or a
+/// question) refuses.
+fn marked_column(column: &str) -> Refusal {
+    Refusal::new(
+        http::StatusCode::FORBIDDEN,
+        "privacy.marked_column",
+        "the column is marked",
+        format!("{column} is marked; read it through the records grid, where it is masked"),
+    )
+}
+
 fn queried(
     object_type: &str,
     scope_key: &str,
     row: norn_cell::analytics::PageRow,
     values: bool,
+    marks: &DatasetMarks,
 ) -> Result<crate::objects::NornQueriedRecord, Refusal> {
+    let mut masked = BTreeMap::new();
+    let mut withheld_properties = Vec::new();
     let read = if values {
-        Some(
-            row.values
-                .iter()
-                .map(|(id, value)| Ok((id.clone(), norn_cell::analytics::runtime_value(value)?)))
-                .collect::<Result<BTreeMap<_, _>, norn_ir::RuntimeValueError>>()
-                .map_err(Refusal::host)?,
-        )
+        let mut read = row
+            .values
+            .iter()
+            .map(|(id, value)| Ok((id.clone(), norn_cell::analytics::runtime_value(value)?)))
+            .collect::<Result<BTreeMap<_, _>, norn_ir::RuntimeValueError>>()
+            .map_err(Refusal::host)?;
+        for (column, ids) in &marks.columns {
+            let mask = crate::privacy::strongest(&marks.catalog, ids)
+                .unwrap_or(norn_ir::MaskPolicy::Refuse {});
+            let Some(value) = read.get_mut(column) else {
+                continue;
+            };
+            let mode = crate::privacy::apply(&mask, marks.key.as_ref(), value);
+            if mode == crate::privacy::NornMaskMode::Refuse {
+                read.remove(column);
+                withheld_properties.push(column.clone());
+            }
+            masked.insert(
+                column.clone(),
+                crate::privacy::NornMaskedProperty {
+                    mode,
+                    markings: ids.clone(),
+                    revealable: false,
+                },
+            );
+        }
+        Some(read)
     } else {
         None
     };
@@ -1766,8 +1994,8 @@ fn queried(
         version: read.as_ref().map(|_| row.version),
         withheld: read.is_none(),
         values: read,
-        withheld_properties: Vec::new(),
-        masked: BTreeMap::new(),
+        withheld_properties,
+        masked,
     })
 }
 
@@ -1817,7 +2045,8 @@ pub fn record_object<E: SqlEngine>(
         .into_iter()
         .next()
         .ok_or_else(crate::object_routes::not_found)?;
-    queried(object_type, &host.scope().key(), row, values)
+    let marks = dataset_marks(host, store, object_type)?;
+    queried(object_type, &host.scope().key(), row, values, &marks)
 }
 
 /// One parsed grid clause as the engine evaluates it: the same operator,
@@ -1876,6 +2105,8 @@ fn page_clause(
 /// they are stored: the cell holds no marking label, or it declares no
 /// marking and no live row of the type carries one, so its labels (the
 /// kernel's on its own records, or earlier versions') are elsewhere (#1547).
+/// A loaded dataset with any effective column marking (manifest union current
+/// model) never leaves as raw stored values.
 ///
 /// # Errors
 /// A store failure.
@@ -1884,12 +2115,22 @@ fn stored_values_leave<E: SqlEngine>(
     reader: &norn_cell::StoreReader<'_, E>,
     object_type: &str,
 ) -> Result<bool, Refusal> {
+    if let Some(current) = reader
+        .dataset_manifest(norn_cell::MAIN_WORLD, object_type)
+        .map_err(Refusal::host)?
+        && !reader
+            .effective_dataset_markings(&current.manifest)
+            .map_err(Refusal::host)?
+            .is_empty()
+    {
+        return Ok(false);
+    }
     let catalog = host.marking_catalog(reader)?;
     Ok(catalog.is_empty()
         || (!crate::privacy::declares(&catalog) && unlabeled(reader, object_type)))
 }
 
-/// S3 (#1547): `leave`, whether `object_type`'s stored values may reach the
+/// S3 (#1547): `decide`, how `object_type`'s stored values may reach the
 /// engine, and the analytics source an engine call reads, at one cell
 /// version. A commit by any
 /// connection between the decision and the frontier would let a row the
@@ -1900,31 +2141,41 @@ fn stored_values_leave<E: SqlEngine>(
 ///
 /// # Errors
 /// A moved snapshot, an engine without a revision, or a store failure.
-fn decided_source<E: SqlEngine>(
+fn decided_source<E: SqlEngine, T>(
     host: &DevHost<E>,
     store: &CellStore<E>,
     object_type: &str,
-    leave: impl Fn(&norn_cell::StoreReader<'_, E>) -> Result<bool, Refusal>,
-) -> Result<(bool, norn_cell::analytics::Source, String), Refusal> {
+    decide: impl Fn(&norn_cell::StoreReader<'_, E>) -> Result<T, Refusal>,
+) -> Result<(T, norn_cell::analytics::Source, String), Refusal> {
     for _attempt in 0..3 {
         let reader = store.read();
         let start = crate::object_routes::cell_version(&reader)?;
-        let leave = leave(&reader)?;
+        let decision = decide(&reader)?;
         let (source, snapshot) = store
             .analytics_source(norn_cell::MAIN_WORLD, &host.scope().key(), object_type)
             .map_err(engine_failure)?;
         if crate::object_routes::cell_version(&reader)? == start {
-            return Ok((leave, source, snapshot));
+            return Ok((decision, source, snapshot));
         }
     }
     Err(crate::object_routes::snapshot_moved())
 }
 
 /// Whether every live row of `object_type` has a complete marking snapshot
-/// with no label on any of its properties. An unknown type, an incomplete
-/// snapshot or an unbounded summary counts as labeled: it fails closed to the
-/// native profile.
+/// with no label on any of its properties. For a loaded dataset whose rows
+/// live in the engine, this checks the effective dataset markings (manifest
+/// union current model). An unknown type, an incomplete snapshot or an
+/// unbounded summary counts as labeled: it fails closed.
 fn unlabeled<E: SqlEngine>(reader: &norn_cell::StoreReader<'_, E>, object_type: &str) -> bool {
+    match reader.dataset_manifest(norn_cell::MAIN_WORLD, object_type) {
+        Ok(Some(current)) => {
+            return reader
+                .effective_dataset_markings(&current.manifest)
+                .is_ok_and(|markings| markings.is_empty());
+        }
+        Ok(None) => {}
+        Err(_) => return false,
+    }
     let Ok(properties) = reader.model().effective_property_types(object_type) else {
         return false;
     };
@@ -1935,6 +2186,42 @@ fn unlabeled<E: SqlEngine>(reader: &norn_cell::StoreReader<'_, E>, object_type: 
     })
 }
 
+/// How `GET /v1/objects/{type}:profile` handles `object_type` under PRIVACY-1
+/// and MANIFEST-MARK-1.
+enum ProfilePlan {
+    /// Unmarked mirror or unmarked loaded dataset: profile on the engine.
+    Engine,
+    /// Marked cell-stored type: profile natively over projected values.
+    Native,
+    /// Loaded dataset with at least one effective marked column: refuse before
+    /// touching the engine.
+    RefusedColumn(String),
+}
+
+fn decide_profile<E: SqlEngine>(
+    host: &DevHost<E>,
+    reader: &norn_cell::StoreReader<'_, E>,
+    object_type: &str,
+) -> Result<ProfilePlan, Refusal> {
+    if let Some(current) = reader
+        .dataset_manifest(norn_cell::MAIN_WORLD, object_type)
+        .map_err(Refusal::host)?
+    {
+        let markings = reader
+            .effective_dataset_markings(&current.manifest)
+            .map_err(Refusal::host)?;
+        if let Some((column, _)) = markings.into_iter().next() {
+            return Ok(ProfilePlan::RefusedColumn(column));
+        }
+        return Ok(ProfilePlan::Engine);
+    }
+    if host.marking_catalog(reader)?.is_empty() || unlabeled(reader, object_type) {
+        Ok(ProfilePlan::Engine)
+    } else {
+        Ok(ProfilePlan::Native)
+    }
+}
+
 /// HOST-READ-5 on the engine (D102): the profile of every row of
 /// `object_type` the caller may read, in the exact profile's shape and
 /// semantics (nearest-rank quantiles, equal-population bins, calendar labels,
@@ -1943,7 +2230,8 @@ fn unlabeled<E: SqlEngine>(reader: &norn_cell::StoreReader<'_, E>, object_type: 
 /// rows counted as withheld and no value statistic.
 ///
 /// # Errors
-/// A denied gate (one opaque 403), an unknown type (404), or an unreachable engine.
+/// A denied gate (one opaque 403), a marked dataset column (`privacy.marked_column`, 403),
+/// an unknown type (404), or an unreachable engine.
 pub fn profile_objects<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -1955,16 +2243,21 @@ pub fn profile_objects<E: SqlEngine>(
     use norn_cell::analytics::{ProfileRequest, ProfileResponse};
     // PRIVACY-1: the engine mirror holds stored values; a cell that declares
     // markings profiles natively, over projected values, unless no live row
-    // of this type carries a label on any of its properties. Then every value
-    // projects as itself and the engine's profile is the native one.
-    let leave = |reader: &norn_cell::StoreReader<'_, E>| -> Result<bool, Refusal> {
-        Ok(host.marking_catalog(reader)?.is_empty() || unlabeled(reader, object_type))
-    };
-    let unmarked = {
+    // of this type carries a label on any of its properties. A loaded dataset
+    // lives only in the engine, so it always passes the authorization gate
+    // first and then refuses if any effective column is marked.
+    let native_only = {
         let guard = host.cell()?;
-        leave(&guard.store().read())?
+        let reader = guard.store().read();
+        let is_dataset = reader
+            .dataset_manifest(norn_cell::MAIN_WORLD, object_type)
+            .map_err(Refusal::host)?
+            .is_some();
+        !(is_dataset
+            || host.marking_catalog(&reader)?.is_empty()
+            || unlabeled(&reader, object_type))
     };
-    if !unmarked {
+    if native_only {
         return crate::object_profile::get_object_profile(host, scope, actor, object_type, access);
     }
     let values = uniform_gate(host, scope, actor, object_type, access)?;
@@ -1972,10 +2265,22 @@ pub fn profile_objects<E: SqlEngine>(
     let store = guard.store();
     // After the gate, so a denied caller costs what it did: the decision
     // again, with the profiled frontier, at one cell version (S3, #1547).
-    let (unmarked, source, _snapshot) = decided_source(host, store, object_type, leave)?;
-    if !unmarked {
-        drop(guard);
-        return crate::object_profile::get_object_profile(host, scope, actor, object_type, access);
+    let (plan, source, _snapshot) = decided_source(host, store, object_type, |reader| {
+        decide_profile(host, reader, object_type)
+    })?;
+    match plan {
+        ProfilePlan::Native => {
+            drop(guard);
+            return crate::object_profile::get_object_profile(
+                host,
+                scope,
+                actor,
+                object_type,
+                access,
+            );
+        }
+        ProfilePlan::RefusedColumn(column) => return Err(marked_column(&column)),
+        ProfilePlan::Engine => {}
     }
     let declared = store
         .model()
@@ -2134,4 +2439,84 @@ fn outliers_of(
             })
             .collect::<Result<_, Refusal>>()?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    use norn_cell::analytics::{PageRow, Value};
+    use norn_ir::{MarkingId, MarkingIr, MarkingSeverity, MaskPolicy, RuntimeValue};
+
+    use super::{DatasetMarks, queried};
+    use crate::privacy::{NornMaskMode, PseudonymKey};
+    use crate::scope::CellScope;
+
+    fn marks(mask: MaskPolicy, key: Option<PseudonymKey>) -> DatasetMarks {
+        let marking = MarkingIr {
+            id: MarkingId("pii.name".into()),
+            label: "Name".into(),
+            severity: MarkingSeverity::High,
+            category: "pii".into(),
+            mask,
+        };
+        DatasetMarks {
+            catalog: Arc::new(BTreeMap::from([("pii.name".to_owned(), marking)])),
+            columns: BTreeMap::from([("customer".to_owned(), vec!["pii.name".to_owned()])]),
+            key,
+        }
+    }
+
+    fn row() -> PageRow {
+        PageRow {
+            id: "1".into(),
+            version: 1,
+            values: BTreeMap::from([
+                ("customer".to_owned(), Value::Text("Ann Lee".into())),
+                ("amount".to_owned(), Value::Number("12.5".into())),
+            ]),
+        }
+    }
+
+    /// MANIFEST-MARK-1: a marked dataset column reads as its mask says (an
+    /// analyst sees a pseudonym); an unmarked one reads as stored.
+    #[test]
+    fn a_marked_dataset_column_reads_as_its_mask() {
+        let scope = CellScope {
+            org_id: "org_demo".into(),
+            environment_id: "dev".into(),
+        };
+        let key = PseudonymKey::derive(&[7_u8; 32], &scope).expect("key");
+        let pseudonym = key.pseudonym("customer", &RuntimeValue::String("Ann Lee".into()));
+        let read = queried(
+            "bench.Line",
+            "org_demo/dev",
+            row(),
+            true,
+            &marks(
+                MaskPolicy::Pseudonym {
+                    subject: "customer".into(),
+                },
+                Some(key),
+            ),
+        )
+        .expect("read");
+        let values = read.values.expect("values");
+        assert_eq!(values["customer"], RuntimeValue::String(pseudonym));
+        assert_eq!(values["amount"].canonical_json().expect("json"), b"12.5");
+        assert_eq!(read.masked["customer"].mode, NornMaskMode::Pseudonym);
+        assert!(!read.masked.contains_key("amount"));
+        // A refused mask withholds the column.
+        let refused = queried(
+            "bench.Line",
+            "org_demo/dev",
+            row(),
+            true,
+            &marks(MaskPolicy::Refuse {}, None),
+        )
+        .expect("read");
+        assert!(!refused.values.expect("values").contains_key("customer"));
+        assert_eq!(refused.withheld_properties, vec!["customer".to_owned()]);
+    }
 }

@@ -22,12 +22,13 @@ use transparency_sha2::{Digest as _, Sha256};
 use super::{
     BucketTotals, Column, ColumnKind, ColumnProfile, EngineRefusal, EvaluateRequest,
     EvaluateResponse, ExportFormat, ExportRequest, FileFormat, Filter, FrontierRequest,
-    FrontierResponse, GroupKey, LandRequest, LandResponse, LandedFile, Literal, LoadRequest,
-    LoadResponse, Lowered, MAX_PREDICATE_SCALE, MemberRow, MembersRequest, MembersResponse,
-    MirrorRow, PageClause, PageOp, PageOperand, PageRequest, PageResponse, PageRow, PredicateKind,
-    ProfileRequest, ProfileResponse, ResidueRow, RowPredicate, RuleCheck, RuleCount, SettleRequest,
-    Source, StoreRequest, SyncRequest, TIME_LINK_COLUMN, TableSchema, TenantId, Test, TimeLink,
-    ValidRange, Value, dataset_cache_id, hex,
+    FrontierResponse, GroupKey, LandRequest, LandResponse, LandedFile, LineageRequest,
+    LineageResponse, Literal, LoadRequest, LoadResponse, Lowered, MAX_PREDICATE_SCALE, MemberRow,
+    MembersRequest, MembersResponse, MirrorRow, PageClause, PageOp, PageOperand, PageRequest,
+    PageResponse, PageRow, PredicateKind, ProfileRequest, ProfileResponse, ResidueRow, RowFinding,
+    RowPredicate, RuleCheck, RuleCount, SettleRequest, Source, StoreRequest, SyncRequest,
+    TIME_LINK_COLUMN, TableSchema, TenantId, Test, TimeLink, ValidRange, Value, dataset_cache_id,
+    hex,
 };
 use super::{MAX_RESIDUE_PAGES, RESIDUE_EXCEEDED, RESIDUE_PAGE_BYTES, RESIDUE_PAGE_ROWS, row_fuel};
 
@@ -1191,6 +1192,61 @@ impl Engine {
         Ok(StoreAnswer {
             answer: response,
             recorded: None,
+        })
+    }
+
+    /// MANIFEST-LINEAGE-1: what the landing holds for one source row:
+    /// whether it was admitted, why it was refused, and every rule it fails.
+    /// Held-back rows are answered too: lineage reaches every source row.
+    ///
+    /// # Errors
+    /// `analytics.dataset_cold` if the kept files are absent,
+    /// `core.compute.stale_input` for another landing, or an engine failure.
+    pub fn lineage(&self, request: &LineageRequest) -> Outcome<LineageResponse> {
+        self.with(&request.tenant, |conn| {
+            let table = &request.table;
+            if meta(conn, &format!("load:{table}"))?.as_deref() != Some(request.load.as_str()) {
+                // MANIFEST-CACHE-1: a cache miss rebuilds the dataset
+                // from the files of exactly its cache identity.
+                hydrate(conn, table, &request.load)?;
+            }
+            let admitted = query_u64(
+                conn,
+                &Frag::fmt(
+                    &format!(
+                        "SELECT count(*) FROM {} WHERE \":row\" = {{}}",
+                        dataset_table(table)
+                    ),
+                    &[&Frag::bind("?", Sql::UBigInt(request.row))],
+                ),
+            )? == 1;
+            let mut statement = db(conn.prepare(&format!(
+                "SELECT \":reason\", \":rule\", \":holds\" FROM {} WHERE \":row\" = ? \
+                 ORDER BY \":rule\" NULLS FIRST, \":reason\"",
+                quarantine_table(table)
+            )))?;
+            let held: Vec<(String, Option<String>, bool)> = db(db(statement
+                .query_map(params_from_iter([Sql::UBigInt(request.row)]), |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                }))?
+            .collect::<Result<_, _>>())?;
+            let mut response = LineageResponse {
+                admitted,
+                refused: None,
+                findings: Vec::new(),
+            };
+            for (reason, rule, holds) in held {
+                match rule {
+                    Some(rule) => response.findings.push(RowFinding {
+                        row: request.row,
+                        rule,
+                        label: reason,
+                        holds,
+                    }),
+                    None => response.refused = Some(reason),
+                }
+            }
+            Ok(response)
         })
     }
 

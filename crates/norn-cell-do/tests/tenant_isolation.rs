@@ -642,6 +642,7 @@ fn probes(route: Route, ids: &Ids) -> Vec<Probe> {
         Route::TransformPlan => get(format!("/v1/transforms/{transform}/plan")),
         Route::ObjectExport => get(format!("/v1/objects/{kind}:export")),
         Route::DatasetLoad => post("/v1/datasets:load".into(), json!({"upload": upload})),
+        Route::DatasetLineage => get(format!("/v1/datasets/{kind}/rows/1:lineage")),
         Route::TransformsCompile => post("/v1/transforms:compile".into(), json!({})),
         Route::TransformRefresh => post(format!("/v1/transforms/{transform}:refresh"), json!({})),
         Route::Inbox => get("/v1/inbox".into()),
@@ -1065,6 +1066,7 @@ fn analytics_b() -> Host {
             held_by_rules: 0,
         },
         valid_time: Vec::new(),
+        markings: BTreeMap::new(),
     };
     store
         .commit_dataset_manifest(

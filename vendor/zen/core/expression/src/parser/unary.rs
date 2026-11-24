@@ -389,12 +389,16 @@ impl From<&Node<'_>> for UnaryNodeBehaviour {
                     InternalFunction::Values => CompareWithReference(In),
                     InternalFunction::Type => CompareWithReference(Equal),
                     InternalFunction::Date => CompareWithReference(Equal),
+                    InternalFunction::IntervalsOverlap => AsBoolean,
                     InternalFunction::CalendarDate
                     | InternalFunction::Timestamp
                     | InternalFunction::DaysBetween
                     | InternalFunction::AddDays
                     | InternalFunction::SecondsBetween
-                    | InternalFunction::AddSeconds => CompareWithReference(Equal),
+                    | InternalFunction::AddSeconds
+                    | InternalFunction::IntervalGapSeconds
+                    | InternalFunction::IntervalIntersectionSeconds
+                    | InternalFunction::ResolveLocalTimestamp => CompareWithReference(Equal),
                 },
                 FunctionKind::Deprecated(d) => match d {
                     DeprecatedFunction::Date => CompareWithReference(Equal),

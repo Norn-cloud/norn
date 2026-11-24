@@ -680,6 +680,24 @@
                             "output_fine_g"
                           ],
                           "type": "object"
+                        },
+                        "trace": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "intentRef": {
+                              "type": "string"
+                            },
+                            "sessionDigest": {
+                              "type": "string"
+                            },
+                            "traceId": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "traceId"
+                          ],
+                          "type": "object"
                         }
                       },
                       "required": [

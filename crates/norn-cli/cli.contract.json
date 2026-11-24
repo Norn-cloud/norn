@@ -485,6 +485,17 @@
               "default": [],
               "values": []
             },
+            "intent_ref": {
+              "long": "intent-ref",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": true,
+              "multiple": false,
+              "required": false,
+              "default": [],
+              "values": []
+            },
             "name": {
               "long": null,
               "short": null,
@@ -493,6 +504,28 @@
               "takes_value": true,
               "multiple": false,
               "required": true,
+              "default": [],
+              "values": []
+            },
+            "session_digest": {
+              "long": "session-digest",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": true,
+              "multiple": false,
+              "required": false,
+              "default": [],
+              "values": []
+            },
+            "trace_id": {
+              "long": "trace-id",
+              "short": null,
+              "aliases": [],
+              "positional": false,
+              "takes_value": true,
+              "multiple": false,
+              "required": false,
               "default": [],
               "values": []
             }

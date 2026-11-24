@@ -23,7 +23,8 @@ import { CellUnavailable, readStudioScope, scopedHostFetch } from "./definitions
  *            envelope carries one today (`/input` not an object, `/idempotencyKey`). Input the
  *            action's schema refuses is one 400 `action.invalid_input` with no field pointers, so
  *            Studio shows it on the form, not on a field; a rule, law or precondition refusal
- *            carries none either.
+ *            carries none either. A diagnostic at `/input/<field>` (nested: `/input/lines/0/sku`)
+ *            reads on that field's row; one at `/input` itself, or at no pointer, reads on the form.
  *        202 { outcome: "pending", decision: { id, expiresAtMs } }: an approval-gated action
  *            (APPROVAL-1); nothing is committed until a decider approves it in the inbox.
  *        409 `action.idempotency_conflict` when the key was used for a different call.
@@ -183,6 +184,14 @@ export async function callAction(actionId: string, input: string, idempotencyKey
 
 export type Spec =
   | { readonly kind: "text" }
+  /**
+   * A string input the schema gives a JSON Schema `format`: a calendar date (`YYYY-MM-DD`), an
+   * instant (RFC 3339 with an offset) or a time of day (`HH:MM:SS`). The form offers a picker and
+   * sends the picker's value as that text; the cell decodes and decides it.
+   */
+  | { readonly kind: "date" }
+  | { readonly kind: "date-time" }
+  | { readonly kind: "time" }
   | { readonly kind: "integer" }
   | { readonly kind: "number" }
   | { readonly kind: "decimal"; readonly scale: number | null; readonly unit: string | null }
@@ -234,6 +243,8 @@ function specOf(schema: unknown, pointer: string): { spec: Spec; nullable: boole
       if (Array.isArray(values) && values.length > 0 && values.every((v) => typeof v === "string")) {
         return values.length === 1 ? { spec: { kind: "fixed", value: values[0] as string }, nullable: false } : { spec: { kind: "choice", values: values as string[] }, nullable: false }
       }
+      const format = node["format"]
+      if (format === "date" || format === "date-time" || format === "time") return { spec: { kind: format }, nullable: false }
       return { spec: { kind: "text" }, nullable: false }
     }
     case "integer": return { spec: { kind: "integer" }, nullable: false }
@@ -302,6 +313,161 @@ export function emptyFor(spec: Spec): Draft {
   }
 }
 
+/** `+02:00` for 120 minutes east of UTC, `-05:30` for 330 west; `Z` for UTC. */
+export function offsetText(minutesEast: number): string {
+  if (minutesEast === 0) return "Z"
+  const sign = minutesEast > 0 ? "+" : "-"
+  const abs = Math.abs(minutesEast)
+  return `${sign}${String(Math.floor(abs / 60)).padStart(2, "0")}:${String(abs % 60).padStart(2, "0")}`
+}
+
+const LOCAL_DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(\.\d+)?)?$/
+const RFC3339_OFFSET = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?(Z|[+-]\d{2}:\d{2})$/
+
+/** Wall-clock parts of a local date-time (`month` is 1..12). */
+export interface WallParts {
+  readonly year: number
+  readonly month: number
+  readonly day: number
+  readonly hour: number
+  readonly minute: number
+  readonly second: number
+}
+
+/**
+ * Resolves a local wall time in one time zone into every valid UTC offset (in minutes east of UTC)
+ * that displays that exact wall time:
+ * - `[]` for a spring-forward DST gap (that wall time does not exist in the zone),
+ * - `[offset]` for an unambiguous wall time,
+ * - `[earlierOffset, laterOffset]` for a fall-back DST repeat (chronological order).
+ */
+export type LocalWallOffsets = (parts: WallParts) => readonly number[]
+
+const sameWall = (at: Date, p: WallParts): boolean =>
+  at.getFullYear() === p.year
+  && at.getMonth() === p.month - 1
+  && at.getDate() === p.day
+  && at.getHours() === p.hour
+  && at.getMinutes() === p.minute
+  && at.getSeconds() === p.second
+
+/** The runtime's local time zone resolver, detecting both spring-forward gaps and fall-back repeats. */
+export function runtimeWallOffsets(parts: WallParts): readonly number[] {
+  const wall = new Date(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second)
+  if (!sameWall(wall, parts)) return []
+  const matches = new Map<number, number>()
+  const add = (at: Date) => {
+    if (!sameWall(at, parts)) return
+    const offset = -at.getTimezoneOffset()
+    if (!matches.has(offset)) matches.set(offset, at.getTime())
+  }
+  add(wall)
+  // Probe half-hour steps across ±3 hours around `wall` to discover sibling occurrences on any DST
+  // fall-back transition (including 30m shifts like Australia/Lord_Howe and 2h shifts like Antarctica/Troll).
+  for (let half = -6; half <= 6; half += 1) {
+    if (half !== 0) add(new Date(wall.getTime() + half * 1_800_000))
+  }
+  return [...matches.entries()].sort(([, ta], [, tb]) => ta - tb).map(([offset]) => offset)
+}
+
+/**
+ * Match `sent` (which may carry `Z` or any equivalent offset) against `alternatives` by epoch
+ * instant, so a restored instant like `2026-11-01T06:30:00Z` in `America/New_York` selects the
+ * second occurrence (`2026-11-01T01:30:00-05:00`) rather than falling back to the first.
+ */
+export function selectedAlternative(sent: string | null, alternatives: readonly string[]): string {
+  if (sent !== null) {
+    const at = Date.parse(sent)
+    if (!Number.isNaN(at)) {
+      const match = alternatives.find((iso) => Date.parse(iso) === at)
+      if (match !== undefined) return match
+    }
+  }
+  return alternatives[0] ?? ""
+}
+
+const pad2 = (n: number) => String(n).padStart(2, "0")
+const formatWall = (p: WallParts, offsetMinutes: number, fraction = "") =>
+  `${String(p.year).padStart(4, "0")}-${pad2(p.month)}-${pad2(p.day)}T${pad2(p.hour)}:${pad2(p.minute)}:${pad2(p.second)}${fraction}${offsetText(offsetMinutes)}`
+
+/** Extract the trailing RFC 3339 offset (`Z` or `±HH:MM`) regardless of fractional seconds. */
+export const offsetSuffix = (iso: string): string => /(Z|[+-]\d{2}:\d{2})$/.exec(iso)?.[1] ?? iso.slice(19)
+
+export type DateTimeResolution =
+  | { readonly kind: "ok"; readonly text: string; readonly alternatives: readonly string[] }
+  | { readonly kind: "nonexistent"; readonly text: string }
+  | { readonly kind: "passthrough"; readonly text: string }
+
+/**
+ * Resolve a draft date-time value to what will be sent, detecting DST gaps and repeats while
+ * preserving any sub-second fraction (e.g. `.250`).
+ * - A zoneless picker value (`YYYY-MM-DDTHH:MM[:SS[.fff]]`): resolves against `wallOffsets`
+ *   (default: the reader's local zone). A spring-forward gap returns `nonexistent` (leaving `text`
+ *   zoneless rather than silently shifting an hour); a fall-back repeat returns both valid RFC 3339
+ *   instants in `alternatives`.
+ * - Text that already carries an RFC 3339 offset (a prefilled/restored instant, or an explicitly
+ *   disambiguated fall-back instant): preserves its exact offset and fractional seconds in `text`
+ *   and in `alternatives` so epoch comparison and occurrence switching never lose precision.
+ */
+export function resolveDateTime(value: string, wallOffsets: LocalWallOffsets = runtimeWallOffsets): DateTimeResolution {
+  const trimmed = value.trim()
+  const local = LOCAL_DATE_TIME.exec(trimmed)
+  if (local !== null) {
+    const parts: WallParts = {
+      year: Number(local[1]), month: Number(local[2]), day: Number(local[3]),
+      hour: Number(local[4]), minute: Number(local[5]), second: Number(local[6] ?? "0"),
+    }
+    const fraction = local[7] ?? ""
+    const offsets = wallOffsets(parts)
+    if (offsets.length === 0) return { kind: "nonexistent", text: value }
+    const alternatives = offsets.map((offset) => formatWall(parts, offset, fraction))
+    return { kind: "ok", text: alternatives[0]!, alternatives }
+  }
+  const zoned = RFC3339_OFFSET.exec(trimmed)
+  if (zoned !== null) {
+    const at = Date.parse(trimmed)
+    if (!Number.isNaN(at)) {
+      const asLocal = new Date(at)
+      const parts: WallParts = {
+        year: asLocal.getFullYear(), month: asLocal.getMonth() + 1, day: asLocal.getDate(),
+        hour: asLocal.getHours(), minute: asLocal.getMinutes(), second: asLocal.getSeconds(),
+      }
+      const fraction = zoned[7] ?? ""
+      const offsets = wallOffsets(parts)
+      const alternatives = offsets.map((offset) => formatWall(parts, offset, fraction))
+      return { kind: "ok", text: trimmed, alternatives }
+    }
+  }
+  return { kind: "passthrough", text: value }
+}
+
+/**
+ * The RFC 3339 text for what a date-time picker holds. A picker gives a wall time with no zone
+ * (`2026-11-23T09:30`); it is sent with the offset the reader's own zone has at that wall time
+ * (`2026-11-23T09:30:00+02:00`), so the instant is the one the reader meant. A nonexistent local
+ * time in a spring DST gap stays as typed (never shifted to another hour) so the cell refuses it;
+ * text that already carries an offset (a prefilled value) is sent as it is. `offsetAt` is the
+ * zone's offset east of UTC, in minutes (for deterministic tests).
+ */
+export function instantText(value: string, offsetAt?: (local: Date) => number): string {
+  if (offsetAt === undefined) return resolveDateTime(value).text
+  const local = LOCAL_DATE_TIME.exec(value.trim())
+  if (local === null) return value
+  const [, y, mo, d, h, mi, sec = "00", frac = ""] = local
+  const wall = new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(sec))
+  return `${y}-${mo}-${d}T${h}:${mi}:${sec}${frac}${offsetText(offsetAt(wall))}`
+}
+
+/** What a date-time picker shows for a draft value: a zoneless wall time as is; an instant in the reader's zone. */
+export function pickerDateTime(value: string): string {
+  if (value === "" || LOCAL_DATE_TIME.test(value)) return value
+  const at = Date.parse(value)
+  if (Number.isNaN(at)) return ""
+  const local = new Date(at)
+  const two = (n: number) => String(n).padStart(2, "0")
+  return `${local.getFullYear()}-${two(local.getMonth() + 1)}-${two(local.getDate())}T${two(local.getHours())}:${two(local.getMinutes())}${local.getSeconds() === 0 ? "" : `:${two(local.getSeconds())}`}`
+}
+
 const NUMBER_TOKEN = /^-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?$/
 
 function encodeLeaf(spec: Spec, value: string): string {
@@ -315,6 +481,8 @@ function encodeLeaf(spec: Spec, value: string): string {
       return JSON.stringify(value.trim())
     case "boolean": return value === "true" ? "true" : value === "false" ? "false" : JSON.stringify(value)
     case "json": try { JSON.parse(value); return value.trim() } catch { return JSON.stringify(value) }
+    case "date-time": return JSON.stringify(instantText(value))
+    case "time": return JSON.stringify(/^\d{2}:\d{2}$/.test(value) ? `${value}:00` : value)
     default: return JSON.stringify(value)
   }
 }
@@ -400,14 +568,53 @@ export function inputPointer(diagnostic: Diagnostic): string | null {
 export const problemsAt = (diagnostics: readonly Diagnostic[], pointer: string): readonly Diagnostic[] =>
   diagnostics.filter((d) => { const at = inputPointer(d); return at !== null && (at === pointer || at.startsWith(`${pointer}/`)) })
 
+/** Fields of a record item re-pointed from the schema's item `0` to the item they edit. */
+export const rebaseFields = (fields: readonly FormField[], from: string, to: string): readonly FormField[] =>
+  fields.map((f) => ({ ...f, pointer: to + f.pointer.slice(from.length), spec: f.spec.kind === "object" ? { ...f.spec, fields: rebaseFields(f.spec.fields, from, to) } : f.spec }))
+
+const ARRAY_INDEX = /^(0|[1-9]\d*)$/
+
+/**
+ * Whether an input pointer (`inputPointer(d)`) is actually rendered by a `FieldRow` in `fields`.
+ * Mirrors `FieldRow`: an object (or array of objects) only renders diagnostics at its own exact
+ * pointer, while its declared children render theirs; leaf fields (and arrays of primitives) render
+ * any pointer at or below them. Unmatched nested pointers (e.g. `/location/unknown` or an
+ * out-of-range array element) return `false` so they surface in the form-level refusal alert.
+ */
+export function isDiagnosticPlaced(at: string, fields: readonly FormField[], draft?: Draft): boolean {
+  for (const field of fields) {
+    if (at === field.pointer) return true
+    if (field.spec.kind === "object") {
+      // Nullable hides an object's child FieldRows when its value is explicitly null.
+      if (draft !== undefined && draftAt(draft, field.pointer) === null) continue
+      if (at.startsWith(`${field.pointer}/`) && isDiagnosticPlaced(at, field.spec.fields, draft)) return true
+      continue
+    }
+    if (field.spec.kind === "array" && field.spec.item.kind === "object") {
+      if (!at.startsWith(`${field.pointer}/`)) continue
+      const rest = at.slice(field.pointer.length + 1)
+      const slash = rest.indexOf("/")
+      if (slash < 0) continue // array item object itself has no FieldRow; only its child fields do
+      const indexText = rest.slice(0, slash)
+      if (!ARRAY_INDEX.test(indexText)) continue
+      if (draft !== undefined) {
+        const items = draftAt(draft, field.pointer)
+        if (!Array.isArray(items) || Number(indexText) >= items.length) continue
+      }
+      const rebased = rebaseFields(field.spec.item.fields, `${field.pointer}/0`, `${field.pointer}/${indexText}`)
+      if (isDiagnosticPlaced(at, rebased, draft)) return true
+      continue
+    }
+    if (at.startsWith(`${field.pointer}/`)) return true
+  }
+  return false
+}
+
 /** Diagnostics that land on no field the form shows: they read at the top of the form. */
-export function unplaced(diagnostics: readonly Diagnostic[], fields: readonly FormField[]): readonly Diagnostic[] {
-  const pointers: string[] = []
-  const walk = (list: readonly FormField[]) => { for (const f of list) { pointers.push(f.pointer); if (f.spec.kind === "object") walk(f.spec.fields) } }
-  walk(fields)
+export function unplaced(diagnostics: readonly Diagnostic[], fields: readonly FormField[], draft?: Draft): readonly Diagnostic[] {
   return diagnostics.filter((d) => {
     const at = inputPointer(d)
-    return at === null || !pointers.some((p) => at === p || at.startsWith(`${p}/`))
+    return at === null || !isDiagnosticPlaced(at, fields, draft)
   })
 }
 

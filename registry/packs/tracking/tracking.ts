@@ -128,7 +128,15 @@ export const AddFirstRunLog = Norn.action({
   output: Schema.Struct({ log_id: Schema.String }),
   scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
   slice: [{ name: "run", type: Run, key: { property: { from: "input", property: "run_id" } } }],
-  preconditions: [Norn.unsafeZen<boolean>('input.seq == 0 and startsWith(input.log_id, input.run_id + "/")')],
+  preconditions: [
+    Norn.expression(
+      Schema.Struct({
+        input: Schema.Struct({ seq: Schema.Int, log_id: Schema.String, run_id: Schema.String }),
+      }),
+      (ctx) => ctx.input.seq === 0 && ctx.input.log_id.startsWith(ctx.input.run_id + "/"),
+      { root: "context" },
+    ),
+  ],
   writes: [{ type: RunLog, change: "created" }],
   effect: { kind: "upsert_input_object", type: RunLog, objectIdField: "log_id", writeMode: { kind: "create_only" } },
 })
@@ -147,7 +155,19 @@ export const AddRunLog = Norn.action({
     { name: "run", type: Run, key: { property: { from: "input", property: "run_id" } } },
     { name: "prev", type: RunLog, key: { property: { from: "input", property: "prev_id" } } },
   ],
-  preconditions: [Norn.unsafeZen<boolean>('slice.prev.run_id == input.run_id and slice.prev.seq == input.seq - 1 and startsWith(input.log_id, input.run_id + "/")')],
+  preconditions: [
+    Norn.expression(
+      Schema.Struct({
+        input: Schema.Struct({ seq: Schema.Int, log_id: Schema.String, run_id: Schema.String }),
+        slice: Schema.Struct({ prev: Schema.Struct({ run_id: Schema.String, seq: Schema.Int }) }),
+      }),
+      (ctx) =>
+        ctx.slice.prev.run_id === ctx.input.run_id &&
+        ctx.slice.prev.seq === ctx.input.seq - 1 &&
+        ctx.input.log_id.startsWith(ctx.input.run_id + "/"),
+      { root: "context" },
+    ),
+  ],
   writes: [{ type: RunLog, change: "created" }],
   effect: { kind: "upsert_input_object", type: RunLog, objectIdField: "log_id", writeMode: { kind: "create_only" } },
 })

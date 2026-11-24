@@ -98,7 +98,7 @@ function ValueInput({ field, clause, onChange, label, problem }: { readonly fiel
 }
 
 /** Writes the filter; the server applies it. Every refusal shows under the condition it points at. */
-export function FilterEditor({ fields, draft, onDraft, onApply, onClear, applied, diagnostics }: {
+export function FilterEditor({ fields, draft, onDraft, onApply, onClear, applied, diagnostics, maxClauses = LIMITS.clauses }: {
   readonly fields: readonly Field[]
   readonly draft: readonly DraftClause[]
   readonly onDraft: (draft: readonly DraftClause[]) => void
@@ -106,6 +106,8 @@ export function FilterEditor({ fields, draft, onDraft, onApply, onClear, applied
   readonly onClear: () => void
   readonly applied: readonly DraftClause[]
   readonly diagnostics: readonly QueryDiagnostic[]
+  /** Effective clause budget (8 on Table; 6 on Timeline, which reserves 2 for the time window). */
+  readonly maxClauses?: number
 }) {
   const id = useId()
   const options = filterable(fields)
@@ -141,7 +143,7 @@ export function FilterEditor({ fields, draft, onDraft, onApply, onClear, applied
       </ol>
       {general.map((problem) => <p key={problem.code} role="alert" className="text-meta text-destructive">{problem.message}</p>)}
       <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" variant="outline" size="sm" disabled={options.length === 0 || draft.length >= LIMITS.clauses}
+        <Button type="button" variant="outline" size="sm" disabled={options.length === 0 || draft.length >= maxClauses}
           onClick={() => { const first = options[0]; if (first) onDraft([...draft, blankClause(first)]) }}>
           <Plus /> Add condition
         </Button>
@@ -150,7 +152,13 @@ export function FilterEditor({ fields, draft, onDraft, onApply, onClear, applied
         <Button type="button" variant="ghost" size="sm" disabled={draft.length === 0 && applied.length === 0} onClick={onClear}>Clear</Button>
         <Button type="submit" size="sm" disabled={!dirty}>Apply</Button>
       </div>
-      {draft.length >= LIMITS.clauses && <p className="text-meta text-muted-foreground">A filter has at most {LIMITS.clauses} conditions.</p>}
+      {draft.length >= maxClauses && (
+        <p className="text-meta text-muted-foreground">
+          {maxClauses < LIMITS.clauses
+            ? `Timeline filters take at most ${maxClauses} conditions (the cell's ${LIMITS.clauses}-condition cap reserves ${LIMITS.clauses - maxClauses} for the time window).`
+            : `A filter has at most ${LIMITS.clauses} conditions.`}
+        </p>
+      )}
     </form>
   )
 }

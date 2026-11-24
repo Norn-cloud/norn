@@ -385,6 +385,7 @@ fn decide<'a>(action: &'a ActionRoot, receipt: &str, key: &str) -> ActionCall<'a
             world: World::Main,
             consumes: None,
         },
+        trace: None,
     }
 }
 

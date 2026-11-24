@@ -4,6 +4,7 @@ import { Link, useParams } from "@tanstack/react-router"
 import { LifecycleStepper } from "@/components/lifecycle-stepper"
 import { Clock, GitCommitHorizontal, Pause, ShieldX } from "lucide-react"
 import { Chip, FactChip } from "@/components/chip"
+import { FactStatusBadge, deriveFactStatus } from "@/components/fact-status-badge"
 import { Braces, Database, EyeOff, GitBranch, History as HistoryIcon, Link2, RefreshCw, Rows3, ShieldCheck, type LucideIcon } from "lucide-react"
 import { Fragment, useEffect, useState, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
@@ -80,34 +81,51 @@ export function ObjectPage() {
   const data = reads.data
   const lineage = data?.source?.document
   const problem = readProblem(catalogRead, reads)
-  const { icon: TypeIcon, text, fill } = KINDS.objectType
+  const { icon: TypeIcon, text } = KINDS.objectType
   // The cell's own decisions over this type: the reader's Sources grant and each role's actions.
   const typeAccess = useTypeAccess(name, live)
   const access = typeAccess.data?.kind === "read" ? typeAccess.data.read.document : undefined
   const sources = access?.capabilities.sources.decision
   const actionTitles = new Map(access?.roles.flatMap(({ actions }) => actions.map(({ actionId, title }) => [actionId, title] as const)) ?? [])
+  const maskedRecord = data?.object.document.masked
+  const recordWithheld = maskedRecord !== undefined && Object.keys(maskedRecord).length > 0
+  // Derive header status strictly from real typed cell fields (quarantined/open findings and masked properties).
+  const recordStatus = live
+    ? deriveFactStatus({
+      quarantined: heldBack,
+      openFindings: broken.length,
+      withheld: reads.isSuccess && data !== null && recordWithheld,
+    })
+    : null
   return (
     <section className="space-y-6">
-      <header className="flex flex-wrap items-start gap-4">
-        <span className={cn("flex size-10 shrink-0 items-center justify-center rounded-lg border border-border/60", fill, text)}><TypeIcon className="size-5" /></span>
-        <div className="min-w-0 flex-1 space-y-2">
+      {/* One header: the record's name with its state beside it, one quiet line of facts under it, the record's actions at the end. */}
+      <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
+        <div className="min-w-0 flex-1 basis-96 space-y-1.5">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="min-w-0 text-title font-semibold tracking-tight [overflow-wrap:break-word]"><PathText value={data ? recordName(data.object.document) : id} /></h1>
-            <Chip tone="violet" icon={TypeIcon}>{concept?.title ?? conceptTitle(name)}</Chip>
+            <h1 className="min-w-0 text-title leading-tight font-semibold tracking-tight [overflow-wrap:break-word]"><PathText value={data ? recordName(data.object.document) : id} /></h1>
             {data?.object.origin === "recorded" && <Chip tone="gray" title={RECORDED_HINT}>Recorded</Chip>}
+            {recordStatus !== null && <FactStatusBadge status={recordStatus} />}
             {heldBack && <Chip tone="amber" icon={Pause} title="An open finding keeps this record out of answers and totals until a correction satisfies the law.">Held back</Chip>}
             {broken.length > 0 && <Chip tone="red" dot>{broken.length} {broken.length === 1 ? "rule broken" : "rules broken"}</Chip>}
-            {data?.source?.document && <SourceChip system={data.source.document.sourceRecordRef.system} title="The connected system this record was read from" />}
           </div>
-          {data && <div className="flex flex-wrap items-center gap-1.5 text-muted-foreground">
-            <CopyId value={id} />
-            <AsOf objectType={name} id={id} version={data.object.document.version} live={data.object.origin === "live"} />
-            {data.object.origin === "live" && <Button type="button" variant="ghost" size="sm" disabled={reads.isFetching} onClick={readAgain} title="Read this record from the cell again">
-              <RefreshCw className={reads.isFetching ? "animate-spin" : undefined} />Read again
-            </Button>}
-          </div>}
-          {data?.object.origin === "live" && <div className="pt-1"><RecordActions objectType={name} id={id} onDone={readAgain} /></div>}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-meta text-muted-foreground">
+            <Link to="/objects/$type" params={{ type: name }} className="inline-flex items-center gap-1.5 text-foreground underline-offset-4 hover:underline"><TypeIcon aria-hidden className={cn("size-3.5", text)} />{concept?.title ?? conceptTitle(name)}</Link>
+            {data?.source?.document && <SourceChip system={data.source.document.sourceRecordRef.system} title="The connected system this record was read from" />}
+            {data && <>
+              <CopyId value={id} />
+              <AsOf objectType={name} id={id} version={data.object.document.version} live={data.object.origin === "live"} />
+            </>}
+          </div>
         </div>
+        {data?.object.origin === "live" && (
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <Button type="button" variant="ghost" size="sm" disabled={reads.isFetching} onClick={readAgain} title="Read this record from the cell again">
+              <RefreshCw className={reads.isFetching ? "animate-spin" : undefined} />Read again
+            </Button>
+            <RecordActions objectType={name} id={id} onDone={readAgain} />
+          </div>
+        )}
       </header>
       {data && concept && broken[0] && <Broken concept={concept} reads={data} finding={broken[0]} heldBack={heldBack} />}
       {problem !== undefined && <p role="alert" className="text-destructive">{problem}</p>}
@@ -209,7 +227,7 @@ function Broken({ concept, reads, finding, heldBack }: { readonly concept: Conce
     ? (fields as readonly Concept["fields"][number][]).map((field) => ({ key: field.id, label: label(field), text: factDisplay(field, reads.object.document, reads.object.numbers, "", view), parts: undefined }))
     : undefined)
   return (
-    <section aria-label="The rule this record breaks" className="rounded-2xl bg-card p-6 shadow-[var(--elevation-1)] ring-1 ring-foreground/5 sm:px-7">
+    <section aria-label="The rule this record breaks" className="rounded-lg border border-tone-red/25 bg-card p-5 sm:px-6">
       {pair ? (
         <div className="grid items-center gap-4 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:gap-6">
           {pair.map((side, index) => <Fragment key={side.key}>
