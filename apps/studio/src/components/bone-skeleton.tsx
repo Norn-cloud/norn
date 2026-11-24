@@ -1,5 +1,6 @@
 import { configureBoneyard, Skeleton as BoneyardSkeleton, type AnimationStyle } from "boneyard-js/react"
 import { useEffect, useState, type ReactNode } from "react"
+import { STUDIO_BONES } from "@/bones/registry"
 
 /** Named first-party Studio loading shapes captured into `src/bones/*.bones.json`. */
 export type StudioBoneName =
@@ -76,6 +77,7 @@ export function BoneSkeleton({
       <BoneyardSkeleton
         name={name}
         loading={loading}
+        initialBones={STUDIO_BONES[name]}
         color="var(--muted)"
         darkColor="var(--well)"
         animate={resolvedAnimate}

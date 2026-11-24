@@ -366,13 +366,16 @@ test("boneyard-js renders UI-shape bone skeletons inside container bounds with z
   const skeleton = page.locator('[data-slot="bone-skeleton"][data-bone="semantic-map"]')
   await expect(skeleton).toBeVisible()
   await expect(skeleton).toHaveAttribute("aria-busy", "true")
+  const overlay = skeleton.locator('[data-boneyard-overlay="true"]')
+  await expect(overlay).toBeVisible()
+  await capture(page, "polar-dark-semantic-map-bones")
 
   // Verify real boneyard-js bones rendered from the viewport breakpoint and stay strictly within container bounds.
   const geometry = await page.evaluate(() => {
-    const overlay = document.querySelector<HTMLElement>('[data-bone="semantic-map"] [data-boneyard-overlay="true"]')
-    if (!overlay) return null
-    const host = overlay.getBoundingClientRect()
-    const bones = [...overlay.querySelectorAll<HTMLElement>(":scope > div")].map((el) => {
+    const overlayEl = document.querySelector<HTMLElement>('[data-bone="semantic-map"] [data-boneyard-overlay="true"]')
+    if (!overlayEl) return null
+    const host = overlayEl.getBoundingClientRect()
+    const bones = [...overlayEl.querySelectorAll<HTMLElement>('[data-boneyard-bone="true"]')].map((el) => {
       const r = el.getBoundingClientRect()
       return { left: r.left, right: r.right, width: r.width, height: r.height }
     })
