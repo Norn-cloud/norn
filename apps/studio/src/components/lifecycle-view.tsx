@@ -8,7 +8,7 @@ import { defineLifecycleView, type LifecycleFinding, type LifecycleViewDocument,
 import viewDocument from "../../../../packages/norn-demo-ui/src/elements/lifecycle-view.widget.json"
 import type { Concept, Field, Lifecycle } from "../lib/catalog.ts"
 import { loadChecker, type Checker } from "../lib/canvas/checker.ts"
-import { scopedHostFetch, useStudioScope } from "../lib/definitions.ts"
+import { readAtScope, readStudioScope, scopedHostFetch, useStudioScope, type StudioScope } from "../lib/definitions.ts"
 import { facetsPath } from "../lib/facets.ts"
 import { liveAnswer } from "../lib/live-reads.ts"
 import { useMode } from "../lib/live-transport.ts"
@@ -37,20 +37,21 @@ export function lifecycleLabel(id: string, field?: Field): string {
   return field?.valueLabels?.get(id) ?? sentence(id)
 }
 
-export function LifecycleView({ concept, lifecycle, filter = null }: {
+export function LifecycleView({ concept, lifecycle, filter = null, scope: boundScope }: {
   readonly concept: Concept
   readonly lifecycle: Lifecycle
   readonly filter?: Predicate | null
+  readonly scope?: StudioScope
 }) {
   const { locale } = useLocale()
   const { view: mode } = useView()
   const modeRead = useMode()
   const scopeRead = useStudioScope()
   const live = modeRead.data?.kind === "live"
-  const scope = live ? (scopeRead.data ?? null) : null
+  const scope = live ? (boundScope ?? scopeRead.data ?? null) : null
   const orgId = scope?.orgId
   const environmentId = scope?.environmentId
-  const waitingForScope = modeRead.isPending || (live && scopeRead.isPending)
+  const waitingForScope = modeRead.isPending || (live && boundScope === undefined && scopeRead.isPending)
   const definitions = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
   const checker = useQuery({ queryKey: ["checker"], queryFn: () => loadChecker(), staleTime: Infinity, retry: false })
   const [host, setHost] = useState<HTMLDivElement | null>(null)
@@ -83,22 +84,27 @@ export function LifecycleView({ concept, lifecycle, filter = null }: {
     const view = document.createElement("norn-lifecycle-view") as NornLifecycleView
     const { labels, ...display } = JSON.parse(presentation) as Presentation
     const stateLabels = new Map(labels)
-    const scope = orgId === undefined || environmentId === undefined ? null : { orgId, environmentId }
-    const call = scope === null ? null : scopedHostFetch((input, init) => fetch(input, init), "/api/host", async () => scope)
+    const activeScope = orgId === undefined || environmentId === undefined ? null : { orgId, environmentId }
+    const call = activeScope === null ? null : scopedHostFetch((input, init) => fetch(input, init), "/api/host", async () => activeScope)
     view.options = {
       document: DOCUMENT,
       ...display,
       hideTitle: true,
       // When live, read the cell's scoped facets route; when recorded or without a cell, draw the declared lifecycle without calling the network.
-      ...(call !== null && scope !== null ? {
-        read: async (signal?: AbortSignal) => {
-          const response = await call(path, { headers: { accept: "application/json" }, signal })
-          const text = await response.text()
-          let body: unknown
-          try { body = text === "" ? undefined : JSON.parse(text) } catch { body = undefined }
-          return { status: response.status, body }
-        },
-        changes: (listener, onRefused) => liveAnswer(path, scope, listener, onRefused),
+      ...(call !== null && activeScope !== null ? {
+        read: async (signal?: AbortSignal) => readAtScope(
+          activeScope,
+          (s) => readStudioScope(undefined, s),
+          async () => {
+            const response = await call(path, { headers: { accept: "application/json" }, signal })
+            const text = await response.text()
+            let body: unknown
+            try { body = text === "" ? undefined : JSON.parse(text) } catch { body = undefined }
+            return { status: response.status, body }
+          },
+          signal,
+        ),
+        changes: (listener, onRefused) => liveAnswer(path, activeScope, listener, onRefused),
       } : {}),
       locale: locale === "ar" ? "ar" : "en",
       technical: mode === "technical",

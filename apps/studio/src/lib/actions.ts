@@ -1,4 +1,4 @@
-import { CellUnavailable, readStudioScope, sameStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
+import { CellUnavailable, defaultFetch, readStudioScope, resolveWriteScope, sameStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
 
 /**
  * Governed actions from Studio: the catalog the cell offers this reader, and one call.
@@ -89,10 +89,16 @@ export type CatalogRead =
   /** The server-reported scope moved away from the scope this call was bound to; no request reached the new cell. */
   | { readonly kind: "scope-changed" }
 
-export interface ActionScopeOptions {
-  readonly scope?: StudioScope
+export interface ListActionsScopeOptions {
+  readonly scope?: StudioScope | null
   readonly signal?: AbortSignal
   readonly onScopeMismatch?: (actual: StudioScope | null) => void
+}
+
+export interface ActionScopeOptions {
+  readonly scope?: StudioScope | null
+  readonly signal?: AbortSignal
+  readonly onScopeMismatch?: (actual: StudioScope | null | undefined) => void
 }
 
 /** An approval-gated call (APPROVAL-1): 202, nothing committed yet; a decider settles it in the inbox. */
@@ -108,7 +114,6 @@ export type CallResult =
 export const ACTIONS_UNAVAILABLE = "This cell doesn't take actions from Studio yet."
 
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>
-const defaultFetch: Fetch = (input, init) => fetch(input, init)
 
 /**
  * DIAG-REASON-1: what refused a call, disclosed with the caller's authority: the law (its pinned
@@ -146,7 +151,7 @@ function refusalOf(text: string): Refusal | null {
   }
 }
 
-async function scoped(fetcher: Fetch, options: ActionScopeOptions = {}): Promise<{ readonly kind: "ok"; readonly call: Fetch } | { readonly kind: "no-cell" } | { readonly kind: "scope-changed" }> {
+async function scoped(fetcher: Fetch, options: ListActionsScopeOptions = {}): Promise<{ readonly kind: "ok"; readonly call: Fetch } | { readonly kind: "no-cell" } | { readonly kind: "scope-changed" }> {
   const scope = await readStudioScope(fetcher, options.signal)
   if (options.scope !== undefined && !sameStudioScope(scope, options.scope)) {
     options.onScopeMismatch?.(scope)
@@ -163,7 +168,7 @@ export async function listActions(
   objectKind: string | undefined,
   fetcher: Fetch = defaultFetch,
   objectId?: string,
-  options: ActionScopeOptions = {},
+  options: ListActionsScopeOptions = {},
 ): Promise<CatalogRead> {
   let resolved
   try { resolved = await scoped(fetcher, options) } catch (error) {
@@ -191,22 +196,28 @@ export async function listActions(
   throw new CellUnavailable(response.status)
 }
 
+const isStudioScopeArg = (value: StudioScope | null | ActionScopeOptions | undefined): value is StudioScope | null =>
+  value === null || (value !== undefined && "orgId" in value && "environmentId" in value)
+
 /** Send one call. `input` is already-encoded JSON text, so exact numbers reach the cell as typed. */
 export async function callAction(
   actionId: string,
   input: string,
   idempotencyKey: string,
   fetcher: Fetch = defaultFetch,
-  options: ActionScopeOptions = {},
+  boundOrOptions?: StudioScope | null | ActionScopeOptions,
 ): Promise<CallResult> {
-  const resolved = await scoped(fetcher, options)
-  if (resolved.kind === "no-cell") return { kind: "no-cell" }
-  if (resolved.kind === "scope-changed") return { kind: "unavailable" }
-  const response = await resolved.call(`/v1/actions/${encodeURIComponent(actionId)}`, {
+  const boundScope = isStudioScopeArg(boundOrOptions) ? boundOrOptions : boundOrOptions?.scope
+  const signal = isStudioScopeArg(boundOrOptions) ? undefined : boundOrOptions?.signal
+  const onScopeMismatch = isStudioScopeArg(boundOrOptions) ? undefined : boundOrOptions?.onScopeMismatch
+  const scope = await resolveWriteScope(fetcher, boundScope)
+  if (scope === null) return { kind: "no-cell" }
+  const call = scopedHostFetch(fetcher, "/api/host", async () => scope)
+  const response = await call(`/v1/actions/${encodeURIComponent(actionId)}`, {
     method: "POST",
     headers: { accept: "application/json", "content-type": "application/json" },
     body: `{"input":${input},"idempotencyKey":${JSON.stringify(idempotencyKey)}}`,
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
+    ...(signal === undefined ? {} : { signal }),
   })
   const text = await response.text()
   if (response.status === 202) {
@@ -217,7 +228,13 @@ export async function callAction(
   if (response.ok) return { kind: "receipt", receipt: JSON.parse(text) as ActionReceipt }
   const refusal = refusalOf(text)
   if (response.status === 404 || response.status === 503) return { kind: "unavailable" }
-  if (refusal !== null) return { kind: "refused", status: response.status, ...refusal }
+  if (refusal !== null) {
+    if (response.status === 409 && refusal.code === "workspace.changed" && onScopeMismatch !== undefined) {
+      const actual = await readStudioScope(fetcher, signal).then((next) => next, () => undefined)
+      onScopeMismatch(actual)
+    }
+    return { kind: "refused", status: response.status, ...refusal }
+  }
   throw new CellUnavailable(response.status)
 }
 

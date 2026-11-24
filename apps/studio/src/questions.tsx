@@ -26,12 +26,13 @@ import { RestatementCard } from "./restatement.tsx"
 import type { MenuEntry } from "./shell.tsx"
 
 import { AnswerView, AskedAnswer, RefusedNote } from "./answer-view.tsx"
+import { useStudioScope, type StudioScope } from "./lib/definitions.ts"
 import { useMode } from "./lib/live-transport.ts"
 import { metricHeading, metricQuestion, readMetrics, recentWindow, timeLabel, windowOf, type Condition, type MetricSummary } from "./lib/metrics.ts"
 import { figure, unitGroups, type UnitGroup } from "./lib/answer-anatomy.ts"
 import { evaluateQuestion } from "./lib/evaluate.ts"
 import { readDocument } from "./lib/exact.ts"
-import { ProfileTimedOut, readProfile } from "./lib/profile.ts"
+import { ProfileTimedOut, profileQueryKey, readProfile } from "./lib/profile.ts"
 import { useLiveRefresh } from "./lib/live-reads.ts"
 export { AnswerView, LiveRecords, RefusedNote, type FetchTrace } from "./answer-view.tsx"
 
@@ -49,12 +50,13 @@ function useSeen<T extends Element>() {
   return [ref, seen] as const
 }
 
-function MetricCard({ metric, turn, onSettled }: {
+function MetricCard({ metric, turn, onSettled, scope: boundScope }: {
   readonly metric: MetricSummary
   /** Whether every question above this one has its answer: the cell answers one at a time, top first. */
   readonly turn: boolean
   /** Called once this question is settled (answered, refused, or nothing to ask). */
   readonly onSettled: () => void
+  readonly scope: StudioScope | null
 }) {
   const { view } = useView()
   // A question asks the cell only once it is near view and the ones above it have their answers.
@@ -64,13 +66,13 @@ function MetricCard({ metric, turn, onSettled }: {
   const [conditions, setConditions] = useState<readonly Condition[]>([])
   // The unit group whose weekly answer is open: chosen from the groups the cell returned, never by default.
   const [picked, setPicked] = useState<UnitGroup | null>(null)
-  const profile = useQuery({ queryKey: ["profile", metric.objectType], queryFn: () => readProfile(metric.objectType), retry: false, enabled: active })
+  const profile = useQuery({ queryKey: profileQueryKey(metric.objectType, boundScope), queryFn: () => readProfile(metric.objectType, boundScope), retry: false, enabled: active })
   const typeNamed = (name: string) => catalog.data?.document.flatMap((artifact) => artifact.kind === "entity" && "objectType" in artifact.payload && artifact.payload.objectType.name === name ? [artifact.payload.objectType] : [])[0]
   // A time read through links (a posting's time is its event's) is profiled on the type the links reach, as the
   // cell declares them; the window then spans every date that type carries.
   const timeType = (metric.timeLinks ?? []).reduce<string | undefined>((type, link) => type === undefined ? undefined
     : (typeNamed(type) as { readonly links?: readonly { readonly id: string; readonly target: string }[] } | undefined)?.links?.find(({ id }) => id === link)?.target, metric.objectType)
-  const timeProfile = useQuery({ queryKey: ["profile", timeType], queryFn: () => readProfile(timeType!), retry: false, enabled: active && timeType !== undefined && timeType !== metric.objectType })
+  const timeProfile = useQuery({ queryKey: profileQueryKey(timeType ?? "", boundScope), queryFn: () => readProfile(timeType!, boundScope), retry: false, enabled: active && timeType !== undefined && timeType !== metric.objectType })
   const timeDocument = timeType === metric.objectType ? profile.data?.document : timeProfile.data?.document
   const profiledWindow = timeDocument && metric.timeProperty !== null ? windowOf(timeDocument, metric.timeProperty) : undefined
   // The profile sent no range for the time property (a hosted cell may withhold it): ask the latest 52 weeks, and say so.
@@ -115,8 +117,8 @@ function MetricCard({ metric, turn, onSettled }: {
             <div className="min-w-0 flex-1"><Conditions fields={(objectType?.properties ?? []).map(({ id }) => id).filter((id) => id !== metric.expression && id !== metric.timeProperty)} conditions={conditions} onChange={change} /></div>
           </div>
           {sources.length === 0
-            ? <AskedAnswer question={metricQuestion(metric, window, conditions) as Question} title={what} declared={declared} heading="none" onSettled={onSettled} />
-            : <UnitGroups asked={metricQuestion(metric, window, conditions) as Question} grain={window.grain} sources={sources} title={what} declared={declared} picked={picked} onPick={setPicked} onSettled={onSettled} />}
+            ? <AskedAnswer question={metricQuestion(metric, window, conditions) as Question} title={what} declared={declared} heading="none" onSettled={onSettled} scope={boundScope} />
+            : <UnitGroups asked={metricQuestion(metric, window, conditions) as Question} grain={window.grain} sources={sources} title={what} declared={declared} picked={picked} onPick={setPicked} onSettled={onSettled} scope={boundScope} />}
         </>}
       </div>
     </section>
@@ -128,7 +130,7 @@ function MetricCard({ metric, turn, onSettled }: {
  * returns (it groups by the unit sources itself), labelled by its unit, most records first; the
  * question's own conditions narrow it. A group opens the question as asked, held to that group.
  */
-export function UnitGroups({ asked, grain, sources, title, declared, picked, onPick, onSettled }: {
+export function UnitGroups({ asked, grain, sources, title, declared, picked, onPick, onSettled, scope }: {
   /** The question as asked: its window, conditions and grouping; the unit groups are read over the same window. */
   readonly asked: Question
   /** The period the opened group's answer is read by, in words ("week"); the question's own when it groups by a time. */
@@ -140,9 +142,11 @@ export function UnitGroups({ asked, grain, sources, title, declared, picked, onP
   readonly picked: UnitGroup | null
   readonly onPick: (group: UnitGroup | null) => void
   readonly onSettled: () => void
+  readonly scope?: StudioScope | null
 }) {
+  const scopeKey = scope ? `${scope.orgId}:${scope.environmentId}` : ""
   const totals: Question = { ...asked, groupBy: sources.map((property) => ({ path: { property } })) }
-  const run = useQuery({ queryKey: ["unit-groups", JSON.stringify(totals)], queryFn: () => evaluateQuestion(totals), retry: false, staleTime: 30_000 })
+  const run = useQuery({ queryKey: ["unit-groups", scopeKey, JSON.stringify(totals)], queryFn: () => evaluateQuestion(totals, undefined, scope), retry: false, staleTime: 30_000 })
   const result = run.data
   // Settled once the totals are back, unless one group opens its answer per period (that answer settles it).
   const single = result?.kind === "answer" && unitGroups(sources, buckets({ question: totals, metrics: [], objectType: declared.objectType.document }, { answer: result.read.document, numbers: result.read.numbers, at: "" })).length === 1
@@ -176,7 +180,7 @@ export function UnitGroups({ asked, grain, sources, title, declared, picked, onP
         </div>
       )}
       {/* One group: its total for the window is the first number on screen while its answer per period comes. */}
-      {open && weekly && <AskedAnswer question={weekly} title={title} unit={open.unit} declared={declared} heading="none" onSettled={onSettled}
+      {open && weekly && <AskedAnswer question={weekly} title={title} unit={open.unit} declared={declared} heading="none" onSettled={onSettled} scope={scope}
         placeholder={groups.length === 1 ? <div data-slot="answer-total" className="rounded-2xl bg-card p-5 shadow-[var(--elevation-1)] ring-1 ring-foreground/5 sm:p-7">
           <div className="text-meta text-muted-foreground">Total, {period(totals.window)}</div>
           <div className="pt-2 text-[3rem] leading-none font-light tracking-[-0.045em] tabular-nums">{figure(open.bucket, open.unit)}</div>
@@ -222,10 +226,14 @@ function Conditions({ fields, conditions, onChange }: { readonly fields: readonl
 
 /** The questions a connected cell can answer: the metrics it derives from its admitted types, grouped by type. */
 function LiveQuestionsBoard() {
-  const metrics = useQuery({ queryKey: ["metrics"], queryFn: readMetrics, retry: false })
+  const scope = useStudioScope()
+  const boundScope = scope.data ?? null
+  const scopeKey = boundScope ? `${boundScope.orgId}:${boundScope.environmentId}` : ""
+  const metrics = useQuery({ queryKey: ["metrics", scopeKey], queryFn: ({ signal }) => readMetrics({ signal, scope: boundScope }), enabled: scope.isSuccess, retry: false })
+  if (scope.isError) return <p role="alert" className="text-destructive">{scope.error.message}</p>
   return (
     <LoadState
-      status={metrics.status}
+      status={scope.isPending ? "pending" : metrics.status}
       data={metrics.data}
       error={metrics.error}
       isFetching={metrics.isFetching}
@@ -244,7 +252,7 @@ function LiveQuestionsBoard() {
       {(data) => {
         const list = data.document.metrics
         const types = [...new Set(list.map(({ objectType }) => objectType))]
-        return <TypeSections types={types} list={list} />
+        return <TypeSections types={types} list={list} scope={boundScope} />
       }}
     </LoadState>
   )
@@ -254,10 +262,10 @@ function LiveQuestionsBoard() {
  * The metrics by type. A type the cell holds no readable records for does not take a card per
  * metric: its metrics are listed together, compactly, after the types that have records.
  */
-function TypeSections({ types, list }: { readonly types: readonly string[]; readonly list: readonly MetricSummary[] }) {
+function TypeSections({ types, list, scope: boundScope }: { readonly types: readonly string[]; readonly list: readonly MetricSummary[]; readonly scope: StudioScope | null }) {
   const { view } = useView()
   // The profiles each card reads as it comes into view (one analytics read at a time): read here, never asked here.
-  const profiles = useQueries({ queries: types.map((type) => ({ queryKey: ["profile", type], queryFn: () => readProfile(type), retry: false, enabled: false })) })
+  const profiles = useQueries({ queries: types.map((type) => ({ queryKey: profileQueryKey(type, boundScope), queryFn: () => readProfile(type, boundScope), retry: false, enabled: false })) })
   const empty = (index: number) => profiles[index]?.data?.document.rows === 0
   const held = types.filter((_, index) => !empty(index))
   const without = types.filter((_, index) => empty(index))
@@ -270,7 +278,7 @@ function TypeSections({ types, list }: { readonly types: readonly string[]; read
     {held.map((type) => (
       <div key={type} className="space-y-3">
         <h2 className="text-section font-medium"><Link to="/objects/$type" params={{ type }} className="underline-offset-4 hover:underline">{conceptTitle(type)}</Link></h2>
-        <div className="grid gap-3">{list.filter(({ objectType }) => objectType === type).map((metric) => <MetricCard key={metric.name} metric={metric} turn={turnOf(metric.name)} onSettled={settle.get(metric.name)!} />)}</div>
+        <div className="grid gap-3">{list.filter(({ objectType }) => objectType === type).map((metric) => <MetricCard key={metric.name} metric={metric} turn={turnOf(metric.name)} onSettled={settle.get(metric.name)!} scope={boundScope} />)}</div>
       </div>
     ))}
     {without.length > 0 && (

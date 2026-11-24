@@ -12,6 +12,7 @@ import { NO_DATA_CELL } from "../lib/definitions.ts"
 import { useLearningCapabilities } from "../lib/learning/capabilities.ts"
 import { useLiveRefresh } from "../lib/live-reads.ts"
 import { getRun, newRunId, phaseOf, refreshEvery, runTitle, RUNS_UNAVAILABLE, startRun, stepTitle, type Phase, type Run, type RunStep, type StepStatus } from "../lib/runs.ts"
+import { usePinnedScope } from "../lib/session.ts"
 
 const STATUS: Readonly<Record<StepStatus, { readonly icon: LucideIcon; readonly label: string; readonly tone: string }>> = {
   pending: { icon: Circle, label: "Not started", tone: "text-muted-foreground" },
@@ -34,8 +35,9 @@ const KIND: Readonly<Record<RunStep["kind"], string>> = { perform: "Step", decid
  */
 export function RunButton({ flow, label = "Run", variant = "default" }: { readonly flow: string; readonly label?: string; readonly variant?: "default" | "outline" }) {
   const navigate = useNavigate()
+  const pinnedScope = usePinnedScope(flow)
   const start = useMutation({
-    mutationFn: async () => startRun(flow, newRunId()),
+    mutationFn: async () => startRun(flow, newRunId(), undefined, pinnedScope),
     onSuccess: (result) => { if (result.kind === "ok") void navigate({ to: "/runs/$id", params: { id: result.value.id } }) },
   })
   const problem = start.isError ? (start.error instanceof Error ? start.error.message : "The cell did not answer.")
