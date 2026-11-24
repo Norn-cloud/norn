@@ -120,13 +120,13 @@ pub(super) fn check_governing_laws<E, C, T, V: CommitView + ?Sized>(
         key: key.clone(),
         reason: crate::governing_laws::LawEvaluationError::Violated(Box::new(failure)),
     };
-    let mut checked = BTreeSet::new();
+    let mut subjects = LawSubjects::default();
     let authorized = authorization.map(ObservationAuthorization::indexed);
     for write in &commit.writes {
         let FactMutation::Put { .. } = &write.mutation else {
             continue;
         };
-        checked.insert(model.canonical(&write.key));
+        subjects.direct.insert(model.canonical(&write.key));
         let PostRow::Live { values, .. } = post.row(&write.key)? else {
             unreachable!("sealed Put is live")
         };
@@ -158,14 +158,14 @@ pub(super) fn check_governing_laws<E, C, T, V: CommitView + ?Sized>(
     if index.is_empty() {
         return Ok(());
     }
-    let LawSubjects {relinked,dependent} = law_subjects(commit, post, &index, &checked)?;
+    law_subjects(commit, post, &index, &mut subjects)?;
     let unreadable = |subject: &FactKey| CommitError::Law {
         key: subject.clone(),
         reason: crate::governing_laws::LawEvaluationError::Unsupported(
             "LAW-LINK-1: a linked subject's values cannot be read".into(),
         ),
     };
-    for subject in &relinked {
+    for subject in &subjects.relinked {
         let PostRow::Live { values, .. } = post.row(subject)? else {
             return Err(unreadable(subject));
         };
@@ -180,7 +180,7 @@ pub(super) fn check_governing_laws<E, C, T, V: CommitView + ?Sized>(
     // a subject already in violation (a quarantined observation) does not
     // freeze its target.
     let before = post.snapshot();
-    for subject in dependent.difference(&relinked) {
+    for subject in subjects.dependent.difference(&subjects.relinked) {
         let PostRow::Live { values, .. } = post.row(subject)? else {
             return Err(unreadable(subject));
         };
@@ -198,20 +198,24 @@ pub(super) fn check_governing_laws<E, C, T, V: CommitView + ?Sized>(
     Ok(())
 }
 
-struct LawSubjects { relinked:BTreeSet<FactKey>, dependent:BTreeSet<FactKey> }
+#[derive(Default)]
+struct LawSubjects {
+    direct: BTreeSet<FactKey>,
+    relinked: BTreeSet<FactKey>,
+    dependent: BTreeSet<FactKey>,
+}
 
 fn law_subjects<E, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     post: &PostState<'_, '_, V>,
     index: &crate::governing_laws::LinkLawIndex,
-    checked: &BTreeSet<FactKey>,
-) -> Result<LawSubjects, CommitError<V::Error>> {
+    subjects: &mut LawSubjects,
+) -> Result<(), CommitError<V::Error>> {
     let model = post.model();
     // A subject whose link changed is a changed subject.
-    let mut relinked = BTreeSet::new();
     for write in &commit.links {
         let key = model.canonical_link(&write.key);
-        if checked.contains(&key.source) {
+        if subjects.direct.contains(&key.source) {
             continue;
         }
         let Some(ty) = post.concrete(&key.source)? else {
@@ -223,15 +227,14 @@ fn law_subjects<E, C, T, V: CommitView + ?Sized>(
             .iter()
             .any(|(subject, link, _)| *link == key.link && model.is_a(&source.object_type, subject))
         {
-            relinked.insert(source);
+            subjects.relinked.insert(source);
         }
     }
-    let mut of_targets = BTreeSet::new();
     // LAW-LINK-MANY-1: a source whose link is added or removed (a line moved,
     // added to or deleted from its document) re-checks the subject it links.
     for write in &commit.links {
         let key = model.canonical_link(&write.key);
-        if checked.contains(&key.target) {
+        if subjects.direct.contains(&key.target) {
             continue;
         }
         let source = match post.concrete(&key.source)? {
@@ -256,31 +259,42 @@ fn law_subjects<E, C, T, V: CommitView + ?Sized>(
                 && model.is_a(&source, declared)
                 && model.is_a(&subject.object_type, reader)
         }) {
-            of_targets.insert(subject);
+            subjects.dependent.insert(subject);
         }
     }
     for write in &commit.writes {
         if matches!(write.mutation, FactMutation::Put { .. }) {
-            linked_subjects(post, index, &write.key, checked, &mut of_targets)?;
+            linked_subjects(
+                post,
+                index,
+                &write.key,
+                &subjects.direct,
+                &mut subjects.dependent,
+            )?;
         }
     }
-    Ok(LawSubjects {relinked, dependent:of_targets})
+    Ok(())
 }
 
-fn evaluate<V:CommitView + ?Sized>(on:&PostState<'_, '_, V>, key:&FactKey, values:&crate::cell_host::JsonObject, remaining:&mut u64) -> Result<Vec<crate::governing_laws::LawFailure>,CommitError<V::Error>> {
-        let mut links = CommitLinks::new(on, key);
-        let evaluated = crate::governing_laws::evaluate_linked(
-            on.model().catalog,
-            key,
-            values,
-            &mut links,
-            remaining,
-        );
-        if let Some(error) = links.take_host_error() {
-            return Err(CommitError::Host(error));
-        }
-        evaluated.map_err(|reason| CommitError::Law {
-            key: key.clone(),
-            reason,
-        })
+fn evaluate<V: CommitView + ?Sized>(
+    on: &PostState<'_, '_, V>,
+    key: &FactKey,
+    values: &crate::cell_host::JsonObject,
+    remaining: &mut u64,
+) -> Result<Vec<crate::governing_laws::LawFailure>, CommitError<V::Error>> {
+    let mut links = CommitLinks::new(on, key);
+    let evaluated = crate::governing_laws::evaluate_linked(
+        on.model().catalog,
+        key,
+        values,
+        &mut links,
+        remaining,
+    );
+    if let Some(error) = links.take_host_error() {
+        return Err(CommitError::Host(error));
+    }
+    evaluated.map_err(|reason| CommitError::Law {
+        key: key.clone(),
+        reason,
+    })
 }

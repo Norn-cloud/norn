@@ -116,7 +116,7 @@ impl<E, C, T, V: CommitView + ?Sized> CommitStages<CommitError<V::Error>>
                                             missing: write.key.source.clone(),
                                         }
                                     })?;
-                                post.model().link_values(&concrete,&write.key,values)?;
+                                post.model().link_values(&concrete, &write.key, values)?;
                             }
                         }
                         Ok(())

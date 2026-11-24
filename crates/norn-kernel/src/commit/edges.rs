@@ -178,25 +178,23 @@ pub(super) fn check_acyclic_links<E, C, T, V: CommitView + ?Sized>(
                 .iter()
                 .map(|target| model.canonical_link(&target.key))
                 .collect();
-            for change in &commit.links {
-                let changed = model.canonical_link(&change.key);
+            for (changed, add) in post.changes(&node) {
                 if changed.source != node || changed.link != key.link {
                     continue;
                 }
-                match change.mutation {
-                    LinkMutation::Add { .. } => {
-                        if !outgoing.contains(&changed) {
-                            charge_acyclic_bytes(
-                                &mut remaining_bytes,
-                                &key.source,
-                                changed.target.key.len(),
-                            )?;
-                            outgoing.insert(changed);
-                        }
+                match super::overlay_core::edge_delta(outgoing.contains(changed), *add) {
+                    super::overlay_core::EdgeDelta::Insert => {
+                        charge_acyclic_bytes(
+                            &mut remaining_bytes,
+                            &key.source,
+                            changed.target.key.len(),
+                        )?;
+                        outgoing.insert(changed.clone());
                     }
-                    LinkMutation::Remove => {
-                        outgoing.remove(&changed);
+                    super::overlay_core::EdgeDelta::Remove => {
+                        outgoing.remove(changed);
                     }
+                    super::overlay_core::EdgeDelta::Keep => {}
                 }
             }
             // Bound the frontier as well as node visits before allocating it.
@@ -243,15 +241,7 @@ pub(super) fn check_required_links<E, C, T, V: CommitView + ?Sized>(
         .iter()
         .map(|w| model.canonical(&w.key))
         .collect();
-    let mut changes = BTreeMap::<(FactKey, String), Vec<(LinkKey, bool)>>::new();
-    for write in &commit.links {
-        let key = model.canonical_link(&write.key);
-        sources.insert(key.source.clone());
-        changes
-            .entry((key.source.clone(), key.link.clone()))
-            .or_default()
-            .push((key, matches!(write.mutation, LinkMutation::Add { .. })));
-    }
+    sources.extend(commit.links.iter().map(|w| model.canonical(&w.key.source)));
     let observed: BTreeSet<_> = authorization
         .into_iter()
         .flat_map(ObservationAuthorization::observed_sources)
@@ -288,17 +278,16 @@ pub(super) fn check_required_links<E, C, T, V: CommitView + ?Sized>(
                 .collect::<Vec<_>>()
         });
         for &role in roles.iter() {
-            let role_changes = changes.get(&(source.clone(), role.to_owned()));
+            let role_changes = post
+                .changes(&source)
+                .iter()
+                .filter(|(key, _)| key.source == source && key.link == role);
             // Added endpoints already passed admission and are live in the
             // final graph. A replacement therefore needs no snapshot scan.
-            if role_changes.is_some_and(|changes| changes.iter().any(|(_, add)| *add)) {
+            if role_changes.clone().any(|(_, add)| *add) {
                 continue;
             }
-            let excluded = role_changes
-                .into_iter()
-                .flatten()
-                .map(|(key, _)| key.target.clone())
-                .collect();
+            let excluded = role_changes.map(|(key, _)| key.target.clone()).collect();
             let present = post
                 .before()
                 .has_link_target(&source, role, &excluded)
@@ -338,22 +327,10 @@ pub(super) fn check_cardinality<E, C, T, V: CommitView + ?Sized>(
             continue;
         };
         if declared.cardinality.to == Multiplicity::One {
-            crate::decision_links::check_to_one_cardinality(
-                commit,
-                model,
-                post.before(),
-                write,
-                &key,
-            )?;
+            check_one(post, &write.key, &key, Direction::Outgoing)?;
         }
         if declared.cardinality.from == Multiplicity::One {
-            crate::decision_links::check_from_one_cardinality(
-                commit,
-                model,
-                post.before(),
-                write,
-                &key,
-            )?;
+            check_one(post, &write.key, &key, Direction::Incoming)?;
         }
     }
     for (source, source_links) in links {
@@ -386,4 +363,67 @@ pub(super) fn check_cardinality<E, C, T, V: CommitView + ?Sized>(
         }
     }
     Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum Direction {
+    Outgoing,
+    Incoming,
+}
+
+/// Bounded adjacency proofs exclude all touched endpoints. A second new edge
+/// or any unchanged edge in the same role violates multiplicity one.
+fn check_one<V: CommitView + ?Sized>(
+    post: &PostState<'_, '_, V>,
+    written: &LinkKey,
+    key: &LinkKey,
+    direction: Direction,
+) -> Result<(), CommitError<V::Error>> {
+    let (endpoint, label) = match direction {
+        Direction::Outgoing => (&key.source, "outgoing"),
+        Direction::Incoming => (&key.target, "incoming"),
+    };
+    let mut added = false;
+    let mut excluded = BTreeSet::new();
+    let refusal = || CommitError::LinkCardinality {
+        key: Box::new(written.clone()),
+        endpoint: endpoint.clone(),
+    };
+    for (edge, add) in post.changes(endpoint) {
+        if edge.link != key.link {
+            continue;
+        }
+        let (this, other) = match direction {
+            Direction::Outgoing => (&edge.source, &edge.target),
+            Direction::Incoming => (&edge.target, &edge.source),
+        };
+        if this != endpoint {
+            continue;
+        }
+        if *add && added {
+            return Err(refusal());
+        }
+        added |= *add;
+        excluded.insert(other.clone());
+    }
+    let present = match direction {
+        Direction::Outgoing => post
+            .before()
+            .has_link_target(endpoint, &key.link, &excluded),
+        Direction::Incoming => post
+            .before()
+            .has_link_source(endpoint, &key.link, &excluded),
+    }
+    .map_err(CommitError::Host)?;
+    match present {
+        Some(true) => Err(refusal()),
+        Some(false) => Ok(()),
+        None => Err(CommitError::EffectiveValues {
+            key: endpoint.clone(),
+            reason: format!(
+                "bounded cardinality proof unavailable for {label} link `{}`",
+                key.link
+            ),
+        }),
+    }
 }

@@ -4464,8 +4464,7 @@ fn removing_an_absent_law_read_link_from_an_absent_subject_commits() -> Checked 
     Ok(())
 }
 
-/// The stored graph of the observed-line regression: `SpecialDoc/d`
-/// (`limit` 3) with one `SpecialLine/l` (`amount` 1), each at version 1.
+/// Two live version-one subtype rows with an incident edge at its last version.
 struct StoredDocument;
 
 impl CommitView for StoredDocument {
@@ -4518,7 +4517,12 @@ impl CommitView for StoredDocument {
 #[test]
 fn exhausted_link_version_refuses_before_post_state_evaluation() -> Checked {
     let types = document_types()?;
-    let catalog = TypeCatalog::new(&types);
+    let laws = [link_law(
+        "document_keeps_a_line",
+        DOC,
+        "len(self.lines) == 0",
+    )?];
+    let catalog = TypeCatalog::new(&types).with_governing_laws(&laws);
     let model = norn_kernel::CommitModel::new(&catalog);
     let mut write = put_new(SPECIAL_DOC, "d", json!({"limit":1}))?;
     write.expected = FactVersion(1);

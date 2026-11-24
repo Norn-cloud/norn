@@ -34,6 +34,6 @@ pub(super) const fn edge_delta(before: bool, add: bool) -> EdgeDelta {
     match (before, add) {
         (false, true) => EdgeDelta::Insert,
         (true, false) => EdgeDelta::Remove,
-        (false,false) | (true,true) => EdgeDelta::Keep,
+        (false, false) | (true, true) => EdgeDelta::Keep,
     }
 }

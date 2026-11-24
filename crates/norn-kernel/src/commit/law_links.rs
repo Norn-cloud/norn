@@ -24,22 +24,39 @@ impl<'p, 'c, 'a, V: CommitView + ?Sized> CommitLinks<'p, 'c, 'a, V> {
         self.host.take()
     }
     fn map_error(&mut self, error: CommitError<V::Error>) -> LawEvaluationError {
-        if let CommitError::Law {reason,..} = error {return reason;}
-        let diagnostic=LawEvaluationError::Unsupported(format!("LAW-LINK-1: {}",error.code()));
-        if let CommitError::Host(cause) = error {self.host=Some(cause);}
+        if let CommitError::Law { reason, .. } = error {
+            return reason;
+        }
+        let diagnostic = LawEvaluationError::Unsupported(format!("LAW-LINK-1: {}", error.code()));
+        if let CommitError::Host(cause) = error {
+            self.host = Some(cause);
+        }
         diagnostic
     }
-    fn target_row(&mut self, key: &FactKey) -> Result<LinkedTarget, LawEvaluationError> {
-        match self.post.row(key).map_err(|e| self.map_error(e))? {
+    fn target_row(
+        &mut self,
+        key: &FactKey,
+        source: Option<&ObjectTypeName>,
+    ) -> Result<Option<LinkedTarget>, LawEvaluationError> {
+        let Some(row) = self
+            .post
+            .row_matching(key, |ty| {
+                source.is_none_or(|declared| self.post.model().is_a(ty, declared))
+            })
+            .map_err(|e| self.map_error(e))?
+        else {
+            return Ok(None);
+        };
+        match row {
             PostRow::Live {
                 concrete,
                 version,
                 values,
-            } => Ok(LinkedTarget {
+            } => Ok(Some(LinkedTarget {
                 key: FactKey::new(concrete.as_str(), &key.key),
                 version: version.0,
                 values: values.into_owned(),
-            }),
+            })),
             PostRow::Deleted { tombstone } => Err(LawEvaluationError::Unsupported(format!(
                 "LAW-LINK-1: linked row was deleted at {tombstone}"
             ))),
@@ -67,11 +84,11 @@ impl<V: CommitView + ?Sized> LinkTargets for CommitLinks<'_, '_, '_, V> {
                 "LAW-LINK-1: multiple targets of {link}"
             )));
         }
-        self.target_row(&key.target).map(Some)
+        self.target_row(&key.target, None)
     }
     fn sources(
         &mut self,
-        role: &str,
+        _role: &str,
         source: &ObjectTypeName,
         link: &str,
     ) -> Result<Vec<LinkedTarget>, LawEvaluationError> {
@@ -84,18 +101,16 @@ impl<V: CommitView + ?Sized> LinkTargets for CommitLinks<'_, '_, '_, V> {
             if key.target != self.subject || key.link != link {
                 continue;
             }
-            let concrete = self.post.concrete(&key.source).map_err(|e|self.map_error(e))?
-                .ok_or_else(|| LawEvaluationError::Unsupported(format!("LAW-LINK-MANY-1: a source of {role} is absent")))?;
-            if !self.post.model().is_a(&concrete, source) {
+            let Some(target) = self.target_row(&key.source, Some(source))? else {
                 continue;
-            }
+            };
             if found.len() >= MAX_LINK_LAW_SUBJECTS {
                 return Err(LawEvaluationError::LinkFanOutExceeded {
                     target: format!("{}/{}", self.subject.object_type.as_str(), self.subject.key),
                     limit: MAX_LINK_LAW_SUBJECTS,
                 });
             }
-            found.push(self.target_row(&key.source)?);
+            found.push(target);
         }
         Ok(found)
     }

@@ -184,25 +184,36 @@ impl<'c, 'a, V: CommitView + ?Sized> PostState<'c, 'a, V> {
     }
 
     pub(super) fn row(&self, key: &FactKey) -> Result<PostRow<'_>, CommitError<V::Error>> {
+        Ok(self.row_matching(key, |_| true)?.unwrap_or(PostRow::Absent))
+    }
+    /// Filter on concrete lineage before asking the host for any values.
+    pub(super) fn row_matching(
+        &self,
+        key: &FactKey,
+        accept: impl FnOnce(&ObjectTypeName) -> bool,
+    ) -> Result<Option<PostRow<'_>>, CommitError<V::Error>> {
         let key = Canon::of(self.model, key);
         match self.source(&key)? {
-            RowSource::Put { row, version } => Ok(PostRow::Live {
+            RowSource::Put { row, version } => Ok(accept(row.concrete).then(|| PostRow::Live {
                 concrete: row.concrete.clone(),
                 version: FactVersion(version),
                 values: Cow::Borrowed(&row.values),
-            }),
-            RowSource::Deleted { tombstone } => Ok(PostRow::Deleted {
+            })),
+            RowSource::Deleted { tombstone } => Ok(Some(PostRow::Deleted {
                 tombstone: FactVersion(tombstone),
-            }),
+            })),
             RowSource::Before => {
                 let version = self.view.version(&key.0).map_err(CommitError::Host)?;
                 let Some(concrete) = self.view.concrete(&key.0).map_err(CommitError::Host)? else {
-                    return Ok(if version == FactVersion::ABSENT {
+                    return Ok(Some(if version == FactVersion::ABSENT {
                         PostRow::Absent
                     } else {
                         PostRow::Deleted { tombstone: version }
-                    });
+                    }));
                 };
+                if !accept(&concrete) {
+                    return Ok(None);
+                }
                 let values = self
                     .view
                     .object_values(&key.0)
@@ -213,14 +224,18 @@ impl<'c, 'a, V: CommitView + ?Sized> PostState<'c, 'a, V> {
                             "LAW-LINK-1: a live row's values cannot be read".into(),
                         ),
                     })?;
-                Ok(PostRow::Live {
+                Ok(Some(PostRow::Live {
                     concrete,
                     version,
                     values: Cow::Owned(values),
-                })
+                }))
             }
         }
     }
+    pub(super) fn changes(&self, canonical: &FactKey) -> &[(LinkKey, bool)] {
+        self.edges.get(canonical).map_or(&[], Vec::as_slice)
+    }
+
     pub(super) fn incident(
         &self,
         object: &FactKey,

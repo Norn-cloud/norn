@@ -139,10 +139,15 @@ impl<'m, 'a> CommitModel<'m, 'a> {
     ) -> Result<crate::cell_host::JsonObject, CommitError<V::Error>> {
         let source = proposed_type(commit, *self, view, &self.canonical(&key.source))?
             .unwrap_or_else(|| key.source.object_type.clone());
-        self.link_values(&source,key,values)
+        self.link_values(&source, key, values)
     }
 
-    pub(crate) fn link_values<X>(&self,source:&ObjectTypeName,key:&LinkKey,values:&crate::cell_host::JsonObject) -> Result<crate::cell_host::JsonObject,CommitError<X>> {
+    pub(crate) fn link_values<X>(
+        &self,
+        source: &ObjectTypeName,
+        key: &LinkKey,
+        values: &crate::cell_host::JsonObject,
+    ) -> Result<crate::cell_host::JsonObject, CommitError<X>> {
         self.catalog
             .effective_link_values(source, &key.link, values)
             .map_err(|error| CommitError::EffectiveValues {
@@ -374,6 +379,7 @@ pub trait CommitView {
 ///    the current version ([`CommitError::Conflict`]); an object is put only
 ///    as its live concrete type ([`CommitError::TypeMismatch`]); every link
 ///    write matches the current link version ([`CommitError::LinkConflict`]);
+///    all written versions have a representable successor ([`CommitError::Overflow`]);
 /// 4. **endpoints** — no link dangles once the commit applies
 ///    ([`CommitError::DanglingLink`]): both endpoints of every added link
 ///    exist as their named types, and every live link of a deleted object
@@ -387,8 +393,7 @@ pub trait CommitView {
 /// 6. **invariants** — each final `Put` satisfies every invariant on its type
 ///    lineage and implemented interfaces with the bounded `norn-expr`
 ///    evaluator ([`CommitError::InvariantViolation`]);
-/// 7. **versions** — each written object's, then each written link's, next
-///    version.
+/// 7. **laws** — direct and affected surviving subjects satisfy their governing laws.
 ///
 /// # Errors
 ///
