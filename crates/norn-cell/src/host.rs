@@ -1951,6 +1951,15 @@ where
                 .authorize(authorization, owned_rows)?
                 .check(&model, &GuardView(reader))
                 .map(Checked::into_versions)?;
+            // RECEIPT-CONSUME-1: command authority and the deadline are
+            // rechecked at the commit's own clock, under its write lock.
+            crate::function_receipt::check_consumption(
+                reader,
+                &commit,
+                self.result_authorizer.as_deref(),
+                &self.scope,
+                self.now,
+            )?;
             Ok((versions, mapping_proof))
         };
         match self.store.commit_guarded_submitted(

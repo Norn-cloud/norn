@@ -2245,6 +2245,8 @@ impl<X> DecisionRefusal<X> {
                 reason: format!("{key} is immutable"),
             },
             CommitError::NotPending { consumed } => Self::NotPending { consumed },
+            // Outside an action call, an unaccepted result cannot be consumed.
+            CommitError::ReceiptNotAccepted { consumed } => Self::NotPending { consumed },
             CommitError::Conflict {
                 key,
                 expected,
@@ -2370,6 +2372,7 @@ impl<X> DecisionRefusal<X> {
             | CommitError::IdentifierTooLong { .. }
             | CommitError::ImmutableObject { .. }
             | CommitError::NotPending { .. }
+            | CommitError::ReceiptNotAccepted { .. }
             | CommitError::Conflict { .. }
             | CommitError::TypeMismatch { .. }
             | CommitError::AccountingPosting { .. }

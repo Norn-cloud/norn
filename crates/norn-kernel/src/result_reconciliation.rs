@@ -318,6 +318,9 @@ pub struct ResultAuthzRequest<'a> {
     pub manifest: &'a Digest,
     /// The destination the result would be written to.
     pub destination: Option<&'a Destination>,
+    /// The host's effective logical time of this check: authority is
+    /// decided now, not at dispatch.
+    pub now: LogicalTime,
 }
 
 /// Why the authorizer denies accepting a result now.
@@ -681,6 +684,7 @@ where
         command: &invocation.command_id,
         manifest: &invocation.manifest,
         destination: invocation.destination.as_ref(),
+        now: context.now,
     };
     if let Err(denial) = checks.authorizer.authorize(&request) {
         return refuse(

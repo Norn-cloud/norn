@@ -75,7 +75,7 @@ consumption and effects commit atomically, with no partial persistence on refusa
 
 RECEIPT-STORE-1: only authenticated reconciliation of the cell's own recorded,
 still-pending `norn.function/v1` delivery, under the cell's scope, `main` and
-clock, retains a receipt as action evidence. Intake re-derives the dispatch,
+effective clock (the host's clock raised to the durable clock floor), retains a receipt as action evidence. Intake re-derives the dispatch,
 input and dependency pins from the enqueued invocation (the execution profile
 is the caller's and must match the receipt's), reads the command's persisted
 state, commits no ledger effect and grants no authority. Unknown, forged,

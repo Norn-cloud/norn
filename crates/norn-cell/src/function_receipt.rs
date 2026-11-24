@@ -38,9 +38,12 @@ use norn_kernel::receipt_binding::{
 use norn_kernel::result_reconciliation::{
     Acceptance, Classification, CommandState, Completion, DispatchedCommand, InvalidReceipt,
     ReceiptValidator, ReconcileContext, ReconcileError, ReconcilePolicy, Reconciliation,
-    RefusalReason, ResultAuthorizer, ResultChecks, StateView, reconcile,
+    RefusalReason, ResultAuthorizer, ResultAuthzRequest, ResultChecks, StateView, reconcile,
 };
-use norn_kernel::{CommandId, FactExpectation, FactKey, FactVersion, Generation, LogicalTime};
+use norn_kernel::{
+    CellCommit, CommandId, CommitError, Consumed, FactExpectation, FactKey, FactVersion,
+    Generation, LogicalTime,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::engine::{SqlEngine, params};
@@ -175,10 +178,12 @@ where
         .map_err(CellError::from)?;
     let generation = i64::try_from(dispatched.generation().0)
         .map_err(|_overflow| CellError::OutOfRange("generation"))?;
-    let retained_at =
-        i64::try_from(now.as_millis()).map_err(|_overflow| CellError::OutOfRange("retained_at"))?;
     let outcome = store.write_tx(|| {
         let reader = store.read();
+        // A sibling handle may have committed past this handle's clock.
+        let now = now.max(LogicalTime::from_millis(reader.clock_floor()?));
+        let retained_at = i64::try_from(now.as_millis())
+            .map_err(|_overflow| CellError::OutOfRange("retained_at"))?;
         let pending = reader.pending_result(&invocation.command_id, dispatched.generation().0)?;
         let Some(pending) = pending else {
             return Ok(Err(ReceiptIntakeError::NotPending));
@@ -186,7 +191,7 @@ where
         if !delivers(&pending, completion.receipt, invocation) {
             return Ok(Err(ReceiptIntakeError::DispatchMismatch));
         }
-        let Some(state) = command_state(&reader, &invocation.command_id)? else {
+        let Some((state, _version)) = command_state(&reader, &invocation.command_id)? else {
             return Ok(Err(ReceiptIntakeError::NoCommandState));
         };
         let context = ReconcileContext {
@@ -328,18 +333,99 @@ fn delivers(
     typed && enqueued && recorded
 }
 
-/// The command's persisted reconciliation state.
+/// The command's persisted reconciliation state and the version of the same
+/// stored row.
 fn command_state<S: SqlEngine>(
     reader: &StoreReader<'_, S>,
     command_id: &str,
-) -> Result<Option<CommandState>, CellError> {
+) -> Result<Option<(CommandState, FactVersion)>, CellError> {
     let Some(record) = reader.object(MAIN_WORLD, FUNCTION_COMMAND_TYPE, command_id)? else {
         return Ok(None);
     };
     Ok(record
         .values
         .get("state")
-        .and_then(|state| norn_ir::runtime::decode::<CommandState>(state).ok()))
+        .and_then(|state| norn_ir::runtime::decode::<CommandState>(state).ok())
+        .map(|state| (state, FactVersion(record.version))))
+}
+
+/// RECEIPT-CONSUME-1, inside the commit transaction: an action commit that
+/// consumes a `norn.function/v1` delivery applies only while the dispatch's
+/// scope, deadline and the host's command-authority recheck still hold at
+/// the commit's effective clock, `now` raised to the durable clock floor
+/// (T2-RES-1 step 8). Every other commit passes; a delivery that is no
+/// longer pending is the kernel's refusal.
+///
+/// # Errors
+/// [`CommitError::ReceiptNotAccepted`], or the host's read failure.
+pub(crate) fn check_consumption<S, A, E, C, I>(
+    reader: &StoreReader<'_, S>,
+    commit: &CellCommit<E, C, I>,
+    authorizer: Option<&A>,
+    scope: &str,
+    now: LogicalTime,
+) -> Result<(), CommitError<CellError>>
+where
+    S: SqlEngine,
+    A: ResultAuthorizer + ?Sized,
+{
+    let Some(consumed) = &commit.consumes else {
+        return Ok(());
+    };
+    let Consumed::Result {
+        command,
+        generation,
+    } = consumed
+    else {
+        return Ok(());
+    };
+    if !commit
+        .writes
+        .iter()
+        .any(|write| write.key.object_type.as_str() == norn_kernel::ACTION_CALL_TYPE)
+    {
+        return Ok(());
+    }
+    let Some(pending) = reader
+        .pending_result(&command.0, generation.0)
+        .map_err(CommitError::Host)?
+    else {
+        return Ok(());
+    };
+    let payload = pending.command.command.get("payload");
+    if payload
+        .and_then(|payload| payload.get("type"))
+        .and_then(Value::as_str)
+        != Some(FUNCTION_PAYLOAD_TYPE)
+    {
+        return Ok(());
+    }
+    let refused = || CommitError::ReceiptNotAccepted {
+        consumed: consumed.clone(),
+    };
+    let invocation = payload
+        .and_then(|payload| payload.get("invocation"))
+        .and_then(|value| norn_ir::runtime::decode::<FunctionInvocation>(value).ok())
+        .ok_or_else(refused)?;
+    let authorizer = authorizer.ok_or_else(refused)?;
+    // A sibling handle may have committed past this handle's clock.
+    let floor = reader.clock_floor().map_err(CommitError::Host)?;
+    let now = now.max(LogicalTime::from_millis(floor));
+    let expired =
+        !ReconcilePolicy::DEFAULT.accept_late && now.as_millis() > invocation.deadline_millis;
+    if invocation.tenant != scope || invocation.world != MAIN_WORLD || expired {
+        return Err(refused());
+    }
+    authorizer
+        .authorize(&ResultAuthzRequest {
+            tenant: &invocation.tenant,
+            authority: &invocation.authority,
+            command: &invocation.command_id,
+            manifest: &invocation.manifest,
+            destination: invocation.destination.as_ref(),
+            now,
+        })
+        .map_err(|_denied| refused())
 }
 
 /// Current fact versions in `main`. Predicate and collection pins are never
@@ -424,17 +510,21 @@ pub(crate) fn resolve<S: SqlEngine>(
     reference: &ReceiptReference,
     manifest: &Digest,
 ) -> Result<ReceiptBinding<JsonObject>, ReceiptBindingError<CellError>> {
-    let resolved = evidence(
-        store,
-        &Lookup {
-            scope,
-            now,
-            authorizer,
-        },
-        reference.digest(),
-        manifest,
-    )?;
-    bind_receipt(&resolved, reference)
+    if store.fork_pin().is_some() {
+        return bind_receipt(&Resolved::Unknown, reference);
+    }
+    let lookup = Lookup {
+        scope,
+        now,
+        authorizer,
+    };
+    // One transaction: the retained row, the pending delivery, the command
+    // state and its version, the pinned facts and the clock floor are read
+    // from one committed snapshot.
+    let resolved = store
+        .write_tx(|| Ok(evidence(store, &lookup, reference.digest(), manifest)))
+        .map_err(ReceiptBindingError::Store)?;
+    bind_receipt(&resolved?, reference)
 }
 
 /// The cell context a lookup resolves under.
@@ -450,10 +540,10 @@ fn evidence<S: SqlEngine>(
     reference: &Digest,
     manifest: &Digest,
 ) -> Result<Resolved, ReceiptBindingError<CellError>> {
-    if store.fork_pin().is_some() {
-        return Ok(Resolved::Unknown);
-    }
     let reader = store.read();
+    let floor = reader.clock_floor().map_err(ReceiptBindingError::Store)?;
+    // A sibling handle may have committed past this handle's clock.
+    let now = lookup.now.max(LogicalTime::from_millis(floor));
     let Some(retained) =
         load(&reader, lookup.scope, reference).map_err(ReceiptBindingError::Store)?
     else {
@@ -485,20 +575,15 @@ fn evidence<S: SqlEngine>(
     if !delivers(&pending, receipt, &retained.dispatched.invocation) {
         return Err(ReceiptBindingError::Mismatch);
     }
-    let Some(state) =
+    let Some((state, state_version)) =
         command_state(&reader, &receipt.command_id).map_err(ReceiptBindingError::Store)?
     else {
         return Err(ReceiptBindingError::Mismatch);
     };
-    let view = View(&reader);
-    let state_key = FactKey::new(FUNCTION_COMMAND_TYPE, receipt.command_id.as_str());
-    let state_version = view
-        .fact_version(&state_key)
-        .map_err(ReceiptBindingError::Store)?;
     let context = ReconcileContext {
         tenant: lookup.scope,
         world: MAIN_WORLD,
-        now: lookup.now,
+        now,
         policy: ReconcilePolicy::DEFAULT,
     };
     let command = CommandId(receipt.command_id.clone());
@@ -519,7 +604,7 @@ fn evidence<S: SqlEngine>(
         &state,
         &completion,
         &checks,
-        &view,
+        &View(&reader),
     ) {
         Ok(Reconciliation::Accepted(acceptance)) => acceptance,
         Ok(Reconciliation::Refused(_refused)) => return Err(ReceiptBindingError::NotAccepted),
@@ -531,7 +616,7 @@ fn evidence<S: SqlEngine>(
     // A re-issue or cancellation between resolution and the accepting
     // commit moves the command state and refuses that commit.
     acceptance.reads.push(FactExpectation {
-        key: state_key,
+        key: FactKey::new(FUNCTION_COMMAND_TYPE, receipt.command_id.as_str()),
         expected: state_version,
     });
     Ok(Resolved::Accepted(Box::new(Evidence {

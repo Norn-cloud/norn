@@ -1305,3 +1305,168 @@ async fn a_restored_cell_holds_no_retained_evidence() {
     assert_eq!(status(&restored, "run-1"), waiting());
     assert!(still_accepted(&cell, &digest));
 }
+
+#[test]
+fn a_sibling_command_state_change_after_resolution_refuses_consumption() {
+    let types = run_types();
+    let catalog = TypeCatalog::new(&types);
+    let action = confirm_action(&manifest());
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("cell.sqlite");
+    let Fixture {
+        mut cell,
+        dispatched,
+        receipt,
+    } = fixture(&path, "delivered");
+    let digest = retain(&mut cell, &dispatched, &receipt).unwrap();
+    let base = cell.commits().unwrap().len();
+    // Another handle cancels the command after this call resolved the
+    // receipt and before its commit; the delivery itself stays pending.
+    let mut sibling = open(&path, SCOPE, &[&receipt]);
+    let cancelled =
+        norn_ir::runtime::encode(&CommandState::dispatched(&dispatched).cancel().unwrap()).unwrap();
+    let race: Race<'_> = Box::new(move |_cell: &mut Sqlite| {
+        sibling
+            .commit(CellCommit {
+                writes: vec![FactWrite {
+                    key: FactKey::new(FUNCTION_COMMAND_TYPE, "run-1/confirm"),
+                    expected: FactVersion(1),
+                    mutation: FactMutation::Put {
+                        values: JsonObject::from([("state".to_owned(), cancelled)]),
+                    },
+                }],
+                ..CellCommit::empty()
+            })
+            .expect("the sibling cancels the command");
+    });
+    let mut host = Host {
+        cell: RefCell::new(cell),
+        race: RefCell::new(Some(race)),
+    };
+    let refused = commit_action(
+        &mut host,
+        &catalog,
+        &confirm(&action, "run-1", &digest.0, "k1"),
+        &Allow,
+    );
+    assert!(refused.is_err(), "a moved command state refuses the commit");
+    let cell = host.cell.into_inner();
+    assert_eq!(status(&cell, "run-1"), waiting());
+    assert_eq!(cell.pending_commands().unwrap().len(), 1);
+    assert_eq!(cell.commits().unwrap().len(), base + 1, "only the cancel");
+}
+
+#[test]
+fn authority_revoked_between_resolution_and_commit_refuses() {
+    let types = run_types();
+    let catalog = TypeCatalog::new(&types);
+    let action = confirm_action(&manifest());
+    let dir = tempfile::tempdir().expect("tempdir");
+    let Fixture {
+        mut cell,
+        dispatched,
+        receipt,
+    } = fixture(&dir.path().join("cell.sqlite"), "delivered");
+    let digest = retain(&mut cell, &dispatched, &receipt).unwrap();
+    let base = cell.commits().unwrap().len();
+    let race: Race<'_> = Box::new(|cell: &mut Sqlite| {
+        cell.set_result_authorizer(Some(Box::new(Revoked)));
+    });
+    let mut host = Host {
+        cell: RefCell::new(cell),
+        race: RefCell::new(Some(race)),
+    };
+    // The commit itself rechecks authority under its write lock.
+    let refused = commit_action(
+        &mut host,
+        &catalog,
+        &confirm(&action, "run-1", &digest.0, "k1"),
+        &Allow,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code(), "action.receipt_not_accepted", "{refused}");
+    let mut cell = host.cell.into_inner();
+    assert_eq!(status(&cell, "run-1"), waiting());
+    assert_eq!(cell.commits().unwrap().len(), base);
+    assert_eq!(cell.pending_commands().unwrap().len(), 1);
+    cell.set_result_authorizer(Some(Box::new(Contract)));
+    assert!(still_accepted(&cell, &digest));
+}
+
+/// Another handle on the same file commits at a clock past the deadline.
+fn advance_sibling(path: &Path, receipt: &FunctionReceipt) {
+    let mut sibling = open(path, SCOPE, &[receipt]);
+    sibling.advance_to(LogicalTime::from_millis(PAST_DEADLINE));
+    sibling
+        .commit(CellCommit {
+            writes: vec![put(
+                FactKey::new(RUN, "run-9"),
+                FactVersion::ABSENT,
+                &[("run_id", "run-9"), ("status", "awaiting_perform_confirm")],
+            )],
+            ..CellCommit::empty()
+        })
+        .expect("the sibling commits past the deadline");
+}
+
+#[test]
+fn a_sibling_clock_past_the_deadline_fails_intake_and_resolution() {
+    let types = run_types();
+    let catalog = TypeCatalog::new(&types);
+    let action = confirm_action(&manifest());
+
+    // Resolution: retained before another handle's clock passed the deadline.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("cell.sqlite");
+    let Fixture {
+        mut cell,
+        dispatched,
+        receipt,
+    } = fixture(&path, "delivered");
+    let digest = retain(&mut cell, &dispatched, &receipt).unwrap();
+    advance_sibling(&path, &receipt);
+    assert!(
+        cell.now() < LogicalTime::from_millis(DEADLINE),
+        "a stale handle clock"
+    );
+    let base = cell.commits().unwrap().len();
+    let refused = commit_action(
+        &mut cell,
+        &catalog,
+        &confirm(&action, "run-1", &digest.0, "k1"),
+        &Allow,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code(), "action.receipt_not_accepted", "{refused}");
+    assert_eq!(status(&cell, "run-1"), waiting());
+    assert_eq!(cell.commits().unwrap().len(), base);
+
+    // Intake: the clock passed the deadline before the receipt was offered.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("cell.sqlite");
+    let Fixture {
+        mut cell,
+        dispatched,
+        receipt,
+    } = fixture(&path, "delivered");
+    advance_sibling(&path, &receipt);
+    let refused = retain(&mut cell, &dispatched, &receipt).unwrap_err();
+    assert!(
+        matches!(
+            refused,
+            ReceiptIntakeError::Refused {
+                reason: RefusalReason::DeadlinePassed { .. },
+                ..
+            }
+        ),
+        "{refused:?}"
+    );
+    let refused = commit_action(
+        &mut cell,
+        &catalog,
+        &confirm(&action, "run-1", &receipt.content_digest().unwrap().0, "k1"),
+        &Allow,
+    )
+    .unwrap_err();
+    assert_eq!(refused.code(), "action.receipt_unknown", "{refused}");
+}

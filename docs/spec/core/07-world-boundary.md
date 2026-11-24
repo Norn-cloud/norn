@@ -440,12 +440,16 @@ host without receipt support refuses `action.receipt_effect_unsupported`. The
 durable host (`SqliteCell`) resolves only evidence retained by RECEIPT-STORE-1
 (Core 04), and only once the host has installed its Function command-authority
 recheck; without one it refuses `action.receipt_effect_unsupported`. It
-re-derives the retained dispatch pins and re-reconciles at its current clock,
-state and authority (T2-RES-1 step 8): a re-issued, cancelled or expired
-command, revoked command authority or a moved relevant-state pin refuses
-`action.receipt_not_accepted`; a consumed delivery refuses
-`action.receipt_replayed`. The command state's version joins the
-reconciliation pins as a compare-and-swap read.
+re-derives the retained dispatch pins and re-reconciles, in one read
+snapshot, at its effective clock (its own clock raised to the cell's durable
+clock floor), state and authority (T2-RES-1 step 8): a re-issued, cancelled or
+expired command, revoked command authority or a moved relevant-state pin
+refuses `action.receipt_not_accepted`; a consumed delivery refuses
+`action.receipt_replayed`. The command state's version, read from the same row
+as the state, joins the reconciliation pins as a compare-and-swap read. Inside
+the consuming action's commit transaction the host rechecks the dispatch's
+scope, its deadline and the command authority at the commit's effective clock;
+a failure refuses `action.receipt_not_accepted` with nothing applied.
 
 The kernel then checks the pins it can see. The receipt's manifest equals the
 declaration's. Its `run.id` equals the action's target object (RUN-BIND-1), and
@@ -481,8 +485,10 @@ transition without consumption and no consumption without transition
 **RECEIPT-CONSUME-DURABLE** covers retained intake, atomic consumption across a
 crash and reopen, exact-retry replay, foreign scope or world, wrong manifest,
 invocation, run or recorded result, an intake retry that reruns every check,
-stale and expired evidence, command authority revoked before consumption, one
-winner of concurrent consumers, laws and caller authority still deciding
+stale and expired evidence, command authority revoked before resolution or
+between resolution and commit, a command state another handle moves after
+resolution, another handle's clock passing the deadline, one winner of
+concurrent consumers, laws and caller authority still deciding
 publication, forks and restored cells holding no evidence, and a host without
 the authority recheck failing closed
 (`crates/norn-cell/tests/receipt_consume.rs`).

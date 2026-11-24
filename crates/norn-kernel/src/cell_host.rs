@@ -687,6 +687,15 @@ pub enum CommitError<X> {
         /// The reference the commit named.
         consumed: Consumed,
     },
+    /// RECEIPT-CONSUME-1: inside the commit, the host no longer accepts the
+    /// consumed Function result into an action: its command authority or
+    /// deadline does not hold at the commit's clock, or the host has no
+    /// authority recheck.
+    #[error("action.receipt_not_accepted: {consumed} is no longer accepted")]
+    ReceiptNotAccepted {
+        /// The delivery the commit named.
+        consumed: Consumed,
+    },
     /// Compare-and-swap failed: the object changed since the turn read it.
     #[error("fact {key} version conflict: expected {expected}, current {current}")]
     Conflict {
