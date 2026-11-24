@@ -168,14 +168,13 @@ pub(crate) fn held_call(approval: &RuntimeValue) -> Option<HeldCall> {
     };
     // A call parked before exact spellings were kept has none; one that has
     // any other `exactInput` than its encoding is no parked call (#618).
-    let input = match approval.get("exactInput") {
-        Some(exact) => decode_exact(exact.as_str()?)?,
-        None => {
-            let Some(RuntimeValue::Object(input)) = approval.get("input") else {
-                return None;
-            };
-            input.clone()
-        }
+    let input = if let Some(exact) = approval.get("exactInput") {
+        decode_exact(exact.as_str()?)?
+    } else {
+        let Some(RuntimeValue::Object(input)) = approval.get("input") else {
+            return None;
+        };
+        input.clone()
     };
     Some(HeldCall {
         definition: text("definition")?,
