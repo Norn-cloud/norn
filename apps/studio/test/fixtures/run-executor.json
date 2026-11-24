@@ -1,0 +1,45 @@
+{
+  "status": 200,
+  "json": {
+    "id": "melt-run-a",
+    "generation": 1,
+    "flow": {
+      "id": "ops.approve_melt",
+      "ruleId": "ops.approve_melt.flow.rule",
+      "version": "1.0.0",
+      "title": "Approve a melt"
+    },
+    "objectType": "ops.ApproveMeltRun",
+    "state": "awaiting_perform_convert",
+    "version": 2,
+    "createdAtMs": 1800000000000,
+    "createdCommitSeq": 4,
+    "updatedAtMs": 1800000000000,
+    "updatedCommitSeq": 5,
+    "terminal": false,
+    "steps": [
+      {
+        "id": "ask_review",
+        "label": null,
+        "kind": "decide",
+        "status": "done",
+        "startedAtMs": 1800000000000,
+        "endedAtMs": 1800000000000,
+        "receipts": [],
+        "error": null
+      },
+      {
+        "id": "convert",
+        "label": null,
+        "kind": "perform",
+        "status": "waiting",
+        "waitingOn": "executor",
+        "startedAtMs": 1800000000000,
+        "endedAtMs": null,
+        "receipts": [],
+        "error": null
+      }
+    ],
+    "decision": null
+  }
+}

@@ -26,6 +26,12 @@ async function inbox(page: Page, options: Parameters<typeof decisionCell>[1] = {
   return cell
 }
 
+async function finishWatchedRun(page: Page, cell: Awaited<ReturnType<typeof decisionCell>>) {
+  const id = new URL(page.url()).pathname.slice("/runs/".length)
+  await expect.poll(() => cell.watchesRun(id)).toBe(true)
+  cell.finishRun(id)
+}
+
 const list = (page: Page) => page.getByRole("list", { name: "Decisions waiting on you" }).getByRole("button")
 const sheet = (page: Page) => page.getByRole("dialog")
 // The sheet draws its first state at once and takes input once its expression engine is here.
@@ -103,7 +109,7 @@ test("edit (decide): a low-risk choice is recorded at once, with its receipt und
 })
 
 test("edit (decide): a high-risk choice that starts an action confirms first; the run goes on and is read live", async ({ page }) => {
-  await inbox(page)
+  const cell = await inbox(page)
   await open(page, "Release the held shipment")
   await expect(sheet(page).getByText("Suggested")).toBeVisible()
   await sheet(page).getByLabel("Release it").check()
@@ -114,11 +120,17 @@ test("edit (decide): a high-risk choice that starts an action confirms first; th
   await sheet(page).getByRole("button", { name: "Decide: Release it" }).click()
   await sheet(page).getByRole("button", { name: "Yes, release it" }).click()
   await expect(sheet(page).getByRole("status")).toHaveText("Decided: Release it · by you")
+  const runRead = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/host/v1/runs/run_restock_7")
   await sheet(page).getByRole("link", { name: "See the run go on" }).click()
   await expect(page).toHaveURL(/\/runs\/run_restock_7$/)
+  expect(await (await runRead).json()).toMatchObject({ state: "awaiting_perform_release" })
   const steps = page.getByRole("list", { name: "Steps" }).getByRole("listitem")
   await expect(steps.nth(1)).toContainText("Done")
+  await expect(steps.nth(2)).toContainText("Waiting on an executor")
+  await expect(page.getByText("In progress", { exact: true })).toBeVisible()
   await expect(page.getByText("Live", { exact: true })).toBeVisible()
+  await shoot(page, "run-executor")
+  await finishWatchedRun(page, cell)
   // The run is read again while it works, until it succeeds.
   await expect(page.getByText("Succeeded")).toBeVisible({ timeout: 20_000 })
   await expect(page.getByText("Live", { exact: true })).toHaveCount(0)
@@ -212,9 +224,31 @@ test("reopen: leaving with a choice asks first; an outage retries with the same 
   expect(new Set(keys).size).toBe(1)
 })
 
+test("decision transport refuses invalid keys and scopes replay to the decision", async ({ page }) => {
+  await inbox(page)
+  const decide = (id: string, choice: string, idempotencyKey: string) => page.evaluate(async ({ id, ...answer }) => {
+    const reply = await fetch(`/api/host/v1/decisions/${id}:decide?orgId=org_demo&environmentId=analytics`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(answer),
+    })
+    return { status: reply.status, json: await reply.json() }
+  }, { id, choice, idempotencyKey })
+  const count = "dec_UmVjb3VudC1iaW4"
+  const shipment = "dec_UmVsZWFzZS1nb2xk"
+  for (const key of [" ", "é".repeat(65)]) {
+    expect(await decide(count, "recount", key)).toMatchObject({
+      status: 422,
+      json: { code: "request.invalid", diagnostics: [{ span: { pointer: "/idempotencyKey" } }] },
+    })
+  }
+  expect(await decide(count, "recount", "shared")).toMatchObject({ status: 200, json: { outcome: "decided" } })
+  expect(await decide(shipment, "hold", "shared")).toMatchObject({ status: 200, json: { outcome: "decided" } })
+  expect(await decide(count, "recount", "shared")).toMatchObject({ status: 200, json: { outcome: "replayed" } })
+  expect(await decide(count, "accept", "shared")).toMatchObject({ status: 409, json: { code: "decision.idempotency_conflict" } })
+})
+
 test("run view: a waiting run links to its decision; Run again starts a new run and reads it until it ends; an unknown run says so", async ({ page }) => {
   await session(page)
-  await decisionCell(page)
+  const cell = await decisionCell(page)
   await page.goto("/runs/run_restock_7")
   await expect(page.getByRole("heading", { name: "Restock gold" })).toBeVisible()
   await expect(page.getByText("Waiting on a decision")).toBeVisible()
@@ -225,7 +259,9 @@ test("run view: a waiting run links to its decision; Run again starts a new run 
   await page.goto("/runs/run_restock_7")
   await page.getByRole("button", { name: "Run again" }).click()
   await expect(page).toHaveURL(/\/runs\/run_[0-9a-f-]{36}$/)
-  await expect(page.getByText("Fetch orders")).toBeVisible() // an unlabelled step reads its id in words
+  const fetchOrders = page.getByRole("listitem").filter({ hasText: "Fetch orders" })
+  await expect(fetchOrders).toContainText("Waiting on an executor")
+  await finishWatchedRun(page, cell)
   await expect(page.getByText("Succeeded")).toBeVisible({ timeout: 20_000 })
   await page.goto("/runs/run_nope")
   await expect(page.getByText("no such run", { exact: true })).toBeVisible()
@@ -248,7 +284,7 @@ test("run view, first cut: without steps the run shows its state, flow and gener
   // Nothing polls (UI-LIVE-1): a commit that changes the run is announced on the live socket and read once.
   await page.waitForTimeout(3_000)
   expect(reads).toBe(1)
-  cell.runs.get("run_restock_7")!.steps.find((s) => s.status === "waiting")!.status = "running"
+  await finishWatchedRun(page, cell)
   await expect.poll(() => reads, { timeout: 15_000 }).toBeGreaterThan(1)
 })
 

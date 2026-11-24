@@ -368,6 +368,17 @@ fn studio_decision_and_run_documents_match_the_served_routes() {
     };
     let unknown_choice = refuse("unknown", String::new());
     let note_too_long = refuse("approve", "x".repeat(501));
+    let bad_key = |key: &str| {
+        decide(
+            &cell,
+            id,
+            ADMIN,
+            &json!({ "choice": "approve", "note": "Within policy", "idempotencyKey": key }),
+            NOW,
+        )
+    };
+    let invalid_key = bad_key(" ");
+    assert_eq!(bad_key(&"é".repeat(65)), invalid_key);
     let decided = decide(&cell, id, ADMIN, &answer, NOW);
     let replayed = decide(&cell, id, ADMIN, &answer, NOW);
     let other = json!({ "choice": "reject", "idempotencyKey": "studio" });
@@ -415,6 +426,7 @@ fn studio_decision_and_run_documents_match_the_served_routes() {
         "law": envelope(law),
         "unknownChoice": envelope(unknown_choice),
         "noteTooLong": envelope(note_too_long),
+        "invalidKey": envelope(invalid_key),
         "conflict": envelope(conflict),
         "runStarted": envelope(started),
         "runReplayed": envelope(started_again),

@@ -425,6 +425,7 @@ fn studio_object_refusals_match_the_served_routes() {
         "inCount": envelope(filter(&json!({"all":[{"property":"quantity","op":"in","value":vec!["1"; 51]}]}).to_string())),
         "rangeArray": envelope(filter(r#"{"all":[{"property":"quantity","op":"between","value":["1"]}]}"#)),
         "rangeOrder": envelope(filter(r#"{"all":[{"property":"quantity","op":"between","value":["2","1"]}]}"#)),
+        "rangeUpperDecimal": envelope(filter(r#"{"all":[{"property":"quantity","op":"between","value":["1","12,5"]}]}"#)),
         "facetsDecimal": envelope(get(&demo, "/v1/objects/canon.Holding:facets", &format!("{SCOPE}&{facets_query}"), VIEWER)),
         "cursorEmpty": envelope(read(&[("after", "")])),
         "cursorInvalid": envelope(bad_cursor),

@@ -2,11 +2,14 @@ import { readFileSync } from "node:fs"
 import type { Page, WebSocketRoute } from "@playwright/test"
 
 /**
- * The DO dispatch pins these envelopes in tests/decisions.rs. The browser
+ * The DO dispatch pins these envelopes in tests/decisions.rs and tests/approvals.rs. The browser
  * scenarios vary the records, clock and progress inside those envelopes.
  */
 const SERVED: typeof import("../test/fixtures/decision-run.json") = JSON.parse(
   readFileSync(new URL("../test/fixtures/decision-run.json", import.meta.url), "utf8"),
+)
+const EXECUTOR: typeof import("../test/fixtures/run-executor.json") = JSON.parse(
+  readFileSync(new URL("../test/fixtures/run-executor.json", import.meta.url), "utf8"),
 )
 function first<T>(items: readonly T[], name: string): T {
   const [item] = items
@@ -17,6 +20,7 @@ function first<T>(items: readonly T[], name: string): T {
 const decisionExample = first(SERVED.page.json.items, "decision")
 const optionExample = first(decisionExample.options, "decision option")
 const waitingStep = first(SERVED.runRead.json.steps, "waiting step")
+const executorStep = first(EXECUTOR.json.steps.filter((step) => step.waitingOn === "executor"), "executor step")
 const doneStep = first(SERVED.runCompleted.json.steps, "completed step")
 const waitingDecision = SERVED.runRead.json.decision
 if (waitingDecision === null) throw new Error("Missing served run decision fixture")
@@ -33,7 +37,7 @@ interface StoredDecision {
   lawRefuses?: boolean
   resolved?: { by: string; atMs: number; choice: string | null }
 }
-interface Step { id: string; label: string | null; kind: "perform" | "decide" | "wait" | "succeed" | "fail"; status: "pending" | "running" | "waiting" | "done" | "failed"; startedAtMs: number | null; endedAtMs: number | null }
+interface Step { id: string; label: string | null; kind: "perform" | "decide" | "wait" | "succeed" | "fail"; status: "pending" | "waiting" | "done" | "failed"; startedAtMs: number | null; endedAtMs: number | null }
 interface StoredRun { id: string; generation: number; flow: { ruleId: string; version: string; title: string | null }; version: number; steps: Step[]; decision: { id: string; expiresAtMs: number } | null; createdAtMs: number; reads: number }
 
 const hash = (n: number) => n.toString(16).padStart(64, "a")
@@ -47,7 +51,9 @@ export interface DecisionCell {
   advance(ms: number): void
   /** The next call fails as an outage (500, no Norn code). */
   failNext(): void
-  readonly runs: Map<string, StoredRun>
+  watchesRun(id: string): boolean
+  /** Complete the run after the test has observed the waiting timeline. */
+  finishRun(id: string): void
 }
 
 function fixtures(now = START) {
@@ -125,7 +131,7 @@ export async function decisionCell(page: Page, options: { readonly empty?: boole
   let seq = 1000
   let fail = false
   const calls: { id: string; body: string }[] = []
-  const keys = new Map<string, { id: string; body: string; result: object }>()
+  const answers = new Map<string, { key: string; body: string; result: object }>()
   const open = () => decisions.filter((d) => d.resolved === undefined && now < d.expiresAtMs)
     .sort((a, b) => a.expiresAtMs - b.expiresAtMs || a.requestedAtMs - b.requestedAtMs)
   const scoped = (url: URL) => url.searchParams.get("orgId") === "org_demo" && url.searchParams.get("environmentId") === "analytics"
@@ -152,10 +158,11 @@ export async function decisionCell(page: Page, options: { readonly empty?: boole
     calls.push({ id, body })
     const parsed = answerBody(body)
     if (parsed === null) return route.fulfill(SERVED.invalidBody)
-    const { idempotencyKey: key, ...rest } = parsed
-    const known = keys.get(key)
-    if (known) {
-      if (known.id !== id || known.body !== JSON.stringify(rest)) return route.fulfill(SERVED.conflict)
+    const { idempotencyKey: key, choice, note } = parsed
+    const answer = JSON.stringify({ choice, note: note ?? null })
+    const known = answers.get(id)
+    if (known?.key === key) {
+      if (known.body !== answer) return route.fulfill(SERVED.conflict)
       return route.fulfill({ ...SERVED.replayed, json: { ...known.result, outcome: SERVED.replayed.json.outcome } })
     }
     const decision = decisions.find((d) => d.id === id)
@@ -168,6 +175,7 @@ export async function decisionCell(page: Page, options: { readonly empty?: boole
     if (decision.lawRefuses) return route.fulfill(SERVED.law)
     if (!decision.options.some((o) => o.id === parsed.choice)) return route.fulfill(SERVED.unknownChoice)
     if (typeof parsed.note === "string" && [...parsed.note].length > 500) return route.fulfill(SERVED.noteTooLong)
+    if (/^\p{White_Space}*$/u.test(key) || Buffer.byteLength(key) > 128) return route.fulfill(SERVED.invalidKey)
     seq += 1
     decision.resolved = { by: SERVED.decided.json.decision.decidedBy, atMs: now, choice: parsed.choice }
     const run = runs.get(decision.runId)
@@ -176,9 +184,8 @@ export async function decisionCell(page: Page, options: { readonly empty?: boole
       run.decision = null
       const ask = run.steps.find((step) => step.id === decision.step.id)
       if (ask) Object.assign(ask, { status: "done", endedAtMs: now })
-      // The run goes on: the next steps run while Studio reads it again, then it succeeds.
       const next = run.steps.find((step) => step.status === "pending")
-      if (next) Object.assign(next, { status: "running", startedAtMs: now })
+      if (next) Object.assign(next, { status: "waiting", startedAtMs: now })
     }
     push()
     const served = SERVED.decided.json
@@ -188,7 +195,7 @@ export async function decisionCell(page: Page, options: { readonly empty?: boole
       receipt: { ...served.receipt, receiptHash: hash(seq), commitSeq: seq, recordedAtMs: now },
       run: { ...served.run, id: decision.runId, state: run ? stateOf(run) : served.run.state },
     }
-    keys.set(key, { id, body: JSON.stringify(rest), result })
+    answers.set(id, { key, body: answer, result })
     return route.fulfill({ ...SERVED.decided, json: result })
   })
 
@@ -198,16 +205,16 @@ export async function decisionCell(page: Page, options: { readonly empty?: boole
       if (!scoped(url)) return route.fulfill(SERVED.runStartDenied)
       const { flow, runId } = JSON.parse(route.request().postData() ?? "{}") as { flow: string; runId: string }
       const existing = runs.get(runId)
-      if (!existing) {
-        runs.set(runId, { id: runId, generation: 1, flow: { ruleId: `${flow}.flow.rule`, version: "1.0.0", title: null }, version: 1, createdAtMs: now, reads: 0, decision: null,
+      const run: StoredRun = existing ?? { id: runId, generation: 1, flow: { ruleId: `${flow}.flow.rule`, version: "1.0.0", title: null }, version: 1, createdAtMs: now, reads: 0, decision: null,
           steps: [
-            { id: "fetch_orders", label: null, kind: "perform", status: "running", startedAtMs: now, endedAtMs: null },
+            { id: "fetch_orders", label: null, kind: "perform", status: "waiting", startedAtMs: now, endedAtMs: null },
             { id: "post_totals", label: "Post totals", kind: "perform", status: "pending", startedAtMs: null, endedAtMs: null },
             { id: "done", label: "Done", kind: "succeed", status: "pending", startedAtMs: null, endedAtMs: null },
-          ] })
+          ],
       }
+      runs.set(runId, run)
       const served = existing ? SERVED.runReplayed : SERVED.runStarted
-      return route.fulfill({ ...served, json: document(runs.get(runId)!, served.json) })
+      return route.fulfill({ ...served, json: document(run) })
     }
     if (!scoped(url)) return route.fulfill(SERVED.runDenied)
     const id = decodeURIComponent(url.pathname.split("/v1/runs/")[1] ?? "")
@@ -219,7 +226,8 @@ export async function decisionCell(page: Page, options: { readonly empty?: boole
       const { steps: _steps, decision: _decision, ...first } = document(run)
       return route.fulfill({ ...SERVED.runRead, json: first })
     }
-    return route.fulfill({ ...SERVED.runRead, json: document(run) })
+    const served = run.decision === null && run.steps.some((step) => step.status === "waiting") ? EXECUTOR : SERVED.runRead
+    return route.fulfill({ ...served, json: document(run) })
   })
 
   // Live reads (UI-LIVE-1): the stand-in's own socket. A subscription gets the route's current
@@ -251,45 +259,49 @@ export async function decisionCell(page: Page, options: { readonly empty?: boole
     })
     ws.onClose(() => { for (const [id, sub] of subs) if (sub.ws === ws) subs.delete(id) })
   })
-  // A running run finishes one step a second on the stand-in's own clock, and says so on the socket.
-  const ticker = setInterval(() => {
-    for (const run of runs.values()) {
-      const active = run.steps.find((s) => s.status === "running")
-      if (!active) continue
-      seq += 1
-      Object.assign(active, { status: "done", endedAtMs: now })
-      const next = run.steps.find((s) => s.status === "pending")
-      if (next) Object.assign(next, { status: "running", startedAtMs: now })
-      run.version += 1
-    }
-    push()
-  }, 1000)
-  page.on("close", () => clearInterval(ticker))
-
   function stateOf(run: StoredRun) {
     const waiting = run.steps.find((step) => step.status === "waiting")
-    return waiting ? `awaiting_perform_${waiting.id}` : run.steps.every((step) => step.status === "done") ? SERVED.runCompleted.json.state : "running"
+    if (waiting === undefined) return SERVED.runCompleted.json.state
+    return waiting.kind === "decide"
+      ? SERVED.runRead.json.state.replace(waitingStep.id, waiting.id)
+      : EXECUTOR.json.state.replace(executorStep.id, waiting.id)
   }
 
-  function document(run: StoredRun, example: typeof SERVED.runRead.json | typeof SERVED.runStarted.json = SERVED.runRead.json) {
+  function document(run: StoredRun) {
     const terminal = run.steps.every((step) => step.status === "done" || step.status === "failed")
-    const template = terminal ? SERVED.runCompleted.json : example
+    const template = terminal ? SERVED.runCompleted.json : run.decision === null ? EXECUTOR.json : SERVED.runRead.json
     return {
       ...template,
       id: run.id, generation: run.generation, flow: { ...template.flow, ...run.flow, id: run.flow.ruleId.slice(0, -".flow.rule".length) },
       state: stateOf(run), terminal, version: run.version, createdAtMs: run.createdAtMs, updatedAtMs: now, updatedCommitSeq: seq,
-      steps: run.steps.filter((step) => step.status !== "pending").map((step) => ({
-        ...(step.status === "waiting" ? waitingStep : doneStep),
-        ...step,
-      })),
+      steps: run.steps.filter((step) => step.status !== "pending").map((step) => {
+        if (step.status !== "waiting") return { ...doneStep, ...step }
+        const waiting = step.kind === "decide" ? waitingStep : executorStep
+        return { ...waiting, id: step.id, label: step.label, startedAtMs: step.startedAtMs }
+      }),
       decision: run.decision === null ? null : { ...waitingDecision, ...run.decision },
     }
   }
 
   return {
-    calls, runs,
+    calls,
     resolveElsewhere: (id, by, choice) => { const d = decisions.find((x) => x.id === id); if (d) d.resolved = { by, atMs: now, choice: choice ?? null }; push() },
     advance: (ms) => { now += ms },
     failNext: () => { fail = true },
+    watchesRun: (id) => [...subs.values()].some(({ path }) => path.startsWith(`/v1/runs/${encodeURIComponent(id)}?`)),
+    finishRun: (id) => {
+      const run = runs.get(id)
+      if (run === undefined) throw new Error(`No run to finish: ${id}`)
+      for (const step of run.steps) {
+        if (step.status === "done") continue
+        step.status = "done"
+        step.startedAtMs ??= now
+        step.endedAtMs = now
+      }
+      run.decision = null
+      run.version += 1
+      seq += 1
+      push()
+    },
   }
 }

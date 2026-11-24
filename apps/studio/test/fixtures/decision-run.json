@@ -226,6 +226,28 @@
       ]
     }
   },
+  "invalidKey": {
+    "status": 422,
+    "json": {
+      "format": "norn/refusal@2",
+      "retryable": false,
+      "reason": null,
+      "code": "request.invalid",
+      "category": "invalid",
+      "message": "idempotencyKey must be 1-128 bytes",
+      "explanation": "correct the field and decide again",
+      "diagnostics": [
+        {
+          "code": "request.invalid",
+          "severity": "error",
+          "message": "idempotencyKey must be 1-128 bytes",
+          "span": {
+            "pointer": "/idempotencyKey"
+          }
+        }
+      ]
+    }
+  },
   "conflict": {
     "status": 409,
     "json": {

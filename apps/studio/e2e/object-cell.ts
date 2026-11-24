@@ -63,6 +63,11 @@ const SERVED: typeof import("../test/fixtures/object-query.json") = JSON.parse(
 type Finding = (typeof SERVED.decimal.json.diagnostics)[number]
 type QueryCase = Exclude<keyof typeof SERVED, "denied" | "unknownType" | "cursorInvalid" | "snapshotMoved">
 
+const pinnedFilters = new Map([
+  ['{"all":[{"property":"quantity","op":"eq","value":"12,5"}]}', SERVED.decimal],
+  ['{"all":[{"property":"quantity","op":"between","value":["1","12,5"]}]}', SERVED.rangeUpperDecimal],
+])
+
 function finding(name: QueryCase, pointer?: string, argument?: { sample: string; value: string }): Finding {
   const [example] = SERVED[name].json.diagnostics
   if (!example) throw new Error(`Missing served diagnostic for ${name}`)
@@ -235,6 +240,8 @@ export async function objectCell(page: Page, initial: readonly Holding[]): Promi
       return route.fulfill({ json: { objectType: "canon.Holding", rows: counted.length, withheldRows: rows.filter((row) => row.withheld).length, quarantinedRows: 0, lowerBound: false, scanLimit: 10000, facets } })
     }
     if (!url.pathname.endsWith("/v1/objects/canon.Holding")) return route.fulfill(SERVED.unknownType)
+    const pinned = pinnedFilters.get(url.searchParams.get("filter") ?? "")
+    if (pinned !== undefined) return route.fulfill(pinned)
     const { sort, filter, limit, problems } = validate(url)
     if (problems.length > 0) return refuseQuery(route, problems)
     const shape = JSON.stringify({ sort, filter })

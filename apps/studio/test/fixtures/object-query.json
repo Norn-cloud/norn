@@ -147,6 +147,28 @@
     "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
       "diagnostics": [{"code": "query.value_invalid", "severity": "error", "message": "between's lo is at most its hi", "span": {"pointer": "/filter/all/0/value"}}]}
   },
+  "rangeUpperDecimal": {
+    "status": 400,
+    "json": {
+      "format": "norn/refusal@2",
+      "retryable": false,
+      "reason": null,
+      "code": "query.invalid",
+      "category": "invalid",
+      "message": "the object query is not valid",
+      "explanation": "each diagnostic names the rule and where in the request it applies",
+      "diagnostics": [
+        {
+          "code": "query.value_invalid",
+          "severity": "error",
+          "message": "a decimal value is exact decimal text",
+          "span": {
+            "pointer": "/filter/all/0/value/1"
+          }
+        }
+      ]
+    }
+  },
   "facetsDecimal": {
     "status": 400,
     "json": {"format": "norn/refusal@2", "retryable": false, "reason": null, "code": "query.invalid", "category": "invalid", "message": "the object query is not valid", "explanation": "each diagnostic names the rule and where in the request it applies",
