@@ -470,7 +470,7 @@ fn prepare_action_input_inner<'a, X>(
 }
 
 /// ACTION-ACTOR-1: caller JSON cannot supply identity or approval claims.
-fn check_action_identity_input<X>(
+pub(super) fn check_action_identity_input<X>(
     action: &ActionRoot,
     raw_input: &JsonObject,
     actor: Option<&str>,
@@ -492,34 +492,67 @@ fn check_action_identity_input<X>(
     {
         check_canonical_object_bound::<X>("caller input", raw_input, max_bytes)?;
     }
-    let mut objects = vec![raw_input];
-    let mut values = Vec::new();
-    while let Some(object) = objects.pop() {
-        for field in [
-            "actor",
-            "approved",
-            "accountablePerson",
-            "accountable_person",
-        ] {
-            if object.contains_key(field) {
-                return Err(ActionRefusal::InvalidInput {
-                    field: field.into(),
-                });
-            }
-        }
-        values.extend(object.values());
-        while let Some(value) = values.pop() {
-            match value {
-                RuntimeValue::Object(object) => objects.push(object),
-                RuntimeValue::Array(items) => values.extend(items),
-                RuntimeValue::Null
-                | RuntimeValue::Bool(_)
-                | RuntimeValue::Number(_)
-                | RuntimeValue::String(_) => {}
-            }
-        }
+    if let Some((field, _)) = reserved_action_identity(raw_input) {
+        return Err(ActionRefusal::InvalidInput {
+            field: field.into(),
+        });
     }
     Ok(())
+}
+
+pub(super) fn rfc6901_token(segment: &str) -> String {
+    segment.replace('~', "~0").replace('/', "~1")
+}
+
+pub(super) fn reserved_action_identity(raw_input: &JsonObject) -> Option<(&'static str, String)> {
+    if let Some(field) = reserved_identity_member(raw_input) {
+        return Some((field, format!("/{field}")));
+    }
+    let mut pending: Vec<_> = raw_input
+        .iter()
+        .rev()
+        .filter(|(_, value)| matches!(value, RuntimeValue::Object(_) | RuntimeValue::Array(_)))
+        .map(|(field, value)| (value, format!("/{}", rfc6901_token(field))))
+        .collect();
+    while let Some((value, path)) = pending.pop() {
+        match value {
+            RuntimeValue::Object(object) => {
+                if let Some(field) = reserved_identity_member(object) {
+                    return Some((field, format!("{path}/{field}")));
+                }
+                pending.extend(
+                    object
+                        .iter()
+                        .rev()
+                        .filter(|(_, value)| {
+                            matches!(value, RuntimeValue::Object(_) | RuntimeValue::Array(_))
+                        })
+                        .map(|(field, value)| (value, format!("{path}/{}", rfc6901_token(field)))),
+                );
+            }
+            RuntimeValue::Array(items) => pending.extend(
+                items
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .filter(|(_, value)| {
+                        matches!(value, RuntimeValue::Object(_) | RuntimeValue::Array(_))
+                    })
+                    .map(|(index, value)| (value, format!("{path}/{index}"))),
+            ),
+            RuntimeValue::Null
+            | RuntimeValue::Bool(_)
+            | RuntimeValue::Number(_)
+            | RuntimeValue::String(_) => {}
+        }
+    }
+    None
+}
+
+fn reserved_identity_member(input: &JsonObject) -> Option<&'static str> {
+    ["actor", "approved", "accountablePerson", "accountable_person"]
+        .into_iter()
+        .find(|field| input.contains_key(*field))
 }
 
 fn action_derivation_destination(
@@ -684,7 +717,7 @@ fn canonical_object_bytes<X>(object: &JsonObject) -> Result<usize, ActionRefusal
         })
 }
 
-fn check_canonical_object_bound<X>(
+pub(super) fn check_canonical_object_bound<X>(
     subject: &str,
     object: &JsonObject,
     max_bytes: usize,
@@ -823,4 +856,8 @@ pub fn actor_derived_fields(action: &ActionRoot) -> std::collections::BTreeSet<S
         })
         .map(|step| step.field.clone())
         .collect()
+}
+
+pub(super) fn action_link_key(value: &RuntimeValue) -> Option<&str> {
+    value.as_str().filter(|key| !key.trim().is_empty())
 }

@@ -1145,6 +1145,7 @@ fn a_binding_retained_before_the_exact_reader_is_revisable_with_its_stored_paylo
                     payload_sha256: payload_sha256(&seeded),
                     payload: seeded,
                     signoff: None,
+                    authority: None,
                 },
                 expected_revision: None,
             };
@@ -1961,6 +1962,7 @@ fn an_existing_reserved_definition_is_read_revised_and_retired() {
                     payload_sha256: payload_sha256(&payload),
                     payload,
                     signoff: None,
+                    authority: None,
                 },
                 expected_revision: None,
             };

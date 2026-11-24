@@ -13,7 +13,7 @@
 )]
 
 #[path = "support/step_cell.rs"]
-mod step_cell;
+pub(super) mod step_cell;
 use serde_json::{Value, json};
 use step_cell::{APPROVER, Cell, FLOW_ID, MEMBER, OPERATOR, SCOPE, call, call_with, cell};
 

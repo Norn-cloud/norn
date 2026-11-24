@@ -31,6 +31,7 @@
 //!    state authorization.
 
 mod approval;
+mod automation_input;
 mod input;
 mod owned_rows;
 mod parameter;
@@ -66,6 +67,7 @@ pub use approval::{
     independent_accountable_people, prepare_action_intent, prepare_action_intent_with_limits,
     validate_accountable_person,
 };
+pub use automation_input::{AutomationInputViolation, validate_automation_static_input};
 pub use input::{actor_derived_fields, prepare_action_input, prepare_action_input_for_call};
 pub use types::{
     ACTION_CALL_TYPE, ACTION_EFFECT_MUTATE_PARENT_WITH_ROWS, ActionAuthorizer, ActionAuthzRequest,

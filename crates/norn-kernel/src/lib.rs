@@ -100,16 +100,18 @@ pub use serde;
 pub use snapshot_observe::{ObservationAuthorization, ObservationEvent, PreparedObservation};
 
 pub use action_commit::{
-    ACTION_CALL_TYPE, ACTION_EFFECT_MUTATE_PARENT_WITH_ROWS, ActionApprovalEvidenceRecord,
-    ActionApprovalReceipt, ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionCallRecord,
-    ActionDenial, ActionDerivedValue, ActionInputPreparation, ActionOutcome, ActionParameterPin,
-    ActionPreconditionOutcome, ActionReadAuthzRequest, ActionReadTypeAuthzRequest, ActionRefusal,
-    ApprovalEvidence, ApprovalEvidenceKind, DelegationAttenuation, IndependentApproval,
-    IndependentApprovalPolicy, NamingSeriesInspectionRequest, OWNED_ROWS_TYPE,
-    PreparedActionIntent, actor_derived_fields, commit_action, commit_action_with_limits,
-    commit_action_with_meter, commit_action_with_preparation, independent_accountable_people,
+    ACTION_CALL_TYPE, ACTION_EFFECT_MUTATE_PARENT_WITH_ROWS, ActionAuthorizer, ActionAuthzRequest,
+    ActionCall, ActionCallRecord, ActionDenial, ActionDerivedValue, ActionInputPreparation,
+    ActionOutcome, ActionParameterPin, ActionPreconditionOutcome, ActionReadAuthzRequest,
+    ActionReadTypeAuthzRequest, ActionRefusal, AutomationInputViolation,
+    ActionApprovalEvidenceRecord, ActionApprovalReceipt, ApprovalEvidence, ApprovalEvidenceKind,
+    DelegationAttenuation, IndependentApproval, IndependentApprovalPolicy, PreparedActionIntent,
+    independent_accountable_people, prepare_action_intent, prepare_action_intent_with_limits,
+    validate_accountable_person,
+    NamingSeriesInspectionRequest, OWNED_ROWS_TYPE, actor_derived_fields, commit_action,
+    commit_action_with_limits, commit_action_with_meter, commit_action_with_preparation,
     owned_rows_manifest_key, prepare_action_input, prepare_action_input_for_call,
-    prepare_action_intent, prepare_action_intent_with_limits, validate_accountable_person,
+    validate_automation_static_input,
 };
 pub use cell_host::{Authorized, Checked, Committed, Proposed};
 pub use cell_host::{

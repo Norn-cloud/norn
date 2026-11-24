@@ -17,6 +17,8 @@ pub(crate) mod approval_identity;
 pub mod approvals;
 /// Default-deny server authorization for host operations and kernel action requests.
 pub mod authz;
+/// The `automation` retained-definition kind (`AUTOMATION-1`).
+pub mod automation_definitions;
 pub mod clock;
 pub mod contracts;
 pub mod decisions;

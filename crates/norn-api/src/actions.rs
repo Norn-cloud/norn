@@ -290,6 +290,11 @@ pub fn call_action<E: SqlEngine>(
     if crate::flow_driver::is_step_call_key(&request.idempotency_key) {
         return Err(step_key_reserved());
     }
+    // AUTOMATION-KEY-1 (S5a-equivalent): automation-owned idempotency keys are
+    // reserved for the automation runtime and never accepted on the public route.
+    if crate::automation_definitions::is_automation_call_key(&request.idempotency_key) {
+        return Err(automation_key_reserved());
+    }
     // The transport's own verified principal for this request: the only one
     // that may consume an approval of its call (S2).
     let principal = actor.and_then(|actor| host.authorizer.verified_principal(actor));
@@ -315,6 +320,15 @@ fn step_key_reserved() -> Refusal {
     invalid_at(
         "/idempotencyKey",
         "idempotencyKey is reserved for a flow step's own call",
+    )
+}
+
+/// AUTOMATION-KEY-1: an automation-owned call key is reserved for the
+/// automation runtime's own dispatch.
+fn automation_key_reserved() -> Refusal {
+    invalid_at(
+        "/idempotencyKey",
+        "idempotencyKey is reserved for the automation runtime",
     )
 }
 
@@ -371,6 +385,13 @@ fn fence_step_key<E: SqlEngine>(
     attempt: Option<&crate::approvals::StepAttempt>,
     approval: Option<&str>,
 ) -> Result<(), Refusal> {
+    if crate::automation_definitions::is_automation_call_key(idempotency_key) {
+        return Err(crate::approvals::refused_under(
+            cell,
+            approval,
+            automation_key_reserved(),
+        ));
+    }
     if !crate::flow_driver::is_step_call_key(idempotency_key) {
         return Ok(());
     }
@@ -502,7 +523,8 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
     };
     // APPROVAL-REVISION-1: an approval binds to the action as defined now,
     // with what it writes.
-    let action_digest = effective_digest(&admitted, action, &model, &catalog)?;
+    let action_digest =
+        crate::action_admission::effective_digest(&admitted, action, &model, &catalog)?;
     let outcome = match through_gate(
         host,
         &mut cell,
@@ -831,81 +853,6 @@ fn approval_of<E: SqlEngine>(
         )?);
     }
     Ok(approval)
-}
-
-/// APPROVAL-REVISION-1: the digest an approval of `action` binds to: the
-/// action's retained definition (its payload, its pinned writer and the
-/// writer's helpers) and its effective write contract over `model`: the
-/// declaration of every object type it may write (with the types they
-/// extend, so a changed default that changes the written facts changes the
-/// digest), the interfaces and property types those declarations draw on,
-/// and the governing laws of each written type. An action whose writes are
-/// not statically known (a synchronous writer) binds every object type.
-///
-/// # Errors
-/// A host failure: a retained action without a digest, an unreadable law.
-fn effective_digest(
-    admitted: &crate::action_admission::RetainedActions,
-    action: &norn_ir::ActionRoot,
-    model: &norn_cell::Model,
-    catalog: &TypeCatalog<'_>,
-) -> Result<String, Refusal> {
-    let definition = admitted
-        .digest(&action.action_id)
-        .ok_or_else(|| Refusal::host("a retained action has no digest"))?;
-    let every = action.synchronous_rule.is_some()
-        || (action.writes.is_empty() && action.effect_program.is_some());
-    let mut written: std::collections::BTreeSet<String> = action
-        .writes
-        .iter()
-        .map(|write| write.entity_kind.clone())
-        .chain(action.create_links.iter().flat_map(|link| {
-            std::iter::once(link.target_type.clone()).chain(
-                link.source
-                    .as_ref()
-                    .map(|source| source.object_type.clone()),
-            )
-        }))
-        .collect();
-    if every {
-        written.extend(model.object_types().map(|t| t.name.as_str().to_owned()));
-    }
-    // Each written type with every type it extends.
-    let mut pending: Vec<String> = written.iter().cloned().collect();
-    while let Some(name) = pending.pop() {
-        if let Some(parent) = model
-            .object_types()
-            .find(|t| t.name.as_str() == name)
-            .and_then(|t| t.extends.as_ref())
-            && written.insert(parent.as_str().to_owned())
-        {
-            pending.push(parent.as_str().to_owned());
-        }
-    }
-    let mut declarations = Vec::new();
-    let mut laws = Vec::new();
-    for name in &written {
-        let declaration = model.object_types().find(|t| t.name.as_str() == name);
-        declarations.push((name, declaration));
-        if declaration.is_some() {
-            let governing = catalog
-                .governing_laws(&norn_ir::ObjectTypeName(name.clone()))
-                .map_err(|error| Refusal::host(format!("{error:?}")))?;
-            laws.push((name, governing));
-        }
-    }
-    let interfaces: Vec<_> = model.interfaces().collect();
-    norn_ir::canonical::domain_hash_hex(
-        b"norn.approval.action/2\0",
-        &(
-            definition,
-            declarations,
-            interfaces,
-            model.property_types(),
-            laws,
-        ),
-    )
-    .map_err(Refusal::host)
 }
 
 /// The kernel turn's time: the cell clock after advancing it to `now` and the
