@@ -1,0 +1,149 @@
+{
+  "artifactId": "inventory.StockBalance.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Stock balance",
+  "namespace": "inventory",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Conserved stock on hand and reserved quantity at one warehouse, optional bin, and optional lot (implements core.Resource).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.Resource"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Warehouse that owns this stock balance.",
+          "id": "owner",
+          "target": "inventory.Warehouse"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Optional warehouse holding custody of this stock balance.",
+          "id": "custodian",
+          "target": "inventory.Warehouse"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Catalog item represented by this stock balance.",
+          "id": "item",
+          "target": "inventory.Item"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Optional bin location storing this stock balance.",
+          "id": "bin",
+          "target": "inventory.BinLocation"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Optional lot or batch for traceable stock.",
+          "id": "lot",
+          "target": "inventory.LotBatch"
+        }
+      ],
+      "name": "inventory.StockBalance",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "resource_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "quantity",
+          "type": {
+            "kind": "ref",
+            "name": "core.quantity"
+          }
+        },
+        {
+          "id": "reserved_quantity",
+          "type": {
+            "kind": "ref",
+            "name": "core.quantity"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "unit",
+          "type": {
+            "kind": "ref",
+            "name": "ucum.unit_code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "currency",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "valuation_method",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "fifo"
+              },
+              {
+                "value": "moving_average"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/inventory/artifacts/inventory.StockBalance.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

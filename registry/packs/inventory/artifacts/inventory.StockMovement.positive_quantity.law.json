@@ -1,0 +1,50 @@
+{
+  "artifactId": "inventory.StockMovement.positive_quantity.law",
+  "dependencies": [
+    {
+      "artifactId": "inventory.StockMovement.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Stock movement has strictly positive quantity and non-negative unit cost",
+  "namespace": "inventory",
+  "payload": {
+    "id": "inventory.StockMovement.positive_quantity",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "inventory",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/inventory/stock.ts"
+    },
+    "rationale": "Every posted stock movement transfers a strictly positive physical quantity at a non-negative unit cost.",
+    "response": {
+      "expression": "self.quantity > 0 and self.unit_cost >= 0",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "inventory.StockMovement"
+      ],
+      "root": {
+        "id": "inventory.StockMovement",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "inventory.StockMovement"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/inventory/artifacts/inventory.StockMovement.positive_quantity.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

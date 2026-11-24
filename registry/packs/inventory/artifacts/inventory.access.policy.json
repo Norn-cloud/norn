@@ -1,0 +1,167 @@
+{
+  "artifactId": "inventory.access.policy",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "policy",
+  "lifecycle": "active",
+  "name": "Inventory and warehouse action authorization policy",
+  "namespace": "inventory",
+  "payload": {
+    "accessVersion": "0.1",
+    "policyId": "inventory.access",
+    "rules": [
+      {
+        "actions": [
+          "inventory.movement.record"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "warehouse_clerk",
+                "inventory_manager",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "inventory.StockMovement",
+        "ruleId": "record_stock_movement",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "inventory.reservation.consume",
+          "inventory.reservation.release"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "warehouse_clerk",
+                "inventory_manager",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "inventory.StockReservation",
+        "ruleId": "manage_stock_reservation",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "inventory.lot.quarantine"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "warehouse_clerk",
+                "quality_inspector",
+                "inventory_manager",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "inventory.LotBatch",
+        "ruleId": "quarantine_lot",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "inventory.lot.recall"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "quality_inspector",
+                "inventory_manager",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "inventory.LotBatch",
+        "ruleId": "recall_lot",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "inventory.cycle_count.submit"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "warehouse_clerk",
+                "inventory_manager",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "inventory.CycleCount",
+        "ruleId": "submit_cycle_count",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "inventory.cycle_count.approve",
+          "inventory.cycle_count.post"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "inventory_manager",
+                "owner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "inventory.CycleCount",
+        "ruleId": "approve_or_post_cycle_count",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/inventory/artifacts/inventory.access.policy.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

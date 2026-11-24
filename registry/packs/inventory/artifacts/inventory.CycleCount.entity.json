@@ -1,0 +1,167 @@
+{
+  "artifactId": "inventory.CycleCount.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Cycle count",
+  "namespace": "inventory",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Physical inventory count conducted over a half-open UTC TimeInterval with conserved variance and immutable posting.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.TimeInterval"
+      ],
+      "lifecycles": [
+        {
+          "immutable": [
+            "posted"
+          ],
+          "initial": [
+            "draft"
+          ],
+          "property": "status",
+          "terminal": [
+            "posted"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "draft"
+              ],
+              "id": "submit",
+              "to": "submitted"
+            },
+            {
+              "from": [
+                "submitted"
+              ],
+              "id": "approve",
+              "to": "approved"
+            },
+            {
+              "from": [
+                "approved"
+              ],
+              "id": "post",
+              "to": "posted"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Warehouse in which the cycle count is conducted.",
+          "id": "warehouse",
+          "target": "inventory.Warehouse"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Stock balance verified by this cycle count.",
+          "id": "stock_balance",
+          "target": "inventory.StockBalance"
+        }
+      ],
+      "name": "inventory.CycleCount",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "starts_at",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.instant"
+          }
+        },
+        {
+          "id": "ends_at",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.instant"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "timezone",
+          "type": {
+            "kind": "ref",
+            "name": "core.time.iana_timezone"
+          }
+        },
+        {
+          "id": "expected_quantity",
+          "type": {
+            "kind": "ref",
+            "name": "core.quantity"
+          }
+        },
+        {
+          "id": "counted_quantity",
+          "type": {
+            "kind": "ref",
+            "name": "core.quantity"
+          }
+        },
+        {
+          "id": "variance_quantity",
+          "type": {
+            "kind": "ref",
+            "name": "core.quantity"
+          }
+        },
+        {
+          "default": "draft",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "draft"
+              },
+              {
+                "value": "submitted"
+              },
+              {
+                "value": "approved"
+              },
+              {
+                "value": "posted"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/inventory/artifacts/inventory.CycleCount.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

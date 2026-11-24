@@ -1,0 +1,104 @@
+{
+  "artifactId": "inventory.Warehouse.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Warehouse",
+  "namespace": "inventory",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "A warehouse, depot, or storage facility acting as an organizational REA agent (implements core.Agent).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.Agent"
+      ],
+      "links": [
+        {
+          "acyclic": true,
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Optional parent warehouse or facility in the storage hierarchy (strictly acyclic).",
+          "id": "parent",
+          "target": "inventory.Warehouse"
+        }
+      ],
+      "name": "inventory.Warehouse",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "warehouse_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "display_name",
+          "type": {
+            "kind": "ref",
+            "name": "core.display_name"
+          }
+        },
+        {
+          "default": "organization",
+          "id": "kind",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "person"
+              },
+              {
+                "value": "organization"
+              },
+              {
+                "value": "system"
+              }
+            ]
+          }
+        },
+        {
+          "default": "active",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "active"
+              },
+              {
+                "value": "frozen"
+              },
+              {
+                "value": "closed"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/inventory/artifacts/inventory.Warehouse.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

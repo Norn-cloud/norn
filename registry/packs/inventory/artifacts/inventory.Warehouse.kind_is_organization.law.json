@@ -1,0 +1,50 @@
+{
+  "artifactId": "inventory.Warehouse.kind_is_organization.law",
+  "dependencies": [
+    {
+      "artifactId": "inventory.Warehouse.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Warehouse agent kind is always organization",
+  "namespace": "inventory",
+  "payload": {
+    "id": "inventory.Warehouse.kind_is_organization",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "inventory",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/inventory/warehouse.ts"
+    },
+    "rationale": "A warehouse or storage facility is an organizational agent, never a natural person or software system.",
+    "response": {
+      "expression": "self.kind == \"organization\"",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "inventory.Warehouse"
+      ],
+      "root": {
+        "id": "inventory.Warehouse",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "inventory.Warehouse"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/inventory/artifacts/inventory.Warehouse.kind_is_organization.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

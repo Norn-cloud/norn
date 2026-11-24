@@ -1,0 +1,184 @@
+{
+  "artifactId": "inventory.StockMovement.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Stock movement",
+  "namespace": "inventory",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Create-only immutable stock ledger event recording receipt, issue, transfer, adjustment, or scrap (implements core.EconomicEvent).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.EconomicEvent"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Warehouse supplying or initiating the stock movement.",
+          "id": "provider",
+          "target": "inventory.Warehouse"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Warehouse receiving or recording the stock movement.",
+          "id": "receiver",
+          "target": "inventory.Warehouse"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Stock balance affected by this movement.",
+          "id": "resource",
+          "target": "inventory.StockBalance"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Optional commitment fulfilled by this stock movement.",
+          "id": "fulfils",
+          "target": "core.Commitment"
+        },
+        {
+          "cardinality": {
+            "from": "one",
+            "to": "one"
+          },
+          "description": "Prior stock movement reversed by this compensating movement.",
+          "id": "reverses",
+          "target": "inventory.StockMovement"
+        }
+      ],
+      "name": "inventory.StockMovement",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "transfer_custody",
+          "id": "action",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "transfer_ownership"
+              },
+              {
+                "value": "transfer_custody"
+              },
+              {
+                "value": "consume"
+              },
+              {
+                "value": "produce"
+              }
+            ]
+          }
+        },
+        {
+          "id": "movement_kind",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "receipt"
+              },
+              {
+                "value": "issue"
+              },
+              {
+                "value": "transfer"
+              },
+              {
+                "value": "adjustment"
+              },
+              {
+                "value": "scrap"
+              }
+            ]
+          }
+        },
+        {
+          "id": "occurred_at",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.timestamp"
+          }
+        },
+        {
+          "id": "quantity",
+          "type": {
+            "kind": "ref",
+            "name": "core.quantity"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "unit",
+          "type": {
+            "kind": "ref",
+            "name": "ucum.unit_code"
+          }
+        },
+        {
+          "id": "unit_cost",
+          "type": {
+            "kind": "ref",
+            "name": "core.money_amount"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "currency",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "id": "reference_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/inventory/artifacts/inventory.StockMovement.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

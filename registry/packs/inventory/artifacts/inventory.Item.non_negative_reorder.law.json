@@ -1,0 +1,50 @@
+{
+  "artifactId": "inventory.Item.non_negative_reorder.law",
+  "dependencies": [
+    {
+      "artifactId": "inventory.Item.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Item reorder point is never negative",
+  "namespace": "inventory",
+  "payload": {
+    "id": "inventory.Item.non_negative_reorder",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "inventory",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/inventory/warehouse.ts"
+    },
+    "rationale": "A replenishment reorder threshold is a non-negative physical quantity.",
+    "response": {
+      "expression": "self.reorder_point >= 0",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "inventory.Item"
+      ],
+      "root": {
+        "id": "inventory.Item",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "inventory.Item"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/inventory/artifacts/inventory.Item.non_negative_reorder.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,50 @@
+{
+  "artifactId": "inventory.StockReservation.positive_quantity.law",
+  "dependencies": [
+    {
+      "artifactId": "inventory.StockReservation.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Stock reservation quantity is strictly positive",
+  "namespace": "inventory",
+  "payload": {
+    "id": "inventory.StockReservation.positive_quantity",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "inventory",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/inventory/stock.ts"
+    },
+    "rationale": "A stock hold must reserve a strictly positive quantity.",
+    "response": {
+      "expression": "self.quantity > 0",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "inventory.StockReservation"
+      ],
+      "root": {
+        "id": "inventory.StockReservation",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "inventory.StockReservation"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/inventory/artifacts/inventory.StockReservation.positive_quantity.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

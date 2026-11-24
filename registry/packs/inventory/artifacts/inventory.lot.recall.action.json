@@ -1,0 +1,73 @@
+{
+  "artifactId": "inventory.lot.recall.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Recall lot or batch",
+  "namespace": "inventory",
+  "payload": {
+    "access": {
+      "artifactId": "inventory.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "inventory.lot.recall",
+    "description": "Permanently recall a lot or batch into terminal immutable recalled state.",
+    "effectProgram": {
+      "entityArtifactId": "inventory.LotBatch.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "lotId",
+      "objectKind": "inventory.LotBatch",
+      "transition": "recall"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "lotId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "lotId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "lotId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "lotId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Recall lot or batch",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "inventory.LotBatch"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/inventory/artifacts/inventory.lot.recall.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

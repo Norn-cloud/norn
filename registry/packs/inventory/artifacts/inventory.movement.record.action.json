@@ -1,0 +1,180 @@
+{
+  "artifactId": "inventory.movement.record.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record immutable stock movement",
+  "namespace": "inventory",
+  "payload": {
+    "access": {
+      "artifactId": "inventory.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "inventory.movement.record",
+    "createLinks": [
+      {
+        "link": "provider",
+        "targetIdField": "providerId",
+        "targetType": "inventory.Warehouse"
+      },
+      {
+        "link": "receiver",
+        "targetIdField": "receiverId",
+        "targetType": "inventory.Warehouse"
+      },
+      {
+        "link": "resource",
+        "targetIdField": "resourceId",
+        "targetType": "inventory.StockBalance"
+      }
+    ],
+    "description": "Post a create-only StockMovement verifying the target StockBalance and linking provider, receiver, and resource.",
+    "effectProgram": {
+      "entityArtifactId": "inventory.StockMovement.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "id",
+      "objectKind": "inventory.StockMovement",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "type": "string"
+        },
+        "currency": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "movement_kind": {
+          "type": "string"
+        },
+        "occurred_at": {
+          "type": "string"
+        },
+        "providerId": {
+          "type": "string"
+        },
+        "quantity": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "receiverId": {
+          "type": "string"
+        },
+        "reference_code": {
+          "type": "string"
+        },
+        "resourceId": {
+          "type": "string"
+        },
+        "unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unit_cost": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "action",
+        "movement_kind",
+        "occurred_at",
+        "quantity",
+        "unit",
+        "unit_cost",
+        "currency",
+        "reference_code",
+        "providerId",
+        "receiverId",
+        "resourceId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "slice.resource.quantity >= 0"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "providerId"
+          }
+        },
+        "name": "provider",
+        "objectType": "inventory.Warehouse"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "receiverId"
+          }
+        },
+        "name": "receiver",
+        "objectType": "inventory.Warehouse"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "resourceId"
+          }
+        },
+        "name": "resource",
+        "objectType": "inventory.StockBalance"
+      }
+    ],
+    "title": "Record immutable stock movement",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "inventory.StockMovement"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/inventory/artifacts/inventory.movement.record.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

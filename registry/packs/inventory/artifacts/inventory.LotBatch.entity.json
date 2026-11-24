@@ -1,0 +1,144 @@
+{
+  "artifactId": "inventory.LotBatch.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Lot or batch",
+  "namespace": "inventory",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "A traceable production lot or batch for an inventory item with quarantine, expiry, and immutable recall lifecycle.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "immutable": [
+            "recalled"
+          ],
+          "initial": [
+            "active"
+          ],
+          "property": "status",
+          "terminal": [
+            "recalled"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "active"
+              ],
+              "id": "quarantine",
+              "to": "quarantined"
+            },
+            {
+              "from": [
+                "quarantined"
+              ],
+              "id": "release_quarantine",
+              "to": "active"
+            },
+            {
+              "from": [
+                "active",
+                "quarantined"
+              ],
+              "id": "expire",
+              "to": "expired"
+            },
+            {
+              "from": [
+                "active",
+                "quarantined",
+                "expired"
+              ],
+              "id": "recall",
+              "to": "recalled"
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Catalog item tracked by this lot or batch.",
+          "id": "item",
+          "target": "inventory.Item"
+        }
+      ],
+      "name": "inventory.LotBatch",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "lot_code",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "manufactured_on",
+          "type": {
+            "kind": "date"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "expires_on",
+          "type": {
+            "kind": "date"
+          }
+        },
+        {
+          "default": "active",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "active"
+              },
+              {
+                "value": "quarantined"
+              },
+              {
+                "value": "expired"
+              },
+              {
+                "value": "recalled"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/inventory/artifacts/inventory.LotBatch.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

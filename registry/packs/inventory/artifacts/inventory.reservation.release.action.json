@@ -1,0 +1,73 @@
+{
+  "artifactId": "inventory.reservation.release.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Release stock reservation",
+  "namespace": "inventory",
+  "payload": {
+    "access": {
+      "artifactId": "inventory.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "inventory.reservation.release",
+    "description": "Release an open stock reservation back to available inventory.",
+    "effectProgram": {
+      "entityArtifactId": "inventory.StockReservation.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "reservationId",
+      "objectKind": "inventory.StockReservation",
+      "transition": "release"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "reservationId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "reservationId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "reservationId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "reservationId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Release stock reservation",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "inventory.StockReservation"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/inventory/artifacts/inventory.reservation.release.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

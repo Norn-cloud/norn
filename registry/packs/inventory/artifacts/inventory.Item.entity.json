@@ -1,0 +1,114 @@
+{
+  "artifactId": "inventory.Item.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Inventory item",
+  "namespace": "inventory",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "A catalog SKU with valuation method, UCUM base unit, lot-tracking policy, and reorder threshold. Catalog metadata is never stock.",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "name": "inventory.Item",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "sku",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "gtin",
+          "type": {
+            "kind": "ref",
+            "name": "gs1.gtin"
+          }
+        },
+        {
+          "id": "display_name",
+          "type": {
+            "kind": "ref",
+            "name": "core.display_name"
+          }
+        },
+        {
+          "id": "base_unit",
+          "type": {
+            "kind": "ref",
+            "name": "ucum.unit_code"
+          }
+        },
+        {
+          "default": "fifo",
+          "id": "valuation_method",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "fifo"
+              },
+              {
+                "value": "moving_average"
+              }
+            ]
+          }
+        },
+        {
+          "default": false,
+          "id": "track_lot",
+          "type": {
+            "kind": "boolean"
+          }
+        },
+        {
+          "id": "reorder_point",
+          "type": {
+            "kind": "decimal",
+            "scale": 6
+          }
+        },
+        {
+          "default": "active",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "active"
+              },
+              {
+                "value": "discontinued"
+              }
+            ]
+          }
+        }
+      ],
+      "role": "thing"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/inventory/artifacts/inventory.Item.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

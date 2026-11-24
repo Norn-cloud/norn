@@ -1,0 +1,73 @@
+{
+  "artifactId": "inventory.reservation.consume.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Consume stock reservation",
+  "namespace": "inventory",
+  "payload": {
+    "access": {
+      "artifactId": "inventory.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "inventory.reservation.consume",
+    "description": "Consume an open stock reservation when the reserved quantity is fulfilled.",
+    "effectProgram": {
+      "entityArtifactId": "inventory.StockReservation.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "reservationId",
+      "objectKind": "inventory.StockReservation",
+      "transition": "consume"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "reservationId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "reservationId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "reservationId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "reservationId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Consume stock reservation",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "inventory.StockReservation"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/inventory/artifacts/inventory.reservation.consume.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

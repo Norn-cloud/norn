@@ -1,0 +1,171 @@
+{
+  "artifactId": "inventory.StockReservation.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Stock reservation",
+  "namespace": "inventory",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "description": "Conserved stock hold against a StockBalance with explicit consume, release, and 3-day expiry transitions (implements core.Hold).",
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "id"
+          ]
+        }
+      ],
+      "implements": [
+        "core.Hold"
+      ],
+      "lifecycles": [
+        {
+          "initial": [
+            "open"
+          ],
+          "property": "status",
+          "terminal": [
+            "released",
+            "consumed",
+            "expired"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "open"
+              ],
+              "id": "consume",
+              "to": "consumed"
+            },
+            {
+              "from": [
+                "open"
+              ],
+              "id": "release",
+              "to": "released"
+            },
+            {
+              "from": [
+                "open"
+              ],
+              "id": "expire",
+              "to": "expired",
+              "trigger": {
+                "kind": "timer",
+                "millis": "259200000"
+              }
+            }
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Stock balance reserved by this hold.",
+          "id": "resource",
+          "target": "inventory.StockBalance"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Warehouse holding this reservation.",
+          "id": "holder",
+          "target": "inventory.Warehouse"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "description": "Optional commitment secured by this stock reservation.",
+          "id": "secures",
+          "target": "core.Commitment"
+        }
+      ],
+      "name": "inventory.StockReservation",
+      "properties": [
+        {
+          "id": "id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "open",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "open"
+              },
+              {
+                "value": "released"
+              },
+              {
+                "value": "consumed"
+              },
+              {
+                "value": "expired"
+              }
+            ]
+          }
+        },
+        {
+          "id": "quantity",
+          "type": {
+            "kind": "ref",
+            "name": "core.quantity"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "unit",
+          "type": {
+            "kind": "ref",
+            "name": "ucum.unit_code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "currency",
+          "type": {
+            "kind": "ref",
+            "name": "core.code"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "expires_at",
+          "type": {
+            "kind": "ref",
+            "name": "iso8601.timestamp"
+          }
+        }
+      ],
+      "role": "happening"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/inventory/artifacts/inventory.StockReservation.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

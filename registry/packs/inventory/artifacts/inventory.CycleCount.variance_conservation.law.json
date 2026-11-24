@@ -1,0 +1,50 @@
+{
+  "artifactId": "inventory.CycleCount.variance_conservation.law",
+  "dependencies": [
+    {
+      "artifactId": "inventory.CycleCount.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Cycle count variance equals counted minus expected quantity",
+  "namespace": "inventory",
+  "payload": {
+    "id": "inventory.CycleCount.variance_conservation",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "inventory",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/inventory/stock.ts"
+    },
+    "rationale": "Expected and counted physical quantities are non-negative and variance must equal counted_quantity minus expected_quantity.",
+    "response": {
+      "expression": "self.expected_quantity >= 0 and self.counted_quantity >= 0 and self.variance_quantity == self.counted_quantity - self.expected_quantity",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "inventory.CycleCount"
+      ],
+      "root": {
+        "id": "inventory.CycleCount",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "inventory.CycleCount"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/inventory/artifacts/inventory.CycleCount.variance_conservation.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

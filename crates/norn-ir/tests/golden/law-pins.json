@@ -20,5 +20,11 @@
   "registry/core/artifacts/core.analytics.restatement_policy.law.json#/payload": "sha256:6411cda959ac4fb05c1e95494508beb4a7a2a749cc5518396a04fd2db6410430",
   "registry/packs/canon/artifacts/canon.ItemizedDocument.total_matches_lines.law.json#/payload": "sha256:18f52fd6fea89c188a2295a098a01b66e949a90c77ec002447a857351651eada",
   "registry/packs/demo-erpnext/artifacts/demo.erpnext.purity.law.json#/payload": "sha256:73ed6579985cbd585a92a9e80ee0febcd45e9e93836fdad57aa9417b32138eaa",
+  "registry/packs/inventory/artifacts/inventory.CycleCount.variance_conservation.law.json#/payload": "sha256:9bb3d994f8373c66f12d1bf0d6248751da8a5c8108049cb14c2c4d819fe988f5",
+  "registry/packs/inventory/artifacts/inventory.Item.non_negative_reorder.law.json#/payload": "sha256:30e30dafb00622d0986fe2665c1371235f19ba946ab70445f557abbadd980b01",
+  "registry/packs/inventory/artifacts/inventory.StockBalance.non_negative_and_reserved_bounded.law.json#/payload": "sha256:94f2e27ef0369e762166f831f1f0be4b7bfa7295780ff6d1476bb7ae58ec96e9",
+  "registry/packs/inventory/artifacts/inventory.StockMovement.positive_quantity.law.json#/payload": "sha256:537b4e7249b169839a61a462b144e8dae4a3a7acb7964bf7c523fef4498e3da7",
+  "registry/packs/inventory/artifacts/inventory.StockReservation.positive_quantity.law.json#/payload": "sha256:68efa64d8d34ab207a68c912f1730ccb21a24ef8f6d88befa5e88ae35c67ac94",
+  "registry/packs/inventory/artifacts/inventory.Warehouse.kind_is_organization.law.json#/payload": "sha256:8df7688aa6a7ad1b4e0e2a024e1f58e3ab3d067e3760db6b57e44600d238f39e",
   "registry/packs/ml/artifacts/ml.promotion_policy.law.json#/payload": "sha256:28490dcafd59948a98dcb621e09fe8eb69004c9de0f61ac2ce3402364e76803c"
 }

@@ -36,6 +36,8 @@ mod commit_path;
 mod dataset_laws;
 #[path = "explorer_documents.rs"]
 mod explorer_documents;
+#[path = "inventory_vertical_e2e.rs"]
+mod inventory_vertical_e2e;
 #[path = "jewelry_pricing.rs"]
 mod jewelry_pricing;
 #[path = "label_identity.rs"]

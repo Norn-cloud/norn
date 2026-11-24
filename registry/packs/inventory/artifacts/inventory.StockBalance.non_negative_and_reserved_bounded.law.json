@@ -1,0 +1,50 @@
+{
+  "artifactId": "inventory.StockBalance.non_negative_and_reserved_bounded.law",
+  "dependencies": [
+    {
+      "artifactId": "inventory.StockBalance.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Stock balance is non-negative and reserved quantity never exceeds on-hand quantity",
+  "namespace": "inventory",
+  "payload": {
+    "id": "inventory.StockBalance.non_negative_and_reserved_bounded",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "inventory",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/inventory/stock.ts"
+    },
+    "rationale": "Conserved stock on hand and reserved quantities cannot be negative, and reservations may never exceed available stock.",
+    "response": {
+      "expression": "self.quantity >= 0 and self.reserved_quantity >= 0 and self.reserved_quantity <= self.quantity",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "inventory.StockBalance"
+      ],
+      "root": {
+        "id": "inventory.StockBalance",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "inventory.StockBalance"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/inventory/artifacts/inventory.StockBalance.non_negative_and_reserved_bounded.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

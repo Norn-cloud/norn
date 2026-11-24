@@ -1,0 +1,73 @@
+{
+  "artifactId": "inventory.cycle_count.approve.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Approve cycle count",
+  "namespace": "inventory",
+  "payload": {
+    "access": {
+      "artifactId": "inventory.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "inventory.cycle_count.approve",
+    "description": "Approve a submitted physical cycle count under inventory manager authority.",
+    "effectProgram": {
+      "entityArtifactId": "inventory.CycleCount.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "cycleCountId",
+      "objectKind": "inventory.CycleCount",
+      "transition": "approve"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "cycleCountId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "cycleCountId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "cycleCountId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "cycleCountId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Approve cycle count",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "inventory.CycleCount"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/inventory/artifacts/inventory.cycle_count.approve.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,73 @@
+{
+  "artifactId": "inventory.lot.quarantine.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Quarantine lot or batch",
+  "namespace": "inventory",
+  "payload": {
+    "access": {
+      "artifactId": "inventory.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "inventory.lot.quarantine",
+    "description": "Move an active lot into quarantine pending quality inspection.",
+    "effectProgram": {
+      "entityArtifactId": "inventory.LotBatch.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "lotId",
+      "objectKind": "inventory.LotBatch",
+      "transition": "quarantine"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "lotId": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "lotId"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "lotId": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "lotId",
+        "status"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Quarantine lot or batch",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "inventory.LotBatch"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/inventory/artifacts/inventory.lot.quarantine.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
