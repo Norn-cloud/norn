@@ -685,11 +685,10 @@ if len(tasks) != len(set(tasks)) or set(tasks) - known:
 if plan["mode"] == "full" and set(tasks) != known:
     raise SystemExit("full bundle plan omitted a registered task")
 target_seconds = 11 * 60
-# Every bundle is one Boat VM start, and the account allows 840 starts per rolling 24 h for
-# CI and every work lane together: at 6 bundles CI alone spent the cap on 2026-11-19 (720
-# jobs). Three bundles keep a push at 4 starts (core + 3) for about 14 more minutes of wall
-# time; each bundle still runs its tasks one after another on a default VM.
-max_bundles = 3
+# #1652 moved `core` to hosted `ubuntu-24.04`, so only `test` bundles take a Boat start.
+# At 8 bundles a full plan hits the exact indivisible floor (847s / 14.1m:
+# integration-authoring + provenance); higher limits still pack into 8 bundles.
+max_bundles = 8
 # Use the fewest jobs that meet the service target. If an indivisible task
 # exceeds it, minimize the critical path before allocating additional VMs.
 # For each bundle count, try both splitting and coalescing each shared build group
