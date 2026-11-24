@@ -557,6 +557,66 @@ fn version_entry<E: SqlEngine>(
     )))
 }
 
+/// Walk backward from `head_version` down to `1` (bounded by `scan_limit`) to
+/// collapse consecutive equal-signature runs onto their earliest version and
+/// suppress any boundary run whose predecessor could not be inspected (#1534
+/// S6, S7).
+fn collect_history_versions(
+    head_version: u64,
+    max_versions: usize,
+    scan_limit: u64,
+    mut load_entry: impl FnMut(u64) -> Result<Option<(NornObjectVersion, VisibleSignature)>, Refusal>,
+) -> Result<(Vec<NornObjectVersion>, bool), Refusal> {
+    let mut versions: Vec<NornObjectVersion> = Vec::new();
+    let mut current_run: Option<(NornObjectVersion, VisibleSignature)> = None;
+    let mut truncated = false;
+    let mut scanned = 0_u64;
+    let mut version = head_version;
+    while version >= 1 {
+        if scanned >= scan_limit {
+            // Stopped before version 1 without establishing whether
+            // `current_run` changed anything relative to `version`; fail
+            // closed by suppressing the unverified boundary run.
+            current_run = None;
+            truncated = true;
+            break;
+        }
+        scanned = scanned.saturating_add(1);
+        if let Some((entry, signature)) = load_entry(version)? {
+            match &mut current_run {
+                Some((earliest, run_sig)) if *run_sig == signature => {
+                    *earliest = entry;
+                }
+                Some(_) => {
+                    if let Some((earliest, _)) = current_run.replace((entry, signature)) {
+                        versions.push(earliest);
+                    }
+                    if versions.len() >= max_versions {
+                        current_run = None;
+                        truncated = true;
+                        break;
+                    }
+                }
+                None => {
+                    current_run = Some((entry, signature));
+                }
+            }
+        }
+        if version == 1 {
+            break;
+        }
+        version = version.saturating_sub(1);
+    }
+    if let Some((earliest, _)) = current_run {
+        if versions.len() < max_versions {
+            versions.push(earliest);
+        } else {
+            truncated = true;
+        }
+    }
+    Ok((versions, truncated))
+}
+
 /// HOST-READ-6: an object's proven versions, newest first, with what wrote each.
 ///
 /// # Errors
@@ -580,62 +640,10 @@ pub fn get_object_history<E: SqlEngine>(
     let row = readable(host, access, &actor, row)?;
     let max_versions = usize::try_from(MAX_HISTORY_VERSIONS).unwrap_or(usize::MAX);
     locked(host, access, &mut start, |reader| {
-        // Walk backward from the head (bounded by `MAX_HISTORY_SCAN`) so
-        // hidden-only writes collapse onto the earliest version that
-        // introduced their visible signature, unreadable versions do not split
-        // an equal-signature run, and any boundary run whose predecessor could
-        // not be checked is suppressed rather than emitted as a false visible
-        // change (#1534 S6, S7). Raw version numbers stay consistent with point
-        // reads and `/lineage?version=` until #1534 settles the handle contract.
-        let mut versions: Vec<NornObjectVersion> = Vec::new();
-        let mut current_run: Option<(NornObjectVersion, VisibleSignature)> = None;
-        let mut truncated = false;
-        let mut scanned = 0_u64;
-        let mut version = row.version;
-        while version >= 1 {
-            if scanned >= MAX_HISTORY_SCAN {
-                // We stopped before version 1 without establishing whether
-                // `current_run` changed anything relative to `version`; fail
-                // closed by suppressing the unverified boundary run.
-                current_run = None;
-                truncated = true;
-                break;
-            }
-            scanned = scanned.saturating_add(1);
-            if let Some((entry, signature)) =
-                version_entry((host, access, &actor), reader, &row, version)?
-            {
-                match &mut current_run {
-                    Some((earliest, run_sig)) if *run_sig == signature => {
-                        *earliest = entry;
-                    }
-                    Some(_) => {
-                        if let Some((earliest, _)) = current_run.replace((entry, signature)) {
-                            versions.push(earliest);
-                        }
-                        if versions.len() >= max_versions {
-                            current_run = None;
-                            truncated = true;
-                            break;
-                        }
-                    }
-                    None => {
-                        current_run = Some((entry, signature));
-                    }
-                }
-            }
-            if version == 1 {
-                break;
-            }
-            version = version.saturating_sub(1);
-        }
-        if let Some((earliest, _)) = current_run {
-            if versions.len() < max_versions {
-                versions.push(earliest);
-            } else {
-                truncated = true;
-            }
-        }
+        let (versions, truncated) =
+            collect_history_versions(row.version, max_versions, MAX_HISTORY_SCAN, |version| {
+                version_entry((host, access, &actor), reader, &row, version)
+            })?;
         Ok(NornObjectHistory {
             object_type: row.object_type.clone(),
             id: row.id.clone(),
@@ -823,6 +831,53 @@ mod trace_tests {
                 "must fail closed on {bad}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn collect_history_suppresses_unverified_boundary_run_when_scan_limit_hits()
+    -> Result<(), String> {
+        let make = |version: u64, name: &str| {
+            let values = Some(BTreeMap::from([(
+                "name".to_owned(),
+                RuntimeValue::from(name),
+            )]));
+            let sig = VisibleSignature {
+                values: values.clone(),
+                writer_json: String::from(r#"{"kind":"other"}"#),
+                projected: crate::privacy::Projected::default(),
+            };
+            let entry = NornObjectVersion {
+                version,
+                commit: version,
+                logical_time: version.saturating_mul(10),
+                values,
+                writer: NornVersionWriter::Other,
+            };
+            (entry, sig)
+        };
+        // 5 versions with identical visible state (`v1`..`v5`) and scan_limit = 4:
+        // scanning `v5..=v2` cannot inspect `v1`, so `v2` is suppressed (never
+        // emitted as a false visible change) and `truncated` is true.
+        let (versions, truncated) =
+            collect_history_versions(5, 64, 4, |version| Ok(Some(make(version, "Ada"))))
+                .map_err(|err| format!("{err:?}"))?;
+        assert!(versions.is_empty(), "{versions:?}");
+        assert!(truncated);
+
+        // When `v5` visibly changed relative to `v4..=v1` and scan_limit = 4:
+        // `v5` IS proven to differ from `v4`, while the unverified `v4..=v2` run
+        // is suppressed at the scan cap with `truncated = true`.
+        let (versions, truncated) = collect_history_versions(5, 64, 4, |version| {
+            let name = if version == 5 { "Ada B." } else { "Ada" };
+            Ok(Some(make(version, name)))
+        })
+        .map_err(|err| format!("{err:?}"))?;
+        assert_eq!(
+            versions.iter().map(|v| v.version).collect::<Vec<_>>(),
+            vec![5]
+        );
+        assert!(truncated);
         Ok(())
     }
 }

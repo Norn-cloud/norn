@@ -20,6 +20,9 @@ use crate::system::{
 };
 
 const MAX_MARKING_SUMMARY_VARIANTS: usize = 4_096;
+/// Bound on historical fact versions scanned per concrete type to prove
+/// classification completeness; exceeding this bound fails closed (#1559).
+const MAX_HISTORY_COMPLETENESS_SCAN: i64 = 10_000;
 
 /// One grouped or filtered question path that holds (or cannot be proved free
 /// of) a marking label in the evaluated world (PRIVACY-4, S2 #1547/#1559).
@@ -705,7 +708,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         let revision = match self.read_isolation() {
             crate::engine::ReadIsolation::Revisioned => Some(
                 self.database_revision()?
-                    .ok_or_else(|| CellError::ComputeRefused("object.snapshot_unavailable"))?,
+                    .ok_or(CellError::ComputeRefused("object.snapshot_unavailable"))?,
             ),
             crate::engine::ReadIsolation::ExclusiveSynchronous => None,
         };
@@ -722,8 +725,9 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
     }
 
     /// Whether the active retained definition set declares any marking in its
-    /// catalog (independently of `Model` property declarations). Fails closed
-    /// on malformed retained definitions.
+    /// catalog (independently of `Model` property declarations). Strictly
+    /// decodes every retained entity payload so malformed marking catalogs fail
+    /// closed rather than falling through to the fast path.
     fn has_retained_marking_catalog(&self) -> Result<bool, CellError> {
         let version = self.active_definitions_version()?;
         let Some(set) = self.installed_definitions(version)? else {
@@ -742,13 +746,31 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             .map(norn_ir::runtime::decode::<norn_ir::ArtifactEnvelope>)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| CellError::Engine(format!("retained definitions: {error}")))?;
-        Ok(!norn_checker::marking_catalog_from_artifacts(&artifacts).is_empty())
+        for artifact in &artifacts {
+            if artifact.kind != norn_ir::ArtifactKind::Entity {
+                continue;
+            }
+            let root: norn_ir::EntityRoot =
+                norn_ir::runtime::decode(&artifact.payload).map_err(|error| {
+                    CellError::Engine(format!(
+                        "retained entity payload {}: {error}",
+                        artifact.artifact_id
+                    ))
+                })?;
+            if let norn_ir::EntityRoot::V2Markings(catalog) = root
+                && !catalog.markings.is_empty()
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Whether any non-tombstone historical version of `object_type` (or a
     /// subtype) in `world` lacks an immutable marking snapshot or a property
     /// marking row for `property` (fail closed when historical classification
-    /// evidence is missing, #1559 S2c).
+    /// evidence is missing or exceeds [`MAX_HISTORY_COMPLETENESS_SCAN`],
+    /// #1559 S2c).
     fn property_history_unclassified(
         &self,
         world: &str,
@@ -758,6 +780,14 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         if self.model.tables(object_type)?.is_empty() {
             return Err(CellError::UnknownObjectType(object_type.to_owned()));
         }
+        let bound_sql = format!(
+            "SELECT COUNT(*) FROM ( \
+               SELECT 1 FROM \"{fv}\" \
+               WHERE \"world\" = ?1 AND \"root_type\" = ?2 AND \"object_type\" = ?3 \
+               LIMIT ?4 \
+             )",
+            fv = crate::system::FACT_VALUES,
+        );
         let sql = format!(
             "SELECT 1 FROM \"{fv}\" AS fv \
              WHERE fv.\"world\" = ?1 AND fv.\"root_type\" = ?2 AND fv.\"object_type\" = ?3 \
@@ -788,6 +818,24 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
                 continue;
             }
             let root = self.root_type(concrete_type)?;
+            let observed: i64 = self
+                .conn
+                .query_optional(
+                    &bound_sql,
+                    params![
+                        world,
+                        root,
+                        concrete_type,
+                        MAX_HISTORY_COMPLETENESS_SCAN.saturating_add(1)
+                    ],
+                    |row| row.get(0),
+                )?
+                .ok_or_else(|| {
+                    CellError::Engine("history completeness bound query returned no row".to_owned())
+                })?;
+            if observed > MAX_HISTORY_COMPLETENESS_SCAN {
+                return Ok(true);
+            }
             let missing: Option<i64> = self.conn.query_optional(
                 &sql,
                 params![world, root, concrete_type, property],

@@ -1135,7 +1135,7 @@ fn install_restatement_marking_catalog(store: &mut CellStore, model: Model) {
                 admission_receipt: None,
                 readmission: None,
                 diff: json!({}),
-                installed_at: 1,
+                installed_at: CLOCK,
                 layout: None,
             },
             Some(0),
@@ -1304,5 +1304,82 @@ fn prepare_restatement_refuses_slice_over_deleted_labelled_field() {
     assert_eq!(
         run_restatement_marking_world("gold", false, true),
         run_restatement_marking_world("secret-alpha", true, false)
+    );
+}
+
+/// S2c (#1559): revalidating slice markings inside `stage_restatement`'s commit
+/// transaction closes the window between `prepare_restatement` and staging.
+#[test]
+fn stage_restatement_refuses_if_a_slice_becomes_marked_after_preparation() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("cell.sqlite");
+    let (mut store, plan, mut context, _model) = setup(&path);
+    let point = cutoff(&store, &context);
+    let version = store
+        .read()
+        .version(MAIN_WORLD, RESTATEMENT_TYPE, ID)
+        .expect("slot version");
+    let build = store
+        .begin_restatement(
+            ID,
+            context.clone(),
+            version,
+            "clean build before reclassification",
+            &BTreeSet::from(["week".into(), "loss".into()]),
+        )
+        .expect("private rebuild");
+    let prepared = store
+        .prepare_restatement(build, requests(&plan, &context, point), |_| Ok(true))
+        .expect("clean cell prepares");
+    // Before staging commits, another commit introduces a labelled row on the
+    // grouped/filtered property without touching the restatement slot.
+    context.now_ms = CLOCK + 500;
+    store
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: SCOPE.into(),
+            logical_time: CLOCK + 500,
+            writes: vec![put(
+                "SYN-LATE-MARKED",
+                50_000,
+                48_000,
+                "2026-10-23T12:00:00Z",
+                "secret-metal",
+            )],
+            events: vec![
+                norn_ir::RuntimeValue::from_json(json!({
+                    "type": "observation.recorded",
+                    "mapped": [{
+                        "objectType": TYPE,
+                        "key": "SYN-LATE-MARKED",
+                        "propertyProvenance": {"metal": {"markings": ["pii.contact"]}}
+                    }]
+                }))
+                .expect("event"),
+            ],
+            ..CommitBatch::default()
+        })
+        .expect("reclassifying commit");
+    let error = store
+        .stage_restatement(prepared)
+        .expect_err("staging transaction must revalidate slice markings");
+    assert!(
+        matches!(
+            error,
+            norn_cell::CellError::ComputeRefused("question.marked_history")
+        ),
+        "expected question.marked_history, got {error:?}"
+    );
+    let slot = store
+        .read()
+        .object(MAIN_WORLD, RESTATEMENT_TYPE, ID)
+        .expect("slot")
+        .expect("slot present");
+    assert_eq!(
+        slot.values
+            .get("candidate")
+            .and_then(norn_ir::RuntimeValue::as_str),
+        Some(""),
+        "refused staging must leave candidate empty: {slot:?}"
     );
 }
