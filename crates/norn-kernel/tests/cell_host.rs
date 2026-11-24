@@ -610,18 +610,40 @@ fn cell_host_check_commit_link_refusal_order() {
             endpoint: law_key(0),
         })
     );
-    // `law.Thing/k2` and `law.Child/k2` are one object.
-    let alias = FactExpectation {
-        key: law_alias(2),
-        expected: FactVersion(1),
+    // `law.Thing/k2` and `law.Child/k2` are one object, so one expectation
+    // (#1701): a read pin through the base type at the write's version merges
+    // with the write (the commit is judged as the write alone); at another
+    // version it is stale. Two writes of the one object stay duplicates.
+    let alias = |expected| CellCommit {
+        reads: vec![FactExpectation {
+            key: law_alias(2),
+            expected: FactVersion(expected),
+        }],
+        writes: vec![put(2, 1, 0)],
+        ..CellCommit::empty()
     };
+    let alone = fixed(&CellCommit {
+        writes: vec![put(2, 1, 0)],
+        ..CellCommit::empty()
+    });
+    assert_eq!(fixed(&alias(1)), alone);
+    assert!(!matches!(alone, Err(CommitError::DuplicateKey { .. })));
+    assert_eq!(
+        fixed(&alias(9)),
+        Err(CommitError::Conflict {
+            key: law_alias(2),
+            expected: FactVersion(9),
+            current: FactVersion(1),
+        })
+    );
+    let mut twice = put(2, 1, 0);
+    twice.key = law_alias(2);
     assert_eq!(
         fixed(&CellCommit {
-            reads: vec![alias],
-            writes: vec![put(2, 1, 0)],
+            writes: vec![put(2, 1, 0), twice],
             ..CellCommit::empty()
         }),
-        Err(CommitError::DuplicateKey { key: law_key(2) })
+        Err(CommitError::DuplicateKey { key: law_alias(2) })
     );
     // k1 is a live `law.Thing`: it is not written as a `law.Child`.
     let child = FactWrite {
@@ -708,15 +730,20 @@ fn cell_host_check_commit_refusal_order() {
     });
     let check = |commit: &CellCommit<(), (), ()>| fixed(commit).map(|versions| versions.written);
 
-    // Shape before delivery before compare-and-swap.
-    assert!(matches!(
+    // Shape before delivery before compare-and-swap: a stale read of an
+    // object the commit writes is refused by shape (#1701).
+    assert_eq!(
         check(&commit(
             vec![stale.clone()],
             vec![put(0, 1, 0)],
             missing.clone()
         )),
-        Err(CommitError::DuplicateKey { .. })
-    ));
+        Err(CommitError::Conflict {
+            key: law_key(0),
+            expected: FactVersion(9),
+            current: FactVersion(1),
+        })
+    );
     assert!(matches!(
         check(&commit(vec![stale.clone()], vec![], missing)),
         Err(CommitError::NotPending { .. })
