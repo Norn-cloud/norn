@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import { Panel, Well } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Skeleton } from "@/components/ui/skeleton"
-import { defineLifecycleView, type LifecycleFinding, type LifecycleViewDocument, type NornLifecycleView } from "../../../../packages/norn-demo-ui/src/elements/lifecycle-view.ts"
+import { defineLifecycleView, type LifecycleFinding, type LifecycleViewDocument, type LifecycleViewOptions, type NornLifecycleView } from "../../../../packages/norn-demo-ui/src/elements/lifecycle-view.ts"
 import viewDocument from "../../../../packages/norn-demo-ui/src/elements/lifecycle-view.widget.json"
 import type { Concept, Field, Lifecycle } from "../lib/catalog.ts"
 import { loadChecker, type Checker } from "../lib/canvas/checker.ts"
@@ -28,7 +28,9 @@ import { useView } from "../lib/view.tsx"
  * message. The checker loads after the view paints, and its findings join once it is here.
  */
 const DOCUMENT = viewDocument as unknown as LifecycleViewDocument
-const NO_FINDINGS: readonly LifecycleFinding[] = []
+type Presentation = Pick<LifecycleViewOptions, "lifecycle" | "title" | "findings"> & {
+  readonly labels: readonly (readonly [string, string])[]
+}
 
 /** Format a lifecycle state, transition, or page state id in words, preferring declared labels. */
 export function lifecycleLabel(id: string, field?: Field): string {
@@ -46,6 +48,8 @@ export function LifecycleView({ concept, lifecycle, filter = null }: {
   const scopeRead = useStudioScope()
   const live = modeRead.data?.kind === "live"
   const scope = live ? (scopeRead.data ?? null) : null
+  const orgId = scope?.orgId
+  const environmentId = scope?.environmentId
   const waitingForScope = modeRead.isPending || (live && scopeRead.isPending)
   const definitions = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
   const checker = useQuery({ queryKey: ["checker"], queryFn: () => loadChecker(), staleTime: Infinity, retry: false })
@@ -55,6 +59,20 @@ export function LifecycleView({ concept, lifecycle, filter = null }: {
   const { property } = lifecycle
   const artifacts = definitions.data?.document
   const findings = useMemo(() => findingsFor(name, property, artifacts, checker.data), [name, property, artifacts, checker.data])
+  // Catalog re-reads can allocate equivalent definitions. Only changed options should restart reads.
+  const presentation = JSON.stringify({
+    lifecycle: {
+      property,
+      states: declaredLifecycleStates(lifecycle, field),
+      initial: lifecycle.initial,
+      terminal: lifecycle.terminal ?? [],
+      transitions: (lifecycle.transitions ?? []).map(({ id, from, to }) => ({ id, from, to })),
+      endings: lifecycle.endings ?? [],
+    },
+    title,
+    findings,
+    labels: [...field?.valueLabels ?? []],
+  } satisfies Presentation)
   const path = facetsPath(concept.name, filter, [lifecycle.property])
   const propertyLabel = field?.label ?? sentence(lifecycle.property)
   const filtered = filter !== null && filter.all.length > 0
@@ -63,18 +81,13 @@ export function LifecycleView({ concept, lifecycle, filter = null }: {
     if (host === null || waitingForScope) return
     defineLifecycleView()
     const view = document.createElement("norn-lifecycle-view") as NornLifecycleView
+    const { labels, ...display } = JSON.parse(presentation) as Presentation
+    const stateLabels = new Map(labels)
+    const scope = orgId === undefined || environmentId === undefined ? null : { orgId, environmentId }
     const call = scope === null ? null : scopedHostFetch((input, init) => fetch(input, init), "/api/host", async () => scope)
     view.options = {
       document: DOCUMENT,
-      lifecycle: {
-        property,
-        states: declaredLifecycleStates(lifecycle, field),
-        initial: lifecycle.initial,
-        terminal: lifecycle.terminal ?? [],
-        transitions: lifecycle.transitions ?? [],
-        endings: lifecycle.endings ?? [],
-      },
-      title,
+      ...display,
       hideTitle: true,
       // When live, read the cell's scoped facets route; when recorded or without a cell, draw the declared lifecycle without calling the network.
       ...(call !== null && scope !== null ? {
@@ -87,15 +100,14 @@ export function LifecycleView({ concept, lifecycle, filter = null }: {
         },
         changes: (listener, onRefused) => liveAnswer(path, scope, listener, onRefused),
       } : {}),
-      findings,
       locale: locale === "ar" ? "ar" : "en",
       technical: mode === "technical",
       // A state's label from the definition; a transition or page state id in words, as the definition names it.
-      label: (id) => lifecycleLabel(id, field),
+      label: (id) => stateLabels.get(id) ?? sentence(id),
     }
     host.replaceChildren(view)
     return () => view.remove()
-  }, [host, waitingForScope, lifecycle, field, property, title, path, scope, locale, findings, mode])
+  }, [host, waitingForScope, presentation, path, orgId, environmentId, locale, mode])
 
   return (
     <Panel icon={GitBranch} label={`${locale === "ar" ? "دورة الحياة" : "Lifecycle"} · ${propertyLabel}`}
@@ -141,8 +153,8 @@ export function findingsFor(
   property: string,
   definitions: readonly unknown[] | undefined,
   checker: Checker | undefined,
-): readonly LifecycleFinding[] {
-  if (!definitions || !checker) return NO_FINDINGS
+): LifecycleFinding[] {
+  if (!definitions || !checker) return []
   const envelopes = definitions as readonly Envelope[]
   const widgets = new Map<string, readonly { readonly machine?: PageMachine }[]>()
   for (const artifact of envelopes) {
@@ -151,7 +163,7 @@ export function findingsFor(
     if (!pages?.some((page) => page.machine?.lifecycle?.objectType === objectType && page.machine.lifecycle.property === property)) continue
     widgets.set(artifact.artifactId, pages)
   }
-  if (widgets.size === 0) return NO_FINDINGS
+  if (widgets.size === 0) return []
   const results: LifecycleFinding[] = []
   for (const finding of checker(definitions).diagnostics.diagnostics) {
     if (!finding.code.startsWith("widget.lifecycle.") || finding.witness == null || !Array.isArray(finding.witness.steps)) continue
@@ -182,5 +194,5 @@ export function findingsFor(
       ...(pageState === undefined ? {} : { pageState }),
     })
   }
-  return results.length === 0 ? NO_FINDINGS : results
+  return results
 }
