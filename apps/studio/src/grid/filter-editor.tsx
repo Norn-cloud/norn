@@ -134,7 +134,11 @@ export function FilterEditor({ fields, draft, onDraft, onApply, onClear, applied
           const pointer = `/filter/all/${index}`
           const problems = diagnosticsAt(diagnostics, pointer).map((problem, i) => ({ ...problem, id: `${id}-${index}-${i}` }))
           const problemAt = (part: string): ProblemProps => {
-            const descriptions = problems.filter((problem) => problem.pointer === `${pointer}/${part}`).map((problem) => problem.id)
+            const control = `${pointer}/${part}`
+            const isList = clause.op === "in" && part === "value"
+            const descriptions = problems
+              .filter(({ pointer }) => pointer === control || (isList && pointer?.startsWith(`${control}/`)))
+              .map(({ id }) => id)
             return descriptions.length === 0 ? {} : { "aria-invalid": true, "aria-describedby": descriptions.join(" ") }
           }
           return (

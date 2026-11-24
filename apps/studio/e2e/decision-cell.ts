@@ -38,7 +38,7 @@ interface StoredDecision {
   resolved?: { by: string; atMs: number; choice: string | null }
 }
 interface Step { id: string; label: string | null; kind: "perform" | "decide" | "wait" | "succeed" | "fail"; status: "pending" | "waiting" | "done" | "failed"; startedAtMs: number | null; endedAtMs: number | null }
-interface StoredRun { id: string; generation: number; flow: { ruleId: string; version: string; title: string | null }; version: number; steps: Step[]; decision: { id: string; expiresAtMs: number } | null; createdAtMs: number; reads: number }
+interface StoredRun { id: string; readonly objectType: string; generation: number; flow: { ruleId: string; version: string; title: string | null }; version: number; steps: Step[]; decision: { id: string; expiresAtMs: number } | null; createdAtMs: number; reads: number }
 
 const hash = (n: number) => n.toString(16).padStart(64, "a")
 
@@ -89,9 +89,9 @@ function fixtures(now = START) {
   const step = (id: string, kind: Step["kind"], status: Step["status"], label: string | null = null): Step =>
     ({ id, label, kind, status, startedAtMs: status === "pending" ? null : now - 2 * HOUR, endedAtMs: status === "done" ? now - 2 * HOUR + 4000 : null })
   const runs = new Map<string, StoredRun>([
-    ["run_count_3", { id: "run_count_3", generation: 1, flow: { ruleId: "canon.cycle_count.flow.rule", version: "2.0.0", title: "Cycle count" }, version: 6, createdAtMs: now - 30 * HOUR, reads: 0, decision: null,
+    ["run_count_3", { id: "run_count_3", objectType: SERVED.runCompleted.json.objectType, generation: 1, flow: { ruleId: "canon.cycle_count.flow.rule", version: "2.0.0", title: "Cycle count" }, version: 6, createdAtMs: now - 30 * HOUR, reads: 0, decision: null,
       steps: [step("count", "perform", "done", "Count the bin"), step("done", "succeed", "done", "Done")] }],
-    ["run_restock_7", { id: "run_restock_7", generation: 1, flow: { ruleId: "canon.restock.flow.rule", version: "3.0.0", title: "Restock gold" }, version: 3, createdAtMs: now - 2 * HOUR, reads: 0, decision: { id: "dec_UmVsZWFzZS1nb2xk", expiresAtMs: now + 45 * 60_000 },
+    ["run_restock_7", { id: "run_restock_7", objectType: SERVED.runRead.json.objectType, generation: 1, flow: { ruleId: "canon.restock.flow.rule", version: "3.0.0", title: "Restock gold" }, version: 3, createdAtMs: now - 2 * HOUR, reads: 0, decision: { id: "dec_UmVsZWFzZS1nb2xk", expiresAtMs: now + 45 * 60_000 },
       steps: [
         step("check_stock", "perform", "done", "Check stock"),
         step("ask_manager", "decide", "waiting"),
@@ -205,7 +205,7 @@ export async function decisionCell(page: Page, options: { readonly empty?: boole
       if (!scoped(url)) return route.fulfill(SERVED.runStartDenied)
       const { flow, runId } = JSON.parse(route.request().postData() ?? "{}") as { flow: string; runId: string }
       const existing = runs.get(runId)
-      const run: StoredRun = existing ?? { id: runId, generation: 1, flow: { ruleId: `${flow}.flow.rule`, version: "1.0.0", title: null }, version: 1, createdAtMs: now, reads: 0, decision: null,
+      const run: StoredRun = existing ?? { id: runId, objectType: SERVED.runStarted.json.objectType, generation: 1, flow: { ruleId: `${flow}.flow.rule`, version: "1.0.0", title: null }, version: 1, createdAtMs: now, reads: 0, decision: null,
           steps: [
             { id: "fetch_orders", label: null, kind: "perform", status: "waiting", startedAtMs: now, endedAtMs: null },
             { id: "post_totals", label: "Post totals", kind: "perform", status: "pending", startedAtMs: null, endedAtMs: null },
@@ -272,7 +272,7 @@ export async function decisionCell(page: Page, options: { readonly empty?: boole
     const template = terminal ? SERVED.runCompleted.json : run.decision === null ? EXECUTOR.json : SERVED.runRead.json
     return {
       ...template,
-      id: run.id, generation: run.generation, flow: { ...template.flow, ...run.flow, id: run.flow.ruleId.slice(0, -".flow.rule".length) },
+      id: run.id, objectType: run.objectType, generation: run.generation, flow: { ...template.flow, ...run.flow, id: run.flow.ruleId.slice(0, -".flow.rule".length) },
       state: stateOf(run), terminal, version: run.version, createdAtMs: run.createdAtMs, updatedAtMs: now, updatedCommitSeq: seq,
       steps: run.steps.filter((step) => step.status !== "pending").map((step) => {
         if (step.status !== "waiting") return { ...doneStep, ...step }
