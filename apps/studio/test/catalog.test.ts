@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { catalogOf, cellOwned, comparedFacts, conceptTitle, systemName, type SourceSystem } from "../src/lib/catalog.ts"
+import { catalogOf, cellOwned, comparedFacts, conceptTitle, lawHeadline, systemName, type SourceSystem } from "../src/lib/catalog.ts"
 import { exactSum } from "../src/lib/law-values.ts"
 import { readDocument } from "../src/lib/exact.ts"
 import type { Artifact } from "../src/lib/transport.ts"
@@ -118,7 +118,27 @@ test("a concept's law governs every concept that implements it, and a sum over i
   const catalog = catalogOf(document, "en")
   const law = catalog.byName.get("docs.ScannedDocument")?.laws.find(({ id }) => id === "canon.ItemizedDocument.total_matches_lines")
   // Declared once, on the concept; the scanned document is bound by it with no law of its own.
-  expect(law).toMatchObject({ inheritedFrom: "canon.ItemizedDocument", compares: ["total", "lines.amount"] })
+  expect(law).toMatchObject({
+    inheritedFrom: "canon.ItemizedDocument",
+    compares: ["total", "lines.amount"],
+    title: "An itemized document's total equals the sum of its lines",
+    titleLang: "en",
+    artifactId: "canon.ItemizedDocument.total_matches_lines.law",
+  })
+  expect(law && lawHeadline(law)).toBe("An itemized document's total equals the sum of its lines")
+  // A `law:` label in the reader's language overrides the artifact name and keeps its language tag.
+  const localized = catalogOf([
+    ...document,
+    {
+      irVersion: "0.1", artifactId: "canon.labels.ar", kind: "labels", namespace: "canon", name: "Labels", version: "0.1.0", lifecycle: "active",
+      scope: {}, dependencies: [], provenance: { source: "system" },
+      payload: { labelsVersion: "0.1", entries: [{ target: { kind: "law", lawId: "canon.ItemizedDocument.total_matches_lines" }, label: { ar: "مجموع المستند يساوي مجموع بنوده" } }] },
+    } as unknown as Artifact,
+  ], "ar")
+  expect(localized.byName.get("docs.ScannedDocument")?.laws.find(({ id }) => id === "canon.ItemizedDocument.total_matches_lines"))
+    .toMatchObject({ title: "مجموع المستند يساوي مجموع بنوده", titleLang: "ar" })
+  // When an artifact's name only repeats its engine id, the headline falls back to its rationale.
+  expect(lawHeadline({ id: "x.rule", title: "x.rule", rationale: "Must balance" })).toBe("Must balance")
   expect(catalog.byName.get("canon.ItemizedDocument")?.laws.map(({ id }) => id)).toEqual(["canon.ItemizedDocument.total_matches_lines"])
   expect(comparedFacts("self.total == sum(map(self.lines, #.amount))")).toEqual(["total", "lines.amount"])
   expect(comparedFacts("sum(map(self.lines, #.amount)) > 0")).toBeUndefined()

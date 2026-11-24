@@ -128,6 +128,9 @@ export function ActionSheet({ open, onClose, onView, onChanged, scopeBinding }: 
     // Lane links and empty-state nearest jumps can change when an action writes links or intervals.
     void client.invalidateQueries({ queryKey: ["timeline-lane"] })
     void client.invalidateQueries({ queryKey: ["timeline-nearest"] })
+    void client.invalidateQueries({ queryKey: ["inbox"] })
+    void client.invalidateQueries({ queryKey: ["profile", objectKind] })
+    void client.invalidateQueries({ queryKey: ["quarantined", objectKind] })
   }
   const close = () => {
     if (open !== null) {

@@ -150,7 +150,7 @@ export function liveTransport(catalog: Read<readonly Artifact[]>, fetcher: Fetch
     definitions: async () => catalog.document.map((artifact, index) => subRead(catalog, `/${index}`, artifact as Envelope)),
     questionBoard: async () => { throw new NotServed("Saved questions are") },
     restatement: async () => { throw new NotServed("Restated answers are") },
-    guarantees: async () => { throw new NotServed("Model-checked guarantees are") },
+    guarantees: async () => { throw new NotServed("Model-checked proofs are") },
     objectPage: async (objectType, after) => read<ObjectPage>(`/v1/objects/${encodeURIComponent(objectType)}${after === undefined ? "" : `?after=${encodeURIComponent(after)}`}`),
     object: async (objectType, id) => {
       const [object, links, source] = await Promise.all([
