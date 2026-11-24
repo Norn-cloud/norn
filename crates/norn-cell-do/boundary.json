@@ -5,6 +5,7 @@
     "norn-api",
     "norn-cell",
     "norn-checker",
+    "norn-ui-checker",
     "norn-ir",
     "norn-kernel",
     "norn-projections"

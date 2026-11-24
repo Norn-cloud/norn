@@ -14,18 +14,18 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::{Ending, Modality, Net, NetEdge};
 
 /// Stable codes of composition refusals (registered, en and ar).
-pub(crate) mod codes {
+pub mod codes {
     /// A sync table names one UI edge label twice.
-    pub(crate) const SYNC_CONFLICT: &str = "lifecycle.soundness.sync_conflict";
+    pub const SYNC_CONFLICT: &str = "lifecycle.soundness.sync_conflict";
     /// The composed machine exceeds [`super::MAX_PRODUCT_STATES`].
-    pub(crate) const PRODUCT_LIMIT: &str = "lifecycle.soundness.product_limit";
+    pub const PRODUCT_LIMIT: &str = "lifecycle.soundness.product_limit";
     /// A Quint module name is not a plain identifier.
-    pub(crate) const INVALID_MODULE_NAME: &str = "lifecycle.soundness.invalid_module_name";
+    pub const INVALID_MODULE_NAME: &str = "lifecycle.soundness.invalid_module_name";
 }
 
 /// Why a composition or its Quint export is refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ComposeError {
+pub enum ComposeError {
     /// [`codes::SYNC_CONFLICT`]: the UI edge label named twice.
     SyncConflict(usize),
     /// [`codes::PRODUCT_LIMIT`].
@@ -36,7 +36,8 @@ pub(crate) enum ComposeError {
 
 impl ComposeError {
     /// The registered diagnostic code.
-    pub(crate) const fn code(self) -> &'static str {
+    #[must_use]
+    pub const fn code(self) -> &'static str {
         match self {
             Self::SyncConflict(_) => codes::SYNC_CONFLICT,
             Self::ProductLimit => codes::PRODUCT_LIMIT,
@@ -49,7 +50,8 @@ impl ComposeError {
 /// be resting; otherwise the pair has no ending, so "the UI shows Done while the backend is still
 /// pending or stuck" is never Good. A breached, cancelled or compensated side makes the pair that
 /// outcome, worst first; the pair is Good only when the UI is Good, and Resting when the UI rests.
-pub(crate) const fn product_ending(ui: Option<Ending>, backend: Option<Ending>) -> Option<Ending> {
+#[must_use]
+pub const fn product_ending(ui: Option<Ending>, backend: Option<Ending>) -> Option<Ending> {
     match (ui, backend) {
         (None, _) | (_, None) => None,
         (Some(Ending::BreachedVisible), _) | (_, Some(Ending::BreachedVisible)) => {
@@ -65,11 +67,11 @@ pub(crate) const fn product_ending(ui: Option<Ending>, backend: Option<Ending>) 
 }
 
 /// Largest product the composition builds; UI machines are tens of states, lifecycles under 20.
-pub(crate) const MAX_PRODUCT_STATES: usize = 65_536;
+pub const MAX_PRODUCT_STATES: usize = 65_536;
 
 /// How one UI edge label moves the backend. A UI label that no entry names fires alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Sync {
+pub enum Sync {
     /// UI edges labelled `ui` fire only together with a backend edge labelled `backend`
     /// enabled in the current backend state. A backend label named here never fires alone.
     Together {
@@ -87,36 +89,37 @@ pub(crate) enum Sync {
 
 /// Which side's edges one product edge took: indices into `ui.edges` and `backend.edges`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Origin {
+pub struct Origin {
     /// The UI edge, unless the backend moved alone.
-    pub(crate) ui: Option<usize>,
+    pub ui: Option<usize>,
     /// The backend edge, unless the UI moved alone.
-    pub(crate) backend: Option<usize>,
+    pub backend: Option<usize>,
 }
 
 /// The reachable product of a UI net and a backend net.
 #[derive(Debug, Clone)]
-pub(crate) struct Product {
+pub struct Product {
     /// The product as a net, read through [`Product::net`]. Each edge's `label` is its own index
     /// into [`Product::origins`]. Endings follow [`product_ending`]; a caller can only remove one
     /// ([`Product::narrow_endings`]), never add or upgrade one.
     net: Net,
     /// The (UI state, backend state) pair of each product state.
-    pub(crate) pairs: Vec<(usize, usize)>,
+    pub pairs: Vec<(usize, usize)>,
     /// The side edges of each product edge.
-    pub(crate) origins: Vec<Origin>,
+    pub origins: Vec<Origin>,
     index: BTreeMap<(usize, usize), usize>,
 }
 
 impl Product {
     /// The product as a net, for `analyse`, `witness` and `input_free_cycles`.
-    pub(crate) const fn net(&self) -> &Net {
+    #[must_use]
+    pub const fn net(&self) -> &Net {
         &self.net
     }
 
     /// Remove the ending of every product state for which `keep(state, (ui, backend), ending)`
     /// is false. Endings can only narrow: no state gains or changes an ending.
-    pub(crate) fn narrow_endings(&mut self, keep: impl Fn(usize, (usize, usize), Ending) -> bool) {
+    pub fn narrow_endings(&mut self, keep: impl Fn(usize, (usize, usize), Ending) -> bool) {
         for (state, slot) in self.net.endings.iter_mut().enumerate() {
             if let (Some(ending), Some(pair)) = (*slot, self.pairs.get(state))
                 && !keep(state, *pair, ending)
@@ -127,13 +130,15 @@ impl Product {
     }
 
     /// The product state of a pair, when that pair is reachable.
-    pub(crate) fn state(&self, ui: usize, backend: usize) -> Option<usize> {
+    #[must_use]
+    pub fn state(&self, ui: usize, backend: usize) -> Option<usize> {
         self.index.get(&(ui, backend)).copied()
     }
 
     /// LIFE-SOUND coverage for #1236's `uncovered_transition`: the labels of the backend edges
     /// some reachable product state takes.
-    pub(crate) fn backend_labels(&self, backend: &Net) -> BTreeSet<usize> {
+    #[must_use]
+    pub fn backend_labels(&self, backend: &Net) -> BTreeSet<usize> {
         self.origins
             .iter()
             .filter_map(|origin| origin.backend)
@@ -145,7 +150,8 @@ impl Product {
     /// Every reachable product state whose pair breaks the UI's backend assumption
     /// (`assumes(ui_state, backend_state)` is false), with a shortest witness run (product
     /// edge indices from an initial state).
-    pub(crate) fn assumption_violations(
+    #[must_use]
+    pub fn assumption_violations(
         &self,
         assumes: impl Fn(usize, usize) -> bool,
     ) -> Vec<(usize, Vec<usize>)> {
@@ -174,7 +180,7 @@ fn combine(first: Modality, second: Modality) -> Modality {
     clippy::too_many_lines,
     reason = "one breadth-first product construction"
 )]
-pub(crate) fn compose(ui: &Net, backend: &Net, sync: &[Sync]) -> Result<Product, ComposeError> {
+pub fn compose(ui: &Net, backend: &Net, sync: &[Sync]) -> Result<Product, ComposeError> {
     let mut together: BTreeMap<usize, usize> = BTreeMap::new();
     let mut alone: BTreeSet<usize> = BTreeSet::new();
     for entry in sync {
@@ -290,7 +296,7 @@ pub(crate) fn compose(ui: &Net, backend: &Net, sync: &[Sync]) -> Result<Product,
 ///
 /// # Errors
 /// `module` is not a plain identifier.
-pub(crate) fn quint(net: &Net, module: &str) -> Result<String, ComposeError> {
+pub fn quint(net: &Net, module: &str) -> Result<String, ComposeError> {
     let mut chars = module.chars();
     if !chars.next().is_some_and(|c| c.is_ascii_alphabetic())
         || !chars.all(|c| c.is_ascii_alphanumeric() || c == '_')

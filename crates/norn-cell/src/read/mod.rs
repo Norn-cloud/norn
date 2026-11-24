@@ -37,7 +37,7 @@ pub use ledger::{LedgerEntry, LedgerHead};
 pub use links::{
     LinkDirection, LinkEdgeRecord, LinkPagePosition, LinkReadPage, LinkRecord, LinkRef,
 };
-pub use objects::ObjectRecord;
+pub use objects::{MarkedQuestionPath, ObjectRecord};
 pub use pagination::{
     BindingRootCandidate, BindingSortValue, BindingSortedCandidate, BindingSortedPosition,
 };

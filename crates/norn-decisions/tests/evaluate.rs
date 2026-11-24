@@ -2010,6 +2010,229 @@ fn cp3_typed_declarations_preserve_sale_scrap_and_melt_allocations() {
 }
 
 #[test]
+fn val_exact_decision_assignment_admits_and_evaluates_temporal_and_decimal_expressions()
+-> Result<(), Box<dyn std::error::Error>> {
+    use norn_ir::{PropertyAdditivity, PropertyType, Rounding, WholeNumber};
+
+    let decimal_site =
+        |scale: u64, rounding: Rounding| -> Result<Json, Box<dyn std::error::Error>> {
+            Ok(json!({
+                "type": "number",
+                "nornType": serde_json::to_value(PropertyType::Decimal {
+                    additivity: PropertyAdditivity::Undeclared {},
+                    scale: WholeNumber(scale),
+                    rounding: Some(rounding),
+                    unit: None,
+                    currency_source: None,
+                    per_unit: None,
+                    unit_source: Vec::new(),
+                })?
+            }))
+        };
+
+    let slice = closed(&json!({
+        "flag": { "type": "boolean" },
+        "hours": decimal_site(2, Rounding::Refuse)?,
+        "start_date": { "type": "string" },
+        "end_date": { "type": "string" },
+        "start_ts": { "type": "string" },
+        "end_ts": { "type": "string" },
+        "divisor": { "type": "integer" }
+    }));
+    let mut root = commands_rule(
+        "demo.temporal_decimal_assignment",
+        &slice,
+        "[{actionId:'allocate',valid:(slice.hours >= 0.00) and (date(slice.start_date) < date(slice.end_date)),value:slice.flag ? seconds_between(timestamp(slice.start_ts), timestamp(slice.end_ts)) / slice.divisor : slice.hours}]",
+    );
+    root["outputSchema"]["properties"]["commands"]["items"] = closed(&json!({
+        "actionId": { "type": "string" },
+        "valid": { "type": "boolean" },
+        "value": decimal_site(2, Rounding::HalfEven)?
+    }));
+
+    let parsed_rule: norn_ir::RuleRoot = serde_json::from_value(root)?;
+    let decision = AdmittedDecision::admit(&parsed_rule, &BTreeMap::new(), binding())
+        .map_err(|err| format!("admit temporal/decimal decision: {err:?}"))?;
+
+    // True arm divides exact `seconds_between` (1s) by dynamic integer `divisor` (3) -> 0.33.
+    let true_slice = Value::object([
+        ("flag", Value::Bool(true)),
+        ("hours", Value::Number("8.50".parse()?)),
+        ("start_date", Value::String("2026-01-01".into())),
+        ("end_date", Value::String("2026-01-05".into())),
+        ("start_ts", Value::String("2026-03-09T14:00:00Z".into())),
+        ("end_ts", Value::String("2026-03-09T14:00:01Z".into())),
+        ("divisor", Value::from(3_i64)),
+    ]);
+    let true_eval = run(&decision, true_slice, event(), EvaluationBudget::default())
+        .map_err(|err| format!("true-arm decision eval: {err:?}"))?;
+    let true_cmd = true_eval
+        .output
+        .commands
+        .first()
+        .ok_or("expected one command")?;
+    assert_eq!(
+        true_cmd.get("valid"),
+        Some(&norn_ir::RuntimeValue::Bool(true))
+    );
+    assert_eq!(
+        true_cmd.get("value"),
+        Some(&norn_ir::RuntimeValue::from_json_text("0.33")?)
+    );
+
+    // False arm returns exact `slice.hours` while temporal guard detects reversed dates.
+    let false_slice = Value::object([
+        ("flag", Value::Bool(false)),
+        ("hours", Value::Number("8.50".parse()?)),
+        ("start_date", Value::String("2026-01-05".into())),
+        ("end_date", Value::String("2026-01-01".into())),
+        ("start_ts", Value::String("2026-03-09T14:00:00Z".into())),
+        ("end_ts", Value::String("2026-03-09T14:00:01Z".into())),
+        ("divisor", Value::from(3_i64)),
+    ]);
+    let false_eval = run(&decision, false_slice, event(), EvaluationBudget::default())
+        .map_err(|err| format!("false-arm decision eval: {err:?}"))?;
+    let false_cmd = false_eval
+        .output
+        .commands
+        .first()
+        .ok_or("expected one command")?;
+    assert_eq!(
+        false_cmd.get("valid"),
+        Some(&norn_ir::RuntimeValue::Bool(false))
+    );
+    assert_eq!(
+        false_cmd.get("value"),
+        Some(&norn_ir::RuntimeValue::from_json_text("8.5")?)
+    );
+
+    // Zero divisor in the exact decision assignment refuses cleanly at runtime.
+    let zero_slice = Value::object([
+        ("flag", Value::Bool(true)),
+        ("hours", Value::Number("8.50".parse()?)),
+        ("start_date", Value::String("2026-01-01".into())),
+        ("end_date", Value::String("2026-01-05".into())),
+        ("start_ts", Value::String("2026-03-09T14:00:00Z".into())),
+        ("end_ts", Value::String("2026-03-09T14:00:01Z".into())),
+        ("divisor", Value::from(0_i64)),
+    ]);
+    assert!(
+        run(&decision, zero_slice, event(), EvaluationBudget::default()).is_err(),
+        "zero divisor in exact decision assignment must fail closed"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn ordered_fold_two_arg_round_preserves_fold_policy_in_conditions_and_call_args()
+-> Result<(), Box<dyn std::error::Error>> {
+    use zen_engine::{
+        Isolate, Variable,
+        meter::Meter,
+        scaled::{Rounding, ScaledArithmetic},
+    };
+
+    let mut isolate = Isolate::with_environment(Variable::Null);
+    let profile = ScaledArithmetic {
+        scale: 2,
+        rounding: Rounding::HalfAwayFromZero,
+    };
+    isolate.set_meter(Some(Meter::new(1_000).with_arithmetic(profile)));
+
+    // 2-argument `round(..., 2)` inherits the OrderedFold meter policy, so
+    // ternary conditions, call arguments, and repeating quotients retain the
+    // fold's declared rounding mode without forcing `Rounding::Refuse`.
+    assert_eq!(
+        isolate
+            .run_standard("round((1 / 2 > 0) ? 1 : 2, 2)")
+            .map_err(|err| format!("fold 2-arg round ternary condition: {err:?}"))?,
+        Variable::Number("1".parse()?)
+    );
+    assert_eq!(
+        isolate
+            .run_standard("round((1 / 3 > 0) ? 1 : 2, 2)")
+            .map_err(|err| format!("fold 2-arg round repeating ternary condition: {err:?}"))?,
+        Variable::Number("1".parse()?)
+    );
+    assert_eq!(
+        isolate
+            .run_standard("round(len([1 / 2]), 2)")
+            .map_err(|err| format!("fold 2-arg round call arg: {err:?}"))?,
+        Variable::Number("1".parse()?)
+    );
+    assert_eq!(
+        isolate
+            .run_standard("round(len([1 / 3]), 2)")
+            .map_err(|err| format!("fold 2-arg round repeating call arg: {err:?}"))?,
+        Variable::Number("1".parse()?)
+    );
+    assert_eq!(
+        isolate
+            .run_standard("round(1 / 3, 2)")
+            .map_err(|err| format!("fold 2-arg round repeating quotient: {err:?}"))?,
+        Variable::Number("0.33".parse()?)
+    );
+    assert_eq!(
+        isolate
+            .run_standard("round(1.005, 2)")
+            .map_err(|err| format!("fold 2-arg round over-scale literal: {err:?}"))?,
+        Variable::Number("1.01".parse()?)
+    );
+    assert_eq!(
+        isolate
+            .run_standard("round(-1.005, 2)")
+            .map_err(|err| format!("fold 2-arg round negated over-scale literal: {err:?}"))?,
+        Variable::Number("-1.01".parse()?)
+    );
+    assert_eq!(
+        isolate
+            .run_standard("round((1 / 3 > 0) ? -1.005 : 1.005, 2)")
+            .map_err(|err| format!(
+                "fold 2-arg round ternary negated over-scale literal: {err:?}"
+            ))?,
+        Variable::Number("-1.01".parse()?)
+    );
+    assert_eq!(
+        isolate
+            .run_standard("round((round(1.25, 1) > 1) ? 1 : 2, 2)")
+            .map_err(|err| format!("fold nested 2-arg round condition: {err:?}"))?,
+        Variable::Number("1".parse()?)
+    );
+
+    // Over-scale literals outside `round` or inside conditions/call args still refuse.
+    for overscale_refusal in [
+        "1.005",
+        "-1.005",
+        "round((1.005 > 0) ? 1 : 2, 2)",
+        "round(len([1.005]), 2)",
+    ] {
+        assert!(
+            isolate.run_standard(overscale_refusal).is_err(),
+            "fold meter must refuse non-rescale over-scale literal `{overscale_refusal}`"
+        );
+    }
+
+    // Explicit 3-argument `round(..., scale, mode)` enters an isolated exact
+    // site, so bare division and undeclared 2-arg `round` inside its condition
+    // or non-`round` call arguments still fail closed.
+    for isolated_refusal in [
+        "round((1 / 2 > 0) ? 1 : 2, 2, 'half_even')",
+        "round((1 / 3 > 0) ? 1 : 2, 2, 'half_even')",
+        "round((round(1.25, 1) > 1) ? 1 : 2, 2, 'half_even')",
+        "round(len([1 / 2]), 2, 'half_even')",
+        "round(len([1 / 3]), 2, 'half_even')",
+    ] {
+        assert!(
+            isolate.run_standard(isolated_refusal).is_err(),
+            "explicit 3-arg round must isolate `{isolated_refusal}` even under fold meter"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn time_window_materialize_sub_decision_executes_and_refuses_dst_anomalies() {
     let sub = rule(&json!({
         "ruleFile": "registry/packs/time/artifacts/time.window.materialize.rule.json"

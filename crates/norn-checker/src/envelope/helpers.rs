@@ -36,7 +36,8 @@ pub(super) fn identifier_too_long(
         artifact_id,
     )
 }
-pub(super) fn validate_proposal_metadata(
+/// Validate an optional `proposal` metadata object on an artifact payload.
+pub fn validate_proposal_metadata(
     value: &JsonValue,
     path: impl Into<String>,
     diagnostics: &mut Vec<Diagnostic>,
@@ -82,7 +83,8 @@ pub(super) fn validate_proposal_metadata(
         code,
     );
 }
-pub(super) fn expect_object<'a>(
+/// Require `value` to be a JSON object map, recording a diagnostic otherwise.
+pub fn expect_object<'a>(
     value: &'a JsonValue,
     path: impl Into<String>,
     diagnostics: &mut Vec<Diagnostic>,
@@ -107,7 +109,8 @@ pub(super) fn expect_object<'a>(
     }
 }
 
-pub(crate) fn require_literal_field(
+/// Require `field` to be a string matching one of `allowed`.
+pub fn require_literal_field(
     object: &BTreeMap<String, JsonValue>,
     field: &str,
     allowed: &[&str],
@@ -142,7 +145,8 @@ pub(crate) fn require_literal_field(
     }
 }
 
-pub(crate) fn require_non_empty_field(
+/// Require `field` to be a non-empty string.
+pub fn require_non_empty_field(
     object: &BTreeMap<String, JsonValue>,
     field: &str,
     path: impl Into<String>,
@@ -233,7 +237,8 @@ pub(crate) fn validate_json_object_field(
     }
 }
 
-pub(super) fn validate_optional_non_empty_json_field(
+/// Validate that an optional string field, when present, is non-empty.
+pub fn validate_optional_non_empty_json_field(
     object: &BTreeMap<String, JsonValue>,
     field: &str,
     path: impl Into<String>,
@@ -256,7 +261,8 @@ pub(super) fn validate_optional_non_empty_json_field(
     }
 }
 
-pub(super) fn validate_string_array_field(
+/// Require `field` to be an array of non-empty strings.
+pub fn validate_string_array_field(
     object: &BTreeMap<String, JsonValue>,
     field: &str,
     path: impl Into<String>,
@@ -479,7 +485,9 @@ pub(super) fn reject_unknown_object_fields(
     }
 }
 
-pub(crate) fn invalid_diagnostic(
+/// Build a legacy error diagnostic with `FixDefinition` remediation.
+#[must_use]
+pub fn invalid_diagnostic(
     code: impl Into<String>,
     message: impl Into<String>,
     path: impl Into<String>,
