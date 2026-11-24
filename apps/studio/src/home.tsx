@@ -44,11 +44,11 @@ function AskBar() {
   }
   return (
     <form onSubmit={(event) => { event.preventDefault(); submit() }}>
-      <InputGroup className="h-11 rounded-xl border-(--panel-border) bg-card shadow-(--panel-shadow) dark:bg-card">
-        <InputGroupAddon><Sparkles aria-hidden /></InputGroupAddon>
+      <InputGroup className="h-12 rounded-2xl border-(--panel-border) bg-card px-1 shadow-(--panel-shadow) dark:bg-card">
+        <InputGroupAddon><Sparkles aria-hidden className="text-muted-foreground" /></InputGroupAddon>
         <InputGroupInput aria-label="Ask or tell Norn anything" placeholder="Ask or tell Norn anything" value={text} onChange={(event) => setText(event.target.value)} />
         <InputGroupAddon align="inline-end">
-          <InputGroupButton type="submit" size="sm" variant="default" disabled={text.trim() === ""}><ArrowUp aria-hidden />Ask</InputGroupButton>
+          <InputGroupButton type="submit" size="sm" variant="default" className="rounded-full px-3.5" disabled={text.trim() === ""}><ArrowUp aria-hidden />Ask</InputGroupButton>
         </InputGroupAddon>
       </InputGroup>
     </form>

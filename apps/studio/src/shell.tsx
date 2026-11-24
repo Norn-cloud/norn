@@ -1,12 +1,12 @@
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router"
 import { Command, CommandEmpty, CommandGroup, CommandGroupLabel, CommandInput, CommandItem, CommandItemIcon, CommandList } from "@ui-sdk/react/command"
 import { Dialog, DialogBackdrop, DialogContent, DialogTitle, DialogTrigger } from "@ui-sdk/react/dialog"
-import { MenuRadioGroup, MenuTrigger } from "@ui-sdk/react/menu"
+import { MenuGroup, MenuRadioGroup, MenuTrigger } from "@ui-sdk/react/menu"
 import { PopoverTitle, PopoverTrigger } from "@ui-sdk/react/popover"
-import { Toolbar, ToolbarButton, ToolbarLink } from "@ui-sdk/react/toolbar"
+import { Toolbar, ToolbarButton, ToolbarLink, ToolbarSeparator } from "@ui-sdk/react/toolbar"
 import { Tree, TreeGroup, TreeItem, TreeItemIndicator, TreeItemLabel } from "@ui-sdk/react/tree"
 import { AssistantPanel, AssistantProvider, useAssistant, type AssistantContent } from "@/assistant-slot"
-import { Bell, ChevronLeft, ChevronRight, ChevronsUpDown, CloudOff, Ellipsis, Keyboard, LayoutGrid, LogOut, Palette, PanelBottom, PanelLeft, Search, SlidersHorizontal, Sparkles, Wrench, type LucideIcon } from "lucide-react"
+import { Bell, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, CircleEllipsis, CloudOff, Keyboard, LayoutGrid, LogOut, MessageCircle, Palette, PanelBottom, PanelLeft, Search, SlidersHorizontal, Sparkles, Wrench, type LucideIcon } from "lucide-react"
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react"
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
@@ -131,18 +131,28 @@ function useOpenWorkspace() {
 const real = (workspace: (typeof WORKSPACES)[number], live: boolean) => workspace.results !== undefined || (workspace.recorded && !live)
 
 /** The scope switcher: the open workspace, and the others that open from here. */
-function ScopeSwitcher() {
+function ScopeSwitcher({ variant = "sidebar" }: { readonly variant?: "sidebar" | "pill" }) {
   const { live, open } = useOpenWorkspace()
   return (
     <Menu>
-      <MenuTrigger data-scope className="group/scope flex w-full min-w-0 items-center gap-2.5 rounded-lg px-2 py-1.5 text-start text-sm transition-[color,background-color] duration-150 outline-none hover:bg-sidebar-accent focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring data-open:bg-sidebar-accent">
-        <span aria-hidden className="flex size-6 shrink-0 items-center justify-center rounded-md bg-background text-[0.6875rem] font-semibold text-foreground shadow-control ring-1 ring-border/90 dark:bg-card">{initials(open?.name ?? "")}</span>
-        <span className="grid min-w-0 flex-1 leading-tight" title={`${open?.name ?? ""} · ${open?.detail ?? ""}`}>
-          <span className="truncate font-semibold tracking-[-0.01em] text-sidebar-foreground">{open?.name}</span>
-          <span className="truncate text-xs text-muted-foreground">{open?.detail}</span>
-        </span>
-        <ChevronsUpDown aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-      </MenuTrigger>
+      {variant === "pill"
+        ? (
+          <MenuTrigger data-scope className="group/scope inline-flex h-8 max-w-60 min-w-0 items-center gap-2 rounded-full border border-border bg-card ps-1.5 pe-2.5 text-sm text-foreground transition-[color,background-color] duration-150 outline-none hover:bg-(--well) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring data-open:bg-(--well)">
+            <span aria-hidden className="flex size-5 shrink-0 items-center justify-center rounded-full bg-(--well) text-[0.625rem] font-medium text-foreground ring-1 ring-border">{initials(open?.name ?? "")}</span>
+            <span className="truncate font-normal tracking-[-0.01em]">{open?.name}</span>
+            <ChevronDown aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+          </MenuTrigger>
+        )
+        : (
+          <MenuTrigger data-scope className="group/scope flex w-full min-w-0 items-center gap-2.5 rounded-lg px-2 py-1.5 text-start text-sm transition-[color,background-color] duration-150 outline-none hover:bg-sidebar-accent focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring data-open:bg-sidebar-accent">
+            <span aria-hidden className="flex size-6 shrink-0 items-center justify-center rounded-md bg-background text-[0.6875rem] font-semibold text-foreground shadow-control ring-1 ring-border/90 dark:bg-card">{initials(open?.name ?? "")}</span>
+            <span className="grid min-w-0 flex-1 leading-tight" title={`${open?.name ?? ""} · ${open?.detail ?? ""}`}>
+              <span className="truncate font-semibold tracking-[-0.01em] text-sidebar-foreground">{open?.name}</span>
+              <span className="truncate text-xs text-muted-foreground">{open?.detail}</span>
+            </span>
+            <ChevronsUpDown aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+          </MenuTrigger>
+        )}
       <KitMenuContent align="start" className="w-72">
         <MenuRadioGroup value={live ? "live" : open?.id ?? ""}>
           {live && open && (
@@ -216,10 +226,10 @@ function AppearanceTray({ side = "bottom", variant = "bar" }: { readonly side?: 
       <ChromeDockTrigger
         aria-label="Appearance"
         className={variant === "dock"
-          ? "flex size-8 items-center justify-center rounded-full text-(--dock-muted) transition-colors outline-none hover:bg-(--dock-active) hover:text-(--dock-foreground) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring data-open:bg-(--dock-active) data-open:text-(--dock-foreground) [&_svg]:size-4"
+          ? "relative grid size-10 place-items-center rounded-full text-(--dock-muted) transition-colors outline-none hover:text-(--dock-foreground) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring data-open:bg-(--dock-well) data-open:text-(--dock-foreground) [&_svg]:size-[18px]"
           : cn(iconButton, "hidden @xl:flex")}
       >
-        <Palette aria-hidden />
+        <Palette aria-hidden strokeWidth={1.7} />
       </ChromeDockTrigger>
       <ChromeDockTray
         side={side}
@@ -282,21 +292,23 @@ export function AccountMenu({ account, onSignOut, inToolbar = true, variant = "r
   readonly account: Account
   readonly onSignOut: () => void
   readonly inToolbar?: boolean
-  readonly variant?: "rail" | "dock"
+  readonly variant?: "rail" | "topbar" | "dock"
 }) {
   const { user, organization } = account
-  const triggerClass = variant === "dock"
-    ? "flex size-8 items-center justify-center rounded-full bg-(--dock-active) text-[0.6875rem] font-medium text-(--dock-foreground) ring-1 ring-(--dock-border) outline-none hover:ring-(--dock-foreground)/40 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
-    : "flex size-8 items-center justify-center rounded-full bg-background text-[0.6875rem] font-medium ring-1 ring-border outline-none hover:ring-foreground/30 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
+  const triggerClass = variant === "topbar"
+    ? "grid size-9 place-items-center rounded-full bg-[linear-gradient(135deg,#fde2e4,#fbe8cf)] text-[0.8125rem] font-medium text-[#8a3b2c] ring-1 ring-black/5 outline-none transition-[box-shadow,transform] hover:ring-foreground/20 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring dark:bg-[linear-gradient(135deg,#33252a,#332c22)] dark:text-[#f6d6c9] dark:ring-white/10"
+    : variant === "dock"
+      ? "flex size-8 items-center justify-center rounded-full bg-(--dock-active) text-[0.6875rem] font-medium text-(--dock-foreground) ring-1 ring-(--dock-border) outline-none hover:ring-(--dock-foreground)/40 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
+      : "flex size-8 items-center justify-center rounded-full bg-background text-[0.6875rem] font-medium ring-1 ring-border outline-none hover:ring-foreground/30 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
   const trigger = inToolbar
     ? <ToolbarButton render={<MenuTrigger />} aria-label="Account" className={triggerClass}>{initials(user.name || user.email)}</ToolbarButton>
     : <MenuTrigger aria-label="Account" className={triggerClass}>{initials(user.name || user.email)}</MenuTrigger>
   return (
     <Menu onAction={(value) => { if (value === "sign-out") onSignOut() }}>
-      <Hint side={variant === "dock" ? "top" : "right"} label={`${user.name} · ${organization ? `${organization.name} · ${organization.role}` : "No organization"}`}>
+      <Hint side={variant === "topbar" ? "bottom" : variant === "dock" ? "top" : "right"} label={`${user.name} · ${organization ? `${organization.name} · ${organization.role}` : "No organization"}`}>
         {trigger}
       </Hint>
-      <KitMenuContent side={variant === "dock" ? "top" : "end"} align="end" className="min-w-60">
+      <KitMenuContent side={variant === "topbar" ? "bottom" : variant === "dock" ? "top" : "end"} align="end" className="min-w-60">
         <div className="grid px-2 py-1.5 text-sm">
           <span className="font-medium">{user.name}</span>
           <span className="text-meta text-muted-foreground">{user.email}</span>
@@ -778,15 +790,27 @@ function BarButtons({ tools }: { readonly tools?: ReactNode }) {
   )
 }
 
-/** Centered floating dark pill dock rendered in `dock` shell mode (`data-shell="dock"`). */
-function FloatingDock({ sections, perspective, navigation, current, assistant, account, onSignOut }: {
+/** Speech-bubble "AI" glyph from v6/shell.tsx, rendered in the accent colour. */
+function AiGlyph({ className }: { readonly className?: string }) {
+  return (
+    <span aria-hidden className={cn("relative grid size-[18px] place-items-center text-action", className)}>
+      <MessageCircle className="absolute inset-0 size-full" strokeWidth={1.8} />
+      <span className="relative text-[7px] leading-none font-bold tracking-tight">AI</span>
+    </span>
+  )
+}
+
+/**
+ * Centered icon-only floating dark pill dock rendered in `dock` shell mode (`data-shell="dock"`),
+ * following norn-mockups v6/shell.tsx craft: rounded-[26px] dark pill, size-10 circular buttons,
+ * soft #34343a active well, hover tooltips, AI glyph, appearance tray, and overflow destinations.
+ */
+function FloatingDock({ sections, perspective, navigation, current, assistant }: {
   readonly sections: readonly Section[]
   readonly perspective: Perspective
   readonly navigation: Navigation
   readonly current: Section | undefined
   readonly assistant?: AssistantContent
-  readonly account: Account
-  readonly onSignOut: () => void
 }) {
   const { open, toggle } = useAssistant()
   const global = sections.filter((section) => section.perspective === "global")
@@ -801,75 +825,97 @@ function FloatingDock({ sections, perspective, navigation, current, assistant, a
     .filter((entry): entry is { readonly section: Section; readonly to: string; readonly count: string | undefined } => entry.to !== undefined)
   const primary = resolvedOwn.slice(0, 5)
   const overflow = resolvedOwn.slice(5)
-  const dockLink = "relative flex h-8 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium text-(--dock-muted) transition-colors outline-none hover:bg-(--dock-active) hover:text-(--dock-foreground) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring data-[active=true]:bg-(--dock-active) data-[active=true]:text-(--dock-foreground) [&_svg]:size-4"
-  const dockIconButton = "flex size-8 items-center justify-center rounded-full text-(--dock-muted) transition-colors outline-none hover:bg-(--dock-active) hover:text-(--dock-foreground) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring data-open:bg-(--dock-active) data-open:text-(--dock-foreground) [&_svg]:size-4"
+  const dockBtn = "relative grid size-10 place-items-center rounded-full text-(--dock-muted) outline-none transition-colors hover:text-(--dock-foreground) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring data-[active=true]:bg-(--dock-well) data-[active=true]:text-(--dock-foreground) data-open:bg-(--dock-well) data-open:text-(--dock-foreground)"
 
   return (
     <nav
       data-slot="floating-dock"
       aria-label="Floating dock"
-      className="fixed bottom-5 left-1/2 z-40 flex max-w-[calc(100vw-2rem)] -translate-x-1/2 items-center gap-1 rounded-full border border-(--dock-border) bg-(--dock-surface) px-2 py-1.5 text-(--dock-foreground) shadow-float backdrop-blur-xl"
+      className="pointer-events-none fixed inset-x-0 bottom-6 z-40 flex justify-center px-4"
     >
-      <Link to="/" aria-label="Norn Studio home" className="flex size-8 shrink-0 items-center justify-center rounded-full outline-none hover:bg-(--dock-active) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">
-        <img src={nornMark} alt="" width={20} height={20} className="size-5 object-contain" />
-      </Link>
-      {global.map((section) => {
-        const Icon = section.icon
-        const count = navigation.badges.get(section.path)
-        const active = current?.path === section.path
-        const label = count ? `${section.label}, ${count} open` : section.label
-        return (
-          <Link key={section.path} to={section.path} aria-label={label} data-active={active || undefined} className={dockLink}>
-            <Icon aria-hidden />
-            <span aria-hidden className="hidden sm:inline">{section.label}</span>
-            {count && <span aria-hidden className="rounded-full bg-destructive px-1.5 text-[0.625rem] leading-4 font-semibold text-destructive-foreground tabular-nums">{count}</span>}
-          </Link>
-        )
-      })}
-      <span aria-hidden className="mx-0.5 h-4 w-px bg-(--dock-border)" />
-      {primary.map(({ section, to, count }) => {
-        const Icon = section.icon
-        const active = current?.path === section.path
-        const label = count ? `${section.label}, ${count} open` : section.label
-        return (
-          <Link key={section.path} to={to} aria-label={label} data-active={active || undefined} className={dockLink}>
-            <Icon aria-hidden />
-            <span aria-hidden className="hidden md:inline">{section.label}</span>
-            {count && <span aria-hidden className="rounded-full bg-destructive px-1.5 text-[0.625rem] leading-4 font-semibold text-destructive-foreground tabular-nums">{count}</span>}
-          </Link>
-        )
-      })}
-      {overflow.length > 0 && (
-        <Menu>
-          <Hint side="top" label="More destinations">
-            <MenuTrigger aria-label="More destinations" className={dockIconButton}>
-              <Ellipsis aria-hidden />
-            </MenuTrigger>
+      <Toolbar
+        aria-label="Dock navigation"
+        className="pointer-events-auto flex max-w-full items-center gap-1 rounded-[26px] bg-(--dock-surface) p-1.5 text-(--dock-foreground) shadow-(--dock-shadow) ring-1 ring-(--dock-border) backdrop-blur-xl"
+      >
+        {global.map((section) => {
+          const Icon = section.icon
+          const count = navigation.badges.get(section.path)
+          const active = current?.path === section.path
+          const label = count ? `${section.label}, ${count} open` : section.label
+          return (
+            <Hint key={section.path} side="top" label={label}>
+              <ToolbarLink
+                render={<Link to={section.path} />}
+                aria-label={label}
+                aria-current={active ? "page" : undefined}
+                data-active={active || undefined}
+                className={dockBtn}
+              >
+                <Icon aria-hidden className="size-[18px]" strokeWidth={1.7} />
+                {count && <span aria-hidden className="absolute top-[7px] right-[7px] size-[6px] rounded-full bg-action ring-2 ring-(--dock-surface)" />}
+              </ToolbarLink>
+            </Hint>
+          )
+        })}
+        {primary.map(({ section, to, count }) => {
+          const Icon = section.icon
+          const active = current?.path === section.path
+          const label = count ? `${section.label}, ${count} open` : section.label
+          return (
+            <Hint key={section.path} side="top" label={label}>
+              <ToolbarLink
+                render={<Link to={to} />}
+                aria-label={label}
+                aria-current={active ? "page" : undefined}
+                data-active={active || undefined}
+                className={dockBtn}
+              >
+                <Icon aria-hidden className="size-[18px]" strokeWidth={1.7} />
+                {count && <span aria-hidden className="absolute top-[7px] right-[7px] size-[6px] rounded-full bg-action ring-2 ring-(--dock-surface)" />}
+              </ToolbarLink>
+            </Hint>
+          )
+        })}
+        <ToolbarSeparator className="mx-1 h-5 w-px bg-white/10" />
+        {assistant && (
+          <Hint side="top" label={assistant.title}>
+            <ToolbarButton
+              aria-label={assistant.title}
+              aria-pressed={open}
+              data-active={open || undefined}
+              onClick={toggle}
+              className={dockBtn}
+            >
+              <AiGlyph />
+            </ToolbarButton>
           </Hint>
-          <KitMenuContent side="top" align="center" className="min-w-48">
-            <KitMenuLabel>More destinations</KitMenuLabel>
-            {overflow.map(({ section, to, count }) => {
-              const Icon = section.icon
-              return (
-                <KitMenuItem key={section.path} value={section.path} label={section.label} render={<Link to={to} />}>
-                  <Icon aria-hidden />
-                  <span className="truncate">{section.label}</span>
-                  {count && <span className="ms-auto rounded-full bg-destructive px-1.5 text-[0.625rem] leading-4 font-semibold text-destructive-foreground tabular-nums">{count}</span>}
-                </KitMenuItem>
-              )
-            })}
-          </KitMenuContent>
-        </Menu>
-      )}
-      <span aria-hidden className="mx-0.5 h-4 w-px bg-(--dock-border)" />
-      {assistant && (
-        <button type="button" aria-label={assistant.title} aria-pressed={open} onClick={toggle}
-          className="flex size-8 items-center justify-center rounded-full text-(--dock-muted) transition-colors outline-none hover:bg-(--dock-active) hover:text-(--dock-foreground) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring aria-pressed:bg-(--dock-active) aria-pressed:text-(--dock-foreground)">
-          <Sparkles aria-hidden className="size-4" />
-        </button>
-      )}
-      <AppearanceTray side="top" variant="dock" />
-      <AccountMenu account={account} onSignOut={onSignOut} inToolbar={false} variant="dock" />
+        )}
+        <AppearanceTray side="top" variant="dock" />
+        {overflow.length > 0 && (
+          <Menu>
+            <Hint side="top" label="More destinations">
+              <MenuTrigger aria-label="More destinations" className={dockBtn}>
+                <CircleEllipsis aria-hidden className="size-[18px]" strokeWidth={1.7} />
+              </MenuTrigger>
+            </Hint>
+            <KitMenuContent side="top" align="end" className="min-w-48">
+              <MenuGroup>
+                <KitMenuLabel>More destinations</KitMenuLabel>
+                {overflow.map(({ section, to, count }) => {
+                  const Icon = section.icon
+                  return (
+                    <KitMenuItem key={section.path} value={section.path} label={section.label} render={<Link to={to} />}>
+                      <Icon aria-hidden />
+                      <span className="truncate">{section.label}</span>
+                      {count && <span className="ms-auto rounded-full bg-destructive px-1.5 text-[0.625rem] leading-4 font-semibold text-destructive-foreground tabular-nums">{count}</span>}
+                    </KitMenuItem>
+                  )
+                })}
+              </MenuGroup>
+            </KitMenuContent>
+          </Menu>
+        )}
+      </Toolbar>
     </nav>
   )
 }
@@ -999,24 +1045,49 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale
         !isDock && "md:my-2 md:me-2 md:ms-0 md:rounded-shell md:border md:border-border/90 md:shadow-shell",
       )}>
         <div className="@container flex min-w-0 flex-1 flex-col">
-          <header className="flex h-12 shrink-0 items-center justify-between gap-1 border-b border-border/80 bg-background/95 px-2 @sm:gap-2 @sm:px-3 @2xl:gap-3 @2xl:px-4 @4xl:grid @4xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
-            <div className="flex min-w-0 flex-1 items-center gap-1.5">
-              {!isDock && <SidebarTrigger ref={triggerRef} className="-ms-1 size-8 shrink-0 rounded-lg text-muted-foreground" />}
-              <div className="hidden min-w-0 overflow-hidden @[17rem]:block">{current && <Crumbs key={current.path} section={current} entries={navigation.menus.get(current.path) ?? []} pathname={pathname} />}</div>
-            </div>
-            <div className="flex shrink-0 justify-center @2xl:w-48 @4xl:w-72 @5xl:w-96"><CommandMenu sections={sections} navigation={navigation} onPerspective={switchTo} /></div>
-            <div className="flex shrink-0 items-center justify-end gap-1 @xl:gap-2">
-              <PerspectiveSwitch perspective={perspective} onChange={switchTo} />
-              <BarButtons tools={tools} />
-            </div>
-          </header>
+          {isDock
+            ? (
+              <header data-slot="dock-topbar" className="flex h-[4.4rem] shrink-0 items-center gap-3 bg-background px-6 md:px-8">
+                <Link to="/" aria-label="Norn Studio home" className="flex size-8 shrink-0 items-center justify-center rounded-lg outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">
+                  <img src={nornMark} alt="" width={28} height={28} className="size-7 object-contain" />
+                </Link>
+                <ScopeSwitcher variant="pill" />
+                <div className="hidden min-w-0 overflow-hidden @[36rem]:block">{current && current.path !== "/" && <Crumbs key={current.path} section={current} entries={navigation.menus.get(current.path) ?? []} pathname={pathname} />}</div>
+                <div className="ms-auto flex shrink-0 items-center gap-2">
+                  <div className="flex shrink-0 justify-center @3xl:w-52"><CommandMenu sections={sections} navigation={navigation} onPerspective={switchTo} /></div>
+                  <PerspectiveSwitch perspective={perspective} onChange={switchTo} />
+                  {tools}
+                  <Popover>
+                    <PopoverTrigger aria-label="Notifications" className={iconButton}><Bell aria-hidden /></PopoverTrigger>
+                    <KitPopoverContent align="end">
+                      <PopoverTitle className="mb-1 text-sm font-medium">Notifications</PopoverTitle>
+                      <p className="text-sm text-muted-foreground">Nothing yet.</p>
+                    </KitPopoverContent>
+                  </Popover>
+                  <AccountMenu account={account} onSignOut={onSignOut} inToolbar={false} variant="topbar" />
+                </div>
+              </header>
+            )
+            : (
+              <header className="flex h-12 shrink-0 items-center justify-between gap-1 border-b border-border/80 bg-background/95 px-2 @sm:gap-2 @sm:px-3 @2xl:gap-3 @2xl:px-4 @4xl:grid @4xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+                <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                  <SidebarTrigger ref={triggerRef} className="-ms-1 size-8 shrink-0 rounded-lg text-muted-foreground" />
+                  <div className="hidden min-w-0 overflow-hidden @[17rem]:block">{current && <Crumbs key={current.path} section={current} entries={navigation.menus.get(current.path) ?? []} pathname={pathname} />}</div>
+                </div>
+                <div className="flex shrink-0 justify-center @2xl:w-48 @4xl:w-72 @5xl:w-96"><CommandMenu sections={sections} navigation={navigation} onPerspective={switchTo} /></div>
+                <div className="flex shrink-0 items-center justify-end gap-1 @xl:gap-2">
+                  <PerspectiveSwitch perspective={perspective} onChange={switchTo} />
+                  <BarButtons tools={tools} />
+                </div>
+              </header>
+            )}
           <ConnectionBanner />
-          <div className={cn("mx-auto w-full max-w-7xl px-5 py-7 md:px-9 md:py-8", isDock && "pb-28 md:pb-28")}><Outlet /></div>
+          <div className={isDock ? "mx-auto w-full max-w-[1220px] px-6 pt-4 pb-32 md:px-8 md:pt-5 md:pb-32" : "mx-auto w-full max-w-7xl px-5 py-7 md:px-9 md:py-8"}><Outlet /></div>
         </div>
         <Inspector />
         <AssistantPanel assistant={assistant} />
       </SidebarInset>
-      {isDock && <FloatingDock sections={sections} perspective={perspective} navigation={navigation} current={current} assistant={assistant} account={account} onSignOut={onSignOut} />}
+      {isDock && <FloatingDock sections={sections} perspective={perspective} navigation={navigation} current={current} assistant={assistant} />}
     </>
   )
 }

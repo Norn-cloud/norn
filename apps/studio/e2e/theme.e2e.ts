@@ -198,10 +198,11 @@ for (const scheme of ["light", "dark"] as const) {
       const shell = document.querySelector<HTMLElement>('[data-slot="sidebar-wrapper"]')!
       const inset = document.querySelector<HTMLElement>('[data-slot="sidebar-inset"]')!
       const panel = document.querySelector<HTMLElement>('[data-slot="panel"]')!
-      const strip = document.querySelector<HTMLElement>('[data-slot="stat-strip"]')!
+      const kpi = document.querySelector<HTMLElement>('[data-slot="kpi"]')!
+      const kpiWell = document.querySelector<HTMLElement>('[data-slot="kpi-well"]')!
       const primary = document.querySelector<HTMLElement>('[data-slot="button"][data-variant="default"]')!
       const thRow = document.querySelector<HTMLElement>('[data-slot="table-header"] tr')!
-      const kpiValue = document.querySelector<HTMLElement>('[data-slot="kpi"] > div')!
+      const kpiValue = document.querySelector<HTMLElement>('[data-slot="kpi-well"] > div')!
       const perspTrack = document.querySelector<HTMLElement>('[role="group"][aria-label="Perspective"]')!
       const perspActive = perspTrack.querySelector<HTMLElement>('button[aria-pressed="true"]')!
 
@@ -229,8 +230,9 @@ for (const scheme of ["light", "dark"] as const) {
         pageShadow: cs(inset).boxShadow,
         panelBg: toRgb(cs(panel).backgroundColor, pageBg),
         panelRadius: Number.parseFloat(cs(panel).borderTopLeftRadius),
-        stripBg: toRgb(cs(strip).backgroundColor, pageBg),
-        stripRadius: Number.parseFloat(cs(strip).borderTopLeftRadius),
+        kpiRadius: Number.parseFloat(cs(kpi).borderTopLeftRadius),
+        kpiWellBg: toRgb(cs(kpiWell).backgroundColor, pageBg),
+        kpiWellRadius: Number.parseFloat(cs(kpiWell).borderTopLeftRadius),
         primaryBg: toRgb(cs(primary).backgroundColor, pageBg),
         primaryRadius: Number.parseFloat(cs(primary).borderTopLeftRadius),
         thBg: toRgb(cs(thRow).backgroundColor, pageBg),
@@ -246,32 +248,35 @@ for (const scheme of ["light", "dark"] as const) {
     expect(metrics.pageBorder).toBeGreaterThanOrEqual(0.5)
     expect(metrics.pageShadow).not.toBe("none")
 
-    // Dark mode layers progress upward in luminance: shell < page < card, and active segment sits above its track.
-    // Light mode lifts pure white page above soft shell ground, with subtly tinted cards.
+    // Dark mode layers progress upward in luminance: shell < page < card < well, and active segment sits above its track.
+    // Light mode lifts pure white page above soft shell ground, with signature v6 soft inner wells (#f5f5f5).
     const shellLum = luminance(rgb(metrics.shellBg))
     const pageLum = luminance(rgb(metrics.pageBg))
     const panelLum = luminance(rgb(metrics.panelBg))
+    const wellLum = luminance(rgb(metrics.kpiWellBg))
     const trackLum = luminance(rgb(metrics.perspTrackBg))
     const activeLum = luminance(rgb(metrics.perspActiveBg))
     if (scheme === "dark") {
       expect(shellLum).toBeLessThan(pageLum)
       expect(pageLum).toBeLessThan(panelLum)
+      expect(panelLum).toBeLessThan(wellLum)
       expect(activeLum).toBeGreaterThan(trackLum)
     } else {
       expect(shellLum).toBeLessThan(pageLum)
-      expect(panelLum).toBeLessThan(pageLum)
+      expect(wellLum).toBeLessThan(pageLum)
       expect(activeLum).toBeGreaterThan(trackLum)
     }
 
-    // 2. Panels and StatStrip sit on a subtly tinted card surface at 10-12px radius (at 90% root font-size).
-    expect(metrics.panelBg).not.toBe(metrics.pageBg)
-    expect(metrics.stripBg).not.toBe(metrics.pageBg)
-    expect(metrics.panelRadius).toBeGreaterThanOrEqual(9)
-    expect(metrics.panelRadius).toBeLessThanOrEqual(13)
-    expect(metrics.stripRadius).toBeGreaterThanOrEqual(9)
-    expect(metrics.stripRadius).toBeLessThanOrEqual(13)
+    // 2. Signature Open v6 double-shell geometry: 20px outer panel/stat rim (~18px at 90% root) wrapping a 15px (~13.5px) inner well.
+    expect(metrics.kpiWellBg).not.toBe(metrics.pageBg)
+    expect(metrics.panelRadius).toBeGreaterThanOrEqual(14)
+    expect(metrics.panelRadius).toBeLessThanOrEqual(21)
+    expect(metrics.kpiRadius).toBeGreaterThanOrEqual(14)
+    expect(metrics.kpiRadius).toBeLessThanOrEqual(21)
+    expect(metrics.kpiWellRadius).toBeGreaterThanOrEqual(11)
+    expect(metrics.kpiWellRadius).toBeLessThanOrEqual(16)
 
-    // 3. Primary action button: chromatic knot violet, ~7-9px radius, >= 4.5:1 at rest & hover, visible keyboard focus.
+    // 3. Primary action button: crisp cobalt blue accent, ~7-9px radius, >= 4.5:1 at rest & hover, visible keyboard focus.
     const primary = page.locator('[data-slot="button"][data-variant="default"]').first()
     const [pr, pg, pb] = rgb(metrics.primaryBg)
     expect(pb).toBeGreaterThan(pr + 40)

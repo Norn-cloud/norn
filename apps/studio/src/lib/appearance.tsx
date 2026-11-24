@@ -22,10 +22,10 @@ export const SKINS: readonly {
   readonly detail: string
   readonly swatch: string
 }[] = [
-  { id: "open", label: "Open", detail: "Airy pure-white open canvas", swatch: "#ffffff" },
-  { id: "polar", label: "Polar", detail: "Deep carbon precision surfaces", swatch: "#151518" },
-  { id: "luma", label: "Luma", detail: "Two-surface mist and violet", swatch: "#f3f4f6" },
-  { id: "glass", label: "Glass", detail: "Translucent liquid glass", swatch: "#e8edff" },
+  { id: "open", label: "Open", detail: "Double-shell white canvas, blue accent", swatch: "#3a6df0" },
+  { id: "polar", label: "Polar", detail: "Monochrome ink and flat hairlines", swatch: "#18181b" },
+  { id: "luma", label: "Luma", detail: "Two-surface mist and knot violet", swatch: "#554ce8" },
+  { id: "glass", label: "Glass", detail: "Translucent frosted liquid glass", swatch: "#dbe6ff" },
 ]
 
 export const SHELLS: readonly {

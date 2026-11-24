@@ -31,12 +31,12 @@ const contrastRatio = (a: [number, number, number], b: [number, number, number])
   return (hi! + 0.05) / (lo! + 0.05)
 }
 
-test("skins and floating dock: switch open, polar, luma, glass skins via ChromeDock tray, persist across reload, and verify dock AccountMenu, overflow destinations, and bottom clearance", async ({ page }) => {
+test("skins and floating dock: switch open, polar, luma, glass skins via ChromeDock tray, persist across reload, and verify v6 dock AccountMenu, overflow destinations, and bottom clearance", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.emulateMedia({ colorScheme: "light" })
   await recorded(page)
-  await page.goto("/sources")
-  await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible()
+  await page.goto("/")
+  await expect(page.getByRole("heading", { name: "Home", level: 1 })).toBeVisible()
 
   // 1. Default skin is open-canvas with sidebar chrome and Geist font family.
   await expect.poll(() => page.evaluate(() => ({
@@ -48,7 +48,11 @@ test("skins and floating dock: switch open, polar, luma, glass skins via ChromeD
     shell: "sidebar",
     font: expect.stringContaining("Geist Variable"),
   })
-  await capture(page, "open-light")
+  await capture(page, "open-light-home")
+
+  await page.goto("/sources")
+  await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible()
+  await capture(page, "open-light-sources")
 
   // 2. Open the first-party @ui-sdk/core + @ui-sdk/react ChromeDock appearance tray and verify data-state transitions.
   const trigger = page.locator('[data-slot="chrome-dock-trigger"]').first()
@@ -59,21 +63,20 @@ test("skins and floating dock: switch open, polar, luma, glass skins via ChromeD
   await expect(tray).toBeVisible()
   await expect(tray.locator('[data-skin-option="open"]')).toHaveAttribute("data-state", "selected")
 
-  // 3. Switch to Polar Carbon skin: deep carbon surface (#151518) and precision hairlines.
+  // 3. Switch to Polar skin (light monochrome): white canvas, near-black #18181b primary (zero purple buttons!).
   await tray.locator('[data-skin-option="polar"]').click()
   await expect(tray.locator('[data-skin-option="polar"]')).toHaveAttribute("data-state", "selected")
   await expect.poll(() => page.evaluate(() => ({
     skin: document.documentElement.dataset.skin,
     pageBg: getComputedStyle(document.querySelector('[data-slot="sidebar-inset"]')!).backgroundColor,
-    shellBg: getComputedStyle(document.querySelector('[data-slot="sidebar-wrapper"]')!).backgroundColor,
+    primaryBg: getComputedStyle(document.querySelector('[data-slot="button"][data-variant="default"]')!).backgroundColor,
   }))).toEqual({
     skin: "polar",
-    pageBg: "rgb(21, 21, 24)",
-    shellBg: "rgb(12, 12, 14)",
+    pageBg: "rgb(255, 255, 255)",
+    primaryBg: "rgb(24, 24, 27)",
   })
   await page.keyboard.press("Escape")
   await expect(trigger).toHaveAttribute("data-state", "closed")
-  await capture(page, "polar-carbon")
 
   // 4. Reload verifies localStorage persistence of data-skin="polar".
   await page.reload()
@@ -95,9 +98,8 @@ test("skins and floating dock: switch open, polar, luma, glass skins via ChromeD
     backdrop: expect.stringContaining("blur("),
   })
   await page.keyboard.press("Escape")
-  await capture(page, "liquid-glass")
 
-  // 6. Switch back to Open skin and activate Floating Dock shell chrome (zero permanent left sidebar!).
+  // 6. Switch back to Open skin and activate v6 Floating Dock shell chrome (zero permanent left sidebar!).
   await page.locator('[data-slot="chrome-dock-trigger"]').first().click()
   const dockSwitchTray = page.locator('[data-slot="chrome-dock-tray"][data-state="open"]')
   await dockSwitchTray.locator('[data-skin-option="open"]').click()
@@ -109,13 +111,13 @@ test("skins and floating dock: switch open, polar, luma, glass skins via ChromeD
   const dock = page.locator('[data-slot="floating-dock"]')
   await expect(dock).toBeVisible()
 
-  // Verify desktop main content keeps full clearance (>= 96px at 90% root font-size) above the floating dock.
+  // Verify desktop main content keeps full clearance (>= 108px at 90% root font-size) above the floating dock.
   const bottomPadding = await page.locator('[data-slot="sidebar-inset"] > div > div').last().evaluate((el) => Number.parseFloat(getComputedStyle(el).paddingBottom))
-  expect(bottomPadding).toBeGreaterThanOrEqual(96)
-  await capture(page, "floating-dock")
+  expect(bottomPadding).toBeGreaterThanOrEqual(108)
+  await capture(page, "floating-dock-sources")
 
-  // 7. Verify AccountMenu (sign-out, view, language) is reachable in dock mode.
-  await dock.getByRole("button", { name: "Account" }).click()
+  // 7. Verify AccountMenu (sign-out, view, language) is reachable in dock mode via the minimal v6 topbar.
+  await page.locator('[data-slot="dock-topbar"]').getByRole("button", { name: "Account" }).click()
   await expect(page.getByRole("menuitem", { name: "Sign out" })).toBeVisible()
   await expect(page.getByRole("menuitemradio", { name: "Business" })).toBeVisible()
   await expect(page.getByRole("menuitemradio", { name: "Technical" })).toBeVisible()
@@ -128,10 +130,11 @@ test("skins and floating dock: switch open, polar, luma, glass skins via ChromeD
   await connectionsItem.click()
   await expect(page).toHaveURL(/\/connections$/)
 
-  // 9. Navigate via primary dock link, verify dock Appearance tray opens above the dock (side="top"), and switch back to Sidebar.
+  // 9. Navigate via primary icon-only dock link to Home, capture floating-dock-home, verify side="top" tray, and switch back to Sidebar.
   await dock.getByRole("link", { name: "Home", exact: true }).click()
   await expect(page).toHaveURL(/\/$/)
   await expect(page.getByRole("heading", { name: "Home", level: 1 })).toBeVisible()
+  await capture(page, "floating-dock-home")
 
   const dockAppearanceTrigger = dock.locator('[data-slot="chrome-dock-trigger"]')
   await dockAppearanceTrigger.click()
@@ -148,25 +151,37 @@ test("skins and floating dock: switch open, polar, luma, glass skins via ChromeD
   await expect(page.locator('[data-slot="sidebar"]')).toBeVisible()
 })
 
-test("dark mode cascade: luma and glass skins render dark surfaces with WCAG AA text contrast in Chromium", async ({ page }) => {
+test("dark mode cascade: open, polar monochrome, luma, and glass skins render dark surfaces with WCAG AA text contrast in Chromium", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.emulateMedia({ colorScheme: "dark" })
   await recorded(page)
+  await page.goto("/")
+  await expect(page.getByRole("heading", { name: "Home", level: 1 })).toBeVisible()
+  await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains("dark"))).toBe(true)
+  await capture(page, "open-dark-home")
+
   await page.goto("/sources")
   await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible()
-  await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains("dark"))).toBe(true)
+  await capture(page, "open-dark-sources")
 
-  for (const [skin, shotName] of [["luma", "luma-dark"], ["glass", "glass-dark"]] as const) {
+  for (const [skin, shotName] of [["polar", "polar-dark-sources"], ["luma", "luma-dark-sources"], ["glass", "glass-dark-sources"]] as const) {
     await page.locator('[data-slot="chrome-dock-trigger"]').first().click()
     const tray = page.locator('[data-slot="chrome-dock-tray"][data-state="open"]')
     await tray.locator(`[data-skin-option="${skin}"]`).click()
     await page.keyboard.press("Escape")
+    await page.mouse.move(10, 10)
     await expect.poll(() => page.evaluate(() => document.documentElement.dataset.skin)).toBe(skin)
+    if (skin === "polar") {
+      await expect.poll(() => page.evaluate(() =>
+        getComputedStyle(document.querySelector<HTMLElement>('[data-slot="button"][data-variant="default"]')!).backgroundColor,
+      )).toBe("rgb(244, 244, 245)")
+    }
 
     const sample = await page.evaluate(() => {
       const inset = document.querySelector<HTMLElement>('[data-slot="sidebar-inset"]')!
       const shell = document.querySelector<HTMLElement>('[data-slot="sidebar-wrapper"]')!
       const h1 = document.querySelector<HTMLElement>("h1")!
+      const primary = document.querySelector<HTMLElement>('[data-slot="button"][data-variant="default"]')!
       const canvas = document.createElement("canvas")
       canvas.width = 1
       canvas.height = 1
@@ -185,12 +200,23 @@ test("dark mode cascade: luma and glass skins render dark surfaces with WCAG AA 
         shellRgb,
         pageRgb,
         textRgb: getComputedStyle(h1).color,
+        primaryRgb: getComputedStyle(primary).backgroundColor,
         backdrop: getComputedStyle(inset).backdropFilter,
       }
     })
     expect(luminance(rgb(sample.shellRgb)), `${skin} dark shell luminance`).toBeLessThan(0.08)
     expect(luminance(rgb(sample.pageRgb)), `${skin} dark page luminance`).toBeLessThan(0.08)
     expect(contrastRatio(rgb(sample.textRgb), rgb(sample.pageRgb)), `${skin} dark heading contrast`).toBeGreaterThanOrEqual(4.5)
+    if (skin === "polar") {
+      expect(sample.primaryRgb).toBe("rgb(244, 244, 245)")
+      await capture(page, shotName)
+      await page.goto("/")
+      await expect(page.getByRole("heading", { name: "Home", level: 1 })).toBeVisible()
+      await capture(page, "polar-dark-home")
+      await page.goto("/sources")
+      await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible()
+      continue
+    }
     if (skin === "glass") {
       expect(sample.backdrop).toContain("blur(")
     }

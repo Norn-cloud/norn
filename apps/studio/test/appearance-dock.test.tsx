@@ -86,7 +86,8 @@ test("ChromeDock primitive renders semantic data-slot and data-state attributes 
 test("chromeDockPrimitive fires onValueChange exactly once with a string and honors details.cancel()", () => {
   const calls: Array<{ value: unknown; hasCancel: boolean }> = []
   let shouldCancel = false
-  const instance = chromeDockPrimitive.create({
+  const instance = chromeDockPrimitive({
+    id: "test-dock",
     defaultValue: "open",
     items: ["open", "polar", "luma", "glass"],
     onValueChange(value, details) {
@@ -147,20 +148,22 @@ test("dock mode mounts AccountMenu, explicit accessible names on every dock link
     </QueryClientProvider>,
   )
   expect(html).toContain('data-shell="dock"')
+  expect(html).toContain('data-slot="dock-topbar"')
   expect(html).toContain('data-slot="floating-dock"')
-  expect(html).toContain("pb-28 md:pb-28")
+  expect(html).toContain("pb-32")
+  expect(html).toContain("md:pb-32")
+
+  // AccountMenu stays reachable in dock mode via the minimal v6 topbar (showing initials and Account trigger).
+  expect(html).toContain('aria-label="Account"')
+  expect(html).toContain(">AL<")
 
   const dockMatch = /<nav[^>]*data-slot="floating-dock"[\s\S]*?<\/nav>/.exec(html)
   expect(dockMatch).toBeTruthy()
   const dockHtml = dockMatch![0]!
 
-  // AccountMenu stays reachable in dock mode (showing initials and Account trigger).
-  expect(dockHtml).toContain('aria-label="Account"')
-  expect(dockHtml).toContain(">AL<")
-
-  // Every anchor link in the dock carries an explicit aria-label (even when visual labels hide on mobile).
+  // Every anchor link in the icon-only v6 dock carries an explicit aria-label.
   const links = [...dockHtml.matchAll(/<a\b([^>]*)>/g)]
-  expect(links.length).toBeGreaterThanOrEqual(8)
+  expect(links.length).toBeGreaterThanOrEqual(7)
   for (const [, attrs] of links) {
     const ariaLabel = /aria-label="([^"]+)"/.exec(attrs!)?.[1]
     expect(ariaLabel, `dock link missing aria-label: <a${attrs}>`).toBeTruthy()

@@ -238,7 +238,8 @@ const decisionTreeSource = readSrc("decision-tree.tsx")
 for (const theme of ["light", "dark"] as const) {
   test(`${theme}: surfaces stay distinct, text tokens pass 4.5:1, and edges/focus ring pass 3:1`, () => {
     expect(tokenHex(theme, "shell")).not.toBe(tokenHex(theme, "background"))
-    expect(tokenHex(theme, "card")).not.toBe(tokenHex(theme, "background"))
+    expect(tokenHex(theme, "well")).not.toBe(tokenHex(theme, "background"))
+    if (theme === "dark") expect(tokenHex(theme, "card")).not.toBe(tokenHex(theme, "background"))
     expect(tokenHex(theme, "surface-subtle")).not.toBe(tokenHex(theme, "background"))
 
     expect(ratio(tokenHex(theme, "edge"), tokenHex(theme, "canvas-surface")), `${theme} edge`).toBeGreaterThanOrEqual(3)
@@ -481,7 +482,7 @@ for (const { skin, theme } of SKIN_SELECTORS) {
 
     const shellHex = resolveSurfaceColor(resolveVar("shell"), theme === "dark" ? "#0b0b0e" : "#ffffff")
     const bgSurfaceHex = resolveSurfaceColor(resolveVar("background"), shellHex)
-    if (theme === "dark" || skin === "polar") {
+    if (theme === "dark") {
       expect(luminance(shellHex), `${skin}/${theme} shell must stay dark`).toBeLessThan(0.08)
       expect(luminance(bgSurfaceHex), `${skin}/${theme} background must stay dark`).toBeLessThan(0.08)
     }
@@ -490,6 +491,11 @@ for (const { skin, theme } of SKIN_SELECTORS) {
     const primaryBgHex = resolveSurfaceColor(resolveVar("primary"), shellHex)
     const primaryFgHex = resolveSurfaceColor(resolveVar("primary-foreground"), primaryBgHex)
     const ringHex = resolveSurfaceColor(resolveVar("ring"), shellHex)
+
+    if (skin === "polar") {
+      const [pr, pg, pb] = rgbOf(primaryBgHex)
+      expect(Math.max(pr, pg, pb) - Math.min(pr, pg, pb), `polar/${theme} primary must stay monochrome, not violet`).toBeLessThanOrEqual(8)
+    }
 
     expect(ratio(primaryFgHex, primaryBgHex), `${skin}/${theme} primary button`).toBeGreaterThanOrEqual(4.5)
 
