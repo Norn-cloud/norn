@@ -1,10 +1,10 @@
-import { CellUnavailable, NO_DATA_CELL, StudioScopeError, readStudioScope, scopedHostFetch } from "../definitions.ts"
+import { CellUnavailable, NO_DATA_CELL, StudioScopeError, scopedHostFetch } from "../definitions.ts"
 import { member, readDocument, type Read } from "../exact.ts"
 import { day, percent } from "../format.ts"
 import { isAnswer, type Fetch, type Refusal } from "../live.ts"
 import type { Answer } from "../transport.ts"
 import { VERDICTS, type Verdict } from "./episode.ts"
-import { DecodeError } from "./objects.ts"
+import { DecodeError, resolveBoundLearningScope, type ScopedReadOptions } from "./objects.ts"
 
 /**
  * Learning pack questions for the Misfit board and learning charts (#1208, #1220 L-4):
@@ -103,12 +103,19 @@ export type LearningQuestionRead<T> =
   | { readonly kind: "refused"; readonly refusal: Refusal }
   | { readonly kind: "unavailable" }
   | { readonly kind: "no-cell" }
+  /** Server-reported scope moved away from the gate's verified scope; zero request reached the new cell. */
+  | { readonly kind: "scope-changed" }
 
 // ---- Exact decimal / rational / BigInt arithmetic (S5) ------------------------------------------
 
 interface ExactDecimal {
   readonly coeff: bigint
   readonly exp: number
+}
+
+interface ExactRational {
+  readonly num: bigint
+  readonly den: bigint
 }
 
 const JSON_DECIMAL = /^(-?)(0|[1-9]\d*)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/
@@ -124,7 +131,9 @@ export function parseExactDecimal(token: string): ExactDecimal | null {
   if (!Number.isSafeInteger(expNum) || Math.abs(expNum) > MAX_DECIMAL_EXP) return null
   const rawCoeff = BigInt(whole + frac)
   if (rawCoeff === 0n) return { coeff: 0n, exp: 0 }
-  return { coeff: sign === "-" ? -rawCoeff : rawCoeff, exp: expNum - frac.length }
+  const exp = expNum - frac.length
+  if (Math.abs(exp) > MAX_DECIMAL_EXP) return null
+  return { coeff: sign === "-" ? -rawCoeff : rawCoeff, exp }
 }
 
 /** Exact total order on two parsed decimal tokens (`< 0`, `0`, `> 0`), zero floats. */
@@ -139,6 +148,24 @@ export function compareExactDecimal(a: ExactDecimal, b: ExactDecimal): number {
   }
   const scaled = b.coeff * 10n ** BigInt(b.exp - a.exp)
   return a.coeff < scaled ? -1 : a.coeff > scaled ? 1 : 0
+}
+
+function decimalToRational(dec: ExactDecimal): ExactRational {
+  if (dec.coeff === 0n) return { num: 0n, den: 1n }
+  if (dec.exp >= 0) return { num: dec.coeff * 10n ** BigInt(dec.exp), den: 1n }
+  return { num: dec.coeff, den: 10n ** BigInt(-dec.exp) }
+}
+
+function compareExactRational(a: ExactRational, b: ExactRational): number {
+  const lhs = a.num * b.den
+  const rhs = b.num * a.den
+  return lhs < rhs ? -1 : lhs > rhs ? 1 : 0
+}
+
+function rationalOf(fig: RateFigure, decimal: ExactDecimal): ExactRational {
+  const num = fig.numerator !== null ? parseExactNonNegInt(fig.numerator) : null
+  const den = fig.denominator !== null ? parseExactNonNegInt(fig.denominator) : null
+  return num !== null && den !== null && den > 0n ? { num, den } : decimalToRational(decimal)
 }
 
 /** Convert an `ExactDecimal` into plain decimal text (`1.5e-2` → `0.015`) for exact `percent()` formatting. */
@@ -174,10 +201,12 @@ export function parseExactNonNegInt(token: string): bigint | null {
 }
 
 /**
- * Exact ascending comparison between two `RateFigure`s (`< 0` if `a < b`, `> 0` if `a > b`, `0` if equal).
+ * Total ascending preorder on `RateFigure`s (`< 0` if `a < b`, `> 0` if `a > b`, `0` if equal).
  * Missing/suppressed/null figures sort strictly below any concrete rate.
- * Compares exact decimal ratio tokens first, then breaks ties with exact rational `numerator / denominator`
- * cross-multiplication when both figures carry positive integer denominators. Never uses `plotPercent`.
+ * Every concrete rate maps consistently to `(exactDecimal, exactRational)` where rows with positive
+ * integer totals use `numerator / denominator` and rows lacking totals use `exactDecimal` itself as
+ * an exact rational — guaranteeing transitivity and permutation-invariance across mixed rows.
+ * Never uses `plotPercent`.
  */
 export function compareRateFigures(a: RateFigure | null, b: RateFigure | null): number {
   const aDec = a !== null && !a.suppressed && a.exact !== null ? parseExactDecimal(a.exact) : null
@@ -187,16 +216,37 @@ export function compareRateFigures(a: RateFigure | null, b: RateFigure | null): 
   if (bDec === null) return 1
   const decCmp = compareExactDecimal(aDec, bDec)
   if (decCmp !== 0) return decCmp
-  const aNum = a!.numerator !== null ? parseExactNonNegInt(a!.numerator) : null
-  const aDen = a!.denominator !== null ? parseExactNonNegInt(a!.denominator) : null
-  const bNum = b!.numerator !== null ? parseExactNonNegInt(b!.numerator) : null
-  const bDen = b!.denominator !== null ? parseExactNonNegInt(b!.denominator) : null
-  if (aNum !== null && aDen !== null && aDen > 0n && bNum !== null && bDen !== null && bDen > 0n) {
-    const lhs = aNum * bDen
-    const rhs = bNum * aDen
-    if (lhs !== rhs) return lhs < rhs ? -1 : 1
+  return compareExactRational(rationalOf(a!, aDec), rationalOf(b!, bDec))
+}
+
+const compareLawId = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
+
+/** Strict total descending order on Misfit rows: override rate, exception rate, then law id. */
+export function compareMisfitRows(a: MisfitLawRow, b: MisfitLawRow): number {
+  return compareRateFigures(b.override, a.override)
+    || compareRateFigures(b.exception, a.exception)
+    || compareLawId(a.lawId, b.lawId)
+}
+
+/** Pick the KPI winner for override or exception rate using the exact same total order (highest rate, then law id). */
+export function topRateRow(
+  rows: readonly MisfitLawRow[],
+  pickRate: (row: MisfitLawRow) => RateFigure | null,
+): MisfitLawRow | undefined {
+  let best: MisfitLawRow | undefined
+  for (const row of rows) {
+    const figure = pickRate(row)
+    if (figure === null || figure.suppressed || figure.exact === null) continue
+    if (best === undefined) {
+      best = row
+      continue
+    }
+    const cmp = compareRateFigures(figure, pickRate(best))
+    if (cmp > 0 || (cmp === 0 && compareLawId(row.lawId, best.lawId) < 0)) {
+      best = row
+    }
   }
-  return 0
+  return best
 }
 
 // ---- Strict envelope & row validation (S6) ------------------------------------------------------
@@ -208,10 +258,12 @@ const isPlainObject = (v: unknown): v is Record<string, unknown> =>
 
 /**
  * Validate every field of `NornQueryResult` consumed by the learning decoders so malformed answers
- * (such as missing `exclusions`, non-boolean `complete`, invalid `engine`, or contradictory D53
- * suppression fields) always return `{ kind: "malformed" }` instead of throwing.
+ * (such as missing `exclusions`, non-boolean `complete`, invalid `engine`, fractional/negative
+ * `memberCount` or `nullCounts`, or contradictory D53 suppression fields) always return
+ * `{ kind: "malformed" }` instead of throwing.
  */
-function validateAnswerEnvelope(value: unknown): Answer {
+function validateAnswerEnvelope(read: Read<Answer>): Answer {
+  const value: unknown = read.document
   if (!isAnswer(value)) throw new DecodeError("answer did not match NornQueryResult")
   const doc = value as unknown as Record<string, unknown>
   if (typeof doc.complete !== "boolean") throw new DecodeError("/complete must be a boolean")
@@ -225,6 +277,7 @@ function validateAnswerEnvelope(value: unknown): Answer {
   }
   const rows = doc.rows as Record<string, Record<string, unknown>>
   for (const [key, row] of Object.entries(rows)) {
+    const rowPath = `/rows/${member(key)}`
     const rawSuppressed = row.suppressed
     if (rawSuppressed !== undefined && typeof rawSuppressed !== "boolean") {
       throw new DecodeError(`/rows/${key}/suppressed must be a boolean`)
@@ -238,8 +291,33 @@ function validateAnswerEnvelope(value: unknown): Answer {
     }
     const rawMemberCount = row.memberCount
     if (rawMemberCount !== undefined && rawMemberCount !== null) {
-      if (typeof rawMemberCount !== "number" || !Number.isFinite(rawMemberCount) || rawMemberCount < 0) {
+      if (typeof rawMemberCount !== "number" || !Number.isFinite(rawMemberCount)) {
         throw new DecodeError(`/rows/${key}/memberCount must be a non-negative integer`)
+      }
+      const token = read.numbers.get(`${rowPath}/memberCount`) ?? String(rawMemberCount)
+      const parsed = parseExactNonNegInt(token)
+      if (parsed === null) {
+        throw new DecodeError(`/rows/${key}/memberCount must be a non-negative integer`)
+      }
+      const listedMembers = BigInt(Object.keys(row.members as Record<string, unknown>).length)
+      if (parsed < listedMembers) {
+        throw new DecodeError(`/rows/${key}/memberCount is smaller than /rows/${key}/members`)
+      }
+    }
+    const rawNullCounts = row.nullCounts
+    if (rawNullCounts !== undefined) {
+      if (!Array.isArray(rawNullCounts)) {
+        throw new DecodeError(`/rows/${key}/nullCounts must be a list of non-negative integers`)
+      }
+      for (let i = 0; i < rawNullCounts.length; i += 1) {
+        const entry = rawNullCounts[i]
+        if (typeof entry !== "number" || !Number.isFinite(entry)) {
+          throw new DecodeError(`/rows/${key}/nullCounts/${i} must be a non-negative integer`)
+        }
+        const token = read.numbers.get(`${rowPath}/nullCounts/${i}`) ?? String(entry)
+        if (parseExactNonNegInt(token) === null) {
+          throw new DecodeError(`/rows/${key}/nullCounts/${i} must be a non-negative integer`)
+        }
       }
     }
   }
@@ -305,6 +383,9 @@ function rateOf(read: Read<Answer>, key: string, row: Answer["rows"][string]): {
       throw new DecodeError(`${path}/value is null on a non-suppressed row with positive denominator`)
     }
   } else {
+    if (denominatorInt !== null && denominatorInt === 0n) {
+      throw new DecodeError(`${path}/value must be null when denominator is zero`)
+    }
     const rawValue = read.numbers.get(`${path}/value`) ?? String(row.value)
     const dec = parseExactDecimal(rawValue)
     if (dec === null || dec.coeff < 0n) throw new DecodeError(`${path}/value is not a non-negative decimal rate`)
@@ -330,7 +411,7 @@ function rateOf(read: Read<Answer>, key: string, row: Answer["rows"][string]): {
  */
 export function decodeMisfitByLaw(read: Read<Answer>): { readonly kind: "ok"; readonly data: MisfitBoardData } | { readonly kind: "malformed"; readonly problem: string } {
   try {
-    const answer = validateAnswerEnvelope(read.document)
+    const answer = validateAnswerEnvelope(read)
     const byLaw = new Map<string, { override: RateFigure | null; exception: RateFigure | null; episodes: bigint | null; members: Set<string>; suppressed: boolean }>()
     for (const [key, row] of Object.entries(answer.rows)) {
       const b = row.bucket
@@ -369,12 +450,8 @@ export function decodeMisfitByLaw(read: Read<Answer>): { readonly kind: "ok"; re
         memberIds: [...entry.members].sort(),
         anySuppressed: entry.suppressed,
       }))
-      // Rank by exact decimal/rational comparison — never rounded chart values.
-      .sort((a, b) =>
-        compareRateFigures(b.override, a.override)
-        || compareRateFigures(b.exception, a.exception)
-        || a.lawId.localeCompare(b.lawId),
-      )
+      // Strict total order by exact decimal/rational key, then deterministic law id — never rounded chart values.
+      .sort(compareMisfitRows)
     return { kind: "ok", data: { rows, meta: metaOf(answer) } }
   } catch (error) {
     if (error instanceof DecodeError) return { kind: "malformed", problem: error.message }
@@ -402,7 +479,7 @@ function isValidIsoWeekStart(text: string): boolean {
  */
 export function decodeTriageOverTime(read: Read<Answer>): { readonly kind: "ok"; readonly data: TriageOverTimeData } | { readonly kind: "malformed"; readonly problem: string } {
   try {
-    const answer = validateAnswerEnvelope(read.document)
+    const answer = validateAnswerEnvelope(read)
     const byWeek = new Map<string, Partial<Record<Verdict, { readonly figure: CountFigure; readonly exactInt: bigint | null }>>>()
     for (const [key, row] of Object.entries(answer.rows)) {
       const b = row.bucket
@@ -424,11 +501,14 @@ export function decodeTriageOverTime(read: Read<Answer>): { readonly kind: "ok";
         const rawValue = read.numbers.get(`${path}/value`) ?? String(row.value)
         const count = parseExactNonNegInt(rawValue)
         if (count === null) throw new DecodeError(`/rows/${key}/value is not a non-negative integer count`)
-        for (let i = 0; i < row.totals.length; i += 1) {
-          const totalToken = read.numbers.get(`${path}/totals/${i}`) ?? String(row.totals[i])
+        if (row.totals.length > 1) {
+          throw new DecodeError(`/rows/${key}/totals must have 0 or 1 entry for a count`)
+        }
+        if (row.totals.length === 1) {
+          const totalToken = read.numbers.get(`${path}/totals/0`) ?? String(row.totals[0])
           const totalInt = parseExactNonNegInt(totalToken)
-          if (totalInt === null) throw new DecodeError(`/rows/${key}/totals/${i} is not a non-negative integer count`)
-          if (row.totals.length === 1 && totalInt !== count) {
+          if (totalInt === null) throw new DecodeError(`/rows/${key}/totals/0 is not a non-negative integer count`)
+          if (totalInt !== count) {
             throw new DecodeError(`/rows/${key}/totals/0 contradicts /rows/${key}/value`)
           }
         }
@@ -469,18 +549,26 @@ async function readQuestion<T>(
   questionName: string,
   decode: (read: Read<Answer>) => { readonly kind: "ok"; readonly data: T } | { readonly kind: "malformed"; readonly problem: string },
   fetcher: Fetch = (input, init) => fetch(input, init),
+  options: ScopedReadOptions = {},
 ): Promise<LearningQuestionRead<T>> {
   let response: Response
   let raw: string
   try {
-    const scoped = scopedHostFetch(fetcher, "/api/host", () => readStudioScope(fetcher))
-    response = await scoped(`/v1/questions/${encodeURIComponent(questionName)}/answer`, { headers: { accept: "application/json" } })
+    const resolved = await resolveBoundLearningScope(fetcher, options)
+    if (resolved.kind !== "ok") return resolved
+    const scoped = scopedHostFetch(fetcher, "/api/host", async () => resolved.scope)
+    response = await scoped(
+      `/v1/questions/${encodeURIComponent(questionName)}/answer`,
+      { headers: { accept: "application/json" }, ...(options.signal === undefined ? {} : { signal: options.signal }) },
+    )
     raw = await response.text()
   } catch (error) {
+    if (options.signal?.aborted) throw error
     if (error instanceof StudioScopeError && error.message === NO_DATA_CELL) return { kind: "no-cell" }
     if (error instanceof CellUnavailable) return { kind: "unavailable" }
     throw error
   }
+  if (options.signal?.aborted) return { kind: "scope-changed" }
   if (response.ok) {
     let read: Read<Answer>
     try { read = readDocument<Answer>(raw, "live") } catch { return { kind: "malformed", problem: "The cell's question answer was not JSON." } }
@@ -507,8 +595,8 @@ async function readQuestion<T>(
   throw new CellUnavailable(response.status)
 }
 
-export const readMisfitByLaw = (fetcher?: Fetch): Promise<LearningQuestionRead<MisfitBoardData>> =>
-  readQuestion(MISFIT_BY_LAW_QUESTION, decodeMisfitByLaw, fetcher)
+export const readMisfitByLaw = (fetcher?: Fetch, options?: ScopedReadOptions): Promise<LearningQuestionRead<MisfitBoardData>> =>
+  readQuestion(MISFIT_BY_LAW_QUESTION, decodeMisfitByLaw, fetcher, options)
 
-export const readTriageOverTime = (fetcher?: Fetch): Promise<LearningQuestionRead<TriageOverTimeData>> =>
-  readQuestion(TRIAGE_OVER_TIME_QUESTION, decodeTriageOverTime, fetcher)
+export const readTriageOverTime = (fetcher?: Fetch, options?: ScopedReadOptions): Promise<LearningQuestionRead<TriageOverTimeData>> =>
+  readQuestion(TRIAGE_OVER_TIME_QUESTION, decodeTriageOverTime, fetcher, options)

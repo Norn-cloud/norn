@@ -5,13 +5,16 @@ import { readFileSync } from "node:fs"
 import { renderToStaticMarkup } from "react-dom/server"
 import { ActionForm } from "../src/actions/action-form.tsx"
 import { LearningGate } from "../src/learning/gate.tsx"
-import type { ActionSummary } from "../src/lib/actions.ts"
+import { listActions, type ActionSummary } from "../src/lib/actions.ts"
+import type { StudioScope } from "../src/lib/definitions.ts"
 import { readDocument } from "../src/lib/exact.ts"
 import { isSectionVisible, learningCapabilitiesOf } from "../src/lib/learning/capabilities.ts"
 import { decodeCuratedCase, decodeEvalSet, listCuratedCases, listEvalSets } from "../src/lib/learning/cases.ts"
+import { listEpisodes, readEpisode } from "../src/lib/learning/episode.ts"
 import {
-  compareExactDecimal, compareRateFigures, decodeMisfitByLaw, decodeTriageOverTime,
-  parseExactDecimal, parseExactNonNegInt, readMisfitByLaw, readTriageOverTime,
+  compareExactDecimal, compareMisfitRows, compareRateFigures, decodeMisfitByLaw, decodeTriageOverTime,
+  parseExactDecimal, parseExactNonNegInt, readMisfitByLaw, readTriageOverTime, topRateRow,
+  type MisfitLawRow, type RateFigure,
 } from "../src/lib/learning/misfit.ts"
 import { decodeGapProposal, listGapProposals, proposalFilterPredicate, proposalStatusFromServed, readGapProposal } from "../src/lib/learning/proposals.ts"
 import type { Mode } from "../src/lib/live-transport.ts"
@@ -101,13 +104,21 @@ function cell(host: (url: URL) => Response, me: unknown = ME) {
   return { calls, fetcher }
 }
 
-function liveMode(objectTypes: readonly string[], publishedQuestions: readonly string[] = [], retiredTypes: readonly string[] = []): Mode {
+const DEFAULT_SCOPE: StudioScope = { orgId: "org_demo", environmentId: "analytics" }
+
+function liveMode(
+  objectTypes: readonly string[],
+  publishedQuestions: readonly string[] = [],
+  retiredTypes: readonly string[] = [],
+  scope: StudioScope = DEFAULT_SCOPE,
+): Mode {
   const artifacts = [
     ...objectTypes.map((name) => ({ artifactId: `${name}.entity`, kind: "entity", lifecycle: "active", payload: { objectType: { name } } })),
     ...retiredTypes.map((name) => ({ artifactId: `${name}.entity`, kind: "entity", lifecycle: "retired", payload: { objectType: { name } } })),
   ] as unknown as readonly Artifact[]
   return {
     kind: "live",
+    scope,
     catalog: { document: artifacts, numbers: new Map(), origin: "live" },
     counts: {},
     publishedQuestions: new Set(publishedQuestions),
@@ -116,11 +127,40 @@ function liveMode(objectTypes: readonly string[], publishedQuestions: readonly s
 
 // ---- S1 Capability gating -----------------------------------------------------------------------
 
-test("capability gating fails closed on missing, pending, failed, recorded, and partial catalogs", () => {
-  expect(learningCapabilitiesOf(undefined, { isPending: true })).toMatchObject({ status: "pending", episodes: false, cases: false, misfit: false, proposals: false })
-  expect(learningCapabilitiesOf(undefined, { isError: true })).toMatchObject({ status: "error", episodes: false, cases: false, misfit: false, proposals: false })
-  expect(learningCapabilitiesOf({ kind: "recorded" })).toMatchObject({ status: "unavailable", episodes: false, cases: false, misfit: false, proposals: false })
-  expect(learningCapabilitiesOf(liveMode([]))).toMatchObject({ status: "ready", episodes: false, cases: false, misfit: false, proposals: false })
+test("capability gating fails closed on missing, pending, failed, recorded, partial, and mismatched-scope catalogs", () => {
+  expect(learningCapabilitiesOf(undefined, { isPending: true })).toMatchObject({ status: "pending", scope: null, episodes: false, cases: false, misfit: false, proposals: false })
+  expect(learningCapabilitiesOf(undefined, { isError: true })).toMatchObject({ status: "error", scope: null, episodes: false, cases: false, misfit: false, proposals: false })
+  expect(learningCapabilitiesOf({ kind: "recorded" })).toMatchObject({ status: "unavailable", scope: null, episodes: false, cases: false, misfit: false, proposals: false })
+  expect(learningCapabilitiesOf(liveMode([]))).toMatchObject({ status: "ready", scope: DEFAULT_SCOPE, episodes: false, cases: false, misfit: false, proposals: false })
+
+  // Same org, different environment: cached mode from env-a MUST fail closed when expectedScope is env-b.
+  const modeA = liveMode(
+    ["learning.Episode", "learning.CuratedCase", "learning.EvalSet", "learning.GapProposal"],
+    ["learning.misfit_by_law", "learning.triage_over_time"],
+    [],
+    { orgId: "org_demo", environmentId: "env-a" },
+  )
+  expect(learningCapabilitiesOf(modeA, { expectedScope: { orgId: "org_demo", environmentId: "env-b" } })).toMatchObject({
+    status: "pending",
+    scope: null,
+    episodes: false,
+    cases: false,
+    misfit: false,
+    proposals: false,
+  })
+  expect(learningCapabilitiesOf(modeA, { expectedScope: null })).toMatchObject({
+    status: "pending",
+    scope: null,
+    episodes: false,
+  })
+  expect(learningCapabilitiesOf(modeA, { expectedScope: { orgId: "org_demo", environmentId: "env-a" } })).toMatchObject({
+    status: "ready",
+    scope: { orgId: "org_demo", environmentId: "env-a" },
+    episodes: true,
+    cases: true,
+    misfit: true,
+    proposals: true,
+  })
 
   // Retired entities do not count as advertised.
   expect(learningCapabilitiesOf(liveMode([], [], ["learning.Episode"]))).toMatchObject({ episodes: false })
@@ -153,6 +193,25 @@ test("capability gating fails closed on missing, pending, failed, recorded, and 
   expect(mounted).toBe(false)
   expect(html).toContain("Unavailable in this workspace")
   expect(html).not.toContain("secret child")
+})
+
+test("scope-bound Learning readers refuse to hit cell B when /api/me moved to a new environment (S1)", async () => {
+  const scopeA: StudioScope = { orgId: "org_demo", environmentId: "env-a" }
+  const scopeB: StudioScope = { orgId: "org_demo", environmentId: "env-b" }
+  const mismatches: (StudioScope | null)[] = []
+  const moved = cell(
+    () => { throw new Error("must not send any Learning request to env-b before catalog") },
+    { ...ME, environmentId: "env-b" },
+  )
+  const opts = { scope: scopeA, onScopeMismatch: (actual: StudioScope | null) => { mismatches.push(actual) } }
+
+  expect(await listEpisodes(EMPTY_QUERY, moved.fetcher, opts)).toEqual({ kind: "scope-changed" })
+  expect(await readEpisode("ep_1", moved.fetcher, opts)).toEqual({ kind: "scope-changed" })
+  expect(await readMisfitByLaw(moved.fetcher, opts)).toEqual({ kind: "scope-changed" })
+  expect(await readTriageOverTime(moved.fetcher, opts)).toEqual({ kind: "scope-changed" })
+  expect(await listActions("learning.Episode", moved.fetcher, undefined, opts)).toEqual({ kind: "scope-changed" })
+  expect(moved.calls).toEqual([])
+  expect(mismatches).toEqual([scopeB, scopeB, scopeB, scopeB, scopeB])
 })
 
 // ---- OpenAPI generic envelope checks (pack `values`/`bucket` remain provisional until backend fixtures land) ----
@@ -221,10 +280,104 @@ test("exact decimal, rational, and BigInt helpers compare and parse without floa
   expect(parseExactNonNegInt("1.5")).toBeNull()
   expect(parseExactNonNegInt("NaN")).toBeNull()
 
-  // Exact rational tie-breaker when rounded decimal values match.
+  // Exact rational tie-breaker when rounded decimal values match — consistent with rows lacking totals.
   const oneThird = { exact: "0.333333", percent: "33.33%", plotPercent: 33.3, numerator: "1", denominator: "3", suppressed: false }
+  const noTotals = { exact: "0.333333", percent: "33.33%", plotPercent: 33.3, numerator: null, denominator: null, suppressed: false }
   const truncated = { exact: "0.333333", percent: "33.33%", plotPercent: 33.3, numerator: "333333", denominator: "1000000", suppressed: false }
   expect(compareRateFigures(oneThird, truncated)).toBeGreaterThan(0)
+  expect(compareRateFigures(oneThird, noTotals)).toBeGreaterThan(0)
+  expect(compareRateFigures(noTotals, truncated)).toBe(0)
+})
+
+function permutations<T>(items: readonly T[]): T[][] {
+  if (items.length <= 1) return [[...items]]
+  const out: T[][] = []
+  for (let i = 0; i < items.length; i += 1) {
+    const rest = [...items.slice(0, i), ...items.slice(i + 1)]
+    for (const tail of permutations(rest)) out.push([items[i]!, ...tail])
+  }
+  return out
+}
+
+test("misfit rate ordering and KPI selection form a strict permutation-invariant total order across rows with and without totals (S5)", () => {
+  // Exact 3-row counterexample from Sol round 2: z (1/3), m (no totals), a (333333/1000000), all decimal 0.333333.
+  const threeEntries: readonly [string, object][] = [
+    ['["z","override"]', { bucket: ["z", "override"], totals: [1, 3], value: 0.333333, members: {} }],
+    ['["m","override"]', { bucket: ["m", "override"], totals: [], value: 0.333333, members: {} }],
+    ['["a","override"]', { bucket: ["a", "override"], totals: [333333, 1000000], value: 0.333333, members: {} }],
+  ]
+  for (const perm of permutations(threeEntries)) {
+    const doc = { ...misfitFixture.misfitByLaw, rows: Object.fromEntries(perm) }
+    const decoded = decodeMisfitByLaw(readDocument<Answer>(JSON.stringify(doc), "live"))
+    if (decoded.kind !== "ok") throw new Error(decoded.problem)
+    expect(decoded.data.rows.map((r) => r.lawId)).toEqual(["z", "a", "m"])
+    expect(topRateRow(decoded.data.rows, (r) => r.override)?.lawId).toBe("z")
+  }
+
+  // Property check over all 120 permutations of 5 mixed rows (totals > decimal, == decimal, < decimal, no totals, suppressed).
+  const fiveEntries: readonly [string, object][] = [
+    ['["law.z","override"]', { bucket: ["law.z", "override"], totals: [1, 3], value: 0.333333, members: {} }],
+    ['["law.m","override"]', { bucket: ["law.m", "override"], totals: [], value: 0.333333, members: {} }],
+    ['["law.a","override"]', { bucket: ["law.a", "override"], totals: [333333, 1000000], value: 0.333333, members: {} }],
+    ['["law.b","override"]', { bucket: ["law.b", "override"], totals: [5, 12], value: 0.417, members: {} }],
+    ['["law.c","override"]', { bucket: ["law.c", "override"], totals: [], value: null, suppressed: true, members: {} }],
+  ]
+  const expectedOrder = ["law.b", "law.z", "law.a", "law.m", "law.c"]
+  const allPermutations = permutations(fiveEntries)
+  expect(allPermutations).toHaveLength(120)
+  for (const perm of allPermutations) {
+    const doc = { ...misfitFixture.misfitByLaw, rows: Object.fromEntries(perm) }
+    const decoded = decodeMisfitByLaw(readDocument<Answer>(JSON.stringify(doc), "live"))
+    if (decoded.kind !== "ok") throw new Error(decoded.problem)
+    expect(decoded.data.rows.map((r) => r.lawId)).toEqual(expectedOrder)
+    expect(topRateRow(decoded.data.rows, (r) => r.override)?.lawId).toBe("law.b")
+  }
+
+  // Exhaustive reflexivity, antisymmetry, and transitivity across all triples of RateFigures & MisfitLawRows.
+  const figures: readonly (RateFigure | null)[] = [
+    null,
+    { exact: null, percent: null, plotPercent: null, numerator: null, denominator: null, suppressed: true },
+    { exact: null, percent: null, plotPercent: null, numerator: "0", denominator: "0", suppressed: false },
+    { exact: "0.333333", percent: "33.33%", plotPercent: 33.3, numerator: "3333329", denominator: "10000000", suppressed: false },
+    { exact: "0.333333", percent: "33.33%", plotPercent: 33.3, numerator: null, denominator: null, suppressed: false },
+    { exact: "0.333333", percent: "33.33%", plotPercent: 33.3, numerator: "333333", denominator: "1000000", suppressed: false },
+    { exact: "0.333333", percent: "33.33%", plotPercent: 33.3, numerator: "1", denominator: "3", suppressed: false },
+    { exact: "0.41701", percent: "41.70%", plotPercent: 41.7, numerator: null, denominator: null, suppressed: false },
+    { exact: "0.41704", percent: "41.70%", plotPercent: 41.7, numerator: "41704", denominator: "100000", suppressed: false },
+  ]
+  const sign = (n: number) => (n < 0 ? -1 : n > 0 ? 1 : 0)
+  for (const x of figures) {
+    expect(compareRateFigures(x, x)).toBe(0)
+    for (const y of figures) {
+      expect(sign(compareRateFigures(x, y)) + sign(compareRateFigures(y, x))).toBe(0)
+      for (const z of figures) {
+        const xy = compareRateFigures(x, y)
+        const yz = compareRateFigures(y, z)
+        const xz = compareRateFigures(x, z)
+        if (xy <= 0 && yz <= 0) expect(xz).toBeLessThanOrEqual(0)
+        if (xy === 0 && yz === 0) expect(xz).toBe(0)
+      }
+    }
+  }
+  const sampleRows: readonly MisfitLawRow[] = figures.map((fig, i) => ({
+    lawId: `law_${i}`,
+    override: fig,
+    exception: figures[(i + 3) % figures.length]!,
+    episodeCount: "10",
+    memberIds: [],
+    anySuppressed: fig?.suppressed ?? false,
+  }))
+  for (const x of sampleRows) {
+    expect(compareMisfitRows(x, x)).toBe(0)
+    for (const y of sampleRows) {
+      expect(sign(compareMisfitRows(x, y)) + sign(compareMisfitRows(y, x))).toBe(0)
+      for (const z of sampleRows) {
+        if (compareMisfitRows(x, y) <= 0 && compareMisfitRows(y, z) <= 0) {
+          expect(compareMisfitRows(x, z)).toBeLessThanOrEqual(0)
+        }
+      }
+    }
+  }
 })
 
 test("misfit_by_law ranks by exact ratios (0.41704 beats 0.41701), keeps BigInt episode counts, preserves D53 suppression and rejects bad envelopes/buckets (S5, S6)", () => {
@@ -281,6 +434,51 @@ test("misfit_by_law ranks by exact ratios (0.41704 beats 0.41701), keeps BigInt 
   const fractionalDen = structuredClone(misfitFixture.misfitByLaw)
   fractionalDen.rows = { bad: { bucket: ["demo.law", "override"], totals: [1, 2.5], value: 0.4, members: {} } }
   expect(decodeMisfitByLaw(readDocument<Answer>(JSON.stringify(fractionalDen), "live")).kind).toBe("malformed")
+
+  // S6: Fractional/negative/contradictory memberCount is rejected even when a denominator is present or row is suppressed.
+  const fractionalMemberWithDen = structuredClone(misfitFixture.misfitByLaw)
+  fractionalMemberWithDen.rows = {
+    bad: { bucket: ["demo.law", "override"], totals: [5, 12], value: 0.417, memberCount: 1.5, members: {} } as never,
+  }
+  expect(decodeMisfitByLaw(readDocument<Answer>(JSON.stringify(fractionalMemberWithDen), "live")).kind).toBe("malformed")
+
+  const fractionalMemberNoDen = structuredClone(misfitFixture.misfitByLaw)
+  fractionalMemberNoDen.rows = {
+    bad: { bucket: ["demo.law", "override"], totals: [], value: 0.5, memberCount: 1.5, members: {} } as never,
+  }
+  expect(decodeMisfitByLaw(readDocument<Answer>(JSON.stringify(fractionalMemberNoDen), "live")).kind).toBe("malformed")
+
+  const fractionalMemberSuppressed = structuredClone(misfitFixture.misfitByLaw)
+  fractionalMemberSuppressed.rows = {
+    bad: { bucket: ["demo.law", "override"], totals: [], value: null, suppressed: true, memberCount: 1.5, members: {} } as never,
+  }
+  expect(decodeMisfitByLaw(readDocument<Answer>(JSON.stringify(fractionalMemberSuppressed), "live")).kind).toBe("malformed")
+
+  const tooSmallMemberCount = structuredClone(misfitFixture.misfitByLaw)
+  tooSmallMemberCount.rows = {
+    bad: {
+      bucket: ["demo.law", "override"],
+      totals: [1, 2],
+      value: 0.5,
+      memberCount: 1,
+      members: { ep_1: { version: 1, amounts: [1, 1] }, ep_2: { version: 1, amounts: [0, 1] } },
+    } as never,
+  }
+  expect(decodeMisfitByLaw(readDocument<Answer>(JSON.stringify(tooSmallMemberCount), "live")).kind).toBe("malformed")
+
+  const zeroDenWithValue = structuredClone(misfitFixture.misfitByLaw)
+  zeroDenWithValue.rows = {
+    bad: { bucket: ["demo.law", "override"], totals: [0, 0], value: 0, members: {} },
+  }
+  expect(decodeMisfitByLaw(readDocument<Answer>(JSON.stringify(zeroDenWithValue), "live")).kind).toBe("malformed")
+
+  // Valid exact BigInt memberCount (> MAX_SAFE_INTEGER) is accepted.
+  const bigMemberJson = JSON.stringify({
+    ...misfitFixture.misfitByLaw,
+    rows: { ok: { bucket: ["demo.law", "override"], totals: [], value: 0.5, memberCount: 7, members: {} } },
+  }).replace('"memberCount":7', '"memberCount":9007199254740993')
+  const bigMemberDecoded = decodeMisfitByLaw(readDocument<Answer>(bigMemberJson, "live"))
+  expect(bigMemberDecoded.kind === "ok" && bigMemberDecoded.data.rows[0]!.episodeCount).toBe("9007199254740993")
 
   // Invalid bucket and duplicate law+signal fail closed.
   const badBucket = structuredClone(misfitFixture.misfitByLaw)
@@ -365,6 +563,29 @@ test("triage_over_time sums exact BigInt totals, rejects duplicates & invalid co
   const fractionalCount = structuredClone(misfitFixture.triageOverTime)
   fractionalCount.rows = { bad: { bucket: ["2026-11-16", "gap"], totals: [1.5], value: 1.5, members: {} } }
   expect(decodeTriageOverTime(readDocument<Answer>(JSON.stringify(fractionalCount), "live")).kind).toBe("malformed")
+
+  // S6: Fractional memberCount on a triage row is rejected.
+  const fractionalTriageMember = structuredClone(misfitFixture.triageOverTime)
+  fractionalTriageMember.rows = { bad: { bucket: ["2026-11-16", "gap"], totals: [4], value: 4, memberCount: 1.5, members: {} } as never }
+  expect(decodeTriageOverTime(readDocument<Answer>(JSON.stringify(fractionalTriageMember), "live")).kind).toBe("malformed")
+
+  // S6: Extra operands in totals (e.g. value: 7 with totals: [0, 8]) or contradicting single total are rejected.
+  const extraTriageTotals = structuredClone(misfitFixture.triageOverTime)
+  extraTriageTotals.rows = { bad: { bucket: ["2026-11-16", "gap"], totals: [0, 8], value: 7, members: {} } }
+  expect(decodeTriageOverTime(readDocument<Answer>(JSON.stringify(extraTriageTotals), "live")).kind).toBe("malformed")
+
+  const extraMatchingTotals = structuredClone(misfitFixture.triageOverTime)
+  extraMatchingTotals.rows = { bad: { bucket: ["2026-11-16", "gap"], totals: [7, 8], value: 7, members: {} } }
+  expect(decodeTriageOverTime(readDocument<Answer>(JSON.stringify(extraMatchingTotals), "live")).kind).toBe("malformed")
+
+  const contradictingTotal = structuredClone(misfitFixture.triageOverTime)
+  contradictingTotal.rows = { bad: { bucket: ["2026-11-16", "gap"], totals: [8], value: 7, members: {} } }
+  expect(decodeTriageOverTime(readDocument<Answer>(JSON.stringify(contradictingTotal), "live")).kind).toBe("malformed")
+
+  const emptyTotalsTriage = structuredClone(misfitFixture.triageOverTime)
+  emptyTotalsTriage.rows = { ok: { bucket: ["2026-11-16", "gap"], totals: [], value: 7, members: {} } }
+  const emptyTotalsDecoded = decodeTriageOverTime(readDocument<Answer>(JSON.stringify(emptyTotalsTriage), "live"))
+  expect(emptyTotalsDecoded.kind === "ok" && emptyTotalsDecoded.data.weeks[0]!.counts.gap.exact).toBe("7")
 
   const negativeCount = structuredClone(misfitFixture.triageOverTime)
   negativeCount.rows = { bad: { bucket: ["2026-11-16", "gap"], totals: [-1], value: -1, members: {} } }

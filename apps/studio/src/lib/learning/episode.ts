@@ -2,7 +2,7 @@ import type { Clause, Predicate, RecordsQuery, Served } from "../records-query.t
 import type { ObjectRecord } from "../transport.ts"
 import {
   DecodeError, defaultFetch, int, list, listLearningObjects, obj, oneOf, readLearningObject, receipt, str, text,
-  type DecodedRecord, type Fetch, type JsonObj, type ObjectListRead, type ReceiptRef,
+  type DecodedRecord, type Fetch, type JsonObj, type ObjectListRead, type ReceiptRef, type ScopedReadOptions,
 } from "./objects.ts"
 
 /**
@@ -163,18 +163,19 @@ export type EpisodeRead =
   /** The cell does not serve the learning pack's episodes (a 404 without a code, or 503). */
   | { readonly kind: "unavailable" }
   | { readonly kind: "no-cell" }
+  | { readonly kind: "scope-changed" }
 
 export type EpisodeListRead = ObjectListRead<Episode>
 
 export const EPISODES_UNAVAILABLE = "This cell doesn't serve decision episodes yet."
 
-export async function readEpisode(id: string, fetcher: Fetch = defaultFetch): Promise<EpisodeRead> {
-  const read = await readLearningObject(EPISODE_TYPE, id, decodeAsItem, fetcher)
+export async function readEpisode(id: string, fetcher: Fetch = defaultFetch, options?: ScopedReadOptions): Promise<EpisodeRead> {
+  const read = await readLearningObject(EPISODE_TYPE, id, decodeAsItem, fetcher, options)
   return read.kind === "ok" ? { kind: "episode", episode: read.item, record: read.record } : read
 }
 
-export const listEpisodes = (query: RecordsQuery, fetcher: Fetch = defaultFetch): Promise<EpisodeListRead> =>
-  listLearningObjects(EPISODE_TYPE, query, decodeAsItem, fetcher)
+export const listEpisodes = (query: RecordsQuery, fetcher: Fetch = defaultFetch, options?: ScopedReadOptions): Promise<EpisodeListRead> =>
+  listLearningObjects(EPISODE_TYPE, query, decodeAsItem, fetcher, options)
 
 // ---- Server-side filter contract (#1208, PR #1631 S2) -------------------------------------------
 

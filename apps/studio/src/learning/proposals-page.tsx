@@ -21,7 +21,7 @@ import {
 } from "../lib/learning/proposals.ts"
 import { DATA_CHANGED, LIMITS, recordsQueryParams, totalText, type RecordsQuery } from "../lib/records-query.ts"
 import type { ObjectRecord } from "../lib/transport.ts"
-import { LearningGate } from "./gate.tsx"
+import { LearningGate, useBoundLearningRead } from "./gate.tsx"
 import { RecordActions, TypeActions } from "./record-actions.tsx"
 
 const STATUS_STYLE: Readonly<Record<ProposalStatus, { readonly label: string; readonly tone: Tone }>> = {
@@ -59,6 +59,7 @@ function ProposalsPageContent() {
   const { view } = useView()
   const technical = view === "technical"
   const client = useQueryClient()
+  const bound = useBoundLearningRead()
   const [status, setStatus] = useState<ProposalStatus | undefined>(undefined)
   const [cursors, setCursors] = useState<readonly (string | undefined)[]>([undefined])
   const [pageIndex, setPageIndex] = useState(0)
@@ -74,8 +75,12 @@ function ProposalsPageContent() {
   const paramString = recordsQueryParams(query).toString()
 
   const read = useQuery({
-    queryKey: ["learning", "proposals", paramString],
-    queryFn: () => listGapProposals(query),
+    queryKey: ["learning", "proposals", bound.scopeKey, paramString],
+    queryFn: ({ signal }) => listGapProposals(query, undefined, {
+      ...(bound.scope === null ? {} : { scope: bound.scope }),
+      signal,
+      onScopeMismatch: bound.onScopeMismatch,
+    }),
     placeholderData: keepPreviousData,
     retry: false,
   })
@@ -131,7 +136,7 @@ function ProposalsPageContent() {
           <span className="flex-1" />
           <Button variant="outline" size="sm" onClick={() => void read.refetch()}>Retry</Button>
         </div>
-      ) : data?.kind === "no-cell" ? (
+      ) : data?.kind === "scope-changed" ? null : data?.kind === "no-cell" ? (
         <EmptyState icon={FileDiff} title="No data cell">{NO_DATA_CELL}</EmptyState>
       ) : data?.kind === "unavailable" ? (
         <EmptyState icon={FileDiff} title="Not served yet">{PROPOSALS_UNAVAILABLE}</EmptyState>
@@ -249,7 +254,16 @@ export function ProposalDetailPage() {
 
 function ProposalDetailPageContent() {
   const { id = "" } = useParams({ strict: false })
-  const read = useQuery({ queryKey: ["learning", "proposal", id], queryFn: () => readGapProposal(id), retry: false })
+  const bound = useBoundLearningRead()
+  const read = useQuery({
+    queryKey: ["learning", "proposal", bound.scopeKey, id],
+    queryFn: ({ signal }) => readGapProposal(id, undefined, {
+      ...(bound.scope === null ? {} : { scope: bound.scope }),
+      signal,
+      onScopeMismatch: bound.onScopeMismatch,
+    }),
+    retry: false,
+  })
   const result = read.data
 
   if (read.isPending) {
@@ -287,7 +301,7 @@ function ProposalReview({ proposal: p, record }: { readonly proposal: GapProposa
   const client = useQueryClient()
   const st = STATUS_STYLE[p.status]
   const refresh = () => {
-    void client.invalidateQueries({ queryKey: ["learning", "proposal", record.id] })
+    void client.invalidateQueries({ queryKey: ["learning", "proposal"] })
     void client.invalidateQueries({ queryKey: ["learning", "proposals"] })
   }
 

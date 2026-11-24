@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs"
 import { expect, test, type Page } from "@playwright/test"
-import { ALL_LEARNING_RESOURCES, advertiseLearning } from "./learning-cell.ts"
+import { ALL_LEARNING_RESOURCES, advertiseLearning, learningCatalogPayload } from "./learning-cell.ts"
 import { session } from "./object-cell.ts"
 
 /**
@@ -86,7 +86,8 @@ test("gating (negative): signed-in cell advertising no learning resources hides 
 
   for (const path of LEARNING_URLS) {
     await page.goto(path)
-    await expect(page.locator('[data-learning-gate="unavailable"]')).toBeVisible()
+    // Require the settled catalog state ("ready"), not the initial pending state.
+    await expect(page.locator('[data-learning-gate="unavailable"][data-gate-status="ready"]')).toBeVisible()
     await expect(page.getByText("Unavailable in this workspace")).toBeVisible()
     if (path === "/learning/episodes") await shoot(page, "gated-unavailable")
   }
@@ -111,8 +112,11 @@ test("gating (failed read): when /v1/definitions fails, Learning stays hidden an
   })
 
   await page.goto("/learning/cases")
-  await expect(page.locator('[data-learning-gate="unavailable"]')).toBeVisible()
+  // Require the settled failed-read state ("error" with Retry), not the initial pending state.
+  const gate = page.locator('[data-learning-gate="unavailable"][data-gate-status="error"]')
+  await expect(gate).toBeVisible()
   await expect(page.getByText("Unavailable in this workspace")).toBeVisible()
+  await expect(gate.getByRole("button", { name: "Retry", exact: true })).toBeVisible()
   const nav = page.getByRole("navigation", { name: "Workspace" })
   await expect(nav).not.toContainText("Learning")
   expect(leakedDataCalls).toEqual([])
@@ -188,8 +192,157 @@ test("gating (positive & partial): cell advertising all learning resources shows
   await expect(nav.getByRole("link", { name: "Proposals" })).toHaveCount(0)
 
   await page.goto("/learning/cases")
-  await expect(page.locator('[data-learning-gate="unavailable"]')).toBeVisible()
+  await expect(page.locator('[data-learning-gate="unavailable"][data-gate-status="ready"]')).toBeVisible()
   await page.goto("/learning/misfit")
-  await expect(page.locator('[data-learning-gate="unavailable"]')).toBeVisible()
+  await expect(page.locator('[data-learning-gate="unavailable"][data-gate-status="ready"]')).toBeVisible()
   expect(blockedCalls).toEqual([])
+})
+
+test("gating (same-tab environment switch): invalidates cached catalog, unmounts page while replacement catalog is pending, and sends zero Learning fetches to the new cell before advertisement", async ({ page }) => {
+  let currentEnv = "env-a"
+  const episodeTemplate = episodesFixture.records[0] as {
+    id: string
+    values: { decision: { question: string } }
+  }
+  const makeEpisode = (id: string, question: string) => {
+    const copy = structuredClone(episodeTemplate)
+    copy.id = id
+    copy.values.decision.question = question
+    return copy
+  }
+
+  // Track every Learning request per environment, and hold B/C/D /v1/definitions pending until released.
+  const learningRequestsByEnv: Record<string, string[]> = { "env-a": [], "env-b": [], "env-c": [], "env-d": [] }
+  const defsRequested: Record<string, boolean> = {}
+  const defsWaiters: Record<string, () => void> = {}
+  const defsGates: Record<string, Promise<void>> = {}
+  for (const env of ["env-b", "env-c", "env-d"]) {
+    defsGates[env] = new Promise<void>((resolve) => { defsWaiters[env] = resolve })
+  }
+  let releaseCReady = false
+
+  await page.route("**/api/me", (route) =>
+    route.fulfill({
+      json: {
+        user: { id: "u_e2e", name: "E2E", email: "viewer@example.com" },
+        organization: { id: "org_demo", name: "Demo", role: "viewer" },
+        environmentId: currentEnv,
+      },
+    }),
+  )
+
+  await page.route("**/api/host/v1/definitions**", async (route) => {
+    const env = new URL(route.request().url()).searchParams.get("environmentId") ?? ""
+    defsRequested[env] = true
+    if (env === "env-a") {
+      return route.fulfill({ json: learningCatalogPayload(ALL_LEARNING_RESOURCES) })
+    }
+    if (env === "env-b") {
+      await defsGates["env-b"]
+      return route.fulfill({ json: learningCatalogPayload({ objectTypes: [], publishedQuestions: [] }) })
+    }
+    if (env === "env-c") {
+      await defsGates["env-c"]
+      releaseCReady = true
+      return route.fulfill({ json: learningCatalogPayload({ objectTypes: ["learning.Episode"], publishedQuestions: [] }) })
+    }
+    if (env === "env-d") {
+      await defsGates["env-d"]
+      return route.fulfill({ json: learningCatalogPayload({ objectTypes: [], publishedQuestions: [] }) })
+    }
+    return route.fulfill({ status: 404, body: "unknown env" })
+  })
+
+  await page.route("**/api/host/v1/objects/learning.**", (route) => {
+    const url = new URL(route.request().url())
+    const env = url.searchParams.get("environmentId") ?? ""
+    ;(learningRequestsByEnv[env] ??= []).push(url.toString())
+    if (env === "env-a") {
+      return route.fulfill({
+        json: { objectType: "learning.Episode", records: [makeEpisode("ep_cell_a", "Cell A episode")], query: { sort: [], filter: null }, total: { count: 1, approximate: false }, next: null, quarantineCount: 0 },
+      })
+    }
+    if (env === "env-c") {
+      expect(releaseCReady, "env-c episode fetch must wait until env-c catalog resolved").toBe(true)
+      return route.fulfill({
+        json: { objectType: "learning.Episode", records: [makeEpisode("ep_cell_c", "Cell C episode")], query: { sort: [], filter: null }, total: { count: 1, approximate: false }, next: null, quarantineCount: 0 },
+      })
+    }
+    return route.fulfill({ status: 500, body: `unexpected Learning object fetch to ${env}` })
+  })
+
+  await page.route("**/api/host/v1/questions/learning.**", (route) => {
+    const url = new URL(route.request().url())
+    const env = url.searchParams.get("environmentId") ?? ""
+    ;(learningRequestsByEnv[env] ??= []).push(url.toString())
+    return route.fulfill({ status: 500, body: `unexpected Learning question fetch to ${env}` })
+  })
+
+  await page.route("**/api/host/v1/actions**", (route) => {
+    const url = new URL(route.request().url())
+    const env = url.searchParams.get("environmentId") ?? ""
+    if ((url.searchParams.get("objectKind") ?? "").startsWith("learning.")) {
+      ;(learningRequestsByEnv[env] ??= []).push(url.toString())
+      if (env !== "env-a" && env !== "env-c") return route.fulfill({ status: 500, body: `unexpected Learning action fetch to ${env}` })
+    }
+    return route.fulfill({ json: { items: [] } })
+  })
+
+  // 1. Mount /learning/episodes in org_demo / env-a (advertises all Learning resources).
+  await page.goto("/learning/episodes")
+  const nav = page.getByRole("navigation", { name: "Workspace" })
+  await expect(page.getByText("Cell A episode")).toBeVisible()
+  await expect(nav.getByRole("link", { name: "Episodes" })).toBeVisible()
+  expect(learningRequestsByEnv["env-a"]!.length).toBeGreaterThan(0)
+
+  // 2. Same user, same org: server switches environment to env-b (whose catalog is held pending).
+  // Clicking Refresh triggers a bound Learning read BEFORE focus/session refetch: it must NOT hit env-b,
+  // and must immediately close the gate (unmounting Cell A's table) while env-b's catalog is pending.
+  currentEnv = "env-b"
+  await page.getByRole("button", { name: "Refresh" }).click()
+  await expect(page.locator('[data-learning-gate="unavailable"][data-gate-status="pending"]')).toBeVisible()
+  await expect(page.getByText("Cell A episode")).toHaveCount(0)
+  await expect(nav.getByRole("link", { name: "Episodes" })).toHaveCount(0)
+  await expect.poll(() => defsRequested["env-b"]).toBe(true)
+  expect(learningRequestsByEnv["env-b"]).toEqual([])
+
+  // 3. Release env-b's catalog with NO learning resources: gate settles as ready-unavailable with zero fetches to env-b.
+  defsWaiters["env-b"]!()
+  await expect(page.locator('[data-learning-gate="unavailable"][data-gate-status="ready"]')).toBeVisible()
+  await expect(nav).not.toContainText("Learning")
+  expect(learningRequestsByEnv["env-b"]).toEqual([])
+
+  // 4. Switch in the same tab (via visibilitychange/focus refetch, no reload) to env-c with env-c's catalog held pending.
+  currentEnv = "env-c"
+  await page.evaluate(() => {
+    document.dispatchEvent(new Event("visibilitychange", { bubbles: true }))
+    window.dispatchEvent(new Event("focus"))
+  })
+  await expect(page.locator('[data-learning-gate="unavailable"][data-gate-status="pending"]')).toBeVisible()
+  await expect.poll(() => defsRequested["env-c"]).toBe(true)
+  expect(learningRequestsByEnv["env-c"]).toEqual([])
+
+  // Release env-c's catalog advertising ONLY learning.Episode -> gate opens and reads Cell C (never stale Cell A).
+  defsWaiters["env-c"]!()
+  await expect(page.getByText("Cell C episode")).toBeVisible()
+  await expect(page.getByText("Cell A episode")).toHaveCount(0)
+  await expect(nav.getByRole("link", { name: "Episodes" })).toBeVisible()
+  await expect(nav.getByRole("link", { name: "Cases & eval sets" })).toHaveCount(0)
+  expect(learningRequestsByEnv["env-c"]!.length).toBeGreaterThan(0)
+
+  // 5. While Cell C's Episodes page is mounted, visibilitychange/focus-driven switch to env-d (catalog held pending)
+  // immediately unmounts the page and sends zero Learning fetches to env-d (even though focus triggers refetches concurrently).
+  currentEnv = "env-d"
+  await page.evaluate(() => {
+    document.dispatchEvent(new Event("visibilitychange", { bubbles: true }))
+    window.dispatchEvent(new Event("focus"))
+  })
+  await expect(page.locator('[data-learning-gate="unavailable"][data-gate-status="pending"]')).toBeVisible()
+  await expect(page.getByText("Cell C episode")).toHaveCount(0)
+  await expect(nav.getByRole("link", { name: "Episodes" })).toHaveCount(0)
+  await expect.poll(() => defsRequested["env-d"]).toBe(true)
+  expect(learningRequestsByEnv["env-d"]).toEqual([])
+  defsWaiters["env-d"]!()
+  await expect(page.locator('[data-learning-gate="unavailable"][data-gate-status="ready"]')).toBeVisible()
+  expect(learningRequestsByEnv["env-d"]).toEqual([])
 })

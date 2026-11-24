@@ -1,7 +1,18 @@
-import { CellUnavailable, readStudioScope, scopedHostFetch } from "../definitions.ts"
+import { CellUnavailable, readStudioScope, sameStudioScope, scopedHostFetch, type StudioScope } from "../definitions.ts"
 import { recordsPath, rowWithheld, servedQuery, snapshotMoved, totalOf, type RecordsQuery, type Served, type Total } from "../records-query.ts"
 import type { QueryDiagnostic } from "../records-source.ts"
 import type { ObjectRecord } from "../transport.ts"
+
+/**
+ * Options binding a Learning read to the exact server-reported scope whose `/v1/definitions`
+ * opened `<LearningGate>`. If `/api/me` now reports a different scope, the read refuses to touch
+ * the new cell and reports the transition via `onScopeMismatch`.
+ */
+export interface ScopedReadOptions {
+  readonly scope?: StudioScope
+  readonly signal?: AbortSignal
+  readonly onScopeMismatch?: (actual: StudioScope | null) => void
+}
 
 /**
  * Shared fail-closed decoding helpers and generic `/v1/objects/{type}` readers for the learning
@@ -71,6 +82,8 @@ export type ObjectItemRead<T> =
   | { readonly kind: "refused"; readonly status: number; readonly code: string; readonly message: string }
   | { readonly kind: "unavailable" }
   | { readonly kind: "no-cell" }
+  /** Server-reported scope moved away from the gate's verified scope; zero request reached the new cell. */
+  | { readonly kind: "scope-changed" }
 
 export type ObjectListRow<T> =
   | { readonly kind: "ok"; readonly item: T; readonly record: ObjectRecord }
@@ -90,6 +103,8 @@ export type ObjectListRead<T> =
   | { readonly kind: "refused"; readonly status: number; readonly code: string; readonly message: string; readonly diagnostics: readonly QueryDiagnostic[] }
   | { readonly kind: "unavailable" }
   | { readonly kind: "no-cell" }
+  /** Server-reported scope moved away from the gate's verified scope; zero request reached the new cell. */
+  | { readonly kind: "scope-changed" }
 
 function diagnosticsOf(body: unknown): readonly QueryDiagnostic[] {
   const raw = (body as { diagnostics?: unknown } | null)?.diagnostics
@@ -101,22 +116,51 @@ function diagnosticsOf(body: unknown): readonly QueryDiagnostic[] {
   }))
 }
 
+/**
+ * Confirm the fresh server-reported scope matches `options.scope` (when bound) before sending any
+ * Learning request. On mismatch, reports the new scope and refuses to issue any host fetch.
+ */
+export async function resolveBoundLearningScope(
+  fetcher: Fetch,
+  options: ScopedReadOptions = {},
+): Promise<
+  | { readonly kind: "ok"; readonly scope: StudioScope }
+  | { readonly kind: "no-cell" }
+  | { readonly kind: "unavailable" }
+  | { readonly kind: "scope-changed" }
+> {
+  let actual: StudioScope | null
+  try { actual = await readStudioScope(fetcher, options.signal) } catch (error) {
+    if (options.signal?.aborted) throw error
+    if (error instanceof CellUnavailable) return { kind: "unavailable" }
+    throw error
+  }
+  if (options.signal?.aborted) return { kind: "scope-changed" }
+  if (options.scope !== undefined && !sameStudioScope(actual, options.scope)) {
+    options.onScopeMismatch?.(actual)
+    return { kind: "scope-changed" }
+  }
+  if (actual === null) return { kind: "no-cell" }
+  return { kind: "ok", scope: actual }
+}
+
 /** Read one record from `GET /v1/objects/{type}/{id}` and decode it fail-closed. */
 export async function readLearningObject<T>(
   objectType: string,
   id: string,
   decode: (record: ObjectRecord) => DecodedRecord<T>,
   fetcher: Fetch = defaultFetch,
+  options: ScopedReadOptions = {},
 ): Promise<ObjectItemRead<T>> {
-  let scope
-  try { scope = await readStudioScope(fetcher) } catch (error) { if (error instanceof CellUnavailable) return { kind: "unavailable" }; throw error }
-  if (scope === null) return { kind: "no-cell" }
-  const active = scope
+  const resolved = await resolveBoundLearningScope(fetcher, options)
+  if (resolved.kind !== "ok") return resolved
+  const active = resolved.scope
   const response = await scopedHostFetch(fetcher, "/api/host", async () => active)(
     `/v1/objects/${encodeURIComponent(objectType)}/${encodeURIComponent(id)}`,
-    { headers: { accept: "application/json" } },
+    { headers: { accept: "application/json" }, ...(options.signal === undefined ? {} : { signal: options.signal }) },
   )
   const raw = await response.text()
+  if (options.signal?.aborted) return { kind: "scope-changed" }
   let body: unknown = null
   try { body = JSON.parse(raw) } catch { /* decided by status below */ }
   const code = (body as { code?: unknown } | null)?.code
@@ -143,16 +187,17 @@ export async function listLearningObjects<T>(
   query: RecordsQuery,
   decode: (record: ObjectRecord) => DecodedRecord<T>,
   fetcher: Fetch = defaultFetch,
+  options: ScopedReadOptions = {},
 ): Promise<ObjectListRead<T>> {
-  let scope
-  try { scope = await readStudioScope(fetcher) } catch (error) { if (error instanceof CellUnavailable) return { kind: "unavailable" }; throw error }
-  if (scope === null) return { kind: "no-cell" }
-  const active = scope
+  const resolved = await resolveBoundLearningScope(fetcher, options)
+  if (resolved.kind !== "ok") return resolved
+  const active = resolved.scope
   const response = await scopedHostFetch(fetcher, "/api/host", async () => active)(
     recordsPath(objectType, query),
-    { headers: { accept: "application/json" } },
+    { headers: { accept: "application/json" }, ...(options.signal === undefined ? {} : { signal: options.signal }) },
   )
   const raw = await response.text()
+  if (options.signal?.aborted) return { kind: "scope-changed" }
   let body: unknown = null
   try { body = JSON.parse(raw) } catch { /* decided by status below */ }
   const code = (body as { code?: unknown } | null)?.code

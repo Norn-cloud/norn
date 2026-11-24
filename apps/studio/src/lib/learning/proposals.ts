@@ -2,7 +2,7 @@ import type { Clause, Predicate, RecordsQuery, Served } from "../records-query.t
 import type { ObjectRecord } from "../transport.ts"
 import {
   DecodeError, bool, defaultFetch, int, list, listLearningObjects, obj, oneOf, readLearningObject, receipt, str, text,
-  type DecodedRecord, type Fetch, type ObjectItemRead, type ObjectListRead, type ReceiptRef,
+  type DecodedRecord, type Fetch, type ObjectItemRead, type ObjectListRead, type ReceiptRef, type ScopedReadOptions,
 } from "./objects.ts"
 
 /**
@@ -212,11 +212,11 @@ export function decodeGapProposal(record: ObjectRecord): DecodedRecord<GapPropos
   }
 }
 
-export const listGapProposals = (query: RecordsQuery, fetcher: Fetch = defaultFetch): Promise<ObjectListRead<GapProposal>> =>
-  listLearningObjects(GAP_PROPOSAL_TYPE, query, decodeGapProposal, fetcher)
+export const listGapProposals = (query: RecordsQuery, fetcher: Fetch = defaultFetch, options?: ScopedReadOptions): Promise<ObjectListRead<GapProposal>> =>
+  listLearningObjects(GAP_PROPOSAL_TYPE, query, decodeGapProposal, fetcher, options)
 
-export const readGapProposal = (id: string, fetcher: Fetch = defaultFetch): Promise<ObjectItemRead<GapProposal>> =>
-  readLearningObject(GAP_PROPOSAL_TYPE, id, decodeGapProposal, fetcher)
+export const readGapProposal = (id: string, fetcher: Fetch = defaultFetch, options?: ScopedReadOptions): Promise<ObjectItemRead<GapProposal>> =>
+  readLearningObject(GAP_PROPOSAL_TYPE, id, decodeGapProposal, fetcher, options)
 
 /** Encode a status filter for `GET /v1/objects/learning.GapProposal`. */
 export function proposalFilterPredicate(status: ProposalStatus | undefined): Predicate | null {

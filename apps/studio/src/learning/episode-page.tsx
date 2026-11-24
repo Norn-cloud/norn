@@ -12,7 +12,7 @@ import { NO_DATA_CELL } from "../lib/definitions.ts"
 import { humanize } from "../lib/cell-read.ts"
 import { EPISODE_TYPE, EPISODES_UNAVAILABLE, readEpisode, type Agreement, type Episode, type OutcomeState, type RuleOutcome, type Verdict } from "../lib/learning/episode.ts"
 import type { ObjectRecord } from "../lib/transport.ts"
-import { LearningGate } from "./gate.tsx"
+import { LearningGate, useBoundLearningRead } from "./gate.tsx"
 import { RecordActions } from "./record-actions.tsx"
 
 /**
@@ -31,7 +31,16 @@ export function EpisodePage() {
 
 function EpisodePageContent() {
   const { id = "" } = useParams({ strict: false })
-  const read = useQuery({ queryKey: ["episode", id], queryFn: () => readEpisode(id), retry: false })
+  const bound = useBoundLearningRead()
+  const read = useQuery({
+    queryKey: ["episode", bound.scopeKey, id],
+    queryFn: ({ signal }) => readEpisode(id, undefined, {
+      ...(bound.scope === null ? {} : { scope: bound.scope }),
+      signal,
+      onScopeMismatch: bound.onScopeMismatch,
+    }),
+    retry: false,
+  })
   const result = read.data
   if (read.isPending) return <div className="mx-auto grid max-w-5xl gap-3" aria-label="Reading the episode"><Skeleton className="h-8 w-80" />{[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-20 rounded-lg" />)}</div>
   if (read.isError) return (
@@ -195,7 +204,7 @@ function Timeline({ episode: e, record }: { readonly episode: Episode; readonly 
                   ariaLabel="Episode actions"
                   emptyText="The cell offers you no actions on this episode."
                   onChanged={() => {
-                    void client.invalidateQueries({ queryKey: ["episode", record.id] })
+                    void client.invalidateQueries({ queryKey: ["episode"] })
                     void client.invalidateQueries({ queryKey: ["learning", "episodes"] })
                   }}
                 />

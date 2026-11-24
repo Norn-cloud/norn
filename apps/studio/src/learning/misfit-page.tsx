@@ -25,13 +25,13 @@ import { writesWhole } from "../lib/actions.ts"
 import { useLearningCapabilities } from "../lib/learning/capabilities.ts"
 import { VERDICTS, type Verdict } from "../lib/learning/episode.ts"
 import {
-  MISFIT_UNAVAILABLE, TRIAGE_TREND_UNAVAILABLE, compareRateFigures, readMisfitByLaw, readTriageOverTime,
-  type AnswerMeta, type MisfitLawRow, type RateFigure,
+  MISFIT_UNAVAILABLE, TRIAGE_TREND_UNAVAILABLE, readMisfitByLaw, readTriageOverTime, topRateRow,
+  type AnswerMeta, type RateFigure,
 } from "../lib/learning/misfit.ts"
 import { GAP_PROPOSAL_TYPE } from "../lib/learning/proposals.ts"
 import { useCatalog } from "../lib/use-catalog.ts"
 import { VERDICT_LABEL } from "./episode-page.tsx"
-import { LearningGate } from "./gate.tsx"
+import { LearningGate, useBoundLearningRead } from "./gate.tsx"
 
 const MISFIT_CHART_CONFIG: ChartConfig = {
   overrideRate: { label: "Override rate", color: "var(--tone-amber)" },
@@ -71,24 +71,6 @@ function RateCell({ figure }: { readonly figure: RateFigure | null }) {
   )
 }
 
-/** Pick the KPI winner for override or exception rate using exact decimal/rational comparison (never rounded chart values). */
-function topRateRow(rows: readonly MisfitLawRow[], pickRate: (row: MisfitLawRow) => RateFigure | null): MisfitLawRow | undefined {
-  let best: MisfitLawRow | undefined
-  for (const row of rows) {
-    const figure = pickRate(row)
-    if (figure === null || figure.suppressed || figure.exact === null) continue
-    if (best === undefined) {
-      best = row
-      continue
-    }
-    const cmp = compareRateFigures(figure, pickRate(best))
-    if (cmp > 0 || (cmp === 0 && row.lawId.localeCompare(best.lawId) < 0)) {
-      best = row
-    }
-  }
-  return best
-}
-
 /**
  * `/learning/misfit`: the Misfit board and learning charts island (#1220 L-4).
  *
@@ -110,13 +92,30 @@ function MisfitPageContent() {
   const { locale } = useLocale()
   const technical = view === "technical"
   const client = useQueryClient()
+  const bound = useBoundLearningRead()
   const capabilities = useLearningCapabilities()
   const { read: catalogRead, catalog } = useCatalog()
   const [acting, setActing] = useState<OpenAction | null>(null)
 
-  const misfitRead = useQuery({ queryKey: ["learning", "misfit-by-law"], queryFn: () => readMisfitByLaw(), retry: false })
-  const triageRead = useQuery({ queryKey: ["learning", "triage-over-time"], queryFn: () => readTriageOverTime(), retry: false })
-  const proposalCatalog = useActions(GAP_PROPOSAL_TYPE, undefined, capabilities.proposals)
+  const misfitRead = useQuery({
+    queryKey: ["learning", "misfit-by-law", bound.scopeKey],
+    queryFn: ({ signal }) => readMisfitByLaw(undefined, {
+      ...(bound.scope === null ? {} : { scope: bound.scope }),
+      signal,
+      onScopeMismatch: bound.onScopeMismatch,
+    }),
+    retry: false,
+  })
+  const triageRead = useQuery({
+    queryKey: ["learning", "triage-over-time", bound.scopeKey],
+    queryFn: ({ signal }) => readTriageOverTime(undefined, {
+      ...(bound.scope === null ? {} : { scope: bound.scope }),
+      signal,
+      onScopeMismatch: bound.onScopeMismatch,
+    }),
+    retry: false,
+  })
+  const proposalCatalog = useActions(GAP_PROPOSAL_TYPE, undefined, capabilities.proposals, bound)
   const draftAction = proposalCatalog.data?.kind === "catalog"
     ? proposalCatalog.data.items.find((a) => a.actionId === "learning.draft_gap_proposal") ?? proposalCatalog.data.items.find(writesWhole)
     : undefined
@@ -203,7 +202,7 @@ function MisfitPageContent() {
               <Button variant="outline" size="sm" onClick={() => void misfitRead.refetch()}>Retry</Button>
             </div>
           </Well>
-        ) : misfitRead.data?.kind === "no-cell" ? (
+        ) : misfitRead.data?.kind === "scope-changed" ? null : misfitRead.data?.kind === "no-cell" ? (
           <Well><EmptyState icon={Scale} title="No data cell">{NO_DATA_CELL}</EmptyState></Well>
         ) : misfitRead.data?.kind === "unavailable" ? (
           <Well><EmptyState icon={Scale} title="Not served yet">{MISFIT_UNAVAILABLE}</EmptyState></Well>
@@ -302,7 +301,7 @@ function MisfitPageContent() {
               <Button variant="outline" size="sm" onClick={() => void triageRead.refetch()}>Retry</Button>
             </div>
           </Well>
-        ) : triageRead.data?.kind === "no-cell" ? (
+        ) : triageRead.data?.kind === "scope-changed" ? null : triageRead.data?.kind === "no-cell" ? (
           <Well><EmptyState icon={TrendingUp} title="No data cell">{NO_DATA_CELL}</EmptyState></Well>
         ) : triageRead.data?.kind === "unavailable" ? (
           <Well><EmptyState icon={TrendingUp} title="Not served yet">{TRIAGE_TREND_UNAVAILABLE}</EmptyState></Well>
@@ -374,7 +373,7 @@ function MisfitPageContent() {
         )}
       </Panel>
 
-      <ActionSheet open={acting} onClose={() => setActing(null)} onChanged={() => void client.invalidateQueries({ queryKey: ["learning", "proposals"] })} />
+      <ActionSheet open={acting} onClose={() => setActing(null)} onChanged={() => void client.invalidateQueries({ queryKey: ["learning", "proposals"] })} scopeBinding={bound} />
     </div>
   )
 }

@@ -213,6 +213,35 @@ test("misfit board (S5 & S6): ranks close rates by exact decimal, marks omitted 
   await page.unrouteAll({ behavior: "ignoreErrors" })
   await openMisfit(page, { triageOverTime: dupTriage })
   await expect(page.getByText("Can't read triage trend")).toBeVisible()
+
+  // S5: Total ordering across mixed rows with and without totals at equal decimal 0.333333 (z 1/3 > a 333333/1000000 > m no totals).
+  const mixedTotals = structuredClone(fixture.misfitByLaw) as { rows: Record<string, unknown> }
+  mixedTotals.rows = {
+    '["demo.law.m","override"]': { bucket: ["demo.law.m", "override"], totals: [], value: 0.333333, members: {} },
+    '["demo.law.a","override"]': { bucket: ["demo.law.a", "override"], totals: [333333, 1000000], value: 0.333333, members: {} },
+    '["demo.law.z","override"]': { bucket: ["demo.law.z", "override"], totals: [1, 3], value: 0.333333, members: {} },
+  }
+  await page.unrouteAll({ behavior: "ignoreErrors" })
+  await openMisfit(page, { misfitByLaw: mixedTotals })
+  const mixedRows = page.getByRole("table", { name: "Misfit by law" }).locator("tbody tr")
+  await expect(mixedRows.nth(0)).toHaveAttribute("data-misfit-law", "demo.law.z")
+  await expect(mixedRows.nth(1)).toHaveAttribute("data-misfit-law", "demo.law.a")
+  await expect(mixedRows.nth(2)).toHaveAttribute("data-misfit-law", "demo.law.m")
+  await expect(page.locator('[data-slot="kpi"]', { hasText: "Highest override rate" })).toContainText("Z")
+
+  // S6: Fractional memberCount on a rate with denominator and extra triage totals ([0, 8] with value 7) both fail closed.
+  const badMemberCount = structuredClone(fixture.misfitByLaw) as { rows: Record<string, unknown> }
+  badMemberCount.rows = {
+    '["demo.law.bad","override"]': { bucket: ["demo.law.bad", "override"], totals: [5, 12], value: 0.417, memberCount: 1.5, members: {} },
+  }
+  const extraTotalsTriage = structuredClone(fixture.triageOverTime) as { rows: Record<string, unknown> }
+  extraTotalsTriage.rows = {
+    '["2026-11-02","gap"]': { bucket: ["2026-11-02", "gap"], totals: [0, 8], value: 7, members: {} },
+  }
+  await page.unrouteAll({ behavior: "ignoreErrors" })
+  await openMisfit(page, { misfitByLaw: badMemberCount, triageOverTime: extraTotalsTriage })
+  await expect(page.getByText("Can't read misfit answer")).toBeVisible()
+  await expect(page.getByText("Can't read triage trend")).toBeVisible()
 })
 
 test("misfit board: refused and unserved answers say so honestly", async ({ page }) => {

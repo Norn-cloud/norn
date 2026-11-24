@@ -1,4 +1,5 @@
 import { useMemo } from "react"
+import { sameStudioScope, useStudioScope, type StudioScope } from "../definitions.ts"
 import { useMode, type Mode } from "../live-transport.ts"
 import { CURATED_CASE_TYPE, EVAL_SET_TYPE } from "./cases.ts"
 import { EPISODE_TYPE } from "./episode.ts"
@@ -33,6 +34,8 @@ export type CapabilityStatus = "ready" | "pending" | "error" | "unavailable"
 
 export interface LearningCapabilities {
   readonly status: CapabilityStatus
+  /** Server-reported scope (`orgId` + `environmentId`) whose catalog authorized these flags, or null when closed. */
+  readonly scope: StudioScope | null
   readonly episodes: boolean
   readonly cases: boolean
   readonly misfit: boolean
@@ -59,6 +62,7 @@ const EMPTY_SET: ReadonlySet<string> = new Set()
 
 const CLOSED = (status: CapabilityStatus): LearningCapabilities => ({
   status,
+  scope: null,
   episodes: false,
   cases: false,
   misfit: false,
@@ -82,22 +86,31 @@ function activeObjectTypes(mode: Extract<Mode, { readonly kind: "live" }>): Read
 }
 
 /**
- * Pure capability evaluation from the single `Mode` read (`GET /v1/definitions`).
- * Always fails closed when `mode` is undefined, failed, or not a live scoped cell.
+ * Pure capability evaluation from the single scoped `Mode` read (`GET /v1/definitions`).
+ * Always fails closed when `mode` is undefined, failed, not a live scoped cell, or belongs to a
+ * different scope than `state.expectedScope` (for example after a same-org environment switch).
  */
 export function learningCapabilitiesOf(
   mode: Mode | undefined,
-  state: { readonly isPending?: boolean; readonly isError?: boolean } = {},
+  state: {
+    readonly isPending?: boolean
+    readonly isError?: boolean
+    readonly expectedScope?: StudioScope | null
+  } = {},
 ): LearningCapabilities {
   if (state.isError) return CLOSED("error")
   if (state.isPending || mode === undefined) return CLOSED("pending")
   if (mode.kind !== "live") return CLOSED("unavailable")
+  if (state.expectedScope !== undefined && !sameStudioScope(mode.scope, state.expectedScope)) {
+    return CLOSED("pending")
+  }
 
   const objectTypes = activeObjectTypes(mode)
   const publishedQuestions = mode.publishedQuestions
 
   return {
     status: "ready",
+    scope: mode.scope,
     episodes: objectTypes.has(EPISODE_TYPE),
     cases: objectTypes.has(CURATED_CASE_TYPE) && objectTypes.has(EVAL_SET_TYPE),
     misfit: publishedQuestions.has(MISFIT_BY_LAW_QUESTION) && publishedQuestions.has(TRIAGE_OVER_TIME_QUESTION),
@@ -115,13 +128,19 @@ export function isSectionVisible(path: string, capabilities: LearningCapabilitie
 
 /**
  * Single shared capability read for both sidebar visibility and route entry, backed by `useMode()`
- * (`GET /v1/definitions` on the current scoped cell).
+ * (`GET /v1/definitions` keyed by the current server-reported scope).
  */
 export function useLearningCapabilities(): LearningCapabilities & { readonly refetch: () => void } {
+  const scope = useStudioScope()
   const mode = useMode()
+  const expectedScope = scope.isSuccess ? scope.data : undefined
   const capabilities = useMemo(
-    () => learningCapabilitiesOf(mode.data, { isPending: mode.isPending, isError: mode.isError }),
-    [mode.data, mode.isPending, mode.isError],
+    () => learningCapabilitiesOf(mode.data, {
+      isPending: scope.isPending || mode.isPending,
+      isError: mode.isError,
+      ...(expectedScope === undefined ? {} : { expectedScope }),
+    }),
+    [mode.data, mode.isPending, mode.isError, scope.isPending, expectedScope],
   )
   return { ...capabilities, refetch: () => { void mode.refetch() } }
 }

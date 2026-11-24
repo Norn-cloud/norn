@@ -19,7 +19,7 @@ import {
 } from "../lib/learning/episode.ts"
 import { DATA_CHANGED, LIMITS, recordsQueryParams, SERVER_QUERY_UNAVAILABLE, totalText, type RecordsQuery } from "../lib/records-query.ts"
 import { AGREEMENT_STYLE, VERDICT_LABEL } from "./episode-page.tsx"
-import { LearningGate } from "./gate.tsx"
+import { LearningGate, useBoundLearningRead } from "./gate.tsx"
 
 const AGREEMENT_TONE: Readonly<Record<Agreement, Tone>> = {
   accepted: "green",
@@ -77,6 +77,7 @@ function EpisodesPageContent() {
   const { view } = useView()
   const technical = view === "technical"
   const client = useQueryClient()
+  const bound = useBoundLearningRead()
 
   const [filters, setFilters] = useState<EpisodeFilters>({})
   const [cursors, setCursors] = useState<readonly (string | undefined)[]>([undefined])
@@ -93,8 +94,12 @@ function EpisodesPageContent() {
   const paramString = recordsQueryParams(query).toString()
 
   const read = useQuery({
-    queryKey: ["learning", "episodes", paramString],
-    queryFn: () => listEpisodes(query),
+    queryKey: ["learning", "episodes", bound.scopeKey, paramString],
+    queryFn: ({ signal }) => listEpisodes(query, undefined, {
+      ...(bound.scope === null ? {} : { scope: bound.scope }),
+      signal,
+      onScopeMismatch: bound.onScopeMismatch,
+    }),
     placeholderData: keepPreviousData,
     retry: false,
   })

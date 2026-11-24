@@ -25,7 +25,7 @@ import type { ObjectListRow } from "../lib/learning/objects.ts"
 import { DATA_CHANGED, LIMITS, recordsQueryParams, totalText, type RecordsQuery } from "../lib/records-query.ts"
 import type { ObjectRecord } from "../lib/transport.ts"
 import { AGREEMENT_STYLE } from "./episode-page.tsx"
-import { LearningGate } from "./gate.tsx"
+import { LearningGate, useBoundLearningRead } from "./gate.tsx"
 import { RecordActions, TypeActions } from "./record-actions.tsx"
 
 const AGREEMENT_TONE: Readonly<Record<Agreement, Tone>> = {
@@ -65,6 +65,7 @@ function CasesPageContent() {
   const { view } = useView()
   const technical = view === "technical"
   const client = useQueryClient()
+  const bound = useBoundLearningRead()
   const [tab, setTab] = useState<"cases" | "eval-sets">("cases")
   // Keep only the selected ids — never stale record snapshots (PR #1631 S3).
   const [openedCaseId, setOpenedCaseId] = useState<string | null>(null)
@@ -98,14 +99,22 @@ function CasesPageContent() {
   const setsParamString = recordsQueryParams(setsQuery).toString()
 
   const casesRead = useQuery({
-    queryKey: ["learning", "cases", casesParamString],
-    queryFn: () => listCuratedCases(casesQuery),
+    queryKey: ["learning", "cases", bound.scopeKey, casesParamString],
+    queryFn: ({ signal }) => listCuratedCases(casesQuery, undefined, {
+      ...(bound.scope === null ? {} : { scope: bound.scope }),
+      signal,
+      onScopeMismatch: bound.onScopeMismatch,
+    }),
     placeholderData: keepPreviousData,
     retry: false,
   })
   const setsRead = useQuery({
-    queryKey: ["learning", "eval-sets", setsParamString],
-    queryFn: () => listEvalSets(setsQuery),
+    queryKey: ["learning", "eval-sets", bound.scopeKey, setsParamString],
+    queryFn: ({ signal }) => listEvalSets(setsQuery, undefined, {
+      ...(bound.scope === null ? {} : { scope: bound.scope }),
+      signal,
+      onScopeMismatch: bound.onScopeMismatch,
+    }),
     placeholderData: keepPreviousData,
     retry: false,
   })
@@ -213,7 +222,7 @@ function CasesPageContent() {
               <span className="flex-1" />
               <Button variant="outline" size="sm" onClick={() => void casesRead.refetch()}>Retry</Button>
             </div>
-          ) : casesRead.data?.kind === "no-cell" ? (
+          ) : casesRead.data?.kind === "scope-changed" ? null : casesRead.data?.kind === "no-cell" ? (
             <EmptyState icon={BookMarked} title="No data cell">{NO_DATA_CELL}</EmptyState>
           ) : casesRead.data?.kind === "unavailable" ? (
             <EmptyState icon={BookMarked} title="Not served yet">{CASES_UNAVAILABLE}</EmptyState>
@@ -332,7 +341,7 @@ function CasesPageContent() {
               <span className="flex-1" />
               <Button variant="outline" size="sm" onClick={() => void setsRead.refetch()}>Retry</Button>
             </div>
-          ) : setsRead.data?.kind === "no-cell" ? (
+          ) : setsRead.data?.kind === "scope-changed" ? null : setsRead.data?.kind === "no-cell" ? (
             <EmptyState icon={FolderLock} title="No data cell">{NO_DATA_CELL}</EmptyState>
           ) : setsRead.data?.kind === "unavailable" ? (
             <EmptyState icon={FolderLock} title="Not served yet">{EVAL_SETS_UNAVAILABLE}</EmptyState>
@@ -618,7 +627,7 @@ function CasesPageContent() {
         </SheetContent>
       </Sheet>
 
-      <ActionSheet open={acting} onClose={() => setActing(null)} onChanged={refreshAll} />
+      <ActionSheet open={acting} onClose={() => setActing(null)} onChanged={refreshAll} scopeBinding={bound} />
     </div>
   )
 }

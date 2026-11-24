@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { NotServed, liveTransport, readMode } from "../src/lib/live-transport.ts"
+import { NotServed, ScopeSupersededError, currentMode, liveTransport, readMode, refreshMode } from "../src/lib/live-transport.ts"
 
 const ME = { user: { id: "user:dev", name: "user:dev", email: "" }, organization: { id: "local", name: "shop", role: "local developer" }, environmentId: "dev" }
 const DEFINITIONS = '{"admitted":true,"version":3,"artifacts":[{"artifactId":"shop.Product.entity","version":"0.1.0","payload":{"scale":2.50}}]}'
@@ -17,14 +17,51 @@ function server(routes: Record<string, readonly [number, string]>, me: readonly 
   return { calls, fetcher }
 }
 
-test("a cell that answers its definitions is live, with the artifacts and their exact numbers", async () => {
+test("a cell that answers its definitions is live, with its scope, artifacts and exact numbers", async () => {
   const { fetcher, calls } = server({ "/v1/definitions": [200, DEFINITIONS] })
   const mode = await readMode(fetcher)
   if (mode.kind !== "live") throw new Error("expected live")
+  expect(mode.scope).toEqual({ orgId: "local", environmentId: "dev" })
   expect(mode.catalog.origin).toBe("live")
   expect(mode.catalog.document.map((artifact) => artifact.artifactId)).toEqual(["shop.Product.entity"])
   expect(mode.catalog.numbers.get("/0/payload/scale")).toBe("2.50")
   expect(calls).toEqual(["/api/host/v1/definitions?orgId=local&environmentId=dev"])
+})
+
+test("currentMode keys cached catalogs by org + environment and rejects superseded in-flight reads (S1)", async () => {
+  refreshMode()
+  const scopeA = { orgId: "org_demo", environmentId: "env-a" }
+  const scopeB = { orgId: "org_demo", environmentId: "env-b" }
+  const calls: string[] = []
+  let releaseA!: () => void
+  const gateA = new Promise<void>((resolve) => { releaseA = resolve })
+
+  const fetcher = async (input: string) => {
+    calls.push(input)
+    if (input.includes("environmentId=env-a")) {
+      await gateA
+      return new Response('{"admitted":true,"version":1,"artifacts":[{"artifactId":"learning.Episode.entity","kind":"entity","lifecycle":"active","payload":{"objectType":{"name":"learning.Episode"}}}]}', { status: 200 })
+    }
+    return new Response('{"admitted":true,"version":2,"artifacts":[]}', { status: 200 })
+  }
+
+  // Start env-a catalog read, then switch scope to env-b before env-a finishes.
+  const inflightA = currentMode(fetcher, scopeA)
+  const modeB = await currentMode(fetcher, scopeB)
+  if (modeB.kind !== "live") throw new Error("expected live env-b")
+  expect(modeB.scope).toEqual(scopeB)
+  expect(modeB.catalog.document).toEqual([])
+
+  // Late resolution of env-a must be superseded and never replace env-b's cached mode.
+  releaseA()
+  await expect(inflightA).rejects.toBeInstanceOf(ScopeSupersededError)
+  const cachedB = await currentMode(fetcher, scopeB)
+  expect(cachedB).toBe(modeB)
+  expect(calls).toEqual([
+    "/api/host/v1/definitions?orgId=org_demo&environmentId=env-a",
+    "/api/host/v1/definitions?orgId=org_demo&environmentId=env-b",
+  ])
+  refreshMode()
 })
 
 test("the catalog's per-type counts are the cell's, kept only when well formed; none when it sends none", async () => {

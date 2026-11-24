@@ -9,6 +9,7 @@ import { ACTIONS_UNAVAILABLE, writesWhole, type ActionSummary } from "../lib/act
 import { NO_DATA_CELL } from "../lib/definitions.ts"
 import { offeredFor, recordCatalog } from "../lib/screen/call.ts"
 import type { ObjectRecord } from "../lib/transport.ts"
+import { useBoundLearningRead } from "./gate.tsx"
 
 /**
  * Type-level creation actions the cell offers for `objectKind` (`writesWhole`). Studio never
@@ -29,8 +30,10 @@ export function TypeActions({ objectKind, prefill, onChanged, onOpen, label, pri
   readonly primary?: boolean
   readonly showUnavailable?: boolean
 }) {
-  const catalog = useActions(objectKind)
+  const bound = useBoundLearningRead()
+  const catalog = useActions(objectKind, undefined, true, bound)
   const [acting, setActing] = useState<OpenAction | null>(null)
+  if (catalog.data?.kind === "scope-changed") return null
   const off = catalog.isError
     ? (catalog.error instanceof Error ? catalog.error.message : ACTIONS_UNAVAILABLE)
     : catalog.data?.kind === "unavailable" ? ACTIONS_UNAVAILABLE
@@ -67,7 +70,7 @@ export function TypeActions({ objectKind, prefill, onChanged, onOpen, label, pri
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
-      {onOpen === undefined && <ActionSheet open={acting} onClose={() => setActing(null)} onChanged={onChanged} />}
+      {onOpen === undefined && <ActionSheet open={acting} onClose={() => setActing(null)} onChanged={onChanged} scopeBinding={bound} />}
     </>
   )
 }
@@ -91,9 +94,11 @@ export function RecordActions({ objectKind, record, onChanged, onOpen, emptyText
   readonly prefillExtra?: Readonly<Record<string, string>>
   readonly icon?: boolean
 }) {
-  const catalog = useActions(objectKind, record.id)
+  const bound = useBoundLearningRead()
+  const catalog = useActions(objectKind, record.id, true, bound)
   const client = useQueryClient()
   const [acting, setActing] = useState<OpenAction | null>(null)
+  if (catalog.data?.kind === "scope-changed") return null
   const off = catalog.isError
     ? (catalog.error instanceof Error ? catalog.error.message : ACTIONS_UNAVAILABLE)
     : catalog.data?.kind === "unavailable" ? ACTIONS_UNAVAILABLE
@@ -128,7 +133,7 @@ export function RecordActions({ objectKind, record, onChanged, onOpen, emptyText
                 ))}
               </div>
             )}
-      {onOpen === undefined && <ActionSheet open={acting} onClose={() => setActing(null)} onChanged={handleChanged} />}
+      {onOpen === undefined && <ActionSheet open={acting} onClose={() => setActing(null)} onChanged={handleChanged} scopeBinding={bound} />}
     </div>
   )
 }

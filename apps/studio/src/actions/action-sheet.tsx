@@ -7,7 +7,8 @@ import { useLocale } from "@/lib/locale"
 import { useView } from "@/lib/view"
 import { conceptTitle } from "../lib/catalog.ts"
 import { labelIndex, pick } from "../lib/labels.ts"
-import { listActions, type ActionSummary, type CatalogRead, type Draft } from "../lib/actions.ts"
+import { listActions, callAction, type ActionSummary, type CatalogRead, type Draft } from "../lib/actions.ts"
+import { studioScopeKey, type StudioScope } from "../lib/definitions.ts"
 import { useAccount } from "../lib/session.ts"
 import { useCatalog } from "../lib/use-catalog.ts"
 import { ActionForm, type EnumLabelLookup } from "./action-form.tsx"
@@ -15,12 +16,36 @@ import { keptDrafts, sessionKey } from "./kept-drafts.ts"
 import { parkedCalls } from "./parked-calls.ts"
 import type { ParkedCall } from "../lib/screen/call.ts"
 
+export interface ActionScopeBinding {
+  readonly scope: StudioScope | null
+  readonly onScopeMismatch?: (actual: StudioScope | null) => void
+}
+
 /**
  * The actions the cell offers this reader for one object type, or for one record in its current
- * state (the server filters; Studio shows what it gets).
+ * state (the server filters; Studio shows what it gets). When `scopeBinding` is supplied, the
+ * query is keyed by that scope and refuses to hit another scope if `/api/me` moves.
  */
-export function useActions(objectKind: string, objectId?: string, enabled = true) {
-  return useQuery<CatalogRead>({ queryKey: ["actions", objectKind, objectId ?? null], queryFn: () => listActions(objectKind, undefined, objectId), retry: false, staleTime: objectId === undefined ? 60_000 : 0, enabled })
+export function useActions(objectKind: string, objectId?: string, enabled = true, scopeBinding?: ActionScopeBinding) {
+  const scopeKey = scopeBinding === undefined ? undefined : studioScopeKey(scopeBinding.scope)
+  return useQuery<CatalogRead>({
+    queryKey: scopeKey === undefined ? ["actions", objectKind, objectId ?? null] : ["actions", objectKind, objectId ?? null, scopeKey],
+    queryFn: ({ signal }) => listActions(
+      objectKind,
+      undefined,
+      objectId,
+      scopeBinding === undefined
+        ? { signal }
+        : {
+          signal,
+          ...(scopeBinding.scope === null ? {} : { scope: scopeBinding.scope }),
+          ...(scopeBinding.onScopeMismatch === undefined ? {} : { onScopeMismatch: scopeBinding.onScopeMismatch }),
+        },
+    ),
+    retry: false,
+    staleTime: objectId === undefined ? 60_000 : 0,
+    enabled,
+  })
 }
 
 const draftKey = (open: OpenAction) => `${open.action.actionId}:${JSON.stringify(open.prefill ?? {})}`
@@ -38,14 +63,23 @@ export interface OpenAction {
  * A governed action's form in a sheet. Closing a draft with unsent changes asks first; so does
  * leaving the page. After a commit the object type's records are read again.
  */
-export function ActionSheet({ open, onClose, onView, onChanged }: {
+export function ActionSheet({ open, onClose, onView, onChanged, scopeBinding }: {
   readonly open: OpenAction | null; readonly onClose: () => void; readonly onView?: (objectId: string) => void
   /** The cell committed something: besides the type's records, read whatever else shows it again. */
   readonly onChanged?: () => void
+  /** Optional verified scope binding so commits never cross onto a different cell environment. */
+  readonly scopeBinding?: ActionScopeBinding
 }) {
   const { view } = useView()
   const { locale } = useLocale()
   const { read: catalogRead } = useCatalog()
+  const boundCall = useMemo(() => {
+    const scope = scopeBinding?.scope
+    if (scope == null) return undefined
+    const onScopeMismatch = scopeBinding?.onScopeMismatch
+    return (actionId: string, input: string, key: string) =>
+      callAction(actionId, input, key, undefined, { scope, ...(onScopeMismatch === undefined ? {} : { onScopeMismatch }) })
+  }, [scopeBinding?.scope, scopeBinding?.onScopeMismatch])
   const enumLabel = useMemo<EnumLabelLookup>(() => {
     const artifacts = catalogRead.data?.document
     if (open === null || artifacts === undefined) return () => undefined
@@ -136,6 +170,7 @@ export function ActionSheet({ open, onClose, onView, onChanged }: {
                 parked={parked} runNow={open.runNow === true && parked === open.parked}
                 onParked={(call) => parkedCalls.set(session, draftKey(open), call)} onUnparked={() => parkedCalls.delete(session, draftKey(open))}
                 onChanged={() => { invalidate(open.action.objectKind); onChanged?.() }}
+                {...(boundCall === undefined ? {} : { call: boundCall })}
                 enumLabel={enumLabel}
                 technical={technical} prefill={open.prefill} onDirty={setDirty} onClose={close}
                 onView={onView === undefined ? undefined : (id) => { close(); onView(id) }} />
