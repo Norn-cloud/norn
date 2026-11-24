@@ -57,6 +57,18 @@ use crate::store::{
     MarkingDeclassification, MarkingReveal, OutboxCommand, TimerEntry,
 };
 
+/// The admission inputs beyond the commit, its authorization and quantity:
+/// derived properties, reference and property reads, mapping bundles, a
+/// bookkeeping event, and the receipt mode.
+pub(crate) type AdmissionArgs<'a> = (
+    &'a [(FactKey, Vec<String>)],
+    &'a [norn_kernel::FactExpectation],
+    &'a [(norn_kernel::FactExpectation, Vec<String>)],
+    &'a [crate::mapping_bundle::MappingBundle],
+    Option<norn_ir::RuntimeValue>,
+    crate::function_receipt::ReceiptCommitMode,
+);
+
 /// The simulated outside world: maps a performed command to the kernel input
 /// its result becomes. `Send`, so a driver can be shared behind a mutex by a
 /// server host.
@@ -1767,13 +1779,12 @@ where
     }
 
     #[allow(
-        clippy::too_many_lines,
         clippy::too_many_arguments,
-        reason = "shared admission and optional quantity data join one guarded transaction"
+        reason = "every ordinary commit is a normal receipt-mode admission"
     )]
     fn commit_with_authorization(
         &mut self,
-        mut commit: CellCommit<E, C, I>,
+        commit: CellCommit<E, C, I>,
         authorization: Option<&ObservationAuthorization>,
         owned_rows: Option<OwnedRowsCommitProof>,
         quantity: Option<(&[norn_ir::quantity_ledger::QuantityRequest], &str)>,
@@ -1782,6 +1793,32 @@ where
         property_reads: &[(norn_kernel::FactExpectation, Vec<String>)],
         mapped: &[crate::mapping_bundle::MappingBundle],
         bookkeeping: Option<norn_ir::RuntimeValue>,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        let mode = crate::function_receipt::ReceiptCommitMode::Normal;
+        let args = (
+            derived,
+            references,
+            property_reads,
+            mapped,
+            bookkeeping,
+            mode,
+        );
+        self.commit_admitted(commit, authorization, owned_rows, quantity, args)
+    }
+
+    /// Admit one commit in `mode`: [`crate::function_receipt::ReceiptCommitMode`]
+    /// decides how a consumed Function delivery is rechecked.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "shared admission and optional quantity data join one guarded transaction"
+    )]
+    pub(crate) fn commit_admitted(
+        &mut self,
+        mut commit: CellCommit<E, C, I>,
+        authorization: Option<&ObservationAuthorization>,
+        owned_rows: Option<OwnedRowsCommitProof>,
+        quantity: Option<(&[norn_ir::quantity_ledger::QuantityRequest], &str)>,
+        (derived, references, property_reads, mapped, bookkeeping, mode): AdmissionArgs<'_>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         check_commit_identifiers(&commit)?;
         // Include the complete kernel input, including read/write expectations,
@@ -1936,13 +1973,8 @@ where
                 .map(Checked::into_versions)?;
             // RECEIPT-CONSUME-1: command authority and the deadline are
             // rechecked at the commit's own clock, under its write lock.
-            crate::function_receipt::check_consumption(
-                reader,
-                &commit,
-                &self.receipts,
-                &self.scope,
-                self.now,
-            )?;
+            let receipts = (&self.receipts, self.scope.as_str(), self.now, mode);
+            crate::function_receipt::check_consumption(reader, &commit, &batch, receipts)?;
             Ok((versions, mapping_proof))
         };
         match self.store.commit_guarded_submitted(

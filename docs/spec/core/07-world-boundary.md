@@ -450,14 +450,16 @@ as the state, joins the reconciliation pins as a compare-and-swap read. Every
 commit that consumes a pending `norn.function/v1` delivery applies its result,
 through an action or `Acceptance::commit`. Inside that commit's transaction the
 host rechecks the dispatch's scope, its deadline and the command authority at
-the commit's effective clock. A host commit consuming a Function delivery,
-pending or already consumed, takes its time from the durable clock floor
-inside its transaction, so a losing consumer refuses
+the commit's effective clock, even when the commit itself writes nothing. A
+host commit consuming the pending result of a Function command, or a result
+delivery not pending at its exact generation, takes its time from the durable
+clock floor inside its transaction, so a losing or stale consumer refuses
 `action.receipt_not_pending`, never a clock regression. A failed recheck
 refuses `action.receipt_not_accepted` (`CommitError::ReceiptNotAccepted`) with
-nothing applied. Only a refusal record (`SqliteCell::commit_result_refusal`),
-which names a pending Function delivery and applies nothing (no write, link,
-event or effect), consumes it without the recheck.
+nothing applied. Only the dedicated refusal entry point
+(`SqliteCell::commit_result_refusal`), chosen per call, consumes a pending
+Function delivery without the recheck, and its final store batch must apply
+nothing (no write, fact, link, event, effect or quantity posting).
 
 The kernel then checks the pins it can see. The receipt's manifest equals the
 declaration's. Its `run.id` equals the action's target object (RUN-BIND-1), and
@@ -495,8 +497,8 @@ crash and reopen, exact-retry replay, foreign scope or world, wrong manifest,
 invocation, run or recorded result, an intake retry that reruns every check,
 stale and expired evidence, command authority revoked before resolution or
 between resolution and commit (through an action or an embedded
-`Acceptance::commit`, including event- or effect-only commits), refusal
-records, a command state another handle moves after resolution, another
+`Acceptance::commit`, including read-only, event-only and effect-only
+commits), refusal records, a stale-generation consumer behind a later clock, a command state another handle moves after resolution, another
 handle's clock moving before intake, resolution or commit, a losing consumer
 behind a later clock, one winner of
 concurrent consumers, laws and caller authority still deciding

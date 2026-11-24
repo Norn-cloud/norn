@@ -41,8 +41,8 @@ use norn_kernel::result_reconciliation::{
     RefusalReason, ResultAuthorizer, ResultAuthzRequest, ResultChecks, StateView, reconcile,
 };
 use norn_kernel::{
-    CellCommit, CellHost, CommandId, CommitError, CommitReceipt, Consumed, FactExpectation,
-    FactKey, FactVersion, Generation, LogicalTime,
+    CellCommit, CommandId, CommitError, CommitReceipt, Consumed, FactExpectation, FactKey,
+    FactVersion, Generation, LogicalTime,
 };
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -113,6 +113,18 @@ impl From<CellError> for ReceiptIntakeError {
 
 /// A host's Function command-authority recheck (T2-RES-1 step 8).
 pub type ResultAuthority = Box<dyn ResultAuthorizer + Send>;
+
+/// How one commit treats a consumed `norn.function/v1` delivery, chosen per
+/// call by its entry point, never by inspecting the commit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReceiptCommitMode {
+    /// Every ordinary commit: consuming a Function delivery applies its
+    /// result and always runs the authority recheck.
+    Normal,
+    /// [`SqliteCell::commit_result_refusal`]: consumes a pending Function
+    /// delivery and its final store batch applies nothing.
+    ResultRefusal,
+}
 
 /// A cell's receipt authority state.
 #[derive(Default)]
@@ -188,13 +200,15 @@ where
 {
     /// T2-RES-1: commit the record of a refused Function result: it consumes
     /// the pending `norn.function/v1` delivery `consumed` and applies nothing
-    /// (no write, link, event or effect). Every commit that applies anything
-    /// with such a delivery is accepted only under the installed
-    /// command-authority recheck (RECEIPT-CONSUME-1).
+    /// (its final store batch has no write, link, fact, event, effect or
+    /// quantity posting). Every ordinary commit consuming such a delivery,
+    /// even one applying nothing, runs the installed command-authority
+    /// recheck (RECEIPT-CONSUME-1).
     ///
     /// # Errors
     /// [`CommitError::ReceiptNotAccepted`] when `consumed` names no pending
-    /// Function delivery; otherwise as [`CellHost::commit`].
+    /// Function delivery or the batch applies something; otherwise as
+    /// [`norn_kernel::CellHost::commit`].
     pub fn commit_result_refusal(
         &mut self,
         consumed: Consumed,
@@ -205,13 +219,13 @@ where
         {
             return Err(CommitError::ReceiptNotAccepted { consumed });
         }
-        CellHost::commit(
-            self,
-            CellCommit {
-                consumes: Some(consumed),
-                ..CellCommit::empty()
-            },
-        )
+        let commit = CellCommit {
+            consumes: Some(consumed),
+            ..CellCommit::empty()
+        };
+        let args: crate::host::AdmissionArgs<'_> =
+            (&[], &[], &[], &[], None, ReceiptCommitMode::ResultRefusal);
+        self.commit_admitted(commit, None, None, None, args)
     }
 }
 
@@ -434,10 +448,12 @@ fn pending_invocation<S: SqlEngine>(
     ))
 }
 
-/// Whether a host batch consumes a result of a `norn.function/v1` command,
-/// pending or already consumed. Read inside the commit transaction: such a
-/// batch's time follows the durable clock floor, so a losing consumer meets
-/// the delivery check, never a clock regression of its own handle.
+/// Whether a host batch's time follows the durable clock floor, read inside
+/// its transaction: it consumes a result delivery that is not pending at its
+/// exact generation (the delivery check refuses it), or is the pending
+/// result of a `norn.function/v1` command. A losing or stale consumer thus
+/// meets the delivery check, never a clock regression of its own handle; a
+/// non-string `payload.type` is simply not a Function.
 ///
 /// # Errors
 /// The host's read failure.
@@ -445,17 +461,23 @@ pub(crate) fn follows_floor<E: SqlEngine>(
     conn: &E,
     batch: &CommitBatch,
 ) -> Result<bool, CellError> {
-    let Some(Consumption::Result { command_id, .. }) = &batch.consumes else {
+    let Some(Consumption::Result {
+        command_id,
+        generation,
+    }) = &batch.consumes
+    else {
         return Ok(false);
     };
-    let kind = conn.query_optional(
+    let generation =
+        i64::try_from(*generation).map_err(|_overflow| CellError::OutOfRange("generation"))?;
+    let function = conn.query_optional(
         &format!(
-            "SELECT json_extract(\"command\", '$.payload.type') FROM \"{OUTBOX}\" WHERE \"command_id\" = ?1 LIMIT 1"
+            "SELECT json_type(\"command\", '$.payload.type') = 'text' AND json_extract(\"command\", '$.payload.type') = ?3 FROM \"{OUTBOX}\" WHERE \"command_id\" = ?1 AND \"generation\" = ?2 AND \"consumed_commit_seq\" IS NULL AND \"result\" IS NOT NULL LIMIT 1"
         ),
-        params![command_id],
-        |row| row.get::<Option<String>>(0),
+        params![command_id, generation, FUNCTION_PAYLOAD_TYPE],
+        |row| row.get::<Option<i64>>(0),
     )?;
-    Ok(kind.flatten().as_deref() == Some(FUNCTION_PAYLOAD_TYPE))
+    Ok(function.is_none_or(|function| function == Some(1)))
 }
 
 /// RECEIPT-CONSUME-1, inside the commit transaction: every commit consuming
@@ -472,27 +494,32 @@ pub(crate) fn follows_floor<E: SqlEngine>(
 pub(crate) fn check_consumption<S: SqlEngine, E, C, I>(
     reader: &StoreReader<'_, S>,
     commit: &CellCommit<E, C, I>,
-    receipts: &ReceiptHost,
-    scope: &str,
-    now: LogicalTime,
+    batch: &CommitBatch,
+    (receipts, scope, now, mode): (&ReceiptHost, &str, LogicalTime, ReceiptCommitMode),
 ) -> Result<(), CommitError<CellError>> {
     let Some(consumed) = &commit.consumes else {
-        return Ok(());
-    };
-    let Some(invocation) = pending_invocation(reader, Some(consumed)).map_err(CommitError::Host)?
-    else {
         return Ok(());
     };
     let refused = || CommitError::ReceiptNotAccepted {
         consumed: consumed.clone(),
     };
-    if commit.writes.is_empty()
-        && commit.links.is_empty()
-        && commit.events.is_empty()
-        && commit.effects.is_empty()
-    {
-        return Ok(());
+    let invocation = pending_invocation(reader, Some(consumed)).map_err(CommitError::Host)?;
+    if mode == ReceiptCommitMode::ResultRefusal {
+        let bare = batch.writes.is_empty()
+            && batch.facts.is_empty()
+            && batch.links.is_empty()
+            && batch.events.is_empty()
+            && batch.effects.is_empty()
+            && batch.quantity.is_none();
+        return if invocation.is_some() && bare {
+            Ok(())
+        } else {
+            Err(refused())
+        };
     }
+    let Some(invocation) = invocation else {
+        return Ok(());
+    };
     let invocation = norn_ir::runtime::decode::<FunctionInvocation>(&invocation)
         .map_err(|_invalid| refused())?;
     let authorizer = receipts.authorizer.as_deref().ok_or_else(refused)?;

@@ -42,9 +42,9 @@ use norn_kernel::result_reconciliation::{
 use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionOutcome, CellCommit,
     CellHost, Command, CommandId, CommitError, CommitReceipt, Consumed, DecisionTurn, DueTimer,
-    Effect, FactEvent, FactKey, FactMutation, FactState, FactVersion, FactWrite, Generation,
-    IdempotencyKey, LedgerSeq, LinkKey, LinkState, LogicalTime, Observed, Performed, TimerId,
-    TypeCatalog, World, commit_action,
+    Effect, FactEvent, FactKey, FactMutation, FactState, FactVersion, FactWrite, FreshnessPolicy,
+    Generation, IdempotencyKey, LedgerSeq, LinkKey, LinkState, LogicalTime, Observed, Performed,
+    TimerId, TypeCatalog, World, commit_action,
 };
 use serde_json::json;
 
@@ -1513,9 +1513,8 @@ fn a_sibling_clock_moving_between_resolution_and_commit() {
         } = fixture(&path, "delivered");
         let digest = retain(&mut cell, &dispatched, &receipt).unwrap();
         let base = cell.commits().unwrap().len();
-        let (sibling_path, sibling_receipt) = (path.clone(), receipt.clone());
         let race: Race<'_> = Box::new(move |_cell: &mut Sqlite| {
-            advance_sibling(&sibling_path, &sibling_receipt, millis);
+            advance_sibling(&path, &receipt, millis);
         });
         let mut host = Host {
             cell: RefCell::new(cell),
@@ -1584,8 +1583,17 @@ fn an_embedded_acceptance_rechecks_authority_and_only_a_bare_refusal_record_skip
         matches!(refused, CommitError::ReceiptNotAccepted { .. }),
         "{refused}"
     );
-    // A commit carrying only an event, or only an effect, still applies
-    // something, so it needs the recheck too.
+    // Even a read-only acceptance, which writes nothing, is rechecked: only
+    // the refusal entry point skips it.
+    let read_only = acceptance
+        .commit::<FactEvent, JsonObject, JsonObject>(Vec::new(), Vec::new(), Vec::new())
+        .expect("no pinned write");
+    let refused = cell.commit(read_only).unwrap_err();
+    assert!(
+        matches!(refused, CommitError::ReceiptNotAccepted { .. }),
+        "{refused}"
+    );
+    // So are event-only and effect-only commits.
     let event = FactEvent::CommandEnqueued {
         command_id: "run-1/other".to_owned(),
         generation: 1,
@@ -1629,7 +1637,7 @@ fn an_embedded_acceptance_rechecks_authority_and_only_a_bare_refusal_record_skip
     assert_eq!(cell.pending_commands().unwrap().len(), 1);
     // The refusal record consumes the delivery without the recheck and
     // applies nothing.
-    cell.commit_result_refusal(acceptance.consumed.clone())
+    cell.commit_result_refusal(acceptance.consumed)
         .expect("the refusal record consumes the delivery");
     assert_eq!(cell.pending_commands().unwrap().len(), 0);
     assert_eq!(status(&cell, "run-1"), waiting());
@@ -1679,4 +1687,55 @@ fn a_losing_consumer_behind_a_later_sibling_clock_is_not_pending() {
         base.saturating_add(1),
         "only the winner"
     );
+}
+
+#[test]
+fn the_floor_classifier_meets_stale_generations_and_non_text_types() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("cell.sqlite");
+    let mut answer = receipt_for(&dispatch("run-1", SCOPE, "main"), "delivered");
+    answer.command_id = "plain-1".to_owned();
+    let mut cell = open(&path, SCOPE, &[&answer]);
+    let plain = CommandId("plain-1".to_owned());
+    // An ordinary command whose `payload.type` is a number.
+    cell.commit(CellCommit {
+        effects: vec![Effect::Perform(Command {
+            id: plain.clone(),
+            generation: Generation(1),
+            idempotency_key: IdempotencyKey("plain-1/1".to_owned()),
+            freshness: FreshnessPolicy::AppendOnly,
+            deadline: None,
+            payload: JsonObject::from([(
+                "type".to_owned(),
+                norn_ir::runtime::encode(&7_u32).unwrap(),
+            )]),
+        })],
+        ..CellCommit::empty()
+    })
+    .unwrap();
+    assert!(cell.perform().unwrap().is_some());
+    // Another handle's clock passes this one's.
+    advance_sibling(&path, &answer, WITHIN_DEADLINE);
+    // A stale generation meets the delivery check, not a clock regression.
+    let stale = cell
+        .commit(CellCommit {
+            consumes: Some(Consumed::Result {
+                command: plain.clone(),
+                generation: Generation(9),
+            }),
+            ..CellCommit::empty()
+        })
+        .unwrap_err();
+    assert!(matches!(stale, CommitError::NotPending { .. }), "{stale}");
+    // A non-text `payload.type` is an ordinary delivery, consumed normally.
+    cell.advance_to(LogicalTime::from_millis(WITHIN_DEADLINE));
+    cell.commit(CellCommit {
+        consumes: Some(Consumed::Result {
+            command: plain,
+            generation: Generation(1),
+        }),
+        ..CellCommit::empty()
+    })
+    .expect("an ordinary delivery is consumed");
+    assert_eq!(cell.pending_commands().unwrap().len(), 0);
 }
