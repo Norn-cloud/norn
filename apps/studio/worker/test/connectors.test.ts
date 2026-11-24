@@ -510,9 +510,24 @@ function liveCell() {
       const definition = held.get(decodeURIComponent(read[1] ?? ""))
       return definition === undefined ? Response.json({ code: "definition.not_found" }, { status: 404 }) : Response.json({ id: read[1], version: definition.version, payload: definition.payload })
     }
+    const retire = /^\/v1\/definitions\/([^:/]+):retire$/.exec(path)
+    if (retire !== null) {
+      const id = decodeURIComponent(retire[1] ?? "")
+      const current = held.get(id)
+      if (current === undefined) return Response.json({ code: "definition.not_found" }, { status: 404 })
+      if (typeof body.expectedVersion === "number" && body.expectedVersion !== current.version) {
+        return Response.json({ code: "definition.version_conflict" }, { status: 409 })
+      }
+      held.delete(id)
+      return Response.json({ installed: true, id, version: current.version, receipt: {} })
+    }
     if (path === "/v1/definitions:install") {
       const id = String(body.id)
-      const version = (held.get(id)?.version ?? 0) + 1
+      const current = held.get(id)
+      if (typeof body.expectedVersion === "number" && (current?.version ?? 0) !== body.expectedVersion) {
+        return Response.json({ code: "definition.version_conflict" }, { status: 409 })
+      }
+      const version = (current?.version ?? 0) + 1
       held.set(id, { version, payload: body.payload as Record<string, unknown> })
       return Response.json({ installed: true, id, version, receipt: {} })
     }
@@ -772,10 +787,44 @@ test("R3-3/R3-4/R3-8: edit lease fencing, finishSave conflict detection, scoped 
   clock.offset += PENDING_CREATE_LEASE_MS + 1
   const expiredReconcile = await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: cell.host })
   expect((expiredReconcile.body.bindings as { state: string; label: string }[])[0]).toMatchObject({ state: "ready", label: "Original" })
-  // Now the slow cell install finishes and finishSave runs: it MUST fail 409 binding_conflict instead of returning stale 200!
+  // Now the slow cell install finishes and finishSave runs: it MUST fail 409 binding_conflict
+  // AND immediately sync D1 to the cell's committed v2 so D1 and the cell never disagree (R5-5)!
   releaseEdit()
   const stalePatch = await editing
   expect(stalePatch).toMatchObject({ status: 409, body: { code: "connectors.binding_conflict" } })
+  const syncedAfterLateEdit = await send("/bindings", { cookie: owner }, { host: cell.host })
+  expect((syncedAfterLateEdit.body.bindings as { label: string; state: string; inputMapping: unknown; definition: { version: number } }[])[0]).toMatchObject({
+    label: "Updated",
+    state: "ready",
+    inputMapping: { repo: { fixed: "new-safe" } },
+    definition: { version: 2 },
+  })
+
+  // R5-5a: A late create whose lease expired and got abandoned by reconcile MUST retire its orphaned
+  // definition in the cell upon late commit and return 409 binding_conflict (zero orphaned definitions).
+  let releaseCreate: () => void = () => {}
+  const createGate = new Promise<void>((resolve) => { releaseCreate = resolve })
+  const slowCreate = { fetch: async (request: Request) => { if (new URL(request.url).pathname === "/v1/definitions:install") await createGate; return cell.host.fetch(request) } } as unknown as Fetcher
+  const creating = send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "LateCreate" }), cookie: owner }, { host: slowCreate })
+  for (let i = 0; i < 100; i++) {
+    const row = db.query("SELECT id FROM connector_binding WHERE label = 'LateCreate'").get() as { id: string } | null
+    if (row !== null) break
+    await Bun.sleep(10)
+  }
+  const lateCreateId = (db.query("SELECT id FROM connector_binding WHERE label = 'LateCreate'").get() as { id: string }).id
+  clock.offset += PENDING_CREATE_LEASE_MS + 1
+  await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: cell.host })
+  expect(db.query("SELECT id FROM connector_binding WHERE id = ?").get(lateCreateId)).toBeNull()
+  releaseCreate()
+  expect(await creating).toMatchObject({ status: 409, body: { code: "connectors.binding_conflict" } })
+  expect(cell.held.has(`studio.binding.${lateCreateId}`)).toBe(false)
+
+  // R5-5b: Even if a hard isolate crash leaves D1 behind the cell's committed version, POST /bindings/:id/run
+  // fails closed with 409 connectors.binding_conflict instead of running stale fixed inputs.
+  db.query("UPDATE connector_binding SET definition_version = 1 WHERE id = ?").run(created.id)
+  const mismatchedRun = await send(`/bindings/${created.id}/run`, { ...body("POST", { input: {} }), cookie: owner }, { host: cell.host })
+  expect(mismatchedRun).toMatchObject({ status: 409, body: { code: "connectors.binding_conflict" } })
+  db.query("UPDATE connector_binding SET definition_version = 2 WHERE id = ?").run(created.id)
 
   // 3. R3-8: GET /status and GET /inventory NEVER refresh or mutate an expired gateway token; POST /refresh does.
   const userId = (db.query("SELECT id FROM user WHERE email = 'r3-owner@example.com'").get() as { id: string }).id

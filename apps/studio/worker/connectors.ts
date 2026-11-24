@@ -4,7 +4,7 @@ import { originAllowed, resolveActor, verifyWriteScope } from "./actor.ts"
 import type { Auth } from "./auth.ts"
 import { BindingDefinitions, bindingDefinitionId, CellUnavailable, type Install } from "./binding-definitions.ts"
 import { cellScope } from "./scope.ts"
-import { abandonSave, adoptCell, beginCreate, beginEdit, connectorString, connectorVersion, finishSave, getBinding, listBindings, manifestDigest, readDraft, removeBinding, runInput, toolManifest, type Binding } from "./bindings.ts"
+import { abandonSave, adoptCell, adoptCommittedEdit, beginCreate, beginEdit, connectorString, connectorVersion, finishSave, getBinding, listBindings, manifestDigest, readDraft, removeBinding, runInput, toolManifest, type Binding } from "./bindings.ts"
 import { Gateway, GatewayError } from "./gateway.ts"
 
 /**
@@ -392,13 +392,39 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
       }
       const refused = cellRefusal(outcome)
       if (refused !== null) {
+        if (outcome.kind === "conflict" && existing !== undefined) {
+          // A version conflict means the cell already moved past `expectedPreviousVersion` (e.g.,
+          // from an earlier late-committing save). Adopt the authoritative cell version when
+          // reachable instead of blindly restoring stale local fields.
+          const held = await cell.get(definitionId).catch(() => null)
+          if (held !== null && held.kind === "found" && (expectedPreviousVersion === null || held.version > expectedPreviousVersion)) {
+            await adoptCell(db, actor.orgId, id, definitionId, held.version, held.payload, attemptId, expectedPreviousVersion)
+            return refused
+          }
+        }
         // The cell decided no: nothing was installed, so the intent is undone.
         await abandonSave(db, actor.orgId, id, existing === undefined ? "create" : "edit", existing?.definition ?? null, attemptId)
         return refused
       }
       const definition = outcome.kind === "installed" ? { id: outcome.id, version: outcome.version } : null
-      const saved = await finishSave(db, actor.orgId, actor.subjectId, id, draft, { manifestDigest: digest, connector, definition }, attemptId, expectedPreviousVersion, (deps.now ?? Date.now)())
-      if (saved === null) return refusal(409, "connectors.binding_conflict", "This binding save was superseded before it finished. Reload and try again.")
+      const savedAt = (deps.now ?? Date.now)()
+      const saved = await finishSave(db, actor.orgId, actor.subjectId, id, draft, { manifestDigest: digest, connector, definition }, attemptId, expectedPreviousVersion, savedAt)
+      if (saved === null) {
+        // The pending attempt was abandoned or superseded after lease expiry while `cell.install`
+        // was still in flight. Compensate immediately so the cell never retains an orphaned
+        // definition and D1 never disagrees with the cell's committed definition version.
+        if (outcome.kind === "installed") {
+          if (existing === undefined) {
+            await cell.retire(outcome.id, outcome.version).catch(() => undefined)
+          } else {
+            const synced = await adoptCommittedEdit(db, actor.orgId, actor.subjectId, id, draft, { manifestDigest: digest, connector, definition }, expectedPreviousVersion, savedAt)
+            if (synced === null && (await getBinding(db, actor.orgId, id)) === null) {
+              await cell.retire(outcome.id, outcome.version).catch(() => undefined)
+            }
+          }
+        }
+        return refusal(409, "connectors.binding_conflict", "This binding save was superseded before it finished. Reload and try again.")
+      }
       return ok({ binding: shown(saved) })
     }
 
@@ -412,6 +438,25 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
       const runDecision = await ask([{ action: "connector.run", resource: toolBinding(binding.definition.id) }])
       if (runDecision instanceof AccessUnavailable) return unavailable(runDecision)
       if (runDecision[0]?.decision !== "permit") return denied(`run ${binding.label}`)
+      // Verify the local binding row's version matches the authoritative cell definition before
+      // merging fixed inputs so a stale D1 row can never run under a newer cell definition's policy.
+      if (deps.host !== undefined) {
+        const cell = cellFor()
+        if (cell === null) return noEnvironment()
+        let held: Awaited<ReturnType<BindingDefinitions["get"]>>
+        try {
+          held = await cell.get(binding.definition.id)
+        } catch (error) {
+          if (error instanceof CellUnavailable) return refusal(503, "connectors.cell_unavailable", error.message)
+          throw error
+        }
+        if (held.kind === "absent") {
+          return refusal(409, "connectors.binding_not_in_cell", `${binding.label} is no longer stored in the cell.`)
+        }
+        if (held.kind === "found" && held.version !== binding.definition.version) {
+          return refusal(409, "connectors.binding_conflict", "This binding changed in the cell since it was last synced. Reconcile or reload it before running.")
+        }
+      }
       const input = (await json(request))?.input
       if (typeof input !== "object" || input === null || Array.isArray(input)) return refusal(400, "connectors.invalid_request", "Send {input: {…}} for the fields the binding does not fix.", undefined, "input")
       const merged = runInput(binding, input as Record<string, unknown>)

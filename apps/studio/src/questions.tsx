@@ -60,18 +60,19 @@ function MetricCard({ metric, turn, onSettled, scope: boundScope }: {
   const { view } = useView()
   // A question asks the cell only once it is near view and the ones above it have their answers.
   const [ref, seen] = useSeen<HTMLElement>()
+  const scopeKey = boundScope ? `${boundScope.orgId}:${boundScope.environmentId}` : ""
   const active = seen && turn
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
   const [conditions, setConditions] = useState<readonly Condition[]>([])
   // The unit group whose weekly answer is open: chosen from the groups the cell returned, never by default.
   const [picked, setPicked] = useState<UnitGroup | null>(null)
-  const profile = useQuery({ queryKey: ["profile", metric.objectType], queryFn: () => readProfile(metric.objectType), retry: false, enabled: active })
+  const profile = useQuery({ queryKey: ["profile", scopeKey, metric.objectType], queryFn: () => readProfile(metric.objectType, undefined, boundScope), retry: false, enabled: active })
   const typeNamed = (name: string) => catalog.data?.document.flatMap((artifact) => artifact.kind === "entity" && "objectType" in artifact.payload && artifact.payload.objectType.name === name ? [artifact.payload.objectType] : [])[0]
   // A time read through links (a posting's time is its event's) is profiled on the type the links reach, as the
   // cell declares them; the window then spans every date that type carries.
   const timeType = (metric.timeLinks ?? []).reduce<string | undefined>((type, link) => type === undefined ? undefined
     : (typeNamed(type) as { readonly links?: readonly { readonly id: string; readonly target: string }[] } | undefined)?.links?.find(({ id }) => id === link)?.target, metric.objectType)
-  const timeProfile = useQuery({ queryKey: ["profile", timeType], queryFn: () => readProfile(timeType!), retry: false, enabled: active && timeType !== undefined && timeType !== metric.objectType })
+  const timeProfile = useQuery({ queryKey: ["profile", scopeKey, timeType], queryFn: () => readProfile(timeType!, undefined, boundScope), retry: false, enabled: active && timeType !== undefined && timeType !== metric.objectType })
   const timeDocument = timeType === metric.objectType ? profile.data?.document : timeProfile.data?.document
   const profiledWindow = timeDocument && metric.timeProperty !== null ? windowOf(timeDocument, metric.timeProperty) : undefined
   // The profile sent no range for the time property (a hosted cell may withhold it): ask the latest 52 weeks, and say so.
@@ -241,8 +242,9 @@ function LiveQuestionsBoard() {
  * metric: its metrics are listed together, compactly, after the types that have records.
  */
 function TypeSections({ types, list, scope: boundScope }: { readonly types: readonly string[]; readonly list: readonly MetricSummary[]; readonly scope?: StudioScope | null }) {
+  const scopeKey = boundScope ? `${boundScope.orgId}:${boundScope.environmentId}` : ""
   // The profiles each card reads as it comes into view (one analytics read at a time): read here, never asked here.
-  const profiles = useQueries({ queries: types.map((type) => ({ queryKey: ["profile", type], queryFn: () => readProfile(type), retry: false, enabled: false })) })
+  const profiles = useQueries({ queries: types.map((type) => ({ queryKey: ["profile", scopeKey, type], queryFn: () => readProfile(type, undefined, boundScope), retry: false, enabled: false })) })
   const empty = (index: number) => profiles[index]?.data?.document.rows === 0
   const held = types.filter((_, index) => !empty(index))
   const without = types.filter((_, index) => empty(index))

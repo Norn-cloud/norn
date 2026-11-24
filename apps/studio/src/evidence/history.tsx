@@ -44,7 +44,7 @@ type Time = "known" | "valid"
 export function History({ objectType, id }: { readonly objectType: string; readonly id: string }) {
   const scope = useStudioScope()
   const scopeKey = scope.data ? `${scope.data.orgId}:${scope.data.environmentId}` : ""
-  const read = useQuery({ queryKey: ["history", scopeKey, objectType, id], queryFn: () => readHistory(objectType, id), retry: false })
+  const read = useQuery({ queryKey: ["history", scopeKey, objectType, id], queryFn: () => readHistory(objectType, id, scope.data), enabled: !scope.isPending, retry: false })
   const metrics = useQuery({ queryKey: ["metrics", scopeKey], queryFn: () => readMetrics(scope.data), enabled: !scope.isPending, retry: false, staleTime: 60_000 })
   const [time, setTime] = useState<Time>("known")
   const [only, setOnly] = useState<WriterKind | null>(null)

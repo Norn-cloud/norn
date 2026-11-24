@@ -193,6 +193,29 @@ export async function finishSave(
 }
 
 /**
+ * Sync a ready binding row to an edit that committed in the cell after its lease expired and
+ * reconciliation abandoned the pending marker back to `expectedPreviousVersion`. Guarded by
+ * `state = 'ready' AND definition_version IS expectedPreviousVersion` so a newer version is never
+ * overwritten, while preventing D1 from disagreeing with the cell's committed definition.
+ */
+export async function adoptCommittedEdit(
+  db: D1Database,
+  orgId: string,
+  actor: string,
+  id: string,
+  draft: BindingDraft,
+  pin: Pin,
+  expectedPreviousVersion: number | null,
+  now = Date.now(),
+): Promise<Binding | null> {
+  const { results } = await db.prepare(
+    `UPDATE connector_binding SET label = ?, input_mapping = ?, run_role = ?, updated_by = ?, updated_at = ?, manifest_digest = ?, connector = ?, definition_id = ?, definition_version = ?, state = 'ready', pending_attempt = NULL, pending_environment_id = NULL, pending_started_at = NULL WHERE org_id = ? AND id = ? AND state = 'ready' AND definition_version IS ? RETURNING ${COLUMNS}`,
+  ).bind(draft.label, JSON.stringify(draft.inputMapping), draft.runRole, actor, now, pin.manifestDigest, JSON.stringify(pin.connector), pin.definition?.id ?? null, pin.definition?.version ?? null, orgId, id, expectedPreviousVersion).all<Row>()
+  const row = results[0]
+  return row === undefined ? null : fromRow(row)
+}
+
+/**
  * Undo a save's intent guarded by `attemptId` and expected version: a create that never reached the
  * cell is deleted; an edit returns to ready with its previous fields and definition.
  */

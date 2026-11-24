@@ -7,6 +7,7 @@ import { HiddenWriter } from "@/components/hidden-writer"
 import { Panel, Well } from "@/components/panel"
 import { cn } from "@/lib/utils"
 import { lawHeadline, systemName, type Law } from "./lib/catalog.ts"
+import { useStudioScope } from "./lib/definitions.ts"
 import { readableTime } from "./lib/format.ts"
 import { liveTypeAccess, type RoleAccess, type TypeAccess } from "./lib/live.ts"
 import { changedProperties, historyUnavailable, readHistory } from "./evidence/review.ts"
@@ -135,7 +136,9 @@ export function RecentChanges({ objectType, id, actionTitles, onAll }: {
   readonly actionTitles: ReadonlyMap<string, string>
   readonly onAll: () => void
 }) {
-  const read = useQuery({ queryKey: ["history", objectType, id], queryFn: () => readHistory(objectType, id), retry: false })
+  const scope = useStudioScope()
+  const scopeKey = scope.data ? `${scope.data.orgId}:${scope.data.environmentId}` : ""
+  const read = useQuery({ queryKey: ["history", scopeKey, objectType, id], queryFn: () => readHistory(objectType, id, scope.data), enabled: !scope.isPending, retry: false })
   const history = read.data
   const versions = history?.document.versions ?? []
   return (

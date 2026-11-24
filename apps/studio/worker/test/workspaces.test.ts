@@ -653,6 +653,8 @@ test("S4 null set-active refuses revoked sessions; S5 member/invitation mutation
   expect(cancelForeign.status).toBe(400)
   expect(await cancelForeign.json()).toEqual(await cancelMissing.json())
 
+  // Verify Alice's email so reject-invitation tests verified-recipient uniformity (unverified accounts are refused 403 below).
+  db.run(`update "user" set "emailVerified" = 1 where "id" = ?`, [alice.userId])
   const rejectMissing = await mutate(env, "POST", "/api/auth/organization/reject-invitation", { invitationId: "inv_does_not_exist" }, { cookie: alice.cookie })
   const rejectForeign = await mutate(env, "POST", "/api/auth/organization/reject-invitation", { invitationId: bobInv.id }, { cookie: alice.cookie })
   expect(rejectMissing.status).toBe(400)
@@ -718,4 +720,37 @@ test("S4 null set-active refuses revoked sessions; S5 member/invitation mutation
   expect(cancelAccepted.status).toBe(400)
   expect(await cancelAccepted.json()).toMatchObject({ code: "INVITATION_NOT_FOUND" })
   expect(db.query(`select "status" from "invitation" where "id" = ?`).get(aliceInv.id)).toEqual({ status: "accepted" })
+
+  // 7. R5-3: reject-invitation requires a currently verified email both before lookup and atomically at the SQL write.
+  const unverified = await enroll(env, "s5-unverified@example.com", "Unverified")
+  const invForUnverified = (await (await mutate(
+    env,
+    "POST",
+    "/api/auth/organization/invite-member",
+    { email: "s5-unverified@example.com", role: "member", organizationId: alice.organizationId },
+    { cookie: alice.cookie, [EXPECTED_ORG_HEADER]: alice.organizationId },
+  )).json()) as { id: string }
+  // Unverified caller gets uniform 403 for both their own invitation and an absent invitation, and invitation stays pending.
+  const unvOwn = await mutate(env, "POST", "/api/auth/organization/reject-invitation", { invitationId: invForUnverified.id }, { cookie: unverified.cookie })
+  const unvMissing = await mutate(env, "POST", "/api/auth/organization/reject-invitation", { invitationId: "inv_missing" }, { cookie: unverified.cookie })
+  expect(unvOwn.status).toBe(403)
+  expect(unvMissing.status).toBe(403)
+  expect(await unvOwn.json()).toEqual(await unvMissing.json())
+  expect(db.query(`select "status" from "invitation" where "id" = ?`).get(invForUnverified.id)).toEqual({ status: "pending" })
+  // Even if emailVerified flips to 0 right before the atomic UPDATE, the SQL write refuses and returns 403!
+  db.run(`update "user" set "emailVerified" = 1 where "id" = ?`, [unverified.userId])
+  let unverifiedMidFlight = false
+  db.prepare = ((sql: string, ...rest: unknown[]) => {
+    if (!unverifiedMidFlight && sql.toLowerCase().includes(`set "status" = 'rejected'`)) {
+      unverifiedMidFlight = true
+      origPrepare(`update "user" set "emailVerified" = 0 where "id" = ?`).run(unverified.userId)
+    }
+    return (origPrepare as (...args: unknown[]) => ReturnType<typeof origPrepare>)(sql, ...rest)
+  }) as typeof db.prepare
+  const racedReject = await mutate(env, "POST", "/api/auth/organization/reject-invitation", { invitationId: invForUnverified.id }, { cookie: unverified.cookie })
+  db.prepare = origPrepare
+  expect(unverifiedMidFlight).toBe(true)
+  expect(racedReject.status).toBe(403)
+  expect(await racedReject.json()).toMatchObject({ code: "EMAIL_VERIFICATION_REQUIRED_BEFORE_ACCEPTING_OR_REJECTING_INVITATION" })
+  expect(db.query(`select "status" from "invitation" where "id" = ?`).get(invForUnverified.id)).toEqual({ status: "pending" })
 })

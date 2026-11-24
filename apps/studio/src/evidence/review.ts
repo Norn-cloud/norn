@@ -6,6 +6,7 @@
  * is the cell's refusal, shown as it is.
  */
 import { cellRead, NotServed } from "../lib/live-transport.ts"
+import type { StudioScope } from "../lib/definitions.ts"
 import { member, type Read } from "../lib/exact.ts"
 import type { ObjectRecord, SourceLineage } from "../lib/transport.ts"
 
@@ -86,8 +87,8 @@ const objectPath = (objectType: string, id: string, leaf?: string) =>
 export const readFindings = (objectType: string, id: string): Promise<Read<ObjectFindings>> =>
   cellRead<ObjectFindings>(objectPath(objectType, id, "findings"), "Findings")
 
-export const readHistory = (objectType: string, id: string): Promise<Read<ObjectHistory>> =>
-  cellRead<ObjectHistory>(objectPath(objectType, id, "history"), "History")
+export const readHistory = (objectType: string, id: string, boundScope?: StudioScope | null): Promise<Read<ObjectHistory>> =>
+  cellRead<ObjectHistory>(objectPath(objectType, id, "history"), "History", {}, undefined, boundScope)
 
 /**
  * What a history panel says when the read fails: a cell that does not serve history says so, and

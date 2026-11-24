@@ -169,9 +169,9 @@ export const DISABLED_AUTH_PATHS: ReadonlySet<string> = new Set([
 
 /**
  * Atomically roll back any provisional oauthConsent insert or update for `claimId` AND delete
- * the `oauth-approval-claimed:<claimId>` lock row in one single D1 batch / SQLite transaction.
- * Because both statements commit or roll back together, a rollback failure can never release
- * the claim while leaving provisional consent exposed.
+ * the dedicated `oauth_consent_claim` lock row in one single D1 batch / SQLite transaction.
+ * Because claims live outside Better Auth's `verification` table, generic expiry cleanup can
+ * never delete a claim without rolling back its provisional consent.
  */
 async function rollbackClaimedApproval(
   db: ProvisionDb,
@@ -188,7 +188,7 @@ async function rollbackClaimedApproval(
     statements.push({
       sql: `delete from "oauthConsent"
             where "clientId" = ? and "userId" = ? and "referenceId" = ?
-              and exists (select 1 from "verification" where "id" = ? and "identifier" = 'oauth-approval-claimed:' || "id")`,
+              and exists (select 1 from "oauth_consent_claim" where "id" = ?)`,
       params: [args.clientId, args.userId, args.referenceId, args.claimId],
     })
   } else if (args.previousConsent !== undefined) {
@@ -197,7 +197,7 @@ async function rollbackClaimedApproval(
       sql: `update "oauthConsent"
             set "scopes" = ?, "resources" = ?, "requestedUserInfoClaims" = ?, "updatedAt" = ?
             where "id" = ? and "clientId" = ? and "userId" = ? and "referenceId" = ?
-              and exists (select 1 from "verification" where "id" = ? and "identifier" = 'oauth-approval-claimed:' || "id")`,
+              and exists (select 1 from "oauth_consent_claim" where "id" = ?)`,
       params: [
         prev.scopes,
         prev.resources,
@@ -212,10 +212,38 @@ async function rollbackClaimedApproval(
     })
   }
   statements.push({
-    sql: `delete from "verification" where "id" = ? and "identifier" = 'oauth-approval-claimed:' || "id"`,
+    sql: `delete from "oauth_consent_claim" where "id" = ?`,
     params: [args.claimId],
   })
   await atomically(db, statements)
+}
+
+/**
+ * Atomically roll back and remove any expired `oauth_consent_claim` rows for `(userId, clientId)`
+ * (e.g. left behind by a crashed isolate). Active unexpired claims are untouched.
+ */
+async function sweepExpiredConsentClaims(db: ProvisionDb, userId: string, clientId: string): Promise<void> {
+  const expiredClaims = await dbAll<{ id: string; referenceId: string; prevConsent: string | null }>(
+    db,
+    `select "id", "referenceId", "prevConsent" from "oauth_consent_claim"
+     where "userId" = ? and "clientId" = ? and not (${LIVE_SESSION_SQL})`,
+    userId,
+    clientId,
+  )
+  for (const stale of expiredClaims) {
+    try {
+      const previousConsent = stale.prevConsent === null ? null : JSON.parse(stale.prevConsent) as ConsentSnapshot
+      await rollbackClaimedApproval(db, {
+        claimId: stale.id,
+        userId,
+        clientId,
+        referenceId: stale.referenceId,
+        previousConsent,
+      })
+    } catch {
+      // If atomic rollback fails, keep the stale claim locked so provisional consent stays hidden.
+    }
+  }
 }
 
 interface ConsentSnapshot {
@@ -1331,9 +1359,14 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
           if (invitationId === null) {
             throw apiError(400, { code: "VALIDATION_ERROR", message: "invitationId is required." }, responseHeaders)
           }
+          // Require a verified email BEFORE touching any invitation row so unverified accounts
+          // cannot reject invitations or probe whether an invitation exists (S5).
+          if (!session.user.emailVerified) {
+            throw apiError(403, { code: "EMAIL_VERIFICATION_REQUIRED_BEFORE_ACCEPTING_OR_REJECTING_INVITATION", message: "Email verification required before accepting or rejecting invitation" }, responseHeaders)
+          }
           const db = config.database as unknown as ProvisionDb
-          // Atomically reject only a pending invitation addressed to this caller's verified email
-          // while their session is live, returning uniform INVITATION_NOT_FOUND otherwise (S5).
+          // Atomically reject only a pending invitation addressed to this caller's currently
+          // verified email while their session is live, returning uniform INVITATION_NOT_FOUND otherwise (S5).
           type RejectedInvitation = { id: string; organizationId: string; email: string; role: string; status: string; expiresAt: string | number; createdAt: string | number; inviterId: string }
           const rejected = await dbFirst<RejectedInvitation>(
             db,
@@ -1341,20 +1374,29 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
              set "status" = 'rejected'
              where "id" = ?
                and "status" = 'pending'
-               and lower("email") = lower(?)
+               and exists (
+                 select 1 from "user" u
+                 where u."id" = ?
+                   and u."emailVerified" = 1
+                   and lower(u."email") = lower("invitation"."email")
+               )
                and exists (
                  select 1 from "session" s
                  where s."token" = ? and s."userId" = ? and ${LIVE_SESSION_S_SQL}
                )
              returning "id", "organizationId", "email", "role", "status", "expiresAt", "createdAt", "inviterId"`,
             invitationId,
-            session.user.email,
+            session.user.id,
             session.session.token,
             session.user.id,
           )
           if (rejected === null) {
             if (!(await isSessionLive(db, session.session.token, session.user.id))) {
               throw apiError(401, { code: "UNAUTHORIZED", message: "Unauthorized" }, responseHeaders)
+            }
+            const latestUser = await dbFirst<{ emailVerified: number | boolean }>(db, `select "emailVerified" from "user" where "id" = ?`, session.user.id)
+            if (!latestUser?.emailVerified) {
+              throw apiError(403, { code: "EMAIL_VERIFICATION_REQUIRED_BEFORE_ACCEPTING_OR_REJECTING_INVITATION", message: "Email verification required before accepting or rejecting invitation" }, responseHeaders)
             }
             throw apiError(400, { code: "INVITATION_NOT_FOUND", message: INVITATION_GONE }, responseHeaders)
           }
@@ -1568,6 +1610,30 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
           }
           return outcome.apiKey
         }
+        if (path === "/oauth2/authorize") {
+          const session = await getSessionFromCtx(ctx, { disableCookieCache: true })
+          if (session !== null) {
+            const responseHeaders = responseHeadersOf(ctx)
+            const queryObj = (ctx.query ?? {}) as { client_id?: unknown }
+            const clientId = nonEmptyString(queryObj.client_id)
+              ?? (ctx.request ? nonEmptyString(new URL(ctx.request.url).searchParams.get("client_id")) : null)
+            if (clientId !== null) {
+              const db = config.database as unknown as ProvisionDb
+              await sweepExpiredConsentClaims(db, session.user.id, clientId)
+              const ownClaimId = oauthScopeStore.getStore()?.claimedApprovalId
+              const activeClaim = await dbFirst<{ id: string }>(
+                db,
+                `select "id" from "oauth_consent_claim" where "userId" = ? and "clientId" = ? limit 1`,
+                session.user.id,
+                clientId,
+              )
+              if (activeClaim !== null && activeClaim.id !== ownClaimId) {
+                throw apiError(409, { code: "CONSENT_IN_PROGRESS", message: "Another approval for this assistant is already in progress. Try again in a moment." }, responseHeaders)
+              }
+            }
+          }
+          return
+        }
         if (path === "/oauth2/consent") {
           const body = ctx.body as { accept?: unknown; oauth_query?: unknown } | undefined
           if (body?.accept === false) return
@@ -1597,67 +1663,27 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
           const state = nonEmptyString(queryParams.get("state"))
           const db = config.database as unknown as ProvisionDb
           const [tokenHash, queryHash] = await Promise.all([sha256Hex(approvalToken), sha256Hex(oauthQuery)])
-          // If an earlier isolate crashed and left an EXPIRED claimed approval for this
-          // (userId, clientId), atomically roll back its provisional consent and delete the stale
-          // claim before attempting to acquire a new exclusive claim.
-          const expiredClaims = await dbAll<{ id: string; value: string }>(
+          // If an earlier isolate crashed and left an EXPIRED claimed approval in
+          // `oauth_consent_claim`, atomically roll back its provisional consent and delete the
+          // stale claim before attempting to acquire a new exclusive claim.
+          await sweepExpiredConsentClaims(db, session.user.id, clientId)
+          // Atomically consume the single-use approval token first so tampered or mismatched
+          // attempts burn the token and cannot be replayed.
+          const approvalIdentifier = `oauth-approval:${tokenHash}`
+          const approvalRow = await dbFirst<{ id: string; value: string; expiresAt: string | number }>(
             db,
-            `select "id", "value" from "verification"
-             where "identifier" glob 'oauth-approval-claimed:*'
-               and not (${LIVE_SESSION_SQL})
-               and json_valid("value")
-               and json_extract("value", '$.type') = 'consent_approval'
-               and json_extract("value", '$.userId') = ?
-               and json_extract("value", '$.clientId') = ?`,
+            `delete from "verification"
+             where "identifier" = ?
+               and ${LIVE_SESSION_SQL}
+               and exists (select 1 from "session" s where s."id" = ? and s."token" = ? and s."userId" = ? and ${LIVE_SESSION_S_SQL})
+             returning "id", "value", "expiresAt"`,
+            approvalIdentifier,
+            session.session.id,
+            session.session.token,
             session.user.id,
-            clientId,
           )
-          for (const stale of expiredClaims) {
-            try {
-              const parsed = JSON.parse(stale.value) as { grantRef?: unknown; prevConsent?: ConsentSnapshot | null }
-              if (typeof parsed.grantRef === "string") {
-                await rollbackClaimedApproval(db, {
-                  claimId: stale.id,
-                  userId: session.user.id,
-                  clientId,
-                  referenceId: parsed.grantRef,
-                  previousConsent: parsed.prevConsent ?? null,
-                })
-              }
-            } catch {
-              // If atomic rollback fails, keep the stale claim locked so provisional consent stays hidden.
-            }
-          }
-          // Atomically claim the single-use approval token, serialized per (userId, clientId, grantRef)
-          // so no concurrent consent request for the same triple can interleave with consent or rollback.
-          let claimed: { id: string; value: string } | null
-          try {
-            claimed = await dbFirst<{ id: string; value: string }>(
-              db,
-              `update "verification"
-               set "identifier" = 'oauth-approval-claimed:' || "id"
-               where "identifier" = ?
-                 and ${LIVE_SESSION_SQL}
-                 and exists (select 1 from "session" s where s."id" = ? and s."token" = ? and s."userId" = ? and ${LIVE_SESSION_S_SQL})
-               returning "id", "value"`,
-              `oauth-approval:${tokenHash}`,
-              session.session.id,
-              session.session.token,
-              session.user.id,
-            )
-          } catch (error) {
-            if (error instanceof Error && error.message.includes("oauth.approval_conflict")) {
-              throw apiError(409, { code: "CONSENT_IN_PROGRESS", message: "Another approval for this assistant is already in progress. Try again in a moment." }, responseHeaders)
-            }
-            throw error
-          }
-          if (claimed === null) {
+          if (approvalRow === null) {
             throw apiError(409, { code: "CONSENT_APPROVAL_EXPIRED", message: "This approval request expired or was already used. Start connecting again from your assistant." }, responseHeaders)
-          }
-          const store = oauthScopeStore.getStore()
-          if (store !== undefined) {
-            store.claimedApprovalId = claimed.id
-            store.isConsentAccept = true
           }
           let approval: {
             sessionId?: unknown
@@ -1673,7 +1699,7 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
             queryHash?: unknown
           }
           try {
-            approval = JSON.parse(claimed.value) as typeof approval
+            approval = JSON.parse(approvalRow.value) as typeof approval
           } catch {
             throw apiError(409, { code: "CONSENT_APPROVAL_EXPIRED", message: "This approval request is no longer valid." }, responseHeaders)
           }
@@ -1703,29 +1729,66 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
             throw apiError(409, { code: "WORKSPACE_CHANGED", message: "Your active workspace changed. Reload this page and approve again for the workspace you intend." }, responseHeaders)
           }
           const grantRef = encodeGrantRef(member.organizationId, member.memberId)
-          // Snapshot any existing consent while holding the exclusive per-(user,client,grant) claim
-          // and persist that snapshot on the claimed approval so rollback can restore exact prior
-          // scopes even if the session is revoked mid-request.
-          const existingConsent = await dbFirst<ConsentSnapshot>(
-            db,
-            `select "id", "scopes", "resources", "requestedUserInfoClaims", "updatedAt"
-             from "oauthConsent"
-             where "clientId" = ? and "userId" = ? and "referenceId" = ?`,
-            clientId,
-            session.user.id,
-            grantRef,
-          )
-          if (existingConsent !== null) {
-            await dbRun(
+          const claimExpiresIso = typeof approvalRow.expiresAt === "number"
+            ? new Date(approvalRow.expiresAt).toISOString()
+            : String(approvalRow.expiresAt)
+          const claimNowIso = new Date().toISOString()
+          // Atomically acquire the exclusive per-(userId, clientId, grantRef) claim in
+          // `oauth_consent_claim` (outside Better Auth's `verification` expiry sweep) while
+          // capturing any pre-existing `oauthConsent` snapshot inline in the same statement.
+          let insertedClaim: { id: string; prevConsent: string | null } | null
+          try {
+            insertedClaim = await dbFirst<{ id: string; prevConsent: string | null }>(
               db,
-              `update "verification"
-               set "value" = json_set("value", '$.prevConsent', json(?))
-               where "id" = ? and "identifier" = 'oauth-approval-claimed:' || "id"`,
-              JSON.stringify(existingConsent),
-              claimed.id,
+              `insert into "oauth_consent_claim" (
+                 "id", "userId", "clientId", "referenceId", "sessionId", "sessionToken",
+                 "redirectUri", "codeChallenge", "state", "prevConsent", "expiresAt", "createdAt"
+               )
+               select ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                 (select json_object(
+                    'id', c."id",
+                    'scopes', c."scopes",
+                    'resources', c."resources",
+                    'requestedUserInfoClaims', c."requestedUserInfoClaims",
+                    'updatedAt', c."updatedAt"
+                  ) from "oauthConsent" c where c."clientId" = ? and c."userId" = ? and c."referenceId" = ? limit 1),
+                 ?, ?
+               where exists (select 1 from "session" s where s."id" = ? and s."token" = ? and s."userId" = ? and ${LIVE_SESSION_S_SQL})
+               returning "id", "prevConsent"`,
+              approvalRow.id,
+              session.user.id,
+              clientId,
+              grantRef,
+              session.session.id,
+              session.session.token,
+              redirectUri,
+              codeChallenge,
+              state,
+              clientId,
+              session.user.id,
+              grantRef,
+              claimExpiresIso,
+              claimNowIso,
+              session.session.id,
+              session.session.token,
+              session.user.id,
             )
+          } catch (error) {
+            if (error instanceof Error && /UNIQUE constraint failed: oauth_consent_claim/i.test(error.message)) {
+              throw apiError(409, { code: "CONSENT_IN_PROGRESS", message: "Another approval for this assistant is already in progress. Try again in a moment." }, responseHeaders)
+            }
+            throw error
           }
+          if (insertedClaim === null) {
+            throw apiError(409, { code: "CONSENT_APPROVAL_EXPIRED", message: "This approval request expired or was already used. Start connecting again from your assistant." }, responseHeaders)
+          }
+          const existingConsent = typeof insertedClaim.prevConsent === "string"
+            ? JSON.parse(insertedClaim.prevConsent) as ConsentSnapshot
+            : null
+          const store = oauthScopeStore.getStore()
           if (store !== undefined) {
+            store.claimedApprovalId = insertedClaim.id
+            store.isConsentAccept = true
             store.referenceId = grantRef
             store.memberId = member.memberId
             store.consentUserId = session.user.id
@@ -1909,7 +1972,7 @@ export function createAuth(config: AuthConfig) {
     // Either consent never entered Better Auth (failed before snapshot) or code issuance succeeded
     // and already consumed the claim; remove any remaining unconsumed claim row safely.
     if (rollbackConsent || !store.isConsentAccept) {
-      await dbRun(db, `delete from "verification" where "id" = ? and "identifier" = 'oauth-approval-claimed:' || "id"`, claimId).catch(() => undefined)
+      await dbRun(db, `delete from "oauth_consent_claim" where "id" = ?`, claimId).catch(() => undefined)
     }
   }
   const rawHandler = auth.handler

@@ -7,6 +7,7 @@ import { useState, type ReactNode } from "react"
 import { CopyId } from "@/components/copy-id"
 import { cn } from "@/lib/utils"
 import { CellRefusal, NotServed } from "../lib/live-transport.ts"
+import { useStudioScope } from "../lib/definitions.ts"
 import { atScale } from "../lib/objects.ts"
 import { transport, type Artifact } from "@/lib/transport"
 import { readEvidence, readHistory, readScan, type Evidence, type EvidenceRef } from "./review.ts"
@@ -38,7 +39,9 @@ function scaleOf(artifacts: readonly Artifact[], objectType: string, property: s
  * correction restates its document's total too).
  */
 function Correction({ evidence, subject }: { readonly evidence: Evidence; readonly subject: EvidenceRef }) {
-  const history = useQuery({ queryKey: ["history", subject.objectType, subject.id], queryFn: () => readHistory(subject.objectType, subject.id), retry: false })
+  const scope = useStudioScope()
+  const scopeKey = scope.data ? `${scope.data.orgId}:${scope.data.environmentId}` : ""
+  const history = useQuery({ queryKey: ["history", scopeKey, subject.objectType, subject.id], queryFn: () => readHistory(subject.objectType, subject.id, scope.data), enabled: !scope.isPending, retry: false })
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
   const versions = [...history.data?.document.versions ?? []].sort((a, b) => b.version - a.version)
   const property = evidence.subjectProperty

@@ -6,6 +6,7 @@ import { HiddenWriter } from "@/components/hidden-writer"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet"
 import { systemName } from "@/lib/catalog"
+import { useStudioScope } from "@/lib/definitions"
 import { KINDS, type Kind } from "@/lib/kinds"
 import { CellRefusal, NotServed } from "@/lib/live-transport"
 import { factProvenance, versionShown, type ValueProvenance } from "@/lib/provenance"
@@ -185,7 +186,9 @@ export function ProvenanceChain({ lineage, fact }: { readonly lineage: SourceLin
 
 /** The history read behind a live fact's card, read once per record and shared with its History tab. */
 function LiveFact({ objectType, id, version, fact, lineage }: { readonly objectType: string; readonly id: string; readonly version: number; readonly fact: string; readonly lineage: SourceLineage | null }) {
-  const history = useQuery({ queryKey: ["history", objectType, id], queryFn: () => readHistory(objectType, id), retry: false })
+  const scope = useStudioScope()
+  const scopeKey = scope.data ? `${scope.data.orgId}:${scope.data.environmentId}` : ""
+  const history = useQuery({ queryKey: ["history", scopeKey, objectType, id], queryFn: () => readHistory(objectType, id, scope.data), enabled: !scope.isPending, retry: false })
   if (history.isPending) return <p className="text-sm text-muted-foreground">Reading where it came from…</p>
   if (history.isError) {
     const reason = history.error instanceof NotServed ? "This cell does not serve record history yet."

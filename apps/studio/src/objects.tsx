@@ -20,6 +20,7 @@ import { Code } from "@/components/code"
 import { cn } from "@/lib/utils"
 import { TableCell, TableHead, TableRow } from "@/components/ui/table"
 import { conceptTitle, lawHeadline, systemName, type Concept } from "./lib/catalog.ts"
+import { useStudioScope } from "./lib/definitions.ts"
 import { useMode } from "./lib/live-transport.ts"
 import { LinkedRecords } from "./linked-records.tsx"
 import { RecordActions } from "./actions/record-actions.tsx"
@@ -216,7 +217,9 @@ const TABS = [["overview", "Overview"], ["lineage", "Lineage"], ["rules", "Rules
  * record's history (the same read its History panel uses). A recorded snapshot says so.
  */
 function AsOf({ objectType, id, version, live }: { readonly objectType: string; readonly id: string; readonly version: number; readonly live: boolean }) {
-  const history = useQuery({ queryKey: ["history", objectType, id], queryFn: () => readHistory(objectType, id), enabled: live, retry: false })
+  const scope = useStudioScope()
+  const scopeKey = scope.data ? `${scope.data.orgId}:${scope.data.environmentId}` : ""
+  const history = useQuery({ queryKey: ["history", scopeKey, objectType, id], queryFn: () => readHistory(objectType, id, scope.data), enabled: live && !scope.isPending, retry: false })
   const entry = history.data?.document.versions.find((candidate) => candidate.version === version)
   return (
     <span className="contents" title={entry ? "The commit that wrote this version, and its logical time" : undefined}>

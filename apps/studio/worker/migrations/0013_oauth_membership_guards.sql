@@ -1,44 +1,41 @@
 -- Commit-time OAuth membership-generation, session, and per-claim guards (S3):
 -- Every OAuth grant reference encodes `<organizationId>|<memberId>` (an immutable membership
 -- generation). Legacy bare-org grants without `|<memberId>` are refused by every trigger.
--- 1. At most one claimed consent approval row may exist per (userId, clientId, grantRef), even
---    after expiry, until atomically rolled back and deleted.
+-- 1. Claimed consent approvals live in the dedicated `oauth_consent_claim` table (outside
+--    Better Auth's `verification` expiry sweep) with a unique index on (userId, clientId,
+--    referenceId) so at most one claimed approval exists per grant until atomically consumed
+--    by authorization-code issuance or atomically rolled back and deleted.
 -- 2. oauthConsent INSERT/UPDATE requires BOTH an exact ready membership generation AND an active
---    claimed consent approval for that exact (userId, clientId, grantRef) bound to a live,
---    unexpired caller session (with a narrow rollback path restoring only the pre-request consent
---    snapshot recorded on the claimed approval).
+--    claimed consent approval in `oauth_consent_claim` for that exact (userId, clientId,
+--    referenceId) bound to a live, unexpired caller session (with a narrow rollback path restoring
+--    only the pre-request consent snapshot recorded on the claim).
 -- 3. authorization_code INSERT in verification requires an exact ready membership generation,
---    a live unexpired session, a matching oauthConsent row for (userId, clientId, referenceId),
---    and—whenever ANY claimed approval exists for that triple (provisional consent)—MUST carry
---    that exact unexpired claim's `claimId` and match its sessionId, redirectUri, codeChallenge,
---    and state; on commit, it consumes ONLY that exact `claimId`.
+--    a live unexpired session, a matching oauthConsent row whose committed `scopes`, `resources`,
+--    and `requestedUserInfoClaims` cover every scope/resource/claim requested in the code, and—
+--    whenever ANY claimed approval exists in `oauth_consent_claim` for that triple (provisional
+--    consent)—MUST carry that exact unexpired claim's `claimId` and match its sessionId,
+--    redirectUri, codeChallenge, and state; on commit, it consumes ONLY that exact `claimId`.
 -- 4. oauthRefreshToken and user oauthAccessToken INSERT require an exact ready membership generation.
--- 5. Deleting a membership immediately deletes matching consents & unredeemed authorization codes
---    and revokes matching refresh & access tokens so rejoin can never resurrect prior grants.
+-- 5. Deleting a membership immediately deletes matching consents, active claims, & unredeemed
+--    authorization codes and revokes matching refresh & access tokens so rejoin can never
+--    resurrect prior grants.
 
-create trigger "oauth_single_claimed_approval_per_grant" before update on "verification"
-when new."identifier" glob 'oauth-approval-claimed:*'
-begin
-  select raise(abort, 'oauth.approval_conflict')
-  where not json_valid(new."value")
-     or json_extract(new."value", '$.type') != 'consent_approval'
-     or json_extract(new."value", '$.userId') is null
-     or json_extract(new."value", '$.clientId') is null
-     or json_extract(new."value", '$.grantRef') is null
-     or json_extract(new."value", '$.sessionId') is null
-     or json_extract(new."value", '$.sessionToken') is null
-     or json_extract(new."value", '$.redirectUri') is null
-     or exists (
-       select 1 from "verification" v
-       where v."id" != new."id"
-         and v."identifier" glob 'oauth-approval-claimed:*'
-         and json_valid(v."value")
-         and json_extract(v."value", '$.type') = 'consent_approval'
-         and json_extract(v."value", '$.userId') = json_extract(new."value", '$.userId')
-         and json_extract(v."value", '$.clientId') = json_extract(new."value", '$.clientId')
-         and json_extract(v."value", '$.grantRef') = json_extract(new."value", '$.grantRef')
-     );
-end;
+create table "oauth_consent_claim" (
+  "id" text not null primary key,
+  "userId" text not null,
+  "clientId" text not null,
+  "referenceId" text not null,
+  "sessionId" text not null,
+  "sessionToken" text not null,
+  "redirectUri" text not null,
+  "codeChallenge" text,
+  "state" text,
+  "prevConsent" text,
+  "expiresAt" text not null,
+  "createdAt" text not null
+);
+
+create unique index "oauth_consent_claim_grant_uidx" on "oauth_consent_claim" ("userId", "clientId", "referenceId");
 
 create trigger "oauth_consent_requires_ready_member_insert" before insert on "oauthConsent"
 begin
@@ -58,18 +55,15 @@ begin
          and (o."metadata" is null or not json_valid(o."metadata") or coalesce(json_extract(o."metadata", '$."norn.provisioning"'), 0) != 1)
      )
      or not exists (
-       select 1 from "verification" v
-       join "session" s on s."id" = json_extract(v."value", '$.sessionId')
-         and s."token" = json_extract(v."value", '$.sessionToken')
+       select 1 from "oauth_consent_claim" cl
+       join "session" s on s."id" = cl."sessionId"
+         and s."token" = cl."sessionToken"
          and s."userId" = new."userId"
          and (case when typeof(s."expiresAt") in ('integer', 'real') then s."expiresAt" > (julianday('now') - 2440587.5) * 86400000.0 else julianday(s."expiresAt") > julianday('now') end)
-       where v."identifier" glob 'oauth-approval-claimed:*'
-         and json_valid(v."value")
-         and json_extract(v."value", '$.type') = 'consent_approval'
-         and json_extract(v."value", '$.userId') = new."userId"
-         and json_extract(v."value", '$.clientId') = new."clientId"
-         and json_extract(v."value", '$.grantRef') = new."referenceId"
-         and (case when typeof(v."expiresAt") in ('integer', 'real') then v."expiresAt" > (julianday('now') - 2440587.5) * 86400000.0 else julianday(v."expiresAt") > julianday('now') end)
+       where cl."userId" = new."userId"
+         and cl."clientId" = new."clientId"
+         and cl."referenceId" = new."referenceId"
+         and (case when typeof(cl."expiresAt") in ('integer', 'real') then cl."expiresAt" > (julianday('now') - 2440587.5) * 86400000.0 else julianday(cl."expiresAt") > julianday('now') end)
      );
 end;
 
@@ -82,22 +76,21 @@ begin
     and new."userId" = old."userId"
     and new."referenceId" = old."referenceId"
     and exists (
-      select 1 from "verification" v
-      where v."identifier" glob 'oauth-approval-claimed:*'
-        and json_valid(v."value")
-        and json_extract(v."value", '$.type') = 'consent_approval'
-        and json_extract(v."value", '$.userId') = old."userId"
-        and json_extract(v."value", '$.clientId') = old."clientId"
-        and json_extract(v."value", '$.grantRef') = old."referenceId"
-        and json_extract(v."value", '$.prevConsent.id') = old."id"
-        and new."scopes" = json_extract(v."value", '$.prevConsent.scopes')
+      select 1 from "oauth_consent_claim" cl
+      where cl."userId" = old."userId"
+        and cl."clientId" = old."clientId"
+        and cl."referenceId" = old."referenceId"
+        and cl."prevConsent" is not null
+        and json_valid(cl."prevConsent")
+        and json_extract(cl."prevConsent", '$.id') = old."id"
+        and new."scopes" = json_extract(cl."prevConsent", '$.scopes')
         and (
-          (new."resources" is null and json_extract(v."value", '$.prevConsent.resources') is null)
-          or new."resources" = json_extract(v."value", '$.prevConsent.resources')
+          (new."resources" is null and json_extract(cl."prevConsent", '$.resources') is null)
+          or new."resources" = json_extract(cl."prevConsent", '$.resources')
         )
         and (
-          (new."requestedUserInfoClaims" is null and json_extract(v."value", '$.prevConsent.requestedUserInfoClaims') is null)
-          or new."requestedUserInfoClaims" = json_extract(v."value", '$.prevConsent.requestedUserInfoClaims')
+          (new."requestedUserInfoClaims" is null and json_extract(cl."prevConsent", '$.requestedUserInfoClaims') is null)
+          or new."requestedUserInfoClaims" = json_extract(cl."prevConsent", '$.requestedUserInfoClaims')
         )
     )
   )
@@ -117,18 +110,15 @@ begin
         and (o."metadata" is null or not json_valid(o."metadata") or coalesce(json_extract(o."metadata", '$."norn.provisioning"'), 0) != 1)
     )
     or not exists (
-      select 1 from "verification" v
-      join "session" s on s."id" = json_extract(v."value", '$.sessionId')
-        and s."token" = json_extract(v."value", '$.sessionToken')
+      select 1 from "oauth_consent_claim" cl
+      join "session" s on s."id" = cl."sessionId"
+        and s."token" = cl."sessionToken"
         and s."userId" = new."userId"
         and (case when typeof(s."expiresAt") in ('integer', 'real') then s."expiresAt" > (julianday('now') - 2440587.5) * 86400000.0 else julianday(s."expiresAt") > julianday('now') end)
-      where v."identifier" glob 'oauth-approval-claimed:*'
-        and json_valid(v."value")
-        and json_extract(v."value", '$.type') = 'consent_approval'
-        and json_extract(v."value", '$.userId') = new."userId"
-        and json_extract(v."value", '$.clientId') = new."clientId"
-        and json_extract(v."value", '$.grantRef') = new."referenceId"
-        and (case when typeof(v."expiresAt") in ('integer', 'real') then v."expiresAt" > (julianday('now') - 2440587.5) * 86400000.0 else julianday(v."expiresAt") > julianday('now') end)
+      where cl."userId" = new."userId"
+        and cl."clientId" = new."clientId"
+        and cl."referenceId" = new."referenceId"
+        and (case when typeof(cl."expiresAt") in ('integer', 'real') then cl."expiresAt" > (julianday('now') - 2440587.5) * 86400000.0 else julianday(cl."expiresAt") > julianday('now') end)
     )
   );
 end;
@@ -144,6 +134,11 @@ begin
      or instr(json_extract(new."value", '$.referenceId'), '|') <= 1
      or instr(substr(json_extract(new."value", '$.referenceId'), instr(json_extract(new."value", '$.referenceId'), '|') + 1), '|') > 0
      or length(substr(json_extract(new."value", '$.referenceId'), instr(json_extract(new."value", '$.referenceId'), '|') + 1)) = 0
+     or instr(coalesce(json_extract(new."value", '$.query.scope'), ''), char(34)) > 0
+     or instr(coalesce(json_extract(new."value", '$.query.scope'), ''), char(92)) > 0
+     or instr(coalesce(json_extract(new."value", '$.query.scope'), ''), char(9)) > 0
+     or instr(coalesce(json_extract(new."value", '$.query.scope'), ''), char(10)) > 0
+     or instr(coalesce(json_extract(new."value", '$.query.scope'), ''), char(13)) > 0
      or not exists (
        select 1 from "member" m
        join "organization" o on o."id" = m."organizationId"
@@ -163,23 +158,90 @@ begin
        where c."userId" = json_extract(new."value", '$.userId')
          and c."clientId" = json_extract(new."value", '$.query.client_id')
          and c."referenceId" = json_extract(new."value", '$.referenceId')
+         and json_valid(c."scopes")
+         and json_type(c."scopes") = 'array'
+         and not exists (
+           select 1
+           from json_each(
+             case
+               when trim(coalesce(json_extract(new."value", '$.query.scope'), '')) = '' then '[]'
+               else json('["' || replace(trim(json_extract(new."value", '$.query.scope')), ' ', '","') || '"]')
+             end
+           ) req_scope
+           where req_scope."value" != ''
+             and not exists (
+               select 1 from json_each(c."scopes") granted_scope
+               where granted_scope."value" = req_scope."value"
+             )
+         )
+         and (
+           json_extract(new."value", '$.resource') is null
+           or (
+             json_type(new."value", '$.resource') = 'array'
+             and not exists (
+               select 1 from json_each(json_extract(new."value", '$.resource')) req_res
+               where not (
+                 c."resources" is not null
+                 and json_valid(c."resources")
+                 and json_type(c."resources") = 'array'
+                 and exists (
+                   select 1 from json_each(c."resources") granted_res
+                   where granted_res."value" = req_res."value"
+                 )
+               )
+             )
+           )
+         )
+         and (
+           json_extract(new."value", '$.query.claims') is null
+           or (
+             case
+               when json_type(new."value", '$.query.claims') = 'object' then json_extract(new."value", '$.query.claims.userinfo')
+               when json_type(new."value", '$.query.claims') = 'text' and json_valid(json_extract(new."value", '$.query.claims')) then json_extract(json_extract(new."value", '$.query.claims'), '$.userinfo')
+               else null
+             end is null
+           )
+           or (
+             json_type(
+               case
+                 when json_type(new."value", '$.query.claims') = 'object' then json_extract(new."value", '$.query.claims.userinfo')
+                 else json_extract(json_extract(new."value", '$.query.claims'), '$.userinfo')
+               end
+             ) = 'object'
+             and not exists (
+               select 1
+               from json_each(
+                 case
+                   when json_type(new."value", '$.query.claims') = 'object' then json_extract(new."value", '$.query.claims.userinfo')
+                   else json_extract(json_extract(new."value", '$.query.claims'), '$.userinfo')
+                 end
+               ) req_claim
+               where not (
+                 c."requestedUserInfoClaims" is not null
+                 and json_valid(c."requestedUserInfoClaims")
+                 and json_type(c."requestedUserInfoClaims") = 'array'
+                 and exists (
+                   select 1 from json_each(c."requestedUserInfoClaims") granted_claim
+                   where granted_claim."value" = req_claim."key"
+                 )
+               )
+             )
+           )
+         )
      )
      or exists (
-       select 1 from "verification" v
-       where v."identifier" glob 'oauth-approval-claimed:*'
-         and json_valid(v."value")
-         and json_extract(v."value", '$.type') = 'consent_approval'
-         and json_extract(v."value", '$.userId') = json_extract(new."value", '$.userId')
-         and json_extract(v."value", '$.clientId') = json_extract(new."value", '$.query.client_id')
-         and json_extract(v."value", '$.grantRef') = json_extract(new."value", '$.referenceId')
+       select 1 from "oauth_consent_claim" cl
+       where cl."userId" = json_extract(new."value", '$.userId')
+         and cl."clientId" = json_extract(new."value", '$.query.client_id')
+         and cl."referenceId" = json_extract(new."value", '$.referenceId')
          and (
            json_extract(new."value", '$.claimId') is null
-           or v."id" != json_extract(new."value", '$.claimId')
-           or not (case when typeof(v."expiresAt") in ('integer', 'real') then v."expiresAt" > (julianday('now') - 2440587.5) * 86400000.0 else julianday(v."expiresAt") > julianday('now') end)
-           or json_extract(v."value", '$.sessionId') != json_extract(new."value", '$.sessionId')
-           or json_extract(v."value", '$.redirectUri') != coalesce(json_extract(new."value", '$.query.redirect_uri'), '')
-           or coalesce(json_extract(v."value", '$.codeChallenge'), '') != coalesce(json_extract(new."value", '$.query.code_challenge'), '')
-           or coalesce(json_extract(v."value", '$.state'), '') != coalesce(json_extract(new."value", '$.query.state'), '')
+           or cl."id" != json_extract(new."value", '$.claimId')
+           or not (case when typeof(cl."expiresAt") in ('integer', 'real') then cl."expiresAt" > (julianday('now') - 2440587.5) * 86400000.0 else julianday(cl."expiresAt") > julianday('now') end)
+           or cl."sessionId" != json_extract(new."value", '$.sessionId')
+           or cl."redirectUri" != coalesce(json_extract(new."value", '$.query.redirect_uri'), '')
+           or coalesce(cl."codeChallenge", '') != coalesce(json_extract(new."value", '$.query.code_challenge'), '')
+           or coalesce(cl."state", '') != coalesce(json_extract(new."value", '$.query.state'), '')
          )
      );
 end;
@@ -189,15 +251,12 @@ when json_valid(new."value")
   and json_extract(new."value", '$.type') = 'authorization_code'
   and json_extract(new."value", '$.claimId') is not null
 begin
-  delete from "verification"
+  delete from "oauth_consent_claim"
   where "id" = json_extract(new."value", '$.claimId')
-    and "identifier" = 'oauth-approval-claimed:' || "id"
-    and json_valid("value")
-    and json_extract("value", '$.type') = 'consent_approval'
-    and json_extract("value", '$.userId') = json_extract(new."value", '$.userId')
-    and json_extract("value", '$.clientId') = json_extract(new."value", '$.query.client_id')
-    and json_extract("value", '$.grantRef') = json_extract(new."value", '$.referenceId')
-    and json_extract("value", '$.sessionId') = json_extract(new."value", '$.sessionId');
+    and "userId" = json_extract(new."value", '$.userId')
+    and "clientId" = json_extract(new."value", '$.query.client_id')
+    and "referenceId" = json_extract(new."value", '$.referenceId')
+    and "sessionId" = json_extract(new."value", '$.sessionId');
 end;
 
 create trigger "oauth_refresh_requires_ready_member" before insert on "oauthRefreshToken"
@@ -237,6 +296,9 @@ end;
 
 create trigger "oauth_revoke_on_member_delete" after delete on "member"
 begin
+  delete from "oauth_consent_claim"
+  where "userId" = old."userId"
+    and ("referenceId" = old."organizationId" || '|' || old."id" or "referenceId" = old."organizationId");
   delete from "oauthConsent"
   where "userId" = old."userId"
     and ("referenceId" = old."organizationId" || '|' || old."id" or "referenceId" = old."organizationId");
@@ -247,7 +309,7 @@ begin
     and (json_extract("value", '$.referenceId') = old."organizationId" || '|' || old."id"
       or json_extract("value", '$.referenceId') = old."organizationId");
   delete from "verification"
-  where ("identifier" glob 'oauth-approval:*' or "identifier" glob 'oauth-approval-claimed:*')
+  where "identifier" glob 'oauth-approval:*'
     and json_valid("value")
     and json_extract("value", '$.type') = 'consent_approval'
     and json_extract("value", '$.userId') = old."userId"

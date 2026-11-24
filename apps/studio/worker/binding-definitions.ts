@@ -67,6 +67,9 @@ const findingsOf = (body: unknown): readonly Finding[] => {
     : []
 }
 
+/** Hard time limit for a single DEFS cell call (strictly below the 2-minute pending-save lease). */
+export const CELL_CALL_TIMEOUT_MS = 30_000
+
 /** A cell that cannot be reached or answers outside DEFS's contract: nothing was saved there. */
 export class CellUnavailable extends Error {}
 
@@ -87,7 +90,12 @@ export class BindingDefinitions {
     if (body !== undefined) headers.set("content-type", "application/json")
     let response: Response
     try {
-      response = await host.fetch(new Request(`https://norn-host${this.scoped(path)}`, { method, headers, ...body === undefined ? {} : { body: JSON.stringify(body) } }))
+      response = await host.fetch(new Request(`https://norn-host${this.scoped(path)}`, {
+        method,
+        headers,
+        signal: AbortSignal.timeout(CELL_CALL_TIMEOUT_MS),
+        ...body === undefined ? {} : { body: JSON.stringify(body) },
+      }))
     } catch {
       throw new CellUnavailable("The cell could not be reached; the binding was not saved.")
     }

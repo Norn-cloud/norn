@@ -695,12 +695,17 @@ test("S3 generation isolation: unredeemed codes, legacy grants, prior consents, 
   const authB = await call(env, authorizeUrl(clientB, pkce().challenge), { headers: { cookie: cookie5 } })
   const queryB = signedQueryOf(authB.headers.get("location") ?? "")
   const ctxB = await consentContext(env, cookie5, queryB)
-  // Claim Client B's approval directly to simulate an in-flight Client B consent.
-  sqlite.run(`update "verification" set "identifier" = 'oauth-approval-claimed:' || "id" where "identifier" glob 'oauth-approval:*'`)
+  expect(ctxB.approvalToken).toBeString()
+  const session5 = sqlite.query(`select "id", "token" from "session" where "userId" = ? order by "createdAt" desc limit 1`).get(user) as { id: string; token: string }
+  // Insert a claimed approval for Client B in `oauth_consent_claim` to simulate an in-flight Client B consent.
+  sqlite.run(
+    `insert into "oauth_consent_claim" ("id", "userId", "clientId", "referenceId", "sessionId", "sessionToken", "redirectUri", "codeChallenge", "state", "prevConsent", "expiresAt", "createdAt")
+     values ('claim_b', ?, ?, ?, ?, ?, ?, null, null, null, datetime('now', '+5 minutes'), datetime('now'))`,
+    [user, clientB, grantRefGen2, session5.id, session5.token, CLAUDE],
+  )
   expect(() => sqlite.run(`update "oauthConsent" set "scopes" = '["openid","offline_access"]' where "id" = ?`, [initialConsent.id])).toThrow("oauth.membership_invalid")
   // Clean up simulated claim for Client B before testing Client A update rollback.
-  expect(ctxB.approvalToken).toBeString()
-  sqlite.run(`delete from "verification" where "identifier" glob 'oauth-approval-claimed:*'`)
+  sqlite.run(`delete from "oauth_consent_claim" where "id" = 'claim_b'`)
 
   // Re-consent Client A with broader scopes (`prompt=consent`, `openid offline_access`) and revoke session right before code insert:
   // the UPDATE to oauthConsent MUST roll back to `initialConsent.scopes` even though the session was revoked!
@@ -723,15 +728,16 @@ test("S3 generation isolation: unredeemed codes, legacy grants, prior consents, 
   expect(failedUpdate.status).toBe(409)
   const restored = sqlite.query(`select "scopes" from "oauthConsent" where "id" = ?`).get(initialConsent.id) as { scopes: string }
   expect(restored.scopes).toBe(initialConsent.scopes)
-  expect(sqlite.query(`select count(*) as n from "verification" where "identifier" glob 'oauth-approval-claimed:*'`).get()).toEqual({ n: 0 })
+  expect(sqlite.query(`select count(*) as n from "oauth_consent_claim"`).get()).toEqual({ n: 0 })
 
-  // 6. R4-1 & R4-2: Provisional consent is hidden from any other authorization request (even with
-  //    identical session/client/grant/redirect/challenge/state) without the exact `claimId`, AND an
-  //    expired claimed approval blocks direct concurrent claims until atomically rolled back.
+  // 6. R4-1/R4-2 & R5-1/R5-2: Claimed approvals live in `oauth_consent_claim` (immune to Better Auth's
+  //    verification expiry cleanup), hide provisional consent from concurrent `/oauth2/authorize` AND
+  //    from direct `authorization_code` inserts without `claimId`, AND verify every requested scope/resource
+  //    against committed `oauthConsent` even after rollback removes the claim.
   const signIn6 = await postJson(env, "/api/auth/sign-in/email", { email: "gen-isolation@example.com", password: "correct horse battery" }, { origin: ORIGIN })
   const cookie6 = cookieOf(signIn6)
   sqlite.run(`update "session" set "activeOrganizationId" = ? where "userId" = ?`, [org, user])
-  const session6Id = (sqlite.query(`select "id" from "session" where "userId" = ? order by "createdAt" desc limit 1`).get(user) as { id: string }).id
+  const session6 = sqlite.query(`select "id", "token" from "session" where "userId" = ? order by "createdAt" desc limit 1`).get(user) as { id: string; token: string }
   const clientC = await register(env)
   const pkceC = pkce()
   const authC = await call(env, authorizeUrl(clientC, pkceC.challenge), { headers: { cookie: cookie6 } })
@@ -739,19 +745,27 @@ test("S3 generation isolation: unredeemed codes, legacy grants, prior consents, 
   const ctxC = await consentContext(env, cookie6, queryC)
   expect(ctxC.approvalToken).toBeString()
   // Simulate an active claimed approval + provisional consent for Client C.
-  sqlite.run(`update "verification" set "identifier" = 'oauth-approval-claimed:' || "id" where "identifier" glob 'oauth-approval:*'`)
-  const claimRow = sqlite.query(`select "id" from "verification" where "identifier" glob 'oauth-approval-claimed:*'`).get() as { id: string }
   sqlite.run(
-    `insert into "oauthConsent" ("id", "clientId", "userId", "referenceId", "scopes", "createdAt", "updatedAt") values ('prov_c', ?, ?, ?, '["openid","offline_access"]', datetime('now'), datetime('now'))`,
-    [clientC, user, grantRefGen2],
+    `insert into "oauth_consent_claim" ("id", "userId", "clientId", "referenceId", "sessionId", "sessionToken", "redirectUri", "codeChallenge", "state", "prevConsent", "expiresAt", "createdAt")
+     values ('claim_c', ?, ?, ?, ?, ?, ?, ?, 'st-1', null, datetime('now', '+5 minutes'), datetime('now'))`,
+    [user, clientC, grantRefGen2, session6.id, session6.token, CLAUDE, pkceC.challenge],
   )
+  sqlite.run(
+    `insert into "oauthConsent" ("id", "clientId", "userId", "referenceId", "scopes", "resources", "createdAt", "updatedAt") values ('prov_c', ?, ?, ?, '["openid","offline_access"]', ?, datetime('now'), datetime('now'))`,
+    [clientC, user, grantRefGen2, JSON.stringify([RESOURCE])],
+  )
+  // Concurrent GET /oauth2/authorize is refused 409 CONSENT_IN_PROGRESS while a claim is active (never reads provisional consent).
+  const concurrentAuth = await call(env, authorizeUrl(clientC, pkce().challenge), { headers: { cookie: cookie6 } })
+  expect(concurrentAuth.status).toBe(409)
+  expect(await concurrentAuth.json()).toMatchObject({ code: "CONSENT_IN_PROGRESS" })
   // Another request with IDENTICAL session/client/grant/redirect/challenge/state but NO claimId (or wrong claimId) MUST abort!
   const stolenCodePayload = {
     type: "authorization_code",
     userId: user,
-    sessionId: session6Id,
+    sessionId: session6.id,
     referenceId: grantRefGen2,
-    query: { client_id: clientC, redirect_uri: CLAUDE, code_challenge: pkceC.challenge, state: "st-1" },
+    resource: [RESOURCE],
+    query: { client_id: clientC, redirect_uri: CLAUDE, scope: "openid offline_access", code_challenge: pkceC.challenge, state: "st-1" },
   }
   expect(() => sqlite.run(
     `insert into "verification" ("id", "identifier", "value", "expiresAt", "createdAt", "updatedAt") values ('stolen_code', 'stolen_1', ?, datetime('now', '+5 minutes'), datetime('now'), datetime('now'))`,
@@ -762,17 +776,26 @@ test("S3 generation isolation: unredeemed codes, legacy grants, prior consents, 
     [JSON.stringify({ ...stolenCodePayload, claimId: "wrong-claim-id" })],
   )).toThrow("oauth.membership_invalid")
   // Claim row is still intact (not consumed by the rejected request).
-  expect(sqlite.query(`select count(*) as n from "verification" where "id" = ?`).get(claimRow.id)).toEqual({ n: 1 })
+  expect(sqlite.query(`select count(*) as n from "oauth_consent_claim" where "id" = 'claim_c'`).get()).toEqual({ n: 1 })
 
-  // Expire the claimed approval: a raw concurrent claim MUST still abort (oauth.approval_conflict)
-  // until the expired claim + its provisional consent are atomically rolled back by the successor flow.
-  sqlite.run(`update "verification" set "expiresAt" = datetime('now', '-5 minutes') where "id" = ?`, [claimRow.id])
+  // R5-1: Expire the claimed approval and run Better Auth's verification expiry cleanup (deleting all
+  // expired verification rows): `oauth_consent_claim` MUST remain intact and still block both code
+  // issuance AND raw concurrent claims until atomically rolled back!
+  sqlite.run(`update "oauth_consent_claim" set "expiresAt" = datetime('now', '-5 minutes') where "id" = 'claim_c'`)
+  sqlite.run(`delete from "verification" where julianday("expiresAt") < julianday('now')`)
+  expect(sqlite.query(`select count(*) as n from "oauth_consent_claim" where "id" = 'claim_c'`).get()).toEqual({ n: 1 })
+  expect(() => sqlite.run(
+    `insert into "verification" ("id", "identifier", "value", "expiresAt", "createdAt", "updatedAt") values ('expired_claim_code', 'exp_1', ?, datetime('now', '+5 minutes'), datetime('now'), datetime('now'))`,
+    [JSON.stringify(stolenCodePayload)],
+  )).toThrow("oauth.membership_invalid")
+  expect(() => sqlite.run(
+    `insert into "oauth_consent_claim" ("id", "userId", "clientId", "referenceId", "sessionId", "sessionToken", "redirectUri", "codeChallenge", "state", "prevConsent", "expiresAt", "createdAt")
+     values ('claim_c_dup', ?, ?, ?, ?, ?, ?, null, null, null, datetime('now', '+5 minutes'), datetime('now'))`,
+    [user, clientC, grantRefGen2, session6.id, session6.token, CLAUDE],
+  )).toThrow("UNIQUE constraint failed")
+  // Submitting the successor consent sweeps the expired claim + its provisional consent atomically and succeeds cleanly!
   const ctxC2 = await consentContext(env, cookie6, queryC)
   expect(ctxC2.approvalToken).toBeString()
-  expect(() => sqlite.run(
-    `update "verification" set "identifier" = 'oauth-approval-claimed:' || "id" where "identifier" glob 'oauth-approval:*'`,
-  )).toThrow("oauth.approval_conflict")
-  // Submitting the successor consent sweeps the expired claim + its provisional consent atomically and succeeds cleanly!
   const successor = await postJson(
     env,
     "/api/auth/oauth2/consent",
@@ -782,4 +805,30 @@ test("S3 generation isolation: unredeemed codes, legacy grants, prior consents, 
   expect(successor.status).toBe(200)
   expect(sqlite.query(`select count(*) as n from "oauthConsent" where "id" = 'prov_c'`).get()).toEqual({ n: 0 })
   expect(sqlite.query(`select count(*) as n from "oauthConsent" where "clientId" = ? and "userId" = ? and "referenceId" = ?`).get(clientC, user, grantRefGen2)).toEqual({ n: 1 })
+
+  // R5-2: Even after rollback restores prior consent (`openid` only) and deletes the claim, an
+  // authorization_code carrying broader provisional scopes (`openid offline_access`) OR an
+  // unconsented resource MUST abort in SQLite!
+  expect(() => sqlite.run(
+    `insert into "verification" ("id", "identifier", "value", "expiresAt", "createdAt", "updatedAt") values ('stale_scope_code', 'stale_scope_1', ?, datetime('now', '+5 minutes'), datetime('now'), datetime('now'))`,
+    [JSON.stringify({
+      type: "authorization_code",
+      userId: user,
+      sessionId: session6.id,
+      referenceId: grantRefGen2,
+      resource: [RESOURCE],
+      query: { client_id: clientA, redirect_uri: CLAUDE, scope: "openid offline_access", code_challenge: pkce().challenge, state: "st-race" },
+    })],
+  )).toThrow("oauth.membership_invalid")
+  expect(() => sqlite.run(
+    `insert into "verification" ("id", "identifier", "value", "expiresAt", "createdAt", "updatedAt") values ('stale_res_code', 'stale_res_1', ?, datetime('now', '+5 minutes'), datetime('now'), datetime('now'))`,
+    [JSON.stringify({
+      type: "authorization_code",
+      userId: user,
+      sessionId: session6.id,
+      referenceId: grantRefGen2,
+      resource: ["https://other.example/mcp"],
+      query: { client_id: clientA, redirect_uri: CLAUDE, scope: "openid", code_challenge: pkce().challenge, state: "st-race-res" },
+    })],
+  )).toThrow("oauth.membership_invalid")
 })

@@ -5,6 +5,7 @@ import { EmptyState, Panel, Well } from "@/components/panel"
 import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import type { Read } from "@/lib/exact"
+import { useStudioScope } from "@/lib/definitions"
 import { NotServed } from "@/lib/live-transport"
 import { profiled, readProfile, type ObjectProfile, type PropertyProfile } from "@/lib/profile"
 import { atScale } from "@/lib/objects"
@@ -60,7 +61,9 @@ function quantile(read: Read<ObjectProfile>, at: string, property: PropertyProfi
  * whose values it withholds from this reader are counted apart and add nothing to the figures.
  */
 export function ProfilePanel({ objectType, scales = new Map() }: { readonly objectType: string; readonly scales?: ReadonlyMap<string, number> }) {
-  const profile = useQuery({ queryKey: ["profile", objectType], queryFn: () => readProfile(objectType), retry: false })
+  const scope = useStudioScope()
+  const scopeKey = scope.data ? `${scope.data.orgId}:${scope.data.environmentId}` : ""
+  const profile = useQuery({ queryKey: ["profile", scopeKey, objectType], queryFn: () => readProfile(objectType, undefined, scope.data), enabled: !scope.isPending, retry: false })
   if (profile.isPending) return <p className="text-sm text-muted-foreground">Profiling the records…</p>
   if (profile.isError) return profile.error instanceof NotServed
     ? <EmptyState icon={BarChart3} title="Not served">{profile.error.message}</EmptyState>
