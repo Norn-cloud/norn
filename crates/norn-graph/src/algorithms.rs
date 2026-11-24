@@ -311,26 +311,23 @@ pub fn hierarchical_rollup<N: Ord + Clone, Q: Quantity>(
     let mut result: BTreeMap<N, Q> = BTreeMap::new();
     for node in order.iter().rev() {
         meter.step()?;
-        let mut aggregate = value(values, node)?.clone();
-        let mut sum = Q::Sum::default();
-        if aggregation == Aggregation::Sum {
-            Q::accumulate(&mut sum, &aggregate)?;
-        }
-        for child in &graph.links(node)?.out {
+        let own = value(values, node)?;
+        let mut children = graph.links(node)?.out.iter().map(|child| {
             meter.step()?;
-            let child_value = result.get(child).ok_or(Error::Invariant)?;
-            aggregate = match aggregation {
-                Aggregation::Sum => {
-                    Q::accumulate(&mut sum, child_value)?;
-                    continue;
+            result.get(child).ok_or(Error::Invariant)
+        });
+        let aggregate = match aggregation {
+            Aggregation::Sum => {
+                let mut sum = Q::Sum::default();
+                Q::accumulate(&mut sum, own)?;
+                for child in children {
+                    Q::accumulate(&mut sum, child?)?;
                 }
-                Aggregation::Min => aggregate.min(child_value.clone()),
-                Aggregation::Max => aggregate.max(child_value.clone()),
-            };
-        }
-        if aggregation == Aggregation::Sum {
-            aggregate = Q::finish(sum)?;
-        }
+                Q::finish(sum)?
+            }
+            Aggregation::Min => children.try_fold(own, |a, b| b.map(|b| a.min(b)))?.clone(),
+            Aggregation::Max => children.try_fold(own, |a, b| b.map(|b| a.max(b)))?.clone(),
+        };
         result.insert(node.clone(), aggregate);
     }
     Ok(result)

@@ -30,7 +30,7 @@ impl U160 {
             .hi
             .wrapping_add(rhs.hi)
             .wrapping_add(if carry { 1 } else { 0 });
-        Self { lo, hi }
+        Self { hi, lo }
     }
 
     #[cfg_attr(verus_keep_ghost, verus_spec(r =>
@@ -73,7 +73,7 @@ impl Amount {
     }
 }
 
-/// The positive and negative subtotals of at most u32::MAX terms.
+/// The positive and negative subtotals of at most `u32::MAX` terms.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(verus_keep_ghost, verus_verify)]
 pub struct ExactSum {

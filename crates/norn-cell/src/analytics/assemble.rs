@@ -434,8 +434,37 @@ fn coefficient_sum(text: &str) -> Result<i128, CellError> {
     Ok(sum)
 }
 
-/// One bucket's row: the exact totals (refusing a sum whose partial sums
-/// could leave the bounded profile), the ratio, and either the members or
+/// Recover the positive and negative subtotals of a summarized operand.
+fn publish_reported(total: &str, magnitude: &str) -> Result<i128, CellError> {
+    let total = coefficient_sum(total)?;
+    let magnitude = coefficient_sum(magnitude)?;
+    // From T=P-N and M=P+N recover the two nonnegative subtotals
+    // without forming M+T, which could overflow for an invalid response.
+    let excess = magnitude
+        .checked_sub(
+            total
+                .checked_abs()
+                .ok_or_else(|| refused("core.compute.bound_exceeded"))?,
+        )
+        .filter(|v| *v >= 0 && v & 1 == 0)
+        .ok_or_else(|| CellError::Engine("inconsistent bucket magnitude".into()))?;
+    let lesser = excess >> 1;
+    let greater = magnitude
+        .checked_sub(lesser)
+        .ok_or_else(|| refused("core.compute.bound_exceeded"))?;
+    let (pos, neg) = if total < 0 {
+        (lesser, greater)
+    } else {
+        (greater, lesser)
+    };
+    let sum = norn_ir::ExactSum::ZERO
+        .add(pos)
+        .and_then(|s| s.add(neg.wrapping_neg()))
+        .ok_or_else(|| refused("core.compute.bound_exceeded"))?;
+    math::decide(sum).map_err(|_| refused("core.compute.bound_exceeded"))
+}
+
+/// One bucket's row: magnitude-bounded totals, the ratio, and either the members or
 /// their count and digest.
 fn assemble_row(
     bucket: &BucketTotals,
@@ -454,32 +483,7 @@ fn assemble_row(
     }
     let mut totals = Vec::with_capacity(arity);
     for (total, magnitude) in bucket.totals.iter().zip(&bucket.magnitude) {
-        let total = coefficient_sum(total)?;
-        let magnitude = coefficient_sum(magnitude)?;
-        // From T=P-N and M=P+N recover the two nonnegative subtotals
-        // without forming M+T, which could overflow for an invalid response.
-        let excess = magnitude
-            .checked_sub(
-                total
-                    .checked_abs()
-                    .ok_or_else(|| refused("core.compute.bound_exceeded"))?,
-            )
-            .filter(|v| *v >= 0 && v & 1 == 0)
-            .ok_or_else(|| CellError::Engine("inconsistent bucket magnitude".into()))?;
-        let lesser = excess >> 1;
-        let greater = magnitude
-            .checked_sub(lesser)
-            .ok_or_else(|| refused("core.compute.bound_exceeded"))?;
-        let (pos, neg) = if total < 0 {
-            (lesser, greater)
-        } else {
-            (greater, lesser)
-        };
-        let sum = norn_ir::ExactSum::ZERO
-            .add(pos)
-            .and_then(|s| s.add(neg.wrapping_neg()))
-            .ok_or_else(|| refused("core.compute.bound_exceeded"))?;
-        totals.push(math::decide(sum).map_err(|_| refused("core.compute.bound_exceeded"))?);
+        totals.push(publish_reported(total, magnitude)?);
     }
     let value_number = match totals.as_slice() {
         [sum] => Some(decimal(*sum)?),

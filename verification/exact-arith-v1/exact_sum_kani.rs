@@ -1,5 +1,6 @@
 //! A symbolic one-step check over both limbs; no loop unwinding bound.
 use super::{ExactSum, U160};
+use std::convert::TryFrom;
 
 fn wide() -> U160 {
     U160 {
