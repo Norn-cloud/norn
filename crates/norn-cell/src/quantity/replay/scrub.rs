@@ -64,6 +64,7 @@ enum TailState {
 pub(crate) struct QuantityScrub {
     replay: QuantityReplay,
     seed: Option<SeedState>,
+    pending_nonpositive: bool,
     pending_append: Option<AppendCursor>,
     tail: Option<TailState>,
 }
@@ -86,13 +87,14 @@ impl QuantityScrub {
         Self {
             replay: QuantityReplay::default(),
             seed,
+            pending_nonpositive: false,
             pending_append: None,
             tail: None,
         }
     }
 
     pub(crate) const fn has_pending_work(&self) -> bool {
-        self.seed.is_some() || self.pending_append.is_some()
+        self.seed.is_some() || self.pending_nonpositive || self.pending_append.is_some()
     }
 
     /// Run one bounded (`<= 512` total rows) pending seed or append-table page step.
@@ -104,6 +106,11 @@ impl QuantityScrub {
         if self.seed.is_some() {
             return self.step_seed(engine, reader);
         }
+        if self.pending_nonpositive {
+            check_nonpositive_append(engine)?;
+            self.pending_nonpositive = false;
+            return Ok(());
+        }
         if self.pending_append.is_some() {
             return self.step_append_page(engine);
         }
@@ -111,8 +118,8 @@ impl QuantityScrub {
     }
 
     /// Replay a batch of completed history commits; ordinary-only chunks verify
-    /// empty append ranges via `LIMIT 1` (charging `budget`), while quantity
-    /// chunks stage `pending_append` to drain on subsequent wakes.
+    /// empty append ranges inline only when `budget` has headroom, otherwise
+    /// staging pending probes/append pages to drain on subsequent wakes.
     pub(crate) fn verify_chunk<S: SqlEngine>(
         &mut self,
         engine: &S,
@@ -122,11 +129,15 @@ impl QuantityScrub {
         budget: &mut crate::scrub::RowBudget,
     ) -> Result<(), CellError> {
         if after == 0 {
-            for sql in [
-                r#"SELECT 1 FROM "_norn_quantity_history" WHERE "commit_seq" <= 0 LIMIT 1"#,
-                r#"SELECT 1 FROM "_norn_quantity_posting" WHERE "commit_seq" <= 0 LIMIT 1"#,
-            ] {
-                check_no_rows_budgeted(engine, sql, &[], budget)?;
+            if budget.remaining() >= 2 {
+                for sql in [
+                    r#"SELECT 1 FROM "_norn_quantity_history" WHERE "commit_seq" <= 0 LIMIT 1"#,
+                    r#"SELECT 1 FROM "_norn_quantity_posting" WHERE "commit_seq" <= 0 LIMIT 1"#,
+                ] {
+                    check_no_rows_budgeted(engine, sql, &[], budget)?;
+                }
+            } else {
+                self.pending_nonpositive = true;
             }
         }
         let (mut history, mut postings) = (Rows::new(), Rows::new());
@@ -134,7 +145,7 @@ impl QuantityScrub {
             self.replay
                 .step_receipt(receipt, &mut history, &mut postings)?;
         }
-        if history.is_empty() && postings.is_empty() {
+        if history.is_empty() && postings.is_empty() && budget.remaining() >= 2 {
             return check_append_empty(engine, after, through, budget);
         }
         self.stage_append(after, through, history, postings);
@@ -150,6 +161,11 @@ impl QuantityScrub {
         target_commits: u64,
         target_boundary: Option<FormatBoundary>,
     ) -> Result<bool, CellError> {
+        if self.pending_nonpositive {
+            check_nonpositive_append(engine)?;
+            self.pending_nonpositive = false;
+            return Ok(false);
+        }
         if self.pending_append.is_some() {
             self.step_append_page(engine)?;
             return Ok(false);
@@ -419,6 +435,16 @@ impl QuantityScrub {
             },
         }
     }
+}
+
+fn check_nonpositive_append<S: SqlEngine>(engine: &S) -> Result<(), CellError> {
+    for sql in [
+        r#"SELECT 1 FROM "_norn_quantity_history" WHERE "commit_seq" <= 0 LIMIT 1"#,
+        r#"SELECT 1 FROM "_norn_quantity_posting" WHERE "commit_seq" <= 0 LIMIT 1"#,
+    ] {
+        check_no_rows(engine, sql, &[])?;
+    }
+    Ok(())
 }
 
 fn check_no_rows_budgeted<S: SqlEngine>(

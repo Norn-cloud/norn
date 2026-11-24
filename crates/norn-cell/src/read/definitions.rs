@@ -169,15 +169,22 @@ fn definition_registry_for_version(
     engine: &impl SqlEngine,
     version: u64,
 ) -> Result<Vec<String>, CellError> {
+    definition_registry_row(engine, version).map(|(registry, _)| registry)
+}
+
+fn definition_registry_row(
+    engine: &impl SqlEngine,
+    version: u64,
+) -> Result<(Vec<String>, bool), CellError> {
     let registry = engine.query_optional(
         &format!("SELECT \"registry\" FROM \"{DEFINITION_REGISTRY}\" WHERE \"version\" = ?1"),
         params![to_i64(version, "definitions version")?],
         |row| row.get::<String>(0),
     )?;
     let Some(registry) = registry else {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), false));
     };
-    Ok(serde_json::from_str(&registry)?)
+    Ok((serde_json::from_str(&registry)?, true))
 }
 
 fn definition_from_row(row: &SqlRow) -> Result<InstalledDefinitionSet, CellError> {
@@ -360,23 +367,20 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         decode_definition_rows(self.conn, rows, Some(budget))
     }
 
-    /// O(1) summary `(count, max_version)` of retained definitions through
-    /// `through` for `Phase::Seed` pin verification (1 SQL row).
-    pub(crate) fn definition_version_stats_through(
-        &self,
-        through: u64,
-    ) -> Result<(u64, u64), CellError> {
-        let (count, max_version): (i64, i64) = self.conn.query_row(
+    /// O(1) latest retained definition version at or before `through` for
+    /// `Phase::Seed` pin verification (`ORDER BY version DESC LIMIT 1`, `<= 1` row).
+    pub(crate) fn latest_definition_version_through(&self, through: u64) -> Result<u64, CellError> {
+        let max_version: Option<i64> = self.conn.query_optional(
             &format!(
-                "SELECT COUNT(*), COALESCE(MAX(\"version\"), 0) FROM \"{DEFINITION_VERSION}\" WHERE \"commit_seq\" <= ?1"
+                "SELECT \"version\" FROM \"{DEFINITION_VERSION}\" WHERE \"commit_seq\" <= ?1 ORDER BY \"version\" DESC LIMIT 1"
             ),
             params![to_i64(through, "definitions commit_seq")?],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| row.get(0),
         )?;
-        Ok((
-            to_u64(count, "definitions count")?,
-            to_u64(max_version, "definitions max version")?,
-        ))
+        max_version
+            .map(|version| to_u64(version, "definitions max version"))
+            .transpose()
+            .map(Option::unwrap_or_default)
     }
 }
 
@@ -402,23 +406,24 @@ fn decode_definition_rows(
     for values in rows {
         let mut installed = definition_from_row(&SqlRow(values))?;
         if has_registry_table {
-            installed.registry = definition_registry_for_version(conn, installed.version)?;
+            let (registry, found) = definition_registry_row(conn, installed.version)?;
+            installed.registry = registry;
             if let Some(budget) = budget.as_deref_mut() {
-                budget.charge(1);
+                budget.charge(usize::from(found));
             }
         }
         if has_admission_receipt_table {
             installed.admission_receipt =
                 definition_admission_receipt_for_version(conn, installed.version)?;
             if let Some(budget) = budget.as_deref_mut() {
-                budget.charge(1);
+                budget.charge(usize::from(installed.admission_receipt.is_some()));
             }
         }
         if has_layout_table {
             (installed.layout, installed.layout_revision) =
                 definition_layout_row(conn, installed.version)?;
             if let Some(budget) = budget.as_deref_mut() {
-                budget.charge(1);
+                budget.charge(usize::from(installed.layout.is_some()));
             }
         }
         out.push(installed);

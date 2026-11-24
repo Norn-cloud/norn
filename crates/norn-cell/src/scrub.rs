@@ -206,7 +206,6 @@ enum Phase {
 struct VerifiedPins {
     export: Option<ExportPin>,
     definitions: String,
-    definitions_count: u64,
     definitions_max_version: u64,
 }
 
@@ -739,13 +738,10 @@ impl<E: SqlEngine> CellStore<E> {
             .map(String::as_str);
         self.verify_target_tail_anchor(&run.target, expected_hash)?;
         let export = crate::cell_identity::last_record_through(&self.conn, run.target.commits)?;
-        let (def_count, def_max) = self
+        let def_max = self
             .verifier()
-            .definition_version_stats_through(run.target.commits)?;
-        if export != pins.export
-            || def_count != pins.definitions_count
-            || def_max != pins.definitions_max_version
-        {
+            .latest_definition_version_through(run.target.commits)?;
+        if export != pins.export || def_max != pins.definitions_max_version {
             return Err(defect(
                 run.target.commits,
                 "export or definition pins changed before checkpoint seed",

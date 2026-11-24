@@ -60,20 +60,28 @@ struct PackedExportState {
     value: Value,
     scope_checked: bool,
     ordinals_done: bool,
-    next_ordinal: u64,
+    last_ordinal: Option<i64>,
     ordinal_idx: usize,
     blobs_loaded: usize,
+}
+
+#[derive(Clone)]
+enum ExportDecodeState {
+    Ready(Option<Box<ExportRecord>>),
+    Packed(Box<PackedExportState>),
 }
 
 /// Resumable reader for one `_norn_export_journal` row and all of its packed
 /// `_norn_export_payload` / `_norn_payload` rows under a shared [`RowBudget`].
 #[derive(Clone)]
-pub(crate) enum ExportDecodeCursor {
-    Ready(Option<Box<ExportRecord>>),
-    Packed(Box<PackedExportState>),
-}
+pub(crate) struct ExportDecodeCursor(ExportDecodeState);
 
 impl ExportDecodeCursor {
+    /// Wrap an already-decoded record so a caller can resume after yielding.
+    pub(crate) fn ready(record: ExportRecord) -> Self {
+        Self(ExportDecodeState::Ready(Some(Box::new(record))))
+    }
+
     /// Fetch the journal row for `commit_seq` (`<= 1` row charged to `budget`)
     /// and prepare resumable decoding. Returns `Ok(None)` when absent.
     pub(crate) fn open(
@@ -93,7 +101,7 @@ impl ExportDecodeCursor {
         let Some(encoded) = serialized.strip_prefix(PREFIX) else {
             let record: ExportRecord = serde_json::from_str(&serialized)?;
             verify_export_envelope(&record, commit_seq, &stored_hash)?;
-            return Ok(Some(Self::Ready(Some(Box::new(record)))));
+            return Ok(Some(Self::ready(record)));
         };
         let packed: Packed = serde_json::from_str(encoded)?;
         if packed.commit_seq != commit_seq {
@@ -110,17 +118,19 @@ impl ExportDecodeCursor {
                 return Err(corrupt());
             }
         }
-        Ok(Some(Self::Packed(Box::new(PackedExportState {
-            commit_seq,
-            stored_hash,
-            packed,
-            value,
-            scope_checked: false,
-            ordinals_done: false,
-            next_ordinal: 0,
-            ordinal_idx: 0,
-            blobs_loaded: 0,
-        }))))
+        Ok(Some(Self(ExportDecodeState::Packed(Box::new(
+            PackedExportState {
+                commit_seq,
+                stored_hash,
+                packed,
+                value,
+                scope_checked: false,
+                ordinals_done: false,
+                last_ordinal: None,
+                ordinal_idx: 0,
+                blobs_loaded: 0,
+            },
+        )))))
     }
 
     /// Advance decoding within `budget`; returns `Ok(Some(record))` once
@@ -130,9 +140,9 @@ impl ExportDecodeCursor {
         engine: &impl SqlEngine,
         budget: &mut RowBudget,
     ) -> Result<Option<ExportRecord>, CellError> {
-        match self {
-            Self::Ready(record) => record.take().map(|boxed| Ok(*boxed)).transpose(),
-            Self::Packed(state) => step_packed(engine, state, budget),
+        match &mut self.0 {
+            ExportDecodeState::Ready(record) => record.take().map(|boxed| Ok(*boxed)).transpose(),
+            ExportDecodeState::Packed(state) => step_packed(engine, state, budget),
         }
     }
 }
@@ -155,19 +165,27 @@ fn step_packed(
             return Ok(None);
         }
         let limit = budget.remaining();
-        let rows = engine.query(
-            r#"SELECT "ordinal", "hash" FROM "_norn_export_payload" WHERE "commit_seq"=?1 AND "ordinal">=?2 ORDER BY "ordinal" LIMIT ?3"#,
-            params![
-                to_i64(state.commit_seq, "payload export seq")?,
-                to_i64(state.next_ordinal, "payload export ordinal")?,
-                to_i64(u64::try_from(limit).unwrap_or(u64::MAX), "payload ordinal limit")?
-            ],
+        let limit_i64 = to_i64(
+            u64::try_from(limit).unwrap_or(u64::MAX),
+            "payload ordinal limit",
         )?;
+        let seq_i64 = to_i64(state.commit_seq, "payload export seq")?;
+        let rows = match state.last_ordinal {
+            None => engine.query(
+                r#"SELECT "ordinal", "hash" FROM "_norn_export_payload" WHERE "commit_seq"=?1 ORDER BY "ordinal" LIMIT ?2"#,
+                params![seq_i64, limit_i64],
+            )?,
+            Some(last) => engine.query(
+                r#"SELECT "ordinal", "hash" FROM "_norn_export_payload" WHERE "commit_seq"=?1 AND "ordinal">?2 ORDER BY "ordinal" LIMIT ?3"#,
+                params![seq_i64, last, limit_i64],
+            )?,
+        };
         let count = rows.len();
         budget.charge(count);
         for raw_row in rows {
             let row = SqlRow(raw_row);
-            let ordinal = to_u64(row.get(0)?, "payload export ordinal")?;
+            let raw_ordinal: i64 = row.get(0)?;
+            let _ = to_u64(raw_ordinal, "payload export ordinal")?;
             let hash: String = row.get(1)?;
             let expected = state
                 .packed
@@ -178,9 +196,7 @@ fn step_packed(
                 return Err(corrupt());
             }
             state.ordinal_idx = state.ordinal_idx.saturating_add(1);
-            state.next_ordinal = ordinal
-                .checked_add(1)
-                .ok_or(CellError::OutOfRange("payload export ordinal"))?;
+            state.last_ordinal = Some(raw_ordinal);
         }
         if count < limit {
             if state.ordinal_idx != state.packed.references.len() {

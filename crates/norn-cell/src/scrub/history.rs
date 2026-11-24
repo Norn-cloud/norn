@@ -341,7 +341,7 @@ impl HistoryCursor {
             return Ok(false);
         };
         if budget.remaining() < 2 {
-            self.anchor.export_pin_cursor = Some(ExportDecodeCursor::Ready(Some(Box::new(record))));
+            self.anchor.export_pin_cursor = Some(ExportDecodeCursor::ready(record));
             return Ok(false);
         }
         let current = crate::cell_identity::read(engine)?;
@@ -701,7 +701,6 @@ impl HistoryCursor {
         Ok(VerifiedPins {
             export: crate::cell_identity::last_record_through(&store.conn, through)?,
             definitions: open_checkpoint::definitions_digest(&self.versions, through)?,
-            definitions_count: installed_count,
             definitions_max_version: max_version,
         })
     }

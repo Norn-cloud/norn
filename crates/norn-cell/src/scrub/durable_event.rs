@@ -555,7 +555,7 @@ fn check_created_snapshot<E: SqlEngine>(
                 return Ok(None);
             };
             if budget.exhausted() {
-                state.export_cursor = Some(ExportDecodeCursor::Ready(Some(Box::new(record))));
+                state.export_cursor = Some(ExportDecodeCursor::ready(record));
                 return Ok(None);
             }
             let installation = record.definition_install.ok_or_else(unproven_event)?;

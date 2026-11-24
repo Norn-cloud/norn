@@ -65,8 +65,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         commit_seq: u64,
         row: &crate::store::WrittenRow,
     ) -> Result<(), CellError> {
-        let stored: Option<(String, String, String)> = self.conn.query_optional(
-            &format!("SELECT root_type,snapshot,hash FROM \"{FACT_VALUES}\" WHERE world=?1 AND commit_seq=?2 AND object_type=?3 AND id=?4 AND version=?5"),
+        let mut rows = self.conn.query(
+            &format!("SELECT root_type,snapshot,hash FROM \"{FACT_VALUES}\" WHERE world=?1 AND commit_seq=?2 AND object_type=?3 AND id=?4 AND version=?5 LIMIT 2"),
             params![
                 world,
                 to_i64(commit_seq, "fact commit")?,
@@ -74,9 +74,13 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 row.key,
                 to_i64(row.version, "fact version")?,
             ],
-            |record| Ok((record.get(0)?, record.get(1)?, record.get(2)?)),
         )?;
-        let (root, encoded, hash) = stored.ok_or_else(unproven_snapshot)?;
+        if rows.len() > 1 {
+            return Err(unproven_snapshot());
+        }
+        let record = SqlRow(rows.pop().ok_or_else(unproven_snapshot)?);
+        let (root, encoded, hash): (String, String, String) =
+            (record.get(0)?, record.get(1)?, record.get(2)?);
         let snapshot = decode_snapshot(
             world,
             &row.object_type,
@@ -460,7 +464,8 @@ impl<E: SqlEngine> CellStore<E> {
             ));
         }
         if target.seq > 0 {
-            let entry = reader.ledger_page(target.seq.saturating_sub(1), 1)?;
+            let mut budget = crate::scrub::RowBudget::new(4);
+            let entry = reader.scrub_ledger_page(target.seq, 1, &mut budget)?;
             if !entry
                 .first()
                 .is_some_and(|e| e.seq == target.seq && e.hash == target.hash)

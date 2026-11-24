@@ -321,12 +321,16 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         version: u64,
     ) -> Result<FactSnapshot, CellError> {
         let root = self.root_type_or_self(object_type)?;
-        let row: Option<(String, String, i64, String)> = self.conn.query_optional(
-            &format!("SELECT \"snapshot\", \"hash\", \"commit_seq\", \"root_type\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND (\"root_type\" = ?2 OR \"object_type\" = ?2) AND \"id\" = ?3 AND \"version\" = ?4"),
+        let mut rows = self.conn.query(
+            &format!("SELECT \"snapshot\", \"hash\", \"commit_seq\", \"root_type\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND (\"root_type\" = ?2 OR \"object_type\" = ?2) AND \"id\" = ?3 AND \"version\" = ?4 LIMIT 2"),
             params![world, root, key, to_i64(version, "fact version")?],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
-        let (encoded, hash, commit, stored_root) = row.ok_or_else(unproven_snapshot)?;
+        if rows.len() > 1 {
+            return Err(unproven_snapshot());
+        }
+        let row = SqlRow(rows.pop().ok_or_else(unproven_snapshot)?);
+        let (encoded, hash, commit, stored_root): (String, String, i64, String) =
+            (row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?);
         let snapshot = decode_snapshot(world, object_type, key, version, &encoded, &hash)?;
         if snapshot.root_type != stored_root {
             return Err(unproven_snapshot());

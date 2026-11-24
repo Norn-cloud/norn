@@ -113,7 +113,6 @@ impl DefInstallCursor {
 pub(super) struct SeedDefsCursor {
     after_version: u64,
     digest: String,
-    count: u64,
     max_version: u64,
 }
 
@@ -145,14 +144,12 @@ impl SeedDefsCursor {
                 self.digest.as_str(),
                 crate::codec::hash_json(&version)?,
             ))?;
-            self.count = self.count.saturating_add(1);
             self.max_version = self.max_version.max(version.version);
         }
         if reached_past || read < cap {
             return Ok(Some(VerifiedPins {
                 export: crate::cell_identity::last_record_through(&store.conn, target_commits)?,
                 definitions: self.digest.clone(),
-                definitions_count: self.count,
                 definitions_max_version: self.max_version,
             }));
         }
