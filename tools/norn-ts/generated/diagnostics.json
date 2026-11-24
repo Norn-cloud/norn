@@ -677,7 +677,7 @@
       "tier": "T0",
       "severity": "error",
       "message": "The checker WASM package is unavailable; build it and set NORN_CHECKER_WASM_PKG.",
-      "fix": "Build the checker package with crates/norn-checker-wasm/scripts/build-pkg.sh and set NORN_CHECKER_WASM_PKG to its directory.",
+      "fix": "Run `norn setup` (or `scripts/dev/fetch-local-runtime.sh`) to fetch prebuilt `norn-checker-abi/1` runtime artifacts, or build from source from the repository root with `bash crates/norn-checker-wasm/scripts/build-pkg.sh \"$PWD/target/norn-checker-wasm/pkg\"` and `export NORN_CHECKER_WASM_PKG=\"$PWD/target/norn-checker-wasm/pkg\"`.",
       "no_fix": null
     },
     {

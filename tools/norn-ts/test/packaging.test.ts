@@ -63,15 +63,19 @@ test("checker package: the override wins, then the bundled copy, then none", () 
   } finally { rmSync(root, { recursive: true }) }
 })
 
-test("check without a usable checker still says NORN-CHECKER-WASM-SETUP", () => {
+test("check without a usable checker refuses with cli.setup.checker_unavailable", () => {
   // The repository checkout carries no bundled checker, so with the variable unset this is the "neither" state.
   expect(existsSync(join(TOOL_ROOT, "checker"))).toBe(false)
   const emptyCache = scratch()
   try {
     const run = spawnSync(process.execPath, [join(TOOL_ROOT, "src/cli.ts"), "check", join(TOOL_ROOT, "fixtures/quickstart"), "--org", "example", "--env", "local"],
       { env: { ...process.env, [CHECKER_PKG_ENV]: "", NORN_CACHE_DIR: join(emptyCache, "no-cache") }, encoding: "utf8" })
+    const registered = registeredCodes().get("cli.setup.checker_unavailable")!
     expect(run.status).toBe(2)
-    expect(run.stderr).toContain("NORN-CHECKER-WASM-SETUP:")
+    expect(run.stdout).toBe("")
+    expect(run.stderr).toStartWith("cli.setup.checker_unavailable: ")
+    expect(run.stderr).toContain(`  fix: ${registered.fix}`)
+    expect(run.stderr).not.toContain("NORN-CHECKER-WASM-SETUP")
   } finally { rmSync(emptyCache, { recursive: true }) }
 })
 

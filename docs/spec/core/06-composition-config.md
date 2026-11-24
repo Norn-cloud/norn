@@ -76,12 +76,12 @@ Evidence: structural identity/admission, runtime activation/parameter pins, gene
 
 ## Main and gaps
 
-Present: `crates/norn-ir/src/{business_pack,mapping,setting,customization}.rs`, `crates/norn-checker/src/obligations/`, `crates/norn-cell/src/migration.rs`. Settings and live-data migration are real substrate. `SettingValue::Number(f64)` is not an exact economic parameter. B1–B3 remain the [design on #213](https://github.com/Norn-cloud/norn/issues/213#issuecomment-6558465085); generic pack instances, protected law transport and complete in-flight migration are gaps.
+Present: `crates/norn-ir/src/{business_pack,mapping,setting,customization}.rs`, `crates/norn-checker/src/obligations/`, `crates/norn-cell/src/migration.rs`. Settings and live-data migration are real substrate, and `SettingValue::Number(DecimalLiteral)` carries exact decimal-string literals (refusing binary64 JSON numbers) decoded to `RuntimeValue::Number(Decimal)`. B1–B3 remain the [design on #213](https://github.com/Norn-cloud/norn/issues/213#issuecomment-6558465085); generic pack instances, protected law transport and complete in-flight migration are gaps.
 
 ## Work breakdown (one coherent unit per PR)
 
 1. B1 role/endpoints in existing mapping roots, then typed member interpretations, then MAP-* negatives/schema/SDK projection cuts.
 2. Coordinate 05 B2 law instances; B3 checked retained-layer construction and receipt revalidation, then full writer/edge challenge reconstruction, then LAYERS/EDGE tests.
 3. Add stable generic instance/type-unit binding admission, then explicit import/export/alias conformance.
-4. Upgrade governed parameter exact typing and scope/interval resolution, then PARAM-TAX commit history tests with 01/04.
+4. Complete governed parameter scope/interval resolution (building on `SettingValue::Number(DecimalLiteral)` exact typing), then PARAM-TAX commit history tests with 01/04.
 5. Add migration plan coverage for states/timers/commands, then atomic activation, then MIGRATE-FLIGHT and rollback/restatement tests with 08.

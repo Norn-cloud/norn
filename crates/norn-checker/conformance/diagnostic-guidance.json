@@ -337,7 +337,7 @@
   },
   {
     "code": "cli.setup.checker_unavailable",
-    "fix": "Build the checker package with crates/norn-checker-wasm/scripts/build-pkg.sh and set NORN_CHECKER_WASM_PKG to its directory."
+    "fix": "Run `norn setup` (or `scripts/dev/fetch-local-runtime.sh`) to fetch prebuilt `norn-checker-abi/1` runtime artifacts, or build from source from the repository root with `bash crates/norn-checker-wasm/scripts/build-pkg.sh \"$PWD/target/norn-checker-wasm/pkg\"` and `export NORN_CHECKER_WASM_PKG=\"$PWD/target/norn-checker-wasm/pkg\"`."
   },
   {
     "code": "cli.setup.host_unavailable",
