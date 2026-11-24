@@ -217,6 +217,31 @@ pub fn receipt_type_env(
     })
 }
 
+/// The current scoped checks of every executable definition of a retained
+/// set, whichever receipt partition holds it: actions, the facts and links
+/// their decide-graph writers emit, and rule bindings, each read under its
+/// own declaring scope. Returns the error findings.
+#[must_use]
+pub fn check_executables(artifacts: &[ArtifactEnvelope]) -> Vec<Diagnostic> {
+    let registry = BTreeSet::new();
+    let context = crate::EntityArtifactSetContext {
+        registry: &registry,
+        base: &[],
+        tenant: None,
+    };
+    crate::check_action_set(artifacts, &context)
+        .into_iter()
+        .chain(crate::check_lifecycle_write_set(artifacts, &context))
+        .chain(crate::decision_links::check_decision_links_set(
+            artifacts, &context,
+        ))
+        .chain(crate::rule_bindings::check_rule_binding_set(
+            artifacts, &context,
+        ))
+        .filter(Diagnostic::is_error)
+        .collect()
+}
+
 /// Lower path equations per candidate scope group so an entity in a broader or
 /// sibling scope cannot traverse an out-of-scope extension link.
 pub(crate) fn scoped_path_equation_findings(

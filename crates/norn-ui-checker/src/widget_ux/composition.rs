@@ -404,7 +404,8 @@ fn collect_tree_semantic_ids(
 }
 
 /// The lifecycle composition and catalog findings of the composed page
-/// `page_id` of `widget`, read under the composed widget's own scope and
+/// `page_id` of `widget`, and the declaration findings of the catalog
+/// entries it places, read under the composed widget's own scope and
 /// dependencies.
 fn page_findings(
     widget: &ArtifactEnvelope,
@@ -435,5 +436,8 @@ fn page_findings(
                 .as_ref()
                 .is_some_and(|span| span.pointer.starts_with(&prefix))
         })
+        .chain(crate::ui_catalog::placed_entry_findings(
+            widget, ux, index, &composed,
+        ))
         .collect()
 }

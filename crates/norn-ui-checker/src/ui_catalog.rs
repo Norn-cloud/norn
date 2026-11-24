@@ -121,6 +121,69 @@ pub(crate) fn check(
             }
         }
     }
+    diagnostics(owner, findings)
+}
+
+/// The declaration findings (`/payload/ux/catalog/…`) of every catalog entry
+/// page `index` of `ux` places: `owner`'s own entries and, through
+/// `composed`, other widgets'.
+#[must_use]
+pub(crate) fn placed_entry_findings(
+    owner: &ArtifactEnvelope,
+    ux: &WidgetUx,
+    index: usize,
+    composed: &ComposedUx<'_>,
+) -> Vec<Diagnostic> {
+    let mut placed = BTreeSet::new();
+    if let Some(page) = ux.pages.get(index) {
+        collect_entries(&page.root, &mut placed);
+    }
+    let mut findings = Vec::new();
+    for (widget, entry_id) in placed {
+        match widget {
+            None => findings.extend(entry_findings(ux, &entry_id)),
+            Some((id, version)) => {
+                let reference = norn_ir::WidgetArtifactRef { id, version };
+                if let Some(declaring) = composed(&reference) {
+                    findings.extend(entry_findings(&declaring, &entry_id));
+                }
+            }
+        }
+    }
+    diagnostics(owner, findings)
+}
+
+type PlacedEntry = (Option<(String, String)>, String);
+
+fn collect_entries(node: &WidgetNode, placed: &mut BTreeSet<PlacedEntry>) {
+    if let WidgetComponent::Catalog { entry, .. } = &node.component {
+        let widget = entry
+            .widget
+            .as_ref()
+            .map(|widget| (widget.id.clone(), widget.version.clone()));
+        placed.insert((widget, entry.entry_id.clone()));
+    }
+    for child in &node.children {
+        collect_entries(child, placed);
+    }
+}
+
+/// The declaration findings of `ux`'s catalog entries named `entry_id`.
+fn entry_findings(ux: &WidgetUx, entry_id: &str) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    check_entries(ux, &mut findings);
+    findings.retain(|finding| {
+        finding
+            .pointer
+            .strip_prefix("/payload/ux/catalog/")
+            .and_then(|rest| rest.split('/').next()?.parse::<usize>().ok())
+            .and_then(|index| ux.catalog.get(index))
+            .is_some_and(|entry| entry.entry_id == entry_id)
+    });
+    findings
+}
+
+fn diagnostics(owner: &ArtifactEnvelope, findings: Vec<Finding>) -> Vec<Diagnostic> {
     findings
         .into_iter()
         .map(|finding| Diagnostic {

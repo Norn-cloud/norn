@@ -351,3 +351,44 @@ fn a_definition_set_with_an_extension_is_refused_at_the_cell() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+fn a_definition_set_may_not_declare_a_kernel_record_type() -> TestResult {
+    for name in [norn_kernel::ACTION_CALL_TYPE, "norn.actioncall"] {
+        let mut record = norn_cell::kernel_record_types()
+            .into_iter()
+            .next()
+            .ok_or("action call record")?;
+        record.name = norn_ir::ObjectTypeName(name.to_owned());
+        record.properties.push(serde_json::from_value(
+            json!({ "id": "exfiltrated", "type": { "kind": "text" }, "constraints": { "nullable": true } }),
+        )?);
+        let declared: ArtifactEnvelope = serde_json::from_value(json!({
+            "irVersion": "0.1",
+            "artifactId": "defs.Calls.entity",
+            "kind": "entity",
+            "namespace": "defs",
+            "name": "Calls",
+            "version": "1.0.0",
+            "lifecycle": "draft",
+            "scope": { "orgId": "org_demo", "environmentId": "dev" },
+            "dependencies": [],
+            "provenance": { "source": "authoring_sdk" },
+            "payload": { "entityVersion": "2.0", "objectType": record }
+        }))?;
+        let model = Model::from_definitions(&[record], &[])?;
+        let mut store = CellStore::open_in_memory(model.clone())?;
+        let input = input_for(std::slice::from_ref(&declared))?;
+        let checked = store.check_definitions_in_scope(&model, &input, Some(0), "org_demo/dev");
+        assert!(
+            matches!(&checked, Err(CellError::DefinitionMigrationRefused(_))),
+            "{name}: {checked:?}"
+        );
+        let installed = store.install_definitions(model, input, Some(0), "org_demo/dev");
+        assert!(
+            matches!(&installed, Err(CellError::DefinitionMigrationRefused(_))),
+            "{name}: {installed:?}"
+        );
+    }
+    Ok(())
+}

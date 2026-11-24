@@ -303,8 +303,10 @@ pub(crate) fn verify_retained(
 }
 
 /// [`verify_retained`], then the set must pass current scoped admission under
-/// that receipt before it supplies executable actions: a historical receipt
-/// attests what was admitted, not that today's checks still admit it.
+/// that receipt, and every executable definition of either receipt partition
+/// its current scoped checks, before it supplies executable actions: a
+/// historical receipt attests what was admitted, not that today's checks
+/// still admit it.
 pub(crate) fn admit_retained(
     installed: &InstalledDefinitionSet,
     scope: &CellScope,
@@ -312,12 +314,14 @@ pub(crate) fn admit_retained(
     let retained = retained_receipt(installed, scope)?;
     let sources = norn_checker::ReceiptSources::new(&retained.candidates, &retained.base)
         .map_err(Refusal::host)?;
-    let base = retained
-        .base
-        .iter()
-        .map(norn_ir::runtime::decode)
-        .collect::<Result<Vec<norn_ir::ArtifactEnvelope>, _>>()
-        .map_err(Refusal::host)?;
+    let decode = |sources: &[RuntimeValue]| {
+        sources
+            .iter()
+            .map(norn_ir::runtime::decode)
+            .collect::<Result<Vec<norn_ir::ArtifactEnvelope>, _>>()
+            .map_err(Refusal::host)
+    };
+    let base = decode(&retained.base)?;
     let context = norn_checker::EntityArtifactSetContext {
         registry: &std::collections::BTreeSet::new(),
         base: &base,
@@ -331,10 +335,12 @@ pub(crate) fn admit_retained(
         &retained.version,
     )
     .map_err(Refusal::host)?;
+    let executable = [decode(&retained.candidates)?, base].concat();
     if checked
         .diagnostics
         .iter()
         .any(norn_checker::Diagnostic::is_error)
+        || !norn_checker::entity_scopes::check_executables(&executable).is_empty()
     {
         return Err(Refusal::host(
             "the retained definitions no longer pass scoped admission",

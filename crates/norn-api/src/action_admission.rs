@@ -12,21 +12,16 @@ use std::collections::{BTreeMap, BTreeSet};
 /// Tenant declarations using SQLite-equivalent reserved names or invalid models refuse.
 pub fn prepare_action_model(model: &norn_cell::Model) -> Result<norn_cell::Model, Refusal> {
     let mut snapshot = model.definitions_snapshot();
-    for record in norn_cell::kernel_record_types() {
-        let name = record.name.as_str();
-        if snapshot
-            .object_types
-            .iter()
-            .any(|ty| ty.name.as_str().eq_ignore_ascii_case(name))
-            || snapshot
-                .interfaces
-                .iter()
-                .any(|ty| ty.name.as_str().eq_ignore_ascii_case(name))
-        {
-            return Err(Refusal::invalid("reserved kernel object type"));
-        }
-        snapshot.object_types.push(record);
+    let declared = snapshot.object_types.iter().map(|ty| ty.name.as_str());
+    if declared
+        .chain(snapshot.interfaces.iter().map(|ty| ty.name.as_str()))
+        .any(norn_cell::is_reserved_kernel_name)
+    {
+        return Err(Refusal::invalid("reserved kernel object type"));
     }
+    snapshot
+        .object_types
+        .extend(norn_cell::kernel_record_types());
     norn_cell::Model::from_snapshot(&snapshot).map_err(Refusal::host)
 }
 
@@ -325,7 +320,9 @@ mod tests {
     use super::RetainedActions;
     use crate::scope::CellScope;
     use norn_checker::entity_scopes::ScopedView;
-    use norn_checker::{EntityArtifactSetContext, ReceiptSources, check_artifact_set_with_receipt};
+    use norn_checker::{
+        CheckReceipt, EntityArtifactSetContext, ReceiptSources, check_artifact_set_with_receipt,
+    };
     use norn_ir::{ArtifactEnvelope, ResourceLimitProfile, RuntimeValue};
     use serde_json::{Value, json};
     use std::collections::BTreeSet;
@@ -399,42 +396,24 @@ mod tests {
         ])
     }
 
-    #[test]
-    fn a_retained_set_the_scoped_checks_refuse_supplies_no_actions() -> TestResult {
-        let artifacts = legacy_set()?;
-        let values = artifacts
+    fn values(
+        artifacts: &[ArtifactEnvelope],
+    ) -> Result<Vec<RuntimeValue>, Box<dyn std::error::Error>> {
+        artifacts
             .iter()
             .map(|artifact| {
                 RuntimeValue::from_json(serde_json::to_value(artifact)?).map_err(Into::into)
             })
-            .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
-        let limits = ResourceLimitProfile::norn_limits_v1();
-        let registry = BTreeSet::new();
-        let context = EntityArtifactSetContext {
-            registry: &registry,
-            base: &[],
-            tenant: None,
-        };
-        let checked = check_artifact_set_with_receipt(
-            &ReceiptSources::new(&values, &[])?,
-            &context,
-            &limits,
-        )?;
-        assert!(!checked.receipt.admitted, "{:#?}", checked.diagnostics);
-        let narrow = artifacts.get(1).ok_or("extension")?;
-        let mut legacy = checked.receipt;
-        legacy.admitted = true;
-        legacy.diagnostics.count = 0;
-        legacy.diagnostics.errors = 0;
-        let whole_set = ScopedView::of(narrow, &artifacts, &[], &registry)
-            .receipt_env(&limits)
-            .map_err(|errors| format!("{errors:?}"))?;
-        legacy.type_env = Some(whole_set.reference()?);
+            .collect()
+    }
+
+    /// `verify_retained` accepts `artifacts` under `receipt`, yet they supply no actions.
+    fn assert_no_actions(receipt: &CheckReceipt, artifacts: &[ArtifactEnvelope]) -> TestResult {
         let installed = norn_cell::InstalledDefinitionSet {
             version: 1,
-            receipt_sha256: legacy.content_sha256()?,
-            admission_receipt: Some(String::from_utf8(legacy.canonical_json()?)?),
-            canonical_set: String::from_utf8(norn_ir::canonical::canonical_json_of(&artifacts)?)?,
+            receipt_sha256: receipt.content_sha256()?,
+            admission_receipt: Some(String::from_utf8(receipt.canonical_json()?)?),
+            canonical_set: String::from_utf8(norn_ir::canonical::canonical_json_of(artifacts)?)?,
             registry: Vec::new(),
             model_hash: String::new(),
             ddl_hash: String::new(),
@@ -460,5 +439,47 @@ mod tests {
             "{refused}"
         );
         Ok(())
+    }
+
+    #[test]
+    fn a_retained_candidate_the_scoped_checks_refuse_supplies_no_actions() -> TestResult {
+        let artifacts = legacy_set()?;
+        let limits = ResourceLimitProfile::norn_limits_v1();
+        let registry = BTreeSet::new();
+        let context = EntityArtifactSetContext {
+            registry: &registry,
+            base: &[],
+            tenant: None,
+        };
+        let sources = ReceiptSources::new(&values(&artifacts)?, &[])?;
+        let checked = check_artifact_set_with_receipt(&sources, &context, &limits)?;
+        assert!(!checked.receipt.admitted, "{:#?}", checked.diagnostics);
+        let narrow = artifacts.get(1).ok_or("extension")?;
+        let mut legacy = checked.receipt;
+        legacy.admitted = true;
+        legacy.diagnostics.count = 0;
+        legacy.diagnostics.errors = 0;
+        let whole_set = ScopedView::of(narrow, &artifacts, &[], &registry)
+            .receipt_env(&limits)
+            .map_err(|errors| format!("{errors:?}"))?;
+        legacy.type_env = Some(whole_set.reference()?);
+        assert_no_actions(&legacy, &artifacts)
+    }
+
+    #[test]
+    fn a_retained_base_action_the_scoped_checks_refuse_supplies_no_actions() -> TestResult {
+        let artifacts = legacy_set()?;
+        let (candidates, base) = artifacts.split_at(2);
+        let registry = BTreeSet::new();
+        let context = EntityArtifactSetContext {
+            registry: &registry,
+            base,
+            tenant: None,
+        };
+        let sources = ReceiptSources::new(&values(candidates)?, &values(base)?)?;
+        let limits = ResourceLimitProfile::norn_limits_v1();
+        let checked = check_artifact_set_with_receipt(&sources, &context, &limits)?;
+        assert!(checked.receipt.admitted, "{:#?}", checked.diagnostics);
+        assert_no_actions(&checked.receipt, &artifacts)
     }
 }

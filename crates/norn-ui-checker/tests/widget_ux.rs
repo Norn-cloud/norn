@@ -2398,6 +2398,36 @@ fn compose_baseline(mut value: Value) -> Value {
     value
 }
 
+/// #1376: a composed page is held to the declarations of the catalog
+/// entries it places, though they live outside the page.
+#[test]
+fn a_composed_page_is_held_to_its_placed_catalog_declarations() {
+    let entry = json!({ "entryId": "tile", "label": { "en": "Tile" }, "trust": "native" });
+    for (catalog, refused) in [(json!([entry]), false), (json!([entry, entry]), true)] {
+        let mut baseline = baseline_widget("baseline-revision");
+        let ux = baseline.at_mut("payload").at_mut("ux");
+        ux.set("catalog", catalog);
+        let page = ux.at_mut("pages").at_mut(0);
+        let field = page.at("root").clone();
+        page.set("root", json!({
+            "nodeId": "baseline-section", "semanticId": "baseline-section",
+            "component": { "kind": "section", "section": {
+                "sectionId": "baseline", "kind": "section", "label": { "en": "Baseline" }, "fields": [], "order": 1
+            } },
+            "children": [field, {
+                "nodeId": "baseline-tile", "semanticId": "baseline-tile",
+                "component": { "kind": "catalog", "entry": { "entryId": "tile" } },
+                "children": []
+            }]
+        }));
+        let found = widget_findings_with_base(compose_baseline(widget()), &[baseline]);
+        let composed = found
+            .iter()
+            .any(|finding| finding.message.contains("fails typed UX validation"));
+        assert_eq!(composed, refused, "{found:#?}");
+    }
+}
+
 #[test]
 fn imported_override_types_use_the_baseline_binding_context() {
     let mut value = compose_baseline(widget());

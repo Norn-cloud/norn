@@ -105,7 +105,7 @@ mod test_door;
 pub mod transparency;
 mod write;
 
-pub use definition_scope::kernel_record_types;
+pub use definition_scope::{is_reserved_kernel_name, kernel_record_types};
 pub use error::CellError;
 
 pub use fork::{ForkEngine, ForkPin, StoreImage};

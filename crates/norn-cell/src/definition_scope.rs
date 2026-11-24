@@ -229,6 +229,15 @@ pub(crate) fn bind_cell_scope<E: SqlEngine>(engine: &E, scope: &str) -> Result<(
     Ok(())
 }
 
+/// Whether `name` is reserved for a kernel record type, compared as SQLite
+/// compares table names: no tenant object type or interface may use it.
+#[must_use]
+pub fn is_reserved_kernel_name(name: &str) -> bool {
+    [norn_kernel::ACTION_CALL_TYPE, norn_kernel::OWNED_ROWS_TYPE]
+        .iter()
+        .any(|reserved| reserved.eq_ignore_ascii_case(name))
+}
+
 /// The kernel's own record types a host adds beside a tenant's definitions:
 /// action-call receipts and owned-row manifests. A cell model may carry them
 /// only exactly as defined here.
@@ -315,9 +324,10 @@ fn nullable(id: &str, property_type: PropertyType) -> Property {
 
 /// Refuse a `model` whose definitions are not those `artifacts` declare: the
 /// same object types and interfaces, besides only the exact
-/// [`kernel_record_types`], and only shared property types the set declares
-/// identically. A cell model projects no object type extension, so a set
-/// declaring one is refused here as at provisioning.
+/// [`kernel_record_types`] a host adds, and only shared property types the
+/// set declares identically. As at provisioning, a set may declare neither a
+/// reserved kernel name nor an object type extension, which a cell model
+/// does not project.
 fn bind_model(model: &Model, artifacts: &[ArtifactEnvelope]) -> Result<(), CellError> {
     let (mut objects, mut interfaces, mut properties) =
         (BTreeMap::new(), BTreeMap::new(), BTreeMap::new());
@@ -328,6 +338,20 @@ fn bind_model(model: &Model, artifacts: &[ArtifactEnvelope]) -> Result<(), CellE
         let root = serde_json::to_value(artifact.payload.to_json_value())
             .and_then(serde_json::from_value::<EntityRoot>)
             .map_err(CellError::Json)?;
+        let declared = match &root {
+            EntityRoot::V2(root) => Some(root.object_type.name.as_str()),
+            EntityRoot::V2Interface(root) => Some(root.interface.name.as_str()),
+            EntityRoot::V2PropertyTypes(_)
+            | EntityRoot::V2Extension(_)
+            | EntityRoot::V2Markings(_)
+            | EntityRoot::V1(_) => None,
+        };
+        if let Some(name) = declared.filter(|name| is_reserved_kernel_name(name)) {
+            return Err(refused(format!(
+                "{:?} declares {name:?}, a name reserved for kernel records",
+                artifact.artifact_id
+            )));
+        }
         match root {
             EntityRoot::V2(root) => {
                 objects.insert(root.object_type.name.0.clone(), root.object_type);
@@ -352,7 +376,7 @@ fn bind_model(model: &Model, artifacts: &[ArtifactEnvelope]) -> Result<(), CellE
     let kernel = kernel_record_types();
     let modelled: BTreeMap<_, _> = model
         .object_types()
-        .filter(|def| objects.contains_key(def.name.as_str()) || !kernel.contains(def))
+        .filter(|def| !kernel.contains(def))
         .map(|def| (def.name.0.clone(), def.clone()))
         .collect();
     let model_interfaces: BTreeMap<_, _> = model
