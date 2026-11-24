@@ -746,12 +746,14 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             .map(norn_ir::runtime::decode::<norn_ir::ArtifactEnvelope>)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| CellError::Engine(format!("retained definitions: {error}")))?;
-        for artifact in &artifacts {
-            if artifact.kind != norn_ir::ArtifactKind::Entity {
-                continue;
-            }
-            let root: norn_ir::EntityRoot =
-                norn_ir::runtime::decode(&artifact.payload).map_err(|error| {
+        let mut found = false;
+        for artifact in artifacts
+            .iter()
+            .filter(|artifact| artifact.kind() == norn_ir::ArtifactKind::Entity)
+        {
+            let root: norn_ir::EntityRoot = serde_json::to_value(artifact.payload.to_json_value())
+                .and_then(serde_json::from_value)
+                .map_err(|error| {
                     CellError::Engine(format!(
                         "retained entity payload {}: {error}",
                         artifact.artifact_id
@@ -760,17 +762,17 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             if let norn_ir::EntityRoot::V2Markings(catalog) = root
                 && !catalog.markings.is_empty()
             {
-                return Ok(true);
+                found = true;
             }
         }
-        Ok(false)
+        Ok(found)
     }
 
     /// Whether any non-tombstone historical version of `object_type` (or a
     /// subtype) in `world` lacks an immutable marking snapshot or a property
     /// marking row for `property` (fail closed when historical classification
-    /// evidence is missing or exceeds [`MAX_HISTORY_COMPLETENESS_SCAN`],
-    /// #1559 S2c).
+    /// evidence is missing or the indexed root range exceeds
+    /// [`MAX_HISTORY_COMPLETENESS_SCAN`], #1559 S2c).
     fn property_history_unclassified(
         &self,
         world: &str,
@@ -780,11 +782,13 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         if self.model.tables(object_type)?.is_empty() {
             return Err(CellError::UnknownObjectType(object_type.to_owned()));
         }
+        // Bound the entire indexed `(world, root_type)` primary-key range so
+        // sibling subtypes cannot force an unbounded scan before LIMIT triggers.
         let bound_sql = format!(
             "SELECT COUNT(*) FROM ( \
                SELECT 1 FROM \"{fv}\" \
-               WHERE \"world\" = ?1 AND \"root_type\" = ?2 AND \"object_type\" = ?3 \
-               LIMIT ?4 \
+               WHERE \"world\" = ?1 AND \"root_type\" = ?2 \
+               LIMIT ?3 \
              )",
             fv = crate::system::FACT_VALUES,
         );
@@ -812,29 +816,29 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             subj = MARKING_SUBJECT,
             ver = MARKING_VERSION,
         );
+        let mut checked_roots = BTreeSet::new();
         for definition in self.model.object_types() {
             let concrete_type = definition.name.as_str();
             if !self.model.is_a(concrete_type, object_type) {
                 continue;
             }
             let root = self.root_type(concrete_type)?;
-            let observed: i64 = self
-                .conn
-                .query_optional(
-                    &bound_sql,
-                    params![
-                        world,
-                        root,
-                        concrete_type,
-                        MAX_HISTORY_COMPLETENESS_SCAN.saturating_add(1)
-                    ],
-                    |row| row.get(0),
-                )?
-                .ok_or_else(|| {
-                    CellError::Engine("history completeness bound query returned no row".to_owned())
-                })?;
-            if observed > MAX_HISTORY_COMPLETENESS_SCAN {
-                return Ok(true);
+            if checked_roots.insert(root.to_owned()) {
+                let observed: i64 = self
+                    .conn
+                    .query_optional(
+                        &bound_sql,
+                        params![world, root, MAX_HISTORY_COMPLETENESS_SCAN.saturating_add(1)],
+                        |row| row.get(0),
+                    )?
+                    .ok_or_else(|| {
+                        CellError::Engine(
+                            "history completeness bound query returned no row".to_owned(),
+                        )
+                    })?;
+                if observed > MAX_HISTORY_COMPLETENESS_SCAN {
+                    return Ok(true);
+                }
             }
             let missing: Option<i64> = self.conn.query_optional(
                 &sql,

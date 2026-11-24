@@ -1383,3 +1383,57 @@ fn stage_restatement_refuses_if_a_slice_becomes_marked_after_preparation() {
         "refused staging must leave candidate empty: {slot:?}"
     );
 }
+
+/// S2c (#1559): a valid marking catalog followed by a malformed retained
+/// entity payload still fails closed rather than returning early on the first
+/// catalog.
+#[test]
+fn prepare_restatement_fails_closed_on_malformed_entity_after_valid_catalog() {
+    let directory = tempfile::tempdir().expect("directory");
+    let path = directory.path().join("cell.sqlite");
+    let (mut store, plan, context, model) = setup(&path);
+    let artifacts = json!([
+        {"irVersion":"0.1","artifactId":"demo.markings.entity","kind":"entity","namespace":"demo","name":"Markings","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","markings":[{"id":"pii.contact","label":"Contact","severity":"high","category":"pii.contact","mask":{"kind":"redacted"}}]}},
+        {"irVersion":"0.1","artifactId":"demo.broken.entity","kind":"entity","namespace":"demo","name":"Broken","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","markings":"not-an-array"}}
+    ]);
+    store
+        .install_definitions(
+            model,
+            norn_cell::InstalledDefinitionInput {
+                canonical_set: serde_json::to_string(&artifacts).expect("set"),
+                registry: vec![],
+                receipt_sha256: "malformed-after-catalog".into(),
+                admission_receipt: None,
+                readmission: None,
+                diff: json!({}),
+                installed_at: CLOCK,
+                layout: None,
+            },
+            Some(0),
+            SCOPE,
+        )
+        .expect("install definitions");
+    let point = cutoff(&store, &context);
+    let version = store
+        .read()
+        .version(MAIN_WORLD, RESTATEMENT_TYPE, ID)
+        .expect("slot version");
+    let build = store
+        .begin_restatement(
+            ID,
+            context.clone(),
+            version,
+            "rebuild with corrupt retained entity",
+            &BTreeSet::from(["week".into(), "loss".into()]),
+        )
+        .expect("private rebuild");
+    let Err(error) =
+        store.prepare_restatement(build, requests(&plan, &context, point), |_| Ok(true))
+    else {
+        panic!("malformed retained entity payload must fail closed");
+    };
+    assert!(
+        matches!(error, norn_cell::CellError::Engine(ref message) if message.contains("demo.broken.entity")),
+        "expected Engine error naming malformed entity, got {error:?}"
+    );
+}
