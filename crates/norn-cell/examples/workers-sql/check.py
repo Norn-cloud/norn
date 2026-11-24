@@ -1,20 +1,18 @@
 #!/usr/bin/env python3
-"""Run the compiled adapter on pinned runtimes, including a daemon restart."""
+"""Run the compiled adapter on the pinned Wrangler runtime, including a daemon restart."""
 import json
 import os
 from pathlib import Path
 import signal
 import subprocess
-import sys
 import time
 import urllib.error
 import urllib.request
 
 ROOT = Path(os.environ["NORN_WORKERS_SQL_PROJECT"]).resolve()
 URL = "http://127.0.0.1:9876"
-RUNTIME = sys.argv[1] if len(sys.argv) > 1 else "celld"
-COMMAND = {"celld": ["celld", "dev", "--port", "9876"],
-           "wrangler": ["wrangler", "dev", "--local", "--port", "9876"]}[RUNTIME]
+RUNTIME = "wrangler"
+COMMAND = ["wrangler", "dev", "--local", "--port", "9876"]
 
 
 def request(path):
@@ -64,7 +62,7 @@ def state():
 
 
 version = subprocess.check_output([RUNTIME, "--version"], text=True).strip()
-assert version == {"celld": "celld 0.6.3", "wrangler": "4.157.0"}[RUNTIME], version
+assert version == "4.157.0", version
 print("Runtime:", version)
 child = start()
 try:

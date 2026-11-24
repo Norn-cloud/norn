@@ -15,17 +15,12 @@ restore.
 Every row is pass, fail, not tested (the run could not show it) or measured
 (an observation, not a claim). A row passes only when what it names was shown.
 
-    conformance.py --reference REF --host celld  --project DIR [--out OUT]
-    conformance.py --reference REF --host rivet  --project DIR [--out OUT]
     NORN_CELL_RIVET=BIN conformance.py --reference REF --host rivet-native [--out OUT]
     conformance.py --reference REF --host url --url https://cell.example [--out OUT]
 
-`celld` and `rivet` start and stop the host themselves (state in a fresh temp directory, or
-an empty real --state outside the project); `url` runs only the tests that need no host control. DIR is a
-built conformance project (see apps/norn-cell-do/README.md); it lives outside
-the checkout. Pins: celld 0.6.3, open-orange 1.0.3 (installed from
-conformance/package.json + bun.lock) with Rivet Engine 3.1.2-rc.1
-(`rivetdev/engine` by digest).
+`rivet-native` starts and stops the host itself (state in a fresh temp directory, or an
+empty real --state); `url` runs only the tests that need no host control. Pin: Rivet Engine
+3.1.1 (`rivetdev/engine` by digest).
 """
 import argparse
 import base64
@@ -34,7 +29,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import secrets
 import shutil
 import signal
@@ -49,12 +43,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-ENGINE_IMAGE = "rivetdev/engine@sha256:6e585002b700dd4d3630808eb67884aa15d1a602d83781984edac47023b6d40f"
 # Rivet Engine 3.1.1 (`rivetdev/engine:3.1.1`), the release the native host's RivetKit pins.
-NATIVE_ENGINE_IMAGE = "rivetdev/engine@sha256:55cdfe9a92c0ee2f7d3ce5f388dab2ef8e0be1bab8e3f1adb7ba972f862e25d4"
-ORANGE_VERSION = "1.0.3"
-# The locked, test-only OpenOrange install (bun install --frozen-lockfile in this directory).
-LOCKED_ORANGE = Path(__file__).resolve().parent / "node_modules" / ".bin" / "orange"
+ENGINE_IMAGE = "rivetdev/engine@sha256:55cdfe9a92c0ee2f7d3ce5f388dab2ef8e0be1bab8e3f1adb7ba972f862e25d4"
 NOW_HEADER = "x-norn-conformance-now"
 HOLD_HEADER = "x-norn-conformance-hold"
 MARKER_HEADER = "x-norn-conformance-marker"
@@ -274,82 +264,26 @@ class UrlHost:
         pass
 
 
-class CelldHost:
-    """`celld dev` (0.6.3) over a state directory, killed by process group."""
+class RivetNativeHost:
+    """The native Rivet host (crates/norn-cell-rivet, D131): a self-hosted Rivet Engine 3.1.1 (Docker,
+    pinned digest) with `norn-cell-rivet` runner processes, RivetKit's Rust SDK with the cell's SQLite
+    in process. The binary is a `conformance` build, named by NORN_CELL_RIVET."""
 
-    name = "celld"
-    controls = True
-    runners = 1
-
-    def __init__(self, project, state):
-        self.project, self.state = project, state
-        self.port = free_port()
-        self.url = f"http://127.0.0.1:{self.port}"
-        self.child = None
-        version = subprocess.check_output(["celld", "--version"], text=True).strip()
-        assert version == "celld 0.6.3", version
-        self.version = version
-
-    def urls(self):
-        return [self.url]
-
-    def logs(self):
-        return [self.state / "celld.log"]
-
-    def start(self):
-        started = time.perf_counter()
-        log = open(self.state / "celld.log", "ab")
-        # --no-watch: a file written under the project must not rebuild and restart the host mid-test;
-        # --logs: the Worker's console (the hold markers) reaches the log the runner reads.
-        self.child = subprocess.Popen(["celld", "dev", "--port", str(self.port), "--no-watch", "--logs"], cwd=self.project, stdout=log, stderr=log, start_new_session=True)
-        wait_ready(self.url, 120, self.child)
-        return (time.perf_counter() - started) * 1000
-
-    def kill(self):
-        kill_group(self.child)
-
-    stop = kill
-
-    def pids(self):
-        return tree(self.child.pid) if self.child else []
-
-    def data(self):
-        return [self.project / ".celld"]
-
-
-def orange_version(binary):
-    """`binary`'s version, refused unless it is exactly the pinned open-orange release.
-
-    The binary must report exactly one version, ORANGE_VERSION; when it is the locked install's
-    shim, the installed package's own manifest must say the same.
-    """
-    out = subprocess.check_output([binary, "--version"], text=True, stderr=subprocess.STDOUT).strip()
-    versions = re.findall(r"\b\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?\b", out)
-    if versions != [ORANGE_VERSION]:
-        raise SystemExit(f"{binary} reports {out!r}; the suite runs only open-orange {ORANGE_VERSION} (bun install --frozen-lockfile in {LOCKED_ORANGE.parents[2]})")
-    manifest = Path(binary).resolve().parent.parent / "package.json"
-    if manifest.is_file():
-        package = json.loads(manifest.read_text())
-        if package.get("name") != "open-orange" or package.get("version") != ORANGE_VERSION:
-            raise SystemExit(f"{binary} belongs to {package.get('name')} {package.get('version')}, not open-orange {ORANGE_VERSION}")
-    return f"open-orange {ORANGE_VERSION}"
-
-
-class RivetHost:
-    """A self-hosted Rivet Engine (Docker, pinned digest) with `orange serve` runners connecting out to it."""
-
-    name = "rivet"
+    name = "rivet-native"
     controls = True
 
-    def __init__(self, project, state, runners=2):
-        self.project, self.state = project, state
+    def __init__(self, state, lineage_key, runners=2):
+        self.state = state
         self.runners = runners
+        self.lineage_key = lineage_key
         self.token = secrets.token_hex(24)
         self.ports = [free_port() for _ in range(runners)]
         self.children = [None] * runners
         self.container = f"norn-conformance-engine-{os.getpid()}"
-        self.orange = os.environ.get("ORANGE", str(LOCKED_ORANGE))
-        self.version = orange_version(self.orange)
+        self.binary = os.environ.get("NORN_CELL_RIVET")
+        if not self.binary or not Path(self.binary).is_file():
+            raise SystemExit("NORN_CELL_RIVET names the norn-cell-rivet binary (cargo build --features conformance in crates/norn-cell-rivet)")
+        self.version = f"norn-cell-rivet (rivetkit 3.1.1) on {ENGINE_IMAGE.split('@')[1][:19]}…"
         config = {
             "storage": {"log_directory": "/var/lib/rivet/log", "auto_provision_partitions": 1, "balancing": {"enabled": False}},
             "object_storage": {"primary": {"file_system": {"path": "/var/lib/rivet/objects"}}},
@@ -372,7 +306,7 @@ class RivetHost:
             "-v", f"{engine / 'config.json'}:/etc/rivet/config.json:ro",
             "-v", f"{engine / 'log'}:/var/lib/rivet/log",
             "-v", f"{engine / 'objects'}:/var/lib/rivet/objects",
-            getattr(self, "image", ENGINE_IMAGE),
+            ENGINE_IMAGE,
         ], check=True, capture_output=True)
         stop_at = time.time() + 120
         while time.time() < stop_at:
@@ -396,9 +330,16 @@ class RivetHost:
             time.sleep(0.5)
 
     def start_runner(self, index):
-        env = {**os.environ, "RIVET_ENDPOINT": f"http://default:{self.token}@127.0.0.1:6420"}
+        env = {
+            **os.environ,
+            "RIVET_ENDPOINT": f"http://default:{self.token}@127.0.0.1:6420",
+            "NORN_LISTEN": f"127.0.0.1:{self.ports[index]}",
+            "NORN_STAGE": "test",
+            "NORN_CONFORMANCE": "synthetic",
+            "NORN_LINEAGE_KEY": self.lineage_key,
+        }
         log = open(self.state / f"runner-{index}.log", "ab")
-        self.children[index] = subprocess.Popen([self.orange, "serve", "--port", str(self.ports[index]), "--ip", "127.0.0.1"], cwd=self.project, env=env, stdout=log, stderr=log, start_new_session=True)
+        self.children[index] = subprocess.Popen([self.binary], env=env, stdout=log, stderr=log, start_new_session=True)
 
     def start(self):
         started = time.perf_counter()
@@ -433,46 +374,6 @@ class RivetHost:
 
     def data(self):
         return [self.state / "engine" / "log", self.state / "engine" / "objects"]
-
-
-class RivetNativeHost(RivetHost):
-    """The native Rivet host (crates/norn-cell-rivet, D131): a self-hosted Rivet Engine 3.1.1 (Docker,
-    pinned digest) with `norn-cell-rivet` runner processes, RivetKit's Rust SDK with the cell's SQLite
-    in process. The binary is a `conformance` build, named by NORN_CELL_RIVET."""
-
-    name = "rivet-native"
-
-    def __init__(self, state, lineage_key, runners=2):
-        self.project, self.state = None, state
-        self.runners = runners
-        self.lineage_key = lineage_key
-        self.token = secrets.token_hex(24)
-        self.ports = [free_port() for _ in range(runners)]
-        self.children = [None] * runners
-        self.container = f"norn-conformance-engine-{os.getpid()}"
-        self.binary = os.environ.get("NORN_CELL_RIVET")
-        if not self.binary or not Path(self.binary).is_file():
-            raise SystemExit("NORN_CELL_RIVET names the norn-cell-rivet binary (cargo build --features conformance in crates/norn-cell-rivet)")
-        self.image = NATIVE_ENGINE_IMAGE
-        self.version = f"norn-cell-rivet (rivetkit 3.1.1) on {NATIVE_ENGINE_IMAGE.split('@')[1][:19]}…"
-        config = {
-            "storage": {"log_directory": "/var/lib/rivet/log", "auto_provision_partitions": 1, "balancing": {"enabled": False}},
-            "object_storage": {"primary": {"file_system": {"path": "/var/lib/rivet/objects"}}},
-        }
-        (state / "engine").mkdir(parents=True, exist_ok=True)
-        (state / "engine" / "config.json").write_text(json.dumps(config))
-
-    def start_runner(self, index):
-        env = {
-            **os.environ,
-            "RIVET_ENDPOINT": f"http://default:{self.token}@127.0.0.1:6420",
-            "NORN_LISTEN": f"127.0.0.1:{self.ports[index]}",
-            "NORN_STAGE": "test",
-            "NORN_CONFORMANCE": "synthetic",
-            "NORN_LINEAGE_KEY": self.lineage_key,
-        }
-        log = open(self.state / f"runner-{index}.log", "ab")
-        self.children[index] = subprocess.Popen([self.binary], env=env, stdout=log, stderr=log, start_new_session=True)
 
 
 # ------------------------------------------------------------------ tests
@@ -1349,63 +1250,22 @@ class WebSocket:
             pass
 
 
-# Host state directories (celld, OpenOrange/Rivet, Wrangler) and the other config spellings celld would
-# prefer over wrangler.json: none of these is copied, so a host starts from fresh state and reads only the
-# copy's own wrangler.json.
-LOCAL_ONLY = {".celld", ".open-orange", ".wrangler", "wrangler.jsonc", "wrangler.toml"}
-
-
-def fresh_state(requested, source):
+def fresh_state(requested):
     if requested is None:
         return Path(tempfile.mkdtemp(prefix="norn-conformance-state-"))
     if requested.is_symlink():
-        sys.exit(f"--state {requested} is a symlink; give a real directory outside the project")
+        sys.exit(f"--state {requested} is a symlink; give a real directory")
     state = requested.resolve()
-    if state == source or source in state.parents:
-        sys.exit(f"--state {requested} is inside the project")
     state.mkdir(parents=True, exist_ok=True)
     if any(state.iterdir()):
         sys.exit(f"--state {requested} is not empty; give a fresh directory")
     return state
 
 
-def local_copy(source, lineage_key):
-    """A fresh copy of the built project, opted in for a local host. Only the copy's wrangler.json is
-    written: the supplied project (which may be deployed as is) keeps its disabled config byte for byte.
-    The caller removes the copy's parent directory afterwards."""
-    project = Path(tempfile.mkdtemp(prefix="norn-conformance-")) / source.name
-    # A copied `.celld` (often a symlink to the project's own state) would make celld open the original
-    # project's objects and runtime: leave it out so the host starts from fresh state in the copy.
-    shutil.copytree(source, project, symlinks=True, ignore=lambda folder, names: [n for n in names if n in LOCAL_ONLY] if Path(folder) == Path(source) else [])
-    # A top-level link back into the supplied project would let a host write through it: materialize it.
-    root = Path(source).resolve()
-    for entry in project.iterdir():
-        if entry.is_symlink() and (entry.resolve() == root or root in entry.resolve().parents):
-            target = entry.resolve()
-            entry.unlink()
-            if target.is_dir():
-                shutil.copytree(target, entry, symlinks=True)
-            elif target.exists():
-                shutil.copy2(target, entry)
-    config = json.loads((project / "wrangler.json").read_text())
-    # The local test host opts the conformance entry in explicitly (see conformance/worker.mjs).
-    config.setdefault("vars", {}).update({"NORN_LINEAGE_KEY": lineage_key, "NORN_STAGE": "test", "NORN_CONFORMANCE": "synthetic"})
-    # The public-URL switches (off in the checked-in config) mean nothing on a local host, and celld refuses them.
-    for key in ("workers_dev", "preview_urls", "routes"):
-        config.pop(key, None)
-    # The copy keeps symlinks, so the copy's wrangler.json may point at the deployable original:
-    # replace the link (or file) with a regular file instead of writing through it.
-    target = project / "wrangler.json"
-    target.unlink()
-    target.write_text(json.dumps(config))
-    return project
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--reference", required=True, type=Path)
-    parser.add_argument("--host", required=True, choices=["celld", "rivet", "rivet-native", "url"])
-    parser.add_argument("--project", type=Path)
+    parser.add_argument("--host", required=True, choices=["rivet-native", "url"])
     parser.add_argument("--state", type=Path)
     parser.add_argument("--url")
     parser.add_argument("--out", type=Path)
@@ -1427,23 +1287,11 @@ def main():
 def run(args, reference, cleanup):
     if args.host == "url":
         host = UrlHost(args.url)
-    elif args.host == "rivet-native":
-        # No Worker project: the runner is the norn-cell-rivet binary.
-        state = fresh_state(args.state, Path(tempfile.gettempdir()) / "norn-conformance-no-project")
+    else:
+        state = fresh_state(args.state)
         if args.state is None:
             cleanup.append(lambda: shutil.rmtree(state, ignore_errors=True))
         host = RivetNativeHost(state, reference["lineageKey"])
-    else:
-        source = args.project.resolve()
-        # State and logs never reach the project: by default a fresh temp directory; a supplied --state
-        # must be an empty, real (not symlinked) directory outside the project.
-        state = fresh_state(args.state, source)
-        if args.state is None:
-            cleanup.append(lambda: shutil.rmtree(state, ignore_errors=True))
-        # The host runs a disposable copy: the supplied project's wrangler.json is never written.
-        project = local_copy(source, reference["lineageKey"])
-        cleanup.append(lambda: shutil.rmtree(project.parent, ignore_errors=True))
-        host = CelldHost(project, state) if args.host == "celld" else RivetHost(project, state)
     suite = Suite(host, reference, quick=args.quick)
     started_ms = host.start()
     suite.measurements["first_start_ms"] = round(started_ms or 0, 1)
