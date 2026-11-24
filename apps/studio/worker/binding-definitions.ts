@@ -108,10 +108,10 @@ export class BindingDefinitions {
 
   /**
    * What the cell holds for a definition id: its version, lifecycle (`active` or `retired`), and
-   * payload, `absent` when it holds none (or does not serve the kind or the route), or `local`
-   * without a cell host. Reconciliation reads it to settle a binding whose save did not finish.
+   * payload, `absent` (with `confirmed: true` only on `404 definition.not_found`, and `false` when
+   * the route or binding kind is not served), or `local` without a cell host.
    */
-  async get(id: string): Promise<{ readonly kind: "found"; readonly version: number; readonly lifecycle: "active" | "retired"; readonly payload: Record<string, unknown> } | { readonly kind: "absent" } | { readonly kind: "local" }> {
+  async get(id: string): Promise<{ readonly kind: "found"; readonly version: number; readonly lifecycle: "active" | "retired"; readonly payload: Record<string, unknown> } | { readonly kind: "absent"; readonly confirmed: boolean } | { readonly kind: "local" }> {
     const answer = await this.call("GET", `/v1/definitions/${encodeURIComponent(id)}`)
     if (answer === null) return { kind: "local" }
     const b = answer.body as { version?: unknown; lifecycle?: unknown; payload?: unknown; code?: unknown } | null
@@ -119,7 +119,8 @@ export class BindingDefinitions {
       const lifecycle = b.lifecycle === "retired" ? "retired" : "active"
       return { kind: "found", version: b.version, lifecycle, payload: (typeof b.payload === "object" && b.payload !== null ? b.payload : {}) as Record<string, unknown> }
     }
-    if (answer.status === 404 || (answer.status === 422 && b?.code === "definition.kind_unknown")) return { kind: "absent" }
+    if (answer.status === 404 && b?.code === "definition.not_found") return { kind: "absent", confirmed: true }
+    if (answer.status === 404 || (answer.status === 422 && b?.code === "definition.kind_unknown")) return { kind: "absent", confirmed: false }
     throw new CellUnavailable(`The cell answered ${answer.status} reading ${id}.`)
   }
 

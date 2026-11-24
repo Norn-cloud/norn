@@ -300,7 +300,7 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
         if (confirmedRetired(retired)) {
           await clearOrphan(db, actor.orgId, orphan.bindingId)
         }
-      } else if (held.kind === "absent" && now - orphan.abandonedAt >= ORPHAN_RETENTION_MS) {
+      } else if (held.kind === "absent" && held.confirmed && now - orphan.abandonedAt >= ORPHAN_RETENTION_MS) {
         await clearOrphan(db, actor.orgId, orphan.bindingId)
       }
     }
@@ -466,7 +466,7 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
           // from an earlier late-committing save). Adopt the authoritative cell version when
           // reachable instead of blindly restoring stale local fields.
           const held = await cell.get(definitionId).catch(() => null)
-          if (held !== null && held.kind === "found" && (expectedPreviousVersion === null || held.version > expectedPreviousVersion)) {
+          if (held !== null && held.kind === "found" && held.lifecycle === "active" && (expectedPreviousVersion === null || held.version > expectedPreviousVersion)) {
             await adoptCell(db, actor.orgId, id, definitionId, held.version, held.payload, attemptId, expectedPreviousVersion)
             return refused
           }

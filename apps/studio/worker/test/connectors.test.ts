@@ -517,11 +517,11 @@ function liveCell() {
       const id = decodeURIComponent(retire[1] ?? "")
       const current = held.get(id)
       if (current === undefined) return Response.json({ code: "definition.not_found" }, { status: 404 })
-      if (current.lifecycle === "retired") {
-        return Response.json({ code: "definition.refused", diagnostics: [{ code: "definition.already_retired", severity: "error", message: "the definition is already retired" }] }, { status: 422 })
-      }
       if (typeof body.expectedVersion === "number" && body.expectedVersion !== current.version) {
         return Response.json({ code: "definition.version_conflict" }, { status: 409 })
+      }
+      if (current.lifecycle === "retired") {
+        return Response.json({ code: "definition.refused", diagnostics: [{ code: "definition.already_retired", severity: "error", message: "the definition is already retired" }] }, { status: 422 })
       }
       const nextVersion = current.version + 1
       held.set(id, { ...current, version: nextVersion, lifecycle: "retired" })
