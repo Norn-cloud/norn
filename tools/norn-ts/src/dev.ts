@@ -30,10 +30,10 @@ import { TOOL_ROOT } from "./profile.ts"
 import { ProjectError, readProject } from "./project.ts"
 import {
   RUNTIME_MANIFEST_FORMAT,
-  cachedDevHostPath,
-  cachedRuntimeManifestPath,
+  activeRuntimeDir,
   defaultCacheRoot,
-  toReleasePlatform,
+  releasePlatformFor,
+  type ActiveRuntimeRoot,
 } from "./runtime-cache.ts"
 
 /** What finding the host depends on; a test replaces parts of it. */
@@ -137,14 +137,18 @@ function releaseVersionsMatch(recorded: string, expected: string): boolean {
 }
 
 /**
- * Validate a `norn-dev-host` binary discovered in the local runtime cache:
+ * Validate a `norn-dev-host` binary discovered in a single snapshot of the
+ * local runtime cache (`runtimeRoot`):
  * - must be a regular file (never a directory or special file);
  * - on POSIX, must be executable;
- * - if `<activeRuntimeDir>/manifest.json` exists, it must be valid metadata
- *   matching the current platform and (when running a release build) version.
+ * - on generation-based caches (`runtimeRoot.isGeneration === true`),
+ *   `manifest.json` in the SAME generation root is required;
+ * - whenever `manifest.json` is present, it must be valid metadata matching the
+ *   current platform (via the shared `detectPlatform` helper) and (when running
+ *   a release build) version.
  */
 function validateCachedDevHost(
-  cacheDir: string,
+  runtimeRoot: ActiveRuntimeRoot,
   binaryPath: string,
   nodePlatform: string,
   build: BuildInfo | undefined,
@@ -171,46 +175,58 @@ function validateCachedDevHost(
       throw unavailable(`cached dev host at ${binaryPath} is not executable by the current user.`, build)
     }
   }
-  const manifestPath = cachedRuntimeManifestPath(cacheDir)
-  if (existsSync(manifestPath)) {
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(readFileSync(manifestPath, "utf8"))
-    } catch (error) {
-      throw unavailable(
-        `cached runtime manifest at ${manifestPath} is invalid JSON (${error instanceof Error ? error.message : String(error)}).`,
-        build,
-      )
+  const manifestPath = join(runtimeRoot.dir, "manifest.json")
+  if (!existsSync(manifestPath)) {
+    if (runtimeRoot.isGeneration) {
+      throw unavailable(`cached runtime generation at ${runtimeRoot.dir} is missing manifest.json.`, build)
     }
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      throw unavailable(`cached runtime manifest at ${manifestPath} is malformed.`, build)
-    }
-    const manifest = parsed as Record<string, unknown>
-    if (manifest.format !== RUNTIME_MANIFEST_FORMAT) {
-      throw unavailable(
-        `cached runtime manifest at ${manifestPath} has unsupported format ${String(manifest.format)}.`,
-        build,
-      )
-    }
-    const expectedPlatform = toReleasePlatform(nodePlatform)
-    if (typeof manifest.platform !== "string" || manifest.platform.length === 0) {
-      throw unavailable(`cached runtime manifest at ${manifestPath} is missing platform metadata.`, build)
-    }
-    if (manifest.platform !== expectedPlatform) {
-      throw unavailable(
-        `cached dev host at ${binaryPath} is for platform ${manifest.platform}, not ${expectedPlatform}.`,
-        build,
-      )
-    }
-    if (typeof manifest.version !== "string" || manifest.version.length === 0) {
-      throw unavailable(`cached runtime manifest at ${manifestPath} is missing version metadata.`, build)
-    }
-    if (build && manifest.version !== "latest" && !releaseVersionsMatch(manifest.version, build.version)) {
-      throw unavailable(
-        `cached dev host at ${binaryPath} is for version ${manifest.version}, not ${build.version}.`,
-        build,
-      )
-    }
+    return binaryPath
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(readFileSync(manifestPath, "utf8"))
+  } catch (error) {
+    throw unavailable(
+      `cached runtime manifest at ${manifestPath} is invalid JSON (${error instanceof Error ? error.message : String(error)}).`,
+      build,
+    )
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw unavailable(`cached runtime manifest at ${manifestPath} is malformed.`, build)
+  }
+  const manifest = parsed as Record<string, unknown>
+  if (manifest.format !== RUNTIME_MANIFEST_FORMAT) {
+    throw unavailable(
+      `cached runtime manifest at ${manifestPath} has unsupported format ${String(manifest.format)}.`,
+      build,
+    )
+  }
+  let expectedPlatform: string
+  try {
+    expectedPlatform = releasePlatformFor(nodePlatform)
+  } catch (error) {
+    throw unavailable(
+      `cannot verify cached dev host platform for ${nodePlatform} (${error instanceof Error ? error.message : String(error)}).`,
+      build,
+    )
+  }
+  if (typeof manifest.platform !== "string" || manifest.platform.length === 0) {
+    throw unavailable(`cached runtime manifest at ${manifestPath} is missing platform metadata.`, build)
+  }
+  if (manifest.platform !== expectedPlatform) {
+    throw unavailable(
+      `cached dev host at ${binaryPath} is for platform ${manifest.platform}, not ${expectedPlatform}.`,
+      build,
+    )
+  }
+  if (typeof manifest.version !== "string" || manifest.version.length === 0) {
+    throw unavailable(`cached runtime manifest at ${manifestPath} is missing version metadata.`, build)
+  }
+  if (build && manifest.version !== "latest" && !releaseVersionsMatch(manifest.version, build.version)) {
+    throw unavailable(
+      `cached dev host at ${binaryPath} is for version ${manifest.version}, not ${build.version}.`,
+      build,
+    )
   }
   return binaryPath
 }
@@ -241,13 +257,14 @@ export async function hostBinary(lookup: HostLookup = hostLookup()): Promise<str
     }
     return binary
   }
-  const runtimeCached = cachedDevHostPath(lookup.cacheDir)
+  const runtimeRoot = activeRuntimeDir(lookup.cacheDir)
+  const runtimeCached = join(runtimeRoot.dir, "bin", "norn-dev-host")
   if (!build) {
-    if (existsSync(runtimeCached)) return validateCachedDevHost(lookup.cacheDir, runtimeCached, lookup.platform, build)
+    if (existsSync(runtimeCached)) return validateCachedDevHost(runtimeRoot, runtimeCached, lookup.platform, build)
     throw unavailable("this is a checkout, which carries no prebuilt host.", build)
   }
   if (!asset) {
-    if (existsSync(runtimeCached)) return validateCachedDevHost(lookup.cacheDir, runtimeCached, lookup.platform, build)
+    if (existsSync(runtimeCached)) return validateCachedDevHost(runtimeRoot, runtimeCached, lookup.platform, build)
     throw unavailable(`this release has no prebuilt host for ${lookup.platform} (it has ${Object.keys(build.hosts).sort().join(", ") || "none"}).`, build)
   }
   const cached = join(lookup.cacheDir, "dev-host", build.version, lookup.platform, "norn-dev-host")

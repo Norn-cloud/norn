@@ -6,15 +6,18 @@
  *
  * Fail-closed verification:
  * 1. Fetches `SHA256SUMS` and every archive with `redirect: "manual"`,
- *    re-validating every redirect hop against the HTTPS / loopback policy.
+ *    rejecting URL userinfo, rejecting any `https:` -> `http:` downgrade (even
+ *    to loopback), and re-validating every redirect hop against the HTTPS /
+ *    loopback policy.
  * 2. Checks that every required archive has a single 64-hex SHA-256 entry and
  *    verifies EVERY archive's SHA-256 BEFORE inspecting or extracting anything.
- * 3. Inspects EVERY archive entry (type, path, linkname, uncompressed size,
- *    member count) BEFORE extracting onto disk, plus post-extraction
- *    verification as defense-in-depth.
+ * 3. Preflight-inspects ALL archives (type, path, linkname, actual bounded
+ *    decompressed byte length, CRC32/checksums, member count) BEFORE extracting
+ *    ANY archive onto disk, plus post-extraction verification as defense-in-depth.
  * 4. Publishes complete runtime generations into `runtime/generations/<genId>/`
  *    and switches via ONE atomic pointer update (`current.tmp` -> `current`),
- *    cleaning up old generations only AFTER the pointer swap succeeds.
+ *    re-reading `current` and preserving both recent and live generations so
+ *    concurrent installers and readers are never stranded.
  */
 import { spawnSync } from "node:child_process"
 import { createHash, randomBytes } from "node:crypto"
@@ -32,11 +35,13 @@ import {
   writeFileSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
-import { join, posix } from "node:path"
-import { gunzipSync } from "node:zlib"
+import { dirname, join, posix, resolve, sep } from "node:path"
+import { gunzipSync, inflateRawSync } from "node:zlib"
 import {
   RUNTIME_MANIFEST_FORMAT,
   defaultCacheRoot,
+  detectPlatform,
+  readActiveGenerationId,
 } from "./runtime-cache.ts"
 
 export const DEFAULT_REPO = "Norn-cloud/norn"
@@ -44,6 +49,8 @@ export const SETUP_DOWNLOAD_TIMEOUT_MS = 600_000
 export const MAX_REDIRECTS = 5
 export const MAX_EXTRACTED_BYTES = 256 * 1024 * 1024
 export const MAX_ARCHIVE_ENTRIES = 4096
+export const GENERATION_CLEANUP_GRACE_MS = 60_000
+export const KEEP_RECENT_GENERATIONS = 2
 const MAX_SUMS_BYTES = 1024 * 1024
 const MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 const MAX_PAX_HEADER_BYTES = 1024 * 1024
@@ -72,6 +79,7 @@ export interface SetupOptions {
   readonly env?: Readonly<Record<string, string | undefined>>
   readonly timeoutMs?: number
   readonly fetchImpl?: FetchLike
+  readonly extractImpl?: typeof extractArchive
   readonly stdout?: (text: string) => void
   readonly stderr?: (text: string) => void
 }
@@ -91,34 +99,20 @@ export interface SetupResult {
 const VALID_PLATFORMS = new Set(["linux-x64", "linux-arm64", "macos-arm64", "macos-x64"])
 
 /** Map Node/Bun `process.platform` + `process.arch` to the release platform key. */
-export function detectReleasePlatform(
-  platform: string = process.platform,
-  arch: string = process.arch,
-): string {
-  let os: string
-  if (platform === "linux") os = "linux"
-  else if (platform === "darwin") os = "macos"
-  else throw new Error(`unsupported OS ${platform}: Linux and macOS only`)
+export const detectReleasePlatform = detectPlatform
 
-  let cpu: string
-  if (arch === "x64" || arch === "x86_64" || arch === "amd64") cpu = "x64"
-  else if (arch === "arm64" || arch === "aarch64") cpu = "arm64"
-  else throw new Error(`unsupported CPU ${arch}: x64 and arm64 only`)
-
-  // Match scripts/release/install.sh: a Rosetta shell on Apple Silicon reports x64.
-  if (os === "macos" && cpu === "x64" && platform === process.platform && arch === process.arch) {
-    const check = spawnSync("sysctl", ["-n", "sysctl.proc_translated"], { encoding: "utf8" })
-    if (check.status === 0 && check.stdout.trim() === "1") cpu = "arm64"
-  }
-  return `${os}-${cpu}`
-}
-
-/** Reject remote plaintext HTTP; allow https or local loopback mirrors for offline/tests. */
+/**
+ * Reject URL userinfo and remote plaintext HTTP; allow https or local loopback
+ * mirrors for offline/tests.
+ */
 export function isFetchableUrl(url: string): boolean {
   let parsed: URL
   try {
     parsed = new URL(url)
   } catch {
+    return false
+  }
+  if (parsed.username !== "" || parsed.password !== "") {
     return false
   }
   if (parsed.protocol === "https:") return parsed.hostname.length > 0
@@ -147,7 +141,7 @@ export function resolveReleaseBaseUrl(options: {
       ? `https://github.com/${repo}/releases/latest/download`
       : `https://github.com/${repo}/releases/download/${encodeURIComponent(version)}`
   if (!isFetchableUrl(baseUrl)) {
-    throw new Error(`refusing non-https release URL ${baseUrl} (plain http is allowed only on loopback)`)
+    throw new Error(`refusing unsafe or non-https release URL ${baseUrl} (userinfo is forbidden; plain http is allowed only on loopback)`)
   }
   return { version, baseUrl }
 }
@@ -180,8 +174,9 @@ function sha256Hex(bytes: Uint8Array): string {
 
 /**
  * Fetch up to `limit` bytes from `url` within `timeoutMs`, following at most
- * `MAX_REDIRECTS` redirects manually and re-validating every redirect hop
- * against `isFetchableUrl` before issuing the next request.
+ * `MAX_REDIRECTS` redirects manually, rejecting userinfo, rejecting ANY
+ * `https:` -> `http:` downgrade (even to loopback), and re-validating every
+ * redirect hop against `isFetchableUrl` before issuing the next request.
  */
 export async function fetchBounded(
   url: string,
@@ -190,7 +185,7 @@ export async function fetchBounded(
   fetchImpl: FetchLike = fetch,
 ): Promise<Uint8Array> {
   if (!isFetchableUrl(url)) {
-    throw new Error(`refusing non-https URL ${url} (plain http is allowed only on loopback)`)
+    throw new Error(`refusing unsafe or non-https URL ${url} (userinfo is forbidden; plain http is allowed only on loopback)`)
   }
   const deadline = Date.now() + timeoutMs
   let currentUrl = url
@@ -216,15 +211,20 @@ export async function fetchBounded(
     if (!location) {
       throw new Error(`HTTP ${response.status} redirect without Location header fetching ${currentUrl}`)
     }
-    let nextUrl: string
+    const prevParsed = new URL(currentUrl)
+    let nextParsed: URL
     try {
-      nextUrl = new URL(location, currentUrl).toString()
+      nextParsed = new URL(location, currentUrl)
     } catch {
       throw new Error(`invalid redirect Location '${location}' from ${currentUrl}`)
     }
+    const nextUrl = nextParsed.toString()
+    if (prevParsed.protocol === "https:" && nextParsed.protocol === "http:") {
+      throw new Error(`refusing redirect downgrade from https (${currentUrl}) to http (${nextUrl})`)
+    }
     if (!isFetchableUrl(nextUrl)) {
       throw new Error(
-        `refusing redirect from ${currentUrl} to non-https URL ${nextUrl} (plain http is allowed only on loopback)`,
+        `refusing redirect from ${currentUrl} to unsafe or non-https URL ${nextUrl} (userinfo is forbidden; plain http is allowed only on loopback)`,
       )
     }
     currentUrl = nextUrl
@@ -382,7 +382,6 @@ export function inspectTarGzArchive(
 ): ArchiveSummary {
   const maxExtractedBytes = limits.maxExtractedBytes ?? MAX_EXTRACTED_BYTES
   const maxEntries = limits.maxEntries ?? MAX_ARCHIVE_ENTRIES
-  // Allow 512-byte header/padding overhead on top of maxExtractedBytes while capping gzip bombs.
   const maxTarStreamBytes = Math.min(
     maxExtractedBytes + Math.max(64 * 1024, (maxEntries + 4) * 2048),
     MAX_EXTRACTED_BYTES + 64 * 1024 * 1024,
@@ -557,19 +556,38 @@ export function inspectTarGzArchive(
   return { entries: entryCount, totalBytes }
 }
 
-/**
- * Inspect EVERY entry of a `.zip` archive via its Central Directory and Local
- * File Headers BEFORE extraction:
- * - rejects symlinks and non-regular/non-directory Unix file modes;
- * - rejects absolute paths, backslashes, drive prefixes, and `..` traversal;
- * - rejects local-vs-central filename mismatches;
- * - enforces strict upper bounds on member count and total expanded bytes.
- */
-export function inspectZipArchive(
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256)
+  for (let i = 0; i < 256; i++) {
+    let c = i
+    for (let k = 0; k < 8; k++) {
+      c = (c & 1) !== 0 ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1)
+    }
+    table[i] = c >>> 0
+  }
+  return table
+})()
+
+export function crc32(data: Uint8Array): number {
+  let c = 0xffffffff
+  for (let i = 0; i < data.length; i++) {
+    c = CRC32_TABLE[(c ^ data[i]!) & 0xff]! ^ (c >>> 8)
+  }
+  return (c ^ 0xffffffff) >>> 0
+}
+
+interface VerifiedZipEntry {
+  readonly name: string
+  readonly isDir: boolean
+  readonly data: Uint8Array
+  readonly unixPerm: number
+}
+
+function parseAndVerifyZipArchive(
   archivePath: string,
   assetName: string,
   limits: ArchiveLimits = {},
-): ArchiveSummary {
+): { readonly entries: ReadonlyArray<VerifiedZipEntry>; readonly totalBytes: number } {
   const maxExtractedBytes = limits.maxExtractedBytes ?? MAX_EXTRACTED_BYTES
   const maxEntries = limits.maxEntries ?? MAX_ARCHIVE_ENTRIES
   const buf = readFileSync(archivePath)
@@ -629,14 +647,16 @@ export function inspectZipArchive(
   const decoder = new TextDecoder()
   let offset = cdOffset
   const cdEnd = cdOffset + cdSize
-  let entryCount = 0
+  const verified: VerifiedZipEntry[] = []
   let totalBytes = 0
 
   while (offset < cdEnd) {
     if (offset + 46 > cdEnd || view.getUint32(offset, true) !== 0x02014b50) {
       throw new Error(`invalid zip archive ${assetName}: corrupt central directory header`)
     }
-    const versionMadeBy = view.getUint16(offset + 4, true)
+    const flags = view.getUint16(offset + 8, true)
+    const method = view.getUint16(offset + 10, true)
+    const expectedCrc = view.getUint32(offset + 16, true)
     const compressedSize32 = view.getUint32(offset + 20, true)
     const uncompressedSize32 = view.getUint32(offset + 24, true)
     const fileNameLen = view.getUint16(offset + 28, true)
@@ -652,6 +672,14 @@ export function inspectZipArchive(
 
     const fileName = decoder.decode(buf.subarray(offset + 46, offset + 46 + fileNameLen))
 
+    if ((flags & 0x1) !== 0) {
+      throw new Error(`refusing encrypted zip entry '${fileName}' in ${assetName}`)
+    }
+    if (method !== 0 && method !== 8) {
+      throw new Error(`refusing unsupported zip compression method ${method} for '${fileName}' in ${assetName}`)
+    }
+
+    let compressedSize = compressedSize32
     let uncompressedSize = uncompressedSize32
     let localHeaderOffset = localHeaderOffset32
     if (
@@ -659,7 +687,6 @@ export function inspectZipArchive(
       || compressedSize32 === 0xffffffff
       || localHeaderOffset32 === 0xffffffff
     ) {
-      // Parse ZIP64 extra field (header ID 0x0001).
       let ex = offset + 46 + fileNameLen
       const exEnd = ex + extraLen
       let foundZip64 = false
@@ -680,6 +707,11 @@ export function inspectZipArchive(
           }
           if (compressedSize32 === 0xffffffff) {
             if (cursor + 8 > ex + 4 + size) throw new Error(`truncated zip64 extra field in ${assetName}`)
+            const v = view.getBigUint64(cursor, true)
+            if (v > BigInt(Number.MAX_SAFE_INTEGER)) {
+              throw new Error(`archive ${assetName} exceeds maximum compressed size in ${assetName}`)
+            }
+            compressedSize = Number(v)
             cursor += 8
           }
           if (localHeaderOffset32 === 0xffffffff) {
@@ -696,52 +728,139 @@ export function inspectZipArchive(
       }
     }
 
-    // Validate Unix file type bits when created by a Unix host (versionMadeBy >> 8 === 3).
-    const hostOs = versionMadeBy >> 8
+    // Reject symlinks and special file type bits regardless of `versionMadeBy` OS byte.
+    const upperMode = externalAttr >>> 16
+    const fileType = upperMode & 0o170000
     let isDir = fileName.endsWith("/")
-    if (hostOs === 3) {
-      const fileType = (externalAttr >>> 16) & 0o170000
-      if (fileType === 0o120000) {
-        throw new Error(`refusing symlink '${fileName}' in ${assetName}`)
-      }
-      if (fileType === 0o040000) {
-        isDir = true
-      } else if (fileType !== 0 && fileType !== 0o100000) {
-        throw new Error(`refusing special file '${fileName}' (mode 0o${fileType.toString(8)}) in ${assetName}`)
-      }
+    if (fileType === 0o120000) {
+      throw new Error(`refusing symlink '${fileName}' in ${assetName}`)
+    }
+    if (fileType === 0o040000) {
+      isDir = true
+    } else if (fileType !== 0 && fileType !== 0o100000) {
+      throw new Error(`refusing special file '${fileName}' (mode 0o${fileType.toString(8)}) in ${assetName}`)
     }
 
     assertSafeArchiveEntryPath(fileName, isDir, assetName)
 
-    // Verify local file header signature & matching filename (prevents parser differentials).
+    if (verified.length + 1 > maxEntries) {
+      throw new Error(`archive ${assetName} exceeds maximum entry count (${maxEntries})`)
+    }
+
+    // Verify local file header signature, compression method, and filename match.
     if (localHeaderOffset + 30 > buf.length || view.getUint32(localHeaderOffset, true) !== 0x04034b50) {
       throw new Error(`invalid zip archive ${assetName}: missing local header for '${fileName}'`)
     }
+    const localMethod = view.getUint16(localHeaderOffset + 8, true)
+    if (localMethod !== method) {
+      throw new Error(`refusing zip compression method mismatch for '${fileName}' in ${assetName}`)
+    }
     const localNameLen = view.getUint16(localHeaderOffset + 26, true)
-    if (localHeaderOffset + 30 + localNameLen > buf.length) {
-      throw new Error(`invalid zip archive ${assetName}: truncated local header for '${fileName}'`)
+    const localExtraLen = view.getUint16(localHeaderOffset + 28, true)
+    const dataStart = localHeaderOffset + 30 + localNameLen + localExtraLen
+    const dataEnd = dataStart + compressedSize
+    if (localHeaderOffset + 30 + localNameLen > buf.length || dataEnd > buf.length) {
+      throw new Error(`invalid zip archive ${assetName}: truncated local entry data for '${fileName}'`)
     }
     const localName = decoder.decode(buf.subarray(localHeaderOffset + 30, localHeaderOffset + 30 + localNameLen))
     if (localName !== fileName) {
       throw new Error(`refusing zip filename mismatch ('${localName}' != '${fileName}') in ${assetName}`)
     }
 
-    entryCount++
-    if (entryCount > maxEntries) {
-      throw new Error(`archive ${assetName} exceeds maximum entry count (${maxEntries})`)
-    }
-    totalBytes += uncompressedSize
-    if (uncompressedSize > maxExtractedBytes || totalBytes > maxExtractedBytes) {
+    const remainingBudget = maxExtractedBytes - totalBytes
+    if (uncompressedSize > remainingBudget) {
       throw new Error(`archive ${assetName} exceeds maximum uncompressed size (${maxExtractedBytes} bytes)`)
     }
+
+    // Decompress with a strict byte budget instead of trusting the declared uncompressed size.
+    const compressedSlice = buf.subarray(dataStart, dataEnd)
+    let expanded: Uint8Array
+    if (method === 0) {
+      if (compressedSlice.byteLength > remainingBudget) {
+        throw new Error(`archive ${assetName} exceeds maximum uncompressed size (${maxExtractedBytes} bytes)`)
+      }
+      expanded = compressedSlice
+    } else {
+      try {
+        expanded = inflateRawSync(compressedSlice, { maxOutputLength: Math.max(remainingBudget, 1) })
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException | undefined)?.code
+        if (code === "ERR_BUFFER_TOO_LARGE") {
+          throw new Error(`archive ${assetName} exceeds maximum uncompressed size (${maxExtractedBytes} bytes)`)
+        }
+        throw new Error(
+          `failed to inflate zip entry '${fileName}' in ${assetName}: ${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
+      if (expanded.byteLength > remainingBudget) {
+        throw new Error(`archive ${assetName} exceeds maximum uncompressed size (${maxExtractedBytes} bytes)`)
+      }
+    }
+
+    if (expanded.byteLength !== uncompressedSize) {
+      throw new Error(
+        `zip entry '${fileName}' expanded size (${expanded.byteLength}) does not match declared size (${uncompressedSize}) in ${assetName}`,
+      )
+    }
+    if (isDir && expanded.byteLength !== 0) {
+      throw new Error(`refusing directory '${fileName}' with non-zero size in ${assetName}`)
+    }
+    const actualCrc = crc32(expanded)
+    if (actualCrc !== expectedCrc) {
+      throw new Error(
+        `zip entry '${fileName}' CRC-32 mismatch (expected ${expectedCrc.toString(16)}, got ${actualCrc.toString(16)}) in ${assetName}`,
+      )
+    }
+
+    totalBytes += expanded.byteLength
+    if (totalBytes > maxExtractedBytes) {
+      throw new Error(`archive ${assetName} exceeds maximum uncompressed size (${maxExtractedBytes} bytes)`)
+    }
+
+    verified.push({
+      name: fileName,
+      isDir,
+      data: expanded,
+      unixPerm: upperMode & 0o777,
+    })
 
     offset = headerEnd
   }
 
-  if (entryCount === 0) {
+  if (verified.length === 0) {
     throw new Error(`archive ${assetName} contains no entries`)
   }
-  return { entries: entryCount, totalBytes }
+  return { entries: verified, totalBytes }
+}
+
+/**
+ * Inspect EVERY entry of a `.zip` archive via its Central Directory, Local File
+ * Headers, and bounded raw decompression BEFORE extraction:
+ * - rejects symlinks and special POSIX file modes regardless of `versionMadeBy` OS byte;
+ * - rejects absolute paths, backslashes, drive prefixes, `..` traversal, and
+ *   LFH-vs-CD filename/method mismatches;
+ * - inflates every entry with a strict remaining byte budget (`maxOutputLength`)
+ *   and checks actual expanded byte length + CRC-32 instead of trusting headers.
+ */
+export function inspectZipArchive(
+  archivePath: string,
+  assetName: string,
+  limits: ArchiveLimits = {},
+): ArchiveSummary {
+  const { entries, totalBytes } = parseAndVerifyZipArchive(archivePath, assetName, limits)
+  return { entries: entries.length, totalBytes }
+}
+
+/** Dispatch preflight inspection for `.tar.gz` / `.tgz` or `.zip` archives. */
+export function inspectArchive(
+  archivePath: string,
+  assetName: string,
+  limits: ArchiveLimits = {},
+): ArchiveSummary {
+  const isZip = assetName.endsWith(".zip") || archivePath.endsWith(".zip")
+  return isZip
+    ? inspectZipArchive(archivePath, assetName, limits)
+    : inspectTarGzArchive(archivePath, assetName, limits)
 }
 
 /** Post-extraction defense-in-depth verification of extracted filesystem tree. */
@@ -785,8 +904,10 @@ function assertSafeExtractedTree(
 }
 
 /**
- * Inspect an archive BEFORE creating `destDir` or extracting, extract it, and
- * run post-extraction tree verification as defense-in-depth.
+ * Inspect an archive BEFORE creating `destDir` or extracting, extract it
+ * safely (writing verified `.zip` entries directly via bounded `inflateRawSync`
+ * with no `unzip` subprocess), and run post-extraction tree verification as
+ * defense-in-depth.
  */
 export function extractArchive(
   archivePath: string,
@@ -796,19 +917,32 @@ export function extractArchive(
 ): void {
   const isZip = assetName.endsWith(".zip") || archivePath.endsWith(".zip")
   if (isZip) {
-    inspectZipArchive(archivePath, assetName, limits)
+    const { entries } = parseAndVerifyZipArchive(archivePath, assetName, limits)
+    mkdirSync(destDir, { recursive: true })
+    const rootResolved = resolve(destDir)
+    for (const entry of entries) {
+      const rel = posix.normalize(entry.name)
+      const target = rel === "." ? rootResolved : resolve(rootResolved, ...rel.split("/").filter(Boolean))
+      if (target !== rootResolved && !target.startsWith(`${rootResolved}${sep}`)) {
+        throw new Error(`refusing unsafe archive entry '${entry.name}' in ${assetName}`)
+      }
+      if (entry.isDir) {
+        mkdirSync(target, { recursive: true })
+      } else {
+        mkdirSync(dirname(target), { recursive: true })
+        writeFileSync(target, entry.data)
+        if ((entry.unixPerm & 0o111) !== 0) {
+          chmodSync(target, 0o755)
+        }
+      }
+    }
   } else {
     inspectTarGzArchive(archivePath, assetName, limits)
-  }
-
-  mkdirSync(destDir, { recursive: true })
-  const run = isZip
-    ? spawnSync("unzip", ["-q", archivePath, "-d", destDir], { encoding: "utf8" })
-    : spawnSync("tar", ["-xzf", archivePath, "-C", destDir], { encoding: "utf8" })
-  if (run.status !== 0) {
-    throw new Error(
-      `failed to extract ${assetName}: ${run.stderr.trim() || `${isZip ? "unzip" : "tar"} exited non-zero`}`,
-    )
+    mkdirSync(destDir, { recursive: true })
+    const run = spawnSync("tar", ["-xzf", archivePath, "-C", destDir], { encoding: "utf8" })
+    if (run.status !== 0) {
+      throw new Error(`failed to extract ${assetName}: ${run.stderr.trim() || "tar exited non-zero"}`)
+    }
   }
   assertSafeExtractedTree(destDir, assetName, limits)
 }
@@ -819,18 +953,64 @@ function assertRegularFile(path: string, label: string): void {
 }
 
 /**
- * Download, verify, and install the prebuilt local runtime into
- * `<cacheRoot>/runtime/generations/<genId>` with an atomic `current` pointer.
+ * Prune superseded generations safely after a pointer swap:
+ * - re-reads `runtime/current` so any concurrent installer's newer active
+ *   generation is preserved alongside `generationId`;
+ * - keeps the `KEEP_RECENT_GENERATIONS` most recent generations;
+ * - skips any generation whose mtime is newer than `graceMs` (default 60s) so
+ *   in-flight readers or concurrent installers never lose their files.
+ */
+function pruneOldGenerations(
+  cacheRoot: string,
+  generationsDir: string,
+  generationId: string,
+  graceMs: number = GENERATION_CLEANUP_GRACE_MS,
+): void {
+  const liveCurrent = readActiveGenerationId(cacheRoot)
+  const protectedIds = new Set<string>([generationId])
+  if (liveCurrent) protectedIds.add(liveCurrent)
+
+  const nowMs = Date.now()
+  const completed: Array<{ readonly name: string; readonly mtimeMs: number }> = []
+  for (const name of readdirSync(generationsDir)) {
+    if (name.startsWith(".staging.")) continue
+    try {
+      const stat = lstatSync(join(generationsDir, name))
+      completed.push({ name, mtimeMs: stat.mtimeMs })
+    } catch {
+      // Another cleaner may have already removed this entry.
+    }
+  }
+  completed.sort((a, b) => (b.mtimeMs - a.mtimeMs) || b.name.localeCompare(a.name))
+  for (const recent of completed.slice(0, KEEP_RECENT_GENERATIONS)) {
+    protectedIds.add(recent.name)
+  }
+
+  for (const entry of completed) {
+    if (protectedIds.has(entry.name)) continue
+    if (nowMs - entry.mtimeMs < graceMs) continue
+    try {
+      rmSync(join(generationsDir, entry.name), { recursive: true, force: true })
+    } catch {
+      // Best-effort cleanup; ignore concurrent deletion races.
+    }
+  }
+}
+
+/**
+ * Download, verify, preflight-inspect, and install the prebuilt local runtime
+ * into `<cacheRoot>/runtime/generations/<genId>` with an atomic `current`
+ * pointer.
  *
  * Guarantees fail-closed behavior: if `SHA256SUMS` is missing an asset, any
  * download or redirect check fails, any archive's SHA-256 differs from
- * `SHA256SUMS`, or any archive fails pre-extraction safety inspection, this
- * throws before extracting anything and without touching an existing active
- * generation.
+ * `SHA256SUMS`, or ANY archive fails preflight safety inspection, this throws
+ * before extracting ANY archive onto disk and without touching an existing
+ * active generation.
  */
 export async function setupLocalRuntime(options: SetupOptions = {}): Promise<SetupResult> {
   const env = options.env ?? process.env
-  const platform = options.platform ?? detectReleasePlatform()
+  const platform = options.platform ?? detectPlatform()
   if (!VALID_PLATFORMS.has(platform)) {
     throw new Error(`unsupported platform '${platform}': expected one of ${[...VALID_PLATFORMS].join(", ")}`)
   }
@@ -843,13 +1023,14 @@ export async function setupLocalRuntime(options: SetupOptions = {}): Promise<Set
   const cacheRoot = options.cacheDir ?? defaultCacheRoot(env)
   const timeoutMs = options.timeoutMs ?? SETUP_DOWNLOAD_TIMEOUT_MS
   const fetchImpl = options.fetchImpl ?? fetch
+  const extractImpl = options.extractImpl ?? extractArchive
 
   const wasmAsset = "norn-checker-wasm.tar.gz"
   const devHostAsset = `norn-dev-host-${platform}.tar.gz`
   const cliAsset = `norn-${platform}.tar.gz`
   const assets = [wasmAsset, devHostAsset, cliAsset] as const
 
-  // Phase 1: Download & verify strictly in a temporary directory. Cache is untouched until verified.
+  // Phase 1: Download & verify SHA-256 strictly in a temporary directory. Cache is untouched.
   const workDir = mkdtempSync(join(tmpdir(), "norn-setup-"))
   try {
     const sumsBytes = await fetchBounded(`${baseUrl}/SHA256SUMS`, MAX_SUMS_BYTES, timeoutMs, fetchImpl)
@@ -879,19 +1060,24 @@ export async function setupLocalRuntime(options: SetupOptions = {}): Promise<Set
       downloaded.set(asset, archivePath)
     }
 
-    // Phase 2: Inspect & extract verified archives in temp dir and check required payloads.
+    // Phase 2a: Preflight-inspect ALL verified archives BEFORE extracting ANY onto disk.
+    for (const asset of assets) {
+      inspectArchive(downloaded.get(asset)!, asset)
+    }
+
+    // Phase 2b: Extract verified & preflighted archives in temp dir and check required payloads.
     const wasmExtract = join(workDir, "extract-wasm")
     const devHostExtract = join(workDir, "extract-dev-host")
     const cliExtract = join(workDir, "extract-cli")
 
-    extractArchive(downloaded.get(wasmAsset)!, wasmExtract, wasmAsset)
+    extractImpl(downloaded.get(wasmAsset)!, wasmExtract, wasmAsset)
     assertRegularFile(join(wasmExtract, "norn_checker_wasm.js"), `${wasmAsset}: norn_checker_wasm.js`)
     assertRegularFile(join(wasmExtract, "norn_checker_wasm_bg.wasm"), `${wasmAsset}: norn_checker_wasm_bg.wasm`)
 
-    extractArchive(downloaded.get(devHostAsset)!, devHostExtract, devHostAsset)
+    extractImpl(downloaded.get(devHostAsset)!, devHostExtract, devHostAsset)
     assertRegularFile(join(devHostExtract, "norn-dev-host"), `${devHostAsset}: norn-dev-host`)
 
-    extractArchive(downloaded.get(cliAsset)!, cliExtract, cliAsset)
+    extractImpl(downloaded.get(cliAsset)!, cliExtract, cliAsset)
     assertRegularFile(join(cliExtract, "norn"), `${cliAsset}: norn`)
 
     // Phase 3: Stage a complete immutable generation and switch `runtime/current` atomically.
@@ -946,12 +1132,8 @@ export async function setupLocalRuntime(options: SetupOptions = {}): Promise<Set
       throw error
     }
 
-    // Phase 4: Clean up superseded generations and any legacy direct layout ONLY after the pointer swap succeeded.
-    for (const entry of readdirSync(generationsDir)) {
-      if (entry === generationId) continue
-      if (entry.startsWith(".staging.")) continue
-      rmSync(join(generationsDir, entry), { recursive: true, force: true })
-    }
+    // Phase 4: Concurrent-safe cleanup ONLY after the pointer swap succeeded.
+    pruneOldGenerations(cacheRoot, generationsDir, generationId)
     for (const legacy of ["checker-wasm", "bin", "manifest.json"]) {
       const legacyPath = join(runtimeDir, legacy)
       if (existsSync(legacyPath)) {

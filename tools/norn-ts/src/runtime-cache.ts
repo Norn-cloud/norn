@@ -1,6 +1,6 @@
 /**
- * Shared local runtime cache paths used by `norn setup`, `norn check`,
- * `norn explain`, and `norn dev`.
+ * Shared local runtime cache paths and platform detection used by `norn setup`,
+ * `norn check`, `norn explain`, and `norn dev`.
  *
  * Cache root precedence:
  * 1. `NORN_CACHE_DIR`
@@ -19,6 +19,7 @@
  * valid generation directory, discovery falls back to the direct layout under
  * `<cacheRoot>/runtime/{checker-wasm,bin,manifest.json}`.
  */
+import { spawnSync } from "node:child_process"
 import { lstatSync, readFileSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
@@ -31,6 +32,12 @@ export interface RuntimeManifest {
   readonly platform: string
   readonly baseUrl: string
   readonly sha256: Readonly<Record<string, string>>
+}
+
+export interface ActiveRuntimeRoot {
+  readonly dir: string
+  readonly isGeneration: boolean
+  readonly generationId?: string
 }
 
 const VALID_GENERATION_ID = /^[A-Za-z0-9._-]+$/
@@ -52,14 +59,44 @@ function isRegularFileNoFollow(path: string): boolean {
 }
 
 /**
- * Normalize a Node `process.platform`-`process.arch` string (e.g. `darwin-arm64`)
- * to the release platform key used in release assets and `manifest.json`
- * (e.g. `macos-arm64`).
+ * Map Node/Bun `process.platform` + `process.arch` to the release platform key
+ * (`linux-x64`, `linux-arm64`, `macos-arm64`, `macos-x64`).
+ *
+ * Shared by both `setup.ts` and `dev.ts` so Rosetta on Apple Silicon agrees on
+ * both install and discovery sides.
  */
-export function toReleasePlatform(nodePlatform: string): string {
-  return nodePlatform.startsWith("darwin-")
-    ? `macos-${nodePlatform.slice("darwin-".length)}`
-    : nodePlatform
+export function detectPlatform(
+  platform: string = process.platform,
+  arch: string = process.arch,
+): string {
+  let os: string
+  if (platform === "linux") os = "linux"
+  else if (platform === "darwin" || platform === "macos") os = "macos"
+  else throw new Error(`unsupported OS ${platform}: Linux and macOS only`)
+
+  let cpu: string
+  if (arch === "x64" || arch === "x86_64" || arch === "amd64") cpu = "x64"
+  else if (arch === "arm64" || arch === "aarch64") cpu = "arm64"
+  else throw new Error(`unsupported CPU ${arch}: x64 and arm64 only`)
+
+  // Match scripts/release/install.sh: a Rosetta shell on Apple Silicon reports x64.
+  if (os === "macos" && cpu === "x64" && platform === process.platform && arch === process.arch) {
+    const check = spawnSync("sysctl", ["-n", "sysctl.proc_translated"], { encoding: "utf8" })
+    if (check.status === 0 && check.stdout.trim() === "1") cpu = "arm64"
+  }
+  return `${os}-${cpu}`
+}
+
+/**
+ * Convert a `<platform>-<arch>` key (such as Node's `darwin-arm64` or
+ * `linux-x64`) through the shared `detectPlatform` logic.
+ */
+export function releasePlatformFor(nodePlatform: string): string {
+  const dash = nodePlatform.indexOf("-")
+  if (dash <= 0 || dash === nodePlatform.length - 1) {
+    throw new Error(`unsupported platform '${nodePlatform}'`)
+  }
+  return detectPlatform(nodePlatform.slice(0, dash), nodePlatform.slice(dash + 1))
 }
 
 /**
@@ -103,34 +140,43 @@ export function readActiveGenerationId(cacheDir: string): string | undefined {
 }
 
 /**
- * Resolve the active runtime directory under `<cacheDir>/runtime`:
- * - `<cacheDir>/runtime/generations/<genId>` when `<cacheDir>/runtime/current`
- *   names an existing generation directory;
- * - otherwise `<cacheDir>/runtime` (legacy direct layout or empty cache).
+ * Snapshot the active runtime root under `<cacheDir>/runtime`:
+ * - `{ dir: <cacheDir>/runtime/generations/<genId>, isGeneration: true, generationId }`
+ *   when `<cacheDir>/runtime/current` names an existing generation directory;
+ * - `{ dir: <cacheDir>/runtime, isGeneration: false }` otherwise (legacy direct layout or empty cache).
  */
-export function activeRuntimeDir(cacheDir: string): string {
+export function activeRuntimeDir(cacheDir: string): ActiveRuntimeRoot {
   const genId = readActiveGenerationId(cacheDir)
-  if (genId) return join(cacheDir, "runtime", "generations", genId)
-  return join(cacheDir, "runtime")
+  if (genId) {
+    return {
+      dir: join(cacheDir, "runtime", "generations", genId),
+      isGeneration: true,
+      generationId: genId,
+    }
+  }
+  return {
+    dir: join(cacheDir, "runtime"),
+    isGeneration: false,
+  }
 }
 
 /** `<activeRuntimeDir>/checker-wasm`, or `undefined` when no cache root applies. */
 export function cachedCheckerWasmDir(env: Readonly<Record<string, string | undefined>> = process.env): string | undefined {
   const root = nornCacheRoot(env)
-  return root ? join(activeRuntimeDir(root), "checker-wasm") : undefined
+  return root ? join(activeRuntimeDir(root).dir, "checker-wasm") : undefined
 }
 
 /** `<activeRuntimeDir>/bin/norn-dev-host`. */
 export function cachedDevHostPath(cacheDir: string): string {
-  return join(activeRuntimeDir(cacheDir), "bin", "norn-dev-host")
+  return join(activeRuntimeDir(cacheDir).dir, "bin", "norn-dev-host")
 }
 
 /** `<activeRuntimeDir>/bin/norn`. */
 export function cachedCliPath(cacheDir: string): string {
-  return join(activeRuntimeDir(cacheDir), "bin", "norn")
+  return join(activeRuntimeDir(cacheDir).dir, "bin", "norn")
 }
 
 /** `<activeRuntimeDir>/manifest.json`. */
 export function cachedRuntimeManifestPath(cacheDir: string): string {
-  return join(activeRuntimeDir(cacheDir), "manifest.json")
+  return join(activeRuntimeDir(cacheDir).dir, "manifest.json")
 }
