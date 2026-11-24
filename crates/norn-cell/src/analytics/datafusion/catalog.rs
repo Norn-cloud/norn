@@ -48,7 +48,7 @@ pub(super) struct Edge {
 }
 
 /// A tenant's catalog.
-pub(super) struct Catalog {
+pub(in crate::analytics) struct Catalog {
     conn: Connection,
 }
 
@@ -135,11 +135,6 @@ pub(super) fn set(tx: &Transaction<'_>, key: &str, value: &str) -> Outcome<()> {
         params![key, value],
     ))
     .map(drop)
-}
-
-/// Remove `key` within a write transaction.
-pub(super) fn unset(tx: &Transaction<'_>, key: &str) -> Outcome<()> {
-    sql(tx.execute("DELETE FROM meta WHERE key = ?1", [key])).map(drop)
 }
 
 /// A frontier record as a number (absent: 0).

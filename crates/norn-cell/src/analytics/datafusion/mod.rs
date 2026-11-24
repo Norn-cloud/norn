@@ -14,6 +14,7 @@
 mod aggregate;
 mod catalog;
 mod columnar;
+mod dataset;
 mod files;
 mod landing;
 mod laws;
@@ -76,11 +77,16 @@ pub(super) fn engine_error(detail: impl Into<String>) -> EngineRefusal {
 }
 
 fn df<T>(value: datafusion::error::Result<T>) -> Outcome<T> {
-    value.map_err(|error| match error {
-        datafusion::error::DataFusionError::ResourcesExhausted(detail) => {
-            refusal(EXHAUSTED, detail)
+    value.map_err(|error| {
+        let exhausted = matches!(
+            error,
+            datafusion::error::DataFusionError::ResourcesExhausted(_)
+        );
+        if exhausted {
+            refusal(EXHAUSTED, error.to_string())
+        } else {
+            engine_error(error.to_string())
         }
-        other => engine_error(other.to_string()),
     })
 }
 
@@ -306,7 +312,7 @@ impl Engine {
     /// `analytics.frontier_moved`, a batch of another mirror generation
     /// (`core.compute.stale_input`), or an unknown table.
     pub fn sync(&self, request: &SyncRequest) -> Outcome<FrontierResponse> {
-        self.with(&request.tenant, |tenant| mirror::sync(self, tenant, request))
+        self.with(&request.tenant, |tenant| mirror::sync(tenant, request))
     }
 
     /// QUERY-ENGINE-1: evaluate a lowered question exactly.
@@ -332,7 +338,7 @@ impl Engine {
     /// # Errors
     /// `bulk.digest_mismatch`, an unreadable file, or an engine failure.
     pub fn load(&self, request: &LoadRequest, file: &Path) -> Outcome<LoadResponse> {
-        self.with(&request.tenant, |tenant| landing::load(self, tenant, request, file))
+        self.with(&request.tenant, |tenant| dataset::load(tenant, request, file))
     }
 
     /// MANIFEST-LAND-1 / MANIFEST-LAWS-1: land `request` in a fresh attempt.
@@ -384,7 +390,7 @@ impl Engine {
     /// # Errors
     /// A cold dataset, a stale load, or an engine failure.
     pub fn lineage(&self, request: &LineageRequest) -> Outcome<LineageResponse> {
-        self.with(&request.tenant, |tenant| landing::lineage(self, tenant, request))
+        self.with(&request.tenant, |tenant| dataset::lineage(self, tenant, request))
     }
 
     /// One records page of a source.

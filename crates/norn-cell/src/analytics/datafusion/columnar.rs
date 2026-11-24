@@ -288,8 +288,3 @@ pub(super) fn column_cells(batch: &RecordBatch, column: &Column) -> Outcome<Vec<
         }
     }
 }
-
-/// The text cells of one held-set column of a batch.
-pub(super) fn text_cells(batch: &RecordBatch, column: &str) -> Outcome<Vec<Option<String>>> {
-    system(batch, column, text_at)
-}

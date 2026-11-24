@@ -98,6 +98,9 @@ pub struct HostConfig {
     /// credentials with (OLAP-CRED-1). Not a connection variable, so no
     /// connector ever sees it.
     pub olap_signing_key: Option<String>,
+    /// `NORN_OLAP_ENGINE`: the analytics engine the deployment runs
+    /// (`duckdb`, the default, or `datafusion`); only its answers count.
+    pub olap_engine: Option<String>,
     /// `NORN_STAGE`.
     pub stage: Option<String>,
     /// `NORN_TENANT_ENVIRONMENTS`.
@@ -164,6 +167,7 @@ impl HostConfig {
             connect_vars: connect_vars.to_string(),
             olap_url: var("NORN_OLAP_URL"),
             olap_signing_key: var("NORN_OLAP_SIGNING_KEY"),
+            olap_engine: var("NORN_OLAP_ENGINE"),
             stage,
             environments,
             allowed_origins: var("ALLOWED_ORIGINS")

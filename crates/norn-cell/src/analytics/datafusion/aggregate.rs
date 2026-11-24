@@ -277,27 +277,24 @@ fn projection(engine: &Engine, tenant: &Tenant, scope: &Scope, query: &Lowered) 
     }
     let plan = Plan::build(query, scope)?;
     let none = Linked::default();
-    let rows: Vec<Projected> = match &query.as_of {
-        Some(as_of) => {
-            let (picked, untimed) = query::as_of_versions(scope, as_of)?;
-            if untimed {
-                return Err(refusal(UNSUPPORTED, "a snapshot version without its valid time"));
-            }
-            picked
-                .iter()
-                .map(|(label, row)| project(&plan, row, label.as_ref(), &none))
-                .collect()
+    let rows: Vec<Projected> = if let Some(as_of) = &query.as_of {
+        let (picked, untimed) = query::as_of_versions(scope, as_of)?;
+        if untimed {
+            return Err(refusal(UNSUPPORTED, "a snapshot version without its valid time"));
         }
-        None => {
-            let links = match &query.time_link {
-                Some(link) => query::linked_times(engine, tenant, scope, link)?,
-                None => BTreeMap::new(),
-            };
-            scope
-                .population()
-                .map(|row| project(&plan, row, None, links.get(&row.id).unwrap_or(&none)))
-                .collect()
-        }
+        picked
+            .iter()
+            .map(|(label, row)| project(&plan, row, label.as_ref(), &none))
+            .collect()
+    } else {
+        let links = match &query.time_link {
+            Some(link) => query::linked_times(engine, tenant, scope, link)?,
+            None => BTreeMap::new(),
+        };
+        scope
+            .population()
+            .map(|row| project(&plan, row, None, links.get(&row.id).unwrap_or(&none)))
+            .collect()
     };
     if rows.iter().any(|row| row.refuse) {
         return Err(refusal(UNSUPPORTED, "a row is outside the bounded profile"));

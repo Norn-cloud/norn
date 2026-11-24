@@ -11,7 +11,7 @@ use super::super::backend::{ReadSnapshot, SnapshotProvenance};
 use super::super::{
     AsOf, Column, ColumnKind, Filter, Literal, Source, TableSchema, TenantId, Test, TimeLink,
 };
-use super::landing;
+use super::dataset;
 use super::mirror::{self, Version};
 use super::values::{Cell, Dec};
 use super::{Engine, Outcome, STALE, Tenant, UNSUPPORTED, engine_error, refusal};
@@ -128,7 +128,7 @@ impl Scope {
                 })
             }
             Source::Dataset { table, load } => {
-                let dataset = landing::dataset(engine, tenant, table, load)?;
+                let dataset = dataset::dataset(engine, tenant, table, load)?;
                 Ok(Self {
                     columns: dataset.table.columns,
                     read: dataset.rows.iter().map(|row| !dataset.held.contains(&row.row)).collect(),
@@ -304,11 +304,15 @@ pub(super) fn filters_hold(filters: &[TypedFilter], cells: &[Cell]) -> (bool, bo
     (holds, refuse)
 }
 
+/// The versions a snapshot picks, each with its period's label, and whether
+/// a subject has a version without its valid time.
+pub(super) type Picked = (Vec<(Option<String>, Row)>, bool);
+
 /// METRIC-SNAPSHOT-ASOF-1: per period, each current subject's last version
 /// known at the frontier whose valid time is before the period's end (ties
 /// to the later version), labelled; and whether a subject has a version
 /// without its valid time (which refuses the question).
-pub(super) fn as_of_versions(scope: &Scope, as_of: &AsOf) -> Outcome<(Vec<(Option<String>, Row)>, bool)> {
+pub(super) fn as_of_versions(scope: &Scope, as_of: &AsOf) -> Outcome<Picked> {
     let versions = scope
         .versions
         .as_ref()
@@ -413,7 +417,7 @@ pub(super) fn linked_times(
     {
         let entry = edges
             .entry(edge.source)
-            .or_insert((0, edge.target.clone()));
+            .or_insert_with(|| (0, edge.target.clone()));
         entry.0 = entry.0.saturating_add(1);
         if edge.target.as_bytes() < entry.1.as_bytes() {
             entry.1 = edge.target;

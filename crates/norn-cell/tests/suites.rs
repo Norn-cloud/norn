@@ -31,9 +31,12 @@ mod cell_host;
 mod cell_host_dst;
 #[path = "commit_path.rs"]
 mod commit_path;
+#[cfg(all(feature = "datafusion", feature = "duckdb"))]
+#[path = "dataset_laws_datafusion.rs"]
+mod dataset_laws_datafusion;
 #[cfg(all(feature = "duckdb", feature = "native"))]
-#[path = "dataset_laws.rs"]
-mod dataset_laws;
+#[path = "dataset_laws_duckdb.rs"]
+mod dataset_laws_duckdb;
 #[path = "explorer_documents.rs"]
 mod explorer_documents;
 #[path = "jewelry_pricing.rs"]

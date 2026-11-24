@@ -196,8 +196,7 @@ fn check_batch(tenant: &Tenant, request: &SyncRequest) -> Outcome<()> {
 /// Apply one sync batch: stage and install each table's segment, then
 /// publish segments, edges and the frontier in one catalog commit that
 /// rechecks the frontier and generation it was staged against.
-pub(super) fn sync(engine: &Engine, tenant: &mut Tenant, request: &SyncRequest) -> Outcome<FrontierResponse> {
-    let _engine = engine;
+pub(super) fn sync(tenant: &mut Tenant, request: &SyncRequest) -> Outcome<FrontierResponse> {
     check_batch(tenant, request)?;
     let mut by_table: BTreeMap<&str, Vec<&MirrorRow>> = BTreeMap::new();
     for row in &request.rows {

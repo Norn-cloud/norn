@@ -24,7 +24,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::io::Write as _;
 
-use norn_cell::analytics::engine::{Engine, Settings};
+use super::backend::{Engine, Settings};
 use norn_cell::analytics::{
     FileFormat, FileSource, LandRequest, LandResponse, LoadRequest, ResidueRow, SettleRequest,
     StoreRequest, StoredObject, TenantId,
@@ -803,7 +803,7 @@ fn a_reader_sees_no_row_of_a_landing_until_it_is_stored() {
             })
             .expect_err("the attempt is gone")
             .code,
-        norn_cell::analytics::engine::ATTEMPT_UNKNOWN
+        super::backend::ATTEMPT_UNKNOWN
     );
     assert_eq!(read(&stored).expect("unchanged"), current);
     // The retry settles on its own and lands what a clean run lands.
@@ -1374,15 +1374,7 @@ fn a_residue_page_counts_its_brackets() {
 /// The `lineage:` records of the engine directory `root`, read once the
 /// engine that wrote them is gone.
 fn lineage_records(root: &std::path::Path) -> Vec<String> {
-    let conn = duckdb::Connection::open(root.join(format!("{}.duckdb", tenant().as_str())))
-        .expect("the tenant's database");
-    let mut statement = conn
-        .prepare("SELECT key FROM \":meta\" WHERE key LIKE 'lineage:%' ORDER BY key")
-        .expect("lineage");
-    let keys = statement
-        .query_map([], |row| row.get::<_, String>(0))
-        .expect("keys");
-    keys.map(|key| key.expect("key")).collect()
+    super::backend::lineage_keys(root, &tenant())
 }
 
 /// MANIFEST-LAWS-1 (Sol r2 S8): a landing refused at its preflight (a

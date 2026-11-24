@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use norn_api::host::DevHost;
 use norn_api::scope::CellScope;
 use norn_api::sources::{UploadRun, report_upload};
-use norn_cell::analytics::engine::{Engine, Settings};
+use super::backend::{Engine, Settings};
 use norn_cell::engine::NativeEngine;
 use norn_cell::{CellStore, InstalledDefinitionInput, Model};
 use norn_cell_do::olap::InProcess;

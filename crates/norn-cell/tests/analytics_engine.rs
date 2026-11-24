@@ -19,7 +19,7 @@ use std::io::Write as _;
 
 use proptest::strategy::Strategy as _;
 
-use norn_cell::analytics::engine::{Engine, Settings};
+use super::backend::{Engine, Settings};
 use norn_cell::analytics::{
     EvaluateResponse, FileFormat, FileSource, GroupKey, LandRequest, LoadRequest, MembersRequest,
     MembershipDigest, Source, StoreRequest, StoredObject, SyncRequest, TenantId, bucket_value,
@@ -92,6 +92,8 @@ fn ask(
             r.code
         }
     })?;
+    // D137: the answer is the engine under test's, never another's.
+    assert_eq!(response.provenance.engine, super::backend::ENGINE_ID);
     store
         .analytics_answer(prepared, response)
         .map_err(|e| code(&e))
@@ -119,7 +121,10 @@ fn compare(
     let answered = ask(store, engine, plan, context.clone());
     match (exact, answered) {
         (Ok(exact), Ok(mut answered)) => {
-            assert_eq!(answered.engine, norn_cell::compute::Engine::Duckdb);
+            assert_eq!(
+                answered.engine,
+                norn_cell::compute::Engine::from(super::backend::ENGINE_ID)
+            );
             answered.engine = norn_cell::compute::Engine::Cell;
             assert_eq!(answered, exact);
             Some(exact)
@@ -440,6 +445,7 @@ fn a_population_past_the_bound_answers_with_digests_that_paging_recomputes() {
                     group: group.clone(),
                     after: after.clone(),
                     limit: 2,
+                    model_pin: None,
                 })
                 .expect("page")
                 .members;
@@ -518,7 +524,7 @@ fn the_engine_names_its_snapshot_and_refuses_another_model()
     let response = engine.evaluate(prepared.request()).map_err(|r| r.detail)?;
     assert_eq!(
         response.provenance.engine,
-        norn_cell::analytics::AnalyticalEngineId::DuckDb
+        super::backend::ENGINE_ID
     );
     store.analytics_answer(prepared, response)?;
     other.model_pin = "another model".into();
@@ -570,7 +576,6 @@ fn a_batch_of_another_mirror_generation_is_refused() -> Result<(), Box<dyn std::
             threads: 1,
         })?)
     };
-    let database = dir.path().join(format!("{}.duckdb", tenant().as_str()));
     let (mut store, _plan, _context) = by_metal(true, 100);
     commit(
         &mut store,
@@ -591,12 +596,7 @@ fn a_batch_of_another_mirror_generation_is_refused() -> Result<(), Box<dyn std::
         ));
         assert_eq!(eng.frontier(frontier_req).map_err(|r| r.detail)?, *expected);
         drop(eng);
-        let conn = ::duckdb::Connection::open(&database)?;
-        let rows: i64 = conn.query_row(&format!("SELECT COUNT(*) FROM \"m:{TYPE}\""), [], |r| {
-            r.get(0)
-        })?;
-        assert_eq!(rows, 0);
-        drop(conn);
+        assert_eq!(super::backend::mirror_rows(dir.path(), &tenant(), TYPE), 0);
         reopen()
     };
     let mut other_schema = batch.clone();
@@ -720,7 +720,6 @@ fn a_load_types_rows_and_quarantines_refused_ones_with_reasons() {
 /// and the refused load has no lineage record.
 #[test]
 fn a_direct_load_whose_lineage_write_fails_commits_nothing() {
-    use duckdb::OptionalExt as _;
     let (dir, engine) = engine();
     let (_store, plan, _context) = by_metal(true, 100);
     let (first, first_sha) = csv(
@@ -741,18 +740,9 @@ fn a_direct_load_whose_lineage_write_fails_commits_nothing() {
     let request = load_request(&plan, "load-1", first_sha);
     let table = request.table.name.clone();
     engine.load(&request, first.path()).expect("first load");
-    // Inject the failure: the tenant's metadata table refuses one key.
+    // Inject the failure: the tenant's metadata refuses one key.
     drop(engine);
-    let database = dir.path().join(format!("{}.duckdb", tenant().as_str()));
-    let open = || ::duckdb::Connection::open(&database).expect("tenant database");
-    open()
-        .execute_batch(
-            "CREATE TABLE \":kept\" AS SELECT * FROM \":meta\"; DROP TABLE \":meta\"; \
-             CREATE TABLE \":meta\" (key VARCHAR PRIMARY KEY, value VARCHAR NOT NULL, \
-             CHECK (key <> 'lineage:load-2')); \
-             INSERT INTO \":meta\" SELECT * FROM \":kept\"; DROP TABLE \":kept\";",
-        )
-        .expect("refusing metadata table");
+    super::backend::refuse_meta_key(dir.path(), &tenant(), "lineage:load-2");
     let engine = Engine::new(Settings {
         root: dir.path().to_path_buf(),
         memory_limit: "256MB".into(),
@@ -763,23 +753,15 @@ fn a_direct_load_whose_lineage_write_fails_commits_nothing() {
         .load(&load_request(&plan, "load-2", second_sha), second.path())
         .expect_err("the lineage write is refused");
     drop(engine);
-    let conn = open();
-    let meta = |key: &str| -> Option<String> {
-        conn.query_row("SELECT value FROM \":meta\" WHERE key = ?", [key], |row| {
-            row.get(0)
-        })
-        .optional()
-        .expect("meta")
-    };
+    let meta = |key: &str| super::backend::meta(dir.path(), &tenant(), key);
     assert_eq!(meta(&format!("load:{table}")).as_deref(), Some("load-1"));
     assert!(meta("lineage:load-1").is_some());
     assert_eq!(meta("lineage:load-2"), None);
-    let rows: u64 = conn
-        .query_row(&format!("SELECT count(*) FROM \"d:{table}\""), [], |row| {
-            row.get(0)
-        })
-        .expect("dataset rows");
-    assert_eq!(rows, 1, "the replacement dataset did not commit");
+    assert_eq!(
+        super::backend::dataset_rows(dir.path(), &tenant(), &table),
+        1,
+        "the replacement dataset did not commit"
+    );
 }
 
 proptest::proptest! {
@@ -1067,6 +1049,7 @@ fn bulk_path_measurements() {
                 "loss".into(),
             ],
             format: norn_cell::analytics::ExportFormat::Parquet,
+            model_pin: None,
         })
         .expect("export");
     let parquet_bytes = std::fs::metadata(&parquet).expect("size").len();
@@ -1469,6 +1452,7 @@ mod scales {
     /// day, across an ISO week that spans a year end, and at instants swept
     /// through 2024.
     #[test]
+    #[cfg(feature = "duckdb")]
     #[allow(clippy::arithmetic_side_effects, reason = "instant sweep fixture")]
     fn grain_labels_equal_duckdb_date_trunc() {
         use norn_checker::metric::compute::contribution::period_start;
@@ -1934,6 +1918,7 @@ mod sources_pack {
                 ids: Vec::new(),
                 offset: 0,
                 limit: 10,
+                model_pin: None,
             })
             .expect("page");
         assert_eq!(page.total, 2);
@@ -1943,6 +1928,7 @@ mod sources_pack {
                 source,
                 columns: exported,
                 format: ExportFormat::Jsonl,
+                model_pin: None,
             })
             .expect("export");
         std::fs::remove_file(path).expect("scratch export");
@@ -2088,6 +2074,7 @@ mod alias_names {
                     ids: vec!["k1".into(), "k0".into(), "k2".into()],
                     offset: 1,
                     limit: 1,
+                    model_pin: None,
                 })
                 .expect("page");
             assert_eq!((page.total, page.rows.len()), (3, 1), "{id}");
@@ -2106,6 +2093,7 @@ mod alias_names {
                 ids: Vec::new(),
                 offset: 0,
                 limit: 10,
+                model_pin: None,
             })
             .expect("label page");
         assert_eq!(text.total, 1);
@@ -2116,6 +2104,7 @@ mod alias_names {
                     source: source.clone(),
                     columns: columns.clone(),
                     format,
+                    model_pin: None,
                 })
                 .expect("export");
             assert!(std::fs::metadata(&path).expect("exported").len() > 0);
@@ -2150,7 +2139,7 @@ mod known_at {
 
     fn on_engine(
         store: &norn_cell::CellStore,
-        engine: &norn_cell::analytics::engine::Engine,
+        engine: &super::Engine,
         plan: &QuestionPlan,
         context: &norn_cell::compute::QueryContext,
         cutoff: KnowledgeCutoff,
@@ -2218,7 +2207,10 @@ mod known_at {
                 let got = on_engine(&store, &engine, &plan, &context, cutoff);
                 match (want, got) {
                     (Ok(want), Ok(mut got)) => {
-                        proptest::prop_assert_eq!(got.result.engine, Answered::Duckdb);
+                        proptest::prop_assert_eq!(
+                            got.result.engine,
+                            Answered::from(super::super::backend::ENGINE_ID)
+                        );
                         got.result.engine = Answered::Cell;
                         proptest::prop_assert_eq!(
                             serde_json::to_value(&got).expect("wire"),
@@ -2543,7 +2535,7 @@ fn a_landing_is_staged_by_attempt_and_read_only_at_its_stored_cache_identity() {
     for load in [cache.as_str(), "land-1"] {
         assert_eq!(
             ask(&engine, load).expect_err("not stored").code,
-            norn_cell::analytics::engine::DATASET_COLD
+            super::backend::DATASET_COLD
         );
     }
     let stored = store(&engine, &store_request(&request, &response)).expect("stored");
@@ -2621,7 +2613,7 @@ fn a_landing_is_staged_by_attempt_and_read_only_at_its_stored_cache_identity() {
 /// the engine never minted is refused alike.
 #[test]
 fn a_store_never_removes_an_attempt_it_does_not_hold() {
-    use norn_cell::analytics::engine::{ATTEMPT_BUSY, ATTEMPT_UNKNOWN};
+    use super::backend::{ATTEMPT_BUSY, ATTEMPT_UNKNOWN};
     let (dir, engine) = engine();
     let (_store, plan, _context) = by_metal(true, 100);
     let request = landing_request(&plan);
@@ -2722,7 +2714,7 @@ fn a_store_never_removes_an_attempt_it_does_not_hold() {
 /// changes nothing a later honest replay reads.
 #[test]
 fn a_store_answers_its_own_receipt_and_refuses_any_other_body() {
-    use norn_cell::analytics::engine::ATTEMPT_UNKNOWN;
+    use super::backend::ATTEMPT_UNKNOWN;
     let (dir, engine) = engine();
     let (_store, plan, _context) = by_metal(true, 100);
     let request = landing_request(&plan);

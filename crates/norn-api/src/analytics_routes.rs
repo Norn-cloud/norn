@@ -302,7 +302,9 @@ impl<E: SqlEngine> QuestionRuntime<E> for EngineQuestions<'_, E> {
         let grain = plan.grain().as_str().to_owned();
         let scope = context.scope.clone();
         let admitted = visible(&gate_record(&grain, ALL_MEMBERS, &scope))?;
-        let prepared = store.analytics_prepare(plan, context, &self.tenant)?;
+        let prepared = store
+            .analytics_prepare(plan, context, &self.tenant)?
+            .expecting(self.transport.capabilities().engine);
         let mut result = if admitted {
             let response = evaluate_on(store, self.transport, &self.tenant, prepared.request())?;
             store.analytics_answer(prepared, response)?
@@ -325,7 +327,9 @@ impl<E: SqlEngine> QuestionRuntime<E> for EngineQuestions<'_, E> {
     ) -> Result<norn_cell::compute::HistoricalQuestionResult, CellError> {
         let grain = plan.grain().as_str().to_owned();
         let admitted = visible(&gate_record(&grain, ALL_MEMBERS, &context.scope))?;
-        let prepared = store.analytics_prepare_known_at(plan, context, &self.tenant, cutoff)?;
+        let prepared = store
+            .analytics_prepare_known_at(plan, context, &self.tenant, cutoff)?
+            .expecting(self.transport.capabilities().engine);
         let mut answer = if admitted {
             let response = evaluate_on(store, self.transport, &self.tenant, prepared.request())?;
             store.analytics_answer_known_at(prepared, response)?
@@ -490,6 +494,7 @@ pub fn export_objects<E: SqlEngine>(
             source: source.clone(),
             columns,
             format,
+            model_pin: None,
         },
     )
     .map_err(engine_failure)?;
@@ -1771,6 +1776,7 @@ pub fn page_objects<E: SqlEngine>(
             ids: Vec::new(),
             offset,
             limit: u32::try_from(query.limit).unwrap_or(u32::MAX),
+            model_pin: None,
         };
         engine_page(store, transport, &request, query.after.is_some())?
     };
@@ -2023,6 +2029,7 @@ pub fn record_object<E: SqlEngine>(
             ids: vec![id.to_owned()],
             offset: 0,
             limit: 1,
+            model_pin: None,
         },
     )
     .map_err(engine_failure)?;
@@ -2296,7 +2303,13 @@ pub fn profile_objects<E: SqlEngine>(
         || cell_version(&store.read())? != start_version
         || profile
             .provenance
-            .verify(&tenant, &source, &model_pin, schema_pin)
+            .verify(
+                transport.capabilities().engine,
+                &tenant,
+                &source,
+                &model_pin,
+                schema_pin,
+            )
             .is_err()
     {
         return Err(snapshot_moved());

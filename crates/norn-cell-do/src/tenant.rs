@@ -19,6 +19,7 @@
 //!   receipt handles are keyed by the stage's lineage key; without one it
 //!   serves no action.
 
+use norn_cell::analytics::AnalyticalEngineId as Engine;
 use std::sync::Arc;
 
 use http::StatusCode;
@@ -678,9 +679,9 @@ impl<E: SqlEngine> Tenant<E> {
     /// engine the host reaches; without it the cell has no analytics.
     /// OLAP-CRED-1: `issuer` is the host's signing key; every call carries a
     /// credential it mints for this cell's own tenant.
-    pub fn enable_analytics(&mut self, issuer: norn_api::olap_credential::Issuer) {
+    pub fn enable_analytics(&mut self, issuer: norn_api::olap_credential::Issuer, engine: Engine) {
         let tenant = norn_cell::analytics::TenantId::of_scope(&self.scope.key());
-        let capabilities = norn_cell::analytics::EngineCapabilities::DUCKDB;
+        let capabilities = norn_cell::analytics::EngineCapabilities::of(engine);
         self.engine
             .get_or_insert_with(|| crate::olap::Exchange::new(issuer, tenant, capabilities));
     }

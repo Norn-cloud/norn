@@ -99,46 +99,48 @@ impl Typed<'_> {
                 }),
                 Val::Null | Val::Bool(_) | Val::Text(_) => return None,
             },
-            P::Add(a, b) | P::Subtract(a, b) | P::Multiply(a, b) => {
-                let (Val::Num(x), Val::Num(y)) = (self.eval(a, cells)?, self.eval(b, cells)?) else {
-                    return None;
-                };
-                Val::Num(match node {
-                    P::Add(..) => x.checked_add(y)?,
-                    P::Subtract(..) => x.checked_add(Dec { m: y.m.checked_neg()?, s: y.s })?,
-                    _ => x.checked_mul(y)?,
-                })
+            P::Add(a, b) => {
+                let (left, right) = self.numbers(a, b, cells)?;
+                Val::Num(left.checked_add(right)?)
+            }
+            P::Subtract(a, b) => {
+                let (left, right) = self.numbers(a, b, cells)?;
+                Val::Num(left.checked_add(Dec {
+                    m: right.m.checked_neg()?,
+                    s: right.s,
+                })?)
+            }
+            P::Multiply(a, b) => {
+                let (left, right) = self.numbers(a, b, cells)?;
+                Val::Num(left.checked_mul(right)?)
             }
             P::Equal(a, b) | P::NotEqual(a, b) => {
                 let equal = matches!(node, P::Equal(..));
-                let (x, y) = (self.eval(a, cells)?, self.eval(b, cells)?);
-                let same = match (&x, &y) {
+                let same = match (self.eval(a, cells)?, self.eval(b, cells)?) {
                     (Val::Null, Val::Null) => true,
                     (Val::Null, _) | (_, Val::Null) => false,
-                    (Val::Num(p), Val::Num(q)) => p.compare(*q).is_eq(),
-                    (Val::Text(p), Val::Text(q)) => p == q,
-                    (Val::Bool(p), Val::Bool(q)) => p == q,
+                    (Val::Num(left), Val::Num(right)) => left.compare(right).is_eq(),
+                    (Val::Text(left), Val::Text(right)) => left == right,
+                    (Val::Bool(left), Val::Bool(right)) => left == right,
                     _ => return None,
                 };
                 Val::Bool(same == equal)
             }
-            P::Less(a, b) | P::LessOrEqual(a, b) | P::Greater(a, b) | P::GreaterOrEqual(a, b) => {
-                let (Val::Num(x), Val::Num(y)) = (self.eval(a, cells)?, self.eval(b, cells)?) else {
-                    return None;
-                };
-                let order = x.compare(y);
-                Val::Bool(match node {
-                    P::Less(..) => order.is_lt(),
-                    P::LessOrEqual(..) => order.is_le(),
-                    P::Greater(..) => order.is_gt(),
-                    _ => order.is_ge(),
-                })
-            }
+            P::Less(a, b) => Val::Bool(self.order(a, b, cells)?.is_lt()),
+            P::LessOrEqual(a, b) => Val::Bool(self.order(a, b, cells)?.is_le()),
+            P::Greater(a, b) => Val::Bool(self.order(a, b, cells)?.is_gt()),
+            P::GreaterOrEqual(a, b) => Val::Bool(self.order(a, b, cells)?.is_ge()),
             P::And(a, b) | P::Or(a, b) => {
-                let (Val::Bool(x), Val::Bool(y)) = (self.eval(a, cells)?, self.eval(b, cells)?) else {
+                let (Val::Bool(left), Val::Bool(right)) =
+                    (self.eval(a, cells)?, self.eval(b, cells)?)
+                else {
                     return None;
                 };
-                Val::Bool(if matches!(node, P::And(..)) { x && y } else { x || y })
+                Val::Bool(if matches!(node, P::And(..)) {
+                    left && right
+                } else {
+                    left || right
+                })
             }
             P::Conditional(c, a, b) => match self.eval(c, cells)? {
                 Val::Bool(true) => self.widen(self.eval(a, cells)?, node)?,
@@ -146,6 +148,20 @@ impl Typed<'_> {
                 Val::Text(_) | Val::Num(_) => return None,
             },
         })
+    }
+
+    /// Two numeric operands.
+    fn numbers(&self, a: &RowPredicate, b: &RowPredicate, cells: &[Cell]) -> Option<(Dec, Dec)> {
+        match (self.eval(a, cells)?, self.eval(b, cells)?) {
+            (Val::Num(left), Val::Num(right)) => Some((left, right)),
+            _ => None,
+        }
+    }
+
+    /// The exact order of two numeric operands.
+    fn order(&self, a: &RowPredicate, b: &RowPredicate, cells: &[Cell]) -> Option<std::cmp::Ordering> {
+        self.numbers(a, b, cells)
+            .map(|(left, right)| left.compare(right))
     }
 
     /// A conditional's branch at the conditional's own scale.
@@ -171,14 +187,13 @@ impl Typed<'_> {
             _ => false,
         };
         let own = match node {
-            P::Number(_) => in_range(node),
+            P::Number(_) | P::Add(..) | P::Subtract(..) | P::Multiply(..) => in_range(node),
             P::Text(_) => nfc(node),
             P::Column(_) => match node.kind(self.table) {
                 Some(PredicateKind::Number(_)) => in_range(node),
                 Some(PredicateKind::Text) => nfc(node),
                 Some(PredicateKind::Null | PredicateKind::Bool) | None => true,
             },
-            P::Add(..) | P::Subtract(..) | P::Multiply(..) => in_range(node),
             P::Null
             | P::Bool(_)
             | P::Not(_)
@@ -230,7 +245,23 @@ fn value_size(node: &RowPredicate, table: &TableSchema, cells: &[Cell]) -> u128 
             .and_then(Cell::as_str)
             .map_or(0, |text| u128::try_from(text.len()).unwrap_or(u128::MAX)),
         P::Conditional(_, a, b) => value_size(a, table, cells).max(value_size(b, table, cells)),
-        _ => 1,
+        P::Null
+        | P::Bool(_)
+        | P::Number(_)
+        | P::Column(_)
+        | P::Not(_)
+        | P::Negate(_)
+        | P::Add(..)
+        | P::Subtract(..)
+        | P::Multiply(..)
+        | P::Equal(..)
+        | P::NotEqual(..)
+        | P::Less(..)
+        | P::LessOrEqual(..)
+        | P::Greater(..)
+        | P::GreaterOrEqual(..)
+        | P::And(..)
+        | P::Or(..) => 1,
     }
 }
 
@@ -243,7 +274,17 @@ fn data_fuel(node: &RowPredicate, table: &TableSchema, cells: &[Cell]) -> u128 {
         P::Conditional(c, a, b) => data_fuel(c, table, cells)
             .saturating_add(data_fuel(a, table, cells))
             .saturating_add(data_fuel(b, table, cells)),
-        _ => children(node).iter().fold(0_u128, |total, child| {
+        P::Add(..)
+        | P::Subtract(..)
+        | P::Multiply(..)
+        | P::Equal(..)
+        | P::NotEqual(..)
+        | P::Less(..)
+        | P::LessOrEqual(..)
+        | P::Greater(..)
+        | P::GreaterOrEqual(..)
+        | P::And(..)
+        | P::Or(..) => children(node).iter().fold(0_u128, |total, child| {
             total
                 .saturating_add(data_fuel(child, table, cells))
                 .saturating_add(value_size(child, table, cells))
@@ -254,7 +295,7 @@ fn data_fuel(node: &RowPredicate, table: &TableSchema, cells: &[Cell]) -> u128 {
 /// One check typed: its predicate and condition, refused if the engine does
 /// not type them as Booleans.
 struct Check<'c> {
-    check: &'c RuleCheck,
+    rule: &'c RuleCheck,
     predicate: Option<&'c RowPredicate>,
     reads: Vec<usize>,
 }
@@ -262,7 +303,7 @@ struct Check<'c> {
 fn type_check<'c>(check: &'c RuleCheck, table: &TableSchema) -> Outcome<Check<'c>> {
     let Some(predicate) = &check.predicate else {
         return Ok(Check {
-            check,
+            rule: check,
             predicate: None,
             reads: Vec::new(),
         });
@@ -291,7 +332,7 @@ fn type_check<'c>(check: &'c RuleCheck, table: &TableSchema) -> Outcome<Check<'c
         .filter_map(|name| table.columns.iter().position(|c| c.id == *name))
         .collect();
     Ok(Check {
-        check,
+        rule: check,
         predicate: Some(predicate),
         reads,
     })
@@ -326,11 +367,11 @@ pub(super) fn check_rules(table: &TableSchema, checks: &[RuleCheck], rows: &[Typ
             && typed
                 .iter()
                 .fold(0_u128, |total, check| {
-                    let mut fuel = u128::from(check.check.fuel);
+                    let mut fuel = u128::from(check.rule.fuel);
                     if let Some(predicate) = check.predicate {
                         fuel = fuel.saturating_add(data_fuel(predicate, table, &row.cells));
                     }
-                    if let Some(condition) = &check.check.condition {
+                    if let Some(condition) = &check.rule.condition {
                         fuel = fuel.saturating_add(data_fuel(condition, table, &row.cells));
                     }
                     total.saturating_add(fuel)
@@ -343,9 +384,9 @@ pub(super) fn check_rules(table: &TableSchema, checks: &[RuleCheck], rows: &[Typ
                         .residue
                         .entry(row.row)
                         .or_default()
-                        .insert(check.check.rule.clone());
+                        .insert(check.rule.rule.clone());
                 }
-                Some(true) => checked.findings.push(finding(check.check, row)),
+                Some(true) => checked.findings.push(finding(check.rule, row)),
                 Some(false) => {}
             }
         }
@@ -380,7 +421,7 @@ fn decide(check: &Check<'_>, table: &TableSchema, cells: &[Cell], over: bool) ->
         table,
     };
     let mut guarded = typed.guards(typed.node, cells);
-    let condition = match &check.check.condition {
+    let condition = match &check.rule.condition {
         Some(condition) => {
             guarded &= typed.guards(condition, cells);
             match typed.eval(condition, cells)? {
@@ -396,7 +437,7 @@ fn decide(check: &Check<'_>, table: &TableSchema, cells: &[Cell], over: bool) ->
     if !guarded {
         return None;
     }
-    Some(condition.unwrap_or(true) && value != check.check.expect)
+    Some(condition.unwrap_or(true) && value != check.rule.expect)
 }
 
 /// Whether a column kind's values are wide (counted toward a residue page's bytes).

@@ -44,6 +44,7 @@ use norn_cell::analytics::{
 use norn_cell::dataset_manifest::ManifestPins;
 use norn_cell_do::olap::Exchange;
 use norn_cell_do::olapd::{Config, NoSeam, Seam, serve_with};
+use super::ENGINE;
 use serde_json::json;
 
 const NOW: u64 = 1_800_000_000_000;
@@ -105,6 +106,7 @@ fn daemon_with(issuers: &[&Issuer], seam: Arc<dyn Seam>) -> Daemon {
             memory_limit: "256MB".to_owned(),
             threads: 1,
         },
+        engine: ENGINE,
     };
     let serving = Arc::clone(&clock);
     std::thread::spawn(move || serve_with(&listener, config, serving, seam));
@@ -375,7 +377,7 @@ fn the_exchange_mints_each_call_for_its_own_tenant() {
     let exchange = Exchange::new(
         issuer("k1", 7),
         a.clone(),
-        norn_cell::analytics::EngineCapabilities::DUCKDB,
+        norn_cell::analytics::EngineCapabilities::of(ENGINE),
     );
     let call = EngineCall {
         op: "frontier".to_owned(),

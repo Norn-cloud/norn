@@ -139,7 +139,7 @@ fn read_parquet(request: &LoadRequest, file: &Path) -> Outcome<Vec<SourceRow>> {
             nanos.insert(name);
         }
     }
-    let schema = builder.schema().clone();
+    let schema = std::sync::Arc::clone(builder.schema());
     let mut plan = Vec::new();
     for column in &request.table.columns {
         let name = field_name(request, column);
@@ -278,7 +278,31 @@ fn parquet_text(array: &dyn Array, row: usize, encoding: Encoding, kind: ColumnK
                 }
             })
         }
-        _ => {
+        DataType::Null
+        | DataType::Float16
+        | DataType::Timestamp(..)
+        | DataType::Date64
+        | DataType::Time32(_)
+        | DataType::Time64(_)
+        | DataType::Duration(_)
+        | DataType::Interval(_)
+        | DataType::Binary
+        | DataType::FixedSizeBinary(_)
+        | DataType::LargeBinary
+        | DataType::BinaryView
+        | DataType::List(_)
+        | DataType::ListView(_)
+        | DataType::FixedSizeList(..)
+        | DataType::LargeList(_)
+        | DataType::LargeListView(_)
+        | DataType::Struct(_)
+        | DataType::Union(..)
+        | DataType::Dictionary(..)
+        | DataType::Decimal32(..)
+        | DataType::Decimal64(..)
+        | DataType::Decimal256(..)
+        | DataType::Map(..)
+        | DataType::RunEndEncoded(..) => {
             return Err(refusal(
                 "bulk.unsupported_encoding",
                 "a field of a type this load does not read",

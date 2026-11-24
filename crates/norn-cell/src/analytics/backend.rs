@@ -37,6 +37,19 @@ pub enum AnalyticalEngineId {
 }
 
 impl AnalyticalEngineId {
+    /// The engine a deployment names (`NORN_OLAP_ENGINE`): `duckdb` or
+    /// `datafusion`, nothing else.
+    ///
+    /// # Errors
+    /// Any other name.
+    pub fn from_name(name: &str) -> Result<Self, String> {
+        match name {
+            "duckdb" => Ok(Self::DuckDb),
+            "datafusion" => Ok(Self::DataFusion),
+            other => Err(format!("NORN_OLAP_ENGINE names no engine: {other}")),
+        }
+    }
+
     /// The wire name, as an answer envelope reports it.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -62,19 +75,33 @@ impl From<AnalyticalEngineId> for ComputeEngine {
 pub struct EngineCapabilities {
     /// Reads as of a valid time or knowledge cutoff (`exact_bitemporal`).
     pub exact_bitemporal: bool,
+    /// The engine the deployment selected at startup; an answer naming any
+    /// other engine is refused (`None`: not pinned).
+    pub engine: Option<AnalyticalEngineId>,
 }
 
 impl EngineCapabilities {
     /// `DuckDB`'s.
     pub const DUCKDB: Self = Self {
         exact_bitemporal: true,
+        engine: Some(AnalyticalEngineId::DuckDb),
     };
 
     /// `DataFusion`'s (D137): exact at a valid time and at a knowledge
     /// cutoff, as both bitemporal suites verify on it.
     pub const DATAFUSION: Self = Self {
         exact_bitemporal: true,
+        engine: Some(AnalyticalEngineId::DataFusion),
     };
+
+    /// The capabilities of the engine a deployment selected.
+    #[must_use]
+    pub const fn of(engine: AnalyticalEngineId) -> Self {
+        match engine {
+            AnalyticalEngineId::DuckDb => Self::DUCKDB,
+            AnalyticalEngineId::DataFusion => Self::DATAFUSION,
+        }
+    }
 
     /// Whether this engine answers `query` over `source` exactly.
     #[must_use]
@@ -131,12 +158,14 @@ pub struct SnapshotProvenance {
 impl SnapshotProvenance {
     /// QUERY-FRESH-1: the engine read exactly the snapshot the cell prepared:
     /// its tenant, source (world, table, frontier and scope, or dataset load),
-    /// the cell's current model and, for the mirror, the table schema.
+    /// the cell's current model and, for the mirror, the table schema; and
+    /// (D136) it is the engine the deployment selected, when one is pinned.
     ///
     /// # Errors
     /// `core.compute.stale_input` on any difference or a non-exact read.
     pub fn verify(
         &self,
+        engine: Option<AnalyticalEngineId>,
         tenant: &TenantId,
         source: &Source,
         model_pin: &str,
@@ -169,7 +198,11 @@ impl SnapshotProvenance {
             }
             _ => false,
         };
-        if read && self.tenant == *tenant && self.freshness == Freshness::Exact {
+        if read
+            && engine.is_none_or(|engine| engine == self.engine)
+            && self.tenant == *tenant
+            && self.freshness == Freshness::Exact
+        {
             Ok(())
         } else {
             Err(refused("core.compute.stale_input"))

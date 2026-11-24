@@ -50,6 +50,8 @@ fn db<T>(value: duckdb::Result<T>) -> Outcome<T> {
 }
 
 const UNSUPPORTED: &str = "core.compute.unsupported_engine";
+/// This engine's identity, as its answers' provenance names it.
+pub const ENGINE_ID: AnalyticalEngineId = AnalyticalEngineId::DuckDb;
 /// The most rows one records page returns.
 pub const MAX_PAGE_ROWS: u32 = 200;
 /// The columns every exported row carries itself; no property is exported
