@@ -1,0 +1,50 @@
+{
+  "artifactId": "time.Calendar.tzdb_version_pinned.law",
+  "dependencies": [
+    {
+      "artifactId": "time.Calendar.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Calendars must pin the exact supported IANA tzdb 2025b release (TIME-PIN-1).",
+  "namespace": "time",
+  "payload": {
+    "id": "time.Calendar.tzdb_version_pinned",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "time",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/time/calendars.ts"
+    },
+    "rationale": "Calendars must pin the exact supported IANA tzdb 2025b release (TIME-PIN-1).",
+    "response": {
+      "expression": "self.tzdb_version == '2025b'",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "time.Calendar"
+      ],
+      "root": {
+        "id": "time.Calendar",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "time.Calendar"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/time/artifacts/time.Calendar.tzdb_version_pinned.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

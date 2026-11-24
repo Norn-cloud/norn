@@ -1684,11 +1684,16 @@ fn no_listed_metric_names_an_internal_encoding_in_any_pack() {
         "core.EconomicEvent.interface",
         "core.LedgerEffect.interface",
         "core.Claim.interface",
+        "core.TimeInterval.interface",
+        "identity.BusinessUnit.entity",
+        "identity.Directory.interface",
+        "party.Organization.entity",
         "norn.SourceEvidence.interface",
         "norn.SourceDocument.interface",
         "core.value_types.entity",
         "std.value_types.entity",
         "core.units",
+        "core.time",
     ]
     .iter()
     .map(|name| {
