@@ -1,7 +1,7 @@
 import alchemy from "alchemy"
 import { createCloudflareApi, D1Database, EmailSender, Vite, WorkerRef } from "alchemy/cloudflare"
 import { FileSystemStateStore } from "alchemy/state"
-import { authDeploy, cellHost, cellHostUrl, cloudflareCredentials, deployTarget, otelSettings, requireSignInRecipe, requireWorkerScript, scanState, useCloudflareCredentials } from "./deploy-target.ts"
+import { authDeploy, cellHost, cellHostUrl, cloudflareCredentials, DEFAULT_ENVIRONMENTS, deployTarget, otelSettings, requireSignInRecipe, requireWorkerScript, scanState, useCloudflareCredentials } from "./deploy-target.ts"
 import { billingModeStatement } from "./worker/billing.ts"
 import { polarConfig } from "./worker/polar-config.ts"
 
@@ -90,6 +90,7 @@ export const studio = await Vite("studio", {
     STUDIO_SIGNUP_EMAILS: auth.signUpEmails.join(","),
     ...host === undefined ? {} : { NORN_HOST: WorkerRef({ service: host }) },
     ...hostUrl === undefined ? {} : { NORN_HOST_URL: hostUrl },
+    ...DEFAULT_ENVIRONMENTS[target.stage] === undefined ? {} : { STUDIO_DEFAULT_ENVIRONMENT_ID: DEFAULT_ENVIRONMENTS[target.stage] },
     BETTER_AUTH_TRUSTED_ORIGINS: JSON.stringify(auth.origins),
     ...otel === undefined ? {} : {
       OTEL_EXPORTER_OTLP_ENDPOINT: otel.endpoint,

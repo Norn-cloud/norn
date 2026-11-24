@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
-import { activeVersion, agentAnswerIssue, agentTailIssue, authDeploy, deploymentStableIssue, cellHost, cellHostUrl, cloudflareCredentials, deployTarget, domainParity, NORN_CLOUDFLARE_ACCOUNT_ID, PROD_DOMAINS, prodParity, PROD_RECORDED_DEMO, requireSignInRecipe, requireWorkerScript, useCloudflareCredentials, wranglerEnv } from "../deploy-target.ts"
+import { activeVersion, agentAnswerIssue, agentTailIssue, authDeploy, deploymentStableIssue, cellHost, cellHostUrl, cloudflareCredentials, DEFAULT_ENVIRONMENTS, deployTarget, domainParity, NORN_CLOUDFLARE_ACCOUNT_ID, PROD_DOMAINS, prodParity, PROD_RECORDED_DEMO, requireSignInRecipe, requireWorkerScript, useCloudflareCredentials, wranglerEnv } from "../deploy-target.ts"
 
 const preview = deployTarget({ ALCHEMY_STAGE: "preview", STUDIO_DOMAINS: "studio-preview.norn.cloud" })
 const prod = deployTarget({ ALCHEMY_STAGE: "prod", NORN_DEPLOY_PROD: "1" })
@@ -178,6 +178,8 @@ test("only preview binds a cell Worker, by script name; prod has none until prom
   expect(cellHostUrl(alpha)).toBe("https://alpha-cells.norn.cloud")
   expect(cellHost(alpha)).toBeUndefined()
   expect(cellHostUrl(preview)).toBeUndefined()
+  // Its new workspaces get a cell in the host's dev environment.
+  expect(DEFAULT_ENVIRONMENTS.alpha).toBe("dev")
 })
 
 test("a missing cell Worker fails the deploy by name; an existing one passes", async () => {

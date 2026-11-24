@@ -343,6 +343,12 @@ export const cellHost = (target: DeployTarget): string | undefined => CELL_HOSTS
  */
 export const CELL_HOST_URLS: Readonly<Record<string, string>> = { alpha: "https://alpha-cells.norn.cloud" }
 
+/**
+ * The cell environment a stage's new workspaces are provisioned for (STUDIO_DEFAULT_ENVIRONMENT_ID):
+ * without one a new workspace has no cell. Each must be one of the host's NORN_TENANT_ENVIRONMENTS.
+ */
+export const DEFAULT_ENVIRONMENTS: Readonly<Record<string, string>> = { alpha: "dev" }
+
 export function cellHostUrl(target: DeployTarget): string | undefined {
   const url = CELL_HOST_URLS[target.stage]
   if (url !== undefined && CELL_HOSTS[target.stage] !== undefined) throw new Error(`Stage ${target.stage} names both a cell Worker and a cell host URL`)
