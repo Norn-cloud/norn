@@ -1,0 +1,164 @@
+{
+  "artifactId": "time.window.materialize_interval.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Materialize working window into canonical UTC interval",
+  "namespace": "time",
+  "payload": {
+    "actionId": "time.window.materialize_interval",
+    "createLinks": [
+      {
+        "link": "calendar",
+        "targetIdField": "calendar_id",
+        "targetType": "time.Calendar"
+      },
+      {
+        "link": "working_window",
+        "targetIdField": "working_window_id",
+        "targetType": "time.WorkingWindow"
+      }
+    ],
+    "description": "Creates a time.MaterializedWindow bound to its linked Calendar and WorkingWindow, enforcing timezone, DST policy, tzdb 2025b pin, local wall bounds, and checked resolve_local_timestamp UTC resolution.",
+    "effectProgram": {
+      "entityArtifactId": "time.MaterializedWindow.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "id",
+      "objectKind": "time.MaterializedWindow",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "calendar_date": {
+          "type": "string"
+        },
+        "calendar_id": {
+          "type": "string"
+        },
+        "dst_policy": {
+          "enum": [
+            "reject",
+            "earlier",
+            "later"
+          ],
+          "type": "string"
+        },
+        "end_local_at": {
+          "type": "string"
+        },
+        "ends_at": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "start_local_at": {
+          "type": "string"
+        },
+        "starts_at": {
+          "type": "string"
+        },
+        "timezone": {
+          "type": "string"
+        },
+        "tzdb_version": {
+          "enum": [
+            "2025b"
+          ],
+          "type": "string"
+        },
+        "working_window_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "calendar_id",
+        "working_window_id",
+        "calendar_date",
+        "start_local_at",
+        "end_local_at",
+        "starts_at",
+        "ends_at",
+        "timezone",
+        "dst_policy",
+        "tzdb_version"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "some(slice.window_calendar as cal, cal.id == slice.calendar.id)",
+      "((input.timezone == slice.calendar.iana_timezone) and (input.dst_policy == slice.calendar.dst_policy)) and (input.tzdb_version == slice.calendar.tzdb_version)",
+      "(input.start_local_at == ((input.calendar_date + 'T') + ((len(slice.working_window.start_local) == 5) ? (slice.working_window.start_local + ':00') : slice.working_window.start_local))) and (input.end_local_at == ((input.calendar_date + 'T') + ((len(slice.working_window.end_local) == 5) ? (slice.working_window.end_local + ':00') : slice.working_window.end_local)))",
+      "((timestamp(input.starts_at) == resolve_local_timestamp(input.start_local_at, slice.calendar.iana_timezone, slice.calendar.dst_policy)) and (timestamp(input.ends_at) == resolve_local_timestamp(input.end_local_at, slice.calendar.iana_timezone, slice.calendar.dst_policy))) and (timestamp(input.starts_at) < timestamp(input.ends_at))"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "calendar_id"
+          }
+        },
+        "name": "calendar",
+        "objectType": "time.Calendar"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "working_window_id"
+          }
+        },
+        "name": "working_window",
+        "objectType": "time.WorkingWindow"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "working_window",
+            "link": "calendar"
+          }
+        },
+        "name": "window_calendar",
+        "objectType": "time.Calendar"
+      }
+    ],
+    "title": "Materialize working window into canonical UTC interval",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "time.MaterializedWindow"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/time/artifacts/time.window.materialize_interval.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

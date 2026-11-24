@@ -90,6 +90,10 @@ export const Membership = Norn.type({
   properties: Schema.Struct({
     id: Schema.String,
     role: Norn.ref<Schema.String>("core.code"),
+    // `core.AgentRole` (`registry/core/src/rea.ts`) declares `valid_from` and
+    // `valid_to` with `iso8601.date`, and `entity_model.rs::type_narrows`
+    // requires implementing properties to preserve the interface's ref chain.
+    // Both `iso8601.date` and `core.time.date` resolve to identical `{ kind: "date" }`.
     valid_from: Norn.ref<Schema.String>("iso8601.date"),
     valid_to: Schema.NullOr(Norn.ref<Schema.String>("iso8601.date")),
   }),
