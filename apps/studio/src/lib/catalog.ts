@@ -60,6 +60,8 @@ export type Source =
 
 export interface Feed {
   readonly system: string
+  /** Canonical mapping artifact id (`artifact.artifactId`) when built from installed definitions. */
+  readonly mappingId?: string
   readonly dataset: string
   /** Declared sources per fact or relationship id (a link may be declared more than once); one missing here is not mapped by this system. */
   readonly facts: ReadonlyMap<string, readonly Source[]>
@@ -78,6 +80,8 @@ export function sourceOf(expression: string): Source {
 
 export interface Concept {
   readonly name: string
+  /** Canonical entity artifact id (`artifact.artifactId`) as installed in `/v1/definitions`. */
+  readonly artifactId?: string
   readonly title: string
   /** The language `title` is written in: the reader's when the type has a label in it, else `en`. */
   readonly titleLang: string
@@ -321,7 +325,7 @@ export function catalogOf(artifacts: readonly Artifact[], locale = "en"): Catalo
       }
       for (const { member, note, reason } of map.gaps ?? []) facts.set(member, [{ kind: "gap", reason, note }])
       const ignored = (map.ignoredFields ?? []).map(({ field, reason }) => ({ field, reason }))
-      feeds.set(target, [...feeds.get(target) ?? [], { system, dataset: map.source.dataset, facts, ignored }])
+      feeds.set(target, [...feeds.get(target) ?? [], { system, mappingId: artifact.artifactId, dataset: map.source.dataset, facts, ignored }])
     }
     const datasets = [...new Set(artifact.payload.maps.map(({ source }) => source.dataset))]
     systems.push({ id: artifact.artifactId, name: system, datasets, feeds: [...targets], schema: sourceSchema.get(artifact.payload.source.schemaId) })
@@ -345,6 +349,7 @@ export function catalogOf(artifacts: readonly Artifact[], locale = "en"): Catalo
     const fed = feeds.get(def.name) ?? []
     concepts.push({
       name: def.name,
+      artifactId: artifact.artifactId,
       title,
       titleLang: own?.tag ?? "en",
       titleNeedsReview: own?.needsReview ?? false,

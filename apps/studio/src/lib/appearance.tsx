@@ -1,6 +1,7 @@
 import { createContext, use, useEffect, useState, type ReactNode } from "react"
 import {
   applyCustomTheme,
+  effectiveBaseSkin,
   persistCustomTheme,
   storedCustomTheme,
   type StudioTheme,
@@ -70,7 +71,13 @@ export function storedShellChrome(): ShellChrome {
   return "sidebar"
 }
 
-/** Apply `data-skin`, `data-shell`, and any active custom JSON theme onto the document root. */
+/** Resolve OS dark-mode preference when no custom theme forces an explicit appearance. */
+function systemPrefersDark(): boolean {
+  if (typeof globalThis.window === "undefined" || typeof globalThis.window.matchMedia !== "function") return false
+  return globalThis.window.matchMedia("(prefers-color-scheme: dark)").matches
+}
+
+/** Apply `data-skin`, `data-shell`, `.dark` (honoring forced custom theme appearance), and any custom JSON theme tokens. */
 export function applyAppearance(
   skin: Skin,
   shell: ShellChrome,
@@ -78,8 +85,22 @@ export function applyAppearance(
   customTheme: StudioTheme | null = null,
 ) {
   if (!root) return
-  root.dataset.skin = customTheme?.baseSkin ?? skin
+  root.dataset.skin = customTheme ? effectiveBaseSkin(customTheme) : skin
   root.dataset.shell = shell
+  if (typeof root.classList?.toggle === "function") {
+    if (customTheme?.appearance === "dark") {
+      root.classList.toggle("dark", true)
+    } else if (customTheme?.appearance === "light") {
+      root.classList.toggle("dark", false)
+    } else if (root.dataset.forcedAppearance !== undefined) {
+      root.classList.toggle("dark", systemPrefersDark())
+    }
+  }
+  if (customTheme?.appearance) {
+    root.dataset.forcedAppearance = customTheme.appearance
+  } else {
+    delete root.dataset.forcedAppearance
+  }
   const isDark = root.classList?.contains("dark") ?? false
   applyCustomTheme(customTheme, isDark, root)
 }
@@ -151,7 +172,7 @@ export function AppearanceProvider({
   }
 
   const setCustomTheme = (theme: StudioTheme) => {
-    const nextSkin = theme.baseSkin ?? skin
+    const nextSkin = effectiveBaseSkin(theme)
     setSkinState(nextSkin)
     setCustomThemeState(theme)
     persistCustomTheme(theme)

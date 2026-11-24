@@ -18,7 +18,7 @@ configureBoneyard({
   shimmerColor: "var(--accent)",
   darkShimmerColor: "var(--accent)",
   animate: "shimmer",
-  select: "container",
+  select: "viewport",
 })
 
 function usePrefersReducedMotion(): boolean {
@@ -81,7 +81,7 @@ export function BoneSkeleton({
         animate={resolvedAnimate}
         fallback={fallback}
         fixture={fixture}
-        select="container"
+        select="viewport"
       >
         {children ?? null}
       </BoneyardSkeleton>

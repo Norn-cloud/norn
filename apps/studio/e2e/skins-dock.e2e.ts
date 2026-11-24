@@ -337,8 +337,8 @@ test("Semantic Map (/map) renders monochrome islands, bundled bridges, zoom-in e
   await page.locator('[data-slot="semantic-node"]').first().click()
   const sheet = page.locator('[data-slot="provenance-sheet"]')
   await expect(sheet).toBeVisible()
-  await expect(sheet).toContainText("SRC")
   await expect(sheet.getByRole("link", { name: "Open records" })).toBeVisible()
+  await expect(sheet.getByRole("link", { name: "Definition" })).toBeVisible()
   await capture(page, "polar-dark-semantic-map-dossier")
 
   // Switch lenses and return to Zoom 0 overview.
@@ -347,7 +347,7 @@ test("Semantic Map (/map) renders monochrome islands, bundled bridges, zoom-in e
   await expect(islands.first()).toBeVisible()
 })
 
-test("boneyard-js renders UI-shape bone skeletons while a Studio read is pending", async ({ page }) => {
+test("boneyard-js renders UI-shape bone skeletons inside container bounds with zero horizontal overflow while pending", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.emulateMedia({ colorScheme: "dark" })
   await session(page)
@@ -357,7 +357,7 @@ test("boneyard-js renders UI-shape bone skeletons while a Studio read is pending
       return route.fulfill({ status: 200, json: { authenticated: true, user: { id: "u1", name: "Ada", email: "ada@example.com" }, organization: { id: "o1", name: "Demo", role: "admin" }, cell: { org: "o1", env: "prod" } } })
     }
     if (url.includes("/v1/definitions")) {
-      await new Promise((resolve) => setTimeout(resolve, 600))
+      await new Promise((resolve) => setTimeout(resolve, 1500))
       return route.fulfill({ status: 404, json: { error: "not found" } })
     }
     return route.fulfill({ status: 404, json: { error: "not found" } })
@@ -366,4 +366,25 @@ test("boneyard-js renders UI-shape bone skeletons while a Studio read is pending
   const skeleton = page.locator('[data-slot="bone-skeleton"][data-bone="semantic-map"]')
   await expect(skeleton).toBeVisible()
   await expect(skeleton).toHaveAttribute("aria-busy", "true")
+
+  // Verify real boneyard-js bones rendered from the viewport breakpoint and stay strictly within container bounds.
+  const geometry = await page.evaluate(() => {
+    const overlay = document.querySelector<HTMLElement>('[data-bone="semantic-map"] [data-boneyard-overlay="true"]')
+    if (!overlay) return null
+    const host = overlay.getBoundingClientRect()
+    const bones = [...overlay.querySelectorAll<HTMLElement>(":scope > div")].map((el) => {
+      const r = el.getBoundingClientRect()
+      return { left: r.left, right: r.right, width: r.width, height: r.height }
+    })
+    return {
+      hostLeft: host.left,
+      hostRight: host.right,
+      hostWidth: host.width,
+      count: bones.length,
+      overflowing: bones.filter((b) => b.left < host.left - 1 || b.right > host.right + 1 || b.width <= 0 || b.height <= 0).length,
+    }
+  })
+  expect(geometry).not.toBeNull()
+  expect(geometry!.count).toBeGreaterThanOrEqual(10)
+  expect(geometry!.overflowing).toBe(0)
 })

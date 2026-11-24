@@ -153,14 +153,14 @@ Truth status is a **server-only authority**. Never infer "verified" from the abs
 Quarantined  >  Withheld  >  Imported (unverified)  >  Verified fact
 ```
 
-### Semantic Map (Islands / Lenses — Phase 1 CURRENT at `/map`, Ripple TARGET `#1664`)
+### Semantic Map (Islands / Lenses — Read-only Catalog Explorer CURRENT at `/map`; Cell-side Marking-Filtered Projection & Ripple TARGET `#1664`)
 
-Underneath, the workspace is one flat System-of-Record (SoR) ontology (`norn-ir` + `#45` CodeGraph). On top, users navigate monochrome structural **Islands** through switchable **Lenses** without duplicating truth (reserving colour strictly for status dots, attention badges, and highlighted causal links):
+Underneath, the workspace is one flat System-of-Record (SoR) ontology (`norn-ir` + `#45` CodeGraph). On top, users navigate monochrome structural **Islands** through switchable **Lenses** without duplicating truth (reserving colour strictly for verified live attention status dots, badges, and highlighted causal links):
 
-- **Zoom 0 — Landscape:** Monochrome structural Islands connected by bundled cross-island bridges with aggregate edge counts and honest attention indicators.
-- **Zoom 1 — Island Expansion:** Plain-English object cards with compact dashed ghost stubs for cross-island neighbors and switchable lenses (`All`, `Data flow`, `Governance`, `Attention`).
-- **Zoom 2 — Living Dossier / Provenance Side Sheet:** `SRC` artifact evidence badge, source feeds, governing laws in plain language, markings, connected upstream/downstream types, and direct jump links to Records and Definitions.
-- **Cell-side withholding across the entire map:** The cell filters Semantic Map projections before serialization across **nodes, edges, aggregate island/bridge counts, and `SRC` source spans** so restricted entities never leak through counts, link labels, or file paths.
+- **Zoom 0 — Landscape (CURRENT at `/map` over admitted `/v1/definitions`):** Monochrome structural Islands connected by bundled cross-island bridges with aggregate edge counts and honest live-inbox alert status (never claiming "no open alerts" when inbox reads are pending, unavailable, or recorded).
+- **Zoom 1 — Island Expansion (CURRENT):** Plain-English object cards with compact dashed ghost stubs for cross-island neighbors and switchable lenses (`All`, `Data flow`, `Governance`, `Attention`).
+- **Zoom 2 — Schema & Provenance Side Sheet (CURRENT for admitted definitions; `SRC` code-span evidence TARGET):** Canonical definition artifact link, source feed mapped/gap counts, governing laws in plain language, markings, connected upstream/downstream types, and direct jump links to Records and Definitions.
+- **Cell-side marking-filtered map projection (TARGET `#1664`):** Today `/v1/definitions` checks `ReadDefinitions` at the catalog gate; fine-grained cell-side withholding across individual **nodes, edges, aggregate island/bridge counts, and `SRC` source spans** requires the server-side Semantic Map projection route tracked in `#1664`.
 
 Switching Lenses re-projects the exact same underlying SoR graph (for example: operational flow, authority/markings, or lineage) rather than maintaining separate stale diagrams.
 

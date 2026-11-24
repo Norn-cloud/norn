@@ -109,9 +109,13 @@ const queryClient = new QueryClient({
 const root = createRootRoute({ component: Root })
 const router = createRouter({ routeTree: routeTree(root) })
 
-// Dark and light are peers: follow the reader's system setting; apply persisted skin, shell, and custom JSON theme before first paint.
+// Dark and light are peers: follow the reader's system setting unless a custom theme pins an explicit appearance.
 const dark = window.matchMedia("(prefers-color-scheme: dark)")
-const applyScheme = () => document.documentElement.classList.toggle("dark", dark.matches)
+const applyScheme = () => {
+  const forced = document.documentElement.dataset.forcedAppearance
+  if (forced === "dark" || forced === "light") return
+  document.documentElement.classList.toggle("dark", dark.matches)
+}
 applyScheme()
 applyAppearance(storedSkin(), storedShellChrome(), undefined, storedCustomTheme())
 dark.addEventListener("change", applyScheme)

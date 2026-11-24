@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { applyAppearance } from "../src/lib/appearance.tsx"
 import {
   STUDIO_THEME_PRESETS,
   applyCustomTheme,
@@ -8,15 +9,25 @@ import {
   validateStudioThemeContrast,
 } from "../src/lib/studio-theme.ts"
 
-function fakeRoot(dark = false) {
+function fakeRoot(initialDark = false) {
   const styles = new Map<string, string>()
   const dataset: Record<string, string> = {}
+  const classes = new Set<string>(initialDark ? ["dark"] : [])
   return {
     styles,
     dataset,
+    classes,
     element: {
       dataset,
-      classList: { contains: (name: string) => name === "dark" && dark },
+      classList: {
+        contains: (name: string) => classes.has(name),
+        toggle: (name: string, force?: boolean) => {
+          const next = force ?? !classes.has(name)
+          if (next) classes.add(name)
+          else classes.delete(name)
+          return next
+        },
+      },
       style: {
         setProperty: (k: string, v: string) => { styles.set(k, v) },
         removeProperty: (k: string) => { styles.delete(k) },
@@ -54,25 +65,87 @@ test("parseStudioTheme rejects unknown tokens, CSS injection values, and malform
   if (!injection.ok) expect(injection.issues.some((i) => i.path === "colors.background")).toBe(true)
 })
 
-test("parseStudioTheme enforces WCAG AA contrast floors and rejects illegible custom themes", () => {
+test("parseStudioTheme enforces WCAG AA contrast across text, hover buttons, popovers, dock, and translucent shells", () => {
   const lowContrast = parseStudioTheme({
     version: 1,
     name: "Low Contrast",
     baseSkin: "polar",
-    variants: {
-      light: {
-        background: "#ffffff",
-        foreground: "#d4d4d8",
-      },
-    },
+    variants: { light: { background: "#ffffff", foreground: "#d4d4d8" } },
   })
   expect(lowContrast.ok).toBe(false)
-  if (!lowContrast.ok) {
-    expect(lowContrast.issues.some((i) => i.path.includes("contrast.light.foreground"))).toBe(true)
-  }
+  if (!lowContrast.ok) expect(lowContrast.issues.some((i) => i.path.includes("contrast.light.foreground"))).toBe(true)
+
+  // Button[default] renders primary-foreground on action-hover: 1:1 hover text must be rejected.
+  const badHover = parseStudioTheme({
+    version: 1,
+    name: "White Hover",
+    baseSkin: "polar",
+    appearance: "light",
+    colors: { "action-hover": "#fafafa" },
+  })
+  expect(badHover.ok).toBe(false)
+  if (!badHover.ok) expect(badHover.issues.some((i) => i.path.includes("action-hover"))).toBe(true)
+
+  // Popover and floating dock pairs are validated too.
+  const badPopover = parseStudioTheme({
+    version: 1,
+    name: "Invisible Popover",
+    baseSkin: "polar",
+    appearance: "dark",
+    colors: { popover: "#1c1c20", "popover-foreground": "#2a2a30" },
+  })
+  expect(badPopover.ok).toBe(false)
+  if (!badPopover.ok) expect(badPopover.issues.some((i) => i.path.includes("popover-foreground"))).toBe(true)
+
+  const badDock = parseStudioTheme({
+    version: 1,
+    name: "Invisible Dock",
+    baseSkin: "polar",
+    appearance: "dark",
+    colors: { "dock-surface": "#222226", "dock-foreground": "#2e2e34" },
+  })
+  expect(badDock.ok).toBe(false)
+  if (!badDock.ok) expect(badDock.issues.some((i) => i.path.includes("dock-foreground"))).toBe(true)
+
+  // Translucent dark shell on a light OS backdrop composites against white, exposing low-contrast white text.
+  const translucentShell = parseStudioTheme({
+    version: 1,
+    name: "Translucent Light Shell",
+    baseSkin: "polar",
+    appearance: "light",
+    colors: { shell: "rgb(0 0 0 / 0.1)", background: "rgb(0 0 0 / 0.05)", foreground: "#fafafa" },
+  })
+  expect(translucentShell.ok).toBe(false)
 })
 
-test("shorthand accent and canvas expand with auto-contrasting foreground ink", () => {
+test("forced appearance and omitted baseSkin use the exact same scheme and skin for validation and rendering", () => {
+  const forcedDark = parseStudioTheme({
+    version: 1,
+    name: "Forced Dark",
+    appearance: "dark",
+    colors: { foreground: "#fafafa" },
+  })
+  expect(forcedDark.ok).toBe(true)
+  if (!forcedDark.ok) return
+
+  // Even when the user was on `glass` in a light OS, applying a forced dark theme without baseSkin
+  // pins `data-skin="polar"` and enables `.dark` so rendering matches the validated palette.
+  const root = fakeRoot(false)
+  applyAppearance("glass", "sidebar", root.element, forcedDark.theme)
+  expect(root.dataset.skin).toBe("polar")
+  expect(root.classes.has("dark")).toBe(true)
+  expect(root.dataset.forcedAppearance).toBe("dark")
+  expect(root.styles.get("--foreground")).toBe("#fafafa")
+
+  // Clearing the custom theme restores the OS preference and removes forcedAppearance + inline properties.
+  applyAppearance("glass", "sidebar", root.element, null)
+  expect(root.dataset.skin).toBe("glass")
+  expect(root.classes.has("dark")).toBe(false)
+  expect(root.dataset.forcedAppearance).toBeUndefined()
+  expect(root.styles.size).toBe(0)
+})
+
+test("shorthand accent and canvas expand with auto-contrasting foreground ink and matching action-hover", () => {
   const result = parseStudioTheme({
     version: 1,
     name: "Ink Accent",
@@ -89,6 +162,7 @@ test("shorthand accent and canvas expand with auto-contrasting foreground ink", 
   expect(tokens.primary).toBe("#1d4ed8")
   expect(tokens["primary-foreground"]).toBe("#fafafa")
   expect(tokens.action).toBe("#1d4ed8")
+  expect(tokens["action-hover"]).toBe("#1d4ed8")
   expect(tokens.ring).toBe("#1d4ed8")
 })
 
@@ -100,12 +174,10 @@ test("applyCustomTheme writes variant tokens for light/dark and removes every in
   expect(lightRoot.styles.get("--background")).toBe("#fcfcfd")
   expect(lightRoot.styles.get("--chart-1")).toBe("#111318")
 
-  // Switching to dark variant updates tokens cleanly without leaving stale keys.
   applyCustomTheme(preset, true, lightRoot.element)
   expect(lightRoot.styles.get("--background")).toBe("#0f1117")
   expect(lightRoot.styles.get("--chart-1")).toBe("#3ccf8e")
 
-  // Clearing removes every inline custom property and metadata attribute.
   applyCustomTheme(null, true, lightRoot.element)
   expect(lightRoot.styles.size).toBe(0)
   expect(lightRoot.dataset.customTheme).toBeUndefined()
