@@ -151,14 +151,31 @@ function useOpenWorkspace(doc: WorkspacesDocument | null | undefined) {
 const real = (workspace: (typeof WORKSPACES)[number], live: boolean) => workspace.results !== undefined || (workspace.recorded && !live)
 
 /** The workspace switcher: the user's real workspaces (with create/rename/archive/delete/request) and a separate Examples group. */
-function ScopeSwitcher({ onArchived }: { readonly onArchived: (workspace: { readonly id: string; readonly name: string }) => void }) {
+function ScopeSwitcher({
+  archivedNoticeId,
+  onArchived,
+  onCleared,
+}: {
+  readonly archivedNoticeId: string | null
+  readonly onArchived: (workspace: { readonly id: string; readonly name: string }) => void
+  readonly onCleared: (id: string) => void
+}) {
   const workspaces = useWorkspaces()
   const doc = workspaces.data
   const { live, open, active } = useOpenWorkspace(doc)
   const [dialog, setDialog] = useState<WorkspaceDialogState>({ kind: "closed" })
   const [switchError, setSwitchError] = useState<string | null>(null)
+  const [switching, setSwitching] = useState(false)
+  const [pendingRefresh, setPendingRefresh] = useState(false)
+  const switchingRef = useRef(false)
   const client = useQueryClient()
   const navigate = useNavigate()
+
+  // Clear the Undo notice once a successfully refreshed archive list confirms the workspace is no longer archived.
+  useEffect(() => {
+    if (archivedNoticeId === null || !workspaces.isSuccess || workspaces.data == null) return
+    if (!workspaces.data.archived.some((workspace) => workspace.id === archivedNoticeId)) onCleared(archivedNoticeId)
+  }, [archivedNoticeId, workspaces.isSuccess, workspaces.data, onCleared])
 
   const realWorkspaces = doc?.workspaces ?? []
   const archivedWorkspaces = doc?.archived ?? []
@@ -166,15 +183,41 @@ function ScopeSwitcher({ onArchived }: { readonly onArchived: (workspace: { read
   const pendingRequests = requests.filter((item) => item.status === "pending").length
   const examples = WORKSPACES.filter((workspace) => real(workspace, live))
 
-  async function selectWorkspace(id: string) {
-    if (id === active?.id) return
+  async function retrySessionRefresh() {
+    if (switchingRef.current) return
+    switchingRef.current = true
+    setSwitching(true)
     setSwitchError(null)
     try {
-      await workspaceApi.activate(id)
       await switchWorkspaceCaches(client)
+      setPendingRefresh(false)
       await navigate({ to: "/" })
     } catch (error) {
+      setSwitchError(error instanceof WorkspaceError ? error.message : "Could not refresh your session. Try again.")
+    } finally {
+      switchingRef.current = false
+      setSwitching(false)
+    }
+  }
+
+  async function selectWorkspace(id: string) {
+    if (switchingRef.current || id === active?.id) return
+    switchingRef.current = true
+    setSwitching(true)
+    setSwitchError(null)
+    let activated = false
+    try {
+      await workspaceApi.activate(id)
+      activated = true
+      await switchWorkspaceCaches(client)
+      setPendingRefresh(false)
+      await navigate({ to: "/" })
+    } catch (error) {
+      if (activated) setPendingRefresh(true)
       setSwitchError(error instanceof WorkspaceError ? error.message : "Could not switch workspaces. Try again.")
+    } finally {
+      switchingRef.current = false
+      setSwitching(false)
     }
   }
 
@@ -217,7 +260,7 @@ function ScopeSwitcher({ onArchived }: { readonly onArchived: (workspace: { read
                 <KitMenuLabel>Your workspaces</KitMenuLabel>
                 {realWorkspaces.length > 0
                   ? realWorkspaces.map((workspace) => (
-                      <KitMenuRadioItem key={workspace.id} value={`ws:${workspace.id}`} label={workspace.name} closeOnSelect className="flex-col items-start gap-0">
+                      <KitMenuRadioItem key={workspace.id} value={`ws:${workspace.id}`} label={workspace.name} disabled={switching} closeOnSelect className="flex-col items-start gap-0">
                         <span className="truncate">{workspace.name}</span>
                         <span className="text-xs text-muted-foreground">{workspace.hasCell ? roleLabel(workspace.role) : `${roleLabel(workspace.role)} · No cell yet`}</span>
                       </KitMenuRadioItem>
@@ -229,8 +272,23 @@ function ScopeSwitcher({ onArchived }: { readonly onArchived: (workspace: { read
                       </KitMenuRadioItem>
                     )}
               </MenuRadioGroup>
-              {switchError && <p role="alert" className="px-2 py-1 text-xs text-destructive">{switchError}</p>}
+              {switchError && (
+                <div role="alert" className="flex items-center justify-between gap-2 px-2 py-1 text-xs text-destructive">
+                  <span>{switchError}</span>
+                  {pendingRefresh && (
+                    <button type="button" disabled={switching} className="shrink-0 underline underline-offset-2" onClick={() => void retrySessionRefresh()}>
+                      Retry refresh
+                    </button>
+                  )}
+                </div>
+              )}
             </>
+          )}
+          {workspaces.isError && (
+            <div role="alert" className="flex items-center justify-between gap-2 px-2 py-1.5 text-xs text-destructive">
+              <span>{workspaces.error instanceof WorkspaceError ? workspaces.error.message : "Could not load workspaces."}</span>
+              <button type="button" className="shrink-0 underline underline-offset-2" onClick={() => void workspaces.refetch()}>Retry</button>
+            </div>
           )}
           {(showManageActions || archivedWorkspaces.length > 0) && (
             <>
@@ -300,6 +358,7 @@ function ScopeSwitcher({ onArchived }: { readonly onArchived: (workspace: { read
         requests={requests}
         onClose={() => setDialog({ kind: "closed" })}
         onArchived={onArchived}
+        onCleared={onCleared}
       />
     </>
   )
@@ -482,11 +541,13 @@ export function diffExpanded(
  * The perspective's sidebar: the workspace switcher, then its spaces (collapsible headings, never
  * walls), each listing its destinations; the open destination lists its items under it.
  */
-function SectionSidebar({ sections, perspective, navigation, pathname, chosen, onChosenChange, onArchived }: {
+function SectionSidebar({ sections, perspective, navigation, pathname, chosen, onChosenChange, archivedNoticeId, onArchived, onCleared }: {
   readonly sections: readonly Section[]; readonly perspective: Perspective; readonly navigation: Navigation; readonly pathname: string
   readonly chosen: Readonly<Record<string, boolean>>
   readonly onChosenChange: (update: (previous: Readonly<Record<string, boolean>>) => Readonly<Record<string, boolean>>) => void
+  readonly archivedNoticeId: string | null
   readonly onArchived: (workspace: { readonly id: string; readonly name: string }) => void
+  readonly onCleared: (id: string) => void
 }) {
   const { setOpenMobile } = useSidebar()
   const own = sections.filter((section) => section.perspective === perspective)
@@ -517,7 +578,7 @@ function SectionSidebar({ sections, perspective, navigation, pathname, chosen, o
   const label = PERSPECTIVES.find(({ id }) => id === perspective)?.label ?? ""
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col">
-      <div className="px-2 pt-2 pb-1"><ScopeSwitcher onArchived={onArchived} /></div>
+      <div className="px-2 pt-2 pb-1"><ScopeSwitcher archivedNoticeId={archivedNoticeId} onArchived={onArchived} onCleared={onCleared} /></div>
       <nav aria-label={label} className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
         <Tree aria-label={`${label} pages`} mode="none" expandOnPress current={current} expanded={expanded}
           onExpandedChange={(next) => onChosenChange((previous) => diffExpanded(expanded, next, previous))}>
@@ -738,36 +799,56 @@ function ConnectionBanner() {
 }
 
 /** Immediate undo banner after archiving a workspace so the owner can restore it in one click. */
-function ArchiveUndoBanner({ archived, onDismiss }: { readonly archived: { readonly id: string; readonly name: string } | null; readonly onDismiss: () => void }) {
-  const [restoring, setRestoring] = useState(false)
+function ArchiveUndoBanner({ archived, onDismiss }: { readonly archived: { readonly id: string; readonly name: string } | null; readonly onDismiss: (id: string) => void }) {
+  const [restoringId, setRestoringId] = useState<string | null>(null)
+  const [committedId, setCommittedId] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const activeIdRef = useRef<string | null>(archived?.id ?? null)
   const client = useQueryClient()
   const navigate = useNavigate()
+
+  useEffect(() => {
+    activeIdRef.current = archived?.id ?? null
+    setError(null)
+    if (archived?.id !== committedId) setCommittedId(null)
+  }, [archived?.id, committedId])
+
   if (archived === null) return null
+  const target = archived
+  const restoring = restoringId === target.id
+  const committed = committedId === target.id
 
   async function undo() {
-    if (archived === null) return
-    setRestoring(true)
+    setRestoringId(target.id)
     setError(null)
+    let didCommit = committed
     try {
-      await workspaceApi.restore(archived.id, true)
+      if (!didCommit) {
+        await workspaceApi.restore(target.id, true)
+        didCommit = true
+        if (activeIdRef.current === target.id) setCommittedId(target.id)
+      }
       await switchWorkspaceCaches(client)
-      onDismiss()
-      await navigate({ to: "/" })
+      onDismiss(target.id)
+      if (activeIdRef.current === target.id) await navigate({ to: "/" })
     } catch (err) {
-      setError(err instanceof WorkspaceError ? err.message : "Could not restore this workspace.")
+      if (activeIdRef.current === target.id) {
+        setError(err instanceof WorkspaceError ? err.message : "Could not restore this workspace.")
+      }
     } finally {
-      setRestoring(false)
+      setRestoringId((current) => (current === target.id ? null : current))
     }
   }
 
   return (
     <div role="status" data-workspace-undo className="flex flex-wrap items-center gap-2 border-b bg-muted/60 px-4 py-2 text-sm md:px-8">
-      <span>Archived “{archived.name}”.</span>
+      <span>Archived “{target.name}”.</span>
       {error && <span role="alert" className="text-destructive">{error}</span>}
       <div className="ms-auto flex items-center gap-2">
-        <Button type="button" variant="outline" size="xs" disabled={restoring} onClick={() => void undo()}>{restoring ? "Restoring…" : "Undo"}</Button>
-        <Button type="button" variant="ghost" size="xs" disabled={restoring} onClick={onDismiss}>Dismiss</Button>
+        <Button type="button" variant="outline" size="xs" disabled={restoring} onClick={() => void undo()}>
+          {restoring ? (committed ? "Refreshing…" : "Restoring…") : committed ? "Retry refresh" : "Undo"}
+        </Button>
+        <Button type="button" variant="ghost" size="xs" disabled={restoring} onClick={() => onDismiss(target.id)}>Dismiss</Button>
       </div>
     </div>
   )
@@ -912,7 +993,10 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale
             onExpandSection={expandSection} />
           <div ref={sidebarPanelRef} className="flex min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
             <SectionSidebar key={perspective} sections={sections} perspective={perspective} navigation={navigation} pathname={pathname}
-              chosen={chosenByPerspective[perspective]} onChosenChange={updateChosen} onArchived={setArchivedNotice} />
+              chosen={chosenByPerspective[perspective]} onChosenChange={updateChosen}
+              archivedNoticeId={archivedNotice?.id ?? null}
+              onArchived={setArchivedNotice}
+              onCleared={(id) => setArchivedNotice((current) => (current?.id === id ? null : current))} />
           </div>
         </div>
       </Sidebar>
@@ -930,7 +1014,7 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale
             </div>
           </header>
           <ConnectionBanner />
-          <ArchiveUndoBanner archived={archivedNotice} onDismiss={() => setArchivedNotice(null)} />
+          <ArchiveUndoBanner archived={archivedNotice} onDismiss={(id) => setArchivedNotice((current) => (current?.id === id ? null : current))} />
           <div className="mx-auto w-full max-w-7xl px-4 py-6 md:px-8"><Outlet /></div>
         </div>
         <Inspector />

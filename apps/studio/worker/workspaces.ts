@@ -1,5 +1,5 @@
 import { hostToken, type NornActor } from "./actor.ts"
-import { activeMembership, atomically, isOrganizationArchived, publicMetadata, BILLING_PAYER, BILLED, type Auth, type ProvisionDb } from "./auth.ts"
+import { activeMembership, atomically, isOrganizationArchived, isProvisioningMetadata, publicMetadata, BILLING_PAYER, BILLED, PROVISIONING, type Auth, type ProvisionDb } from "./auth.ts"
 import { admitCell, admitMember, entitlementOf, limitRaised, refusalMessage, type Admission, type BillingDb, type BillingSettings } from "./billing.ts"
 
 /**
@@ -148,24 +148,25 @@ async function activate(auth: Auth, token: string, organizationId: string | null
   await context.internalAdapter.updateSession(token, { activeOrganizationId: organizationId })
 }
 
-/** Find the user's earliest non-archived membership (excluding `excludeId` if given). */
+/** Find the user's earliest non-archived, ready membership (excluding `excludeId` if given). */
 async function nextActiveWorkspace(db: D1Database, userId: string, excludeId?: string): Promise<string | null> {
+  type Candidate = { organizationId: string; metadata: string | null }
+  let rows: Candidate[]
   try {
-    const row = excludeId === undefined
-      ? await first<{ organizationId: string }>(db,
-          `select m."organizationId" from "member" m left join "workspace_archive" a on a."organization_id" = m."organizationId" where m."userId" = ? and a."organization_id" is null order by m."createdAt" asc, m."id" asc limit 1`,
+    rows = excludeId === undefined
+      ? await all<Candidate>(db,
+          `select m."organizationId", o."metadata" from "member" m join "organization" o on o."id" = m."organizationId" left join "workspace_archive" a on a."organization_id" = m."organizationId" where m."userId" = ? and a."organization_id" is null order by m."createdAt" asc, m."id" asc`,
           userId)
-      : await first<{ organizationId: string }>(db,
-          `select m."organizationId" from "member" m left join "workspace_archive" a on a."organization_id" = m."organizationId" where m."userId" = ? and m."organizationId" <> ? and a."organization_id" is null order by m."createdAt" asc, m."id" asc limit 1`,
+      : await all<Candidate>(db,
+          `select m."organizationId", o."metadata" from "member" m join "organization" o on o."id" = m."organizationId" left join "workspace_archive" a on a."organization_id" = m."organizationId" where m."userId" = ? and m."organizationId" <> ? and a."organization_id" is null order by m."createdAt" asc, m."id" asc`,
           userId, excludeId)
-    return row?.organizationId ?? null
   } catch (error) {
     if (!missingTable(error, "workspace_archive")) throw error
-    const row = excludeId === undefined
-      ? await first<{ organizationId: string }>(db, `select "organizationId" from "member" where "userId" = ? order by "createdAt" asc, "id" asc limit 1`, userId)
-      : await first<{ organizationId: string }>(db, `select "organizationId" from "member" where "userId" = ? and "organizationId" <> ? order by "createdAt" asc, "id" asc limit 1`, userId, excludeId)
-    return row?.organizationId ?? null
+    rows = excludeId === undefined
+      ? await all<Candidate>(db, `select m."organizationId", o."metadata" from "member" m join "organization" o on o."id" = m."organizationId" where m."userId" = ? order by m."createdAt" asc, m."id" asc`, userId)
+      : await all<Candidate>(db, `select m."organizationId", o."metadata" from "member" m join "organization" o on o."id" = m."organizationId" where m."userId" = ? and m."organizationId" <> ? order by m."createdAt" asc, m."id" asc`, userId, excludeId)
   }
+  return rows.find((row) => !isProvisioningMetadata(row.metadata))?.organizationId ?? null
 }
 
 /**
@@ -180,7 +181,12 @@ export async function provisionEmptyCell(
   orgId: string,
   environmentId: string,
 ): Promise<{ readonly ok: true } | { readonly ok: false; readonly status: number; readonly code: string }> {
-  const token = await hostToken(auth, actor)
+  let token: string
+  try {
+    token = await hostToken(auth, actor)
+  } catch {
+    return { ok: false, status: 503, code: "host.token_unavailable" }
+  }
   const query = new URLSearchParams({ orgId, environmentId }).toString()
   const send = async (baseSha256: string) => host.fetch(new Request(`https://norn-host/v1/cell:provision?${query}`, {
     method: "POST",
@@ -242,6 +248,7 @@ export async function listWorkspaces(request: Request, context: WorkspaceContext
   const workspaces: WorkspaceItem[] = []
   const archived: WorkspaceItem[] = []
   for (const row of rows) {
+    if (isProvisioningMetadata(row.metadata)) continue
     const isDefault = context.defaultOrganizationId !== undefined && row.id === context.defaultOrganizationId
     const isArchived = row.archived_at !== null
     const owner = isOwner(row.role)
@@ -293,14 +300,14 @@ export async function listWorkspaces(request: Request, context: WorkspaceContext
            from "workspace_request" r
            join "user" u on u."id" = r."user_id"
            where r."user_id" = ? or r."organization_id" = ?
-           order by r."created_at" desc limit 50`,
+           order by case when r."status" = 'pending' then 0 else 1 end asc, r."created_at" desc limit 50`,
           session.user.id, active.organizationId)
       : await all<RequestRow>(context.db,
           `select r."id", r."user_id", r."organization_id", r."name", r."note", r."status", r."created_at", u."name" as "requester_name", u."email" as "requester_email"
            from "workspace_request" r
            join "user" u on u."id" = r."user_id"
            where r."user_id" = ?
-           order by r."created_at" desc limit 50`,
+           order by case when r."status" = 'pending' then 0 else 1 end asc, r."created_at" desc limit 50`,
           session.user.id)
   } catch (error) {
     if (!missingTable(error, "workspace_request")) throw error
@@ -346,16 +353,22 @@ export async function createWorkspace(request: Request, context: WorkspaceContex
   const id = crypto.randomUUID()
   const at = new Date().toISOString()
   // Server-only keys: environmentId (from deployment config, never client input) and billing payer (when billing is on).
+  // When NORN_HOST is connected, start in an explicit provisioning state with no environmentId so concurrent reads
+  // cannot list or activate the workspace before cell provisioning succeeds.
   const environmentId = context.defaultEnvironmentId
-  const metadata = {
+  const needsHostProvision = context.host !== undefined && environmentId !== undefined
+  const baseMetadata = {
     ...publicMetadata(input?.metadata),
-    ...environmentId === undefined ? {} : { environmentId },
     ...context.billing === undefined ? {} : { [BILLING_PAYER]: session.user.id, [BILLED]: true },
   }
+  const initialMetadata = needsHostProvision
+    ? { ...baseMetadata, [PROVISIONING]: true }
+    : { ...baseMetadata, ...environmentId === undefined ? {} : { environmentId } }
+  const readyMetadata = { ...baseMetadata, ...environmentId === undefined ? {} : { environmentId } }
   const member = { id: crypto.randomUUID(), organizationId: id, userId: session.user.id, role: "owner", createdAt: at }
   try {
     await atomically(context.db as unknown as ProvisionDb, [
-      { sql: `insert into "organization" ("id", "name", "slug", "logo", "metadata", "createdAt") values (?, ?, ?, ?, ?, ?)`, params: [id, name, slug, logo, JSON.stringify(metadata), at] },
+      { sql: `insert into "organization" ("id", "name", "slug", "logo", "metadata", "createdAt") values (?, ?, ?, ?, ?, ?)`, params: [id, name, slug, logo, JSON.stringify(initialMetadata), at] },
       { sql: `insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values (?, ?, ?, ?, ?)`, params: [member.id, id, member.userId, member.role, at] },
     ])
   } catch (error) {
@@ -363,23 +376,35 @@ export async function createWorkspace(request: Request, context: WorkspaceContex
     if (/UNIQUE constraint failed: organization\.slug/.test(error instanceof Error ? error.message : "")) return failure(400, "ORGANIZATION_ALREADY_EXISTS", "Organization already exists")
     throw error
   }
-  if (context.host !== undefined && environmentId !== undefined) {
-    const actor: NornActor = { actorKind: "user", subjectId: session.user.id, orgId: id, role: "owner", authMethod: method as NornActor["authMethod"] }
-    const provisioned = await provisionEmptyCell(context.host, context.auth, actor, id, environmentId)
-    if (!provisioned.ok) {
+  if (needsHostProvision) {
+    const rollback = async () => {
       // Never leave an unprovisioned org behind or burn the user's billed cell quota.
       await atomically(context.db as unknown as ProvisionDb, [
         { sql: `delete from "member" where "organizationId" = ?`, params: [id] },
         { sql: `delete from "organization" where "id" = ?`, params: [id] },
       ])
+    }
+    const actor: NornActor = { actorKind: "user", subjectId: session.user.id, orgId: id, role: "owner", authMethod: method as NornActor["authMethod"] }
+    let provisioned: { readonly ok: true } | { readonly ok: false; readonly status: number; readonly code: string }
+    try {
+      provisioned = await provisionEmptyCell(context.host, context.auth, actor, id, environmentId)
+      if (provisioned.ok) {
+        await run(context.db, `update "organization" set "metadata" = ? where "id" = ?`, JSON.stringify(readyMetadata), id)
+      }
+    } catch {
+      await rollback()
+      return failure(502, "CELL_PROVISION_FAILED", "Could not provision a cell for this workspace right now. Try again shortly.")
+    }
+    if (!provisioned.ok) {
+      await rollback()
       return failure(502, "CELL_PROVISION_FAILED", "Could not provision a cell for this workspace right now. Try again shortly.")
     }
   }
   if (input?.keepCurrentActiveOrganization !== true) await activate(context.auth, session.session.token, id)
-  return json({ id, name, slug, logo, metadata: publicMetadata(metadata), createdAt: at, members: [member] })
+  return json({ id, name, slug, logo, metadata: publicMetadata(readyMetadata), createdAt: at, members: [member] })
 }
 
-/** POST /api/workspaces/:id/activate: switch the session's active workspace (members only, non-archived only). */
+/** POST /api/workspaces/:id/activate: switch the session's active workspace (members only, non-archived, ready only). */
 export async function activateWorkspace(request: Request, context: WorkspaceContext, organizationId: string): Promise<Response> {
   const session = await context.auth.api.getSession({ headers: request.headers })
   if (session === null) return failure(401, "UNAUTHORIZED", "Sign in first.")
@@ -387,6 +412,7 @@ export async function activateWorkspace(request: Request, context: WorkspaceCont
     `select m."role", o."name", o."metadata" from "member" m join "organization" o on o."id" = m."organizationId" where m."organizationId" = ? and m."userId" = ?`,
     organizationId, session.user.id)
   if (membership === null) return failure(403, "FORBIDDEN", "You are not a member of this workspace.")
+  if (isProvisioningMetadata(membership.metadata)) return failure(409, "WORKSPACE_PROVISIONING", "This workspace is still being provisioned.")
   try {
     const archived = await first(context.db, `select 1 as "found" from "workspace_archive" where "organization_id" = ?`, organizationId)
     if (archived !== null) return failure(409, "WORKSPACE_ARCHIVED", "Restore this workspace before opening it.")
@@ -397,15 +423,16 @@ export async function activateWorkspace(request: Request, context: WorkspaceCont
   return json({ activeOrganizationId: organizationId, name: membership.name, role: membership.role, hasCell: environmentOf(membership.metadata) !== null })
 }
 
-/** PATCH /api/workspaces/:id { name }: rename a workspace (owner or admin only; non-archived only). */
+/** PATCH /api/workspaces/:id { name }: rename a workspace (owner or admin only; non-archived, ready only). */
 export async function renameWorkspace(request: Request, context: WorkspaceContext, organizationId: string): Promise<Response> {
   const session = await context.auth.api.getSession({ headers: request.headers })
   if (session === null) return failure(401, "UNAUTHORIZED", "Sign in first.")
-  const membership = await first<{ role: string }>(context.db,
-    `select "role" from "member" where "organizationId" = ? and "userId" = ?`, organizationId, session.user.id)
+  const membership = await first<{ role: string; metadata: string | null }>(context.db,
+    `select m."role", o."metadata" from "member" m join "organization" o on o."id" = m."organizationId" where m."organizationId" = ? and m."userId" = ?`, organizationId, session.user.id)
   if (membership === null || !isAdmin(membership.role)) {
     return failure(403, "FORBIDDEN", "Only workspace owners and admins can rename a workspace.")
   }
+  if (isProvisioningMetadata(membership.metadata)) return failure(409, "WORKSPACE_PROVISIONING", "This workspace is still being provisioned.")
   try {
     const archived = await first(context.db, `select 1 as "found" from "workspace_archive" where "organization_id" = ?`, organizationId)
     if (archived !== null) return failure(409, "WORKSPACE_ARCHIVED", "Restore this workspace before renaming it.")
@@ -425,21 +452,29 @@ export async function renameWorkspace(request: Request, context: WorkspaceContex
 export async function archiveWorkspace(request: Request, context: WorkspaceContext, organizationId: string): Promise<Response> {
   const session = await context.auth.api.getSession({ headers: request.headers })
   if (session === null) return failure(401, "UNAUTHORIZED", "Sign in first.")
-  const membership = await first<{ role: string }>(context.db,
-    `select "role" from "member" where "organizationId" = ? and "userId" = ?`, organizationId, session.user.id)
+  const membership = await first<{ role: string; metadata: string | null }>(context.db,
+    `select m."role", o."metadata" from "member" m join "organization" o on o."id" = m."organizationId" where m."organizationId" = ? and m."userId" = ?`, organizationId, session.user.id)
   if (membership === null || !isOwner(membership.role)) {
     return failure(403, "FORBIDDEN", "Only a workspace owner can archive a workspace.")
   }
+  if (isProvisioningMetadata(membership.metadata)) return failure(409, "WORKSPACE_PROVISIONING", "This workspace is still being provisioned.")
   if (context.defaultOrganizationId !== undefined && organizationId === context.defaultOrganizationId) {
     return failure(403, "FORBIDDEN", "The deployment's shared default workspace cannot be archived.")
   }
   const existing = await first(context.db, `select 1 as "found" from "workspace_archive" where "organization_id" = ?`, organizationId)
   if (existing !== null) return failure(409, "ALREADY_ARCHIVED", "This workspace is already archived.")
   const at = new Date().toISOString()
-  await atomically(context.db as unknown as ProvisionDb, [
-    { sql: `insert into "workspace_archive" ("organization_id", "archived_at", "archived_by") values (?, ?, ?)`, params: [organizationId, at, session.user.id] },
-    { sql: `update "session" set "activeOrganizationId" = null where "activeOrganizationId" = ?`, params: [organizationId] },
-  ])
+  try {
+    await atomically(context.db as unknown as ProvisionDb, [
+      { sql: `insert into "workspace_archive" ("organization_id", "archived_at", "archived_by") values (?, ?, ?)`, params: [organizationId, at, session.user.id] },
+      { sql: `update "session" set "activeOrganizationId" = null where "activeOrganizationId" = ?`, params: [organizationId] },
+    ])
+  } catch (error) {
+    if (/UNIQUE constraint failed: workspace_archive\.organization_id/.test(error instanceof Error ? error.message : "")) {
+      return failure(409, "ALREADY_ARCHIVED", "This workspace is already archived.")
+    }
+    throw error
+  }
   const nextId = await nextActiveWorkspace(context.db, session.user.id, organizationId)
   if (session.session.activeOrganizationId === organizationId || session.session.activeOrganizationId == null) {
     await activate(context.auth, session.session.token, nextId)
@@ -589,19 +624,25 @@ export async function acceptWorkspaceInvitation(request: Request, context: Works
   const count = await first<{ n: number }>(context.db, `select count(*) as "n" from "member" where "organizationId" = ?`, invitation.organizationId)
   if ((count?.n ?? 0) >= MEMBERSHIP_LIMIT) return failure(403, "ORGANIZATION_MEMBERSHIP_LIMIT_REACHED", "Organization membership limit reached")
   const member = { id: crypto.randomUUID(), organizationId: invitation.organizationId, userId: session.user.id, role: invitation.role ?? "member", createdAt: new Date().toISOString() }
+  const acceptStatements = (checkArchive: boolean) => [
+    { sql: `update "invitation" set "status" = 'accepted' where "id" = ? and "status" = 'pending'
+      and (case when typeof("expiresAt") in ('integer', 'real') then "expiresAt" > (julianday('now') - 2440587.5) * 86400000.0 else julianday("expiresAt") > julianday('now') end)
+      and exists (select 1 from "user" u where u."id" = ? and u."emailVerified" = 1 and lower(u."email") = lower("invitation"."email"))
+      and exists (select 1 from "organization" o where o."id" = "invitation"."organizationId")${checkArchive ? `\n      and not exists (select 1 from "workspace_archive" a where a."organization_id" = "invitation"."organizationId")` : ""}
+      and (select count(*) from "member" m where m."organizationId" = "invitation"."organizationId") < ${MEMBERSHIP_LIMIT}`, params: [invitationId, session.user.id] },
+    { sql: `insert into "member" ("id", "organizationId", "userId", "role", "createdAt") select ?, ?, ?, ?, ? where changes() = 1`, params: [member.id, member.organizationId, member.userId, member.role, member.createdAt] },
+  ]
   try {
     // The invitation turns accepted only if, at the write, it is still pending and unexpired (the
     // database's clock), the session's user still has a verified address it was sent to, its workspace
-    // exists and holds fewer than the membership limit; the member is inserted only if that update
-    // happened. A transaction is serialized, so two acceptances cannot both count 99 members.
-    await atomically(context.db as unknown as ProvisionDb, [
-      { sql: `update "invitation" set "status" = 'accepted' where "id" = ? and "status" = 'pending'
-        and (case when typeof("expiresAt") in ('integer', 'real') then "expiresAt" > (julianday('now') - 2440587.5) * 86400000.0 else julianday("expiresAt") > julianday('now') end)
-        and exists (select 1 from "user" u where u."id" = ? and u."emailVerified" = 1 and lower(u."email") = lower("invitation"."email"))
-        and exists (select 1 from "organization" o where o."id" = "invitation"."organizationId")
-        and (select count(*) from "member" m where m."organizationId" = "invitation"."organizationId") < ${MEMBERSHIP_LIMIT}`, params: [invitationId, session.user.id] },
-      { sql: `insert into "member" ("id", "organizationId", "userId", "role", "createdAt") select ?, ?, ?, ?, ? where changes() = 1`, params: [member.id, member.organizationId, member.userId, member.role, member.createdAt] },
-    ])
+    // exists, is not archived, and holds fewer than the membership limit; the member is inserted only
+    // if that update happened. A transaction is serialized, so two acceptances cannot both count 99 members.
+    try {
+      await atomically(context.db as unknown as ProvisionDb, acceptStatements(true))
+    } catch (error) {
+      if (!missingTable(error, "workspace_archive")) throw error
+      await atomically(context.db as unknown as ProvisionDb, acceptStatements(false))
+    }
   } catch (error) {
     // Only the workspace the stored invitation names: never one the request body or query mentions.
     if (limitRaised(error) === "members") return planLimit(await admitMember(context.db as unknown as BillingDb, context.billing, context.baseURL, invitation.organizationId, session.user.id), "This workspace's member limit is reached.")
@@ -610,6 +651,7 @@ export async function acceptWorkspaceInvitation(request: Request, context: Works
   }
   if (await first(context.db, `select 1 as "joined" from "member" where "id" = ?`, member.id) === null) {
     // Refused at the write: say which check failed, read again now.
+    if (await isOrganizationArchived(context.auth, invitation.organizationId)) return failure(409, "WORKSPACE_ARCHIVED", "This workspace is archived. Ask an owner to restore it before joining.")
     const now = await first<{ n: number }>(context.db, `select count(*) as "n" from "member" where "organizationId" = ?`, invitation.organizationId)
     if ((now?.n ?? 0) >= MEMBERSHIP_LIMIT) return failure(403, "ORGANIZATION_MEMBERSHIP_LIMIT_REACHED", "Organization membership limit reached")
     return failure(400, "INVITATION_NOT_FOUND", INVITATION_GONE)

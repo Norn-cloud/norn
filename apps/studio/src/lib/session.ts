@@ -32,29 +32,33 @@ async function readAccount(fetcher: Fetch): Promise<Account | null> {
   return (await response.json()) as Account
 }
 
-/** Read which sign-in methods this deployment actually supports; fails closed (magicLink: false) when unavailable. */
+/** Read which sign-in methods this deployment actually supports; throws on transient failures so queries can retry. */
 export async function readAuthConfig(fetcher: Fetch = (input, init) => fetch(input, init)): Promise<AuthConfig> {
-  const response = await fetcher("/api/auth/config", { headers: { accept: "application/json" } }).catch(() => null)
-  if (response === null || !response.ok) return DEFAULT_AUTH_CONFIG
+  const response = await fetcher("/api/auth/config", { headers: { accept: "application/json" } })
+  if (!response.ok) throw new Error(`Auth config check failed (${response.status}).`)
   const body = (await response.json().catch(() => null)) as { magicLink?: unknown; inviteOnly?: unknown } | null
-  return { magicLink: body?.magicLink === true, inviteOnly: body?.inviteOnly === true }
+  if (body === null || typeof body !== "object") throw new Error("Auth config response was invalid.")
+  return { magicLink: body.magicLink === true, inviteOnly: body.inviteOnly === true }
 }
 
 /** Server-reported auth capabilities for the login screen; hides unsupported methods until confirmed. */
 export function useAuthConfig() {
-  return useQuery({ queryKey: AUTH_CONFIG, queryFn: () => readAuthConfig(), staleTime: 60_000, retry: false })
+  return useQuery({ queryKey: AUTH_CONFIG, queryFn: () => readAuthConfig(), staleTime: 60_000, retry: 1 })
 }
 
+const isReadQuery = (query: { readonly queryKey: readonly unknown[] }) =>
+  query.queryKey[0] !== SESSION[0] && query.queryKey[0] !== AUTH_CONFIG[0]
+
 /** Forget every read made as the reader who made it (records, picker choices, the inbox): all but the session itself. */
-export function forgetReads(client: QueryClient, options: { readonly refetchActive?: boolean } = {}): void {
-  const isRead = (query: { readonly queryKey: readonly unknown[] }) =>
-    query.queryKey[0] !== SESSION[0] && query.queryKey[0] !== AUTH_CONFIG[0]
+export function forgetReads(client: QueryClient, options: { readonly refetchActive?: boolean; readonly deferActiveRefetch?: boolean } = {}): void {
   if (options.refetchActive) {
-    client.removeQueries({ predicate: isRead, type: "inactive" })
-    void client.resetQueries({ predicate: isRead, type: "active" })
+    client.removeQueries({ predicate: isReadQuery, type: "inactive" })
+    const resetActive = () => { void client.resetQueries({ predicate: isReadQuery, type: "active" }) }
+    if (options.deferActiveRefetch) queueMicrotask(resetActive)
+    else resetActive()
     return
   }
-  client.removeQueries({ predicate: isRead })
+  client.removeQueries({ predicate: isReadQuery })
 }
 
 /**
@@ -74,7 +78,8 @@ export function accountQuery(client: QueryClient, fetcher: Fetch = (input, init)
         // nor for the same reader coming back after a tenant switch or an expiry.
         forgetParkedCalls()
         refreshMode()
-        forgetReads(client, { refetchActive: account !== null })
+        // Defer active query resets until after this queryFn returns and publishes the new session.
+        forgetReads(client, { refetchActive: account !== null, deferActiveRefetch: true })
       }
       return account
     },

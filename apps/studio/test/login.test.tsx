@@ -41,11 +41,20 @@ test("an email link needs only the address when the server enables magic links",
   expect(html).toContain("Send link")
 })
 
-test("readAuthConfig fails closed when unavailable and parses server booleans strictly", async () => {
+test("readAuthConfig parses server booleans strictly and rejects transient failures so queries can retry", async () => {
   expect(await readAuthConfig(async () => Response.json({ magicLink: true, inviteOnly: true }))).toEqual({ magicLink: true, inviteOnly: true })
+  expect(await readAuthConfig(async () => Response.json({ magicLink: false, inviteOnly: false }))).toEqual({ magicLink: false, inviteOnly: false })
   expect(await readAuthConfig(async () => Response.json({ magicLink: "yes", inviteOnly: 1 }))).toEqual({ magicLink: false, inviteOnly: false })
-  expect(await readAuthConfig(async () => new Response(null, { status: 503 }))).toEqual({ magicLink: false, inviteOnly: false })
-  expect(await readAuthConfig(async () => { throw new TypeError("offline") })).toEqual({ magicLink: false, inviteOnly: false })
+  await expect(readAuthConfig(async () => new Response(null, { status: 503 }))).rejects.toThrow("503")
+  await expect(readAuthConfig(async () => { throw new TypeError("offline") })).rejects.toThrow("offline")
+})
+
+test("readWorkspaces returns null only on 401/404 and throws retryable WorkspaceError on 503/offline", async () => {
+  const { readWorkspaces, WorkspaceError } = await import("../src/lib/workspaces-api.ts")
+  expect(await readWorkspaces(async () => new Response(null, { status: 401 }))).toBeNull()
+  expect(await readWorkspaces(async () => new Response(null, { status: 404 }))).toBeNull()
+  await expect(readWorkspaces(async () => new Response(null, { status: 503 }))).rejects.toBeInstanceOf(WorkspaceError)
+  await expect(readWorkspaces(async () => { throw new TypeError("offline") })).rejects.toBeInstanceOf(WorkspaceError)
 })
 
 test("after sign-up the page asks the user to sign in, never saying whether the address was new", () => {

@@ -45,11 +45,11 @@ test("#1412: invite-only deployment hides Email link tab and refuses non-allowli
   await page.goto("/")
   await expect(page.getByRole("tab", { name: "Sign in" })).toBeVisible()
   await expect(page.getByRole("tab", { name: "Create account" })).toBeVisible()
-  // No mailer configured: the Email link tab must not be rendered at all.
-  await expect(page.getByRole("tab", { name: "Email link" })).toHaveCount(0)
 
   await page.getByRole("tab", { name: "Create account" }).click()
   await expect(page.getByText(/This alpha is invite-only/)).toBeVisible()
+  // Config has loaded (invite-only notice is rendered): Email link tab must not exist even when hidden.
+  await expect(page.getByRole("tab", { name: "Email link", includeHidden: true })).toHaveCount(0)
 
   // Non-allowlisted sign-up: renders server's refusal and NEVER says "Account ready".
   await page.getByLabel("Name").fill("New Customer")
@@ -296,17 +296,25 @@ test("#1414: switcher separates real workspaces from Examples, never renders raw
   await expect(undoBanner).toHaveCount(0)
   await expect(trigger).toContainText("North Ops Live")
 
-  // Archive again -> open Archived workspaces -> permanently delete it.
+  // Archive again -> open Archived workspaces -> confirm permanent deletion (Cancel keeps it, Delete permanently removes it and clears Undo notice).
   await trigger.click()
   await page.getByRole("menuitem", { name: "Archive workspace" }).click()
   await page.getByRole("dialog").getByRole("button", { name: "Archive workspace" }).click()
   await expect(trigger).toContainText("Core Analytics")
+  await expect(undoBanner).toContainText("North Ops Live")
   await trigger.click()
   await page.getByRole("menuitem", { name: /Archived workspaces/ }).click()
   const archivedDialog = page.getByRole("dialog")
   await expect(archivedDialog).toContainText("North Ops Live")
   await archivedDialog.getByRole("button", { name: "Delete" }).click()
+  await expect(archivedDialog.getByRole("heading", { name: /Delete “North Ops Live” permanently/ })).toBeVisible()
+  await archivedDialog.getByRole("button", { name: "Cancel" }).click()
+  await expect(archivedDialog).toContainText("North Ops Live")
+  await archivedDialog.getByRole("button", { name: "Delete" }).click()
+  await archivedDialog.getByRole("button", { name: "Delete permanently" }).click()
   await expect(archivedDialog).toContainText("No archived workspaces.")
+  await archivedDialog.getByRole("button", { name: "Close" }).click()
+  await expect(undoBanner).toHaveCount(0)
   expect(pageErrors).toEqual([])
 })
 
@@ -358,13 +366,19 @@ test("#1414: a slow connecting cell explains what it is waiting for and supports
     return route.fulfill({ status: 404, json: { code: "route.not_found", message: "not served" } })
   })
 
-  await page.goto("/")
-  await expect(page.locator("[data-scope]")).toContainText("Cold Workspace")
-  const banner = page.locator('[data-connection="connecting"]')
-  await expect(banner).toBeVisible({ timeout: 8_000 })
-  await expect(banner).toContainText("Connecting to your workspace cell…")
-  await banner.getByRole("button", { name: "Retry now" }).click()
-  releaseFirst?.()
-  await expect(page.locator("[data-scope]")).toContainText("Live · Owner")
-  await expect(page.getByRole("heading", { name: "Get started" })).toBeVisible()
+  try {
+    await page.goto("/")
+    await expect(page.locator("[data-scope]")).toContainText("Cold Workspace")
+    const banner = page.locator('[data-connection="connecting"]')
+    await expect(banner).toBeVisible({ timeout: 8_000 })
+    await expect(banner).toContainText("Connecting to your workspace cell…")
+    await banner.getByRole("button", { name: "Retry now" }).click()
+    // Prove Retry now actually dispatched a replacement probe before releasing the stalled first request.
+    await expect.poll(() => attempts, { timeout: 5_000 }).toBeGreaterThanOrEqual(2)
+    releaseFirst?.()
+    await expect(page.locator("[data-scope]")).toContainText("Live · Owner")
+    await expect(page.getByRole("heading", { name: "Get started" })).toBeVisible()
+  } finally {
+    releaseFirst?.()
+  }
 })

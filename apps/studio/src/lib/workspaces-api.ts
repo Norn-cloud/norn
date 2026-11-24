@@ -53,17 +53,32 @@ export class WorkspaceError extends Error {
   }
 }
 
+export class SessionRefreshError extends WorkspaceError {
+  constructor(message = "The change succeeded, but refreshing your session failed. Retry refreshing below.") {
+    super(503, "SESSION_REFRESH_FAILED", message)
+  }
+}
+
 export const WORKSPACES_QUERY_KEY = ["workspaces"] as const
 
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>
 
-/** Read the signed-in user's workspace document; returns null when no session server answers. */
+/** Read the signed-in user's workspace document; returns null only for supported absence (401/404). */
 export async function readWorkspaces(fetcher: Fetch = (input, init) => fetch(input, init)): Promise<WorkspacesDocument | null> {
-  const response = await fetcher("/api/workspaces", { headers: { accept: "application/json" } }).catch(() => null)
-  if (response === null || response.status === 401 || response.status === 404) return null
-  if (!response.ok) return null
+  let response: Response
+  try {
+    response = await fetcher("/api/workspaces", { headers: { accept: "application/json" } })
+  } catch {
+    throw new WorkspaceError(0, "WORKSPACES_UNAVAILABLE", "Could not load workspaces. Check your connection and retry.")
+  }
+  if (response.status === 401 || response.status === 404) return null
+  if (!response.ok) {
+    throw new WorkspaceError(response.status, "WORKSPACES_UNAVAILABLE", `Could not load workspaces (${response.status}).`)
+  }
   const body = (await response.json().catch(() => null)) as Partial<WorkspacesDocument> | null
-  if (body === null || !Array.isArray(body.workspaces) || !Array.isArray(body.archived) || body.creation === undefined) return null
+  if (body === null || !Array.isArray(body.workspaces) || !Array.isArray(body.archived) || body.creation === undefined) {
+    throw new WorkspaceError(response.status, "WORKSPACES_INVALID", "Received an invalid workspace list from the server.")
+  }
   return {
     workspaces: body.workspaces,
     archived: body.archived,
@@ -103,12 +118,21 @@ export const workspaceApi = {
   decideRequest: (id: string, decision: "approved" | "dismissed", fetcher?: Fetch) => mutate<{ readonly id: string; readonly status: string }>(`/api/workspaces/requests/${encodeURIComponent(id)}/decide`, "POST", { decision }, fetcher),
 }
 
-/** Forget previous workspace reads and cached cell mode, then re-read session, scope, mode and workspaces. */
+/**
+ * Forget previous workspace reads and cached cell mode, confirm the updated session from `/api/me`,
+ * then re-read workspaces, scope, and mode. Throws SessionRefreshError if the session refresh fails
+ * so callers never report completion or replay a committed mutation.
+ */
 export async function switchWorkspaceCaches(client: QueryClient): Promise<void> {
   await client.cancelQueries({ predicate: (query) => query.queryKey[0] !== "session" && query.queryKey[0] !== "auth-config" })
   forgetParkedCalls()
   refreshMode()
-  await client.refetchQueries({ queryKey: ["session"] })
+  try {
+    await client.refetchQueries({ queryKey: ["session"] }, { throwOnError: true })
+  } catch {
+    throw new SessionRefreshError()
+  }
+  if (client.getQueryState(["session"])?.status === "error") throw new SessionRefreshError()
   refreshMode()
   forgetReads(client, { refetchActive: true })
   await Promise.all([

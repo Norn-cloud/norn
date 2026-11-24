@@ -6,7 +6,7 @@
 CREATE TABLE "workspace_archive" (
   "organization_id" text NOT NULL PRIMARY KEY REFERENCES "organization" ("id") ON DELETE CASCADE,
   "archived_at" text NOT NULL,
-  "archived_by" text NOT NULL REFERENCES "user" ("id") ON DELETE CASCADE
+  "archived_by" text REFERENCES "user" ("id") ON DELETE SET NULL
 );
 
 CREATE TABLE "workspace_request" (

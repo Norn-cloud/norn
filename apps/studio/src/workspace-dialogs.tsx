@@ -41,12 +41,14 @@ export function WorkspaceDialogs({
   requests,
   onClose,
   onArchived,
+  onCleared,
 }: {
   readonly state: WorkspaceDialogState
   readonly archived: readonly WorkspaceItem[]
   readonly requests: readonly WorkspaceRequestItem[]
   readonly onClose: () => void
   readonly onArchived: (workspace: { readonly id: string; readonly name: string }) => void
+  readonly onCleared: (id: string) => void
 }) {
   return (
     <>
@@ -54,8 +56,8 @@ export function WorkspaceDialogs({
       {state.kind === "plan-limit" && <PlanLimitDialog reason={state.reason} upgradeUrl={state.upgradeUrl} onClose={onClose} />}
       {state.kind === "rename" && <RenameDialog workspace={state.workspace} onClose={onClose} />}
       {state.kind === "archive" && <ArchiveDialog workspace={state.workspace} onClose={onClose} onArchived={onArchived} />}
-      {state.kind === "delete" && <DeleteDialog workspace={state.workspace} onClose={onClose} />}
-      {state.kind === "archived" && <ArchivedDialog archived={archived} onClose={onClose} />}
+      {state.kind === "delete" && <DeleteDialog workspace={state.workspace} onClose={onClose} onCleared={onCleared} />}
+      {state.kind === "archived" && <ArchivedDialog archived={archived} onClose={onClose} onCleared={onCleared} />}
       {state.kind === "request" && <RequestDialog requests={requests} onClose={onClose} />}
     </>
   )
@@ -64,18 +66,15 @@ export function WorkspaceDialogs({
 function CreateDialog({ onClose }: { readonly onClose: () => void }) {
   const [name, setName] = useState("")
   const [pending, setPending] = useState(false)
+  const [committed, setCommitted] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const client = useQueryClient()
   const navigate = useNavigate()
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const trimmed = name.trim()
-    if (trimmed === "") return
+  async function refreshAfterCreate() {
     setPending(true)
     setError(null)
     try {
-      await workspaceApi.create(trimmed)
       await switchWorkspaceCaches(client)
       onClose()
       await navigate({ to: "/" })
@@ -83,6 +82,24 @@ function CreateDialog({ onClose }: { readonly onClose: () => void }) {
       setPending(false)
       setError(errorText(err))
     }
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (committed) { void refreshAfterCreate(); return }
+    const trimmed = name.trim()
+    if (trimmed === "") return
+    setPending(true)
+    setError(null)
+    try {
+      await workspaceApi.create(trimmed)
+      setCommitted(true)
+    } catch (err) {
+      setPending(false)
+      setError(errorText(err))
+      return
+    }
+    await refreshAfterCreate()
   }
 
   return (
@@ -95,12 +112,14 @@ function CreateDialog({ onClose }: { readonly onClose: () => void }) {
         <form onSubmit={(event) => void submit(event)} className="grid gap-4">
           <label className="grid gap-1.5 text-sm">
             <span className="font-medium">Workspace name</span>
-            <Input required autoFocus maxLength={80} placeholder="e.g. Operations" value={name} onChange={(event) => setName(event.target.value)} />
+            <Input required autoFocus maxLength={80} disabled={committed} placeholder="e.g. Operations" value={name} onChange={(event) => setName(event.target.value)} />
           </label>
           <ErrorLine error={error} />
           <DialogFooter>
             <Button type="button" variant="outline" disabled={pending} onClick={onClose}>Cancel</Button>
-            <Button type="submit" disabled={pending || name.trim() === ""}>{pending ? "Creating…" : "Create workspace"}</Button>
+            <Button type="submit" disabled={pending || (!committed && name.trim() === "")}>
+              {pending ? (committed ? "Refreshing…" : "Creating…") : committed ? "Retry refresh" : "Create workspace"}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -183,15 +202,15 @@ function ArchiveDialog({ workspace, onClose, onArchived }: {
   readonly onArchived: (workspace: { readonly id: string; readonly name: string }) => void
 }) {
   const [pending, setPending] = useState(false)
+  const [committed, setCommitted] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const client = useQueryClient()
   const navigate = useNavigate()
 
-  async function confirm() {
+  async function refreshAfterArchive() {
     setPending(true)
     setError(null)
     try {
-      await workspaceApi.archive(workspace.id)
       await switchWorkspaceCaches(client)
       onArchived({ id: workspace.id, name: workspace.name })
       onClose()
@@ -200,6 +219,21 @@ function ArchiveDialog({ workspace, onClose, onArchived }: {
       setPending(false)
       setError(errorText(err))
     }
+  }
+
+  async function confirm() {
+    if (committed) { void refreshAfterArchive(); return }
+    setPending(true)
+    setError(null)
+    try {
+      await workspaceApi.archive(workspace.id)
+      setCommitted(true)
+    } catch (err) {
+      setPending(false)
+      setError(errorText(err))
+      return
+    }
+    await refreshAfterArchive()
   }
 
   return (
@@ -212,31 +246,50 @@ function ArchiveDialog({ workspace, onClose, onArchived }: {
         <ErrorLine error={error} />
         <DialogFooter>
           <Button type="button" variant="outline" disabled={pending} onClick={onClose}>Cancel</Button>
-          <Button type="button" variant="destructive" disabled={pending} onClick={() => void confirm()}>{pending ? "Archiving…" : "Archive workspace"}</Button>
+          <Button type="button" variant={committed ? "default" : "destructive"} disabled={pending} onClick={() => void confirm()}>
+            {pending ? (committed ? "Refreshing…" : "Archiving…") : committed ? "Retry refresh" : "Archive workspace"}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   )
 }
 
-function DeleteDialog({ workspace, onClose }: { readonly workspace: WorkspaceItem; readonly onClose: () => void }) {
+function DeleteDialog({ workspace, onClose, onCleared }: { readonly workspace: WorkspaceItem; readonly onClose: () => void; readonly onCleared: (id: string) => void }) {
   const [pending, setPending] = useState(false)
+  const [committed, setCommitted] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const client = useQueryClient()
   const navigate = useNavigate()
 
-  async function confirm() {
+  async function refreshAfterDelete() {
     setPending(true)
     setError(null)
     try {
-      await workspaceApi.remove(workspace.id)
       await switchWorkspaceCaches(client)
+      onCleared(workspace.id)
       onClose()
       await navigate({ to: "/" })
     } catch (err) {
       setPending(false)
       setError(errorText(err))
     }
+  }
+
+  async function confirm() {
+    if (committed) { void refreshAfterDelete(); return }
+    setPending(true)
+    setError(null)
+    try {
+      await workspaceApi.remove(workspace.id)
+      setCommitted(true)
+      onCleared(workspace.id)
+    } catch (err) {
+      setPending(false)
+      setError(errorText(err))
+      return
+    }
+    await refreshAfterDelete()
   }
 
   return (
@@ -249,25 +302,29 @@ function DeleteDialog({ workspace, onClose }: { readonly workspace: WorkspaceIte
         <ErrorLine error={error} />
         <DialogFooter>
           <Button type="button" variant="outline" disabled={pending} onClick={onClose}>Cancel</Button>
-          <Button type="button" variant="destructive" disabled={pending} onClick={() => void confirm()}>{pending ? "Deleting…" : "Delete permanently"}</Button>
+          <Button type="button" variant={committed ? "default" : "destructive"} disabled={pending} onClick={() => void confirm()}>
+            {pending ? (committed ? "Refreshing…" : "Deleting…") : committed ? "Retry refresh" : "Delete permanently"}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   )
 }
 
-function ArchivedDialog({ archived, onClose }: { readonly archived: readonly WorkspaceItem[]; readonly onClose: () => void }) {
+function ArchivedDialog({ archived, onClose, onCleared }: { readonly archived: readonly WorkspaceItem[]; readonly onClose: () => void; readonly onCleared: (id: string) => void }) {
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [restoredId, setRestoredId] = useState<string | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<WorkspaceItem | null>(null)
   const [error, setError] = useState<string | null>(null)
   const client = useQueryClient()
   const navigate = useNavigate()
 
-  async function restore(item: WorkspaceItem) {
-    setBusyId(item.id)
+  async function refreshAfterRestore(id: string) {
+    setBusyId(id)
     setError(null)
     try {
-      await workspaceApi.restore(item.id, true)
       await switchWorkspaceCaches(client)
+      onCleared(id)
       onClose()
       await navigate({ to: "/" })
     } catch (err) {
@@ -276,12 +333,30 @@ function ArchivedDialog({ archived, onClose }: { readonly archived: readonly Wor
     }
   }
 
+  async function restore(item: WorkspaceItem) {
+    if (restoredId === item.id) { void refreshAfterRestore(item.id); return }
+    setBusyId(item.id)
+    setError(null)
+    try {
+      await workspaceApi.restore(item.id, true)
+      setRestoredId(item.id)
+      onCleared(item.id)
+    } catch (err) {
+      setBusyId(null)
+      setError(errorText(err))
+      return
+    }
+    await refreshAfterRestore(item.id)
+  }
+
   async function remove(item: WorkspaceItem) {
     setBusyId(item.id)
     setError(null)
     try {
       await workspaceApi.remove(item.id)
+      onCleared(item.id)
       await client.invalidateQueries({ queryKey: WORKSPACES_QUERY_KEY })
+      setConfirmDelete(null)
       setBusyId(null)
     } catch (err) {
       setBusyId(null)
@@ -292,35 +367,53 @@ function ArchivedDialog({ archived, onClose }: { readonly archived: readonly Wor
   return (
     <Dialog open onOpenChange={(open) => { if (!open && busyId === null) onClose() }}>
       <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Archived workspaces</DialogTitle>
-          <DialogDescription>Restore a workspace to reopen it, or delete it permanently.</DialogDescription>
-        </DialogHeader>
-        <ErrorLine error={error} />
-        {archived.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No archived workspaces.</p>
+        {confirmDelete !== null ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>Delete “{confirmDelete.name}” permanently?</DialogTitle>
+              <DialogDescription>This removes the workspace, its memberships, invitations, and API keys permanently. This action cannot be undone.</DialogDescription>
+            </DialogHeader>
+            <ErrorLine error={error} />
+            <DialogFooter>
+              <Button type="button" variant="outline" disabled={busyId !== null} onClick={() => { setConfirmDelete(null); setError(null) }}>Cancel</Button>
+              <Button type="button" variant="destructive" disabled={busyId !== null} onClick={() => void remove(confirmDelete)}>
+                {busyId === confirmDelete.id ? "Deleting…" : "Delete permanently"}
+              </Button>
+            </DialogFooter>
+          </>
         ) : (
-          <ul className="divide-y rounded-lg border">
-            {archived.map((item) => (
-              <li key={item.id} className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm">
-                <span className="min-w-0 truncate font-medium">{item.name}</span>
-                <div className="flex shrink-0 items-center gap-1.5">
-                  <Button type="button" size="xs" variant="outline" disabled={busyId !== null} onClick={() => void restore(item)}>
-                    <ArchiveRestore aria-hidden className="size-3.5" />Restore
-                  </Button>
-                  {item.canDelete && (
-                    <Button type="button" size="xs" variant="destructive" disabled={busyId !== null} onClick={() => void remove(item)}>
-                      <Trash2 aria-hidden className="size-3.5" />Delete
-                    </Button>
-                  )}
-                </div>
-              </li>
-            ))}
-          </ul>
+          <>
+            <DialogHeader>
+              <DialogTitle>Archived workspaces</DialogTitle>
+              <DialogDescription>Restore a workspace to reopen it, or delete it permanently.</DialogDescription>
+            </DialogHeader>
+            <ErrorLine error={error} />
+            {archived.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No archived workspaces.</p>
+            ) : (
+              <ul className="divide-y rounded-lg border">
+                {archived.map((item) => (
+                  <li key={item.id} className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm">
+                    <span className="min-w-0 truncate font-medium">{item.name}</span>
+                    <div className="flex shrink-0 items-center gap-1.5">
+                      <Button type="button" size="xs" variant="outline" disabled={busyId !== null} onClick={() => void restore(item)}>
+                        <ArchiveRestore aria-hidden className="size-3.5" />{restoredId === item.id ? "Retry refresh" : "Restore"}
+                      </Button>
+                      {item.canDelete && restoredId !== item.id && (
+                        <Button type="button" size="xs" variant="destructive" disabled={busyId !== null} onClick={() => { setError(null); setConfirmDelete(item) }}>
+                          <Trash2 aria-hidden className="size-3.5" />Delete
+                        </Button>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <DialogFooter>
+              <Button type="button" variant="outline" disabled={busyId !== null} onClick={onClose}>Close</Button>
+            </DialogFooter>
+          </>
         )}
-        <DialogFooter>
-          <Button type="button" variant="outline" disabled={busyId !== null} onClick={onClose}>Close</Button>
-        </DialogFooter>
       </DialogContent>
     </Dialog>
   )

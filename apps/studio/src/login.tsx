@@ -31,8 +31,8 @@ function Field({ label, ...props }: { readonly label: string } & React.Component
  * server) ask for an email link. Capabilities come from `/api/auth/config`, never a client flag.
  */
 export function LoginPage({ initial = "sign-in", config }: { readonly initial?: Mode; readonly config?: AuthConfig }) {
-  const fetched = useAuthConfig().data
-  const activeConfig = config ?? fetched ?? DEFAULT_AUTH_CONFIG
+  const authConfig = useAuthConfig()
+  const activeConfig = config ?? authConfig.data ?? DEFAULT_AUTH_CONFIG
   const modes = activeConfig.magicLink ? MODES : MODES.filter((entry) => entry.mode !== "email-link")
   const [mode, setMode] = useState<Mode>(initial)
   const activeMode: Mode = mode === "email-link" && !activeConfig.magicLink ? "sign-in" : mode
@@ -97,6 +97,12 @@ export function LoginPage({ initial = "sign-in", config }: { readonly initial?: 
                 </button>
               ))}
             </div>
+            {config === undefined && authConfig.isError && (
+              <p role="status" className="flex items-center justify-between gap-2 text-meta text-muted-foreground">
+                <span>Could not load all sign-in options.</span>
+                <button type="button" className="underline underline-offset-4 hover:text-foreground" onClick={() => void authConfig.refetch()}>Retry</button>
+              </p>
+            )}
             <form key={activeMode} onSubmit={submit} className="grid gap-3">
               {activeMode === "sign-up" && activeConfig.inviteOnly && (
                 <p className="rounded-md border bg-surface-subtle px-3 py-2 text-meta text-muted-foreground">

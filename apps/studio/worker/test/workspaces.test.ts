@@ -313,7 +313,106 @@ test("#1414: accepting an invitation to an archived workspace is refused until r
 
   // After restore, the same pending invitation succeeds.
   expect((await mutate(env, "POST", `/api/workspaces/${created.id}/restore`, { activate: false }, { cookie: owner.cookie })).status).toBe(200)
+  // Race: archive commits right after the pre-check and before the atomic acceptance write -> invitation stays pending, 409 returned.
+  const origPrepare = db.prepare.bind(db)
+  let injected = false
+  db.prepare = ((sql: string, ...rest: unknown[]) => {
+    if (!injected && sql.includes(`update "invitation" set "status" = 'accepted'`)) {
+      injected = true
+      origPrepare(`insert into "workspace_archive" ("organization_id", "archived_at", "archived_by") values (?, ?, ?)`).run(created.id, new Date().toISOString(), owner.userId)
+    }
+    return (origPrepare as (...args: unknown[]) => ReturnType<typeof origPrepare>)(sql, ...rest)
+  }) as typeof db.prepare
+  const raced = await mutate(env, "POST", "/api/workspaces/invitations/accept", { invitationId: invId }, { cookie: invitee.cookie })
+  db.prepare = origPrepare
+  expect(raced.status).toBe(409)
+  expect(((await raced.json()) as { code: string }).code).toBe("WORKSPACE_ARCHIVED")
+  expect(db.prepare(`select "status" from "invitation" where "id" = ?`).get(invId)).toEqual({ status: "pending" })
+  expect(db.prepare(`select count(*) as n from "member" where "organizationId" = ? and "userId" = ?`).get(created.id, invitee.userId)).toEqual({ n: 0 })
+
+  // Restore once more and accept cleanly.
+  expect((await mutate(env, "POST", `/api/workspaces/${created.id}/restore`, { activate: false }, { cookie: owner.cookie })).status).toBe(200)
   const accepted = await mutate(env, "POST", "/api/workspaces/invitations/accept", { invitationId: invId }, { cookie: invitee.cookie })
   expect(accepted.status).toBe(200)
   expect(db.prepare(`select count(*) as n from "member" where "organizationId" = ? and "userId" = ?`).get(created.id, invitee.userId)).toEqual({ n: 1 })
+})
+
+test("#1414: deleting the archiving user preserves archive state (ON DELETE SET NULL) and keeps API keys blocked", async () => {
+  const { db, env } = stage()
+  db.exec("PRAGMA foreign_keys = ON")
+  const owner = await enroll(env, "archiver@example.com", "Archiver")
+  const created = (await (await mutate(env, "POST", "/api/workspaces", { name: "Locked Org" }, { cookie: owner.cookie })).json()) as { id: string }
+  expect((await mutate(env, "POST", `/api/workspaces/${created.id}/archive`, {}, { cookie: owner.cookie })).status).toBe(200)
+  // Deleting the user who archived the org must NOT cascade-delete workspace_archive.
+  db.prepare(`delete from "user" where "id" = ?`).run(owner.userId)
+  const archiveRow = db.prepare(`select "organization_id", "archived_by" from "workspace_archive" where "organization_id" = ?`).get(created.id) as { organization_id: string; archived_by: string | null } | null
+  expect(archiveRow).toEqual({ organization_id: created.id, archived_by: null })
+})
+
+test("#1414: workspace is hidden and unactivatable while host cell provisioning is in flight, and rolls back if host throws", async () => {
+  let releaseProvision!: () => void
+  let provisionStarted!: () => void
+  const started = new Promise<void>((resolve) => { provisionStarted = resolve })
+  const gate = new Promise<void>((resolve) => { releaseProvision = resolve })
+  let throwOnCall = false
+  const gatedHost = {
+    fetch: async (request: Request) => {
+      const url = new URL(request.url)
+      if (url.pathname === "/v1/cell:provision") {
+        if (throwOnCall) throw new Error("unexpected host crash")
+        provisionStarted()
+        await gate
+        return Response.json({ outcome: "provisioned", cellId: "c1", definitionsVersion: 1, receiptSha256: "b".repeat(64), baseSha256: BASE_DIGEST })
+      }
+      return Response.json({ artifacts: [] })
+    },
+  } as unknown as Fetcher
+
+  const { db, env } = stage({ host: gatedHost, defaultEnvironmentId: "prod" })
+  const owner = await enroll(env, "in-flight@example.com", "Owner")
+
+  // Kick off creation without awaiting completion yet.
+  const creating = mutate(env, "POST", "/api/workspaces", { name: "In Flight Cell" }, { cookie: owner.cookie })
+  await started
+  const pendingOrg = db.prepare(`select "id" from "organization" where "name" = 'In Flight Cell'`).get() as { id: string } | null
+  expect(pendingOrg).not.toBeNull()
+
+  // While provisioning is in flight: list omits it and activate refuses with 409 WORKSPACE_PROVISIONING.
+  const listedMid = (await (await call(env, "/api/workspaces", { headers: { cookie: owner.cookie } })).json()) as WorkspacesDocument
+  expect(listedMid.workspaces.some((w) => w.id === pendingOrg!.id)).toBe(false)
+  const actMid = await mutate(env, "POST", `/api/workspaces/${pendingOrg!.id}/activate`, {}, { cookie: owner.cookie })
+  expect(actMid.status).toBe(409)
+  expect(((await actMid.json()) as { code: string }).code).toBe("WORKSPACE_PROVISIONING")
+
+  // Once provisioning resolves, creation completes and the workspace appears with hasCell: true.
+  releaseProvision()
+  const finished = await creating
+  expect(finished.status).toBe(200)
+  const listedAfter = (await (await call(env, "/api/workspaces", { headers: { cookie: owner.cookie } })).json()) as WorkspacesDocument
+  expect(listedAfter.workspaces.find((w) => w.id === pendingOrg!.id)).toMatchObject({ name: "In Flight Cell", hasCell: true, active: true })
+
+  // If the host throws unexpectedly, the workspace and its membership are rolled back cleanly.
+  throwOnCall = true
+  const crashed = await mutate(env, "POST", "/api/workspaces", { name: "Crashed Cell" }, { cookie: owner.cookie })
+  expect(crashed.status).toBe(502)
+  expect(db.prepare(`select count(*) as n from "organization" where "name" = 'Crashed Cell'`).get()).toEqual({ n: 0 })
+})
+
+test("#1414: pending workspace requests stay visible ahead of 50+ newer decided requests", async () => {
+  const { db, env } = stage()
+  const owner = await enroll(env, "history@example.com", "History Owner")
+  const activeOrg = (db.query(`select "organizationId" from "member" where "userId" = ?`).get(owner.userId) as { organizationId: string }).organizationId
+  // Insert 5 old pending requests, then 55 newer decided requests.
+  for (let i = 0; i < 5; i++) {
+    db.prepare(`insert into "workspace_request" ("id", "user_id", "organization_id", "name", "note", "status", "created_at") values (?, ?, ?, ?, '', 'pending', ?)`)
+      .run(`old-pending-${i}`, owner.userId, activeOrg, `Old Pending ${i}`, `2026-01-01T00:00:0${i}.000Z`)
+  }
+  for (let i = 0; i < 55; i++) {
+    db.prepare(`insert into "workspace_request" ("id", "user_id", "organization_id", "name", "note", "status", "created_at") values (?, ?, ?, ?, '', 'dismissed', ?)`)
+      .run(`new-decided-${i}`, owner.userId, activeOrg, `New Decided ${i}`, `2026-11-01T00:${String(i).padStart(2, "0")}:00.000Z`)
+  }
+  const doc = (await (await call(env, "/api/workspaces", { headers: { cookie: owner.cookie } })).json()) as WorkspacesDocument
+  expect(doc.requests).toHaveLength(50)
+  const pendingIds = doc.requests.filter((r) => r.status === "pending").map((r) => r.id).sort()
+  expect(pendingIds).toEqual(["old-pending-0", "old-pending-1", "old-pending-2", "old-pending-3", "old-pending-4"])
 })

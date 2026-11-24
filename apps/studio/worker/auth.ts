@@ -340,6 +340,8 @@ export function isOrganizationArchived(auth: Auth, organizationId: string): Prom
 export const BILLING_PAYER = "norn.billingPayer"
 /** Set on workspaces created while billing is on: only those are limited (migration 0011). */
 export const BILLED = "norn.billed"
+/** Set while a newly created workspace's cell is still provisioning on NORN_HOST (excluded from opening until ready). */
+export const PROVISIONING = "norn.provisioning"
 /** Reserved metadata is assigned only by server-side provisioning. */
 const reservedMetadata = (key: string) => key === "environmentId" || key.startsWith("norn.")
 function metadataObject(value: unknown): Record<string, unknown> {
@@ -347,6 +349,7 @@ function metadataObject(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}
 }
 export const publicMetadata = (value: unknown) => Object.fromEntries(Object.entries(metadataObject(value)).filter(([key]) => !reservedMetadata(key)))
+export const isProvisioningMetadata = (value: unknown): boolean => metadataObject(value)[PROVISIONING] === true
 
 export function authOptions(config: AuthConfig, self: Self = {}) {
   return {
@@ -523,7 +526,11 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
                 sortBy: { field: "createdAt", direction: "asc" },
                 limit: 100,
               })
-              for (const row of rows) if (!(await isArchivedInDb(db, row.organizationId))) return row
+              for (const row of rows) {
+                if (await isArchivedInDb(db, row.organizationId)) continue
+                const org = await adapter.findOne<{ metadata?: unknown }>({ model: "organization", where: [{ field: "id", value: row.organizationId }] })
+                if (org !== null && !isProvisioningMetadata(org.metadata)) return row
+              }
               return undefined
             }
             // The stage's default organization when the user belongs to it, else the earliest non-archived membership
@@ -565,12 +572,16 @@ export async function activeMembership(auth: Auth, userId: string, activeOrganiz
     limit: activeOrganizationId == null ? 100 : 1,
   })
   let member: { organizationId: string; role: string } | undefined
+  let org: { name: string; metadata?: unknown } | null = null
   for (const candidate of rows) {
-    if (!(await isOrganizationArchived(auth, candidate.organizationId))) { member = candidate; break }
+    if (await isOrganizationArchived(auth, candidate.organizationId)) continue
+    const found = await adapter.findOne<{ name: string; metadata?: unknown }>({ model: "organization", where: [{ field: "id", value: candidate.organizationId }] })
+    if (found === null || isProvisioningMetadata(found.metadata)) continue
+    member = candidate
+    org = found
+    break
   }
-  if (member === undefined) return null
-  const org = await adapter.findOne<{ name: string; metadata?: unknown }>({ model: "organization", where: [{ field: "id", value: member.organizationId }] })
-  if (org === null) return null
+  if (member === undefined || org === null) return null
   const environmentId = metadataObject(org.metadata).environmentId
   return { organizationId: member.organizationId, organizationName: org.name, role: member.role, environmentId: typeof environmentId === "string" && environmentId.trim() !== "" ? environmentId : null }
 }

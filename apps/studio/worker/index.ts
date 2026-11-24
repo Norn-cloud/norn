@@ -1,5 +1,5 @@
 import { forwardToHost, originAllowed, resolveActor } from "./actor.ts"
-import { activeMembership, createAuth, isOrganizationArchived, verifyMagicLinkOrigin, type Auth, type MagicLinkMail } from "./auth.ts"
+import { activeMembership, createAuth, isOrganizationArchived, isProvisioningMetadata, verifyMagicLinkOrigin, type Auth, type MagicLinkMail } from "./auth.ts"
 import { passwordScrypt } from "./password.ts"
 import { clientIpHeader } from "./client-ip.ts"
 import { connectors } from "./connectors.ts"
@@ -293,11 +293,17 @@ async function blockArchivedSetActive(request: Request, env: Env): Promise<Respo
     return null
   }
   if (typeof organizationId !== "string" || organizationId === "") return null
-  if (!(await isOrganizationArchived(auth(env), organizationId))) return null
   const { adapter } = await auth(env).$context
   const member = await adapter.findOne<{ id: string }>({ model: "member", where: [{ field: "userId", value: session.user.id }, { field: "organizationId", value: organizationId }] })
   if (member === null) return null
-  return Response.json({ code: "WORKSPACE_ARCHIVED", message: "Restore this workspace before opening it." }, { status: 409, headers: { "cache-control": "no-store" } })
+  if (await isOrganizationArchived(auth(env), organizationId)) {
+    return Response.json({ code: "WORKSPACE_ARCHIVED", message: "Restore this workspace before opening it." }, { status: 409, headers: { "cache-control": "no-store" } })
+  }
+  const org = await adapter.findOne<{ metadata?: unknown }>({ model: "organization", where: [{ field: "id", value: organizationId }] })
+  if (org !== null && isProvisioningMetadata(org.metadata)) {
+    return Response.json({ code: "WORKSPACE_PROVISIONING", message: "This workspace is still being provisioned." }, { status: 409, headers: { "cache-control": "no-store" } })
+  }
+  return null
 }
 
 /** The signed-in user and active organization, for the shell. Display only; Norn decides permissions. */
