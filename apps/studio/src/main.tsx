@@ -1,29 +1,48 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-router"
 import { BarChart3, Blend, Bookmark, BookMarked, ChartLine, Columns2, Database, FileDiff, Fingerprint, GitCompareArrows, House, Inbox, LayoutDashboard, Map as MapIcon, Network, Plug, Rows3, ShieldCheck, Workflow } from "lucide-react"
-import { StrictMode, useMemo } from "react"
+import { StrictMode, Suspense, lazy, useEffect, useMemo, useState } from "react"
+import { useAssistant } from "@/assistant-slot"
 import { Button } from "@/components/ui/button"
-import { CellUnavailable, scopeFromAccount } from "@/lib/definitions"
+import { CellUnavailable, scopeFromAccount, type StudioScope } from "@/lib/definitions"
 import { CellRefusal, NotServed } from "@/lib/live-transport"
 import { endSession, useAccount, type Account } from "@/lib/session"
 import { applyAppearance, storedShellChrome, storedSkin } from "@/lib/appearance"
 import { storedCustomTheme } from "@/lib/studio-theme"
 import "./bones/registry.ts"
 import { isSectionVisible, useLearningCapabilities } from "@/lib/learning/capabilities"
+import {
+  useDecisionBadge,
+  useImportTriageBadge,
+  useQuestionsMenu,
+  useRecordsMenu,
+  useRulesMenu,
+  useSourcesMenu,
+  useViewsMenu,
+  useWorkflowsMenu,
+} from "@/lib/nav-menus"
 import { LoginPage } from "./login.tsx"
 import { oauthPage } from "./oauth.tsx"
 import { createRoot } from "react-dom/client"
-import { useDecisionBadge } from "./decisions/inbox.tsx"
-import { useRulesMenu } from "./guarantees.tsx"
-import { useImportTriageBadge } from "./imports/import-triage-page.tsx"
-import { useQuestionsMenu } from "./questions.tsx"
 import { routeTree } from "./routes.tsx"
-import { Sidekick, useSidekickServed } from "./sidekick/panel.tsx"
+import { useSidekickServed } from "./sidekick/served.ts"
 import { Shell, type Section } from "./shell.tsx"
-import { useRecordsMenu, useSourcesMenu } from "./sources.tsx"
-import { useViewsMenu } from "./views.tsx"
-import { useWorkflowsMenu } from "./workflows.tsx"
 import "./index.css"
+
+// Loaded only once the user opens Sidekick, keeping Streamdown and the ACP SDK out of the initial bundle.
+const LazySidekick = lazy(() => import("./sidekick/panel.tsx").then((module) => ({ default: module.Sidekick })))
+
+function DeferredSidekick({ scope, scopeKey }: { readonly scope?: StudioScope | null; readonly scopeKey?: string }) {
+  const { open } = useAssistant()
+  const [activated, setActivated] = useState(open)
+  useEffect(() => { if (open) setActivated(true) }, [open])
+  if (!activated) return null
+  return (
+    <Suspense fallback={<p role="status" className="p-4 text-sm text-muted-foreground">Loading Sidekick…</p>}>
+      <LazySidekick scope={scope} scopeKey={scopeKey} />
+    </Suspense>
+  )
+}
 
 /**
  * Every destination, in the perspective that lists it and the space (sidebar section) it sits under.
@@ -66,7 +85,7 @@ function SignedInShell({ account, sidekick }: { readonly account: Account; reado
   return (
     <Shell
       sections={sections}
-      assistant={sidekick ? { title: "Sidekick", content: <Sidekick key={sidekickScopeKey} scope={sidekickScope} scopeKey={sidekickScopeKey} /> } : undefined}
+      assistant={sidekick ? { title: "Sidekick", content: <DeferredSidekick key={sidekickScopeKey} scope={sidekickScope} scopeKey={sidekickScopeKey} /> } : undefined}
       account={account}
       onSignOut={() => void signOut()}
     />

@@ -1,68 +1,50 @@
-import { createRoute, redirect, type AnyRootRoute, type RouteComponent } from "@tanstack/react-router"
-import { QuestionBuilderPage } from "./builder.tsx"
+import { createRoute, lazyRouteComponent, redirect, type AnyRootRoute, type RouteComponent } from "@tanstack/react-router"
 import { HomePage } from "./home.tsx"
-import { CanvasPage } from "./canvas.tsx"
-import { ConnectionsPage } from "./connections.tsx"
-import { QuestionTreePage } from "./question-tree.tsx"
-import { DashboardBoardPage, DashboardEditorPage, DashboardsPage } from "./dashboards.tsx"
-import { RulesPage } from "./guarantees.tsx"
-import { MarkingsPage } from "./markings.tsx"
 import { PAGES, type PagePath } from "./lib/pages.ts"
-import { RecordsPage } from "./grid/records-page.tsx"
-import { DecisionsPage } from "./decisions/inbox.tsx"
-import { ImportTriagePage } from "./imports/import-triage-page.tsx"
-import { RunPage } from "./runs/run-page.tsx"
-import { CasesPage } from "./learning/cases-page.tsx"
-import { EpisodePage } from "./learning/episode-page.tsx"
-import { EpisodesPage } from "./learning/episodes-page.tsx"
-import { MisfitPage } from "./learning/misfit-page.tsx"
-import { ProposalDetailPage, ProposalsPage } from "./learning/proposals-page.tsx"
-import { SourcesItemPage } from "./objects.tsx"
-import { QuestionPage, QuestionsPage } from "./questions.tsx"
-import { SemanticMapPage } from "./semantic-map.tsx"
-import { ObjectTypePage, SourcesPage } from "./sources.tsx"
-import { TransformPage, TransformsPage } from "./transforms.tsx"
-import { ToolBindings } from "./tool-bindings.tsx"
-import { ViewDetailPage, ViewEditorPage, ViewsPage } from "./views.tsx"
-import { WorkflowsPage } from "./workflows.tsx"
 
-const ConnectionsWithBindings = () => <ConnectionsPage><ToolBindings /></ConnectionsPage>
+const ConnectionsWithBindings = lazyRouteComponent(async () => {
+  const [{ ConnectionsPage }, { ToolBindings }] = await Promise.all([
+    import("./connections.tsx"),
+    import("./tool-bindings.tsx"),
+  ])
+  return { default: () => <ConnectionsPage><ToolBindings /></ConnectionsPage> }
+})
 
 /** Every page's component: one for each entry of PAGES, and no other (checked by the type). */
 export const COMPONENTS: { readonly [P in PagePath]: RouteComponent } = {
   "/": HomePage,
-  "/sources": SourcesPage,
-  "/sources/$concept": ObjectTypePage,
-  "/sources/$concept/$": SourcesItemPage,
-  "/objects/$type": RecordsPage,
-  "/transforms": TransformsPage,
-  "/transforms/$id": TransformPage,
-  "/decisions": DecisionsPage,
-  "/imports": ImportTriagePage,
-  "/runs/$id": RunPage,
-  "/learning/episodes": EpisodesPage,
-  "/episodes/$id": EpisodePage,
-  "/learning/cases": CasesPage,
-  "/learning/misfit": MisfitPage,
-  "/learning/proposals": ProposalsPage,
-  "/learning/proposals/$id": ProposalDetailPage,
-  "/metrics": QuestionsPage,
-  "/metrics/new": QuestionBuilderPage,
-  "/metrics/build": QuestionTreePage,
-  "/metrics/$name": QuestionPage,
-  "/dashboards": DashboardsPage,
-  "/dashboards/new": DashboardEditorPage,
-  "/dashboards/$id": DashboardBoardPage,
-  "/dashboards/$id/edit": DashboardEditorPage,
-  "/views": ViewsPage,
-  "/views/new": ViewEditorPage,
-  "/views/$id": ViewDetailPage,
-  "/views/$id/edit": ViewEditorPage,
-  "/workflows": WorkflowsPage,
-  "/map": SemanticMapPage,
-  "/canvas": CanvasPage,
-  "/rules": RulesPage,
-  "/markings": MarkingsPage,
+  "/sources": lazyRouteComponent(() => import("./sources.tsx"), "SourcesPage"),
+  "/sources/$concept": lazyRouteComponent(() => import("./sources.tsx"), "ObjectTypePage"),
+  "/sources/$concept/$": lazyRouteComponent(() => import("./objects.tsx"), "SourcesItemPage"),
+  "/objects/$type": lazyRouteComponent(() => import("./grid/records-page.tsx"), "RecordsPage"),
+  "/transforms": lazyRouteComponent(() => import("./transforms.tsx"), "TransformsPage"),
+  "/transforms/$id": lazyRouteComponent(() => import("./transforms.tsx"), "TransformPage"),
+  "/decisions": lazyRouteComponent(() => import("./decisions/inbox.tsx"), "DecisionsPage"),
+  "/imports": lazyRouteComponent(() => import("./imports/import-triage-page.tsx"), "ImportTriagePage"),
+  "/runs/$id": lazyRouteComponent(() => import("./runs/run-page.tsx"), "RunPage"),
+  "/learning/episodes": lazyRouteComponent(() => import("./learning/episodes-page.tsx"), "EpisodesPage"),
+  "/episodes/$id": lazyRouteComponent(() => import("./learning/episode-page.tsx"), "EpisodePage"),
+  "/learning/cases": lazyRouteComponent(() => import("./learning/cases-page.tsx"), "CasesPage"),
+  "/learning/misfit": lazyRouteComponent(() => import("./learning/misfit-page.tsx"), "MisfitPage"),
+  "/learning/proposals": lazyRouteComponent(() => import("./learning/proposals-page.tsx"), "ProposalsPage"),
+  "/learning/proposals/$id": lazyRouteComponent(() => import("./learning/proposals-page.tsx"), "ProposalDetailPage"),
+  "/metrics": lazyRouteComponent(() => import("./questions.tsx"), "QuestionsPage"),
+  "/metrics/new": lazyRouteComponent(() => import("./builder.tsx"), "QuestionBuilderPage"),
+  "/metrics/build": lazyRouteComponent(() => import("./question-tree.tsx"), "QuestionTreePage"),
+  "/metrics/$name": lazyRouteComponent(() => import("./questions.tsx"), "QuestionPage"),
+  "/dashboards": lazyRouteComponent(() => import("./dashboards.tsx"), "DashboardsPage"),
+  "/dashboards/new": lazyRouteComponent(() => import("./dashboards.tsx"), "DashboardEditorPage"),
+  "/dashboards/$id": lazyRouteComponent(() => import("./dashboards.tsx"), "DashboardBoardPage"),
+  "/dashboards/$id/edit": lazyRouteComponent(() => import("./dashboards.tsx"), "DashboardEditorPage"),
+  "/views": lazyRouteComponent(() => import("./views.tsx"), "ViewsPage"),
+  "/views/new": lazyRouteComponent(() => import("./views.tsx"), "ViewEditorPage"),
+  "/views/$id": lazyRouteComponent(() => import("./views.tsx"), "ViewDetailPage"),
+  "/views/$id/edit": lazyRouteComponent(() => import("./views.tsx"), "ViewEditorPage"),
+  "/workflows": lazyRouteComponent(() => import("./workflows.tsx"), "WorkflowsPage"),
+  "/map": lazyRouteComponent(() => import("./semantic-map.tsx"), "SemanticMapPage"),
+  "/canvas": lazyRouteComponent(() => import("./canvas.tsx"), "CanvasPage"),
+  "/rules": lazyRouteComponent(() => import("./guarantees.tsx"), "RulesPage"),
+  "/markings": lazyRouteComponent(() => import("./markings.tsx"), "MarkingsPage"),
   "/connections": ConnectionsWithBindings,
 }
 

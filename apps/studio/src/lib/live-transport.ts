@@ -7,7 +7,7 @@ import { queryOptions, type QueryClient, useQuery, useQueryClient } from "@tanst
 import { useEffect } from "react"
 import { CellUnavailable, StudioScopeError, defaultFetch, isReadMethod, parseUnavailableDetail, readAtScope, readStudioScope, recordCellReachable, resolveWriteScope, sameStudioScope, scopedHostFetch, studioScopeKey, useStudioScope, type ScopedRequestInit, type StudioScope, type UnavailableDetail } from "./definitions.ts"
 import { readDocument, type Read } from "./exact.ts"
-import { readsOf } from "./objects.ts"
+import { readsOf } from "./record-name.ts"
 import type { Artifact, Envelope, LinkPage, ObjectPage, ObjectRecord, SourceLineage, Transport } from "./transport.ts"
 import type { CountedLinkPage, LinkCounts } from "./record-page.ts"
 import { totalOf, type Total } from "./records-query.ts"

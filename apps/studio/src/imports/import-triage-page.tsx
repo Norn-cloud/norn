@@ -88,18 +88,7 @@ const EMPTY_BATCH_DRAFT: BatchDraftState = {
   supersessions: {},
 }
 
-/** Sidebar rail badge showing total open triage items awaiting operator review. */
-export function useImportTriageBadge(): number | undefined {
-  const read = useQuery({
-    queryKey: QUERY_KEY,
-    queryFn: () => fetchImportTriage(),
-    refetchInterval: 60_000,
-    retry: false,
-  })
-  if (read.data?.kind !== "ok") return undefined
-  const total = triageSummary(read.data.value).totalAttention
-  return total > 0 ? total : undefined
-}
+export { useImportTriageBadge } from "@/lib/nav-menus"
 
 /**
  * `/imports`: Dedicated domain-agnostic Split-Pane Import Triage surface (separate from DecisionSheet).

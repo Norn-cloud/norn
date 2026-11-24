@@ -18,5 +18,25 @@ export default defineConfig({
   server: { fs: { allow: ["../.."] } },
   // The contact sheet (sheet.html) builds beside the app so a deployed stage serves it too.
   // The app's input stays `index`: its entry chunk is assets/index-<hash>.js, which the deploys' served-build checks read.
-  build: { rollupOptions: { input: { index: fileURLToPath(new URL("./index.html", import.meta.url)), sheet: fileURLToPath(new URL("./sheet.html", import.meta.url)) } } },
+  build: {
+    rollupOptions: {
+      input: {
+        index: fileURLToPath(new URL("./index.html", import.meta.url)),
+        sheet: fileURLToPath(new URL("./sheet.html", import.meta.url)),
+      },
+      output: {
+        codeSplitting: {
+          includeDependenciesRecursively: false,
+          groups: [
+            { name: "vendor-react", test: /node_modules\/(react|react-dom|scheduler)\//, priority: 30 },
+            { name: "vendor-tanstack", test: /node_modules\/@tanstack\/(react-router|router-core|history|react-query|query-core|store|react-store)\//, priority: 25 },
+            { name: "vendor-recharts", test: /node_modules\/recharts\//, priority: 20 },
+            { name: "vendor-xyflow", test: /node_modules\/@xyflow\//, priority: 20 },
+            { name: "vendor-acp", test: /node_modules\/@agentclientprotocol\//, priority: 20 },
+            { name: "vendor-parse5", test: /node_modules\/parse5\//, priority: 20 },
+          ],
+        },
+      },
+    },
+  },
 })

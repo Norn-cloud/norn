@@ -2,7 +2,6 @@ import { Check, LoaderCircle, SquarePen, Sparkles, X } from "lucide-react"
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react"
 import { Streamdown } from "streamdown"
 import { StickToBottom } from "use-stick-to-bottom"
-import { useQuery } from "@tanstack/react-query"
 import { useAssistant } from "@/assistant-slot"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -11,8 +10,10 @@ import { cn } from "@/lib/utils"
 import { getDisplayedScope, type StudioScope } from "@/lib/definitions"
 import type { ToolHost } from "@/widget/bridge"
 import type { View } from "@/widget/views"
-import { SidekickSession, sidekickServed, type ViewDelivery } from "./client.ts"
+import { SidekickSession, type ViewDelivery } from "./client.ts"
 import { applyUpdate, promptItem, toolWords, viewItem, type Item, type Transcript } from "./transcript.ts"
+
+export { useSidekickServed } from "./served.ts"
 
 /**
  * Sidekick: the person's agent inside Studio. It answers by calling Norn's own tools as the
@@ -31,11 +32,6 @@ export const SUGGESTIONS = ["What's our stock worth?", "Where does that number c
 /** Enter sends; Shift+Enter is a new line; Enter that confirms an IME composition is the input method's. */
 export const sendsOnEnter = (event: { readonly key: string; readonly shiftKey: boolean; readonly nativeEvent: { readonly isComposing?: boolean } }) =>
   event.key === "Enter" && !event.shiftKey && event.nativeEvent.isComposing !== true
-
-/** Whether this deployment serves Sidekick: asked once per page load. */
-export function useSidekickServed(): boolean {
-  return useQuery({ queryKey: ["sidekick-served"], queryFn: () => sidekickServed(), staleTime: Number.POSITIVE_INFINITY, retry: false }).data === true
-}
 
 function ToolRow({ item }: { readonly item: Extract<Item, { kind: "tool" }> }) {
   const failed = item.status === "failed"

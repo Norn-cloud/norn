@@ -8,11 +8,10 @@ import { Toolbar, ToolbarButton, ToolbarLink, ToolbarSeparator } from "@ui-sdk/r
 import { Tree, TreeGroup, TreeItem, TreeItemIndicator, TreeItemLabel } from "@ui-sdk/react/tree"
 import { AssistantPanel, AssistantProvider, useAssistant, type AssistantContent } from "@/assistant-slot"
 import { Bell, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, CircleEllipsis, CloudOff, Code2, Keyboard, LayoutGrid, Loader2, LogOut, MessageCircle, Palette, PanelBottom, PanelLeft, Search, SlidersHorizontal, Sparkles, Wrench, type LucideIcon } from "lucide-react"
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react"
+import { Suspense, lazy, useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react"
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
 import { ChromeDock, ChromeDockOption, ChromeDockTray, ChromeDockTrigger } from "@/components/ui/chrome-dock"
-import { CustomThemeDialog } from "@/components/custom-theme-dialog"
 import { AppearanceProvider, SHELLS, SKINS, isShellChrome, isSkin, useAppearance, type ShellChrome, type Skin } from "@/lib/appearance"
 import { PERSPECTIVES, PerspectiveProvider, isPerspective, usePerspective, type Perspective } from "@/lib/perspective"
 import { Sidebar, SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar"
@@ -33,6 +32,8 @@ import { useAccount, type Account } from "@/lib/session"
 import { WorkspaceError, useWorkspaces, type WorkspacesDocument } from "@/lib/workspaces-api"
 import nornMark from "@/assets/norn-mark.webp"
 import { Keys } from "@/components/keys"
+
+const LazyCustomThemeDialog = lazy(() => import("@/components/custom-theme-dialog").then((module) => ({ default: module.CustomThemeDialog })))
 
 export interface Section {
   readonly path: string
@@ -359,7 +360,7 @@ function AppearanceTray({ side = "bottom", variant = "bar" }: { readonly side?: 
         </div>
       </ChromeDockTray>
     </ChromeDock>
-    <CustomThemeDialog open={themeDialogOpen} onOpenChange={setThemeDialogOpen} />
+    {themeDialogOpen && <Suspense fallback={null}><LazyCustomThemeDialog open={themeDialogOpen} onOpenChange={setThemeDialogOpen} /></Suspense>}
     </>
   )
 }
@@ -1220,7 +1221,11 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale
               </header>
             )}
           <ConnectionBanner />
-          <div className={isDock ? "mx-auto w-full max-w-[1220px] px-6 pt-4 pb-32 md:px-8 md:pt-5 md:pb-32" : "mx-auto w-full max-w-7xl px-5 py-7 md:px-9 md:py-8"}><Outlet /></div>
+          <div className={isDock ? "mx-auto w-full max-w-[1220px] px-6 pt-4 pb-32 md:px-8 md:pt-5 md:pb-32" : "mx-auto w-full max-w-7xl px-5 py-7 md:px-9 md:py-8"}>
+            <Suspense fallback={<div role="status" aria-label="Loading page" className="min-h-40 py-8 text-sm text-muted-foreground">Loading…</div>}>
+              <Outlet />
+            </Suspense>
+          </div>
         </div>
         <Inspector />
         <AssistantPanel assistant={assistant} />

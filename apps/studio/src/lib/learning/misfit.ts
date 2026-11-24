@@ -25,8 +25,8 @@ import { DecodeError, resolveBoundLearningScope, type ScopedReadOptions } from "
  * fixtures.
  */
 
-export const MISFIT_BY_LAW_QUESTION = "learning.misfit_by_law"
-export const TRIAGE_OVER_TIME_QUESTION = "learning.triage_over_time"
+import { MISFIT_BY_LAW_QUESTION, TRIAGE_OVER_TIME_QUESTION } from "./resource-names.ts"
+export { MISFIT_BY_LAW_QUESTION, TRIAGE_OVER_TIME_QUESTION }
 
 export const MISFIT_UNAVAILABLE = "This cell doesn't serve the learning.misfit_by_law question yet."
 export const TRIAGE_TREND_UNAVAILABLE = "This cell doesn't serve the learning.triage_over_time question yet."
