@@ -6564,6 +6564,130 @@
         },
         "additionalProperties": false
       },
+      "LiveClientMessage": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Answer `path` now and after every commit that changes its answer.\nSubscribing again under a held `id` replaces that subscription.",
+            "required": [
+              "id",
+              "path",
+              "type"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "The client's name for the subscription: 1 to 64 letters, digits\nor `_.:-`, unique on its socket."
+              },
+              "path": {
+                "type": "string",
+                "description": "One of the cell's GET routes with its query (`/v1/…?…`), at most\n512 bytes; never the live route itself."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "subscribe"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Stop answering the subscription `id`.",
+            "required": [
+              "id",
+              "type"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "The subscription's id."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "unsubscribe"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A frame a client sends on a live socket (`norn.live.v1`). A frame larger\nthan 4096 UTF-8 bytes closes the socket with 1009; one that is not JSON\ncloses it with 1007."
+      },
+      "LiveServerMessage": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The route's answer, on subscribe and on every change.",
+            "required": [
+              "id",
+              "status",
+              "digest",
+              "body",
+              "type"
+            ],
+            "properties": {
+              "body": {
+                "description": "The GET's own document, byte for byte (exact decimals stay number tokens), or null when the answer is not JSON."
+              },
+              "digest": {
+                "type": "string",
+                "description": "A digest of the status and the answer; a frame is sent only when it\nchanges."
+              },
+              "id": {
+                "type": "string",
+                "description": "The subscription's id."
+              },
+              "status": {
+                "type": "integer",
+                "format": "int32",
+                "description": "The HTTP status the GET answers with now (a refusal keeps its own).",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "snapshot"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The protocol refused a frame: no subscription was made or changed.",
+            "required": [
+              "id",
+              "code",
+              "message",
+              "type"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "Stable machine code: `live.invalid_id`, `live.not_subscribable`,\n`live.too_many_subscriptions` or `live.unknown_message`."
+              },
+              "id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The refused subscription's id; null when the frame named no valid\nid."
+              },
+              "message": {
+                "type": "string",
+                "description": "One-line summary."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "refused"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A frame the cell sends on a live socket (`norn.live.v1`). A token the cell\nno longer admits closes the socket with 4401; the client reconnects with a\nfresh one."
+      },
       "McpError": {
         "type": "object",
         "description": "A JSON-RPC protocol error, carrying the shared refusal as its data.",
