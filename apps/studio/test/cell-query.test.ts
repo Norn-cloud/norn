@@ -150,6 +150,22 @@ test("a read already in flight when a push lands never overwrites the pushed doc
   expect(client.getQueryData<CellDocument<{ version: number }>>(options.queryKey)?.document.version).toBe(2)
 })
 
+test("a refusal pushed while a read is in flight wins over the older read", async () => {
+  const client = new QueryClient()
+  let release: (response: Response) => void = () => {}
+  const cell = httpCell(() => new Promise<Response>((resolve) => { release = resolve }))
+  const options = cellQueryOptions(client, ROUTE, params, { scope, fetch: cell.fetch })
+  const reading = client.fetchQuery(options).catch((error: unknown) => error)
+  const socket = liveCell()
+  const path = cellPath(ROUTE, scope, params)
+  attachLive({ client, live: socket.live, scope, route: ROUTE, queryKey: options.queryKey, path })
+  socket.push(path, 403, "denied", '{"format":"norn/refusal@2","retryable":false,"reason":null,"code":"authz.denied","category":"permission","message":"denied","explanation":"x"}')
+  while (cell.asked.length === 0) await Bun.sleep(1)
+  release(new Response(record(1, "10.50")))
+  expect(await reading).toBeInstanceOf(CellRefusal)
+  expect(client.getQueryState(options.queryKey)?.data).toBeUndefined()
+})
+
 test("a live refusal leaves the read standing and is reported to the page", async () => {
   const client = new QueryClient()
   const { options } = await readOnce(client)

@@ -1,4 +1,4 @@
-import { queryOptions, replaceEqualDeep, useMutation, useQuery, useQueryClient, type Query, type QueryClient, type QueryKey, type UseMutationResult, type UseQueryResult } from "@tanstack/react-query"
+import { hashKey, queryOptions, replaceEqualDeep, useMutation, useQuery, useQueryClient, type Query, type QueryClient, type QueryKey, type UseMutationResult, type UseQueryResult } from "@tanstack/react-query"
 import { useEffect, useState } from "react"
 import { createNornClient, fillRoute, NornRefusalError, NornUnavailableError, scopedQuery, type CallOptions, type FetchLike, type GetRoute, type NornClient, type NornDocument, type Operation, type PostRoute, type Success } from "../../../../packages/norn-sdk/src/client.ts"
 import { readExact } from "../../../../packages/norn-sdk/src/exact.ts"
@@ -144,7 +144,7 @@ export function cellQueryOptions<P extends GetRoute>(client: QueryClient, route:
     ...(kept === undefined ? {} : { persister: kept.persister as never }),
     queryFn: async ({ queryKey, signal }) => {
       if (config.scope === null) throw new StudioScopeError(NO_DATA_CELL)
-      const hash = JSON.stringify(queryKey)
+      const hash = hashKey(queryKey)
       const before = pushCount(client, hash)
       let read: NornDocument<unknown>
       try {
@@ -152,9 +152,12 @@ export function cellQueryOptions<P extends GetRoute>(client: QueryClient, route:
       } catch (error) {
         throw studioError(error, what)
       }
-      // A push landed while this read was in flight: the pushed document is newer.
-      const current = client.getQueryData<CellData<P>>(queryKey)
-      if (pushCount(client, hash) !== before && current !== undefined) return current
+      // A push landed while this read was in flight: the pushed answer (a document or a refusal) is newer.
+      if (pushCount(client, hash) !== before) {
+        const pushed = client.getQueryState<CellData<P>, Error>(queryKey)
+        if (pushed?.data !== undefined) return pushed.data
+        if (pushed?.error != null) throw pushed.error
+      }
       return asDocument(read)
     },
   })
@@ -184,7 +187,7 @@ export function attachLive(options: {
   readonly onRefused?: (refusal: LiveRefusal) => void
 }): () => void {
   const { client, queryKey, route, scope } = options
-  const hash = JSON.stringify(queryKey)
+  const hash = hashKey(queryKey)
   return options.live.subscribe(options.path, (snapshot) => {
     const current = client.getQueryData<CellDocument<unknown>>(queryKey)
     if (snapshot.status >= 200 && snapshot.status < 300) {
