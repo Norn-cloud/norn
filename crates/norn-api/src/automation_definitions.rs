@@ -533,17 +533,15 @@ pub(crate) fn bind_authority<E: SqlEngine>(
 }
 
 /// Summary of a bound [`RetainedAuthority`] recorded in the install diff.
-pub(crate) fn authority_diff(authority: Option<&RetainedAuthority>) -> Option<Value> {
-    authority.map(|authority| {
-        serde_json::json!({
-            "delegationId": authority.delegation_id,
-            "parentGrantIds": authority.parent_grant_ids,
-            "author": authority.author.subject,
-            "actionId": authority.action_id,
-            "objectType": authority.object_type,
-            "actionDigest": authority.action_digest,
-            "revocable": authority.revocable,
-        })
+pub(crate) fn authority_diff(authority: &RetainedAuthority) -> Value {
+    serde_json::json!({
+        "delegationId": authority.delegation_id,
+        "parentGrantIds": authority.parent_grant_ids,
+        "author": authority.author.subject,
+        "actionId": authority.action_id,
+        "objectType": authority.object_type,
+        "actionDigest": authority.action_digest,
+        "revocable": authority.revocable,
     })
 }
 

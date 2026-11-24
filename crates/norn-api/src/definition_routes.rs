@@ -1486,6 +1486,35 @@ fn append<E: SqlEngine>(
                 active.admission_receipt,
             ),
         };
+        let mut retained =
+            serde_json::Map::from_iter([
+                ("kind".into(), serde_json::json!(definition.kind)),
+                ("id".into(), serde_json::json!(definition.id)),
+                ("revision".into(), serde_json::json!(definition.revision)),
+                (
+                    "lifecycle".into(),
+                    serde_json::json!(definition.lifecycle.as_str()),
+                ),
+                (
+                    "payloadSha256".into(),
+                    serde_json::json!(definition.payload_sha256),
+                ),
+                (
+                    "signoff".into(),
+                    serde_json::json!(definition.signoff.as_ref().map(
+                        |signoff| serde_json::json!({
+                            "signer": signoff.signer,
+                            "restatementSha256": signoff.restatement_sha256,
+                        })
+                    )),
+                ),
+            ]);
+        if let Some(authority) = definition.authority.as_ref() {
+            retained.insert(
+                "authority".into(),
+                crate::automation_definitions::authority_diff(authority),
+            );
+        }
         let input = InstalledDefinitionInput {
             canonical_set,
             registry: active.registry,
@@ -1494,20 +1523,7 @@ fn append<E: SqlEngine>(
             readmission: None,
             diff: serde_json::json!({
                 "added": [], "removed": [], "changed": [], "narrowing": [],
-                "retained": {
-                    "kind": definition.kind,
-                    "id": definition.id,
-                    "revision": definition.revision,
-                    "lifecycle": definition.lifecycle.as_str(),
-                    "payloadSha256": definition.payload_sha256,
-                    "signoff": definition.signoff.as_ref().map(|signoff| serde_json::json!({
-                        "signer": signoff.signer,
-                        "restatementSha256": signoff.restatement_sha256,
-                    })),
-                    "authority": crate::automation_definitions::authority_diff(
-                        definition.authority.as_ref(),
-                    ),
-                },
+                "retained": retained,
             }),
             installed_at,
             layout: None,

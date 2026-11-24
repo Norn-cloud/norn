@@ -72,7 +72,7 @@
         "decidedAtMs": 1800000000000
       },
       "receipt": {
-        "receiptHash": "3f0bc225dd583bddd27756b2949bae462008d8d6473221b1d696a5c30194554f",
+        "receiptHash": "2c91a5bc3fc0b3ba389a16f6acf9bbbb2da67d19e30805206e19953053d01a16",
         "commitSeq": 5,
         "recordedAtMs": 1800000000000
       },
@@ -94,7 +94,7 @@
         "decidedAtMs": 1800000000000
       },
       "receipt": {
-        "receiptHash": "3f0bc225dd583bddd27756b2949bae462008d8d6473221b1d696a5c30194554f",
+        "receiptHash": "2c91a5bc3fc0b3ba389a16f6acf9bbbb2da67d19e30805206e19953053d01a16",
         "commitSeq": 5,
         "recordedAtMs": 1800000000000
       },

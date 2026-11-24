@@ -255,6 +255,50 @@ mod cases {
         assert_eq!(status, 200, "{installed}");
     }
 
+    #[test]
+    fn only_automation_installs_record_authority_in_the_ledger() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("install-audit.sqlite");
+        let automation_id = "ops.audit_melt";
+        {
+            let engine = NativeEngine::open(&path, StoreOptions::default()).unwrap();
+            let cell = cell_on(engine, true);
+            install_automation(
+                &cell,
+                automation_id,
+                &automation_payload(
+                    "Audit melt",
+                    &json!({ "kind": "event", "event": "created" }),
+                ),
+            );
+        }
+
+        let engine = NativeEngine::open(&path, StoreOptions::default()).unwrap();
+        let install_event = |id: &str| -> Value {
+            let event: String = engine
+                .query_row(
+                    "SELECT event FROM _norn_ledger
+                     WHERE json_extract(event, '$.type') = 'definitions.installed'
+                       AND json_extract(event, '$.diff.retained.id') = ?1",
+                    &[id.into()],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            serde_json::from_str(&event).unwrap()
+        };
+        let flow = install_event(FLOW_ID);
+        assert!(
+            !flow["diff"]["retained"]
+                .as_object()
+                .unwrap()
+                .contains_key("authority")
+        );
+        let automation = install_event(automation_id);
+        let authority = &automation["diff"]["retained"]["authority"];
+        assert!(authority.is_object(), "{automation}");
+        assert_eq!(authority["actionId"], MELT_ACTION);
+    }
+
     /// 1. Trigger recorded in the same commit as the write, and replay dedupes.
     #[test]
     fn trigger_recorded_in_same_commit_and_replay_dedupes() {
