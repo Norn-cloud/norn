@@ -15,11 +15,13 @@ import { getRun, newRunId, phaseOf, refreshEvery, runTitle, RUNS_UNAVAILABLE, st
 const STATUS: Readonly<Record<StepStatus, { readonly icon: LucideIcon; readonly label: string; readonly tone: string }>> = {
   pending: { icon: Circle, label: "Not started", tone: "text-muted-foreground" },
   running: { icon: Loader2, label: "Running", tone: "text-[var(--tint-tool)]" },
-  waiting: { icon: Hourglass, label: "Waiting on a person", tone: "text-[var(--tint-ask)]" },
+  waiting: { icon: Hourglass, label: "Waiting", tone: "text-[var(--tint-ask)]" },
   done: { icon: CheckCircle2, label: "Done", tone: "text-[var(--tint-outcome)]" },
   failed: { icon: XCircle, label: "Failed", tone: "text-destructive" },
   skipped: { icon: MinusCircle, label: "Skipped", tone: "text-muted-foreground" },
 }
+
+const WAITING_ON = { decision: "Waiting on a person", executor: "Waiting on an executor", timer: "Waiting for a timer" } as const
 
 const PHASE: Readonly<Record<Phase, string>> = { running: "Running", waiting: "Waiting on a decision", succeeded: "Succeeded", failed: "Failed", ended: "Ended", active: "In progress" }
 
@@ -125,6 +127,8 @@ export function RunPage() {
       {run.steps !== undefined && <ol aria-label="Steps" className="grid gap-2">
         {run.steps.map((step, index) => {
           const s = STATUS[step.status]
+          const waitingOn = step.waitingOn ?? (step.kind === "decide" ? "decision" : undefined)
+          const statusLabel = step.status === "waiting" && waitingOn !== undefined ? WAITING_ON[waitingOn] : s.label
           const Icon = s.icon
           const started = time(step.startedAtMs)
           return (
@@ -136,7 +140,7 @@ export function RunPage() {
                 <span className="font-medium">{stepTitle(step)}</span>
                 <span className="rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">{KIND[step.kind]}</span>
                 <span className="flex-1" />
-                <span className={cn("text-meta", s.tone)}>{s.label}</span>
+                <span className={cn("text-meta", s.tone)}>{statusLabel}</span>
                 {took(step) && <span className="text-meta text-muted-foreground tabular-nums">· {took(step)}</span>}
               </div>
               {step.error && <p role="alert" className="text-sm text-destructive">{step.error.message}{technical && <code className="ms-2 text-xs">{step.error.code}</code>}</p>}

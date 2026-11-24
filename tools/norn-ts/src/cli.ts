@@ -40,6 +40,10 @@ if (process.argv[2] === "plan" || process.argv[2] === "apply") {
   const { main } = await import("./apply.ts")
   process.exit(await main(process.argv[2], process.argv.slice(3)))
 }
+if (process.argv[2] === "setup") {
+  const { setupCli } = await import("./setup.ts")
+  process.exit(await setupCli(process.argv.slice(3)))
+}
 if (process.argv[2] === "init") {
   const { init } = await import("./init.ts")
   const { ProjectError } = await import("./project.ts")
@@ -59,7 +63,7 @@ function option(name: string): string | undefined {
 }
 const hasFlag = (name: string): boolean => flags.includes(name)
 if (!input || (command !== "check" && command !== "compile" && command !== "profile" && command !== "question" && command !== "dashboard")) {
-  process.stderr.write("usage: norn <check|compile|profile> <pack-dir|file.ts> --org ID --env ID [--forbid-unsafe-zen] [--out FILE]\n       norn question <file.ts> [--out FILE]\n       norn dashboard <file.ts> [--out FILE]\n       norn init <dir> | norn dev [--port N] [--json] | norn fmt\n       norn plan|apply <pack-dir|file.ts> --url URL --org ID --env ID (--email EMAIL --password-env VAR | --token-env VAR)\n")
+  process.stderr.write("usage: norn <check|compile|profile> <pack-dir|file.ts> --org ID --env ID [--forbid-unsafe-zen] [--out FILE]\n       norn question <file.ts> [--out FILE]\n       norn dashboard <file.ts> [--out FILE]\n       norn setup [--version TAG] [--base-url URL]\n       norn init <dir> | norn dev [--port N] [--json] | norn fmt\n       norn plan|apply <pack-dir|file.ts> --url URL --org ID --env ID (--email EMAIL --password-env VAR | --token-env VAR)\n")
   process.exit(2)
 }
 if (command === "profile") {
@@ -131,7 +135,7 @@ if (command === "compile") {
     checker = await loadChecker()
     if (!checker) throw new Error("NORN_CHECKER_WASM_PKG is required")
   } catch (error) {
-    process.stderr.write(`NORN-CHECKER-WASM-SETUP: ${String(error)}\nExpected norn-checker-abi/1 built from this checkout. From the repository root, run:\n  bash crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/target/norn-checker-wasm/pkg"\n  export NORN_CHECKER_WASM_PKG="$PWD/target/norn-checker-wasm/pkg"\nThen rerun this check.\n`)
+    process.stderr.write(`NORN-CHECKER-WASM-SETUP: ${String(error)}\nExpected norn-checker-abi/1 built from this checkout or cached by \`norn setup\`.\nTo fetch prebuilt runtime artifacts (no Rust build needed), run:\n  norn setup   # or: scripts/dev/fetch-local-runtime.sh\nOr build from source from the repository root:\n  bash crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/target/norn-checker-wasm/pkg"\n  export NORN_CHECKER_WASM_PKG="$PWD/target/norn-checker-wasm/pkg"\nThen rerun this check.\n`)
     process.exit(2)
   }
   const { report } = admit(checker, pack)
