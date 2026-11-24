@@ -167,7 +167,7 @@ async fn a_socket_without_a_valid_token_is_refused_before_the_upgrade() {
             .header("connection", "upgrade")
             .header("upgrade", "websocket")
             .header("sec-websocket-version", "13")
-            .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==")
+            .header("sec-websocket-key", URL_SAFE_NO_PAD.encode([7_u8; 16]))
             .header("sec-websocket-protocol", "norn.live.v1");
         if let Some(authorization) = authorization {
             request = request.header("authorization", authorization);
