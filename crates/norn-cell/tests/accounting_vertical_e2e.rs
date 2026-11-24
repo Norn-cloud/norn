@@ -710,18 +710,20 @@ fn assert_law_refusal(
         "core.laws.violated",
         "unexpected commit error for {expected_law_id}: {err}"
     );
-    match err {
-        CommitError::Law {
-            reason: LawEvaluationError::Violated(failure),
-            ..
-        } => match failure.rule_ref {
-            DataQualityRuleRef::Law { law_id, .. } => {
-                assert_eq!(law_id, expected_law_id);
-            }
-            other => panic!("expected Law rule_ref for {expected_law_id}, got {other:?}"),
-        },
-        other => panic!("expected CommitError::Law for {expected_law_id}, got {other:?}"),
-    }
+    let CommitError::Law {
+        reason: LawEvaluationError::Violated(failure),
+        ..
+    } = &err
+    else {
+        panic!("expected CommitError::Law for {expected_law_id}, got {err:?}");
+    };
+    let DataQualityRuleRef::Law { law_id, .. } = &failure.rule_ref else {
+        panic!(
+            "expected Law rule_ref for {expected_law_id}, got {:?}",
+            failure.rule_ref
+        );
+    };
+    assert_eq!(law_id.as_str(), expected_law_id);
 }
 
 #[allow(
@@ -739,20 +741,22 @@ fn assert_action_law_refusal(
         "core.laws.violated",
         "unexpected action refusal for {expected_law_id}: {err}"
     );
-    match err {
-        ActionRefusal::Decision(DecisionRefusal::Law {
-            reason: LawEvaluationError::Violated(failure),
-            ..
-        }) => match failure.rule_ref {
-            DataQualityRuleRef::Law { law_id, .. } => {
-                assert_eq!(law_id, expected_law_id);
-            }
-            other => panic!("expected Law rule_ref for {expected_law_id}, got {other:?}"),
-        },
-        other => panic!(
-            "expected ActionRefusal::Decision(DecisionRefusal::Law) for {expected_law_id}, got {other:?}"
-        ),
-    }
+    let ActionRefusal::Decision(DecisionRefusal::Law {
+        reason: LawEvaluationError::Violated(failure),
+        ..
+    }) = &err
+    else {
+        panic!(
+            "expected ActionRefusal::Decision(DecisionRefusal::Law) for {expected_law_id}, got {err:?}"
+        );
+    };
+    let DataQualityRuleRef::Law { law_id, .. } = &failure.rule_ref else {
+        panic!(
+            "expected Law rule_ref for {expected_law_id}, got {:?}",
+            failure.rule_ref
+        );
+    };
+    assert_eq!(law_id.as_str(), expected_law_id);
 }
 
 #[allow(
@@ -767,16 +771,14 @@ fn assert_time_interval_refusal(result: Result<CommitReceipt, CommitError<norn_c
         "commit.invariant_violation",
         "unexpected commit error for core.TimeInterval: {err}"
     );
-    match err {
-        CommitError::InvariantViolation { owner, id, .. } => {
-            assert_eq!(
-                owner,
-                InvariantOwner::Interface(InterfaceName("core.TimeInterval".to_owned()))
-            );
-            assert_eq!(id.as_str(), "proper_interval");
-        }
-        other => panic!("expected CommitError::InvariantViolation, got {other:?}"),
-    }
+    let CommitError::InvariantViolation { owner, id, .. } = &err else {
+        panic!("expected CommitError::InvariantViolation, got {err:?}");
+    };
+    assert_eq!(
+        owner,
+        &InvariantOwner::Interface(InterfaceName("core.TimeInterval".to_owned()))
+    );
+    assert_eq!(id.as_str(), "proper_interval");
 }
 
 fn base_book_and_counterparty_facts() -> Vec<FactWrite> {
