@@ -181,12 +181,19 @@ fn is_scaled_allowed_function(
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ExactFrame {
+    Site(crate::scaled::ScaledArithmetic),
+    Suspended,
+    Legacy,
+}
+
 struct VMInner<'parent_ref, 'bytecode_ref> {
     scopes: &'parent_ref mut Vec<LoopScope>,
     stack: &'parent_ref mut Vec<Variable>,
     bytecode: &'bytecode_ref [Opcode],
     ip: u32,
-    exact_sites: Vec<Option<crate::scaled::ScaledArithmetic>>,
+    exact_sites: Vec<ExactFrame>,
     meter: Option<&'parent_ref crate::meter::Meter>,
 }
 
@@ -214,6 +221,20 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
         self.stack.pop().ok_or_else(|| StackOutOfBounds {
             stack: format!("{:?}", self.stack),
         })
+    }
+
+    fn active_exact_site(&self) -> Option<crate::scaled::ScaledArithmetic> {
+        match self.exact_sites.last().copied() {
+            Some(ExactFrame::Site(site)) => Some(site),
+            Some(ExactFrame::Suspended) => None,
+            Some(ExactFrame::Legacy) | None => self.meter.and_then(|meter| meter.arithmetic()),
+        }
+    }
+
+    fn in_exact_site_scope(&self) -> bool {
+        self.exact_sites
+            .iter()
+            .any(|frame| matches!(frame, ExactFrame::Site(_)))
     }
 
     /// Follow unconditional forward jumps (for example from a ternary true arm)
@@ -249,22 +270,15 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
             self.ip += 1;
 
             self.charge(op)?;
-            if let Some(meter) = self.meter.filter(|m| {
-                m.arithmetic().is_some()
-                    || m.exact_arithmetic()
-                    || self.exact_sites.last().is_some_and(Option::is_some)
-            }) {
-                let exact = meter.exact_arithmetic()
-                    || self.exact_sites.last().is_some_and(Option::is_some);
-                let exact_expression = meter.exact_arithmetic()
-                    || (meter.arithmetic().is_none()
-                        && self.exact_sites.last().is_some_and(Option::is_some));
-                let arithmetic = self
-                    .exact_sites
-                    .last()
-                    .copied()
-                    .flatten()
-                    .or_else(|| meter.arithmetic());
+            let in_exact_scope = self.in_exact_site_scope();
+            if let Some(meter) = self
+                .meter
+                .filter(|m| m.arithmetic().is_some() || m.exact_arithmetic() || in_exact_scope)
+            {
+                let exact = meter.exact_arithmetic() || in_exact_scope;
+                let exact_expression =
+                    meter.exact_arithmetic() || (meter.arithmetic().is_none() && in_exact_scope);
+                let arithmetic = self.active_exact_site();
                 let next_ip = usize::try_from(self.ip)
                     .ok()
                     .and_then(|ip| self.next_effective_ip(ip));
@@ -307,17 +321,9 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
                         let result = if exact && name != "Divide" {
                             crate::scaled::ScaledArithmetic::exact_binary(name, a, b)
                         } else {
-                            let mut profile = self
-                                .exact_sites
-                                .last()
-                                .copied()
-                                .flatten()
-                                .or_else(|| meter.arithmetic())
-                                .ok_or_else(|| {
-                                    failure(
-                                        "division requires a declared result scale and rounding",
-                                    )
-                                })?;
+                            let mut profile = self.active_exact_site().ok_or_else(|| {
+                                failure("division requires a declared result scale and rounding")
+                            })?;
                             if exact {
                                 // VAL-ROUND: only a final result may use destination rounding.
                                 let at_division_site = next_ip.is_some_and(|ip| {
@@ -405,17 +411,11 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
 
             match op {
                 Opcode::ExactSite { scale, rounding } => {
-                    let inherited = self
-                        .exact_sites
-                        .last()
-                        .copied()
-                        .flatten()
-                        .or_else(|| self.meter.and_then(|meter| meter.arithmetic()));
+                    let inherited = self.active_exact_site();
+                    let exact = self.in_exact_site_scope()
+                        || self.meter.is_some_and(|meter| meter.exact_arithmetic());
                     let site = crate::scaled::ScaledArithmetic::rounding_site(
-                        *scale,
-                        *rounding,
-                        inherited,
-                        self.meter.is_some_and(|meter| meter.exact_arithmetic()),
+                        *scale, *rounding, inherited, exact,
                     )
                     .map_err(|reason| OpcodeErr {
                         opcode: "ExactSite".into(),
@@ -427,11 +427,14 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
                             message: "unmetered exact site".into(),
                         });
                     }
-                    self.exact_sites.push(site);
+                    self.exact_sites.push(match site {
+                        Some(site) => ExactFrame::Site(site),
+                        None => ExactFrame::Legacy,
+                    });
                 }
                 Opcode::Rescale { scale } => {
                     let value = self.pop()?;
-                    let result = if let Some(Some(site)) = self.exact_sites.last() {
+                    let result = if let Some(ExactFrame::Site(site)) = self.exact_sites.last() {
                         let Number(value) = value else {
                             return Err(OpcodeErr {
                                 opcode: "Rescale".into(),
@@ -460,6 +463,18 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
                     self.push(result);
                 }
                 Opcode::ExactSiteEnd => {
+                    self.exact_sites.pop();
+                }
+                Opcode::ExactSiteSuspend => {
+                    let in_exact = self.in_exact_site_scope()
+                        || self.meter.is_some_and(|meter| meter.exact_arithmetic());
+                    self.exact_sites.push(if in_exact {
+                        ExactFrame::Suspended
+                    } else {
+                        ExactFrame::Legacy
+                    });
+                }
+                Opcode::ExactSiteResume => {
                     self.exact_sites.pop();
                 }
                 Opcode::PushNull => self.push(Null),
@@ -1432,18 +1447,23 @@ impl VMInner<'_, '_> {
         };
 
         // Legacy round(value, scale) retains its previous push-scale/call fuel.
+        // Site suspend/resume markers are emitted 1:1 around already-metered
+        // conditional conditions and call arguments and cost zero extra fuel.
         match op {
+            Opcode::ExactSiteSuspend | Opcode::ExactSiteResume => return Ok(()),
             Opcode::ExactSite { rounding, .. }
                 if rounding.is_none()
                     && !meter.exact_arithmetic()
-                    && self.exact_sites.last().is_none_or(Option::is_none) =>
+                    && !self.in_exact_site_scope() =>
             {
                 return Ok(())
             }
-            Opcode::ExactSiteEnd if self.exact_sites.last().is_some_and(Option::is_none) => {
+            Opcode::ExactSiteEnd if matches!(self.exact_sites.last(), Some(ExactFrame::Legacy)) => {
                 return Ok(())
             }
-            Opcode::Rescale { .. } if self.exact_sites.last().is_some_and(Option::is_none) => {
+            Opcode::Rescale { .. }
+                if matches!(self.exact_sites.last(), Some(ExactFrame::Legacy)) =>
+            {
                 return meter.charge(4).map_err(crate::vm::VMError::BudgetExhausted)
             }
             _ => {}

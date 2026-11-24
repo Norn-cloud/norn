@@ -2658,3 +2658,142 @@ fn val_exact_ternary_arms_nanoseconds_and_temporal_amounts()
 
     Ok(())
 }
+
+#[test]
+fn val_exact_isolates_ternary_conditions_and_call_arguments_from_outer_site()
+-> Result<(), Box<dyn std::error::Error>> {
+    let shift_def: ObjectTypeDef = serde_json::from_value(serde_json::json!({
+        "name": "time.SiteIsolationShift",
+        "properties": [
+            {"id": "flag", "type": {"kind": "boolean"}},
+            {"id": "hours", "type": {"kind": "decimal", "scale": 2}},
+            {"id": "start_date", "type": {"kind": "date"}},
+            {"id": "end_date", "type": {"kind": "date"}},
+            {"id": "start_ts", "type": {"kind": "timestamp", "timezone": "utc"}},
+            {"id": "one_sec_ts", "type": {"kind": "timestamp", "timezone": "utc"}}
+        ]
+    }))?;
+    let object_types = [shift_def];
+    let defs = norn_expr::EntityDefinitions {
+        property_types: &[],
+        interfaces: &[],
+        object_types: &object_types,
+        extensions: &[],
+    };
+    let env = ZenTypeEnv::from_artifact_set(&defs, EnvOptions::default())
+        .map_err(|errors| format!("env: {errors:?}"))?
+        .bind_self(&name("time.SiteIsolationShift"))
+        .map_err(|error| format!("bind_self: {error:?}"))?;
+    let ctx = Value::object([(
+        "self",
+        Value::object([
+            ("flag", Value::Bool(true)),
+            ("hours", Value::Number("8.50".parse::<Number>()?)),
+            ("start_date", Value::from("2026-01-01")),
+            ("end_date", Value::from("2026-01-05")),
+            ("start_ts", Value::from("2026-03-09T14:00:00Z")),
+            ("one_sec_ts", Value::from("2026-03-09T14:00:01Z")),
+        ]),
+    )]);
+
+    // Terminating quotients and 2-arg `round` inside ternary conditions or non-`round`
+    // call arguments MUST NOT inherit the enclosing `round(..., scale, mode)` site.
+    for isolated_refusal in [
+        "round((1 / 2 > 0) ? 1 : 2, 2, 'half_even')",
+        "round((round(1.25, 1) > 1) ? 1 : 2, 2, 'half_even')",
+        "round(((self.flag ? 1 / 2 : 1) > 0) ? 1 : 2, 2, 'half_even')",
+        "round(days_between(date(self.start_date), add_days(date(self.start_date), 1 / 2)), 2, 'half_even')",
+        "round(days_between(date(self.start_date), add_days(date(self.start_date), round(1.25, 0))), 2, 'half_even')",
+    ] {
+        let compiled = Expression::compile(isolated_refusal)?;
+        let Err(errors) = compiled.check_typed(&env, &Type::Number) else {
+            return Err(format!("`{isolated_refusal}` must refuse statically").into());
+        };
+        assert!(
+            errors.iter().any(|d| d.code == "core.values.inexact"),
+            "`{isolated_refusal}` expected core.values.inexact, got {errors:?}"
+        );
+        assert!(
+            compiled
+                .evaluate_exact_metered(&ctx, EvaluationBudget::default(), None)
+                .result
+                .is_err(),
+            "exact VM must refuse `{isolated_refusal}` directly at runtime"
+        );
+        assert!(
+            compiled
+                .evaluate_metered(&ctx, EvaluationBudget::default())
+                .result
+                .is_err(),
+            "metered VM inside explicit round must refuse `{isolated_refusal}` at runtime"
+        );
+    }
+
+    // Direct top-level Decimal site (`evaluate_exact_metered(..., Some(&site))`) must
+    // also isolate ternary conditions and non-`round` call arguments from the top-level site.
+    let top_site = norn_ir::PropertyType::Decimal {
+        additivity: norn_ir::PropertyAdditivity::Undeclared {},
+        scale: norn_ir::WholeNumber(2),
+        rounding: Some(norn_ir::Rounding::HalfEven),
+        unit: None,
+        currency_source: None,
+        per_unit: None,
+        unit_source: Vec::new(),
+    };
+    for top_refusal in [
+        "(1 / 2 > 0) ? 1 : 2",
+        "(round(1.25, 1) > 1) ? 1 : 2",
+        "days_between(date(self.start_date), add_days(date(self.start_date), 1 / 2))",
+    ] {
+        let compiled = Expression::compile(top_refusal)?;
+        assert!(
+            compiled
+                .evaluate_exact_metered(&ctx, EvaluationBudget::default(), Some(&top_site))
+                .result
+                .is_err(),
+            "top-level Decimal site must isolate `{top_refusal}` at runtime"
+        );
+    }
+    assert_eq!(
+        Expression::compile("self.flag ? 1 / 3 : 2")?
+            .evaluate_exact_metered(&ctx, EvaluationBudget::default(), Some(&top_site))
+            .result?
+            .into_value(),
+        Value::Number("0.33".parse::<Number>()?)
+    );
+
+    // Positive controls: explicit inner `round(..., scale, mode)` and exact temporal
+    // comparisons inside ternary conditions or non-`round` call arguments still work,
+    // and the enclosing rounding site resumes for the ternary value arms.
+    for (source, expected_num) in [
+        (
+            "round((round(1 / 2, 1, 'half_even') > 0) ? 1 / 3 : 2, 2, 'half_even')",
+            "0.33",
+        ),
+        (
+            "round((date(self.start_date) < date(self.end_date)) ? seconds_between(timestamp(self.start_ts), timestamp(self.one_sec_ts)) / 3 : 2, 2, 'half_even')",
+            "0.33",
+        ),
+        (
+            "round(days_between(date(self.start_date), add_days(date(self.start_date), round(1 / 2, 0, 'half_even'))), 2, 'half_even')",
+            "0",
+        ),
+    ] {
+        let compiled = Expression::compile(source)?;
+        compiled
+            .check_typed(&env, &Type::Number)
+            .map_err(|errors| format!("`{source}` check_typed: {errors:?}"))?;
+        let exact_val = compiled
+            .evaluate_exact_metered(&ctx, EvaluationBudget::default(), None)
+            .result?
+            .into_value();
+        assert_eq!(exact_val, Value::Number(expected_num.parse::<Number>()?));
+        let typed_val = compiled
+            .evaluate_typed_metered(&ctx, EvaluationBudget::default(), &env, &Type::Number)
+            .result?
+            .into_value();
+        assert_eq!(typed_val, Value::Number(expected_num.parse::<Number>()?));
+    }
+
+    Ok(())
+}
