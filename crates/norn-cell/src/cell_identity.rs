@@ -94,41 +94,44 @@ pub(crate) fn verify_export_pin(
     Ok(())
 }
 
-/// Verify at most `max_records` export records in `(after, through]` against
-/// this cell's live identity, returning `(new_checked_through, checked_count)`.
-///
-/// # Errors
-/// A record naming another identity; SQL failures.
-pub(crate) fn verify_records_step(
+/// Find the next export journal commit strictly after `after` through `through`
+/// (`<= 1` SQL row charged to `budget`).
+pub(crate) fn next_record_seq_between(
     engine: &impl SqlEngine,
     after: u64,
     through: u64,
-    max_records: usize,
-) -> Result<(u64, usize), CellError> {
-    if after >= through || max_records == 0 {
-        return Ok((after.min(through), 0));
+    budget: &mut crate::scrub::RowBudget,
+) -> Result<Option<u64>, CellError> {
+    if after >= through {
+        return Ok(None);
     }
-    let current = read(engine)?;
-    let mut cursor = after;
-    let mut checked = 0_usize;
-    while checked < max_records {
-        let next = engine.query_optional(
-            "SELECT commit_seq FROM _norn_export_journal WHERE commit_seq > ?1 ORDER BY commit_seq LIMIT 1",
-            params![crate::read::to_i64(cursor, "commit sequence")?],
-            |row| row.get::<i64>(0),
-        )?;
-        let Some(sequence) = next else {
-            return Ok((through, checked));
-        };
-        let sequence = crate::read::to_u64(sequence, "commit sequence")?;
-        if sequence > through {
-            return Ok((through, checked));
-        }
-        verify_record_names(engine, sequence, current.as_ref())?;
-        cursor = sequence;
-        checked = checked.saturating_add(1);
+    let next = engine.query_optional(
+        "SELECT commit_seq FROM _norn_export_journal WHERE commit_seq > ?1 ORDER BY commit_seq LIMIT 1",
+        params![crate::read::to_i64(after, "commit sequence")?],
+        |row| row.get::<i64>(0),
+    )?;
+    let Some(sequence) = next else {
+        return Ok(None);
+    };
+    budget.charge(1);
+    let sequence = crate::read::to_u64(sequence, "commit sequence")?;
+    Ok((sequence <= through).then_some(sequence))
+}
+
+/// Check that a decoded export record's bindings match `current` cell identity.
+pub(crate) fn check_export_record_identity(
+    record: &crate::export::ExportRecord,
+    current: Option<&CellId>,
+) -> Result<(), CellError> {
+    let retained = from_bindings(&record.bindings)?;
+    if retained.as_ref() != current {
+        return Err(CellError::BindingMismatch {
+            key: KEY.to_owned(),
+            expected: current.map_or_else(String::new, |id| id.as_str().to_owned()),
+            found: retained.map_or_else(String::new, String::from),
+        });
     }
-    Ok((cursor, checked))
+    Ok(())
 }
 
 /// Every export record committed after `after` through `through` names

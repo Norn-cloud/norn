@@ -2629,21 +2629,15 @@ impl<E: SqlEngine> CellStore<E> {
         reason = "startup validates every retained install before serving the cell"
     )]
     pub(crate) fn verify_definition_install(
-        &self,
-        reader: &StoreReader<'_, E>,
         versions: &[InstalledDefinitionSet],
         version_index: usize,
         receipt: &Receipt,
+        record: &crate::export::ExportRecord,
+        entries: &[crate::read::LedgerEntry],
     ) -> Result<(), CellError> {
         let version = versions
             .get(version_index)
             .ok_or(CellError::OutOfRange("definition history index"))?;
-        let record = self
-            .local_export_record(version.commit_seq)?
-            .ok_or_else(|| CellError::LedgerCorrupt {
-                seq: version.commit_seq,
-                reason: "installed definitions have no typed export record".to_owned(),
-            })?;
         let installation =
             record
                 .definition_install
@@ -2696,7 +2690,6 @@ impl<E: SqlEngine> CellStore<E> {
         )?;
         let installed_model = Model::from_retained_snapshot(&installation.model)?;
         installed_model.check_governing_laws(&version.canonical_set)?;
-        let entries = reader.ledger_page(receipt.body.first_event_seq.saturating_sub(1), 1)?;
         if installation.installed != *version
             || record.receipt != *receipt
             || installed_model.model_hash() != version.model_hash

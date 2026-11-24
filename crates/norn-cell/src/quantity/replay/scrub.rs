@@ -110,22 +110,23 @@ impl QuantityScrub {
         Ok(())
     }
 
-    /// Replay a `<= 64`-commit history chunk; ordinary-only chunks verify empty
-    /// append ranges via `LIMIT 1`, while quantity chunks stage `pending_append`
-    /// so append pages drain on subsequent wakes within the 512-row total bound.
+    /// Replay a batch of completed history commits; ordinary-only chunks verify
+    /// empty append ranges via `LIMIT 1` (charging `budget`), while quantity
+    /// chunks stage `pending_append` to drain on subsequent wakes.
     pub(crate) fn verify_chunk<S: SqlEngine>(
         &mut self,
         engine: &S,
         receipts: &[Receipt],
         after: u64,
         through: u64,
+        budget: &mut crate::scrub::RowBudget,
     ) -> Result<(), CellError> {
         if after == 0 {
             for sql in [
                 r#"SELECT 1 FROM "_norn_quantity_history" WHERE "commit_seq" <= 0 LIMIT 1"#,
                 r#"SELECT 1 FROM "_norn_quantity_posting" WHERE "commit_seq" <= 0 LIMIT 1"#,
             ] {
-                check_no_rows(engine, sql, &[])?;
+                check_no_rows_budgeted(engine, sql, &[], budget)?;
             }
         }
         let (mut history, mut postings) = (Rows::new(), Rows::new());
@@ -134,7 +135,7 @@ impl QuantityScrub {
                 .step_receipt(receipt, &mut history, &mut postings)?;
         }
         if history.is_empty() && postings.is_empty() {
-            return check_append_empty(engine, after, through);
+            return check_append_empty(engine, after, through, budget);
         }
         self.stage_append(after, through, history, postings);
         Ok(())
@@ -420,7 +421,26 @@ impl QuantityScrub {
     }
 }
 
-fn check_append_empty<S: SqlEngine>(engine: &S, after: u64, through: u64) -> Result<(), CellError> {
+fn check_no_rows_budgeted<S: SqlEngine>(
+    engine: &S,
+    sql: &str,
+    params: &[SqlValue],
+    budget: &mut crate::scrub::RowBudget,
+) -> Result<(), CellError> {
+    let rows = engine.query(sql, params)?;
+    budget.charge(rows.len());
+    if !rows.is_empty() {
+        return Err(QuantityError::Corrupt.into());
+    }
+    Ok(())
+}
+
+fn check_append_empty<S: SqlEngine>(
+    engine: &S,
+    after: u64,
+    through: u64,
+    budget: &mut crate::scrub::RowBudget,
+) -> Result<(), CellError> {
     let params = [
         to_i64(after, "quantity append after")?.into(),
         to_i64(through, "quantity append through")?.into(),
@@ -429,7 +449,7 @@ fn check_append_empty<S: SqlEngine>(engine: &S, after: u64, through: u64) -> Res
         r#"SELECT 1 FROM "_norn_quantity_history" WHERE "commit_seq" > ?1 AND "commit_seq" <= ?2 LIMIT 1"#,
         r#"SELECT 1 FROM "_norn_quantity_posting" WHERE "commit_seq" > ?1 AND "commit_seq" <= ?2 LIMIT 1"#,
     ] {
-        check_no_rows(engine, sql, &params)?;
+        check_no_rows_budgeted(engine, sql, &params, budget)?;
     }
     Ok(())
 }

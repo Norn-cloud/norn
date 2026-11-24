@@ -2833,7 +2833,7 @@ fn quantity_scrub_after_large_sibling_suffix_stays_within_512_total_rows_per_wak
     );
 }
 
-fn multi_row_batch(n: u64, width: u64) -> CommitBatch {
+fn multi_row_batch(n: u64, width: u64, logical_time: u64) -> CommitBatch {
     let writes = (0..width)
         .map(|slot| FactWriteRow::Put {
             object_type: "fixture.Item".to_owned(),
@@ -2856,7 +2856,7 @@ fn multi_row_batch(n: u64, width: u64) -> CommitBatch {
     CommitBatch {
         world: MAIN_WORLD.to_owned(),
         scope: engine_fixture::SCOPE.to_owned(),
-        logical_time: 20_000_u64.saturating_add(n),
+        logical_time,
         idempotency_key: Some(format!("multi-{n}")),
         writes,
         events,
@@ -2864,7 +2864,14 @@ fn multi_row_batch(n: u64, width: u64) -> CommitBatch {
     }
 }
 
-/// S10 (#1551 round 11): multi-row commits (both 64+ commits x 10 events/writes
+fn put_at(n: u64, logical_time: u64) -> CommitBatch {
+    CommitBatch {
+        logical_time,
+        ..put(n)
+    }
+}
+
+/// S10 (#1551 round 11/12): multi-row commits (both 64+ commits x 10 events/writes
 /// AND a single jumbo commit with 300 events + 300 writes = 600 rows > 512)
 /// resume cleanly across wakes while staying strictly <= 512 total SQL rows per wake.
 #[test]
@@ -2873,18 +2880,18 @@ fn multi_row_commits_history_scrub_stays_within_512_total_rows_per_wake() {
     let path = dir.path().join("multi.sqlite");
     engine_fixture::write_cell(&path);
     let mut seed = open(&path).expect("open");
-    // 64 multi-row commits (10 writes + 10 events each = 1,280 rows across 64 commits)
-    // plus one jumbo commit (300 writes + 300 events = 600 rows inside a single commit),
-    // then fill past EVERY so an open checkpoint is recorded covering all of them.
+    // Monotonic logical_time: 10_000+n (64 multi-row) < 20_000 (jumbo) < 30_000+n (tail).
     let jumbo_n = engine_fixture::COMMITS.saturating_add(64);
     for n in engine_fixture::COMMITS..jumbo_n {
-        seed.commit(&multi_row_batch(n, 10)).expect("multi commit");
+        seed.commit(&multi_row_batch(n, 10, 10_000_u64.saturating_add(n)))
+            .expect("multi commit");
     }
-    seed.commit(&multi_row_batch(jumbo_n, 300))
+    seed.commit(&multi_row_batch(jumbo_n, 300, 20_000))
         .expect("jumbo commit");
     let total_commits = EVERY.saturating_add(4);
     for n in jumbo_n.saturating_add(1)..total_commits {
-        seed.commit(&put(n)).expect("tail put");
+        seed.commit(&put_at(n, 30_000_u64.saturating_add(n)))
+            .expect("tail put");
     }
     drop(seed);
     assert_eq!(checkpoint(&path).map(|(c, ..)| c), Some(EVERY));

@@ -18,10 +18,10 @@ use crate::transparency::ReceiptLog;
 /// and the commit that installed it.
 #[derive(Debug, Clone)]
 pub(crate) struct DefinitionWalk {
-    next_version: u64,
+    pub(crate) next_version: u64,
     pub(crate) version_index: usize,
-    active_version: u64,
-    previous_install_seq: u64,
+    pub(crate) active_version: u64,
+    pub(crate) previous_install_seq: u64,
 }
 
 impl Default for DefinitionWalk {
@@ -36,7 +36,7 @@ impl Default for DefinitionWalk {
 }
 
 impl DefinitionWalk {
-    fn installed(&mut self, version: &InstalledDefinitionSet) -> Result<(), CellError> {
+    pub(crate) fn installed(&mut self, version: &InstalledDefinitionSet) -> Result<(), CellError> {
         self.active_version = version.version;
         self.previous_install_seq = version.commit_seq;
         self.next_version = self
@@ -726,7 +726,7 @@ impl<E: SqlEngine> CellStore<E> {
                     seq: version.commit_seq,
                     reason: "the active definitions have no installing receipt".to_owned(),
                 })?;
-            self.verify_definition_install(reader, versions, index, &receipt)?;
+            self.verify_definition_install_live(reader, versions, index, &receipt)?;
         }
         if commits > 0
             && reader
@@ -767,7 +767,7 @@ impl<E: SqlEngine> CellStore<E> {
                         .to_owned(),
                 });
             }
-            self.verify_definition_install(reader, versions, walk.version_index, receipt)?;
+            self.verify_definition_install_live(reader, versions, walk.version_index, receipt)?;
             walk.installed(version)?;
         } else if receipt.body.definitions_version != walk.active_version {
             return Err(CellError::LedgerCorrupt {
@@ -776,6 +776,26 @@ impl<E: SqlEngine> CellStore<E> {
             });
         }
         Ok(())
+    }
+
+    fn verify_definition_install_live(
+        &self,
+        reader: &StoreReader<'_, E>,
+        versions: &[InstalledDefinitionSet],
+        version_index: usize,
+        receipt: &Receipt,
+    ) -> Result<(), CellError> {
+        let version = versions
+            .get(version_index)
+            .ok_or(CellError::OutOfRange("definition history index"))?;
+        let record = self
+            .local_export_record(version.commit_seq)?
+            .ok_or_else(|| CellError::LedgerCorrupt {
+                seq: version.commit_seq,
+                reason: "installed definitions have no typed export record".to_owned(),
+            })?;
+        let entries = reader.ledger_page(receipt.body.first_event_seq.saturating_sub(1), 1)?;
+        Self::verify_definition_install(versions, version_index, receipt, &record, &entries)
     }
 
     /// S10 (#1551 round 7): snapshot only the scalar live database head and

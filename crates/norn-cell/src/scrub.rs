@@ -16,7 +16,33 @@ use crate::open_checkpoint::{self, ExportPin, OpenCheckpoint};
 use crate::quantity::FormatBoundary;
 use crate::{CellError, CellStore, LedgerHead};
 
+mod durable_event;
 mod history;
+mod support;
+
+/// Shared per-wake SQL row budget passed through all `Phase::History` and
+/// `Phase::Seed` sub-reads so total SQL rows per wake strictly stay `<= 512`.
+pub(crate) struct RowBudget {
+    remaining: usize,
+}
+
+impl RowBudget {
+    pub(crate) const fn new(limit: usize) -> Self {
+        Self { remaining: limit }
+    }
+
+    pub(crate) const fn remaining(&self) -> usize {
+        self.remaining
+    }
+
+    pub(crate) const fn exhausted(&self) -> bool {
+        self.remaining == 0
+    }
+
+    pub(crate) fn charge(&mut self, rows: usize) {
+        self.remaining = self.remaining.saturating_sub(rows);
+    }
+}
 
 /// The refusal code of a read or write held back by the scrub (retryable).
 pub(crate) const VERIFYING: &str = "cell.verifying";
@@ -180,6 +206,8 @@ enum Phase {
 struct VerifiedPins {
     export: Option<ExportPin>,
     definitions: String,
+    definitions_count: u64,
+    definitions_max_version: u64,
 }
 
 /// One scrub run: verify from `start` (genesis with none) to `target`, then seed.
@@ -200,6 +228,7 @@ struct Run {
     history_cursor: history::HistoryCursor,
     quantity_scrub: crate::quantity::QuantityScrub,
     verified_pins: Option<VerifiedPins>,
+    seed_defs: support::SeedDefsCursor,
     data_version: Option<u64>,
     restarts: u32,
 }
@@ -238,6 +267,7 @@ impl Run {
             phase: Phase::Receipts,
             tree: crate::transparency::ReceiptLog::new(),
             verified_pins: None,
+            seed_defs: support::SeedDefsCursor::default(),
             data_version,
             restarts: 0,
         }
@@ -262,6 +292,7 @@ impl Run {
         self.history_cursor = history::HistoryCursor::new(None);
         self.quantity_scrub = crate::quantity::QuantityScrub::new(None, target_boundary);
         self.verified_pins = None;
+        self.seed_defs = support::SeedDefsCursor::default();
         self.data_version = data_version;
         self.restarts = self.restarts.saturating_add(1);
     }
@@ -323,14 +354,18 @@ enum StepOutcome {
         done: bool,
     },
     HistoryChunk {
-        history_cursor: history::HistoryCursor,
-        quantity_scrub: crate::quantity::QuantityScrub,
+        history_cursor: Box<history::HistoryCursor>,
+        quantity_scrub: Box<crate::quantity::QuantityScrub>,
         verified_pins: Option<VerifiedPins>,
         done: bool,
     },
     QuantityStep {
-        quantity_scrub: crate::quantity::QuantityScrub,
+        quantity_scrub: Box<crate::quantity::QuantityScrub>,
         done: bool,
+    },
+    SeedPins {
+        seed_defs: support::SeedDefsCursor,
+        verified_pins: Option<VerifiedPins>,
     },
     Seeded(Option<OpenCheckpoint>),
 }
@@ -684,8 +719,17 @@ impl<E: SqlEngine> CellStore<E> {
         Ok((outcome, dv))
     }
 
-    /// Phase 3: verify tail anchor and pins inside the seed tx before recording (S10).
+    /// Phase 3: verify tail anchor and O(1) pins inside the seed tx before
+    /// recording, folding definitions in bounded pages first if `!run.history` (S10).
     fn scrub_seed(&self, run: &Run) -> Result<StepOutcome, CellError> {
+        let Some(pins) = &run.verified_pins else {
+            let mut seed_defs = run.seed_defs.clone();
+            let verified_pins = seed_defs.step(self, run.target.commits)?;
+            return Ok(StepOutcome::SeedPins {
+                seed_defs,
+                verified_pins,
+            });
+        };
         let expected_hash = run
             .target
             .commits
@@ -694,24 +738,31 @@ impl<E: SqlEngine> CellStore<E> {
             .and_then(|idx| run.tree.get(idx))
             .map(String::as_str);
         self.verify_target_tail_anchor(&run.target, expected_hash)?;
-        let quantity = match &run.quantity {
-            Some(quantity) => quantity.clone(),
-            None => open_checkpoint::quantity_seed()?,
-        };
-        let checkpoint = self.checkpoint_at(
-            &run.target,
-            run.target_boundary,
-            open_checkpoint::root_hex(run.tree.root().as_bytes()),
-            quantity,
-        )?;
-        if let Some(pins) = &run.verified_pins
-            && (checkpoint.export != pins.export || checkpoint.definitions != pins.definitions)
+        let export = crate::cell_identity::last_record_through(&self.conn, run.target.commits)?;
+        let (def_count, def_max) = self
+            .verifier()
+            .definition_version_stats_through(run.target.commits)?;
+        if export != pins.export
+            || def_count != pins.definitions_count
+            || def_max != pins.definitions_max_version
         {
             return Err(defect(
                 run.target.commits,
                 "export or definition pins changed before checkpoint seed",
             ));
         }
+        let quantity_receipts = match &run.quantity {
+            Some(quantity) => quantity.clone(),
+            None => open_checkpoint::quantity_seed()?,
+        };
+        let checkpoint = OpenCheckpoint {
+            head: run.target.clone(),
+            receipts_root: open_checkpoint::root_hex(run.tree.root().as_bytes()),
+            boundary: run.target_boundary,
+            quantity_receipts,
+            export,
+            definitions: pins.definitions.clone(),
+        };
         Ok(StepOutcome::Seeded(
             self.record_scrub_checkpoint(checkpoint)?,
         ))
@@ -805,7 +856,7 @@ impl<E: SqlEngine> CellStore<E> {
             let mut quantity_scrub = run.quantity_scrub.clone();
             quantity_scrub.step_pending(&self.conn, &reader)?;
             return Ok(StepOutcome::QuantityStep {
-                quantity_scrub,
+                quantity_scrub: Box::new(quantity_scrub),
                 done: false,
             });
         }
@@ -823,8 +874,8 @@ impl<E: SqlEngine> CellStore<E> {
             history::HistoryStep::Done(pins) => (Some(pins), true),
         };
         Ok(StepOutcome::HistoryChunk {
-            history_cursor,
-            quantity_scrub,
+            history_cursor: Box::new(history_cursor),
+            quantity_scrub: Box::new(quantity_scrub),
             verified_pins,
             done,
         })
@@ -841,7 +892,7 @@ impl<E: SqlEngine> CellStore<E> {
             run.target_boundary,
         )?;
         Ok(StepOutcome::QuantityStep {
-            quantity_scrub,
+            quantity_scrub: Box::new(quantity_scrub),
             done,
         })
     }
@@ -909,8 +960,8 @@ fn apply_step(
             verified_pins,
             done,
         } => {
-            run.history_cursor = history_cursor;
-            run.quantity_scrub = quantity_scrub;
+            run.history_cursor = *history_cursor;
+            run.quantity_scrub = *quantity_scrub;
             if done {
                 run.verified_pins = verified_pins;
                 run.phase = Phase::QuantityTail;
@@ -921,10 +972,18 @@ fn apply_step(
             quantity_scrub,
             done,
         } => {
-            run.quantity_scrub = quantity_scrub;
+            run.quantity_scrub = *quantity_scrub;
             if done {
                 run.phase = Phase::Seed;
             }
+            Ok(StepProgress::Continue)
+        }
+        StepOutcome::SeedPins {
+            seed_defs,
+            verified_pins,
+        } => {
+            run.seed_defs = seed_defs;
+            run.verified_pins = verified_pins;
             Ok(StepProgress::Continue)
         }
         StepOutcome::Seeded(checkpoint) => Ok(StepProgress::Done(checkpoint)),

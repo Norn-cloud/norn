@@ -222,7 +222,7 @@ fn history_projection_is_subset(proposed: &Value, authenticated: &Value) -> bool
     }
 }
 
-fn materialize_historical_values(
+pub(crate) fn materialize_historical_values(
     model: &Model,
     object_type: &norn_ir::ObjectTypeName,
     stored: &BTreeMap<String, Value>,
@@ -301,7 +301,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(model)
     }
 
-    fn root_type_or_self<'a>(&'a self, object_type: &'a str) -> Result<&'a str, CellError> {
+    pub(crate) fn root_type_or_self<'a>(
+        &'a self,
+        object_type: &'a str,
+    ) -> Result<&'a str, CellError> {
         self.check_live()?;
         match self.root_type(object_type) {
             Ok(root) => Ok(root),
@@ -310,7 +313,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         }
     }
 
-    fn proven_snapshot(
+    pub(crate) fn proven_snapshot(
         &self,
         world: &str,
         object_type: &str,
@@ -1183,7 +1186,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(())
     }
 
-    fn verify_prior_absence(&self, snapshot: &FactSnapshot) -> Result<(), CellError> {
+    pub(crate) fn verify_prior_absence(&self, snapshot: &FactSnapshot) -> Result<(), CellError> {
         if snapshot.version > 1 {
             let prior = self.proven_snapshot(
                 &snapshot.world,
@@ -2515,7 +2518,7 @@ pub(crate) fn unproven_snapshot() -> CellError {
     )
 }
 
-fn unproven_event() -> CellError {
+pub(crate) fn unproven_event() -> CellError {
     CellError::HistoricalValueUnproven(
         "event payload has no unique committed value proof".to_owned(),
     )

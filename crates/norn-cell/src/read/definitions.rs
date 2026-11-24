@@ -97,6 +97,13 @@ fn definition_layout_for_version(
     if !definition_layout_table_exists(engine)? {
         return Ok((None, 0));
     }
+    definition_layout_row(engine, version)
+}
+
+fn definition_layout_row(
+    engine: &impl SqlEngine,
+    version: u64,
+) -> Result<(Option<String>, u64), CellError> {
     let row = engine.query_optional(
         &format!(
             "SELECT \"layout_revision\", \"sidecar\" FROM \"{DEFINITION_LAYOUT}\" WHERE \"version\" = ?1"
@@ -319,15 +326,17 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             ),
             params![],
         )?;
-        decode_definition_rows(self.conn, rows)
+        decode_definition_rows(self.conn, rows, None)
     }
 
     /// Read at most `limit` retained definition versions strictly after
-    /// `after_version` (unfiltered when `after_version == 0`), in version order.
+    /// `after_version` (unfiltered when `after_version == 0`), charging exact
+    /// SQL rows read (including schema probes and layout/registry rows) to `budget`.
     pub(crate) fn installed_definition_versions_after(
         &self,
         after_version: u64,
         limit: usize,
+        budget: &mut crate::scrub::RowBudget,
     ) -> Result<Vec<InstalledDefinitionSet>, CellError> {
         let limit = i64::try_from(limit)
             .unwrap_or(crate::engine::MAX_SAFE_INTEGER)
@@ -347,32 +356,72 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 params![to_i64(after_version, "definitions version")?, limit],
             )?
         };
-        decode_definition_rows(self.conn, rows)
+        budget.charge(rows.len());
+        decode_definition_rows(self.conn, rows, Some(budget))
+    }
+
+    /// O(1) summary `(count, max_version)` of retained definitions through
+    /// `through` for `Phase::Seed` pin verification (1 SQL row).
+    pub(crate) fn definition_version_stats_through(
+        &self,
+        through: u64,
+    ) -> Result<(u64, u64), CellError> {
+        let (count, max_version): (i64, i64) = self.conn.query_row(
+            &format!(
+                "SELECT COUNT(*), COALESCE(MAX(\"version\"), 0) FROM \"{DEFINITION_VERSION}\" WHERE \"commit_seq\" <= ?1"
+            ),
+            params![to_i64(through, "definitions commit_seq")?],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        Ok((
+            to_u64(count, "definitions count")?,
+            to_u64(max_version, "definitions max version")?,
+        ))
     }
 }
 
 fn decode_definition_rows(
     conn: &impl SqlEngine,
     rows: Vec<Vec<crate::engine::SqlValue>>,
+    mut budget: Option<&mut crate::scrub::RowBudget>,
 ) -> Result<Vec<InstalledDefinitionSet>, CellError> {
     if rows.is_empty() {
         return Ok(Vec::new());
     }
     let has_registry_table = definition_registry_table_exists(conn)?;
     let has_admission_receipt_table = definition_admission_receipt_table_exists(conn)?;
-    rows.into_iter()
-        .map(|values| {
-            let mut installed = definition_from_row(&SqlRow(values))?;
-            if has_registry_table {
-                installed.registry = definition_registry_for_version(conn, installed.version)?;
+    let has_layout_table = definition_layout_table_exists(conn)?;
+    if let Some(budget) = budget.as_deref_mut() {
+        budget.charge(
+            usize::from(has_registry_table)
+                .saturating_add(usize::from(has_admission_receipt_table))
+                .saturating_add(usize::from(has_layout_table)),
+        );
+    }
+    let mut out = Vec::with_capacity(rows.len());
+    for values in rows {
+        let mut installed = definition_from_row(&SqlRow(values))?;
+        if has_registry_table {
+            installed.registry = definition_registry_for_version(conn, installed.version)?;
+            if let Some(budget) = budget.as_deref_mut() {
+                budget.charge(1);
             }
-            if has_admission_receipt_table {
-                installed.admission_receipt =
-                    definition_admission_receipt_for_version(conn, installed.version)?;
+        }
+        if has_admission_receipt_table {
+            installed.admission_receipt =
+                definition_admission_receipt_for_version(conn, installed.version)?;
+            if let Some(budget) = budget.as_deref_mut() {
+                budget.charge(1);
             }
+        }
+        if has_layout_table {
             (installed.layout, installed.layout_revision) =
-                definition_layout_for_version(conn, installed.version)?;
-            Ok(installed)
-        })
-        .collect()
+                definition_layout_row(conn, installed.version)?;
+            if let Some(budget) = budget.as_deref_mut() {
+                budget.charge(1);
+            }
+        }
+        out.push(installed);
+    }
+    Ok(out)
 }

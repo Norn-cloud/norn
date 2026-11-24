@@ -413,11 +413,56 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         self.ledger_page(after, length_rows.len()).map(Some)
     }
 
-    pub(crate) fn ledger_range(
+    /// Read at most `limit` ledger entries starting at `from`, decoding packed
+    /// payloads and checking entry hashes while charging exact SQL rows read to
+    /// `budget` (durable fact proofs are driven resumably by the caller).
+    pub(crate) fn scrub_ledger_page(
         &self,
         from: u64,
-        limit: Option<usize>,
+        limit: usize,
+        budget: &mut crate::scrub::RowBudget,
     ) -> Result<Vec<LedgerEntry>, CellError> {
+        let limit = i64::try_from(limit)
+            .unwrap_or(MAX_SAFE_INTEGER)
+            .min(MAX_SAFE_INTEGER);
+        let rows = self.conn.query(
+            &format!(
+                "SELECT \"seq\", \"commit_seq\", \"world\", \"event\", \"prev_hash\", \"hash\" FROM \"{LEDGER}\" WHERE \"seq\" >= ?1 ORDER BY \"seq\" LIMIT ?2"
+            ),
+            params![to_i64(from, "seq")?, limit],
+        )?;
+        budget.charge(rows.len());
+        let mut out = Vec::with_capacity(rows.len());
+        for values in rows {
+            let row = SqlRow(values);
+            let seq = to_u64(row.get(0)?, "seq")?;
+            let commit_seq = to_u64(row.get(1)?, "commit_seq")?;
+            let world: String = row.get(2)?;
+            let event: String = row.get(3)?;
+            let prev_hash: String = row.get(4)?;
+            let hash: String = row.get(5)?;
+            let decoded = crate::payload_storage::decode_event_budgeted(
+                self.conn, seq, &world, &event, budget,
+            )?;
+            if entry_hash(seq, commit_seq, &world, &decoded, &prev_hash)? != hash {
+                return Err(CellError::LedgerCorrupt {
+                    seq,
+                    reason: "entry hash does not verify".to_owned(),
+                });
+            }
+            out.push(LedgerEntry {
+                seq,
+                commit_seq,
+                world,
+                event: decoded,
+                prev_hash,
+                hash,
+            });
+        }
+        Ok(out)
+    }
+
+    fn ledger_range(&self, from: u64, limit: Option<usize>) -> Result<Vec<LedgerEntry>, CellError> {
         self.ledger_range_with(from, limit, true)
     }
 
