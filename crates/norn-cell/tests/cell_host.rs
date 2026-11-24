@@ -5837,7 +5837,7 @@ fn r7_empty_predicate_dynamic_marking_and_unclassified_negative_control() -> R7T
         .links
         .extend(r7_empty_pred_link_commit(status_pred, false).links);
     cell.commit(clean_commit)?;
-    assert!(r7_note_markings(&cell, "CLEAN")?.is_empty());
+    assert_eq!(r7_note_markings(&cell, "CLEAN")?, Vec::<String>::new());
 
     // Empty predicate on dynamically marked `tag` refuses link & propagates pii.ssn.
     let tag_pred: PredicateQuery = serde_json::from_value(
