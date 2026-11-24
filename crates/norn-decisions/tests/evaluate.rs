@@ -2123,3 +2123,173 @@ fn val_exact_decision_assignment_admits_and_evaluates_temporal_and_decimal_expre
 
     Ok(())
 }
+
+#[test]
+fn time_window_materialize_sub_decision_executes_and_refuses_dst_anomalies() {
+    let sub = rule(&json!({
+        "ruleFile": "registry/packs/time/artifacts/time.window.materialize.rule.json"
+    }));
+    let mut root = commands_rule(
+        "time.window.materialize_harness",
+        &closed(&json!({
+            "start_local_at": {"type": "string"},
+            "end_local_at": {"type": "string"},
+            "iana_timezone": {"type": "string"},
+            "dst_policy": {"type": "string", "enum": ["reject", "earlier", "later"]}
+        })),
+        "[{actionId: 'time.window.materialize_interval', starts_at: window.starts_at, ends_at: window.ends_at, duration_seconds: window.duration_seconds, proper_interval: window.proper_interval}]",
+    );
+    root["outputSchema"]["properties"]["commands"]["items"] = closed(&json!({
+        "actionId": {"type": "string"},
+        "starts_at": {"type": "string"},
+        "ends_at": {"type": "string"},
+        "duration_seconds": {"type": "number"},
+        "proper_interval": {"type": "boolean"}
+    }));
+    root["graph"]["nodes"].as_array_mut().unwrap().insert(
+        1,
+        json!({
+            "id": "call",
+            "name": "call",
+            "type": "decisionNode",
+            "content": {
+                "key": "time.window.materialize.rule",
+                "inputField": "slice",
+                "outputPath": "window",
+                "passThrough": true
+            }
+        }),
+    );
+    root["graph"]["edges"][0]["targetId"] = json!("call");
+    root["graph"]["edges"].as_array_mut().unwrap().push(json!({
+        "id": "e_call",
+        "sourceId": "call",
+        "targetId": "x"
+    }));
+    let subs = BTreeMap::from([("time.window.materialize.rule".to_owned(), sub)]);
+    let admitted = AdmittedDecision::admit(&rule(&root), &subs, binding()).unwrap();
+    let eval = |slice: &Json| {
+        run(
+            &admitted,
+            value(slice),
+            event(),
+            EvaluationBudget::default(),
+        )
+    };
+
+    // Unambiguous EDT workday resolves cleanly to canonical UTC [13:00Z, 21:00Z).
+    let edt = eval(&json!({
+        "start_local_at": "2026-06-15T09:00:00",
+        "end_local_at": "2026-06-15T17:00:00",
+        "iana_timezone": "America/New_York",
+        "dst_policy": "reject"
+    }))
+    .unwrap();
+    let edt_cmd = &edt.output.commands[0];
+    assert_eq!(
+        edt_cmd["starts_at"],
+        norn_ir::RuntimeValue::String("2026-06-15T13:00:00Z".to_owned())
+    );
+    assert_eq!(
+        edt_cmd["ends_at"],
+        norn_ir::RuntimeValue::String("2026-06-15T21:00:00Z".to_owned())
+    );
+    assert_eq!(
+        edt_cmd["duration_seconds"],
+        norn_ir::RuntimeValue::from_json_text("28800").unwrap()
+    );
+    assert_eq!(
+        edt_cmd["proper_interval"],
+        norn_ir::RuntimeValue::Bool(true)
+    );
+
+    // DST spring-forward gap (2026-03-08T02:30:00 in America/New_York) refuses under every policy.
+    for policy in ["reject", "earlier", "later"] {
+        let err = eval(&json!({
+            "start_local_at": "2026-03-08T02:30:00",
+            "end_local_at": "2026-03-08T10:30:00",
+            "iana_timezone": "America/New_York",
+            "dst_policy": policy
+        }))
+        .unwrap_err();
+        let DecisionError::Strict {
+            site: StrictSite::DecisionTableOutput,
+            message,
+            ..
+        } = &err
+        else {
+            panic!("expected strict table output refusal for gap ({policy}), got {err:?}");
+        };
+        assert!(
+            message.to_lowercase().contains("gap"),
+            "expected DST gap message for {policy}, got: {message}"
+        );
+    }
+
+    // DST fall-back fold (2026-11-01T01:30:00 in America/New_York) refuses under "reject".
+    let fold_err = eval(&json!({
+        "start_local_at": "2026-11-01T01:30:00",
+        "end_local_at": "2026-11-01T09:30:00",
+        "iana_timezone": "America/New_York",
+        "dst_policy": "reject"
+    }))
+    .unwrap_err();
+    let DecisionError::Strict {
+        site: StrictSite::DecisionTableOutput,
+        message,
+        ..
+    } = &fold_err
+    else {
+        panic!("expected strict table output refusal for fold reject, got {fold_err:?}");
+    };
+    assert!(
+        message.to_lowercase().contains("ambiguous"),
+        "expected DST fold ambiguity message, got: {message}"
+    );
+
+    // Same DST fold resolves deterministically under "earlier" (UTC-4 -> 05:30Z, 9h) and "later" (UTC-5 -> 06:30Z, 8h).
+    for (policy, expected_start, expected_duration) in [
+        ("earlier", "2026-11-01T05:30:00Z", "32400"),
+        ("later", "2026-11-01T06:30:00Z", "28800"),
+    ] {
+        let res = eval(&json!({
+            "start_local_at": "2026-11-01T01:30:00",
+            "end_local_at": "2026-11-01T09:30:00",
+            "iana_timezone": "America/New_York",
+            "dst_policy": policy
+        }))
+        .unwrap();
+        let cmd = &res.output.commands[0];
+        assert_eq!(
+            cmd["starts_at"],
+            norn_ir::RuntimeValue::String(expected_start.to_owned())
+        );
+        assert_eq!(
+            cmd["ends_at"],
+            norn_ir::RuntimeValue::String("2026-11-01T14:30:00Z".to_owned())
+        );
+        assert_eq!(
+            cmd["duration_seconds"],
+            norn_ir::RuntimeValue::from_json_text(expected_duration).unwrap()
+        );
+        assert_eq!(cmd["proper_interval"], norn_ir::RuntimeValue::Bool(true));
+    }
+
+    // Reversed bounds produce negative duration and proper_interval = false.
+    let reversed = eval(&json!({
+        "start_local_at": "2026-06-15T17:00:00",
+        "end_local_at": "2026-06-15T09:00:00",
+        "iana_timezone": "America/New_York",
+        "dst_policy": "reject"
+    }))
+    .unwrap();
+    let rev_cmd = &reversed.output.commands[0];
+    assert_eq!(
+        rev_cmd["duration_seconds"],
+        norn_ir::RuntimeValue::from_json_text("-28800").unwrap()
+    );
+    assert_eq!(
+        rev_cmd["proper_interval"],
+        norn_ir::RuntimeValue::Bool(false)
+    );
+}

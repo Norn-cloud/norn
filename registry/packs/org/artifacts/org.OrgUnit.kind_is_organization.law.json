@@ -1,0 +1,50 @@
+{
+  "artifactId": "org.OrgUnit.kind_is_organization.law",
+  "dependencies": [
+    {
+      "artifactId": "org.OrgUnit.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "An organizational unit is always an organization agent, never a person or system.",
+  "namespace": "org",
+  "payload": {
+    "id": "org.OrgUnit.kind_is_organization",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "org",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/org/org.ts"
+    },
+    "rationale": "An organizational unit is always an organization agent, never a person or system.",
+    "response": {
+      "expression": "self.kind == 'organization'",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "org.OrgUnit"
+      ],
+      "root": {
+        "id": "org.OrgUnit",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "org.OrgUnit"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/org/artifacts/org.OrgUnit.kind_is_organization.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

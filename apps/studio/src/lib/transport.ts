@@ -127,7 +127,7 @@ export const recordedTransport: Transport = {
 const through = (pick: (transport: Transport) => (...args: never[]) => Promise<unknown>) =>
   async (...args: never[]) => {
     const active = await currentMode()
-    const chosen = active.kind === "live" ? liveTransport(active.catalog, (input, init) => fetch(input, init), active.counts) : recordedTransport
+    const chosen = active.kind === "live" ? liveTransport(active.catalog, (input, init) => fetch(input, init), active.counts, active.scope) : recordedTransport
     return pick(chosen)(...args)
   }
 

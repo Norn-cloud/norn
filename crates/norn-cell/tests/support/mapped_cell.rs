@@ -43,9 +43,11 @@ pub(crate) fn fixture_artifacts() -> Vec<ArtifactEnvelope> {
                 "core.Order.interface",
                 "core.Entitlement.entity",
                 "identity.BusinessUnit.entity",
+                "identity.Directory.interface",
                 "location.Region.entity",
                 "location.Space.entity",
                 "party.Brand.entity",
+                "party.Organization.entity",
             ]
             .contains(&artifact.artifact_id.as_str())
             {
