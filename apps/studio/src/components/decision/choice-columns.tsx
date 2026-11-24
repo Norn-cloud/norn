@@ -37,15 +37,16 @@ export function ChoiceColumn({ title, options, selected, onSelect, invalid, fiel
       <ol className="flex flex-col gap-2" aria-label={title}>
         {options.map((option, index) => {
           const active = option.id === selected
+          const muted = selected !== undefined && !active
           return (
             <li key={option.id}>
               <button type="button" aria-pressed={active} onClick={() => onSelect(option.id)}
-                className={cn("w-full rounded-xl border border-border/90 bg-card px-3 py-2 text-start text-sm transition-[color,background-color,border-color,box-shadow] duration-150 hover:bg-surface-subtle focus-visible:ring-3 focus-visible:ring-ring/30 focus-visible:outline-none",
-                  active ? "border-action bg-background shadow-elevation ring-2 ring-action/20 dark:bg-card" : selected !== undefined && "opacity-60")}>
+                className={cn("w-full rounded-xl border border-border/90 bg-card px-3 py-2 text-start text-sm transition-[color,background-color,border-color,box-shadow] duration-150 outline-none hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring",
+                  active ? "border-action bg-background shadow-elevation ring-2 ring-action/20 dark:bg-card" : muted && "border-border/70 bg-surface-subtle/60")}>
                 <span className="flex flex-wrap items-center gap-2">
                   <span className="rounded-sm border border-border/90 bg-surface-subtle px-1.5 font-mono text-xs text-muted-foreground">{index + 1}</span>
-                  <span className="font-medium">{option.label}</span>
-                  {(option.marks ?? []).map((mark) => <span key={mark} className="text-xs font-medium text-action">{MARK_TEXT[mark]}</span>)}
+                  <span className={cn("font-medium", muted ? "text-muted-foreground" : "text-foreground")}>{option.label}</span>
+                  {(option.marks ?? []).map((mark) => <span key={mark} className={cn("text-xs font-medium", muted ? "text-muted-foreground" : "text-action")}>{MARK_TEXT[mark]}</span>)}
                 </span>
                 {option.detail && <span className="mt-1 block text-meta text-muted-foreground">{option.detail}</span>}
               </button>

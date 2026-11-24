@@ -247,8 +247,8 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
             <Popover open={filterOpen} onOpenChange={(open) => { setFilterOpen(open); if (open && draft.length === 0 && filterCount === 0) { const first = filterable(fields)[0]; if (first) setDraft([blankClause(first)]) } }}>
               <PopoverTrigger asChild>
                 <Button variant="ghost" size="sm" className={pill} disabled={!canQuery || filterable(fields).length === 0} title={off}>
-                  <Filter /> Filter{filterCount > 0 && <span className="ml-0.5 rounded-md bg-primary/10 px-1.5 text-xs tabular-nums text-primary">{filterCount}</span>}
-                  {draftDirty && <span className="size-1.5 rounded-full bg-primary" aria-label="Unapplied changes" />}
+                  <Filter /> Filter{filterCount > 0 && <span className="ml-0.5 rounded-md bg-tone-violet/10 px-1.5 text-xs font-medium tabular-nums text-tone-violet ring-1 ring-inset ring-tone-violet/20 dark:bg-tone-violet/15 dark:ring-tone-violet/25">{filterCount}</span>}
+                  {draftDirty && <span className="size-1.5 rounded-full bg-action" aria-label="Unapplied changes" />}
                 </Button>
               </PopoverTrigger>
               <PopoverContent align="start" className="w-[min(44rem,90vw)] rounded-node border-node-border shadow-float">

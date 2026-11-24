@@ -131,7 +131,7 @@ function ScopeSwitcher() {
   const { live, open } = useOpenWorkspace()
   return (
     <Menu>
-      <MenuTrigger data-scope className="group/scope flex w-full min-w-0 items-center gap-2.5 rounded-lg px-2 py-1.5 text-start text-sm transition-colors duration-150 outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring data-open:bg-sidebar-accent">
+      <MenuTrigger data-scope className="group/scope flex w-full min-w-0 items-center gap-2.5 rounded-lg px-2 py-1.5 text-start text-sm transition-[color,background-color] duration-150 outline-none hover:bg-sidebar-accent focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring data-open:bg-sidebar-accent">
         <span aria-hidden className="flex size-6 shrink-0 items-center justify-center rounded-md bg-background text-[0.6875rem] font-semibold text-foreground shadow-control ring-1 ring-border/90 dark:bg-card">{initials(open?.name ?? "")}</span>
         <span className="grid min-w-0 flex-1 leading-tight" title={`${open?.name ?? ""} · ${open?.detail ?? ""}`}>
           <span className="truncate font-semibold tracking-[-0.01em] text-sidebar-foreground">{open?.name}</span>
@@ -194,7 +194,7 @@ export function AccountMenu({ account, onSignOut }: { readonly account: Account;
   return (
     <Menu onAction={(value) => { if (value === "sign-out") onSignOut() }}>
       <Hint label={`${user.name} · ${organization ? `${organization.name} · ${organization.role}` : "No organization"}`}>
-        <ToolbarButton render={<MenuTrigger />} aria-label="Account" className="flex size-8 items-center justify-center rounded-full bg-background text-[0.6875rem] font-medium ring-1 ring-border outline-none hover:ring-foreground/30 focus-visible:ring-2 focus-visible:ring-ring">
+        <ToolbarButton render={<MenuTrigger />} aria-label="Account" className="flex size-8 items-center justify-center rounded-full bg-background text-[0.6875rem] font-medium ring-1 ring-border outline-none hover:ring-foreground/30 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">
           {initials(user.name || user.email)}
         </ToolbarButton>
       </Hint>
@@ -227,7 +227,7 @@ function useNavigation(sections: readonly Section[]) {
 
 type Navigation = ReturnType<typeof useNavigation>
 
-const railButton = "relative flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors duration-150 outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-[1.0625rem]"
+const railButton = "relative flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-[color,background-color] duration-150 outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring [&_svg]:size-[1.0625rem]"
 const railActive = "bg-action/12 text-action ring-1 ring-inset ring-action/20 hover:bg-action/15 hover:text-action dark:bg-action/18 dark:ring-action/30"
 
 /** One destination on the rail: its icon, its name as a hint, and its count. */
@@ -294,7 +294,7 @@ function Rail({ sections, perspective, navigation, current, account, onSignOut, 
   return (
     <div ref={railRef} className="h-full shrink-0 border-e border-sidebar-border/75 group-data-[collapsible=icon]:border-e-0">
       <Toolbar orientation="vertical" aria-label="Studio" className="flex h-full w-(--sidebar-width-icon) flex-col items-center gap-1 py-2.5">
-        <Link to="/" aria-label="Norn Studio home" className="mb-2 flex size-8 items-center justify-center rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring">
+        <Link to="/" aria-label="Norn Studio home" className="mb-2 flex size-8 items-center justify-center rounded-lg outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">
           <img src={nornMark} alt="" width={24} height={24} className="size-6 object-contain" />
         </Link>
         {global.map((section) => <RailLink key={section.path} section={section} count={navigation.badges.get(section.path)} />)}
@@ -318,8 +318,8 @@ function Rail({ sections, perspective, navigation, current, account, onSignOut, 
 }
 
 // Focus stays on the tree item; its row is the label inside.
-const focusRow = "outline-none focus-visible:[&>[data-slot=tree-label]]:ring-2 focus-visible:[&>[data-slot=tree-label]]:ring-ring"
-const row = "relative flex h-7.5 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-sm text-sidebar-foreground/80 transition-colors duration-150 outline-none hover:bg-sidebar-accent hover:text-sidebar-foreground data-current:bg-background data-current:font-medium data-current:text-foreground data-current:shadow-control data-current:ring-1 data-current:ring-border/80 dark:data-current:bg-card dark:data-current:ring-border data-current:[&_svg]:text-action data-current:before:absolute data-current:before:inset-y-1.5 data-current:before:start-0 data-current:before:w-[2.5px] data-current:before:rounded-full data-current:before:bg-action [&_svg]:size-4 [&_svg]:shrink-0"
+const focusRow = "outline-none focus-visible:[&>[data-slot=tree-label]]:relative focus-visible:[&>[data-slot=tree-label]]:z-10 focus-visible:[&>[data-slot=tree-label]]:outline-2 focus-visible:[&>[data-slot=tree-label]]:outline-solid focus-visible:[&>[data-slot=tree-label]]:outline-offset-1 focus-visible:[&>[data-slot=tree-label]]:outline-ring"
+const row = "relative flex h-7.5 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-sm text-sidebar-foreground/80 transition-[color,background-color] duration-150 outline-none hover:bg-sidebar-accent hover:text-sidebar-foreground data-current:bg-background data-current:font-medium data-current:text-foreground data-current:shadow-control data-current:ring-1 data-current:ring-border/80 dark:data-current:bg-card dark:data-current:ring-border data-current:[&_svg]:text-action data-current:before:absolute data-current:before:inset-y-1.5 data-current:before:start-0 data-current:before:w-[2.5px] data-current:before:rounded-full data-current:before:bg-action [&_svg]:size-4 [&_svg]:shrink-0"
 
 /** The current page's tree value: the item that claims the longest prefix of it, else its destination. */
 function currentOf(sections: readonly Section[], navigation: Navigation, pathname: string): string | null {
@@ -493,7 +493,7 @@ function PerspectiveSwitch({ perspective, onChange }: { readonly perspective: Pe
     <div role="group" aria-label="Perspective" data-perspective={perspective} className="flex h-8 shrink-0 items-center rounded-lg border border-border/80 bg-surface-subtle p-0.5 dark:bg-shell">
       {PERSPECTIVES.map(({ id, label }) => (
         <button key={id} type="button" aria-pressed={perspective === id} onClick={() => onChange(id)}
-          className="flex h-[1.625rem] items-center gap-1.5 rounded-md px-1.5 text-sm text-muted-foreground transition-[color,background-color,box-shadow] duration-150 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-control aria-pressed:ring-1 aria-pressed:ring-border/70 aria-pressed:[&_svg]:text-action dark:aria-pressed:bg-accent dark:aria-pressed:ring-border @sm:px-2 @lg:px-2.5 [&_svg]:size-3.5">
+          className="flex h-[1.625rem] items-center gap-1.5 rounded-md px-1.5 text-sm text-muted-foreground transition-[color,background-color,box-shadow] duration-150 outline-none hover:text-foreground focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-control aria-pressed:ring-1 aria-pressed:ring-border/70 aria-pressed:[&_svg]:text-action dark:aria-pressed:bg-accent dark:aria-pressed:ring-border @sm:px-2 @lg:px-2.5 [&_svg]:size-3.5">
           {id === "workspace" ? <LayoutGrid aria-hidden /> : <Wrench aria-hidden />}<span className="sr-only @lg:not-sr-only">{label}</span>
         </button>
       ))}
@@ -512,7 +512,7 @@ function CommandMenu({ sections, navigation, onPerspective }: { readonly section
   ])
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger shortcut="mod+k" aria-label="Search" className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-colors duration-150 outline-none hover:bg-surface-subtle hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring @2xl:w-full @2xl:justify-start @2xl:gap-2 @2xl:border @2xl:border-border/90 @2xl:bg-surface-subtle/70 @2xl:px-2.5 @2xl:hover:border-input @2xl:hover:bg-surface-subtle">
+      <DialogTrigger shortcut="mod+k" aria-label="Search" className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-[color,background-color,border-color] duration-150 outline-none hover:bg-surface-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring @2xl:w-full @2xl:justify-start @2xl:gap-2 @2xl:border @2xl:border-border/90 @2xl:bg-surface-subtle/70 @2xl:px-2.5 @2xl:hover:border-input @2xl:hover:bg-surface-subtle">
         <Search aria-hidden className="size-4 shrink-0" /><span className="hidden truncate @2xl:inline">Search…</span><Keys className="ms-auto hidden rounded border border-border/90 bg-background px-1.5 py-0.5 text-[0.6875rem] leading-none text-muted-foreground @2xl:inline">⌘K</Keys>
       </DialogTrigger>
       <DialogBackdrop className="fixed inset-0 bg-black/40 backdrop-blur-[2px] transition-opacity duration-150 data-starting-style:opacity-0 data-ending-style:opacity-0" />
@@ -583,7 +583,7 @@ function ConnectionBanner() {
   )
 }
 
-const iconButton = "flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-open:bg-accent [&_svg]:size-4"
+const iconButton = "flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring data-open:bg-accent [&_svg]:size-4"
 
 /** The page bar's right-hand buttons: the page's own tools, then shortcuts and notifications. */
 function BarButtons({ tools }: { readonly tools?: ReactNode }) {
