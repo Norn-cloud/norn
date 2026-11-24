@@ -92,6 +92,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         limit: usize,
         quantity: bool,
     ) -> Result<Vec<PendingTimer>, CellError> {
+        self.check_live()?;
         let (index, kind) = if quantity {
             ("_norn_timer/quantity_due", QUANTITY)
         } else {
@@ -130,6 +131,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// # Errors
     /// SQL engine or decode errors.
     pub fn next_eligible_timer(&self) -> Result<Option<u64>, CellError> {
+        self.check_live()?;
         // The earliest timer with no retry record, through the due index: it
         // passes over only the timers that failed.
         let fresh = self.conn.query_optional(
@@ -165,6 +167,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// # Errors
     /// SQL engine or decode errors.
     pub fn due_retries(&self, prefix: &str) -> Result<BTreeMap<String, DueRetry>, CellError> {
+        self.check_live()?;
         let rows = self.conn.query(
             &format!(
                 r#"SELECT "item","incarnation","attempts","eligible_at" FROM "{DUE_RETRY}" WHERE substr("item",1,length(?1))=?1 ORDER BY "item""#

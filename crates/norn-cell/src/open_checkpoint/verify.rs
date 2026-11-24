@@ -130,12 +130,39 @@ impl<E: SqlEngine> CellStore<E> {
         })
     }
 
-    /// Return the scrub gate after retrying any pending fence persistence.
+    /// Return the scrub gate after retrying any pending fence persistence and
+    /// checking sibling durable fences whenever `PRAGMA data_version` changed.
     pub(crate) fn served_gate(&self) -> crate::scrub::Gate {
         if self.scrub.borrow().needs_fence_persist() {
             self.persist_pending_fence();
         }
-        self.scrub.borrow().gate()
+        let check_durable_fence = if self.scrub.borrow().refuse_fenced().is_err()
+            || self.conn.read_isolation() == crate::engine::ReadIsolation::ExclusiveSynchronous
+        {
+            false
+        } else {
+            match self.conn.external_data_version() {
+                Ok(Some(dv)) => {
+                    if self.scrub.borrow().fence_checked_dv() == Some(dv) {
+                        false
+                    } else {
+                        match open_checkpoint::read_fence(&self.conn) {
+                            Ok(Some(finding)) => {
+                                self.scrub.borrow_mut().record_durable_fence(finding);
+                                false
+                            }
+                            Ok(None) => {
+                                self.scrub.borrow_mut().set_fence_checked_dv(dv);
+                                false
+                            }
+                            Err(_) => true,
+                        }
+                    }
+                }
+                Ok(None) | Err(_) => true,
+            }
+        };
+        self.scrub.borrow().gate(check_durable_fence)
     }
 
     /// Complete open/provisioning-replay checkpoint recording and scrub setup.
@@ -688,5 +715,64 @@ impl<E: SqlEngine> CellStore<E> {
             });
         }
         Ok(())
+    }
+
+    /// S10 (#1551 round 6): snapshot the live database head, quantity boundary,
+    /// and any receipt hashes beyond `loaded_len` inside a scrub restart
+    /// transaction so restarting on an external `data_version` change verifies
+    /// the entire history including any suffix written during the scrub.
+    pub(crate) fn restart_scrub_target(
+        &self,
+        loaded_len: u64,
+    ) -> Result<(LedgerHead, Option<FormatBoundary>, Vec<String>), CellError> {
+        let reader = self.verifier();
+        let commits = reader.next_commit_seq()?.saturating_sub(1);
+        if commits < loaded_len {
+            return Err(open_checkpoint::corrupt(
+                loaded_len,
+                "the ledger shrank behind the open handle",
+            ));
+        }
+        let (seq, hash) = reader.ledger_tail()?;
+        let target = LedgerHead { seq, hash, commits };
+        let boundary =
+            crate::quantity::format_boundary(&self.conn)?.filter(|boundary| boundary.seq <= seq);
+        let extra = if commits > loaded_len {
+            let rows = self.conn.query(
+                &format!(
+                    "SELECT \"commit_seq\", \"receipt_hash\" FROM \"{RECEIPT}\" \
+                     WHERE \"commit_seq\" > ?1 AND \"commit_seq\" <= ?2 \
+                     ORDER BY \"commit_seq\""
+                ),
+                params![
+                    to_i64(loaded_len, "receipt log length")?,
+                    to_i64(commits, "restart target commits")?
+                ],
+            )?;
+            let mut hashes = Vec::with_capacity(rows.len());
+            let mut expected = loaded_len.saturating_add(1);
+            for values in rows {
+                let row = SqlRow(values);
+                let commit_seq = to_u64(row.get(0)?, "receipt commit")?;
+                if commit_seq != expected {
+                    return Err(open_checkpoint::corrupt(
+                        expected,
+                        "a receipt is missing from the suffix during scrub restart",
+                    ));
+                }
+                hashes.push(row.get::<String>(1)?);
+                expected = expected.saturating_add(1);
+            }
+            if expected != commits.saturating_add(1) {
+                return Err(open_checkpoint::corrupt(
+                    expected,
+                    "the receipt log is shorter than the ledger tail during scrub restart",
+                ));
+            }
+            hashes
+        } else {
+            Vec::new()
+        };
+        Ok((target, boundary, extra))
     }
 }

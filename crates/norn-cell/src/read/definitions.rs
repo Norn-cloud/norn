@@ -195,6 +195,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// # Errors
     /// SQL errors or a dangling active-version pointer.
     pub fn active_definitions_version(&self) -> Result<Option<u64>, CellError> {
+        self.check_live()?;
         validate_active_definition_pointer(self.conn)
     }
 
@@ -205,6 +206,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// # Errors
     /// SQL errors or a dangling active-version pointer.
     pub fn active_definitions_identity(&self) -> Result<Option<(u64, String)>, CellError> {
+        self.check_live()?;
         let Some(version) = validate_active_definition_pointer(self.conn)? else {
             return Ok(None);
         };
@@ -251,6 +253,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         &self,
         version: Option<u64>,
     ) -> Result<Option<InstalledDefinitionSet>, CellError> {
+        self.check_live()?;
         let version = if let Some(version) = version {
             version
         } else {
@@ -278,6 +281,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ///
     /// SQL, decoding, sequence-range, or receipt-integrity errors.
     pub fn definitions_version_at(&self, commit_seq: u64) -> Result<Option<u64>, CellError> {
+        self.check_history("definitions version history")?;
         if commit_seq == 0 {
             return Ok(None);
         }
@@ -308,6 +312,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ///
     /// SQL or decoding errors.
     pub fn installed_definition_versions(&self) -> Result<Vec<InstalledDefinitionSet>, CellError> {
+        self.check_live()?;
         let rows = self.conn.query(
             &format!(
                 "SELECT \"version\", \"receipt_sha256\", \"canonical_set\", \"model_hash\", \"ddl_hash\", \"installed_at\", \"commit_seq\" FROM \"{DEFINITION_VERSION}\" ORDER BY \"version\""

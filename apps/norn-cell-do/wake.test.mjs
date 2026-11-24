@@ -219,6 +219,36 @@ describe("an alarm", () => {
     expect(ran).toEqual({ committed: false, failed: fencedReport, sync: null });
     expect(store.alarm).toBe(null);
   });
+
+  // Round 6 S12: when durable fence persistence failed transiently, nextDue
+  // returns a retry timestamp instead of undefined so the alarm stays armed
+  // until a later wake persists the fence durably.
+  test("a wake whose durable fence persistence is pending keeps the alarm armed until persisted", async () => {
+    const store = storage();
+    const wake = new Wake(store);
+    const fencedReport = "history scrub: the cell is fenced: missing value";
+    let persisted = false;
+    const served = {
+      serving: () => true,
+      runDue() {
+        return { committed: false, failed: fencedReport, free() {} };
+      },
+      syncDue() {
+        return undefined;
+      },
+      nextDue(now) {
+        return persisted ? undefined : now + 1_000;
+      },
+    };
+    const first = await wake.alarm(served, NOW);
+    expect(first).toEqual({ committed: false, failed: fencedReport, sync: null });
+    expect(store.alarm).toBe(NOW + 1_000);
+
+    persisted = true;
+    const second = await wake.alarm(served, NOW + 1_000);
+    expect(second).toEqual({ committed: false, failed: fencedReport, sync: null });
+    expect(store.alarm).toBe(null);
+  });
 });
 
 describe("opening", () => {

@@ -151,7 +151,10 @@ fn derives_in_order_before_lookup_and_validation_then_records_committed_evidence
     let mut cell = cell();
     let outcome =
         commit_action(&mut cell, &catalog, &invocation, &Allow).expect("related object is valid");
-    let ActionOutcome::Committed { record, receipt } = outcome else {
+    let ActionOutcome::Committed {
+        record, receipt, ..
+    } = outcome
+    else {
         panic!("new action must commit")
     };
     assert_eq!(receipt.written.len(), 2);

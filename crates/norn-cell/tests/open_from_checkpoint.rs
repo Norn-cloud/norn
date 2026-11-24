@@ -2171,3 +2171,180 @@ fn fork_is_refused_while_scrub_is_incomplete_or_fenced() {
         "fork must refuse on a fenced cell"
     );
 }
+
+/// S10 (#1551 round 6): if a commit extends the ledger during scrub and an
+/// external connection subsequently corrupts that suffix, the `data_version`
+/// restart refreshes the scrub target to the live tail and fences the cell.
+#[test]
+fn external_suffix_corruption_after_mid_scrub_commit_restarts_and_fences() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    let total = EVERY.saturating_add(10);
+    cell(&path, total);
+
+    let mut store = open(&path).expect("checkpointed open");
+    assert!(!history_ready(&store));
+
+    // Advance into History phase so the scrub has already completed Receipts.
+    loop {
+        let status = store.scrub_step();
+        if matches!(
+            status,
+            ScrubStatus::Verifying {
+                phase: "history",
+                verified,
+                ..
+            } if verified >= 64
+        ) {
+            break;
+        }
+        assert!(
+            matches!(status, ScrubStatus::Verifying { .. }),
+            "expected history progress >= 64, got {status:?}"
+        );
+    }
+
+    // Commit a new suffix during the active scrub (extends past original target).
+    let suffix_commit = total.saturating_add(1);
+    let outcome = store.commit(&put(suffix_commit)).expect("mid-scrub commit");
+    assert_eq!(outcome.receipt().body.commit_seq, suffix_commit);
+
+    // Corrupt that suffix externally via a second SQLite connection!
+    execute(
+        &path,
+        &format!("DELETE FROM _norn_fact_values WHERE commit_seq = {suffix_commit}"),
+    );
+
+    // Restart must refresh target to `suffix_commit`, detect corruption, and fence!
+    let final_status = store.scrub_to_end();
+    assert!(
+        matches!(final_status, ScrubStatus::Fenced { .. }),
+        "external suffix tamper must restart through the suffix and fence, got {final_status:?}"
+    );
+    assert!(!history_ready(&store));
+    drop(store);
+    assert_eq!(checkpoint(&path), None, "fence dropped checkpoint");
+    assert!(matches!(open(&path), Err(CellError::Fenced(_))));
+}
+
+/// S8/S12 (#1551 round 6): `dump_filtered`/`dump` refuse during incomplete scrub
+/// and on a sibling durable fence; `flow_run`/`flow_runs`/`live_runs` refuse on
+/// a sibling durable fence.
+#[test]
+fn dump_filtered_and_flow_run_respect_scrub_and_durable_fence() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    cell(&path, EVERY.saturating_add(10));
+
+    let store = open(&path).expect("checkpointed open");
+    assert!(!history_ready(&store));
+    assert!(matches!(
+        store.read().dump_filtered(|_| true),
+        Err(CellError::Verifying(_))
+    ));
+    assert!(matches!(store.read().dump(), Err(CellError::Verifying(_))));
+    assert!(store.read().flow_run(MAIN_WORLD, "run-1").is_ok());
+    assert_eq!(store.scrub_to_end(), ScrubStatus::Idle);
+    assert!(store.read().dump_filtered(|_| true).is_ok());
+    drop(store);
+
+    // Sibling opens before first handle fences durably.
+    execute(&path, "DELETE FROM _norn_fact_values WHERE commit_seq = 10");
+    let first = open(&path).expect("first open");
+    let sibling = open(&path).expect("sibling open");
+    assert!(matches!(first.scrub_to_end(), ScrubStatus::Fenced { .. }));
+
+    let filter = norn_cell::flow_run::RunFilter::default();
+    assert!(matches!(
+        sibling.read().dump_filtered(|_| true),
+        Err(CellError::Fenced(_))
+    ));
+    assert!(matches!(
+        sibling.read().flow_run(MAIN_WORLD, "run-1"),
+        Err(CellError::Fenced(_))
+    ));
+    assert!(matches!(
+        sibling.read().flow_runs(MAIN_WORLD, &filter),
+        Err(CellError::Fenced(_))
+    ));
+    assert!(matches!(
+        sibling.read().live_runs(MAIN_WORLD, "flow.one"),
+        Err(CellError::Fenced(_))
+    ));
+}
+
+struct FenceOnBeginEngine {
+    inner: NativeEngine,
+    path: std::path::PathBuf,
+    armed: std::rc::Rc<Cell<bool>>,
+}
+
+impl SqlEngine for FenceOnBeginEngine {
+    fn read_isolation(&self) -> ReadIsolation {
+        self.inner.read_isolation()
+    }
+    fn checkpoint_key(&self) -> Option<CheckpointKey> {
+        self.inner.checkpoint_key()
+    }
+    fn external_data_version(&self) -> Result<Option<u64>, CellError> {
+        self.inner.external_data_version()
+    }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.inner.definition_writes(f)
+    }
+    fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
+        self.inner.execute(sql, params)
+    }
+    fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+        self.inner.query(sql, params)
+    }
+    fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
+        self.inner.execute_batch(sql)
+    }
+    fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X> {
+        if self.armed.replace(false) {
+            execute(
+                &self.path,
+                "INSERT OR REPLACE INTO _norn_meta (key, value) VALUES ('open_checkpoint:fenced', 'sibling raced before bind tx')",
+            );
+        }
+        self.inner.transaction(f)
+    }
+}
+
+/// S12 (#1551 round 6): `CellStore::bind` checks the durable fence INSIDE its
+/// write transaction, refusing if a sibling fences between pre-check and BEGIN.
+#[test]
+fn bind_refuses_when_sibling_fences_before_bind_transaction() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    cell(&path, 10);
+
+    let armed = std::rc::Rc::new(Cell::new(false));
+    let mut store = CellStore::from_engine(
+        FenceOnBeginEngine {
+            inner: NativeEngine::open(&path, keyed()).expect("native engine"),
+            path: path.clone(),
+            armed: std::rc::Rc::clone(&armed),
+        },
+        engine_fixture::model(),
+    )
+    .expect("open");
+
+    armed.set(true);
+    let refused = store.bind("late_key", "late_value");
+    assert!(
+        matches!(refused, Err(CellError::Fenced(_))),
+        "bind must fail closed inside its write transaction, got {refused:?}"
+    );
+    let rows = raw(&path)
+        .query(
+            "SELECT value FROM _norn_meta WHERE key = 'binding:late_key'",
+            &[],
+        )
+        .expect("query meta");
+    assert!(rows.is_empty(), "fenced bind must not persist a binding");
+}

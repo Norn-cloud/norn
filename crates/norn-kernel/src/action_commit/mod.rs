@@ -1,37 +1,15 @@
-//! The action commit path (T2-KER-2c, #2895).
+//! The action commit path (T2-KER-2c, #2895): authorized calls commit through
+//! [`crate::decision_commit`] in one [`CellHost::commit`] (fact writes, ledger
+//! events, and idempotency record).
 //!
-//! An authorized call of an action whose effect program is `fire_transition`
-//! or `upsert_input_object` commits through the decision-commit path
-//! ([`crate::decision_commit`]) in **one** [`CellHost::commit`]: the fact
-//! writes and ledger events plus the call's idempotency record.
-//! [`commit_action`] is the entry point a shell (`norn dev`'s
-//! `POST /v1/actions/{action}`, the cell shim) calls.
-//!
-//! Order of checks, each refusing with nothing committed:
-//!
-//! 1. **Command shape and scope, fail-closed**:
-//!    [`crate::action::check_action_command`] (organization scope, identity
-//!    fields) and every `scopeRequired` key present and non-blank.
-//! 2. **Effect**: only `fire_transition` and `upsert_input_object` are
-//!    executable here.
-//! 3. **Input preparation**: ordered ZEN derivations run against caller input
-//!    and prior derived values, then the effective object is checked against
-//!    the closed input schema. The raw caller input remains the idempotency
-//!    binding.
-//! 4. **Current-state authorization**, by the injected [`ActionAuthorizer`],
-//!    with the target's committed values when it exists. A missing transition
-//!    target is still checked with `target_values: None` and reports
-//!    [`ActionRefusal::TargetNotFound`]. A create upsert defers resource
-//!    authorization until its proposed values have been prepared.
-//! 5. **Preconditions**: every action precondition (a boolean ZEN Expression
-//!    over effective input and the authorized, declared slice) holds. The
-//!    slice's fact versions and complete bounded link sets are compared again
-//!    in the commit; false, non-boolean, failing, or stale reads refuse.
-//! 6. **Object kind**: the target's type is the effect's `objectKind` or a
-//!    subtype of it.
-//! 7. **Idempotency**: a committed call with the same action and idempotency
-//!    key replays (no second transition) when its binding (object, input,
-//!    actor) is equal, and refuses otherwise. Existing targets are authorized
+//! Checks (each refusing with nothing committed):
+//! 1. **Command & scope** (fail-closed): [`crate::action::check_action_command`] and `scopeRequired`.
+//! 2. **Effect**: `fire_transition`, `upsert_input_object`, or owned-rows mutation.
+//! 3. **Input preparation**: ZEN derivations against caller input; raw input binds idempotency.
+//! 4. **Authorization**: [`ActionAuthorizer`] on committed values (deferred for create upserts).
+//! 5. **Preconditions**: ZEN boolean expressions over authorized slice, CAS-verified at commit.
+//! 6. **Object kind**: target type matches effect's `objectKind` or subtype.
+//! 7. **Idempotency**: exact binding replays; conflicts refuse. Existing targets are authorized
 //!    against current state before replay. An absent upsert replay is checked
 //!    as an absent current target and remains not-found, rather than becoming
 //!    a fresh create.
@@ -72,8 +50,8 @@ use norn_ir::{ActionEffectProgram, FactChange, ObjectTypeName};
 
 use crate::action::{ActionCommandRejection, ActionCommandShape, check_action_command};
 use crate::cell_host::{
-    CellCommit, CellHost, CommitError, FactKey, FactMutation, FactState, FactWrite, JsonObject,
-    JsonValue, LinkKey, LinkMutation, LinkWrite,
+    CellCommit, CellHost, CommitError, FactKey, FactMutation, FactState, FactVersion, FactWrite,
+    JsonObject, JsonValue, LinkKey, LinkMutation, LinkWrite,
 };
 use crate::decision_commit::{
     DecisionRefusal, FactEvent, TypeCatalog, prepare_decision_with_limits, widen_effect,
@@ -551,6 +529,10 @@ where
         writes.push(candidate.counter_write);
         reads.extend(candidate.skipped_reads);
     }
+    let target_before = slice
+        .get(&target)
+        .map_or(FactVersion::ABSENT, |state| state.version);
+    receipt::ensure_target_read(&target, target_before, &writes, &mut reads);
     writes.push(FactWrite {
         key: record_key.clone(),
         expected: recorded.version,
@@ -605,7 +587,13 @@ where
             if let Some(meter) = meter {
                 meter.charge(counts);
             }
-            Ok(ActionOutcome::Committed { receipt, record })
+            let target_version =
+                receipt::committed_target_version(&receipt, &target, target_before);
+            Ok(ActionOutcome::Committed {
+                receipt,
+                record,
+                target_version,
+            })
         }
         Err(error) if error.is_invariant_refusal() => Err(ActionRefusal::Decision(
             ledger_action_invariant_refusal(host, call, error),

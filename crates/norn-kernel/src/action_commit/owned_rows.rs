@@ -846,9 +846,7 @@ where
             action_id: call.action.action_id.clone(),
         });
     };
-    // Coverage belongs to the action's pinned type, not to collections added
-    // by a concrete subtype. A base action cannot delete those collections
-    // without their derivations/guards, nor accept operations against them.
+    // Coverage belongs to the action's pinned type, not subtype-added collections.
     if action_type.owned_collections.is_empty()
         || action_type.owned_collections.len() != configs.len()
         || action_type
@@ -1120,10 +1118,7 @@ where
         });
     }
 
-    // Reserve the same owned-state/input work already bounded above before
-    // loading any declared dependency. Declared aliases intentionally incur
-    // another charge: their authorized expression values are materialized
-    // separately from the owned mutation snapshot.
+    // Reserve the bounded owned-state/input work before loading declared dependencies.
     let mut slice_meter = SliceMeter::new(slice_limits);
     for record_index in 0..snapshot_cost {
         let bytes = if record_index == 0 {
@@ -1168,10 +1163,7 @@ where
         .clone_from(&action_slice.parameter_pins);
     check_action_record_size::<H::Error>(call.action, &record, limits)?;
 
-    // Replays must be resolved before CAS validation: a create retry carries
-    // its original absent-version token although the committed target now
-    // exists. Current authorization of the parent and all descendants above
-    // still happens before the replay is exposed.
+    // Resolve replays before CAS validation; current authorization already ran above.
     if delete_parent && !parent_state.exists() {
         return Err(ActionRefusal::TargetNotFound);
     }
@@ -1623,9 +1615,7 @@ where
         }
     }
 
-    // Materialize link defaults before sealing the owned-row proof so the
-    // native host's identical canonicalization leaves its protected writes
-    // byte-for-byte unchanged during admission.
+    // Materialize link defaults before sealing so host canonicalization is unchanged.
     for write in &mut link_writes {
         if let LinkMutation::Add { values } = &mut write.mutation {
             *values = catalog
@@ -1703,8 +1693,7 @@ where
         },
         &mut prepared.writes,
     )?;
-    // Do not expose a row guard's outcome until every proposed write has
-    // passed authorization. Removed rows use their authorized current state.
+    // Check row preconditions only after every proposed write passes authorization.
     for ((collection_id, _), values) in &guarded_rows {
         let child_type = &declared
             .get(collection_id)
@@ -1745,6 +1734,8 @@ where
     }
     let mut writes = prepared.writes;
     writes.extend(manifest_writes);
+    let target_before = parent_state.version;
+    super::receipt::ensure_target_read(&target, target_before, &writes, &mut prepared.reads);
     writes.push(FactWrite {
         key: record_key.clone(),
         expected: recorded.version,
@@ -1779,7 +1770,13 @@ where
             if let Some(meter) = meter {
                 meter.charge(counts);
             }
-            Ok(ActionOutcome::Committed { receipt, record })
+            let target_version =
+                super::receipt::committed_target_version(&receipt, &target, target_before);
+            Ok(ActionOutcome::Committed {
+                receipt,
+                record,
+                target_version,
+            })
         }
         Err(error) if error.is_invariant_refusal() => Err(ActionRefusal::Decision(
             ledger_action_invariant_refusal(host, call, error),

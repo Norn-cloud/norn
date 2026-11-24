@@ -742,8 +742,7 @@ impl<E: SqlEngine> CellStore<E> {
         raw: &Observed<RuntimeValue>,
         input: &MappingInput,
     ) -> Result<(String, bool), CellError> {
-        self.conn
-            .transaction(|| self.capture_mapping_bundle(raw, input))
+        self.write_tx(|| self.capture_mapping_bundle(raw, input))
     }
 
     /// MAP-REPROCESS-1: retain an explicitly re-derived bundle at its own
@@ -764,8 +763,7 @@ impl<E: SqlEngine> CellStore<E> {
             input: norn_ir::runtime::encode(bundle).map_err(CellError::Encoding)?,
         };
         let encoded = norn_ir::runtime::encode(&observed).map_err(CellError::Encoding)?;
-        self.conn
-            .transaction(|| crate::store::inject_observation(&self.conn, &id, &encoded))?;
+        self.write_tx(|| crate::store::inject_observation(&self.conn, &id, &encoded))?;
         Ok(id)
     }
 

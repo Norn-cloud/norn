@@ -634,7 +634,10 @@ fn action_commits_once_and_replays_retries() {
 
     let approved =
         commit_action(&mut cell, &catalog, &call(&approve, "SO-1", "k2"), &Allow).unwrap();
-    let ActionOutcome::Committed { receipt, record } = approved else {
+    let ActionOutcome::Committed {
+        receipt, record, ..
+    } = approved
+    else {
         panic!("expected a commit: {approved:?}");
     };
     assert_eq!(
@@ -717,7 +720,10 @@ fn upsert_creates_and_replays_in_one_action_commit() {
     let action_call = call(&action, "SO-CREATE", "create-upsert");
 
     let committed = commit_action(&mut cell, &catalog, &action_call, &Allow).unwrap();
-    let ActionOutcome::Committed { receipt, record } = committed else {
+    let ActionOutcome::Committed {
+        receipt, record, ..
+    } = committed
+    else {
         panic!("expected a commit: {committed:?}");
     };
     assert_eq!(record.effect_kind.as_deref(), Some("upsert_input_object"));
@@ -3847,8 +3853,9 @@ fn owned_rows_preserve_generated_names_but_allow_updates_and_reorders() {
         ]),
     );
     let before = cell.ledger().len();
-    let ActionOutcome::Committed { receipt, record } =
-        commit_action(&mut cell, &catalog, &update, &Allow).unwrap()
+    let ActionOutcome::Committed {
+        receipt, record, ..
+    } = commit_action(&mut cell, &catalog, &update, &Allow).unwrap()
     else {
         panic!("expected existing-row update");
     };

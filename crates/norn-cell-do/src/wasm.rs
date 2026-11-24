@@ -467,6 +467,16 @@ impl NornCell {
     /// A host failure reading the cell.
     #[wasm_bindgen(js_name = nextDue)]
     pub fn next_due(&mut self, now_ms: f64) -> Result<Option<f64>, JsValue> {
+        if self
+            .tenant
+            .serving_host()
+            .is_some_and(norn_api::timers::is_fence_persist_pending)
+        {
+            return Ok(earliest(
+                Some(millis(now_ms).saturating_add(norn_api::timers::FENCE_RETRY_MS)),
+                None,
+            ));
+        }
         let cell = self
             .tenant
             .next_due()

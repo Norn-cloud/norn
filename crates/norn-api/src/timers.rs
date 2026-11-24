@@ -92,27 +92,78 @@ impl DueWork {
     }
 }
 
-fn fence_finding<E: SqlEngine>(host: &DevHost<E>) -> Option<String> {
-    let guard = host.cell.lock().ok()?;
-    if let norn_cell::ScrubStatus::Fenced { finding } = guard.as_ref()?.store().scrub_status() {
-        Some(finding)
+enum FenceState {
+    None,
+    Pending,
+    Durable,
+}
+
+fn fence_state<E: SqlEngine>(host: &DevHost<E>) -> FenceState {
+    let Ok(guard) = host.cell.lock() else {
+        return FenceState::None;
+    };
+    let Some(cell) = guard.as_ref() else {
+        return FenceState::None;
+    };
+    let store = cell.store();
+    if matches!(store.scrub_status(), norn_cell::ScrubStatus::Fenced { .. }) {
+        if store.fence_persist_pending() {
+            FenceState::Pending
+        } else {
+            FenceState::Durable
+        }
     } else {
-        None
+        FenceState::None
     }
 }
+
+/// OPEN-CHECKPOINT-1 (S12, #1551 round 6): backoff (logical ms) before retrying
+/// an alarm wake when durable fence persistence failed transiently.
+pub const FENCE_RETRY_MS: u64 = 1_000;
 
 /// OPEN-CHECKPOINT-1 (S12, #1551 round 5): whether the cell has been fenced
 /// by its history scrub (locally or durably by a sibling).
 #[must_use]
 pub fn is_fenced<E: SqlEngine>(host: &DevHost<E>) -> bool {
-    fence_finding(host).is_some()
+    !matches!(fence_state(host), FenceState::None)
 }
 
-fn fenced_due_work(finding: &str) -> DueWork {
-    let mut work = DueWork::default();
+/// OPEN-CHECKPOINT-1 (S12, #1551 round 6): whether a local fence finding still
+/// awaits durable persistence in `_norn_meta`, so alarm hosts must keep waking.
+#[must_use]
+pub fn is_fence_persist_pending<E: SqlEngine>(host: &DevHost<E>) -> bool {
+    matches!(fence_state(host), FenceState::Pending)
+}
+
+fn fenced_due_work(finding: &str, next: Option<u64>) -> DueWork {
+    let mut work = DueWork {
+        next,
+        ..DueWork::default()
+    };
     work.failed
         .push(format!("history scrub: the cell is fenced: {finding}"));
     work
+}
+
+/// Retry durable fence persistence directly under the cell mutex without going
+/// through `host.cell()`'s fence refusal (S12, #1551 round 6).
+fn retry_pending_fence<E: SqlEngine>(host: &DevHost<E>, now: LogicalTime) -> Option<DueWork> {
+    let guard = host.cell.lock().ok()?;
+    let cell = guard.as_ref()?;
+    let store = cell.store();
+    if !matches!(store.scrub_status(), norn_cell::ScrubStatus::Fenced { .. }) {
+        return None;
+    }
+    let status = store.scrub_step();
+    let finding = if let norn_cell::ScrubStatus::Fenced { finding } = status {
+        finding
+    } else {
+        "the history scrub found a defect".to_owned()
+    };
+    let next = store
+        .fence_persist_pending()
+        .then(|| now.as_millis().saturating_add(FENCE_RETRY_MS));
+    Some(fenced_due_work(&finding, next))
 }
 
 /// The earliest time the cell has work to try (logical milliseconds): a
@@ -125,15 +176,19 @@ fn fenced_due_work(finding: &str) -> DueWork {
 /// # Errors
 /// A host failure.
 pub fn next_due<E: SqlEngine>(host: &DevHost<E>) -> Result<Option<u64>, Refusal> {
-    // OPEN-CHECKPOINT-1 (S12, #1551 round 5): check fence without calling
-    // `host.cell()` so an already-fenced cell returns None cleanly for alarm cleanup.
-    if is_fenced(host) {
-        return Ok(None);
+    // OPEN-CHECKPOINT-1 (S12, #1551 round 6): keep alarms armed while durable
+    // fence persistence is still pending; clear only once durably persisted.
+    match fence_state(host) {
+        FenceState::Durable => return Ok(None),
+        FenceState::Pending => return Ok(Some(0)),
+        FenceState::None => {}
     }
     let _epoch = host.definition_read()?;
     let cell = match host.cell() {
         Ok(cell) => cell,
-        Err(err) if err.code == crate::refusal::codes::CELL_FENCED => return Ok(None),
+        Err(err) if err.code == crate::refusal::codes::CELL_FENCED => {
+            return Ok(is_fence_persist_pending(host).then_some(0));
+        }
         Err(err) => return Err(err),
     };
     // OPEN-CHECKPOINT-1 (#1551): a running history scrub is due at once.
@@ -192,17 +247,17 @@ impl Item {
 /// A host failure reading the cell or recording a failure. An item that
 /// fails is not an error of the call: it stays due.
 pub fn run_due<E: SqlEngine>(host: &DevHost<E>, now: LogicalTime) -> Result<DueWork, Refusal> {
-    // OPEN-CHECKPOINT-1 (S12, #1551 round 5): an already-fenced cell must report
-    // terminal due work with `next = None` instead of throwing out of `host.cell()`.
-    if let Some(finding) = fence_finding(host) {
-        return Ok(fenced_due_work(&finding));
+    // OPEN-CHECKPOINT-1 (S12, #1551 round 6): on an already-fenced cell, retry
+    // pending durable fence persistence and keep `next` armed until persisted.
+    if let Some(work) = retry_pending_fence(host, now) {
+        return Ok(work);
     }
     let _epoch = host.definition_read()?;
     let mut cell = match host.cell() {
         Ok(cell) => cell,
         Err(err) if err.code == crate::refusal::codes::CELL_FENCED => {
-            let finding = fence_finding(host).unwrap_or(err.message);
-            return Ok(fenced_due_work(&finding));
+            return Ok(retry_pending_fence(host, now)
+                .unwrap_or_else(|| fenced_due_work(&err.message, None)));
         }
         Err(err) => return Err(err),
     };
@@ -211,7 +266,11 @@ pub fn run_due<E: SqlEngine>(host: &DevHost<E>, now: LogicalTime) -> Result<DueW
     // timer loop). A defect fences the cell; the next request is refused.
     let scrub = cell.store().scrub_step();
     if let norn_cell::ScrubStatus::Fenced { finding } = &scrub {
-        return Ok(fenced_due_work(finding));
+        let next = cell
+            .store()
+            .fence_persist_pending()
+            .then(|| now.as_millis().saturating_add(FENCE_RETRY_MS));
+        return Ok(fenced_due_work(finding, next));
     }
     let scrubbing = matches!(scrub, norn_cell::ScrubStatus::Verifying { .. });
     let now = crate::actions::turn_clock(&mut cell, now)?;

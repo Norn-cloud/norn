@@ -307,10 +307,13 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// SQL engine errors.
     pub fn image(&self) -> Result<StoreImage, CellError> {
+        self.persist_pending_fence();
+        self.served_gate().history("store image")?;
         let platform = self.conn.platform_table_globs();
         let filter = " AND name NOT GLOB ?".repeat(platform.len());
         let globs: Vec<SqlValue> = platform.iter().map(|glob| SqlValue::from(*glob)).collect();
         self.conn.transaction(|| {
+            crate::open_checkpoint::check_fence(&self.conn)?;
             let catalog = self.conn.query(
                 &format!(
                     "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE 1{filter} ORDER BY type, name"

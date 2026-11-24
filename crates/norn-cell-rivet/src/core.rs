@@ -365,6 +365,15 @@ impl CellCore {
     /// # Errors
     /// A host failure reading the cell.
     pub fn next_due(&mut self, now_ms: u64) -> Result<Option<u64>, String> {
+        if self
+            .tenant
+            .serving_host()
+            .is_some_and(norn_api::timers::is_fence_persist_pending)
+        {
+            return Ok(Some(
+                now_ms.saturating_add(norn_api::timers::FENCE_RETRY_MS),
+            ));
+        }
         let cell = self.tenant.next_due().map_err(|refusal| refusal.code)?;
         Ok(earliest(cell, self.sync_next(now_ms)?))
     }

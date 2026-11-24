@@ -106,3 +106,33 @@ pub(super) fn consume_receipt<X>(
     }
     Ok(acceptance.consumed.clone())
 }
+
+/// Ensure an untouched action target is CAS-verified inside the commit transaction.
+pub(super) fn ensure_target_read(
+    target: &crate::cell_host::FactKey,
+    before: crate::cell_host::FactVersion,
+    writes: &[FactWrite],
+    reads: &mut Vec<FactExpectation>,
+) {
+    if !writes.iter().any(|write| write.key == *target)
+        && !reads.iter().any(|read| read.key == *target)
+    {
+        reads.push(FactExpectation {
+            key: target.clone(),
+            expected: before,
+        });
+    }
+}
+
+/// Exact target version at `receipt.seq`: written version or CAS-verified pre-commit version.
+pub(super) fn committed_target_version(
+    receipt: &crate::cell_host::CommitReceipt,
+    target: &crate::cell_host::FactKey,
+    before: crate::cell_host::FactVersion,
+) -> crate::cell_host::FactVersion {
+    receipt
+        .written
+        .iter()
+        .find(|written| written.key == *target)
+        .map_or(before, |written| written.version)
+}

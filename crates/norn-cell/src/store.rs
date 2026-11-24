@@ -2743,7 +2743,7 @@ impl<E: SqlEngine> CellStore<E> {
             return self.require_cell_id(&id);
         }
         let meta_key = format!("binding:{key}");
-        self.conn.transaction(|| -> Result<(), CellError> {
+        self.write_tx(|| {
             let found: Option<String> = self.conn.query_optional(
                 &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
                 params![meta_key],

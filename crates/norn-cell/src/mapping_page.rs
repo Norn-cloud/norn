@@ -124,7 +124,7 @@ impl<E: SqlEngine> CellStore<E> {
         let model = self.model().clone();
         let catalog = TypeCatalog::new(model.object_types()).with_interfaces(model.interfaces());
         let canonical = CommitModel::new(&catalog);
-        self.conn.transaction(|| {
+        self.write_tx(|| {
             // Capture writes only inbox rows: a plan proven once holds for
             // every record of the page (INGEST-DERIVE-ONCE-1).
             let _pinned = crate::mapping_bundle::PinnedPlans::open(&self.mapping_plans);

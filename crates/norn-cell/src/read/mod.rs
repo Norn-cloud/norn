@@ -394,7 +394,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
     /// S12 (#1551 round 5): fail closed on a local or sibling durable fence.
     pub(crate) fn check_live(&self) -> Result<(), CellError> {
         self.history_gate.refuse_fenced()?;
-        if self.history_gate.is_served()
+        if self.history_gate.needs_durable_fence_check()
             && self.conn.read_isolation() != crate::engine::ReadIsolation::ExclusiveSynchronous
         {
             crate::open_checkpoint::check_fence_open(self.conn)?;
@@ -511,6 +511,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         &self,
         include: impl Fn(&str) -> bool,
     ) -> Result<BTreeMap<String, Vec<String>>, CellError> {
+        self.check_history("dump")?;
         let names: Vec<String> = self
             .conn
             .query(
