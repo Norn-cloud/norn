@@ -157,7 +157,7 @@ export function scopedHostFetch(fetcher: Fetch, base = "/api/host", scope?: Scop
       ? await scope()
       : write && fetcher === fetch && currentDisplayedScope !== undefined
         ? currentDisplayedScope
-        : await readStudioScope(fetcher)
+        : await readStudioScope()
     if (active === null) throw new StudioScopeError(NO_DATA_CELL)
     const [pathname, search] = path.split("?", 2)
     const query = new URLSearchParams(search)

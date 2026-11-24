@@ -57,7 +57,7 @@ function EmptyWorkspaceChecklist() {
 /** "What do I do now": ask, what needs you, and the numbers that matter, each one click from where to act. */
 export function HomePage() {
   const mode = useMode()
-  const empty = mode.data?.kind === "live" && isEmptyWorkspace(mode.data.catalog.document)
+  const empty = mode.data?.kind === "live" && Array.isArray(mode.data.catalog?.document) && isEmptyWorkspace(mode.data.catalog.document)
   return (
     <section className="max-w-5xl space-y-8">
       <PageHeader title="Home" description={empty ? "Your workspace is ready. Follow these steps to bring data in and build your first dashboard." : "What needs you, and the numbers that matter. Every item opens where you act on it."} />

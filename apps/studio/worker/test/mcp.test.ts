@@ -379,13 +379,20 @@ test("consent refuses without a ready workspace, and /mcp rejects unscoped or re
   })
   expect((await mcp(env, unscopedJwt, INIT)).status).toBe(401)
 
-  // Mark remaining org as provisioning -> user has no ready workspace: consent accept refuses 409 NO_ACTIVE_WORKSPACE,
-  // while denying consent still completes cleanly with error=access_denied.
+  // Mark remaining org as provisioning -> user has no ready workspace: /authorize immediately refuses 409 NO_ACTIVE_WORKSPACE.
   db(env).run(`update "organization" set "metadata" = '{"norn.provisioning":true}' where "id" = 'org_second'`)
   const clientId = await register(env)
+  const blockedAuth = await call(env, authorizeUrl(clientId, pkce().challenge), { headers: { cookie } })
+  expect(blockedAuth.status).toBe(409)
+  expect(await blockedAuth.json()).toMatchObject({ code: "NO_ACTIVE_WORKSPACE" })
+
+  // If the org turns provisioning between /authorize and /oauth2/consent, accepting is still refused 409 NO_ACTIVE_WORKSPACE,
+  // while denying consent still completes cleanly with error=access_denied.
+  db(env).run(`update "organization" set "metadata" = '{"environmentId":"analytics"}' where "id" = 'org_second'`)
   const authorize = await call(env, authorizeUrl(clientId, pkce().challenge), { headers: { cookie } })
   expect(authorize.status).toBe(302)
   const consentPage = authorize.headers.get("location") ?? ""
+  db(env).run(`update "organization" set "metadata" = '{"norn.provisioning":true}' where "id" = 'org_second'`)
   const accepted = await postJson(env, "/api/auth/oauth2/consent", { accept: true, oauth_query: signedQueryOf(consentPage) }, { cookie, origin: ORIGIN })
   expect(accepted.status).toBe(409)
   expect(await accepted.json()).toMatchObject({ code: "NO_ACTIVE_WORKSPACE" })

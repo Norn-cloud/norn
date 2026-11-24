@@ -255,8 +255,9 @@ test("stale-tab writes carrying another workspace's scope are refused with 409 w
   expect(await staleEnv.json()).toMatchObject({ code: "workspace.changed" })
 
   // Other write endpoints (/api/questions/check, /api/sidekick/grant, /api/agent/dashboards/propose) also refuse stale org headers.
+  const mcpEnv: Env = { ...env, STUDIO_MCP: "on" }
   for (const path of ["/api/questions/check", "/api/sidekick/grant", "/api/agent/dashboards/propose"]) {
-    const res = await call(env, path, {
+    const res = await call(mcpEnv, path, {
       method: "POST",
       headers: { cookie, origin: ORIGIN, "content-type": "application/json", [EXPECTED_ORG_HEADER]: org1 },
       body: "{}",
