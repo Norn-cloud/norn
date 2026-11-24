@@ -393,7 +393,7 @@ fn keys_past_the_stale_bound_are_refused_until_a_refetch_succeeds() {
     );
     let stale = stale_edge + 1;
     let token = admin_at(1, "k1", stale);
-    let anonymous = defs(&demo, None);
+    let anonymous = defs_at(&demo, None, stale);
     let refused = defs_at(&demo, Some(&token), stale);
     assert_eq!((refused.status, &refused.body), (403, &anonymous.body));
     // Failed refetches keep the old keys aging, and retry on an interval.

@@ -772,17 +772,17 @@ impl ReadPolicy {
         authz::authorize(&pdp, &request).is_ok()
     }
 
-    /// The trusted disclosure request for `request`: the verified caller, its
-    /// declared roles and a `norn.disclose_refusal_detail` grant in this
-    /// cell's scope, asking for the diagnostic of an action the cell's policy
-    /// governs. `None` (deny) for any other caller or action.
+    /// Trusted disclosure request for `request` (DIAG-DISCLOSE-1); `None` denies.
     fn disclosure_request(
         &self,
         request: &RefusalDetailRequest<'_>,
     ) -> Option<(Pdp, authz::AccessRequest)> {
         let caller = self.member(request.actor)?;
-        self.action_policy()
-            .filter(|policy| policy.callable(request.action_id))?;
+        (request.action_id == norn_api::decisions::DECISION_REFUSAL_ACTION
+            || self
+                .action_policy()
+                .is_some_and(|p| p.callable(request.action_id)))
+        .then_some(())?;
         let actor_kind = match caller.actor_kind {
             "user" => ActorKind::User,
             "service" => ActorKind::Service,

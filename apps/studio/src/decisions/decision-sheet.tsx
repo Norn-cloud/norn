@@ -1,13 +1,16 @@
 import { useNavigate } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
 import { Clock } from "lucide-react"
-import { useEffect, useRef, useState, type CSSProperties } from "react"
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import "@ui-sdk/web/radio"
 import "@ui-sdk/web/textarea"
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet"
+import { liveAccess } from "@/lib/live"
 import { useLocale } from "@/lib/locale"
+import { transport } from "@/lib/transport"
+import { useView } from "@/lib/view"
 import { cn } from "@/lib/utils"
-import { defineDecisionSheet, decideRequest, type NornDecisionSheet, type SheetDocument } from "../../../../packages/norn-demo-ui/src/elements/decision-sheet.ts"
+import { defineDecisionSheet, decideRequest, type NornDecisionSheet, type SheetDocument, type SheetLawInfo } from "../../../../packages/norn-demo-ui/src/elements/decision-sheet.ts"
 import { fetchTransport, wasmEvaluate } from "../../../../packages/norn-demo-ui/src/machine/index.ts"
 import { sharedEngine } from "../lib/canvas/checker.ts"
 import { defaultFetch } from "../lib/cell-read.ts"
@@ -60,6 +63,7 @@ export function DecisionSheet({ decision, now, onClose, onSettled }: {
   readonly onSettled: () => void
 }) {
   const { locale } = useLocale()
+  const { view } = useView()
   const navigate = useNavigate()
   const learning = useLearningCapabilities()
   const episodesAvailable = useRef(learning.episodes)
@@ -67,6 +71,24 @@ export function DecisionSheet({ decision, now, onClose, onSettled }: {
   // Loaded once per page, starting when the inbox renders, so it compiles while the person reads.
   // The sheet draws its first state without it and takes input once it is here.
   const engine = useQuery({ queryKey: ["checker-engine"], queryFn: () => sharedEngine(), staleTime: Infinity, retry: false })
+  const access = useQuery({ queryKey: ["live-access"], queryFn: () => liveAccess(), retry: false, staleTime: 60_000 })
+  const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog, retry: false, staleTime: 60_000 })
+  const principal = access.data?.kind === "read" ? access.data.read.document.principal : undefined
+  const caller = principal ? `${principal.subjectId}${principal.roles.length > 0 ? ` · ${principal.roles.join(", ")}` : ""}` : undefined
+  const laws = useMemo<Readonly<Record<string, SheetLawInfo>>>(() => {
+    const map: Record<string, SheetLawInfo> = {}
+    for (const artifact of catalog.data?.document ?? []) {
+      if (artifact.kind !== "law") continue
+      const payload = artifact.payload as { id?: unknown; rationale?: unknown } | undefined
+      const info: SheetLawInfo = {
+        ...(typeof artifact.name === "string" && artifact.name !== "" ? { name: artifact.name } : {}),
+        ...(typeof payload?.rationale === "string" && payload.rationale !== "" ? { rationale: payload.rationale } : {}),
+      }
+      if (artifact.artifactId) map[artifact.artifactId] = info
+      if (typeof payload?.id === "string" && payload.id !== "") map[payload.id] = info
+    }
+    return map
+  }, [catalog.data])
   // A callback ref: the sheet's portal mounts its content after this component commits.
   const [host, setHost] = useState<HTMLDivElement | null>(null)
   const element = useRef<NornDecisionSheet | null>(null)
@@ -85,6 +107,9 @@ export function DecisionSheet({ decision, now, onClose, onSettled }: {
       evaluate: sharedEngine().then((loaded) => wasmEvaluate(loaded)),
       transport: fetchTransport((_, input, key) => decideRequest(decision.id, input, key), call),
       locale: locale === "ar" ? "ar" : "en",
+      technical: view === "technical",
+      ...(caller === undefined ? {} : { caller }),
+      laws,
       ...(now === undefined ? {} : { now }),
       navigate: (path) => void navigate({ to: path }),
       canOpenEpisode: () => episodesAvailable.current,
@@ -94,8 +119,12 @@ export function DecisionSheet({ decision, now, onClose, onSettled }: {
     target.replaceChildren(sheet)
     element.current = sheet
     return () => { sheet.remove(); element.current = null }
-    // A new decision mounts a fresh machine; `now` only repaints.
+    // A new decision mounts a fresh machine; `now` and display context only repaint.
   }, [decision?.id, locale, host])
+
+  useEffect(() => {
+    element.current?.setContext?.({ technical: view === "technical", ...(caller === undefined ? {} : { caller }), laws })
+  }, [view, caller, laws])
 
   useEffect(() => {
     if (now !== undefined) element.current?.setNow?.(now)

@@ -2401,3 +2401,139 @@ fn time_window_materialize_sub_decision_executes_and_refuses_dst_anomalies() {
         norn_ir::RuntimeValue::Bool(false)
     );
 }
+
+#[test]
+fn edmonton_2025b_and_2026c_decision_evaluation_and_mismatch_refusal()
+-> Result<(), Box<dyn std::error::Error>> {
+    use norn_decisions::evaluate_in;
+    use norn_expr::temporal::TzdbBundle;
+
+    let sub = rule(&json!({
+        "ruleFile": "registry/packs/time/artifacts/time.window.materialize.rule.json"
+    }));
+    let mut root = commands_rule(
+        "time.window.materialize_tzdb_harness",
+        &closed(&json!({
+            "start_local_at": {"type": "string"},
+            "end_local_at": {"type": "string"},
+            "iana_timezone": {"type": "string"},
+            "dst_policy": {"type": "string", "enum": ["reject", "earlier", "later"]}
+        })),
+        "[{actionId: 'time.window.materialize_interval', starts_at: window.starts_at, ends_at: window.ends_at, duration_seconds: window.duration_seconds, proper_interval: window.proper_interval}]",
+    );
+    if let Some(items) = root.pointer_mut("/outputSchema/properties/commands/items") {
+        *items = closed(&json!({
+            "actionId": {"type": "string"},
+            "starts_at": {"type": "string"},
+            "ends_at": {"type": "string"},
+            "duration_seconds": {"type": "number"},
+            "proper_interval": {"type": "boolean"}
+        }));
+    }
+    if let Some(nodes) = root
+        .pointer_mut("/graph/nodes")
+        .and_then(Json::as_array_mut)
+    {
+        nodes.insert(
+            1,
+            json!({
+                "id": "call",
+                "name": "call",
+                "type": "decisionNode",
+                "content": {
+                    "key": "time.window.materialize.rule",
+                    "inputField": "slice",
+                    "outputPath": "window",
+                    "passThrough": true
+                }
+            }),
+        );
+    }
+    if let Some(target_id) = root.pointer_mut("/graph/edges/0/targetId") {
+        *target_id = json!("call");
+    }
+    if let Some(edges) = root
+        .pointer_mut("/graph/edges")
+        .and_then(Json::as_array_mut)
+    {
+        edges.push(json!({
+            "id": "e_call",
+            "sourceId": "call",
+            "targetId": "x"
+        }));
+    }
+    let root_rule = rule(&root);
+    let subs = BTreeMap::from([("time.window.materialize.rule".to_owned(), sub)]);
+    let b25 = TzdbBundle::v2025b();
+    let b26 = TzdbBundle::v2026c();
+
+    let admitted_25 = AdmittedDecision::admit_in(&root_rule, &subs, binding(), b25)?;
+    let admitted_26 = AdmittedDecision::admit_in(&root_rule, &subs, binding(), b26)?;
+    assert_eq!(admitted_25.tzdb_sha256(), b25.sha256());
+    assert_eq!(admitted_26.tzdb_sha256(), b26.sha256());
+
+    let slice_json = json!({
+        "start_local_at": "2026-12-31T23:30:00",
+        "end_local_at": "2027-01-01T00:30:00",
+        "iana_timezone": "America/Edmonton",
+        "dst_policy": "reject"
+    });
+    let slice_25 = admitted_25.validate_slice(value(&slice_json))?;
+    let event_25 = admitted_25.type_event(event())?;
+    let slice_26 = admitted_26.validate_slice(value(&slice_json))?;
+    let event_26 = admitted_26.type_event(event())?;
+
+    // 2025b: 2026-12-31 23:30 MST (UTC-7) -> 2027-01-01T06:30:00Z.
+    let out_25 = evaluate_in(
+        &admitted_25,
+        &slice_25,
+        &event_25,
+        EvaluationBudget::default(),
+        b25,
+    )?;
+    let cmd_25 = out_25.output.commands.first().ok_or("missing 2025b cmd")?;
+    assert_eq!(
+        cmd_25.get("starts_at"),
+        Some(&norn_ir::RuntimeValue::String(
+            "2027-01-01T06:30:00Z".to_owned()
+        ))
+    );
+
+    // 2026c: 2026-12-31 23:30 UTC-6 -> 2027-01-01T05:30:00Z.
+    let out_26 = evaluate_in(
+        &admitted_26,
+        &slice_26,
+        &event_26,
+        EvaluationBudget::default(),
+        b26,
+    )?;
+    let cmd_26 = out_26.output.commands.first().ok_or("missing 2026c cmd")?;
+    assert_eq!(
+        cmd_26.get("starts_at"),
+        Some(&norn_ir::RuntimeValue::String(
+            "2027-01-01T05:30:00Z".to_owned()
+        ))
+    );
+
+    // Mismatched tzdb digest between admission and evaluation is refused cleanly.
+    assert!(matches!(
+        evaluate_in(
+            &admitted_25,
+            &slice_25,
+            &event_25,
+            EvaluationBudget::default(),
+            b26,
+        ),
+        Err(DecisionError::TzdbMismatch { .. })
+    ));
+    assert!(matches!(
+        norn_decisions::evaluate(
+            &admitted_26,
+            &slice_26,
+            &event_26,
+            EvaluationBudget::default(),
+        ),
+        Err(DecisionError::TzdbMismatch { .. })
+    ));
+    Ok(())
+}

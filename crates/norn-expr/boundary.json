@@ -7,7 +7,6 @@
   "dev_only_norn": [],
   "third_party": [
     "zen-expression",
-    "jiff",
-    "jiff-tzdb"
+    "jiff"
   ]
 }

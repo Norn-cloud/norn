@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { ShieldAlert } from "lucide-react"
 import { FactStatusBadge } from "@/components/fact-status-badge"
+import { LoadState } from "@/components/load-state"
 import { CellRefusal, NotServed } from "@/lib/live-transport"
 import { RecordActions } from "./actions/record-actions.tsx"
 import { Findings as FindingsPanel } from "./evidence/findings.tsx"
@@ -21,8 +22,10 @@ export function QuarantinedRecord({ objectType, id, onDone }: { readonly objectT
   })
   const corrections = useEvidenceActions(objectType, id)
   const absent = <p className="text-muted-foreground">This record is not available: it does not exist, or you may not read it.</p>
-  if (findings.isPending) return <p className="text-muted-foreground">Reading the record…</p>
-  if (findings.isError) return findings.error instanceof NotServed || (findings.error instanceof CellRefusal && findings.error.status === 404) ? absent : <p role="alert" className="text-destructive">{findings.error.message}</p>
+  if (findings.isPending) return <LoadState status="pending" skeleton="detail" loadingLabel="Reading record" onRetry={() => void findings.refetch()}>{() => null}</LoadState>
+  if (findings.isError) return findings.error instanceof NotServed || (findings.error instanceof CellRefusal && findings.error.status === 404)
+    ? absent
+    : <LoadState status="error" error={findings.error} isFetching={findings.isFetching} onRetry={() => void findings.refetch()}>{() => null}</LoadState>
   const { quarantined } = findings.data.document
   if (!quarantined) return absent
   return (

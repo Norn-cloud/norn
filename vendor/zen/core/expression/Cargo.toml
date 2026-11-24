@@ -14,10 +14,10 @@ smallvec = { version = "1", features = ["union"] }
 anyhow = "1"
 ahash = { version = "0.8", default-features = false, features = ["std", "no-rng"] }
 bumpalo = { version = "3", features = ["collections"] }
-# Norn (#1436, #1584): civil calendar arithmetic and pinned IANA tzdb (2025b)
-# for pure deterministic temporal values; no clock, no host zoneinfo.
+# Norn (#1436, #1584, #1440): civil calendar arithmetic and TZif parser for
+# pure deterministic temporal values; versioned IANA tzdb bundles are injected
+# explicitly via `TzdbLookup` (no clock, no host zoneinfo, no runtime jiff-tzdb).
 jiff = { version = "0.2.37", default-features = false, features = ["std"] }
-jiff-tzdb = "=0.1.4"
 fastrand = "2"
 once_cell = "1"
 # Norn (#3404): the only regex backend.

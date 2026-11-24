@@ -4,7 +4,11 @@
     "objectType": "constitution.Melt",
     "objectId": "melt-1",
     "version": 1,
-    "receipt": { "receiptHash": "<keyed receipt handle>", "commitSeq": 2, "recordedAtMs": 1700000000000 }
+    "receipt": {
+      "receiptHash": "<keyed receipt handle>",
+      "commitSeq": 2,
+      "recordedAtMs": 1700000000000
+    }
   },
   "conflict": {
     "format": "norn/refusal@2",
@@ -13,7 +17,8 @@
     "code": "action.idempotency_conflict",
     "category": "conflict",
     "message": "the request conflicts with current state",
-    "explanation": "diagnostic detail is unavailable under the caller's disclosure authority"
+    "explanation": "diagnostic detail is unavailable under the caller's disclosure authority",
+    "decidedAt": "2023-11-14T22:13:20Z"
   },
   "status": {
     "conflict": 409,
@@ -31,7 +36,8 @@
     "code": "authz.denied",
     "category": "permission",
     "message": "the action request is not authorized",
-    "explanation": "access to the requested action is denied"
+    "explanation": "access to the requested action is denied",
+    "decidedAt": "2023-11-14T22:13:20Z"
   },
   "invalidInput": {
     "format": "norn/refusal@2",
@@ -40,7 +46,8 @@
     "code": "action.invalid_input",
     "category": "invalid",
     "message": "the request is invalid",
-    "explanation": "diagnostic detail is unavailable under the caller's disclosure authority"
+    "explanation": "diagnostic detail is unavailable under the caller's disclosure authority",
+    "decidedAt": "2023-11-14T22:13:20Z"
   },
   "precondition": {
     "format": "norn/refusal@2",
@@ -49,7 +56,8 @@
     "code": "action.precondition_failed",
     "category": "precondition",
     "message": "a declared precondition does not hold",
-    "explanation": "diagnostic detail is unavailable under the caller's disclosure authority"
+    "explanation": "diagnostic detail is unavailable under the caller's disclosure authority",
+    "decidedAt": "2023-11-14T22:13:20Z"
   },
   "stale": {
     "format": "norn/refusal@2",
@@ -58,7 +66,8 @@
     "code": "defs.stale",
     "category": "conflict",
     "message": "the definitions changed; refresh the action catalog",
-    "explanation": "the call pins a definitions version that is no longer active"
+    "explanation": "the call pins a definitions version that is no longer active",
+    "decidedAt": "2023-11-14T22:13:20Z"
   },
   "routeNotFound": {
     "format": "norn/refusal@2",
@@ -67,7 +76,8 @@
     "code": "route.not_found",
     "category": "visibility",
     "message": "no such route",
-    "explanation": "the host serves only its declared read routes"
+    "explanation": "the host serves only its declared read routes",
+    "decidedAt": "2023-11-14T22:13:20Z"
   },
   "invalidKey": {
     "format": "norn/refusal@2",
@@ -82,8 +92,11 @@
         "code": "request.invalid",
         "severity": "error",
         "message": "idempotencyKey must be 1 to 128 printable characters and at most 256 bytes",
-        "span": { "pointer": "/idempotencyKey" }
+        "span": {
+          "pointer": "/idempotencyKey"
+        }
       }
-    ]
+    ],
+    "decidedAt": "2023-11-14T22:13:20Z"
   }
 }

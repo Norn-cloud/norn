@@ -7,11 +7,12 @@ import { PopoverTitle, PopoverTrigger } from "@ui-sdk/react/popover"
 import { Toolbar, ToolbarButton, ToolbarLink, ToolbarSeparator } from "@ui-sdk/react/toolbar"
 import { Tree, TreeGroup, TreeItem, TreeItemIndicator, TreeItemLabel } from "@ui-sdk/react/tree"
 import { AssistantPanel, AssistantProvider, useAssistant, type AssistantContent } from "@/assistant-slot"
-import { Bell, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, CircleEllipsis, CloudOff, Keyboard, LayoutGrid, Loader2, LogOut, MessageCircle, Palette, PanelBottom, PanelLeft, Search, SlidersHorizontal, Sparkles, Wrench, type LucideIcon } from "lucide-react"
+import { Bell, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, CircleEllipsis, CloudOff, Code2, Keyboard, LayoutGrid, Loader2, LogOut, MessageCircle, Palette, PanelBottom, PanelLeft, Search, SlidersHorizontal, Sparkles, Wrench, type LucideIcon } from "lucide-react"
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react"
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
 import { ChromeDock, ChromeDockOption, ChromeDockTray, ChromeDockTrigger } from "@/components/ui/chrome-dock"
+import { CustomThemeDialog } from "@/components/custom-theme-dialog"
 import { AppearanceProvider, SHELLS, SKINS, isShellChrome, isSkin, useAppearance, type ShellChrome, type Skin } from "@/lib/appearance"
 import { PERSPECTIVES, PerspectiveProvider, isPerspective, usePerspective, type Perspective } from "@/lib/perspective"
 import { Sidebar, SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar"
@@ -23,7 +24,11 @@ import { cn } from "@/lib/utils"
 import { ViewProvider, useView } from "@/lib/view"
 import { LOCALES, LocaleProvider, directionOf, isLocale, useLocale } from "@/lib/locale"
 import { WORKSPACES } from "@/lib/workspaces"
-import { retryMode, useMode } from "@/lib/live-transport"
+import { isRetryableModeError, retryMode, useMode } from "@/lib/live-transport"
+import { lastReachableAt, useStudioScope } from "@/lib/definitions"
+import { CopyId } from "@/components/copy-id"
+import { formatLastReachable } from "@/components/load-state"
+import { explainError } from "@/lib/plain-words"
 import { useAccount, type Account } from "@/lib/session"
 import { WorkspaceError, useWorkspaces, type WorkspacesDocument } from "@/lib/workspaces-api"
 import nornMark from "@/assets/norn-mark.webp"
@@ -138,6 +143,7 @@ function useOpenWorkspace(doc: WorkspacesDocument | null | undefined) {
   const slow = useSlowConnecting(mode)
   const live = mode.data?.kind === "live"
   const recorded = mode.data?.kind === "recorded"
+  const retrying = !mode.isError && mode.failureCount > 0 && isRetryableModeError(mode.failureReason)
   const active = doc?.workspaces.find((workspace) => workspace.active)
   const organization = active ?? account.data?.organization
   const open = live
@@ -146,7 +152,10 @@ function useOpenWorkspace(doc: WorkspacesDocument | null | undefined) {
       ? organization
         ? { name: organization.name, detail: "Recorded demo data" }
         : recordedWorkspace
-      : { name: organization?.name ?? "Workspace", detail: mode.isError || mode.failureCount > 0 ? "Can't reach the cell · retrying" : slow ? "Connecting to cell…" : "Connecting…" }
+      : {
+          name: organization?.name ?? "Workspace",
+          detail: mode.isError ? "Workspace unavailable" : retrying ? "Reconnecting…" : slow ? "Connecting to cell…" : "Connecting…",
+        }
   const workspaceOpen = organization != null || live
   return { live, open, active, workspaceOpen, recordedSelection: recorded ? recordedWorkspace?.id : undefined }
 }
@@ -266,8 +275,10 @@ function ViewAndLanguage() {
 
 /** Interactive skin & shell chrome tray powered by the first-party `@ui-sdk/core` + `@ui-sdk/react` ChromeDock primitive. */
 function AppearanceTray({ side = "bottom", variant = "bar" }: { readonly side?: "top" | "bottom"; readonly variant?: "bar" | "dock" }) {
-  const { skin, setSkin, shell, setShell } = useAppearance()
+  const { skin, setSkin, shell, setShell, customTheme } = useAppearance()
+  const [themeDialogOpen, setThemeDialogOpen] = useState(false)
   return (
+    <>
     <ChromeDock
       value={skin}
       items={SKINS.map(({ id }) => id)}
@@ -293,7 +304,7 @@ function AppearanceTray({ side = "bottom", variant = "bar" }: { readonly side?: 
           <div className="space-y-1.5">
             <div className="flex items-center justify-between text-xs font-medium text-muted-foreground">
               <span>Skin</span>
-              <span className="capitalize text-foreground">{skin}</span>
+              <span className="truncate capitalize text-foreground">{customTheme ? customTheme.name : skin}</span>
             </div>
             <div role="group" aria-label="Skin" className="grid grid-cols-2 gap-1.5">
               {SKINS.map((option) => (
@@ -332,9 +343,24 @@ function AppearanceTray({ side = "bottom", variant = "bar" }: { readonly side?: 
               })}
             </div>
           </div>
+          <div className="h-px bg-border/80" />
+          <button
+            type="button"
+            data-slot="custom-theme-trigger"
+            onClick={() => setThemeDialogOpen(true)}
+            className="flex w-full items-center justify-between gap-2 rounded-lg border border-border/80 bg-background/70 px-2.5 py-2 text-xs font-medium text-foreground transition-colors outline-none hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
+          >
+            <span className="flex items-center gap-1.5">
+              <Code2 aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+              <span>Custom theme JSON…</span>
+            </span>
+            {customTheme && <span className="truncate text-[0.6875rem] text-muted-foreground">Active</span>}
+          </button>
         </div>
       </ChromeDockTray>
     </ChromeDock>
+    <CustomThemeDialog open={themeDialogOpen} onOpenChange={setThemeDialogOpen} />
+    </>
   )
 }
 
@@ -785,14 +811,29 @@ function CommandMenu({ sections, navigation, onPerspective }: { readonly section
 }
 
 /**
- * Cell connection status above the page: explains a slow initial cold start after a few seconds
- * with a Retry button, or reports retries and outages; nothing recorded replaces a live outage.
+ * Honest cell connection banner (#1424):
+ * - Slow initial cold start (`data-connection="connecting"`): explains why and offers Retry now.
+ * - Brief automatic retry on transient outages (`data-connection="retrying"`): never lingers forever.
+ * - Persistent failure or non-retryable refusal such as `503 cell.unopenable` (`data-connection="unavailable"`):
+ *   never says "Retrying…"; shows "Workspace unavailable", what the server said, incident id when logged,
+ *   when it was last reachable, and an explicit Retry button.
  */
 function ConnectionBanner() {
+  const queryClient = useQueryClient()
+  const scope = useStudioScope()
   const mode = useMode()
   const slow = useSlowConnecting(mode)
-  const client = useQueryClient()
-  const retryNow = () => retryMode(client)
+  const { locale } = useLocale()
+  const { view } = useView()
+  const retry = () => {
+    void retryMode(queryClient)
+    void queryClient.invalidateQueries({
+      predicate: (query) => {
+        const head = query.queryKey[0]
+        return query.state.status === "error" && head !== "studio-scope" && head !== "studio-mode"
+      },
+    })
+  }
   if (mode.data !== undefined) return null
   if (mode.failureCount === 0 && !mode.isError) {
     if (!slow) return null
@@ -801,16 +842,46 @@ function ConnectionBanner() {
         <Loader2 aria-hidden className="size-4 shrink-0 animate-spin text-muted-foreground" />
         <span className="font-medium">Connecting to your workspace cell…</span>
         <span className="text-muted-foreground">Starting a cold cell can take a moment.</span>
-        <Button type="button" variant="outline" size="xs" className="ms-auto" onClick={() => void retryNow()}>Retry now</Button>
+        <Button type="button" variant="outline" size="xs" className="ms-auto" onClick={retry}>Retry now</Button>
       </div>
     )
   }
+  const retrying = !mode.isError && isRetryableModeError(mode.failureReason)
+  if (retrying) {
+    return (
+      <div role="status" data-connection="retrying" className="flex flex-wrap items-center gap-2 border-b border-tone-amber/30 bg-tone-amber/10 px-4 py-2 text-sm text-tone-amber md:px-8">
+        <CloudOff aria-hidden className="size-4 shrink-0" />
+        <span className="font-medium">Couldn't reach the cell.</span>
+        <span className="text-foreground/80">Reconnecting…</span>
+        <Button type="button" variant="outline" size="xs" className="ms-auto" disabled={mode.isFetching} onClick={retry}>Retry now</Button>
+      </div>
+    )
+  }
+  const error = mode.error ?? mode.failureReason
+  const info = explainError(error, locale, view)
+  const reachable = lastReachableAt(scope.data)
+  const reachableLabel = formatLastReachable(reachable)
   return (
-    <div role="status" data-connection="retrying" className="flex flex-wrap items-center gap-2 border-b border-tone-amber/30 bg-tone-amber/10 px-4 py-2 text-sm text-tone-amber md:px-8">
-      <CloudOff aria-hidden className="size-4 shrink-0" />
-      <span className="font-medium">Couldn't reach the cell.</span>
-      <span className="text-foreground/80">{mode.isError ? "It didn't answer after several tries." : `Retrying (attempt ${mode.failureCount + 1})…`}</span>
-      <Button type="button" variant="outline" size="xs" className="ms-auto" disabled={mode.isFetching} onClick={() => void retryNow()}>Retry now</Button>
+    <div role="alert" data-connection="unavailable" data-retryable={info.retryable === false ? "false" : "true"}
+      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-destructive/30 bg-destructive/10 px-4 py-2.5 text-sm md:px-8">
+      <CloudOff aria-hidden className="size-4 shrink-0 text-destructive" />
+      <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <span className="font-medium text-foreground">Workspace unavailable.</span>
+        <span className="text-foreground/85">{info.headline}</span>
+        {info.detail && <span className="text-meta text-muted-foreground">{info.detail}</span>}
+        {reachable !== null && reachableLabel !== null && (
+          <span className="text-meta text-muted-foreground">
+            · Last reachable <time dateTime={new Date(reachable).toISOString()} title={new Date(reachable).toISOString()}>{reachableLabel}</time>
+          </span>
+        )}
+        {info.incidentId && (
+          <span className="inline-flex items-center gap-1 text-meta text-muted-foreground">· Incident <CopyId value={info.incidentId} /></span>
+        )}
+        {view === "technical" && info.code && (
+          <span className="font-mono text-xs text-muted-foreground">· {info.code}</span>
+        )}
+      </div>
+      <Button type="button" variant="outline" size="xs" className="ms-auto" disabled={mode.isFetching} onClick={retry}>Retry</Button>
     </div>
   )
 }

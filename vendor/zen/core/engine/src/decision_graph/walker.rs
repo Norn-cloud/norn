@@ -37,6 +37,8 @@ pub(crate) struct GraphWalker {
     error: Option<(NodeIndex, StrictEvaluationError)>,
     /// Norn `metering`: charged by switch conditions.
     pub(crate) meter: Option<zen_expression::meter::Meter>,
+    /// Norn (#1440): explicit versioned offline IANA tzdb lookup for switch conditions.
+    pub(crate) tzdb: Option<Arc<dyn zen_expression::temporal::TzdbLookup>>,
 
     nodes_in_context: bool,
 }
@@ -67,6 +69,7 @@ impl GraphWalker {
             visited_switch_nodes: Default::default(),
             error: None,
             meter: None,
+            tzdb: None,
             iter: 0,
 
             nodes_in_context: ZEN_CONFIG.nodes_in_context.load(Ordering::Relaxed),
@@ -185,6 +188,7 @@ impl GraphWalker {
                     let (input, input_trace) = self.incoming_node_data(g, nid);
                     let mut isolate = Isolate::with_environment(input);
                     isolate.set_meter(self.meter.clone());
+                    isolate.set_tzdb(self.tzdb.clone());
                     if let Some(nodes) = self.nodes_context() {
                         isolate.set_local(Variable::nodes_key(), nodes);
                     }

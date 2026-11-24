@@ -62,14 +62,19 @@ Reject and replace any of the following in code review:
 
 Themes contain **zero business logic**—no conditional queries, permission checks, or layout forks. Every visual theme is a pure CSS token layer driven by `data-skin` (alongside `.dark` color-scheme tokens and `[data-density="compact"]` for dense builder views):
 
+- **Strict first-party monochrome default (`polar`):** Large structural regions (canvas, sidebar, islands, panels, tables, chrome) stay strictly monochrome black, grey, and white (Polar / Linear craft). Colour is reserved exclusively for visualizations/charts/graph paths, status dots (`live`/`held`/`refused`), semantic badges/chips, small primary CTAs/focus rings, and the Norn knot (`--knot`).
+- **VS Code / T3 Code-style `StudioTheme` JSON customization (`src/lib/studio-theme.ts`):** Operators and tenants may supply or edit declarative JSON themes (`version: 1`, `baseSkin`, `accent`, `canvas`, `colors`, `variants.light` / `variants.dark`) overriding allowlisted semantic CSS tokens on `:root`. Every custom theme is sanitized against CSS injection and gated by automated WCAG AA contrast checks (`>= 4.5:1` text/controls, `>= 3:1` focus rings) before applying.
+
 | Built-in `data-skin` | Visual character |
 | --- | --- |
-| `open` | Airy light open canvas (default). |
-| `polar` | Deep carbon layered dark surfaces, crisp monochrome contrast, restrained knot-violet accent. |
-| `luma` | Soft neutral daylight surfaces with low-contrast tonal separation. |
+| `polar` | **First-party default.** Strict Polar / Linear monochrome light and deep-carbon dark surfaces, crisp flat hairlines, colour reserved for attention and data. |
+| `open` | Airy light/dark open canvas with double-shell cards and a single crisp blue accent. |
+| `luma` | Soft neutral daylight/carbon surfaces with two-surface mist ground and knot-violet accent. |
 | `glass` | Translucent liquid-glass overlays and floating docks over the canvas (CSS fallback mandatory; optional single-shader WebGL2 refraction layered over `@ui-sdk`, respecting `prefers-reduced-motion`). |
 
-Tenants may supply a **brand token overlay** (accent, focus ring, surface tint, radius tokens) layered on top of a built-in skin; overlays are constrained to approved CSS variables and must pass the same contrast floors.
+### First-party UI-shape skeleton loading (`boneyard-js`)
+
+First-party Studio loading surfaces use **`boneyard-js`** (`0xGF/boneyard`, MIT, `boneyard-js/react`) via `BoneSkeleton` (`src/components/bone-skeleton.tsx`) and `LoadState` (`bone="..."`), rendering pre-captured responsive `.bones.json` geometry (`src/bones/`) styled with Studio's monochrome tokens (`var(--muted)` / `var(--well)`) and respecting `prefers-reduced-motion`. Every pending state remains bounded by `LoadState` (skeleton → slow notice → honest timed-out state with explicit Retry).
 
 ### Performance & loading discipline (TARGET)
 
@@ -88,8 +93,8 @@ Shells own frame chrome and navigation geometry only; view components must never
 
 ## 3. Hard Primitives Mandate — No Radix in First-Party Code
 
-- **`radix-ui`, `@radix-ui/*`, and `--radix-*` are strictly banned in first-party Studio code.** Automated CI enforcement (`apps/studio/test/ui-primitives-guard.test.ts`) is a **TARGET** gate landing with the Base UI / UI SDK hard-cutover PR.
-- **Delete instead of preserving (`AGENTS.md`).** Do not wrap Radix primitives behind compatibility shims or add new Radix imports. Existing legacy Radix imports in `apps/studio/src/components/ui/` and `apps/studio/src/lib/locale.tsx` (plus `--radix-*` references in `apps/studio/src/components/ui/shadcn.css`) are migration debt to be deleted cleanly in the cutover PR.
+- **`radix-ui`, `@radix-ui/*`, `cmdk`, and `--radix-*` are strictly banned in first-party Studio code.** Automated CI enforcement (`apps/studio/test/ui-primitives-guard.test.ts` — **CURRENT**) blocks any direct or transitive Radix/cmdk import, CSS reference, or lockfile entry.
+- **Delete instead of preserving (`AGENTS.md`).** Do not wrap legacy primitives behind compatibility shims.
 
 ### Approved web primitive stack
 
@@ -148,14 +153,14 @@ Truth status is a **server-only authority**. Never infer "verified" from the abs
 Quarantined  >  Withheld  >  Imported (unverified)  >  Verified fact
 ```
 
-### Semantic Map (Islands / Lenses, TARGET `#1664`)
+### Semantic Map (Islands / Lenses — Read-only Catalog Explorer CURRENT at `/map`; Cell-side Marking-Filtered Projection & Ripple TARGET `#1664`)
 
-Underneath, the workspace is one flat System-of-Record (SoR) ontology (`norn-ir` + `#45` CodeGraph). On top, users navigate arbitrary color-coded **Islands** through switchable **Lenses** without duplicating truth:
+Underneath, the workspace is one flat System-of-Record (SoR) ontology (`norn-ir` + `#45` CodeGraph). On top, users navigate monochrome structural **Islands** through switchable **Lenses** without duplicating truth (reserving colour strictly for verified live attention status dots, badges, and highlighted causal links):
 
-- **Zoom 0 — Landscape:** Color-coded Islands connected by bundled cross-island bridges (The Weave source-colored convergence threads and soft semantic washes).
-- **Zoom 1 — Island Expansion:** Plain-English job/object cards (Floorplan) with local flow rails and active dependency highlights.
-- **Zoom 2 — Living Dossier:** Executable rules in plain language, interactive lifecycle/witness stepper, and Archify-style `SRC` span evidence badges linking every claim directly to its source span.
-- **Cell-side withholding across the entire map:** The cell filters Semantic Map projections before serialization across **nodes, edges, aggregate island/bridge counts, and `SRC` source spans** so restricted entities never leak through counts, link labels, or file paths.
+- **Zoom 0 — Landscape (CURRENT at `/map` over admitted `/v1/definitions`):** Monochrome structural Islands connected by bundled cross-island bridges with aggregate edge counts and honest live-inbox alert status (never claiming "no open alerts" when inbox reads are pending, unavailable, or recorded).
+- **Zoom 1 — Island Expansion (CURRENT):** Plain-English object cards with compact dashed ghost stubs for cross-island neighbors and switchable lenses (`All`, `Data flow`, `Governance`, `Attention`).
+- **Zoom 2 — Schema & Provenance Side Sheet (CURRENT for admitted definitions; `SRC` code-span evidence TARGET):** Canonical definition artifact link, source feed mapped/gap counts, governing laws in plain language, markings, connected upstream/downstream types, and direct jump links to Records and Definitions.
+- **Cell-side marking-filtered map projection (TARGET `#1664`):** Today `/v1/definitions` checks `ReadDefinitions` at the catalog gate; fine-grained cell-side withholding across individual **nodes, edges, aggregate island/bridge counts, and `SRC` source spans** requires the server-side Semantic Map projection route tracked in `#1664`.
 
 Switching Lenses re-projects the exact same underlying SoR graph (for example: operational flow, authority/markings, or lineage) rather than maintaining separate stale diagrams.
 
@@ -173,6 +178,6 @@ Changes to the System of Record ripple visibly and honestly into every dependent
 Every Studio PR must satisfy all applicable gates before merge:
 
 1. **Domain-agnostic Studio (`apps/studio/test/domain-words.test.ts` — CURRENT):** `apps/studio/src/` must never name a business domain (identifiers or prose). Domain vocabulary belongs exclusively in packs (`registry/packs/`) and test fixtures. There is no allowlist.
-2. **No-Radix CI guard (`apps/studio/test/ui-primitives-guard.test.ts` — TARGET, landing with the hard-cutover PR):** First-party Studio code and `apps/studio/package.json` must contain zero `radix-ui`, `@radix-ui/*`, or `--radix-*` references.
-3. **Contrast & focus gate (`apps/studio/test/contrast.test.ts` — CURRENT for `:root`/`.dark`; TARGET to expand across all four `data-skin` sets in the cutover PR):** All tokens, skins, buttons, chips, badges, tabs, and shell controls must pass automated WCAG AA contrast and focus-outline invariants across themes.
+2. **No-Radix CI guard (`apps/studio/test/ui-primitives-guard.test.ts` — CURRENT):** First-party Studio code, `apps/studio/package.json`, and `bun.lock` must contain zero `radix-ui`, `@radix-ui/*`, `cmdk`, or `--radix-*` references.
+3. **Contrast & focus gate (`apps/studio/test/contrast.test.ts` & `apps/studio/test/studio-theme.test.ts` — CURRENT):** All built-in skins (`polar`, `open`, `luma`, `glass`), custom `StudioTheme` JSON overrides, buttons, chips, badges, tabs, and shell controls must pass automated WCAG AA contrast and focus-outline invariants across light and dark themes.
 4. **Browser proof on Boat before merge (CURRENT):** Visual, layout, skin, shell, and interaction changes require Playwright E2E coverage (`bun run e2e`) plus real rendered **light, dark, and active skin screenshots** captured on Boat before merge. Static markup tests never substitute for rendered browser proof.

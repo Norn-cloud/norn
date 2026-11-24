@@ -34,6 +34,7 @@
     "@ui-sdk/web": "0.1.0-beta.16",
     "@xyflow/react": "12.12.1",
     "better-auth": "1.7.12",
+    "boneyard-js": "1.10.0",
     "canonicalize": "5.1.0",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",

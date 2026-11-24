@@ -1,10 +1,14 @@
 import { cellRead } from "./live-transport.ts"
+import { plainMetricLabel } from "./plain-words.ts"
 import type { ObjectProfile } from "./profile.ts"
+import type { View } from "./view.tsx"
 
 /** One metric the cell derives from its admitted types (`GET /v1/questions:metrics`). */
 export interface MetricSummary {
   readonly name: string
   readonly label: string
+  /** Plain-word display name from the server when present. */
+  readonly display?: string | null
   readonly kind: string
   readonly objectType: string
   readonly expression: string | null
@@ -55,9 +59,16 @@ export function timeLabel(metric: Pick<MetricSummary, "timeProperty" | "timeLink
   return [...(metric.timeLinks ?? []).map((link) => `${link.replaceAll("_", " ")}'s`), metric.timeProperty.replaceAll("_", " ")].join(" ")
 }
 
-export function metricHeading(metric: Pick<MetricSummary, "additivity" | "label" | "expression" | "kind">, grain = "period"): string {
+export function metricHeading(metric: Pick<MetricSummary, "additivity" | "label" | "display" | "expression" | "kind">, grain = "period", view: View = "business"): string {
+  if (view === "technical") return metric.label
   const property = (metric.expression ?? "").replaceAll("_", " ")
-  if (metric.kind !== "simple" || property === "") return metric.label
+  if (metric.kind !== "simple" || property === "") {
+    if (metric.display && metric.display.trim() !== "") {
+      const display = metric.display.trim()
+      return display.charAt(0).toUpperCase() + display.slice(1)
+    }
+    return plainMetricLabel(metric.label)
+  }
   const additivity = additivityOf(metric)
   const word = property.charAt(0).toUpperCase() + property.slice(1)
   if (additivity?.kind === "additive") return word === "Total" ? word : `Total ${property}`
@@ -66,7 +77,8 @@ export function metricHeading(metric: Pick<MetricSummary, "additivity" | "label"
 }
 
 /** The metrics this reader may ask about; a cell without the route says so. */
-export const readMetrics = () => cellRead<{ readonly metrics: readonly MetricSummary[] }>("/v1/questions:metrics", "Questions are")
+export const readMetrics = (context?: { readonly signal?: AbortSignal }) =>
+  cellRead<{ readonly metrics: readonly MetricSummary[] }>("/v1/questions:metrics", "Questions are", context?.signal ? { signal: context.signal } : {})
 
 export interface Window { readonly start: string; readonly end: string; readonly grain: "day" | "week" }
 
