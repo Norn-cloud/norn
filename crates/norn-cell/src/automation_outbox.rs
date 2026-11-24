@@ -1107,6 +1107,7 @@ mod tests {
         expected_defs_version: u64,
         id: &str,
         current_revision: u64,
+        retired_at: u64,
     ) {
         let current = store
             .read()
@@ -1125,7 +1126,7 @@ mod tests {
         store
             .install_retained_definition(
                 model.clone(),
-                &install_input(canonical_set, 30),
+                &install_input(canonical_set, retired_at),
                 Some(expected_defs_version),
                 SCOPE,
                 &change,
@@ -1313,7 +1314,7 @@ mod tests {
         );
 
         // Retiring `ops.on_create` atomically voids its pending candidates and removes its index row.
-        retire_automation(&mut store, &model, &canonical, 3, "ops.on_create", 1);
+        retire_automation(&mut store, &model, &canonical, 3, "ops.on_create", 1, 150);
         assert_eq!(
             store
                 .read()
@@ -2044,17 +2045,20 @@ mod tests {
         assert_eq!(triggers.len(), 2, "{triggers:?}");
 
         // Common ancestor `demo.Ticket` sees an update with TicketA before and TicketB after.
-        assert_eq!(triggers[0].key.automation_id, "ops.base_updated");
-        assert_eq!(triggers[0].trigger_kind, KIND_UPDATED);
+        let base_update = triggers
+            .iter()
+            .find(|trigger| trigger.key.automation_id == "ops.base_updated")
+            .expect("ancestor update");
+        assert_eq!(base_update.trigger_kind, KIND_UPDATED);
         assert_eq!(
-            triggers[0]
+            base_update
                 .before_values
                 .as_ref()
                 .and_then(|values| values.get("a_tag")),
             Some(&Value::String("from-a".into()))
         );
         assert_eq!(
-            triggers[0]
+            base_update
                 .after_values
                 .as_ref()
                 .and_then(|values| values.get("b_tag")),
@@ -2062,11 +2066,14 @@ mod tests {
         );
 
         // New sibling `demo.TicketB` fires `event:created` (NOT `event:updated`) with no before-state.
-        assert_eq!(triggers[1].key.automation_id, "ops.b_created");
-        assert_eq!(triggers[1].trigger_kind, KIND_CREATED);
-        assert_eq!(triggers[1].before_values, None);
+        let sibling_create = triggers
+            .iter()
+            .find(|trigger| trigger.key.automation_id == "ops.b_created")
+            .expect("sibling creation");
+        assert_eq!(sibling_create.trigger_kind, KIND_CREATED);
+        assert_eq!(sibling_create.before_values, None);
         assert_eq!(
-            triggers[1]
+            sibling_create
                 .after_values
                 .as_ref()
                 .and_then(|values| values.get("b_tag")),
