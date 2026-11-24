@@ -1856,8 +1856,7 @@ mod suite {
                     "payload_digest": "sha256:aaaa", "confidence_bp": 6200, "source_span": "row:4",
                     "extracted_at": "2026-11-23T08:05:00Z", "observed_at": "2026-11-22T20:30:00Z",
                     "effective_on": "2026-11-22", "dispute_state": "disputed",
-                    "review_receipt_digest": "sha256:rev_disp",
-                    "reviewed_by_user_id": "principal:hr_reviewer", "status": "staged"
+                    "review_receipt_digest": null, "reviewed_by_user_id": null, "status": "staged"
                 }),
             ),
             put_fact(
@@ -1869,8 +1868,7 @@ mod suite {
                     "payload_digest": "sha256:cccc", "confidence_bp": 9400, "source_span": "row:5",
                     "extracted_at": "2026-11-23T08:10:00Z", "observed_at": "2026-11-22T20:30:00Z",
                     "effective_on": "2026-11-22", "dispute_state": "clean",
-                    "review_receipt_digest": "sha256:rev_open",
-                    "reviewed_by_user_id": "principal:hr_reviewer", "status": "staged"
+                    "review_receipt_digest": null, "reviewed_by_user_id": null, "status": "staged"
                 }),
             ),
             put_fact(
@@ -1882,8 +1880,7 @@ mod suite {
                     "payload_digest": "sha256:bbbb", "confidence_bp": 9850, "source_span": "row:4-fix",
                     "extracted_at": "2026-11-23T09:00:00Z", "observed_at": "2026-11-22T21:00:00Z",
                     "effective_on": "2026-11-22", "dispute_state": "clean",
-                    "review_receipt_digest": "sha256:rev_001",
-                    "reviewed_by_user_id": "principal:hr_reviewer", "status": "staged"
+                    "review_receipt_digest": null, "reviewed_by_user_id": null, "status": "staged"
                 }),
             ),
         ]);
@@ -1967,7 +1964,7 @@ mod suite {
         cell.commit(seed).expect("seed import evidence");
     }
 
-    fn record_import_reviews_via_action(fixture: &HrVerticalFixture, cell: &mut Cell) {
+    fn assert_review_record_access_denials(fixture: &HrVerticalFixture, cell: &mut Cell) {
         // Untrusted import worker cannot record a human review decision.
         assert_permission_denied(
             fixture.invoke(
@@ -2003,8 +2000,12 @@ mod suite {
             ),
             "mismatched reviewer_user_id must be denied by AccessIR",
         );
+    }
 
-        // Authenticated hr_reviewer records governed ReviewDecision facts through commit_action.
+    fn record_import_reviews_via_action(fixture: &HrVerticalFixture, cell: &mut Cell) {
+        assert_review_record_access_denials(fixture, cell);
+
+        // Authenticated hr_reviewer records ReviewDecision for cand_disputed and cand_open_finding.
         for (rev_id, cand_id, receipt, key) in [
             (
                 "rev_disputed",
@@ -2018,7 +2019,6 @@ mod suite {
                 "sha256:rev_open",
                 "imp-rev-open",
             ),
-            ("rev_clean", "cand_clean", "sha256:rev_001", "imp-rev-clean"),
         ] {
             fixture
                 .invoke(
@@ -2037,6 +2037,55 @@ mod suite {
                 )
                 .unwrap_or_else(|e| panic!("authorized hr_reviewer records {rev_id}: {e:?}"));
         }
+
+        // Unreviewed `cand_clean` CANNOT promote before its own `hr_import.review.record`:
+        // neither with a missing review nor by borrowing another candidate's ReviewDecision!
+        let missing_refusal = fixture
+            .invoke(
+                cell,
+                "hr_import.candidate.promote",
+                &json!({
+                    "candidateId": "cand_clean", "batchId": "batch_1",
+                    "evidenceId": "ev_clean", "reviewDecisionId": "rev_clean"
+                }),
+                "principal:hr_manager",
+                "imp-promote-unreviewed-missing-refused",
+            )
+            .expect_err("unreviewed cand_clean must refuse before review.record");
+        assert_eq!(missing_refusal.code(), "action.slice_object_missing");
+
+        assert_precondition_false(
+            fixture.invoke(
+                cell,
+                "hr_import.candidate.promote",
+                &json!({
+                    "candidateId": "cand_clean", "batchId": "batch_1",
+                    "evidenceId": "ev_clean", "reviewDecisionId": "rev_disputed"
+                }),
+                "principal:hr_manager",
+                "imp-promote-unreviewed-foreign-review-refused",
+            ),
+            "unreviewed cand_clean cannot borrow another candidate's ReviewDecision",
+        );
+
+        // Now record `rev_clean` via `hr_import.review.record` so `cand_clean` (still with null
+        // redundant review fields) becomes promotable purely via linked ReviewDecision!
+        fixture
+            .invoke(
+                cell,
+                "hr_import.review.record",
+                &json!({
+                    "id": "rev_clean", "candidateId": "cand_clean",
+                    "decision": "approve_promotion",
+                    "reviewer_user_id": "principal:hr_reviewer",
+                    "receipt_digest": "sha256:rev_001",
+                    "reason": "Verified against source batch evidence.",
+                    "decided_at": "2026-11-23T09:10:00Z"
+                }),
+                "principal:hr_reviewer",
+                "imp-rev-clean",
+            )
+            .expect("authorized hr_reviewer records rev_clean");
     }
 
     fn seed_import_findings(cell: &mut Cell) {

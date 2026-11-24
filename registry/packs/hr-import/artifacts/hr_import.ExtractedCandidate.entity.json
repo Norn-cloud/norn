@@ -47,7 +47,7 @@
                 "staged"
               ],
               "guards": [
-                "((self.dispute_state == 'clean') and (self.review_receipt_digest != null)) and (self.reviewed_by_user_id != null)"
+                "self.dispute_state == 'clean'"
               ],
               "id": "promote",
               "to": "promoted"

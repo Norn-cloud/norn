@@ -169,10 +169,7 @@ export const ExtractedCandidate = Norn.type({
           guards: [
             Norn.expression(
               ExtractedCandidateProps,
-              (self) =>
-                self.dispute_state === "clean" &&
-                self.review_receipt_digest !== null &&
-                self.reviewed_by_user_id !== null,
+              (self) => self.dispute_state === "clean",
             ),
           ],
         },
@@ -769,8 +766,6 @@ export const CandidateBitemporalReversedViolated = Norn.example("observed_at aft
 const ExtractedCandidateReviewSubject = Schema.Struct({
   status: CandidateStatus,
   dispute_state: CandidateDisputeState,
-  review_receipt_digest: Schema.NullOr(Schema.String),
-  reviewed_by_user_id: Schema.NullOr(Schema.String),
   findings: Schema.Array(Schema.Struct({ status: FindingStatus })),
   reviews: Schema.Array(Schema.Struct({ decision: ReviewDecisionKind })),
 })
@@ -789,7 +784,7 @@ export const PromotedCandidateRequiresCleanReview = Norn.law({
     id: "hr_import.ExtractedCandidate.promoted_requires_clean_review",
     owner: "hr_import",
     severity: "error",
-    rationale: "Untrusted extracted candidates cannot be promoted while quarantined/disputed, while any linked DataQualityFinding remains open (LAW-LINK-MANY-1), or without a linked approve_promotion ReviewDecision.",
+    rationale: "Untrusted extracted candidates cannot be promoted while quarantined/disputed, while any linked DataQualityFinding remains open (LAW-LINK-MANY-1), or without a linked approve_promotion ReviewDecision as the single authoritative review source.",
     provenance: { source: "authoring_sdk", sourcePath: "registry/packs/hr-import/hr_import.ts" },
     subject: "hr_import.ExtractedCandidate",
     scope: {
@@ -804,8 +799,6 @@ export const PromotedCandidateRequiresCleanReview = Norn.law({
         ExtractedCandidateReviewSubject,
         (self) =>
           self.dispute_state === "clean" &&
-          self.review_receipt_digest !== null &&
-          self.reviewed_by_user_id !== null &&
           self.findings.every((f) => f.status !== "open") &&
           self.reviews.some((r) => r.decision === "approve_promotion"),
       ),
@@ -848,8 +841,8 @@ export const PromotedCandidateCleanHolds = Norn.example("promoted clean candidat
     observed_at: "2026-11-22T18:05:00Z",
     effective_on: "2026-11-24",
     dispute_state: "clean",
-    review_receipt_digest: "sha256:rev001",
-    reviewed_by_user_id: "principal:hr_manager",
+    review_receipt_digest: null,
+    reviewed_by_user_id: null,
     status: "promoted",
     findings: [{ status: "resolved" }],
     reviews: [{ decision: "approve_promotion" }],
@@ -1223,8 +1216,6 @@ const PromoteEvidenceLinkSlice = Schema.Struct({
       id: Schema.String,
       status: CandidateStatus,
       dispute_state: CandidateDisputeState,
-      review_receipt_digest: Schema.NullOr(Schema.String),
-      reviewed_by_user_id: Schema.NullOr(Schema.String),
     }),
     batch: Schema.Struct({
       id: Schema.String,
@@ -1337,8 +1328,8 @@ export const PromoteCandidate = Norn.action({
         ctx.slice.candidate.status === "staged" &&
         ctx.slice.candidate.dispute_state === "clean" &&
         ctx.slice.review.decision === "approve_promotion" &&
-        (ctx.slice.candidate.review_receipt_digest ?? "") === ctx.slice.review.receipt_digest &&
-        (ctx.slice.candidate.reviewed_by_user_id ?? "") === ctx.slice.review.reviewer_user_id &&
+        ctx.slice.review.reviewer_user_id !== "" &&
+        ctx.slice.review.receipt_digest !== "" &&
         ctx.slice.evidence.document_digest === ctx.slice.batch.document_digest,
       { root: "context" },
     ),

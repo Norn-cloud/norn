@@ -37,9 +37,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/hr-import/hr_import.ts"
     },
-    "rationale": "Untrusted extracted candidates cannot be promoted while quarantined/disputed, while any linked DataQualityFinding remains open (LAW-LINK-MANY-1), or without a linked approve_promotion ReviewDecision.",
+    "rationale": "Untrusted extracted candidates cannot be promoted while quarantined/disputed, while any linked DataQualityFinding remains open (LAW-LINK-MANY-1), or without a linked approve_promotion ReviewDecision as the single authoritative review source.",
     "response": {
-      "expression": "((((self.dispute_state == 'clean') and (self.review_receipt_digest != null)) and (self.reviewed_by_user_id != null)) and all(self.findings as f, f.status != 'open')) and some(self.reviews as r, r.decision == 'approve_promotion')",
+      "expression": "((self.dispute_state == 'clean') and all(self.findings as f, f.status != 'open')) and some(self.reviews as r, r.decision == 'approve_promotion')",
       "kind": "predicate"
     },
     "scope": {

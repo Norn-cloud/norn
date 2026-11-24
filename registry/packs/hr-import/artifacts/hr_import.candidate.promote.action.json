@@ -66,7 +66,7 @@
     },
     "preconditions": [
       "(((slice.batch.id in map(slice.candidate_batch as b, b.id)) and (slice.candidate.id in map(slice.evidence_candidate as c, c.id))) and (slice.batch.id in map(slice.evidence_batch as b, b.id))) and (slice.candidate.id in map(slice.review_candidate as c, c.id))",
-      "(((((slice.candidate.status == 'staged') and (slice.candidate.dispute_state == 'clean')) and (slice.review.decision == 'approve_promotion')) and ((slice.candidate.review_receipt_digest ?? '') == slice.review.receipt_digest)) and ((slice.candidate.reviewed_by_user_id ?? '') == slice.review.reviewer_user_id)) and (slice.evidence.document_digest == slice.batch.document_digest)"
+      "(((((slice.candidate.status == 'staged') and (slice.candidate.dispute_state == 'clean')) and (slice.review.decision == 'approve_promotion')) and (slice.review.reviewer_user_id != '')) and (slice.review.receipt_digest != '')) and (slice.evidence.document_digest == slice.batch.document_digest)"
     ],
     "scopeRequired": [
       "orgId",
