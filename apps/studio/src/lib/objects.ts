@@ -1,3 +1,4 @@
+import { orderLifecycleStates } from "../../../../packages/norn-demo-ui/src/elements/lifecycle-view.ts"
 import type { Field, Lifecycle } from "./catalog.ts"
 import { member } from "./exact.ts"
 import { groupDigits, readableTime } from "./format.ts"
@@ -71,23 +72,37 @@ export function readProblem(...reads: readonly { readonly error: Error | null }[
 export const readsOf = (objectType: string, id: string, object: ObjectRecord, links: LinkPage): boolean =>
   object.objectType === objectType && object.id === id && links.objectType === objectType && links.id === id
 
-/** A lifecycle's states in the order the declared transitions first reach them from the initial states. */
-export function lifecycleStates(lifecycle: Lifecycle): readonly string[] {
-  const order = [...lifecycle.initial]
-  for (let index = 0; index < order.length; index += 1) {
-    for (const transition of lifecycle.transitions ?? []) {
-      if (transition.from.includes(order[index] ?? "") && !order.includes(transition.to)) order.push(transition.to)
-    }
-  }
-  return order
+/** Every declared state of a lifecycle: the enum property's values when declared, else the union of initial, terminal and transitions. */
+export function declaredLifecycleStates(lifecycle: Lifecycle, field?: Field): readonly string[] {
+  if (field?.scalar.kind === "enum") return field.scalar.values
+  const terminal = lifecycle.terminal ?? []
+  const transitions = lifecycle.transitions ?? []
+  return [...new Set([...lifecycle.initial, ...terminal, ...transitions.flatMap(({ from, to }) => [...from, to])])]
+}
+
+/**
+ * A lifecycle's states in the canonical display order shared with `<norn-lifecycle-view>`:
+ * grouped by shortest distance from an initial state, peers in declared order, unreachable
+ * declared states last.
+ */
+export function lifecycleStates(lifecycle: Lifecycle, declared?: readonly string[]): readonly string[] {
+  const states = declared === undefined
+    ? declaredLifecycleStates(lifecycle)
+    : [...new Set([...declared, ...declaredLifecycleStates(lifecycle)])]
+  return orderLifecycleStates({
+    states,
+    initial: lifecycle.initial,
+    transitions: lifecycle.transitions ?? [],
+  })
 }
 
 /** The record's position in a lifecycle and the steps the definition declares from there. */
-export function lifecycleOf(lifecycle: Lifecycle, record: ObjectRecord) {
+export function lifecycleOf(lifecycle: Lifecycle, record: ObjectRecord, declared?: readonly string[]) {
   const value = record.values[lifecycle.property]
   const state = typeof value === "string" ? value : undefined
+  const states = lifecycleStates(lifecycle, declared)
   return {
-    states: lifecycleStates(lifecycle),
+    states: state !== undefined && !states.includes(state) ? [...states, state] : states,
     state,
     terminal: state !== undefined && (lifecycle.terminal ?? []).includes(state),
     next: state === undefined ? [] : (lifecycle.transitions ?? []).filter(({ from }) => from.includes(state)),
