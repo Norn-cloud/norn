@@ -73,7 +73,7 @@ fn decision_id(parked: &Value) -> Result<String, Box<dyn Error>> {
 }
 
 /// The approver approves `id`.
-fn approve<E: SqlEngine>(cell: &Cell<E>, id: &str) -> Checked {
+fn approve<E: SqlEngine>(cell: &Cell<E>, id: &str) {
     let body = json!({ "choice": "approve", "idempotencyKey": "approve-1" }).to_string();
     let (status, decided) = call(
         cell,
@@ -83,7 +83,6 @@ fn approve<E: SqlEngine>(cell: &Cell<E>, id: &str) -> Checked {
         &body,
     );
     assert_eq!(status, 200, "{decided}");
-    Ok(())
 }
 
 fn melt_written<E: SqlEngine>(cell: &Cell<E>) -> bool {
@@ -105,11 +104,11 @@ fn approved_on(path: &Path) -> Result<String, Box<dyn Error>> {
     let (status, parked) = melt(&cell, "operator-1");
     assert_eq!(status, 202, "{parked}");
     let id = decision_id(&parked)?;
-    approve(&cell, &id)?;
+    approve(&cell, &id);
     Ok(id)
 }
 
-/// Rewrite the parked call's approval record on `path` as `sql` sets it.
+/// Rewrite the parked call's command on `path` with the SQL expression `set`.
 fn rewrite_parked(path: &Path, set: &str) -> Checked {
     NativeEngine::open(path, StoreOptions::default())?.execute_batch(&format!(
         r#"UPDATE "_norn_outbox" SET "command"={set} WHERE json_extract("command",'$.payload.approval') IS NOT NULL"#
