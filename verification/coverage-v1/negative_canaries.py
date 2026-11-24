@@ -1509,6 +1509,9 @@ def workflow_context_canaries(source: str, trusted_source: str) -> None:
         document = copy.deepcopy(trusted_workflow)
         document["on"]["pull_request"] = None
         rejected_trusted("trusted-policy workflow triggers on pull_request", document)
+        document = copy.deepcopy(trusted_workflow)
+        document["concurrency"] = {"group": "trusted-policy", "cancel-in-progress": True}
+        rejected_trusted("trusted-policy workflow-level concurrency", document)
         for label, permissions in (("write-all", "write-all"), ("id-token", {"id-token": "write"})):
             document = copy.deepcopy(trusted_workflow)
             document["jobs"]["trusted-policy"]["permissions"] = permissions

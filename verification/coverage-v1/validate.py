@@ -680,6 +680,8 @@ def validate_workflow_integrity(evidence_roots: list[str], *, formal_path: Path 
         "pull_request_target": None,
         "issue_comment": {"types": ["created", "edited", "deleted"]},
     }, "trusted-policy workflow must trigger only on pull_request_target and issue_comment")
+    require("concurrency" not in trusted_workflow,
+            "trusted-policy workflow must not define workflow-level concurrency; only the job-level per-PR group applies")
     require(trusted_workflow.get("permissions") == {"contents": "read"},
             "trusted-policy workflow: inherited permissions must be contents: read")
     require(not trusted_workflow.get("env"),
