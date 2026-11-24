@@ -373,50 +373,51 @@ fn check_artifact_set_ring0_phases_using(
     };
 
     let per_artifact: Vec<Vec<Diagnostic>> = norm.iter().map(local).collect();
-    let (resolved_ok, pre_ux_set, mut post_ux_set) = match resolve_artifact_set(&norm, &base) {
-        Ok(_resolved) => (
-            true,
-            check_entity_layer_set_findings(&norm, &ctx)
-                .into_iter()
-                .chain(scope_findings(&norm, &base))
-                .chain(check_pack_instances(&norm, &base))
-                .chain(check_sub_decision_closures(&norm, &base))
-                .chain(check_action_set(&norm, &ctx))
-                .chain(check_lifecycle_write_set(&norm, &ctx))
-                .chain(crate::rule_bindings::check_rule_binding_set(&norm, &ctx))
-                .chain(crate::source_commands::check_set(&norm, &ctx))
-                .chain(crate::mapping::check_mapping_artifacts(
-                    &norm,
-                    &base,
-                    ctx.registry,
-                ))
-                .collect(),
-            crate::markings::check_references(&norm, &base)
-                .into_iter()
-                .chain(crate::deontic::check_declared_order_set(&norm, &base))
-                .chain(crate::verification::check_law_set(
-                    &norm,
-                    &base,
-                    ctx.registry,
-                ))
-                .chain(crate::labels::check_label_set(&norm, &base))
-                .chain(crate::transform::check_transform_set(
-                    &norm,
-                    &base,
-                    ctx.registry,
-                ))
-                .chain(crate::model::check_model_set(&norm, &base))
-                .collect(),
-        ),
-        Err(resolution) => (
-            false,
-            Vec::new(),
-            crate::markings::check_references(&norm, &base)
-                .into_iter()
-                .chain(resolution)
-                .collect(),
-        ),
-    };
+    let (resolved_ok, pre_ux_set, mut post_ux_set): (bool, Vec<Diagnostic>, Vec<Diagnostic>) =
+        match resolve_artifact_set(&norm, &base) {
+            Ok(_resolved) => (
+                true,
+                check_entity_layer_set_findings(&norm, &ctx)
+                    .into_iter()
+                    .chain(scope_findings(&norm, &base))
+                    .chain(check_pack_instances(&norm, &base))
+                    .chain(check_sub_decision_closures(&norm, &base))
+                    .chain(check_action_set(&norm, &ctx))
+                    .chain(check_lifecycle_write_set(&norm, &ctx))
+                    .chain(crate::rule_bindings::check_rule_binding_set(&norm, &ctx))
+                    .chain(crate::source_commands::check_set(&norm, &ctx))
+                    .chain(crate::mapping::check_mapping_artifacts(
+                        &norm,
+                        &base,
+                        ctx.registry,
+                    ))
+                    .collect(),
+                crate::markings::check_references(&norm, &base)
+                    .into_iter()
+                    .chain(crate::deontic::check_declared_order_set(&norm, &base))
+                    .chain(crate::verification::check_law_set(
+                        &norm,
+                        &base,
+                        ctx.registry,
+                    ))
+                    .chain(crate::labels::check_label_set(&norm, &base))
+                    .chain(crate::transform::check_transform_set(
+                        &norm,
+                        &base,
+                        ctx.registry,
+                    ))
+                    .chain(crate::model::check_model_set(&norm, &base))
+                    .collect(),
+            ),
+            Err(resolution) => (
+                false,
+                Vec::new(),
+                crate::markings::check_references(&norm, &base)
+                    .into_iter()
+                    .chain(resolution)
+                    .collect(),
+            ),
+        };
     let unit_findings = crate::unit_admission::check(&norm, &base);
     post_ux_set.extend(
         layout_findings

@@ -43,16 +43,24 @@ fn push_legacy_widget_extra(
     extra: Vec<norn_ir::Diagnostic>,
 ) {
     for finding in extra {
-        if let Some((existing, from_ring0)) = out.iter_mut().find(|(existing, _)| {
+        if let Some(index) = out.iter().position(|(existing, _)| {
             existing.code == finding.code
                 && existing.artifact_id == finding.artifact_id
                 && existing.path == finding.path
         }) {
+            let Some((existing, from_ring0)) = out.get(index) else {
+                continue;
+            };
+            let from_ring0 = *from_ring0;
             let new_rank = severity_rank(&finding.severity);
             let old_rank = severity_rank(&existing.severity);
-            if new_rank > old_rank || (*from_ring0 && new_rank == old_rank) {
-                *existing = finding;
-                *from_ring0 = false;
+            if new_rank > old_rank {
+                if let Some(slot) = out.get_mut(index) {
+                    *slot = (finding, false);
+                }
+            } else if from_ring0 && new_rank == old_rank {
+                out.remove(index);
+                out.push((finding, false));
             }
         } else {
             out.push((finding, false));
@@ -88,7 +96,7 @@ fn push_widget_extra(out: &mut Vec<(Diagnostic, bool)>, extra: Vec<Diagnostic>) 
             .span
             .as_ref()
             .map_or("", |span| span.pointer.as_str());
-        if let Some((existing, from_ring0)) = out.iter_mut().find(|(existing, _)| {
+        if let Some(index) = out.iter().position(|(existing, _)| {
             existing.code == finding.code
                 && existing.artifact_id == finding.artifact_id
                 && existing
@@ -97,11 +105,19 @@ fn push_widget_extra(out: &mut Vec<(Diagnostic, bool)>, extra: Vec<Diagnostic>) 
                     .map_or("", |span| span.pointer.as_str())
                     == finding_ptr
         }) {
+            let Some((existing, from_ring0)) = out.get(index) else {
+                continue;
+            };
+            let from_ring0 = *from_ring0;
             let new_rank = severity_rank(&finding.severity);
             let old_rank = severity_rank(&existing.severity);
-            if new_rank > old_rank || (*from_ring0 && new_rank == old_rank) {
-                *existing = finding;
-                *from_ring0 = false;
+            if new_rank > old_rank {
+                if let Some(slot) = out.get_mut(index) {
+                    *slot = (finding, false);
+                }
+            } else if from_ring0 && new_rank == old_rank {
+                out.remove(index);
+                out.push((finding, false));
             }
         } else {
             out.push((finding, false));
@@ -753,5 +769,79 @@ mod ring1_composition_tests {
             upgraded.first().map(|d| &d.severity),
             Some(&DiagnosticSeverity::Error)
         );
+    }
+
+    #[test]
+    fn view_states_empty_precedes_projection_hints_null() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut widget_json = widget_fixture_json()?;
+        if let Some(payload) = widget_json
+            .get_mut("payload")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            payload.insert("viewStates".to_owned(), json!([]));
+            payload.insert("projectionHints".to_owned(), serde_json::Value::Null);
+        } else {
+            return Err("widget fixture payload must be an object".into());
+        }
+        let widget_env: ArtifactEnvelope = serde_json::from_value(widget_json)?;
+
+        let legacy_err = match validate_artifact(&widget_env) {
+            Ok(()) => return Err("validate_artifact must reject invalid widget".into()),
+            Err(diags) => diags,
+        };
+        let (Some(vs_legacy), Some(ph_legacy)) = (
+            legacy_err
+                .iter()
+                .position(|d| d.path.as_deref() == Some("payload.viewStates")),
+            legacy_err.iter().position(|d| {
+                d.path.as_deref() == Some("payload.projectionHints")
+                    && d.message == "value must be an object"
+            }),
+        ) else {
+            return Err(format!("Expected viewStates and projectionHints: {legacy_err:#?}").into());
+        };
+        assert!(
+            vs_legacy < ph_legacy,
+            "validate_artifact must emit viewStates before projectionHints: {legacy_err:#?}"
+        );
+
+        let registry = BTreeSet::new();
+        let context = EntityArtifactSetContext {
+            registry: &registry,
+            base: &[],
+            tenant: None,
+        };
+        for (label, findings) in [
+            ("check_artifact", check_artifact(&widget_env)),
+            (
+                "check_artifact_set",
+                check_artifact_set(std::slice::from_ref(&widget_env), &context),
+            ),
+        ] {
+            let (Some(vs_idx), Some(ph_idx)) = (
+                findings.iter().position(|d| {
+                    d.span
+                        .as_ref()
+                        .is_some_and(|s| s.pointer == "/payload/viewStates")
+                }),
+                findings.iter().position(|d| {
+                    d.span
+                        .as_ref()
+                        .is_some_and(|s| s.pointer == "/payload/projectionHints")
+                        && d.message == "value must be an object"
+                }),
+            ) else {
+                return Err(format!(
+                    "{label}: expected viewStates and projectionHints: {findings:#?}"
+                )
+                .into());
+            };
+            assert!(
+                vs_idx < ph_idx,
+                "{label} must emit viewStates before projectionHints: {findings:#?}"
+            );
+        }
+        Ok(())
     }
 }
