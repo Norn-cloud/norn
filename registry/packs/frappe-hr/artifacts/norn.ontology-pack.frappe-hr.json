@@ -4,7 +4,7 @@
   "irVersion": "0.1",
   "kind": "business_pack",
   "lifecycle": "active",
-  "name": "Frappe HR v15 system pack (map-only, clean-room)",
+  "name": "Frappe HR v16 system pack (map-only, clean-room)",
   "namespace": "norn.ontology",
   "payload": {
     "mappings": [
@@ -53,16 +53,170 @@
       {
         "confidenceBasisPoints": 9000,
         "evidenceRefs": [
-          "https://docs.frappe.io/hr/holiday-list"
+          "https://docs.frappe.io/hr/branch"
         ],
-        "externalIri": "https://docs.frappe.io/hr/holiday-list",
-        "justification": "Public Frappe HR Holiday List concept.",
-        "mappingId": "map.frappe-hr.holiday.list",
+        "externalIri": "https://docs.frappe.io/hr/branch",
+        "justification": "Public Frappe HR Branch concept.",
+        "mappingId": "map.frappe-hr.branch",
         "relation": "close_match",
         "reviewedAt": "2026-11-23T00:00:00Z",
         "reviewedBy": "hr-vertical (agent, proposed)",
         "sourceId": "source.frappe-hr",
-        "termId": "norn.frappe-hr.holiday.list"
+        "termId": "norn.frappe-hr.branch"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/employment-type"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/employment-type",
+        "justification": "Public Frappe HR Employment Type concept.",
+        "mappingId": "map.frappe-hr.employment.type",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.employment.type"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/employee-grade"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/employee-grade",
+        "justification": "Public Frappe HR Employee Grade concept.",
+        "mappingId": "map.frappe-hr.employee.grade",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.employee.grade"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/employee-group"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/employee-group",
+        "justification": "Public Frappe HR Employee Group concept.",
+        "mappingId": "map.frappe-hr.employee.group",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.employee.group"
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/employee"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/employee",
+        "justification": "Public Frappe HR v16 Employee Document Type catalog concept superseding legacy Identification Document Type.",
+        "mappingId": "map.frappe-hr.employee.document.type",
+        "relation": "related_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.employee.document.type"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/employee-promotion"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/employee-promotion",
+        "justification": "Public Frappe HR Employee Promotion concept.",
+        "mappingId": "map.frappe-hr.employee.promotion",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.employee.promotion"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/employee-transfer"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/employee-transfer",
+        "justification": "Public Frappe HR Employee Transfer concept.",
+        "mappingId": "map.frappe-hr.employee.transfer",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.employee.transfer"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/employee-grievance"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/employee-grievance",
+        "justification": "Public Frappe HR Employee Grievance concept.",
+        "mappingId": "map.frappe-hr.employee.grievance",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.employee.grievance"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/leave-type"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/leave-type",
+        "justification": "Public Frappe HR Leave Type concept.",
+        "mappingId": "map.frappe-hr.leave.type",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.leave.type"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/leave-policy"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/leave-policy",
+        "justification": "Public Frappe HR Leave Policy concept.",
+        "mappingId": "map.frappe-hr.leave.policy",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.leave.policy"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/leave-policy-assignment"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/leave-policy-assignment",
+        "justification": "Public Frappe HR Leave Policy Assignment concept.",
+        "mappingId": "map.frappe-hr.leave.policy.assignment",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.leave.policy.assignment"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/leave-period"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/leave-period",
+        "justification": "Public Frappe HR Leave Period concept.",
+        "mappingId": "map.frappe-hr.leave.period",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.leave.period"
       },
       {
         "confidenceBasisPoints": 9000,
@@ -95,6 +249,90 @@
       {
         "confidenceBasisPoints": 9000,
         "evidenceRefs": [
+          "https://docs.frappe.io/hr/leave-ledger-entry"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/leave-ledger-entry",
+        "justification": "Public Frappe HR Leave Ledger Entry concept.",
+        "mappingId": "map.frappe-hr.leave.ledger.entry",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.leave.ledger.entry"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/compensatory-leave-request"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/compensatory-leave-request",
+        "justification": "Public Frappe HR Compensatory Leave Request concept.",
+        "mappingId": "map.frappe-hr.compensatory.leave.request",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.compensatory.leave.request"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/leave-encashment"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/leave-encashment",
+        "justification": "Public Frappe HR Leave Encashment concept.",
+        "mappingId": "map.frappe-hr.leave.encashment",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.leave.encashment"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/leave-block-list"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/leave-block-list",
+        "justification": "Public Frappe HR Leave Block List concept.",
+        "mappingId": "map.frappe-hr.leave.block.list",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.leave.block.list"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/holiday-list"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/holiday-list",
+        "justification": "Public Frappe HR Holiday List concept.",
+        "mappingId": "map.frappe-hr.holiday.list",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.holiday.list"
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/holiday-list"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/holiday-list",
+        "justification": "One holiday date row documented within the public Frappe HR Holiday List guide.",
+        "mappingId": "map.frappe-hr.holiday.list.holiday",
+        "relation": "narrow_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.holiday.list.holiday"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
           "https://docs.frappe.io/hr/shift-type"
         ],
         "externalIri": "https://docs.frappe.io/hr/shift-type",
@@ -109,6 +347,20 @@
       {
         "confidenceBasisPoints": 9000,
         "evidenceRefs": [
+          "https://docs.frappe.io/hr/shift-request"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/shift-request",
+        "justification": "Public Frappe HR Shift Request concept.",
+        "mappingId": "map.frappe-hr.shift.request",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.shift.request"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
           "https://docs.frappe.io/hr/shift-assignment"
         ],
         "externalIri": "https://docs.frappe.io/hr/shift-assignment",
@@ -119,6 +371,20 @@
         "reviewedBy": "hr-vertical (agent, proposed)",
         "sourceId": "source.frappe-hr",
         "termId": "norn.frappe-hr.shift.assignment"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/employee-checkin"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/employee-checkin",
+        "justification": "Public Frappe HR Employee Checkin concept.",
+        "mappingId": "map.frappe-hr.employee.checkin",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.employee.checkin"
       },
       {
         "confidenceBasisPoints": 9000,
@@ -147,6 +413,398 @@
         "reviewedBy": "hr-vertical (agent, proposed)",
         "sourceId": "source.frappe-hr",
         "termId": "norn.frappe-hr.attendance.request"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/salary-component"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/salary-component",
+        "justification": "Public Frappe HR Salary Component concept.",
+        "mappingId": "map.frappe-hr.salary.component",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.salary.component"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/salary-structure"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/salary-structure",
+        "justification": "Public Frappe HR Salary Structure concept.",
+        "mappingId": "map.frappe-hr.salary.structure",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.salary.structure"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/salary-structure-assignment"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/salary-structure-assignment",
+        "justification": "Public Frappe HR Salary Structure Assignment concept.",
+        "mappingId": "map.frappe-hr.salary.structure.assignment",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.salary.structure.assignment"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/payroll-period"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/payroll-period",
+        "justification": "Public Frappe HR Payroll Period concept.",
+        "mappingId": "map.frappe-hr.payroll.period",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.payroll.period"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/payroll-entry"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/payroll-entry",
+        "justification": "Public Frappe HR Payroll Entry concept.",
+        "mappingId": "map.frappe-hr.payroll.entry",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.payroll.entry"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/salary-slip"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/salary-slip",
+        "justification": "Public Frappe HR Salary Slip concept.",
+        "mappingId": "map.frappe-hr.salary.slip",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.salary.slip"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/additional-salary"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/additional-salary",
+        "justification": "Public Frappe HR Additional Salary concept.",
+        "mappingId": "map.frappe-hr.additional.salary",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.additional.salary"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/income-tax-slab"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/income-tax-slab",
+        "justification": "Public Frappe HR Income Tax Slab concept.",
+        "mappingId": "map.frappe-hr.income.tax.slab",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.income.tax.slab"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/employee-tax-exemption-declaration"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/employee-tax-exemption-declaration",
+        "justification": "Public Frappe HR Employee Tax Exemption Declaration concept.",
+        "mappingId": "map.frappe-hr.employee.tax.exemption.declaration",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.employee.tax.exemption.declaration"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/employee-tax-exemption-proof-submission"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/employee-tax-exemption-proof-submission",
+        "justification": "Public Frappe HR Employee Tax Exemption Proof Submission concept.",
+        "mappingId": "map.frappe-hr.employee.tax.exemption.proof.submission",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.employee.tax.exemption.proof.submission"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/employee-benefit-application"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/employee-benefit-application",
+        "justification": "Public Frappe HR Employee Benefit Application concept.",
+        "mappingId": "map.frappe-hr.employee.benefit.application",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.employee.benefit.application"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/gratuity"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/gratuity",
+        "justification": "Public Frappe HR Gratuity concept.",
+        "mappingId": "map.frappe-hr.gratuity",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.gratuity"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/full-and-final-statement"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/full-and-final-statement",
+        "justification": "Public Frappe HR Full and Final Statement concept.",
+        "mappingId": "map.frappe-hr.full.and.final.statement",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.full.and.final.statement"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/expense-claim"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/expense-claim",
+        "justification": "Public Frappe HR Expense Claim concept.",
+        "mappingId": "map.frappe-hr.expense.claim",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.expense.claim"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/expense-claim-type"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/expense-claim-type",
+        "justification": "Public Frappe HR Expense Claim Type concept.",
+        "mappingId": "map.frappe-hr.expense.claim.type",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.expense.claim.type"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/employee-advance"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/employee-advance",
+        "justification": "Public Frappe HR Employee Advance concept.",
+        "mappingId": "map.frappe-hr.employee.advance",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.employee.advance"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/travel-request"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/travel-request",
+        "justification": "Public Frappe HR Travel Request concept.",
+        "mappingId": "map.frappe-hr.travel.request",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.travel.request"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/job-opening"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/job-opening",
+        "justification": "Public Frappe HR Job Opening concept.",
+        "mappingId": "map.frappe-hr.job.opening",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.job.opening"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/job-applicant"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/job-applicant",
+        "justification": "Public Frappe HR Job Applicant concept.",
+        "mappingId": "map.frappe-hr.job.applicant",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.job.applicant"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/job-offer"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/job-offer",
+        "justification": "Public Frappe HR v16 Job Offer concept.",
+        "mappingId": "map.frappe-hr.job.offer",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.job.offer"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/appointment-letter"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/appointment-letter",
+        "justification": "Public Frappe HR Appointment Letter concept.",
+        "mappingId": "map.frappe-hr.appointment.letter",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.appointment.letter"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/employee-onboarding"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/employee-onboarding",
+        "justification": "Public Frappe HR Employee Onboarding concept.",
+        "mappingId": "map.frappe-hr.employee.onboarding",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.employee.onboarding"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/employee-separation"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/employee-separation",
+        "justification": "Public Frappe HR Employee Separation concept.",
+        "mappingId": "map.frappe-hr.employee.separation",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.employee.separation"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/appraisal"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/appraisal",
+        "justification": "Public Frappe HR Appraisal concept.",
+        "mappingId": "map.frappe-hr.appraisal",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.appraisal"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/appraisal-cycle"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/appraisal-cycle",
+        "justification": "Public Frappe HR Appraisal Cycle concept.",
+        "mappingId": "map.frappe-hr.appraisal.cycle",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.appraisal.cycle"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/goal"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/goal",
+        "justification": "Public Frappe HR Goal concept.",
+        "mappingId": "map.frappe-hr.goal",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.goal"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/training-event"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/training-event",
+        "justification": "Public Frappe HR Training Event concept.",
+        "mappingId": "map.frappe-hr.training.event",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.training.event"
+      },
+      {
+        "confidenceBasisPoints": 9000,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/training-result"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/training-result",
+        "justification": "Public Frappe HR Training Result concept.",
+        "mappingId": "map.frappe-hr.training.result",
+        "relation": "close_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.training.result"
       }
     ],
     "packId": "norn.ontology-pack.frappe-hr",
@@ -202,21 +860,151 @@
             "valueType": "string"
           }
         ],
-        "shapeId": "shape.frappe-hr.holiday.list",
-        "termId": "norn.frappe-hr.holiday.list"
+        "shapeId": "shape.frappe-hr.branch",
+        "termId": "norn.frappe-hr.branch"
       },
       {
         "closed": true,
         "fields": [
           {
-            "fieldId": "holidayDate",
+            "fieldId": "name",
             "maxCount": 1,
             "minCount": 1,
             "valueType": "string"
           }
         ],
-        "shapeId": "shape.frappe-hr.holiday.list.holiday",
-        "termId": "norn.frappe-hr.holiday.list.holiday"
+        "shapeId": "shape.frappe-hr.employment.type",
+        "termId": "norn.frappe-hr.employment.type"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.employee.grade",
+        "termId": "norn.frappe-hr.employee.grade"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.employee.group",
+        "termId": "norn.frappe-hr.employee.group"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.employee.document.type",
+        "termId": "norn.frappe-hr.employee.document.type"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.employee.promotion",
+        "termId": "norn.frappe-hr.employee.promotion"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.employee.transfer",
+        "termId": "norn.frappe-hr.employee.transfer"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.employee.grievance",
+        "termId": "norn.frappe-hr.employee.grievance"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.leave.type",
+        "termId": "norn.frappe-hr.leave.type"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.leave.policy",
+        "termId": "norn.frappe-hr.leave.policy"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.leave.policy.assignment",
+        "termId": "norn.frappe-hr.leave.policy.assignment"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.leave.period",
+        "termId": "norn.frappe-hr.leave.period"
       },
       {
         "closed": true,
@@ -254,6 +1042,84 @@
             "valueType": "string"
           }
         ],
+        "shapeId": "shape.frappe-hr.leave.ledger.entry",
+        "termId": "norn.frappe-hr.leave.ledger.entry"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.compensatory.leave.request",
+        "termId": "norn.frappe-hr.compensatory.leave.request"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.leave.encashment",
+        "termId": "norn.frappe-hr.leave.encashment"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.leave.block.list",
+        "termId": "norn.frappe-hr.leave.block.list"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.holiday.list",
+        "termId": "norn.frappe-hr.holiday.list"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "holidayDate",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.holiday.list.holiday",
+        "termId": "norn.frappe-hr.holiday.list.holiday"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
         "shapeId": "shape.frappe-hr.shift.type",
         "termId": "norn.frappe-hr.shift.type"
       },
@@ -267,8 +1133,34 @@
             "valueType": "string"
           }
         ],
+        "shapeId": "shape.frappe-hr.shift.request",
+        "termId": "norn.frappe-hr.shift.request"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
         "shapeId": "shape.frappe-hr.shift.assignment",
         "termId": "norn.frappe-hr.shift.assignment"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.employee.checkin",
+        "termId": "norn.frappe-hr.employee.checkin"
       },
       {
         "closed": true,
@@ -295,15 +1187,379 @@
         ],
         "shapeId": "shape.frappe-hr.attendance.request",
         "termId": "norn.frappe-hr.attendance.request"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.salary.component",
+        "termId": "norn.frappe-hr.salary.component"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.salary.structure",
+        "termId": "norn.frappe-hr.salary.structure"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.salary.structure.assignment",
+        "termId": "norn.frappe-hr.salary.structure.assignment"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.payroll.period",
+        "termId": "norn.frappe-hr.payroll.period"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.payroll.entry",
+        "termId": "norn.frappe-hr.payroll.entry"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.salary.slip",
+        "termId": "norn.frappe-hr.salary.slip"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.additional.salary",
+        "termId": "norn.frappe-hr.additional.salary"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.income.tax.slab",
+        "termId": "norn.frappe-hr.income.tax.slab"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.employee.tax.exemption.declaration",
+        "termId": "norn.frappe-hr.employee.tax.exemption.declaration"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.employee.tax.exemption.proof.submission",
+        "termId": "norn.frappe-hr.employee.tax.exemption.proof.submission"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.employee.benefit.application",
+        "termId": "norn.frappe-hr.employee.benefit.application"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.gratuity",
+        "termId": "norn.frappe-hr.gratuity"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.full.and.final.statement",
+        "termId": "norn.frappe-hr.full.and.final.statement"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.expense.claim",
+        "termId": "norn.frappe-hr.expense.claim"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.expense.claim.type",
+        "termId": "norn.frappe-hr.expense.claim.type"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.employee.advance",
+        "termId": "norn.frappe-hr.employee.advance"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.travel.request",
+        "termId": "norn.frappe-hr.travel.request"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.job.opening",
+        "termId": "norn.frappe-hr.job.opening"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.job.applicant",
+        "termId": "norn.frappe-hr.job.applicant"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.job.offer",
+        "termId": "norn.frappe-hr.job.offer"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.appointment.letter",
+        "termId": "norn.frappe-hr.appointment.letter"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.employee.onboarding",
+        "termId": "norn.frappe-hr.employee.onboarding"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.employee.separation",
+        "termId": "norn.frappe-hr.employee.separation"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.appraisal",
+        "termId": "norn.frappe-hr.appraisal"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.appraisal.cycle",
+        "termId": "norn.frappe-hr.appraisal.cycle"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.goal",
+        "termId": "norn.frappe-hr.goal"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.training.event",
+        "termId": "norn.frappe-hr.training.event"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
+        "shapeId": "shape.frappe-hr.training.result",
+        "termId": "norn.frappe-hr.training.result"
       }
     ],
     "sources": [
       {
-        "canonicalUrl": "https://github.com/frappe/hrms/tree/46b389047bb12fb9c86c1300c3d7bfd5f897f171",
+        "canonicalUrl": "https://github.com/frappe/hrms/tree/1b2d7e034e0de8e30a9e513541d7741710587ad5",
         "importMode": "map_only",
         "license": "GPL-3.0-only",
         "redistribution": "reference_only",
-        "releaseId": "version-15@46b389047bb12fb9c86c1300c3d7bfd5f897f171",
+        "releaseId": "v16.60.0@1b2d7e034e0de8e30a9e513541d7741710587ad5",
         "releasedAt": "2026-11-23",
         "retrievedAt": "2026-11-23",
         "sourceId": "source.frappe-hr"
@@ -335,19 +1591,99 @@
         "termKind": "class"
       },
       {
-        "definition": "Frappe HR calendar of public holidays and weekly off days.",
-        "label": "Holiday List",
+        "definition": "Frappe HR physical work location or operating site assigned to employees.",
+        "label": "Branch",
         "semanticAuthority": "semantic_only",
         "status": "active",
-        "termId": "norn.frappe-hr.holiday.list",
+        "termId": "norn.frappe-hr.branch",
         "termKind": "class"
       },
       {
-        "definition": "One holiday or weekly-off date row inside a Holiday List.",
-        "label": "Holiday",
+        "definition": "Frappe HR employment contract classification such as full-time, part-time, intern, or contract.",
+        "label": "Employment Type",
         "semanticAuthority": "semantic_only",
         "status": "active",
-        "termId": "norn.frappe-hr.holiday.list.holiday",
+        "termId": "norn.frappe-hr.employment.type",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR seniority or compensation band associated with default leave policies and salary structures.",
+        "label": "Employee Grade",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.grade",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR named group of employees used for scheduling, holiday overrides, and payroll or policy targeting.",
+        "label": "Employee Group",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.group",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR v16 catalog classification of required employee identification, compliance, and personnel documents (superseding legacy Identification Document Type).",
+        "label": "Employee Document Type",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.document.type",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR document recording a role, grade, or compensation promotion for an employee.",
+        "label": "Employee Promotion",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.promotion",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR document recording an employee move across departments, branches, or legal entities.",
+        "label": "Employee Transfer",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.transfer",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR formal employee complaint case tracked through investigation and resolution.",
+        "label": "Employee Grievance",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.grievance",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR catalog classification of leave rules including caps, carry-forward, LWP, and encashment policy.",
+        "label": "Leave Type",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.type",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR template pairing Leave Types with annual entitlement quotas.",
+        "label": "Leave Policy",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.policy",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR document assigning a Leave Policy to an employee for a leave period or effective date.",
+        "label": "Leave Policy Assignment",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.policy.assignment",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR fiscal or annual date window governing leave grant cycles and carry-forward expiry.",
+        "label": "Leave Period",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.period",
         "termKind": "class"
       },
       {
@@ -367,6 +1703,54 @@
         "termKind": "class"
       },
       {
+        "definition": "Frappe HR signed leave movement record posting credits, debits, encashments, and carry-forward expiries.",
+        "label": "Leave Ledger Entry",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.ledger.entry",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR employee request to earn compensatory leave days in exchange for work performed on a holiday or off day.",
+        "label": "Compensatory Leave Request",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.compensatory.leave.request",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR document converting eligible unused leave balance into a cash payroll earning.",
+        "label": "Leave Encashment",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.encashment",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR blackout calendar restricting leave applications on specified dates with optional allow-listed approvers.",
+        "label": "Leave Block List",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.block.list",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR calendar of public holidays and weekly off days.",
+        "label": "Holiday List",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.holiday.list",
+        "termKind": "class"
+      },
+      {
+        "definition": "One holiday or weekly-off date row inside a Holiday List.",
+        "label": "Holiday",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.holiday.list.holiday",
+        "termKind": "class"
+      },
+      {
         "definition": "Frappe HR recurring local wall-clock shift window definition.",
         "label": "Shift Type",
         "semanticAuthority": "semantic_only",
@@ -375,11 +1759,27 @@
         "termKind": "class"
       },
       {
+        "definition": "Frappe HR employee or manager request to change or assign a shift over a date range.",
+        "label": "Shift Request",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.shift.request",
+        "termKind": "class"
+      },
+      {
         "definition": "Frappe HR scheduled shift assigned to an employee over a date range.",
         "label": "Shift Assignment",
         "semanticAuthority": "semantic_only",
         "status": "active",
         "termId": "norn.frappe-hr.shift.assignment",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR raw timestamped time-punch observation captured from biometric, mobile, or manual entry.",
+        "label": "Employee Checkin",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.checkin",
         "termKind": "class"
       },
       {
@@ -396,6 +1796,230 @@
         "semanticAuthority": "semantic_only",
         "status": "active",
         "termId": "norn.frappe-hr.attendance.request",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR atomic earning or deduction pay element with accounting and tax flags.",
+        "label": "Salary Component",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.salary.component",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR compensation template grouping earning and deduction Salary Components for a pay frequency.",
+        "label": "Salary Structure",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.salary.structure",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR effective-dated assignment binding an employee to a Salary Structure, base pay, and tax slab.",
+        "label": "Salary Structure Assignment",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.salary.structure.assignment",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR tax and payroll year interval governing cumulative tax calculation and benefit ceilings.",
+        "label": "Payroll Period",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.payroll.period",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR batch payroll run generating Salary Slips and posting aggregate accrual and bank entries.",
+        "label": "Payroll Entry",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.payroll.entry",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR individual employee pay period statement computing gross earnings, deductions, and net payable.",
+        "label": "Salary Slip",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.salary.slip",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR ad-hoc or recurring off-structure earning or deduction injected into a Salary Slip.",
+        "label": "Additional Salary",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.additional.salary",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR progressive statutory tax bracket schedule and standard exemption table.",
+        "label": "Income Tax Slab",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.income.tax.slab",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR employee declaration of expected tax-exempt investments or allowances for a payroll period.",
+        "label": "Employee Tax Exemption Declaration",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.tax.exemption.declaration",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR verified documentary proof supporting claimed tax exemptions at tax-period reconciliation.",
+        "label": "Employee Tax Exemption Proof Submission",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.tax.exemption.proof.submission",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR employee election allocating flexible compensation allowance across eligible benefit components.",
+        "label": "Employee Benefit Application",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.benefit.application",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR end-of-service gratuity settlement calculated from service tenure and applicable gratuity rule.",
+        "label": "Gratuity",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.gratuity",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR exit settlement reconciling remaining payables, leave encashment, gratuity, loans, advances, and asset returns.",
+        "label": "Full and Final Statement",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.full.and.final.statement",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR employee reimbursement request for out-of-pocket business expenses.",
+        "label": "Expense Claim",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.expense.claim",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR expense category mapping claim lines to default expense accounts.",
+        "label": "Expense Claim Type",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.expense.claim.type",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR pre-disbursed cash advance issued to an employee and settled via expense claims or cash return.",
+        "label": "Employee Advance",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.advance",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR pre-travel authorization capturing itinerary, purpose, and estimated travel costs.",
+        "label": "Travel Request",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.travel.request",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR published vacancy requisition for a target designation and organizational scope.",
+        "label": "Job Opening",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.job.opening",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR candidate application record tracking a person through recruitment stages for a Job Opening.",
+        "label": "Job Applicant",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.job.applicant",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR v16 revamped formal employment offer extending proposed role, compensation terms, and acceptance workflow to a Job Applicant.",
+        "label": "Job Offer",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.job.offer",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR formal employment appointment letter issued to a hired candidate detailing binding joining date and contractual terms.",
+        "label": "Appointment Letter",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.appointment.letter",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR pre-hire and joining checklist process transitioning an accepted Job Offer into active employment.",
+        "label": "Employee Onboarding",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.onboarding",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR offboarding checklist process coordinating exit clearance and final settlement.",
+        "label": "Employee Separation",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.separation",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR structured performance review scoring employee KRAs, goals, and peer/manager feedback.",
+        "label": "Appraisal",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.appraisal",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR time-bounded review cycle coordinating appraisals across an eligible employee cohort.",
+        "label": "Appraisal Cycle",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.appraisal.cycle",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR measurable performance objective linked to an employee, KRA, and appraisal cycle.",
+        "label": "Goal",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.goal",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR scheduled training session specifying trainer, attendees, and session window.",
+        "label": "Training Event",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.training.event",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR post-session evaluation recording completed training hours and grades per attendee.",
+        "label": "Training Result",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.training.result",
         "termKind": "class"
       },
       {
@@ -426,12 +2050,192 @@
         "termKind": "property"
       },
       {
+        "definition": "Work location branch linked to an Employee record.",
+        "domainTermId": "norn.frappe-hr.employee",
+        "label": "branch (employee)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.branch",
+        "termKind": "property"
+      },
+      {
+        "definition": "Employment contract classification linked to an Employee record.",
+        "domainTermId": "norn.frappe-hr.employee",
+        "label": "employment type (employee)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.employment.type",
+        "termKind": "property"
+      },
+      {
+        "definition": "Seniority or compensation grade linked to an Employee record.",
+        "domainTermId": "norn.frappe-hr.employee",
+        "label": "grade (employee)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.assigned.grade",
+        "termKind": "property"
+      },
+      {
+        "definition": "Lifecycle status of an Employee (Active, Inactive, Suspended, Left).",
+        "domainTermId": "norn.frappe-hr.employee",
+        "label": "status (employee)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.status",
+        "termKind": "property"
+      },
+      {
+        "definition": "Effective exit or last working date of a separating Employee.",
+        "domainTermId": "norn.frappe-hr.employee",
+        "label": "relieving date (employee)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.relieving.date",
+        "termKind": "property"
+      },
+      {
+        "definition": "Direct reporting manager reference on an Employee record.",
+        "domainTermId": "norn.frappe-hr.employee",
+        "label": "reports to (employee)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.reports.to",
+        "termKind": "property"
+      },
+      {
+        "definition": "Default Holiday List calendar assigned to an Employee.",
+        "domainTermId": "norn.frappe-hr.employee",
+        "label": "holiday list (employee)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.holiday.list",
+        "termKind": "property"
+      },
+      {
+        "definition": "Parent organizational node in the Department hierarchy.",
+        "domainTermId": "norn.frappe-hr.department",
+        "label": "parent department (department)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.department.parent.department",
+        "termKind": "property"
+      },
+      {
+        "definition": "Effective calendar date on which an Employee Promotion takes effect.",
+        "domainTermId": "norn.frappe-hr.employee.promotion",
+        "label": "promotion date (employee.promotion)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.promotion.promotion.date",
+        "termKind": "property"
+      },
+      {
+        "definition": "Effective calendar date on which an Employee Transfer takes effect.",
+        "domainTermId": "norn.frappe-hr.employee.transfer",
+        "label": "transfer date (employee.transfer)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.transfer.transfer.date",
+        "termKind": "property"
+      },
+      {
+        "definition": "Case lifecycle status of an Employee Grievance (Open, Investigated, Resolved, Invalid).",
+        "domainTermId": "norn.frappe-hr.employee.grievance",
+        "label": "status (employee.grievance)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.grievance.status",
+        "termKind": "property"
+      },
+      {
+        "definition": "Maximum annual leave day cap configured on a Leave Type.",
+        "domainTermId": "norn.frappe-hr.leave.type",
+        "label": "max leaves allowed (leave.type)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.type.max.leaves.allowed",
+        "termKind": "property"
+      },
+      {
+        "definition": "Flag indicating whether unused leave days carry forward into the next leave period.",
+        "domainTermId": "norn.frappe-hr.leave.type",
+        "label": "is carry forward (leave.type)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.type.is.carry.forward",
+        "termKind": "property"
+      },
+      {
+        "definition": "Flag marking a Leave Type as unpaid leave deducted from payable payroll days.",
+        "domainTermId": "norn.frappe-hr.leave.type",
+        "label": "is leave without pay (leave.type)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.type.is.lwp",
+        "termKind": "property"
+      },
+      {
+        "definition": "Flag permitting Leave Applications to approve even when leave balance drops below zero.",
+        "domainTermId": "norn.frappe-hr.leave.type",
+        "label": "allow negative balance (leave.type)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.type.allow.negative",
+        "termKind": "property"
+      },
+      {
+        "definition": "Flag enabling unused leave days of this Leave Type to be encashed into payroll.",
+        "domainTermId": "norn.frappe-hr.leave.type",
+        "label": "allow encashment (leave.type)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.type.allow.encashment",
+        "termKind": "property"
+      },
+      {
+        "definition": "First effective date of a Leave Policy Assignment.",
+        "domainTermId": "norn.frappe-hr.leave.policy.assignment",
+        "label": "effective from (leave.policy.assignment)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.policy.assignment.effective.from",
+        "termKind": "property"
+      },
+      {
+        "definition": "Opening date of a Leave Period window.",
+        "domainTermId": "norn.frappe-hr.leave.period",
+        "label": "from date (leave.period)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.period.from.date",
+        "termKind": "property"
+      },
+      {
+        "definition": "Closing date of a Leave Period window.",
+        "domainTermId": "norn.frappe-hr.leave.period",
+        "label": "to date (leave.period)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.period.to.date",
+        "termKind": "property"
+      },
+      {
         "definition": "Number of leave days newly granted in a Leave Allocation.",
         "domainTermId": "norn.frappe-hr.leave.allocation",
         "label": "new_leaves_allocated (leave.allocation)",
         "semanticAuthority": "semantic_only",
         "status": "active",
         "termId": "norn.frappe-hr.leave.allocation.new.leaves.allocated",
+        "termKind": "property"
+      },
+      {
+        "definition": "Combined newly allocated and carried-forward leave days on a Leave Allocation.",
+        "domainTermId": "norn.frappe-hr.leave.allocation",
+        "label": "total leaves allocated (leave.allocation)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.allocation.total.leaves.allocated",
         "termKind": "property"
       },
       {
@@ -462,6 +2266,114 @@
         "termKind": "property"
       },
       {
+        "definition": "Indicator marking a Leave Application as including a half-day leave date.",
+        "domainTermId": "norn.frappe-hr.leave.application",
+        "label": "half day (leave.application)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.application.half.day",
+        "termKind": "property"
+      },
+      {
+        "definition": "Signed quantity of leave days credited or debited by a Leave Ledger Entry.",
+        "domainTermId": "norn.frappe-hr.leave.ledger.entry",
+        "label": "leaves (leave.ledger.entry)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.ledger.entry.leaves",
+        "termKind": "property"
+      },
+      {
+        "definition": "Flag marking a Leave Ledger Entry as an expired balance write-off.",
+        "domainTermId": "norn.frappe-hr.leave.ledger.entry",
+        "label": "is expired (leave.ledger.entry)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.ledger.entry.is.expired",
+        "termKind": "property"
+      },
+      {
+        "definition": "First holiday or off-day worked that grounds a Compensatory Leave Request.",
+        "domainTermId": "norn.frappe-hr.compensatory.leave.request",
+        "label": "work from date (compensatory.leave.request)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.compensatory.leave.request.work.from.date",
+        "termKind": "property"
+      },
+      {
+        "definition": "Number of unused leave days converted to cash in a Leave Encashment.",
+        "domainTermId": "norn.frappe-hr.leave.encashment",
+        "label": "encashment days (leave.encashment)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.encashment.encashment.days",
+        "termKind": "property"
+      },
+      {
+        "definition": "Monetary cash payout computed for encashed leave days.",
+        "domainTermId": "norn.frappe-hr.leave.encashment",
+        "label": "encashment amount (leave.encashment)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.encashment.encashment.amount",
+        "termKind": "property"
+      },
+      {
+        "definition": "Flag distinguishing a recurring weekly-off date from a public holiday inside a Holiday List.",
+        "domainTermId": "norn.frappe-hr.holiday.list.holiday",
+        "label": "weekly off (holiday)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.holiday.list.holiday.weekly.off",
+        "termKind": "property"
+      },
+      {
+        "definition": "Recurring local wall-clock start time of a Shift Type.",
+        "domainTermId": "norn.frappe-hr.shift.type",
+        "label": "start time (shift.type)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.shift.type.start.time",
+        "termKind": "property"
+      },
+      {
+        "definition": "Recurring local wall-clock end time of a Shift Type.",
+        "domainTermId": "norn.frappe-hr.shift.type",
+        "label": "end time (shift.type)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.shift.type.end.time",
+        "termKind": "property"
+      },
+      {
+        "definition": "Flag activating automated Attendance generation from Employee Checkin punches.",
+        "domainTermId": "norn.frappe-hr.shift.type",
+        "label": "enable auto attendance (shift.type)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.shift.type.enable.auto.attendance",
+        "termKind": "property"
+      },
+      {
+        "definition": "First date of a requested shift window on a Shift Request.",
+        "domainTermId": "norn.frappe-hr.shift.request",
+        "label": "from date (shift.request)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.shift.request.from.date",
+        "termKind": "property"
+      },
+      {
+        "definition": "Optional closing date of a requested shift window on a Shift Request.",
+        "domainTermId": "norn.frappe-hr.shift.request",
+        "label": "to date (shift.request)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.shift.request.to.date",
+        "termKind": "property"
+      },
+      {
         "definition": "First effective date of a Shift Assignment.",
         "domainTermId": "norn.frappe-hr.shift.assignment",
         "label": "start_date (shift.assignment)",
@@ -480,6 +2392,24 @@
         "termKind": "property"
       },
       {
+        "definition": "Timestamp captured on an Employee Checkin punch record.",
+        "domainTermId": "norn.frappe-hr.employee.checkin",
+        "label": "time (employee.checkin)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.checkin.time",
+        "termKind": "property"
+      },
+      {
+        "definition": "Punch direction classification (IN or OUT) on an Employee Checkin.",
+        "domainTermId": "norn.frappe-hr.employee.checkin",
+        "label": "log type (employee.checkin)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.checkin.log.type",
+        "termKind": "property"
+      },
+      {
         "definition": "Daily attendance classification (Present, Absent, On Leave, Half Day, Work From Home).",
         "domainTermId": "norn.frappe-hr.attendance",
         "label": "status (attendance)",
@@ -487,6 +2417,429 @@
         "status": "active",
         "termId": "norn.frappe-hr.attendance.status",
         "termKind": "property"
+      },
+      {
+        "definition": "Duration of work recorded in hours on a posted Attendance document.",
+        "domainTermId": "norn.frappe-hr.attendance",
+        "label": "working hours (attendance)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.attendance.working.hours",
+        "termKind": "property"
+      },
+      {
+        "definition": "Flag marking arrival beyond the Shift Type late-entry grace threshold.",
+        "domainTermId": "norn.frappe-hr.attendance",
+        "label": "late entry (attendance)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.attendance.late.entry",
+        "termKind": "property"
+      },
+      {
+        "definition": "Flag marking departure ahead of the Shift Type early-exit grace threshold.",
+        "domainTermId": "norn.frappe-hr.attendance",
+        "label": "early exit (attendance)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.attendance.early.exit",
+        "termKind": "property"
+      },
+      {
+        "definition": "Classification of a Salary Component as Earning or Deduction.",
+        "domainTermId": "norn.frappe-hr.salary.component",
+        "label": "type (salary.component)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.salary.component.type",
+        "termKind": "property"
+      },
+      {
+        "definition": "Dynamic Python expression string evaluated at runtime to compute a Salary Component amount.",
+        "domainTermId": "norn.frappe-hr.salary.component",
+        "label": "formula (salary.component)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.salary.component.formula",
+        "termKind": "property"
+      },
+      {
+        "definition": "Flag indicating whether a Salary Component enters taxable income calculation.",
+        "domainTermId": "norn.frappe-hr.salary.component",
+        "label": "is tax applicable (salary.component)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.salary.component.is.tax.applicable",
+        "termKind": "property"
+      },
+      {
+        "definition": "Pay run cadence configured on a Salary Structure (Monthly, Fortnightly, Bimonthly, Weekly, Daily).",
+        "domainTermId": "norn.frappe-hr.salary.structure",
+        "label": "payroll frequency (salary.structure)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.salary.structure.payroll.frequency",
+        "termKind": "property"
+      },
+      {
+        "definition": "Currency denomination of compensation amounts defined in a Salary Structure.",
+        "domainTermId": "norn.frappe-hr.salary.structure",
+        "label": "currency (salary.structure)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.salary.structure.currency",
+        "termKind": "property"
+      },
+      {
+        "definition": "Effective start date from which a Salary Structure Assignment governs payroll.",
+        "domainTermId": "norn.frappe-hr.salary.structure.assignment",
+        "label": "from date (salary.structure.assignment)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.salary.structure.assignment.from.date",
+        "termKind": "property"
+      },
+      {
+        "definition": "Assigned base compensation amount for an employee under a Salary Structure Assignment.",
+        "domainTermId": "norn.frappe-hr.salary.structure.assignment",
+        "label": "base salary (salary.structure.assignment)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.salary.structure.assignment.base",
+        "termKind": "property"
+      },
+      {
+        "definition": "First date of a Payroll Period tax year.",
+        "domainTermId": "norn.frappe-hr.payroll.period",
+        "label": "start date (payroll.period)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.payroll.period.start.date",
+        "termKind": "property"
+      },
+      {
+        "definition": "Last date of a Payroll Period tax year.",
+        "domainTermId": "norn.frappe-hr.payroll.period",
+        "label": "end date (payroll.period)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.payroll.period.end.date",
+        "termKind": "property"
+      },
+      {
+        "definition": "Accounting ledger posting date of a Payroll Entry batch run.",
+        "domainTermId": "norn.frappe-hr.payroll.entry",
+        "label": "posting date (payroll.entry)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.payroll.entry.posting.date",
+        "termKind": "property"
+      },
+      {
+        "definition": "Total earnings before deductions calculated on a Salary Slip.",
+        "domainTermId": "norn.frappe-hr.salary.slip",
+        "label": "gross pay (salary.slip)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.salary.slip.gross.pay",
+        "termKind": "property"
+      },
+      {
+        "definition": "Total statutory and voluntary deductions calculated on a Salary Slip.",
+        "domainTermId": "norn.frappe-hr.salary.slip",
+        "label": "total deduction (salary.slip)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.salary.slip.total.deduction",
+        "termKind": "property"
+      },
+      {
+        "definition": "Net payable compensation equal to gross pay less total deductions.",
+        "domainTermId": "norn.frappe-hr.salary.slip",
+        "label": "net pay (salary.slip)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.salary.slip.net.pay",
+        "termKind": "property"
+      },
+      {
+        "definition": "Payable work days in the pay period after excluding unpaid leave and absences.",
+        "domainTermId": "norn.frappe-hr.salary.slip",
+        "label": "payment days (salary.slip)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.salary.slip.payment.days",
+        "termKind": "property"
+      },
+      {
+        "definition": "Monetary value of an ad-hoc or recurring Additional Salary adjustment.",
+        "domainTermId": "norn.frappe-hr.additional.salary",
+        "label": "amount (additional.salary)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.additional.salary.amount",
+        "termKind": "property"
+      },
+      {
+        "definition": "Effective start date of an Income Tax Slab schedule.",
+        "domainTermId": "norn.frappe-hr.income.tax.slab",
+        "label": "effective from (income.tax.slab)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.income.tax.slab.effective.from",
+        "termKind": "property"
+      },
+      {
+        "definition": "Computed end-of-service gratuity settlement amount.",
+        "domainTermId": "norn.frappe-hr.gratuity",
+        "label": "amount (gratuity)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.gratuity.amount",
+        "termKind": "property"
+      },
+      {
+        "definition": "Total net exit settlement owed to or recoverable from a separating employee.",
+        "domainTermId": "norn.frappe-hr.full.and.final.statement",
+        "label": "total payable amount (full.and.final.statement)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.full.and.final.statement.total.payable.amount",
+        "termKind": "property"
+      },
+      {
+        "definition": "Sum of amounts submitted by an employee across Expense Claim lines.",
+        "domainTermId": "norn.frappe-hr.expense.claim",
+        "label": "total claimed amount (expense.claim)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.expense.claim.total.claimed.amount",
+        "termKind": "property"
+      },
+      {
+        "definition": "Sum of amounts approved for reimbursement by the expense approver.",
+        "domainTermId": "norn.frappe-hr.expense.claim",
+        "label": "total sanctioned amount (expense.claim)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.expense.claim.total.sanctioned.amount",
+        "termKind": "property"
+      },
+      {
+        "definition": "Approval workflow state of an Expense Claim (Draft, Approved, Rejected).",
+        "domainTermId": "norn.frappe-hr.expense.claim",
+        "label": "approval status (expense.claim)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.expense.claim.approval.status",
+        "termKind": "property"
+      },
+      {
+        "definition": "Default expense ledger account linked to an Expense Claim Type.",
+        "domainTermId": "norn.frappe-hr.expense.claim.type",
+        "label": "default account (expense.claim.type)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.expense.claim.type.default.account",
+        "termKind": "property"
+      },
+      {
+        "definition": "Authorized cash advance amount requested by an employee.",
+        "domainTermId": "norn.frappe-hr.employee.advance",
+        "label": "advance amount (employee.advance)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.advance.advance.amount",
+        "termKind": "property"
+      },
+      {
+        "definition": "Actual cash amount disbursed to the employee against an Employee Advance.",
+        "domainTermId": "norn.frappe-hr.employee.advance",
+        "label": "paid amount (employee.advance)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.advance.paid.amount",
+        "termKind": "property"
+      },
+      {
+        "definition": "Portion of an Employee Advance already offset by submitted Expense Claims.",
+        "domainTermId": "norn.frappe-hr.employee.advance",
+        "label": "claimed amount (employee.advance)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.advance.claimed.amount",
+        "termKind": "property"
+      },
+      {
+        "definition": "Business justification for a Travel Request.",
+        "domainTermId": "norn.frappe-hr.travel.request",
+        "label": "purpose (travel.request)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.travel.request.purpose",
+        "termKind": "property"
+      },
+      {
+        "definition": "Target job designation for which a Job Opening is recruiting.",
+        "domainTermId": "norn.frappe-hr.job.opening",
+        "label": "designation (job.opening)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.job.opening.designation",
+        "termKind": "property"
+      },
+      {
+        "definition": "Availability state of a Job Opening (Open or Closed).",
+        "domainTermId": "norn.frappe-hr.job.opening",
+        "label": "status (job.opening)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.job.opening.status",
+        "termKind": "property"
+      },
+      {
+        "definition": "Recruitment pipeline state of a Job Applicant (Open, Replied, Accepted, Hold, Rejected).",
+        "domainTermId": "norn.frappe-hr.job.applicant",
+        "label": "status (job.applicant)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.job.applicant.status",
+        "termKind": "property"
+      },
+      {
+        "definition": "Candidate acceptance state of a Job Offer (Awaiting Response, Accepted, Rejected).",
+        "domainTermId": "norn.frappe-hr.job.offer",
+        "label": "status (job.offer)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.job.offer.status",
+        "termKind": "property"
+      },
+      {
+        "definition": "Effective employment start date formalized on an Appointment Letter.",
+        "domainTermId": "norn.frappe-hr.appointment.letter",
+        "label": "appointment date (appointment.letter)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.appointment.letter.appointment.date",
+        "termKind": "property"
+      },
+      {
+        "definition": "Target joining date governing an Employee Onboarding workflow.",
+        "domainTermId": "norn.frappe-hr.employee.onboarding",
+        "label": "date of joining (employee.onboarding)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.onboarding.date.of.joining",
+        "termKind": "property"
+      },
+      {
+        "definition": "Date on which notice of resignation or separation was received.",
+        "domainTermId": "norn.frappe-hr.employee.separation",
+        "label": "resignation letter date (employee.separation)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.separation.resignation.letter.date",
+        "termKind": "property"
+      },
+      {
+        "definition": "Composite performance score derived from KRAs, goals, and feedback on an Appraisal.",
+        "domainTermId": "norn.frappe-hr.appraisal",
+        "label": "final score (appraisal)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.appraisal.final.score",
+        "termKind": "property"
+      },
+      {
+        "definition": "Opening date of an Appraisal Cycle evaluation window.",
+        "domainTermId": "norn.frappe-hr.appraisal.cycle",
+        "label": "start date (appraisal.cycle)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.appraisal.cycle.start.date",
+        "termKind": "property"
+      },
+      {
+        "definition": "Closing date of an Appraisal Cycle evaluation window.",
+        "domainTermId": "norn.frappe-hr.appraisal.cycle",
+        "label": "end date (appraisal.cycle)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.appraisal.cycle.end.date",
+        "termKind": "property"
+      },
+      {
+        "definition": "Percentage completion progress tracked on a Goal.",
+        "domainTermId": "norn.frappe-hr.goal",
+        "label": "progress (goal)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.goal.progress",
+        "termKind": "property"
+      },
+      {
+        "definition": "Scheduled start timestamp of a Training Event.",
+        "domainTermId": "norn.frappe-hr.training.event",
+        "label": "start time (training.event)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.training.event.start.time",
+        "termKind": "property"
+      },
+      {
+        "definition": "Completed training duration in hours recorded on a Training Result.",
+        "domainTermId": "norn.frappe-hr.training.result",
+        "label": "hours (training.result)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.training.result.hours",
+        "termKind": "property"
+      },
+      {
+        "definition": "Submit an Employee Promotion, updating Employee master properties in place and appending an internal work history row.",
+        "domainTermId": "norn.frappe-hr.employee.promotion",
+        "label": "Submit Employee Promotion",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.promotion.submit",
+        "termKind": "action"
+      },
+      {
+        "definition": "Submit an Employee Transfer across organizational units or companies, updating Employee master placement.",
+        "domainTermId": "norn.frappe-hr.employee.transfer",
+        "label": "Submit Employee Transfer",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.transfer.submit",
+        "termKind": "action"
+      },
+      {
+        "definition": "Record investigation outcome and close a submitted Employee Grievance.",
+        "domainTermId": "norn.frappe-hr.employee.grievance",
+        "label": "Resolve Employee Grievance",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.grievance.resolve",
+        "termKind": "action"
+      },
+      {
+        "definition": "Submit a Leave Policy Assignment and materialize period Leave Allocations for each policy leave type.",
+        "domainTermId": "norn.frappe-hr.leave.policy.assignment",
+        "label": "Grant Leave Policy Assignment",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.policy.assignment.grant",
+        "termKind": "action"
+      },
+      {
+        "definition": "Submit a Leave Allocation and post a credit Leave Ledger Entry.",
+        "domainTermId": "norn.frappe-hr.leave.allocation",
+        "label": "Submit Leave Allocation",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.allocation.submit",
+        "termKind": "action"
       },
       {
         "definition": "Submit and approve a Leave Application, posting a leave ledger debit.",
@@ -507,6 +2860,60 @@
         "termKind": "action"
       },
       {
+        "definition": "Submit a Compensatory Leave Request to credit compensatory leave days for holiday work.",
+        "domainTermId": "norn.frappe-hr.compensatory.leave.request",
+        "label": "Submit Compensatory Leave Request",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.compensatory.leave.request.submit",
+        "termKind": "action"
+      },
+      {
+        "definition": "Submit a Leave Encashment, debiting leave ledger balance and creating an Additional Salary payout.",
+        "domainTermId": "norn.frappe-hr.leave.encashment",
+        "label": "Submit Leave Encashment",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.leave.encashment.submit",
+        "termKind": "action"
+      },
+      {
+        "definition": "Approve and submit a Shift Request, creating the corresponding Shift Assignment.",
+        "domainTermId": "norn.frappe-hr.shift.request",
+        "label": "Submit Shift Request",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.shift.request.submit",
+        "termKind": "action"
+      },
+      {
+        "definition": "Submit an active Shift Assignment scheduling an employee into a Shift Type.",
+        "domainTermId": "norn.frappe-hr.shift.assignment",
+        "label": "Submit Shift Assignment",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.shift.assignment.submit",
+        "termKind": "action"
+      },
+      {
+        "definition": "Batch-evaluate Employee Checkin logs for a Shift Type to generate posted daily Attendance records.",
+        "domainTermId": "norn.frappe-hr.shift.type",
+        "label": "Process Auto Attendance",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.shift.type.process.auto.attendance",
+        "termKind": "action"
+      },
+      {
+        "definition": "Submit an Attendance Request to regularize missed or remote work days by creating or updating Attendance.",
+        "domainTermId": "norn.frappe-hr.attendance.request",
+        "label": "Submit Attendance Request",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.attendance.request.submit",
+        "termKind": "action"
+      },
+      {
         "definition": "Cancel a submitted Attendance document and amend a replacement copy in place of an immutable reversing event.",
         "domainTermId": "norn.frappe-hr.attendance",
         "label": "Cancel and amend Attendance",
@@ -514,6 +2921,183 @@
         "status": "active",
         "termId": "norn.frappe-hr.attendance.cancel.amend",
         "termKind": "action"
+      },
+      {
+        "definition": "Generate draft Salary Slips for all eligible employees included in a Payroll Entry.",
+        "domainTermId": "norn.frappe-hr.payroll.entry",
+        "label": "Create Salary Slips",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.payroll.entry.create.salary.slips",
+        "termKind": "action"
+      },
+      {
+        "definition": "Submit all Salary Slips in a Payroll Entry and post payroll accrual journal entries.",
+        "domainTermId": "norn.frappe-hr.payroll.entry",
+        "label": "Submit Payroll Salary Slips",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.payroll.entry.submit.salary.slips",
+        "termKind": "action"
+      },
+      {
+        "definition": "Create the bank disbursement journal entry settling accrued payroll payable.",
+        "domainTermId": "norn.frappe-hr.payroll.entry",
+        "label": "Make Payroll Bank Entry",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.payroll.entry.make.bank.entry",
+        "termKind": "action"
+      },
+      {
+        "definition": "Finalize a Salary Slip, locking computed earnings, deductions, and net pay for the period.",
+        "domainTermId": "norn.frappe-hr.salary.slip",
+        "label": "Submit Salary Slip",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.salary.slip.submit",
+        "termKind": "action"
+      },
+      {
+        "definition": "Cancel a submitted Salary Slip and amend a replacement copy in place of an immutable reversing/retro-adjustment event.",
+        "domainTermId": "norn.frappe-hr.salary.slip",
+        "label": "Cancel and amend Salary Slip",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.salary.slip.cancel.amend",
+        "termKind": "action"
+      },
+      {
+        "definition": "Submit a Gratuity settlement, generating an Additional Salary or payable journal entry.",
+        "domainTermId": "norn.frappe-hr.gratuity",
+        "label": "Submit Gratuity",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.gratuity.submit",
+        "termKind": "action"
+      },
+      {
+        "definition": "Finalize a separating employee's Full and Final Statement reconciling payables, recoveries, and clearances.",
+        "domainTermId": "norn.frappe-hr.full.and.final.statement",
+        "label": "Submit Full and Final Statement",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.full.and.final.statement.submit",
+        "termKind": "action"
+      },
+      {
+        "definition": "Submit an approved Expense Claim, posting expense ledger entries and employee payable or advance offset.",
+        "domainTermId": "norn.frappe-hr.expense.claim",
+        "label": "Submit Expense Claim",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.expense.claim.submit",
+        "termKind": "action"
+      },
+      {
+        "definition": "Submit an approved Employee Advance authorizing cash disbursement to the employee.",
+        "domainTermId": "norn.frappe-hr.employee.advance",
+        "label": "Submit Employee Advance",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.advance.submit",
+        "termKind": "action"
+      },
+      {
+        "definition": "Post a return payment recovering unspent Employee Advance funds back to the company.",
+        "domainTermId": "norn.frappe-hr.employee.advance",
+        "label": "Return Employee Advance",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.advance.return",
+        "termKind": "action"
+      },
+      {
+        "definition": "Submit an approved Travel Request authorizing business travel and estimated expenses.",
+        "domainTermId": "norn.frappe-hr.travel.request",
+        "label": "Submit Travel Request",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.travel.request.submit",
+        "termKind": "action"
+      },
+      {
+        "definition": "Record candidate acceptance of a submitted Job Offer, unlocking appointment issuance, onboarding, and employee creation.",
+        "domainTermId": "norn.frappe-hr.job.offer",
+        "label": "Accept Job Offer",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.job.offer.accept",
+        "termKind": "action"
+      },
+      {
+        "definition": "Issue a formal Appointment Letter to an accepted candidate recording contractual joining terms.",
+        "domainTermId": "norn.frappe-hr.appointment.letter",
+        "label": "Issue Appointment Letter",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.appointment.letter.issue",
+        "termKind": "action"
+      },
+      {
+        "definition": "Submit an Employee Onboarding record to spawn joining checklist tasks and activate employment.",
+        "domainTermId": "norn.frappe-hr.employee.onboarding",
+        "label": "Submit Employee Onboarding",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.onboarding.submit",
+        "termKind": "action"
+      },
+      {
+        "definition": "Submit an Employee Separation record to spawn offboarding clearance tasks and exit settlement.",
+        "domainTermId": "norn.frappe-hr.employee.separation",
+        "label": "Submit Employee Separation",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.employee.separation.submit",
+        "termKind": "action"
+      },
+      {
+        "definition": "Submit a finalized Appraisal locking KRA, goal, and feedback scores for the cycle.",
+        "domainTermId": "norn.frappe-hr.appraisal",
+        "label": "Submit Appraisal",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.appraisal.submit",
+        "termKind": "action"
+      },
+      {
+        "definition": "Submit a Training Result recording completed hours and grades for training attendees.",
+        "domainTermId": "norn.frappe-hr.training.result",
+        "label": "Submit Training Result",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.training.result.submit",
+        "termKind": "action"
+      },
+      {
+        "definition": "Refuses assigning a Department's parent to itself or one of its descendants.",
+        "label": "Cyclic department hierarchy",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.guard.department.cycle",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "Refuses submitting promotions, transfers, or operational HR documents for a separated or inactive employee.",
+        "label": "Inactive employee mutation",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.guard.employee.inactive.mutation",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "Refuses assigning an employee as their own reporting manager or forming a reporting cycle.",
+        "label": "Self-reporting manager",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.guard.employee.reports.to.self",
+        "termKind": "predicate"
       },
       {
         "definition": "Refuses a Leave Application when requested days exceed available balance (unless negative balance is allowed).",
@@ -532,11 +3116,155 @@
         "termKind": "predicate"
       },
       {
+        "definition": "Refuses a Leave Application spanning dates covered by an applicable Leave Block List unless allowed.",
+        "label": "Blocked leave date",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.guard.leave.block.list",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "Refuses overlapping Leave Allocations for the same employee and Leave Type.",
+        "label": "Overlapping leave allocation",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.guard.leave.allocation.overlap",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "Refuses a requester attempting to approve their own Leave Application.",
+        "label": "Self-approved leave application",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.guard.leave.self.approval",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "Refuses Leave Encashment when the Leave Type disallows encashment or balance falls below threshold.",
+        "label": "Ineligible leave encashment",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.guard.leave.encashment.ineligible",
+        "termKind": "predicate"
+      },
+      {
         "definition": "Refuses overlapping Shift Assignments for the same employee.",
         "label": "Overlapping shift assignment",
         "semanticAuthority": "semantic_only",
         "status": "active",
         "termId": "norn.frappe-hr.guard.shift.overlap",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "Refuses posting more than one active Attendance record for the same employee on the same date.",
+        "label": "Duplicate daily attendance",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.guard.attendance.duplicate.date",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "Refuses posting working Attendance that contradicts an approved full-day Leave Application on the same date.",
+        "label": "Attendance conflicts with approved leave",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.guard.attendance.leave.conflict",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "Refuses overlapping submitted Salary Slips for the same employee in the same pay period.",
+        "label": "Overlapping salary slip",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.guard.salary.slip.overlap",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "Refuses submitting a Salary Slip whose total deductions exceed gross pay.",
+        "label": "Negative net pay",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.guard.salary.slip.negative.net.pay",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "Refuses overlapping Payroll Periods within the same company.",
+        "label": "Overlapping payroll period",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.guard.payroll.period.overlap",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "Refuses tax exemption declarations or proof submissions exceeding statutory category caps.",
+        "label": "Tax exemption cap exceeded",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.guard.tax.exemption.cap",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "Refuses generating a Salary Slip when no active Salary Structure Assignment exists for the pay period.",
+        "label": "Missing salary structure assignment",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.guard.salary.structure.missing",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "Refuses approving an Expense Claim whose sanctioned amount exceeds the claimed amount.",
+        "label": "Sanctioned exceeds claimed expense",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.guard.expense.sanctioned.exceeds.claimed",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "Refuses an employee attempting to approve their own Expense Claim.",
+        "label": "Self-approved expense claim",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.guard.expense.self.approval",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "Refuses offsetting more Employee Advance funds than remain unclaimed from the paid advance.",
+        "label": "Employee advance over-allocation",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.guard.advance.over.allocation",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "Refuses initiating Employee Onboarding from a Job Offer that has not been accepted.",
+        "label": "Onboarding without accepted offer",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.guard.job.offer.unaccepted.onboarding",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "Refuses creating or submitting multiple active Appraisals for the same employee in one Appraisal Cycle.",
+        "label": "Duplicate appraisal in cycle",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.guard.appraisal.duplicate.cycle",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "Refuses Appraisal KRA or Goal weightages whose sum violates the 100% allocation bound.",
+        "label": "Goal or KRA weightage overflow",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.guard.goal.weightage.overflow",
+        "termKind": "predicate"
+      },
+      {
+        "definition": "Flags or refuses completing Employee Separation while unrecovered advances, assets, or final settlement remain open.",
+        "label": "Unsettled separation obligations",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.guard.separation.pending.settlement",
         "termKind": "predicate"
       }
     ]
