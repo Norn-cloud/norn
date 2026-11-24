@@ -865,7 +865,6 @@ mod tests {
         }))
         .unwrap();
         let action: ActionRoot = serde_json::from_value(json!({
-            "actionVersion": "0.1",
             "actionId": "demo.app.offerAssistance",
             "inputSchema": {
                 "type": "object",
