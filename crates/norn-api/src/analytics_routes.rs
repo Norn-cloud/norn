@@ -2143,22 +2143,22 @@ fn decided_source<E: SqlEngine, T>(
 /// live in the engine, this checks the effective dataset markings (manifest
 /// union current model). An unknown type, an incomplete snapshot or an
 /// unbounded summary counts as labeled: it fails closed.
-fn unlabeled<E: SqlEngine>(reader: &norn_cell::StoreReader<'_, E>, object_type: &str) -> bool {
-    match reader.dataset_manifest(norn_cell::MAIN_WORLD, object_type) {
-        Ok(Some(current)) => {
-            return reader
-                .effective_dataset_markings(&current.manifest)
-                .is_ok_and(|markings| markings.is_empty());
-        }
-        Ok(None) => {}
-        Err(_) => return false,
+fn unlabeled<E: SqlEngine>(r: &norn_cell::StoreReader<'_, E>, object_type: &str) -> bool {
+    match r.dataset_manifest(norn_cell::MAIN_WORLD, object_type) {
+        Ok(Some(c)) => r
+            .effective_dataset_markings(&c.manifest)
+            .is_ok_and(|m| m.is_empty()),
+        Ok(None) => mirror_unlabeled(r, object_type),
+        Err(_) => false,
     }
-    let Ok(properties) = reader.model().effective_property_types(object_type) else {
+}
+
+fn mirror_unlabeled<E: SqlEngine>(r: &norn_cell::StoreReader<'_, E>, object_type: &str) -> bool {
+    let Ok(properties) = r.model().effective_property_types(object_type) else {
         return false;
     };
     properties.iter().all(|(property, _)| {
-        reader
-            .property_marking_summary(norn_cell::MAIN_WORLD, object_type, property)
+        r.property_marking_summary(norn_cell::MAIN_WORLD, object_type, property)
             .is_ok_and(|labels| labels.is_some_and(|labels| labels.is_empty()))
     })
 }
@@ -2192,7 +2192,7 @@ fn decide_profile<E: SqlEngine>(
         }
         return Ok(ProfilePlan::Engine);
     }
-    if host.marking_catalog(reader)?.is_empty() || unlabeled(reader, object_type) {
+    if host.marking_catalog(reader)?.is_empty() || mirror_unlabeled(reader, object_type) {
         Ok(ProfilePlan::Engine)
     } else {
         Ok(ProfilePlan::Native)
@@ -2255,7 +2255,7 @@ pub fn profile_objects<E: SqlEngine>(
             .map_err(Refusal::host)?
             .is_none()
             && !host.marking_catalog(&r)?.is_empty()
-            && !unlabeled(&r, object_type)
+            && !mirror_unlabeled(&r, object_type)
     } {
         return native();
     }
