@@ -22,15 +22,15 @@ const WEIGHTS: &[(&str, u32)] = &[
     ("test/rest-3", 312),
     ("phase/doctest", 17),
     ("phase/features", 347),
-    ("phase/duckdb", 621),
+    ("phase/duckdb", 510),
     ("phase/wasm", 173),
     ("phase/clippy", 51),
     ("phase/doc", 48),
     ("phase/guards", 117),
     ("phase/rivet", 259),
-    ("phase/integration-authoring", 695),
+    ("phase/integration-authoring", 543),
     ("phase/integration-wasm", 293),
-    ("phase/integration-clients", 35),
+    ("phase/integration-clients", 15),
     ("phase/provenance", 4),
     ("phase/test-shards", 3),
     ("phase/browser", 239),
@@ -88,7 +88,10 @@ impl Task {
             BuildGroup::Test
         } else if matches!(
             self.name,
-            "phase/integration-authoring" | "phase/integration-wasm" | "phase/browser"
+            "phase/integration-authoring"
+                | "phase/integration-wasm"
+                | "phase/integration-clients"
+                | "phase/browser"
         ) {
             BuildGroup::WasmPkg
         } else {
@@ -601,7 +604,7 @@ mod tests {
     // Byte-for-byte outputs from core.sh: full, norn-api, and norn-cell affected plans.
     const PYTHON_PLANS: &[&str] = &[
         concat!(
-            r#"{"mode": "full", "shard": ["heavy-1", "heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["doctest", "features", "duckdb", "wasm", "clippy", "doc", "rivet", "guards", "integration-authoring", "integration-wasm", "integration-clients", "browser", "provenance", "test-shards"], "packages": "", "rest_shards": 3, "reason": "complete suite", "bundle": [{"id": "b0", "tasks": ["test/rest-2", "test/rest-3", "test/rest-1", "test/heavy-2", "test/heavy-3", "test/heavy-6", "test/heavy-5", "test/heavy-4", "test/heavy-1", "phase/test-shards", "phase/integration-clients"]}, {"id": "b1", "tasks": ["phase/integration-authoring", "phase/integration-wasm", "phase/browser", "phase/doc", "phase/provenance"]}, {"id": "b2", "tasks": ["phase/duckdb", "phase/features", "phase/rivet", "phase/wasm", "phase/guards", "phase/clippy", "phase/doctest"]}]}"#,
+            r#"{"mode": "full", "shard": ["heavy-1", "heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["doctest", "features", "duckdb", "wasm", "clippy", "doc", "rivet", "guards", "integration-authoring", "integration-wasm", "integration-clients", "browser", "provenance", "test-shards"], "packages": "", "rest_shards": 3, "reason": "complete suite", "bundle": [{"id": "b0", "tasks": ["test/rest-2", "test/rest-3", "test/rest-1", "test/heavy-2", "test/heavy-3", "test/heavy-6", "test/heavy-5", "test/heavy-4", "test/heavy-1", "phase/test-shards"]}, {"id": "b1", "tasks": ["phase/integration-authoring", "phase/integration-wasm", "phase/browser", "phase/integration-clients", "phase/clippy", "phase/doctest"]}, {"id": "b2", "tasks": ["phase/duckdb", "phase/features", "phase/rivet", "phase/wasm", "phase/guards", "phase/doc", "phase/provenance"]}]}"#,
             "\n"
         ),
         concat!(
@@ -609,7 +612,7 @@ mod tests {
             "\n"
         ),
         concat!(
-            r#"{"mode": "affected", "shard": ["heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["guards", "provenance", "clippy", "duckdb", "rivet"], "packages": "norn-api norn-builtins norn-cell norn-cell-do norn-cli norn-kernel norn-testkit", "rest_shards": 3, "reason": "changed: norn-cell", "bundle": [{"id": "b0", "tasks": ["phase/duckdb", "phase/rivet", "phase/provenance"]}, {"id": "b1", "tasks": ["test/rest-2", "test/heavy-2", "test/heavy-6", "test/heavy-5", "phase/guards"]}, {"id": "b2", "tasks": ["test/rest-3", "test/rest-1", "test/heavy-3", "test/heavy-4", "phase/clippy"]}]}"#,
+            r#"{"mode": "affected", "shard": ["heavy-2", "heavy-3", "heavy-4", "heavy-5", "heavy-6", "rest-1", "rest-2", "rest-3"], "phase": ["guards", "provenance", "clippy", "duckdb", "rivet"], "packages": "norn-api norn-builtins norn-cell norn-cell-do norn-cli norn-kernel norn-testkit", "rest_shards": 3, "reason": "changed: norn-cell", "bundle": [{"id": "b0", "tasks": ["test/rest-2", "test/heavy-2", "phase/rivet"]}, {"id": "b1", "tasks": ["test/rest-3", "test/rest-1", "test/heavy-6", "test/heavy-5", "phase/guards"]}, {"id": "b2", "tasks": ["phase/duckdb", "test/heavy-3", "test/heavy-4", "phase/clippy", "phase/provenance"]}]}"#,
             "\n"
         ),
     ];
@@ -657,6 +660,7 @@ mod tests {
                 "test/rest-1",
                 "phase/doc",
                 "phase/integration-authoring",
+                "phase/integration-clients",
             ]
             .into_iter()
             .map(str::to_owned)
@@ -672,6 +676,7 @@ mod tests {
                     ("phase/browser", true),
                     ("phase/integration-wasm", false),
                     ("phase/integration-authoring", false),
+                    ("phase/integration-clients", false),
                     ("phase/clippy", true),
                     ("phase/doc", true),
                 ],
@@ -684,6 +689,7 @@ mod tests {
                     ("phase/browser", true),
                     ("phase/integration-wasm", false),
                     ("phase/integration-authoring", false),
+                    ("phase/integration-clients", false),
                     ("phase/clippy", true),
                     ("phase/test-shards", true),
                     ("phase/doc", true),

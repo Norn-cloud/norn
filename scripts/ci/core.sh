@@ -410,13 +410,15 @@ PY
     duckdb)
       # The workspace never enables the optional DuckDB backend, so a change that breaks it
       # compiles everywhere else (#513, #1152). Build it and run its integration tests (the
-      # tenant engine's correspondence suite and the transform backend); full plans run this
-      # phase, and affected plans run it whenever norn-cell is reached. The in-process
-      # `duckdb_question` target was retired with the SQL question path (#1395).
-      cargo test --locked -p norn-cell --features duckdb --lib -- suites::analytics_engine:: suites::duckdb_transform:: analytics::engine::tests::
-      # MANIFEST-LAWS-1 (#1514): compare set-based laws with the per-row path in the
-      # DuckDB-only dataset_laws module of the integration suite.
-      cargo test --locked -p norn-cell --features duckdb --test suites dataset_laws::
+      # tenant engine's correspondence suite and the transform backend) plus MANIFEST-LAWS-1
+      # (#1514, dataset_laws) in one nextest invocation so both binaries build and schedule
+      # across all vCPUs together; full plans run this phase, and affected plans run it
+      # whenever norn-cell is reached. The in-process `duckdb_question` target was retired
+      # with the SQL question path (#1395).
+      ensure_nextest
+      "${nextest[@]}" run --locked --ignore-default-filter --no-fail-fast \
+        -p norn-cell --features duckdb --lib --test suites \
+        -E '(binary_id(norn-cell) & (test(/^suites::analytics_engine::/) | test(/^suites::duckdb_transform::/) | test(/^analytics::engine::tests::/))) | (binary_id(norn-cell::suites) & test(/^dataset_laws::/))'
       ;;
     wasm)
       cargo check --locked --target wasm32-unknown-unknown -p norn-canonical -p norn-ir -p norn-expr -p norn-checker -p norn-graph -p norn-datalog -p norn-authz -p norn-kernel -p norn-builtins -p norn-projections -p norn-decisions -p norn-api
@@ -480,9 +482,28 @@ PY
       printf "{}\n" > "$upstream/context.json"
       "$NORN_BIN" check --artifacts "$upstream/task.json" --context "$upstream/context.json" > "$upstream/check.json"
       # runnable-docs runs each release test the status matrix names; build
-      # them first so its bounded runs only execute (#1171 integrated gate).
-      grep -oE 'cargo test --locked -p [a-z-]+ (--test [a-z_]+|--lib)' docs/authoring/runnable/status.md | sort -u |
-        while read -r build; do $build --no-run; done
+      # them in one Cargo invocation so its bounded runs only execute (#1171 integrated gate).
+      local runnable_docs_raw
+      local -a runnable_docs_args
+      runnable_docs_raw=$(
+        grep -oE 'cargo test --locked -p [a-z-]+ (--test [a-z_]+|--lib)' docs/authoring/runnable/status.md |
+          python3 -c 'import sys
+pkgs, targets = set(), set()
+for line in sys.stdin:
+    parts = line.split()
+    pkgs.add(parts[4])
+    targets.add(tuple(parts[5:]))
+if not pkgs or not targets:
+    sys.exit("integration-authoring: no runnable-docs release tests found in docs/authoring/runnable/status.md")
+for pkg in sorted(pkgs):
+    print("-p"); print(pkg)
+for target in sorted(targets):
+    for arg in target:
+        print(arg)
+'
+      )
+      mapfile -t runnable_docs_args <<< "$runnable_docs_raw"
+      cargo test --locked --no-run "${runnable_docs_args[@]}"
       run_authoring_tests
       ;;
     integration-wasm)
@@ -601,26 +622,29 @@ plan = json.loads(raw)
 known = {"test/" + shard for shard in shards.split()} | {
     "phase/" + phase for phase in phases.split() + ["test-shards"]
     if phase not in {"cheap", "test", "formal", "rivet-conformance"}}
-# Task seconds on Boat, refitted from green run 45206607883 (2026-11-23, df92ecf).
+# Task seconds on Boat, refitted from green run 45206607883 (2026-11-23, df92ecf)
+# and Boat benchmarks for batched runnable-docs pre-build, shared integration binaries,
+# and combined nextest duckdb execution.
 # A test task's seconds are net of the test build it carries (compile_seconds), and
 # a WASM-pkg task's seconds are net of the shared norn-checker-wasm build (wasm_compile_seconds).
 weights = {
     "test/heavy-1": 33, "test/heavy-2": 146, "test/heavy-3": 90,
     "test/heavy-4": 37, "test/heavy-5": 43, "test/heavy-6": 56,
     "test/rest-1": 221, "test/rest-2": 391, "test/rest-3": 312,
-    "phase/doctest": 17, "phase/features": 347, "phase/duckdb": 621, "phase/wasm": 173,
+    "phase/doctest": 17, "phase/features": 347, "phase/duckdb": 510, "phase/wasm": 173,
     "phase/clippy": 51, "phase/doc": 48, "phase/guards": 117,
     "phase/rivet": 259,
-    "phase/integration-authoring": 695, "phase/integration-wasm": 293,
-    "phase/integration-clients": 35, "phase/provenance": 4, "phase/test-shards": 3,
+    "phase/integration-authoring": 543, "phase/integration-wasm": 293,
+    "phase/integration-clients": 15, "phase/provenance": 4, "phase/test-shards": 3,
     "phase/browser": 239,
 }
 # Shared compile costs amortized once per bundle containing any task in the group:
 # - Test: workspace test binaries (test/* and phase/test-shards).
-# - WasmPkg: norn-checker-wasm wasm-release LTO + wasm-opt -Oz package.
+# - WasmPkg: norn-checker-wasm wasm-release LTO + wasm-opt -Oz package, plus
+#   target/debug/{norn,norn-dev-host} reused by integration-clients after integration-authoring.
 compile_seconds = 216
 wasm_compile_seconds = 300
-wasm_pkg_tasks = {"phase/integration-authoring", "phase/integration-wasm", "phase/browser"}
+wasm_pkg_tasks = {"phase/integration-authoring", "phase/integration-wasm", "phase/integration-clients", "phase/browser"}
 def compiles_tests(task):
     return task.startswith("test/") or task == "phase/test-shards"
 def compiles_wasm_pkg(task):
