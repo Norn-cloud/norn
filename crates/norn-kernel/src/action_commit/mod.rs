@@ -62,10 +62,8 @@ use crate::envelope::{EnvelopeCounts, TurnEnvelopeMeter, check_decision_envelope
 use crate::limits::EnvelopeLimits;
 
 pub use approval::{
-    ActionApprovalEvidenceRecord, ActionApprovalReceipt, ApprovalEvidence, ApprovalEvidenceKind,
-    DelegationAttenuation, IndependentApproval, IndependentApprovalPolicy, PreparedActionIntent,
     independent_accountable_people, prepare_action_intent, prepare_action_intent_with_limits,
-    validate_accountable_person,
+    retained_person_matches, validate_accountable_person,
 };
 pub use automation_input::{AutomationInputViolation, validate_automation_static_input};
 pub use input::{actor_derived_fields, prepare_action_input, prepare_action_input_for_call};
@@ -130,7 +128,7 @@ where
     H::Command: From<JsonObject>,
     H::Input: From<JsonObject>,
 {
-    commit_action_with_capture(
+    commit_action_inner(
         host,
         catalog,
         call,
@@ -162,7 +160,7 @@ where
     H::Command: From<JsonObject>,
     H::Input: From<JsonObject>,
 {
-    commit_action_with_capture(
+    commit_action_inner(
         host,
         catalog,
         call,
@@ -199,7 +197,7 @@ where
     H::Input: From<JsonObject>,
 {
     let limits = meter.decision_limits();
-    commit_action_with_capture(
+    commit_action_inner(
         host,
         catalog,
         call,
@@ -217,7 +215,7 @@ where
     clippy::too_many_lines,
     reason = "one dispatch resolves closure, scope, input and effect program before any commit"
 )]
-fn commit_action_with_capture<H>(
+fn commit_action_inner<H>(
     host: &mut H,
     catalog: &TypeCatalog<'_>,
     call: &ActionCall<'_>,
@@ -510,7 +508,10 @@ where
             limits,
         },
     )?;
-    let mut record = action_record_with_transition(record, &prepared.events);
+    let record = action_record_with_transition(record, &prepared.events);
+    // Transition metadata is added after the earlier precondition/evidence
+    // checks, so include the finalized receipt in the aggregate output bound.
+    check_action_record_size::<H::Error>(call.action, &record, limits)?;
     let mut events = prepared.events;
     if let Some(candidate) = &series_candidate {
         events.push(candidate.event.clone());
@@ -532,23 +533,6 @@ where
         reads.extend(candidate.skipped_reads);
     }
     let quantity = crate::action_quantity::prepare_quantity_action(call, &effective_input)?;
-    let capturing = capture.is_some();
-    record.approval_evidence = approval::enforce_or_capture_intent::<H::Error>(
-        call,
-        &approval::PreparedIntentParts {
-            target: &target,
-            effective_input: &effective_input,
-            writes: &writes,
-            links: &created_links,
-            commands: &output.commands,
-            quantity: quantity.as_ref().map(|(request, _)| request),
-        },
-        capture,
-    )?;
-    if capturing {
-        return Err(ActionRefusal::TargetNotFound);
-    }
-    check_action_record_size::<H::Error>(call.action, &record, limits)?;
     let target_before = receipt::target_before_version(catalog, &slice, &target);
     receipt::ensure_target_read(catalog, &target, target_before, &writes, &mut reads);
     writes.push(FactWrite {
@@ -568,6 +552,20 @@ where
         }
         None => None,
     };
+    approval::bind_approved_intent::<H::Error>(
+        call,
+        &approval::PreparedCommit {
+            target: &target,
+            effective_input: &effective_input,
+            record: &record_key,
+            consumes: consumes.as_ref(),
+            writes: &writes,
+            links: &created_links,
+            effects: &prepared.effects,
+            quantity: quantity.as_ref().map(|(request, _)| request),
+        },
+        capture,
+    )?;
     let commit = CellCommit {
         consumes,
         reads,
@@ -763,7 +761,7 @@ fn authorize_identity_collision<H: CellHost + ?Sized>(
     let CommitError::IdentityCollision { conflicts, .. } = error else {
         return Ok(());
     };
-    for key in conflicts.iter() {
+    for key in conflicts {
         authorize_slice_type(call, input, authorizer, &key.object_type)?;
         let bounded = host
             .load_bounded(

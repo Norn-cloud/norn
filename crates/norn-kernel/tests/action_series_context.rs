@@ -96,7 +96,7 @@ fn call(action: &ActionRoot) -> ActionCall<'_> {
         ]),
         actor: "test:manager".to_owned(),
         accountable_person: None,
-        approval: None,
+        approved_intent: None,
         input: values(json!({"company": " acme "})),
         idempotency_key: "create-1".to_owned(),
         object_type: None,

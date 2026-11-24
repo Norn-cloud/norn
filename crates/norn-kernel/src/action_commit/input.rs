@@ -550,7 +550,7 @@ pub(super) fn reserved_action_identity(raw_input: &JsonObject) -> Option<(&'stat
 }
 
 fn reserved_identity_member(input: &JsonObject) -> Option<&'static str> {
-    ["actor", "approved", "accountablePerson", "accountable_person"]
+    ["actor", "approved"]
         .into_iter()
         .find(|field| input.contains_key(*field))
 }
@@ -779,7 +779,6 @@ pub(super) fn check_action_record_size<X>(
     // Existing actions without the new preparation phases retain their
     // admitted input/receipt behavior, including command-only actions.
     if !has_action_preparation_features(action)
-        && record.approval_evidence.is_none()
         && !record.effective_input.as_ref().is_some_and(|effective| {
             record
                 .input

@@ -373,7 +373,7 @@ fn call<'a>(action: &'a ActionRoot, so_number: &str, key: &str) -> ActionCall<'a
         scope: scope(),
         actor: "agent:ops".to_owned(),
         accountable_person: None,
-        approval: None,
+        approved_intent: None,
         input: JsonObject::from([(
             "so_number".to_owned(),
             JsonValue::String(so_number.to_owned()),
@@ -4769,541 +4769,114 @@ fn ancestor_addressed_action_with_subtype_slice_read_commits_and_reports_version
     assert!(matches!(replayed, ActionOutcome::Replayed { .. }));
 }
 
-/// Helper building an authenticated approval or assay evidence item without panicking.
-fn approval_item(
-    evidence_id: &str,
-    kind: norn_kernel::ApprovalEvidenceKind,
-    actor: &str,
-    accountable_person: Option<&str>,
-    intent_digest: &str,
-    delegation: Option<norn_kernel::DelegationAttenuation>,
-) -> norn_kernel::ApprovalEvidence {
-    norn_kernel::ApprovalEvidence {
-        evidence_id: evidence_id.to_owned(),
-        kind,
-        actor: actor.to_owned(),
-        accountable_person: accountable_person.map(str::to_owned),
-        intent_digest: intent_digest.to_owned(),
-        delegation,
+/// AUTH-INDEPENDENT-PERSON (#618), exhaustive-finite over a small identity
+/// domain: two identities are independent people exactly when both are valid
+/// canonical accountable people and differ, so one person behind two sessions
+/// is never two people and a missing or non-canonical identity never stands
+/// in for one. A record retained without a person matches its authenticated
+/// subject's retry; a record naming a person matches only that person.
+#[test]
+fn independent_person_approval_uses_accountable_identity() {
+    let identities = [
+        None,
+        Some(""),
+        Some(" person:alice"),
+        Some("person:e\u{301}"),
+        Some("person:\u{202e}x"),
+        Some("person:alice"),
+        Some("person:bob"),
+    ];
+    let valid = |person: Option<&str>| norn_kernel::validate_accountable_person(person).is_some();
+    assert_eq!(
+        identities.iter().filter(|person| valid(**person)).count(),
+        2
+    );
+    for first in identities {
+        for second in identities {
+            assert_eq!(
+                norn_kernel::independent_accountable_people(first, second),
+                valid(first) && valid(second) && first != second,
+                "{first:?} / {second:?}"
+            );
+            assert_eq!(
+                norn_kernel::retained_person_matches(first, second),
+                first.is_none() || first == second,
+                "{first:?} / {second:?}"
+            );
+        }
     }
 }
 
-/// AUTH-INDEPENDENT-PERSON (#618): two distinct sessions (or a delegated agent) for one
-/// accountable person do not satisfy independent-person approval, while two distinct
-/// authenticated accountable people acting on the exact prepared intent do.
+/// AUTH-INDEPENDENT-PERSON (#618): an approval binds the commit it was granted
+/// for, not the call's raw input. Preparing writes nothing. With the input held
+/// fixed, another turn (other command identities) or a changed target refuses
+/// `action.approved_intent_changed` and writes nothing; the commit the
+/// approval was granted for commits.
 #[test]
-fn independent_person_approval_uses_accountable_identity() {
+fn approved_intent_binds_the_prepared_commit_not_the_raw_input() {
     let types = order_types();
     let catalog = TypeCatalog::new(&types);
-    let action = approve();
     let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
-    let seed = cell.commit(CellCommit {
+    let target = seed(&mut cell, ORDER, "SO-1", "draft");
+    let approve = approve_with_submit_command("input.so_number");
+    let granted = call(&approve, "SO-1", "approve-so-1");
+    let digest = norn_kernel::prepare_action_intent(&cell, &catalog, &granted, &Allow).ok();
+    assert!(digest.is_some());
+    assert_eq!(cell.ledger().len(), 1);
+
+    let other_turn = ActionCall {
+        approved_intent: digest.clone(),
+        turn: DecisionTurn {
+            id: "turn-other".to_owned(),
+            ..granted.turn.clone()
+        },
+        ..granted.clone()
+    };
+    let refused = commit_action(&mut cell, &catalog, &other_turn, &Allow);
+    assert!(
+        matches!(&refused, Err(refusal) if refusal.code() == "action.approved_intent_changed"),
+        "{refused:?}"
+    );
+    let restated = cell.commit(CellCommit {
         writes: vec![FactWrite {
-            key: FactKey::new(ORDER, "SO-DUAL-1"),
-            expected: FactVersion::ABSENT,
+            key: target,
+            expected: FactVersion(1),
             mutation: FactMutation::Put {
                 values: JsonObject::from([
-                    (
-                        "so_number".to_owned(),
-                        JsonValue::String("SO-DUAL-1".to_owned()),
-                    ),
+                    ("so_number".to_owned(), JsonValue::String("SO-1".to_owned())),
                     ("status".to_owned(), JsonValue::String("draft".to_owned())),
                 ]),
             },
         }],
         ..CellCommit::empty()
     });
-    assert!(seed.is_ok(), "seed order must commit: {seed:?}");
-
-    struct AllowAll;
-    impl ActionAuthorizer for AllowAll {
-        fn authorize(&self, _: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
-            Ok(())
-        }
-    }
-
-    let mut base_call = call(&action, "SO-DUAL-1", "dual-approval-1");
-    base_call.actor = "session:alice-web".to_owned();
-    base_call.accountable_person = Some("person:alice".to_owned());
-
-    let prepared = norn_kernel::prepare_action_intent(&cell, &catalog, &base_call, &AllowAll);
-    let Ok(intent) = prepared else {
-        assert!(
-            prepared.is_ok(),
-            "prepare_action_intent failed: {prepared:?}"
-        );
-        return;
+    assert!(restated.is_ok(), "{restated:?}");
+    let stale = ActionCall {
+        approved_intent: digest.clone(),
+        ..granted.clone()
     };
-    assert!(intent.intent_digest.starts_with("sha256:"));
-    assert_eq!(
-        cell.ledger().len(),
-        1,
-        "prepare_action_intent must not mutate storage"
-    );
-
-    // 1. Two distinct sessions for the SAME accountable person (requester vs approver) -> REFUSED.
-    let mut same_person_two_sessions = base_call.clone();
-    same_person_two_sessions.approval = Some(norn_kernel::IndependentApproval {
-        policy: norn_kernel::IndependentApprovalPolicy::independent_approver_from_requester(),
-        evidence: vec![approval_item(
-            "ev-alice-mobile",
-            norn_kernel::ApprovalEvidenceKind::Approval,
-            "session:alice-mobile",
-            Some("person:alice"),
-            &intent.intent_digest,
-            None,
-        )],
-        requester_delegation: None,
-    });
-    let refused_same_person =
-        commit_action(&mut cell, &catalog, &same_person_two_sessions, &AllowAll);
+    let refused = commit_action(&mut cell, &catalog, &stale, &Allow);
     assert!(
-        matches!(&refused_same_person, Err(refusal) if refusal.code() == "core.authority.denied"),
-        "same accountable person across two sessions must be refused: {refused_same_person:?}"
+        matches!(&refused, Err(refusal) if refusal.code() == "action.approved_intent_changed"),
+        "{refused:?}"
     );
-    assert_eq!(cell.ledger().len(), 1, "refusal must commit nothing");
+    assert_eq!(cell.ledger().len(), 2);
+    assert!(cell.outbox().is_empty());
 
-    // 2. Two distinct sessions for the SAME accountable person in dual-approval evidence -> REFUSED.
-    let mut same_person_dual = base_call.clone();
-    same_person_dual.approval = Some(norn_kernel::IndependentApproval {
-        policy: norn_kernel::IndependentApprovalPolicy::dual_independent_people(),
-        evidence: vec![
-            approval_item(
-                "ev-alice-1",
-                norn_kernel::ApprovalEvidenceKind::Approval,
-                "session:alice-web",
-                Some("person:alice"),
-                &intent.intent_digest,
-                None,
-            ),
-            approval_item(
-                "ev-alice-2",
-                norn_kernel::ApprovalEvidenceKind::Approval,
-                "session:alice-mobile",
-                Some("person:alice"),
-                &intent.intent_digest,
-                None,
-            ),
-        ],
-        requester_delegation: None,
-    });
-    let refused_dual_same = commit_action(&mut cell, &catalog, &same_person_dual, &AllowAll);
-    assert!(
-        matches!(&refused_dual_same, Err(refusal) if refusal.code() == "core.authority.denied"),
-        "two sessions of one accountable person must not satisfy dual approval: {refused_dual_same:?}"
-    );
-    assert_eq!(cell.ledger().len(), 1);
-
-    // 3. Delegated agent acting for the SAME accountable person as requester -> REFUSED.
-    let alice_delegation = norn_kernel::DelegationAttenuation {
-        delegator: "person:alice".to_owned(),
-        revocation_generation: 2,
-        active_revocation_generation: 2,
-        revoked: false,
-        scope: scope(),
-        allowed_actions: vec![action.action_id.clone()],
-        expires_at_ms: Some(5_000),
-    };
-    let mut same_person_delegate = base_call.clone();
-    same_person_delegate.approval = Some(norn_kernel::IndependentApproval {
-        policy: norn_kernel::IndependentApprovalPolicy::independent_approver_from_requester(),
-        evidence: vec![approval_item(
-            "ev-alice-agent",
-            norn_kernel::ApprovalEvidenceKind::Approval,
-            "agent:alice-assistant",
-            Some("person:alice"),
-            &intent.intent_digest,
-            Some(alice_delegation),
-        )],
-        requester_delegation: None,
-    });
-    let refused_delegate = commit_action(&mut cell, &catalog, &same_person_delegate, &AllowAll);
-    assert!(
-        matches!(&refused_delegate, Err(refusal) if refusal.code() == "core.authority.denied"),
-        "delegated agent of same accountable person must be refused: {refused_delegate:?}"
-    );
-    assert_eq!(cell.ledger().len(), 1);
-
-    // 4. Missing accountable person on approver or requester -> REFUSED fail-closed (no session fallback).
-    let mut missing_approver_person = base_call.clone();
-    missing_approver_person.approval = Some(norn_kernel::IndependentApproval {
-        policy: norn_kernel::IndependentApprovalPolicy::independent_approver_from_requester(),
-        evidence: vec![approval_item(
-            "ev-missing-person",
-            norn_kernel::ApprovalEvidenceKind::Approval,
-            "session:bob-web",
-            None,
-            &intent.intent_digest,
-            None,
-        )],
-        requester_delegation: None,
-    });
-    let refused_missing = commit_action(&mut cell, &catalog, &missing_approver_person, &AllowAll);
-    assert!(
-        matches!(&refused_missing, Err(refusal) if refusal.code() == "core.authority.denied"),
-        "missing approver accountable person must fail closed: {refused_missing:?}"
-    );
-
-    let mut missing_requester_person = base_call.clone();
-    missing_requester_person.accountable_person = None;
-    missing_requester_person.approval = Some(norn_kernel::IndependentApproval {
-        policy: norn_kernel::IndependentApprovalPolicy::independent_approver_from_requester(),
-        evidence: vec![approval_item(
-            "ev-bob-ok",
-            norn_kernel::ApprovalEvidenceKind::Approval,
-            "session:bob-web",
-            Some("person:bob"),
-            &intent.intent_digest,
-            None,
-        )],
-        requester_delegation: None,
-    });
-    let refused_missing_req =
-        commit_action(&mut cell, &catalog, &missing_requester_person, &AllowAll);
-    assert!(
-        matches!(&refused_missing_req, Err(refusal) if refusal.code() == "core.authority.denied"),
-        "missing requester accountable person must fail closed: {refused_missing_req:?}"
-    );
-    assert_eq!(cell.ledger().len(), 1);
-
-    // 5. Two distinct authenticated accountable people on the exact prepared intent -> ACCEPTED.
-    let mut two_people = base_call.clone();
-    two_people.approval = Some(norn_kernel::IndependentApproval {
-        policy: norn_kernel::IndependentApprovalPolicy::independent_approver_from_requester(),
-        evidence: vec![approval_item(
-            "ev-bob-web",
-            norn_kernel::ApprovalEvidenceKind::Approval,
-            "session:bob-web",
-            Some("person:bob"),
-            &intent.intent_digest,
-            None,
-        )],
-        requester_delegation: None,
-    });
-    let accepted = commit_action(&mut cell, &catalog, &two_people, &AllowAll);
-    let Ok(ActionOutcome::Committed { record, .. }) = accepted else {
-        assert!(
-            matches!(accepted, Ok(ActionOutcome::Committed { .. })),
-            "two distinct accountable people on exact prepared intent must commit: {accepted:?}"
-        );
-        return;
-    };
-    assert_eq!(record.actor, "session:alice-web");
-    assert_eq!(record.accountable_person.as_deref(), Some("person:alice"));
-    let Some(approval_receipt) = record.approval_evidence.as_ref() else {
-        assert!(
-            record.approval_evidence.is_some(),
-            "receipt must retain approval evidence"
-        );
-        return;
-    };
-    assert_eq!(approval_receipt.intent_digest, intent.intent_digest);
-    assert_eq!(
-        approval_receipt.accountable_people,
-        vec!["person:bob".to_owned()]
-    );
-    assert_eq!(approval_receipt.evidence.len(), 1);
-
-    // 6. Exact idempotency replay preserves the committed receipt; changing accountable person conflicts.
-    let replayed = commit_action(&mut cell, &catalog, &two_people, &AllowAll);
-    assert!(matches!(
-        replayed,
-        Ok(ActionOutcome::Replayed { record: ref replay_record })
-            if replay_record.approval_evidence == record.approval_evidence
-                && replay_record.accountable_person == record.accountable_person
-    ));
-    let mut conflicting_person = two_people.clone();
-    conflicting_person.accountable_person = Some("person:charlie".to_owned());
-    let conflict = commit_action(&mut cell, &catalog, &conflicting_person, &AllowAll);
-    assert!(
-        matches!(&conflict, Err(refusal) if refusal.code() == "action.idempotency_conflict"),
-        "changed accountable person on same idempotency key must conflict: {conflict:?}"
-    );
-}
-
-/// AUTH-INDEPENDENT-PERSON / AUTH-ATTENUATE-1 / AUTH-REVOKE adversarial matrix:
-/// duplicate assayers, changed batch/input/target/output, revoked/expired/widened delegations,
-/// and caller JSON spoofing of accountable-person claims all fail closed with zero commits.
-#[test]
-fn dual_assay_approval_refuses_duplicates_changed_intent_revocation_and_spoofs() {
-    let types = business_unit_types();
-    let catalog = TypeCatalog::new(&types);
-    let action = business_unit_upsert_action("commerce.batch.post");
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
-
-    struct AllowAll;
-    impl ActionAuthorizer for AllowAll {
-        fn authorize(&self, _: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
-            Ok(())
-        }
-    }
-
-    let batch_call = |batch_id: &str, unit: &str, key: &str| {
-        let mut c = call(&action, batch_id, key);
-        c.actor = "session:operator-1".to_owned();
-        c.accountable_person = Some("person:operator".to_owned());
-        c.object_type = Some(ObjectTypeName("commerce.AuthzOrder".to_owned()));
-        c.input = JsonObject::from([
-            (
-                "so_number".to_owned(),
-                JsonValue::String(batch_id.to_owned()),
-            ),
-            (
-                "business_unit".to_owned(),
-                JsonValue::String(unit.to_owned()),
-            ),
-        ]);
-        c
-    };
-
-    let original = batch_call("BATCH-100", "BU-GOLD-A", "post-batch-1");
-    let prepared_batch = norn_kernel::prepare_action_intent(&cell, &catalog, &original, &AllowAll);
-    assert!(
-        prepared_batch.is_ok(),
-        "preparing valid batch intent must succeed: {prepared_batch:?}"
-    );
-    let Ok(intent) = prepared_batch else {
-        return;
-    };
-
-    // A. Duplicate assayer (same accountable person with different evidence IDs & sessions) -> REFUSED.
-    let mut dup_assayer = original.clone();
-    dup_assayer.approval = Some(norn_kernel::IndependentApproval {
-        policy: norn_kernel::IndependentApprovalPolicy::dual_independent_assays(),
-        evidence: vec![
-            approval_item(
-                "assay-1",
-                norn_kernel::ApprovalEvidenceKind::Assay,
-                "session:bob-lab1",
-                Some("person:bob"),
-                &intent.intent_digest,
-                None,
-            ),
-            approval_item(
-                "assay-2",
-                norn_kernel::ApprovalEvidenceKind::Assay,
-                "session:bob-lab2",
-                Some("person:bob"),
-                &intent.intent_digest,
-                None,
-            ),
-        ],
-        requester_delegation: None,
-    });
-    let res = commit_action(&mut cell, &catalog, &dup_assayer, &AllowAll);
-    assert!(
-        matches!(&res, Err(refusal) if refusal.code() == "core.authority.denied"),
-        "duplicate assayer must be refused: {res:?}"
-    );
-
-    // B. Duplicate evidence ID even across distinct people -> REFUSED.
-    let mut dup_evidence_id = original.clone();
-    dup_evidence_id.approval = Some(norn_kernel::IndependentApproval {
-        policy: norn_kernel::IndependentApprovalPolicy::dual_independent_assays(),
-        evidence: vec![
-            approval_item(
-                "assay-same-id",
-                norn_kernel::ApprovalEvidenceKind::Assay,
-                "session:bob-lab",
-                Some("person:bob"),
-                &intent.intent_digest,
-                None,
-            ),
-            approval_item(
-                "assay-same-id",
-                norn_kernel::ApprovalEvidenceKind::Assay,
-                "session:carol-lab",
-                Some("person:carol"),
-                &intent.intent_digest,
-                None,
-            ),
-        ],
-        requester_delegation: None,
-    });
-    let res = commit_action(&mut cell, &catalog, &dup_evidence_id, &AllowAll);
-    assert!(
-        matches!(&res, Err(refusal) if refusal.code() == "core.authority.denied"),
-        "duplicate evidence id must be refused: {res:?}"
-    );
-
-    // C. Changed batch / input / output after assays were bound -> REFUSED.
-    let valid_two_assays = norn_kernel::IndependentApproval {
-        policy: norn_kernel::IndependentApprovalPolicy {
-            required_distinct_people: 2,
-            require_independent_from_requester: true,
-            required_kind: Some(norn_kernel::ApprovalEvidenceKind::Assay),
+    let regranted = norn_kernel::prepare_action_intent(&cell, &catalog, &granted, &Allow).ok();
+    assert!(regranted.is_some() && regranted != digest);
+    let committed = commit_action(
+        &mut cell,
+        &catalog,
+        &ActionCall {
+            approved_intent: regranted,
+            ..granted
         },
-        evidence: vec![
-            approval_item(
-                "assay-bob",
-                norn_kernel::ApprovalEvidenceKind::Assay,
-                "session:bob-lab",
-                Some("person:bob"),
-                &intent.intent_digest,
-                None,
-            ),
-            approval_item(
-                "assay-carol",
-                norn_kernel::ApprovalEvidenceKind::Assay,
-                "session:carol-lab",
-                Some("person:carol"),
-                &intent.intent_digest,
-                None,
-            ),
-        ],
-        requester_delegation: None,
-    };
-    let mut changed_output = batch_call("BATCH-100", "BU-TAMPERED", "post-batch-tampered");
-    changed_output.approval = Some(valid_two_assays.clone());
-    let res = commit_action(&mut cell, &catalog, &changed_output, &AllowAll);
+        &Allow,
+    );
     assert!(
-        matches!(&res, Err(refusal) if refusal.code() == "core.authority.denied"),
-        "changed batch output must invalidate prior assay intent digest: {res:?}"
+        matches!(committed, Ok(ActionOutcome::Committed { .. })),
+        "{committed:?}"
     );
-    let mut changed_target = batch_call("BATCH-999", "BU-GOLD-A", "post-batch-target");
-    changed_target.approval = Some(valid_two_assays.clone());
-    let res = commit_action(&mut cell, &catalog, &changed_target, &AllowAll);
-    assert!(
-        matches!(&res, Err(refusal) if refusal.code() == "core.authority.denied"),
-        "changed target must invalidate prior assay intent digest: {res:?}"
-    );
-
-    // D. Revoked, stale-generation, expired, wrong-scope, and wrong-action delegations -> REFUSED.
-    let base_del = norn_kernel::DelegationAttenuation {
-        delegator: "person:bob".to_owned(),
-        revocation_generation: 3,
-        active_revocation_generation: 3,
-        revoked: false,
-        scope: scope(),
-        allowed_actions: vec![action.action_id.clone()],
-        expires_at_ms: Some(2_000),
-    };
-    let cases = [
-        (
-            "revoked flag",
-            norn_kernel::DelegationAttenuation {
-                revoked: true,
-                ..base_del.clone()
-            },
-            "core.authority.revoked",
-        ),
-        (
-            "stale revocation generation",
-            norn_kernel::DelegationAttenuation {
-                revocation_generation: 1,
-                active_revocation_generation: 2,
-                ..base_del.clone()
-            },
-            "core.authority.revoked",
-        ),
-        (
-            "expired delegation",
-            norn_kernel::DelegationAttenuation {
-                expires_at_ms: Some(1_000),
-                ..base_del.clone()
-            },
-            "core.authority.revoked",
-        ),
-        (
-            "widened/mismatched scope",
-            norn_kernel::DelegationAttenuation {
-                scope: BTreeMap::from([("orgId".to_owned(), "org_other".to_owned())]),
-                ..base_del.clone()
-            },
-            "core.authority.denied",
-        ),
-        (
-            "unpermitted action",
-            norn_kernel::DelegationAttenuation {
-                allowed_actions: vec!["other.action".to_owned()],
-                ..base_del.clone()
-            },
-            "core.authority.denied",
-        ),
-        (
-            "mismatched delegator",
-            norn_kernel::DelegationAttenuation {
-                delegator: "person:mallory".to_owned(),
-                ..base_del
-            },
-            "core.authority.denied",
-        ),
-    ];
-    for (label, del, expected_code) in cases {
-        let mut delegated = original.clone();
-        delegated.approval = Some(norn_kernel::IndependentApproval {
-            policy: norn_kernel::IndependentApprovalPolicy::dual_independent_assays(),
-            evidence: vec![
-                approval_item(
-                    "assay-bob-del",
-                    norn_kernel::ApprovalEvidenceKind::Assay,
-                    "agent:bob-bot",
-                    Some("person:bob"),
-                    &intent.intent_digest,
-                    Some(del),
-                ),
-                approval_item(
-                    "assay-carol",
-                    norn_kernel::ApprovalEvidenceKind::Assay,
-                    "session:carol-lab",
-                    Some("person:carol"),
-                    &intent.intent_digest,
-                    None,
-                ),
-            ],
-            requester_delegation: None,
-        });
-        let res = commit_action(&mut cell, &catalog, &delegated, &AllowAll);
-        assert!(
-            matches!(&res, Err(refusal) if refusal.code() == expected_code),
-            "case {label} expected {expected_code}, got {res:?}"
-        );
-    }
-
-    // E. Caller JSON spoofing accountablePerson / accountable_person -> REFUSED.
-    for spoof_field in ["accountablePerson", "accountable_person"] {
-        let mut spoofed = original.clone();
-        spoofed.input.insert(
-            spoof_field.to_owned(),
-            JsonValue::String("person:bob".to_owned()),
-        );
-        let res = commit_action(&mut cell, &catalog, &spoofed, &AllowAll);
-        assert!(
-            matches!(res, Err(ActionRefusal::InvalidInput { ref field }) if field == spoof_field),
-            "spoof field {spoof_field} must refuse: {res:?}"
-        );
-    }
-    assert!(
-        cell.ledger().is_empty(),
-        "all refusals must leave cell ledger empty"
-    );
-
-    // F. Valid dual independent assays by two distinct accountable people distinct from requester -> ACCEPTED.
-    let mut accepted_call = original.clone();
-    accepted_call.approval = Some(valid_two_assays.clone());
-    let committed = commit_action(&mut cell, &catalog, &accepted_call, &AllowAll);
-    let Ok(ActionOutcome::Committed { record, .. }) = committed else {
-        assert!(
-            matches!(committed, Ok(ActionOutcome::Committed { .. })),
-            "valid dual assay must commit: {committed:?}"
-        );
-        return;
-    };
-    let Some(receipt) = record.approval_evidence.as_ref() else {
-        assert!(record.approval_evidence.is_some());
-        return;
-    };
-    assert_eq!(
-        receipt.accountable_people,
-        vec!["person:bob".to_owned(), "person:carol".to_owned()]
-    );
-
-    // G. Reusing the exact same approval evidence on a second commit after state advanced -> REFUSED!
-    let mut second_attempt = batch_call("BATCH-100", "BU-GOLD-A", "post-batch-2");
-    second_attempt.approval = Some(valid_two_assays);
-    let reused = commit_action(&mut cell, &catalog, &second_attempt, &AllowAll);
-    assert!(
-        matches!(&reused, Err(refusal) if refusal.code() == "core.authority.denied"),
-        "prior approval evidence must not replay after target version advanced: {reused:?}"
-    );
+    assert_eq!(cell.outbox().len(), 1);
 }

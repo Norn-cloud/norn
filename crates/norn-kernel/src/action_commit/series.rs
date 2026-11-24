@@ -142,7 +142,6 @@ where
             parameter_pins: slice.parameter_pins.clone(),
             actor: call.actor.clone(),
             accountable_person: call.accountable_person.clone(),
-            approval_evidence: None,
             turn: call.turn.id.clone(),
             transition: String::new(),
             from: String::new(),

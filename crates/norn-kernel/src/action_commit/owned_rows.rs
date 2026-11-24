@@ -18,7 +18,7 @@ use crate::decision_commit::{
 use crate::limits::{EnvelopeLimits, SliceMeter};
 use crate::naming_series::type_series;
 
-use super::approval::{PreparedIntentParts, enforce_or_capture_intent};
+use super::approval::{PreparedCommit, bind_approved_intent};
 use super::input::{build_action_commands, check_action_record_size, expression_value_to_runtime};
 use super::receipt::{committed_target_version, ensure_target_read};
 use super::slice::{
@@ -1072,7 +1072,6 @@ where
         parameter_pins: Vec::new(),
         actor: call.actor.clone(),
         accountable_person: call.accountable_person.clone(),
-        approval_evidence: None,
         turn: call.turn.id.clone(),
         transition: String::new(),
         from: String::new(),
@@ -1725,22 +1724,6 @@ where
     writes.extend(manifest_writes);
     let quantity =
         crate::action_quantity::prepare_quantity_action(call, &preparation.effective_input)?;
-    let capturing = capture.is_some();
-    record.approval_evidence = enforce_or_capture_intent::<H::Error>(
-        call,
-        &PreparedIntentParts {
-            target: &target,
-            effective_input: &preparation.effective_input,
-            writes: &writes,
-            links: &link_writes,
-            commands: &output.commands,
-            quantity: quantity.as_ref().map(|(request, _)| request),
-        },
-        capture,
-    )?;
-    if capturing {
-        return Err(ActionRefusal::TargetNotFound);
-    }
     check_action_record_size::<H::Error>(call.action, &record, limits)?;
     let before = parent_state.version;
     ensure_target_read(catalog, &target, before, &writes, &mut prepared.reads);
@@ -1751,6 +1734,20 @@ where
             values: record.to_values(),
         },
     });
+    bind_approved_intent::<H::Error>(
+        call,
+        &PreparedCommit {
+            target: &target,
+            effective_input: &preparation.effective_input,
+            record: &record_key,
+            consumes: prepared.consumes.as_ref(),
+            writes: &writes,
+            links: &link_writes,
+            effects: &prepared.effects,
+            quantity: quantity.as_ref().map(|(request, _)| request),
+        },
+        capture,
+    )?;
     let commit = CellCommit {
         consumes: prepared.consumes,
         reads: prepared.reads,

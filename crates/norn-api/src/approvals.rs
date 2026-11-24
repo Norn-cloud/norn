@@ -89,6 +89,11 @@ pub(crate) struct ParkedCall {
     pub(crate) attempt: Option<StepAttempt>,
     /// Optional provenance trace context carried by the call when it parked.
     pub(crate) trace: Option<norn_ir::TraceContext>,
+    /// AUTH-INDEPENDENT-PERSON (#618): the prepared-intent digest of the
+    /// commit the call would make when it parked: what its approval is
+    /// granted for. `None` for a call parked before intents were bound,
+    /// whose approval runs nothing ([`approved_intent`]).
+    pub(crate) intent_digest: Option<String>,
 }
 
 /// S6b: one flow step attempt making an action call: its run and its parked
@@ -195,6 +200,7 @@ pub(crate) fn held_call(approval: &RuntimeValue) -> Option<HeldCall> {
                     Some(decoded)
                 }
             },
+            intent_digest: text("intentDigest"),
         },
     })
 }
@@ -465,14 +471,36 @@ pub(crate) fn attempt_live<E: SqlEngine>(
 
 /// S2: whether `principal`, the authenticated principal of the request
 /// running a call, is the parked call's requester: the same subject, actor
-/// kind and role table. Its roles are the ones verified now.
+/// kind and role table, and never another accountable person than the one
+/// recorded (#618). Its roles are the ones verified now.
 pub(crate) fn is_requester(principal: Option<&RunStarter>, requester: &RunStarter) -> bool {
     principal.is_some_and(|principal| {
         principal.subject == requester.subject
             && principal.actor_kind == requester.actor_kind
             && principal.role_table == requester.role_table
-            && principal.accountable_person == requester.accountable_person
+            && norn_kernel::retained_person_matches(
+                requester.accountable_person.as_deref(),
+                principal.accountable_person.as_deref(),
+            )
     })
+}
+
+/// AUTH-INDEPENDENT-PERSON (#618): the prepared-intent digest the approval
+/// `decision_id` was granted for, which the call's commit must match. A call
+/// parked before intents were bound names none: its approval covers no
+/// commit, and that is recorded as final (call again for a fresh approval).
+///
+/// # Errors
+/// `approval.definition_changed`; a host failure.
+pub(crate) fn approved_intent<E: SqlEngine>(
+    cell: &mut ActionCell<E>,
+    decision_id: &str,
+) -> Result<String, Refusal> {
+    let digest = approved_call(cell, decision_id)?.and_then(|(held, _)| held.call.intent_digest);
+    match digest {
+        Some(digest) => Ok(digest),
+        None => Err(refuse(cell, decision_id, definition_changed())?),
+    }
 }
 
 /// S2: the approval `decision_id` is consumed only by its parked
@@ -637,6 +665,9 @@ fn park<E: SqlEngine>(
     }
     if let Some(trace) = &parked_call.trace {
         approval.insert("trace".to_owned(), trace.to_runtime_value());
+    }
+    if let Some(digest) = &parked_call.intent_digest {
+        approval.insert("intentDigest".to_owned(), text(digest));
     }
     let payload: RuntimeObject = BTreeMap::from([
         ("kind".to_owned(), text("perform")),

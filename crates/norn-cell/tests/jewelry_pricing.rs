@@ -149,7 +149,7 @@ fn call<'a>(action: &'a norn_ir::ActionRoot, input: JsonObject, request: &str) -
         ]),
         actor: "test:operator".into(),
         accountable_person: None,
-        approval: None,
+        approved_intent: None,
         input,
         idempotency_key: request.into(),
         object_type: None,

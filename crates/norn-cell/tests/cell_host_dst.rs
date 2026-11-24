@@ -1982,7 +1982,7 @@ fn action_call<'a>(
         ]),
         actor: actor.to_owned(),
         accountable_person: None,
-        approval: None,
+        approved_intent: None,
         input: BTreeMap::from([
             ("id".to_owned(), JsonValue::String(id.to_owned())),
             (

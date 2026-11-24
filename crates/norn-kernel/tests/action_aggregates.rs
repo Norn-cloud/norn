@@ -94,7 +94,7 @@ fn call<'a>(action: &'a ActionRoot, code: &str) -> ActionCall<'a> {
         ]),
         actor: "books:clerk".to_owned(),
         accountable_person: None,
-        approval: None,
+        approved_intent: None,
         input: object(json!({
             "code": code, "account": "A", "from": "2026-11-01", "to": "2026-11-30"
         })),

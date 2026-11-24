@@ -150,9 +150,10 @@ test("a granted assistant reaches the cell as that person, in the workspace they
   expect(new URL(sent?.url ?? "").pathname).toBe("/v1/mcp")
   expect(Object.fromEntries(new URL(sent?.url ?? "").searchParams)).toEqual({ orgId: org, environmentId: "analytics" })
   expect(JSON.parse(sent?.body ?? "")).toEqual(INIT)
-  // The cell sees a host token for the person (never the assistant's token), signed in by grant.
+  // The cell sees a host token for the person (never the assistant's token), signed in by grant,
+  // naming that same person as accountable: the assistant never counts as a second approver.
   const hostClaims = JSON.parse(Buffer.from((sent?.authorization ?? "").split(".")[1] ?? "", "base64url").toString())
-  expect(hostClaims).toMatchObject({ sub: user, aud: "norn-host", norn: { kind: "user", org, role: "owner", amr: "oauth" } })
+  expect(hostClaims).toMatchObject({ sub: user, aud: "norn-host", norn: { kind: "user", org, role: "owner", amr: "oauth", accountablePerson: user } })
 
   const notification = await mcp(env, accessToken, { jsonrpc: "2.0", method: "notifications/initialized" })
   expect(notification.status).toBe(202)

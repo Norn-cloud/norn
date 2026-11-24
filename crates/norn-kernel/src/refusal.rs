@@ -665,9 +665,7 @@ impl<X> ActionRefusal<X> {
         match self {
             Self::Decision(refusal) => refusal.category(),
             Self::TargetNotFound | Self::SliceObjectMissing { .. } => RefusalCategory::Visibility,
-            Self::PermissionDenied { .. }
-            | Self::AuthorityDenied { .. }
-            | Self::AuthorityRevoked { .. } => RefusalCategory::Permission,
+            Self::PermissionDenied { .. } => RefusalCategory::Permission,
             Self::PreconditionFailed { .. } | Self::WriteModeFailed { .. } => {
                 RefusalCategory::Precondition
             }
@@ -677,6 +675,7 @@ impl<X> ActionRefusal<X> {
                 norn_checker::parameter::ParameterError::Invalid => RefusalCategory::Invalid,
             },
             Self::IdempotencyConflict { .. }
+            | Self::ApprovedIntentChanged
             | Self::StalePreconditionRead { .. }
             | Self::StaleAggregateRead { .. } => RefusalCategory::Conflict,
             Self::ReceiptRefused { reason } => reason.category(),

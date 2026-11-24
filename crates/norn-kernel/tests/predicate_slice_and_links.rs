@@ -422,6 +422,8 @@ fn schedule_call<'a>(
             ("environmentId".to_owned(), "dev".to_owned()),
         ]),
         actor: "scheduler:lead".to_owned(),
+        accountable_person: None,
+        approved_intent: None,
         input: object(json!({
             "plan_id": plan_id,
             "agent_id": "A1",
@@ -1772,6 +1774,8 @@ fn r2_blocker3b_fresh_aggregate_authorizes_before_bound_and_byte_overflow() -> T
             ("environmentId".to_owned(), "dev".to_owned()),
         ]),
         actor: "scheduler:lead".to_owned(),
+        accountable_person: None,
+        approved_intent: None,
         input: object(json!({
             "plan_id": "P1", "agent_id": "A1",
             "window_start": "2026-11-23T00:00:00Z", "window_end": "2026-11-24T00:00:00Z"
@@ -2108,6 +2112,8 @@ fn r3_blocker4_hidden_row_past_max_items_plus_one_conceals_as_target_not_found()
                 ("environmentId".to_owned(), "dev".to_owned()),
             ]),
             actor: "operator".to_owned(),
+            accountable_person: None,
+            approved_intent: None,
             input: serde_json::from_value(json!({"item_id": format!("W{idx}"), "grp": "g"}))?,
             idempotency_key: format!("r3-b4-mem-{idx}"),
             object_type: None,

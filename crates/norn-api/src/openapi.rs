@@ -115,7 +115,6 @@ mod action_contract_tests {
             "actionId",
             "actor",
             "accountablePerson",
-            "approvalEvidence",
             "turn",
             "object",
             "input",

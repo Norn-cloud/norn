@@ -62,8 +62,8 @@ pub struct Principal {
     pub auth_method: String,
     /// The table version the roles came from.
     pub role_table: &'static str,
-    /// AUTH-INDEPENDENT-PERSON (#618): authenticated accountable human person
-    /// behind this principal, distinct from session or delegated-agent subject ids.
+    /// AUTH-INDEPENDENT-PERSON (#618): the accountable person the issuer
+    /// names for a user (`norn.accountablePerson`); `None` when it names none.
     pub accountable_person: Option<String>,
 }
 
@@ -227,13 +227,14 @@ impl TokenVerifier {
             return None;
         }
         let subject_id = format!("{prefix}:{}", claims.sub);
+        // AUTH-INDEPENDENT-PERSON: only the issuer's explicit claim names the
+        // person behind a user; the subject (a session, an assistant's grant)
+        // never stands in for one, and a service key names none.
         let accountable_person = match norn.accountable_person {
+            Some(_) if actor_kind == ActorKind::Service => return None,
             Some(person) => {
-                Some(norn_kernel::validate_accountable_person(Some(person.as_str()))?.to_owned())
+                Some(norn_kernel::validate_accountable_person(Some(&person))?.to_owned())
             }
-            None if actor_kind == ActorKind::User => Some(
-                norn_kernel::validate_accountable_person(Some(subject_id.as_str()))?.to_owned(),
-            ),
             None => None,
         };
         Some(Principal {

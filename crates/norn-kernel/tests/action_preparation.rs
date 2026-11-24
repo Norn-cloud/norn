@@ -86,7 +86,7 @@ fn call<'a>(action: &'a ActionRoot, input: JsonObject, action_version: &'a str) 
         ]),
         actor: "test:caller".to_owned(),
         accountable_person: None,
-        approval: None,
+        approved_intent: None,
         input,
         idempotency_key: "prepared-token".to_owned(),
         object_type: None,

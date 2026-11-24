@@ -155,7 +155,6 @@ where
         parameter_pins: Vec::new(),
         actor: call.actor.clone(),
         accountable_person: call.accountable_person.clone(),
-        approval_evidence: None,
         turn: call.turn.id.clone(),
         transition: String::new(),
         from: String::new(),

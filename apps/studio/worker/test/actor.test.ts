@@ -56,7 +56,7 @@ test("the host token carries exactly the actor, for the host's audience, for fiv
   if (actor === null) throw new Error("no actor")
   const body = claims(await hostToken(auth, actor, 1_800_000_000))
   expect(body).toMatchObject({ iss: ORIGIN, aud: "norn-host", sub: actor.subjectId, iat: 1_800_000_000, exp: 1_800_000_000 + HOST_TOKEN_SECONDS })
-  expect(body.norn).toEqual({ kind: "user", org: actor.orgId, role: "owner", amr: "password" })
+  expect(body.norn).toEqual({ kind: "user", org: actor.orgId, role: "owner", amr: "password", accountablePerson: actor.subjectId })
 })
 
 test("an organization API key acts as a service, never with an approving role", async () => {
@@ -67,6 +67,8 @@ test("an organization API key acts as a service, never with an approving role", 
   const viewer = await create()
   const service = await resolveActor(new Request(ORIGIN, { headers: { "x-api-key": viewer.key } }), auth)
   expect(service).toEqual({ actorKind: "service", subjectId: viewer.id, orgId: owner?.orgId ?? "", role: "viewer", authMethod: "api_key" })
+  if (service === null) throw new Error("no service")
+  expect(claims(await hostToken(auth, service)).norn).not.toHaveProperty("accountablePerson")
   const admin = await create({ role: "admin" })
   expect(await resolveActor(new Request(ORIGIN, { headers: { "x-api-key": admin.key } }), auth)).toBeNull()
   expect(await resolveActor(new Request(ORIGIN, { headers: { "x-api-key": "not-a-key" } }), auth)).toBeNull()

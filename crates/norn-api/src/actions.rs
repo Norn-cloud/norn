@@ -508,7 +508,7 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
         actor: actor.to_owned(),
         accountable_person: principal
             .and_then(|starter| starter.verified_accountable_person().map(str::to_owned)),
-        approval: None,
+        approved_intent: None,
         input: input.clone(),
         idempotency_key: request.idempotency_key.clone(),
         object_type: None,
@@ -541,6 +541,14 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
         Gated::Pending(pending) => return Ok(ActionAnswer::Pending(pending)),
         Gated::Replayed(outcome) => *outcome,
         Gated::Commit(approval) => {
+            let approved_intent = approval
+                .as_deref()
+                .map(|decision| crate::approvals::approved_intent(&mut cell, decision))
+                .transpose()?;
+            let kernel_call = norn_kernel::ActionCall {
+                approved_intent,
+                ..kernel_call
+            };
             let approval = approval.as_deref();
             commit_call(host, &mut cell, &catalog, &kernel_call, approval, attempt)?
         }
@@ -785,10 +793,21 @@ fn through_gate<E: SqlEngine>(
             if approval.is_some() {
                 return Ok(Gated::Commit(approval));
             }
+            // AUTH-INDEPENDENT-PERSON (#618): an approval needs a person
+            // independent of the requester, so a requester no accountable
+            // person stands behind parks nothing anyone could approve.
             let requester = host
                 .authorizer
                 .verified_principal(&kernel_call.actor)
+                .filter(|requester| requester.verified_accountable_person().is_some())
                 .ok_or_else(action_denied)?;
+            let intent_digest = norn_kernel::prepare_action_intent(
+                &*cell,
+                catalog,
+                kernel_call,
+                &KernelAuthorizer(host.authorizer.as_ref()),
+            )
+            .map_err(|error| kernel_refusal(host, &kernel_call.actor, action_id, &error))?;
             // S5a: a call parks for a step attempt only while that attempt
             // still waits on exactly this call, judged under this hold.
             require_making(cell.store(), attempt, key)?;
@@ -802,6 +821,7 @@ fn through_gate<E: SqlEngine>(
                 // S6b: the step attempt making this call, recorded now.
                 attempt: attempt.cloned(),
                 trace: kernel_call.trace.clone(),
+                intent_digest: Some(intent_digest),
             };
             Ok(
                 match crate::approvals::hold(cell, &gate, &parked, kernel_call.turn.now)? {

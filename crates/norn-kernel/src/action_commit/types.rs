@@ -13,7 +13,7 @@ use crate::envelope::TurnEnvelopeMeter;
 use crate::limits::EnvelopeLimits;
 use crate::naming_series::SeriesCandidate;
 
-use super::approval::{ActionApprovalReceipt, IndependentApproval, validate_accountable_person};
+use super::approval::{retained_person_matches, validate_accountable_person};
 pub use super::parameter::ActionParameterPin;
 pub use super::receipt::ActionReferenceReads;
 
@@ -62,12 +62,14 @@ pub struct ActionCall<'a> {
     pub scope: BTreeMap<String, String>,
     /// The calling actor's identity.
     pub actor: String,
-    /// AUTH-INDEPENDENT-PERSON (#618): authenticated accountable person behind
-    /// `actor`, distinct from session or delegated-agent identifiers.
+    /// AUTH-INDEPENDENT-PERSON (#618): the authenticated accountable person
+    /// behind `actor`, from the host's verified principal; never a session or
+    /// agent id standing in for one.
     pub accountable_person: Option<String>,
-    /// AUTH-INDEPENDENT-PERSON (#618): optional independent-person approval
-    /// policy and evidence verified against the exact prepared intent.
-    pub approval: Option<IndependentApproval>,
+    /// The prepared-intent digest ([`super::prepare_action_intent`]) of the
+    /// commit an approval of this call was granted for, read by the host from
+    /// its approval record. The call commits only as exactly that commit.
+    pub approved_intent: Option<String>,
     /// The caller's raw input. The kernel derives and validates its effective
     /// input while retaining this value for idempotency and delegation
     /// binding.
@@ -364,14 +366,10 @@ pub struct ActionCallRecord {
     pub parameter_pins: Vec<ActionParameterPin>,
     /// The actor.
     pub actor: String,
-    /// AUTH-INDEPENDENT-PERSON (#618): authenticated accountable person behind
-    /// `actor`, when supplied by the trusted host seam.
+    /// AUTH-INDEPENDENT-PERSON (#618): the authenticated accountable person
+    /// behind `actor`; absent on records retained before people were bound.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accountable_person: Option<String>,
-    /// AUTH-INDEPENDENT-PERSON (#618): verified independent-person approval
-    /// receipt bound to this call's exact prepared intent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub approval_evidence: Option<ActionApprovalReceipt>,
     /// The turn the call committed in.
     pub turn: String,
     /// The fired transition.
@@ -417,7 +415,6 @@ impl ActionCallRecord {
             parameter_pins: Vec::new(),
             actor: call.actor.clone(),
             accountable_person: call.accountable_person.clone(),
-            approval_evidence: None,
             turn: call.turn.id.clone(),
             transition: transition.as_str().to_owned(),
             from: String::new(),
@@ -429,18 +426,26 @@ impl ActionCallRecord {
 
     pub(super) fn binds_same_call(&self, other: &Self) -> bool {
         crate::replay_decision::same_call(&self.call_identity(), &other.call_identity())
+            && retained_person_matches(
+                self.accountable_person.as_deref(),
+                other.accountable_person.as_deref(),
+            )
     }
 
     const fn call_identity(
         &self,
-    ) -> crate::replay_decision::CallIdentity<&String, &FactKey, &JsonObject, CallIdentityBinding<'_>>
-    {
+    ) -> crate::replay_decision::CallIdentity<
+        &String,
+        &FactKey,
+        &JsonObject,
+        (&Option<String>, &Option<TraceContext>),
+    > {
         crate::replay_decision::CallIdentity {
             action: &self.action_id,
             object: &self.object,
             input: &self.input,
             actor: &self.actor,
-            rule_binding: (&self.rule_binding, &self.trace, &self.accountable_person),
+            rule_binding: (&self.rule_binding, &self.trace),
         }
     }
 
@@ -457,7 +462,7 @@ impl ActionCallRecord {
             && self.object.object_type == *object_type
             && self.input == *input
             && self.actor == actor
-            && self.accountable_person.as_deref() == accountable_person
+            && retained_person_matches(self.accountable_person.as_deref(), accountable_person)
             && self.trace.as_ref() == trace
     }
 
@@ -549,9 +554,6 @@ impl ActionCallRecord {
         if let Some(person) = &self.accountable_person {
             values.insert("accountablePerson".to_owned(), string(person));
         }
-        if let Some(approval) = &self.approval_evidence {
-            values.insert("approvalEvidence".to_owned(), approval.to_runtime_value());
-        }
         if let Some(trace) = &self.trace {
             values.insert("trace".to_owned(), trace.to_runtime_value());
         }
@@ -619,8 +621,21 @@ impl ActionCallRecord {
                 decoded
             }
         };
-        let (accountable_person, approval_evidence, trace) =
-            decode_optional_record_governance(values)?;
+        let accountable_person = match values.get("accountablePerson") {
+            None | Some(JsonValue::Null) => None,
+            Some(JsonValue::String(person)) => {
+                Some(validate_accountable_person(Some(person))?.to_owned())
+            }
+            _ => return None,
+        };
+        let trace = match values.get("trace") {
+            None | Some(JsonValue::Null) => None,
+            Some(value) => {
+                let decoded: TraceContext = norn_ir::runtime::decode(value).ok()?;
+                decoded.validate().ok()?;
+                Some(decoded)
+            }
+        };
         Some(Self {
             action_id: string("actionId")?,
             action_artifact_id,
@@ -639,7 +654,6 @@ impl ActionCallRecord {
             parameter_pins,
             actor: string("actor")?,
             accountable_person,
-            approval_evidence,
             turn: string("turn")?,
             transition: string("transition")?,
             from: string("from")?,
@@ -648,44 +662,6 @@ impl ActionCallRecord {
             trace,
         })
     }
-}
-
-type CallIdentityBinding<'a> = (
-    &'a Option<String>,
-    &'a Option<TraceContext>,
-    &'a Option<String>,
-);
-
-type RecordGovernanceFields = (
-    Option<String>,
-    Option<ActionApprovalReceipt>,
-    Option<TraceContext>,
-);
-
-fn decode_optional_record_governance(values: &JsonObject) -> Option<RecordGovernanceFields> {
-    let accountable_person = match values.get("accountablePerson") {
-        None | Some(JsonValue::Null) => None,
-        Some(JsonValue::String(person)) => {
-            Some(validate_accountable_person(Some(person))?.to_owned())
-        }
-        _ => return None,
-    };
-    let approval_evidence = match values.get("approvalEvidence") {
-        None | Some(JsonValue::Null) => None,
-        Some(value) => {
-            let decoded: ActionApprovalReceipt = norn_ir::runtime::decode(value).ok()?;
-            Some(decoded.is_valid().then_some(decoded)?)
-        }
-    };
-    let trace = match values.get("trace") {
-        None | Some(JsonValue::Null) => None,
-        Some(value) => {
-            let decoded: TraceContext = norn_ir::runtime::decode(value).ok()?;
-            decoded.validate().ok()?;
-            Some(decoded)
-        }
-    };
-    Some((accountable_person, approval_evidence, trace))
 }
 
 /// What an accepted call did.
@@ -844,18 +820,10 @@ pub enum ActionRefusal<X> {
         /// The authorizer's reason code.
         reason: String,
     },
-    /// AUTH-ATTENUATE-1 / AUTH-INDEPENDENT-PERSON: authority or dual-approval check refused.
-    #[error("action authority denied ({reason})")]
-    AuthorityDenied {
-        /// Why authority or independent-person approval was denied.
-        reason: String,
-    },
-    /// AUTH-REVOKE: delegated authority was revoked or expired before commit.
-    #[error("action authority revoked ({reason})")]
-    AuthorityRevoked {
-        /// Why delegated authority was revoked.
-        reason: String,
-    },
+    /// AUTH-INDEPENDENT-PERSON (#618): the commit differs from the one the
+    /// call's approval was granted for.
+    #[error("the prepared commit is not the one this call's approval was granted for")]
+    ApprovedIntentChanged,
     /// The target is not of the effect's object kind or a subtype.
     #[error("the action fires on {expected}, but the target is a {actual}")]
     KindMismatch {
@@ -915,8 +883,7 @@ impl<X> ActionRefusal<X> {
             Self::PreconditionFailed { .. } => "action.precondition_failed",
             Self::TargetNotFound => "action.target_not_found",
             Self::PermissionDenied { .. } => "action.permission_denied",
-            Self::AuthorityDenied { .. } => "core.authority.denied",
-            Self::AuthorityRevoked { .. } => "core.authority.revoked",
+            Self::ApprovedIntentChanged => "action.approved_intent_changed",
             Self::KindMismatch { .. } => "artifact_set.action.effect_kind_mismatch",
             Self::IdempotencyConflict { .. } => "action.idempotency_conflict",
             Self::WriteModeFailed { .. } => "action.write_mode_failed",
@@ -957,9 +924,10 @@ pub(super) struct Pending {
     pub(super) receipt: Option<crate::result_reconciliation::Acceptance>,
 }
 
-/// Per-decision limits, optional turn meter, and optional intent capture slot.
+/// Per-decision limits and, when present, the shared aggregate turn meter and
+/// the slot [`super::prepare_action_intent`] captures the prepared digest in.
 pub(super) struct EnvelopePolicy<'a> {
     pub(super) limits: &'a EnvelopeLimits,
     pub(super) meter: Option<&'a mut TurnEnvelopeMeter>,
-    pub(super) capture: Option<&'a mut Option<super::approval::PreparedActionIntent>>,
+    pub(super) capture: Option<&'a mut Option<String>>,
 }

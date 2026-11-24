@@ -68,7 +68,7 @@ fn a_signed_session_token_maps_through_the_declared_role_table() {
             roles: vec!["member".into()],
             auth_method: "password".into(),
             role_table: "studio-roles/1",
-            accountable_person: Some("user:u1".into()),
+            accountable_person: None,
         }
     );
     let link = resolve(&token(&claims("user", "admin", "magic_link"))).unwrap();
@@ -188,37 +188,27 @@ fn a_jwks_without_ed25519_keys_is_refused() {
     assert!(TokenVerifier::from_jwks(ISSUER, "norn-host", "{}", &STUDIO_ROLES).is_err());
 }
 
+/// AUTH-INDEPENDENT-PERSON (#618): only the issuer's explicit claim names the
+/// person behind a token. Two sessions naming one person resolve to that one
+/// person; a user token without the claim names none (its session subject never
+/// stands in); a service key naming a person, or a malformed claim, is refused.
 #[test]
-fn distinct_sessions_carry_same_accountable_person_and_malformed_claim_refuses() {
-    let mut session_a = claims("user", "admin", "password");
-    session_a["sub"] = json!("sess-a");
-    session_a["norn"]["accountablePerson"] = json!("user:alice");
-    let mut session_b = claims("user", "admin", "oauth");
-    session_b["sub"] = json!("sess-b");
-    session_b["norn"]["accountablePerson"] = json!("user:alice");
-    let a = resolve(&token(&session_a));
-    let b = resolve(&token(&session_b));
-    assert!(a.is_ok() && b.is_ok());
-    if let (Ok(pa), Ok(pb)) = (a, b) {
-        assert_ne!(pa.subject_id, pb.subject_id);
-        assert_eq!(pa.accountable_person.as_deref(), Some("user:alice"));
-        assert_eq!(pb.accountable_person.as_deref(), Some("user:alice"));
-        assert!(!norn_kernel::independent_accountable_people(
-            pa.accountable_person.as_deref(),
-            pb.accountable_person.as_deref()
-        ));
+fn only_the_issuers_claim_names_the_accountable_person() {
+    let session = |sub: &str, person: Option<&str>| {
+        let mut claims = claims("user", "admin", "password");
+        claims["sub"] = json!(sub);
+        if let Some(person) = person {
+            claims["norn"]["accountablePerson"] = json!(person);
+        }
+        resolve(&token(&claims)).map(|principal| principal.accountable_person)
+    };
+    assert_eq!(session("sess-a", Some("alice")), Ok(Some("alice".into())));
+    assert_eq!(session("sess-b", Some("alice")), Ok(Some("alice".into())));
+    assert_eq!(session("sess-c", None), Ok(None));
+    for malformed in ["", "   ", " alice", "e\u{301}"] {
+        assert!(session("sess-d", Some(malformed)).is_err(), "{malformed:?}");
     }
-    let service = resolve(&token(&claims("service", "viewer", "api_key")));
-    assert!(matches!(
-        service,
-        Ok(Principal {
-            accountable_person: None,
-            ..
-        })
-    ));
-    for bad in ["", "   ", " user:alice", "user:e\u{301}"] {
-        let mut malformed = claims("user", "admin", "password");
-        malformed["norn"]["accountablePerson"] = json!(bad);
-        assert!(resolve(&token(&malformed)).is_err(), "{bad:?}");
-    }
+    let mut service = claims("service", "viewer", "api_key");
+    service["norn"]["accountablePerson"] = json!("alice");
+    assert!(resolve(&token(&service)).is_err());
 }

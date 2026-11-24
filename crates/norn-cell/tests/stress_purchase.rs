@@ -140,7 +140,7 @@ pub(crate) fn run(
             ]),
             actor: "synthetic:operator".into(),
             accountable_person: None,
-            approval: None,
+            approved_intent: None,
             input,
             idempotency_key: key.into(),
             object_type: None,

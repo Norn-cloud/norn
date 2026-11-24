@@ -90,27 +90,19 @@ pub struct RunStarter {
     pub roles: Vec<String>,
     /// The declared role table the roles came from.
     pub role_table: String,
-    /// AUTH-INDEPENDENT-PERSON (#618): the authenticated accountable person
-    /// behind this principal, distinct from session or delegated-agent subject ids.
+    /// AUTH-INDEPENDENT-PERSON (#618): the accountable person the host's
+    /// verified principal named; absent on principals that name none and on
+    /// starters recorded before people were bound.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accountable_person: Option<String>,
 }
 
 impl RunStarter {
-    /// Authenticated accountable person for independent-person approval checks.
-    ///
-    /// Explicit `accountable_person` claims are validated fail-closed. When absent,
-    /// only direct `user` principals resolve to their own canonical `subject`;
-    /// services, agents, and malformed claims return `None` (fail closed).
+    /// The accountable person behind this principal when it is a valid,
+    /// canonical identity; never the subject standing in for one.
     #[must_use]
     pub fn verified_accountable_person(&self) -> Option<&str> {
-        match self.accountable_person.as_deref() {
-            Some(person) => norn_kernel::validate_accountable_person(Some(person)),
-            None if self.actor_kind == "user" => {
-                norn_kernel::validate_accountable_person(Some(self.subject.as_str()))
-            }
-            None => None,
-        }
+        norn_kernel::validate_accountable_person(self.accountable_person.as_deref())
     }
 }
 
