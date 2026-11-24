@@ -54,6 +54,12 @@ export interface Binding {
   readonly pendingSave: "create" | "edit" | null
   /** The definition id a pending save targets (the binding's own, studio.binding.<id>). */
   readonly pendingDefinition: string | null
+  /** Unique attempt token guarding finish, abandon, and reconciliation writes against concurrent saves. */
+  readonly pendingAttempt: string | null
+  /** Cell environment the pending save targeted, so reconciliation reads the same environment. */
+  readonly pendingEnvironmentId: string | null
+  /** Epoch ms when the pending create or edit began, fencing active saves against premature abandon. */
+  readonly pendingStartedAt: number | null
 }
 
 export interface BindingDraft {
@@ -64,7 +70,7 @@ export interface BindingDraft {
   readonly runRole: RunRole
 }
 
-interface Row { id: string; app: string; tool: string; label: string; input_mapping: string; run_role: RunRole; updated_by: string; updated_at: number; manifest_digest: string; connector: string; definition_id: string | null; definition_version: number | null; state: "ready" | "creating" | "editing" }
+interface Row { id: string; app: string; tool: string; label: string; input_mapping: string; run_role: RunRole; updated_by: string; updated_at: number; manifest_digest: string; connector: string; definition_id: string | null; definition_version: number | null; state: "ready" | "creating" | "editing"; pending_attempt: string | null; pending_environment_id: string | null; pending_started_at: number | null }
 const fromRow = (row: Row): Binding => ({
   id: row.id, app: row.app, tool: row.tool, label: row.label, inputMapping: JSON.parse(row.input_mapping) as InputMapping,
   runRole: row.run_role, updatedBy: row.updated_by, updatedAt: row.updated_at,
@@ -73,8 +79,11 @@ const fromRow = (row: Row): Binding => ({
   state: row.state === "ready" ? "ready" : "pending",
   pendingSave: row.state === "creating" ? "create" : row.state === "editing" ? "edit" : null,
   pendingDefinition: row.state === "ready" ? null : row.definition_id,
+  pendingAttempt: row.state === "ready" ? null : row.pending_attempt,
+  pendingEnvironmentId: row.state === "ready" ? null : row.pending_environment_id,
+  pendingStartedAt: row.state === "ready" ? null : row.pending_started_at ?? row.updated_at,
 })
-const COLUMNS = "id, app, tool, label, input_mapping, run_role, updated_by, updated_at, manifest_digest, connector, definition_id, definition_version, state"
+const COLUMNS = "id, app, tool, label, input_mapping, run_role, updated_by, updated_at, manifest_digest, connector, definition_id, definition_version, state, pending_attempt, pending_environment_id, pending_started_at"
 
 export async function listBindings(db: D1Database, orgId: string): Promise<readonly Binding[]> {
   const { results } = await db.prepare(`SELECT ${COLUMNS} FROM connector_binding WHERE org_id = ? ORDER BY app, tool, label`).bind(orgId).all<Row>()
@@ -126,52 +135,157 @@ export interface Pin { readonly manifestDigest: string; readonly connector: Conn
  * `finishSave` writes the result (state ready) or `abandonSave` undoes the intent. A pending row
  * left by a failure is settled by `adoptCell` or `abandonSave` when reconciled against the cell.
  */
-export async function beginCreate(db: D1Database, orgId: string, actor: string, draft: BindingDraft, pin: Omit<Pin, "definition">, id: string, definitionId: string): Promise<void> {
-  const now = Date.now()
+export async function beginCreate(
+  db: D1Database,
+  orgId: string,
+  actor: string,
+  draft: BindingDraft,
+  pin: Omit<Pin, "definition">,
+  id: string,
+  definitionId: string,
+  attemptId: string,
+  environmentId: string | null,
+  now = Date.now(),
+): Promise<void> {
   await db.prepare(
-    "INSERT INTO connector_binding (id, org_id, app, tool, label, input_mapping, run_role, created_by, created_at, updated_by, updated_at, manifest_digest, connector, definition_id, definition_version, state) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'creating')",
-  ).bind(id, orgId, draft.app, draft.tool, draft.label, JSON.stringify(draft.inputMapping), draft.runRole, actor, now, actor, now, pin.manifestDigest, JSON.stringify(pin.connector), definitionId).run()
+    "INSERT INTO connector_binding (id, org_id, app, tool, label, input_mapping, run_role, created_by, created_at, updated_by, updated_at, manifest_digest, connector, definition_id, definition_version, state, pending_attempt, pending_environment_id, pending_started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'creating', ?, ?, ?)",
+  ).bind(id, orgId, draft.app, draft.tool, draft.label, JSON.stringify(draft.inputMapping), draft.runRole, actor, now, actor, now, pin.manifestDigest, JSON.stringify(pin.connector), definitionId, attemptId, environmentId, now).run()
 }
 
-/** Mark an existing binding as being saved; its current fields and version stay until the save finishes. */
-export async function beginEdit(db: D1Database, orgId: string, id: string, definitionId: string): Promise<void> {
-  // The target definition id is recorded too, so reconciliation can ask the cell about it.
-  await db.prepare("UPDATE connector_binding SET state = 'editing', definition_id = ? WHERE org_id = ? AND id = ?").bind(definitionId, orgId, id).run()
-}
-
-export async function finishSave(db: D1Database, orgId: string, actor: string, id: string, draft: BindingDraft, pin: Pin): Promise<Binding> {
-  const now = Date.now()
-  await db.prepare(
-    "UPDATE connector_binding SET label = ?, input_mapping = ?, run_role = ?, updated_by = ?, updated_at = ?, manifest_digest = ?, connector = ?, definition_id = ?, definition_version = ?, state = 'ready' WHERE org_id = ? AND id = ?",
-  ).bind(draft.label, JSON.stringify(draft.inputMapping), draft.runRole, actor, now, pin.manifestDigest, JSON.stringify(pin.connector), pin.definition?.id ?? null, pin.definition?.version ?? null, orgId, id).run()
-  const saved = await getBinding(db, orgId, id)
-  if (saved === null) throw new Error(`binding ${id} vanished while saving`)
-  return saved
+/** Mark an existing ready binding as being saved; returns false if another save already claimed it. */
+export async function beginEdit(
+  db: D1Database,
+  orgId: string,
+  id: string,
+  definitionId: string,
+  attemptId: string,
+  environmentId: string | null,
+  expectedVersion: number | null,
+  now = Date.now(),
+): Promise<boolean> {
+  const { results } = await db.prepare(
+    "UPDATE connector_binding SET state = 'editing', definition_id = ?, pending_attempt = ?, pending_environment_id = ?, pending_started_at = ? WHERE org_id = ? AND id = ? AND state = 'ready' AND definition_version IS ? RETURNING id",
+  ).bind(definitionId, attemptId, environmentId, now, orgId, id, expectedVersion).all<{ id: string }>()
+  return results.length > 0
 }
 
 /**
- * Undo a save's intent: a create that never reached the cell is deleted; an edit returns to ready
- * with its previous fields and definition (whose version is unchanged; a local binding keeps none).
+ * Commit a binding save only when the row still carries this exact pending attempt and prior
+ * version. Returns `null` if the attempt was abandoned or superseded so callers never report
+ * stale state as a completed save.
  */
-export async function abandonSave(db: D1Database, orgId: string, id: string, save: "create" | "edit", previous: Binding["definition"]): Promise<"deleted" | "restored"> {
-  if (save === "create") {
-    await db.prepare("DELETE FROM connector_binding WHERE org_id = ? AND id = ? AND state = 'creating'").bind(orgId, id).run()
-    return "deleted"
-  }
-  await db.prepare("UPDATE connector_binding SET state = 'ready', definition_id = ? WHERE org_id = ? AND id = ? AND state = 'editing'").bind(previous?.id ?? null, orgId, id).run()
-  return "restored"
+export async function finishSave(
+  db: D1Database,
+  orgId: string,
+  actor: string,
+  id: string,
+  draft: BindingDraft,
+  pin: Pin,
+  attemptId: string,
+  expectedPreviousVersion: number | null,
+  now = Date.now(),
+): Promise<Binding | null> {
+  const { results } = await db.prepare(
+    `UPDATE connector_binding SET label = ?, input_mapping = ?, run_role = ?, updated_by = ?, updated_at = ?, manifest_digest = ?, connector = ?, definition_id = ?, definition_version = ?, state = 'ready', pending_attempt = NULL, pending_environment_id = NULL, pending_started_at = NULL WHERE org_id = ? AND id = ? AND pending_attempt = ? AND state IN ('creating', 'editing') AND definition_version IS ? RETURNING ${COLUMNS}`,
+  ).bind(draft.label, JSON.stringify(draft.inputMapping), draft.runRole, actor, now, pin.manifestDigest, JSON.stringify(pin.connector), pin.definition?.id ?? null, pin.definition?.version ?? null, orgId, id, attemptId, expectedPreviousVersion).all<Row>()
+  const row = results[0]
+  return row === undefined ? null : fromRow(row)
 }
 
-/** Settle a pending binding from what the cell holds: the cell is the authority for version and fields. */
-export async function adoptCell(db: D1Database, orgId: string, id: string, definitionId: string, version: number, payload: Record<string, unknown>): Promise<void> {
+/**
+ * Sync a ready binding row to an edit that committed in the cell after its lease expired and
+ * reconciliation abandoned the pending marker back to `expectedPreviousVersion`. Guarded by
+ * `state = 'ready' AND definition_version IS expectedPreviousVersion` so a newer version is never
+ * overwritten, while preventing D1 from disagreeing with the cell's committed definition.
+ */
+export async function adoptCommittedEdit(
+  db: D1Database,
+  orgId: string,
+  actor: string,
+  id: string,
+  draft: BindingDraft,
+  pin: Pin,
+  expectedPreviousVersion: number | null,
+  now = Date.now(),
+): Promise<Binding | null> {
+  const { results } = await db.prepare(
+    `UPDATE connector_binding SET label = ?, input_mapping = ?, run_role = ?, updated_by = ?, updated_at = ?, manifest_digest = ?, connector = ?, definition_id = ?, definition_version = ?, state = 'ready', pending_attempt = NULL, pending_environment_id = NULL, pending_started_at = NULL WHERE org_id = ? AND id = ? AND state = 'ready' AND definition_version IS ? RETURNING ${COLUMNS}`,
+  ).bind(draft.label, JSON.stringify(draft.inputMapping), draft.runRole, actor, now, pin.manifestDigest, JSON.stringify(pin.connector), pin.definition?.id ?? null, pin.definition?.version ?? null, orgId, id, expectedPreviousVersion).all<Row>()
+  const row = results[0]
+  return row === undefined ? null : fromRow(row)
+}
+
+/**
+ * Undo a save's intent guarded by `attemptId` and expected version: a create that never reached the
+ * cell is deleted; an edit returns to ready with its previous fields and definition.
+ */
+export async function abandonSave(
+  db: D1Database,
+  orgId: string,
+  id: string,
+  save: "create" | "edit",
+  previous: Binding["definition"],
+  attemptId: string | null,
+): Promise<"deleted" | "restored" | "unchanged"> {
+  if (save === "create") {
+    const { results } = await db.prepare(
+      "DELETE FROM connector_binding WHERE org_id = ? AND id = ? AND state = 'creating' AND pending_attempt IS ? RETURNING id",
+    ).bind(orgId, id, attemptId).all<{ id: string }>()
+    return results.length > 0 ? "deleted" : "unchanged"
+  }
+  const { results } = await db.prepare(
+    "UPDATE connector_binding SET state = 'ready', definition_id = ?, pending_attempt = NULL, pending_environment_id = NULL, pending_started_at = NULL WHERE org_id = ? AND id = ? AND state = 'editing' AND pending_attempt IS ? AND definition_version IS ? RETURNING id",
+  ).bind(previous?.id ?? null, orgId, id, attemptId, previous?.version ?? null).all<{ id: string }>()
+  return results.length > 0 ? "restored" : "unchanged"
+}
+
+/**
+ * Settle a pending binding from what the cell holds, guarded by `attemptId` and
+ * `expectedPreviousVersion` so a newer completed save can never be overwritten by an earlier snapshot.
+ */
+export async function adoptCell(
+  db: D1Database,
+  orgId: string,
+  id: string,
+  definitionId: string,
+  version: number,
+  payload: Record<string, unknown>,
+  attemptId: string | null,
+  expectedPreviousVersion: number | null,
+): Promise<boolean> {
   const label = typeof payload.label === "string" ? payload.label : null
   const mapping = typeof payload.inputMapping === "object" && payload.inputMapping !== null ? JSON.stringify(payload.inputMapping) : null
   const role = payload.runRole === "member" || payload.runRole === "admin" ? payload.runRole : null
   const digest = typeof payload.manifestDigest === "string" ? payload.manifestDigest : null
   const connector = typeof payload.connector === "object" && payload.connector !== null ? JSON.stringify(payload.connector) : null
-  await db.prepare(
-    "UPDATE connector_binding SET label = COALESCE(?, label), input_mapping = COALESCE(?, input_mapping), run_role = COALESCE(?, run_role), manifest_digest = COALESCE(?, manifest_digest), connector = COALESCE(?, connector), definition_id = ?, definition_version = ?, state = 'ready' WHERE org_id = ? AND id = ?",
-  ).bind(label, mapping, role, digest, connector, definitionId, version, orgId, id).run()
+  const { results } = await db.prepare(
+    "UPDATE connector_binding SET label = COALESCE(?, label), input_mapping = COALESCE(?, input_mapping), run_role = COALESCE(?, run_role), manifest_digest = COALESCE(?, manifest_digest), connector = COALESCE(?, connector), definition_id = ?, definition_version = ?, state = 'ready', pending_attempt = NULL, pending_environment_id = NULL, pending_started_at = NULL WHERE org_id = ? AND id = ? AND pending_attempt IS ? AND state IN ('creating', 'editing') AND definition_version IS ? RETURNING id",
+  ).bind(label, mapping, role, digest, connector, definitionId, version, orgId, id, attemptId, expectedPreviousVersion).all<{ id: string }>()
+  return results.length > 0
+}
+
+/**
+ * Sync a ready binding row forward when reconciliation discovers the cell already holds a newer
+ * version (e.g. a timed-out edit that committed in the cell after its lease expired).
+ */
+export async function adoptReadyCell(
+  db: D1Database,
+  orgId: string,
+  id: string,
+  definitionId: string,
+  version: number,
+  payload: Record<string, unknown>,
+  expectedPreviousVersion: number,
+): Promise<boolean> {
+  const label = typeof payload.label === "string" ? payload.label : null
+  const mapping = typeof payload.inputMapping === "object" && payload.inputMapping !== null ? JSON.stringify(payload.inputMapping) : null
+  const role = payload.runRole === "member" || payload.runRole === "admin" ? payload.runRole : null
+  const digest = typeof payload.manifestDigest === "string" ? payload.manifestDigest : null
+  const connector = typeof payload.connector === "object" && payload.connector !== null ? JSON.stringify(payload.connector) : null
+  const { results } = await db.prepare(
+    "UPDATE connector_binding SET label = COALESCE(?, label), input_mapping = COALESCE(?, input_mapping), run_role = COALESCE(?, run_role), manifest_digest = COALESCE(?, manifest_digest), connector = COALESCE(?, connector), definition_id = ?, definition_version = ? WHERE org_id = ? AND id = ? AND state = 'ready' AND definition_version = ? RETURNING id",
+  ).bind(label, mapping, role, digest, connector, definitionId, version, orgId, id, expectedPreviousVersion).all<{ id: string }>()
+  return results.length > 0
 }
 
 export async function removeBinding(db: D1Database, orgId: string, id: string): Promise<boolean> {
@@ -179,6 +293,63 @@ export async function removeBinding(db: D1Database, orgId: string, id: string): 
   if (before === null) return false
   await db.prepare("DELETE FROM connector_binding WHERE org_id = ? AND id = ?").bind(orgId, id).run()
   return true
+}
+
+/** Durable tombstone for an abandoned create whose cell install outcome was unknown. */
+export interface OrphanTombstone {
+  readonly orgId: string
+  readonly bindingId: string
+  readonly definitionId: string
+  readonly environmentId: string | null
+  readonly abandonedAt: number
+}
+
+interface OrphanRow {
+  org_id: string
+  binding_id: string
+  definition_id: string
+  environment_id: string | null
+  abandoned_at: number
+}
+
+/**
+ * Atomically abandon an expired `creating` binding AND record a durable orphan tombstone in one
+ * D1 batch so reconciliation can still detect and retire a late cell commit even if the original
+ * Worker response was lost.
+ */
+export async function abandonCreateWithTombstone(
+  db: D1Database,
+  orgId: string,
+  id: string,
+  attemptId: string | null,
+  now = Date.now(),
+): Promise<"deleted" | "unchanged"> {
+  await db.batch([
+    db.prepare(
+      "INSERT OR REPLACE INTO connector_binding_orphan (org_id, binding_id, definition_id, environment_id, abandoned_at) SELECT org_id, id, definition_id, pending_environment_id, ? FROM connector_binding WHERE org_id = ? AND id = ? AND state = 'creating' AND pending_attempt IS ? AND definition_id IS NOT NULL",
+    ).bind(now, orgId, id, attemptId),
+    db.prepare(
+      "DELETE FROM connector_binding WHERE org_id = ? AND id = ? AND state = 'creating' AND pending_attempt IS ?",
+    ).bind(orgId, id, attemptId),
+  ])
+  return (await getBinding(db, orgId, id)) === null ? "deleted" : "unchanged"
+}
+
+export async function listOrphans(db: D1Database, orgId: string): Promise<readonly OrphanTombstone[]> {
+  const { results } = await db.prepare(
+    "SELECT org_id, binding_id, definition_id, environment_id, abandoned_at FROM connector_binding_orphan WHERE org_id = ?",
+  ).bind(orgId).all<OrphanRow>()
+  return results.map((row) => ({
+    orgId: row.org_id,
+    bindingId: row.binding_id,
+    definitionId: row.definition_id,
+    environmentId: row.environment_id,
+    abandonedAt: row.abandoned_at,
+  }))
+}
+
+export async function clearOrphan(db: D1Database, orgId: string, bindingId: string): Promise<void> {
+  await db.prepare("DELETE FROM connector_binding_orphan WHERE org_id = ? AND binding_id = ?").bind(orgId, bindingId).run()
 }
 
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/

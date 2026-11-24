@@ -1,5 +1,5 @@
 import { refusalOf, type Diagnostic } from "./cell-read.ts"
-import { CellUnavailable, readStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
+import { CellUnavailable, parseUnavailableDetail, readStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
 import { readDocument, type Read } from "./exact.ts"
 import { nextCursor, recordsPath, servedQuery, snapshotMoved, totalOf, type RecordsQuery, type Served, type Total } from "./records-query.ts"
 import { currentMode } from "./live-transport.ts"
@@ -62,7 +62,19 @@ async function fetchLiveRecords(
     const read = readDocument<ObjectPage>(text, "live")
     return { kind: "page", read, origin: "live", served: servedQuery(read.document), next: nextCursor(read.document), total: totalOf(read.document) }
   }
-  // A 404 or 503 falls back before decoding the body, which may come from the proxy.
+  if (response.status === 503) {
+    let parsed: { code?: unknown; message?: unknown } | null = null
+    if (text !== "") {
+      try { parsed = JSON.parse(text) as { code?: unknown; message?: unknown } | null } catch { parsed = null }
+    }
+    // Scoped live previews (`recorded === null`) and structured cell outages (such as `cell.unopenable`)
+    // must surface their availability failure instead of pretending the type or query is unserved.
+    if (recorded === null || typeof parsed?.code === "string") {
+      const message = typeof parsed?.message === "string" && parsed.message !== "" ? parsed.message : undefined
+      throw new CellUnavailable(response.status, message, parseUnavailableDetail(parsed))
+    }
+  }
+  // A 404 or bare proxy 503 falls back before decoding the body, which may come from the proxy.
   if (response.status === 404 || response.status === 503) {
     if (query.sort.length > 0 || query.filter !== null) return { kind: "refused", status: response.status, code: "studio.query_unavailable", message: "This cell can't sort or filter records yet.", diagnostics: [] }
     return recorded === null ? { kind: "none" } : recordedPage(await recorded(objectType, query.after))
@@ -99,17 +111,18 @@ export async function readRecordsAtScope(
  *   A query is never sent to the recording: it cannot sort or filter, and the grid offers neither.
  * - A refusal is returned exactly, with every diagnostic. A 409 `object.snapshot_moved` is `restart`.
  */
-export async function readRecords(objectType: string, query: RecordsQuery, deps: RecordsDeps = defaults): Promise<RecordsRead> {
+export async function readRecords(objectType: string, query: RecordsQuery, deps: RecordsDeps = defaults, signal?: AbortSignal): Promise<RecordsRead> {
   let scope: StudioScope | null
   try {
-    scope = await readStudioScope(deps.fetcher)
+    scope = await readStudioScope(deps.fetcher, signal)
   } catch (error) {
+    if (signal?.aborted) throw error
     // No signed-in session reachable (local preview, tests): only the recording can be read.
     if (error instanceof CellUnavailable) return recordedPage(await deps.recorded(objectType, query.after))
     throw error
   }
   if (scope === null) return { kind: "no-cell" }
-  return fetchLiveRecords(objectType, query, scope, deps.fetcher, deps.recorded)
+  return fetchLiveRecords(objectType, query, scope, deps.fetcher, deps.recorded, signal)
 }
 
 /** The diagnostics that point at one part of the request, e.g. `/filter/all/2`. */

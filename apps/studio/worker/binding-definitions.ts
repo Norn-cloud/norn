@@ -67,6 +67,9 @@ const findingsOf = (body: unknown): readonly Finding[] => {
     : []
 }
 
+/** Hard time limit for a single DEFS cell call (strictly below the 2-minute pending-save lease). */
+export const CELL_CALL_TIMEOUT_MS = 30_000
+
 /** A cell that cannot be reached or answers outside DEFS's contract: nothing was saved there. */
 export class CellUnavailable extends Error {}
 
@@ -87,7 +90,12 @@ export class BindingDefinitions {
     if (body !== undefined) headers.set("content-type", "application/json")
     let response: Response
     try {
-      response = await host.fetch(new Request(`https://norn-host${this.scoped(path)}`, { method, headers, ...body === undefined ? {} : { body: JSON.stringify(body) } }))
+      response = await host.fetch(new Request(`https://norn-host${this.scoped(path)}`, {
+        method,
+        headers,
+        signal: AbortSignal.timeout(CELL_CALL_TIMEOUT_MS),
+        ...body === undefined ? {} : { body: JSON.stringify(body) },
+      }))
     } catch {
       throw new CellUnavailable("The cell could not be reached; the binding was not saved.")
     }
@@ -99,16 +107,20 @@ export class BindingDefinitions {
   }
 
   /**
-   * What the cell holds for a definition id: its version and payload, `absent` when it holds none
-   * (or does not serve the kind or the route), or `local` without a cell host. Reconciliation
-   * reads it to settle a binding whose save did not finish.
+   * What the cell holds for a definition id: its version, lifecycle (`active` or `retired`), and
+   * payload, `absent` (with `confirmed: true` only on `404 definition.not_found`, and `false` when
+   * the route or binding kind is not served), or `local` without a cell host.
    */
-  async get(id: string): Promise<{ readonly kind: "found"; readonly version: number; readonly payload: Record<string, unknown> } | { readonly kind: "absent" } | { readonly kind: "local" }> {
+  async get(id: string): Promise<{ readonly kind: "found"; readonly version: number; readonly lifecycle: "active" | "retired"; readonly payload: Record<string, unknown> } | { readonly kind: "absent"; readonly confirmed: boolean } | { readonly kind: "local" }> {
     const answer = await this.call("GET", `/v1/definitions/${encodeURIComponent(id)}`)
     if (answer === null) return { kind: "local" }
-    const b = answer.body as { version?: unknown; payload?: unknown; code?: unknown } | null
-    if (answer.status === 200 && typeof b?.version === "number") return { kind: "found", version: b.version, payload: (typeof b.payload === "object" && b.payload !== null ? b.payload : {}) as Record<string, unknown> }
-    if (answer.status === 404 || (answer.status === 422 && b?.code === "definition.kind_unknown")) return { kind: "absent" }
+    const b = answer.body as { version?: unknown; lifecycle?: unknown; payload?: unknown; code?: unknown } | null
+    if (answer.status === 200 && typeof b?.version === "number") {
+      const lifecycle = b.lifecycle === "retired" ? "retired" : "active"
+      return { kind: "found", version: b.version, lifecycle, payload: (typeof b.payload === "object" && b.payload !== null ? b.payload : {}) as Record<string, unknown> }
+    }
+    if (answer.status === 404 && b?.code === "definition.not_found") return { kind: "absent", confirmed: true }
+    if (answer.status === 404 || (answer.status === 422 && b?.code === "definition.kind_unknown")) return { kind: "absent", confirmed: false }
     throw new CellUnavailable(`The cell answered ${answer.status} reading ${id}.`)
   }
 

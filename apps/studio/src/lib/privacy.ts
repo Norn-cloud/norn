@@ -1,4 +1,5 @@
 import { cellCall, defaultFetch, type Fetch } from "./cell-read.ts"
+import type { StudioScope } from "./definitions.ts"
 
 /**
  * PRIVACY-1/2. A marked property arrives already projected by the server: a pseudonym, `•••`,
@@ -47,12 +48,14 @@ export type RevealResult =
 export async function revealProperty(
   objectType: string, id: string, property: string, purpose: string,
   idempotencyKey: string = globalThis.crypto.randomUUID(), fetcher: Fetch = defaultFetch,
+  boundScope?: StudioScope | null,
 ): Promise<RevealResult> {
   const body = { property, ...purpose.trim() === "" ? {} : { purpose: purpose.trim() }, idempotencyKey }
   const result = await cellCall<{ value: unknown; receipt: RevealReceipt }>(
     `/v1/objects/${encodeURIComponent(objectType)}/${encodeURIComponent(id)}/reveal`,
     { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) },
     fetcher,
+    boundScope,
   )
   switch (result.kind) {
     case "ok": return { kind: "revealed", value: result.value.value, receipt: result.value.receipt }
