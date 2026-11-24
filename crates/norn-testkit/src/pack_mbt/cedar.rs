@@ -1,4 +1,4 @@
-//! Full Cedar authorization and Separation-of-Duties (SoD) matrix driver (#1656).
+//! Full Cedar authorization and Separation-of-Duties (`SoD`) matrix driver (#1656).
 //!
 //! Compiles an [`AdmittedPack`]'s `AccessIR` policies through `norn-authz` and
 //! verifies every rule against authorized actors, unauthorized roles, foreign
@@ -40,7 +40,7 @@ struct CedarCtx<'a> {
     coverage: &'a Arc<Mutex<DomainCoverage>>,
 }
 
-/// Runs the exhaustive Cedar & SoD matrix across every `AccessIR` rule in `pack`.
+/// Runs the exhaustive Cedar & `SoD` matrix across every `AccessIR` rule in `pack`.
 ///
 /// # Errors
 ///
@@ -341,14 +341,16 @@ fn prepare_denied_action_input<H: PackHost>(
     }
     if matches!(effect, ActionEffectProgram::FireTransition { .. }) {
         let seeded = synthesize_object(pack, object_type, &obj_id, seq);
-        let _ = host.commit(CellCommit {
-            writes: vec![FactWrite {
-                key: FactKey::new(object_type.name.as_str(), &obj_id),
-                expected: FactVersion::ABSENT,
-                mutation: FactMutation::Put { values: seeded },
-            }],
-            ..CellCommit::empty()
-        });
+        let _seed_ok = host
+            .commit(CellCommit {
+                writes: vec![FactWrite {
+                    key: FactKey::new(object_type.name.as_str(), &obj_id),
+                    expected: FactVersion::ABSENT,
+                    mutation: FactMutation::Put { values: seeded },
+                }],
+                ..CellCommit::empty()
+            })
+            .is_ok();
     }
     input
 }
@@ -388,10 +390,14 @@ where
         Some(hint.clone()),
         move |auth_req| {
             let mut mapped = req_clone.clone();
-            mapped.action_id = auth_req.action.action_id.clone();
-            mapped.capability = auth_req.action.action_id.clone();
-            mapped.resource.id = auth_req.target.key.clone();
-            mapped.resource.object_type = auth_req.target.object_type.as_str().to_owned();
+            mapped.action_id.clone_from(&auth_req.action.action_id);
+            mapped.capability.clone_from(&auth_req.action.action_id);
+            mapped.resource.id.clone_from(&auth_req.target.key);
+            auth_req
+                .target
+                .object_type
+                .as_str()
+                .clone_into(&mut mapped.resource.object_type);
             Ok(mapped)
         },
     );
@@ -558,10 +564,12 @@ fn apply_resource_condition(
                 }),
                 AccessLiteral::Long(n) => {
                     let adjusted = match rc.op {
-                        ResourceCompareOp::Eq | ResourceCompareOp::Le | ResourceCompareOp::Ge => *n,
+                        ResourceCompareOp::Eq
+                        | ResourceCompareOp::Le
+                        | ResourceCompareOp::Ge
+                        | ResourceCompareOp::In => *n,
                         ResourceCompareOp::Ne | ResourceCompareOp::Gt => n.saturating_add(1),
                         ResourceCompareOp::Lt => n.saturating_sub(1),
-                        ResourceCompareOp::In => *n,
                     };
                     AttrValue::Long(adjusted)
                 }

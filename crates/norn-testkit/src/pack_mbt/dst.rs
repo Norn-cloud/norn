@@ -382,7 +382,10 @@ impl<H: PackHost> DstCaseState<'_, H> {
             return Ok(());
         };
         let len = target.lifecycle.transitions.len();
-        let Some(transition) = target.lifecycle.transitions.get(transition_idx % len) else {
+        let Some(transition) = transition_idx
+            .checked_rem(len)
+            .and_then(|idx| target.lifecycle.transitions.get(idx))
+        else {
             return Ok(());
         };
         let ty_name = target.object_type.name.as_str();
@@ -427,7 +430,7 @@ impl<H: PackHost> DstCaseState<'_, H> {
                             return Err("valid transition did not append 1 ledger entry".to_owned());
                         }
                         if let Some(entry) = self.model.get_mut(&(type_idx, slot)) {
-                            entry.state = transition.to.clone();
+                            entry.state.clone_from(&transition.to);
                             entry
                                 .values
                                 .insert(prop.to_owned(), JsonValue::String(transition.to.clone()));

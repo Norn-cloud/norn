@@ -19,7 +19,7 @@
 //!    declared lifecycles/policies + `runtime-enforced` `LAW-EXAMPLE-1` parity):
 //!    all-states and all-transitions walks, disallowed transitions, mutations on
 //!    every `immutable` state and entity (`IMMUTABLE_STATE_WRITE` + zero ledger
-//!    writes), full Cedar & SoD matrix (`PermissionDenied` + zero ledger
+//!    writes), full Cedar & `SoD` matrix (`PermissionDenied` + zero ledger
 //!    events), and `LAW-EXAMPLE-1` runtime parity against a real [`PackHost`].
 //! 4. **Seeded Multi-Entity Stateful DST** ([`dst`], `sampled`): seeded,
 //!    shrinkable `proptest` operation sequences with virtual clock steps
@@ -88,13 +88,13 @@ pub struct LawExampleCase {
 pub struct AdmittedPack {
     /// Pack identifier for diagnostics and coverage reports.
     pub name: String,
-    /// Admitted EntityIR v2 object types.
+    /// Admitted `EntityIR` v2 object types.
     pub object_types: Vec<ObjectTypeDef>,
-    /// Admitted EntityIR v2 interfaces.
+    /// Admitted `EntityIR` v2 interfaces.
     pub interfaces: Vec<InterfaceDef>,
     /// Shared named property types (`ref` targets).
     pub property_types: Vec<PropertyTypeDef>,
-    /// Admitted ActionIR definitions with their artifact pins `(artifact_id, version, root)`.
+    /// Admitted `ActionIR` definitions with their artifact pins `(artifact_id, version, root)`.
     pub actions: Vec<AdmittedAction>,
     /// Retained governing law envelopes (passed directly to `TypeCatalog` / `Model`).
     pub law_envelopes: Vec<ArtifactEnvelope>,

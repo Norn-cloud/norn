@@ -9,7 +9,7 @@
 //!    (`exhaustive-finite`): asserts `UNDECLARED_WRITE`, `DIRECT_WRITE`,
 //!    `IMMUTABLE_STATE_WRITE`, and `commit.immutable_object` with zero ledger
 //!    writes.
-//! 3. **Full Cedar authorization & SoD matrix** (`exhaustive-finite`): compiles
+//! 3. **Full Cedar authorization & `SoD` matrix** (`exhaustive-finite`): compiles
 //!    `AccessIR` via real `norn-authz` Cedar PDP and tests authorized actors,
 //!    unauthorized roles, foreign scopes, and self-approvers (`PermissionDenied`
 //!    + zero ledger writes).

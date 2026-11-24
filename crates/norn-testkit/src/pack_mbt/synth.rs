@@ -172,16 +172,12 @@ pub fn synthesize_object(
                 .map(|state| (lc.property.as_str(), state.as_str()))
         })
         .collect();
-    let key_props: BTreeSet<&str> = object_type
-        .identity
-        .first()
-        .map(|spec| {
-            spec.properties
-                .iter()
-                .map(norn_kernel::norn_ir::PropertyId::as_str)
-                .collect()
-        })
-        .unwrap_or_default();
+    let key_props: BTreeSet<&str> = object_type.identity.first().map_or_default(|spec| {
+        spec.properties
+            .iter()
+            .map(norn_kernel::norn_ir::PropertyId::as_str)
+            .collect()
+    });
 
     let mut values = JsonObject::new();
     for prop in &object_type.properties {
@@ -556,9 +552,7 @@ fn synthesize_property_value(
         }
         PropertyType::Decimal { .. } | PropertyType::DecimalBinding { .. } => {
             let text = format!("{}.50", (seed % 100).saturating_add(10));
-            Decimal::parse_wire(&text)
-                .map(JsonValue::Number)
-                .unwrap_or_else(|_| JsonValue::from(10_i64))
+            Decimal::parse_wire(&text).map_or_else(|_| JsonValue::from(10_i64), JsonValue::Number)
         }
         PropertyType::Boolean {} => JsonValue::Bool(true),
         PropertyType::Enum { values } => JsonValue::String(

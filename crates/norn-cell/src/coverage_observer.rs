@@ -369,7 +369,7 @@ fn extract_states(
 fn governing_law_ids_for(model: &crate::model::Model, object_type: &str) -> BTreeSet<String> {
     model
         .governing_laws(object_type)
-        .map(|artifacts| {
+        .map_or_default(|artifacts| {
             artifacts
                 .into_iter()
                 .filter_map(|artifact| {
@@ -383,7 +383,6 @@ fn governing_law_ids_for(model: &crate::model::Model, object_type: &str) -> BTre
                 })
                 .collect()
         })
-        .unwrap_or_default()
 }
 
 impl<E, C, I, S: SqlEngine> CellHost for ObservedSqliteCell<E, C, I, S>

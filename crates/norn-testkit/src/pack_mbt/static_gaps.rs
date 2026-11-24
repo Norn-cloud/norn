@@ -135,7 +135,7 @@ impl StaticGapReport {
             .collect()
     }
 
-    /// Returns all explicit policy questions (such as missing SoD policies).
+    /// Returns all explicit policy questions (such as missing `SoD` policies).
     #[must_use]
     pub fn questions(&self) -> Vec<&StructuralGap> {
         self.gaps

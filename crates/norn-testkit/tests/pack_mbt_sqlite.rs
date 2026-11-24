@@ -3,7 +3,7 @@
 //! Detector, and Seeded Multi-Entity DST (#1656).
 //!
 //! Exercises real `origin/main` registry packs (`ml`, `tracking`, `canon`,
-//! `time`, `org`) plus an Order-to-Cash SoD & immutable-terminal pack against
+//! `time`, `org`) plus an Order-to-Cash `SoD` & immutable-terminal pack against
 //! file-backed [`ObservedSqliteCell`] with crash/reopen and `verify_ledger()`.
 
 use std::collections::BTreeSet;
