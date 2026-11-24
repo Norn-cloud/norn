@@ -418,13 +418,16 @@ impl NornCell {
 
     /// Configure the cell's source connections (`NORN_SOURCES`, a JSON
     /// array) and the server variables they read (`NORN_SECRET_*` and
-    /// `NORN_S3_*`, as one JSON object). The values stay in the cell.
+    /// `NORN_S3_*`, as one JSON object). The values stay in the cell, which
+    /// keeps only the connections of its own scope and the secrets they bind
+    /// (SOURCE-SCOPE-1).
     ///
     /// # Errors
     /// Malformed configuration; the cell then serves without connections.
     #[wasm_bindgen(js_name = configureConnect)]
     pub fn configure_connect(&mut self, config: &str, vars: &str) -> Result<(), JsValue> {
-        self.connect = Some(crate::connect::Connect::new(config, vars).map_err(rejected)?);
+        let connect = crate::connect::Connect::new(self.tenant.scope(), config, vars);
+        self.connect = Some(connect.map_err(rejected)?);
         Ok(())
     }
 
@@ -625,7 +628,7 @@ impl NornGate {
             org_id,
             environment_id,
         };
-        let connect = crate::connect::Connect::new(sources, vars).is_ok();
+        let connect = crate::connect::Connect::new(&scope, sources, vars).is_ok();
         let gate = Gate::new(scope.clone(), &DEMO_GRANTS, lineage_key.as_deref(), connect)
             .map_err(rejected)?;
         let principals = Principals::of(issuer, jwks, scope, gate.caller(), now_ms)?;

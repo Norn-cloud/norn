@@ -27,9 +27,13 @@
 //! only to a host the operator lists in [`ALLOWED_HOSTS_VAR`](crate::sources::ALLOWED_HOSTS_VAR)
 //! (comma-separated, empty by default). The check is of the URL, not of what
 //! a name resolves to.
+//! SOURCE-SCOPE-1: a connection, its endpoint and the secrets it may resolve
+//! are bound to the cell scope it names: a cell keeps only its own
+//! connections and the secrets they bind, and a connector resolves no other.
+
+mod auth;
 
 use std::collections::BTreeMap;
-use std::fmt::Write as _;
 
 use norn_cell::MappingOutcome;
 use norn_cell::engine::SqlEngine;
@@ -39,6 +43,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::host::DevHost;
 use crate::pull::{Limits, Pull, PullError, PullProfile, Request, Watermark, observation};
+use crate::scope::CellScope;
+pub use auth::secret_env;
+use auth::{auth_headers, client_credentials};
 
 /// The server variable listing the hosts a base URL may name although they
 /// are internal or plain http (SYNC-URL-1): comma-separated host names or IP
@@ -62,6 +69,14 @@ pub const DEFAULT_EVERY_MINUTES: u32 = 15;
 pub struct ConnectionConfig {
     /// The connection id, e.g. `erpnext.rest`.
     pub id: String,
+    /// SOURCE-SCOPE-1: the organization whose cell owns the connection.
+    pub org_id: String,
+    /// SOURCE-SCOPE-1: the environment whose cell owns the connection.
+    pub environment_id: String,
+    /// SOURCE-SCOPE-1: the secret references (a connector's `secretRef` or
+    /// `clientSecretRef`) the connection may resolve; any other is refused.
+    #[serde(default)]
+    pub secret_refs: Vec<String>,
     /// The source system (`erpnext`, `odoo`, `shopify`).
     pub system: String,
     /// The display name.
@@ -252,24 +267,31 @@ impl std::fmt::Debug for Sources {
 }
 
 impl Sources {
-    /// The connections in `config` (a JSON array of [`ConnectionConfig`]),
-    /// with `secrets` keyed by their environment names.
+    /// The connections in `config` (a JSON array of [`ConnectionConfig`])
+    /// that the cell serving `scope` owns, with the `secrets` (keyed by their
+    /// environment names) they bind (SOURCE-SCOPE-1).
     ///
     /// # Errors
-    /// Malformed configuration, a duplicate id, or a base URL SYNC-URL-1 refuses.
-    pub fn new(config: &str, secrets: BTreeMap<String, String>) -> Result<Self, String> {
-        Self::with_allowed_hosts(config, secrets, "")
+    /// Malformed configuration, a duplicate id, a base URL SYNC-URL-1
+    /// refuses, or a secret bound in two scopes.
+    pub fn new(
+        scope: &CellScope,
+        config: &str,
+        secrets: &BTreeMap<String, String>,
+    ) -> Result<Self, String> {
+        Self::with_allowed_hosts(scope, config, secrets, "")
     }
 
     /// [`Sources::new`], with `allowed_hosts` (the [`ALLOWED_HOSTS_VAR`]
     /// value) naming the internal or plain-http hosts a base URL may use.
     ///
     /// # Errors
-    /// Malformed configuration, a duplicate id, a base URL SYNC-URL-1
-    /// refuses, or an `allowed_hosts` entry that is not a bare host.
+    /// What [`Sources::new`] refuses, or an `allowed_hosts` entry that is not
+    /// a bare host.
     pub fn with_allowed_hosts(
+        scope: &CellScope,
         config: &str,
-        secrets: BTreeMap<String, String>,
+        secrets: &BTreeMap<String, String>,
         allowed_hosts: &str,
     ) -> Result<Self, String> {
         let allowed_hosts = allowed_host_list(allowed_hosts)?;
@@ -305,6 +327,8 @@ impl Sources {
                 ));
             }
         }
+        // SOURCE-SCOPE-1: every connection was checked; the cell keeps its own.
+        let (connections, secrets) = auth::bind(scope, connections, secrets)?;
         Ok(Self {
             connections,
             secrets,
@@ -519,6 +543,14 @@ impl Sources {
         let Some(config) = self.connections.iter().find(|c| c.id == id).cloned() else {
             return Step::Done(failed_summary("", "source.unknown", "no such connection"));
         };
+        if !auth::owns(host.scope(), &config) {
+            // SOURCE-SCOPE-1: never stepped, nor reported, in another cell.
+            if let Some(state) = self.state.get_mut(id) {
+                state.run = None;
+            }
+            let message = "the connection belongs to another cell";
+            return Step::Done(failed_summary("", "source.scope_mismatch", message));
+        }
         let watermarks_known = self.state.get(id).and_then(|s| s.watermarks.clone());
         let Some(run) = self.state.get_mut(id).and_then(|s| s.run.as_mut()) else {
             return Step::Done(failed_summary(
@@ -650,7 +682,7 @@ fn begin<E: SqlEngine>(
     }
     let token = client_credentials(&payload, secrets, config)?;
     if token.is_none() {
-        run.auth = auth_headers(&payload, secrets)?;
+        run.auth = auth_headers(&payload, secrets, config)?;
     }
     let stored = host
         .host_object(crate::sources::CONNECTION_TYPE, &config.id)
@@ -813,111 +845,6 @@ fn drain<E: SqlEngine>(host: &DevHost<E>, run: &mut Run) -> Result<Next, Failure
         return Ok(Next::Continue);
     }
     Ok(run.after.take().map_or(Next::Done, Next::Request))
-}
-
-/// For an `oauth2` connector, the client-credentials token request (RFC 6749
-/// §4.4) to the connector's relative `tokenUrl` on the connection's base URL,
-/// with the client id and secret from the `clientSecretRef` secret
-/// (`<id>:<secret>`).
-fn client_credentials(
-    payload: &serde_json::Value,
-    secrets: &BTreeMap<String, String>,
-    config: &ConnectionConfig,
-) -> Result<Option<HttpRequest>, Failure> {
-    let auth = payload.get("auth").cloned().unwrap_or_default();
-    let field = |name: &str| auth.get(name).and_then(serde_json::Value::as_str);
-    if field("kind") != Some("oauth2") {
-        return Ok(None);
-    }
-    let path = field("tokenUrl")
-        .filter(|p| p.starts_with('/') && !p.contains("://"))
-        .ok_or_else(|| {
-            fail(
-                "source.auth_unsupported",
-                "an oauth2 tokenUrl is a path on the connection",
-            )
-        })?;
-    let name = secret_env(field("clientSecretRef").unwrap_or_default());
-    let (id, secret) = secrets
-        .get(&name)
-        .and_then(|pair| pair.split_once(':'))
-        .ok_or_else(|| {
-            fail(
-                "source.secret_missing",
-                format!("the server has no {name} (<client id>:<client secret>)"),
-            )
-        })?;
-    let form = |text: &str| -> String {
-        let mut out = String::with_capacity(text.len());
-        for b in text.bytes() {
-            if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
-                out.push(char::from(b));
-            } else {
-                // Writing to a String cannot fail.
-                let _written = write!(out, "%{b:02X}");
-            }
-        }
-        out
-    };
-    Ok(Some(HttpRequest {
-        method: "POST",
-        url: format!("{}{path}", config.base_url.trim_end_matches('/')),
-        headers: vec![(
-            "Content-Type".into(),
-            "application/x-www-form-urlencoded".into(),
-        )],
-        body: Some(format!(
-            "grant_type=client_credentials&client_id={}&client_secret={}",
-            form(id),
-            form(secret)
-        )),
-    }))
-}
-
-/// The connector's declared header auth, resolved from server secrets.
-fn auth_headers(
-    payload: &serde_json::Value,
-    secrets: &BTreeMap<String, String>,
-) -> Result<Vec<(String, String)>, Failure> {
-    let auth = payload.get("auth").cloned().unwrap_or_default();
-    let field = |name: &str| auth.get(name).and_then(serde_json::Value::as_str);
-    match field("kind") {
-        Some("none") => Ok(Vec::new()),
-        Some("api_key") if field("placement") == Some("header") => {
-            let reference = field("secretRef").unwrap_or_default();
-            let name = secret_env(reference);
-            let secret = secrets
-                .get(&name)
-                .filter(|s| !s.is_empty())
-                .ok_or_else(|| {
-                    fail("source.secret_missing", format!("the server has no {name}"))
-                })?;
-            let header = field("name").unwrap_or("Authorization");
-            Ok(vec![(
-                header.to_owned(),
-                format!("{}{secret}", field("prefix").unwrap_or_default()),
-            )])
-        }
-        _ => Err(fail(
-            "source.auth_unsupported",
-            "this connector's auth is not supported by the pull host",
-        )),
-    }
-}
-
-/// The environment name of a secret reference: `erpnext_rest_token` is
-/// `NORN_SECRET_ERPNEXT_REST_TOKEN`.
-#[must_use]
-pub fn secret_env(reference: &str) -> String {
-    let mut name = String::from("NORN_SECRET_");
-    name.extend(reference.chars().map(|c| {
-        if c.is_ascii_alphanumeric() {
-            c.to_ascii_uppercase()
-        } else {
-            '_'
-        }
-    }));
-    name
 }
 
 fn http(config: &ConnectionConfig, auth: &[(String, String)], request: Request) -> HttpRequest {
@@ -1420,9 +1347,89 @@ mod tests {
     fn config() -> ConnectionConfig {
         serde_json::from_value(serde_json::json!({
             "id": "shop.dev", "system": "shopify", "label": "Dev store", "connector": "shopify.dev.connector",
-            "mapping": "shopify.dev.mapping", "instance": "dev", "baseUrl": "https://dev-store.example"
+            "mapping": "shopify.dev.mapping", "instance": "dev", "baseUrl": "https://dev-store.example",
+            "orgId": "org_a", "environmentId": "prod", "secretRefs": ["shopify_dev_client", "shop_token"]
         }))
         .expect("config")
+    }
+
+    fn scope(org: &str, environment: &str) -> CellScope {
+        CellScope {
+            org_id: org.to_owned(),
+            environment_id: environment.to_owned(),
+        }
+    }
+
+    /// SOURCE-SCOPE-1: a cell keeps only its own connections and the secrets
+    /// they bind, and one secret bound in two scopes refuses the configuration.
+    #[test]
+    fn a_cell_keeps_only_its_own_connections_and_their_secrets() {
+        let one = |id: &str, org: &str, environment: &str, refs: &[&str]| {
+            serde_json::json!({"id": id, "system": "erpnext", "label": id, "connector": "c",
+                "mapping": "m", "instance": "i", "baseUrl": "https://erp.example.test",
+                "orgId": org, "environmentId": environment, "secretRefs": refs})
+        };
+        let config = serde_json::json!([
+            one("a", "org_a", "prod", &["erp_a"]),
+            one("b", "org_b", "prod", &["erp_b"]),
+            one("c", "org_a", "dev", &["erp_c"]),
+        ])
+        .to_string();
+        let secrets = BTreeMap::from([
+            ("NORN_SECRET_ERP_A".to_owned(), "a".to_owned()),
+            ("NORN_SECRET_ERP_B".to_owned(), "b".to_owned()),
+            ("NORN_SECRET_ERP_C".to_owned(), "c".to_owned()),
+        ]);
+        let sources = Sources::new(&scope("org_a", "prod"), &config, &secrets).expect("bound");
+        let ids: Vec<&str> = sources
+            .connections()
+            .iter()
+            .map(|c| c.id.as_str())
+            .collect();
+        assert_eq!(ids, ["a"]);
+        assert_eq!(
+            sources.secrets.keys().collect::<Vec<_>>(),
+            ["NORN_SECRET_ERP_A"]
+        );
+        let other = Sources::new(&scope("org_b", "dev"), &config, &secrets).expect("bound");
+        assert_eq!(other.connections().len(), 0);
+        assert_eq!(other.secrets.len(), 0);
+        let shared = serde_json::json!([
+            one("a", "org_a", "prod", &["erp_shared"]),
+            one("b", "org_b", "prod", &["erp-shared"]),
+        ])
+        .to_string();
+        let refused =
+            Sources::new(&scope("org_a", "prod"), &shared, &secrets).expect_err("two scopes");
+        assert!(refused.contains("NORN_SECRET_ERP_SHARED"), "{refused}");
+        let unscoped = r#"[{"id": "a", "system": "erpnext", "label": "a", "connector": "c",
+            "mapping": "m", "instance": "i", "baseUrl": "https://erp.example.test"}]"#;
+        assert!(Sources::new(&scope("org_a", "prod"), unscoped, &secrets).is_err());
+    }
+
+    /// SOURCE-SCOPE-1: a connector resolves only the secrets its connection
+    /// binds, whatever the server holds.
+    #[test]
+    fn a_connector_resolves_only_secrets_its_connection_binds() {
+        let secrets = BTreeMap::from([
+            ("NORN_SECRET_SHOP_TOKEN".to_owned(), "mine".to_owned()),
+            ("NORN_SECRET_OTHER_CELL".to_owned(), "theirs".to_owned()),
+        ]);
+        let header = |reference: &str| {
+            serde_json::json!({"auth": {"kind": "api_key", "placement": "header",
+                "name": "Authorization", "prefix": "Bearer ", "secretRef": reference}})
+        };
+        assert_eq!(
+            auth_headers(&header("shop_token"), &secrets, &config()),
+            Ok(vec![("Authorization".to_owned(), "Bearer mine".to_owned())])
+        );
+        let unbound =
+            auth_headers(&header("other_cell"), &secrets, &config()).expect_err("unbound");
+        assert_eq!(unbound.0, "source.secret_unbound");
+        let oauth = serde_json::json!({"auth": {"kind": "oauth2", "tokenUrl": "/token",
+            "clientSecretRef": "other_cell"}});
+        let unbound = client_credentials(&oauth, &secrets, &config()).expect_err("unbound");
+        assert_eq!(unbound.0, "source.secret_unbound");
     }
 
     #[test]

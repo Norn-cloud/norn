@@ -224,7 +224,7 @@ fn loaded_with(path: &Path, handle_key: Option<&[u8]>) -> Cell {
         "NORN_S3_ACCESS_KEY_ID": "key-id",
         "NORN_S3_SECRET_ACCESS_KEY": "secret",
     });
-    let mut connect = Connect::new("[]", &vars.to_string()).expect("configuration");
+    let mut connect = Connect::new(&scope(), "[]", &vars.to_string()).expect("configuration");
     let scans = std::fs::read_to_string(root().join("fixtures/documents/scans.snapshot.json"))
         .expect("snapshot");
     let admin = user("admin");

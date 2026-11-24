@@ -205,7 +205,7 @@ fn loaded(path: &Path) -> Cell {
         "NORN_S3_ACCESS_KEY_ID": "key-id",
         "NORN_S3_SECRET_ACCESS_KEY": "secret",
     });
-    let connect = Connect::new("[]", &vars.to_string()).expect("configuration");
+    let connect = Connect::new(&scope(), "[]", &vars.to_string()).expect("configuration");
     let mut cell = Cell {
         tenant,
         tokens,

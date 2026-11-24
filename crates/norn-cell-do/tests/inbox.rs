@@ -213,7 +213,7 @@ fn loaded_with(path: &Path, marked: bool, sources: &str, extra: &[Value]) -> (Ce
         "NORN_S3_ACCESS_KEY_ID": "key-id",
         "NORN_S3_SECRET_ACCESS_KEY": "secret",
     });
-    let mut connect = Connect::new(sources, &vars.to_string()).expect("configuration");
+    let mut connect = Connect::new(&scope(), sources, &vars.to_string()).expect("configuration");
     let scans = std::fs::read_to_string(root().join("fixtures/documents/scans.snapshot.json"))
         .expect("snapshot");
     let admin = user("admin");
@@ -408,10 +408,12 @@ fn a_connection_whose_connector_is_not_installed_is_not_a_failed_source() {
     let sources = json!([
         { "id": "docs.scans", "system": "extractor", "label": "Scanned documents",
           "connector": "docs.scans.connector", "mapping": "docs.scans.mapping",
-          "instance": "demo", "baseUrl": "https://extractor.example.test" },
+          "instance": "demo", "baseUrl": "https://extractor.example.test",
+          "orgId": "org_a", "environmentId": "prod" },
         { "id": "erpnext.rest", "system": "erpnext", "label": "ERPNext REST",
           "connector": "erpnext.rest.connector", "mapping": "erpnext.rest.mapping",
-          "instance": "sandbox", "baseUrl": "https://erp.example.test" },
+          "instance": "sandbox", "baseUrl": "https://erp.example.test",
+          "orgId": "org_a", "environmentId": "prod" },
     ])
     .to_string();
     let connector =

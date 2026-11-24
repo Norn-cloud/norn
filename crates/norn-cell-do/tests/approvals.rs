@@ -1221,6 +1221,58 @@ fn other_requesters_approved_calls_never_hide_yours() {
     assert_eq!(page.get("totalCapped"), None, "{page}");
 }
 
+/// DECISION-SCAN-1 (#1702): a pending-decisions list reads at most
+/// `MAX_DECISION_SCAN` parked commands, a storage page at a time, and charges
+/// every one it reads: one the caller may not decide (their own call) and one
+/// past its deadline cost the same as one it lists. A decision parked after
+/// the budget is spent is not listed, and the page says its total is capped.
+#[test]
+fn a_decision_list_charges_every_parked_command_it_reads() {
+    let cell = cell();
+    gate(&cell, Some(60_000));
+    let scan = norn_api::decisions::MAX_DECISION_SCAN;
+    let half = scan / 2;
+    // The approver's own calls: parked, but never theirs to decide.
+    for n in 0..half {
+        let body = melt_body(&format!("melt-i{n}"), "12", "10", &format!("approver-i{n}"));
+        let (status, parked) = convert(&cell, APPROVER, &body);
+        assert_eq!(status, 202, "{parked}");
+    }
+    // The operator's calls: the approver's to decide until their deadline.
+    for n in half..scan {
+        let body = melt_body(&format!("melt-e{n}"), "12", "10", &format!("operator-e{n}"));
+        let (status, parked) = convert(&cell, OPERATOR, &body);
+        assert_eq!(status, 202, "{parked}");
+    }
+    let list = |at: u64| {
+        let query = format!("{SCOPE}&state=pending&limit=200");
+        let (status, page) = call_at(&cell, ("GET", "/v1/decisions", &query), APPROVER, "", at);
+        assert_eq!(status, 200, "{page}");
+        page
+    };
+    // Exactly the budget read, nothing left: the total is exact.
+    let page = list(NOW);
+    assert_eq!(page["total"], json!(scan - half), "{page}");
+    assert_eq!(page.get("totalCapped"), None, "{page}");
+    // One more decision, parked later, lies past the budget.
+    let path = format!("/v1/actions/{MELT_ACTION}");
+    let body = melt_body("melt-last", "12", "10", "operator-last");
+    let (status, parked) = call_at(&cell, ("POST", &path, SCOPE), OPERATOR, &body, NOW + 30);
+    assert_eq!(status, 202, "{parked}");
+    let last = parked["decision"]["id"].as_str().unwrap().to_owned();
+    let page = list(NOW + 30);
+    assert_eq!(page["total"], json!(scan - half), "{page}");
+    assert_eq!(page["totalCapped"], json!(true), "{page}");
+    // The operator's first calls have expired and the approver's are not
+    // theirs: none is listed, yet each was read and charged, so the last
+    // decision (open, and the approver's to decide) still lies past the budget.
+    let page = list(NOW + 61);
+    assert_eq!(page["items"], json!([]), "{page}");
+    assert_eq!(page["total"], json!(0), "{page}");
+    assert_eq!(page["totalCapped"], json!(true), "{page}");
+    assert!(!page.to_string().contains(&last), "{page}");
+}
+
 /// #1587: an approval-gated action with optional `trace` context parks with
 /// that exact trace visible on pending and requested decision reads, binds the
 /// approval to the trace (omitting or altering `trace` parks a distinct

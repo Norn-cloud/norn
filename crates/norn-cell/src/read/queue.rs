@@ -23,6 +23,17 @@ pub struct PendingCommand {
     pub result: Option<Value>,
 }
 
+/// One page of parked commands ([`StoreReader::parked_commands_page`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParkedPage {
+    /// The page's parked commands, in enqueue order.
+    pub commands: Vec<PendingCommand>,
+    /// Outbox rows the page read: what a bounded scan charges for it.
+    pub read: usize,
+    /// The position the next page starts after; `None` once none is left.
+    pub next_after: Option<u64>,
+}
+
 /// PARKED-1: the SQL form of [`is_parked`] over the stored `command` JSON,
 /// so queue selection skips parked rows without loading them. A string
 /// comparison is false for a non-string or missing member, exactly as
@@ -127,6 +138,35 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .into_iter()
             .filter(|row| is_parked(&row.command))
             .collect())
+    }
+
+    /// PARKED-1, DECISION-SCAN-1 (#1702): at most `limit` (at least 1) parked
+    /// commands enqueued after position `after`, read with a SQL `LIMIT`, so a
+    /// bounded reader pages through a backlog without loading it whole.
+    ///
+    /// # Errors
+    ///
+    /// SQL engine or decode errors.
+    pub fn parked_commands_page(&self, after: u64, limit: usize) -> Result<ParkedPage, CellError> {
+        let limit = limit.max(1);
+        let rows = self.outbox_rows(
+            &format!("AND \"position\" > ?1 AND {PARKED_SQL}"),
+            params![to_i64(after, "position")?],
+            &format!(" LIMIT {limit}"),
+        )?;
+        let read = rows.len();
+        let next_after = rows
+            .last()
+            .map(|row| row.position)
+            .filter(|_| read >= limit);
+        Ok(ParkedPage {
+            commands: rows
+                .into_iter()
+                .filter(|row| is_parked(&row.command))
+                .collect(),
+            read,
+            next_after,
+        })
     }
 
     /// The pending result delivery of `command_id` at `generation`: the FIFO

@@ -791,6 +791,90 @@ fn the_guard_tokenizes_marked_fields_and_detected_identifiers_and_restores_throu
     assert!(viewer.reveals.is_empty() && !viewer.complete);
 }
 
+/// GUARD-ORACLE-1 (#1702): a reader who may read a context row but not
+/// reveal its marked field learns nothing about that field from the guard.
+/// The same free text guarded with the same context reads byte for byte the
+/// same whether the protected value equals the guess in the text or not: the
+/// field is tokenized by its identity, and the guess is matched only against
+/// values the reader may reveal (a detected email still becomes its own token).
+#[test]
+fn a_reader_who_may_not_reveal_a_context_field_cannot_probe_its_value() {
+    use norn_api::privacy_guard::{NornGuardRef, NornGuardRequest, guard};
+    let guarded = |stored: &str, text: &str| {
+        let later = [vec![customer("c3", "Grace", stored)]];
+        let (cell, _dir) = host_with("org_a", &pseudonym(), Some(&SECRET), &later);
+        let guarded = guard(
+            &cell,
+            &scope("org_a"),
+            Some("viewer"),
+            &NornGuardRequest {
+                text: text.into(),
+                context: vec![NornGuardRef {
+                    object_type: TYPE.into(),
+                    id: "c3".into(),
+                }],
+                purpose: Some("probe".into()),
+                idempotency_key: "probe".into(),
+            },
+            &Mapping,
+        )
+        .unwrap();
+        (
+            guarded.safe_prompt,
+            serde_json::to_string(&guarded.tokens).unwrap(),
+            guarded.withheld,
+        )
+    };
+    for (guess, other) in [
+        ("vip-grace", "vip-grace-2"),
+        ("grace@example.com", "grace@example.org"),
+    ] {
+        let text = format!("Is the contact on file {guess}?");
+        let equal = guarded(guess, &text);
+        let differs = guarded(other, &text);
+        assert_eq!(equal.0.as_bytes(), differs.0.as_bytes(), "{guess}");
+        assert_eq!(equal, differs, "{guess}");
+        assert!(!equal.0.contains(other), "{}", equal.0);
+        assert!(equal.0.contains("- email: [CUSTOMER_1]"), "{}", equal.0);
+    }
+    // The non-email guess stays as typed: nothing marks it as a known value.
+    let (safe, _, _) = guarded("vip-grace", "Is the contact on file vip-grace?");
+    assert!(
+        safe.starts_with("Is the contact on file vip-grace?"),
+        "{safe}"
+    );
+    // A reader who may reveal the field still has the guess matched to it.
+    let (cell, _dir) = host_with(
+        "org_a",
+        &pseudonym(),
+        Some(&SECRET),
+        &[vec![customer("c3", "Grace", "vip-grace")]],
+    );
+    let auditor = guard(
+        &cell,
+        &scope("org_a"),
+        Some("auditor"),
+        &NornGuardRequest {
+            text: "Is the contact on file vip-grace?".into(),
+            context: vec![NornGuardRef {
+                object_type: TYPE.into(),
+                id: "c3".into(),
+            }],
+            purpose: None,
+            idempotency_key: "auditor".into(),
+        },
+        &Mapping,
+    )
+    .unwrap();
+    assert!(
+        auditor
+            .safe_prompt
+            .starts_with("Is the contact on file [CUSTOMER_1]?"),
+        "{}",
+        auditor.safe_prompt
+    );
+}
+
 /// A privacy cell's set: the three-systems catalog with the privacy pack
 /// (its marking catalog and reveal policy) and its `canon.Party` overlay in
 /// place of the canon artifact. It admits as one set, and the canon pack

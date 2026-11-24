@@ -1676,7 +1676,7 @@ fn a_caller_cannot_load_the_cells_own_upload_records() {
         "file_name": "secret.csv", "format": "csv", "columns": "[]",
         "owner": "user:owner", "completed_at": "2026-11-12T12:00:05Z",
     });
-    let mut connect = Connect::new("[]", "{}").unwrap();
+    let mut connect = Connect::new(&scope, "[]", "{}").unwrap();
     for (source, mapping, instance) in [
         ("norn-connect", "norn.connect.mapping", "cell"),
         ("norn-connect", "norn.connect.mapping", "demo"),
@@ -1752,7 +1752,7 @@ fn a_completed_upload_survives_a_restart() {
     let upload_id = {
         let cell = provisioned(&path, &scope, &set);
         let host = cell.tenant.serving_host().expect("a served cell");
-        let mut connect = Connect::new("[]", &vars).unwrap();
+        let mut connect = Connect::new(&scope, "[]", &vars).unwrap();
         let request = r#"{"fileName": "sales.csv", "contentType": "text/csv", "size": 30}"#;
         let begun = connect
             .route(
@@ -1790,7 +1790,7 @@ fn a_completed_upload_survives_a_restart() {
     assert_eq!(kept.sha256, norn_api::uploads::sha256_hex(csv));
     assert_eq!(kept.file_name, "sales.csv");
     assert_ne!(kept.owner.len(), 0);
-    let mut connect = Connect::new("[]", &vars).unwrap();
+    let mut connect = Connect::new(&scope, "[]", &vars).unwrap();
     let define = format!("/v1/uploads/{upload_id}:define");
     let mut define_with = |body: &str| {
         let routed = connect
