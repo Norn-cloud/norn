@@ -11,7 +11,7 @@ use std::time::Duration;
 
 /// The largest pack this client sends, as the cell bounds it.
 const MAX_BODY: usize = 1 << 20;
-/// [`MAX_BODY`] as a read limit: no one artifact file may exceed it.
+/// [`MAX_BODY`] as a read budget across every file of a pack.
 const MAX_FILE: u64 = 1 << 20;
 
 #[derive(Debug, Args)]
@@ -65,92 +65,118 @@ enum CellCommand {
     },
 }
 
+type Artifact = Box<serde_json::value::RawValue>;
+
 /// The pack's artifacts, each file's exact JSON text, in path order. Read
-/// once per command: `apply` plans and applies this one snapshot.
-fn artifacts(paths: &[PathBuf]) -> Result<Vec<Box<serde_json::value::RawValue>>, String> {
-    let mut files = Vec::new();
+/// once per command: `apply` plans and applies this one snapshot. At most
+/// [`MAX_FILE`] bytes (plus one, to detect excess) are read across the
+/// whole pack, so many small files cannot exhaust memory either.
+fn artifacts(paths: &[PathBuf]) -> Result<Vec<Artifact>, String> {
+    let mut budget = MAX_FILE;
+    let mut read = Vec::new();
     for path in paths {
-        // The named path itself, never what a link there points at.
-        let kind = std::fs::symlink_metadata(path)
-            .map_err(|e| format!("{}: {e}", path.display()))?
-            .file_type();
-        if kind.is_symlink() {
-            return Err(format!("{}: links are refused", path.display()));
-        }
-        if kind.is_dir() {
-            let mut inside: Vec<PathBuf> = std::fs::read_dir(path)
-                .map_err(|e| format!("{}: {e}", path.display()))?
-                .map(|entry| entry.map(|entry| entry.path()))
-                .collect::<Result<_, _>>()
-                .map_err(|e| format!("{}: {e}", path.display()))?;
-            inside.retain(|file| file.extension().is_some_and(|ext| ext == "json"));
-            inside.sort();
-            files.extend(inside);
-        } else {
-            files.push(path.clone());
-        }
+        read_path(path, &mut budget, &mut read)?;
     }
-    if files.is_empty() {
+    if read.is_empty() {
         return Err("no artifact files".to_owned());
     }
-    files
-        .iter()
-        .map(|file: &PathBuf| {
-            let text = read_artifact(file)?;
-            serde_json::value::RawValue::from_string(text)
-                .map_err(|e| format!("{}: not JSON: {e}", file.display()))
-        })
-        .collect()
+    Ok(read)
 }
 
-/// One artifact file's text: a regular file, never a link or anything else,
-/// read to at most the cell's bound so a huge file is refused unread. On
-/// Unix the open itself refuses a link (`O_NOFOLLOW`) and cannot block on a
-/// FIFO swapped in after the check (`O_NONBLOCK`).
-fn read_artifact(file: &Path) -> Result<String, String> {
-    let shown = file.display();
-    let linked = std::fs::symlink_metadata(file).map_err(|e| format!("{shown}: {e}"))?;
-    if !linked.file_type().is_file() {
-        return Err(format!("{shown}: not a regular file (links are refused)"));
+/// Read one named path: a regular file, or a directory's `*.json` children
+/// in name order. The path is opened once without following a link, and a
+/// directory's children are listed and opened relative to that open
+/// directory, so swapping a link or directory in mid-read redirects nothing.
+#[cfg(unix)]
+fn read_path(path: &Path, budget: &mut u64, read: &mut Vec<Artifact>) -> Result<(), String> {
+    use std::os::unix::ffi::OsStrExt as _;
+    let shown = path.display();
+    let opened = open_no_follow(rustix::fs::CWD, path).map_err(|e| format!("{shown}: {e}"))?;
+    let kind = opened
+        .metadata()
+        .map_err(|e| format!("{shown}: {e}"))?
+        .file_type();
+    if kind.is_file() {
+        read.push(artifact(path, opened, budget)?);
+        return Ok(());
     }
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    if !kind.is_dir() {
+        return Err(format!("{shown}: not a regular file or directory"));
     }
-    let handle = options.open(file).map_err(|e| format!("{shown}: {e}"))?;
-    let opened = handle.metadata().map_err(|e| format!("{shown}: {e}"))?;
-    if !opened.is_file() || !same_file(&linked, &opened) {
-        return Err(format!(
-            "{shown}: changed while being opened (links are refused)"
-        ));
+    let mut names = Vec::new();
+    for entry in rustix::fs::Dir::read_from(&opened).map_err(|e| format!("{shown}: {e}"))? {
+        let name = entry
+            .map_err(|e| format!("{shown}: {e}"))?
+            .file_name()
+            .to_owned();
+        let json = Path::new(std::ffi::OsStr::from_bytes(name.to_bytes()))
+            .extension()
+            .is_some_and(|ext| ext == "json");
+        if json {
+            names.push(name);
+        }
     }
+    names.sort();
+    for name in names {
+        let child = path.join(std::ffi::OsStr::from_bytes(name.to_bytes()));
+        let file = open_no_follow(&opened, name.as_c_str())
+            .map_err(|e| format!("{}: {e}", child.display()))?;
+        let regular = file
+            .metadata()
+            .map_err(|e| format!("{}: {e}", child.display()))?
+            .is_file();
+        if !regular {
+            return Err(format!("{}: not a regular file", child.display()));
+        }
+        read.push(artifact(&child, file, budget)?);
+    }
+    Ok(())
+}
+
+/// Without a no-follow, directory-relative open this client cannot read a
+/// pack safely, so it refuses rather than follow links.
+#[cfg(not(unix))]
+fn read_path(path: &Path, _budget: &mut u64, _read: &mut Vec<Artifact>) -> Result<(), String> {
+    Err(format!(
+        "{}: pack reads need no-follow opens, which this client supports only on Unix",
+        path.display()
+    ))
+}
+
+/// Open `name` under `dir` read-only: never through a final link
+/// (`O_NOFOLLOW`), and never blocking on a FIFO (`O_NONBLOCK`).
+#[cfg(unix)]
+fn open_no_follow<P: rustix::path::Arg>(
+    dir: impl std::os::fd::AsFd,
+    name: P,
+) -> Result<std::fs::File, String> {
+    use rustix::fs::{Mode, OFlags};
+    let flags = OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC;
+    rustix::fs::openat(dir, name, flags, Mode::empty())
+        .map(std::fs::File::from)
+        .map_err(|e| {
+            if e == rustix::io::Errno::LOOP {
+                "links are refused".to_owned()
+            } else {
+                e.to_string()
+            }
+        })
+}
+
+/// One artifact's exact text, charged against the pack's remaining budget
+/// while it is read: never more than the budget plus one byte.
+#[cfg(unix)]
+fn artifact(path: &Path, file: std::fs::File, budget: &mut u64) -> Result<Artifact, String> {
+    let shown = path.display();
     let mut text = String::new();
-    handle
-        .take(MAX_FILE.saturating_add(1))
+    file.take(budget.saturating_add(1))
         .read_to_string(&mut text)
         .map_err(|e| format!("{shown}: {e}"))?;
-    if text.len() > MAX_BODY {
-        return Err(format!("{shown}: exceeds the cell's 1 MiB bound"));
-    }
-    Ok(text)
-}
-
-/// Whether the opened handle is the file `symlink_metadata` saw: a link
-/// swapped in between the check and the open names another inode.
-#[cfg(unix)]
-fn same_file(linked: &std::fs::Metadata, opened: &std::fs::Metadata) -> bool {
-    use std::os::unix::fs::MetadataExt as _;
-    linked.dev() == opened.dev() && linked.ino() == opened.ino()
-}
-
-/// Whether the opened handle is the file `symlink_metadata` saw (without
-/// inode numbers, the regular-file checks are what this platform offers).
-#[cfg(not(unix))]
-fn same_file(linked: &std::fs::Metadata, opened: &std::fs::Metadata) -> bool {
-    linked.is_file() && opened.is_file()
+    let used = u64::try_from(text.len()).map_err(|e| format!("{shown}: {e}"))?;
+    *budget = budget
+        .checked_sub(used)
+        .ok_or_else(|| format!("{shown}: the pack exceeds the cell's 1 MiB bound"))?;
+    serde_json::value::RawValue::from_string(text).map_err(|e| format!("{shown}: not JSON: {e}"))
 }
 
 /// A URL parsed once: scheme, host and origin all come from this one parse,
@@ -273,6 +299,9 @@ fn check_authority(authority: &ureq::http::uri::Authority) -> Result<(), String>
         if !valid {
             return Err("URL has a malformed IPv6 host".into());
         }
+    } else if host.contains(['[', ']']) {
+        // `http` admits balanced brackets inside a name (`host[x]`).
+        return Err("URL has a malformed host".into());
     }
     let rest = authority
         .as_str()
@@ -545,10 +574,7 @@ fn answer(
     (shown, accepted)
 }
 
-fn body(
-    artifacts: &[Box<serde_json::value::RawValue>],
-    expected_version: Option<u64>,
-) -> Result<String, String> {
+fn body(artifacts: &[Artifact], expected_version: Option<u64>) -> Result<String, String> {
     // Each artifact's exact text is spliced in as read: never through
     // `Value`, which would round a high-precision number.
     let artifacts = serde_json::to_string(artifacts).map_err(|e| e.to_string())?;
@@ -624,6 +650,7 @@ mod tests {
     use super::*;
     use std::path::Path;
 
+    #[cfg(unix)]
     #[test]
     fn a_pack_directory_is_read_in_name_order_and_kept_exact() {
         let pack =
@@ -766,6 +793,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
     #[test]
     fn an_oversized_artifact_is_refused_while_reading() -> TestResult {
         let pack = scratch("oversized")?;
@@ -790,6 +818,8 @@ mod tests {
             "http://127.0.0.1:8787x",
             "http://[::1",
             "http://[not-ipv6]:8787",
+            "https://host[x]/",
+            "https://host[x]:443/api",
             "https://alpha.norn.cloud#frag",
             "https://alpha.norn.cloud/api/host#frag",
         ] {
@@ -856,6 +886,30 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn the_byte_budget_spans_the_whole_pack() -> TestResult {
+        let pack = scratch("budget")?;
+        // Each file is under the bound; together they exceed it.
+        for name in ["a.json", "b.json"] {
+            std::fs::write(pack.join(name), format!("{}{{}}", " ".repeat(600_000)))?;
+        }
+        let Err(refused) = artifacts(std::slice::from_ref(&pack)) else {
+            return Err("a pack over the bound was read".into());
+        };
+        assert!(refused.contains("b.json"), "{refused}");
+        assert!(refused.contains("exceeds"), "{refused}");
+        std::fs::remove_dir_all(&pack)?;
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn packs_are_refused_without_no_follow_opens() {
+        assert!(artifacts(&[PathBuf::from("pack")]).is_err());
+    }
+
+    #[cfg(unix)]
     #[test]
     fn plan_and_apply_send_exact_numbers() -> TestResult {
         let pack = scratch("exact")?;
@@ -871,6 +925,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(unix)]
     #[test]
     fn plan_and_apply_send_one_snapshot() -> TestResult {
         let pack = scratch("snapshot")?;
