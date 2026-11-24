@@ -967,6 +967,7 @@ def workflow_expression_cap_canaries() -> None:
         raise AssertionError("expression length no longer models GitHub's format() escaping")
     merge = (ROOT / ".github/workflows/trusted-merge-group.yml").read_text(encoding="utf-8")
     source = (ROOT / ".github/workflows/ci-policy.yml").read_text(encoding="utf-8")
+    trusted = (ROOT / ".github/workflows/trusted-policy.yml").read_text(encoding="utf-8")
     group = yaml.safe_load(merge)
     name = "Record admin approvals of the queued heads"
     collector = next(step for step in group["jobs"]["trusted-policy"]["steps"] if step.get("name") == name)
@@ -980,7 +981,8 @@ def workflow_expression_cap_canaries() -> None:
             raise AssertionError(f"expression cap canary padding drifted for {target}")
         try:
             validator.validate_expression_lengths({"trusted-merge-group.yml": yaml.safe_dump(document, sort_keys=False),
-                                                   "ci-policy.yml": source})
+                                                   "ci-policy.yml": source,
+                                                   "trusted-policy.yml": trusted})
         except validator.InvalidCoverage:
             if not refused:
                 raise AssertionError(f"a {target}-character collector expression was refused")
@@ -1404,38 +1406,63 @@ def workflow_cache_canaries() -> None:
                 raise AssertionError("failed cache replacement left temporary data")
 
 
-def workflow_context_canaries(source: str) -> None:
+def workflow_context_canaries(source: str, trusted_source: str) -> None:
     workflow = yaml.safe_load(source)
     if True in workflow:
         workflow["on"] = workflow.pop(True)
+    trusted_workflow = yaml.safe_load(trusted_source)
+    if True in trusted_workflow:
+        trusted_workflow["on"] = trusted_workflow.pop(True)
     validator = load_module("norn_workflow_context_canary", VALIDATOR)
     with tempfile.TemporaryDirectory() as directory:
         candidate = Path(directory) / "ci-policy.yml"
+        trusted_candidate = Path(directory) / "trusted-policy.yml"
         candidate.write_text(yaml.safe_dump(workflow, sort_keys=False), encoding="utf-8")
-        validator.validate_workflow_integrity([], formal_path=candidate)
+        trusted_candidate.write_text(yaml.safe_dump(trusted_workflow, sort_keys=False), encoding="utf-8")
+        validator.validate_workflow_integrity([], formal_path=candidate, trusted_path=trusted_candidate)
 
         def rejected(label: str, document: dict[str, Any]) -> None:
             candidate.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
             try:
-                validator.validate_workflow_integrity([], formal_path=candidate)
+                validator.validate_workflow_integrity([], formal_path=candidate, trusted_path=trusted_candidate)
             except validator.InvalidCoverage:
                 return
+            finally:
+                candidate.write_text(yaml.safe_dump(workflow, sort_keys=False), encoding="utf-8")
             raise AssertionError(f"workflow context mutation passed: {label}")
 
-        for name in ("core", "full"):
-            expression = workflow["jobs"][name]["if"]
-            for event in ("pull_request", "push", "merge_group", "workflow_dispatch", "pull_request_target", "issue_comment"):
-                for draft in (False, True):
-                    for action in ("opened", "synchronize", "reopened", "ready_for_review"):
-                        if event == "pull_request" and action not in workflow["on"]["pull_request"]["types"]:
-                            raise AssertionError(f"missing PR activity: {action}")
-                        candidate_expression = expression.replace("github.event_name", repr(event)).replace(
-                            "github.event.pull_request.draft", str(draft)).replace("always()", "True").replace(
-                            "cancelled()", "False").replace("&&", " and ").replace("||", " or ")
-                        candidate_expression = re.sub(r"!(?!=)", " not ", candidate_expression)
-                        expected = event not in ("pull_request_target", "issue_comment")
-                        if bool(condition_value(candidate_expression)) != expected:
-                            raise AssertionError(f"{name} admission drift: {event}/{action}/{draft}")
+        def rejected_trusted(label: str, document: dict[str, Any]) -> None:
+            trusted_candidate.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+            try:
+                validator.validate_workflow_integrity([], formal_path=candidate, trusted_path=trusted_candidate)
+            except validator.InvalidCoverage:
+                return
+            finally:
+                trusted_candidate.write_text(yaml.safe_dump(trusted_workflow, sort_keys=False), encoding="utf-8")
+            raise AssertionError(f"trusted-policy workflow mutation passed: {label}")
+
+        # ci-policy.yml must never trigger on pull_request_target or issue_comment,
+        # otherwise those runs emit skipped `core` and `full` check-runs on PR heads.
+        for forbidden_trigger in ("pull_request_target", "issue_comment"):
+            if forbidden_trigger in workflow["on"]:
+                raise AssertionError(f"ci-policy.yml must not trigger on {forbidden_trigger}")
+            document = copy.deepcopy(workflow)
+            document["on"][forbidden_trigger] = None
+            rejected(f"ci-policy.yml triggers on {forbidden_trigger}", document)
+
+        for event in ("pull_request", "push", "merge_group", "workflow_dispatch"):
+            for draft in (False, True):
+                for action in ("opened", "synchronize", "reopened", "ready_for_review"):
+                    if event == "pull_request" and action not in workflow["on"]["pull_request"]["types"]:
+                        raise AssertionError(f"missing PR activity: {action}")
+                    if "if" in workflow["jobs"]["core"]:
+                        raise AssertionError("core should not carry an event guard after splitting trusted-policy")
+                    expression = workflow["jobs"]["full"]["if"].replace("github.event_name", repr(event)).replace(
+                        "github.event.pull_request.draft", str(draft)).replace("always()", "True").replace(
+                        "cancelled()", "False").replace("&&", " and ").replace("||", " or ")
+                    expression = re.sub(r"!(?!=)", " not ", expression)
+                    if not bool(condition_value(expression)):
+                        raise AssertionError(f"full admission drift: {event}/{action}/{draft}")
         for event in ("pull_request", "merge_group", "push", "workflow_dispatch"):
             for draft in (False, True):
                 expression = workflow["jobs"]["full"]["if"].replace("github.event_name", repr(event)).replace(
@@ -1453,12 +1480,15 @@ def workflow_context_canaries(source: str) -> None:
         document = copy.deepcopy(workflow)
         document["jobs"]["plan"]["permissions"] = {"contents": "read", "id-token": "write"}
         rejected("planner OIDC grant", document)
-        for name in ("core", "full", "trusted-policy"):
+        for name in ("core", "full"):
             document = copy.deepcopy(workflow)
             document["jobs"][name]["name"] = "renamed"
             rejected(f"renamed control check {name}", document)
+        document = copy.deepcopy(trusted_workflow)
+        document["jobs"]["trusted-policy"]["name"] = "renamed"
+        rejected_trusted("renamed control check trusted-policy", document)
         for change in ("concurrency", "if", "reporter"):
-            document = copy.deepcopy(workflow)
+            document = copy.deepcopy(trusted_workflow)
             trusted = document["jobs"]["trusted-policy"]
             if change == "concurrency":
                 trusted["concurrency"]["cancel-in-progress"] = False
@@ -1468,10 +1498,21 @@ def workflow_context_canaries(source: str) -> None:
                 reporter = next(step for step in trusted["steps"]
                                 if step.get("name") == "Report trusted policy on the exact PR head")
                 reporter["with"]["script"] = reporter["with"]["script"].replace("context: 'trusted-policy'", "context: 'different-status'")
-            rejected(f"trusted-policy {change} mutation", document)
-        document = copy.deepcopy(workflow)
+            rejected_trusted(f"trusted-policy {change} mutation", document)
+        document = copy.deepcopy(trusted_workflow)
         document["jobs"]["trusted-policy"]["name"] = "trusted-policy"
-        rejected("duplicate required check name", document)
+        rejected_trusted("duplicate required check name", document)
+        for trigger in trusted_workflow["on"]:
+            document = copy.deepcopy(trusted_workflow)
+            del document["on"][trigger]
+            rejected_trusted(f"removed trusted-policy trigger {trigger}", document)
+        document = copy.deepcopy(trusted_workflow)
+        document["on"]["pull_request"] = None
+        rejected_trusted("trusted-policy workflow triggers on pull_request", document)
+        for label, permissions in (("write-all", "write-all"), ("id-token", {"id-token": "write"})):
+            document = copy.deepcopy(trusted_workflow)
+            document["jobs"]["trusted-policy"]["permissions"] = permissions
+            rejected_trusted(f"trusted-policy OIDC token by {label}", document)
         for trigger in workflow["on"]:
             document = copy.deepcopy(workflow)
             del document["on"][trigger]
@@ -1662,7 +1703,7 @@ def workflow_context_canaries(source: str) -> None:
         step["continue-on-error"] = True
         rejected("core secret inventory failure ignored", document)
         # Outside test no job mints an OIDC token, `write-all` included.
-        for name in ("core", "full", "trusted-policy"):
+        for name in ("core", "full"):
             for label, permissions in (("write-all", "write-all"), ("id-token", {"id-token": "write"})):
                 document = copy.deepcopy(workflow)
                 document["jobs"][name]["permissions"] = permissions
@@ -1760,7 +1801,7 @@ def workflow_context_canaries(source: str) -> None:
                 environment = condition_value(concrete(workflow["jobs"]["test"]["environment"]))
                 if environment != ("ci-cache-writer-boat" if main_push else ""):
                     raise AssertionError("test cache-writer environment drift: " + case)
-        for name in ("core", "test", "full", "trusted-policy"):
+        for name in ("core", "test", "full"):
             unsafe = ["boat", "self-hosted", ["self-hosted", "norn-merge"], legacy,
                       "${{ vars.NORN_MERGE_RUNNER || 'ubuntu-24.04' }}",
                       "${{ vars.NORN_PR_RUNNER || 'ubuntu-24.04' }}",
@@ -1810,10 +1851,14 @@ def workflow_context_canaries(source: str) -> None:
                 document = copy.deepcopy(workflow)
                 document["jobs"][name]["runs-on"] = value
                 rejected(f"{name} unsafe runner routing", document)
+        for value in ("boat", "self-hosted", runner, merge_only):
+            document = copy.deepcopy(trusted_workflow)
+            document["jobs"]["trusted-policy"]["runs-on"] = value
+            rejected_trusted("trusted-policy unsafe runner routing", document)
         document = copy.deepcopy(workflow)
         document["jobs"]["test"]["runs-on"] = runner
         candidate.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-        validator.validate_workflow_integrity([], formal_path=candidate)
+        validator.validate_workflow_integrity([], formal_path=candidate, trusted_path=trusted_candidate)
         for name in ("core", "test"):
             document = copy.deepcopy(workflow)
             document["jobs"][name]["steps"].insert(-1, {
@@ -1874,12 +1919,13 @@ def workflow_context_canaries(source: str) -> None:
 
 def workflow_canaries() -> None:
     source = (ROOT / ".github/workflows/ci-policy.yml").read_text(encoding="utf-8")
+    trusted_source = (ROOT / ".github/workflows/trusted-policy.yml").read_text(encoding="utf-8")
     workflow_verdict_canaries(source)
-    workflow_context_canaries(source)
+    workflow_context_canaries(source, trusted_source)
     workflow_cleanup_canaries(source)
     workflow_concurrency_canaries()
     workflow_concurrency_parity()
-    workflow_trusted_policy_canaries(source)
+    workflow_trusted_policy_canaries(trusted_source)
     workflow_merge_group_policy_canaries(source)
     workflow_cache_canaries()
     mutations = [
@@ -1904,7 +1950,7 @@ def workflow_canaries() -> None:
         ("floating Rust toolchain", "toolchain: 1.100.0", "toolchain: stable"),
         ("insufficient proof timeout", "timeout-minutes: 110", "timeout-minutes: 20"),
     ]
-    mutations.extend((f"missing {trigger} trigger", f"  {trigger}:\n", "") for trigger in ("pull_request", "pull_request_target", "push", "merge_group"))
+    mutations.extend((f"missing {trigger} trigger", f"  {trigger}:\n", "") for trigger in ("pull_request", "push", "merge_group"))
     with tempfile.TemporaryDirectory() as directory:
         candidate = Path(directory) / "ci-policy.yml"
         for label, original, replacement in mutations:
@@ -2567,8 +2613,9 @@ def evidence_inventory_canaries() -> None:
 def main() -> int:
     if sys.argv[1:] == ["--workflow-contract"]:
         source = (ROOT / ".github/workflows/ci-policy.yml").read_text(encoding="utf-8")
+        trusted_source = (ROOT / ".github/workflows/trusted-policy.yml").read_text(encoding="utf-8")
         workflow_verdict_canaries(source)
-        workflow_context_canaries(source)
+        workflow_context_canaries(source, trusted_source)
         workflow_cleanup_canaries(source)
         workflow_concurrency_canaries()
         workflow_concurrency_parity()
@@ -2577,7 +2624,7 @@ def main() -> int:
         studio_browser_pin_canaries()
         integration_partition_canaries()
         rust_parity_evidence_canaries()
-        workflow_trusted_policy_canaries(source)
+        workflow_trusted_policy_canaries(trusted_source)
         workflow_expression_cap_canaries()
         workflow_merge_group_policy_canaries(source)
         workflow_cache_canaries()
