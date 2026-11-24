@@ -449,6 +449,72 @@ impl Refusal {
         .with_category(RefusalCategory::Precondition)
     }
 
+    /// Map a [`norn_cell::CellError`] directly to a [`Refusal`], preserving
+    /// typed `cell.verifying` (retryable 503) and `cell.fenced` (fail-closed
+    /// 503) even when wrapped inside [`norn_cell::CellError::ObservationCommit`].
+    #[must_use]
+    pub fn from_cell_error(error: &norn_cell::CellError) -> Self {
+        if let Some(refusal) = Self::cell_availability_refusal(error) {
+            return refusal;
+        }
+        Self::host(error)
+    }
+
+    fn cell_availability_refusal(error: &norn_cell::CellError) -> Option<Self> {
+        if matches!(error, norn_cell::CellError::Verifying(_)) {
+            return Some(Self::verifying());
+        }
+        if matches!(error, norn_cell::CellError::Fenced(_)) {
+            return Some(Self::fenced(error));
+        }
+        if let norn_cell::CellError::ObservationCommit(commit) = error
+            && let norn_kernel::CommitError::Host(inner) = commit.as_ref()
+        {
+            return Self::cell_availability_refusal(inner);
+        }
+        None
+    }
+
+    /// Map a kernel [`norn_kernel::CommitError<norn_cell::CellError>`] on a
+    /// host-internal commit path to a [`Refusal`], preserving typed
+    /// `cell.verifying` and `cell.fenced` instead of returning non-retryable
+    /// `500 host.error` (OPEN-CHECKPOINT-1, #1551 round 5).
+    #[must_use]
+    pub fn from_commit_host_error(error: &norn_kernel::CommitError<norn_cell::CellError>) -> Self {
+        if let norn_kernel::CommitError::Host(host_error) = error {
+            return Self::from_cell_error(host_error);
+        }
+        Self::host(format!("{error:?}"))
+    }
+
+    /// If an [`norn_kernel::ActionRefusal<norn_cell::CellError>`] wraps a
+    /// `cell.verifying` or `cell.fenced` host error, return its typed refusal
+    /// directly so kernel commit paths never downgrade it to `500 commit.host`.
+    #[must_use]
+    pub fn from_action_host_error(
+        error: &norn_kernel::ActionRefusal<norn_cell::CellError>,
+    ) -> Option<Self> {
+        let norn_kernel::ActionRefusal::Decision(norn_kernel::DecisionRefusal::Host(host_error)) =
+            error
+        else {
+            return None;
+        };
+        Self::cell_availability_refusal(host_error)
+    }
+
+    /// Whether this refusal is never recorded as a permanent approval refusal
+    /// (internal/visibility/permission or verifying/fenced cell).
+    #[must_use]
+    pub fn is_unrecorded_approval_refusal(&self) -> bool {
+        matches!(
+            self.category,
+            RefusalCategory::Internal | RefusalCategory::Permission | RefusalCategory::Visibility
+        ) || matches!(
+            self.code.as_str(),
+            codes::CELL_VERIFYING | codes::CELL_FENCED
+        )
+    }
+
     /// A host failure (the request changed nothing). A cell still
     /// verifying its history, or fenced by it, answers its own refusal.
     #[must_use]

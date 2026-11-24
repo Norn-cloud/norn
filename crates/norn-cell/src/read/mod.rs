@@ -391,6 +391,38 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         self
     }
 
+    /// S12 (#1551 round 5): fail closed on a local or sibling durable fence.
+    pub(crate) fn check_live(&self) -> Result<(), CellError> {
+        self.history_gate.refuse_fenced()?;
+        if self.history_gate.is_served()
+            && self.conn.read_isolation() != crate::engine::ReadIsolation::ExclusiveSynchronous
+        {
+            crate::open_checkpoint::check_fence_open(self.conn)?;
+        }
+        Ok(())
+    }
+
+    /// S7/S8/S12: fail closed on a durable fence first, then refuse while
+    /// covered history is still unverified.
+    pub(crate) fn check_history(&self, what: &'static str) -> Result<(), CellError> {
+        self.check_live()?;
+        self.history_gate.history(what)
+    }
+
+    /// S8/S12: fail closed on a durable fence first, then gate ledger reads
+    /// that reach covered history.
+    pub(crate) fn check_ledger(&self, after: u64) -> Result<(), CellError> {
+        self.check_live()?;
+        self.history_gate.ledger(after)
+    }
+
+    /// S4/S12: fail closed on a durable fence first, then gate idempotency
+    /// lookup misses while covered receipts remain unverified.
+    pub(crate) fn check_receipt_miss(&self) -> Result<(), CellError> {
+        self.check_live()?;
+        self.history_gate.receipt_miss()
+    }
+
     /// A receipt cache for one read-only pass inside a transaction.
     pub(crate) const fn with_transaction_verified_receipts(
         mut self,

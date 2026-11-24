@@ -580,7 +580,7 @@ fn action_artifact(
 }
 
 /// `test.order.edit` patches a `test.Order` and its owned `lines` rows.
-fn rows_host() -> DevHost<NativeEngine> {
+fn rows_documents() -> Vec<Value> {
     let order = entity(
         "test.Order.entity",
         &json!({
@@ -647,8 +647,12 @@ fn rows_host() -> DevHost<NativeEngine> {
         }),
         &["test.Order.entity", "test.OrderLine.entity"],
     );
+    vec![order, line, edit]
+}
+
+fn rows_host() -> DevHost<NativeEngine> {
     host_of(admitted_store(
-        &[order, line, edit],
+        &rows_documents(),
         crate::action_admission::prepare_action_model,
     ))
 }
@@ -1616,5 +1620,266 @@ fn parameter_slice_executes_end_to_end_through_api_and_cell_store() {
     assert_eq!(
         (hidden.status, hidden.code.as_str()),
         (403, codes::AUTHZ_DENIED)
+    );
+}
+
+/// OPEN-CHECKPOINT-1 (#1551 round 5, Blockers 3, 6, 10):
+/// - An unchanged-target non-quantity action committing during an active
+///   history scrub succeeds cleanly with the target's live version instead of
+///   committing and then returning retryable `cell.verifying` (Blocker 3).
+/// - Kernel commit paths and `CommitError::Host` preserve typed `503
+///   cell.verifying` (retryable) and `503 cell.fenced` (fail-closed) instead
+///   of downgrading to `500 commit.host` / `500 host.error` (Blocker 10).
+/// - `timers::run_due` + `timers::next_due` on a fenced cell return terminal
+///   failure and `Ok(None)` without throwing `cell.fenced` (Blocker 6).
+fn order_edit_body(id: &str, values: &str, version: u64, key: &str) -> String {
+    format!(
+        r#"{{"input":{{"parentId":"{id}","parentValues":{values},"parentVersion":"{version}","rowOps":[]}},"idempotencyKey":"{key}"}}"#
+    )
+}
+
+fn seed_checkpointed_rows_cell() -> (
+    tempfile::TempDir,
+    std::path::PathBuf,
+    norn_cell::Model,
+    norn_cell::StoreOptions,
+    ActionReceipt,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("rows.sqlite");
+    let options = norn_cell::StoreOptions {
+        checkpoint_key: Some(norn_cell::CheckpointKey::from_bytes([0x5a; 32])),
+        ..norn_cell::StoreOptions::default()
+    };
+    let docs = rows_documents();
+    let engine = NativeEngine::open(&path, options).unwrap();
+    let store = action_cell::admitted_store_on(
+        engine,
+        &docs,
+        crate::action_admission::prepare_action_model,
+    );
+    let model = store.model().clone();
+    let host = host_of(store);
+    let query = scoped("org_demo");
+    let created = call(
+        &host,
+        &query,
+        Some(OPERATOR),
+        ORDER_EDIT,
+        &order_edit_body("order-1", r#"{"title":"first"}"#, 0, "create-order-1"),
+    )
+    .unwrap();
+    for n in 0..130_u64 {
+        let id = format!("filler-{n}");
+        call(
+            &host,
+            &query,
+            Some(OPERATOR),
+            ORDER_EDIT,
+            &order_edit_body(&id, r#"{"title":"fill"}"#, 0, &format!("fill-{n}")),
+        )
+        .unwrap();
+    }
+    drop(host);
+    (dir, path, model, options, created)
+}
+
+#[test]
+fn open_checkpoint_refusal_mappings_preserve_verifying_and_fenced() {
+    use norn_cell::CellError;
+    use norn_kernel::{ActionRefusal, CommitError, DecisionRefusal};
+
+    let verifying_action = Refusal::from_action_host_error(&ActionRefusal::Decision(
+        DecisionRefusal::Host(CellError::Verifying("idempotency")),
+    ))
+    .expect("verifying action refusal");
+    assert_eq!(
+        (
+            verifying_action.status,
+            verifying_action.code.as_str(),
+            verifying_action.retryable
+        ),
+        (503, codes::CELL_VERIFYING, true)
+    );
+    let fenced_action = Refusal::from_action_host_error(&ActionRefusal::Decision(
+        DecisionRefusal::Host(CellError::Fenced("tampered".to_owned())),
+    ))
+    .expect("fenced action refusal");
+    assert_eq!(
+        (
+            fenced_action.status,
+            fenced_action.code.as_str(),
+            fenced_action.retryable
+        ),
+        (503, codes::CELL_FENCED, false)
+    );
+    let verifying_commit =
+        Refusal::from_commit_host_error(&CommitError::Host(CellError::Verifying("idempotency")));
+    assert_eq!(
+        (
+            verifying_commit.status,
+            verifying_commit.code.as_str(),
+            verifying_commit.retryable
+        ),
+        (503, codes::CELL_VERIFYING, true)
+    );
+    let fenced_commit = Refusal::from_commit_host_error(&CommitError::Host(CellError::Fenced(
+        "tampered".to_owned(),
+    )));
+    assert_eq!(
+        (
+            fenced_commit.status,
+            fenced_commit.code.as_str(),
+            fenced_commit.retryable
+        ),
+        (503, codes::CELL_FENCED, false)
+    );
+}
+
+#[test]
+fn open_checkpoint_scrub_actions_refusals_and_fenced_timers() {
+    use norn_cell::ScrubStatus;
+
+    let (_dir, path, model, options, created) = seed_checkpointed_rows_cell();
+    let query = scoped("org_demo");
+    let operator = Some(OPERATOR);
+
+    // Reopen from checkpoint: starts in Receipts phase (idempotency unproven).
+    let reopened_store = CellStore::open(&path, model, options).unwrap();
+    assert!(matches!(
+        reopened_store.scrub_status(),
+        ScrubStatus::Verifying {
+            phase: "receipts",
+            history_ready: false,
+            ..
+        }
+    ));
+    let host = host_of(reopened_store);
+
+    // Blocker 10 end-to-end: during Receipts phase, an idempotency-keyed kernel
+    // commit hits CommitError::Host(CellError::Verifying) -> 503 cell.verifying.
+    {
+        let mut cell = host.cell().unwrap();
+        let err = norn_kernel::CellHost::commit_action_quantity(
+            &mut *cell,
+            norn_kernel::CellCommit::empty(),
+            &[],
+            "unproven-receipt-key",
+        )
+        .unwrap_err();
+        let mapped = Refusal::from_commit_host_error(&err);
+        assert_eq!(
+            (mapped.status, mapped.code.as_str(), mapped.retryable),
+            (503, codes::CELL_VERIFYING, true)
+        );
+    }
+
+    // Advance scrub past Receipts phase into History phase.
+    {
+        let cell = host.cell().unwrap();
+        loop {
+            let status = cell.store().scrub_step();
+            if matches!(
+                status,
+                ScrubStatus::Verifying {
+                    phase: "history",
+                    history_ready: false,
+                    ..
+                }
+            ) {
+                break;
+            }
+            assert!(
+                matches!(
+                    status,
+                    ScrubStatus::Verifying {
+                        phase: "receipts",
+                        ..
+                    }
+                ),
+                "expected history phase, got {status:?}"
+            );
+        }
+    }
+
+    // Blocker 3: unchanged-target non-quantity action commits during History scrub.
+    let noop_body = order_edit_body("order-1", "{}", created.version, "noop-during-history");
+    let noop = call(&host, &query, operator, ORDER_EDIT, &noop_body)
+        .expect("unchanged-target action must not commit and return cell.verifying");
+    assert_eq!(noop.outcome, ActionCallOutcome::Committed);
+    assert_eq!(
+        (noop.object_id.as_str(), noop.version),
+        ("order-1", created.version)
+    );
+
+    // Replay during History scrub preserves S5b and refuses 503 cell.verifying.
+    let replay_err = call(&host, &query, operator, ORDER_EDIT, &noop_body).unwrap_err();
+    assert_eq!(
+        (
+            replay_err.status,
+            replay_err.code.as_str(),
+            replay_err.retryable
+        ),
+        (503, codes::CELL_VERIFYING, true)
+    );
+    assert_eq!(
+        host.cell().unwrap().store().scrub_to_end(),
+        ScrubStatus::Idle
+    );
+    let replayed = call(&host, &query, operator, ORDER_EDIT, &noop_body).unwrap();
+    assert_eq!(replayed.outcome, ActionCallOutcome::Replayed);
+    assert_eq!(
+        (replayed.object_id.as_str(), replayed.version),
+        ("order-1", created.version)
+    );
+}
+
+#[test]
+fn open_checkpoint_fenced_timers_and_action_refusal() {
+    use norn_cell::StoreOptions;
+
+    let (_dir, path, model, options, created) = seed_checkpointed_rows_cell();
+    let query = scoped("org_demo");
+    let operator = Some(OPERATOR);
+
+    // Blocker 6 + Blocker 10 (fenced): tamper covered fact -> fenced alarm cleanup.
+    {
+        use norn_cell::engine::SqlEngine as _;
+        let raw = NativeEngine::open(&path, StoreOptions::default()).unwrap();
+        raw.execute("DELETE FROM _norn_fact_values WHERE commit_seq = 5", &[])
+            .unwrap();
+    }
+    let fenced_host = host_of(CellStore::open(&path, model, options).unwrap());
+    let now = LogicalTime::from_millis(1_800_000_000_000);
+    let fenced_work = loop {
+        let work = crate::timers::run_due(&fenced_host, now).expect("run_due must not throw");
+        if work.failed.iter().any(|msg| msg.contains("fenced")) {
+            break work;
+        }
+        assert!(work.next.is_some());
+    };
+    assert_eq!(fenced_work.next, None);
+    let second = crate::timers::run_due(&fenced_host, now).expect("repeat run_due must not throw");
+    assert_eq!(second.next, None);
+    assert!(second.failed.iter().any(|msg| msg.contains("fenced")));
+    assert_eq!(
+        crate::timers::next_due(&fenced_host).expect("next_due on fenced cell must not throw"),
+        None
+    );
+    let fenced_call = call(
+        &fenced_host,
+        &query,
+        operator,
+        ORDER_EDIT,
+        &order_edit_body("order-1", "{}", created.version, "call-when-fenced"),
+    )
+    .unwrap_err();
+    assert_eq!(
+        (
+            fenced_call.status,
+            fenced_call.code.as_str(),
+            fenced_call.retryable
+        ),
+        (503, codes::CELL_FENCED, false)
     );
 }

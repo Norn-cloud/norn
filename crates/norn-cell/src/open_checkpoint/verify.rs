@@ -100,25 +100,69 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     }
 }
 
+/// What [`CellStore::verify_history`] admits and caches on open.
+pub(crate) struct VerifiedHistory {
+    pub(crate) head: LedgerHead,
+    pub(crate) boundary: Option<FormatBoundary>,
+    pub(crate) transparency: ReceiptLog,
+    pub(crate) trusted: Option<OpenCheckpoint>,
+    pub(crate) data_version: Option<u64>,
+}
+
 impl<E: SqlEngine> CellStore<E> {
+    /// S12 (#1551 round 5): retry any pending fence persistence and fail closed
+    /// on either a local or durable fence (sibling handle).
+    pub(crate) fn check_writable(&self) -> Result<(), CellError> {
+        self.persist_pending_fence();
+        self.scrub.borrow().refuse_fenced()?;
+        open_checkpoint::check_fence(&self.conn)
+    }
+
+    /// Run `f` inside a transaction after checking local and durable fences.
+    pub(crate) fn write_tx<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.check_writable()?;
+        self.conn.transaction(|| {
+            open_checkpoint::check_fence(&self.conn)?;
+            f()
+        })
+    }
+
+    /// Return the scrub gate after retrying any pending fence persistence.
+    pub(crate) fn served_gate(&self) -> crate::scrub::Gate {
+        if self.scrub.borrow().needs_fence_persist() {
+            self.persist_pending_fence();
+        }
+        self.scrub.borrow().gate()
+    }
+
     /// Complete open/provisioning-replay checkpoint recording and scrub setup.
     pub(crate) fn finish_open_scrub(
         &self,
         upgrading: bool,
-        trusted: Option<OpenCheckpoint>,
-        head: &LedgerHead,
-        boundary: Option<FormatBoundary>,
-        transparency: &ReceiptLog,
+        verified: &VerifiedHistory,
     ) -> Result<(), CellError> {
-        let recorded = if upgrading && trusted.is_none() {
-            self.record_open_checkpoint(None, head, boundary, transparency)?
+        let recorded = if upgrading && verified.trusted.is_none() {
+            self.record_open_checkpoint(
+                None,
+                &verified.head,
+                verified.boundary,
+                &verified.transparency,
+            )?
         } else {
             None
         };
         let keyed = self.conn.checkpoint_key().is_some()
             && crate::cell_identity::read(&self.conn)?.is_some();
         self.scrub.replace(crate::scrub::Scrub::after_open(
-            keyed, trusted, recorded, head, boundary,
+            keyed,
+            verified.trusted.clone(),
+            recorded,
+            &verified.head,
+            verified.boundary,
+            verified.data_version,
         ));
         Ok(())
     }
@@ -126,24 +170,13 @@ impl<E: SqlEngine> CellStore<E> {
     /// Admit the file's history (OPEN-CHECKPOINT-1, #1533): from its open
     /// checkpoint when it has one, else from genesis. Refuses immediately if
     /// the cell carries a durable scrub fence (S12).
-    #[allow(
-        clippy::type_complexity,
-        reason = "one admission returns what the open caches"
-    )]
     pub(crate) fn verify_history(
         &self,
         pass: &RefCell<crate::history::VerifiedReceipts>,
-    ) -> Result<
-        (
-            LedgerHead,
-            Option<FormatBoundary>,
-            ReceiptLog,
-            Option<OpenCheckpoint>,
-        ),
-        CellError,
-    > {
+    ) -> Result<VerifiedHistory, CellError> {
         // S12: a cell fenced durably by an earlier scrub refuses reopen.
         open_checkpoint::check_fence(&self.conn)?;
+        let mut drop_stale_checkpoint = false;
         let checkpoint = match open_checkpoint::load(&self.conn)? {
             Loaded::Authentic(checkpoint) => {
                 let last = self.verifier().next_commit_seq()?.saturating_sub(1);
@@ -153,6 +186,7 @@ impl<E: SqlEngine> CellStore<E> {
                         last,
                         "open checkpoint: past the file's history (a trimmed restore); verifying from genesis"
                     );
+                    drop_stale_checkpoint = true;
                     None
                 } else {
                     Some(checkpoint)
@@ -192,7 +226,20 @@ impl<E: SqlEngine> CellStore<E> {
                 "the receipt log and the ledger disagree on the commit count",
             ));
         }
-        Ok((head, boundary, transparency, checkpoint))
+        // S10 (#1551 round 5): after a trimmed restore passes genesis
+        // verification, drop the stale past-end checkpoint immediately so even
+        // histories <= MAX_ADVANCE (<= 256 commits) do not retain it.
+        if drop_stale_checkpoint {
+            open_checkpoint::drop_row(&self.conn)?;
+        }
+        let data_version = self.conn.external_data_version()?;
+        Ok(VerifiedHistory {
+            head,
+            boundary,
+            transparency,
+            trusted: checkpoint,
+            data_version,
+        })
     }
 
     /// S1 (#1551): replay the quantity projections from every quantity
@@ -373,6 +420,7 @@ impl<E: SqlEngine> CellStore<E> {
     /// commits, advance the checkpoint inside its own transaction after checking
     /// the live database tail and durable fence (S3, S10, S12).
     pub(crate) fn checkpoint_after_commit(&self, receipt: &Receipt) {
+        self.persist_pending_fence();
         let commits = receipt.body.commit_seq;
         if commits == 0
             || !commits.is_multiple_of(open_checkpoint::EVERY)
@@ -415,7 +463,9 @@ impl<E: SqlEngine> CellStore<E> {
             match (&previous, open_checkpoint::load(&self.conn)?) {
                 (Some(prev), Loaded::Authentic(row)) if row == *prev => {}
                 (Some(_), _) => return Ok(None),
-                (None, Loaded::Authentic(row)) if row.head.commits >= commits => {
+                (None, Loaded::Authentic(row))
+                    if row.head.commits <= tail_commits && row.head.commits >= commits =>
+                {
                     return Ok(None);
                 }
                 (None, _) => {}

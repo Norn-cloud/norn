@@ -24,6 +24,12 @@
 /** How long a guard or recovery wake waits: the longest a lost wake can delay a deadline. */
 export const RECOVERY_MS = 60_000;
 
+/** S12 (#1551 round 5): whether an error from the cell indicates a terminal history-scrub fence. */
+function isFenced(error) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return message.startsWith("cell.fenced");
+}
+
 export class Wake {
   /** `storage` is the object's storage: getAlarm, setAlarm, deleteAlarm. */
   constructor(storage) {
@@ -42,7 +48,14 @@ export class Wake {
   /** A serving cell opened: arm for whatever is already due. */
   async opened(cell, now) {
     if (!cell.serving()) return;
-    await this.earliest(cell.nextDue(now), now);
+    let next;
+    try {
+      next = cell.nextDue(now);
+    } catch (error) {
+      if (isFenced(error)) return;
+      throw error;
+    }
+    await this.earliest(next, now);
   }
   /** Before a request that may write: the guard wake is durable first. */
   async beforeWrite(cell, now) {
@@ -60,7 +73,17 @@ export class Wake {
   async afterWrite(cell, now) {
     this.writing = Math.max(0, this.writing - 1);
     if (!cell.serving()) return;
-    await this.earliest(cell.nextDue(now), now);
+    let next;
+    try {
+      next = cell.nextDue(now);
+    } catch (error) {
+      if (isFenced(error)) {
+        await this.storage.deleteAlarm();
+        return;
+      }
+      throw error;
+    }
+    await this.earliest(next, now);
   }
   /**
    * One alarm run at `now`: the recovery wake, the due work, a due sync's
@@ -75,7 +98,18 @@ export class Wake {
     // SYNC-ONE-1: an idle cell syncs on schedule too; the claim is the cell's.
     const sync = cell.syncDue(now) ?? null;
     // The next deadline, read after the claim (a claimed sync's lease counts).
-    const next = cell.nextDue(now);
+    let next;
+    try {
+      next = cell.nextDue(now);
+    } catch (error) {
+      // S12 (#1551 round 5): a fenced cell is terminal; clear the recovery
+      // alarm and return the failure report instead of looping forever.
+      if (isFenced(error)) {
+        await this.storage.deleteAlarm();
+        return { committed, failed: failed ?? String(error instanceof Error ? error.message : error), sync: null };
+      }
+      throw error;
+    }
     const recovery = now + RECOVERY_MS;
     if (this.writing > 0) {
       // A request still writing keeps the recovery wake until its own rearm

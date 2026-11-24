@@ -245,7 +245,28 @@ fn mac(
 /// The checkpoint row. Every column is qualified by the table alias, so a
 /// column an older layout lacks is an error under either setting of
 /// SQLite's double-quoted-string mode, never a string literal (S5, #1551).
-pub(crate) const LOAD_SQL: &str = r#"SELECT c."commits", c."seq", c."hash", c."receipts_root", c."boundary_seq", c."boundary_commit", c."quantity_receipts", c."export_seq", c."export_hash", c."definitions", c."mac" FROM "_norn_open_checkpoint" AS c WHERE c."id" = 1"#;
+///
+/// S2 (#1551 round 5): every column is projected safely inside SQLite so
+/// malformed values confined to `_norn_open_checkpoint` (integers outside
+/// `0..=MAX_SAFE_INTEGER`, non-finite floats, invalid UTF-8 text, or wrong
+/// storage classes) never abort row decoding at the Native or Workers SQL
+/// boundary before `decode_with_tag` classifies the row as
+/// [`Loaded::Unauthentic`]. Genuine SQL/schema errors still propagate.
+pub(crate) const LOAD_SQL: &str = concat!(
+    r#"SELECT "#,
+    r#"CASE WHEN typeof(c."commits") = 'integer' AND c."commits" >= 0 AND c."commits" <= 9007199254740992 THEN c."commits" ELSE -1 END, "#,
+    r#"CASE WHEN typeof(c."seq") = 'integer' AND c."seq" >= 0 AND c."seq" <= 9007199254740992 THEN c."seq" ELSE -1 END, "#,
+    r#"CASE WHEN typeof(c."hash") = 'text' THEN CAST(c."hash" AS BLOB) ELSE NULL END, "#,
+    r#"CASE WHEN typeof(c."receipts_root") = 'text' THEN CAST(c."receipts_root" AS BLOB) ELSE NULL END, "#,
+    r#"CASE WHEN c."boundary_seq" IS NULL THEN NULL WHEN typeof(c."boundary_seq") = 'integer' AND c."boundary_seq" >= 0 AND c."boundary_seq" <= 9007199254740992 THEN c."boundary_seq" ELSE -1 END, "#,
+    r#"CASE WHEN c."boundary_commit" IS NULL THEN NULL WHEN typeof(c."boundary_commit") = 'integer' AND c."boundary_commit" >= 0 AND c."boundary_commit" <= 9007199254740992 THEN c."boundary_commit" ELSE -1 END, "#,
+    r#"CASE WHEN typeof(c."quantity_receipts") = 'text' THEN CAST(c."quantity_receipts" AS BLOB) ELSE NULL END, "#,
+    r#"CASE WHEN c."export_seq" IS NULL THEN NULL WHEN typeof(c."export_seq") = 'integer' AND c."export_seq" >= 0 AND c."export_seq" <= 9007199254740992 THEN c."export_seq" ELSE -1 END, "#,
+    r#"CASE WHEN c."export_hash" IS NULL THEN NULL WHEN typeof(c."export_hash") = 'text' THEN CAST(c."export_hash" AS BLOB) ELSE -1 END, "#,
+    r#"CASE WHEN typeof(c."definitions") = 'text' THEN CAST(c."definitions" AS BLOB) ELSE NULL END, "#,
+    r#"CASE WHEN typeof(c."mac") = 'text' THEN CAST(c."mac" AS BLOB) ELSE NULL END "#,
+    r#"FROM "_norn_open_checkpoint" AS c WHERE c."id" = 1"#,
+);
 
 /// The `(commit, receipt digest)` of every quantity receipt, in commit
 /// order, read through the receipt table's two quantity indexes (a single
@@ -354,16 +375,41 @@ fn opt_unsigned_column(row: &SqlRow, index: usize) -> OptUnsigned {
     }
 }
 
+fn text_column(row: &SqlRow, index: usize) -> Option<String> {
+    match row.get_ref(index).ok()? {
+        SqlValue::Blob(bytes) => String::from_utf8(bytes.clone()).ok(),
+        SqlValue::Text(text) => Some(text.clone()),
+        SqlValue::Null | SqlValue::Integer(_) | SqlValue::Real(_) => None,
+    }
+}
+
+enum OptText {
+    Null,
+    Value(String),
+    Malformed,
+}
+
+fn opt_text_column(row: &SqlRow, index: usize) -> OptText {
+    match row.get_ref(index) {
+        Ok(SqlValue::Null) => OptText::Null,
+        Ok(SqlValue::Blob(bytes)) => {
+            String::from_utf8(bytes.clone()).map_or(OptText::Malformed, OptText::Value)
+        }
+        Ok(SqlValue::Text(text)) => OptText::Value(text.clone()),
+        Ok(SqlValue::Integer(_) | SqlValue::Real(_)) | Err(_) => OptText::Malformed,
+    }
+}
+
 /// Decode all 11 checkpoint columns and the 32-byte MAC tag, returning `None`
-/// for any column count, type, range, structural or MAC-encoding defect (S2).
+/// for any column count, type, range, UTF-8, structural or MAC-encoding defect (S2).
 fn decode_with_tag(row: &SqlRow) -> Option<(OpenCheckpoint, [u8; 32])> {
     if row.0.len() != 11 {
         return None;
     }
     let commits = unsigned_column(row, 0)?;
     let seq = unsigned_column(row, 1)?;
-    let hash: String = row.get(2).ok()?;
-    let receipts_root: String = row.get(3).ok()?;
+    let hash = text_column(row, 2)?;
+    let receipts_root = text_column(row, 3)?;
     if commits == 0 && (seq != 0 || hash != GENESIS_HASH) {
         return None;
     }
@@ -380,20 +426,17 @@ fn decode_with_tag(row: &SqlRow) -> Option<(OpenCheckpoint, [u8; 32])> {
         }
         _ => return None,
     };
-    let quantity_receipts: String = row.get(6).ok()?;
-    let export = match (
-        opt_unsigned_column(row, 7),
-        row.get::<Option<String>>(8).ok()?,
-    ) {
-        (OptUnsigned::Null, None) => None,
-        (OptUnsigned::Value(export_seq), Some(export_hash)) => Some(ExportPin {
+    let quantity_receipts = text_column(row, 6)?;
+    let export = match (opt_unsigned_column(row, 7), opt_text_column(row, 8)) {
+        (OptUnsigned::Null, OptText::Null) => None,
+        (OptUnsigned::Value(export_seq), OptText::Value(export_hash)) => Some(ExportPin {
             seq: export_seq,
             hash: export_hash,
         }),
         _ => return None,
     };
-    let definitions: String = row.get(9).ok()?;
-    let mac_text: String = row.get(10).ok()?;
+    let definitions = text_column(row, 9)?;
+    let mac_text = text_column(row, 10)?;
     let tag_bytes = decode_hex(&mac_text)?;
     let tag: [u8; 32] = tag_bytes.try_into().ok()?;
     Some((
@@ -507,6 +550,31 @@ pub(crate) fn read_fence(engine: &impl SqlEngine) -> Result<Option<String>, Cell
     }))
 }
 
+/// Refuse with [`CellError::Fenced`] if an already-open cell carries a durable
+/// fence in `_norn_meta`, in one primary-key lookup (S12).
+///
+/// # Errors
+/// [`CellError::Fenced`] or SQL failures.
+pub(crate) fn check_fence_open(engine: &impl SqlEngine) -> Result<(), CellError> {
+    let value = engine.query_optional(
+        &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
+        params![FENCE_KEY],
+        |row| row.get_ref(0).cloned(),
+    )?;
+    if let Some(val) = value {
+        let finding = match val {
+            SqlValue::Text(finding) if !finding.is_empty() => finding,
+            SqlValue::Null
+            | SqlValue::Integer(_)
+            | SqlValue::Real(_)
+            | SqlValue::Text(_)
+            | SqlValue::Blob(_) => "corrupt durable history-scrub fence marker".to_owned(),
+        };
+        return Err(CellError::Fenced(finding));
+    }
+    Ok(())
+}
+
 /// Refuse with [`CellError::Fenced`] if the cell carries a durable fence (S12).
 ///
 /// # Errors
@@ -555,19 +623,19 @@ pub(crate) fn corrupt(commits: u64, reason: &str) -> CellError {
 }
 
 #[cfg(all(test, feature = "native"))]
-#[allow(clippy::expect_used, reason = "test assertions")]
 mod tests {
     use super::{CheckpointKey, Loaded, OpenCheckpoint, load, mac};
+    use crate::CellError;
     use crate::engine::{NativeEngine, SqlEngine as _};
     use hmac::Mac as _;
 
     /// 32 random bytes from SQLite's `randomblob`: a key for this test only.
-    fn random_bytes() -> [u8; 32] {
-        let conn = rusqlite::Connection::open_in_memory().expect("database");
-        let bytes: Vec<u8> = conn
-            .query_row("SELECT randomblob(32)", [], |row| row.get(0))
-            .expect("random bytes");
-        bytes.try_into().expect("32 bytes")
+    fn random_bytes() -> Result<[u8; 32], CellError> {
+        let conn = rusqlite::Connection::open_in_memory()?;
+        let bytes: Vec<u8> = conn.query_row("SELECT randomblob(32)", [], |row| row.get(0))?;
+        bytes
+            .try_into()
+            .map_err(|_bytes| CellError::Encoding("32 random bytes".to_owned()))
     }
 
     fn checkpoint() -> OpenCheckpoint {
@@ -585,53 +653,75 @@ mod tests {
         }
     }
 
-    fn verifies(key: &CheckpointKey, cell: &str, row: &OpenCheckpoint, tag: &[u8]) -> bool {
-        mac(key, cell, row).expect("mac").verify_slice(tag).is_ok()
+    fn verifies(
+        key: &CheckpointKey,
+        cell: &str,
+        row: &OpenCheckpoint,
+        tag: &[u8],
+    ) -> Result<bool, CellError> {
+        Ok(mac(key, cell, row)?.verify_slice(tag).is_ok())
     }
 
     /// #1551 round 4: the MAC binds every column, the cell's identity and
     /// the key. A row MAC'd for one cell does not verify for another, and
     /// one changed column, or another key, fails it.
     #[test]
-    fn the_mac_binds_the_row_the_cell_and_the_key() {
-        let key = CheckpointKey::from_bytes(random_bytes());
+    fn the_mac_binds_the_row_the_cell_and_the_key() -> Result<(), CellError> {
+        let key = CheckpointKey::from_bytes(random_bytes()?);
         let row = checkpoint();
-        let tag = mac(&key, "cell-a", &row)
-            .expect("mac")
-            .finalize()
-            .into_bytes();
-        assert!(verifies(&key, "cell-a", &row, &tag));
-        assert!(!verifies(&key, "cell-b", &row, &tag), "copied across cells");
+        let tag = mac(&key, "cell-a", &row)?.finalize().into_bytes();
+        assert!(verifies(&key, "cell-a", &row, &tag)?);
+        assert!(
+            !verifies(&key, "cell-b", &row, &tag)?,
+            "copied across cells"
+        );
         let mut changed = row.clone();
         changed.receipts_root = "r2".to_owned();
-        assert!(!verifies(&key, "cell-a", &changed, &tag), "a changed root");
-        let other = CheckpointKey::from_bytes(random_bytes());
-        assert!(!verifies(&other, "cell-a", &row, &tag), "another key");
+        assert!(!verifies(&key, "cell-a", &changed, &tag)?, "a changed root");
+        let other = CheckpointKey::from_bytes(random_bytes()?);
+        assert!(!verifies(&other, "cell-a", &row, &tag)?, "another key");
+        Ok(())
     }
 
     #[test]
-    fn a_key_is_64_hexadecimal_digits() {
-        let bytes = random_bytes();
+    fn a_key_is_64_hexadecimal_digits() -> Result<(), CellError> {
+        let bytes = random_bytes()?;
         let hex = super::root_hex(&bytes);
-        let key = CheckpointKey::from_hex(&hex).expect("key");
+        let key = CheckpointKey::from_hex(&hex)?;
         assert_eq!(key, CheckpointKey::from_bytes(bytes));
         assert!(CheckpointKey::from_hex("07").is_err());
         assert!(CheckpointKey::from_hex(&"zz".repeat(32)).is_err());
         assert_eq!(format!("{key:?}"), "CheckpointKey(<redacted>)");
+        Ok(())
     }
 
     /// S2 (#1551): malformed checkpoint rows (wrong SQLite column types,
-    /// negative values, half-null boundary/export pairs, short or non-hex MAC)
-    /// decode as `Loaded::Unauthentic` rather than erroring or panicking.
+    /// negative or out-of-range integers, floats, non-finite floats, invalid
+    /// UTF-8 text, BLOBs, half-null boundary/export pairs, short or non-hex
+    /// MAC) decode as `Loaded::Unauthentic` rather than erroring or panicking.
     #[test]
-    fn malformed_checkpoint_rows_are_unauthentic() {
-        let key = CheckpointKey::from_bytes(random_bytes());
+    fn malformed_checkpoint_rows_are_unauthentic() -> Result<(), CellError> {
+        let key = CheckpointKey::from_bytes(random_bytes()?);
         let cases = [
             // Non-integer commits (SQLite allows text in non-STRICT tables).
             "INSERT INTO _norn_open_checkpoint VALUES (1, 'bad', 1, 'h', 'r', NULL, NULL, 'q', NULL, NULL, 'd', '00')",
             // Negative commits.
             "INSERT INTO _norn_open_checkpoint VALUES (1, -5, 1, 'h', 'r', NULL, NULL, 'q', NULL, NULL, 'd', '00')",
-            // Blob MAC column.
+            // Out-of-range positive integer (> MAX_SAFE_INTEGER / i64::MAX).
+            "INSERT INTO _norn_open_checkpoint VALUES (1, 9223372036854775807, 1, 'h', 'r', NULL, NULL, 'q', NULL, NULL, 'd', '00')",
+            "INSERT INTO _norn_open_checkpoint VALUES (1, 9007199254740993, 1, 'h', 'r', NULL, NULL, 'q', NULL, NULL, 'd', '00')",
+            // Out-of-range negative integer (i64::MIN).
+            "INSERT INTO _norn_open_checkpoint VALUES (1, -9223372036854775808, 1, 'h', 'r', NULL, NULL, 'q', NULL, NULL, 'd', '00')",
+            // Float and non-finite float (+Inf, -Inf) in integer and text columns.
+            "INSERT INTO _norn_open_checkpoint VALUES (1, 1.5, 1, 'h', 'r', NULL, NULL, 'q', NULL, NULL, 'd', '00')",
+            "INSERT INTO _norn_open_checkpoint VALUES (1, 9e999, 1, 'h', 'r', NULL, NULL, 'q', NULL, NULL, 'd', '00')",
+            "INSERT INTO _norn_open_checkpoint VALUES (1, 1, 1, -9e999, 'r', NULL, NULL, 'q', NULL, NULL, 'd', '00')",
+            // Invalid UTF-8 bytes stored with TEXT storage class.
+            "INSERT INTO _norn_open_checkpoint VALUES (1, 1, 1, CAST(X'fffe' AS TEXT), 'r', NULL, NULL, 'q', NULL, NULL, 'd', '00')",
+            "INSERT INTO _norn_open_checkpoint VALUES (1, 1, 1, 'h', 'r', NULL, NULL, 'q', 1, CAST(X'fffe' AS TEXT), 'd', '00')",
+            "INSERT INTO _norn_open_checkpoint VALUES (1, 1, 1, 'h', 'r', NULL, NULL, 'q', NULL, NULL, 'd', CAST(X'fffe' AS TEXT))",
+            // BLOB in integer and text columns.
+            "INSERT INTO _norn_open_checkpoint VALUES (1, X'deadbeef', 1, 'h', 'r', NULL, NULL, 'q', NULL, NULL, 'd', '00')",
             "INSERT INTO _norn_open_checkpoint VALUES (1, 1, 1, 'h', 'r', NULL, NULL, 'q', NULL, NULL, 'd', X'0102')",
             // Short MAC hex.
             "INSERT INTO _norn_open_checkpoint VALUES (1, 1, 1, 'h', 'r', NULL, NULL, 'q', NULL, NULL, 'd', 'abcd')",
@@ -647,25 +737,22 @@ mod tests {
             "INSERT INTO _norn_open_checkpoint VALUES (1, 5, 0, 'h', 'r', NULL, NULL, 'q', NULL, NULL, 'd', '0000000000000000000000000000000000000000000000000000000000000000')",
         ];
         for sql in cases {
-            let engine = NativeEngine::open_in_memory()
-                .expect("engine")
-                .with_checkpoint_key(Some(key));
-            engine
-                .execute_batch(&format!(
-                    r#"CREATE TABLE "_norn_meta" ("key" TEXT PRIMARY KEY, "value" TEXT NOT NULL);
-                       INSERT INTO "_norn_meta" VALUES ('binding:cell_id', '0123456789abcdef0123456789abcdef');
-                       INSERT INTO "_norn_meta" VALUES ('binding:cell_identity_format', '{}');"#,
-                    crate::cell_identity::FORMAT
-                ))
-                .expect("meta");
-            engine.execute_batch(super::DDL).expect("ddl");
-            engine.execute_batch(sql).expect("insert malformed row");
-            let loaded = load(&engine).expect("malformed row does not error");
+            let engine = NativeEngine::open_in_memory()?.with_checkpoint_key(Some(key));
+            engine.execute_batch(&format!(
+                r#"CREATE TABLE "_norn_meta" ("key" TEXT PRIMARY KEY, "value" TEXT NOT NULL);
+                   INSERT INTO "_norn_meta" VALUES ('binding:cell_id', '0123456789abcdef0123456789abcdef');
+                   INSERT INTO "_norn_meta" VALUES ('binding:cell_identity_format', '{}');"#,
+                crate::cell_identity::FORMAT
+            ))?;
+            engine.execute_batch(super::DDL)?;
+            engine.execute_batch(sql)?;
+            let loaded = load(&engine)?;
             assert!(
                 matches!(loaded, Loaded::Unauthentic),
                 "expected Unauthentic for `{sql}`, got {loaded:?}"
             );
         }
+        Ok(())
     }
 
     /// S5 (#1551 round 2): a checkpoint table of an older layout, with no
@@ -674,25 +761,22 @@ mod tests {
     /// used before reads the missing column back as its own name when the
     /// mode is on.
     #[test]
-    fn an_older_checkpoint_layout_refuses_under_either_quoted_string_mode() {
+    fn an_older_checkpoint_layout_refuses_under_either_quoted_string_mode() -> Result<(), CellError>
+    {
         use rusqlite::config::DbConfig;
         const UNQUALIFIED: &str =
             r#"SELECT "commits", "quantity_receipts" FROM "_norn_open_checkpoint" WHERE "id" = 1"#;
         for dqs in [true, false] {
-            let conn = rusqlite::Connection::open_in_memory().expect("database");
-            conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DQS_DML, dqs)
-                .expect("quoted-string mode");
+            let conn = rusqlite::Connection::open_in_memory()?;
+            conn.set_db_config(DbConfig::SQLITE_DBCONFIG_DQS_DML, dqs)?;
             conn.execute_batch(
                 r#"CREATE TABLE "_norn_open_checkpoint" ("id" INTEGER PRIMARY KEY, "commits" INTEGER NOT NULL,
                      "seq" INTEGER NOT NULL, "hash" TEXT NOT NULL, "receipts_root" TEXT NOT NULL,
                      "boundary_seq" INTEGER, "boundary_commit" INTEGER);
                    INSERT INTO "_norn_open_checkpoint" VALUES (1, 128, 300, 'h', 'r', NULL, NULL);"#,
-            )
-            .expect("older layout");
+            )?;
             if dqs {
-                let read: String = conn
-                    .query_row(UNQUALIFIED, [], |row| row.get(1))
-                    .expect("the unqualified form reads a literal");
+                let read: String = conn.query_row(UNQUALIFIED, [], |row| row.get(1))?;
                 assert_eq!(read, "quantity_receipts");
             }
             assert!(
@@ -700,5 +784,6 @@ mod tests {
                 "the load admitted an older layout (quoted-string mode {dqs})"
             );
         }
+        Ok(())
     }
 }

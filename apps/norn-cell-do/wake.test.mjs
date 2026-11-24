@@ -177,6 +177,48 @@ describe("an alarm", () => {
     await wake.alarm(served, NOW);
     expect(store.alarm).toBe(NOW + 3_600_000);
   });
+
+  // Round 5 S12: when a scrub step fences the cell, alarm cleanup deletes the
+  // recovery wake and returns the terminal report instead of throwing/looping.
+  test("a wake that fences the cell clears the recovery alarm and returns the terminal report", async () => {
+    const store = storage();
+    const fencedReport = "history scrub: the cell is fenced: missing value";
+    const served = {
+      serving: () => true,
+      runDue() {
+        return { committed: false, failed: fencedReport, free() {} };
+      },
+      syncDue() {
+        return undefined;
+      },
+      nextDue() {
+        return undefined;
+      },
+    };
+    const ran = await new Wake(store).alarm(served, NOW);
+    expect(ran).toEqual({ committed: false, failed: fencedReport, sync: null });
+    expect(store.alarm).toBe(null);
+  });
+
+  test("a wake whose nextDue throws cell.fenced still clears the alarm and returns the report", async () => {
+    const store = storage();
+    const fencedReport = "history scrub: the cell is fenced: tampered history";
+    const served = {
+      serving: () => true,
+      runDue() {
+        return { committed: false, failed: fencedReport, free() {} };
+      },
+      syncDue() {
+        return undefined;
+      },
+      nextDue() {
+        throw "cell.fenced";
+      },
+    };
+    const ran = await new Wake(store).alarm(served, NOW);
+    expect(ran).toEqual({ committed: false, failed: fencedReport, sync: null });
+    expect(store.alarm).toBe(null);
+  });
 });
 
 describe("opening", () => {

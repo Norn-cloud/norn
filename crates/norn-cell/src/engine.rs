@@ -248,6 +248,23 @@ pub trait SqlEngine {
         Ok(None)
     }
 
+    /// External-writer revision of the database (`PRAGMA data_version` on
+    /// native SQLite, constant `Some(0)` on exclusive single-connection
+    /// engines such as Durable Objects and Rivet), readable both inside and
+    /// outside a transaction (OPEN-CHECKPOINT-1 S10, #1551).
+    ///
+    /// Equal values across two transactions prove no other connection wrote
+    /// to the database file in between.
+    ///
+    /// # Errors
+    /// Backend revision-read failures.
+    fn external_data_version(&self) -> Result<Option<u64>, CellError> {
+        Ok(match self.read_isolation() {
+            ReadIsolation::ExclusiveSynchronous => Some(0),
+            ReadIsolation::Revisioned => None,
+        })
+    }
+
     /// A store has accepted this engine's database. A host applies here the
     /// persistent settings it deferred at open, so that a refused open
     /// leaves the file exactly as found (ENGINE-UPGRADE-1, #1504).
@@ -891,13 +908,20 @@ impl SqlEngine for NativeEngine {
         if !self.conn.is_autocommit() {
             return Ok(None);
         }
+        let Some(external) = self.external_data_version()? else {
+            return Ok(None);
+        };
+        Ok(Some((self.conn.total_changes(), external)))
+    }
+
+    fn external_data_version(&self) -> Result<Option<u64>, CellError> {
         let _counted = StatementCount::start(&self.conn, &[]);
         let external: i64 = self
             .conn
             .query_row("PRAGMA data_version", [], |row| row.get(0))?;
         let external = u64::try_from(external)
             .map_err(|_negative| CellError::OutOfRange("SQLite cache revision"))?;
-        Ok(Some((self.conn.total_changes(), external)))
+        Ok(Some(external))
     }
 
     fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {

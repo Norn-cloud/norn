@@ -22,7 +22,7 @@ pub struct DevHost<E: SqlEngine> {
     definitions: RwLock<()>,
     /// Always `Some` outside [`DevHost::ingest`], which holds the lock while
     /// it maps one page of source rows under the observation profile.
-    cell: Mutex<Option<ActionCell<E>>>,
+    pub(crate) cell: Mutex<Option<ActionCell<E>>>,
     /// Requests waiting for [`Self::cell`]; a load yields to them between
     /// its commits (INGEST-YIELD-1).
     waiting: std::sync::atomic::AtomicUsize,

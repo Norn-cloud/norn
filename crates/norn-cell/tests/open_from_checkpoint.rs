@@ -1174,6 +1174,30 @@ fn malformed_checkpoint_row_opens_from_genesis() {
             "UPDATE _norn_open_checkpoint SET commits = 'corrupt'",
         ),
         (
+            "out-of-range positive integer",
+            "UPDATE _norn_open_checkpoint SET commits = 9223372036854775807",
+        ),
+        (
+            "out-of-range negative integer",
+            "UPDATE _norn_open_checkpoint SET commits = -9223372036854775808",
+        ),
+        (
+            "float commits",
+            "UPDATE _norn_open_checkpoint SET commits = 1.5",
+        ),
+        (
+            "non-finite float commits",
+            "UPDATE _norn_open_checkpoint SET commits = 9e999",
+        ),
+        (
+            "invalid utf8 hash",
+            "UPDATE _norn_open_checkpoint SET hash = CAST(X'fffe' AS TEXT)",
+        ),
+        (
+            "blob commits",
+            "UPDATE _norn_open_checkpoint SET commits = X'deadbeef'",
+        ),
+        (
             "half-null export pair",
             "UPDATE _norn_open_checkpoint SET export_seq = 1, export_hash = NULL",
         ),
@@ -1443,11 +1467,13 @@ fn checkpoint_seed_does_not_regress_newer_concurrent_checkpoint() {
     );
 }
 
-/// Wraps a `NativeEngine` and injects a single transient I/O error on the
-/// next transaction when `fail_next` is armed.
+/// Wraps a `NativeEngine` and injects a single transient commit fault AFTER
+/// the transaction callback has run and returned `Ok`, rolling back the
+/// transaction when `fail_next` is armed (S11 / S12).
 struct OneShotIoFault {
     inner: NativeEngine,
     fail_next: std::rc::Rc<Cell<bool>>,
+    callbacks_rolled_back: std::rc::Rc<Cell<u32>>,
 }
 
 impl SqlEngine for OneShotIoFault {
@@ -1456,6 +1482,9 @@ impl SqlEngine for OneShotIoFault {
     }
     fn checkpoint_key(&self) -> Option<CheckpointKey> {
         self.inner.checkpoint_key()
+    }
+    fn external_data_version(&self) -> Result<Option<u64>, CellError> {
+        self.inner.external_data_version()
     }
     fn definition_writes<T>(
         &self,
@@ -1473,16 +1502,29 @@ impl SqlEngine for OneShotIoFault {
         self.inner.execute_batch(sql)
     }
     fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X> {
-        if self.fail_next.replace(false) {
-            return Err(CellError::Engine("transient sqlite io fault".to_owned()).into());
+        if !self.fail_next.replace(false) {
+            return self.inner.transaction(f);
         }
-        self.inner.transaction(f)
+        let ran = Cell::new(false);
+        let result: Result<T, X> = self.inner.transaction(|| {
+            let _value = f()?;
+            ran.set(true);
+            Err(CellError::Engine("transient sqlite commit fault".to_owned()).into())
+        });
+        assert!(
+            ran.get(),
+            "transaction callback must have executed before injected commit rollback"
+        );
+        self.callbacks_rolled_back
+            .set(self.callbacks_rolled_back.get().saturating_add(1));
+        result
     }
 }
 
 /// S11: staged scrub progress applies to `Run` only after each step
-/// transaction commits, so transient SQLite I/O faults during receipts and
-/// history phases retry cleanly without corrupting accumulated state.
+/// transaction commits, so transient SQLite commit faults AFTER the callback
+/// runs in Receipts, History, and Seed phases roll back cleanly without
+/// corrupting accumulated state.
 #[test]
 fn staged_scrub_survives_transient_engine_io_fault() {
     let dir = tempfile::tempdir().expect("directory");
@@ -1491,14 +1533,16 @@ fn staged_scrub_survives_transient_engine_io_fault() {
     cell(&path, total);
 
     let fail_next = std::rc::Rc::new(Cell::new(false));
+    let rolled_back = std::rc::Rc::new(Cell::new(0));
     let engine = OneShotIoFault {
         inner: NativeEngine::open(&path, keyed()).expect("native engine"),
         fail_next: std::rc::Rc::clone(&fail_next),
+        callbacks_rolled_back: std::rc::Rc::clone(&rolled_back),
     };
     let store = CellStore::from_engine(engine, engine_fixture::model()).expect("open");
     assert!(!history_ready(&store));
 
-    // Inject transient I/O error during Receipts phase.
+    // Inject transient COMMIT fault during Receipts phase (callback runs, then rolls back).
     fail_next.set(true);
     let status = store.scrub_step();
     assert!(
@@ -1506,11 +1550,13 @@ fn staged_scrub_survives_transient_engine_io_fault() {
             status,
             ScrubStatus::Verifying {
                 phase: "receipts",
+                verified: 0,
                 ..
             }
         ),
-        "transient receipts fault should retry, got {status:?}"
+        "transient receipts commit fault must not mutate Run, got {status:?}"
     );
+    assert_eq!(rolled_back.get(), 1);
 
     // Advance into History phase.
     loop {
@@ -1525,7 +1571,7 @@ fn staged_scrub_survives_transient_engine_io_fault() {
         }
     }
 
-    // Inject transient I/O error during History phase.
+    // Inject transient COMMIT fault during History phase (callback runs, then rolls back).
     fail_next.set(true);
     let status = store.scrub_step();
     assert!(
@@ -1533,10 +1579,39 @@ fn staged_scrub_survives_transient_engine_io_fault() {
             status,
             ScrubStatus::Verifying {
                 phase: "history",
+                verified: 0,
                 ..
             }
         ),
-        "transient history fault should retry, got {status:?}"
+        "transient history commit fault must not mutate Run, got {status:?}"
+    );
+    assert_eq!(rolled_back.get(), 2);
+
+    // Advance into Seed phase.
+    loop {
+        let status = store.scrub_step();
+        if let ScrubStatus::Verifying { phase, .. } = status {
+            if phase == "seed" {
+                break;
+            }
+            assert_eq!(phase, "history", "expected history or seed phase");
+        } else {
+            panic!("expected seed phase, got {status:?}");
+        }
+    }
+
+    // Inject transient COMMIT fault during Seed phase (checkpoint write rolls back).
+    fail_next.set(true);
+    let status = store.scrub_step();
+    assert!(
+        matches!(status, ScrubStatus::Verifying { phase: "seed", .. }),
+        "transient seed commit fault must retry cleanly, got {status:?}"
+    );
+    assert_eq!(rolled_back.get(), 3);
+    assert_eq!(
+        checkpoint(&path).map(|(commits, ..)| commits),
+        Some(EVERY),
+        "rolled-back seed must not persist new checkpoint"
     );
 
     // Scrub finishes cleanly without corrupted walk/quantity/tree state.
@@ -1546,13 +1621,15 @@ fn staged_scrub_survives_transient_engine_io_fault() {
     assert_eq!(
         checkpoint(&path).map(|(commits, ..)| commits),
         Some(total),
-        "staged scrub seeded the exact open head after transient retries"
+        "staged scrub seeded the exact open head after transient commit retries"
     );
 }
 
 /// S12: when scrub detects a defect it drops `_norn_open_checkpoint` AND
 /// persists `_norn_meta` key `open_checkpoint:fenced`, so sibling handles
-/// and subsequent reopens (keyed or unkeyed) fail closed with `Fenced`.
+/// (live reads, writes, `inject`, `fork` even with pending scrub, and
+/// `scrub_status`/`scrub_step`) and subsequent reopens (keyed or unkeyed)
+/// all fail closed with `Fenced`.
 #[test]
 fn durable_fence_persists_across_reopen_and_blocks_sibling_handles() {
     let dir = tempfile::tempdir().expect("directory");
@@ -1563,18 +1640,69 @@ fn durable_fence_persists_across_reopen_and_blocks_sibling_handles() {
 
     let handle_a = open(&path).expect("handle A");
     let mut handle_b = open(&path).expect("handle B");
+    let handle_b_head = handle_b.verified_head().expect("handle B head");
+    assert!(!history_ready(&handle_b));
 
     assert!(matches!(
         handle_a.scrub_to_end(),
         ScrubStatus::Fenced { .. }
     ));
+    // Sibling live reads refuse with Fenced.
+    assert!(
+        matches!(
+            handle_b.read().object(MAIN_WORLD, "fixture.Item", "c0"),
+            Err(CellError::Fenced(_))
+        ),
+        "sibling live object read must fail closed on durable fence"
+    );
+    assert!(
+        matches!(
+            handle_b.read().version(MAIN_WORLD, "fixture.Item", "c0"),
+            Err(CellError::Fenced(_))
+        ),
+        "sibling live version read must fail closed on durable fence"
+    );
+    assert!(
+        matches!(
+            handle_b.read().list(MAIN_WORLD, "fixture.Item", 10),
+            Err(CellError::Fenced(_))
+        ),
+        "sibling live list read must fail closed on durable fence"
+    );
+    assert!(
+        matches!(handle_b.verified_head(), Err(CellError::Fenced(_))),
+        "sibling verified_head must fail closed on durable fence"
+    );
+    // Sibling commit and receipt-less writes (`inject`) refuse with Fenced.
     assert!(
         matches!(
             handle_b.commit(&put(total.saturating_add(1))),
             Err(CellError::Fenced(_))
         ),
-        "sibling handle must fail closed on durable fence"
+        "sibling commit must fail closed on durable fence"
     );
+    assert!(
+        matches!(
+            handle_b.inject("obs-after-fence", &RuntimeValue::Null),
+            Err(CellError::Fenced(_))
+        ),
+        "sibling inject must fail closed on durable fence"
+    );
+    // Sibling with pending scrub must return Fenced (NOT Verifying) on fork().
+    assert!(
+        matches!(
+            handle_b.fork("what-if", &handle_b_head),
+            Err(CellError::Fenced(_))
+        ),
+        "sibling fork with pending scrub must prefer Fenced over Verifying"
+    );
+    // Sibling scrub_status() and scrub_step() observe the durable fence.
+    assert!(matches!(
+        handle_b.scrub_status(),
+        ScrubStatus::Fenced { .. }
+    ));
+    assert!(!handle_b.scrub_pending());
+    assert!(matches!(handle_b.scrub_step(), ScrubStatus::Fenced { .. }));
     drop(handle_a);
     drop(handle_b);
 
@@ -1587,6 +1715,428 @@ fn durable_fence_persists_across_reopen_and_blocks_sibling_handles() {
         matches!(open_unkeyed(&path), Err(CellError::Fenced(_))),
         "unkeyed reopen must also fail closed with Fenced"
     );
+}
+
+struct NthCommitFault {
+    inner: NativeEngine,
+    skip_txs: std::rc::Rc<Cell<u32>>,
+    armed: std::rc::Rc<Cell<bool>>,
+}
+
+impl SqlEngine for NthCommitFault {
+    fn read_isolation(&self) -> ReadIsolation {
+        self.inner.read_isolation()
+    }
+    fn checkpoint_key(&self) -> Option<CheckpointKey> {
+        self.inner.checkpoint_key()
+    }
+    fn external_data_version(&self) -> Result<Option<u64>, CellError> {
+        self.inner.external_data_version()
+    }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.inner.definition_writes(f)
+    }
+    fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
+        self.inner.execute(sql, params)
+    }
+    fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+        self.inner.query(sql, params)
+    }
+    fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
+        self.inner.execute_batch(sql)
+    }
+    fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X> {
+        if !self.armed.get() {
+            return self.inner.transaction(f);
+        }
+        let left = self.skip_txs.get();
+        if left > 0 {
+            self.skip_txs.set(left.saturating_sub(1));
+            return self.inner.transaction(f);
+        }
+        self.armed.set(false);
+        self.inner.transaction(|| {
+            let _ok = f()?;
+            Err(CellError::Engine("transient fence_durably commit fault".to_owned()).into())
+        })
+    }
+}
+
+/// S12 (#1551 round 5): if `fence_durably` fails transiently when scrub first
+/// detects a defect, the handle keeps `fence_persisted = false` and retries
+/// persisting the durable fence on subsequent calls until `_norn_meta` records
+/// `open_checkpoint:fenced` and `_norn_open_checkpoint` is deleted.
+#[test]
+fn transient_fence_persistence_failure_retries_until_durable() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    let total = EVERY.saturating_add(10);
+    cell(&path, total);
+    execute(&path, "DELETE FROM _norn_fact_values WHERE commit_seq = 10");
+
+    // Use a 2nd-transaction commit fault: tx 0 is the failing history step
+    // (returns LedgerCorrupt), tx 1 is `fence_durably` (returns Ok -> rolled back!).
+    let skip_txs = std::rc::Rc::new(Cell::new(0));
+    let armed = std::rc::Rc::new(Cell::new(false));
+    let store = CellStore::from_engine(
+        NthCommitFault {
+            inner: NativeEngine::open(&path, keyed()).expect("native engine"),
+            skip_txs: std::rc::Rc::clone(&skip_txs),
+            armed: std::rc::Rc::clone(&armed),
+        },
+        engine_fixture::model(),
+    )
+    .expect("open");
+
+    loop {
+        let status = store.scrub_step();
+        if matches!(
+            status,
+            ScrubStatus::Verifying {
+                phase: "history",
+                ..
+            }
+        ) {
+            break;
+        }
+        assert!(
+            matches!(
+                status,
+                ScrubStatus::Verifying {
+                    phase: "receipts",
+                    ..
+                }
+            ),
+            "expected history phase, got {status:?}"
+        );
+    }
+    // Skip tx 0 (history step returning LedgerCorrupt), fail tx 1 (fence_durably).
+    skip_txs.set(1);
+    armed.set(true);
+    assert!(matches!(store.scrub_step(), ScrubStatus::Fenced { .. }));
+    assert!(!armed.get(), "fence_durably commit fault must have fired");
+    assert!(
+        checkpoint(&path).is_some(),
+        "transient fence_durably failure left checkpoint in place until retried"
+    );
+
+    // Next call retries `fence_durably`, deleting checkpoint and persisting fence.
+    assert!(matches!(store.scrub_step(), ScrubStatus::Fenced { .. }));
+    assert_eq!(checkpoint(&path), None, "retry deleted checkpoint");
+    drop(store);
+    assert!(
+        matches!(open(&path), Err(CellError::Fenced(_))),
+        "reopen fails closed after retried durable fence persistence"
+    );
+}
+
+/// S10 (#1551 round 5): trimmed restores at `<= MAX_ADVANCE` (`<= 256` commits,
+/// e.g. 100 and 200 commits) drop the stale past-end checkpoint immediately on
+/// open and advance cleanly on subsequent periodic checkpoints.
+#[test]
+fn a_trimmed_restore_under_max_advance_drops_stale_checkpoint_and_advances() {
+    let dir = tempfile::tempdir().expect("directory");
+    let end = EVERY.saturating_mul(4).saturating_add(2);
+    for (cut, next_cp) in [(100_u64, EVERY), (200_u64, EVERY.saturating_mul(2))] {
+        let path = dir.path().join(format!("cell-{cut}.sqlite"));
+        let restored = dir.path().join(format!("restored-{cut}.sqlite"));
+        cell(&path, cut);
+        std::fs::copy(&path, &restored).expect("snapshot");
+        cell_more(&path, cut, end);
+        let row = raw(&path)
+            .query("SELECT * FROM _norn_open_checkpoint", &[])
+            .expect("later checkpoint")
+            .remove(0);
+        let engine = raw(&restored);
+        engine
+            .execute("DELETE FROM _norn_open_checkpoint", &[])
+            .expect("clear");
+        engine
+            .execute(
+                "INSERT INTO _norn_open_checkpoint VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                &row,
+            )
+            .expect("copy past-end checkpoint");
+        drop(engine);
+
+        let mut store = open(&restored).expect("trimmed restore opens from genesis");
+        assert!(history_ready(&store));
+        assert_eq!(
+            checkpoint(&restored),
+            None,
+            "cut={cut}: stale past-end checkpoint must be dropped immediately on open"
+        );
+        for n in cut..=next_cp {
+            store.commit(&put(n)).expect("commit");
+        }
+        drop(store);
+        assert_eq!(
+            checkpoint(&restored).map(|(commits, ..)| commits),
+            Some(next_cp),
+            "cut={cut}: periodic advancement must record the new checkpoint at {next_cp}"
+        );
+    }
+}
+
+/// S10 (#1551 round 5): if an external SQLite connection mutates an already-
+/// scrubbed earlier row between scrub transactions, `PRAGMA data_version`
+/// changes, forcing the scrub to restart from genesis instead of stamping a
+/// checkpoint over tampered history; the restarted scrub detects the tamper
+/// and fences the cell durably.
+#[test]
+fn external_mutation_between_scrub_steps_restarts_and_fences_cell() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    let total = EVERY.saturating_add(10);
+    cell(&path, total);
+
+    let store = open(&path).expect("checkpointed open");
+    assert!(!history_ready(&store));
+
+    // Advance past Receipts AND the first History chunk (commits 1..=64 passed!).
+    loop {
+        let status = store.scrub_step();
+        if matches!(
+            status,
+            ScrubStatus::Verifying {
+                phase: "history",
+                verified,
+                ..
+            } if verified >= 64
+        ) {
+            break;
+        }
+        assert!(
+            matches!(status, ScrubStatus::Verifying { .. }),
+            "expected history progress >= 64, got {status:?}"
+        );
+    }
+
+    // Mutate an already-scrubbed earlier row (commit 10) from a second SQLite connection!
+    execute(&path, "DELETE FROM _norn_fact_values WHERE commit_seq = 10");
+
+    // Seed must NOT clear the gate or stamp a checkpoint; scrub restarts and fences!
+    let final_status = store.scrub_to_end();
+    assert!(
+        matches!(final_status, ScrubStatus::Fenced { .. }),
+        "external mid-scrub tamper must restart scrub and fence the cell, got {final_status:?}"
+    );
+    assert!(!history_ready(&store));
+    drop(store);
+    assert_eq!(checkpoint(&path), None, "fence dropped checkpoint");
+    assert!(matches!(open(&path), Err(CellError::Fenced(_))));
+}
+
+fn measured_model() -> norn_cell::Model {
+    use norn_ir::{
+        ObjectTypeDef, ObjectTypeName, Property, PropertyConstraints, PropertyId, PropertyType,
+    };
+    use norn_projections::SqliteDdlInput;
+
+    let object_type = ObjectTypeDef {
+        immutable: false,
+        name: ObjectTypeName("fixture.Measured".to_owned()),
+        role: None,
+        description: None,
+        status: norn_ir::ResourceStatus::default(),
+        extends: None,
+        implements: vec![],
+        properties: vec![
+            Property {
+                protected: false,
+                id: PropertyId("unit".to_owned()),
+                description: None,
+                property_type: PropertyType::Text { format: None },
+                constraints: PropertyConstraints::default(),
+                default: None,
+                markings: vec![],
+                computed: None,
+            },
+            Property {
+                protected: false,
+                id: PropertyId("amount".to_owned()),
+                description: None,
+                property_type: PropertyType::Decimal {
+                    additivity: norn_ir::PropertyAdditivity::default(),
+                    scale: norn_ir::WholeNumber(2),
+                    rounding: None,
+                    unit: None,
+                    currency_source: None,
+                    per_unit: None,
+                    unit_source: vec![PropertyId("unit".to_owned())],
+                },
+                constraints: PropertyConstraints::default(),
+                default: None,
+                markings: vec![],
+                computed: None,
+            },
+        ],
+        links: vec![],
+        owned_collections: vec![],
+        identity: vec![],
+        invariants: vec![],
+        lifecycles: vec![],
+        markings: vec![],
+        accounting_leg: None,
+    };
+    norn_cell::Model::new(&SqliteDdlInput {
+        object_types: &[object_type],
+        property_types: &[],
+    })
+    .expect("model")
+}
+
+/// S7/S8 (#1551 round 5): `source_disagreements` scans `_norn_fact_values` and
+/// must be gated by `history_gate` until the scrub finishes.
+#[test]
+fn source_disagreements_are_gated_until_scrub_ends() {
+    let model = measured_model();
+
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("measured.sqlite");
+    {
+        let mut store = CellStore::open(&path, model.clone(), keyed()).expect("open");
+        for n in 0..EVERY.saturating_add(5) {
+            let batch = CommitBatch {
+                world: MAIN_WORLD.to_owned(),
+                scope: "s".to_owned(),
+                logical_time: 10_000_u64.saturating_add(n),
+                idempotency_key: Some(format!("m-{n}")),
+                writes: vec![FactWriteRow::Put {
+                    object_type: "fixture.Measured".to_owned(),
+                    key: "m1".to_owned(),
+                    values: BTreeMap::from([
+                        (
+                            "unit".to_owned(),
+                            RuntimeValue::from(if n.is_multiple_of(2) { "kg" } else { "lb" }),
+                        ),
+                        ("amount".to_owned(), RuntimeValue::from("10.00")),
+                    ]),
+                }],
+                events: vec![
+                    runtime_object! { "type" => "fixture.measured", "n" => i64::try_from(n).expect("n") },
+                ],
+                ..CommitBatch::default()
+            };
+            store.commit(&batch).expect("commit");
+        }
+    }
+
+    let store = CellStore::open(&path, model, keyed()).expect("checkpointed open");
+    assert!(!history_ready(&store));
+    assert!(
+        matches!(
+            store
+                .read()
+                .source_disagreements(MAIN_WORLD, "fixture.Measured", "m1", None),
+            Err(CellError::Verifying(_))
+        ),
+        "source_disagreements must refuse with Verifying during incomplete scrub"
+    );
+    assert_eq!(store.scrub_to_end(), ScrubStatus::Idle);
+    assert!(
+        store
+            .read()
+            .source_disagreements(MAIN_WORLD, "fixture.Measured", "m1", None)
+            .is_ok(),
+        "source_disagreements succeeds once scrub completes"
+    );
+}
+
+/// S7/S8 (#1551 round 5): `analytics_delta`, `dataset_manifest`,
+/// `observation_is_quarantined`, `observation_findings`, and `analytics_source`
+/// all scan covered history and must refuse with `Verifying` until scrub ends
+/// and `Fenced` when fenced.
+#[test]
+fn analytics_delta_dataset_manifest_and_quarantine_reads_are_gated_until_scrub_ends() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    cell(&path, EVERY.saturating_add(10));
+    let tenant = norn_cell::analytics::TenantId::of_scope(engine_fixture::SCOPE);
+
+    let store = open(&path).expect("checkpointed open");
+    assert!(!history_ready(&store));
+    let record = store
+        .read()
+        .object(MAIN_WORLD, "fixture.Item", "c0")
+        .expect("live object")
+        .expect("c0 exists");
+
+    assert!(
+        matches!(
+            store.analytics_delta(&tenant, MAIN_WORLD, 0, 100),
+            Err(CellError::Verifying(_))
+        ),
+        "analytics_delta must refuse with Verifying while scrub is incomplete"
+    );
+    assert!(
+        matches!(
+            store.dataset_manifest(MAIN_WORLD, "fixture.Item"),
+            Err(CellError::Verifying(_))
+        ),
+        "dataset_manifest must refuse with Verifying while scrub is incomplete"
+    );
+    assert!(
+        matches!(
+            store.read().observation_is_quarantined(MAIN_WORLD, &record),
+            Err(CellError::Verifying(_))
+        ),
+        "observation_is_quarantined must refuse with Verifying while scrub is incomplete"
+    );
+    assert!(
+        matches!(
+            store
+                .read()
+                .observation_findings(MAIN_WORLD, "fixture.Item", "c0"),
+            Err(CellError::Verifying(_))
+        ),
+        "observation_findings must refuse with Verifying while scrub is incomplete"
+    );
+    assert!(
+        matches!(
+            store.analytics_source(MAIN_WORLD, engine_fixture::SCOPE, "fixture.Item"),
+            Err(CellError::Verifying(_))
+        ),
+        "analytics_source must refuse with Verifying while scrub is incomplete"
+    );
+
+    assert_eq!(store.scrub_to_end(), ScrubStatus::Idle);
+    assert!(store.analytics_delta(&tenant, MAIN_WORLD, 0, 100).is_ok());
+    assert!(store.dataset_manifest(MAIN_WORLD, "fixture.Item").is_ok());
+    assert!(
+        store
+            .read()
+            .observation_is_quarantined(MAIN_WORLD, &record)
+            .is_ok()
+    );
+    assert!(
+        store
+            .analytics_source(MAIN_WORLD, engine_fixture::SCOPE, "fixture.Item")
+            .is_ok()
+    );
+    drop(store);
+
+    // Tamper covered history -> scrub fences -> all refuse with Fenced.
+    execute(&path, "DELETE FROM _norn_fact_values WHERE commit_seq = 10");
+    let fenced = open(&path).expect("open before scrub");
+    assert!(matches!(fenced.scrub_to_end(), ScrubStatus::Fenced { .. }));
+    assert!(matches!(
+        fenced.analytics_delta(&tenant, MAIN_WORLD, 0, 100),
+        Err(CellError::Fenced(_))
+    ));
+    assert!(matches!(
+        fenced.dataset_manifest(MAIN_WORLD, "fixture.Item"),
+        Err(CellError::Fenced(_))
+    ));
+    assert!(matches!(
+        fenced
+            .read()
+            .observation_is_quarantined(MAIN_WORLD, &record),
+        Err(CellError::Fenced(_))
+    ));
 }
 
 /// S13: `CellStore::fork` refuses with `Verifying` while the history scrub

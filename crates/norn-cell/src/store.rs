@@ -2577,21 +2577,21 @@ impl<E: SqlEngine> CellStore<E> {
             crate::engine_release::admission(&store.conn)?,
             crate::engine_release::Admission::Upgrade { .. }
         );
-        let (head, boundary, transparency, fork) = store.conn.transaction(|| {
+        let (verified, fork) = store.conn.transaction(|| {
             Self::init_schema(&store.conn, &store.model, source)?;
             if let Some(expected) = expected {
                 store.require_cell_id(expected)?;
             }
-            let (head, boundary, transparency, trusted) = store.verify_history(&pass)?;
+            let verified = store.verify_history(&pass)?;
             let fork = crate::fork::load_pin(&store.conn)?;
-            refuse_pin_past(fork.as_ref(), head.commits)?;
+            refuse_pin_past(fork.as_ref(), verified.head.commits)?;
             // An upgrading open verified from genesis, so record its checkpoint inside this tx.
-            store.finish_open_scrub(upgrading, trusted, &head, boundary, &transparency)?;
-            Ok::<_, CellError>((head, boundary, transparency, fork))
+            store.finish_open_scrub(upgrading, &verified)?;
+            Ok::<_, CellError>((verified, fork))
         })?;
-        store.verified.replace(head);
-        store.quantity_boundary.set(boundary);
-        store.transparency.replace(transparency);
+        store.verified.replace(verified.head);
+        store.quantity_boundary.set(verified.boundary);
+        store.transparency.replace(verified.transparency);
         store.fork = fork;
         // Only an accepted file takes the requested journal mode (#1504).
         store.conn.admitted()?;
@@ -2726,6 +2726,7 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// [`CellError::BindingMismatch`] when the file is bound to another value.
     pub fn bind(&mut self, key: &str, value: &str) -> Result<(), CellError> {
+        self.check_writable()?;
         if key == crate::cell_identity::FORMAT_KEY {
             if value == crate::cell_identity::FORMAT && self.cell_id()?.is_some() {
                 return Ok(());
@@ -2778,8 +2779,7 @@ impl<E: SqlEngine> CellStore<E> {
     /// Committed-state reads.
     #[must_use]
     pub fn read(&self) -> StoreReader<'_, E> {
-        self.verifier()
-            .with_history_gate(self.scrub.borrow().gate())
+        self.verifier().with_history_gate(self.served_gate())
     }
 
     /// [`Self::read`] without the scrub's history gate: for the
@@ -2813,7 +2813,7 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// [`CellError::LedgerCorrupt`] when the ledger does not verify.
     pub fn verified_head(&self) -> Result<LedgerHead, CellError> {
-        self.scrub.borrow().refuse_fenced()?;
+        self.check_writable()?;
         let checkpoint = self.verified.borrow().clone();
         let (head, boundary) = match self.read().verify_ledger_with_boundary(&checkpoint) {
             Ok(verified) => verified,
@@ -3177,6 +3177,7 @@ impl<E: SqlEngine> CellStore<E> {
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<(T, CommitOutcome), GuardedError<X>> {
         // A fenced cell commits nothing (#1551 round 4).
+        self.persist_pending_fence();
         self.scrub.borrow().refuse_fenced()?;
         if batch
             .effects
@@ -3236,12 +3237,12 @@ impl<E: SqlEngine> CellStore<E> {
                         return Err(CellError::IdempotencyConflict("tenant provisioning".to_owned()).into());
                     }
                     let pass = RefCell::default();
-                    let (head, boundary, log, trusted) = self.verify_history(&pass)?;
-                    refuse_pin_past(self.fork.as_ref(), head.commits)?;
-                    self.finish_open_scrub(upgrading, trusted, &head, boundary, &log)?;
-                    self.transparency.replace(log);
-                    self.verified.replace(head);
-                    admitted_boundary.set(boundary);
+                    let verified = self.verify_history(&pass)?;
+                    refuse_pin_past(self.fork.as_ref(), verified.head.commits)?;
+                    self.finish_open_scrub(upgrading, &verified)?;
+                    self.transparency.replace(verified.transparency);
+                    self.verified.replace(verified.head);
+                    admitted_boundary.set(verified.boundary);
                     let receipt = self.verifier().receipt_at(1)?.ok_or_else(|| CellError::Engine("missing provisioning receipt".to_owned()))?;
                     return Ok((T::default(), CommitOutcome::Replayed(receipt)));
                 }
@@ -3629,7 +3630,7 @@ impl<E: SqlEngine> CellStore<E> {
         generation: u64,
         outcome: &Value,
     ) -> Result<bool, CellError> {
-        self.conn.transaction(|| -> Result<bool, CellError> {
+        self.write_tx(|| {
             let head = StoreReader::new(&self.conn, &self.model)
                 .with_source_disputes(&self.source_disputes)
                 .head_command()?;
@@ -3663,7 +3664,7 @@ impl<E: SqlEngine> CellStore<E> {
         generation: u64,
         outcome: &Value,
     ) -> Result<bool, CellError> {
-        self.conn.transaction(|| -> Result<bool, CellError> {
+        self.write_tx(|| {
             let parked = StoreReader::new(&self.conn, &self.model)
                 .with_source_disputes(&self.source_disputes)
                 .pending_command(command_id)?
@@ -3737,8 +3738,7 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// Serialization, observation-size or queue-position limits, or SQL errors.
     pub fn inject(&mut self, observation_id: &str, observed: &Value) -> Result<bool, CellError> {
-        self.conn
-            .transaction(|| inject_observation(&self.conn, observation_id, observed))
+        self.write_tx(|| inject_observation(&self.conn, observation_id, observed))
     }
 }
 

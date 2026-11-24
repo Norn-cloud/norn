@@ -318,7 +318,12 @@ impl<S: SqlEngine> SqliteCell<ObservationEvent, RuntimeObject, RuntimeObject, S>
                     .map(|(id, _)| (id, MappingOutcome::Landed))
                     .collect(),
             )),
-            Err(error @ (CellError::Sqlite(_) | CellError::Engine(_))) => Err(error),
+            Err(
+                error @ (CellError::Sqlite(_)
+                | CellError::Engine(_)
+                | CellError::Verifying(_)
+                | CellError::Fenced(_)),
+            ) => Err(error),
             Err(_refused) => Ok(PageAttempt::Refused(
                 members.into_iter().map(|(id, _)| id).collect(),
             )),

@@ -143,6 +143,18 @@ pub struct Reply {
     pub policy_error: Option<String>,
 }
 
+#[wasm_bindgen(inline_js = r#"
+export function key_field(keys, name) {
+  if (keys === null || keys === undefined) return undefined;
+  if (typeof keys === "string") return name === "lineage" ? keys : undefined;
+  const value = keys[name];
+  return typeof value === "string" ? value : undefined;
+}
+"#)]
+extern "C" {
+    fn key_field(keys: &JsValue, name: &str) -> Option<String>;
+}
+
 #[wasm_bindgen]
 impl NornCell {
     /// Whether this build accepts fixture principals ([`crate::fixtures_enabled`]):
@@ -167,39 +179,31 @@ impl NornCell {
     /// use; any other scope is served if it was provisioned, else vacant.
     /// `issuer` and `jwks` are the pinned token issuer and its key document
     /// (fetched at `now_ms`, Unix milliseconds); without the `fixtures` feature
-    /// both are required. `lineage_key` is the stage secret
-    /// (`NORN_LINEAGE_KEY`) that keys the analytics cell's lineage handles.
-    /// `checkpoint_key` (`NORN_CHECKPOINT_KEY`, 64 hexadecimal digits, from
-    /// the Worker's secret store) authenticates the cell's open checkpoint
-    /// (OPEN-CHECKPOINT-1, #1551): without it, every open verifies the whole
-    /// history and no checkpoint is recorded; a malformed one refuses the
-    /// open, as a malformed signing key does.
+    /// both are required. `keys` carries the stage secrets as
+    /// `{ lineage, checkpoint }` (or a plain string for `lineage` alone):
+    /// `lineage` (`NORN_LINEAGE_KEY`) keys the analytics cell's lineage
+    /// handles, and `checkpoint` (`NORN_CHECKPOINT_KEY`, 64 hexadecimal
+    /// digits) authenticates the cell's open checkpoint (OPEN-CHECKPOINT-1,
+    /// #1551).
     ///
     /// # Errors
     /// Seeding failed, the storage holds a cell this host cannot serve, no
     /// usable issuer keys were supplied, or the analytics cell has no lineage
     /// key of at least 32 bytes.
     #[wasm_bindgen(constructor)]
-    #[allow(
-        clippy::too_many_arguments,
-        clippy::needless_pass_by_value,
-        reason = "wasm-bindgen constructors take the Worker's bindings positionally, optional strings by value"
-    )]
     pub fn new(
         storage: JsValue,
         org_id: String,
         environment_id: String,
         issuer: Option<String>,
         jwks: Option<String>,
-        lineage_key: Option<String>,
+        keys: &JsValue,
         now_ms: f64,
-        checkpoint_key: Option<String>,
     ) -> Result<Self, JsValue> {
         crate::incident::install_panic_log();
-        let lineage_key = lineage_key.map(String::into_bytes);
-        let checkpoint_key = checkpoint_key
-            .as_deref()
-            .map(norn_cell::CheckpointKey::from_hex)
+        let lineage_key = key_field(keys, "lineage").map(String::into_bytes);
+        let checkpoint_key = key_field(keys, "checkpoint")
+            .map(|hex| norn_cell::CheckpointKey::from_hex(&hex))
             .transpose()
             .map_err(|error| JsValue::from_str(&format!("NORN_CHECKPOINT_KEY: {error}")))?;
         let engine =
@@ -424,10 +428,20 @@ impl NornCell {
         Ok(())
     }
 
+    /// Whether the served cell has been fenced by the history scrub (S12).
+    fn is_fenced(&self) -> bool {
+        self.tenant
+            .serving_host()
+            .is_some_and(norn_api::timers::is_fenced)
+    }
+
     /// SYNC-ONE-1: claim the next connection due on its schedule at `now_ms`
     /// (checked and marked in this one call), as its own principal.
     #[wasm_bindgen(js_name = syncDue)]
     pub fn sync_due(&mut self, now_ms: f64) -> Option<String> {
+        if self.is_fenced() {
+            return None;
+        }
         let host = self.tenant.serving_host()?;
         let connect = self.connect.as_mut()?;
         // A schedule the cell's records cannot be read back for claims nothing.
@@ -482,7 +496,12 @@ impl NornCell {
     }
 
     /// The next scheduled sync, with the schedule read back from the cell.
+    /// Returns `Ok(None)` when the cell is fenced so alarm cleanup finishes
+    /// cleanly instead of throwing `cell.fenced` (S12, #1551 round 5).
     fn sync_next(&mut self, now_ms: f64) -> Result<Option<u64>, JsValue> {
+        if self.is_fenced() {
+            return Ok(None);
+        }
         let (Some(host), Some(connect)) = (self.tenant.serving_host(), self.connect.as_mut())
         else {
             return Ok(None);

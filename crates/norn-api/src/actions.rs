@@ -619,6 +619,9 @@ fn kernel_refusal<E: SqlEngine>(
     action_id: &str,
     error: &norn_kernel::ActionRefusal<norn_cell::CellError>,
 ) -> Refusal {
+    if let Some(host_refusal) = Refusal::from_action_host_error(error) {
+        return host_refusal;
+    }
     let refusal = error.refusal();
     if matches!(
         refusal.category,
@@ -925,21 +928,21 @@ fn caller_receipt<E: SqlEngine>(
     raw_hash: bool,
     key: &[u8],
 ) -> Result<ActionReceipt, Refusal> {
-    let (outcome, record, receipt) = match outcome {
+    let (outcome, record, receipt, committed) = match outcome {
         ActionOutcome::Committed { receipt, record } => {
             let receipt = store
                 .read()
                 .receipt_at(receipt.seq.0)
                 .map_err(Refusal::host)?
                 .ok_or_else(|| Refusal::host("the committed receipt is missing"))?;
-            (ActionCallOutcome::Committed, record, receipt)
+            (ActionCallOutcome::Committed, record, receipt, true)
         }
         ActionOutcome::Replayed { record } => {
             let receipt = original_receipt(store, action_id, &request.idempotency_key)?;
-            (ActionCallOutcome::Replayed, record, receipt)
+            (ActionCallOutcome::Replayed, record, receipt, false)
         }
     };
-    let version = target_version(store, &receipt, &record)?;
+    let version = target_version(store, &receipt, &record, committed)?;
     let receipt_hash = if raw_hash {
         receipt.hash.clone()
     } else {
@@ -986,7 +989,7 @@ pub(crate) fn recorded_target<E: SqlEngine>(
     idempotency_key: &str,
 ) -> Result<(String, String, u64), Refusal> {
     let receipt = original_receipt(store, &record.action_id, idempotency_key)?;
-    let version = target_version(store, &receipt, record)?;
+    let version = target_version(store, &receipt, record, false)?;
     Ok((
         record.object.object_type.as_str().to_owned(),
         record.object.key.clone(),
@@ -994,8 +997,6 @@ pub(crate) fn recorded_target<E: SqlEngine>(
     ))
 }
 
-/// The authenticated receipt of the commit that wrote this call's
-/// idempotency record: a replay reports the original commit, never a new one.
 fn original_receipt<E: SqlEngine>(
     store: &norn_cell::CellStore<E>,
     action_id: &str,
@@ -1010,31 +1011,28 @@ fn original_receipt<E: SqlEngine>(
         .map_err(Refusal::host)
 }
 
-/// The target's version as `receipt` wrote it. A call that commits without
-/// rewriting its target (a row mutation with an empty parent patch and no row
-/// operations) is still a success: it reports the target's version as of
-/// that commit, never one a later write made (S5b).
+/// Target version as of `receipt`: live version on fresh commit (S7), else as-of (S5b).
 fn target_version<E: SqlEngine>(
     store: &norn_cell::CellStore<E>,
     receipt: &Receipt,
     record: &ActionCallRecord,
+    committed: bool,
 ) -> Result<u64, Refusal> {
-    let object_type = record.object.object_type.as_str();
+    let ty = record.object.object_type.as_str();
     let written = receipt
         .body
         .written
         .iter()
-        .find(|row| row.object_type == object_type && row.key == record.object.key);
+        .find(|r| r.object_type == ty && r.key == record.object.key);
     match written {
         Some(row) => Ok(row.version),
+        None if committed => store
+            .read()
+            .version(MAIN_WORLD, ty, &record.object.key)
+            .map_err(Refusal::host),
         None => store
             .read()
-            .version_as_of(
-                MAIN_WORLD,
-                object_type,
-                &record.object.key,
-                receipt.body.commit_seq,
-            )
+            .version_as_of(MAIN_WORLD, ty, &record.object.key, receipt.body.commit_seq)
             .map_err(Refusal::host),
     }
 }

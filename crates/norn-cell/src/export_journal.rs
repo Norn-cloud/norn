@@ -281,7 +281,7 @@ impl<E: SqlEngine> CellStore<E> {
     /// Engine or sequence-range errors while reading the receipt head.
     pub fn export_commit_count(&self) -> Result<u64, CellError> {
         // S8 (#1551): export reads wait until the history scrub completes.
-        self.scrub.borrow().gate().history("export reads")?;
+        self.read().check_history("export reads")?;
         Ok(self.read().next_commit_seq()?.saturating_sub(1))
     }
 
@@ -305,7 +305,7 @@ impl<E: SqlEngine> CellStore<E> {
             return Err(CellError::ForkEvidenceForbidden);
         }
         // S8 (#1551): portable export records wait for the history scrub.
-        self.scrub.borrow().gate().history("export reads")?;
+        self.read().check_history("export reads")?;
         let Some(record) = self.local_export_record(commit_seq)? else {
             return Ok(None);
         };

@@ -131,7 +131,7 @@ impl<S: SqlEngine> HistoryRead<'_, '_, S> {
         let reader = self.reader;
         // S7 (#1551 round 4): the selection trusts that every version it
         // scans is present, which the scrub proves for the covered history.
-        reader.history_gate.history("as-of reads")?;
+        reader.check_history("as-of reads")?;
         reader.select_evidence_known_at_with_budget(
             world,
             kind,
@@ -450,7 +450,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         commit_seq: u64,
     ) -> Result<u64, CellError> {
         // S7 (#1551 round 4): `MAX(version)` trusts the scan's completeness.
-        self.history_gate.history("as-of reads")?;
+        self.check_history("as-of reads")?;
         let root = self.root_type(object_type)?;
         let version: Option<Option<i64>> = self.conn.query_optional(
             &format!("SELECT MAX(\"version\") FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND \"root_type\" = ?2 AND \"id\" = ?3 AND \"commit_seq\" <= ?4"),
@@ -615,7 +615,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<HistoricalEvidence, CellError> {
         // S7 (#1551): gate historical reads before touching frontier receipts or history scans.
-        self.history_gate.history("as-of reads")?;
+        self.check_history("as-of reads")?;
         let mut history = self.history_read();
         if known_as_of.frontier > 0 && history.receipt(known_as_of.frontier, budget)?.is_none() {
             return Ok(HistoricalEvidence::Exhausted);
@@ -754,7 +754,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<Option<HistoricalFrame>, CellError> {
         // S7 (#1551): gate historical frames before frontier lookup or population selection.
-        self.history_gate.history("historical frames")?;
+        self.check_history("historical frames")?;
         if cutoff.frontier == 0 {
             return Ok(Some(HistoricalFrame {
                 revision: LedgerHead::genesis(),
@@ -860,7 +860,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ) -> Result<Option<Vec<ObjectRecord>>, CellError> {
         // S7 (#1551 round 4): a version list (history, as-of metrics) is
         // complete only once the scrub has proven the covered history.
-        self.history_gate.history("version history")?;
+        self.check_history("version history")?;
         let root = self.root_type(object_type).unwrap_or(object_type);
         // At a knowledge cutoff only versions committed by its frontier exist.
         let through = through.map_or(Ok(crate::engine::MAX_SAFE_INTEGER), |commit| {

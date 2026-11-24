@@ -513,7 +513,7 @@ impl<E: SqlEngine> CellStore<E> {
             let reader = self.read();
             // S7 (#1551): gate historical/as-of compute before population selection.
             if cutoff.is_some() || plan.as_of() {
-                reader.history_gate.history("historical compute")?;
+                reader.check_history("historical compute")?;
             }
             let mut budget = question_budget()?;
             let mut historical_receipt = None;

@@ -242,6 +242,11 @@ impl<S: SqlEngine> SqlEngine for FaultEngine<S> {
         self.live()?;
         self.inner.read_cache_revision()
     }
+
+    fn external_data_version(&self) -> Result<Option<u64>, CellError> {
+        self.live()?;
+        self.inner.external_data_version()
+    }
 }
 
 #[cfg(feature = "native")]

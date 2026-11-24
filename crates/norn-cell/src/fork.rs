@@ -171,8 +171,14 @@ impl<E: ForkEngine> CellStore<E> {
     /// head; a storage-version refusal when the copy is not at this engine's
     /// storage version; ledger verification or engine errors otherwise.
     pub fn fork(&self, world: &str, base: &LedgerHead) -> Result<Self, CellError> {
+        self.persist_pending_fence();
+        // S12 (#1551 round 5): check durable fence BEFORE pending-scrub
+        // Verifying so a sibling handle with an incomplete scrub fails closed
+        // with Fenced once the cell is fenced.
+        self.scrub.borrow().refuse_fenced()?;
+        crate::open_checkpoint::check_fence(&self.conn)?;
         // S13 (#1551): refuse forking while a checkpointed cell's history
-        // scrub is incomplete or the cell is fenced.
+        // scrub is incomplete.
         self.scrub.borrow().refuse_fork()?;
         let parent = self
             .fork_pin()

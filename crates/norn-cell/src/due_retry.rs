@@ -203,7 +203,10 @@ impl<E: SqlEngine> CellStore<E> {
         now: u64,
         (base_ms, cap_ms): (u64, u64),
     ) -> Result<DueRetry, CellError> {
+        self.persist_pending_fence();
+        self.scrub.borrow().refuse_fenced()?;
         self.conn.transaction(|| -> Result<DueRetry, CellError> {
+            crate::open_checkpoint::check_fence(&self.conn)?;
             let previous = self.conn.query_optional(
                 &format!(
                     r#"SELECT "incarnation","attempts" FROM "{DUE_RETRY}" WHERE "item"=?1"#
@@ -243,7 +246,10 @@ impl<E: SqlEngine> CellStore<E> {
     /// # Errors
     /// SQL engine errors.
     pub fn clear_due_retry(&self, item: &str) -> Result<(), CellError> {
+        self.persist_pending_fence();
+        self.scrub.borrow().refuse_fenced()?;
         self.conn.transaction(|| -> Result<(), CellError> {
+            crate::open_checkpoint::check_fence(&self.conn)?;
             self.conn.execute(
                 &format!(r#"DELETE FROM "{DUE_RETRY}" WHERE "item"=?1"#),
                 params![item],
@@ -259,7 +265,10 @@ impl<E: SqlEngine> CellStore<E> {
     /// # Errors
     /// SQL engine errors.
     pub fn prune_timer_retries(&self) -> Result<(), CellError> {
+        self.persist_pending_fence();
+        self.scrub.borrow().refuse_fenced()?;
         self.conn.transaction(|| -> Result<(), CellError> {
+            crate::open_checkpoint::check_fence(&self.conn)?;
             self.conn.execute(
                 &format!(
                     r#"DELETE FROM "{DUE_RETRY}" WHERE substr("item",1,6)='timer/' AND NOT EXISTS (SELECT 1 FROM "_norn_timer" AS t WHERE ('timer/'||t."timer_id")="{DUE_RETRY}"."item" AND t."commit_seq"="{DUE_RETRY}"."incarnation")"#

@@ -125,7 +125,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     pub fn ledger(&self, from: u64) -> Result<Vec<LedgerEntry>, CellError> {
         // S8 (#1551): `ledger(from)` reads entries with `seq >= from`;
         // anything covering the checkpoint waits until the scrub finishes.
-        self.history_gate.ledger(from.saturating_sub(1))?;
+        self.check_ledger(from.saturating_sub(1))?;
         self.ledger_range(from, None)
     }
 
@@ -140,7 +140,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         // S8 (#1551 round 4): an entry is served on its own hash, which does
         // not prove it is the chain's; entries the open checkpoint covers
         // wait until the scrub has verified the chain through them.
-        self.history_gate.ledger(after)?;
+        self.check_ledger(after)?;
         // No stored sequence exceeds the host's exact-integer bound, so a cursor at or past it
         // has nothing after it.
         match i64::try_from(after) {
@@ -380,7 +380,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         budget: &mut DecodeBudget,
     ) -> Result<Option<Vec<LedgerEntry>>, CellError> {
         // S8 (#1551): check the scrub barrier before scanning ledger rows.
-        self.history_gate.ledger(after)?;
+        self.check_ledger(after)?;
         if limit == 0 {
             return Ok(Some(Vec::new()));
         }
@@ -527,7 +527,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// SQL engine or decode errors; [`CellError::LedgerCorrupt`] when a
     /// receipt's lookup columns disagree with its hashed body.
     pub fn receipts(&self) -> Result<Vec<Receipt>, CellError> {
-        self.history_gate.refuse_fenced()?;
+        self.check_live()?;
         self.receipts_from(0)
     }
 
@@ -543,12 +543,12 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         world: &str,
         key: &str,
     ) -> Result<Option<Receipt>, CellError> {
-        self.history_gate.refuse_fenced()?;
+        self.check_live()?;
         let found = receipt_by_key(self.conn, world, key)?;
         if found.is_none() {
             // S4 (#1551): a lookup miss cannot conclude "first commit" until
             // the scrub has verified every covered receipt's lookup columns.
-            self.history_gate.receipt_miss()?;
+            self.check_receipt_miss()?;
         }
         Ok(found)
     }
@@ -585,7 +585,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// SQL engine or decode errors; [`CellError::LedgerCorrupt`] when a
     /// receipt's lookup columns disagree with its hashed body.
     pub fn receipts_after(&self, after: u64, limit: usize) -> Result<Vec<Receipt>, CellError> {
-        self.history_gate.refuse_fenced()?;
+        self.check_live()?;
         let limit = i64::try_from(limit)
             .unwrap_or(MAX_SAFE_INTEGER)
             .min(MAX_SAFE_INTEGER);
@@ -654,7 +654,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         limit: usize,
         budget: &mut DecodeBudget,
     ) -> Result<Option<Vec<Receipt>>, CellError> {
-        self.history_gate.refuse_fenced()?;
+        self.check_live()?;
         let limit = i64::try_from(limit)
             .unwrap_or(MAX_SAFE_INTEGER)
             .min(MAX_SAFE_INTEGER);
@@ -686,7 +686,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ///
     /// As [`Self::receipts_after`].
     pub fn receipt_at(&self, commit_seq: u64) -> Result<Option<Receipt>, CellError> {
-        self.history_gate.refuse_fenced()?;
+        self.check_live()?;
         if commit_seq == 0 {
             return Ok(None);
         }
@@ -702,7 +702,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// # Errors
     /// SQL engine errors or an out-of-range commit sequence.
     pub fn receipt_hash_at(&self, commit_seq: u64) -> Result<Option<String>, CellError> {
-        self.history_gate.refuse_fenced()?;
+        self.check_live()?;
         if commit_seq == 0 {
             return Ok(None);
         }

@@ -44,7 +44,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ) -> Result<Option<FindingLedgerPage>, CellError> {
         // S8 (#1551 round 4): a scan that selects findings by position
         // relies on every covered entry being present.
-        self.history_gate.ledger(after)?;
+        self.check_ledger(after)?;
         let mut page = FindingLedgerPage {
             entries: Vec::new(),
             scanned_rows: 0,
