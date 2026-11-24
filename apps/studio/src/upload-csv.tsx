@@ -317,10 +317,7 @@ export function UploadCsv() {
             {outcome.kind === "dataset" && (
               <div role="status" className="space-y-2 rounded-lg border p-4 text-sm">
                 <p className="font-medium">
-                  {outcome.reconciled
-                    ? `${outcome.loaded.rows} rows loaded into `
-                    : `${outcome.loaded.rows} rows loaded into `}
-                  <code className="font-mono">{outcome.objectType}</code>
+                  {outcome.loaded.rows} rows loaded into <code className="font-mono">{outcome.objectType}</code>
                   {outcome.reconciled ? " (confirmed from the workspace)." : ` in ${outcome.loaded.millis} ms.`}
                 </p>
                 {outcome.loaded.rejected > 0

@@ -110,7 +110,7 @@ test("reconcileUploadConnection matches only an advanced source.Connection with 
   })
   expect(await reconcileUploadConnection({ connectionId: "upload.sale", sha256: sha, baselineVersion: 2, baselineEndedAt: "2027-01-15T08:00:00Z" })).toBeNull()
 
-  // Advanced version with matching sha256 reconciles cleanly with its counts and reasons.
+  // Advanced version with matching sha256 reconciles cleanly with its counts and server-formatted reasons.
   cell(200, {
     id: "upload.sale",
     version: 3,
@@ -118,9 +118,9 @@ test("reconcileUploadConnection matches only an advanced source.Connection with 
       last_sync_ended_at: "2027-01-15T08:05:00Z",
       watermark: JSON.stringify({ sha256: sha, rows: 12 }),
       rows_read: 12,
-      rows_landed: 11,
-      rows_quarantined: 1,
-      quarantine_reasons: JSON.stringify({ "bulk.not_decimal": 1 }),
+      rows_landed: 9,
+      rows_quarantined: 3,
+      quarantine_reasons: "bulk.not_decimal=1; bulk.missing=2",
     },
   })
   const reconciled = await reconcileUploadConnection({ connectionId: "upload.sale", sha256: sha, baselineVersion: 2, baselineEndedAt: "2027-01-15T08:00:00Z" })
@@ -130,8 +130,8 @@ test("reconcileUploadConnection matches only an advanced source.Connection with 
     endedAt: "2027-01-15T08:05:00Z",
     watermarkSha256: sha,
     rowsRead: 12,
-    rowsLanded: 11,
-    rowsQuarantined: 1,
-    quarantineReasons: { "bulk.not_decimal": 1 },
+    rowsLanded: 9,
+    rowsQuarantined: 3,
+    quarantineReasons: { "bulk.not_decimal": 1, "bulk.missing": 2 },
   })
 })

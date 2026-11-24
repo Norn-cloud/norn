@@ -91,7 +91,7 @@ export function SourceConnections() {
       {installed === false && <Well><EmptyState icon={Cable} title="No connections yet" next={<UploadCsv />}>No system is connected to this cell yet. Upload a CSV to start, or ask an admin to connect a system.</EmptyState></Well>}
       {(installed === undefined || (installed && connections.isPending)) && (
         <div className="p-3">
-          <LoadState status="pending" skeleton="list" loadingLabel="Reading connections" onRetry={() => void connections.refetch()}>{() => null}</LoadState>
+          <LoadState status="pending" skeleton="list" loadingLabel="Reading connections" timeoutMs={READ_DEADLINE_MS} onRetry={() => void connections.refetch()}>{() => null}</LoadState>
         </div>
       )}
       {connections.isError && (connections.error instanceof NotServed || notInstalled

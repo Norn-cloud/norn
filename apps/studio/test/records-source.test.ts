@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { readDocument, type Read } from "../src/lib/exact.ts"
 import type { ObjectPage } from "../src/lib/transport.ts"
+import served from "./fixtures/object-query.json"
 
 // The recorded transport reads fixtures through Vite's import.meta.glob, which bun test lacks; recordings are passed in below.
 mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
@@ -73,11 +74,11 @@ test("signed out (no session to read), only the recording is shown", async () =>
 })
 
 test("a moved snapshot restarts; a bad cursor is a refusal with its pointer", async () => {
-  const moved = cell(() => Response.json({ code: "object.snapshot_moved", message: "moved" }, { status: 409 }))
+  const moved = cell(() => Response.json(served.snapshotMoved.json, { status: served.snapshotMoved.status }))
   expect(await readRecords("canon.Item", { ...EMPTY_QUERY, after: "c" }, moved.deps)).toEqual({ kind: "restart" })
-  const bad = cell(() => Response.json({ code: "query.cursor_invalid", message: "That page link is no longer valid.", diagnostics: [{ code: "query.cursor_invalid", message: "Unknown cursor.", pointer: "/after" }] }, { status: 400 }))
+  const bad = cell(() => Response.json(served.cursorInvalid.json, { status: served.cursorInvalid.status }))
   const read = await readRecords("canon.Item", { ...EMPTY_QUERY, after: "c" }, bad.deps)
-  expect(read).toMatchObject({ kind: "refused", status: 400, code: "query.cursor_invalid", diagnostics: [{ pointer: "/after" }] })
+  expect(read).toMatchObject({ kind: "refused", status: 400, code: "query.invalid", diagnostics: [{ code: "query.cursor_invalid", pointer: "/after" }] })
 })
 
 test("every diagnostic is kept and found by the part of the request it points at", async () => {
@@ -95,7 +96,7 @@ test("every diagnostic is kept and found by the part of the request it points at
 })
 
 test("the cell's own 404 (route.not_found) is a route it does not serve: the recording is read", async () => {
-  const { deps } = cell(() => Response.json({ code: "route.not_found", message: "No such route." }, { status: 404 }))
+  const { deps } = cell(() => Response.json({ code: "route.not_found", diagnostics: [null] }, { status: 404 }))
   const read = await readRecords("canon.Item", EMPTY_QUERY, deps)
   expect(read.kind === "page" && read.origin).toBe("recorded")
 })

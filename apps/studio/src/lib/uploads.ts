@@ -145,8 +145,22 @@ function parseReasons(raw: string | Readonly<Record<string, number>> | null | un
   if (raw === null || raw === undefined) return {}
   let obj: unknown = raw
   if (typeof raw === "string") {
-    if (raw.trim() === "") return {}
-    try { obj = JSON.parse(raw) } catch { return {} }
+    const trimmed = raw.trim()
+    if (trimmed === "") return {}
+    if (trimmed.startsWith("{")) {
+      try { obj = JSON.parse(trimmed) } catch { return {} }
+    } else {
+      // `report()` in norn-api formats `quarantine_reasons` as `"code=count; code2=count2"`.
+      const entries: [string, number][] = []
+      for (const part of trimmed.split(";")) {
+        const eq = part.indexOf("=")
+        if (eq <= 0) continue
+        const code = part.slice(0, eq).trim()
+        const count = Number(part.slice(eq + 1).trim())
+        if (code !== "" && Number.isFinite(count)) entries.push([code, count])
+      }
+      return Object.fromEntries(entries)
+    }
   }
   if (obj === null || typeof obj !== "object" || Array.isArray(obj)) return {}
   return Object.fromEntries(

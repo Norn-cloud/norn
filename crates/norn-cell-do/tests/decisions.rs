@@ -43,7 +43,11 @@ struct Cell {
     kinds: DefinitionKinds,
 }
 
-fn empty_cell() -> Cell {
+fn cell() -> Cell {
+    cell_with(LOWERED)
+}
+
+fn cell_with(lowered: &str) -> Cell {
     let scope = analytics::analytics_scope();
     let opened = analytics::provision(NativeEngine::open_in_memory().unwrap(), &scope).unwrap();
     let policy =
@@ -57,7 +61,7 @@ fn empty_cell() -> Cell {
     let questions = DemoQuestions::new(opened.plan, scope)
         .with_handle_key(&[5; 32])
         .with_metrics(opened.definitions, opened.catalog);
-    Cell {
+    let cell = Cell {
         host,
         questions,
         principals,
@@ -65,12 +69,8 @@ fn empty_cell() -> Cell {
             .with_roles(ROLES)
             .with_restater(norn_api::definition_routes::checker_restatement)
             .with_builtins(norn_cell::builtin_registered),
-    }
-}
-
-fn cell() -> Cell {
-    let cell = empty_cell();
-    install_lowered(&cell, LOWERED);
+    };
+    install(&cell, lowered);
     cell
 }
 
@@ -109,7 +109,7 @@ fn get(cell: &Cell, path: &str, query: &str, auth: Option<&str>) -> (u16, Value)
     call(cell, "GET", path, &format!("{SCOPE}{query}"), auth, "", NOW)
 }
 
-fn install_lowered(cell: &Cell, lowered: &str) {
+fn install(cell: &Cell, lowered: &str) {
     let artifacts: Vec<Value> = serde_json::from_str::<Vec<Value>>(lowered)
         .unwrap()
         .into_iter()
@@ -348,7 +348,6 @@ fn an_expired_decision_is_gone() {
 /// role without (`member`), while stamping `decidedAt` from the host clock.
 #[test]
 fn decision_law_refusal_discloses_reason_by_policy_and_stamps_decided_at() {
-    let cell = empty_cell();
     // Patch the flow so both `admin` and `member` are admitted deciders and a
     // decider law guards the decision, letting us verify DIAG-DISCLOSE-1 across roles.
     let patched = LOWERED.replace(
@@ -356,7 +355,7 @@ fn decision_law_refusal_discloses_reason_by_policy_and_stamps_decided_at() {
         "decider: {roles: ['admin', 'member', 'owner'], law: 'ops.refund.finance_limit'}",
     );
     assert_ne!(patched, LOWERED, "fixture did not match decider roles");
-    install_lowered(&cell, &patched);
+    let cell = cell_with(&patched);
 
     start(&cell, "refund-law-1");
     let (_, page) = get(&cell, "/v1/decisions", "&state=pending", ADMIN);
@@ -478,7 +477,7 @@ fn flow_decision_refusal_disclosure_binds_solely_to_decision_action() {
         "decider: {roles: ['admin', 'owner']}",
         "decider: {roles: ['admin', 'owner'], law: 'ops.refund.finance_limit'}",
     );
-    install_lowered(&cell, &patched);
+    install(&cell, &patched);
 
     start(&cell, "refund-law-2");
     let (_, page) = get(&cell, "/v1/decisions", "&state=pending", ADMIN);
@@ -500,13 +499,11 @@ fn flow_decision_refusal_disclosure_binds_solely_to_decision_action() {
 /// refusal-detail disclosure authority.
 #[test]
 fn flow_result_turn_refusal_preserves_422_and_discloses_no_operands() {
-    let cell = empty_cell();
-    let single_set = "{op: 'set', objectType: 'ops.ApproveRefundRun', key: slice.run.run_id, property: 'slots', value: {result: {outcome: 'approved'}}}";
-    let excess_facts = format!("[{}]", vec![single_set; 33].join(", "));
+    let excess_facts = "map([1..40], {op: 'set', objectType: 'ops.ApproveRefundRun', key: slice.run.run_id, property: 'slots', value: {result: {outcome: 'approved'}}})";
     let target = "[{op: 'set', objectType: 'ops.ApproveRefundRun', key: slice.run.run_id, property: 'slots', value: {result: {outcome: 'approved'}}}, {op: 'transition', objectType: 'ops.ApproveRefundRun', key: slice.run.run_id, lifecycle: 'status', transition: 'to_completed'}]";
-    let patched = LOWERED.replace(target, &excess_facts);
+    let patched = LOWERED.replace(target, excess_facts);
     assert_ne!(patched, LOWERED, "fixture did not match result turn facts");
-    install_lowered(&cell, &patched);
+    let cell = cell_with(&patched);
 
     start(&cell, "refund-limit-1");
     let (_, page) = get(&cell, "/v1/decisions", "&state=pending", ADMIN);
@@ -516,4 +513,111 @@ fn flow_result_turn_refusal_preserves_422_and_discloses_no_operands() {
     assert_eq!(status, 422, "{refused}");
     assert_eq!(refused["category"], json!("invalid"));
     assert_eq!(refused["reason"], Value::Null);
+}
+
+/// Pin the documents and HTTP statuses used by Studio's browser stand-in.
+#[test]
+fn studio_decision_and_run_documents_match_the_served_routes() {
+    let cell = cell();
+    let run_id = "refund-studio";
+    let start_body = json!({ "flow": FLOW_ID, "runId": run_id });
+    let started = post(&cell, "/v1/runs", MEMBER, &start_body);
+    let started_again = post(&cell, "/v1/runs", MEMBER, &start_body);
+    let page = get(&cell, "/v1/decisions", "&state=pending", ADMIN);
+    let id = page.1["items"][0]["id"].as_str().unwrap();
+    let decide_path = format!("/v1/decisions/{id}:decide");
+    let run_path = format!("/v1/runs/{run_id}");
+    let read = get(&cell, &run_path, "", ADMIN);
+    let answer = json!({ "choice": "approve", "idempotencyKey": "studio" });
+    let refuse = |choice, note: String| {
+        decide(
+            &cell,
+            id,
+            ADMIN,
+            &json!({
+                "choice": choice, "note": note, "idempotencyKey": "studio"
+            }),
+            NOW,
+        )
+    };
+    let unknown_choice = refuse("unknown", String::new());
+    let note_too_long = refuse("approve", "x".repeat(501));
+    let bad_key = |key: &str| {
+        decide(
+            &cell,
+            id,
+            ADMIN,
+            &json!({ "choice": "approve", "note": "Within policy", "idempotencyKey": key }),
+            NOW,
+        )
+    };
+    let invalid_key = bad_key(" ");
+    assert_eq!(bad_key(&"é".repeat(65)), invalid_key);
+    let decided = decide(&cell, id, ADMIN, &answer, NOW);
+    let replayed = decide(&cell, id, ADMIN, &answer, NOW);
+    let other = json!({ "choice": "reject", "idempotencyKey": "studio" });
+    let conflict = decide(&cell, id, ADMIN, &other, NOW);
+    let resolved = decide(&cell, id, OWNER, &other, NOW);
+
+    start(&cell, "refund-expired");
+    let (_, expiring) = get(&cell, "/v1/decisions", "&state=pending", ADMIN);
+    let expired = decide(
+        &cell,
+        expiring["items"][0]["id"].as_str().unwrap(),
+        ADMIN,
+        &answer,
+        NOW + 2 * 86_400,
+    );
+
+    // Vary only the decider's optional law in the installed test flow.
+    let with_law = LOWERED.replace(
+        "decider: {roles: ['admin', 'owner']}",
+        "decider: {roles: ['admin', 'owner'], law: 'ops.refund.review'}",
+    );
+    let law_cell = cell_with(&with_law);
+    start(&law_cell, "refund-with-law");
+    let (_, law_page) = get(&law_cell, "/v1/decisions", "&state=pending", ADMIN);
+    let law = decide(
+        &law_cell,
+        law_page["items"][0]["id"].as_str().unwrap(),
+        ADMIN,
+        &answer,
+        NOW,
+    );
+
+    let envelope = |(status, body): (u16, Value)| json!({ "status": status, "json": body });
+    let foreign = "orgId=foreign&environmentId=analytics";
+    let actual = json!({
+        "page": envelope(page),
+        "requested": envelope(get(&cell, "/v1/decisions:requested", "", ADMIN)),
+        "decided": envelope(decided),
+        "replayed": envelope(replayed),
+        "decisionDenied": envelope(call(&cell, "GET", "/v1/decisions", &format!("{foreign}&state=pending"), ADMIN, "", NOW)),
+        "invalidBody": envelope(call(&cell, "POST", &decide_path, SCOPE, ADMIN, "{", NOW)),
+        "decisionMissing": envelope(decide(&cell, "dec_missing", ADMIN, &answer, NOW)),
+        "resolved": envelope(resolved),
+        "expired": envelope(expired),
+        "law": envelope(law),
+        "unknownChoice": envelope(unknown_choice),
+        "noteTooLong": envelope(note_too_long),
+        "invalidKey": envelope(invalid_key),
+        "conflict": envelope(conflict),
+        "runStarted": envelope(started),
+        "runReplayed": envelope(started_again),
+        "runRead": envelope(read),
+        "runCompleted": envelope(get(&cell, &run_path, "", ADMIN)),
+        "runDenied": envelope(call(&cell, "GET", &run_path, foreign, ADMIN, "", NOW)),
+        "runStartDenied": envelope(call(&cell, "POST", "/v1/runs", foreign, MEMBER, &start_body.to_string(), NOW)),
+        "runMissing": envelope(get(&cell, "/v1/runs/absent", "", ADMIN)),
+    });
+    let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../apps/studio/test/fixtures/decision-run.json");
+    if std::env::var_os("NORN_BLESS").is_some() {
+        let mut rendered = serde_json::to_string_pretty(&actual).unwrap();
+        rendered.push('\n');
+        std::fs::write(&fixture_path, rendered).unwrap();
+    }
+    let pinned: Value =
+        serde_json::from_str(&std::fs::read_to_string(&fixture_path).unwrap()).unwrap();
+    assert_eq!(actual, pinned);
 }
