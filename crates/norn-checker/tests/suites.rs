@@ -38,6 +38,8 @@ mod consistency_exchange;
 mod core_time;
 #[path = "core_units.rs"]
 mod core_units;
+#[path = "core_value_types.rs"]
+mod core_value_types;
 #[path = "defined_concepts.rs"]
 mod defined_concepts;
 #[path = "definition_catalog.rs"]

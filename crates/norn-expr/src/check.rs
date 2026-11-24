@@ -104,8 +104,9 @@ use crate::{Expression, Number, UnaryTest};
 pub(crate) mod bounds;
 mod cost;
 mod sites;
-mod units;
-use units::{Operand, Operation};
+pub(crate) mod units;
+use units::{Operand, Operation, exact_type, expected_exact_type};
+pub(crate) use units::{decimal_destination, validate_exact_environment};
 
 pub use bounds::StructuralLimits;
 
@@ -1723,7 +1724,7 @@ fn lower(ty: &Type, depth: u32, env: &ZenTypeEnv, owner: Option<&str>, exact: bo
             Operand::Dimensionless
         }),
         Type::DecimalBinding { .. } => T::Number(if exact {
-            Operand::Unresolved
+            Operand::Bound(None)
         } else {
             Operand::Dimensionless
         }),
@@ -1739,6 +1740,7 @@ fn lower(ty: &Type, depth: u32, env: &ZenTypeEnv, owner: Option<&str>, exact: bo
 }
 
 struct Scope {
+    id: usize,
     alias: Option<String>,
     element: T,
 }
@@ -1750,6 +1752,7 @@ struct Checker<'a> {
     /// expression, where `$` is not bound.
     subject: Option<&'a Type>,
     scopes: Vec<Scope>,
+    next_scope_id: usize,
     diagnostics: Vec<Diagnostic>,
     notes: Vec<Diagnostic>,
     /// The proved type of every inferred node, by address, for the cost
@@ -1882,6 +1885,7 @@ impl<'a> Checker<'a> {
             metadata,
             subject,
             scopes: Vec::new(),
+            next_scope_id: 0,
             diagnostics: Vec::new(),
             notes: Vec::new(),
             types: HashMap::new(),
@@ -2104,22 +2108,14 @@ impl<'a> Checker<'a> {
         }
     }
 
-    fn number(&mut self, node: &Node<'_>) -> Option<()> {
-        match self.value(node, Some(&T::Number(Operand::Dimensionless)))? {
-            T::Number(_) => Some(()),
-            ty @ (T::Null
-            | T::Bool
-            | T::Str(_)
-            | T::Date
-            | T::Timestamp
-            | T::ParsedDate
-            | T::ParsedTimestamp
-            | T::List(_)
-            | T::Record(_)
-            | T::Optional(_)) => self.report(
+    fn numeric_rounding(&mut self, node: &Node<'_>, operand: &Node<'_>) -> Option<Operand> {
+        let op = self.numeric(operand)?;
+        match units::admit_rounding(&op) {
+            Some(result) => Some(result),
+            None => self.report(
                 node,
-                codes::TYPE_ERROR,
-                format!("expected a number, found `{ty}`"),
+                codes::UNIT,
+                format!("VAL-UNIT / VAL-RATE: rounding refuses {op:?}"),
             ),
         }
     }
@@ -2239,7 +2235,14 @@ impl<'a> Checker<'a> {
     /// fractional dynamic value at runtime; fractional literals are known at
     /// admission and are refused here.
     fn temporal_amount(&mut self, node: &Node<'_>) -> Option<()> {
-        self.number(node)?;
+        let op = self.numeric(node)?;
+        if !units::destination(&op, &Operand::Dimensionless) {
+            return self.report(
+                node,
+                codes::UNIT,
+                format!("temporal arithmetic refuses dimensioned operand {op:?}"),
+            );
+        }
         if fractional_numeric_literal(node) {
             return self.report(
                 node,
@@ -2347,7 +2350,7 @@ impl<'a> Checker<'a> {
             Node::Null => Some(T::Null),
             Node::Bool(_) => Some(T::Bool),
             Node::Number(number) => match number.to_string().parse::<Number>() {
-                Ok(_) => Some(T::Number(Operand::Literal)),
+                Ok(parsed) => Some(T::Number(units::literal(&parsed))),
                 Err(err) => self.report(node, codes::TYPE_ERROR, err.to_string()),
             },
             Node::String(text) => Some(T::Str(Some(BTreeSet::from([(*text).to_owned()])))),
@@ -2662,7 +2665,33 @@ impl<'a> Checker<'a> {
                 };
                 self.exact |= exact_type(&field.ty);
                 match lower(&field.ty, depth, self.env, Some(&name), self.exact_math) {
-                    Some(ty) => Some(ty),
+                    Some(mut ty) => {
+                        if self.exact_math
+                            && let Some(group) = units::decimal_binding_group(&field.ty)
+                        {
+                            let owner = self.env.decimal_binding_owner(&name, key);
+                            let instance = units::instance_path(
+                                target,
+                                &|alias| {
+                                    self.scopes
+                                        .iter()
+                                        .rev()
+                                        .find(|scope| scope.alias.as_deref() == Some(alias))
+                                        .map(|scope| scope.id)
+                                },
+                                self.scopes.last().map(|scope| scope.id),
+                            );
+                            let op = units::bound_operand(owner, instance, group);
+                            if let T::Number(slot) = &mut ty {
+                                *slot = op;
+                            } else if let T::Optional(inner) = &mut ty
+                                && let T::Number(slot) = inner.as_mut()
+                            {
+                                *slot = op;
+                            }
+                        }
+                        Some(ty)
+                    }
                     None => self.report(
                         node,
                         codes::OPAQUE_READ,
@@ -2751,12 +2780,15 @@ impl<'a> Checker<'a> {
             ..
         } = unparenthesized(right)
         {
-            let low = self.number(low);
-            let high = self.number(high);
+            let low = self.numeric(low);
+            let high = self.numeric(high);
             let needle = needle?;
-            low.and(high)?;
+            let (low, high) = (low?, high?);
             return match needle {
-                T::Number(_) => Some(T::Bool),
+                T::Number(n) => self
+                    .numeric_operation(node, Operation::Compare, &n, &low)
+                    .and_then(|_| self.numeric_operation(node, Operation::Compare, &n, &high))
+                    .map(|_| T::Bool),
                 ty @ (T::Null
                 | T::Bool
                 | T::Str(_)
@@ -3192,13 +3224,17 @@ impl<'a> Checker<'a> {
                 let b = self.string(arguments.get(1)?);
                 a.and(b).map(|()| T::Bool)
             }
-            F::Abs | F::Floor | F::Ceil => {
+            F::Abs => {
                 self.arity(node, arguments, 1)?;
                 self.numeric(first?).map(T::Number)
             }
+            F::Floor | F::Ceil => {
+                self.arity(node, arguments, 1)?;
+                self.numeric_rounding(node, first?).map(T::Number)
+            }
             F::Round if arguments.len() == 3 => {
                 self.exact = true;
-                let operand = self.numeric(first?)?;
+                let operand = self.numeric_rounding(node, first?)?;
                 self.string(arguments.get(2)?)?;
                 if !matches!(arguments.get(1), Some(Node::Number(n)) if n.to_string().parse::<u8>().is_ok_and(|n| n <= 18))
                     || !matches!(
@@ -3224,7 +3260,7 @@ impl<'a> Checker<'a> {
                         "expected 1 or 2 arguments".to_owned(),
                     );
                 }
-                let operand = self.numeric(first?)?;
+                let operand = self.numeric_rounding(node, first?)?;
                 match arguments.get(1) {
                     None => Some(T::Number(operand)),
                     Some(Node::Number(places))
@@ -3245,7 +3281,30 @@ impl<'a> Checker<'a> {
                     first?,
                     Some(&T::List(Box::new(T::Number(Operand::Dimensionless)))),
                 )? {
-                    T::List(item) if matches!(*item, T::Number(_)) => Some(*item),
+                    T::List(item) => match *item {
+                        T::Number(op) => match units::admit_sum(&op) {
+                            Some(result) => Some(T::Number(result)),
+                            None => self.report(
+                                node,
+                                codes::UNIT,
+                                format!("VAL-UNIT / VAL-RATE: sum refuses {op:?}"),
+                            ),
+                        },
+                        ty @ (T::Null
+                        | T::Bool
+                        | T::Str(_)
+                        | T::Date
+                        | T::Timestamp
+                        | T::ParsedDate
+                        | T::ParsedTimestamp
+                        | T::List(_)
+                        | T::Record(_)
+                        | T::Optional(_)) => self.report(
+                            node,
+                            codes::TYPE_ERROR,
+                            format!("`sum` of `{}`", T::List(Box::new(ty))),
+                        ),
+                    },
                     ty @ (T::Null
                     | T::Bool
                     | T::Number(_)
@@ -3254,7 +3313,6 @@ impl<'a> Checker<'a> {
                     | T::Timestamp
                     | T::ParsedDate
                     | T::ParsedTimestamp
-                    | T::List(_)
                     | T::Record(_)
                     | T::Optional(_)) => {
                         self.report(node, codes::TYPE_ERROR, format!("`sum` of `{ty}`"))
@@ -3315,11 +3373,14 @@ impl<'a> Checker<'a> {
         let Some(Node::Closure { body, alias }) = arguments.get(1).copied() else {
             return self.unsupported(node, "a closure argument that is not a closure");
         };
+        let scope_id = self.next_scope_id;
+        self.next_scope_id = self.next_scope_id.saturating_add(1);
         self.scopes.push(Scope {
+            id: scope_id,
             alias: alias.map(ToOwned::to_owned),
             element: element.clone(),
         });
-        let result = match function {
+        let mut result = match function {
             C::Map => self.value(body, None).map(|ty| T::List(Box::new(ty))),
             // zen flattens one level: every element of a list body is spliced
             // in, so the result has the body's element type.
@@ -3347,6 +3408,9 @@ impl<'a> Checker<'a> {
             C::All | C::None | C::Some | C::One => self.boolean(body).map(|()| T::Bool),
         };
         self.scopes.pop();
+        if let Some(ty) = &mut result {
+            strip_scope_bounds(ty, scope_id);
+        }
         result
     }
 
@@ -3408,93 +3472,24 @@ impl<'a> Checker<'a> {
     }
 }
 
-pub(crate) fn validate_exact_environment(env: &ZenTypeEnv, prefix: &str) -> Result<(), String> {
-    for (name, record) in env
-        .records()
-        .iter()
-        .filter(|(name, _)| name.starts_with(prefix))
-    {
-        for field in record.fields.values() {
-            let mut ty = &field.ty;
-            while let Type::Optional(inner) | Type::List(inner) = ty {
-                ty = inner;
-            }
-            if let Type::Decimal {
-                unit,
-                currency_source,
-                per_unit,
-                ..
-            } = ty
-                && matches!(
-                    units::declared(
-                        env,
-                        Some(name),
-                        unit.as_ref(),
-                        currency_source.as_ref(),
-                        per_unit.as_ref()
-                    ),
-                    Operand::Unresolved
-                )
-            {
-                return Err("exact currency requires a fixed singleton currencySource and compatible Decimal bindings".into());
+fn strip_scope_bounds(ty: &mut T, scope_id: usize) {
+    match ty {
+        T::Number(operand) => units::strip_scope_operand(operand, scope_id),
+        T::List(inner) | T::Optional(inner) => strip_scope_bounds(inner, scope_id),
+        T::Record(Rec::Literal(fields)) => {
+            for field in fields.values_mut() {
+                strip_scope_bounds(field, scope_id);
             }
         }
+        T::Null
+        | T::Bool
+        | T::Str(_)
+        | T::Date
+        | T::Timestamp
+        | T::ParsedDate
+        | T::ParsedTimestamp
+        | T::Record(Rec::Env { .. }) => {}
     }
-    Ok(())
-}
-
-/// VAL-EXACT-1: record references are inspected when their members are read.
-fn exact_type(mut ty: &Type) -> bool {
-    while let Type::Optional(inner) | Type::List(inner) = ty {
-        ty = inner;
-    }
-    matches!(ty, Type::Decimal { .. })
-}
-
-fn expected_exact_type<'a>(ty: &'a Type, env: &'a ZenTypeEnv) -> bool {
-    let mut pending = vec![ty];
-    let mut visited = BTreeSet::new();
-    while let Some(ty) = pending.pop() {
-        if exact_type(ty) {
-            return true;
-        }
-        let mut names = Vec::new();
-        ty.records(&mut names);
-        for name in names {
-            if visited.insert(name.clone())
-                && let Some(record) = env.record(&name)
-            {
-                pending.extend(record.fields.values().map(|field| &field.ty));
-            }
-        }
-    }
-    false
-}
-
-pub(crate) fn decimal_destination(mut ty: &Type) -> Option<norn_ir::PropertyType> {
-    while let Type::Optional(inner) = ty {
-        ty = inner;
-    }
-    let Type::Decimal {
-        scale,
-        unit,
-        rounding,
-        currency_source,
-        per_unit,
-    } = ty
-    else {
-        return None;
-    };
-    Some(norn_ir::PropertyType::Decimal {
-        additivity: norn_ir::PropertyAdditivity::Undeclared {},
-
-        scale: norn_ir::WholeNumber(*scale),
-        unit: unit.clone(),
-        rounding: Some(*rounding),
-        currency_source: currency_source.clone(),
-        per_unit: per_unit.clone(),
-        unit_source: Vec::new(),
-    })
 }
 
 /// VAL-ROUND: no information-losing operation enters the exact runtime implicitly.

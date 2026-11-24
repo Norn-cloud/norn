@@ -14,18 +14,18 @@ use proptest::prelude::*;
 
 #[path = "../../../registry/core/src/units.rs"]
 mod units;
+#[path = "../../../registry/core/src/value_types.rs"]
+mod value_types;
 
 fn registry() -> BTreeSet<norn_ir::PropertyTypeName> {
-    [
-        "core.code",
-        "core.quantity",
-        "ucum.unit_code",
-        "core.display_name",
-        "iso8601.timestamp",
+    BTreeSet::new()
+}
+
+fn base_catalogs() -> Vec<ArtifactEnvelope> {
+    vec![
+        value_types::core_pack().expect("core value types"),
+        value_types::std_pack().expect("std value types"),
     ]
-    .map(|name| norn_ir::PropertyTypeName(name.into()))
-    .into_iter()
-    .collect()
 }
 
 fn fixture() -> Vec<ArtifactEnvelope> {
@@ -78,9 +78,10 @@ fn compare(
 #[test]
 fn dependency_edits_and_new_writers_cannot_reuse_global_evidence() {
     let registry = registry();
+    let base = base_catalogs();
     let context = EntityArtifactSetContext {
         registry: &registry,
-        base: &[],
+        base: &base,
         tenant: None,
     };
     let mut pool = fixture();
@@ -125,9 +126,10 @@ fn dependency_edits_and_new_writers_cannot_reuse_global_evidence() {
 #[test]
 fn conflicting_versions_retain_independent_local_evidence() {
     let registry = registry();
+    let base = base_catalogs();
     let context = EntityArtifactSetContext {
         registry: &registry,
-        base: &[],
+        base: &base,
         tenant: None,
     };
     let mut pool = fixture();

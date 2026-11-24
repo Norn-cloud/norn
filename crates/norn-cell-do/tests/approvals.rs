@@ -480,6 +480,12 @@ fn a_flow_step_parks_like_a_direct_call() {
     assert_eq!(decided["run"]["state"], json!("awaiting_perform_convert"));
     assert_eq!(decided["call"], not_executed(), "{decided}");
     assert_eq!(melt_status(&cell), 404);
+    let (status, waiting) = call(&cell, "GET", "/v1/runs/melt-run-a", OPERATOR, "");
+    let pinned: Value = serde_json::from_str(include_str!(
+        "../../../apps/studio/test/fixtures/run-executor.json"
+    ))
+    .unwrap();
+    assert_eq!(json!({ "status": status, "json": waiting }), pinned);
     assert_eq!(restart(&cell, "melt-run-a")["state"], json!("completed"));
     assert_eq!(melt_status(&cell), 200);
 }

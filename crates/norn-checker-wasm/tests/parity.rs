@@ -281,7 +281,10 @@ fn clean_set_emits_v2_and_preserves_the_historical_receipt_pin() {
     );
     assert_eq!(output["diagnostics"]["diagnostics"], serde_json::json!([]));
     assert_eq!(output["receipt"]["format"], "norn-checker/receipt@2");
-    assert_eq!(output["receipt"]["typeEnv"]["version"], 2);
+    assert_eq!(
+        output["receipt"]["typeEnv"]["version"],
+        norn_expr::TYPE_ENV_VERSION
+    );
     assert_ne!(output["receiptSha256"], RETAIL_RECEIPT_SHA256);
     let historical: Value = serde_json::from_str(include_str!(
         "../../norn-checker/tests/golden/check-receipt.retail.json"

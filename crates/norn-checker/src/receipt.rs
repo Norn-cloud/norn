@@ -875,37 +875,35 @@ pub fn recover_legacy_admission_receipt(
     let checked = run_profile(IDENTIFIER_ADMISSION_PROFILE, false)?;
     let current_sha256 = checked.receipt.content_sha256()?;
 
+    let derived_env = derive_type_env(artifacts, base, limits).map_err(|errors| {
+        invalid_receipt(format!("cannot derive receipt environment: {errors:?}"))
+    })?;
     if checked.receipt.admitted {
-        let bytes = checked.receipt.canonical_json()?;
-        let recovered = std::str::from_utf8(&bytes)
-            .map_err(|error| invalid_receipt(format!("recovered receipt is not UTF-8: {error}")))?
-            .to_owned();
-        if admission_receipt_sha256(&recovered)? == expected_sha256 {
-            return Ok(recovered);
+        use norn_expr::env::TypeEnvVersion as V;
+        for version in [V::V3, V::V2, V::V1] {
+            let Ok(env_ref) = derived_env.reference_at_version(version) else {
+                continue;
+            };
+            let mut candidate = checked.receipt.clone();
+            candidate.type_env = Some(env_ref);
+            let recovered = String::from_utf8(candidate.canonical_json()?).map_err(|error| {
+                invalid_receipt(format!("recovered receipt is not UTF-8: {error}"))
+            })?;
+            if admission_receipt_sha256(&recovered)? == expected_sha256 {
+                return Ok(recovered);
+            }
         }
     }
 
     let historical_check = run_profile(HISTORICAL_IDENTIFIER_PROFILE, true)?;
 
     let limit_profile = limits.reference()?;
-    let type_env = derive_type_env(artifacts, base, limits)
-        .map_err(|errors| {
-            invalid_receipt(format!("cannot derive receipt environment: {errors:?}"))
-        })?
+    let type_env = derived_env
         .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
         .map_err(|_error| ReceiptError::ReceiptHashMismatch {
             expected: expected_sha256.to_owned(),
             actual: current_sha256.clone(),
         })?;
-    if checked.receipt.admitted {
-        let mut historical_current = checked.receipt;
-        historical_current.type_env = Some(type_env.clone());
-        let recovered = String::from_utf8(historical_current.canonical_json()?)
-            .map_err(|error| invalid_receipt(format!("recovered receipt is not UTF-8: {error}")))?;
-        if admission_receipt_sha256(&recovered)? == expected_sha256 {
-            return Ok(recovered);
-        }
-    }
     let warnings: Vec<Diagnostic> = historical_check
         .diagnostics
         .iter()

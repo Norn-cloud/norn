@@ -337,6 +337,107 @@ fn a_cursor_at_the_cursor_bound_reaches_the_route() {
     assert_eq!(body["diagnostics"][0]["code"], "query.cursor_invalid");
 }
 
+#[path = "../../norn-cell/tests/support/governed.rs"]
+mod governed;
+
+/// Studio serves these exact refusals for queries against its typed grid.
+#[test]
+fn studio_object_refusals_match_the_served_routes() {
+    use governed::GovernedCommit as _;
+    use norn_cell::{CommitBatch, FactWriteRow, MAIN_WORLD};
+    use serde_json::json;
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let open = || NativeEngine::open(&path, norn_cell::StoreOptions::default()).unwrap();
+    let scope = seed::demo_scope();
+    let mut writer = seed::provision(open(), &scope).unwrap();
+    let demo = host(open());
+    let route = "/v1/objects/canon.Holding";
+    let read = |params: &[(&str, &str)]| {
+        let query = form_urlencoded::Serializer::new(String::new())
+            .extend_pairs(params)
+            .finish();
+        get(&demo, route, &format!("{SCOPE}&{query}"), VIEWER)
+    };
+    let filter = |text: &str| read(&[("filter", text)]);
+    let envelope = |(status, body): (u16, Value)| json!({ "status": status, "json": body });
+    let party = |params: &str| {
+        get(
+            &demo,
+            "/v1/objects/canon.Party",
+            &format!("{SCOPE}&{params}"),
+            VIEWER,
+        )
+    };
+    let (status, first) = party("limit=1");
+    assert_eq!(status, 200, "{first}");
+    let cursor = first["next"].as_str().unwrap();
+    let bad_cursor = read(&[("after", "not-a-cursor")]);
+    assert_eq!(
+        party(&format!("sort=display_name:asc&after={cursor}")),
+        bad_cursor
+    );
+    writer
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.into(),
+            scope: scope.key(),
+            logical_time: writer.read().clock_floor().unwrap().saturating_add(1),
+            writes: vec![FactWriteRow::Delete {
+                object_type: "canon.Party".into(),
+                key: "SYN-PARTY-01".into(),
+            }],
+            ..CommitBatch::default()
+        })
+        .unwrap();
+    let decimal = r#"{"all":[{"property":"quantity","op":"eq","value":"12,5"}]}"#;
+    let facets_query = form_urlencoded::Serializer::new(String::new())
+        .append_pair("filter", decimal)
+        .finish();
+    let actual = json!({
+        "denied": envelope(get(&demo, route, "orgId=foreign&environmentId=dev", VIEWER)),
+        "unknownType": envelope(get(&demo, "/v1/objects/canon.Missing", SCOPE, VIEWER)),
+        "limit": envelope(read(&[("limit", "0")])),
+        "sortSyntax": envelope(read(&[("sort", "quantity")])),
+        "sortDirection": envelope(read(&[("sort", "quantity:up")])),
+        "sortName": envelope(read(&[("sort", "Quantity:asc")])),
+        "sortUnknown": envelope(read(&[("sort", "missing:asc")])),
+        "sortDuplicate": envelope(read(&[("sort", "quantity:asc,quantity:desc")])),
+        "sortCount": envelope(read(&[("sort", "quantity:asc,unit:asc,location:asc,resource_code:asc")])),
+        "filterJson": envelope(filter("no")),
+        "filterMembers": envelope(filter(r#"{"all":[{"property":"quantity","op":"present"}],"other":null}"#)),
+        "filterArray": envelope(filter(r#"{"all":null}"#)),
+        "filterEmpty": envelope(filter(r#"{"all":[]}"#)),
+        "filterCount": envelope(filter(&json!({"all": vec![json!({"property":"quantity","op":"present"}); 9]}).to_string())),
+        "clauseObject": envelope(filter(r#"{"all":[null]}"#)),
+        "clauseMembers": envelope(filter(r#"{"all":[{"property":"quantity","op":"present","other":null}]}"#)),
+        "propertyName": envelope(filter(r#"{"all":[{"op":"present"}]}"#)),
+        "propertyUnknown": envelope(filter(r#"{"all":[{"property":"missing","op":"present"}]}"#)),
+        "opUnknown": envelope(filter(r#"{"all":[{"property":"quantity","op":"other"}]}"#)),
+        "opKind": envelope(filter(r#"{"all":[{"property":"quantity","op":"prefix","value":"1"}]}"#)),
+        "presenceValue": envelope(filter(r#"{"all":[{"property":"quantity","op":"present","value":null}]}"#)),
+        "missingValue": envelope(filter(r#"{"all":[{"property":"quantity","op":"eq"}]}"#)),
+        "scalarType": envelope(filter(r#"{"all":[{"property":"quantity","op":"eq","value":1}]}"#)),
+        "decimal": envelope(filter(decimal)),
+        "enumValue": envelope(filter(r#"{"all":[{"property":"valuation_method","op":"eq","value":"other"}]}"#)),
+        "inArray": envelope(filter(r#"{"all":[{"property":"quantity","op":"in","value":"1"}]}"#)),
+        "inEmpty": envelope(filter(r#"{"all":[{"property":"quantity","op":"in","value":[]}]}"#)),
+        "inCount": envelope(filter(&json!({"all":[{"property":"quantity","op":"in","value":vec!["1"; 51]}]}).to_string())),
+        "rangeArray": envelope(filter(r#"{"all":[{"property":"quantity","op":"between","value":["1"]}]}"#)),
+        "rangeOrder": envelope(filter(r#"{"all":[{"property":"quantity","op":"between","value":["2","1"]}]}"#)),
+        "rangeUpperDecimal": envelope(filter(r#"{"all":[{"property":"quantity","op":"between","value":["1","12,5"]}]}"#)),
+        "facetsDecimal": envelope(get(&demo, "/v1/objects/canon.Holding:facets", &format!("{SCOPE}&{facets_query}"), VIEWER)),
+        "cursorEmpty": envelope(read(&[("after", "")])),
+        "cursorInvalid": envelope(bad_cursor),
+        "snapshotMoved": envelope(party(&format!("after={cursor}"))),
+    });
+    let pinned: Value = serde_json::from_str(include_str!(
+        "../../../apps/studio/test/fixtures/object-query.json"
+    ))
+    .unwrap();
+    assert_eq!(actual, pinned);
+}
+
 /// Served routes the `OpenAPI` document does not describe, each with its reason.
 const UNDOCUMENTED: &[server::Route] = &[
     // Served only by the published host's entry point, for the access view:

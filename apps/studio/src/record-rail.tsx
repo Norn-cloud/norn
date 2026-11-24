@@ -6,7 +6,7 @@ import { Chip } from "@/components/chip"
 import { HiddenWriter } from "@/components/hidden-writer"
 import { Panel, Well } from "@/components/panel"
 import { cn } from "@/lib/utils"
-import { systemName } from "./lib/catalog.ts"
+import { lawHeadline, systemName, type Law } from "./lib/catalog.ts"
 import { readableTime } from "./lib/format.ts"
 import { liveTypeAccess, type RoleAccess, type TypeAccess } from "./lib/live.ts"
 import { changedProperties, historyUnavailable, readHistory } from "./evidence/review.ts"
@@ -95,14 +95,19 @@ function RoleList({ access, yours }: { readonly access: TypeAccess; readonly you
   )
 }
 
-/** The laws declared over this type, in their own sentences. */
-export function RulesKept({ rules, title }: { readonly rules: readonly string[]; readonly title: string }) {
+/** The rules declared over this type, leading with each rule's authored name. */
+export function RulesKept({ rules, laws = [], title }: { readonly rules: readonly string[]; readonly laws?: readonly Law[]; readonly title: string }) {
+  const invariants = rules.filter((rule) => !laws.some(({ rationale }) => rationale === rule))
+  const items = [
+    ...laws.map((law) => ({ key: law.id, text: lawHeadline(law), lang: law.titleLang })),
+    ...invariants.map((rule) => ({ key: rule, text: rule, lang: undefined })),
+  ]
   return (
-    <Panel icon={Scale} label="Rules it keeps" action={<Link to="/guarantees" className="underline-offset-4 hover:underline">All rules</Link>}>
+    <Panel icon={Scale} label="Rules it keeps" action={<Link to="/rules" className="underline-offset-4 hover:underline">All rules</Link>}>
       <Well className="px-3.5 pb-3">
-        {rules.length === 0 ? note(`No rule is declared over ${title.toLowerCase()} records.`) : (
+        {items.length === 0 ? note(`No rule is declared over ${title.toLowerCase()} records.`) : (
           <ul className="space-y-2">
-            {rules.map((rule) => <li key={rule} className="flex gap-2 text-sm leading-snug text-pretty"><ShieldCheck aria-hidden className="mt-0.5 size-3.5 shrink-0 text-tone-green" />{rule}</li>)}
+            {items.map((item) => <li key={item.key} lang={item.lang} className="flex gap-2 text-sm leading-snug text-pretty"><ShieldCheck aria-hidden className="mt-0.5 size-3.5 shrink-0 text-tone-green" />{item.text}</li>)}
           </ul>
         )}
       </Well>
