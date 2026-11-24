@@ -78,14 +78,14 @@ test("slow response: shows skeleton, then slow notice, then bounded timeout with
   }
 })
 
-test("headers-first stalled body: deadline cancels the hung body stream and Retry starts a new request that recovers", async ({ page }) => {
+test("headers-first stalled body: the browser cancels the hung stream and Retry recovers", async ({ page }) => {
   await session(page)
   await page.route("**/api/host/v1/**", (route) => {
     const path = new URL(route.request().url()).pathname
     if (path.endsWith("/v1/definitions")) return route.fulfill({ json: { artifacts: definitions } })
     return route.fulfill({ status: 404, json: { code: "route.not_found", message: "not served" } })
   })
-  // Simulate a server that returns 200 headers immediately then stalls mid-body on attempt 1, and answers cleanly on attempt 2.
+  // Replace window.fetch for metrics to exercise browser stream cancellation and retry.
   await page.addInitScript(() => {
     const nativeFetch = window.fetch.bind(window)
     const state = { attempts: 0, cancelled: false }
