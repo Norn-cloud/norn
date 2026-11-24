@@ -755,6 +755,10 @@ fn historical_receipt_verification_does_not_rerun_current_admission() {
     // by the cell's stored digest. Verification checks its integrity and
     // bindings; it must not use the current checker's refusal as a reason to
     // reinterpret that historical attestation.
+    assert!(
+        !candidate_envelopes.is_empty(),
+        "fixture must carry a candidate envelope"
+    );
     let type_env = derive_type_env(&candidate_envelopes, &base_envelopes, &limits)
         .expect("the entity base still supplies its type environment")
         .reference_at_version(norn_expr::env::TypeEnvVersion::V1)
