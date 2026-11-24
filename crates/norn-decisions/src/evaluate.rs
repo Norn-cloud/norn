@@ -7,19 +7,115 @@ use std::pin::pin;
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
+use norn_expr::temporal::{LocalCivilWallTime, LocalOffsetResolution, TzdbBundle};
 use norn_expr::{EvaluationBudget, Value};
 use zen_engine::meter::Meter;
 use zen_engine::{
-    DecisionGraphTrace, EvaluationError, EvaluationOptions, EvaluationTrace, StrictErrorSite,
-    StrictEvaluationError, Variable,
+    DecisionGraphTrace, EvaluationError, EvaluationOptions, EvaluationTrace, LocalWallTime,
+    ResolvedLocalOffset, StrictErrorSite, StrictEvaluationError, TzdbLookup, Variable,
 };
 
+#[derive(Debug)]
+struct DecisionTzdb(TzdbBundle);
+
+impl TzdbLookup for DecisionTzdb {
+    fn resolve_local_offset(&self, name: &str, wall: LocalWallTime) -> Option<ResolvedLocalOffset> {
+        let wall = LocalCivilWallTime {
+            year: wall.year,
+            month: wall.month,
+            day: wall.day,
+            hour: wall.hour,
+            minute: wall.minute,
+            second: wall.second,
+            nanosecond: wall.nanosecond,
+        };
+        Some(match self.0.resolve_local_offset(name, wall)? {
+            LocalOffsetResolution::Unambiguous { offset_seconds } => {
+                ResolvedLocalOffset::Unambiguous(offset_seconds)
+            }
+            LocalOffsetResolution::Gap => ResolvedLocalOffset::Gap,
+            LocalOffsetResolution::Fold {
+                before_seconds,
+                after_seconds,
+            } => ResolvedLocalOffset::Fold {
+                before: before_seconds,
+                after: after_seconds,
+            },
+        })
+    }
+}
+
+fn engine_tzdb(bundle: &TzdbBundle) -> Arc<dyn TzdbLookup> {
+    Arc::new(DecisionTzdb(bundle.clone()))
+}
+
 use crate::admit::ENGINE_MAX_DEPTH;
-use norn_ir::{DecisionOutput, FactChange, LinkChange, RuntimeObject, RuntimeValue};
+use norn_ir::{DecisionOutput, FactChange, LinkChange, RuleRoot, RuntimeObject, RuntimeValue};
 
 use crate::convert::{from_variable, to_variable, value_to_runtime};
 use crate::schema::Schema;
-use crate::{AdmittedDecision, DecisionError, StrictSite};
+use crate::{AdmissionError, AdmittedDecision, DecisionBinding, DecisionError, StrictSite};
+
+impl AdmittedDecision {
+    /// Loads `root` with the sub-decisions it reaches under the operational
+    /// default tzdb bundle (`2025b`). `sub_decisions` is keyed by the
+    /// `decisionNode` key (the sub-decision rule's artifact id) and must be
+    /// exactly the reachable closure.
+    ///
+    /// # Errors
+    ///
+    /// An [`AdmissionError`] when any admission check fails.
+    pub fn admit(
+        root: &RuleRoot,
+        sub_decisions: &std::collections::BTreeMap<String, RuleRoot>,
+        binding: DecisionBinding,
+    ) -> Result<Self, AdmissionError> {
+        Self::admit_in(root, sub_decisions, binding, TzdbBundle::default_bundle())
+    }
+
+    /// [`Self::admit`] against an explicit versioned [`TzdbBundle`] (`#1440`).
+    ///
+    /// # Errors
+    ///
+    /// An [`AdmissionError`] when any admission check fails.
+    pub fn admit_in(
+        root: &RuleRoot,
+        sub_decisions: &std::collections::BTreeMap<String, RuleRoot>,
+        binding: DecisionBinding,
+        tzdb: &TzdbBundle,
+    ) -> Result<Self, AdmissionError> {
+        Self::admit_with_defaults_in(root, sub_decisions, binding, None, tzdb)
+    }
+
+    /// [`Self::admit`], with the rule's `defaults` member as exact runtime
+    /// values parsed from the artifact's source text (#2770).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::admit`]; [`AdmissionError::InvalidDefault`] when a numeric
+    /// default has no exact source value, or the exact value is not the
+    /// decoded one.
+    pub fn admit_with_defaults(
+        root: &RuleRoot,
+        sub_decisions: &std::collections::BTreeMap<String, RuleRoot>,
+        binding: DecisionBinding,
+        exact_defaults: Option<&RuntimeObject>,
+    ) -> Result<Self, AdmissionError> {
+        Self::admit_with_defaults_in(
+            root,
+            sub_decisions,
+            binding,
+            exact_defaults,
+            TzdbBundle::default_bundle(),
+        )
+    }
+
+    /// SHA-256 digest of the [`TzdbBundle`] this decision was admitted under.
+    #[must_use]
+    pub fn tzdb_sha256(&self) -> &str {
+        &self.tzdb_sha256
+    }
+}
 
 /// A decision slice validated against one decision's input schema
 /// ([`AdmittedDecision::validate_slice`]).
@@ -107,7 +203,25 @@ pub fn evaluate(
     event: &TypedEvent,
     budget: EvaluationBudget,
 ) -> Result<Evaluated, DecisionError> {
-    evaluate_with(decision, slice, event, budget, false, &mut |_| Ok(()))
+    evaluate_in(decision, slice, event, budget, TzdbBundle::default_bundle())
+}
+
+/// [`evaluate`] against an explicit versioned [`TzdbBundle`] (`#1440`).
+///
+/// The bundle digest must match the bundle the decision was admitted under.
+///
+/// # Errors
+///
+/// As [`evaluate`], or [`DecisionError::TzdbMismatch`] when `tzdb` differs from
+/// `decision.tzdb_sha256()`.
+pub fn evaluate_in(
+    decision: &AdmittedDecision,
+    slice: &ValidatedSlice,
+    event: &TypedEvent,
+    budget: EvaluationBudget,
+    tzdb: &TzdbBundle,
+) -> Result<Evaluated, DecisionError> {
+    evaluate_with(decision, slice, event, budget, false, tzdb, &mut |_| Ok(()))
 }
 
 /// [`evaluate`] that also reports the decision-table rows that matched
@@ -125,7 +239,22 @@ pub fn evaluate_explained(
     event: &TypedEvent,
     budget: EvaluationBudget,
 ) -> Result<Evaluated, DecisionError> {
-    evaluate_with(decision, slice, event, budget, true, &mut |_| Ok(()))
+    evaluate_explained_in(decision, slice, event, budget, TzdbBundle::default_bundle())
+}
+
+/// [`evaluate_explained`] against an explicit versioned [`TzdbBundle`] (`#1440`).
+///
+/// # Errors
+///
+/// As [`evaluate_in`].
+pub fn evaluate_explained_in(
+    decision: &AdmittedDecision,
+    slice: &ValidatedSlice,
+    event: &TypedEvent,
+    budget: EvaluationBudget,
+    tzdb: &TzdbBundle,
+) -> Result<Evaluated, DecisionError> {
+    evaluate_with(decision, slice, event, budget, true, tzdb, &mut |_| Ok(()))
 }
 
 /// Evaluate with explanations and a host's effective fact-contract check.
@@ -141,9 +270,33 @@ pub fn evaluate_explained_with_fact_check(
     slice: &ValidatedSlice,
     event: &TypedEvent,
     budget: EvaluationBudget,
+    check_fact: impl FnMut(&RuntimeValue) -> Result<(), String>,
+) -> Result<Evaluated, DecisionError> {
+    evaluate_explained_with_fact_check_in(
+        decision,
+        slice,
+        event,
+        budget,
+        TzdbBundle::default_bundle(),
+        check_fact,
+    )
+}
+
+/// [`evaluate_explained_with_fact_check`] against an explicit versioned
+/// [`TzdbBundle`] (`#1440`).
+///
+/// # Errors
+///
+/// As [`evaluate_explained_with_fact_check`], or [`DecisionError::TzdbMismatch`].
+pub fn evaluate_explained_with_fact_check_in(
+    decision: &AdmittedDecision,
+    slice: &ValidatedSlice,
+    event: &TypedEvent,
+    budget: EvaluationBudget,
+    tzdb: &TzdbBundle,
     mut check_fact: impl FnMut(&RuntimeValue) -> Result<(), String>,
 ) -> Result<Evaluated, DecisionError> {
-    evaluate_with(decision, slice, event, budget, true, &mut check_fact)
+    evaluate_with(decision, slice, event, budget, true, tzdb, &mut check_fact)
 }
 
 fn evaluate_with(
@@ -152,6 +305,7 @@ fn evaluate_with(
     event: &TypedEvent,
     budget: EvaluationBudget,
     trace: bool,
+    tzdb: &TzdbBundle,
     check_fact: &mut dyn FnMut(&RuntimeValue) -> Result<(), String>,
 ) -> Result<Evaluated, DecisionError> {
     if !decision.accepts(slice, event) {
@@ -165,6 +319,13 @@ fn evaluate_with(
             validated_for,
         });
     }
+    if decision.tzdb_sha256() != tzdb.sha256() {
+        return Err(DecisionError::TzdbMismatch {
+            decision: decision.rule_id().to_owned(),
+            admitted: decision.tzdb_sha256().to_owned(),
+            evaluated: tzdb.sha256().to_owned(),
+        });
+    }
     let input = to_variable(&Value::object([
         ("event", event.value.clone()),
         ("slice", slice.value.clone()),
@@ -174,11 +335,12 @@ fn evaluate_with(
         trace,
         max_depth: ENGINE_MAX_DEPTH,
     };
-    let outcome = poll_once(
-        decision
-            .decision()
-            .evaluate_metered(input, options, meter.clone()),
-    )?;
+    let outcome = poll_once(decision.decision().evaluate_metered_with_tzdb(
+        input,
+        options,
+        meter.clone(),
+        Some(engine_tzdb(tzdb)),
+    ))?;
     // Exhaustion wins over whatever the engine made of it.
     if let Some(exhausted) = meter.exhausted() {
         return Err(DecisionError::BudgetExhausted {
