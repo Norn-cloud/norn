@@ -855,7 +855,7 @@ struct ThreeAndOne {
 
 impl norn_api::analytics_routes::Transport for ThreeAndOne {
     fn capabilities(&self) -> norn_cell::analytics::EngineCapabilities {
-        norn_cell::analytics::EngineCapabilities::duckdb_default()
+        norn_cell::analytics::EngineCapabilities::DUCKDB
     }
     fn resumed(&self) -> Option<norn_api::analytics_routes::EngineAnswer> {
         None

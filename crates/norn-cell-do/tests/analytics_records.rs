@@ -701,7 +701,7 @@ struct PanicTransport;
 
 impl Transport for PanicTransport {
     fn capabilities(&self) -> norn_cell::analytics::EngineCapabilities {
-        norn_cell::analytics::EngineCapabilities::duckdb_default()
+        norn_cell::analytics::EngineCapabilities::DUCKDB
     }
     fn resumed(&self) -> Option<EngineAnswer> {
         None

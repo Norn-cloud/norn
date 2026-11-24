@@ -158,36 +158,6 @@ impl<E: SqlEngine> CellStore<E> {
         })
     }
 
-    /// VIEW-ENGINE-1 / D136: evaluate an admitted transform on any
-    /// [`crate::analytics::AnalyticalEngine`] over the same authorized snapshot
-    /// [`Self::evaluate_transform`] reads.
-    ///
-    /// The engine admits the plan *before* the cell reads any rows, so an
-    /// unsupported plan refuses without touching cell data, and the envelope
-    /// carries the backend's actual [`Engine`] identity.
-    ///
-    /// # Errors
-    /// As [`Self::evaluate_transform`], and `core.compute.unsupported_engine`
-    /// for a plan the backend cannot lower.
-    pub fn evaluate_transform_on<A: crate::analytics::AnalyticalEngine + ?Sized>(
-        &self,
-        engine: &A,
-        plan: &TransformPlan,
-        world: &str,
-        scope: &str,
-        access: impl FnMut(&ObjectRecord) -> Result<RowAccess, CellError>,
-    ) -> Result<TransformResult, CellError> {
-        // Admit first: an unsupported plan refuses before reading any cell snapshot.
-        let admitted = engine.admit_transform(plan)?;
-        self.evaluate_transform_with(
-            plan,
-            (world, scope),
-            access,
-            engine.engine_id().into_compute_engine(),
-            |plan, input| admitted.execute(plan, input),
-        )
-    }
-
     /// One snapshot, one engine, one envelope: every engine evaluates the
     /// same authorized input and returns rows the envelope pins identically.
     pub(crate) fn evaluate_transform_with(

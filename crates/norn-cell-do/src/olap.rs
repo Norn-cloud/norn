@@ -8,8 +8,7 @@ use norn_api::analytics_routes::{EngineAnswer, EngineCall, Transport};
 use norn_api::olap_credential::{Issuer, body_digest};
 #[cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
 use norn_cell::analytics::{
-    AnalyticalEngine, EngineOutcome, EngineRefusal, STALE_INPUT_CODE, dispatch_evaluate,
-    dispatch_members,
+    AnalyticalEngine, EngineOutcome, EngineRefusal, dispatch_evaluate, dispatch_members,
 };
 use norn_cell::analytics::{EngineCapabilities, TenantId};
 #[cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
@@ -28,8 +27,8 @@ pub struct Exchange {
 }
 
 impl Exchange {
-    /// The link of the cell whose engine database is `tenant`, minting with `issuer`,
-    /// targeting a sidecar qualified for `capabilities`.
+    /// The link of the cell whose engine database is `tenant`, minting with
+    /// `issuer`, to an engine with `capabilities`.
     #[must_use]
     pub const fn new(issuer: Issuer, tenant: TenantId, capabilities: EngineCapabilities) -> Self {
         Self {
@@ -85,8 +84,7 @@ impl Transport for Exchange {
     }
 }
 
-/// The engine linked into a native host: each call runs in place through
-/// [`AnalyticalEngine`].
+/// The engine linked into a native host: each call runs in place.
 #[cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
 pub struct InProcess<A: AnalyticalEngine = norn_cell::analytics::engine::Engine>(pub A);
 
@@ -123,41 +121,13 @@ impl<A: AnalyticalEngine> Transport for InProcess<A> {
     fn call(&self, call: &EngineCall) -> Option<EngineAnswer> {
         let engine: &dyn AnalyticalEngine = &self.0;
         let (status, body) = match call.op.as_str() {
-            "frontier" => Self::run(&call.body, |r| engine.mirror_frontier(r)),
-            "sync" => Self::run(&call.body, |r| engine.mirror_sync(r)),
-            "evaluate" => Self::run(&call.body, |r| {
-                let mut resp = dispatch_evaluate(engine, r)?;
-                resp.provenance = None;
-                Ok(resp)
-            }),
-            "v2/evaluate" => Self::run(&call.body, |r| {
-                let resp = dispatch_evaluate(engine, r)?;
-                if resp.provenance.is_none() {
-                    return Err(EngineRefusal {
-                        code: STALE_INPUT_CODE.to_owned(),
-                        detail: "v2 evaluate response omitted provenance".to_owned(),
-                    });
-                }
-                Ok(resp)
-            }),
+            "frontier" => Self::run(&call.body, |r| engine.frontier(r)),
+            "sync" => Self::run(&call.body, |r| engine.sync(r)),
+            "evaluate" => Self::run(&call.body, |r| dispatch_evaluate(engine, r)),
             "members" => Self::run(&call.body, |r| dispatch_members(engine, r)),
-            "profile" => Self::run(&call.body, |r| {
-                let mut resp = engine.profile_objects(r)?;
-                resp.provenance = None;
-                Ok(resp)
-            }),
-            "v2/profile" => Self::run(&call.body, |r| {
-                let resp = engine.profile_objects(r)?;
-                if resp.provenance.is_none() {
-                    return Err(EngineRefusal {
-                        code: STALE_INPUT_CODE.to_owned(),
-                        detail: "v2 profile response omitted provenance".to_owned(),
-                    });
-                }
-                Ok(resp)
-            }),
-            "page" => Self::run(&call.body, |r| engine.query_page(r)),
-            "lineage" => Self::run(&call.body, |r| engine.query_lineage(r)),
+            "profile" => Self::run(&call.body, |r| engine.profile(r)),
+            "page" => Self::run(&call.body, |r| engine.page(r)),
+            "lineage" => Self::run(&call.body, |r| engine.lineage(r)),
             _ => (404, String::new()),
         };
         Some(EngineAnswer {

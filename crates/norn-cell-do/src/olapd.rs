@@ -36,15 +36,6 @@
 //! one operation at a time; that operation is its one cleanup owner, so a
 //! store, replayed or not, never removes an attempt still downloading or
 //! one a later landing made.
-//!
-//! Rolling-deploy / rollback contract (D136/#1661): deploy `norn-olapd`
-//! before cell callers switch to `/v2/evaluate` and `/v2/profile`, and roll
-//! back callers before retiring `/v2/*`. During rollout and rollback,
-//! `norn-olapd` dual-serves `/v1/evaluate` & `/v1/profile` (omitting
-//! `provenance` for older `deny_unknown_fields` callers) alongside
-//! `/v2/evaluate` & `/v2/profile` (requiring verified provenance, refusing
-//! missing provenance with `409 core.compute.stale_input`). Calling `/v2/*`
-//! against an older pre-v2 sidecar fails closed with `401` at the gate.
 
 use std::ffi::OsString;
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
@@ -60,8 +51,8 @@ use norn_cell::analytics::engine::{Engine, Settings};
 use norn_cell::analytics::{
     AnalyticalEngine, EngineOutcome, EngineRefusal, EvaluateRequest, ExportRequest,
     FrontierRequest, LandRequest, LandResponse, LineageRequest, MembersRequest, PageRequest,
-    ProfileRequest, STALE_INPUT_CODE, SettleRequest, StoreBody, SyncRequest, TenantId,
-    dispatch_evaluate, dispatch_members,
+    ProfileRequest, SettleRequest, StoreBody, SyncRequest, TenantId, dispatch_evaluate,
+    dispatch_members,
 };
 use norn_kernel::LogicalTime;
 use serde::Serialize;
@@ -264,22 +255,8 @@ pub fn serve_with(
     seam: Arc<dyn Seam>,
 ) -> std::io::Result<()> {
     let engine: Arc<dyn AnalyticalEngine> = Arc::new(Engine::new(config.settings)?);
-    serve_engine(listener, config.keys_file, &engine, clock, seam)
-}
-
-/// Serve `listener` backed by any [`AnalyticalEngine`] implementation.
-///
-/// # Errors
-/// Returns an I/O error if the listener cannot be served.
-pub fn serve_engine(
-    listener: &TcpListener,
-    keys_file: PathBuf,
-    engine: &Arc<dyn AnalyticalEngine>,
-    clock: Arc<dyn Clock>,
-    seam: Arc<dyn Seam>,
-) -> std::io::Result<()> {
     let gate = Arc::new(Gate {
-        keys_file,
+        keys_file: config.keys_file,
         clock,
         seam,
     });
@@ -295,10 +272,10 @@ pub fn serve_engine(
             );
             continue;
         }
-        let (engine, gate, active) = (Arc::clone(engine), Arc::clone(&gate), Arc::clone(&active));
+        let (engine, gate, active) = (Arc::clone(&engine), Arc::clone(&gate), Arc::clone(&active));
         std::thread::spawn(move || {
             // A broken connection affects only itself.
-            let _ignored = connection(&stream, engine.as_ref(), &gate);
+            let _ignored = connection(&stream, &engine, &gate);
             active.fetch_sub(1, Ordering::SeqCst);
         });
     }
@@ -355,14 +332,7 @@ impl Gate {
     fn admit(&self, request: &Request) -> Result<TenantId, Denied> {
         let digest = body_digest(&request.body);
         let keyring = read_keyring(&self.keys_file);
-        let op = if let Some(v1) = request.path.strip_prefix("/v1/") {
-            v1
-        } else if request.path.starts_with("/v2/") {
-            // Credential op for v2 routes is "v2/<op>" so v1 and v2 credentials never cross-verify.
-            request.path.strip_prefix('/').unwrap_or_default()
-        } else {
-            ""
-        };
+        let op = request.path.strip_prefix("/v1/").unwrap_or_default();
         let credential = request
             .authorization
             .as_deref()
@@ -495,41 +465,13 @@ fn connection(
         tenant: &tenant,
     };
     match request.path.as_str() {
-        "/v1/frontier" => call.answer(|r: FrontierRequest| engine.mirror_frontier(&r)),
-        "/v1/sync" => call.answer(|r: SyncRequest| engine.mirror_sync(&r)),
-        "/v1/evaluate" => call.answer(|r: EvaluateRequest| {
-            let mut resp = dispatch_evaluate(engine, &r)?;
-            resp.provenance = None;
-            Ok(resp)
-        }),
-        "/v2/evaluate" => call.answer(|r: EvaluateRequest| {
-            let resp = dispatch_evaluate(engine, &r)?;
-            if resp.provenance.is_none() {
-                return Err(refusal(
-                    STALE_INPUT_CODE,
-                    "v2 evaluate response omitted provenance",
-                ));
-            }
-            Ok(resp)
-        }),
+        "/v1/frontier" => call.answer(|r: FrontierRequest| engine.frontier(&r)),
+        "/v1/sync" => call.answer(|r: SyncRequest| engine.sync(&r)),
+        "/v1/evaluate" => call.answer(|r: EvaluateRequest| dispatch_evaluate(engine, &r)),
         "/v1/members" => call.answer(|r: MembersRequest| dispatch_members(engine, &r)),
-        "/v1/profile" => call.answer(|r: ProfileRequest| {
-            let mut resp = engine.profile_objects(&r)?;
-            resp.provenance = None;
-            Ok(resp)
-        }),
-        "/v2/profile" => call.answer(|r: ProfileRequest| {
-            let resp = engine.profile_objects(&r)?;
-            if resp.provenance.is_none() {
-                return Err(refusal(
-                    STALE_INPUT_CODE,
-                    "v2 profile response omitted provenance",
-                ));
-            }
-            Ok(resp)
-        }),
-        "/v1/page" => call.answer(|r: PageRequest| engine.query_page(&r)),
-        "/v1/lineage" => call.answer(|r: LineageRequest| engine.query_lineage(&r)),
+        "/v1/profile" => call.answer(|r: ProfileRequest| engine.profile(&r)),
+        "/v1/page" => call.answer(|r: PageRequest| engine.page(&r)),
+        "/v1/lineage" => call.answer(|r: LineageRequest| engine.lineage(&r)),
         "/v1/land" => call.answer(|r: LandRequest| land(engine, &r)),
         "/v1/settle" => call.answer(|r: SettleRequest| settle(engine, &r)),
         "/v1/store" => call.answer(|r: StoreBody| {
@@ -746,7 +688,7 @@ fn upload(
 /// mints, downloading it into the attempt's own source file. The engine
 /// holds the attempt throughout; a failed landing removes it.
 fn land(engine: &dyn AnalyticalEngine, request: &LandRequest) -> EngineOutcome<LandResponse> {
-    engine.land_dataset(request, &mut |file| {
+    engine.land(request, &mut |file| {
         download(&agent(), &request.load.file.url, file)
     })
 }
@@ -755,7 +697,7 @@ fn land(engine: &dyn AnalyticalEngine, request: &LandRequest) -> EngineOutcome<L
 /// takes the attempt by its token and owns its cleanup: a refused settle
 /// removes the attempt it took, and nothing else.
 fn settle(engine: &dyn AnalyticalEngine, request: &SettleRequest) -> EngineOutcome<LandResponse> {
-    engine.settle_dataset(request)
+    engine.settle(request)
 }
 
 /// MANIFEST-LAND-1: send an attempt's landed files to their content-addressed
@@ -775,7 +717,7 @@ fn store(
         sha256(request.landed.data.as_ref()),
         sha256(request.landed.held.as_ref()),
     );
-    engine.store_dataset_json(body, &mut |data, held| {
+    engine.store(body, &mut |data, held| {
         let agent = agent();
         upload(&agent, &request.data.url, data, &data_sha256)?;
         upload(&agent, &request.held.url, held, &held_sha256)
@@ -802,7 +744,7 @@ fn export(call: &Call<'_>, engine: &dyn AnalyticalEngine) -> std::io::Result<()>
         norn_cell::analytics::ExportFormat::Parquet => "application/vnd.apache.parquet",
         norn_cell::analytics::ExportFormat::Jsonl => "application/x-ndjson",
     };
-    let path = match engine.export_dataset(&parsed) {
+    let path = match engine.export(&parsed) {
         Ok(path) => path,
         Err(refused) => return refuse(stream, status_of(&refused), &refused),
     };

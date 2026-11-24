@@ -1,17 +1,30 @@
-//! The cell actor: one tenant cell per Rivet actor (D131), native port of
-//! `apps/norn-cell-do/worker.mjs` (`Cell`) and `wake.mjs` via [`crate::core`].
+//! The cell actor: one tenant cell per Rivet actor (D131). This is the native
+//! port of the Durable Object class in `apps/norn-cell-do/worker.mjs` (`Cell`)
+//! and its wake (`wake.mjs`); the decisions are the cell's, in
+//! [`crate::core`], run on the actor's cell thread.
 //!
-//! - Nothing is written in `create` or `on_start` (#1130): the cell opens on
-//!   the first request, and provisioning is acknowledged only from a request.
+//! - Nothing is written in `create` or `on_start`: `RivetKit` holds a new
+//!   actor's startup writes in memory until startup completes (#1130,
+//!   section 1), so the cell opens on the first request and provisioning is
+//!   acknowledged only from a request.
 //! - The cell's identity is the rows in its own database (`Tenant::open`
-//!   checks the binding); the router names the scope in `x-norn-cell`, and the
-//!   actor refuses a scope its key does not name.
-//! - TIMER-ALARM-1: wake rules of `wake.mjs` over [`crate::alarm`] under one
-//!   actor lock (`deadline`), so a wake finding no writer never erases a newly
-//!   admitted writer's recovery wake.
-//! - ENGINE-UPGRADE-1: every start reads the cell's storage version without
-//!   writing and refuses newer/unreadable stamps before claiming schedules; the
-//!   wake re-checks before writing.
+//!   checks the binding); the actor key only routes. The router names the
+//!   scope in `x-norn-cell`, and the actor refuses a scope its key does not
+//!   name.
+//! - TIMER-ALARM-1: the wake rules of `wake.mjs`, over [`crate::alarm`].
+//!   Writer admission, a write's deadline update and the wake's final
+//!   deadline decision run under one actor lock (`deadline`): a wake that
+//!   found no writer can never erase the recovery wake of a writer admitted
+//!   after it looked.
+//! - ENGINE-UPGRADE-1: every start reads the cell's storage version first,
+//!   without writing, and a cell this engine refuses (a newer or unreadable
+//!   stamp, or one it cannot read) fails the start. A started actor's
+//!   `RivetKit` claims each due schedule row (it deletes the one-shot rows
+//!   from `_rivet_schedule_events`) before any handler runs, at the end of
+//!   its start and whenever a trigger comes due, so only an actor that never
+//!   starts leaves a refused cell's database, host tables included, as it
+//!   was. The engine retries the start; a release that reads the cell serves
+//!   it. The wake checks the version again before it writes.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -973,14 +986,11 @@ impl CellActor {
         Ok(Settled::Reply(reply))
     }
 
-    /// D102/D136: run one cell engine call (rollout: deploy norn-olapd before v2/* callers; rollback callers first).
+    /// D102: one engine call the cell asked for; a `stream` call (an export
+    /// the cell authorized) answers the caller with the engine's file.
     async fn engine_call(&self, call: &Value) -> EngineAnswer {
         let unreachable = || {
-            EngineAnswer::Answer(
-                503,
-                json!({"code": "analytics.unavailable", "detail": "the analytics engine is unreachable"})
-                    .to_string(),
-            )
+            EngineAnswer::Answer(503, json!({"code": "analytics.unavailable", "detail": "the analytics engine is unreachable"}).to_string())
         };
         let (Some(url), Some(op)) = (
             self.config.olap_url.as_deref(),
@@ -993,14 +1003,10 @@ impl CellActor {
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned();
-        let target = if op.starts_with("v2/") {
-            format!("{url}/{op}")
-        } else {
-            format!("{url}/v1/{op}")
-        };
         let sent = self
             .http
-            .post(target)
+            .post(format!("{url}/v1/{op}"))
+            // OLAP-CRED-1: the credential the cell minted for this call.
             .bearer_auth(
                 call.get("credential")
                     .and_then(Value::as_str)
@@ -1226,7 +1232,14 @@ async fn read_bounded(mut response: reqwest::Response, limit: usize) -> Option<V
     }
 }
 
-/// ENGINE-UPGRADE-1 admission within [`RIVET_ENGINE`](crate::config::RIVET_ENGINE).
+/// ENGINE-UPGRADE-1 on this host: what it does with a cell whose metadata
+/// says `stored`, within [`RIVET_ENGINE`](crate::config::RIVET_ENGINE). A
+/// stamp below the retained `RivetKit` channel's floor is refused like one
+/// below the engine's own (`core.engine.upgrade_unsupported`); a newer or
+/// unreadable stamp as everywhere else.
+///
+/// # Errors
+/// As [`engine_release::admit`].
 fn admit(stored: &engine_release::StoredVersion) -> Result<engine_release::Admission, CellError> {
     engine_release::admit(stored, crate::config::RIVET_ENGINE)
 }

@@ -13,12 +13,11 @@ use norn_ir::{Decimal, RuntimeValue};
 
 use norn_ir::metric::TimeGrain;
 
-use super::backend::AnalyticalRefusal;
 use super::{
     BucketTotals, EvaluateRequest, EvaluateResponse, Grain, GroupKey, MemberRow, MembershipDigest,
     Source, TenantId, lower::lower,
 };
-use crate::compute::{Member, QueryContext, QueryResult, QueryRow, decimal, refused};
+use crate::compute::{Engine, Member, QueryContext, QueryResult, QueryRow, decimal, refused};
 use crate::engine::{SqlEngine, SqlRow, params};
 use crate::read::LedgerHead;
 use crate::system::LEDGER;
@@ -70,36 +69,17 @@ pub struct Prepared {
     revision: LedgerHead,
     query_pin: String,
     definition_pin: String,
-    model_pin: String,
-    /// Active mirror table schema pin generation (`None` for loaded datasets).
+    /// The mirror table's schema (none for a loaded dataset).
     schema_pin: Option<String>,
     /// At a knowledge cutoff: the cutoff and the receipt it is pinned to.
     known_at: Option<(crate::KnowledgeCutoff, Option<String>)>,
 }
 
 impl Prepared {
-    /// Immutable view of the prepared engine request.
+    /// What to send the engine.
     #[must_use]
     pub const fn request(&self) -> &EvaluateRequest {
         &self.request
-    }
-
-    /// Expected mirror table schema pin generation (`None` for loaded datasets).
-    #[must_use]
-    pub fn schema_pin(&self) -> Option<&str> {
-        self.schema_pin.as_deref()
-    }
-
-    /// Active cell model hash pinned at preparation time.
-    #[must_use]
-    pub fn model_pin(&self) -> &str {
-        &self.model_pin
-    }
-
-    /// Whether this preparation requires historical/bitemporal execution.
-    #[must_use]
-    pub fn is_historical(&self) -> bool {
-        self.known_at.is_some() || self.plan.as_of()
     }
 }
 
@@ -237,13 +217,12 @@ impl<E: SqlEngine> CellStore<E> {
             Source::Dataset { .. } => None,
         };
         let (query_pin, definition_pin) = self.question_pins(plan, cutoff)?;
-        let model_pin = self.model().model_hash().to_owned();
         let request = EvaluateRequest {
             tenant: tenant.clone(),
             source,
             query,
             inline_members: u64::try_from(bound).unwrap_or(u64::MAX),
-            model_pin: Some(model_pin.clone()),
+            model_pin: self.model().model_hash().to_owned(),
         };
         Ok(Prepared {
             request,
@@ -253,7 +232,6 @@ impl<E: SqlEngine> CellStore<E> {
             revision,
             query_pin,
             definition_pin,
-            model_pin,
             schema_pin,
             known_at: cutoff.map(|cutoff| (cutoff, receipt)),
         })
@@ -367,157 +345,76 @@ impl<E: SqlEngine> CellStore<E> {
     }
 
     /// QUERY-ENGINE-1: verify the engine's answer to `prepared` into the
-    /// exact envelope. The answer must be for the prepared tenant, world,
-    /// model pin, and commit frontier or dataset load; totals, ratios and
-    /// lineage are recomputed here with the exact arithmetic.
+    /// exact envelope. The answer must be for the snapshot prepared
+    /// (QUERY-FRESH-1); totals, ratios and lineage are recomputed here with
+    /// the exact arithmetic.
     ///
     /// # Errors
-    /// A moved head or mismatched provenance (`core.compute.stale_input`), a
-    /// malformed or inconsistent response, or a sum outside the bounded profile.
+    /// A moved head, model or load, or an answer over another snapshot
+    /// (`core.compute.stale_input`), a malformed or inconsistent response, or
+    /// a sum outside the bounded profile.
     pub fn analytics_answer(
         &self,
         prepared: Prepared,
         response: EvaluateResponse,
     ) -> Result<QueryResult, CellError> {
-        self.assemble_answer(prepared, response, false)
+        self.check_prepared(&prepared)?;
+        let request = &prepared.request;
+        response.provenance.verify(
+            &request.tenant,
+            &request.source,
+            &request.model_pin,
+            prepared.schema_pin.as_deref(),
+        )?;
+        self.assemble(prepared, Some(response))
     }
 
-    /// QUERY-FRESH-1 / strict law read: verify the engine's answer into the
-    /// exact envelope and fail closed unless the read is an exact, complete
-    /// governed mirror snapshot (never stale, incomplete, or a loaded dataset).
+    /// The answer to a caller the population gate denies: the cell's own
+    /// empty answer, with no engine call and so no engine named.
     ///
     /// # Errors
-    /// As [`Self::analytics_answer`], or a typed insufficient-protection refusal.
-    pub fn analytics_answer_strict(
-        &self,
-        prepared: Prepared,
-        response: EvaluateResponse,
-    ) -> Result<QueryResult, CellError> {
-        self.assemble_answer(prepared, response, true)
-    }
-
-    /// Cell-produced empty answer when the caller's population gate denied
-    /// reading the grain. Performs no engine call and fabricates no
-    /// [`super::SnapshotProvenance`], attributing the empty authorized result directly
-    /// to [`crate::compute::Engine::Cell`].
-    ///
-    /// # Errors
-    /// A moved head/model/dataset or a store error.
+    /// A moved head, model or load (`core.compute.stale_input`).
     pub fn analytics_empty_authorized_answer(
         &self,
         prepared: Prepared,
     ) -> Result<QueryResult, CellError> {
-        self.verify_prepared_still_current(&prepared)?;
-        let Prepared {
-            plan,
-            context,
-            revision,
-            query_pin,
-            definition_pin,
-            ..
-        } = prepared;
-        let mut result = crate::compute::materialize(
-            &plan,
-            (context, BTreeMap::new()),
-            revision,
-            query_pin,
-            definition_pin,
-            &BTreeMap::new(),
-        )?;
-        result.rows = BTreeMap::new();
-        result.unlinked = 0;
-        result.engine = crate::compute::Engine::Cell;
-        let evidence = crate::compute::FindingEvidence {
-            context: &result.context,
-            exclusions: &result.exclusions,
-        };
-        result.lineage_ref = crate::codec::hash_json(&(
-            &result.query_pin,
-            &result.revision,
-            evidence,
-            &result.rows,
-        ))?;
-        Ok(result)
+        self.check_prepared(&prepared)?;
+        self.assemble(prepared, None)
     }
 
-    /// ASOF-KNOWLEDGE-1: cell-produced empty historical answer when the
-    /// caller's population gate denied reading the grain.
-    ///
-    /// # Errors
-    /// As [`Self::analytics_empty_authorized_answer`], or a preparation without a cutoff.
-    pub fn analytics_empty_authorized_answer_known_at(
-        &self,
-        prepared: Prepared,
-    ) -> Result<crate::compute::HistoricalQuestionResult, CellError> {
-        let (cutoff, receipt) = prepared
-            .known_at
-            .clone()
-            .ok_or_else(|| refused(UNSUPPORTED_ENGINE))?;
-        let result = self.analytics_empty_authorized_answer(prepared)?;
-        Ok(crate::compute::HistoricalQuestionResult {
-            world: norn_kernel::World::Historical {
-                commit: norn_kernel::CommitId(
-                    receipt.unwrap_or_else(|| crate::system::GENESIS_HASH.into()),
-                ),
-            },
-            knowledge_time_ms: cutoff.recorded_at.as_millis(),
-            result,
-        })
-    }
-
-    fn verify_prepared_still_current(&self, prepared: &Prepared) -> Result<(), CellError> {
+    /// A current answer is exact only at the head, model and dataset load it
+    /// was prepared at; a cutoff's history is immutable.
+    fn check_prepared(&self, prepared: &Prepared) -> Result<(), CellError> {
         if prepared.known_at.is_some() || prepared.plan.as_of() {
             self.read().check_history("historical analytics")?;
         } else {
             self.read().check_live()?;
         }
-        if self.model().model_hash() != prepared.model_pin {
-            return Err(AnalyticalRefusal::StaleRead {
-                detail: "cell model pin changed since preparation".to_owned(),
-            }
-            .into());
+        let stale = || refused("core.compute.stale_input");
+        if self.model().model_hash() != prepared.request.model_pin {
+            return Err(stale());
         }
-        // A cutoff's history is immutable; a current answer is exact only at
-        // the head (and dataset load) it was prepared at.
-        if prepared.known_at.is_none() && self.verified_head()? != prepared.revision {
-            return Err(refused("core.compute.stale_input"));
+        if prepared.known_at.is_some() {
+            return Ok(());
         }
-        if prepared.known_at.is_none()
-            && let Source::Dataset { table, load } = &prepared.request.source
+        if self.verified_head()? != prepared.revision {
+            return Err(stale());
+        }
+        if let Source::Dataset { table, load } = &prepared.request.source
+            && self
+                .dataset_manifest(crate::MAIN_WORLD, table)?
+                .is_none_or(|current| current.manifest.load != *load)
         {
-            let current = self.dataset_manifest(crate::MAIN_WORLD, table)?;
-            if current.is_none_or(|manifest| manifest.manifest.load != *load) {
-                return Err(AnalyticalRefusal::StaleRead {
-                    detail: "dataset manifest load moved since preparation".to_owned(),
-                }
-                .into());
-            }
+            return Err(stale());
         }
         Ok(())
     }
 
-    fn assemble_answer(
+    fn assemble(
         &self,
         prepared: Prepared,
-        response: EvaluateResponse,
-        strict_law_read: bool,
+        response: Option<EvaluateResponse>,
     ) -> Result<QueryResult, CellError> {
-        self.verify_prepared_still_current(&prepared)?;
-        let provenance =
-            response
-                .provenance
-                .as_ref()
-                .ok_or_else(|| AnalyticalRefusal::StaleRead {
-                    detail: "analytical response omitted snapshot provenance".to_owned(),
-                })?;
-        provenance.verify_against(
-            &prepared.request.tenant,
-            &prepared.request.source,
-            Some(prepared.model_pin.as_str()),
-            prepared.schema_pin.as_deref(),
-        )?;
-        let engine_id = provenance.engine;
-        let provenance_copy = provenance.clone();
         let Prepared {
             request,
             plan,
@@ -528,12 +425,22 @@ impl<E: SqlEngine> CellStore<E> {
             definition_pin,
             ..
         } = prepared;
-        let present: BTreeSet<&String> = response.excluded.iter().collect();
+        let (excluded, buckets, population, unlinked, engine) = match response {
+            Some(answer) => (
+                answer.excluded,
+                answer.buckets,
+                answer.population,
+                answer.unlinked,
+                answer.provenance.engine.into(),
+            ),
+            None => (Vec::new(), Vec::new(), 0, 0, Engine::Cell),
+        };
+        let present: BTreeSet<&String> = excluded.iter().collect();
         exclusions.retain(|id, _| present.contains(id));
-        let inline = response.population <= request.inline_members;
+        let inline = population <= request.inline_members;
         let arity = plan.sums().len();
         let mut rows = BTreeMap::new();
-        for bucket in response.buckets {
+        for bucket in buckets {
             let value = bucket_value(&bucket.group)?;
             let key = key_of(&value)?;
             let row = assemble_row(&bucket, value, arity, inline)?;
@@ -549,21 +456,9 @@ impl<E: SqlEngine> CellStore<E> {
             definition_pin,
             &BTreeMap::new(),
         )?;
-        if let Some(reported_freshness) = provenance_copy.freshness
-            && reported_freshness != crate::compute::Freshness::Exact
-            && result.freshness == crate::compute::Freshness::Exact
-        {
-            return Err(AnalyticalRefusal::StaleRead {
-                detail: "analytical engine reported non-exact snapshot freshness".to_owned(),
-            }
-            .into());
-        }
-        if strict_law_read {
-            provenance_copy.verify_strict_law_read(result.freshness, result.complete)?;
-        }
         result.rows = rows;
-        result.unlinked = response.unlinked;
-        result.engine = engine_id.into_compute_engine();
+        result.unlinked = unlinked;
+        result.engine = engine;
         let evidence = crate::compute::FindingEvidence {
             context: &result.context,
             exclusions: &result.exclusions,
@@ -576,9 +471,7 @@ impl<E: SqlEngine> CellStore<E> {
         ))?;
         Ok(result)
     }
-}
 
-impl<E: SqlEngine> CellStore<E> {
     /// ASOF-KNOWLEDGE-1 on the engine: verify the engine's answer to a
     /// prepared cutoff into the exact engine's historical envelope.
     ///
@@ -589,11 +482,35 @@ impl<E: SqlEngine> CellStore<E> {
         prepared: Prepared,
         response: EvaluateResponse,
     ) -> Result<crate::compute::HistoricalQuestionResult, CellError> {
+        self.known_at(prepared, |prepared| {
+            self.analytics_answer(prepared, response)
+        })
+    }
+
+    /// ASOF-KNOWLEDGE-1: [`Self::analytics_empty_authorized_answer`] at a cutoff.
+    ///
+    /// # Errors
+    /// As [`Self::analytics_empty_authorized_answer`], or a preparation
+    /// without a cutoff.
+    pub fn analytics_empty_authorized_answer_known_at(
+        &self,
+        prepared: Prepared,
+    ) -> Result<crate::compute::HistoricalQuestionResult, CellError> {
+        self.known_at(prepared, |prepared| {
+            self.analytics_empty_authorized_answer(prepared)
+        })
+    }
+
+    fn known_at(
+        &self,
+        prepared: Prepared,
+        answer: impl FnOnce(Prepared) -> Result<QueryResult, CellError>,
+    ) -> Result<crate::compute::HistoricalQuestionResult, CellError> {
         let (cutoff, receipt) = prepared
             .known_at
             .clone()
             .ok_or_else(|| refused(UNSUPPORTED_ENGINE))?;
-        let result = self.analytics_answer(prepared, response)?;
+        let result = answer(prepared)?;
         Ok(crate::compute::HistoricalQuestionResult {
             world: norn_kernel::World::Historical {
                 commit: norn_kernel::CommitId(

@@ -40,13 +40,12 @@ pub const MAX_STEPS: u32 = norn_cell::analytics::MAX_ENGINE_STEPS;
 /// Lifetime of the presigned URLs a load reads and lands through, in seconds.
 const LOAD_URL_SECONDS: u64 = 900;
 
-/// One engine call (`POST /v1/<op>`, or `/<op>` for `v2/*` ops).
-/// Rollout/rollback: deploy `norn-olapd` (/v1 + /v2 dual-served) before callers
-/// switch to `v2/*`; roll back callers before retiring `/v2/*`.
+/// One engine operation, as the host sends it: `POST /v1/<op>` with `body`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EngineCall {
-    /// Operation name (`frontier`, `sync`, `v2/evaluate`, `members`, `v2/profile`, `page`, `land`, `store`, `export`).
+    /// `frontier`, `sync`, `evaluate`, `members`, `profile`, `page`, `land`,
+    /// `store` or `export`.
     pub op: String,
     /// Call identity echoed in the answer so stale answers are ignored.
     pub digest: String,
@@ -89,7 +88,7 @@ impl EngineCall {
 
 /// How the cell reaches its engine.
 pub trait Transport: Send + Sync {
-    /// D136/#1661 capabilities qualified by the engine this transport reaches.
+    /// What the engine this transport reaches answers exactly (D136).
     fn capabilities(&self) -> norn_cell::analytics::EngineCapabilities;
     /// The answer the host re-entered the cell with, once.
     fn resumed(&self) -> Option<EngineAnswer>;
@@ -181,12 +180,13 @@ fn evaluate_on<E: SqlEngine>(
     tenant: &TenantId,
     request: &EvaluateRequest,
 ) -> Result<EvaluateResponse, CellError> {
-    transport
+    if !transport
         .capabilities()
-        .require(norn_cell::analytics::required_evaluate_capabilities(
-            request,
-        ))?;
-    let call = EngineCall::new("v2/evaluate", request)?;
+        .answers(&request.query, &request.source)
+    {
+        return Err(CellError::ComputeRefused(UNSUPPORTED_ENGINE));
+    }
+    let call = EngineCall::new("evaluate", request)?;
     let answer = exchange(
         store,
         transport,
@@ -530,11 +530,15 @@ pub struct UploadRecord {
 pub trait Uploads {
     /// The completed upload `id`, if any.
     fn record(&self, id: &str) -> Option<UploadRecord>;
-    /// Whether `id` was issued by this host for `scope_key` and sealed to `uri` (UPLOAD-ID-1 / S5).
+    /// Whether `id` is an upload identity this host issued, readable from the
+    /// cell scope `scope_key`, sealed to the object at exactly `uri`
+    /// (UPLOAD-ID-1). A kept `source.Upload` record names a URI; only this
+    /// answer makes it one the cell may sign (S5).
     fn issued(&self, id: &str, scope_key: &str, uri: &str) -> bool;
-    /// A GET URL for `uri`, valid for `seconds` from `now_ms`.
+    /// A GET URL for exactly `uri`, valid for `seconds` from `now_ms`.
     fn presigned_get(&self, uri: &str, seconds: u64, now_ms: u64) -> Option<String>;
-    /// MANIFEST-LAND-1: a PUT URL for dataset `key`, valid for `seconds` from `now_ms`, and its durable URI.
+    /// MANIFEST-LAND-1: a PUT URL for the object `key` the cell lands a
+    /// dataset file at, valid for `seconds` from `now_ms`, and its durable URI.
     fn presigned_put(&self, key: &str, seconds: u64, now_ms: u64) -> Option<(String, String)>;
 }
 
@@ -1678,12 +1682,17 @@ pub fn serves_records<E: SqlEngine>(host: &DevHost<E>, object_type: &str) -> Res
             .is_some())
 }
 
-/// HOST-READ-3 over a loaded dataset (D102): grid query answered by the
-/// tenant's engine with native grammar, order, visibility and load-bound cursor.
+/// HOST-READ-3 over a loaded dataset (D102): the grid query of
+/// `GET /v1/objects/{type}` answered by the tenant's engine, with the native
+/// grid's grammar, order and visibility: every clause holds (a withheld row
+/// matches none), absent values sort last either way, then identity. The
+/// dataset is immutable per load, so a cursor is an offset bound to the load,
+/// the query, the scope and the caller, and a sort or filter reads every row.
 ///
 /// # Errors
-/// Denied gate (403), invalid query/cursor (400), unsupported comparison (422),
-/// reload since cursor (409 `object.snapshot_moved`), or unreachable engine.
+/// A denied gate (one opaque 403), an invalid query or cursor (400), a
+/// comparison the engine cannot evaluate (422), a reload since the cursor
+/// (409 `object.snapshot_moved`), or an unreachable engine.
 pub fn page_objects<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -2073,7 +2082,15 @@ fn page_clause(
     })
 }
 
-/// PRIVACY-1: whether `object_type`'s current stored values may leave as stored.
+/// PRIVACY-1: whether `object_type`'s current stored values may leave as
+/// they are stored: the cell holds no marking label, or it declares no
+/// marking and no live row of the type carries one, so its labels (the
+/// kernel's on its own records, or earlier versions') are elsewhere (#1547).
+/// A loaded dataset with any effective column marking (manifest union current
+/// model) never leaves as raw stored values.
+///
+/// # Errors
+/// A store failure.
 fn stored_values_leave<E: SqlEngine>(
     host: &DevHost<E>,
     reader: &norn_cell::StoreReader<'_, E>,
@@ -2094,16 +2111,20 @@ fn stored_values_leave<E: SqlEngine>(
         || (!crate::privacy::declares(&catalog) && unlabeled(reader, object_type)))
 }
 
-/// S3 (#1547): bracket `decide` and `analytics_source` at one cell version (retries 3x).
+/// A cell version: its head and foreign-write revision.
 type CellVersion = (u64, Option<(u64, u64)>);
 
-fn format_cell_version((head, rev): CellVersion) -> String {
-    match rev {
-        Some((a, b)) => format!("{head}:{a}:{b}"),
-        None => head.to_string(),
-    }
-}
-
+/// S3 (#1547): `decide`, how `object_type`'s stored values may reach the
+/// engine, and the analytics source an engine call reads, at one cell
+/// version. A commit by any
+/// connection between the decision and the frontier would let a row the
+/// decision never saw into the call, so the two are bracketed by the cell's
+/// version (head and foreign-write revision): a moved version is read again,
+/// up to three times, then refused with the retryable `object.snapshot_moved`.
+/// The engine reads the rows live at that frontier.
+///
+/// # Errors
+/// A moved snapshot, an engine without a revision, or a store failure.
 fn decided_source<E: SqlEngine, T>(
     host: &DevHost<E>,
     store: &CellStore<E>,
@@ -2124,7 +2145,11 @@ fn decided_source<E: SqlEngine, T>(
     Err(crate::object_routes::snapshot_moved())
 }
 
-/// Whether every live row of `object_type` has no marking label (fails closed).
+/// Whether every live row of `object_type` has a complete marking snapshot
+/// with no label on any of its properties. For a loaded dataset whose rows
+/// live in the engine, this checks the effective dataset markings (manifest
+/// union current model). An unknown type, an incomplete snapshot or an
+/// unbounded summary counts as labeled: it fails closed.
 fn unlabeled<E: SqlEngine>(reader: &norn_cell::StoreReader<'_, E>, object_type: &str) -> bool {
     match reader.dataset_manifest(norn_cell::MAIN_WORLD, object_type) {
         Ok(Some(current)) => {
@@ -2181,29 +2206,6 @@ fn decide_profile<E: SqlEngine>(
     }
 }
 
-fn verify_profile_post_exchange<E: SqlEngine>(
-    store: &CellStore<E>,
-    source: &Source,
-    model_pin: &str,
-    start_version: CellVersion,
-) -> Result<(), Refusal> {
-    let post_reader = store.read();
-    if store.model().model_hash() != model_pin
-        || crate::object_routes::cell_version(&post_reader)? != start_version
-    {
-        return Err(crate::object_routes::snapshot_moved());
-    }
-    if let Source::Dataset { table, load } = source {
-        let current = post_reader
-            .dataset_manifest(norn_cell::MAIN_WORLD, table)
-            .map_err(Refusal::host)?;
-        if current.is_none_or(|m| m.manifest.load != *load) {
-            return Err(crate::object_routes::snapshot_moved());
-        }
-    }
-    Ok(())
-}
-
 /// HOST-READ-5 on the engine (D102/D136): column profile over the caller's
 /// authorized snapshot, computed by the tenant analytics engine. A caller
 /// without Values sees withheld counts and no value statistics.
@@ -2238,6 +2240,8 @@ pub fn profile_objects<E: SqlEngine>(
     let values = uniform_gate(host, scope, actor, object_type, access)?;
     let guard = host.cell()?;
     let store = guard.store();
+    // After the gate, so a denied caller costs what it did: the decision
+    // again, with the profiled frontier, at one cell version (S3, #1547).
     let (plan, source, _snapshot, start_version) =
         decided_source(host, store, object_type, |reader| {
             decide_profile(host, reader, object_type)
@@ -2262,16 +2266,15 @@ pub fn profile_objects<E: SqlEngine>(
         .map_err(|_unknown| crate::object_routes::not_found())?;
     let model_pin = store.model().model_hash().to_owned();
     let table = store.analytics_table(object_type).map_err(engine_failure)?;
-    let expected_schema_pin = matches!(source, Source::Mirror { .. }).then_some(table.pin.as_str());
     let tenant = TenantId::of_scope(&host.scope().key());
     let call = EngineCall::new(
-        "v2/profile",
+        "profile",
         &ProfileRequest {
             tenant: tenant.clone(),
             source: source.clone(),
             columns: table.columns.iter().map(|c| c.id.clone()).collect(),
-            model_pin: Some(model_pin.clone()),
-            cell_revision: Some(format_cell_version(start_version)),
+            model_pin: model_pin.clone(),
+            cell_revision: format!("{start_version:?}"),
         },
     )
     .map_err(engine_failure)?;
@@ -2284,17 +2287,20 @@ pub fn profile_objects<E: SqlEngine>(
         }
         return Err(engine_failure(err));
     }
-    verify_profile_post_exchange(store, &source, &model_pin, start_version)?;
     let profile: ProfileResponse = decode(&answer.body).map_err(engine_failure)?;
-    let provenance = norn_cell::analytics::verify_profile_provenance(
-        &profile,
-        &tenant,
-        &source,
-        Some(model_pin.as_str()),
-        expected_schema_pin,
-    )
-    .map_err(|_stale| crate::object_routes::snapshot_moved())?;
-    let engine = provenance.engine.as_str().to_owned();
+    // QUERY-FRESH-1: the cell is still at the version and model the profile
+    // was decided at, and the engine read exactly that snapshot.
+    let schema_pin = matches!(source, Source::Mirror { .. }).then_some(table.pin.as_str());
+    if store.model().model_hash() != model_pin
+        || crate::object_routes::cell_version(&store.read())? != start_version
+        || profile
+            .provenance
+            .verify(&tenant, &source, &model_pin, schema_pin)
+            .is_err()
+    {
+        return Err(crate::object_routes::snapshot_moved());
+    }
+    let engine = profile.provenance.engine.as_str().to_owned();
     let properties = declared
         .iter()
         .map(|(property, declared_type)| {

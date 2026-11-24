@@ -480,8 +480,8 @@ fn a_row_of_another_scope_refuses_as_stale() {
             tenant: request.tenant.clone(),
             source: request.source.clone(),
             columns: vec!["recovered".to_owned()],
-            model_pin: None,
-            cell_revision: None,
+            model_pin: request.model_pin.clone(),
+            cell_revision: String::new(),
         }),
         Err(ref refused) if refused.code == "core.compute.stale_input"
     ));
@@ -494,11 +494,39 @@ fn a_row_of_another_scope_refuses_as_stale() {
             tenant: request.tenant,
             source: request.source,
             columns: vec!["recovered".to_owned()],
-            model_pin: None,
-            cell_revision: None,
+            model_pin: request.model_pin,
+            cell_revision: String::new(),
         }),
         Err(ref refused) if refused.code == "core.compute.unsupported_engine"
     ));
+}
+
+/// D136 / QUERY-FRESH-1: the engine names the snapshot it read, the cell
+/// accepts that answer, and a mirror synced under another model refuses.
+#[test]
+fn the_engine_names_its_snapshot_and_refuses_another_model()
+-> Result<(), Box<dyn std::error::Error>> {
+    let (_dir, engine) = engine();
+    let (mut store, plan, context) = by_metal(true, 100);
+    commit(
+        &mut store,
+        vec![row("A", 1000, Some(400), TIMES[0], "gold")],
+    );
+    sync(&store, &engine, WORLD);
+    let prepared = store.analytics_prepare(&plan, context, &tenant())?;
+    let mut other = prepared.request().clone();
+    let response = engine.evaluate(prepared.request()).map_err(|r| r.detail)?;
+    assert_eq!(
+        response.provenance.engine,
+        norn_cell::analytics::AnalyticalEngineId::DuckDb
+    );
+    store.analytics_answer(prepared, response)?;
+    other.model_pin = "another model".into();
+    assert!(matches!(
+        engine.evaluate(&other),
+        Err(refused) if refused.code == "core.compute.stale_input"
+    ));
+    Ok(())
 }
 
 /// A batch that does not continue the mirror's frontier is refused whole.
@@ -724,7 +752,7 @@ proptest::proptest! {
                 source: Source::Dataset { table: TYPE.into(), load: "load-1".into() },
                 query: lower(&plan).expect("lowered"),
                 inline_members: 100,
-                model_pin: None,
+                model_pin: String::new(),
             })
             .expect("dataset answer");
         proptest::prop_assert_eq!(totals(&response), exact_totals(&exact));
@@ -801,8 +829,8 @@ fn load_timestamp(text: &str) -> Option<(i64, u32)> {
                 load: "t".into(),
             },
             columns: vec!["at".into()],
-            model_pin: None,
-            cell_revision: None,
+            model_pin: String::new(),
+            cell_revision: String::new(),
         })
         .expect("profile");
     match profile.columns[0].ranks.get(&1).cloned() {
@@ -928,7 +956,7 @@ fn bulk_path_measurements() {
         },
         query: lower(&plan).expect("lowered"),
         inline_members: 100,
-        model_pin: None,
+        model_pin: String::new(),
     };
     let mut times = Vec::new();
     for _ in 0..11 {
@@ -956,8 +984,8 @@ fn bulk_path_measurements() {
                 "occurred_at".into(),
                 "metal".into(),
             ],
-            model_pin: None,
-            cell_revision: None,
+            model_pin: String::new(),
+            cell_revision: String::new(),
         })
         .expect("profile");
     println!(
@@ -1829,8 +1857,8 @@ mod sources_pack {
                 tenant: tenant(),
                 source: source.clone(),
                 columns,
-                model_pin: None,
-                cell_revision: None,
+                model_pin: store.model().model_hash().to_owned(),
+                cell_revision: String::new(),
             })
             .expect("profile");
         assert_eq!(profile.rows, 2);
@@ -1975,8 +2003,8 @@ mod alias_names {
                 tenant: tenant(),
                 source: source.clone(),
                 columns: columns.clone(),
-                model_pin: None,
-                cell_revision: None,
+                model_pin: store.model().model_hash().to_owned(),
+                cell_revision: String::new(),
             })
             .expect("profile");
         assert_eq!(profile.rows, 3);
@@ -2445,7 +2473,7 @@ fn a_landing_is_staged_by_attempt_and_read_only_at_its_stored_cache_identity() {
             source: source(load),
             query: lower(&plan).expect("lowered"),
             inline_members: 100,
-            model_pin: None,
+            model_pin: String::new(),
         })
     };
     // Landed but not stored: no reader sees the rows, at any identity.
@@ -2492,8 +2520,8 @@ fn a_landing_is_staged_by_attempt_and_read_only_at_its_stored_cache_identity() {
                 tenant: tenant(),
                 source: source(&cache),
                 columns: vec!["input".into()],
-                model_pin: None,
-                cell_revision: None,
+                model_pin: String::new(),
+                cell_revision: String::new(),
             })
             .expect("profile")
     };

@@ -10,7 +10,7 @@ pub mod lineage;
 pub mod materialize;
 /// VIEW-ENGINE-1: admitted transforms lowered to embedded `DuckDB`.
 #[cfg(feature = "duckdb")]
-pub(crate) mod olap_transform;
+mod olap_transform;
 /// Governed native restatement generations.
 pub mod restatement;
 mod restatement_state;

@@ -1384,7 +1384,7 @@ impl norn_cell::engine::SqlEngine for Hooked {
 struct Recording(std::sync::Mutex<Vec<String>>);
 impl norn_api::analytics_routes::Transport for Recording {
     fn capabilities(&self) -> norn_cell::analytics::EngineCapabilities {
-        norn_cell::analytics::EngineCapabilities::duckdb_default()
+        norn_cell::analytics::EngineCapabilities::DUCKDB
     }
     fn resumed(&self) -> Option<norn_api::analytics_routes::EngineAnswer> {
         None

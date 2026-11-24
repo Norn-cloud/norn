@@ -20,10 +20,8 @@ use serde_json::value::RawValue;
 use transparency_sha2::{Digest as _, Sha256};
 
 pub use super::backend::StoreBody;
-use super::backend::{
-    AnalyticalEngineId, ReadSnapshot, SnapshotProvenance, legacy_land_response_from_raw,
-    legacy_store_request_from_raw,
-};
+use super::backend::{AnalyticalEngineId, ReadSnapshot, SnapshotProvenance};
+use super::store_body::{legacy_land_response, legacy_store_request};
 use super::{
     BucketTotals, Column, ColumnKind, ColumnProfile, EngineRefusal, EvaluateRequest,
     EvaluateResponse, ExportFormat, ExportRequest, FileFormat, Filter, FrontierRequest,
@@ -537,19 +535,12 @@ impl Engine {
     pub fn frontier(&self, request: &FrontierRequest) -> Outcome<FrontierResponse> {
         self.with(&request.tenant, |conn| {
             let mut stale = meta(conn, "links")?.unwrap_or_default() != request.links.join("\n");
-            if let Some(model_pin) = request.model_pin.as_deref() {
-                stale |= meta(conn, "model_pin")?.as_deref() != Some(model_pin);
-            }
+            stale |= meta(conn, "model_pin")?.as_deref() != Some(&request.model_pin);
             for table in &request.tables {
                 stale |= meta(conn, &format!("pin:{}", table.name))?.as_deref() != Some(&table.pin);
             }
             if stale {
-                reset_mirror(
-                    conn,
-                    &request.tables,
-                    &request.links,
-                    request.model_pin.as_deref(),
-                )?;
+                reset_mirror(conn, &request.tables, &request.links, &request.model_pin)?;
             }
             let frontier = meta(conn, &format!("frontier:{}", request.world))?
                 .and_then(|v| v.parse().ok())
@@ -596,7 +587,7 @@ impl Engine {
     /// mirror has not reached (`analytics.frontier_behind`), or a stale load.
     pub fn evaluate(&self, request: &EvaluateRequest) -> Outcome<EvaluateResponse> {
         self.with(&request.tenant, |conn| {
-            let scope = Scope::new(conn, &request.source, request.model_pin.as_deref())?;
+            let scope = Scope::new(conn, &request.source, Some(&request.model_pin))?;
             let (cell, bad) = match &request.source {
                 Source::Mirror { scope, .. } => (
                     Frag::bind("\":scope\" <> ?", Sql::Text(scope.clone())),
@@ -663,14 +654,7 @@ impl Engine {
                 excluded,
                 buckets,
                 unlinked,
-                provenance: Some(
-                    SnapshotProvenance::new(
-                        AnalyticalEngineId::DuckDb,
-                        request.tenant.clone(),
-                        scope.read_snapshot(&request.source),
-                    )
-                    .with_freshness(crate::compute::Freshness::Exact),
-                ),
+                provenance: scope.provenance(&request.tenant),
             })
         })
     }
@@ -1183,7 +1167,7 @@ impl Engine {
         let receipt: RecordedStore = serde_json::from_str(&text).map_err(decode_error)?;
         let recorded_request: StoreRequest = match receipt.version {
             StoreReceiptVersion::Unversioned => {
-                legacy_store_request_from_raw(&receipt.request).map_err(decode_error)?
+                legacy_store_request(&receipt.request).map_err(decode_error)?
             }
             StoreReceiptVersion::Current if !legacy => {
                 serde_json::from_str(receipt.request.get()).map_err(decode_error)?
@@ -1196,7 +1180,7 @@ impl Engine {
             return Err(refusal(STALE, "the store is another request's"));
         }
         let answer = if matches!(receipt.version, StoreReceiptVersion::Unversioned) {
-            legacy_land_response_from_raw(&receipt.response).map_err(decode_error)?
+            legacy_land_response(&receipt.response).map_err(decode_error)?
         } else {
             serde_json::from_str(receipt.response.get()).map_err(decode_error)?
         };
@@ -1311,7 +1295,7 @@ impl Engine {
     /// An unknown column or a stale source.
     pub fn profile(&self, request: &ProfileRequest) -> Outcome<ProfileResponse> {
         self.with(&request.tenant, |conn| {
-            let scope = Scope::new(conn, &request.source, request.model_pin.as_deref())?;
+            let scope = Scope::new(conn, &request.source, Some(&request.model_pin))?;
             scope.verify_mirror_rows(conn, &request.source)?;
             let rows = query_u64(
                 conn,
@@ -1331,14 +1315,7 @@ impl Engine {
                 rows,
                 quarantined,
                 columns,
-                provenance: Some(
-                    SnapshotProvenance::new(
-                        AnalyticalEngineId::DuckDb,
-                        request.tenant.clone(),
-                        scope.read_snapshot(&request.source),
-                    )
-                    .with_freshness(crate::compute::Freshness::Exact),
-                ),
+                provenance: scope.provenance(&request.tenant),
             })
         })
     }
@@ -1432,7 +1409,7 @@ fn reset_mirror(
     conn: &Connection,
     tables: &[TableSchema],
     links: &[String],
-    model_pin: Option<&str>,
+    model_pin: &str,
 ) -> Outcome<()> {
     db(conn.execute_batch("BEGIN TRANSACTION"))?;
     let reset = (|| {
@@ -1487,9 +1464,7 @@ fn reset_mirror(
             )))?;
         }
         set_meta(conn, "links", &links.join("\n"))?;
-        if let Some(pin) = model_pin {
-            set_meta(conn, "model_pin", pin)?;
-        }
+        set_meta(conn, "model_pin", model_pin)?;
         Ok(())
     })();
     match reset {
@@ -1741,10 +1716,8 @@ struct Scope {
     at: Option<(String, u64)>,
     /// At a knowledge cutoff, the model every version read must be of.
     model: Option<String>,
-    /// Active cell model hash generation attested in snapshot provenance.
-    active_model_pin: Option<String>,
-    /// Active mirror table schema pin generation read from `:meta`.
-    schema_pin: Option<String>,
+    /// The snapshot this scope reads, as an answer names it.
+    read: ReadSnapshot,
 }
 
 impl Scope {
@@ -1754,9 +1727,9 @@ impl Scope {
                 world,
                 table,
                 frontier,
+                scope,
                 excluded,
                 model,
-                ..
             } => {
                 let reached: u64 = meta(conn, &format!("frontier:{world}"))?
                     .and_then(|v| v.parse().ok())
@@ -1767,18 +1740,10 @@ impl Scope {
                         format!("the mirror is at {reached}"),
                     ));
                 }
-                let schema_pin = meta(conn, &format!("pin:{table}"))?
-                    .ok_or_else(|| refusal(STALE, "mirror schema pin is missing"))?;
                 let schema = schema_of(conn, &format!("schema:{table}"))?;
-                if schema.pin != schema_pin {
-                    return Err(refusal(STALE, "mirror schema pin disagrees with schema"));
-                }
-                let stored_model_pin = meta(conn, "model_pin")?;
-                if let Some(expected) = expected_model_pin
-                    && stored_model_pin.as_deref() != Some(expected)
-                {
-                    return Err(refusal(STALE, "mirror model pin does not match"));
-                }
+                let model_pin = meta(conn, "model_pin")?
+                    .filter(|pin| expected_model_pin.is_none_or(|expected| pin == expected))
+                    .ok_or_else(|| refusal(STALE, "the mirror is of another model"))?;
                 let at = Frag::bind("?", Sql::UBigInt(*frontier));
                 let all = Frag::fmt(
                     "(\":w\" = {} AND \":from\" <= {} AND (\":to\" IS NULL OR \":to\" > {}))",
@@ -1795,15 +1760,21 @@ impl Scope {
                 );
                 Ok(Self {
                     table: mirror_table(table),
-                    columns: schema.columns,
                     all,
                     population,
                     versions: Some(versions),
                     excluded: excluded.clone(),
                     at: Some((world.clone(), *frontier)),
                     model: model.clone(),
-                    active_model_pin: stored_model_pin.or_else(|| model.clone()),
-                    schema_pin: Some(schema_pin),
+                    read: ReadSnapshot::Mirror {
+                        world: world.clone(),
+                        table: table.clone(),
+                        frontier: *frontier,
+                        scope: scope.clone(),
+                        model_pin,
+                        schema_pin: schema.pin,
+                    },
+                    columns: schema.columns,
                 })
             }
             Source::Dataset { table, load } => {
@@ -1827,8 +1798,10 @@ impl Scope {
                     excluded: Vec::new(),
                     at: None,
                     model: None,
-                    active_model_pin: expected_model_pin.map(str::to_owned),
-                    schema_pin: None,
+                    read: ReadSnapshot::Dataset {
+                        table: table.clone(),
+                        load: load.clone(),
+                    },
                 })
             }
         }
@@ -1865,12 +1838,13 @@ impl Scope {
         Ok(())
     }
 
-    fn read_snapshot(&self, source: &Source) -> ReadSnapshot {
-        ReadSnapshot::from_source_with_pins(
-            source,
-            self.active_model_pin.clone(),
-            self.schema_pin.clone(),
-        )
+    fn provenance(&self, tenant: &TenantId) -> SnapshotProvenance {
+        SnapshotProvenance {
+            engine: AnalyticalEngineId::DuckDb,
+            tenant: tenant.clone(),
+            snapshot: self.read.clone(),
+            freshness: crate::compute::Freshness::Exact,
+        }
     }
 
     fn column(&self, id: &str) -> Outcome<&Column> {

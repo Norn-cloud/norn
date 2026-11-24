@@ -23,10 +23,8 @@ mod store_body;
 
 pub use assemble::{Prepared, bucket_value};
 pub use backend::{
-    AdmittedTransform, AnalyticalEngine, AnalyticalEngineId, AnalyticalRefusal, Capability,
-    EngineCapabilities, EngineOutcome, MARKED_COLUMN_CODE, ProtectionReason, ReadSnapshot,
-    STALE_INPUT_CODE, SnapshotProvenance, StoreBody, dispatch_evaluate, dispatch_members,
-    required_evaluate_capabilities, required_members_capabilities, verify_profile_provenance,
+    AnalyticalEngine, AnalyticalEngineId, EngineCapabilities, EngineOutcome, ReadSnapshot,
+    SnapshotProvenance, StoreBody, dispatch_evaluate, dispatch_members,
 };
 pub use lower::{lower, table_schema};
 pub use mirror::MirrorBatch;
@@ -37,13 +35,13 @@ pub use mirror::MirrorBatch;
 pub struct TenantId(String);
 
 impl TenantId {
-    /// A tenant's analytics database: hex SHA-256 of its verified cell scope key.
+    /// ANALYTICS-TENANT-1: the database of the cell bound to `scope_key`.
     #[must_use]
     pub fn of_scope(scope_key: &str) -> Self {
         Self(hex(&Sha256::digest(scope_key.as_bytes())))
     }
 
-    /// The file stem (64 lowercase hex digits, never a path).
+    /// The file stem; 64 lowercase hex digits, so never a path.
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
@@ -104,7 +102,8 @@ pub enum ColumnKind {
     Timestamp,
     /// A calendar date: its text and the ordering key of its UTC midnight.
     Date,
-    /// Any other value, kept as canonical JSON; exportable only (never filtered, grouped, or summed).
+    /// Any other value, kept as canonical JSON; it can be exported but never
+    /// filtered, grouped or summed.
     Opaque,
 }
 
@@ -214,14 +213,15 @@ pub struct FrontierRequest {
     pub tenant: TenantId,
     /// The execution world.
     pub world: String,
-    /// Current schemas of every mirrored root type; a changed pin resets the mirror.
+    /// The current schemas of every mirrored root type; any changed pin
+    /// clears the world's mirror, so it is synced again from the start.
     pub tables: Vec<TableSchema>,
-    /// Link tables kept by the mirror; a changed set resets the mirror.
+    /// Every link table the mirror keeps edges of; a changed set clears the
+    /// mirror as a changed pin does.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub links: Vec<String>,
-    /// Active cell model hash generation; a changed model resets and rebinds the mirror.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_pin: Option<String>,
+    /// The cell model; a changed model clears the mirror as a changed pin does.
+    pub model_pin: String,
 }
 
 /// The last commit the mirror applied for the world.
@@ -246,12 +246,16 @@ pub struct SyncRequest {
     pub through: u64,
     /// Every version committed in `(after, through]`, in commit order.
     pub rows: Vec<MirrorRow>,
-    /// Every link edge changed in those commits, in commit order.
+    /// Every link edge those commits changed, in commit order, as it stands
+    /// after its last change.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub links: Vec<LinkEdge>,
 }
 
-/// One link edge changed by a commit (METRIC-GRAIN-LINK-1): latest state and commit.
+/// One link edge a commit changed (METRIC-GRAIN-LINK-1): whether it is
+/// live after its last change, and the commit of that change. The mirror
+/// keeps each edge's latest state, so an answer through a link is exact
+/// only at a frontier no edge of that link changed after.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LinkEdge {
@@ -460,11 +464,12 @@ pub struct EvaluateRequest {
     pub source: Source,
     /// The lowered question.
     pub query: Lowered,
-    /// Inline member bound; larger populations return counts + membership digests.
+    /// Members are returned inline when the population has at most this many
+    /// rows (the plan's bound); otherwise each bucket carries its count and
+    /// membership digest and members are paged.
     pub inline_members: u64,
-    /// Active cell model hash generation validated and attested by the engine.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_pin: Option<String>,
+    /// The cell model the mirror must have been synced under.
+    pub model_pin: String,
 }
 
 /// A bucket's grouping value as the engine grouped it.
@@ -533,12 +538,12 @@ pub struct EvaluateResponse {
     pub excluded: Vec<String>,
     /// Buckets in group order.
     pub buckets: Vec<BucketTotals>,
-    /// METRIC-GRAIN-LINK-1: rows skipped because their linked object is absent.
+    /// METRIC-GRAIN-LINK-1: rows that would count but have no linked
+    /// object, so no time: skipped and counted.
     #[serde(default)]
     pub unlinked: u64,
-    /// D136: engine identity and snapshot-actually-read provenance envelope.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provenance: Option<SnapshotProvenance>,
+    /// D136: the engine and the snapshot it read.
+    pub provenance: SnapshotProvenance,
 }
 
 /// Page one bucket's members in identity order.
@@ -852,20 +857,31 @@ pub fn row_fuel() -> u64 {
         .fuel_units
 }
 
-/// Base fuel charged per rule entry and check.
+/// Fuel a rule's evaluation is charged at most beside its nodes: entering
+/// the rule, reading its result, and the checks around it.
 pub const RULE_FUEL: u64 = 64;
-/// Upper-bound fuel charged per ZEN AST node.
+/// Fuel one node of a rule's ZEN source is charged at most beside the data
+/// it reads: every node compiles to a few opcodes of one unit each, and an
+/// exact decimal site to a few more.
 pub const NODE_FUEL: u64 = 16;
 
-/// MANIFEST-LAWS-1 (S2): static rule fuel bound (`RULE_FUEL + NODE_FUEL * nodes`).
+/// MANIFEST-LAWS-1 (S2): the static part of a rule's fuel bound: [`RULE_FUEL`]
+/// and [`NODE_FUEL`] for each node of its ZEN sources (the condition's
+/// too), counted before lowering, so a `??` the lowering drops is still
+/// paid for.
 #[must_use]
 pub fn rule_fuel(nodes: u64) -> u64 {
     RULE_FUEL.saturating_add(NODE_FUEL.saturating_mul(nodes))
 }
 
-/// D102 / MANIFEST-LAWS-1 (S1): maximum engine calls one request may make.
+/// D102 / MANIFEST-LAWS-1 (S1): engine calls one request may make, on every
+/// host: the Durable Object's Worker takes this bound from the cell, and
+/// the native host's landing loop is bounded by it too.
 pub const MAX_ENGINE_STEPS: u32 = 64;
-/// MANIFEST-LAWS-1 (S1): maximum residue pages per landing (`MAX_ENGINE_STEPS - 2`).
+/// MANIFEST-LAWS-1 (S1): residue pages one landing may take. A landing is
+/// one land call, a settle per page, and a store, so its calls fit
+/// [`MAX_ENGINE_STEPS`]; the engine refuses a landing whose residue takes
+/// more ([`RESIDUE_EXCEEDED`]) and drops its staging.
 pub const MAX_RESIDUE_PAGES: u32 = MAX_ENGINE_STEPS - 2;
 /// Residue rows one page carries at most.
 pub const RESIDUE_PAGE_ROWS: u32 = 2_000;
@@ -1104,12 +1120,11 @@ pub struct ProfileRequest {
     pub source: Source,
     /// The properties to profile, in order.
     pub columns: Vec<String>,
-    /// Active cell model hash generation validated and attested by the engine.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub model_pin: Option<String>,
-    /// Prepared cell revision token bound into the request digest for re-entry.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cell_revision: Option<String>,
+    /// The cell model the mirror must have been synced under.
+    pub model_pin: String,
+    /// The cell version the profile was decided at; it is part of the
+    /// call's digest, so an answer to another version is never re-entered.
+    pub cell_revision: String,
 }
 
 /// The percentiles a profile reports, by nearest rank.
@@ -1203,9 +1218,8 @@ pub struct ProfileResponse {
     pub quarantined: u64,
     /// Per requested column.
     pub columns: Vec<ColumnProfile>,
-    /// D136: engine identity and snapshot-actually-read provenance envelope.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub provenance: Option<SnapshotProvenance>,
+    /// D136: the engine and the snapshot it read.
+    pub provenance: SnapshotProvenance,
 }
 
 /// An export's format.

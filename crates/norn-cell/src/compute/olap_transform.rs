@@ -22,9 +22,8 @@ use norn_checker::transform::{
 use norn_ir::metric::TimeGrain;
 use norn_ir::{AggregateFn, Decimal, DedupeKeep, JoinKind, RuntimeValue, SortDirection, WindowFn};
 
-use super::{CellError, CellStore, SqlEngine, UNSUPPORTED_ENGINE, refused};
+use super::{CellError, CellStore, Engine, SqlEngine, UNSUPPORTED_ENGINE, refused};
 use crate::ObjectRecord;
-use crate::analytics::{AdmittedTransform, AnalyticalEngineId};
 use crate::compute::transform::{RowAccess, TransformResult, eval_refusal};
 
 const MEMBER_FIELD: char = '\u{1f}';
@@ -36,21 +35,6 @@ fn db<T>(value: duckdb::Result<T>) -> Result<T, CellError> {
 
 fn unsupported<T>() -> Result<T, CellError> {
     Err(refused(UNSUPPORTED_ENGINE))
-}
-
-impl AdmittedTransform for Lowered {
-    fn execute(
-        &self,
-        plan: &TransformPlan,
-        input: &TransformInput,
-    ) -> Result<TransformOutput, CellError> {
-        execute(plan, input, self)
-    }
-}
-
-/// Admit (lower) a transform plan for the `DuckDB` backend before reading cell data.
-pub(crate) fn admit(plan: &TransformPlan) -> Result<Box<dyn AdmittedTransform>, CellError> {
-    Ok(Box::new(lower(plan)?))
 }
 
 impl<E: SqlEngine> CellStore<E> {
@@ -68,14 +52,14 @@ impl<E: SqlEngine> CellStore<E> {
         scope: &str,
         access: impl FnMut(&ObjectRecord) -> Result<RowAccess, CellError>,
     ) -> Result<TransformResult, CellError> {
-        // Admit first: an unsupported plan refuses before any read.
-        let admitted = admit(plan)?;
+        // Lower first: an unsupported plan refuses before any read.
+        let lowered = lower(plan)?;
         self.evaluate_transform_with(
             plan,
             (world, scope),
             access,
-            AnalyticalEngineId::DuckDb.into_compute_engine(),
-            |plan, input| admitted.execute(plan, input),
+            Engine::Duckdb,
+            |plan, input| execute(plan, input, &lowered),
         )
     }
 }

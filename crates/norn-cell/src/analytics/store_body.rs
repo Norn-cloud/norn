@@ -1,6 +1,5 @@
-//! Pre-law legacy `store` request decoding, shared across native and `wasm32`
-//! targets so [`super::backend::AnalyticalEngine::store_dataset_json`] stays
-//! target-clean.
+//! A `store` body, current or from a cell replaying a pre-law store: the
+//! body of [`super::AnalyticalEngine::store`], so it is decoded on every target.
 
 use std::collections::BTreeMap;
 
@@ -104,25 +103,12 @@ struct LegacyStore {
     held: StoredObject,
 }
 
-/// Decode a pre-law legacy store request payload into [`StoreRequest`].
-///
-/// # Errors
-/// JSON decoding error if `raw` does not match the legacy store shape.
 #[cfg(all(feature = "duckdb", feature = "native"))]
-pub(crate) fn legacy_store_request_from_raw(raw: &RawValue) -> serde_json::Result<StoreRequest> {
-    legacy_store_request(raw)
-}
-
-/// Decode a pre-law legacy landing answer payload into [`LandResponse`].
-///
-/// # Errors
-/// JSON decoding error if `raw` does not match the legacy answer shape.
-#[cfg(all(feature = "duckdb", feature = "native"))]
-pub(crate) fn legacy_land_response_from_raw(raw: &RawValue) -> serde_json::Result<LandResponse> {
+pub(super) fn legacy_land_response(raw: &RawValue) -> serde_json::Result<LandResponse> {
     serde_json::from_str::<LegacyLandingAnswer>(raw.get()).map(Into::into)
 }
 
-fn legacy_store_request(raw: &RawValue) -> serde_json::Result<StoreRequest> {
+pub(super) fn legacy_store_request(raw: &RawValue) -> serde_json::Result<StoreRequest> {
     let old: LegacyStore = serde_json::from_str(raw.get())?;
     Ok(StoreRequest {
         land: LandRequest {

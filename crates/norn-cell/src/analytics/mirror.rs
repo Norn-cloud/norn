@@ -101,7 +101,7 @@ impl<E: SqlEngine> CellStore<E> {
             world: world.to_owned(),
             tables: self.analytics_tables()?,
             links: self.analytics_links(),
-            model_pin: Some(self.model().model_hash().to_owned()),
+            model_pin: self.model().model_hash().to_owned(),
         })
     }
 
