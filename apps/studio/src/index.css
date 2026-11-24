@@ -226,7 +226,7 @@
  * Skin: Polar Carbon (`polar.sh`-inspired) — deep carbon surfaces (#0c0c0e / #151518 / #1c1c20),
  * crisp stark-white hierarchy, precision 1px metallic hairlines.
  */
-[data-skin="polar"] {
+:root[data-skin="polar"] {
   color-scheme: dark;
   --shell: #0c0c0e;
   --canvas: #0c0c0e;
@@ -313,7 +313,7 @@
 /*
  * Skin: Luma — soft tinted two-surface shell ground + knot-violet craft with framed panels.
  */
-[data-skin="luma"] {
+:root[data-skin="luma"] {
   --shell: #f3f4f6;
   --canvas: #f3f4f6;
   --background: #ffffff;
@@ -331,7 +331,7 @@
   --elevation-shell: 0 1px 2px rgb(15 23 42 / 0.04), 0 10px 28px -14px rgb(15 23 42 / 0.11);
 }
 
-.dark[data-skin="luma"] {
+:root.dark[data-skin="luma"] {
   --shell: #0b0b0e;
   --canvas: #0b0b0e;
   --background: #111115;
@@ -352,7 +352,7 @@
 /*
  * Skin: Liquid Glass — translucent frosted surfaces, soft ambient canvas mesh, and specular hairlines.
  */
-[data-skin="glass"] {
+:root[data-skin="glass"] {
   --shell: #eef1f8;
   --canvas: #eef1f8;
   --background: rgb(255 255 255 / 0.74);
@@ -375,7 +375,7 @@
   --dock-border: rgb(255 255 255 / 0.26);
 }
 
-.dark[data-skin="glass"] {
+:root.dark[data-skin="glass"] {
   --shell: #0b0d17;
   --canvas: #0b0d17;
   --background: rgb(18 21 34 / 0.72);
@@ -398,8 +398,8 @@
   --dock-border: rgb(255 255 255 / 0.2);
 }
 
-[data-skin="glass"] body,
-[data-skin="glass"] [data-slot="sidebar-wrapper"] {
+:root[data-skin="glass"] body,
+:root[data-skin="glass"] [data-slot="sidebar-wrapper"] {
   background-image:
     radial-gradient(62rem 36rem at 12% -6%, rgb(99 102 241 / 0.18), transparent 62%),
     radial-gradient(50rem 34rem at 92% 10%, rgb(14 165 233 / 0.16), transparent 60%),
@@ -407,8 +407,8 @@
   background-attachment: fixed;
 }
 
-.dark[data-skin="glass"] body,
-.dark[data-skin="glass"] [data-slot="sidebar-wrapper"] {
+:root.dark[data-skin="glass"] body,
+:root.dark[data-skin="glass"] [data-slot="sidebar-wrapper"] {
   background-image:
     radial-gradient(62rem 36rem at 12% -6%, rgb(99 102 241 / 0.24), transparent 62%),
     radial-gradient(50rem 34rem at 92% 10%, rgb(14 165 233 / 0.18), transparent 60%),
@@ -416,14 +416,14 @@
   background-attachment: fixed;
 }
 
-[data-skin="glass"] [data-slot="sidebar-inset"],
-[data-skin="glass"] [data-slot="panel"],
-[data-skin="glass"] [data-slot="stat-strip"],
-[data-skin="glass"] [data-slot="table-card"],
-[data-skin="glass"] [data-slot="records-table-frame"],
-[data-skin="glass"] [data-slot="popover-content"],
-[data-skin="glass"] [data-slot="dropdown-menu-content"],
-[data-skin="glass"] [data-slot="chrome-dock-tray"] {
+:root[data-skin="glass"] [data-slot="sidebar-inset"],
+:root[data-skin="glass"] [data-slot="panel"],
+:root[data-skin="glass"] [data-slot="stat-strip"],
+:root[data-skin="glass"] [data-slot="table-card"],
+:root[data-skin="glass"] [data-slot="records-table-frame"],
+:root[data-skin="glass"] [data-slot="popover-content"],
+:root[data-skin="glass"] [data-slot="dropdown-menu-content"],
+:root[data-skin="glass"] [data-slot="chrome-dock-tray"] {
   backdrop-filter: blur(20px) saturate(165%);
 }
 

@@ -1,8 +1,8 @@
 import {
-  createChange,
   createPopup,
   createSelection,
   definePrimitive,
+  dispatch,
   openAttrs,
   popupContent,
   popupState,
@@ -27,14 +27,16 @@ interface ChromeDockOptions {
 }
 
 interface ChromeDockState extends PopupState {
-  value: string[]
+  /** Internal single-item array managed by `createSelection`; kept separate from `value` so `onValueChange` fires once with a string. */
+  selected: string[]
   items: readonly string[]
 }
 
 /**
  * First-party floating chrome & skin/dock tray primitive built on `@ui-sdk/core`.
- * Composes `createPopup` (Escape + outside dismissal, top-layer positioning) with `createSelection`
- * (single-select state for active skin/shell options) and exposes semantic `data-state` attributes.
+ * Composes `createPopup` (`slot: "tray"`, Escape + outside dismissal, top-layer positioning) with
+ * `createSelection` (single-select state for active skin/shell options) and exposes semantic
+ * `data-state` attributes.
  */
 export const chromeDockPrimitive = definePrimitive({
   name: "chrome-dock",
@@ -50,28 +52,31 @@ export const chromeDockPrimitive = definePrimitive({
   },
   state: (options: ChromeDockOptions): ChromeDockState => ({
     ...popupState(options),
-    value: options.value !== undefined ? [options.value] : options.defaultValue !== undefined ? [options.defaultValue] : [],
+    selected: options.value !== undefined ? [options.value] : options.defaultValue !== undefined ? [options.defaultValue] : [],
     items: options.items ?? [],
   }),
   sync: (options: ChromeDockOptions) => {
     const patch: Partial<ChromeDockState> = {}
     if (options.open !== undefined) patch.open = options.open
-    if (options.value !== undefined) patch.value = [options.value]
+    if (options.value !== undefined) patch.selected = [options.value]
     if (options.items !== undefined) patch.items = options.items
     return patch
   },
   api: (context) => {
-    const popup = createPopup(context, { preset: popoverPreset })
-    const change = createChange(context)
+    const popup = createPopup(context, { preset: popoverPreset, slot: "tray" })
     const selection = createSelection(context, {
-      key: "value",
+      key: "selected",
       set: (next, details) => {
-        const applied = change("value", next, details)
         const chosen = next[0]
-        if (applied && chosen !== undefined) {
-          context.options().onValueChange?.(chosen, details as ChangeDetails<ChromeDockReason>)
+        if (chosen === undefined) return false
+        const current = context.store.get().selected[0]
+        if (chosen === current) return false
+        const canceled = dispatch(context, "onValueChange", chosen, details)
+        if (canceled) return false
+        if (context.options().value === undefined) {
+          context.store.set({ selected: [chosen] })
         }
-        return applied
+        return true
       },
       order: () => context.store.get().items,
       multiple: () => false,
@@ -92,7 +97,7 @@ export const chromeDockPrimitive = definePrimitive({
     const content = popupContent(slot)
     return {
       root: slot({
-        state: (state) => ({ open: state.open, value: state.value[0] ?? "" }),
+        state: (state) => ({ open: state.open, value: state.selected[0] ?? "" }),
         attrs: (state) => ({
           "data-state": state.open ? "open" : "closed",
           ...openAttrs(state.open),
@@ -118,11 +123,11 @@ export const chromeDockPrimitive = definePrimitive({
           disabled: "boolean",
         },
         state: (state, part) => ({
-          selected: state.value.includes(part.props.value),
+          selected: state.selected.includes(part.props.value),
           disabled: Boolean(part.props.disabled),
         }),
         attrs: (state, part) => {
-          const selected = state.value.includes(part.props.value)
+          const selected = state.selected.includes(part.props.value)
           return {
             type: "button",
             "aria-pressed": String(selected),

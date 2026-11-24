@@ -464,8 +464,12 @@ const SKIN_SELECTORS: readonly { readonly skin: "open" | "polar" | "luma" | "gla
 for (const { skin, theme } of SKIN_SELECTORS) {
   test(`skin=${skin} (${theme}): composited surfaces, foreground, muted-foreground, primary button, and focus ring pass WCAG AA`, () => {
     const base = { ...THEME_TOKENS[theme] }
-    const skinLight = skin === "open" ? {} : parseRawBlock(new RegExp(`(?<!\\.dark)\\[data-skin="${skin}"\\]\\s*\\{([^}]+)\\}`))
-    const skinDark = skin === "open" || theme === "light" ? {} : parseRawBlock(new RegExp(`\\.dark\\[data-skin="${skin}"\\]\\s*\\{([^}]+)\\}`))
+    const skinLight = skin === "open" ? {} : parseRawBlock(new RegExp(`:root\\[data-skin="${skin}"\\]\\s*\\{([^}]+)\\}`))
+    const skinDark = skin === "open" || theme === "light" ? {} : parseRawBlock(new RegExp(`:root\\.dark\\[data-skin="${skin}"\\]\\s*\\{([^}]+)\\}`))
+    if (skin !== "open") expect(Object.keys(skinLight).length, `missing :root[data-skin="${skin}"] block`).toBeGreaterThan(0)
+    if ((skin === "luma" || skin === "glass") && theme === "dark") {
+      expect(Object.keys(skinDark).length, `missing :root.dark[data-skin="${skin}"] block`).toBeGreaterThan(0)
+    }
     const merged: Record<string, string> = { ...base, ...skinLight, ...skinDark }
     const resolveVar = (name: string, depth = 0): string => {
       if (depth > 8) throw new Error(`cyclic skin token --${name}`)
@@ -476,6 +480,11 @@ for (const { skin, theme } of SKIN_SELECTORS) {
     }
 
     const shellHex = resolveSurfaceColor(resolveVar("shell"), theme === "dark" ? "#0b0b0e" : "#ffffff")
+    const bgSurfaceHex = resolveSurfaceColor(resolveVar("background"), shellHex)
+    if (theme === "dark" || skin === "polar") {
+      expect(luminance(shellHex), `${skin}/${theme} shell must stay dark`).toBeLessThan(0.08)
+      expect(luminance(bgSurfaceHex), `${skin}/${theme} background must stay dark`).toBeLessThan(0.08)
+    }
     const fgHex = resolveSurfaceColor(resolveVar("foreground"), shellHex)
     const mutedFgHex = resolveSurfaceColor(resolveVar("muted-foreground"), shellHex)
     const primaryBgHex = resolveSurfaceColor(resolveVar("primary"), shellHex)
@@ -496,3 +505,7 @@ for (const { skin, theme } of SKIN_SELECTORS) {
     }
   })
 }
+
+test("shell never duplicates data-skin inside the document body, keeping :root.dark[data-skin=...] authoritative", () => {
+  expect(shellSource).not.toMatch(/data-skin=\{/)
+})

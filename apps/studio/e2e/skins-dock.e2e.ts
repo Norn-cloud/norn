@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test"
 import { session } from "./object-cell.ts"
+import { recordCell } from "./record-cell.ts"
 
 const SHOTS = process.env.CUTOVER_SHOTS
 
@@ -14,7 +15,23 @@ async function capture(page: Page, name: string) {
   await page.screenshot({ path: `${SHOTS}/${name}.png`, fullPage: false })
 }
 
-test("skins and floating dock: switch open, polar, luma, glass skins via ChromeDock tray, persist across reload, and switch to floating dock chrome", async ({ page }) => {
+const rgb = (value: string): [number, number, number] => {
+  const match = value.match(/rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/)
+  if (!match) throw new Error(`unexpected color: ${value}`)
+  return [Number(match[1]), Number(match[2]), Number(match[3])]
+}
+
+const luminance = ([r, g, b]: [number, number, number]) => {
+  const lin = [r, g, b].map((v) => v / 255).map((c) => c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
+  return 0.2126 * lin[0]! + 0.7152 * lin[1]! + 0.0722 * lin[2]!
+}
+
+const contrastRatio = (a: [number, number, number], b: [number, number, number]) => {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+  return (hi! + 0.05) / (lo! + 0.05)
+}
+
+test("skins and floating dock: switch open, polar, luma, glass skins via ChromeDock tray, persist across reload, and verify dock AccountMenu, overflow destinations, and bottom clearance", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.emulateMedia({ colorScheme: "light" })
   await recorded(page)
@@ -38,9 +55,8 @@ test("skins and floating dock: switch open, polar, luma, glass skins via ChromeD
   await expect(trigger).toHaveAttribute("data-state", "closed")
   await trigger.click()
   await expect(trigger).toHaveAttribute("data-state", "open")
-  const tray = page.locator('[data-slot="chrome-dock-tray"]')
+  const tray = page.locator('[data-slot="chrome-dock-tray"][data-state="open"]')
   await expect(tray).toBeVisible()
-  await expect(tray).toHaveAttribute("data-state", "open")
   await expect(tray.locator('[data-skin-option="open"]')).toHaveAttribute("data-state", "selected")
 
   // 3. Switch to Polar Carbon skin: deep carbon surface (#151518) and precision hairlines.
@@ -64,9 +80,9 @@ test("skins and floating dock: switch open, polar, luma, glass skins via ChromeD
   await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible()
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.skin)).toBe("polar")
 
-  // 5. Switch to Luma skin, then Liquid Glass skin (verifying backdrop-filter blur).
+  // 5. Switch to Luma skin, then Liquid Glass skin (verifying real backdrop-filter blur).
   await page.locator('[data-slot="chrome-dock-trigger"]').first().click()
-  const trayAfterReload = page.locator('[data-slot="chrome-dock-tray"]')
+  const trayAfterReload = page.locator('[data-slot="chrome-dock-tray"][data-state="open"]')
   await trayAfterReload.locator('[data-skin-option="luma"]').click()
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.skin)).toBe("luma")
 
@@ -83,24 +99,125 @@ test("skins and floating dock: switch open, polar, luma, glass skins via ChromeD
 
   // 6. Switch back to Open skin and activate Floating Dock shell chrome (zero permanent left sidebar!).
   await page.locator('[data-slot="chrome-dock-trigger"]').first().click()
-  const dockSwitchTray = page.locator('[data-slot="chrome-dock-tray"]')
+  const dockSwitchTray = page.locator('[data-slot="chrome-dock-tray"][data-state="open"]')
   await dockSwitchTray.locator('[data-skin-option="open"]').click()
   await dockSwitchTray.locator('[data-shell-option="dock"]').click()
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.shell)).toBe("dock")
+  await page.keyboard.press("Escape")
 
   await expect(page.locator('[data-slot="sidebar"]')).toHaveCount(0)
   const dock = page.locator('[data-slot="floating-dock"]')
   await expect(dock).toBeVisible()
+
+  // Verify desktop main content keeps full clearance (>= 96px at 90% root font-size) above the floating dock.
+  const bottomPadding = await page.locator('[data-slot="sidebar-inset"] > div > div').last().evaluate((el) => Number.parseFloat(getComputedStyle(el).paddingBottom))
+  expect(bottomPadding).toBeGreaterThanOrEqual(96)
   await capture(page, "floating-dock")
 
-  // 7. Navigate using the Floating Dock, then switch back to Sidebar chrome cleanly.
+  // 7. Verify AccountMenu (sign-out, view, language) is reachable in dock mode.
+  await dock.getByRole("button", { name: "Account" }).click()
+  await expect(page.getByRole("menuitem", { name: "Sign out" })).toBeVisible()
+  await expect(page.getByRole("menuitemradio", { name: "Business" })).toBeVisible()
+  await expect(page.getByRole("menuitemradio", { name: "Technical" })).toBeVisible()
+  await page.keyboard.press("Escape")
+
+  // 8. Verify overflow destinations (>5 in Builder: Connections) are reachable via More destinations in dock mode.
+  await dock.getByRole("button", { name: "More destinations" }).click()
+  const connectionsItem = page.getByRole("menuitem", { name: "Connections" })
+  await expect(connectionsItem).toBeVisible()
+  await connectionsItem.click()
+  await expect(page).toHaveURL(/\/connections$/)
+
+  // 9. Navigate via primary dock link, verify dock Appearance tray opens above the dock (side="top"), and switch back to Sidebar.
   await dock.getByRole("link", { name: "Home", exact: true }).click()
   await expect(page).toHaveURL(/\/$/)
   await expect(page.getByRole("heading", { name: "Home", level: 1 })).toBeVisible()
 
-  await dock.locator('[data-slot="chrome-dock-trigger"]').click()
-  await page.locator('[data-slot="chrome-dock-tray"][data-state="open"]').locator('[data-shell-option="sidebar"]').click()
+  const dockAppearanceTrigger = dock.locator('[data-slot="chrome-dock-trigger"]')
+  await dockAppearanceTrigger.click()
+  const dockTray = page.locator('[data-slot="chrome-dock-tray"][data-state="open"]')
+  await expect(dockTray).toBeVisible()
+  const triggerBox = await dockAppearanceTrigger.boundingBox()
+  const trayBox = await dockTray.boundingBox()
+  expect(triggerBox && trayBox).toBeTruthy()
+  expect(trayBox!.y + trayBox!.height).toBeLessThanOrEqual(triggerBox!.y + 4)
+
+  await dockTray.locator('[data-shell-option="sidebar"]').click()
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.shell)).toBe("sidebar")
   await expect(page.locator('[data-slot="floating-dock"]')).toHaveCount(0)
   await expect(page.locator('[data-slot="sidebar"]')).toBeVisible()
+})
+
+test("dark mode cascade: luma and glass skins render dark surfaces with WCAG AA text contrast in Chromium", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.emulateMedia({ colorScheme: "dark" })
+  await recorded(page)
+  await page.goto("/sources")
+  await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible()
+  await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains("dark"))).toBe(true)
+
+  for (const [skin, shotName] of [["luma", "luma-dark"], ["glass", "glass-dark"]] as const) {
+    await page.locator('[data-slot="chrome-dock-trigger"]').first().click()
+    const tray = page.locator('[data-slot="chrome-dock-tray"][data-state="open"]')
+    await tray.locator(`[data-skin-option="${skin}"]`).click()
+    await page.keyboard.press("Escape")
+    await expect.poll(() => page.evaluate(() => document.documentElement.dataset.skin)).toBe(skin)
+
+    const sample = await page.evaluate(() => {
+      const inset = document.querySelector<HTMLElement>('[data-slot="sidebar-inset"]')!
+      const shell = document.querySelector<HTMLElement>('[data-slot="sidebar-wrapper"]')!
+      const h1 = document.querySelector<HTMLElement>("h1")!
+      const canvas = document.createElement("canvas")
+      canvas.width = 1
+      canvas.height = 1
+      const ctx = canvas.getContext("2d", { willReadFrequently: true })!
+      const read = () => {
+        const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data
+        return `rgb(${r}, ${g}, ${b})`
+      }
+      ctx.fillStyle = getComputedStyle(shell).backgroundColor
+      ctx.fillRect(0, 0, 1, 1)
+      const shellRgb = read()
+      ctx.fillStyle = getComputedStyle(inset).backgroundColor
+      ctx.fillRect(0, 0, 1, 1)
+      const pageRgb = read()
+      return {
+        shellRgb,
+        pageRgb,
+        textRgb: getComputedStyle(h1).color,
+        backdrop: getComputedStyle(inset).backdropFilter,
+      }
+    })
+    expect(luminance(rgb(sample.shellRgb)), `${skin} dark shell luminance`).toBeLessThan(0.08)
+    expect(luminance(rgb(sample.pageRgb)), `${skin} dark page luminance`).toBeLessThan(0.08)
+    expect(contrastRatio(rgb(sample.textRgb), rgb(sample.pageRgb)), `${skin} dark heading contrast`).toBeGreaterThanOrEqual(4.5)
+    if (skin === "glass") {
+      expect(sample.backdrop).toContain("blur(")
+    }
+    await capture(page, shotName)
+  }
+})
+
+test("single-select ToggleGroup preserves radiogroup/radio ARIA semantics and arrow-key navigation without aria-pressed", async ({ page }) => {
+  test.skip(Boolean(process.env.E2E_BASE), "uses deterministic record-cell stand-in")
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await recordCell(page, "admin")
+  await page.goto("/sources/canon.Party/demo/party/0001")
+  await page.getByRole("tab", { name: "Lineage" }).click()
+
+  const group = page.getByRole("radiogroup", { name: "Show as" })
+  await expect(group).toBeVisible()
+  const graph = group.getByRole("radio", { name: "Graph" })
+  const list = group.getByRole("radio", { name: "List" })
+  await expect(graph).toHaveAttribute("aria-checked", "true")
+  await expect(list).toHaveAttribute("aria-checked", "false")
+  await expect(graph).not.toHaveAttribute("aria-pressed", /.+/)
+  await expect(list).not.toHaveAttribute("aria-pressed", /.+/)
+
+  await graph.focus()
+  await page.keyboard.press("ArrowRight")
+  await expect(list).toBeFocused()
+  await page.keyboard.press("Enter")
+  await expect(list).toHaveAttribute("aria-checked", "true")
+  await expect(graph).toHaveAttribute("aria-checked", "false")
 })

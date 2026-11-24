@@ -1,9 +1,11 @@
 import { expect, test } from "bun:test"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createMemoryHistory, createRootRoute, createRouter } from "@tanstack/react-router"
-import { Database, House } from "lucide-react"
+import { Blend, Database, Fingerprint, House, Inbox, Network, Plug, ShieldCheck } from "lucide-react"
 import { renderToStaticMarkup } from "react-dom/server"
-import { ChromeDock, ChromeDockOption, ChromeDockTray, ChromeDockTrigger } from "../src/components/ui/chrome-dock.tsx"
+import { ChromeDock, ChromeDockOption, ChromeDockTray, ChromeDockTrigger, chromeDockPrimitive } from "../src/components/ui/chrome-dock.tsx"
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "../src/components/ui/command.tsx"
+import { ToggleGroup, ToggleGroupItem } from "../src/components/ui/toggle-group.tsx"
 import { AppearanceProvider, SHELLS, SKINS, applyAppearance, isShellChrome, isSkin, storedShellChrome, storedSkin } from "../src/lib/appearance.tsx"
 import type { Account } from "../src/lib/session.ts"
 import { Shell, type Section } from "../src/shell.tsx"
@@ -15,7 +17,13 @@ const account: Account = {
 
 const sections: readonly Section[] = [
   { path: "/", label: "Home", icon: House, perspective: "global" },
+  { path: "/decisions", label: "Inbox", icon: Inbox, perspective: "global", useBadge: () => 4 },
   { path: "/sources", label: "Sources", icon: Database, perspective: "builder", group: "Model" },
+  { path: "/transforms", label: "Transforms", icon: Blend, perspective: "builder", group: "Model" },
+  { path: "/canvas", label: "Canvas", icon: Network, perspective: "builder", group: "Logic" },
+  { path: "/rules", label: "Rules", icon: ShieldCheck, perspective: "builder", group: "Logic" },
+  { path: "/markings", label: "Markings", icon: Fingerprint, perspective: "builder", group: "Logic" },
+  { path: "/connections", label: "Connections", icon: Plug, perspective: "builder", group: "Settings" },
 ]
 
 test("appearance validators and defaults cover all four skins and both shell layouts", () => {
@@ -75,7 +83,40 @@ test("ChromeDock primitive renders semantic data-slot and data-state attributes 
   expect(html).toContain('aria-pressed="false"')
 })
 
-test("Shell mounts the Appearance ChromeDock trigger with default open skin and sidebar chrome", async () => {
+test("chromeDockPrimitive fires onValueChange exactly once with a string and honors details.cancel()", () => {
+  const calls: Array<{ value: unknown; hasCancel: boolean }> = []
+  let shouldCancel = false
+  const instance = chromeDockPrimitive.create({
+    defaultValue: "open",
+    items: ["open", "polar", "luma", "glass"],
+    onValueChange(value, details) {
+      calls.push({ value, hasCancel: typeof details?.cancel === "function" })
+      if (shouldCancel) details.cancel()
+    },
+  })
+  try {
+    instance.api.select("polar")
+    expect(calls).toEqual([{ value: "polar", hasCancel: true }])
+    expect(instance.api.isSelected("polar")).toBe(true)
+    expect(instance.api.isSelected("open")).toBe(false)
+
+    // Re-selecting the already active value does not fire a redundant callback.
+    instance.api.select("polar")
+    expect(calls).toHaveLength(1)
+
+    // Canceling inside onValueChange vetoes the selection transition.
+    shouldCancel = true
+    instance.api.select("glass")
+    expect(calls).toHaveLength(2)
+    expect(calls[1]).toEqual({ value: "glass", hasCancel: true })
+    expect(instance.api.isSelected("polar")).toBe(true)
+    expect(instance.api.isSelected("glass")).toBe(false)
+  } finally {
+    instance.destroy()
+  }
+})
+
+test("Shell mounts the Appearance ChromeDock trigger in sidebar mode without duplicating data-skin in body", async () => {
   const router = createRouter({
     routeTree: createRootRoute({ component: () => <Shell sections={sections} account={account} onSignOut={() => {}} /> }),
     history: createMemoryHistory({ initialEntries: ["/sources"] }),
@@ -86,8 +127,93 @@ test("Shell mounts the Appearance ChromeDock trigger with default open skin and 
       <RouterProvider router={router} />
     </QueryClientProvider>,
   )
-  expect(html).toContain('data-skin="open"')
+  expect(html).not.toContain('data-skin="')
   expect(html).toContain('data-shell="sidebar"')
   expect(html).toContain('aria-label="Appearance"')
   expect(html).toContain('data-slot="chrome-dock-trigger"')
+})
+
+test("dock mode mounts AccountMenu, explicit accessible names on every dock link, overflow menu for >5 sections, and desktop bottom clearance", async () => {
+  const router = createRouter({
+    routeTree: createRootRoute({
+      component: () => <Shell sections={sections} account={account} onSignOut={() => {}} initialShell="dock" />,
+    }),
+    history: createMemoryHistory({ initialEntries: ["/sources"] }),
+  })
+  await router.load()
+  const html = renderToStaticMarkup(
+    <QueryClientProvider client={new QueryClient()}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  )
+  expect(html).toContain('data-shell="dock"')
+  expect(html).toContain('data-slot="floating-dock"')
+  expect(html).toContain("pb-28 md:pb-28")
+
+  const dockMatch = /<nav[^>]*data-slot="floating-dock"[\s\S]*?<\/nav>/.exec(html)
+  expect(dockMatch).toBeTruthy()
+  const dockHtml = dockMatch![0]!
+
+  // AccountMenu stays reachable in dock mode (showing initials and Account trigger).
+  expect(dockHtml).toContain('aria-label="Account"')
+  expect(dockHtml).toContain(">AL<")
+
+  // Every anchor link in the dock carries an explicit aria-label (even when visual labels hide on mobile).
+  const links = [...dockHtml.matchAll(/<a\b([^>]*)>/g)]
+  expect(links.length).toBeGreaterThanOrEqual(8)
+  for (const [, attrs] of links) {
+    const ariaLabel = /aria-label="([^"]+)"/.exec(attrs!)?.[1]
+    expect(ariaLabel, `dock link missing aria-label: <a${attrs}>`).toBeTruthy()
+  }
+  expect(dockHtml).toContain('aria-label="Inbox, 4 open"')
+
+  // The 6th builder section (Connections) is exposed via the "More destinations" overflow menu trigger.
+  expect(dockHtml).toContain('aria-label="More destinations"')
+})
+
+test("ToggleGroup emits radiogroup/radio/aria-checked without aria-pressed in single mode, and group/aria-pressed in multiple mode", () => {
+  const singleHtml = renderToStaticMarkup(
+    <ToggleGroup type="single" value="a" aria-label="Mode">
+      <ToggleGroupItem value="a">Alpha</ToggleGroupItem>
+      <ToggleGroupItem value="b">Beta</ToggleGroupItem>
+    </ToggleGroup>,
+  )
+  expect(singleHtml).toContain('role="radiogroup"')
+  expect(singleHtml).toContain('role="radio"')
+  expect(singleHtml).toContain('aria-checked="true"')
+  expect(singleHtml).toContain('aria-checked="false"')
+  expect(singleHtml).not.toContain("aria-pressed=")
+
+  const multiHtml = renderToStaticMarkup(
+    <ToggleGroup type="multiple" value={["a"]} aria-label="Filters">
+      <ToggleGroupItem value="a">Alpha</ToggleGroupItem>
+      <ToggleGroupItem value="b">Beta</ToggleGroupItem>
+    </ToggleGroup>,
+  )
+  expect(multiHtml).toContain('role="group"')
+  expect(multiHtml).toContain('aria-pressed="true"')
+  expect(multiHtml).toContain('aria-pressed="false"')
+  expect(multiHtml).not.toContain('role="radio"')
+  expect(multiHtml).not.toContain("aria-checked=")
+})
+
+test("first-party Command palette renders accessible combobox, listbox, group, and option roles without cmdk", () => {
+  const html = renderToStaticMarkup(
+    <Command label="Choose a record" shouldFilter={false}>
+      <CommandInput placeholder="Search…" value="" onValueChange={() => {}} />
+      <CommandList>
+        <CommandEmpty>No results.</CommandEmpty>
+        <CommandGroup heading="Records">
+          <CommandItem value="r1">Record One</CommandItem>
+          <CommandItem value="r2">Record Two</CommandItem>
+        </CommandGroup>
+      </CommandList>
+    </Command>,
+  )
+  expect(html).toContain('role="combobox"')
+  expect(html).toContain('role="listbox"')
+  expect(html).toContain('role="group"')
+  expect(html).toContain('role="option"')
+  expect(html).toContain('data-slot="command-item"')
+  expect(html).toContain("Record One")
 })
