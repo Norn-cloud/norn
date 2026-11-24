@@ -94,6 +94,21 @@ async function discoverScope(fetcher: Fetch, signal?: AbortSignal): Promise<Stud
   }
 }
 
+/**
+ * The scope (`studioScopeKey`) and mode generation a `/v1/definitions` read was actually sent to,
+ * fixed when the request goes out. Each mode and each error `readMode` produces after choosing a
+ * scope carries it, so whatever later records that outcome (the mode query's settled failure) binds
+ * it to the workspace that answered, never to whichever scope happens to be active when it is stored.
+ * A failure before any definitions request (the scope discovery itself) carries none.
+ */
+type DefinitionsTarget = { readonly scopeKey: string; readonly generation: number }
+const definitionsTargets = new WeakMap<object, DefinitionsTarget>()
+
+/** The scope and generation the definitions read behind this mode or error went to, if it got that far. */
+function definitionsTargetOf(outcome: unknown): DefinitionsTarget | undefined {
+  return typeof outcome === "object" && outcome !== null ? definitionsTargets.get(outcome) : undefined
+}
+
 export async function readMode(
   fetcher: Fetch,
   knownScope?: StudioScope | null,
@@ -103,6 +118,18 @@ export async function readMode(
   const scope = knownScope === undefined ? await discoverScope(fetcher, signal) : knownScope
   signal?.throwIfAborted()
   if (scope === null) return { kind: "recorded" }
+  const target: DefinitionsTarget = { scopeKey: studioScopeKey(scope), generation: modeGeneration }
+  try {
+    const mode = await readDefinitions(fetcher, scope, signal)
+    definitionsTargets.set(mode, target)
+    return mode
+  } catch (error) {
+    if (typeof error === "object" && error !== null) definitionsTargets.set(error, target)
+    throw error
+  }
+}
+
+async function readDefinitions(fetcher: Fetch, scope: StudioScope, signal?: AbortSignal): Promise<Mode> {
   let response: Response
   let text: string
   try {
@@ -242,17 +269,16 @@ const modeByScope = new Map<string, ModeProbe>()
 let unkeyedMode: ModeProbe | undefined
 /**
  * The error the mode query settled on once its bounded retries ran out (or a non-retryable refusal),
- * bound to the scope (`studioScopeKey`) and mode generation it was decided in. Until the user
+ * bound to the scope (`studioScopeKey`) and mode generation its definitions read was sent to
+ * ({@link DefinitionsTarget}), and recorded only while that scope is still the active one. Until the user
  * retries (`retryMode` → `refreshMode`) or a mode read succeeds, page reads through the transport in
  * that same scope and generation reuse it instead of starting their own `/v1/definitions` probe, so
  * a settled "Workspace unavailable" issues no further automatic catalog reads. Any scope switch
  * clears it, and a read in another scope or generation never sees it (no refusal detail, such as an
  * incident ID, crosses workspaces).
  */
-type SettledModeFailure = { readonly error: unknown; readonly scopeKey: string | null; readonly generation: number }
+type SettledModeFailure = { readonly error: unknown } & DefinitionsTarget
 let settledModeFailure: SettledModeFailure | undefined
-/** The scope and generation each failed mode-query attempt ran in, so its settle binds to that, not to whatever is current later. */
-const modeAttemptOrigin = new WeakMap<object, { readonly scopeKey: string | null; readonly generation: number }>()
 
 function settledFailureFor(scopeKey: string | null): SettledModeFailure | undefined {
   const settled = settledModeFailure
@@ -514,28 +540,22 @@ export function modeQuery(scope: StudioScope | null | undefined, enabled = true,
     queryKey: ["studio-mode", scope === undefined ? "outage" : studioScopeKey(scope)],
     enabled,
     queryFn: async ({ signal }) => {
-      // `currentMode` switches the active scope (and generation) synchronously, so read the origin after it starts.
-      const read = recoveryClient === undefined ? currentMode(browserFetch, scope, signal) : readMode(browserFetch, undefined, signal)
-      const origin = { scopeKey: activeModeScopeKey, generation: modeGeneration }
-      let mode: Mode
-      try {
-        mode = await read
-      } catch (error) {
-        if (typeof error === "object" && error !== null) modeAttemptOrigin.set(error, origin)
-        throw error
-      }
-      if (settledModeFailure?.scopeKey === origin.scopeKey) settledModeFailure = undefined
+      const mode = await (recoveryClient === undefined ? currentMode(browserFetch, scope, signal) : readMode(browserFetch, undefined, signal))
+      const target = definitionsTargetOf(mode)
+      if (target !== undefined && settledModeFailure?.scopeKey === target.scopeKey) settledModeFailure = undefined
       if (recoveryClient !== undefined) recoveryClient.setQueryData(["studio-scope"], mode.kind === "live" ? mode.scope : null)
       return mode
     },
     retry: (failureCount, error) => {
       if (error instanceof ScopeSupersededError) return false
       if (isRetryableModeError(error) && failureCount < MODE_AUTO_RETRIES) return true
-      // Settled: no more automatic retries here, and none through the transport either, but only
-      // while the scope and generation this attempt ran in are still current.
-      const origin = typeof error === "object" && error !== null ? modeAttemptOrigin.get(error) : undefined
-      if (origin !== undefined && origin.scopeKey === activeModeScopeKey && origin.generation === modeGeneration) {
-        settledModeFailure = { error, ...origin }
+      // Settled: no more automatic retries here, and none through the transport either. Bind the error
+      // to the workspace its definitions read went to, and record it only while that workspace and
+      // generation are still the active ones: outage recovery can discover (and be refused by) another
+      // workspace than the active one, and that refusal is never the active workspace's failure.
+      const target = definitionsTargetOf(error)
+      if (target !== undefined && target.scopeKey === activeModeScopeKey && target.generation === modeGeneration) {
+        settledModeFailure = { error, ...target }
       }
       return false
     },
