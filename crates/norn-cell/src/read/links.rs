@@ -583,6 +583,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         limit: usize,
         max_bytes: u64,
     ) -> Result<Option<Vec<LinkTargetVersion>>, CellError> {
+        self.check_live()?;
         let (_, table) = self.model.link(object_type, link)?;
         let Some(targets) =
             self.link_targets(world, object_type, link, source, limit, max_bytes)?
@@ -605,7 +606,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
 
     /// The version and written target type of the link row
     /// `(source, target)` of link table `link_table`, if ever written.
-    fn link_version_row(
+    pub(crate) fn link_version_row(
         &self,
         world: &str,
         link_table: &str,
@@ -690,10 +691,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         source: &str,
         target: &str,
     ) -> Result<Option<LinkRecord>, CellError> {
-        Ok(self
-            .links(world, object_type, link, source)?
-            .into_iter()
-            .find(|record| record.target == target))
+        self.check_live()?;
+        crate::link_guard::point_link(self, world, object_type, link, source, None, target)
     }
 
     /// Read one bounded page of live links touching an existing object.

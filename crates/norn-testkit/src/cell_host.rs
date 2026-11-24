@@ -485,6 +485,20 @@ impl<E, C, I> CommitView for MemoryView<'_, E, C, I> {
         })))
     }
 
+    fn has_link_source(
+        &self,
+        target: &FactKey,
+        link: &str,
+        excluded: &BTreeSet<FactKey>,
+    ) -> Result<Option<bool>, Infallible> {
+        Ok(Some(self.0.links.iter().any(|(key, state)| {
+            key.target == *target
+                && key.link == link
+                && state.exists()
+                && !excluded.contains(&key.source)
+        })))
+    }
+
     fn links_of(&self, key: &FactKey) -> Result<Vec<LinkKey>, Infallible> {
         Ok(self
             .0
@@ -3585,24 +3599,8 @@ pub const CELL_FAULT_LABELS: &[&str] = &[
     "cell:perform.outcome_unknown",
 ];
 
-/// Coverage labels a healthy run under responder faults hits (law 7): every
-/// network transition (dispatch, in-order, out-of-order, delayed and
-/// duplicated delivery, loss), a stale-generation result refused, a
-/// duplicate result ignored, and observations redelivered before and after
-/// their consumption.
-///
-/// Each is reached by construction, in the construction case every network
-/// host runs first (independent of the generator's weights):
-///
-/// | label | constructing transition and step |
-/// |---|---|
-/// | `network.dispatched` | [`Exchange`]: its first dispatch (after `prepare`) |
-/// | `network.delivered`, `network.out_of_order` | [`Exchange`]: `second` delivered ahead of `first` |
-/// | `network.duplicate`, `network.duplicate_ignored` | [`Exchange`]: `second` duplicated after it was recorded |
-/// | `network.dropped` | [`Exchange`]: `first` lost in flight |
-/// | `result.stale_refused`, `network.delayed` | [`Exchange`]: `first` duplicated after its re-issue, four network steps late |
-/// | `observe.duplicate_ignored` | [`Reinjecting`]: its second arrival, while pending |
-/// | `observe.late_ignored` | [`Reinjecting`]: its arrival after the consumption |
+/// Coverage labels a healthy run under responder faults hits (law 7).
+/// Reached by construction in the construction case via [`Exchange`] and [`Reinjecting`].
 pub const CELL_NETWORK_LABELS: &[&str] = &[
     "cell:network.dispatched",
     "cell:network.delivered",
@@ -3673,12 +3671,9 @@ pub fn run_cell_host<H: SimulatedCell>(settings: &Settings) -> Result<Coverage, 
     }
 }
 
-/// Runs the laws over one fixed `transitions` sequence from a fresh host,
-/// for a mutant self-test whose counterexample is known: generation alone
-/// may reach it too rarely. Returns the first violation's message.
+/// Runs the laws over one fixed `transitions` sequence from a fresh host.
 ///
 /// # Errors
-///
 /// The violation, as the law machine's panic message.
 pub fn run_cell_host_sequence<H: SimulatedCell>(transitions: Vec<CellOp>) -> Result<(), String> {
     run_sequence::<H>(transitions)
@@ -3707,14 +3702,10 @@ fn run_sequence<H: SimulatedCell>(transitions: Vec<CellOp>) -> Result<(), String
 /// [`run_cell_host`], panicking with the minimal counterexample on failure.
 ///
 /// # Panics
-///
 /// Panics if any law fails.
 #[must_use = "assert the coverage with `Coverage::assert_covered`"]
 #[track_caller]
-#[expect(
-    clippy::panic,
-    reason = "test-support entry point: a failed property must fail the calling test"
-)]
+#[expect(clippy::panic, reason = "test-support entry point")]
 pub fn check_cell_host<H: SimulatedCell>(settings: &Settings) -> Coverage {
     match run_cell_host::<H>(settings) {
         Ok(coverage) => coverage,

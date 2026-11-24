@@ -7,8 +7,10 @@
 //! resulting [`crate::PredicateReadExpectation`], whose recheck keeps the
 //! folded value valid at commit.
 
+use std::collections::BTreeMap;
+
 use norn_checker::EffectiveKind;
-use norn_ir::{ActionAggregateInput, PropertyType};
+use norn_ir::{ActionAggregateInput, AggregateWindow, ObjectTypeName, PropertyId, PropertyType};
 
 use crate::cell_host::{JsonObject, JsonValue};
 use crate::decision_commit::TypeCatalog;
@@ -25,20 +27,41 @@ pub(crate) fn predicate_query(
     input: &JsonObject,
     catalog: &TypeCatalog<'_>,
 ) -> Result<PredicateQuery, String> {
-    let mut filter = std::collections::BTreeMap::new();
-    for (property, field) in &aggregate.filter {
+    build_predicate_query(
+        &aggregate.object_type,
+        &aggregate.filter,
+        aggregate.window.as_ref(),
+        input,
+        catalog,
+    )
+}
+
+/// Build a [`PredicateQuery`] from a declared equality filter and optional
+/// window over action effective input values.
+///
+/// # Errors
+///
+/// A reason when a referenced input field has no usable value or the windowed
+/// property is not a date or timestamp in `catalog`.
+pub(crate) fn build_predicate_query(
+    object_type: &ObjectTypeName,
+    filter_spec: &BTreeMap<PropertyId, String>,
+    window_spec: Option<&AggregateWindow>,
+    input: &JsonObject,
+    catalog: &TypeCatalog<'_>,
+) -> Result<PredicateQuery, String> {
+    let mut filter = BTreeMap::new();
+    for (property, field) in filter_spec {
         let value = input
             .get(field)
             .filter(|value| !value.is_null())
             .ok_or_else(|| format!("input field {field:?} has no value"))?;
         filter.insert(property.as_str().to_owned(), value.clone());
     }
-    let window = aggregate
-        .window
-        .as_ref()
+    let window = window_spec
         .map(|window| {
             let kind = catalog
-                .effective_type(&aggregate.object_type)
+                .effective_type(object_type)
                 .and_then(|object| object.property(window.property.as_str()))
                 .and_then(|property| match &property.kind {
                     EffectiveKind::Base(PropertyType::Date {}) => Some(PredicateWindowKind::Date),
@@ -73,7 +96,7 @@ pub(crate) fn predicate_query(
         })
         .transpose()?;
     Ok(PredicateQuery {
-        object_type: aggregate.object_type.clone(),
+        object_type: object_type.clone(),
         filter,
         window,
     })
