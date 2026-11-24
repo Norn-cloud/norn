@@ -337,7 +337,7 @@
   },
   {
     "code": "cli.setup.checker_unavailable",
-    "fix": "Run `norn setup` (or `scripts/dev/fetch-local-runtime.sh`) to fetch prebuilt `norn-checker-abi/1` runtime artifacts, or build from source from the repository root with `bash crates/norn-checker-wasm/scripts/build-pkg.sh \"$PWD/target/norn-checker-wasm/pkg\"` and `export NORN_CHECKER_WASM_PKG=\"$PWD/target/norn-checker-wasm/pkg\"`."
+    "fix": "Run `norn setup` (or `scripts/dev/fetch-local-runtime.sh`) to fetch prebuilt `norn-checker-abi/1` runtime artifacts and `unset NORN_CHECKER_WASM_PKG` to clear any invalid override before retrying, or build from source from the repository root with `bash crates/norn-checker-wasm/scripts/build-pkg.sh \"$PWD/target/norn-checker-wasm/pkg\"` and `export NORN_CHECKER_WASM_PKG=\"$PWD/target/norn-checker-wasm/pkg\"`."
   },
   {
     "code": "cli.setup.host_unavailable",

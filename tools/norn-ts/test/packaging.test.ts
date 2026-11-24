@@ -73,9 +73,7 @@ test("check without a usable checker refuses with cli.setup.checker_unavailable"
     const registered = registeredCodes().get("cli.setup.checker_unavailable")!
     expect(run.status).toBe(2)
     expect(run.stdout).toBe("")
-    expect(run.stderr).toStartWith("cli.setup.checker_unavailable: ")
-    expect(run.stderr).toContain(`  fix: ${registered.fix}`)
-    expect(run.stderr).not.toContain("NORN-CHECKER-WASM-SETUP")
+    expect(run.stderr).toBe(`cli.setup.checker_unavailable: ${registered.message} (NORN_CHECKER_WASM_PKG is not set)\n  fix: ${registered.fix}\n`)
   } finally { rmSync(emptyCache, { recursive: true }) }
 })
 

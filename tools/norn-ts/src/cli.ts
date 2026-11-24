@@ -137,9 +137,16 @@ if (command === "compile") {
   } catch (error) {
     const { cliDiagnostic, formatCliDiagnostic, registeredCodes } = await import("./cli-diagnostic.ts")
     const { ProjectError } = await import("./project.ts")
-    const detail = error instanceof Error ? error.message : String(error)
+    const detail = (error instanceof Error ? error.message : String(error))
+      .split(/\r?\n/)
+      .filter((line) => !/^\s*at\s/.test(line))
+      .map((line) => line.replace(/[\u0000-\u001f\u007f]+/g, " ").trim())
+      .filter(Boolean)
+      .join(" ")
+      .replace(/\s+/g, " ")
     const base = registeredCodes().get("cli.setup.checker_unavailable")?.message ?? ""
-    const refusal = new ProjectError("cli.setup.checker_unavailable", base ? `${base} (${detail})` : detail, 2)
+    const message = base ? (detail ? `${base} (${detail})` : base) : detail
+    const refusal = new ProjectError("cli.setup.checker_unavailable", message, 2)
     process.stderr.write(`${formatCliDiagnostic(cliDiagnostic(refusal))}\n`)
     process.exit(refusal.exitCode)
   }
