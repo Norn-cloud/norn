@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { MutationObserver, onlineManager, QueryClient, QueryObserver } from "@tanstack/react-query"
 import { parseLiveFrame } from "../../../packages/norn-sdk/src/live.ts"
 import { LiveClient, type LiveRefusal, type LiveSnapshot, type SocketLike } from "../../../packages/norn-demo-ui/src/live/client.ts"
-import { actionReads, attachLive, cellMutationOptions, cellPath, cellQueryKey, cellQueryOptions, cellReadState, invalidateCellRoutes, submitCall, type CellDocument, type CellEntry, type CellRefused, type LiveSource } from "../src/lib/cell-query.ts"
+import { actionReads, attachLive, cellMutationOptions, cellPath, cellQueryKey, cellQueryOptions, cellReadState, invalidateCellRoutes, submitCall, type CellDocument, type CellEntry, type CellRefused, type CellSubmission, type LiveSource } from "../src/lib/cell-query.ts"
 import { CellUnavailable, EXPECTED_ENV_HEADER, EXPECTED_ORG_HEADER, setDisplayedScope, StudioScopeError, WORKSPACE_CHANGED_MESSAGE, type StudioScope } from "../src/lib/definitions.ts"
 import { CellRefusal, NotServed } from "../src/lib/live-transport.ts"
 
@@ -38,6 +38,10 @@ function liveCell() {
   }
   return { live, subscribed, unsubscribed, push }
 }
+
+/** The version of the document an entry holds; a refused entry has none. */
+const versionOf = (entry: CellEntry<{ readonly version?: number | null }> | undefined): number | null | undefined =>
+  entry?.kind === "document" ? entry.document.version : undefined
 
 async function readOnce(client: QueryClient, at = scope, answer: () => Response | Promise<Response> = () => new Response(record(1, "10.50"))) {
   const cell = httpCell(answer)
@@ -150,7 +154,7 @@ test("a read already in flight when a push lands never overwrites the pushed doc
   while (cell.asked.length === 0) await Bun.sleep(1)
   release(new Response(record(1, "10.50")))
   const settled = await reading
-  expect(settled.document.version).toBe(2)
+  expect(versionOf(settled)).toBe(2)
   expect(client.getQueryData<CellDocument<{ version: number }>>(options.queryKey)?.document.version).toBe(2)
 })
 
@@ -286,7 +290,7 @@ test("a push wins over a read that fails after it", async () => {
   socket.push(path, 200, "d2", record(2, "12"))
   while (cell.asked.length === 0) await Bun.sleep(1)
   fail(new TypeError("network down"))
-  expect((await reading).document.version).toBe(2)
+  expect(versionOf(await reading)).toBe(2)
   expect(client.getQueryState(options.queryKey)?.status).toBe("success")
 })
 
@@ -333,7 +337,7 @@ test("a read in flight when an unchanged push lands is still fenced: an older an
   expect(client.getQueryData(options.queryKey) === held).toBe(true)
   while (slow.asked.length === 0) await Bun.sleep(1)
   release(new Response(record(1, "10.50")))
-  expect((await reading).document.version).toBe(2)
+  expect(versionOf(await reading)).toBe(2)
   expect(client.getQueryData<CellDocument<{ version: number }>>(options.queryKey)?.document.version).toBe(2)
 })
 
@@ -512,7 +516,7 @@ test("a write runs in the scope it was submitted in, and invalidates that scope'
   expect(client.getQueryState(cellQueryKey("/v1/inbox", other, {}))?.isInvalidated).toBe(false)
   expect(await observer.mutate(second).catch((error: unknown) => (error as Error).message)).toBe(WORKSPACE_CHANGED_MESSAGE)
   // Variables `submitCall` did not make are refused, even shaped like a submission.
-  const forged = { ...first }
+  const forged: CellSubmission<typeof ACTION> = { ...first }
   expect(await observer.mutate(forged).catch((error: unknown) => error)).toBeInstanceOf(StudioScopeError)
   // A call submitted with no scope is refused.
   expect(await observer.mutate(submitCall(ACTION, call, null)).catch((error: unknown) => error)).toBeInstanceOf(StudioScopeError)
