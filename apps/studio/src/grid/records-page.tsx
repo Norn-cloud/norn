@@ -3,7 +3,6 @@ import { Shapes } from "lucide-react"
 import { EmptyState, PageHeader } from "@/components/panel"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { useMode } from "@/lib/live-transport"
 import { useCatalog } from "../sources.tsx"
 import { LawsPanel } from "../laws.tsx"
 import { ProfilePanel } from "./profile-panel.tsx"
@@ -22,8 +21,8 @@ export function RecordsPage() {
   const concept = catalog?.byName.get(type)
   // A `core.TimeInterval` (through any parent) can be read as a timeline too; the catalog says which types are.
   const timeline = catalog !== undefined && concept !== undefined && offersTimeline(catalog, concept)
-  // A profile is the connected cell's; recordings carry none.
-  const live = useMode().data?.kind === "live"
+  // Use the same read for the catalog and its layout so mode discovery cannot remount an active grid.
+  const live = read.data?.origin === "live"
   // The open saved view (none: every record) and the query the grid shows, for saving.
   const [view, setView] = useState<StoredView | null>(null)
   const [query, setQuery] = useState<GridQuery>()
