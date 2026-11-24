@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { HOST_TOKEN_SECONDS, hostToken, resolveActor } from "../actor.ts"
+import { EXPECTED_ENV_HEADER, EXPECTED_ORG_HEADER, HOST_TOKEN_SECONDS, WORKSPACE_CHANGED_MESSAGE, hostToken, resolveActor } from "../actor.ts"
 import { createAuth } from "../auth.ts"
 import worker, { type Env } from "../index.ts"
 
@@ -73,12 +73,15 @@ test("an organization API key acts as a service, never with an approving role", 
 })
 
 test("Norn calls go to the host with the host token only, never the client's cookie or key", async () => {
-  const { env, seen } = stage(() => Response.json({ ok: true }))
+  const { env, db, seen, auth } = stage(() => Response.json({ ok: true }))
   const cookie = await signUp(env, "di@example.com")
-  const response = await call(env, "/api/host/v1/defs?orgId=o", { headers: { cookie, authorization: "Bearer forged", accept: "application/json" } })
+  const actor = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
+  if (!actor) throw new Error("no actor")
+  db.run(`update "organization" set "metadata" = ? where "id" = ?`, [JSON.stringify({ environmentId: "analytics" }), actor.orgId])
+  const response = await call(env, `/api/host/v1/defs?orgId=${actor.orgId}&environmentId=analytics`, { headers: { cookie, authorization: "Bearer forged", accept: "application/json" } })
   expect(response.status).toBe(200)
   const forwarded = seen[0]
-  expect(forwarded?.url).toBe("https://norn-host/v1/defs?orgId=o")
+  expect(forwarded?.url).toBe(`https://norn-host/v1/defs?orgId=${actor.orgId}&environmentId=analytics`)
   expect(forwarded?.headers.get("cookie")).toBeNull()
   expect(forwarded?.headers.get("authorization")).not.toBe("Bearer forged")
   expect(claims(forwarded?.headers.get("authorization")?.slice("Bearer ".length) ?? "").aud).toBe("norn-host")
@@ -86,64 +89,109 @@ test("Norn calls go to the host with the host token only, never the client's coo
 
 test("without a session or a connected host, Norn calls refuse", async () => {
   expect((await call(stage(() => new Response()).env, "/api/host/v1/defs")).status).toBe(401)
-  const { env } = stage()
+  const { env, db, auth } = stage()
   const cookie = await signUp(env, "ed@example.com")
+  const actor = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
+  if (!actor) throw new Error("no actor")
+  db.run(`update "organization" set "metadata" = ? where "id" = ?`, [JSON.stringify({ environmentId: "analytics" }), actor.orgId])
   expect((await call(env, "/api/host/v1/defs", { headers: { cookie } })).status).toBe(503)
 })
 
 test("a request body reaches the host unchanged", async () => {
-  const { env, seen } = stage(() => new Response(null, { status: 202 }))
+  const { env, db, seen, auth } = stage(() => new Response(null, { status: 202 }))
   const cookie = await signUp(env, "fe@example.com")
-  const response = await call(env, "/api/host/v1/actions", { method: "POST", headers: { cookie, origin: ORIGIN, "content-type": "application/json" }, body: JSON.stringify({ proposal: 1 }) })
+  const actor = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
+  if (!actor) throw new Error("no actor")
+  db.run(`update "organization" set "metadata" = ? where "id" = ?`, [JSON.stringify({ environmentId: "analytics" }), actor.orgId])
+  const response = await call(env, "/api/host/v1/actions", {
+    method: "POST",
+    headers: { cookie, origin: ORIGIN, "content-type": "application/json", [EXPECTED_ORG_HEADER]: actor.orgId, [EXPECTED_ENV_HEADER]: "analytics" },
+    body: JSON.stringify({ proposal: 1 }),
+  })
   expect(response.status).toBe(202)
   expect((await seen[0]?.json()) as unknown).toEqual({ proposal: 1 })
   expect(seen[0]?.headers.get("content-type")).toBe("application/json")
+  const forwardedUrl = new URL(seen[0]!.url)
+  expect(forwardedUrl.searchParams.get("orgId")).toBe(actor.orgId)
+  expect(forwardedUrl.searchParams.get("environmentId")).toBe("analytics")
 })
 
 test("a cookie-authenticated write from anywhere but the Studio origin never reaches the host", async () => {
-  const { env, seen } = stage(() => new Response(null, { status: 202 }))
+  const { env, db, seen, auth } = stage(() => new Response(null, { status: 202 }))
   const cookie = await signUp(env, "gu@example.com")
+  const actor = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
+  if (!actor) throw new Error("no actor")
+  db.run(`update "organization" set "metadata" = ? where "id" = ?`, [JSON.stringify({ environmentId: "analytics" }), actor.orgId])
   for (const origin of ["https://evil.norn.cloud", "null", undefined]) {
-    const headers: Record<string, string> = { cookie, "content-type": "text/plain" }
+    const headers: Record<string, string> = { cookie, "content-type": "text/plain", [EXPECTED_ORG_HEADER]: actor.orgId, [EXPECTED_ENV_HEADER]: "analytics" }
     if (origin !== undefined) headers.origin = origin
     const response = await call(env, "/api/host/v1/actions", { method: "POST", headers, body: "{}" })
     expect([origin, response.status]).toEqual([origin, 403])
   }
   expect(seen).toHaveLength(0)
-  // A read needs no Origin; a write from the Studio itself goes through.
+  // A read needs no Origin; a write from the Studio itself goes through with matching scope headers.
   expect((await call(env, "/api/host/v1/defs", { headers: { cookie } })).status).toBe(202)
-  expect((await call(env, "/api/host/v1/actions", { method: "POST", headers: { cookie, origin: ORIGIN }, body: "{}" })).status).toBe(202)
+  expect((await call(env, "/api/host/v1/actions", { method: "POST", headers: { cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: actor.orgId, [EXPECTED_ENV_HEADER]: "analytics" }, body: "{}" })).status).toBe(202)
   expect(seen).toHaveLength(2)
 })
 
-test("a live socket (UI-LIVE-1) opens only from the Studio origin and reaches the host with the host token and its handshake", async () => {
-  const { env, seen } = stage(() => new Response(null, { status: 204 }))
+test("a live socket (UI-LIVE-1) opens only from the Studio origin with canonical session scope and reaches the host with the host token and its handshake", async () => {
+  const { env, db, seen, auth } = stage(() => new Response(null, { status: 204 }))
   const cookie = await signUp(env, "live@example.com")
+  const actor = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
+  if (!actor) throw new Error("no actor")
+  db.run(`update "organization" set "metadata" = ? where "id" = ?`, [JSON.stringify({ environmentId: "analytics" }), actor.orgId])
   const handshake = { cookie, upgrade: "websocket", connection: "Upgrade", "sec-websocket-key": btoa("the sample nonce"), "sec-websocket-version": "13", "sec-websocket-protocol": "norn.live.v1" }
   // Cross-site socket hijacking: the browser sends the cookie on an upgrade from any page.
   for (const origin of ["https://evil.norn.cloud", "null", undefined]) {
     const headers: Record<string, string> = { ...handshake }
     if (origin !== undefined) headers.origin = origin
-    expect([origin, (await call(env, "/api/host/v1/subscribe", { headers })).status]).toEqual([origin, 403])
+    expect([origin, (await call(env, `/api/host/v1/subscribe?orgId=${actor.orgId}&environmentId=analytics`, { headers })).status]).toEqual([origin, 403])
   }
+  // Missing or mismatched scope query params or conflicting expected-scope headers on a WebSocket upgrade are refused before reaching the host.
+  expect((await call(env, "/api/host/v1/subscribe", { headers: { ...handshake, origin: ORIGIN } })).status).toBe(400)
+  expect((await call(env, `/api/host/v1/subscribe?orgId=${actor.orgId}&environmentId=other`, { headers: { ...handshake, origin: ORIGIN } })).status).toBe(409)
+  expect((await call(env, `/api/host/v1/subscribe?orgId=org_other&environmentId=analytics`, { headers: { ...handshake, origin: ORIGIN } })).status).toBe(409)
+  expect((await call(env, `/api/host/v1/subscribe?orgId=${actor.orgId}&environmentId=analytics`, { headers: { ...handshake, origin: ORIGIN, [EXPECTED_ORG_HEADER]: "org_other" } })).status).toBe(409)
+  expect((await call(env, `/api/host/v1/subscribe?orgId=${actor.orgId}&environmentId=analytics`, { headers: { ...handshake, origin: ORIGIN, [EXPECTED_ENV_HEADER]: "other" } })).status).toBe(409)
   expect(seen).toHaveLength(0)
-  await call(env, "/api/host/v1/subscribe?orgId=o&environmentId=e", { headers: { ...handshake, origin: ORIGIN } })
+  await call(env, `/api/host/v1/subscribe?orgId=${actor.orgId}&environmentId=analytics`, { headers: { ...handshake, origin: ORIGIN } })
   expect(seen).toHaveLength(1)
   const forwarded = seen[0]!
-  expect(new URL(forwarded.url).pathname).toBe("/v1/subscribe")
+  const forwardedUrl = new URL(forwarded.url)
+  expect(forwardedUrl.pathname).toBe("/v1/subscribe")
+  expect(forwardedUrl.searchParams.get("orgId")).toBe(actor.orgId)
+  expect(forwardedUrl.searchParams.get("environmentId")).toBe("analytics")
   expect(forwarded.headers.get("cookie")).toBeNull()
   expect(forwarded.headers.get("authorization")).toStartWith("Bearer ")
   for (const name of ["upgrade", "sec-websocket-key", "sec-websocket-version", "sec-websocket-protocol"]) expect(forwarded.headers.get(name)).toBe(handshake[name as keyof typeof handshake])
 })
 
-test("an API-key write needs no Origin", async () => {
-  const { env, seen, auth } = stage(() => new Response(null, { status: 202 }))
+test("an API-key write needs no Origin and stays bound to its organization's canonical environment", async () => {
+  const { env, db, seen, auth } = stage(() => new Response(null, { status: 202 }))
   const cookie = await signUp(env, "ha@example.com")
   const owner = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
-  const key = await auth.api.createApiKey({ body: { name: "svc", organizationId: owner?.orgId }, headers: new Headers({ cookie }) })
+  if (!owner) throw new Error("no owner")
+  const key = await auth.api.createApiKey({ body: { name: "svc", organizationId: owner.orgId }, headers: new Headers({ cookie }) })
+  // Without a canonical cell environment on the org, service-key and user calls refuse 409 workspace.no_cell.
+  expect((await call(env, "/api/host/v1/actions?environmentId=other", { method: "POST", headers: { "x-api-key": key.key, "content-type": "application/json" }, body: "{}" })).status).toBe(409)
+  expect((await call(env, "/api/host/v1/defs?environmentId=other", { headers: { "x-api-key": key.key } })).status).toBe(409)
+  expect((await call(env, "/api/host/v1/defs?environmentId=other", { headers: { cookie } })).status).toBe(409)
+  expect(seen).toHaveLength(0)
+
+  db.run(`update "organization" set "metadata" = ? where "id" = ?`, [JSON.stringify({ environmentId: "analytics" }), owner.orgId])
+  // Foreign environmentId or orgId on GET or service-key POST is refused 409 workspace.changed before reaching the host.
+  expect((await call(env, `/api/host/v1/defs?orgId=${owner.orgId}&environmentId=other`, { headers: { cookie } })).status).toBe(409)
+  expect((await call(env, `/api/host/v1/defs?orgId=org_other&environmentId=analytics`, { headers: { cookie } })).status).toBe(409)
+  expect((await call(env, `/api/host/v1/actions?orgId=${owner.orgId}&environmentId=other`, { method: "POST", headers: { "x-api-key": key.key, "content-type": "application/json" }, body: "{}" })).status).toBe(409)
+  expect(seen).toHaveLength(0)
+
   const response = await call(env, "/api/host/v1/actions", { method: "POST", headers: { "x-api-key": key.key, "content-type": "application/json" }, body: "{}" })
   expect(response.status).toBe(202)
   expect(seen).toHaveLength(1)
+  const forwardedUrl = new URL(seen[0]!.url)
+  expect(forwardedUrl.searchParams.get("orgId")).toBe(owner.orgId)
+  expect(forwardedUrl.searchParams.get("environmentId")).toBe("analytics")
 })
 
 test("a member removed from the organization, or switched to one they left, reaches nothing there", async () => {
@@ -171,7 +219,8 @@ test("an authorized definition read resolves its signer inside the active organi
   const cookie = await signUp(env, "reader@example.com")
   const reader = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
   if (!reader) throw new Error("no reader")
-  const read = () => call(env, "/api/host/v1/definitions/studio.question?orgId=x&environmentId=y", { headers: { cookie } })
+  db.run(`update "organization" set "metadata" = ? where "id" = ?`, [JSON.stringify({ environmentId: "analytics" }), reader.orgId])
+  const read = () => call(env, `/api/host/v1/definitions/studio.question?orgId=${reader.orgId}&environmentId=analytics`, { headers: { cookie } })
   signer = `user:${reader.subjectId}`
   expect((await (await read()).json() as { signoff: { displayName: string } }).signoff.displayName).toBe("you")
   await signUp(env, "signer@example.com")
@@ -199,11 +248,12 @@ function streamed(document: unknown, status = 200): Response {
 
 test("a streamed definition read is served without cloning, signed or not", async () => {
   let document: Record<string, unknown> = {}
-  const { env, auth } = stage(() => streamed(document))
+  const { env, db, auth } = stage(() => streamed(document))
   const cookie = await signUp(env, "streamed@example.com")
   const reader = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
   if (!reader) throw new Error("no reader")
-  const read = () => call(env, "/api/host/v1/definitions/ops.approve_refund?orgId=x&environmentId=y", { headers: { cookie } })
+  db.run(`update "organization" set "metadata" = ? where "id" = ?`, [JSON.stringify({ environmentId: "analytics" }), reader.orgId])
+  const read = () => call(env, `/api/host/v1/definitions/ops.approve_refund?orgId=${reader.orgId}&environmentId=analytics`, { headers: { cookie } })
   document = { id: "ops.approve_refund", kind: "flow", signoff: { signer: `user:${reader.subjectId}`, signedAtMs: 1, restatementSha256: "a".repeat(64) } }
   const signed = await read()
   expect(signed.status).toBe(200)
@@ -212,4 +262,103 @@ test("a streamed definition read is served without cloning, signed or not", asyn
   const unsigned = await read()
   expect(unsigned.status).toBe(200)
   expect(await unsigned.json() as Record<string, unknown>).toEqual(document)
+})
+
+test("stale-tab writes carrying another workspace's scope are refused with 409 workspace.changed before reaching the host", async () => {
+  const { env, db, seen, auth } = stage(() => new Response(null, { status: 202 }))
+  const cookie = await signUp(env, "tabs@example.com")
+  const actor1 = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
+  if (!actor1) throw new Error("no actor")
+  const org1 = actor1.orgId
+  const org2 = "org_second_tab"
+  db.run(`update "organization" set "metadata" = ? where "id" = ?`, [JSON.stringify({ environmentId: "env_1" }), org1])
+  db.run(`insert into "organization" ("id", "name", "slug", "metadata", "createdAt") values (?, 'Second', 'second', ?, ?)`, [org2, JSON.stringify({ environmentId: "env_2" }), new Date().toISOString()])
+  db.run(`insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values ('m_tabs_2', ?, ?, 'owner', ?)`, [org2, actor1.subjectId, new Date().toISOString()])
+  // Tab B switches the session to org2.
+  db.run(`update "session" set "activeOrganizationId" = ? where "userId" = ?`, [org2, actor1.subjectId])
+
+  // Stale Tab A submits with org1 in x-norn-expected-org and query params -> 409 workspace.changed, never forwarded.
+  const staleHeaders = await call(env, `/api/host/v1/actions/canon.holding.adjust?orgId=${org1}&environmentId=env_1`, {
+    method: "POST",
+    headers: { cookie, origin: ORIGIN, "content-type": "application/json", [EXPECTED_ORG_HEADER]: org1, [EXPECTED_ENV_HEADER]: "env_1" },
+    body: JSON.stringify({ input: {}, idempotencyKey: "k1" }),
+  })
+  expect(staleHeaders.status).toBe(409)
+  expect(await staleHeaders.json()).toMatchObject({ code: "workspace.changed", message: WORKSPACE_CHANGED_MESSAGE })
+
+  // Omitting x-norn-expected-org on a cookie-authenticated write is refused 400 scope.required before reaching the host.
+  const missingOrg = await call(env, `/api/host/v1/actions/canon.holding.adjust?orgId=${org2}&environmentId=env_2`, {
+    method: "POST",
+    headers: { cookie, origin: ORIGIN, "content-type": "application/json" },
+    body: JSON.stringify({ input: {}, idempotencyKey: "k2" }),
+  })
+  expect(missingOrg.status).toBe(400)
+  expect(await missingOrg.json()).toMatchObject({ code: "scope.required" })
+
+  // Omitting x-norn-expected-env on a cell-backed /api/host write is also refused 400 scope.required.
+  const missingEnv = await call(env, `/api/host/v1/actions/canon.holding.adjust?orgId=${org2}&environmentId=env_2`, {
+    method: "POST",
+    headers: { cookie, origin: ORIGIN, "content-type": "application/json", [EXPECTED_ORG_HEADER]: org2 },
+    body: JSON.stringify({ input: {}, idempotencyKey: "k2b" }),
+  })
+  expect(missingEnv.status).toBe(400)
+  expect(await missingEnv.json()).toMatchObject({ code: "scope.required" })
+
+  // Matching org2 with a stale x-norn-expected-env (env_1 != env_2) is refused 409.
+  const staleEnv = await call(env, `/api/host/v1/actions/canon.holding.adjust?orgId=${org2}&environmentId=env_2`, {
+    method: "POST",
+    headers: { cookie, origin: ORIGIN, "content-type": "application/json", [EXPECTED_ORG_HEADER]: org2, [EXPECTED_ENV_HEADER]: "env_1" },
+    body: JSON.stringify({ input: {}, idempotencyKey: "k3" }),
+  })
+  expect(staleEnv.status).toBe(409)
+  expect(await staleEnv.json()).toMatchObject({ code: "workspace.changed" })
+
+  // Matching headers with a conflicting or duplicated query orgId/environmentId are refused 409 with zero host calls.
+  for (const query of [
+    `orgId=${org1}&environmentId=env_2`,
+    `orgId=${org2}&environmentId=env_1`,
+    `orgId=${org2}&orgId=${org1}&environmentId=env_2`,
+    `orgId=${org2}&environmentId=env_2&environmentId=env_1`,
+  ]) {
+    const res = await call(env, `/api/host/v1/actions/canon.holding.adjust?${query}`, {
+      method: "POST",
+      headers: { cookie, origin: ORIGIN, "content-type": "application/json", [EXPECTED_ORG_HEADER]: org2, [EXPECTED_ENV_HEADER]: "env_2" },
+      body: JSON.stringify({ input: {}, idempotencyKey: "k3b" }),
+    })
+    expect({ query, status: res.status }).toEqual({ query, status: 409 })
+    expect(await res.json()).toMatchObject({ code: "workspace.changed" })
+  }
+
+  // Other write endpoints (/api/questions/check, /api/sidekick/grant, /api/agent/dashboards/propose)
+  // require scope headers (400 when missing) and refuse stale scope headers (409).
+  const mcpEnv: Env = { ...env, STUDIO_MCP: "on" }
+  for (const path of ["/api/questions/check", "/api/sidekick/grant", "/api/agent/dashboards/propose"]) {
+    const missing = await call(mcpEnv, path, {
+      method: "POST",
+      headers: { cookie, origin: ORIGIN, "content-type": "application/json" },
+      body: "{}",
+    })
+    expect({ path, status: missing.status }).toEqual({ path, status: 400 })
+    expect(await missing.json()).toMatchObject({ code: "scope.required" })
+
+    const res = await call(mcpEnv, path, {
+      method: "POST",
+      headers: { cookie, origin: ORIGIN, "content-type": "application/json", [EXPECTED_ORG_HEADER]: org1, [EXPECTED_ENV_HEADER]: "env_1" },
+      body: "{}",
+    })
+    expect({ path, status: res.status }).toEqual({ path, status: 409 })
+  }
+  expect(seen).toHaveLength(0)
+
+  // A fresh write bound to org2 / env_2 goes through cleanly, and the Worker forwards the validated scope even when query params are omitted.
+  const fresh = await call(env, "/api/host/v1/actions/canon.holding.adjust", {
+    method: "POST",
+    headers: { cookie, origin: ORIGIN, "content-type": "application/json", [EXPECTED_ORG_HEADER]: org2, [EXPECTED_ENV_HEADER]: "env_2" },
+    body: JSON.stringify({ input: {}, idempotencyKey: "k4" }),
+  })
+  expect(fresh.status).toBe(202)
+  expect(seen).toHaveLength(1)
+  const forwardedUrl = new URL(seen[0]!.url)
+  expect(forwardedUrl.searchParams.get("orgId")).toBe(org2)
+  expect(forwardedUrl.searchParams.get("environmentId")).toBe("env_2")
 })

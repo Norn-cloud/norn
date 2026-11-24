@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { refreshMode } from "@/lib/live-transport"
+import { usePinnedScope } from "@/lib/session"
 import { KINDS, columnId, define, kindOf, loadDataset, loadRecords, upload, type Completed, type DatasetLoaded, type DefineColumn, type Kind } from "@/lib/uploads"
 
 /** One column's choices: kept or left out, part of the key, its kind, and whether its values add up. */
@@ -35,8 +36,10 @@ export function UploadCsv() {
   const [choices, setChoices] = useState<Readonly<Record<string, Choice>>>({})
   const [outcome, setOutcome] = useState<Outcome | null>(null)
   const client = useQueryClient()
+  // Pin the workspace scope when the upload dialog opens and carry it through upload -> define -> load.
+  const pinnedScope = usePinnedScope(open)
   const sent = useMutation({
-    mutationFn: (chosen: File) => upload(chosen),
+    mutationFn: (chosen: File) => upload(chosen, undefined, pinnedScope),
     onSuccess: ({ completed }) => setChoices(Object.fromEntries(completed.columns.map((column, index) => {
       const type = kindOf(column.inferred)
       return [columnId(column), { include: true, key: index === 0, type, measure: type === "decimal" && index !== 0 }]
@@ -53,8 +56,9 @@ export function UploadCsv() {
   const asDataset = useMutation({
     mutationFn: async () => {
       if (!sent.data || !completed) throw new Error("Upload a file first.")
-      const { objectType } = await define(sent.data.uploadId, typeName.trim(), key(), columns(), completed.sha256)
-      const loaded = await loadDataset(sent.data.uploadId, objectType)
+      const workflowScope = sent.data.scope
+      const { objectType } = await define(sent.data.uploadId, typeName.trim(), key(), columns(), completed.sha256, workflowScope)
+      const loaded = await loadDataset(sent.data.uploadId, objectType, workflowScope)
       return loaded === "no-engine" ? { kind: "no-engine", objectType } as const : { kind: "dataset", objectType, loaded } as const
     },
     onSuccess: async (result) => { setOutcome(result); await settle() },
@@ -62,7 +66,7 @@ export function UploadCsv() {
   const asRecords = useMutation({
     mutationFn: async () => {
       if (!sent.data || !completed) throw new Error("Upload a file first.")
-      const { objectType } = await loadRecords(sent.data.uploadId, typeName.trim(), key(), columns(), completed.sha256)
+      const { objectType } = await loadRecords(sent.data.uploadId, typeName.trim(), key(), columns(), completed.sha256, sent.data.scope)
       return { kind: "records", objectType } as const
     },
     onSuccess: async (result) => { setOutcome(result); await settle() },

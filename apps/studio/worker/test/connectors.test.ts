@@ -2,9 +2,10 @@ import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
+import { EXPECTED_ENV_HEADER, EXPECTED_ORG_HEADER, resolveActor } from "../actor.ts"
 import { createAuth, gatewaySubject } from "../auth.ts"
 import { connectors, PENDING_CREATE_LEASE_MS, type ConnectorDeps } from "../connectors.ts"
-import { canonicalJson, connectorVersion, manifestDigest, readDraft, runInput, toolManifest } from "../bindings.ts"
+import { adoptCell, abandonSave, canonicalJson, connectorVersion, getBinding, manifestDigest, readDraft, runInput, toolManifest } from "../bindings.ts"
 import { Gateway } from "../gateway.ts"
 import { cellScope, scopeQuery } from "../scope.ts"
 import worker, { type Env } from "../index.ts"
@@ -24,7 +25,10 @@ function d1(db: Database): D1Database {
   const statement = (sql: string, args: unknown[] = []) => ({
     sql, args,
     bind: (...next: unknown[]) => statement(sql, next),
-    all: async () => ({ results: db.query(sql).all(...(args as never[])) }),
+    all: async () => {
+      if (failures.next?.test(sql)) { failures.next = null; throw new Error("D1_ERROR: injected failure") }
+      return { results: db.query(sql).all(...(args as never[])) }
+    },
     run: async () => {
       if (failures.next?.test(sql)) { failures.next = null; throw new Error("D1_ERROR: injected failure") }
       db.query(sql).run(...(args as never[])); return { success: true }
@@ -43,6 +47,7 @@ function stage(gatewayClient = false) {
   db.exec(migration("0004_connector_binding_manifest.sql"))
   db.exec(migration("0005_connector_binding_definition.sql"))
   db.exec(migration("0006_connector_binding_state.sql"))
+  db.exec(migration("0014_connector_binding_attempt.sql"))
   const env: Env = {
     ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher,
     AUTH_DB: db as unknown as D1Database,
@@ -66,10 +71,22 @@ function stage(gatewayClient = false) {
   // `clock.offset` moves the connectors' clock forward, past the pending-create lease.
   const clock = { offset: 0 }
   const deps: ConnectorDeps = { db: d1(db), grant: async () => TOKEN, fetch: fetcher, host: standInHost(cell.host), now: () => Date.now() + clock.offset }
-  const send = async (path: string, init: RequestInit & { cookie?: string } = {}, overrides: Partial<ConnectorDeps> = {}, gateway: string | null = GATEWAY) => {
+  const send = async (path: string, init: RequestInit & { cookie?: string; omitScope?: boolean } = {}, overrides: Partial<ConnectorDeps> = {}, gateway: string | null = GATEWAY) => {
     const headers = new Headers(init.headers)
     if (init.cookie !== undefined) headers.set("cookie", init.cookie)
-    if (init.method !== undefined && init.method !== "GET") headers.set("origin", ORIGIN)
+    if (init.method !== undefined && init.method !== "GET") {
+      headers.set("origin", ORIGIN)
+      if (init.omitScope !== true && init.cookie !== undefined) {
+        const actor = await resolveActor(new Request(ORIGIN, { headers: { cookie: init.cookie } }), auth)
+        if (actor !== null) {
+          if (!headers.has(EXPECTED_ORG_HEADER)) headers.set(EXPECTED_ORG_HEADER, actor.orgId)
+          if (!headers.has(EXPECTED_ENV_HEADER)) {
+            const scope = await cellScope(auth, actor.orgId)
+            if (scope.environmentId !== null) headers.set(EXPECTED_ENV_HEADER, scope.environmentId)
+          }
+        }
+      }
+    }
     // A test that brings its own cell keeps the same stand-in PDP in front of it.
     const given = overrides.host as (Fetcher & { raw?: boolean }) | undefined
     const host = "host" in overrides ? (given === undefined ? undefined : given.raw === true ? given : standInHost(given)) : deps.host
@@ -91,7 +108,7 @@ function stage(gatewayClient = false) {
     if (environment) db.query(`UPDATE organization SET metadata = json_set(coalesce(metadata, '{}'), '$.environmentId', 'analytics') WHERE id = (SELECT organizationId FROM member WHERE userId = (SELECT id FROM user WHERE email = ?)) AND json_extract(coalesce(metadata, '{}'), '$.environmentId') IS NULL`).run(email)
     return response.headers.getSetCookie().map((line) => line.split(";")[0]).join("; ")
   }
-  return { send, signUp, calls, cell, clock, answer: (next: (request: Request) => Response) => { answer = next } }
+  return { send, signUp, calls, cell, clock, db, d1Db: deps.db, answer: (next: (request: Request) => Response) => { answer = next } }
 }
 
 const body = (method: string, value: unknown) => ({ method, headers: { "content-type": "application/json" }, body: JSON.stringify(value) })
@@ -394,7 +411,7 @@ test("a tool with no gateway version gets sha256- and the first 12 hex of its di
 
 test("the whole link round trip: state cookie, basic client auth, resource, introspection, then a linked grant", async () => {
   const db = new Database(":memory:")
-  for (const file of ["0001_better_auth.sql", "0002_workspace_provisioning.sql", "0003_connector_binding.sql", "0004_connector_binding_manifest.sql", "0005_connector_binding_definition.sql", "0006_connector_binding_state.sql"]) db.exec(migration(file))
+  for (const file of ["0001_better_auth.sql", "0002_workspace_provisioning.sql", "0003_connector_binding.sql", "0004_connector_binding_manifest.sql", "0005_connector_binding_definition.sql", "0006_connector_binding_state.sql", "0014_connector_binding_attempt.sql"]) db.exec(migration(file))
   const env: Env = { ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip", TOOL_GATEWAY_URL: GATEWAY, TOOL_GATEWAY_CLIENT_ID: "studio", TOOL_GATEWAY_CLIENT_SECRET: "s".repeat(32), NORN_HOST: standInHost(liveCell().host) }
   const jar = new Map<string, string>()
   const keep = (response: Response) => { for (const line of response.headers.getSetCookie()) { const [pair] = line.split(";"); const [name, ...rest] = (pair ?? "").split("="); if (name) jar.set(name, rest.join("=")) } return response }
@@ -426,7 +443,8 @@ test("the whole link round trip: state cookie, basic client auth, resource, intr
     return new Response("not found", { status: 404 })
   }) as typeof fetch
   try {
-    const link = await call("/api/connectors/link", { method: "POST" })
+    const orgId = (db.query("SELECT id FROM organization LIMIT 1").get() as { id: string }).id
+    const link = await call("/api/connectors/link", { method: "POST", headers: { [EXPECTED_ORG_HEADER]: orgId, [EXPECTED_ENV_HEADER]: "analytics" } })
     const state = new URL(((await link.json()) as { url: string }).url).searchParams.get("state") ?? ""
     const back = await call(`/api/auth/callback/executor?code=abc&state=${encodeURIComponent(state)}`)
     expect(back.status).toBe(302)
@@ -481,21 +499,42 @@ test("the cell scope is the organization's declared environment, or null", async
   expect(scopeQuery({ orgId: "org_demo", environmentId: "analytics" })).toBe("orgId=org_demo&environmentId=analytics")
 })
 
-/** A cell that keeps what it installs, answers reads of it, and can be taken down. */
+/** A cell that keeps what it installs (including retired definitions with `lifecycle: "retired"`), answers reads, and can be taken down. */
 function liveCell() {
-  const held = new Map<string, { version: number; payload: Record<string, unknown> }>()
+  const held = new Map<string, { version: number; lifecycle: "active" | "retired"; payload: Record<string, unknown> }>()
   const state = { down: false }
   const { host, seen } = cellHost((path, body) => {
     if (state.down) throw new TypeError("connect refused")
     const read = /^\/v1\/definitions\/([^:/]+)$/.exec(path)
     if (read !== null) {
       const definition = held.get(decodeURIComponent(read[1] ?? ""))
-      return definition === undefined ? Response.json({ code: "definition.not_found" }, { status: 404 }) : Response.json({ id: read[1], version: definition.version, payload: definition.payload })
+      return definition === undefined
+        ? Response.json({ code: "definition.not_found" }, { status: 404 })
+        : Response.json({ id: read[1], version: definition.version, lifecycle: definition.lifecycle, payload: definition.payload })
+    }
+    const retire = /^\/v1\/definitions\/([^:/]+):retire$/.exec(path)
+    if (retire !== null) {
+      const id = decodeURIComponent(retire[1] ?? "")
+      const current = held.get(id)
+      if (current === undefined) return Response.json({ code: "definition.not_found" }, { status: 404 })
+      if (typeof body.expectedVersion === "number" && body.expectedVersion !== current.version) {
+        return Response.json({ code: "definition.version_conflict" }, { status: 409 })
+      }
+      if (current.lifecycle === "retired") {
+        return Response.json({ code: "definition.refused", diagnostics: [{ code: "definition.already_retired", severity: "error", message: "the definition is already retired" }] }, { status: 422 })
+      }
+      const nextVersion = current.version + 1
+      held.set(id, { ...current, version: nextVersion, lifecycle: "retired" })
+      return Response.json({ installed: true, id, version: nextVersion, receipt: {} })
     }
     if (path === "/v1/definitions:install") {
       const id = String(body.id)
-      const version = (held.get(id)?.version ?? 0) + 1
-      held.set(id, { version, payload: body.payload as Record<string, unknown> })
+      const current = held.get(id)
+      if (typeof body.expectedVersion === "number" && (current?.version ?? 0) !== body.expectedVersion) {
+        return Response.json({ code: "definition.version_conflict" }, { status: 409 })
+      }
+      const version = (current?.version ?? 0) + 1
+      held.set(id, { version, lifecycle: "active", payload: body.payload as Record<string, unknown> })
       return Response.json({ installed: true, id, version, receipt: {} })
     }
     return Response.json({ installed: true, id: "x", version: 1, receipt: {} })
@@ -503,28 +542,34 @@ function liveCell() {
   return { host, seen, held, state }
 }
 
-test("a save never ends half-done: each failure point is settled against the cell", async () => {
+test("a save never ends half-done: each failure point is settled via scoped POST /bindings:reconcile (GET stays read-only)", async () => {
   const { send, signUp, clock } = stage()
   const owner = await signUp("ada@example.com")
   const cell = liveCell()
-  const list = async () => (await send("/bindings", { cookie: owner }, { host: cell.host })).body.bindings as (Binding & { label: string })[]
+  const readOnlyList = async () => (await send("/bindings", { cookie: owner }, { host: cell.host })).body.bindings as (Binding & { label: string })[]
+  const list = async () => (await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: cell.host })).body.bindings as (Binding & { label: string })[]
   type Binding = { id: string; state: string; definition: { id: string; version: number } | null }
 
   // 1. Create: the cell installs it, then writing the result locally fails. The row is left
-  //    "creating"; the next read adopts the cell's definition.
+  //    "creating"; GET /bindings never mutates DB, while POST /bindings:reconcile adopts the cell's definition.
   failures.next = /^UPDATE connector_binding SET label/
   const failed = await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "One" }), cookie: owner }, { host: cell.host })
   expect(failed).toMatchObject({ status: 500, body: { code: "connectors.internal" } })
   // Within its lease the create may still be installing elsewhere, so it is left alone.
   expect((await list())[0]).toMatchObject({ label: "One", state: "pending" })
   clock.offset += PENDING_CREATE_LEASE_MS + 1
+  // GET /bindings stays read-only even after lease expiry; POST /bindings:reconcile settles it.
+  expect((await readOnlyList())[0]).toMatchObject({ label: "One", state: "pending" })
   const [one] = await list()
   expect(one).toMatchObject({ label: "One", state: "ready", definition: { version: 1 } })
   expect(cell.held.size).toBe(1)
 
-  // 2. Edit: the cell installs version 2, then the local write fails. The read adopts version 2 and its fields.
+  // 2. Edit: the cell installs version 2, then the local write fails. During its lease the edit
+  //    stays pending (never adopted prematurely before finishSave); once its lease expires, reconcile adopts v2.
   failures.next = /^UPDATE connector_binding SET label/
   expect((await send(`/bindings/${one?.id}`, { ...body("PATCH", { label: "One, edited" }), cookie: owner }, { host: cell.host })).status).toBe(500)
+  expect((await list())[0]).toMatchObject({ label: "One", state: "pending", definition: { version: 1 } })
+  clock.offset += PENDING_CREATE_LEASE_MS + 1
   expect((await list())[0]).toMatchObject({ label: "One, edited", state: "ready", definition: { version: 2 } })
 
   // 3. Create while the cell is down: the outcome is unknown, so the row stays "creating" and
@@ -543,11 +588,13 @@ test("a save never ends half-done: each failure point is settled against the cel
   clock.offset += PENDING_CREATE_LEASE_MS + 1
   expect((await list()).map((b) => b.label)).toEqual(["One, edited"])
 
-  // 4. Edit while the cell is down, which never received it: once the cell answers, the edit is
-  //    undone and the binding is back as it was (version 2, its label).
+  // 4. Edit while the cell is down, which never received it: fenced during its lease (never
+  //    abandoned prematurely while an install may still be in flight), then undone once the lease expires.
   cell.state.down = true
   await send(`/bindings/${one?.id}`, { ...body("PATCH", { label: "Lost edit" }), cookie: owner }, { host: cell.host })
   cell.state.down = false
+  expect((await list())[0]).toMatchObject({ label: "One, edited", state: "pending", definition: { version: 2 } })
+  clock.offset += PENDING_CREATE_LEASE_MS + 1
   expect((await list())[0]).toMatchObject({ label: "One, edited", state: "ready", definition: { version: 2 } })
 
   // 5. Create refused by the cell: the intent is undone at once, nothing is left.
@@ -564,7 +611,7 @@ test("a create still installing is never reconciled away by another read", async
   let release: () => void = () => {}
   const gate = new Promise<void>((resolve) => { release = resolve })
   const slow = { fetch: async (request: Request) => { if (new URL(request.url).pathname === "/v1/definitions:install") await gate; return cell.host.fetch(request) } } as unknown as Fetcher
-  const list = async () => (await send("/bindings", { cookie: owner }, { host: cell.host })).body.bindings as { label: string; state: string; definition: { version: number } | null }[]
+  const list = async () => (await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: cell.host })).body.bindings as { label: string; state: string; definition: { version: number } | null }[]
 
   const saving = send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "Slow" }), cookie: owner }, { host: slow })
   // Another page loads Connections mid-install: the row is shown pending, not deleted.
@@ -664,4 +711,226 @@ test("a binding kept only in Studio cannot run: who may run it is the cell's to 
   const local = (await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", inputMapping: { repo: { fixed: "norn" } } }), cookie: owner }, { host: noKind.host })).body.binding as { id: string; definition: unknown }
   expect(local.definition).toBeNull()
   expect((await send(`/bindings/${local.id}/run`, { ...body("POST", { input: {} }), cookie: owner }, { host: noKind.host })).body.code).toBe("connectors.binding_not_in_cell")
+})
+
+test("connector mutations require x-norn-expected-org and x-norn-expected-env and refuse mismatched workspaces before reaching gateway or cell", async () => {
+  const { send, signUp, calls } = stage()
+  const owner = await signUp("scope-conn@example.com")
+  const before = calls.length
+  const missing = await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner, omitScope: true })
+  expect(missing).toMatchObject({ status: 400, body: { code: "scope.required" } })
+  const staleOrg = await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner, headers: { "content-type": "application/json", [EXPECTED_ORG_HEADER]: "org_other", [EXPECTED_ENV_HEADER]: "analytics" } })
+  expect(staleOrg).toMatchObject({ status: 409, body: { code: "workspace.changed" } })
+  const staleEnv = await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner, headers: { "content-type": "application/json", [EXPECTED_ENV_HEADER]: "wrong_env" } })
+  expect(staleEnv).toMatchObject({ status: 409, body: { code: "workspace.changed" } })
+  expect(calls.length).toBe(before)
+})
+
+test("POST /bindings:reconcile requires connector.bind (admin/owner) and stale reconciliation snapshots never overwrite a newer save", async () => {
+  const { send, signUp, cell, clock, db, d1Db } = stage()
+  const owner = await signUp("reconcile-owner@example.com")
+  const member = await signUp("reconcile-member@example.com", "member", "reconcile-owner@example.com")
+  const viewer = await signUp("reconcile-viewer@example.com", "viewer", "reconcile-owner@example.com")
+
+  // Non-admins cannot run reconciliation writes.
+  expect(await send("/bindings:reconcile", { method: "POST", cookie: member }, { host: cell.host })).toMatchObject({ status: 403, body: { code: "connectors.forbidden" } })
+  expect(await send("/bindings:reconcile", { method: "POST", cookie: viewer }, { host: cell.host })).toMatchObject({ status: 403, body: { code: "connectors.forbidden" } })
+
+  // Create a binding (v1), then simulate a failed local finishSave on edit so it is pending with attempt A1.
+  const created = (await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "Initial" }), cookie: owner }, { host: cell.host })).body.binding as { id: string }
+  failures.next = /^UPDATE connector_binding SET label/
+  expect((await send(`/bindings/${created.id}`, { ...body("PATCH", { label: "Edit v2" }), cookie: owner }, { host: cell.host })).status).toBe(500)
+
+  // Calling /run on a pending binding refuses immediately without triggering reconciliation.
+  const runPending = await send(`/bindings/${created.id}/run`, { ...body("POST", { input: {} }), cookie: owner }, { host: cell.host })
+  expect(runPending.body.code).toBe("connectors.binding_pending")
+  const orgId = (db.query("SELECT org_id FROM connector_binding WHERE id = ?").get(created.id) as { org_id: string }).org_id
+  const pendingRow = await getBinding(d1Db, orgId, created.id)
+  expect(pendingRow?.state).toBe("pending")
+  const staleAttempt = pendingRow?.pendingAttempt ?? null
+  expect(staleAttempt).toBeString()
+
+  // Admin reconciles it to v2 cleanly once its lease expires (fenced during lease).
+  clock.offset += PENDING_CREATE_LEASE_MS + 1
+  const reconciled = await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: cell.host })
+  expect(reconciled.status).toBe(200)
+  expect((reconciled.body.bindings as { label: string; state: string; definition: { version: number } }[])[0]).toMatchObject({ label: "Edit v2", state: "ready", definition: { version: 2 } })
+
+  // A stale reconciliation snapshot referencing the old attempt/version CANNOT overwrite or abandon the newer ready save.
+  const staleAdopt = await adoptCell(d1Db, orgId, created.id, `studio.binding.${created.id}`, 1, { label: "Stale v1" }, staleAttempt, 1)
+  expect(staleAdopt).toBe(false)
+  const staleAbandon = await abandonSave(d1Db, orgId, created.id, "edit", { id: `studio.binding.${created.id}`, version: 1 }, staleAttempt)
+  expect(staleAbandon).toBe("unchanged")
+  const current = await getBinding(d1Db, orgId, created.id)
+  expect(current).toMatchObject({ label: "Edit v2", state: "ready", definition: { version: 2 } })
+})
+
+test("R3-3/R3-4/R3-8: edit lease fencing, finishSave conflict detection, scoped connector GETs, and read-only GET token handling", async () => {
+  const { send, signUp, cell, clock, db } = stage(true)
+  const owner = await signUp("r3-owner@example.com")
+
+  // 1. R3-4: Connector GETs carrying a stale expected-org or expected-env header refuse 409 workspace.changed.
+  expect(await send("/bindings", { cookie: owner, headers: { [EXPECTED_ORG_HEADER]: "org_wrong", [EXPECTED_ENV_HEADER]: "analytics" } })).toMatchObject({ status: 409, body: { code: "workspace.changed" } })
+  expect(await send("/inventory", { cookie: owner, headers: { [EXPECTED_ENV_HEADER]: "wrong_env" } })).toMatchObject({ status: 409, body: { code: "workspace.changed" } })
+
+  // 2. R3-3: An in-flight edit is fenced against premature abandon during its lease, and if an edit's
+  //    attempt was abandoned after lease expiry before finishSave runs, PATCH returns 409 binding_conflict (never stale 200).
+  const created = (await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "Original", inputMapping: { repo: { fixed: "safe" } } }), cookie: owner }, { host: cell.host })).body.binding as { id: string }
+  let releaseEdit: () => void = () => {}
+  const editGate = new Promise<void>((resolve) => { releaseEdit = resolve })
+  const slowEdit = { fetch: async (request: Request) => { if (new URL(request.url).pathname === "/v1/definitions:install") await editGate; return cell.host.fetch(request) } } as unknown as Fetcher
+  const editing = send(`/bindings/${created.id}`, { ...body("PATCH", { label: "Updated", inputMapping: { repo: { fixed: "new-safe" } } }), cookie: owner }, { host: slowEdit })
+  // Wait for beginEdit to mark the row pending.
+  for (let i = 0; i < 100; i++) {
+    const row = db.query("SELECT state FROM connector_binding WHERE id = ?").get(created.id) as { state: string } | null
+    if (row?.state === "editing") break
+    await Bun.sleep(10)
+  }
+  // Reconcile while lease is active MUST keep the edit pending (fenced).
+  const midReconcile = await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: cell.host })
+  expect((midReconcile.body.bindings as { state: string }[])[0]?.state).toBe("pending")
+  // Expire the lease and reconcile -> abandons the pending edit back to ready v1.
+  clock.offset += PENDING_CREATE_LEASE_MS + 1
+  const expiredReconcile = await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: cell.host })
+  expect((expiredReconcile.body.bindings as { state: string; label: string }[])[0]).toMatchObject({ state: "ready", label: "Original" })
+  // Now the slow cell install finishes and finishSave runs: it MUST fail 409 binding_conflict
+  // AND immediately sync D1 to the cell's committed v2 so D1 and the cell never disagree (R5-5)!
+  releaseEdit()
+  const stalePatch = await editing
+  expect(stalePatch).toMatchObject({ status: 409, body: { code: "connectors.binding_conflict" } })
+  const syncedAfterLateEdit = await send("/bindings", { cookie: owner }, { host: cell.host })
+  expect((syncedAfterLateEdit.body.bindings as { label: string; state: string; inputMapping: unknown; definition: { version: number } }[])[0]).toMatchObject({
+    label: "Updated",
+    state: "ready",
+    inputMapping: { repo: { fixed: "new-safe" } },
+    definition: { version: 2 },
+  })
+
+  // R5-5a: A late create whose lease expired and got abandoned by reconcile MUST retire its orphaned
+  // definition in the cell upon late commit and return 409 binding_conflict (zero orphaned definitions).
+  let releaseCreate: () => void = () => {}
+  const createGate = new Promise<void>((resolve) => { releaseCreate = resolve })
+  const slowCreate = { fetch: async (request: Request) => { if (new URL(request.url).pathname === "/v1/definitions:install") await createGate; return cell.host.fetch(request) } } as unknown as Fetcher
+  const creating = send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "LateCreate" }), cookie: owner }, { host: slowCreate })
+  for (let i = 0; i < 100; i++) {
+    const row = db.query("SELECT id FROM connector_binding WHERE label = 'LateCreate'").get() as { id: string } | null
+    if (row !== null) break
+    await Bun.sleep(10)
+  }
+  const lateCreateId = (db.query("SELECT id FROM connector_binding WHERE label = 'LateCreate'").get() as { id: string }).id
+  clock.offset += PENDING_CREATE_LEASE_MS + 1
+  await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: cell.host })
+  expect(db.query("SELECT id FROM connector_binding WHERE id = ?").get(lateCreateId)).toBeNull()
+  releaseCreate()
+  expect(await creating).toMatchObject({ status: 409, body: { code: "connectors.binding_conflict" } })
+  expect(cell.held.get(`studio.binding.${lateCreateId}`)?.lifecycle).toBe("retired")
+  expect(db.query("SELECT definition_id FROM connector_binding_orphan WHERE binding_id = ?").get(lateCreateId)).toBeNull()
+
+  // R6-2: If a create commits in the cell and reconciliation ADOPTS it before the original response
+  // returns, finishSave sees the adopted row and returns 200 WITHOUT retiring the adopted definition!
+  let releaseAdoptedResponse: () => void = () => {}
+  const responseGate = new Promise<void>((resolve) => { releaseAdoptedResponse = resolve })
+  const slowResponseCreate = {
+    fetch: async (request: Request) => {
+      const response = await cell.host.fetch(request)
+      if (new URL(request.url).pathname === "/v1/definitions:install") await responseGate
+      return response
+    },
+  } as unknown as Fetcher
+  const creatingAdopted = send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "AdoptedCreate" }), cookie: owner }, { host: slowResponseCreate })
+  let adoptedId = ""
+  for (let i = 0; i < 100; i++) {
+    const row = db.query("SELECT id FROM connector_binding WHERE label = 'AdoptedCreate'").get() as { id: string } | null
+    if (row !== null && cell.held.has(`studio.binding.${row.id}`)) { adoptedId = row.id; break }
+    await Bun.sleep(10)
+  }
+  expect(adoptedId).not.toBe("")
+  clock.offset += PENDING_CREATE_LEASE_MS + 1
+  const adoptedList = await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: cell.host })
+  expect((adoptedList.body.bindings as { id: string; state: string; definition: { version: number } }[]).find((b) => b.id === adoptedId)).toMatchObject({ state: "ready", definition: { version: 1 } })
+  releaseAdoptedResponse()
+  expect(await creatingAdopted).toMatchObject({ status: 200, body: { binding: { id: adoptedId, state: "ready", definition: { version: 1 } } } })
+  expect(cell.held.has(`studio.binding.${adoptedId}`)).toBe(true)
+
+  // R7-1: Lost-response create (Worker gets timeout/503, reconcile abandons row after lease while
+  // recording a durable tombstone, THEN cell commits v1 late with no Worker response handler alive):
+  // subsequent POST /bindings:reconcile discovers the tombstone, retires the late cell commit, and clears it!
+  cell.state.down = true
+  const lostCreate = await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "LostResponseCreate" }), cookie: owner }, { host: cell.host })
+  expect(lostCreate).toMatchObject({ status: 503, body: { code: "connectors.cell_unavailable" } })
+  const lostRow = db.query("SELECT id FROM connector_binding WHERE label = 'LostResponseCreate'").get() as { id: string }
+  const lostDefId = `studio.binding.${lostRow.id}`
+  cell.state.down = false
+  clock.offset += PENDING_CREATE_LEASE_MS + 1
+  await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: cell.host })
+  expect(db.query("SELECT id FROM connector_binding WHERE id = ?").get(lostRow.id)).toBeNull()
+  expect(db.query("SELECT definition_id FROM connector_binding_orphan WHERE binding_id = ?").get(lostRow.id)).toEqual({ definition_id: lostDefId })
+  // Simulate the cell committing the lost-response install AFTER reconcile already deleted the binding row.
+  cell.held.set(lostDefId, { version: 1, lifecycle: "active", payload: { label: "LostResponseCreate", runRole: "member" } })
+  // R8-1: If the retire route answers 404 route.not_found (`local`), the tombstone MUST NOT be cleared!
+  const missingRetireHost = {
+    fetch: async (request: Request) => {
+      if (new URL(request.url).pathname.endsWith(":retire")) return Response.json({ code: "route.not_found" }, { status: 404 })
+      return cell.host.fetch(request)
+    },
+  } as unknown as Fetcher
+  await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: missingRetireHost })
+  expect(cell.held.get(lostDefId)?.lifecycle).toBe("active")
+  expect(db.query("SELECT definition_id FROM connector_binding_orphan WHERE binding_id = ?").get(lostRow.id)).toEqual({ definition_id: lostDefId })
+  // R8-2: If retirement commits in the cell (leaving `lifecycle: "retired"` retained) AND its
+  // response is lost, the next reconcile reads `lifecycle: "retired"` and clears the tombstone
+  // with ZERO further `:retire` calls!
+  const lostRetireResponseHost = {
+    fetch: async (request: Request) => {
+      const response = await cell.host.fetch(request)
+      if (new URL(request.url).pathname.endsWith(":retire")) throw new TypeError("connection reset after commit")
+      return response
+    },
+  } as unknown as Fetcher
+  await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: lostRetireResponseHost })
+  expect(cell.held.get(lostDefId)?.lifecycle).toBe("retired")
+  expect(db.query("SELECT definition_id FROM connector_binding_orphan WHERE binding_id = ?").get(lostRow.id)).toEqual({ definition_id: lostDefId })
+  const retireCountBefore = cell.seen.filter((r) => r.path.endsWith(":retire")).length
+  await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: cell.host })
+  expect(cell.seen.filter((r) => r.path.endsWith(":retire")).length).toBe(retireCountBefore)
+  expect(db.query("SELECT definition_id FROM connector_binding_orphan WHERE binding_id = ?").get(lostRow.id)).toBeNull()
+
+  // R5-5b: Even if a hard isolate crash leaves D1 behind the cell's committed version, POST /bindings/:id/run
+  // fails closed with 409 connectors.binding_conflict, and POST /bindings:reconcile heals D1 forward to v2!
+  db.query("UPDATE connector_binding SET definition_version = 1 WHERE id = ?").run(created.id)
+  const mismatchedRun = await send(`/bindings/${created.id}/run`, { ...body("POST", { input: {} }), cookie: owner }, { host: cell.host })
+  expect(mismatchedRun).toMatchObject({ status: 409, body: { code: "connectors.binding_conflict" } })
+  const healed = await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: cell.host })
+  expect((healed.body.bindings as { id: string; definition: { version: number } }[]).find((b) => b.id === created.id)).toMatchObject({ definition: { version: 2 } })
+
+  // 3. R3-8: GET /status and GET /inventory NEVER refresh or mutate an expired gateway token; POST /refresh does.
+  const userId = (db.query("SELECT id FROM user WHERE email = 'r3-owner@example.com'").get() as { id: string }).id
+  const nowIso = new Date().toISOString()
+  const expiredIso = new Date(Date.now() - 60_000).toISOString()
+  db.query(`INSERT INTO account (id, accountId, providerId, userId, accessToken, refreshToken, accessTokenExpiresAt, createdAt, updatedAt) VALUES ('acc_exp', 'gw_sub_1', 'executor', ?, 'expired_tok', 'refresh_tok', ?, ?, ?)`).run(userId, expiredIso, nowIso, nowIso)
+  const realFetch = globalThis.fetch
+  let refreshCalls = 0
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : String(input))
+    if (url.origin === new URL(GATEWAY).origin && url.pathname === "/api/auth/oauth2/token") {
+      refreshCalls += 1
+      return Response.json({ access_token: "fresh_gateway_tok", refresh_token: "fresh_refresh_tok", token_type: "Bearer", expires_in: 3600 })
+    }
+    return realFetch(input, init)
+  }) as typeof fetch
+  try {
+    const statusRes = await send("/status", { cookie: owner }, { grant: undefined })
+    expect(statusRes).toMatchObject({ status: 200, body: { gateway: GATEWAY, linked: true, refreshRequired: true } })
+    const invRes = await send("/inventory", { cookie: owner }, { grant: undefined })
+    expect(invRes).toMatchObject({ status: 401, body: { code: "connectors.refresh_required" } })
+    expect(refreshCalls).toBe(0)
+    expect((db.query("SELECT accessToken FROM account WHERE id = 'acc_exp'").get() as { accessToken: string }).accessToken).toBe("expired_tok")
+    // POST /refresh (origin + scope checked) performs the refresh; GET /status no longer reports refreshRequired.
+    const refreshRes = await send("/refresh", { method: "POST", cookie: owner }, { grant: undefined })
+    expect(refreshRes).toMatchObject({ status: 200, body: { gateway: GATEWAY, linked: true } })
+    expect(refreshCalls).toBe(1)
+    expect((await send("/status", { cookie: owner }, { grant: undefined })).body).toEqual({ gateway: GATEWAY, linked: true })
+  } finally {
+    globalThis.fetch = realFetch
+  }
 })
