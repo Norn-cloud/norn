@@ -494,24 +494,20 @@ fn real_time_and_org_packs_pass_law_example_sqlite_runtime_parity() -> Result<()
 fn real_canon_pack_runs_static_gap_and_mbt_cleanly() -> Result<(), String> {
     let canon_pack = load_registry_pack("canon", &["canon"], true)?;
     let gaps = analyze_static_gaps(&canon_pack);
-    let canon_defects: Vec<_> = gaps
-        .defects()
-        .into_iter()
-        .filter(|gap| match gap {
-            StructuralGap::DeadEndNonTerminalState { object_type, .. }
-            | StructuralGap::UnreachableState { object_type, .. }
-            | StructuralGap::OrphanField { object_type, .. }
-            | StructuralGap::ImmutableFinancialMissingReversal { object_type, .. }
-            | StructuralGap::TransitionWithoutAction { object_type, .. } => {
-                object_type.starts_with("canon.")
-            }
-            StructuralGap::HighImpactActionMissingSod { action_id, .. } => {
-                action_id.starts_with("canon.")
-            }
-        })
-        .collect();
+    let has_canon_defect = gaps.defects().into_iter().any(|gap| match gap {
+        StructuralGap::DeadEndNonTerminalState { object_type, .. }
+        | StructuralGap::UnreachableState { object_type, .. }
+        | StructuralGap::OrphanField { object_type, .. }
+        | StructuralGap::ImmutableFinancialMissingReversal { object_type, .. }
+        | StructuralGap::TransitionWithoutAction { object_type, .. } => {
+            object_type.starts_with("canon.")
+        }
+        StructuralGap::HighImpactActionMissingSod { action_id, .. } => {
+            action_id.starts_with("canon.")
+        }
+    });
     assert!(
-        canon_defects.is_empty(),
+        !has_canon_defect,
         "canon.* entities should have no structural defects:\n{gaps}"
     );
     // Static Gap Detector genuinely flags real core.analytics.Restatement gaps.
