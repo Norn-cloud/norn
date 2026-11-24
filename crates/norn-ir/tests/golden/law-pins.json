@@ -25,5 +25,5 @@
   "registry/packs/org/artifacts/org.OrgUnit.kind_is_organization.law.json#/payload": "sha256:6080d2c140f5ba403474e4290209fe11ea6896305387cfd18b389505f5425df7",
   "registry/packs/time/artifacts/time.Calendar.tzdb_version_pinned.law.json#/payload": "sha256:a880f79483b00fbaa61d9e63a171703fd24e6b74e5f383159d1a15e8c8007a1d",
   "registry/packs/time/artifacts/time.MaterializedWindow.resolved_matches_bounds.law.json#/payload": "sha256:fb478c7ee0005cff5b68bf6c10cc628cbfe75e12ded2d7bab55a5634fdf1a36f",
-  "registry/packs/time/artifacts/time.WorkingWindow.valid_local_window.law.json#/payload": "sha256:52fb226a2cb7eadcb8b445a193885a67da44144d05b9e1463b02b8fe19a41fc9"
+  "registry/packs/time/artifacts/time.WorkingWindow.valid_local_window.law.json#/payload": "sha256:0c7dd30cba684ca8eb0416de366f14954e0303b647fc57497c761c75731273c2"
 }
