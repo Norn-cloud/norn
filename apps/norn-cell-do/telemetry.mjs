@@ -24,7 +24,7 @@ const MAX_REFUSAL_TEXT = 8192;
 const REFUSAL_CODES = new Set(Object.entries({
   action:
     "aggregate_bound_exceeded aggregate_bytes_exceeded aggregate_stale_read aggregate_unavailable " +
-    "authorized_binding_mismatch blank_field conflict derivation_failed duplicate_precondition " +
+    "approved_intent_changed authorized_binding_mismatch blank_field conflict derivation_failed duplicate_precondition " +
     "expression_budget_exceeded id_too_long idempotency_conflict idempotency_key_too_long " +
     "idempotency_without_receipt input_bound_exceeded invalid_input invalid_transition_identity " +
     "legacy_receipt logical_time_rollback missing_precondition missing_scope owner_version_conflict " +

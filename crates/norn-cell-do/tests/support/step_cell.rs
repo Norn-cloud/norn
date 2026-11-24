@@ -7,11 +7,6 @@
     unused_imports,
     reason = "each test target uses part of the shared cell"
 )]
-#![allow(
-    clippy::unwrap_used,
-    clippy::indexing_slicing,
-    reason = "fixture setup fails loudly; it never runs outside tests"
-)]
 use std::collections::BTreeMap;
 use std::sync::Arc;
 

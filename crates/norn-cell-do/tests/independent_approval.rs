@@ -4,6 +4,11 @@
 //! decided again when its retry commits.
 
 #[path = "support/step_cell.rs"]
+#[allow(
+    clippy::unwrap_used,
+    clippy::indexing_slicing,
+    reason = "the shared step cell's fixture setup unwraps"
+)]
 mod step_cell;
 
 use std::error::Error;
