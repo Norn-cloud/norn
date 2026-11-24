@@ -2097,19 +2097,18 @@ fn time_window_materialize_sub_decision_executes_and_refuses_dst_anomalies() {
             "dst_policy": policy
         }))
         .unwrap_err();
-        match err {
-            DecisionError::Strict {
-                site: StrictSite::DecisionTableOutput,
-                message,
-                ..
-            } => assert!(
-                message.to_lowercase().contains("gap"),
-                "expected DST gap message for {policy}, got: {message}"
-            ),
-            other => {
-                panic!("expected strict table output refusal for gap ({policy}), got {other:?}")
-            }
-        }
+        let DecisionError::Strict {
+            site: StrictSite::DecisionTableOutput,
+            message,
+            ..
+        } = &err
+        else {
+            panic!("expected strict table output refusal for gap ({policy}), got {err:?}");
+        };
+        assert!(
+            message.to_lowercase().contains("gap"),
+            "expected DST gap message for {policy}, got: {message}"
+        );
     }
 
     // DST fall-back fold (2026-11-01T01:30:00 in America/New_York) refuses under "reject".
@@ -2120,17 +2119,18 @@ fn time_window_materialize_sub_decision_executes_and_refuses_dst_anomalies() {
         "dst_policy": "reject"
     }))
     .unwrap_err();
-    match fold_err {
-        DecisionError::Strict {
-            site: StrictSite::DecisionTableOutput,
-            message,
-            ..
-        } => assert!(
-            message.to_lowercase().contains("ambiguous"),
-            "expected DST fold ambiguity message, got: {message}"
-        ),
-        other => panic!("expected strict table output refusal for fold reject, got {other:?}"),
-    }
+    let DecisionError::Strict {
+        site: StrictSite::DecisionTableOutput,
+        message,
+        ..
+    } = &fold_err
+    else {
+        panic!("expected strict table output refusal for fold reject, got {fold_err:?}");
+    };
+    assert!(
+        message.to_lowercase().contains("ambiguous"),
+        "expected DST fold ambiguity message, got: {message}"
+    );
 
     // Same DST fold resolves deterministically under "earlier" (UTC-4 -> 05:30Z, 9h) and "later" (UTC-5 -> 06:30Z, 8h).
     for (policy, expected_start, expected_duration) in [
