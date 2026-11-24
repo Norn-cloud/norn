@@ -136,7 +136,11 @@ pub(super) fn batch(schema: &SchemaRef, arrays: Vec<ArrayRef>) -> Outcome<Record
 
 /// Write `batches` as one zstd Parquet file at `path`, created exclusively,
 /// its footer finished and its bytes on disk before this returns.
-pub(super) fn write_parquet(path: &Path, schema: &SchemaRef, batches: &[RecordBatch]) -> Outcome<()> {
+pub(super) fn write_parquet(
+    path: &Path,
+    schema: &SchemaRef,
+    batches: &[RecordBatch],
+) -> Outcome<()> {
     let file = super::catalog::create_new(path)?;
     let properties = WriterProperties::builder()
         .set_compression(Compression::ZSTD(ZstdLevel::default()))
@@ -150,7 +154,8 @@ pub(super) fn write_parquet(path: &Path, schema: &SchemaRef, batches: &[RecordBa
         writer.into_inner()
     })();
     let file = written.map_err(|error| engine_error(error.to_string()))?;
-    file.sync_all().map_err(|error| engine_error(error.to_string()))
+    file.sync_all()
+        .map_err(|error| engine_error(error.to_string()))
 }
 
 /// A column of a scanned batch by name.
@@ -227,18 +232,18 @@ pub(super) fn system<T>(
     read: impl Fn(&dyn Array, usize) -> Option<T>,
 ) -> Outcome<Vec<Option<T>>> {
     let array = named(batch, name)?;
-    Ok((0..batch.num_rows()).map(|row| read(array.as_ref(), row)).collect())
+    Ok((0..batch.num_rows())
+        .map(|row| read(array.as_ref(), row))
+        .collect())
 }
 
 /// The cells of one stored column of a batch.
 pub(super) fn column_cells(batch: &RecordBatch, column: &Column) -> Outcome<Vec<Cell>> {
     let array = named(batch, &column.id)?;
     let rows = batch.num_rows();
-    let mismatch = || {
-        EngineRefusal {
-            code: super::STALE.to_owned(),
-            detail: format!("{} is not stored as its kind", column.id),
-        }
+    let mismatch = || EngineRefusal {
+        code: super::STALE.to_owned(),
+        detail: format!("{} is not stored as its kind", column.id),
     };
     match column.kind {
         ColumnKind::Integer | ColumnKind::Decimal { .. } => {

@@ -159,7 +159,12 @@ impl Typed<'_> {
     }
 
     /// The exact order of two numeric operands.
-    fn order(&self, a: &RowPredicate, b: &RowPredicate, cells: &[Cell]) -> Option<std::cmp::Ordering> {
+    fn order(
+        &self,
+        a: &RowPredicate,
+        b: &RowPredicate,
+        cells: &[Cell],
+    ) -> Option<std::cmp::Ordering> {
         self.numbers(a, b, cells)
             .map(|(left, right)| left.compare(right))
     }
@@ -346,7 +351,11 @@ pub(super) struct Checked {
 }
 
 /// MANIFEST-LAWS-1 / LAW-04: check every rule over `rows` in one pass.
-pub(super) fn check_rules(table: &TableSchema, checks: &[RuleCheck], rows: &[TypedRow]) -> Outcome<Checked> {
+pub(super) fn check_rules(
+    table: &TableSchema,
+    checks: &[RuleCheck],
+    rows: &[TypedRow],
+) -> Outcome<Checked> {
     let mut checked = Checked {
         residue: BTreeMap::new(),
         findings: Vec::new(),
@@ -364,19 +373,16 @@ pub(super) fn check_rules(table: &TableSchema, checks: &[RuleCheck], rows: &[Typ
         // S2: a row whose rules may cost more fuel than a row is given is
         // left to the per-row evaluator for every rule.
         let over = lowered
-            && typed
-                .iter()
-                .fold(0_u128, |total, check| {
-                    let mut fuel = u128::from(check.rule.fuel);
-                    if let Some(predicate) = check.predicate {
-                        fuel = fuel.saturating_add(data_fuel(predicate, table, &row.cells));
-                    }
-                    if let Some(condition) = &check.rule.condition {
-                        fuel = fuel.saturating_add(data_fuel(condition, table, &row.cells));
-                    }
-                    total.saturating_add(fuel)
-                })
-                > budget;
+            && typed.iter().fold(0_u128, |total, check| {
+                let mut fuel = u128::from(check.rule.fuel);
+                if let Some(predicate) = check.predicate {
+                    fuel = fuel.saturating_add(data_fuel(predicate, table, &row.cells));
+                }
+                if let Some(condition) = &check.rule.condition {
+                    fuel = fuel.saturating_add(data_fuel(condition, table, &row.cells));
+                }
+                total.saturating_add(fuel)
+            }) > budget;
         for check in &typed {
             match decide(check, table, &row.cells, over) {
                 None => {

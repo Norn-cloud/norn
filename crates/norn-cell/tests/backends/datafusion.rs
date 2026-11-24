@@ -12,10 +12,10 @@
 
 use std::path::Path;
 
+use norn_cell::analytics::TenantId;
 pub use norn_cell::analytics::datafusion::{
     ATTEMPT_BUSY, ATTEMPT_UNKNOWN, DATASET_COLD, ENGINE_ID, Engine, Settings,
 };
-use norn_cell::analytics::TenantId;
 use rusqlite::OptionalExtension as _;
 
 fn open(root: &Path, tenant: &TenantId) -> rusqlite::Connection {
@@ -59,7 +59,9 @@ pub fn refuse_meta_key(root: &Path, tenant: &TenantId, key: &str) {
 /// One catalog record.
 pub fn meta(root: &Path, tenant: &TenantId, key: &str) -> Option<String> {
     open(root, tenant)
-        .query_row("SELECT value FROM meta WHERE key = ?1", [key], |row| row.get(0))
+        .query_row("SELECT value FROM meta WHERE key = ?1", [key], |row| {
+            row.get(0)
+        })
         .optional()
         .expect("meta")
 }
@@ -70,12 +72,22 @@ pub fn dataset_rows(root: &Path, tenant: &TenantId, table: &str) -> u64 {
         &meta(root, tenant, &format!("files:{table}")).expect("published files"),
     )
     .expect("files");
-    rows_of(files.get("data").and_then(serde_json::Value::as_str).expect("data path"))
+    rows_of(
+        files
+            .get("data")
+            .and_then(serde_json::Value::as_str)
+            .expect("data path"),
+    )
 }
 
 /// Every `lineage:` record key, in order.
 pub fn lineage_keys(root: &Path, tenant: &TenantId) -> Vec<String> {
-    if !root.join("t").join(tenant.as_str()).join("catalog.sqlite3").exists() {
+    if !root
+        .join("t")
+        .join(tenant.as_str())
+        .join("catalog.sqlite3")
+        .exists()
+    {
         return Vec::new();
     }
     let conn = open(root, tenant);

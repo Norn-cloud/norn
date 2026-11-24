@@ -64,11 +64,7 @@ fn value_bytes(table: &TableSchema, row: &TypedRow) -> usize {
 pub(super) fn page(staged: &Staged, after: u64, limit: u32) -> Outcome<Vec<ResidueRow>> {
     let take = usize::try_from(limit.clamp(1, RESIDUE_PAGE_ROWS)).unwrap_or(1);
     let mut candidates = Vec::new();
-    for (row, rules) in staged
-        .residue
-        .range(after.saturating_add(1)..)
-        .take(take)
-    {
+    for (row, rules) in staged.residue.range(after.saturating_add(1)..).take(take) {
         let typed = staged
             .row(*row)
             .ok_or_else(|| engine_error("a residue row without its typed row"))?;
@@ -93,7 +89,8 @@ pub(super) fn page(staged: &Staged, after: u64, limit: u32) -> Outcome<Vec<Resid
             .iter()
             .zip(&typed.cells)
             .filter_map(|(column, cell)| {
-                cell.present(column.kind).map(|value| (column.id.clone(), value))
+                cell.present(column.kind)
+                    .map(|value| (column.id.clone(), value))
             })
             .collect();
         let residue = ResidueRow {
@@ -148,9 +145,15 @@ pub(super) fn fits(staged: &Staged, limit: u32) -> Outcome<()> {
 /// up to `through` and remove those rows from the residue. A finding must
 /// name a rule the engine left to that row, once, with the label and hold
 /// the landing pinned for that rule.
-pub(super) fn settle(staged: &mut Staged, checks: &[RuleCheck], request: &SettleRequest) -> Outcome<()> {
-    let by_rule: BTreeMap<&str, &RuleCheck> =
-        checks.iter().map(|check| (check.rule.as_str(), check)).collect();
+pub(super) fn settle(
+    staged: &mut Staged,
+    checks: &[RuleCheck],
+    request: &SettleRequest,
+) -> Outcome<()> {
+    let by_rule: BTreeMap<&str, &RuleCheck> = checks
+        .iter()
+        .map(|check| (check.rule.as_str(), check))
+        .collect();
     let mut seen = BTreeSet::new();
     let mut findings = Vec::new();
     for finding in &request.findings {

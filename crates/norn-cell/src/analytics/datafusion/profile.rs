@@ -16,7 +16,11 @@ use super::values::{Cell, Dec};
 use super::{Engine, Outcome, Tenant};
 
 /// Exact column profiles of a source, naming the snapshot read.
-pub(super) fn profile(engine: &Engine, tenant: &mut Tenant, request: &ProfileRequest) -> Outcome<ProfileResponse> {
+pub(super) fn profile(
+    engine: &Engine,
+    tenant: &mut Tenant,
+    request: &ProfileRequest,
+) -> Outcome<ProfileResponse> {
     let scope = Scope::new(engine, tenant, &request.source, Some(&request.model_pin))?;
     scope.verify_rows(&request.source, false)?;
     let population: Vec<&Row> = scope.population().collect();
@@ -37,10 +41,11 @@ pub(super) fn profile(engine: &Engine, tenant: &mut Tenant, request: &ProfileReq
 /// The profile order of two present cells: instants by their text.
 fn profile_order(a: &Cell, b: &Cell) -> Ordering {
     match (a, b) {
-        (Cell::Instant { text: x, .. }, Cell::Instant { text: y, .. }) => x.as_bytes().cmp(y.as_bytes()),
-        (Cell::Instant { text: x, .. }, Cell::Text(y)) | (Cell::Text(x), Cell::Instant { text: y, .. }) => {
+        (Cell::Instant { text: x, .. }, Cell::Instant { text: y, .. }) => {
             x.as_bytes().cmp(y.as_bytes())
         }
+        (Cell::Instant { text: x, .. }, Cell::Text(y))
+        | (Cell::Text(x), Cell::Instant { text: y, .. }) => x.as_bytes().cmp(y.as_bytes()),
         _ => a.order(b),
     }
 }
@@ -102,7 +107,12 @@ fn labels(present: &[(&Row, &Cell)]) -> (String, Vec<(String, u64)>) {
     let read = |width: usize| -> Vec<(String, u64)> {
         let mut counts: BTreeMap<Vec<u8>, (String, u64)> = BTreeMap::new();
         for (_, cell) in present {
-            let label: String = cell.as_str().unwrap_or_default().chars().take(width).collect();
+            let label: String = cell
+                .as_str()
+                .unwrap_or_default()
+                .chars()
+                .take(width)
+                .collect();
             let entry = counts
                 .entry(label.as_bytes().to_vec())
                 .or_insert((label, 0));
@@ -133,7 +143,10 @@ fn outliers(
     let (q1, q3) = (quartile(25)?, quartile(75)?);
     let iqr = q3.checked_sub(q1)?;
     let span = (1..PROFILE_OUTLIER_K).try_fold(iqr, |total, _| total.checked_add(iqr))?;
-    let (lower, upper) = (q1.checked_sub(span)?.canonical(), q3.checked_add(span)?.canonical());
+    let (lower, upper) = (
+        q1.checked_sub(span)?.canonical(),
+        q3.checked_add(span)?.canonical(),
+    );
     if [&lower, &upper]
         .iter()
         .any(|fence| norn_ir::Decimal::parse(fence).map_or(true, |d| d.scale() > scale))

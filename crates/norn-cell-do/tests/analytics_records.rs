@@ -18,9 +18,9 @@
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
+use super::backend::{Engine, Settings};
 use norn_api::analytics_routes::{EngineAnswer, EngineCall, Transport, UploadRecord, Uploads};
 use norn_api::host::DevHost;
-use super::backend::{Engine, Settings};
 use norn_cell::analytics::{
     Column, ColumnKind, LandRequest, PointLaw, SettleRequest, StoreRequest, TableSchema, hex_digest,
 };

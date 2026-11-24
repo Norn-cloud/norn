@@ -57,12 +57,18 @@ pub(super) fn schema_of(tenant: &Tenant, key: &str) -> Outcome<TableSchema> {
 
 /// ANALYTICS-FRONTIER-1: the frontier, after a reset if the model, a schema
 /// or the link set changed.
-pub(super) fn frontier(tenant: &mut Tenant, request: &FrontierRequest) -> Outcome<FrontierResponse> {
+pub(super) fn frontier(
+    tenant: &mut Tenant,
+    request: &FrontierRequest,
+) -> Outcome<FrontierResponse> {
     let links = request.links.join("\n");
     let mut stale = tenant.catalog.meta("links")?.unwrap_or_default() != links;
     stale |= tenant.catalog.meta("model_pin")?.as_deref() != Some(request.model_pin.as_str());
     for table in &request.tables {
-        stale |= tenant.catalog.meta(&format!("pin:{}", table.name))?.as_deref()
+        stale |= tenant
+            .catalog
+            .meta(&format!("pin:{}", table.name))?
+            .as_deref()
             != Some(table.pin.as_str());
     }
     if stale {
@@ -115,18 +121,30 @@ fn write_segment(
     let mut arrays: Vec<ArrayRef> = vec![
         Arc::new(UInt64Array::from(vec![seq; count])),
         Arc::new(UInt64Array::from_iter_values(ords)),
-        Arc::new(StringArray::from_iter_values(rows.iter().map(|r| r.id.as_str()))),
-        Arc::new(UInt64Array::from_iter_values(rows.iter().map(|r| r.version))),
-        Arc::new(UInt64Array::from_iter_values(rows.iter().map(|r| r.commit_seq))),
-        Arc::new(StringArray::from_iter_values(rows.iter().map(|r| r.scope.as_str()))),
+        Arc::new(StringArray::from_iter_values(
+            rows.iter().map(|r| r.id.as_str()),
+        )),
+        Arc::new(UInt64Array::from_iter_values(
+            rows.iter().map(|r| r.version),
+        )),
+        Arc::new(UInt64Array::from_iter_values(
+            rows.iter().map(|r| r.commit_seq),
+        )),
+        Arc::new(StringArray::from_iter_values(
+            rows.iter().map(|r| r.scope.as_str()),
+        )),
         Arc::new(StringArray::from_iter_values(
             rows.iter().map(|r| r.object_type.as_str()),
         )),
-        Arc::new(BooleanArray::from(rows.iter().map(|r| r.bad).collect::<Vec<_>>())),
+        Arc::new(BooleanArray::from(
+            rows.iter().map(|r| r.bad).collect::<Vec<_>>(),
+        )),
         Arc::new(BooleanArray::from(
             rows.iter().map(|r| r.values.is_none()).collect::<Vec<_>>(),
         )),
-        Arc::new(StringArray::from_iter_values(rows.iter().map(|r| r.model.as_str()))),
+        Arc::new(StringArray::from_iter_values(
+            rows.iter().map(|r| r.model.as_str()),
+        )),
     ];
     for (index, column) in table.columns.iter().enumerate() {
         let cells: Vec<Cell> = rows
@@ -138,7 +156,10 @@ fn write_segment(
                     .map_or(Cell::Null, |value| stored(column.kind, value))
             })
             .collect();
-        arrays.extend(columnar::column_arrays(column, &cells.iter().collect::<Vec<_>>())?);
+        arrays.extend(columnar::column_arrays(
+            column,
+            &cells.iter().collect::<Vec<_>>(),
+        )?);
     }
     let batch = columnar::batch(&schema, arrays)?;
     let staged = tenant
@@ -184,10 +205,16 @@ fn check_batch(tenant: &Tenant, request: &SyncRequest) -> Outcome<()> {
     let known = tenant.catalog.meta("links")?.unwrap_or_default();
     for edge in &request.links {
         if !known.split('\n').any(|name| name == edge.table) {
-            return Err(refusal(UNSUPPORTED, format!("no link table {}", edge.table)));
+            return Err(refusal(
+                UNSUPPORTED,
+                format!("no link table {}", edge.table),
+            ));
         }
         if edge.commit_seq <= request.after {
-            return Err(refusal("analytics.frontier_moved", "an edge outside the batch"));
+            return Err(refusal(
+                "analytics.frontier_moved",
+                "an edge outside the batch",
+            ));
         }
     }
     Ok(())
@@ -201,17 +228,21 @@ pub(super) fn sync(tenant: &mut Tenant, request: &SyncRequest) -> Outcome<Fronti
     let mut by_table: BTreeMap<&str, Vec<&MirrorRow>> = BTreeMap::new();
     for row in &request.rows {
         if row.commit_seq <= request.after || row.commit_seq > request.through {
-            return Err(refusal("analytics.frontier_moved", "a row outside the batch"));
+            return Err(refusal(
+                "analytics.frontier_moved",
+                "a row outside the batch",
+            ));
         }
         by_table.entry(row.table.as_str()).or_default().push(row);
     }
     let mut installed = Vec::new();
     for (name, rows) in &by_table {
         let table = schema_of(tenant, &format!("schema:{name}"))?;
-        if rows
-            .iter()
-            .any(|row| row.values.as_ref().is_some_and(|v| v.len() != table.columns.len()))
-        {
+        if rows.iter().any(|row| {
+            row.values
+                .as_ref()
+                .is_some_and(|v| v.len() != table.columns.len())
+        }) {
             return Err(engine_error("values do not match the table"));
         }
         let seq = tenant
@@ -282,7 +313,10 @@ pub(super) fn versions(
     world: &str,
 ) -> Outcome<Vec<Version>> {
     let segments = tenant.catalog.segments(&table.name, world)?;
-    let files: Vec<_> = segments.iter().map(|segment| segment.path.clone()).collect();
+    let files: Vec<_> = segments
+        .iter()
+        .map(|segment| segment.path.clone())
+        .collect();
     let mut staged = Vec::new();
     for batch in engine.scan(tenant, &files, None)? {
         let seg = columnar::system(&batch, ":seg", u64_at)?;

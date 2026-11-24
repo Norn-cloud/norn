@@ -22,7 +22,9 @@ use parquet::basic::{LogicalType, Type as PhysicalType};
 
 use super::super::{Column, ColumnKind, FileFormat, LoadRequest, PointLaw};
 use super::columnar::text_at;
-use super::values::{Cell, Dec, DecError, format_day, format_second, in_bulk_domain, parse_date, parse_timestamp};
+use super::values::{
+    Cell, Dec, DecError, format_day, format_second, in_bulk_domain, parse_date, parse_timestamp,
+};
 use super::{Outcome, engine_error, refusal};
 
 /// Rows decoded per Parquet batch.
@@ -46,7 +48,10 @@ fn unreadable(error: impl std::fmt::Display) -> super::super::EngineRefusal {
 }
 
 fn missing(name: &str) -> super::super::EngineRefusal {
-    refusal("bulk.missing_column", format!("the file has no column {name}"))
+    refusal(
+        "bulk.missing_column",
+        format!("the file has no column {name}"),
+    )
 }
 
 /// The file field each column reads, by header or Parquet field name.
@@ -116,20 +121,27 @@ enum Encoding {
 }
 
 fn read_parquet(request: &LoadRequest, file: &Path) -> Outcome<Vec<SourceRow>> {
-    let source = std::fs::File::open(file).map_err(|e| refusal("bulk.unreadable", e.to_string()))?;
+    let source =
+        std::fs::File::open(file).map_err(|e| refusal("bulk.unreadable", e.to_string()))?;
     let builder = ParquetRecordBatchReaderBuilder::try_new(source).map_err(unreadable)?;
     let metadata = builder.metadata();
-    if metadata.num_row_groups() > MAX_ROW_GROUPS
-        || builder.schema().fields().len() > MAX_FIELDS
-    {
-        return Err(refusal("bulk.unsupported_encoding", "the file declares too much structure"));
+    if metadata.num_row_groups() > MAX_ROW_GROUPS || builder.schema().fields().len() > MAX_FIELDS {
+        return Err(refusal(
+            "bulk.unsupported_encoding",
+            "the file declares too much structure",
+        ));
     }
     // LAW-03: the fields holding nanosecond instants, and the legacy ones a
     // reader narrows.
     let mut nanos = BTreeSet::new();
     let mut int96 = BTreeSet::new();
     for descriptor in builder.parquet_schema().columns() {
-        let name = descriptor.path().parts().first().cloned().unwrap_or_default();
+        let name = descriptor
+            .path()
+            .parts()
+            .first()
+            .cloned()
+            .unwrap_or_default();
         if descriptor.physical_type() == PhysicalType::INT96 {
             int96.insert(name.clone());
         }
@@ -171,7 +183,10 @@ fn read_parquet(request: &LoadRequest, file: &Path) -> Outcome<Vec<SourceRow>> {
         check_laws(column)?;
         plan.push((index, encoding, column.kind));
     }
-    let reader = builder.with_batch_size(BATCH_ROWS).build().map_err(unreadable)?;
+    let reader = builder
+        .with_batch_size(BATCH_ROWS)
+        .build()
+        .map_err(unreadable)?;
     let mut rows = Vec::new();
     let mut number = 0_u64;
     for batch in reader {
@@ -226,7 +241,12 @@ fn instant_of(array: &dyn Array, row: usize) -> Option<(i64, i64)> {
 }
 
 /// The text `DuckDB` reads a Parquet value as.
-fn parquet_text(array: &dyn Array, row: usize, encoding: Encoding, kind: ColumnKind) -> Outcome<Option<String>> {
+fn parquet_text(
+    array: &dyn Array,
+    row: usize,
+    encoding: Encoding,
+    kind: ColumnKind,
+) -> Outcome<Option<String>> {
     if array.is_null(row) {
         return Ok(None);
     }
@@ -245,18 +265,36 @@ fn parquet_text(array: &dyn Array, row: usize, encoding: Encoding, kind: ColumnK
         DataType::Boolean => any
             .downcast_ref::<BooleanArray>()
             .map(|a| a.value(row).to_string()),
-        DataType::Int8 => any.downcast_ref::<Int8Array>().map(|a| a.value(row).to_string()),
-        DataType::Int16 => any.downcast_ref::<Int16Array>().map(|a| a.value(row).to_string()),
-        DataType::Int32 => any.downcast_ref::<Int32Array>().map(|a| a.value(row).to_string()),
-        DataType::Int64 => any.downcast_ref::<Int64Array>().map(|a| a.value(row).to_string()),
-        DataType::UInt8 => any.downcast_ref::<UInt8Array>().map(|a| a.value(row).to_string()),
-        DataType::UInt16 => any.downcast_ref::<UInt16Array>().map(|a| a.value(row).to_string()),
-        DataType::UInt32 => any.downcast_ref::<UInt32Array>().map(|a| a.value(row).to_string()),
-        DataType::UInt64 => any.downcast_ref::<UInt64Array>().map(|a| a.value(row).to_string()),
+        DataType::Int8 => any
+            .downcast_ref::<Int8Array>()
+            .map(|a| a.value(row).to_string()),
+        DataType::Int16 => any
+            .downcast_ref::<Int16Array>()
+            .map(|a| a.value(row).to_string()),
+        DataType::Int32 => any
+            .downcast_ref::<Int32Array>()
+            .map(|a| a.value(row).to_string()),
+        DataType::Int64 => any
+            .downcast_ref::<Int64Array>()
+            .map(|a| a.value(row).to_string()),
+        DataType::UInt8 => any
+            .downcast_ref::<UInt8Array>()
+            .map(|a| a.value(row).to_string()),
+        DataType::UInt16 => any
+            .downcast_ref::<UInt16Array>()
+            .map(|a| a.value(row).to_string()),
+        DataType::UInt32 => any
+            .downcast_ref::<UInt32Array>()
+            .map(|a| a.value(row).to_string()),
+        DataType::UInt64 => any
+            .downcast_ref::<UInt64Array>()
+            .map(|a| a.value(row).to_string()),
         DataType::Float32 => any
             .downcast_ref::<Float32Array>()
             .map(|a| float_text(f64::from(a.value(row)))),
-        DataType::Float64 => any.downcast_ref::<Float64Array>().map(|a| float_text(a.value(row))),
+        DataType::Float64 => any
+            .downcast_ref::<Float64Array>()
+            .map(|a| float_text(a.value(row))),
         DataType::Decimal128(_, scale) => any.downcast_ref::<Decimal128Array>().map(|a| {
             Dec {
                 m: a.value(row),
@@ -309,7 +347,8 @@ fn parquet_text(array: &dyn Array, row: usize, encoding: Encoding, kind: ColumnK
             ));
         }
     };
-    text.map(Some).ok_or_else(|| engine_error("an unreadable value"))
+    text.map(Some)
+        .ok_or_else(|| engine_error("an unreadable value"))
 }
 
 /// A double as `DuckDB` casts it to text: its shortest round-trip digits.
@@ -336,7 +375,10 @@ fn check_laws(column: &Column) -> Outcome<()> {
             PointLaw::Unchecked => {
                 return Err(refusal(
                     LAW,
-                    format!("{} declares a constraint the engine does not check", column.id),
+                    format!(
+                        "{} declares a constraint the engine does not check",
+                        column.id
+                    ),
                 ));
             }
             PointLaw::OneOf(_) | PointLaw::MinLength(_) | PointLaw::MaxLength(_) => {}
@@ -365,7 +407,9 @@ fn parse(kind: ColumnKind, text: &str) -> Result<Cell, &'static str> {
     match kind {
         ColumnKind::Text | ColumnKind::Opaque => Ok(Cell::Text(text.to_owned())),
         ColumnKind::Integer => {
-            if !text.bytes().all(|b| b.is_ascii_digit() || b == b'-' || b == b'+')
+            if !text
+                .bytes()
+                .all(|b| b.is_ascii_digit() || b == b'-' || b == b'+')
                 || text.bytes().filter(|b| !b.is_ascii_digit()).count() > 1
             {
                 return Err("bulk.not_integer");
@@ -450,12 +494,10 @@ fn first_law(column: &Column, cell: &Cell) -> Option<&'static str> {
                 | PointLaw::Unchecked => order.is_gt().then_some("bulk.above_max"),
             }
         }
-        PointLaw::MinLength(n) => {
-            (u64::try_from(text.chars().count()).unwrap_or(u64::MAX) < *n).then_some("bulk.too_short")
-        }
-        PointLaw::MaxLength(n) => {
-            (u64::try_from(text.chars().count()).unwrap_or(u64::MAX) > *n).then_some("bulk.too_long")
-        }
+        PointLaw::MinLength(n) => (u64::try_from(text.chars().count()).unwrap_or(u64::MAX) < *n)
+            .then_some("bulk.too_short"),
+        PointLaw::MaxLength(n) => (u64::try_from(text.chars().count()).unwrap_or(u64::MAX) > *n)
+            .then_some("bulk.too_long"),
         PointLaw::Unchecked => None,
     })
 }

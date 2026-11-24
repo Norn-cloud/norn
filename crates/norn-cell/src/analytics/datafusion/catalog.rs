@@ -80,7 +80,10 @@ impl Catalog {
 
     /// Run `f` in one write transaction: everything it writes commits
     /// together, or nothing does.
-    pub(super) fn write<T>(&mut self, f: impl FnOnce(&Transaction<'_>) -> Outcome<T>) -> Outcome<T> {
+    pub(super) fn write<T>(
+        &mut self,
+        f: impl FnOnce(&Transaction<'_>) -> Outcome<T>,
+    ) -> Outcome<T> {
         let tx = sql(self
             .conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate))?;
@@ -91,12 +94,14 @@ impl Catalog {
 
     /// The segments of `table` in `world`, in order.
     pub(super) fn segments(&self, table: &str, world: &str) -> Outcome<Vec<Segment>> {
-        let mut statement = sql(self
-            .conn
-            .prepare("SELECT seq, path, sha256 FROM segment WHERE tbl = ?1 AND world = ?2 ORDER BY seq"))?;
+        let mut statement = sql(self.conn.prepare(
+            "SELECT seq, path, sha256 FROM segment WHERE tbl = ?1 AND world = ?2 ORDER BY seq",
+        ))?;
         let rows = sql(statement.query_map(params![table, world], |row| {
             Ok(Segment {
-                seq: row.get::<_, i64>(0).map(|seq| u64::try_from(seq).unwrap_or(0))?,
+                seq: row
+                    .get::<_, i64>(0)
+                    .map(|seq| u64::try_from(seq).unwrap_or(0))?,
                 path: PathBuf::from(row.get::<_, String>(1)?),
                 sha256: row.get(2)?,
             })
@@ -124,7 +129,9 @@ impl Catalog {
 /// `key`'s value in `conn`.
 pub(super) fn get(conn: &Connection, key: &str) -> Outcome<Option<String>> {
     sql(conn
-        .query_row("SELECT value FROM meta WHERE key = ?1", [key], |row| row.get(0))
+        .query_row("SELECT value FROM meta WHERE key = ?1", [key], |row| {
+            row.get(0)
+        })
         .optional())
 }
 

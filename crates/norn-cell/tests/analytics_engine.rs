@@ -522,10 +522,7 @@ fn the_engine_names_its_snapshot_and_refuses_another_model()
     let prepared = store.analytics_prepare(&plan, context, &tenant())?;
     let mut other = prepared.request().clone();
     let response = engine.evaluate(prepared.request()).map_err(|r| r.detail)?;
-    assert_eq!(
-        response.provenance.engine,
-        super::backend::ENGINE_ID
-    );
+    assert_eq!(response.provenance.engine, super::backend::ENGINE_ID);
     store.analytics_answer(prepared, response)?;
     other.model_pin = "another model".into();
     assert!(matches!(

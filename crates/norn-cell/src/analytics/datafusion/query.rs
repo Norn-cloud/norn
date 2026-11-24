@@ -131,7 +131,11 @@ impl Scope {
                 let dataset = dataset::dataset(engine, tenant, table, load)?;
                 Ok(Self {
                     columns: dataset.table.columns,
-                    read: dataset.rows.iter().map(|row| !dataset.held.contains(&row.row)).collect(),
+                    read: dataset
+                        .rows
+                        .iter()
+                        .map(|row| !dataset.held.contains(&row.row))
+                        .collect(),
                     all: dataset
                         .rows
                         .into_iter()
@@ -327,7 +331,10 @@ pub(super) fn as_of_versions(scope: &Scope, as_of: &AsOf) -> Outcome<Picked> {
     let subjects: BTreeSet<&str> = scope.population().map(|row| row.id.as_str()).collect();
     let mut by_subject: BTreeMap<&str, Vec<&Row>> = BTreeMap::new();
     for version in versions.iter().filter(|v| subjects.contains(v.id.as_str())) {
-        by_subject.entry(version.id.as_str()).or_default().push(version);
+        by_subject
+            .entry(version.id.as_str())
+            .or_default()
+            .push(version);
     }
     let untimed = by_subject
         .values()

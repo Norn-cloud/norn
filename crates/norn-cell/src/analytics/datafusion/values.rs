@@ -71,7 +71,11 @@ impl Dec {
         }
         let mut m: i128 = 0;
         let padded = fraction.len()..usize::try_from(scale).map_err(|_e| DecError::Range)?;
-        for b in whole.bytes().chain(fraction.bytes()).chain(padded.map(|_| b'0')) {
+        for b in whole
+            .bytes()
+            .chain(fraction.bytes())
+            .chain(padded.map(|_| b'0'))
+        {
             m = m
                 .checked_mul(10)
                 .and_then(|m| m.checked_add(i128::from(b.wrapping_sub(b'0'))))
@@ -122,7 +126,9 @@ impl Dec {
             return format!("{sign}{digits}");
         }
         let padded = format!("{digits:0>width$}", width = scale.saturating_add(1));
-        let (whole, fraction) = padded.split_at_checked(padded.len().saturating_sub(scale)).unwrap_or((&padded, ""));
+        let (whole, fraction) = padded
+            .split_at_checked(padded.len().saturating_sub(scale))
+            .unwrap_or((&padded, ""));
         format!("{sign}{whole}.{fraction}")
     }
 
@@ -347,7 +353,11 @@ impl Cell {
 /// Days since 1970-01-01 of a proleptic Gregorian date (Hinnant's
 /// algorithm, in saturating arithmetic: every year here is 0000–9999).
 pub(super) fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
-    let year = if month <= 2 { year.saturating_sub(1) } else { year };
+    let year = if month <= 2 {
+        year.saturating_sub(1)
+    } else {
+        year
+    };
     let era = year.div_euclid(400);
     let yoe = year.rem_euclid(400);
     let month = i64::from(month);
@@ -425,7 +435,11 @@ pub(super) fn period_start(t: i64, grain: super::super::Grain) -> i64 {
         Grain::Month => days_from_civil(year, month, 1),
         Grain::Quarter => days_from_civil(
             year,
-            month.saturating_sub(1).div_euclid(3).saturating_mul(3).saturating_add(1),
+            month
+                .saturating_sub(1)
+                .div_euclid(3)
+                .saturating_mul(3)
+                .saturating_add(1),
             1,
         ),
         Grain::Year => days_from_civil(year, 1, 1),
@@ -554,25 +568,52 @@ mod tests {
 
     #[test]
     fn decimals_parse_and_print_in_the_storage_domain() {
-        assert_eq!(Dec::parse_at("1.5", 2).map(Dec::text), Ok("1.50".to_owned()));
-        assert_eq!(Dec::parse_at("-0.5", 1).map(Dec::text), Ok("-0.5".to_owned()));
+        assert_eq!(
+            Dec::parse_at("1.5", 2).map(Dec::text),
+            Ok("1.50".to_owned())
+        );
+        assert_eq!(
+            Dec::parse_at("-0.5", 1).map(Dec::text),
+            Ok("-0.5".to_owned())
+        );
         assert_eq!(Dec::parse_at("1.555", 2), Err(DecError::Scale));
         assert_eq!(Dec::parse_at("1.", 2), Err(DecError::Shape));
         assert_eq!(Dec::parse_at(&"9".repeat(39), 0), Err(DecError::Range));
-        assert_eq!(Dec::cast("1.235", 2).map(Dec::text), Some("1.24".to_owned()));
-        assert_eq!(Dec::cast("-1.235", 2).map(Dec::text), Some("-1.24".to_owned()));
-        assert_eq!(Dec::parse_at("1.50", 2).map(Dec::canonical), Ok("1.5".to_owned()));
+        assert_eq!(
+            Dec::cast("1.235", 2).map(Dec::text),
+            Some("1.24".to_owned())
+        );
+        assert_eq!(
+            Dec::cast("-1.235", 2).map(Dec::text),
+            Some("-1.24".to_owned())
+        );
+        assert_eq!(
+            Dec::parse_at("1.50", 2).map(Dec::canonical),
+            Ok("1.5".to_owned())
+        );
     }
 
     #[test]
     fn instants_keep_the_cells_grammar_and_calendar() {
         assert_eq!(parse_timestamp("1970-01-01T00:00:00Z"), Some((0, 0)));
-        assert_eq!(parse_timestamp("1969-12-31T23:59:59.5Z"), Some((-1, 500_000_000)));
-        assert_eq!(parse_timestamp("2024-01-01T02:00:00+02:00"), parse_timestamp("2024-01-01T00:00:00Z"));
+        assert_eq!(
+            parse_timestamp("1969-12-31T23:59:59.5Z"),
+            Some((-1, 500_000_000))
+        );
+        assert_eq!(
+            parse_timestamp("2024-01-01T02:00:00+02:00"),
+            parse_timestamp("2024-01-01T00:00:00Z")
+        );
         assert_eq!(parse_timestamp("2024-01-01T00:00:00-00:00"), None);
         assert_eq!(parse_timestamp("2023-02-29T00:00:00Z"), None);
-        assert_eq!(parse_timestamp("0000-01-01T00:00:00Z"), Some((FIRST_SECOND, 0)));
-        assert_eq!(parse_date("2024-02-29"), Some(days_from_civil(2024, 2, 29) * DAY));
+        assert_eq!(
+            parse_timestamp("0000-01-01T00:00:00Z"),
+            Some((FIRST_SECOND, 0))
+        );
+        assert_eq!(
+            parse_date("2024-02-29"),
+            Some(days_from_civil(2024, 2, 29) * DAY)
+        );
         assert_eq!(period_start(0, super::super::super::Grain::Week), -3);
         assert_eq!(format_second(-1), "1969-12-31T23:59:59");
     }

@@ -259,7 +259,11 @@ impl Engine {
             .with_target_partitions(usize::try_from(self.settings.threads.max(1)).unwrap_or(1))
             .with_batch_size(8192)
             .with_information_schema(false);
-        config.options_mut().execution.parquet.schema_force_view_types = false;
+        config
+            .options_mut()
+            .execution
+            .parquet
+            .schema_force_view_types = false;
         let ctx = SessionContext::new_with_config_rt(config, Arc::clone(&tenant.runtime));
         let batches = self.block_on(async move {
             let frame = ctx
@@ -276,7 +280,10 @@ impl Engine {
             total.saturating_add(batch.get_array_memory_size())
         });
         if decoded > self.memory {
-            return Err(refusal(EXHAUSTED, "a scan decodes more than the memory bound"));
+            return Err(refusal(
+                EXHAUSTED,
+                "a scan decodes more than the memory bound",
+            ));
         }
         Ok(batches)
     }
@@ -321,7 +328,9 @@ impl Engine {
     /// The Core 03 refusals the exact engine would give, a frontier the
     /// mirror has not reached, or a stale source.
     pub fn evaluate(&self, request: &EvaluateRequest) -> Outcome<EvaluateResponse> {
-        self.with(&request.tenant, |tenant| aggregate::evaluate(self, tenant, request))
+        self.with(&request.tenant, |tenant| {
+            aggregate::evaluate(self, tenant, request)
+        })
     }
 
     /// Page one bucket's members in identity order, over the generation the
@@ -330,7 +339,9 @@ impl Engine {
     /// # Errors
     /// As [`Self::evaluate`].
     pub fn members(&self, request: &MembersRequest) -> Outcome<MembersResponse> {
-        self.with(&request.tenant, |tenant| aggregate::members(self, tenant, request))
+        self.with(&request.tenant, |tenant| {
+            aggregate::members(self, tenant, request)
+        })
     }
 
     /// BULK-LOAD-1: load `file` (already downloaded) as the dataset's only load.
@@ -338,7 +349,9 @@ impl Engine {
     /// # Errors
     /// `bulk.digest_mismatch`, an unreadable file, or an engine failure.
     pub fn load(&self, request: &LoadRequest, file: &Path) -> Outcome<LoadResponse> {
-        self.with(&request.tenant, |tenant| dataset::load(tenant, request, file))
+        self.with(&request.tenant, |tenant| {
+            dataset::load(tenant, request, file)
+        })
     }
 
     /// MANIFEST-LAND-1 / MANIFEST-LAWS-1: land `request` in a fresh attempt.
@@ -390,7 +403,9 @@ impl Engine {
     /// # Errors
     /// A cold dataset, a stale load, or an engine failure.
     pub fn lineage(&self, request: &LineageRequest) -> Outcome<LineageResponse> {
-        self.with(&request.tenant, |tenant| dataset::lineage(self, tenant, request))
+        self.with(&request.tenant, |tenant| {
+            dataset::lineage(self, tenant, request)
+        })
     }
 
     /// One records page of a source.
@@ -406,7 +421,9 @@ impl Engine {
     /// # Errors
     /// An unknown column or a stale source.
     pub fn profile(&self, request: &ProfileRequest) -> Outcome<ProfileResponse> {
-        self.with(&request.tenant, |tenant| profile::profile(self, tenant, request))
+        self.with(&request.tenant, |tenant| {
+            profile::profile(self, tenant, request)
+        })
     }
 
     /// Export columns of every row of a source into a scratch file.

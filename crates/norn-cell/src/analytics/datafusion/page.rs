@@ -14,13 +14,15 @@ use datafusion::arrow::datatypes::{DataType, Field};
 use transparency_sha2::{Digest as _, Sha256};
 
 use super::super::{
-    Column, ColumnKind, ExportFormat, ExportRequest, PageClause, PageOp, PageOperand,
-    PageRequest, PageResponse, PageRow, Source, TableSchema, hex,
+    Column, ColumnKind, ExportFormat, ExportRequest, PageClause, PageOp, PageOperand, PageRequest,
+    PageResponse, PageRow, Source, TableSchema, hex,
 };
 use super::columnar;
 use super::query::{Row, Scope};
 use super::values::{Cell, Dec};
-use super::{EXPORT_RESERVED, Engine, MAX_PAGE_ROWS, Outcome, Tenant, UNSUPPORTED, engine_error, refusal};
+use super::{
+    EXPORT_RESERVED, Engine, MAX_PAGE_ROWS, Outcome, Tenant, UNSUPPORTED, engine_error, refusal,
+};
 
 /// One typed operand.
 enum Operand {
@@ -167,8 +169,17 @@ fn matches_empty(clause: &Clause, row: &Row, temporal: bool) -> bool {
 }
 
 /// One records page of a source.
-pub(super) fn page(engine: &Engine, tenant: &mut Tenant, request: &PageRequest) -> Outcome<PageResponse> {
-    let scope = Scope::new(engine, tenant, &request.source, request_pin(&request.source, request.model_pin.as_deref()))?;
+pub(super) fn page(
+    engine: &Engine,
+    tenant: &mut Tenant,
+    request: &PageRequest,
+) -> Outcome<PageResponse> {
+    let scope = Scope::new(
+        engine,
+        tenant,
+        &request.source,
+        request_pin(&request.source, request.model_pin.as_deref()),
+    )?;
     scope.verify_rows(&request.source, false)?;
     let clauses = request
         .filters
@@ -216,7 +227,13 @@ pub(super) fn page(engine: &Engine, tenant: &mut Tenant, request: &PageRequest) 
                     b.cells.get(*index).unwrap_or(&Cell::Null),
                 );
                 let temporal = temporal.get(*index).copied().unwrap_or(false);
-                let present = |c: &Cell| if temporal { c.instant().is_some() } else { c.is_present() };
+                let present = |c: &Cell| {
+                    if temporal {
+                        c.instant().is_some()
+                    } else {
+                        c.is_present()
+                    }
+                };
                 match (present(x), present(y)) {
                     (false, false) => Ordering::Equal,
                     (false, true) => Ordering::Greater,
@@ -243,7 +260,8 @@ pub(super) fn page(engine: &Engine, tenant: &mut Tenant, request: &PageRequest) 
                 .iter()
                 .zip(&row.cells)
                 .filter_map(|(column, cell)| {
-                    cell.present(column.kind).map(|value| (column.id.clone(), value))
+                    cell.present(column.kind)
+                        .map(|value| (column.id.clone(), value))
                 })
                 .collect(),
         })
@@ -266,7 +284,12 @@ pub(super) fn export(
     request: &ExportRequest,
     scratch: &Path,
 ) -> Outcome<PathBuf> {
-    let scope = Scope::new(engine, tenant, &request.source, request_pin(&request.source, request.model_pin.as_deref()))?;
+    let scope = Scope::new(
+        engine,
+        tenant,
+        &request.source,
+        request_pin(&request.source, request.model_pin.as_deref()),
+    )?;
     scope.verify_rows(&request.source, false)?;
     let mut columns = Vec::new();
     for id in &request.columns {
@@ -340,7 +363,9 @@ fn export_parquet(path: &Path, rows: &[&Row], columns: &[(usize, Column)]) -> Ou
     }
     let schema = Arc::new(datafusion::arrow::datatypes::Schema::new(fields));
     let mut arrays: Vec<ArrayRef> = vec![
-        Arc::new(StringArray::from_iter_values(rows.iter().map(|r| r.id.as_str()))),
+        Arc::new(StringArray::from_iter_values(
+            rows.iter().map(|r| r.id.as_str()),
+        )),
         Arc::new(UInt64Array::from_iter_values(rows.iter().map(|r| r.v))),
     ];
     for (index, column) in columns {

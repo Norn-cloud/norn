@@ -10,10 +10,10 @@
     reason = "engine correspondence over the seeded demo cell"
 )]
 
+use super::backend::{Engine, Settings};
 use norn_api::analytics_routes::{EngineAnswer, EngineCall, EngineQuestions, Transport};
 use norn_api::host::DevHost;
 use norn_api::question_routes::AdHocQuestions;
-use super::backend::{Engine, Settings};
 use norn_cell::engine::NativeEngine;
 use norn_cell_do::olap::{Exchange, InProcess};
 use norn_cell_do::policy::{DEMO_GRANTS, ReadPolicy};
@@ -68,7 +68,11 @@ fn the_engine_profile_equals_the_exact_profile_of_every_demo_type() {
         let engine = server::analytics(&host, &principals, &transport, None, &request)
             .expect("an engine route");
         let engine_document: Value = serde_json::from_str(&engine.body).unwrap();
-        assert_eq!(engine_document["engine"], super::backend::ENGINE_ID.as_str(), "{name}");
+        assert_eq!(
+            engine_document["engine"],
+            super::backend::ENGINE_ID.as_str(),
+            "{name}"
+        );
         assert_eq!(profile_of(&engine), profile_of(&exact), "{name}");
     }
 }

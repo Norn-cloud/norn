@@ -23,15 +23,25 @@ use super::laws::TypedRow;
 use super::{DATASET_COLD, Engine, Outcome, STALE, Tenant, engine_error, refusal};
 
 /// BULK-LOAD-1: a direct load, its files and lineage published together.
-pub(super) fn load(tenant: &mut Tenant, request: &LoadRequest, file: &Path) -> Outcome<LoadResponse> {
+pub(super) fn load(
+    tenant: &mut Tenant,
+    request: &LoadRequest,
+    file: &Path,
+) -> Outcome<LoadResponse> {
     let started = Instant::now();
     let (digest, bytes) = digest_of(file)?;
     if digest != request.file.sha256 {
-        return Err(refusal("bulk.digest_mismatch", "the file is not the recorded upload"));
+        return Err(refusal(
+            "bulk.digest_mismatch",
+            "the file is not the recorded upload",
+        ));
     }
     let staged = stage(request, file, bytes, started)?;
     let staging = tenant.staging();
-    let (data, held) = (staging.join("load-data.parquet"), staging.join("load-held.parquet"));
+    let (data, held) = (
+        staging.join("load-data.parquet"),
+        staging.join("load-held.parquet"),
+    );
     for stale in [&data, &held] {
         let _removed = std::fs::remove_file(stale);
     }
@@ -81,8 +91,16 @@ pub(super) struct Dataset {
 /// MANIFEST-CACHE-1: rebuild the current dataset `table` at the cache
 /// identity `load` from the files kept for it, each verified first.
 fn hydrate(tenant: &mut Tenant, table: &str, load: &str) -> Outcome<()> {
-    let cold = || refusal(DATASET_COLD, "the dataset's files are not kept by this engine");
-    let text = tenant.catalog.meta(&format!("landing:{load}"))?.ok_or_else(cold)?;
+    let cold = || {
+        refusal(
+            DATASET_COLD,
+            "the dataset's files are not kept by this engine",
+        )
+    };
+    let text = tenant
+        .catalog
+        .meta(&format!("landing:{load}"))?
+        .ok_or_else(cold)?;
     let kept: KeptLanding = serde_json::from_str(&text).map_err(|e| engine_error(e.to_string()))?;
     if kept.table.name != table
         || dataset_cache_id(&kept.table, &kept.data.sha256, &kept.held.sha256) != load
@@ -111,7 +129,12 @@ fn hydrate(tenant: &mut Tenant, table: &str, load: &str) -> Outcome<()> {
 }
 
 /// The dataset `table` at `load`, hydrated first on a cache miss.
-pub(super) fn dataset(engine: &Engine, tenant: &mut Tenant, table: &str, load: &str) -> Outcome<Dataset> {
+pub(super) fn dataset(
+    engine: &Engine,
+    tenant: &mut Tenant,
+    table: &str,
+    load: &str,
+) -> Outcome<Dataset> {
     if tenant.catalog.meta(&format!("load:{table}"))?.as_deref() != Some(load) {
         hydrate(tenant, table, load)?;
     }
@@ -122,13 +145,16 @@ pub(super) fn dataset(engine: &Engine, tenant: &mut Tenant, table: &str, load: &
             .ok_or_else(|| refusal(super::UNSUPPORTED, "no such table"))?,
     )
     .map_err(|e| engine_error(e.to_string()))?;
-    let files: Files = serde_json::from_str(
-        &tenant
-            .catalog
-            .meta(&format!("files:{table}"))?
-            .ok_or_else(|| refusal(DATASET_COLD, "the dataset's files are not kept by this engine"))?,
-    )
-    .map_err(|e| engine_error(e.to_string()))?;
+    let files: Files =
+        serde_json::from_str(&tenant.catalog.meta(&format!("files:{table}"))?.ok_or_else(
+            || {
+                refusal(
+                    DATASET_COLD,
+                    "the dataset's files are not kept by this engine",
+                )
+            },
+        )?)
+        .map_err(|e| engine_error(e.to_string()))?;
     let rows = read_rows(engine, tenant, &schema, &files.data, None)?;
     let mut held = BTreeSet::new();
     for batch in engine.scan(tenant, std::slice::from_ref(&files.held), None)? {
@@ -180,11 +206,14 @@ fn read_rows(
 }
 
 /// MANIFEST-LINEAGE-1: what the landing holds for one source row.
-pub(super) fn lineage(engine: &Engine, tenant: &mut Tenant, request: &LineageRequest) -> Outcome<LineageResponse> {
+pub(super) fn lineage(
+    engine: &Engine,
+    tenant: &mut Tenant,
+    request: &LineageRequest,
+) -> Outcome<LineageResponse> {
     let dataset = dataset(engine, tenant, &request.table, &request.load)?;
-    let row_filter = |name: &str| {
-        Expr::Column(DfColumn::new_unqualified(name)).eq(lit(request.row))
-    };
+    let row_filter =
+        |name: &str| Expr::Column(DfColumn::new_unqualified(name)).eq(lit(request.row));
     let admitted = read_rows(
         engine,
         tenant,
@@ -195,7 +224,11 @@ pub(super) fn lineage(engine: &Engine, tenant: &mut Tenant, request: &LineageReq
     .len()
         == 1;
     let mut held: Vec<(Option<String>, String, bool)> = Vec::new();
-    for batch in engine.scan(tenant, std::slice::from_ref(&dataset.files.held), Some(row_filter(":row")))? {
+    for batch in engine.scan(
+        tenant,
+        std::slice::from_ref(&dataset.files.held),
+        Some(row_filter(":row")),
+    )? {
         let reason = columnar::system(&batch, ":reason", columnar::text_at)?;
         let rule = columnar::system(&batch, ":rule", columnar::text_at)?;
         let holds = columnar::system(&batch, ":holds", columnar::bool_at)?;

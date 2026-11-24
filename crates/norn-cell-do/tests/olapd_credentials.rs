@@ -29,6 +29,7 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Barrier, Mutex};
 use std::time::Duration;
 
+use super::ENGINE;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use norn_api::analytics_routes::{EngineCall, Transport as _};
@@ -44,7 +45,6 @@ use norn_cell::analytics::{
 use norn_cell::dataset_manifest::ManifestPins;
 use norn_cell_do::olap::Exchange;
 use norn_cell_do::olapd::{Config, NoSeam, Seam, serve_with};
-use super::ENGINE;
 use serde_json::json;
 
 const NOW: u64 = 1_800_000_000_000;

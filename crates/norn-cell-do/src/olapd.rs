@@ -49,10 +49,10 @@ use norn_api::clock::Clock;
 use norn_api::olap_credential::{Denied, Keyring, body_digest};
 use norn_cell::analytics::engine::{Engine, Settings};
 use norn_cell::analytics::{
-    AnalyticalEngine, AnalyticalEngineId, EngineOutcome, EngineRefusal, EvaluateRequest, ExportRequest,
-    FrontierRequest, LandRequest, LandResponse, LineageRequest, MembersRequest, PageRequest,
-    ProfileRequest, SettleRequest, StoreBody, SyncRequest, TenantId, dispatch_evaluate,
-    dispatch_members,
+    AnalyticalEngine, AnalyticalEngineId, EngineOutcome, EngineRefusal, EvaluateRequest,
+    ExportRequest, FrontierRequest, LandRequest, LandResponse, LineageRequest, MembersRequest,
+    PageRequest, ProfileRequest, SettleRequest, StoreBody, SyncRequest, TenantId,
+    dispatch_evaluate, dispatch_members,
 };
 use norn_kernel::LogicalTime;
 use serde::Serialize;
@@ -249,19 +249,19 @@ fn open_engine(
     match selected {
         AnalyticalEngineId::DuckDb => Ok(Arc::new(Engine::new(settings)?)),
         #[cfg(feature = "datafusion")]
-        AnalyticalEngineId::DataFusion => Ok(Arc::new(
-            norn_cell::analytics::datafusion::Engine::new(
+        AnalyticalEngineId::DataFusion => {
+            Ok(Arc::new(norn_cell::analytics::datafusion::Engine::new(
                 norn_cell::analytics::datafusion::Settings {
                     root: settings.root,
                     memory_limit: settings.memory_limit,
                     threads: settings.threads,
                 },
-            )?,
-        )),
+            )?))
+        }
         #[cfg(not(feature = "datafusion"))]
-        AnalyticalEngineId::DataFusion => Err(std::io::Error::other(
-            "this build has no DataFusion engine",
-        )),
+        AnalyticalEngineId::DataFusion => {
+            Err(std::io::Error::other("this build has no DataFusion engine"))
+        }
     }
 }
 

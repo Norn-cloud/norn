@@ -14,10 +14,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
+use super::backend::{Engine, Settings};
 use norn_api::host::DevHost;
 use norn_api::scope::CellScope;
 use norn_api::sources::{UploadRun, report_upload};
-use super::backend::{Engine, Settings};
 use norn_cell::engine::NativeEngine;
 use norn_cell::{CellStore, InstalledDefinitionInput, Model};
 use norn_cell_do::olap::InProcess;

@@ -123,7 +123,10 @@ impl Plan {
         for operand in &query.operands {
             let (index, column) = scope.column(&operand.column)?;
             let filters = query::type_filters(scope, &operand.filters)?;
-            if !matches!(column.kind, ColumnKind::Integer | ColumnKind::Decimal { .. }) {
+            if !matches!(
+                column.kind,
+                ColumnKind::Integer | ColumnKind::Decimal { .. }
+            ) {
                 return Err(refusal(UNSUPPORTED, "a summed column that is not numeric"));
             }
             ops.push(Op { index, filters });
@@ -209,23 +212,28 @@ fn project(plan: &Plan, row: &Row, label: Option<&String>, link: &Linked) -> Pro
                     |index| row.cells.get(index).cloned().unwrap_or(Cell::Null),
                 );
                 refuse |= reach && !cell.is_present();
-                cell.instant().map_or((Group::Null, GroupKey::Null), |(t, _)| {
-                    let day = period_start(t, *grain);
-                    (Group::Day(day), GroupKey::Period { grain: *grain, day })
-                })
+                cell.instant()
+                    .map_or((Group::Null, GroupKey::Null), |(t, _)| {
+                        let day = period_start(t, *grain);
+                        (Group::Day(day), GroupKey::Period { grain: *grain, day })
+                    })
             }
-            Dim::Text { index, normalized } => {
-                row.cells.get(*index).and_then(Cell::as_str).map_or(
-                    (Group::Null, GroupKey::Null),
-                    |text| {
-                        let normal = nfc(text);
-                        let shown = if *normalized { normal.clone() } else { text.to_owned() };
-                        (Group::Text(normal), GroupKey::Text(shown))
-                    },
-                )
-            }
+            Dim::Text { index, normalized } => row.cells.get(*index).and_then(Cell::as_str).map_or(
+                (Group::Null, GroupKey::Null),
+                |text| {
+                    let normal = nfc(text);
+                    let shown = if *normalized {
+                        normal.clone()
+                    } else {
+                        text.to_owned()
+                    };
+                    (Group::Text(normal), GroupKey::Text(shown))
+                },
+            ),
             Dim::Number(index) => match row.cells.get(*index) {
-                Some(Cell::Dec(value)) => (Group::Number(*value), GroupKey::Number(value.canonical())),
+                Some(Cell::Dec(value)) => {
+                    (Group::Number(*value), GroupKey::Number(value.canonical()))
+                }
                 _ => (Group::Null, GroupKey::Null),
             },
             Dim::Bool(index) => match row.cells.get(*index) {
@@ -271,7 +279,12 @@ fn project(plan: &Plan, row: &Row, label: Option<&String>, link: &Linked) -> Pro
 
 /// The projection of a question over its scope, after the refusals the
 /// exact engine gives before reading any value.
-fn projection(engine: &Engine, tenant: &Tenant, scope: &Scope, query: &Lowered) -> Outcome<(Vec<Projected>, usize)> {
+fn projection(
+    engine: &Engine,
+    tenant: &Tenant,
+    scope: &Scope,
+    query: &Lowered,
+) -> Outcome<(Vec<Projected>, usize)> {
     if let Some(link) = &query.time_link {
         query::check_link(tenant, scope, link)?;
     }
@@ -280,7 +293,10 @@ fn projection(engine: &Engine, tenant: &Tenant, scope: &Scope, query: &Lowered) 
     let rows: Vec<Projected> = if let Some(as_of) = &query.as_of {
         let (picked, untimed) = query::as_of_versions(scope, as_of)?;
         if untimed {
-            return Err(refusal(UNSUPPORTED, "a snapshot version without its valid time"));
+            return Err(refusal(
+                UNSUPPORTED,
+                "a snapshot version without its valid time",
+            ));
         }
         picked
             .iter()
@@ -378,14 +394,19 @@ fn buckets(mut rows: Vec<Projected>, arity: usize, inline: bool) -> Outcome<Vec<
 }
 
 /// QUERY-ENGINE-1: evaluate a lowered question exactly.
-pub(super) fn evaluate(engine: &Engine, tenant: &mut Tenant, request: &EvaluateRequest) -> Outcome<EvaluateResponse> {
+pub(super) fn evaluate(
+    engine: &Engine,
+    tenant: &mut Tenant,
+    request: &EvaluateRequest,
+) -> Outcome<EvaluateResponse> {
     let scope = Scope::new(engine, tenant, &request.source, Some(&request.model_pin))?;
     let tenant = &*tenant;
     let population = u64::try_from(scope.all.len()).unwrap_or(u64::MAX);
     scope.verify_rows(&request.source, true)?;
     let excluded = scope.excluded_present();
     let (rows, _dims) = projection(engine, tenant, &scope, &request.query)?;
-    let unlinked = u64::try_from(rows.iter().filter(|row| row.unlinked).count()).unwrap_or(u64::MAX);
+    let unlinked =
+        u64::try_from(rows.iter().filter(|row| row.unlinked).count()).unwrap_or(u64::MAX);
     let buckets = buckets(
         rows,
         request.query.operands.len(),
@@ -418,7 +439,13 @@ fn in_bucket(row: &Projected, group: &GroupKey, dims: usize) -> Outcome<bool> {
             }
             (GroupKey::Text(text), Group::Text(normal)) => nfc(text) == *normal,
             (GroupKey::Period { day, .. }, Group::Day(actual)) => day == actual,
-            (GroupKey::Bool(_) | GroupKey::Number(_) | GroupKey::Text(_) | GroupKey::Period { .. }, Group::Null) => false,
+            (
+                GroupKey::Bool(_)
+                | GroupKey::Number(_)
+                | GroupKey::Text(_)
+                | GroupKey::Period { .. },
+                Group::Null,
+            ) => false,
             _ => return Err(refusal(UNSUPPORTED, "a bucket of another kind")),
         };
     }
@@ -428,7 +455,11 @@ fn in_bucket(row: &Projected, group: &GroupKey, dims: usize) -> Outcome<bool> {
 /// Page one bucket's members in identity order, over exactly the snapshot
 /// and generation an evaluate of the same request would read, with every
 /// refusal it would give.
-pub(super) fn members(engine: &Engine, tenant: &mut Tenant, request: &MembersRequest) -> Outcome<MembersResponse> {
+pub(super) fn members(
+    engine: &Engine,
+    tenant: &mut Tenant,
+    request: &MembersRequest,
+) -> Outcome<MembersResponse> {
     let expected = match &request.source {
         Source::Mirror { .. } => request.model_pin.as_deref(),
         Source::Dataset { .. } => None,

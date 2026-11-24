@@ -130,7 +130,13 @@ fn begin_attempt<'e>(engine: &'e Engine, tenant: &TenantId) -> Outcome<(Lease<'e
         let _removed = std::fs::remove_dir_all(&dir);
         return Err(engine_error("a landing token was reused"));
     }
-    attempts.insert(key.clone(), Held { leased: true, landed: None });
+    attempts.insert(
+        key.clone(),
+        Held {
+            leased: true,
+            landed: None,
+        },
+    );
     drop(attempts);
     let lease = Lease {
         engine,
@@ -154,7 +160,10 @@ fn lease_attempt<'e>(
     through: Option<u64>,
 ) -> Outcome<(Lease<'e>, Landed)> {
     let tenant = &request.load.tenant;
-    let dir = engine.private(tenant)?.join("scratch").join(&request.attempt);
+    let dir = engine
+        .private(tenant)?
+        .join("scratch")
+        .join(&request.attempt);
     let mut attempts = engine.attempts();
     let Some(held) = attempts.get_mut(&(tenant.clone(), request.attempt.clone())) else {
         return Err(refusal(ATTEMPT_UNKNOWN, "the landing attempt is not held"));
@@ -196,7 +205,12 @@ fn lease_attempt<'e>(
 }
 
 /// Read and type a source file: typed rows, typing refusals and counts.
-pub(super) fn stage(request: &LoadRequest, file: &Path, bytes: u64, started: Instant) -> Outcome<Staged> {
+pub(super) fn stage(
+    request: &LoadRequest,
+    file: &Path,
+    bytes: u64,
+    started: Instant,
+) -> Outcome<Staged> {
     let source = files::read_source(request, file)?;
     let mut rows = Vec::new();
     let mut held = Vec::new();
@@ -220,14 +234,19 @@ pub(super) fn stage(request: &LoadRequest, file: &Path, bytes: u64, started: Ins
                 holds: true,
                 values: row.texts,
             }),
-            None => rows.push(TypedRow { row: row.row, cells }),
+            None => rows.push(TypedRow {
+                row: row.row,
+                cells,
+            }),
         }
     }
     let reasons = files::count_reasons(held.iter().map(|row| row.reason.as_str()));
     let load = LoadResponse {
         load: request.load.clone(),
         rows: u64::try_from(rows.len()).unwrap_or(u64::MAX),
-        rejected: reasons.values().fold(0_u64, |total, n| total.saturating_add(*n)),
+        rejected: reasons
+            .values()
+            .fold(0_u64, |total, n| total.saturating_add(*n)),
         reasons,
         bytes,
         millis: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
@@ -275,10 +294,16 @@ fn held_system() -> Vec<Field> {
 pub(super) fn write_files(staged: &Staged, data: &Path, held: &Path) -> Outcome<(u64, u64)> {
     let table = &staged.table;
     let back = held_back(&staged.held);
-    let rows: Vec<&TypedRow> = staged.rows.iter().filter(|row| !back.contains(&row.row)).collect();
+    let rows: Vec<&TypedRow> = staged
+        .rows
+        .iter()
+        .filter(|row| !back.contains(&row.row))
+        .collect();
     let schema = columnar::storage_schema(data_system(), table);
     let mut arrays: Vec<ArrayRef> = vec![
-        Arc::new(StringArray::from_iter_values(rows.iter().map(|r| r.row.to_string()))),
+        Arc::new(StringArray::from_iter_values(
+            rows.iter().map(|r| r.row.to_string()),
+        )),
         Arc::new(UInt64Array::from(vec![1_u64; rows.len()])),
         Arc::new(UInt64Array::from_iter_values(rows.iter().map(|r| r.row))),
     ];
@@ -292,20 +317,34 @@ pub(super) fn write_files(staged: &Staged, data: &Path, held: &Path) -> Outcome<
     columnar::write_parquet(data, &schema, &[columnar::batch(&schema, arrays)?])?;
     let mut quarantine: Vec<&HeldRow> = staged.held.iter().collect();
     quarantine.sort_by(|a, b| {
-        (a.row, a.rule.as_ref().map(String::as_bytes), a.reason.as_bytes()).cmp(&(
-            b.row,
-            b.rule.as_ref().map(String::as_bytes),
-            b.reason.as_bytes(),
-        ))
+        (
+            a.row,
+            a.rule.as_ref().map(String::as_bytes),
+            a.reason.as_bytes(),
+        )
+            .cmp(&(
+                b.row,
+                b.rule.as_ref().map(String::as_bytes),
+                b.reason.as_bytes(),
+            ))
     });
     let schema = columnar::text_schema(held_system(), table);
     let mut arrays: Vec<ArrayRef> = vec![
-        Arc::new(UInt64Array::from_iter_values(quarantine.iter().map(|r| r.row))),
-        Arc::new(StringArray::from_iter_values(quarantine.iter().map(|r| r.reason.as_str()))),
-        Arc::new(StringArray::from(
-            quarantine.iter().map(|r| r.rule.clone()).collect::<Vec<_>>(),
+        Arc::new(UInt64Array::from_iter_values(
+            quarantine.iter().map(|r| r.row),
         )),
-        Arc::new(BooleanArray::from(quarantine.iter().map(|r| r.holds).collect::<Vec<_>>())),
+        Arc::new(StringArray::from_iter_values(
+            quarantine.iter().map(|r| r.reason.as_str()),
+        )),
+        Arc::new(StringArray::from(
+            quarantine
+                .iter()
+                .map(|r| r.rule.clone())
+                .collect::<Vec<_>>(),
+        )),
+        Arc::new(BooleanArray::from(
+            quarantine.iter().map(|r| r.holds).collect::<Vec<_>>(),
+        )),
     ];
     for index in 0..table.columns.len() {
         arrays.push(Arc::new(StringArray::from(
@@ -354,7 +393,8 @@ fn valid_ranges(staged: &Staged) -> Vec<ValidRange> {
 
 /// The answer to a landing step: the next residue page, or the written files.
 fn landing(dir: &Path, request: &LandRequest, staged: &Staged) -> Outcome<LandResponse> {
-    let mut findings: std::collections::BTreeMap<String, RuleCount> = std::collections::BTreeMap::new();
+    let mut findings: std::collections::BTreeMap<String, RuleCount> =
+        std::collections::BTreeMap::new();
     for row in &staged.held {
         if let Some(rule) = &row.rule {
             let count = findings.entry(rule.clone()).or_insert_with(|| RuleCount {
@@ -392,7 +432,11 @@ fn landing(dir: &Path, request: &LandRequest, staged: &Staged) -> Outcome<LandRe
     let landed = |path: &Path, rows: u64| -> Outcome<LandedFile> {
         catalog::seal(path)?;
         let (sha256, bytes) = sha256_file(path).map_err(|e| engine_error(e.to_string()))?;
-        Ok(LandedFile { sha256, rows, bytes })
+        Ok(LandedFile {
+            sha256,
+            rows,
+            bytes,
+        })
     };
     response.data = Some(landed(&data, data_rows)?);
     response.held = Some(landed(&held, held_rows)?);
@@ -422,7 +466,10 @@ pub(super) fn land(
     catalog::seal(&file)?;
     let (digest, bytes) = digest_of(&file)?;
     if digest != request.load.file.sha256 {
-        return Err(refusal("bulk.digest_mismatch", "the file is not the recorded upload"));
+        return Err(refusal(
+            "bulk.digest_mismatch",
+            "the file is not the recorded upload",
+        ));
     }
     let landed = (|| {
         let mut staged = stage(&request.load, &file, bytes, started)?;
@@ -448,7 +495,8 @@ pub(super) fn land(
 /// the next step.
 pub(super) fn settle(engine: &Engine, request: &SettleRequest) -> Outcome<LandResponse> {
     let land = &request.land;
-    let (mut lease, landed) = lease_attempt(engine, land, Phase::Staged, None, Some(request.through))?;
+    let (mut lease, landed) =
+        lease_attempt(engine, land, Phase::Staged, None, Some(request.through))?;
     let mut staged = landed
         .staged
         .as_deref()
@@ -521,20 +569,27 @@ pub(super) fn store(
         return Err(refusal(STALE, "the answer is not this landing's"));
     }
     if request.landed.data.is_none() || request.landed.held.is_none() {
-        return Err(refusal("analytics.invalid", "the landing has residue to settle"));
+        return Err(refusal(
+            "analytics.invalid",
+            "the landing has residue to settle",
+        ));
     }
-    let (lease, landed) = match lease_attempt(engine, land, Phase::Written, Some(&request.landed), None) {
-        Ok(leased) => leased,
-        Err(unknown) if unknown.code == ATTEMPT_UNKNOWN => {
-            return replayed(engine, request, false)?.ok_or(unknown);
-        }
-        Err(refused) => return Err(refused),
-    };
+    let (lease, landed) =
+        match lease_attempt(engine, land, Phase::Written, Some(&request.landed), None) {
+            Ok(leased) => leased,
+            Err(unknown) if unknown.code == ATTEMPT_UNKNOWN => {
+                return replayed(engine, request, false)?.ok_or(unknown);
+            }
+            Err(refused) => return Err(refused),
+        };
     let answer = landed.answer;
     let (Some(data_file), Some(held_file)) = (&answer.data, &answer.held) else {
         return Err(engine_error("a written attempt names its files"));
     };
-    let (data, held) = (lease.dir.join("data.parquet"), lease.dir.join("held.parquet"));
+    let (data, held) = (
+        lease.dir.join("data.parquet"),
+        lease.dir.join("held.parquet"),
+    );
     send(&data, &held)?;
     let cache = dataset_cache_id(table, &data_file.sha256, &held_file.sha256);
     let response = LandResponse {

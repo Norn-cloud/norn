@@ -709,7 +709,6 @@ pub enum PredicateKind {
 /// evaluator's decimal cannot hold the value exactly.
 pub const MAX_PREDICATE_SCALE: u32 = 28;
 
-
 /// MANIFEST-LAWS-1: one law or invariant, as the engine checks it over a
 /// landing. Where the condition holds, the predicate must equal `expect`;
 /// a row where it does not fails the rule.

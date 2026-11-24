@@ -11,10 +11,10 @@
 use std::path::Path;
 
 use duckdb::OptionalExt as _;
+use norn_cell::analytics::TenantId;
 pub use norn_cell::analytics::engine::{
     ATTEMPT_BUSY, ATTEMPT_UNKNOWN, DATASET_COLD, ENGINE_ID, Engine, Settings,
 };
-use norn_cell::analytics::TenantId;
 
 fn open(root: &Path, tenant: &TenantId) -> duckdb::Connection {
     duckdb::Connection::open(root.join(format!("{}.duckdb", tenant.as_str())))
@@ -24,7 +24,9 @@ fn open(root: &Path, tenant: &TenantId) -> duckdb::Connection {
 /// Rows of the mirror table `table` a reader could see.
 pub fn mirror_rows(root: &Path, tenant: &TenantId, table: &str) -> u64 {
     open(root, tenant)
-        .query_row(&format!("SELECT count(*) FROM \"m:{table}\""), [], |r| r.get(0))
+        .query_row(&format!("SELECT count(*) FROM \"m:{table}\""), [], |r| {
+            r.get(0)
+        })
         .expect("mirror rows")
 }
 
@@ -43,7 +45,9 @@ pub fn refuse_meta_key(root: &Path, tenant: &TenantId, key: &str) {
 /// One metadata record.
 pub fn meta(root: &Path, tenant: &TenantId, key: &str) -> Option<String> {
     open(root, tenant)
-        .query_row("SELECT value FROM \":meta\" WHERE key = ?", [key], |row| row.get(0))
+        .query_row("SELECT value FROM \":meta\" WHERE key = ?", [key], |row| {
+            row.get(0)
+        })
         .optional()
         .expect("meta")
 }
@@ -51,7 +55,9 @@ pub fn meta(root: &Path, tenant: &TenantId, key: &str) -> Option<String> {
 /// Rows of the current dataset `table`.
 pub fn dataset_rows(root: &Path, tenant: &TenantId, table: &str) -> u64 {
     open(root, tenant)
-        .query_row(&format!("SELECT count(*) FROM \"d:{table}\""), [], |r| r.get(0))
+        .query_row(&format!("SELECT count(*) FROM \"d:{table}\""), [], |r| {
+            r.get(0)
+        })
         .expect("dataset rows")
 }
 

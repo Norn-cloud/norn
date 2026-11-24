@@ -659,7 +659,10 @@ impl CellActor {
                 if let Err(error) = core.configure_connect(&sources, &vars) {
                     tracing::error!(error = %error, "source connections not configured");
                 }
-                if analytics && let Err(error) = core.enable_analytics(signing_key.as_deref(), olap_engine.as_deref()) {
+                if analytics
+                    && let Err(error) =
+                        core.enable_analytics(signing_key.as_deref(), olap_engine.as_deref())
+                {
                     tracing::error!(error = %error, "analytics not enabled");
                 }
                 let serving = core.serving();
