@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 
 use norn_checker::receipt::{
     ReceiptSources, admission_receipt_sha256, check_artifact_set_with_receipt,
-    verify_admission_receipt,
+    recover_legacy_admission_receipt, verify_admission_receipt,
 };
 use norn_checker::{
     ArtifactValidation, EntityArtifactSetContext, EntityContext, EntityModel, check_artifact_set,
@@ -362,6 +362,27 @@ fn receipt_sources_for(artifacts: &[ArtifactEnvelope]) -> TestResult<ReceiptSour
     ReceiptSources::new(&values, &[]).map_err(|err| format!("receipt sources: {err:?}").into())
 }
 
+/// Exact `norn.expr.env/2` type-environment hash of `core.Conversion` from
+/// `origin/main` (without `decimalBindingOwners`, under `HashProfile::Norn1`).
+const MAIN_CONVERSION_ENV_V2_SHA256: &str =
+    "4c603de583ae4b5c0c3932fadd7492e495136fd4f84f68b30dd96c5108ad5942";
+
+/// Exact `norn-checker/receipt@2` content hash minted under `origin/main`'s
+/// `norn.expr.env/2` preimage for `core.Conversion`.
+const MAIN_CONVERSION_RECEIPT_V2_SHA256: &str =
+    "06c5fd6351f85b2e1c8e604ccffe4a4b2c2666f90a02147e3730669d178f0d88";
+
+fn with_type_env(body: &str, version: u32, sha256: &str) -> TestResult<String> {
+    let mut doc: serde_json::Value = serde_json::from_str(body)?;
+    doc.as_object_mut()
+        .ok_or("receipt must be a JSON object")?
+        .insert(
+            "typeEnv".to_owned(),
+            json!({ "id": "norn.expr.env", "version": version, "sha256": sha256 }),
+        );
+    Ok(String::from_utf8(norn_canonical::canonical_json_of(&doc)?)?)
+}
+
 #[test]
 fn retained_env_v2_decimal_binding_receipt_verifies_and_relabelling_to_v3_refuses() -> TestResult {
     let conversion = interface_envelope(
@@ -402,12 +423,13 @@ fn retained_env_v2_decimal_binding_receipt_verifies_and_relabelling_to_v3_refuse
         .ok_or("fresh receipt must carry typeEnv")?;
     assert_eq!(fresh_env.version, 3);
     assert_eq!(fresh_env.version, norn_expr::TYPE_ENV_VERSION);
+    assert_ne!(fresh_env.sha256, MAIN_CONVERSION_ENV_V2_SHA256);
     let fresh_body = String::from_utf8(checked.receipt.canonical_json()?)?;
     let fresh_hash = admission_receipt_sha256(&fresh_body)?;
     verify_admission_receipt(&fresh_body, &fresh_hash, &artifacts, &[], &limits)?;
 
-    // Historical main-era norn.expr.env/2 receipt (without decimalBindingOwners)
-    // must still verify cleanly against the exact same DecimalBinding artifact set.
+    // Historical main-era norn.expr.env/2 receipt pinned to origin/main's literal
+    // digest (without decimalBindingOwners) must verify and recover by hash.
     let derived =
         derive_type_env(&artifacts, &[], &limits).map_err(|err| format!("derive env: {err:?}"))?;
     let v2_bytes = String::from_utf8(derived.canonical_json_at_version(TypeEnvVersion::V2)?)?;
@@ -416,29 +438,32 @@ fn retained_env_v2_decimal_binding_receipt_verifies_and_relabelling_to_v3_refuse
     assert!(v3_bytes.contains("decimalBindingOwners"));
     let v2_ref = derived.reference_at_version(TypeEnvVersion::V2)?;
     assert_eq!(v2_ref.version, 2);
-    assert_ne!(v2_ref.sha256, fresh_env.sha256);
+    assert_eq!(v2_ref.sha256, MAIN_CONVERSION_ENV_V2_SHA256);
 
-    let mut retained_v2 = checked.receipt;
-    retained_v2.type_env = Some(v2_ref);
-    let retained_v2_body = String::from_utf8(retained_v2.canonical_json()?)?;
-    let retained_v2_hash = admission_receipt_sha256(&retained_v2_body)?;
+    let retained_v2_body = with_type_env(&fresh_body, 2, MAIN_CONVERSION_ENV_V2_SHA256)?;
+    assert_eq!(
+        admission_receipt_sha256(&retained_v2_body)?,
+        MAIN_CONVERSION_RECEIPT_V2_SHA256
+    );
     verify_admission_receipt(
         &retained_v2_body,
-        &retained_v2_hash,
+        MAIN_CONVERSION_RECEIPT_V2_SHA256,
         &artifacts,
         &[],
         &limits,
     )?;
+    assert_eq!(
+        recover_legacy_admission_receipt(
+            MAIN_CONVERSION_RECEIPT_V2_SHA256,
+            &artifacts,
+            &[],
+            &limits
+        )?,
+        retained_v2_body
+    );
 
     // Relabelling a historical /2 hash as /3 must refuse.
-    let mut relabelled: serde_json::Value = serde_json::from_str(&retained_v2_body)?;
-    if let Some(type_env) = relabelled
-        .get_mut("typeEnv")
-        .and_then(serde_json::Value::as_object_mut)
-    {
-        type_env.insert("version".to_owned(), json!(3));
-    }
-    let relabelled_body = String::from_utf8(norn_canonical::canonical_json_of(&relabelled)?)?;
+    let relabelled_body = with_type_env(&fresh_body, 3, MAIN_CONVERSION_ENV_V2_SHA256)?;
     let relabelled_hash = admission_receipt_sha256(&relabelled_body)?;
     assert!(
         verify_admission_receipt(&relabelled_body, &relabelled_hash, &artifacts, &[], &limits)

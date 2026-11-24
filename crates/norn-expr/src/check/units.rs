@@ -191,14 +191,18 @@ pub(crate) fn check_v1_canonical_compatibility(
             message: "Rate requires norn.expr.env/2".to_owned(),
         });
     }
+    let is_binding = |mut ty: &Type| {
+        while let Type::List(inner) | Type::Optional(inner) = ty {
+            ty = inner;
+        }
+        matches!(ty, Type::DecimalBinding { .. })
+    };
     let has_binding = !owners.is_empty()
-        || variables
-            .values()
-            .any(|ty| decimal_binding_group(ty).is_some())
+        || variables.values().any(is_binding)
         || records
             .values()
             .flat_map(|record| record.fields.values())
-            .any(|field| decimal_binding_group(&field.ty).is_some());
+            .any(|field| is_binding(&field.ty));
     if has_binding {
         return Err(CanonicalJsonError::Serialize {
             message: "DecimalBinding requires norn.expr.env/2".to_owned(),

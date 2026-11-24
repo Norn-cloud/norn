@@ -440,19 +440,43 @@ fn interface_decimal_binding_refuses_cross_instance_sum_rounding_and_destination
 
 #[test]
 fn nested_alias_shadowing_isolates_and_restores_bound_scopes() -> TestResult {
-    let all = test_interfaces()?;
-    let conv_env = interface_env(&all, "core.Conversion")?;
+    let mut interfaces = test_interfaces()?.to_vec();
+    interfaces.push(interface_def(
+        r#"{
+            "name": "toy.OuterConversion",
+            "extends": ["core.Conversion"],
+            "properties": [
+                {"id": "outer_only", "type": {"kind": "decimal-binding", "group": "outer"}},
+                {"id": "outer_peer", "type": {"kind": "decimal-binding", "group": "outer"}}
+            ],
+            "links": [
+                {"id": "outer_items", "target": "toy.OuterConversion", "cardinality": {"from": "many", "to": "many", "required": false}}
+            ]
+        }"#,
+    )?);
+    let conv_env = interface_env(&interfaces, "core.Conversion")?;
+    let outer_env = interface_env(&interfaces, "toy.OuterConversion")?;
 
     // `all(...)` is outside the exact scaled VM function set (emitting only
     // `core.values.inexact`), so unit-sound nested shadowing must never emit
     // `core.values.unit_mismatch`: inner `x` resolves to the inner scope
-    // (matching inner `#`) and outer `x` is restored after the inner closure pops.
-    for source in [
-        "all(self.others as x, all(self.others as x, x.input == x.output + x.loss))",
-        "all(self.others as x, all(self.others as x, x.input == #.output))",
-        "all(self.others as x, (x.input == x.output) and all(self.others as x, x.input == x.loss) and (x.output == #.loss))",
+    // (matching inner `#`), and outer `x` (with `outer_only` absent on inner
+    // `core.Conversion`) is restored after the inner closure pops.
+    for (env, source) in [
+        (
+            &conv_env,
+            "all(self.others as x, all(self.others as x, x.input == x.output + x.loss))",
+        ),
+        (
+            &conv_env,
+            "all(self.others as x, all(self.others as x, x.input == #.output))",
+        ),
+        (
+            &outer_env,
+            "all(self.outer_items as x, (x.outer_only == x.outer_peer) and all(self.others as x, x.input == #.output) and (x.outer_only == #.outer_peer))",
+        ),
     ] {
-        let Err(err) = compile(source)?.check_typed(&conv_env, &Type::Bool) else {
+        let Err(err) = compile(source)?.check_typed(env, &Type::Bool) else {
             return Err(format!("{source} is outside exact scaled VM function set").into());
         };
         assert!(
@@ -471,6 +495,33 @@ fn nested_alias_shadowing_isolates_and_restores_bound_scopes() -> TestResult {
         "all(self.others as x, all(self.others as y, all(self.others as x, x.input == y.input)))",
     ] {
         assert_refused(&conv_env, source, &Type::Bool, "core.values.unit_mismatch")?;
+    }
+    Ok(())
+}
+
+#[test]
+fn list_and_optional_decimal_binding_refuse_v1_even_without_owners() -> TestResult {
+    let binding = Type::DecimalBinding {
+        group: "mass".into(),
+    };
+    for ty in [
+        binding.clone(),
+        binding.clone().optional(),
+        binding.clone().list(),
+        binding.clone().list().optional(),
+        binding.optional().list(),
+    ] {
+        let env = ZenTypeEnv::input_only(
+            BTreeMap::from([("qty".to_owned(), ty)]),
+            EnvOptions::default(),
+        )
+        .map_err(|err| format!("input_only env: {err:?}"))?;
+        assert!(
+            env.reference_at_version(TypeEnvVersion::V1).is_err(),
+            "DecimalBinding (including list/optional wrappers) must refuse norn.expr.env/1"
+        );
+        assert_eq!(env.reference_at_version(TypeEnvVersion::V2)?.version, 2);
+        assert_eq!(env.reference_at_version(TypeEnvVersion::V3)?.version, 3);
     }
     Ok(())
 }
