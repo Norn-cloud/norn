@@ -327,6 +327,7 @@ export function SourcesPage() {
         error={read.error}
         isFetching={read.isFetching}
         onRetry={() => { refreshMode(); void read.refetch() }}
+        bone="sources-overview"
         skeleton="table"
         loadingLabel="Reading sources and types"
       >

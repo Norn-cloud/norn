@@ -7,8 +7,9 @@ use norn_ir::{
     jdm::{FoldOrderKind, OrderedFold},
 };
 use std::collections::BTreeSet;
+use std::sync::Arc;
 use zen_engine::{
-    Variable,
+    TzdbLookup, Variable,
     meter::{Meter, cost},
     nodes::DecisionContracts,
 };
@@ -25,11 +26,12 @@ pub(crate) struct StepContracts {
 }
 
 impl StepContracts {
-    pub(crate) fn bind_expressions(
+    pub(crate) fn bind_expressions_in(
         &mut self,
         root: &norn_ir::RuleRoot,
+        tzdb: &norn_expr::temporal::TzdbBundle,
     ) -> Result<(), crate::AdmissionError> {
-        let assignments = norn_expr::graph::bind(root).map_err(|reason| {
+        let assignments = norn_expr::graph::bind_in(root, tzdb).map_err(|reason| {
             crate::AdmissionError::InvalidSchema {
                 rule_id: root.rule_id.clone(),
                 path: "nornType".into(),
@@ -115,10 +117,20 @@ impl DecisionContracts for StepContracts {
         input: &Variable,
         meter: Option<&Meter>,
     ) -> Option<Result<Variable, Box<dyn std::error::Error>>> {
+        self.derive_with_tzdb(key, input, meter, None)
+    }
+
+    fn derive_with_tzdb(
+        &self,
+        key: &str,
+        input: &Variable,
+        meter: Option<&Meter>,
+        tzdb: Option<&Arc<dyn TzdbLookup>>,
+    ) -> Option<Result<Variable, Box<dyn std::error::Error>>> {
         self.folds.get(key).map(|plan| {
             meter
                 .ok_or_else(|| "fold requires shared fuel".into())
-                .and_then(|meter| plan.run(input, meter, self))
+                .and_then(|meter| plan.run(input, meter, tzdb, self))
         })
     }
 

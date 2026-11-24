@@ -46,6 +46,15 @@ pub enum ExprError {
         /// Engine type name of the value (for example `"date"`).
         type_name: String,
     },
+    /// A [`PreparedAdmission`](crate::PreparedAdmission) was evaluated against
+    /// a [`TzdbBundle`](crate::temporal::TzdbBundle) whose SHA-256 digest
+    /// differs from the bundle it was admitted under.
+    TzdbMismatch {
+        /// SHA-256 digest of the bundle bound at admission.
+        admitted: String,
+        /// SHA-256 digest of the bundle supplied at evaluation.
+        evaluated: String,
+    },
 }
 
 impl fmt::Display for ExprError {
@@ -63,6 +72,13 @@ impl fmt::Display for ExprError {
             Self::UnsupportedResult { type_name } => write!(
                 f,
                 "expression produced a `{type_name}` value, which has no Norn value representation"
+            ),
+            Self::TzdbMismatch {
+                admitted,
+                evaluated,
+            } => write!(
+                f,
+                "prepared expression was admitted for tzdb `{admitted}`, not `{evaluated}`"
             ),
         }
     }
