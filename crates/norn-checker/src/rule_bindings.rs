@@ -28,8 +28,10 @@ use norn_ir::{
 };
 
 use crate::action_set::Model;
+use crate::artifact_set::scope_finding;
 use crate::entity_artifacts::EntityArtifactSetContext;
 use crate::entity_instance::{EffectiveKind, EffectiveObjectType, EffectiveProperty};
+use crate::entity_scopes::{ScopeKey, scope_key};
 use crate::envelope::invalid_diagnostic;
 use crate::lifecycle_writes::finding;
 
@@ -677,11 +679,20 @@ pub(crate) fn check_rule_binding_set(
     if bound.is_empty() {
         return Vec::new();
     }
-    let model = Model::new(artifacts, context.base, context.registry, true);
+    let mut models: BTreeMap<ScopeKey, Model<'_>> = BTreeMap::new();
     let mut findings = Vec::new();
     for (artifact, triggers, slice) in bound {
-        check_trigger_binding_set(&model, artifact, &triggers, &mut findings);
-        check_slice_binding_set(&model, artifact, &slice, &mut findings);
+        let model = models.entry(scope_key(&artifact.scope)).or_insert_with(|| {
+            Model::for_scope(
+                artifacts,
+                context.base,
+                context.registry,
+                true,
+                &artifact.scope,
+            )
+        });
+        check_trigger_binding_set(model, artifact, &triggers, &mut findings);
+        check_slice_binding_set(model, artifact, &slice, &mut findings);
     }
     findings
 }
@@ -718,6 +729,12 @@ fn check_trigger_binding_set(
             ));
             continue;
         };
+        if let Some(error) =
+            scope_finding(artifact, defined.artifact, &format!("{pointer}/objectType"))
+        {
+            findings.push(error);
+            continue;
+        }
         if let Some(transition) = transition {
             let declared = defined.lifecycles.as_ref().is_ok_and(|lifecycles| {
                 lifecycles.iter().any(|effective| {
@@ -794,7 +811,13 @@ fn check_slice_binding_set(
         .and_then(JsonValue::as_object);
     for (index, entry) in slice.iter().enumerate() {
         let defined = model.object_type(entry.object_type.as_str());
-        if defined.is_none() {
+        let pointer = format!("/payload/slice/{index}/objectType");
+        if let Some(defined) = defined {
+            if let Some(error) = scope_finding(artifact, defined.artifact, &pointer) {
+                findings.push(error);
+                continue;
+            }
+        } else {
             findings.push(finding(
                 codes::UNKNOWN_BINDING,
                 format!(
@@ -803,7 +826,7 @@ fn check_slice_binding_set(
                     entry.object_type.as_str()
                 ),
                 artifact,
-                &format!("/payload/slice/{index}/objectType"),
+                &pointer,
             ));
         }
         if matches!(&entry.key, SliceKey::TriggerBefore | SliceKey::TriggerAfter)

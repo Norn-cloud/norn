@@ -1,10 +1,11 @@
 //! Structural law admission and conservative whole-set impact closure. No proof claims.
 use crate::entity_artifacts::{Decoded, Layer, decode_v2};
+use crate::entity_scopes::{LawScopeEnv, ScopeKey, law_scope_env, scope_key};
 use crate::{
     Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, EffectiveCatalog, Span,
 };
 use norn_expr::env::{FieldSource, RecordKind, RecordType};
-use norn_expr::{EntityDefinitions, EnvOptions, Expression, Type, ZenTypeEnv, check_expression};
+use norn_expr::{Expression, Type, ZenTypeEnv, check_expression};
 use norn_graph::{Budget, Direction, Graph, reachability};
 use norn_ir::{
     ArtifactEnvelope, ArtifactKind, ArtifactPayload, LawIR, LawModality, LawResponse, LawRoot,
@@ -207,31 +208,7 @@ pub fn check_law_set(
         return Vec::new();
     }
     let limits = ResourceLimitProfile::norn_limits_v1();
-    let catalog = EffectiveCatalog::from_artifacts_with_registry(&pool, registry);
-    let mut layer = Layer::default();
-    for (index, a) in pool.iter().enumerate() {
-        if let Decoded::Root(root) = decode_v2(a) {
-            layer.push(index, *root);
-        }
-    }
-    let property_types: Vec<_> = layer.catalog.iter().map(|(_, def)| def.clone()).collect();
-    let env = ZenTypeEnv::from_artifact_set_with_registry(
-        &EntityDefinitions {
-            property_types: &property_types,
-            interfaces: &layer.interfaces,
-            object_types: &layer.object_types,
-            extensions: &layer.extensions,
-        },
-        registry,
-        EnvOptions::from_limit_profile(&limits),
-    );
-    let context = LawContext {
-        base,
-        pool: &pool,
-        catalog: &catalog,
-        layer: &layer,
-        env: env.as_ref().ok(),
-    };
+    let mut scoped_envs: BTreeMap<ScopeKey, LawScopeEnv> = BTreeMap::new();
     // The whole-set inventory is identical for every law; compute it once.
     let closure_refused = pool
         .iter()
@@ -260,6 +237,16 @@ pub fn check_law_set(
             continue;
         };
         out.extend(local(&law, artifact));
+        let scoped = scoped_envs
+            .entry(scope_key(&artifact.scope))
+            .or_insert_with(|| law_scope_env(&pool, registry, &limits, &artifact.scope));
+        let context = LawContext {
+            base,
+            pool: &pool,
+            catalog: &scoped.catalog,
+            layer: &scoped.layer,
+            env: scoped.env.as_ref(),
+        };
         context.check_bound_law(&law, artifact, &mut out);
         for (parent, inherited) in laws.get(&law.id).into_iter().flatten() {
             if inherited != &law || crate::scope_conflict(&artifact.scope, &parent.scope).is_some()

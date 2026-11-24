@@ -67,23 +67,24 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use norn_expr::{
-    EntityDefinitions, EnvOptions, Expression, FieldSource, RecordType, Type, ZenTypeEnv,
-};
+use norn_expr::{Expression, FieldSource, RecordType, Type, ZenTypeEnv};
 use norn_ir::{
     ActionAggregateInput, ActionEffectProgram, ActionEffectTarget, ActionRoot, AggregateFunction,
     ArtifactEnvelope, ArtifactKind, ArtifactPayload, DiagnosticRemediation, DiagnosticSeverity,
     EntityMutationAuthority, JsonObject, JsonValue, ObjectTypeName, OwnedCollectionAction,
-    PropertyAdditivity, PropertyId, PropertyTypeName, SliceKey, TransitionId, UpsertWriteMode,
-    WriteChange, ZenExpression,
+    PropertyAdditivity, PropertyId, PropertyTypeName, ScopeRef, SliceKey, TransitionId,
+    UpsertWriteMode, WriteChange, ZenExpression,
 };
 
 use crate::artifact_set::scope_finding;
-use crate::entity_artifacts::{Decoded, EntityArtifactSetContext, Layer, decode_v2};
+use crate::entity_artifacts::EntityArtifactSetContext;
 use crate::entity_instance::{
-    EffectiveCatalog, EffectiveKind, EffectiveLifecycle, EffectiveObjectType, EffectiveProperty,
+    EffectiveKind, EffectiveLifecycle, EffectiveObjectType, EffectiveProperty,
 };
 use crate::entity_lowering::{EntityForm, entity_object_type};
+use crate::entity_scopes::{
+    ScopeKey, action_model_parts, scope_key, upsert_extension_scope_findings,
+};
 use crate::lifecycle_writes::{codes as codes_lifecycle, finding as lifecycle_finding};
 use crate::lifecycles::{check_transition_firing, codes::UNDECLARED_WRITE};
 use crate::predicate_property::{
@@ -204,12 +205,12 @@ pub fn check_action_set(
         .iter()
         .filter_map(|artifact| decode_action(artifact).map(|root| (artifact, root)))
         .collect();
-    let model = Model::new(artifacts, base, context.registry, !actions.is_empty());
-    let mut findings = model.duplicate_findings();
+    let mut findings = Model::new(artifacts, base, context.registry, false).duplicate_findings();
     if actions.is_empty() {
         return findings;
     }
 
+    let mut models: BTreeMap<ScopeKey, Model<'_>> = BTreeMap::new();
     let mut action_ids: BTreeSet<String> = base
         .iter()
         .filter_map(decode_action)
@@ -227,7 +228,10 @@ pub fn check_action_set(
                 "/payload/actionId",
             ));
         }
-        findings.extend(check_action(artifact, root, &model, artifacts, base));
+        let model = models.entry(scope_key(&artifact.scope)).or_insert_with(|| {
+            Model::for_scope(artifacts, base, context.registry, true, &artifact.scope)
+        });
+        findings.extend(check_action(artifact, root, model, artifacts, base));
     }
     findings
 }
@@ -625,11 +629,13 @@ fn action_slice_types(
             typed_slice = false;
             continue;
         };
-        findings.extend(scope_finding(
-            artifact,
-            defined.artifact,
-            &format!("{path}/objectType"),
-        ));
+        if let Some(error) =
+            scope_finding(artifact, defined.artifact, &format!("{path}/objectType"))
+        {
+            findings.push(error);
+            typed_slice = false;
+            continue;
+        }
         let Some(Ok(_)) = &defined.effective_object_type else {
             findings.push(finding(
                 codes::INVALID_SLICE,
@@ -801,11 +807,14 @@ fn aggregate_result_type(
         ));
         return None;
     };
-    findings.extend(scope_finding(
+    if let Some(error) = scope_finding(
         site.artifact,
         defined.artifact,
         &format!("{}/objectType", site.path),
-    ));
+    ) {
+        findings.push(error);
+        return None;
+    }
     let (Some(Ok(effective)), Some(record)) =
         (&defined.effective_object_type, environment.record(kind))
     else {
@@ -1214,14 +1223,14 @@ fn effect_target_findings(
     });
     match pinned {
         Some(pinned) if matches!(pinned.payload, ArtifactPayload::Entity(_)) => {
-            findings.extend(scope_finding(
-                artifact,
-                pinned,
-                "/payload/effectProgram/entityArtifactId",
-            ));
+            let scope_error = scope_finding(artifact, pinned, "/payload/effectProgram/entityArtifactId");
+            let out_of_scope = scope_error.is_some();
+            findings.extend(scope_error);
             match model.defined_by(pinned) {
                 Some(defined) if defined.name == object_kind => {
-                    findings.extend(defined.writability(artifact, root, program, model));
+                    if !out_of_scope {
+                        findings.extend(defined.writability(artifact, root, program, model, artifacts, base));
+                    }
                 }
                 defined => findings.push(finding(
                     codes::EFFECT_KIND_MISMATCH,
@@ -1312,6 +1321,8 @@ impl Defined<'_> {
         root: &ActionRoot,
         program: &ActionEffectProgram,
         model: &Model<'_>,
+        artifacts: &[ArtifactEnvelope],
+        base: &[ArtifactEnvelope],
     ) -> Vec<Diagnostic> {
         let kind = program.target().object_kind;
         let mut findings: Vec<Diagnostic> = self
@@ -1385,6 +1396,16 @@ impl Defined<'_> {
                     ]));
                     findings.push(diagnostic);
                 }
+                findings.extend(upsert_extension_scope_findings(
+                    action,
+                    kind,
+                    properties,
+                    self.effective_object_type
+                        .as_ref()
+                        .and_then(|v| v.as_ref().ok()),
+                    artifacts,
+                    base,
+                ));
             }
         }
         if let ActionEffectProgram::MutateParentWithRows {
@@ -2306,33 +2327,6 @@ fn transition_findings(
     })
 }
 
-fn action_model_environment(
-    artifacts: &[ArtifactEnvelope],
-    base: &[ArtifactEnvelope],
-    registry: &BTreeSet<PropertyTypeName>,
-) -> Result<ZenTypeEnv, Vec<norn_expr::EnvError>> {
-    let mut layer = Layer::default();
-    let mut object_types = Vec::new();
-    for (index, artifact) in base.iter().chain(artifacts).enumerate() {
-        if let Decoded::Root(root) = decode_v2(artifact) {
-            layer.push(index, *root);
-        }
-        if let ArtifactPayload::Entity(payload) = &artifact.payload
-            && let Ok(Some(object)) = entity_object_type(payload)
-        {
-            object_types.push(object.root.object_type);
-        }
-    }
-    let property_types: Vec<_> = layer.catalog.iter().map(|(_, def)| def.clone()).collect();
-    let definitions = EntityDefinitions {
-        property_types: &property_types,
-        interfaces: &layer.interfaces,
-        object_types: &object_types,
-        extensions: &layer.extensions,
-    };
-    ZenTypeEnv::from_artifact_set_for_checking(&definitions, registry, EnvOptions::default())
-}
-
 /// The object types of the set and the base, by name, in definition order (base first).
 pub struct Model<'a> {
     by_name: BTreeMap<String, Vec<Defined<'a>>>,
@@ -2348,11 +2342,30 @@ impl<'a> Model<'a> {
         registry: &BTreeSet<PropertyTypeName>,
         effective: bool,
     ) -> Self {
-        // The effective view is only needed to check writes.
-        let catalog = effective.then(|| {
-            let combined: Vec<ArtifactEnvelope> = base.iter().chain(artifacts).cloned().collect();
-            EffectiveCatalog::from_artifacts_with_registry(&combined, registry)
-        });
+        Self::build(artifacts, base, registry, effective, None)
+    }
+
+    /// Build the effective object-type model visible from `consumer`.
+    #[must_use]
+    pub fn for_scope(
+        artifacts: &'a [ArtifactEnvelope],
+        base: &'a [ArtifactEnvelope],
+        registry: &BTreeSet<PropertyTypeName>,
+        effective: bool,
+        consumer: &ScopeRef,
+    ) -> Self {
+        Self::build(artifacts, base, registry, effective, Some(consumer))
+    }
+
+    fn build(
+        artifacts: &'a [ArtifactEnvelope],
+        base: &'a [ArtifactEnvelope],
+        registry: &BTreeSet<PropertyTypeName>,
+        effective: bool,
+        consumer: Option<&ScopeRef>,
+    ) -> Self {
+        let (catalog, expression_environment) =
+            action_model_parts(artifacts, base, registry, effective, consumer);
         let mut by_name: BTreeMap<String, Vec<Defined<'a>>> = BTreeMap::new();
         let pool = base
             .iter()
@@ -2433,7 +2446,6 @@ impl<'a> Model<'a> {
                 links,
             });
         }
-        let expression_environment = action_model_environment(artifacts, base, registry);
         Self {
             by_name,
             expression_environment,

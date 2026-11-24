@@ -42,6 +42,7 @@ pub mod entity_artifacts;
 pub mod entity_instance;
 pub mod entity_lowering;
 pub mod entity_model;
+pub mod entity_scopes;
 pub mod envelope;
 pub mod exact_rational;
 mod finite;

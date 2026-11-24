@@ -625,6 +625,9 @@ impl UxChecker<'_, '_, '_> {
 
     fn object_type_definition(&self, name: &str) -> Option<norn_ir::ObjectTypeDef> {
         self.all.iter().find_map(|artifact| {
+            if !norn_checker::entity_scopes::scope_visible(&self.owner.scope, &artifact.scope) {
+                return None;
+            }
             let ArtifactPayload::Entity(payload) = &artifact.payload else {
                 return None;
             };

@@ -20,7 +20,7 @@ use norn_expr::{EnvOptions, Expression, InferredType, ZenTypeEnv};
 use norn_ir::{
     AggregateFn, ArtifactEnvelope, ArtifactKind, ArtifactPayload, CalcExpr, DedupeKeep, JoinKind,
     JoinOn, Normalization, OrderKey, PropertyAdditivity, PropertyType, PropertyTypeName,
-    RefreshPolicy, ResourceLimitProfile, SortDirection, ViewInputKind, ViewIrPayload,
+    RefreshPolicy, ResourceLimitProfile, ScopeRef, SortDirection, ViewInputKind, ViewIrPayload,
     ViewMaintenance, ViewNode, WindowFn,
 };
 
@@ -465,21 +465,19 @@ pub fn check_transform_set(
         return Vec::new();
     }
     let pool: Vec<ArtifactEnvelope> = base.iter().chain(artifacts).cloned().collect();
-    let context = Context::new(&pool, registry);
-    artifacts
-        .iter()
-        .filter(|artifact| is_relational(artifact))
-        .flat_map(|artifact| match context.admit(artifact) {
-            Ok(_plan) => Vec::new(),
-            Err(findings) => findings
-                .into_iter()
-                .map(|mut finding| {
-                    finding.artifact_id = Some(artifact.artifact_id.clone());
-                    finding
-                })
-                .collect(),
-        })
-        .collect()
+    let mut contexts = BTreeMap::new();
+    let mut findings = Vec::new();
+    for a in artifacts.iter().filter(|a| is_relational(a)) {
+        let key = crate::entity_scopes::scope_key(&a.scope);
+        let ctx = contexts
+            .entry(key)
+            .or_insert_with(|| Context::new(&pool, registry, &a.scope));
+        for mut d in ctx.admit(a).err().unwrap_or_default() {
+            d.artifact_id = Some(a.artifact_id.clone());
+            findings.push(d);
+        }
+    }
+    findings
 }
 
 /// Admit one relational view against the artifact pool it is installed with.
@@ -492,7 +490,7 @@ pub fn admit(
     pool: &[ArtifactEnvelope],
     registry: &BTreeSet<PropertyTypeName>,
 ) -> Result<TransformPlan, Vec<Diagnostic>> {
-    Context::new(pool, registry).admit(artifact)
+    Context::new(pool, registry, &artifact.scope).admit(artifact)
 }
 
 struct Context<'a> {
@@ -503,12 +501,13 @@ struct Context<'a> {
 }
 
 impl<'a> Context<'a> {
-    fn new(pool: &'a [ArtifactEnvelope], registry: &BTreeSet<PropertyTypeName>) -> Self {
+    fn new(pool: &'a [ArtifactEnvelope], reg: &BTreeSet<PropertyTypeName>, s: &ScopeRef) -> Self {
         let limits = ResourceLimitProfile::norn_limits_v1();
+        let (catalog, env) = crate::entity_scopes::transform_scope_parts(pool, reg, &limits, s);
         Self {
             pool,
-            catalog: EffectiveCatalog::from_artifacts_with_registry(pool, registry),
-            env: crate::derive_type_env(&[], pool, &limits).ok(),
+            catalog,
+            env,
             limits,
         }
     }

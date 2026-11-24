@@ -116,6 +116,7 @@ fn required_target<'a>(
         .filter(|a| a.artifact_id == reference.artifact_id && a.version == reference.version);
     let target = targets.next().ok_or("a dependency target is unavailable")?;
     if targets.next().is_some()
+        || !crate::entity_scopes::scope_visible(&owner.scope, &target.scope)
         || !owner.dependencies.iter().any(|pin| {
             pin.required
                 && pin.artifact_id == target.artifact_id

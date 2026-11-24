@@ -2,14 +2,15 @@
 //! T8-MAP-1a): run by [`crate::check_artifact_set`] over the candidates and
 //! the installed base. See the [`super`] module docs.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
 
 use norn_ir::mapping::{LawInterpretationIr, MappingDocument, MappingIr};
 use norn_ir::source_schema::SourceSchemaIr;
-use norn_ir::{ArtifactEnvelope, ArtifactKind, ArtifactPayload};
+use norn_ir::{ArtifactEnvelope, ArtifactKind, ArtifactPayload, ScopeRef};
 
 use super::{CompiledMapping, MappingModel, check_mapping_local, codes, compile_mapping};
+use crate::entity_scopes::{ScopeKey, scope_key, scope_visible};
 use crate::lint::mapping::codes as lint_codes;
 use crate::lint::{LintInput, lint_artifact_set};
 use crate::property_types::error;
@@ -56,7 +57,7 @@ pub fn check_mapping_artifacts(
                     .and_then(serde_json::from_value::<MappingDocument>)
         {
             out.extend(interpretation_endpoints(artifact, &document, base));
-            if !interpretation_members(&document, base) {
+            if !interpretation_members(artifact, &document, base) {
                 out.push(in_payload(error(
                     "core.composition.mapping_gap",
                     "interpretation must cover the retained source contract exactly with unique compatible target members".to_owned(),
@@ -89,10 +90,13 @@ pub fn check_mapping_artifacts(
     if mappings.is_empty() {
         return out;
     }
-    let model = MappingModel::from_artifacts(&entity_artifacts(artifacts, base));
+    let mut models: BTreeMap<ScopeKey, Result<MappingModel, Vec<Diagnostic>>> = BTreeMap::new();
     let mut path_refused = false;
     for (artifact, mapping) in &mappings {
-        if let Ok(model) = &model {
+        let model = models.entry(scope_key(&artifact.scope)).or_insert_with(|| {
+            MappingModel::from_artifacts(&entity_artifacts(artifacts, base, &artifact.scope))
+        });
+        if let Ok(model) = &*model {
             out.extend(missing_path_bindings(
                 artifact, mapping, model, artifacts, base,
             ));
@@ -106,7 +110,7 @@ pub fn check_mapping_artifacts(
         }
         out.extend(key_findings(artifact));
         out.extend(dependency_findings(artifact, mapping));
-        let findings = match (&model, resolve_source(mapping, artifacts, base)) {
+        let findings = match (&*model, resolve_source(mapping, artifacts, base)) {
             (Ok(model), Ok(source)) => {
                 match compile_checked(artifact, mapping, &source, model, artifacts, base) {
                     Ok(compiled) => coverage_findings(artifact, &compiled, artifacts, base),
@@ -153,7 +157,11 @@ fn missing_path_bindings(
         };
         let mut equations = Vec::new();
         let mut owners = BTreeSet::new();
-        for declaration in artifacts.iter().chain(base) {
+        for declaration in artifacts
+            .iter()
+            .chain(base)
+            .filter(|declaration| scope_visible(&artifact.scope, &declaration.scope))
+        {
             let Decoded::Root(root) = decode_v2(declaration) else {
                 continue;
             };
@@ -228,6 +236,7 @@ fn path_findings(
                     .chain(base)
                     .find(|a| {
                         a.artifact_id == *id
+                            && scope_visible(&artifact.scope, &a.scope)
                             && matches!(a.payload, ArtifactPayload::Entity(_))
                             && artifact
                                 .dependencies
@@ -322,7 +331,11 @@ fn path_pin(artifact: &ArtifactEnvelope) -> Result<ArtifactRef, Vec<Diagnostic>>
 
 /// MAP-TOTAL-1: totality comes from retained definitions, never a supplied list.
 /// This cut checks identity bindings; transformations remain unsupported.
-fn interpretation_members(document: &LawInterpretationIr, base: &[ArtifactEnvelope]) -> bool {
+fn interpretation_members(
+    owner: &ArtifactEnvelope,
+    document: &LawInterpretationIr,
+    base: &[ArtifactEnvelope],
+) -> bool {
     let Some(source) = layer_members(&document.source_layer, base) else {
         return false;
     };
@@ -340,14 +353,19 @@ fn interpretation_members(document: &LawInterpretationIr, base: &[ArtifactEnvelo
             && seen.insert(binding.source.clone())
             && images.insert(binding.target.clone())
     }) && seen == source
-        && interpretation_contracts(document, base)
+        && interpretation_contracts(owner, document, base)
 }
 
 /// MAP-UNITS / EVENT-MULTI: member owners, scalar units and relation roles
 /// come from resolved contracts. This identity profile never invents conversions.
-fn interpretation_contracts(document: &LawInterpretationIr, base: &[ArtifactEnvelope]) -> bool {
+fn interpretation_contracts(
+    owner: &ArtifactEnvelope,
+    document: &LawInterpretationIr,
+    base: &[ArtifactEnvelope],
+) -> bool {
     use norn_ir::definition_catalog::Member;
-    let catalog = crate::entity_instance::EffectiveCatalog::from_artifacts(base);
+    let catalog =
+        crate::entity_scopes::effective_catalog_for_scope(base, &BTreeSet::new(), &owner.scope);
     document.members.iter().all(|binding| {
         let (Some(source_owner), Some(target_owner)) = (member_owner(&binding.source), member_owner(&binding.target)) else { return false; };
         if !document.members.iter().any(|b| b.source == source_owner && b.target == target_owner) { return false; }
@@ -490,7 +508,8 @@ fn layer_members(
     let BusinessPackRoot::Composition(pack) = root else {
         return None;
     };
-    let catalog = crate::entity_instance::EffectiveCatalog::from_artifacts(base);
+    let catalog =
+        crate::entity_scopes::effective_catalog_for_scope(base, &BTreeSet::new(), &layer.scope);
     let mut members = BTreeSet::new();
     for reference in pack.artifacts {
         // Nested pack/extension contracts need retained closure, not guessed scope.
@@ -669,7 +688,8 @@ pub fn compile_mapping_artifact(
             Span::pointer(""),
         )]));
     };
-    let model = MappingModel::from_artifacts(&entity_artifacts(artifacts, base)).map_err(locate)?;
+    let model = MappingModel::from_artifacts(&entity_artifacts(artifacts, base, &mapping.scope))
+        .map_err(locate)?;
     let source =
         resolve_source(&document, artifacts, base).map_err(|finding| locate(vec![*finding]))?;
     compile_checked(mapping, &document, &source, &model, artifacts, base).map_err(locate)
@@ -706,7 +726,7 @@ fn compile_checked(
         }
     }
     let compiled = compile_mapping(artifact, mapping, source, model)?;
-    let entities = entity_artifacts(artifacts, base);
+    let entities = entity_artifacts(artifacts, base, &artifact.scope);
     let findings = crate::check_artifact_set(
         compiled.action_artifacts(),
         &crate::EntityArtifactSetContext {
@@ -745,9 +765,19 @@ fn coverage_findings(
     artifacts: &[ArtifactEnvelope],
     base: &[ArtifactEnvelope],
 ) -> Vec<Diagnostic> {
+    let visible_artifacts: Vec<_> = artifacts
+        .iter()
+        .filter(|candidate| scope_visible(&artifact.scope, &candidate.scope))
+        .cloned()
+        .collect();
+    let visible_base: Vec<_> = base
+        .iter()
+        .filter(|candidate| scope_visible(&artifact.scope, &candidate.scope))
+        .cloned()
+        .collect();
     lint_artifact_set(&LintInput {
-        artifacts,
-        base,
+        artifacts: &visible_artifacts,
+        base: &visible_base,
         coverage: compiled.coverage(),
     })
     .into_iter()
@@ -763,14 +793,18 @@ fn coverage_findings(
     .collect()
 }
 
-/// Every `entity` artifact of the base and the set.
+/// Every `entity` artifact of the base and the set visible to `consumer`.
 fn entity_artifacts(
     artifacts: &[ArtifactEnvelope],
     base: &[ArtifactEnvelope],
+    consumer: &ScopeRef,
 ) -> Vec<ArtifactEnvelope> {
     base.iter()
         .chain(artifacts)
-        .filter(|artifact| matches!(artifact.payload, ArtifactPayload::Entity(_)))
+        .filter(|artifact| {
+            matches!(artifact.payload, ArtifactPayload::Entity(_))
+                && scope_visible(consumer, &artifact.scope)
+        })
         .cloned()
         .collect()
 }

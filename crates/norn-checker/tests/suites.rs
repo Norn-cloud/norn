@@ -74,6 +74,8 @@ mod entity_relation_roots;
 mod evidence_pins;
 #[path = "explain.rs"]
 mod explain;
+#[path = "extension_scope.rs"]
+mod extension_scope;
 #[path = "function_admission.rs"]
 mod function_admission;
 #[path = "incremental.rs"]

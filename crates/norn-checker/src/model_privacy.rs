@@ -71,6 +71,8 @@ pub(crate) struct Carried {
 struct Lineage {
     /// Object type name → (entity artifact id, objectType JSON).
     types: BTreeMap<String, (String, Value)>,
+    /// Target object type name → extension JSONs visible to the model.
+    extensions: BTreeMap<String, Vec<Value>>,
     /// Interface name → interface JSON.
     interfaces: BTreeMap<String, Value>,
     /// Shared property type name → its markings.
@@ -88,6 +90,7 @@ impl Lineage {
     fn of(artifacts: &[&ArtifactEnvelope]) -> Self {
         let mut lineage = Self {
             types: BTreeMap::new(),
+            extensions: BTreeMap::new(),
             interfaces: BTreeMap::new(),
             property_types: BTreeMap::new(),
             mappings: Vec::new(),
@@ -104,6 +107,15 @@ impl Lineage {
                             .types
                             .entry(name.to_owned())
                             .or_insert_with(|| (artifact.artifact_id.clone(), object.clone()));
+                    }
+                    if let Some(ext) = body.get("objectTypeExtension")
+                        && let Some(target) = ext.get("target").and_then(Value::as_str)
+                    {
+                        lineage
+                            .extensions
+                            .entry(target.to_owned())
+                            .or_default()
+                            .push(ext.clone());
                     }
                     if let Some(interface) = body.get("interface")
                         && let Some(name) = interface.get("name").and_then(Value::as_str)
@@ -213,6 +225,23 @@ impl Lineage {
                 );
             }
         }
+        for ext in self.extensions.get(object_type).into_iter().flatten() {
+            if let Some(own) = declared(ext) {
+                push(strings(own.get("markings")), member.clone());
+                if let Some(shared) = own
+                    .get("type")
+                    .filter(|kind| kind.get("kind").and_then(Value::as_str) == Some("ref"))
+                    .and_then(|kind| kind.get("name"))
+                    .and_then(Value::as_str)
+                    && let Some(markings) = self.property_types.get(shared)
+                {
+                    push(
+                        markings.clone(),
+                        format!("{member} ← property type {shared}"),
+                    );
+                }
+            }
+        }
         for interface in strings(object.get("implements")) {
             if let Some(declared_by) = self.interfaces.get(&interface) {
                 push(
@@ -318,15 +347,24 @@ pub(crate) fn check(
     base: &[ArtifactEnvelope],
     finding: impl Fn(&str, String, String, &ArtifactEnvelope) -> Diagnostic,
 ) -> Vec<Diagnostic> {
-    let all: Vec<&ArtifactEnvelope> = artifacts.iter().chain(base).collect();
-    let lineage = Lineage::of(&all);
-    let owned: Vec<ArtifactEnvelope> = all.iter().map(|artifact| (*artifact).clone()).collect();
-    let catalog: BTreeMap<String, MarkingIr> = crate::marking_catalog_from_artifacts(&owned)
-        .into_iter()
-        .map(|(id, marking)| (id.0, marking))
-        .collect();
     let mut findings = Vec::new();
     for (artifact, root) in models {
+        let visible: Vec<&ArtifactEnvelope> = artifacts
+            .iter()
+            .chain(base)
+            .filter(|candidate| {
+                crate::entity_scopes::scope_visible(&artifact.scope, &candidate.scope)
+            })
+            .collect();
+        let lineage = Lineage::of(&visible);
+        let owned: Vec<ArtifactEnvelope> = visible
+            .iter()
+            .map(|candidate| (*candidate).clone())
+            .collect();
+        let catalog: BTreeMap<String, MarkingIr> = crate::marking_catalog_from_artifacts(&owned)
+            .into_iter()
+            .map(|(id, marking)| (id.0, marking))
+            .collect();
         let input = root.input.object_type().as_str();
         let uses = root
             .features

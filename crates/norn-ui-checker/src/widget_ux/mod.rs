@@ -32,6 +32,7 @@ use norn_ir::{
 
 use norn_checker::entity_instance::{EffectiveCatalog, EffectiveProperty};
 use norn_checker::entity_lowering::entity_object_type;
+use norn_checker::entity_scopes::{ScopeKey, effective_catalog_for_scope, scope_key};
 use norn_checker::{
     Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity,
     EntityArtifactSetContext, Span,
@@ -63,11 +64,9 @@ pub fn check_widget_ux_set(
     context: &EntityArtifactSetContext<'_>,
 ) -> Vec<Diagnostic> {
     let combined: Vec<ArtifactEnvelope> = context.base.iter().chain(artifacts).cloned().collect();
-    let catalog = EffectiveCatalog::from_artifacts_with_registry(&combined, context.registry);
+    let mut catalogs: BTreeMap<ScopeKey, EffectiveCatalog> = BTreeMap::new();
+    let mut models: BTreeMap<ScopeKey, norn_checker::action_set::Model<'_>> = BTreeMap::new();
     let mut diagnostics = Vec::new();
-    // The effective model of object types, built once and only for a set whose pages name a
-    // lifecycle to compose with (UI-LIFECYCLE-1).
-    let model = std::cell::OnceCell::new();
     for artifact in artifacts {
         let ArtifactPayload::Widget(payload) = &artifact.payload else {
             continue;
@@ -87,7 +86,11 @@ pub fn check_widget_ux_set(
                     continue;
                 }
             };
-        let mut checker = UxChecker::new(artifact, &combined, &catalog, &ux, &mut diagnostics);
+        let key = scope_key(&artifact.scope);
+        let catalog = catalogs.entry(key.clone()).or_insert_with(|| {
+            effective_catalog_for_scope(&combined, context.registry, &artifact.scope)
+        });
+        let mut checker = UxChecker::new(artifact, &combined, catalog, &ux, &mut diagnostics);
         checker.check();
         let nullable_inputs = checker.nullable_form_inputs();
         let composed = |widget: &norn_ir::WidgetArtifactRef| {
@@ -118,12 +121,13 @@ pub fn check_widget_ux_set(
                 .is_some_and(|machine| machine.lifecycle.is_some())
         });
         if names_lifecycle {
-            let model = model.get_or_init(|| {
-                norn_checker::action_set::Model::new(
+            let model = models.entry(key).or_insert_with(|| {
+                norn_checker::action_set::Model::for_scope(
                     artifacts,
                     context.base,
                     context.registry,
                     true,
+                    &artifact.scope,
                 )
             });
             diagnostics.extend(crate::ui_lifecycle::check(artifact, &ux, &combined, model));
