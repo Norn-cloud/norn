@@ -1,4 +1,4 @@
-import { hostToken, type NornActor } from "./actor.ts"
+import { hostToken, type NornActor, type ValidatedWriteScope } from "./actor.ts"
 import type { Auth } from "./auth.ts"
 import { cellScope, scopeQuery } from "./scope.ts"
 
@@ -19,13 +19,13 @@ export interface Cell {
   post(path: string, body: unknown): Promise<CellAnswer>
 }
 
-export function cellFor(host: Fetcher, auth: Auth, actor: NornActor): Cell {
+export function cellFor(host: Fetcher, auth: Auth, actor: NornActor, validatedScope?: ValidatedWriteScope): Cell {
   const call = async (method: "GET" | "POST", path: string, body?: unknown): Promise<CellAnswer> => {
-    const scope = await cellScope(auth, actor.orgId)
+    const scope = validatedScope ?? await cellScope(auth, actor.orgId)
     if (scope.environmentId === null) return { kind: "no-cell" }
     const headers = new Headers({ authorization: `Bearer ${await hostToken(auth, actor)}`, accept: "application/json" })
     if (body !== undefined) headers.set("content-type", "application/json")
-    const response = await host.fetch(new Request(`https://norn-host${path}?${scopeQuery({ ...scope, environmentId: scope.environmentId })}`, { method, headers, body: body === undefined ? null : JSON.stringify(body) }))
+    const response = await host.fetch(new Request(`https://norn-host${path}?${scopeQuery({ orgId: scope.orgId, environmentId: scope.environmentId })}`, { method, headers, body: body === undefined ? null : JSON.stringify(body) }))
     const text = await response.text()
     let parsed: unknown = null
     try { parsed = JSON.parse(text) } catch { parsed = null }

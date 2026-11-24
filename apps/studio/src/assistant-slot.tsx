@@ -23,6 +23,8 @@ interface AssistantState {
   ask(text: string): void
   /** The prompt a page handed over, until the assistant takes it. */
   readonly prompt: string | null
+  /** The workspace scope key under which `prompt` was queued. */
+  readonly promptScopeKey?: string
   /** The assistant took the prompt. */
   took(): void
 }
@@ -38,9 +40,10 @@ const stored = () => {
   }
 }
 
-export function AssistantProvider({ available, children }: { readonly available: boolean; readonly children: ReactNode }) {
+export function AssistantProvider({ available, scopeKey, children }: { readonly available: boolean; readonly scopeKey?: string; readonly children: ReactNode }) {
   const [open, setOpenState] = useState(stored)
-  const [prompt, setPrompt] = useState<string | null>(null)
+  const [queued, setQueued] = useState<{ readonly text: string; readonly scopeKey?: string } | null>(null)
+  useEffect(() => { setQueued(null) }, [scopeKey])
   const setOpen = useCallback((next: boolean) => {
     setOpenState(next)
     try {
@@ -68,10 +71,11 @@ export function AssistantProvider({ available, children }: { readonly available:
     open,
     setOpen,
     toggle: () => setOpen(!open),
-    ask: (text) => { setPrompt(text); setOpen(true) },
-    prompt,
-    took: () => setPrompt(null),
-  }), [available, open, prompt, setOpen])
+    ask: (text) => { setQueued({ text, scopeKey }); setOpen(true) },
+    prompt: queued !== null && queued.scopeKey === scopeKey ? queued.text : null,
+    promptScopeKey: queued?.scopeKey,
+    took: () => setQueued(null),
+  }), [available, open, queued, scopeKey, setOpen])
   return <Context.Provider value={value}>{children}</Context.Provider>
 }
 

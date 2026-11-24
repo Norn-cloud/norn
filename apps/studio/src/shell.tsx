@@ -1071,9 +1071,10 @@ export function Shell(props: {
   readonly initialSkin?: Skin
   readonly initialShell?: ShellChrome
 }) {
+  const scopeKey = `${props.account.user.id}:${props.account.organization?.id ?? ""}:${props.account.environmentId ?? ""}`
   return (
     <AppearanceProvider initialSkin={props.initialSkin} initialShell={props.initialShell}>
-      <LocaleProvider><PerspectiveProvider><AssistantProvider available={props.assistant !== undefined}><LocalizedShell {...props} /></AssistantProvider></PerspectiveProvider></LocaleProvider>
+      <LocaleProvider><PerspectiveProvider><AssistantProvider available={props.assistant !== undefined} scopeKey={scopeKey}><LocalizedShell {...props} /></AssistantProvider></PerspectiveProvider></LocaleProvider>
     </AppearanceProvider>
   )
 }
