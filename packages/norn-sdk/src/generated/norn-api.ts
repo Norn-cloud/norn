@@ -15737,6 +15737,7 @@ export interface operations {
                 };
                 content: {
                     "application/vnd.apache.parquet": unknown;
+                    "application/x-ndjson": unknown;
                 };
             };
             /** @description The request was refused as invalid. */

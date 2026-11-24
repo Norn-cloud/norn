@@ -22,10 +22,10 @@ const shown = (read: CellDocument<QueriedRecord>, property: string, value: unkno
 
 function RecordRead({ type, id }: { readonly type: string; readonly id: string }) {
   const scope = useStudioScope()
-  const { read, liveRefusal } = useCellQuery("/v1/objects/{type}/{id}", { path: { type, id } }, { scope: scope.data ?? null, what: "This record" })
+  const { read, state, liveRefusal } = useCellQuery("/v1/objects/{type}/{id}", { path: { type, id } }, { scope: scope.data ?? null, what: "This record" })
   return (
     <section className="space-y-3" data-testid="record-read" data-live-refusal-code={liveRefusal?.code}>
-      <LoadState status={read.status} data={read.data} error={read.error} isFetching={read.isFetching} onRetry={() => void read.refetch()} skeleton="detail">
+      <LoadState status={state.status} data={state.data} error={state.error} isFetching={read.isFetching} onRetry={() => void read.refetch()} skeleton="detail">
         {(doc) => (
           <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1 text-sm">
             <dt className="text-muted-foreground">Version</dt>

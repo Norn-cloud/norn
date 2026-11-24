@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { createNornClient, fillRoute, NornRefusalError, NornUnavailableError, type FetchLike, type NornDocument, type Schemas } from "../src/index.ts"
+import { createNornClient, fillRoute, NornRefusalError, NornUnavailableError, refusalFrom, type FetchLike, type NornDocument, type Schemas } from "../src/index.ts"
 
 const scope = { orgId: "org_1", environmentId: "dev" }
 
@@ -137,6 +137,15 @@ test("a refusal-like body that is no valid norn/refusal@2 document is unavailabl
     { ...valid, diagnostics: [{ code: "Q001", severity: "error", message: "m" }] },
     { ...valid, diagnostics: [{ code: "Q001", severity: "error", message: "m", span: { pointer: 3 } }] },
     { ...valid, incidentId: 42 },
+    // The reason is `NornIrRefusalReason`: law, subject and values, and a typed pin if any.
+    { ...valid, reason: {} },
+    { ...valid, reason: { law: "L1", subject: "s" } },
+    { ...valid, reason: { law: "L1", subject: "s", values: [] } },
+    { ...valid, reason: { law: 1, subject: "s", values: {} } },
+    { ...valid, reason: { law: "L1", subject: "s", values: {}, pin: "v1" } },
+    { ...valid, reason: { law: "L1", subject: "s", values: {}, pin: { kind: "law", lawId: "L1" } } },
+    { ...valid, reason: { law: "L1", subject: "s", values: {}, pin: { kind: "invariant", invariantId: "i", version: "1", owner: { kind: "table", name: "t" } } } },
+    { ...valid, reason: { law: "L1", subject: "s", values: {}, pin: { kind: "elsewhere", id: "x", version: "1" } } },
   ]
   for (const body of malformed) {
     const client = createNornClient({ baseUrl: "https://cell.example", scope, fetch: cell(403, JSON.stringify(body)).fetch })
@@ -148,6 +157,16 @@ test("a refusal-like body that is no valid norn/refusal@2 document is unavailabl
   const refused = await client.get("/v1/runs/{id}", { path: { id: "r" } }).catch((caught: unknown) => caught)
   expect(refused).toBeInstanceOf(NornRefusalError)
   expect((refused as NornRefusalError).diagnostics).toHaveLength(1)
+  // Every pin the contract declares, and a reason without one, are refusals.
+  for (const pin of [
+    undefined, null,
+    { kind: "law", artifactId: "a", lawId: "L1", version: "sha256:1" },
+    { kind: "invariant", invariantId: "i", version: "1", owner: { kind: "object", name: "demo.Item" } },
+    { kind: "builtin", id: "norn.unique", version: "1" },
+  ]) {
+    const reason = { law: "L1", subject: "demo.Item/i1", values: { amount: "1" }, ...(pin === undefined ? {} : { pin }) }
+    expect(refusalFrom({ ...valid, reason }), JSON.stringify(pin)).not.toBeNull()
+  }
 })
 
 test("a file route is read as bytes by its content type, never through the JSON decoder", async () => {
@@ -174,6 +193,17 @@ test("a file route is read as bytes by its content type, never through the JSON 
   // A file read answered with a JSON document is not the file.
   const json = createNornClient({ baseUrl: "https://cell.example", scope, fetch: cell(200, '{"rows":[]}').fetch })
   expect(await json.download("/v1/objects/{type}:export", { path: { type: "demo.Item" }, query: { columns: "amount" } }).catch((caught: unknown) => caught)).toBeInstanceOf(NornUnavailableError)
+  // A successful page that is not the export (a proxy's fallback, a sign-in page) is not the file either.
+  for (const contentType of ["text/html; charset=utf-8", "application/octet-stream", ""]) {
+    const fallback = createNornClient({ baseUrl: "https://cell.example", scope, fetch: async () => new Response("<!doctype html><title>Sign in</title>", { status: 200, headers: contentType === "" ? {} : { "content-type": contentType } }) })
+    const answered = await fallback.download("/v1/objects/{type}:export", { path: { type: "demo.Item" }, query: { columns: "amount" } }).catch((caught: unknown) => caught)
+    expect(answered, contentType).toBeInstanceOf(NornUnavailableError)
+  }
+  // The route's other declared representation, JSON lines, is the file.
+  const lines = createNornClient({ baseUrl: "https://cell.example", scope, fetch: async () => new Response('{"amount":1}\n', { status: 200, headers: { "content-type": "application/x-ndjson" } }) })
+  const exported = await lines.download("/v1/objects/{type}:export", { path: { type: "demo.Item" }, query: { columns: "amount", format: "jsonl" } })
+  expect(exported.contentType).toBe("application/x-ndjson")
+  expect(new TextDecoder().decode(exported.bytes)).toBe('{"amount":1}\n')
   // A refusal to an export is still the typed refusal.
   const denied = { format: "norn/refusal@2", retryable: false, reason: null, code: "authz.denied", category: "permission", message: "denied", explanation: "policy" }
   const refusing = createNornClient({ baseUrl: "https://cell.example", scope, fetch: cell(403, JSON.stringify(denied)).fetch })

@@ -49,6 +49,18 @@ export type GetRoute = DocumentRoutesWith<"get">
 export type FileRoute = { [P in RoutesWith<"get">]: ServesFile<Operation<P, "get">> extends true ? P : never }[RoutesWith<"get">]
 export type PostRoute = DocumentRoutesWith<"post">
 
+/**
+ * The media types each file route declares for its success, as the contract lists them: `download`
+ * accepts an answer only in one of these. The compiler holds the table to the contract both ways:
+ * every file route is listed, and with every media type it declares and no other.
+ */
+export const FILE_MEDIA = {
+  "/v1/objects/{type}:export": ["application/vnd.apache.parquet", "application/x-ndjson"],
+} as const satisfies { readonly [P in FileRoute]: readonly SuccessMedia<Operation<P, "get">>[] }
+type Unlisted = { [P in FileRoute]: Exclude<SuccessMedia<Operation<P, "get">>, (typeof FILE_MEDIA)[P][number]> }[FileRoute]
+const everyMediaListed: [Unlisted] extends [never] ? true : never = true
+void everyMediaListed
+
 /** The query members the client binds itself: the scope. */
 type Bound = "orgId" | "environmentId"
 type ParamsOf<O> = O extends { readonly parameters: infer X } ? X : never
@@ -134,6 +146,28 @@ const isFields = (value: unknown): value is Fields => value !== null && typeof v
 const absentOr = (value: unknown, check: (present: unknown) => boolean): boolean => value === undefined || check(value)
 const isText = (value: unknown): value is string => typeof value === "string"
 
+/** `NornIrDataQualityRuleRef`: the declaration a refusal reason pins. */
+function isRuleRef(value: unknown): boolean {
+  if (!isFields(value)) return false
+  switch (value["kind"]) {
+    case "law": return isText(value["artifactId"]) && isText(value["lawId"]) && isText(value["version"])
+    case "invariant": {
+      const owner = value["owner"]
+      return isText(value["invariantId"]) && isText(value["version"])
+        && isFields(owner) && (owner["kind"] === "object" || owner["kind"] === "interface") && isText(owner["name"])
+    }
+    case "builtin": return isText(value["id"]) && isText(value["version"])
+    default: return false
+  }
+}
+
+/** `NornIrRefusalReason`: the governing law, the refused subject, the typed operands, and the pinned declaration if any. */
+function isReason(value: unknown): boolean {
+  if (!isFields(value)) return false
+  return isText(value["law"]) && isText(value["subject"]) && isFields(value["values"])
+    && absentOr(value["pin"], (present) => present === null || isRuleRef(present))
+}
+
 /** One checker finding as `RefusalDiagnostic` declares it. */
 function isDiagnostic(value: unknown): value is RefusalDiagnostic {
   if (!isFields(value)) return false
@@ -144,22 +178,29 @@ function isDiagnostic(value: unknown): value is RefusalDiagnostic {
 }
 
 /**
- * The refusal `text` holds, if it is a `norn/refusal@2` document: the format, and every member
- * the typed error exposes with the type the contract gives it. Anything else, a refusal-like body
- * with a missing or different format or a mistyped member included, is no refusal (null), and the
- * client reports the answer as unavailable rather than trusting part of it.
+ * The refusal `body` is, if it is a `norn/refusal@2` document: the format, and every member the
+ * typed error exposes with the type the contract gives it, the reason's own members included.
+ * Anything else, a refusal-like body with a missing or different format or a mistyped member
+ * included, is no refusal (null), and the answer is unavailable rather than partly trusted. Every
+ * transport classifies with this one check: an HTTP answer's text (`refusalOf`) and a refusal the
+ * cell pushes over the live socket alike.
  */
-export function refusalOf(text: string): Refusal | null {
-  let body: unknown
-  try { body = JSON.parse(text) } catch { return null }
+export function refusalFrom(body: unknown): Refusal | null {
   if (!isFields(body)) return null
   const { format, code, category, message, explanation, retryable, reason, diagnostics } = body
   if (format !== REFUSAL_FORMAT || !isText(code) || !isText(message) || !isText(explanation) || typeof retryable !== "boolean") return null
   if (!isText(category) || !CATEGORIES.has(category)) return null
-  if (!(reason === null || isFields(reason))) return null
+  if (!(reason === null || isReason(reason))) return null
   if (!absentOr(diagnostics, (present) => Array.isArray(present) && present.every(isDiagnostic))) return null
   if (!["decidedAt", "incidentId", "restatement", "restatementSha256"].every((name) => absentOr(body[name], isText))) return null
   return body as Refusal
+}
+
+/** {@link refusalFrom} over a response's text. */
+export function refusalOf(text: string): Refusal | null {
+  let body: unknown
+  try { body = JSON.parse(text) } catch { return null }
+  return refusalFrom(body)
 }
 
 /** The media type `contentType` names, parameters such as `charset` aside. */
@@ -297,16 +338,18 @@ export function createNornClient(options: NornClientOptions): NornClient {
   const request = <T,>(method: "GET" | "POST", template: string, call: LooseOptions = {}) =>
     send(method, template, call, "application/json", (response) => documentOf<T>(response))
 
-  const download = (template: string, call: LooseOptions = {}) =>
-    send("GET", template, call, "*/*", async (response): Promise<NornFile> => {
+  const download = (template: string, call: LooseOptions = {}) => {
+    const declared: readonly string[] = Object.hasOwn(FILE_MEDIA, template) ? FILE_MEDIA[template as FileRoute] : []
+    return send("GET", template, call, "*/*", async (response): Promise<NornFile> => {
       const contentType = response.headers.get("content-type") ?? ""
-      // A file route's success names its media type; an answer without one, or a JSON document, is not the file.
-      const media = mediaOf(contentType)
-      if (media === "" || media === "application/json" || media.endsWith("+json")) {
-        throw new NornUnavailableError(response.status, null, `The cell answered ${contentType === "" ? "without a content type" : contentType}, not a file.`)
+      // Only a media type the route declares is the file. Anything else, a JSON document, no type,
+      // or a proxy's or sign-in page's `200 text/html`, is no answer from the route.
+      if (!declared.includes(mediaOf(contentType))) {
+        throw new NornUnavailableError(response.status, null, `The cell answered ${contentType === "" ? "without a content type" : contentType}, not ${declared.join(" or ") || "a declared file"}.`)
       }
       return { status: response.status, contentType, bytes: await response.arrayBuffer(), etag: response.headers.get("etag") }
     })
+  }
 
   const loose = (args: readonly unknown[]) => args[0] as LooseOptions | undefined
   return {

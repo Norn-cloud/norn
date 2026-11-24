@@ -23,7 +23,7 @@ const GENERATED = new Set(["checker", "engine"].map((dir) => join(SOURCE, dir)))
 /** The door: the modules that turn a route into a call. */
 const DOOR = new Set(["src/lib/cell-query.ts"])
 /** Calls whose first argument is a route by design. */
-const DOOR_CALLS = new Set(["useCellQuery", "useCellMutation", "cellQueryOptions", "cellQueryKey", "cellPath"])
+const DOOR_CALLS = new Set(["useCellQuery", "useCellMutation", "submitCall", "cellQueryOptions", "cellQueryKey", "cellPath"])
 const CELL_ROUTE = /^\/(v1\/|api\/host(\/|$|\?))/
 
 interface Violation { readonly file: string; readonly line: number; readonly text: string }

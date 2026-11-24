@@ -3316,7 +3316,8 @@
           "200": {
             "description": "The rows, as Parquet (`application/vnd.apache.parquet`) or JSON lines (`application/x-ndjson`); `Norn-Snapshot` names the snapshot they are exact at.",
             "content": {
-              "application/vnd.apache.parquet": {}
+              "application/vnd.apache.parquet": {},
+              "application/x-ndjson": {}
             }
           },
           "400": {
