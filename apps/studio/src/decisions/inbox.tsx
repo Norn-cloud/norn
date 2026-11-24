@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
-import { useNavigate, useSearch } from "@tanstack/react-router"
-import { CheckCircle2, Hourglass, Inbox, Play, RefreshCw, Sparkles } from "lucide-react"
+import { Link, useNavigate, useSearch } from "@tanstack/react-router"
+import { CheckCircle2, Hourglass, Inbox, Play, RefreshCw, ShieldAlert, Sparkles } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { EmptyState, PageHeader } from "@/components/panel"
 import { Button } from "@/components/ui/button"
@@ -12,6 +12,7 @@ import { useLiveRefresh } from "../lib/live-reads.ts"
 import { badgeText, cellNow, countDecisions, DECISIONS_UNAVAILABLE, flowTitle, listDecisions, listRequested, parkedFrom, remaining, requestedAction, requestedPath, requestedWords, stepTitle, type Decision, type DecisionsPage, type RequestedDecision, type RequestedPage } from "../lib/decisions.ts"
 import { listActions } from "../lib/actions.ts"
 import { ActionSheet, type OpenAction } from "../actions/action-sheet.tsx"
+import { heldCountText, useHeldBack } from "../laws.tsx"
 import { Countdown, DecisionSheet, RiskChip } from "./decision-sheet.tsx"
 
 type Read<T> = { readonly result: CellResult<T>; readonly receivedAt: number }
@@ -63,6 +64,8 @@ export function DecisionsPage() {
   const missing = search.open !== undefined && page !== undefined && selected === null
   const choose = (id: string | undefined) => void navigate({ to: "/decisions", search: id === undefined ? {} : { open: id } as never, replace: true })
   const refresh = () => void client.invalidateQueries({ queryKey: ["decisions"] })
+  const { section: heldSection } = useHeldBack()
+  const heldCount = heldSection && (heldSection.count > 0 || heldSection.approximate) ? heldCountText(heldSection.count, heldSection.approximate) : undefined
 
   const body = (() => {
     if (read.isPending) return <div className="grid gap-2" aria-label="Reading decisions">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-16 rounded-lg" />)}</div>
@@ -105,7 +108,16 @@ export function DecisionsPage() {
     <div className="grid max-w-4xl gap-6">
       <PageHeader title="Inbox" description="Decisions your flows wait on you to make, soonest deadline first."
         meta={page && <span className="tabular-nums" aria-live="polite">{page.total === 0 ? "None waiting" : `${badgeText(page)} waiting on you`}</span>}
-        actions={<Button variant="ghost" size="sm" onClick={refresh} disabled={read.isFetching}><RefreshCw className={cn(read.isFetching && "animate-spin")} /> Refresh</Button>} />
+        actions={<>
+          <Button asChild variant="outline" size="sm">
+            <Link to="/rules" search={{ view: "held" } as never}>
+              <ShieldAlert aria-hidden />
+              Held by rules
+              {heldCount !== undefined && <span className="text-muted-foreground tabular-nums">{heldCount}</span>}
+            </Link>
+          </Button>
+          <Button variant="ghost" size="sm" onClick={refresh} disabled={read.isFetching}><RefreshCw className={cn(read.isFetching && "animate-spin")} /> Refresh</Button>
+        </>} />
       {missing && <p role="status" className="rounded-lg border bg-muted/50 px-3 py-2 text-sm">That decision isn't waiting on you: it was resolved, it expired, or you're not one of its deciders.</p>}
       {body}
       <RequestedCalls />
