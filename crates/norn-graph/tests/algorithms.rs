@@ -770,3 +770,31 @@ fn signed_rollup_keeps_cancellation_across_decimal_scales() {
         }
     }
 }
+
+#[test]
+fn parallel_bom_lines_sum_small_fractions_before_narrowing() {
+    let part = |cost| Part {
+        cost,
+        lead_time: Decimal::ZERO,
+    };
+    let large = Decimal::MAX - Decimal::ONE;
+    for quantities in [
+        [large, Decimal::new(1, 1), Decimal::new(9, 1)],
+        [Decimal::new(9, 1), Decimal::new(1, 1), large],
+    ] {
+        let bom = Bom {
+            parts: BTreeMap::from([(0, part(Decimal::ZERO)), (1, part(Decimal::ONE))]),
+            lines: quantities
+                .into_iter()
+                .map(|quantity| Composition {
+                    parent: 0,
+                    child: 1,
+                    quantity,
+                })
+                .collect(),
+        };
+        let result = explode(&bom, &BTreeMap::from([(0, Decimal::ONE)]), BUDGET).unwrap();
+        assert_eq!(result.total_cost, Decimal::MAX);
+        assert_eq!(result.requirements.get(&1), Some(&Decimal::MAX));
+    }
+}

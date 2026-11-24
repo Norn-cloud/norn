@@ -8,7 +8,7 @@ pub const SCALE: u32 = 6;
 pub const FACTOR: i128 = 1_000_000;
 /// Per-object coefficient bound; the evaluator refuses larger values.
 pub const MAX_VALUE: i64 = 9_000_000_000_000_000_000;
-/// At most 1,000 objects, each within `MAX_VALUE`; every sum fits this range.
+/// Per-operand sum of magnitudes, equivalent to 1,000 maximum-size contributions.
 pub const MAX_SUM: i128 = 9_000_000_000_000_000_000_000;
 
 /// Query arithmetic exceeds the bounded profile.
