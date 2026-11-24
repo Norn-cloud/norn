@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { useView } from "@/lib/view"
 import { cn } from "@/lib/utils"
 import { NO_DATA_CELL } from "../lib/definitions.ts"
+import { useLearningCapabilities } from "../lib/learning/capabilities.ts"
 import { useLiveRefresh } from "../lib/live-reads.ts"
 import { getRun, newRunId, phaseOf, refreshEvery, runTitle, RUNS_UNAVAILABLE, startRun, stepTitle, type Phase, type Run, type RunStep, type StepStatus } from "../lib/runs.ts"
 
@@ -58,6 +59,7 @@ export function RunPage() {
   const { id = "" } = useParams({ strict: false })
   const { view } = useView()
   const technical = view === "technical"
+  const learning = useLearningCapabilities()
   const etag = useRef<string | null>(null)
   const last = useRef<Run | null>(null)
   const read = useQuery({
@@ -159,6 +161,10 @@ export function RunPage() {
                           {r.executor && <><span className="text-muted-foreground">By</span><span>{r.executor}</span></>}
                           <span className="text-muted-foreground">Commit</span><span className="tabular-nums">{r.commitSeq}</span>
                           <span className="text-muted-foreground">Recorded</span><time dateTime={at.toISOString()} className="whitespace-nowrap">{at.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "medium" })}</time>
+                          {/* PROVISIONAL CONTRACT (#1208, PR #1631 S1/S2): link only when the cell advertises learning.Episode and supplies episodeId. */}
+                          {learning.episodes && typeof r.episodeId === "string" && r.episodeId !== "" && (
+                            <><span className="text-muted-foreground">Episode</span><Link to="/episodes/$id" params={{ id: r.episodeId }} className="underline-offset-4 hover:underline">See episode</Link></>
+                          )}
                         </li>
                       )
                     })}

@@ -52,26 +52,17 @@ jobs:
           echo "plan=$plan" >> "$GITHUB_OUTPUT"
           echo "$plan"
   core:
-    # Boat: merge groups, and same-repository pull requests whose author, actor and
-    # re-runner are all Boat CI's public-repository user (`boat ci public`). Every
-    # other job, fork, bot or user runs hosted, never queued on Boat.
+    # The cheap gate runs on a free GitHub-hosted runner (no Boat start); bundles run
+    # in parallel on Boat.
     if: github.event_name != 'pull_request_target' && github.event_name != 'issue_comment'
-    # Only `ci-cache-writer-boat` (deployment branch: main only) names the writer identity, whose
-    # OIDC binding is that environment's immutable subject on a push to main of this workflow.
-    # Merge groups and pull requests log in as the reader, which can reach only the read-only key.
-    # A main push enters the environment exactly when the runner's main-push arm sends it to Boat
-    # (#1369): made and started by the merge queue, with NORN_MAIN_RUNNER set. A human re-run or
-    # push runs hosted, uses the Actions cache and never receives the key.
-    environment: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat' && 'ci-cache-writer-boat' || '' }}
     permissions:
       contents: read
       actions: read # Enumerate deployment environments for the secret inventory.
-      id-token: write # Read the shared cache keys from Infisical over OIDC.
     env:
       SCCACHE_CACHE_SIZE: 10G
       SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
       NORN_INTEROP_CACHE: ~/.cache/norn-interop
-    runs-on: ${{ ((github.event_name == 'merge_group' && vars.NORN_MERGE_RUNNER == 'boat') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login == 'Youssef-Tarek-Ali-26' && github.actor == 'Youssef-Tarek-Ali-26' && github.triggering_actor == 'Youssef-Tarek-Ali-26' && vars.NORN_PR_RUNNER == 'boat') || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.actor == 'github-merge-queue[bot]' && github.triggering_actor == 'github-merge-queue[bot]' && vars.NORN_MAIN_RUNNER == 'boat')) && 'boat' || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 110
     steps:
       - name: Reclaim runner disk space
@@ -86,31 +77,22 @@ jobs:
           fi
           df -h /
           [ "$(available)" -ge "$minimum" ] || { echo "Insufficient runner space: need 12 GiB free"; df -Pk /; exit 1; }
-      - name: Reclaim Boat runner disk space
-        if: ${{ runner.environment == 'self-hosted' }}
-        run: |
-          set -euo pipefail
-          minimum=$((40 * 1024 * 1024))
-          available() { df -Pk / | awk 'NR == 2 {print $4}'; }
-          df -h /
-          docker system prune --all --force
-          rustup toolchain uninstall stable nightly-2025-03-01
-          df -h /
-          [ "$(available)" -ge "$minimum" ] || { echo "Insufficient Boat runner space: need 40 GiB free"; df -Pk /; exit 1; }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
-      # A same-repository pull request runs on Boat only while NORN_PR_RUNNER is
-      # 'boat'; otherwise it falls back to hosted runners, which must never go
-      # unnoticed. Fork pull requests run hosted by design and stay quiet.
+      # `core` itself always runs on hosted ubuntu-24.04; same-repository pull-request
+      # bundles run on Boat only while NORN_PR_RUNNER is 'boat', otherwise they fall
+      # back to hosted runners, which must never go unnoticed. Fork pull requests run
+      # hosted by design and stay quiet; `vars.NORN_PR_RUNNER != 'boat'` keeps this
+      # quiet when bundles are on Boat. Keep the step text unchanged so base's
+      # PINNED_STEPS (`("core", HOSTED_PR_WARNING)`) passes without a 2-PR stack.
       - name: Warn that pull request CI fell back to hosted runners
         if: ${{ runner.environment == 'github-hosted' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.NORN_PR_RUNNER != 'boat' }}
         run: |
           echo "::warning title=PR CI on hosted runners::PR CI is running on hosted runners: the repository variable NORN_PR_RUNNER is not 'boat', so this same-repository pull request fell back from Boat."
-      # Boat's managed base image ships only the versioned libclang-18.so.18, which
-      # clang-sys (bindgen) rejects; it loads the unversioned libclang.so that hosted
-      # ubuntu-24.04 already has. Install it once per VM, or link it, then require it.
+      # Stays as a skipped no-op on hosted `core` (`runner.environment == 'self-hosted'`)
+      # so base's PINNED_STEPS (`("core", BOAT_LIBCLANG)`) passes without a 2-PR stack.
       - name: Make libclang loadable on Boat runners
         if: ${{ runner.environment == 'self-hosted' }}
         run: |
@@ -142,25 +124,7 @@ jobs:
         with:
           version: v0.19.0
           disable_annotations: true
-      # The shared cache's R2 keys live in Infisical. This step reads them over OIDC using the
-      # helper pinned by the workflow contract. A push to main (Boat only, inside
-      # `ci-cache-writer-boat`) logs in as the writer its environment variables name, in the writer's
-      # own Infisical project; every other run as the reader, in the reader's project, which holds only
-      # the read-only key. An unset variable yields '' (never the other role). With `--optional`, unset
-      # variables, a fork or any failure keep Boat on its local cache: a cache outage never fails a build.
-      - name: Read the shared cache keys from Infisical over OIDC
-        id: sccache-keys
-        if: ${{ runner.environment == 'self-hosted' }}
-        env:
-          INFISICAL_IDENTITY_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.NORN_SCCACHE_WRITER_INFISICAL_IDENTITY_ID || github.event_name != 'push' && vars.NORN_SCCACHE_READER_INFISICAL_IDENTITY_ID || github.ref != 'refs/heads/main' && vars.NORN_SCCACHE_READER_INFISICAL_IDENTITY_ID || '' }}
-          INFISICAL_PROJECT_ID: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.NORN_SCCACHE_WRITER_INFISICAL_PROJECT_ID || github.event_name != 'push' && vars.NORN_SCCACHE_READER_INFISICAL_PROJECT_ID || github.ref != 'refs/heads/main' && vars.NORN_SCCACHE_READER_INFISICAL_PROJECT_ID || '' }}
-        run: bash scripts/ci/infisical-oidc.sh --optional prod /sccache NORN_SCCACHE_BUCKET NORN_SCCACHE_ENDPOINT NORN_SCCACHE_KEY_ID NORN_SCCACHE_SECRET
       - name: Start sccache or compile without it
-        env:
-          NORN_SCCACHE_BUCKET: ${{ steps.sccache-keys.outputs.norn_sccache_bucket }}
-          NORN_SCCACHE_ENDPOINT: ${{ steps.sccache-keys.outputs.norn_sccache_endpoint }}
-          NORN_SCCACHE_KEY_ID: ${{ steps.sccache-keys.outputs.norn_sccache_key_id }}
-          NORN_SCCACHE_SECRET: ${{ steps.sccache-keys.outputs.norn_sccache_secret }}
         # Writes only constants this step computes (true/false, a path under RUNNER_TEMP).
         run: | # zizmor: ignore[github-env]
           set -uo pipefail

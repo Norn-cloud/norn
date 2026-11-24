@@ -1,0 +1,270 @@
+{
+  "contract": "GapProposal records in the served NornObjectRecord envelope (#1208, #1220 L-5), including curated-case replay tables for tightened numeric limits and protected-case refusal. Replace with fixtures written by the learning pack's route tests once Train 2 lands.",
+  "records": [
+    {
+      "objectType": "learning.GapProposal",
+      "id": "prop_demo_credit_tighten",
+      "scope": "org_demo/analytics",
+      "version": 3,
+      "values": {
+        "title": "Tighten credit over-limit threshold from 20% to 10%",
+        "summary": "Lower the automatic shipment-hold over-limit ceiling to catch overdue balances earlier.",
+        "status": "refused",
+        "target": {
+          "artifactId": "demo.credit.hold_over_limit.law",
+          "kind": "law",
+          "label": "Hold shipments over the credit limit"
+        },
+        "diff": {
+          "summary": "Reduce credit_overage_limit from 0.20 to 0.10",
+          "before": "credit_overage_limit <= 0.20",
+          "after": "credit_overage_limit <= 0.10",
+          "patch": "--- a/demo.credit.hold_over_limit.law\n+++ b/demo.credit.hold_over_limit.law\n@@ -12,1 +12,1 @@\n-  credit_overage_limit: \"0.20\"\n+  credit_overage_limit: \"0.10\""
+        },
+        "episodeIds": ["ep_demo_overridden", "ep_demo_accepted"],
+        "author": "a manager",
+        "createdAtMs": 1794600000000,
+        "updatedAtMs": 1794620000000,
+        "checker": {
+          "status": "admitted",
+          "diagnostics": []
+        },
+        "replay": {
+          "evalSetId": "eval_credit_holdout_v1",
+          "evalSetName": "Credit release holdout",
+          "evalSetVersion": 1,
+          "definitionPin": "sha256:aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff66667777888899990000",
+          "replayedAtMs": 1794619000000,
+          "totalCases": 4,
+          "flippedCount": 2,
+          "protectedFlippedCount": 1,
+          "admissionStatus": "refused",
+          "refusalReason": "1 protected curated case (case_credit_phone_01) flips from Allowed to Would refuse under the tightened 0.10 limit; supersede it by name in the ruling or adjust the limit.",
+          "cases": [
+            {
+              "caseId": "case_credit_phone_01",
+              "episodeId": "ep_demo_overridden",
+              "label": "Release the held shipment? (18% over limit, paid by phone)",
+              "protected": true,
+              "supersededByRuling": false,
+              "beforeOutcome": "allowed",
+              "afterOutcome": "refused",
+              "flipped": true,
+              "detail": "18% overage exceeds proposed 10% limit; previously allowed after phone confirmation."
+            },
+            {
+              "caseId": "case_credit_standard_03",
+              "episodeId": "ep_demo_unsuggested",
+              "label": "Release priority replenishment (14% over limit)",
+              "protected": false,
+              "supersededByRuling": false,
+              "beforeOutcome": "allowed",
+              "afterOutcome": "refused",
+              "flipped": true,
+              "detail": "14% overage exceeds proposed 10% limit."
+            },
+            {
+              "caseId": "case_credit_overdue_02",
+              "episodeId": "ep_demo_accepted",
+              "label": "Approve the restock order? (4% over limit)",
+              "protected": false,
+              "supersededByRuling": false,
+              "beforeOutcome": "allowed",
+              "afterOutcome": "allowed",
+              "flipped": false,
+              "detail": "Within proposed 10% limit."
+            },
+            {
+              "caseId": "case_credit_blocked_04",
+              "episodeId": "ep_demo_accepted",
+              "label": "Hold delinquent account (35% over limit)",
+              "protected": false,
+              "supersededByRuling": false,
+              "beforeOutcome": "refused",
+              "afterOutcome": "refused",
+              "flipped": false,
+              "detail": "Refused under both 20% and 10% limits."
+            }
+          ]
+        },
+        "ruling": null,
+        "supersedesProposalId": null
+      }
+    },
+    {
+      "objectType": "learning.GapProposal",
+      "id": "prop_demo_discount_cap",
+      "scope": "org_demo/analytics",
+      "version": 2,
+      "values": {
+        "title": "Tighten auto-approved discount ceiling from 15% to 12%",
+        "summary": "Require manager sign-off above 12% while keeping protected enterprise agreements unaffected.",
+        "status": "admitted",
+        "target": {
+          "artifactId": "demo.discount.max_margin.law",
+          "kind": "law",
+          "label": "Discount stays within margin floor"
+        },
+        "diff": {
+          "summary": "Reduce auto_discount_cap from 0.15 to 0.12",
+          "before": "auto_discount_cap <= 0.15",
+          "after": "auto_discount_cap <= 0.12",
+          "patch": "--- a/demo.discount.max_margin.law\n+++ b/demo.discount.max_margin.law\n@@ -8,1 +8,1 @@\n-  auto_discount_cap: \"0.15\"\n+  auto_discount_cap: \"0.12\""
+        },
+        "episodeIds": ["ep_demo_accepted"],
+        "author": "you",
+        "createdAtMs": 1794630000000,
+        "updatedAtMs": 1794640000000,
+        "checker": {
+          "status": "admitted",
+          "diagnostics": []
+        },
+        "replay": {
+          "evalSetId": "eval_credit_holdout_v1",
+          "evalSetName": "Credit release holdout",
+          "evalSetVersion": 1,
+          "definitionPin": "sha256:bbbb1111cccc2222dddd3333eeee4444ffff555500006666777788889999aaaa",
+          "replayedAtMs": 1794639000000,
+          "totalCases": 2,
+          "flippedCount": 1,
+          "protectedFlippedCount": 0,
+          "admissionStatus": "admitted",
+          "refusalReason": null,
+          "cases": [
+            {
+              "caseId": "case_disc_13pct",
+              "episodeId": "ep_demo_accepted",
+              "label": "Standard order at 13.5% discount",
+              "protected": false,
+              "supersededByRuling": false,
+              "beforeOutcome": "allowed",
+              "afterOutcome": "refused",
+              "flipped": true,
+              "detail": "13.5% exceeds proposed 12% auto-approval ceiling."
+            },
+            {
+              "caseId": "case_disc_8pct",
+              "episodeId": "ep_demo_overridden",
+              "label": "Protected contract order at 8% discount",
+              "protected": true,
+              "supersededByRuling": false,
+              "beforeOutcome": "allowed",
+              "afterOutcome": "allowed",
+              "flipped": false,
+              "detail": "Within proposed 12% limit."
+            }
+          ]
+        },
+        "ruling": null,
+        "supersedesProposalId": null
+      }
+    },
+    {
+      "objectType": "learning.GapProposal",
+      "id": "prop_demo_draft_remittance",
+      "scope": "org_demo/analytics",
+      "version": 1,
+      "values": {
+        "title": "Allow verified remittance notice as a temporary credit hold release",
+        "summary": "Add an explicit documented remittance path so managers do not need manual waivers.",
+        "status": "draft",
+        "target": {
+          "artifactId": "demo.credit.hold_over_limit.law",
+          "kind": "law",
+          "label": "Hold shipments over the credit limit"
+        },
+        "diff": {
+          "summary": "Allow release when confirmed_remittance_within_hours <= 48",
+          "before": "balance <= credit_limit",
+          "after": "balance <= credit_limit || confirmed_remittance_within_hours <= 48",
+          "patch": "--- a/demo.credit.hold_over_limit.law\n+++ b/demo.credit.hold_over_limit.law\n@@ -5,1 +5,2 @@\n-  balance <= credit_limit\n+  balance <= credit_limit\n+    || confirmed_remittance_within_hours <= 48"
+        },
+        "episodeIds": ["ep_demo_overridden"],
+        "author": "you",
+        "createdAtMs": 1794650000000,
+        "updatedAtMs": 1794650000000,
+        "checker": {
+          "status": "not_run",
+          "diagnostics": []
+        },
+        "replay": null,
+        "ruling": null,
+        "supersedesProposalId": null
+      }
+    },
+    {
+      "objectType": "learning.GapProposal",
+      "id": "prop_demo_ratified_order",
+      "scope": "org_demo/analytics",
+      "version": 4,
+      "values": {
+        "title": "Require signed purchase confirmation on expedited orders",
+        "summary": "Closed an approval gap on expedited orders with zero protected flips.",
+        "status": "ratified",
+        "target": {
+          "artifactId": "demo.order.signed.law",
+          "kind": "law",
+          "label": "A shipment needs a signed order"
+        },
+        "diff": {
+          "summary": "Include expedited shipments in signed-order requirement",
+          "before": "standard_shipment => has_signed_order",
+          "after": "(standard_shipment || expedited_shipment) => has_signed_order",
+          "patch": "--- a/demo.order.signed.law\n+++ b/demo.order.signed.law\n@@ -3,1 +3,1 @@\n-  standard_shipment => has_signed_order\n+  (standard_shipment || expedited_shipment) => has_signed_order"
+        },
+        "episodeIds": ["ep_demo_accepted"],
+        "author": "a manager",
+        "createdAtMs": 1794400000000,
+        "updatedAtMs": 1794580000000,
+        "checker": {
+          "status": "admitted",
+          "diagnostics": []
+        },
+        "replay": {
+          "evalSetId": "eval_credit_holdout_v1",
+          "evalSetName": "Credit release holdout",
+          "evalSetVersion": 1,
+          "definitionPin": "sha256:cccc1111dddd2222eeee3333ffff4444000055556666777788889999aaaabbbb",
+          "replayedAtMs": 1794570000000,
+          "totalCases": 2,
+          "flippedCount": 0,
+          "protectedFlippedCount": 0,
+          "admissionStatus": "admitted",
+          "refusalReason": null,
+          "cases": [
+            {
+              "caseId": "case_credit_overdue_02",
+              "episodeId": "ep_demo_accepted",
+              "label": "Approve the restock order?",
+              "protected": false,
+              "supersededByRuling": false,
+              "beforeOutcome": "allowed",
+              "afterOutcome": "allowed",
+              "flipped": false,
+              "detail": "Signed order attached."
+            },
+            {
+              "caseId": "case_credit_phone_01",
+              "episodeId": "ep_demo_overridden",
+              "label": "Release the held shipment?",
+              "protected": true,
+              "supersededByRuling": false,
+              "beforeOutcome": "allowed",
+              "afterOutcome": "allowed",
+              "flipped": false,
+              "detail": "Signed order attached."
+            }
+          ]
+        },
+        "ruling": {
+          "receiptHash": "sha256:dddd1111eeee2222ffff33330000444455556666777788889999aaaabbbbcccc",
+          "commitSeq": 5201,
+          "ratifiedBy": "an owner",
+          "ratifiedAtMs": 1794580000000,
+          "supersededCaseIds": []
+        },
+        "supersedesProposalId": null
+      }
+    }
+  ]
+}
