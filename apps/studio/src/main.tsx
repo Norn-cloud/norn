@@ -1,12 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-router"
-import { Blend, ChartLine, Columns2, Database, Fingerprint, House, Inbox, LayoutDashboard, Network, Plug, Rows3, ShieldCheck, Workflow } from "lucide-react"
+import { Blend, Bookmark, ChartLine, Columns2, Database, Fingerprint, House, Inbox, LayoutDashboard, Network, Plug, Rows3, ShieldCheck, Workflow, Zap } from "lucide-react"
 import { StrictMode } from "react"
 import { Button } from "@/components/ui/button"
 import { endSession, useAccount } from "@/lib/session"
 import { LoginPage } from "./login.tsx"
 import { oauthPage } from "./oauth.tsx"
 import { createRoot } from "react-dom/client"
+import { useAutomationsMenu } from "./automations-builder.tsx"
 import { useDecisionBadge } from "./decisions/inbox.tsx"
 import { useGuaranteesMenu } from "./guarantees.tsx"
 import { useImportTriageBadge } from "./imports/import-triage-page.tsx"
@@ -15,6 +16,7 @@ import { routeTree } from "./routes.tsx"
 import { Sidekick, useSidekickServed } from "./sidekick/panel.tsx"
 import { Shell, type Section } from "./shell.tsx"
 import { useRecordsMenu, useSourcesMenu } from "./sources.tsx"
+import { useViewsMenu } from "./views.tsx"
 import { useWorkflowsMenu } from "./workflows.tsx"
 import "./index.css"
 
@@ -27,6 +29,7 @@ const SECTIONS: readonly Section[] = [
   { path: "/decisions", label: "Inbox", icon: Inbox, perspective: "global", useBadge: useDecisionBadge, paths: ["/episodes"] },
   // Workspace: what an operator works with.
   { path: "/objects", label: "Records", icon: Rows3, perspective: "workspace", group: "Data", kind: "source", useMenu: useRecordsMenu, index: false },
+  { path: "/views", label: "Views", icon: Bookmark, perspective: "workspace", group: "Data", useMenu: useViewsMenu, pinned: true },
   { path: "/metrics", label: "Metrics", icon: ChartLine, perspective: "workspace", group: "Analysis", kind: "question", useMenu: useQuestionsMenu },
   { path: "/dashboards", label: "Dashboards", icon: LayoutDashboard, perspective: "workspace", group: "Analysis" },
   { path: "/workflows", label: "Workflows", icon: Workflow, perspective: "workspace", group: "Operations", kind: "workflow", useMenu: useWorkflowsMenu, paths: ["/runs"] },
@@ -35,6 +38,7 @@ const SECTIONS: readonly Section[] = [
   { path: "/sources", label: "Sources", icon: Database, perspective: "builder", group: "Model", kind: "source", useMenu: useSourcesMenu, paths: ["/objects"] },
   { path: "/transforms", label: "Transforms", icon: Blend, perspective: "builder", group: "Model", kind: "transform" },
   { path: "/canvas", label: "Canvas", icon: Network, perspective: "builder", group: "Logic" },
+  { path: "/automations", label: "Automations", icon: Zap, perspective: "builder", group: "Logic", useMenu: useAutomationsMenu },
   { path: "/guarantees", label: "Guarantees", icon: ShieldCheck, perspective: "builder", group: "Logic", kind: "guarantee", useMenu: useGuaranteesMenu },
   { path: "/markings", label: "Markings", icon: Fingerprint, perspective: "builder", group: "Logic" },
   { path: "/connections", label: "Connections", icon: Plug, perspective: "builder", group: "Settings" },

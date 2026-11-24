@@ -627,7 +627,7 @@ fn values(listed: &Listed) -> object_query::RowValues<'_> {
 }
 
 /// A listed row as the grid shows it: values only when readable.
-fn queried(listed: &Listed) -> NornQueriedRecord {
+fn queried(listed: &Listed, offers: Option<Vec<String>>) -> NornQueriedRecord {
     NornQueriedRecord {
         object_type: listed.row.object_type.clone(),
         id: listed.row.id.clone(),
@@ -637,6 +637,7 @@ fn queried(listed: &Listed) -> NornQueriedRecord {
         withheld: !listed.readable,
         withheld_properties: listed.projected.withheld.clone(),
         masked: listed.projected.masked.clone(),
+        offers: listed.readable.then_some(offers).flatten(),
     }
 }
 
@@ -789,9 +790,10 @@ pub fn get_object_query_within<E: SqlEngine>(
         count: u64::try_from(matched.len()).unwrap_or(u64::MAX),
         approximate: !scan.exhausted,
     });
+    let records = queried_page(host, scope, &actor, object_type, page)?;
     Ok(NornObjectQueryPage {
         object_type: object_type.to_owned(),
-        records: page.into_iter().map(queried).collect(),
+        records,
         quarantine_count: scan.quarantined,
         query: NornAppliedQuery {
             sort: query.sort_document(),
@@ -799,6 +801,32 @@ pub fn get_object_query_within<E: SqlEngine>(
         },
         next,
         total,
+    })
+}
+
+fn queried_page<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &ScopeQuery,
+    actor: &str,
+    object_type: &str,
+    page: Vec<&Listed>,
+) -> Result<Vec<NornQueriedRecord>, Refusal> {
+    let row_refs: Vec<(bool, &ObjectRecord)> = page
+        .iter()
+        .map(|listed| (listed.readable, &listed.row))
+        .collect();
+    let per_row_offers =
+        crate::action_catalog::offers_for_records(host, scope, actor, object_type, &row_refs)?;
+    Ok(match per_row_offers {
+        Some(offers) => page
+            .into_iter()
+            .zip(offers)
+            .map(|(listed, offer)| queried(listed, offer))
+            .collect(),
+        None => page
+            .into_iter()
+            .map(|listed| queried(listed, None))
+            .collect(),
     })
 }
 
@@ -860,9 +888,21 @@ pub fn get_queried_object<E: SqlEngine>(
         Some(catalog) => privacy::project(host, &actor, catalog, markings.as_ref(), &mut row),
         None => privacy::Projected::default(),
     };
-    Ok(queried(&Listed {
-        row,
-        readable,
-        projected,
-    }))
+    let offers = crate::action_catalog::offers_for_records(
+        host,
+        scope,
+        &actor,
+        &row.object_type,
+        &[(readable, &row)],
+    )?
+    .and_then(|mut list| list.pop())
+    .flatten();
+    Ok(queried(
+        &Listed {
+            row,
+            readable,
+            projected,
+        },
+        offers,
+    ))
 }

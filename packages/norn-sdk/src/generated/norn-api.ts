@@ -35,22 +35,80 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Call one admitted action as the verified caller: it commits, or an
-         *     identical earlier call replays with its original receipt. While an
-         *     approval gates the action (APPROVAL-1), a call that would commit parks
-         *     instead, as one open decision, and answers 202 with it; a call that would
-         *     be refused is refused exactly as it would be ungated, and parks nothing.
+         * Call one admitted action as the verified caller: commits, replays an
+         *     identical earlier call, or parks behind an approval gate (APPROVAL-1, 202).
          *     # Errors
-         *     One opaque 403, decided before any storage read, for a missing or
-         *     unverified caller, a denied policy, a foreign scope or an unknown action;
-         *     the same opaque 403 for every visibility or permission refusal the kernel
-         *     decides (an invisible or absent target, a denied policy decision);
-         *     409 `defs.stale` for a stale definitions pin; otherwise the kernel's typed
-         *     refusal, its detail disclosed only under an explicit diagnostic grant;
-         *     for a gated call whose decision was resolved, 409 `approval.rejected` or
-         *     410 `approval.expired`. A refusal commits nothing.
+         *     403 opaque denial for unauthorized/unknown calls, 409 `defs.stale` or
+         *     `approval.rejected`, 410 `approval.expired`, or typed kernel refusal.
          */
         post: operations["call_action"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/automations/{id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /v1/automations/{id}/runs`: durable run history for one automation,
+         *     newest first, including proposals, commits, and refusals.
+         * @description # Errors
+         *     403 when unauthorized; 404 when unknown; 400 on invalid limit; 500 on host failure.
+         */
+        get: operations["list_automation_runs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/automations/{id}:run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /v1/automations/{id}:run`: evaluate an installed automation against
+         *     current readable records and fire proposals or governed action calls.
+         * @description # Errors
+         *     403 when unauthorized; 404 when unknown or retired; 500 on host failure.
+         */
+        post: operations["run_automation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/automations:preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /v1/automations:preview`: test an automation against current readable
+         *     records without firing any action or creating any Inbox proposal.
+         * @description # Errors
+         *     403 when unauthorized; 404 if `id` is unknown; 422 if the draft payload is
+         *     invalid; 500 on host failure.
+         */
+        post: operations["preview_automation"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1197,6 +1255,174 @@ export interface components {
          * @enum {string}
          */
         ApplyOutcome: "installed" | "unchanged";
+        /** @description One record currently matching an automation during preview. */
+        AutomationPreviewMatch: {
+            /** @description Record id. */
+            id: string;
+            /** @description Concrete object type. */
+            objectType: string;
+            /** @description The action that would be proposed or run. */
+            proposedAction: components["schemas"]["AutomationProposedAction"];
+            /** @description Human-readable explanation of why this record matched. */
+            reason: string;
+            /**
+             * Format: int64
+             * @description Elapsed milliseconds since last commit, for staleness triggers.
+             */
+            staleForMs?: number | null;
+            /** @description An automation definition payload object. */
+            values: {
+                [key: string]: unknown;
+            };
+            /**
+             * Format: int64
+             * @description Record version.
+             */
+            version: number;
+        };
+        /**
+         * @description Request body for `POST /v1/automations:preview`: either an installed
+         *     automation `id` or a draft `payload`.
+         */
+        AutomationPreviewRequest: {
+            /** @description Installed automation definition id to preview. */
+            id?: string | null;
+            /** @description An automation definition payload object. */
+            payload?: {
+                [key: string]: unknown;
+            };
+        };
+        /** @description Response of `POST /v1/automations:preview`. */
+        AutomationPreviewResponse: {
+            /** @description True when the scan bound or match display cap was reached. */
+            approximate: boolean;
+            /**
+             * Format: int64
+             * @description Number of matching records found.
+             */
+            matchedCount: number;
+            /** @description Matching records (bounded by [`MAX_PREVIEW_MATCHES`]). */
+            matches: components["schemas"]["AutomationPreviewMatch"][];
+            /** @description Target object type. */
+            objectType: string;
+            /** @description Plain-words restatement of the automation. */
+            restatement: string;
+            /**
+             * Format: int64
+             * @description Number of readable records scanned.
+             */
+            scannedCount: number;
+        };
+        /** @description One action the automation would propose or call for a matched record. */
+        AutomationProposedAction: {
+            /** @description Admitted action id. */
+            actionId: string;
+            /** @description An automation definition payload object. */
+            input: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * @description Outcome of one automation run entry.
+         * @enum {string}
+         */
+        AutomationRunOutcome: "proposed" | "committed" | "refused" | "skipped";
+        /** @description One durable automation run entry recorded on the ledger. */
+        AutomationRunRecord: {
+            /** @description Action targeted by this run. */
+            actionId: string;
+            /** @description Automation definition id. */
+            automationId: string;
+            /**
+             * Format: int64
+             * @description Automation definition revision.
+             */
+            automationRevision: number;
+            /**
+             * Format: int64
+             * @description Commit sequence, when an action committed.
+             */
+            commitSeq?: number | null;
+            /** @description Parked Inbox decision id, when `outcome == Proposed`. */
+            decisionId?: string | null;
+            /** @description Deduplication key `(automation, revision, objectType, objectId, version)`. */
+            dedupeKey: string;
+            /** @description Unique run entry id. */
+            id: string;
+            /** @description Subject record id. */
+            objectId: string;
+            /** @description Subject object type. */
+            objectType: string;
+            /**
+             * Format: int64
+             * @description Subject record version.
+             */
+            objectVersion: number;
+            /** @description Outcome. */
+            outcome: components["schemas"]["AutomationRunOutcome"];
+            /**
+             * Format: int64
+             * @description Logical timestamp in milliseconds.
+             */
+            recordedAtMs: number;
+            /** @description Refusal code, when `outcome == Refused`. */
+            refusalCode?: string | null;
+            /** @description Refusal message, when `outcome == Refused`. */
+            refusalMessage?: string | null;
+            /** @description What triggered this evaluation. */
+            trigger: string;
+        };
+        /** @description Response of `POST /v1/automations/{id}:run`. */
+        AutomationRunResponse: {
+            /**
+             * Format: int64
+             * @description Actions committed directly under laws and authority.
+             */
+            committed: number;
+            /** @description Whether the automation was enabled when evaluated. */
+            enabled: boolean;
+            /** @description Automation definition id. */
+            id: string;
+            /**
+             * Format: int64
+             * @description Records matching `when` and `if`.
+             */
+            matchedCount: number;
+            /**
+             * Format: int64
+             * @description Proposals parked into the Inbox.
+             */
+            proposed: number;
+            /**
+             * Format: int64
+             * @description Actions refused by laws, preconditions, or authority.
+             */
+            refused: number;
+            /** @description Run entries produced during this evaluation. */
+            runs: components["schemas"]["AutomationRunRecord"][];
+            /**
+             * Format: int64
+             * @description Records scanned.
+             */
+            scannedCount: number;
+            /**
+             * Format: int64
+             * @description Already-evaluated records skipped by deduplication.
+             */
+            skipped: number;
+            /**
+             * Format: int64
+             * @description Automation definition revision.
+             */
+            version: number;
+        };
+        /** @description Response of `GET /v1/automations/{id}/runs`. */
+        AutomationRunsPage: {
+            /** @description Automation definition id. */
+            id: string;
+            /** @description Recent runs, newest first. */
+            items: components["schemas"]["AutomationRunRecord"][];
+        };
         /** @description One link of a listed object type, to a readable target. */
         CatalogLink: {
             /** @description The link role, as a path's `links` names it. */
@@ -1354,20 +1580,20 @@ export interface components {
             /** @description Its lifecycle state. */
             state?: string | null;
         };
-        /** @description The parked action call an approval decides (APPROVAL-1). */
+        /** @description The parked action call an approval or automation proposal decides. */
         DecisionCall: {
             /** @description The action called. */
             action: string;
-            /** @description The approval definition that gates it. */
+            /** @description The approval or automation definition that created it. */
             definition: string;
-            /** @description The call's admitted input, as its requester sent it. */
+            /** @description The call's admitted input. */
             input: {
                 [key: string]: unknown;
             };
             /** @description Optional provenance trace context carried by the parked call. */
             trace?: components["schemas"]["TraceContext"];
         };
-        /** @description What the decision is about. Empty in this version. */
+        /** @description What the decision is about. */
         DecisionContext: {
             /** @description The objects the decision concerns. */
             subjects: components["schemas"]["DecisionSubject"][];
@@ -12412,6 +12638,13 @@ export interface components {
             };
             /** @description The concrete object type. */
             objectType: string;
+            /**
+             * @description ACTION-CATALOG-STATE-1: admitted action ids the caller may call on this
+             *     record in its current lifecycle state. Omitted for withheld rows and
+             *     when the cell serves no actions for the caller. Convenience only, never
+             *     a grant: every call is decided again at call time.
+             */
+            offers?: string[] | null;
             /** @description The tenant scope. */
             scope: string;
             /** @description Every stored property by property id; decimals are exact JSON number tokens. Null when the row is withheld. */
@@ -13647,6 +13880,210 @@ export interface operations {
             };
             /** @description The request was refused (`action.receipts_unconfigured`, retryable): the host keys no receipt handles, so no call can commit. Told only to a verified member calling an action the scope's policy governs; anyone else gets the 403. */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    list_automation_runs: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+                /** @description Maximum runs to return (1..100, default 50). */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Automation definition id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Recent automation run outcomes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutomationRunsPage"];
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description Scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description Automation not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description Host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    run_automation: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path: {
+                /** @description Automation definition id. */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Evaluation results and recorded run entries. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutomationRunResponse"];
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description Scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description Automation not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description Host failure. */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+        };
+    };
+    preview_automation: {
+        parameters: {
+            query: {
+                /** @description Organization (required). */
+                orgId: string;
+                /** @description Environment (required). */
+                environmentId: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AutomationPreviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Records matching the automation right now; nothing was fired. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutomationPreviewResponse"];
+                };
+            };
+            /** @description Invalid request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description Scope or authority denied. */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description Automation not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description Automation payload refused. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Refusal"];
+                };
+            };
+            /** @description Host failure. */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

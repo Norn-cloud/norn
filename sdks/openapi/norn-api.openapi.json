@@ -110,7 +110,7 @@
         "tags": [
           "crate::actions"
         ],
-        "summary": "Call one admitted action as the verified caller: it commits, or an\nidentical earlier call replays with its original receipt. While an\napproval gates the action (APPROVAL-1), a call that would commit parks\ninstead, as one open decision, and answers 202 with it; a call that would\nbe refused is refused exactly as it would be ungated, and parks nothing.\n# Errors\nOne opaque 403, decided before any storage read, for a missing or\nunverified caller, a denied policy, a foreign scope or an unknown action;\nthe same opaque 403 for every visibility or permission refusal the kernel\ndecides (an invisible or absent target, a denied policy decision);\n409 `defs.stale` for a stale definitions pin; otherwise the kernel's typed\nrefusal, its detail disclosed only under an explicit diagnostic grant;\nfor a gated call whose decision was resolved, 409 `approval.rejected` or\n410 `approval.expired`. A refusal commits nothing.",
+        "summary": "Call one admitted action as the verified caller: commits, replays an\nidentical earlier call, or parks behind an approval gate (APPROVAL-1, 202).\n# Errors\n403 opaque denial for unauthorized/unknown calls, 409 `defs.stale` or\n`approval.rejected`, 410 `approval.expired`, or typed kernel refusal.",
         "operationId": "call_action",
         "parameters": [
           {
@@ -265,6 +265,316 @@
           },
           "503": {
             "description": "The request was refused (`action.receipts_unconfigured`, retryable): the host keys no receipt handles, so no call can commit. Told only to a verified member calling an action the scope's policy governs; anyone else gets the 403.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/automations/{id}/runs": {
+      "get": {
+        "tags": [
+          "crate::automations"
+        ],
+        "summary": "`GET /v1/automations/{id}/runs`: durable run history for one automation,\nnewest first, including proposals, commits, and refusals.",
+        "description": "# Errors\n403 when unauthorized; 404 when unknown; 400 on invalid limit; 500 on host failure.",
+        "operationId": "list_automation_runs",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Automation definition id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Maximum runs to return (1..100, default 50).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Recent automation run outcomes.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutomationRunsPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Automation not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/automations/{id}:run": {
+      "post": {
+        "tags": [
+          "crate::automations"
+        ],
+        "summary": "`POST /v1/automations/{id}:run`: evaluate an installed automation against\ncurrent readable records and fire proposals or governed action calls.",
+        "description": "# Errors\n403 when unauthorized; 404 when unknown or retired; 500 on host failure.",
+        "operationId": "run_automation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Automation definition id.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Evaluation results and recorded run entries.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutomationRunResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Automation not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Host failure.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "hostToken": []
+          }
+        ]
+      }
+    },
+    "/v1/automations:preview": {
+      "post": {
+        "tags": [
+          "crate::automations"
+        ],
+        "summary": "`POST /v1/automations:preview`: test an automation against current readable\nrecords without firing any action or creating any Inbox proposal.",
+        "description": "# Errors\n403 when unauthorized; 404 if `id` is unknown; 422 if the draft payload is\ninvalid; 500 on host failure.",
+        "operationId": "preview_automation",
+        "parameters": [
+          {
+            "name": "orgId",
+            "in": "query",
+            "description": "Organization (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "environmentId",
+            "in": "query",
+            "description": "Environment (required).",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AutomationPreviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Records matching the automation right now; nothing was fired.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutomationPreviewResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Scope or authority denied.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Automation not found.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Automation payload refused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Refusal"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Host failure.",
             "content": {
               "application/json": {
                 "schema": {
@@ -5330,6 +5640,344 @@
           "unchanged"
         ]
       },
+      "AutomationPreviewMatch": {
+        "type": "object",
+        "description": "One record currently matching an automation during preview.",
+        "required": [
+          "objectType",
+          "id",
+          "version",
+          "values",
+          "reason",
+          "proposedAction"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Record id."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "Concrete object type."
+          },
+          "proposedAction": {
+            "$ref": "#/components/schemas/AutomationProposedAction",
+            "description": "The action that would be proposed or run."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Human-readable explanation of why this record matched."
+          },
+          "staleForMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Elapsed milliseconds since last commit, for staleness triggers.",
+            "minimum": 0
+          },
+          "values": {
+            "type": "object",
+            "description": "An automation definition payload object.",
+            "additionalProperties": true
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Record version.",
+            "minimum": 0
+          }
+        }
+      },
+      "AutomationPreviewRequest": {
+        "type": "object",
+        "description": "Request body for `POST /v1/automations:preview`: either an installed\nautomation `id` or a draft `payload`.",
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Installed automation definition id to preview."
+          },
+          "payload": {
+            "type": "object",
+            "description": "An automation definition payload object.",
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "AutomationPreviewResponse": {
+        "type": "object",
+        "description": "Response of `POST /v1/automations:preview`.",
+        "required": [
+          "objectType",
+          "scannedCount",
+          "matchedCount",
+          "approximate",
+          "restatement",
+          "matches"
+        ],
+        "properties": {
+          "approximate": {
+            "type": "boolean",
+            "description": "True when the scan bound or match display cap was reached."
+          },
+          "matchedCount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of matching records found.",
+            "minimum": 0
+          },
+          "matches": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AutomationPreviewMatch"
+            },
+            "description": "Matching records (bounded by [`MAX_PREVIEW_MATCHES`])."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "Target object type."
+          },
+          "restatement": {
+            "type": "string",
+            "description": "Plain-words restatement of the automation."
+          },
+          "scannedCount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Number of readable records scanned.",
+            "minimum": 0
+          }
+        }
+      },
+      "AutomationProposedAction": {
+        "type": "object",
+        "description": "One action the automation would propose or call for a matched record.",
+        "required": [
+          "actionId",
+          "input"
+        ],
+        "properties": {
+          "actionId": {
+            "type": "string",
+            "description": "Admitted action id."
+          },
+          "input": {
+            "type": "object",
+            "description": "An automation definition payload object.",
+            "additionalProperties": true
+          }
+        }
+      },
+      "AutomationRunOutcome": {
+        "type": "string",
+        "description": "Outcome of one automation run entry.",
+        "enum": [
+          "proposed",
+          "committed",
+          "refused",
+          "skipped"
+        ]
+      },
+      "AutomationRunRecord": {
+        "type": "object",
+        "description": "One durable automation run entry recorded on the ledger.",
+        "required": [
+          "id",
+          "automationId",
+          "automationRevision",
+          "dedupeKey",
+          "trigger",
+          "objectType",
+          "objectId",
+          "objectVersion",
+          "actionId",
+          "outcome",
+          "recordedAtMs"
+        ],
+        "properties": {
+          "actionId": {
+            "type": "string",
+            "description": "Action targeted by this run."
+          },
+          "automationId": {
+            "type": "string",
+            "description": "Automation definition id."
+          },
+          "automationRevision": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Automation definition revision.",
+            "minimum": 0
+          },
+          "commitSeq": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "Commit sequence, when an action committed.",
+            "minimum": 0
+          },
+          "decisionId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Parked Inbox decision id, when `outcome == Proposed`."
+          },
+          "dedupeKey": {
+            "type": "string",
+            "description": "Deduplication key `(automation, revision, objectType, objectId, version)`."
+          },
+          "id": {
+            "type": "string",
+            "description": "Unique run entry id."
+          },
+          "objectId": {
+            "type": "string",
+            "description": "Subject record id."
+          },
+          "objectType": {
+            "type": "string",
+            "description": "Subject object type."
+          },
+          "objectVersion": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Subject record version.",
+            "minimum": 0
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/AutomationRunOutcome",
+            "description": "Outcome."
+          },
+          "recordedAtMs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Logical timestamp in milliseconds.",
+            "minimum": 0
+          },
+          "refusalCode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Refusal code, when `outcome == Refused`."
+          },
+          "refusalMessage": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Refusal message, when `outcome == Refused`."
+          },
+          "trigger": {
+            "type": "string",
+            "description": "What triggered this evaluation."
+          }
+        }
+      },
+      "AutomationRunResponse": {
+        "type": "object",
+        "description": "Response of `POST /v1/automations/{id}:run`.",
+        "required": [
+          "id",
+          "version",
+          "enabled",
+          "scannedCount",
+          "matchedCount",
+          "proposed",
+          "committed",
+          "refused",
+          "skipped",
+          "runs"
+        ],
+        "properties": {
+          "committed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Actions committed directly under laws and authority.",
+            "minimum": 0
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the automation was enabled when evaluated."
+          },
+          "id": {
+            "type": "string",
+            "description": "Automation definition id."
+          },
+          "matchedCount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Records matching `when` and `if`.",
+            "minimum": 0
+          },
+          "proposed": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Proposals parked into the Inbox.",
+            "minimum": 0
+          },
+          "refused": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Actions refused by laws, preconditions, or authority.",
+            "minimum": 0
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AutomationRunRecord"
+            },
+            "description": "Run entries produced during this evaluation."
+          },
+          "scannedCount": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Records scanned.",
+            "minimum": 0
+          },
+          "skipped": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Already-evaluated records skipped by deduplication.",
+            "minimum": 0
+          },
+          "version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Automation definition revision.",
+            "minimum": 0
+          }
+        }
+      },
+      "AutomationRunsPage": {
+        "type": "object",
+        "description": "Response of `GET /v1/automations/{id}/runs`.",
+        "required": [
+          "id",
+          "items"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Automation definition id."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AutomationRunRecord"
+            },
+            "description": "Recent runs, newest first."
+          }
+        }
+      },
       "CatalogLink": {
         "type": "object",
         "description": "One link of a listed object type, to a readable target.",
@@ -5678,7 +6326,7 @@
       },
       "DecisionCall": {
         "type": "object",
-        "description": "The parked action call an approval decides (APPROVAL-1).",
+        "description": "The parked action call an approval or automation proposal decides.",
         "required": [
           "action",
           "definition",
@@ -5691,11 +6339,11 @@
           },
           "definition": {
             "type": "string",
-            "description": "The approval definition that gates it."
+            "description": "The approval or automation definition that created it."
           },
           "input": {
             "type": "object",
-            "description": "The call's admitted input, as its requester sent it.",
+            "description": "The call's admitted input.",
             "additionalProperties": {},
             "propertyNames": {
               "type": "string"
@@ -5709,7 +6357,7 @@
       },
       "DecisionContext": {
         "type": "object",
-        "description": "What the decision is about. Empty in this version.",
+        "description": "What the decision is about.",
         "required": [
           "subjects"
         ],
@@ -5750,7 +6398,7 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/DecisionCall",
-                "description": "For the approval of a parked action call (APPROVAL-1), the call\nwaiting on it; absent for a flow's ask."
+                "description": "For the approval of a parked action call (APPROVAL-1) or an automation\nproposal (AUTOMATION-1), the action call it proposes; absent for a flow's ask."
               },
               {
                 "type": "null"
@@ -34053,6 +34701,16 @@
           "objectType": {
             "type": "string",
             "description": "The concrete object type."
+          },
+          "offers": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "ACTION-CATALOG-STATE-1: admitted action ids the caller may call on this\nrecord in its current lifecycle state. Omitted for withheld rows and\nwhen the cell serves no actions for the caller. Convenience only, never\na grant: every call is decided again at call time."
           },
           "scope": {
             "type": "string",

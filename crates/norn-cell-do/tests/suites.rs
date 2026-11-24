@@ -92,3 +92,5 @@ mod tenant_isolation;
 mod timers;
 #[path = "tokens.rs"]
 mod tokens;
+#[path = "views_and_automations.rs"]
+mod views_and_automations;

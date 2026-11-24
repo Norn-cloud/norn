@@ -10,12 +10,13 @@ import type { GridQuery } from "./records-grid.tsx"
 
 const views = cellViews()
 
-/** The view a grid query saves as. */
-const asView = (title: string, objectType: string, query: GridQuery): SavedView => ({
+/** The view a grid query saves as, keeping any space/description/actions already on the view. */
+const asView = (title: string, objectType: string, query: GridQuery, existing?: SavedView): SavedView => ({
+  ...existing,
   title,
   objectType,
-  ...query.filter && query.filter.all.length > 0 ? { filter: query.filter } : {},
-  ...sortText(query.sort) ? { sort: sortText(query.sort) } : {},
+  filter: query.filter && query.filter.all.length > 0 ? query.filter : undefined,
+  sort: sortText(query.sort),
   columns: query.columns,
 })
 
@@ -68,7 +69,7 @@ export function ViewsBar({ objectType, open, query, onOpen }: {
   const [notice, setNotice] = useState<{ readonly text: string; readonly undo?: () => Promise<void> } | null>(null)
   const [creating, setCreating] = useState(false)
   const [renaming, setRenaming] = useState(false)
-  const reread = () => client.invalidateQueries({ queryKey: ["views", objectType] })
+  const reread = () => client.invalidateQueries({ queryKey: ["views"] })
   const create = async (title: string) => {
     if (query === undefined) return "The grid has not answered yet."
     const id = newViewId(objectType, title)
@@ -126,7 +127,7 @@ export function ViewsBar({ objectType, open, query, onOpen }: {
         <span className="flex-1" />
         {open !== null && <>
           <Button type="button" variant="outline" size="sm" className="h-8" disabled={!changed} title={changed ? "Save the grid's filter, sort and columns into this view" : "The grid shows this view as saved"}
-            onClick={() => { if (query) void update(asView(open.view.title, objectType, query)).then((problem) => problem && setNotice({ text: problem })) }}><Save />Update view</Button>
+            onClick={() => { if (query) void update(asView(open.view.title, objectType, query, open.view)).then((problem) => problem && setNotice({ text: problem })) }}><Save />Update view</Button>
           <Popover open={renaming} onOpenChange={setRenaming}>
             <PopoverTrigger asChild><Button type="button" variant="ghost" size="sm" className="h-8"><Pencil />Rename</Button></PopoverTrigger>
             <PopoverContent align="end" className="w-72 rounded-node border-node-border shadow-float">

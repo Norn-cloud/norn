@@ -118,6 +118,12 @@ pub struct NornQueriedRecord {
     /// Omitted when no property is marked.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub masked: BTreeMap<String, crate::privacy::NornMaskedProperty>,
+    /// ACTION-CATALOG-STATE-1: admitted action ids the caller may call on this
+    /// record in its current lifecycle state. Omitted for withheld rows and
+    /// when the cell serves no actions for the caller. Convenience only, never
+    /// a grant: every call is decided again at call time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offers: Option<Vec<String>>,
 }
 
 /// One applied sort key.

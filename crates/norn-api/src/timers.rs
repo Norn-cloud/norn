@@ -74,6 +74,8 @@ pub struct DueWork {
     /// Approved action steps whose recorded outcome was delivered to their
     /// runs (APPROVAL-RECOVERY-1); no action was called.
     pub steps: u32,
+    /// Staleness automations whose Inbox proposals were parked (AUTOMATION-1).
+    pub automations: u32,
     /// Why each item that was due could not be handled, for the operator's
     /// log; such an item stays due and is retried after its backoff.
     pub failed: Vec<String>,
@@ -88,7 +90,11 @@ impl DueWork {
     /// Whether anything was committed.
     #[must_use]
     pub const fn committed(&self) -> bool {
-        self.expired_reservations > 0 || self.timers > 0 || self.decisions > 0 || self.steps > 0
+        self.expired_reservations > 0
+            || self.timers > 0
+            || self.decisions > 0
+            || self.steps > 0
+            || self.automations > 0
     }
 }
 
@@ -204,6 +210,10 @@ pub fn run_due<E: SqlEngine>(host: &DevHost<E>, now: LogicalTime) -> Result<DueW
         }
     }
     work.next = if more { Some(at) } else { next_wake(&cell)? };
+    drop(cell);
+    if let Ok(fired) = crate::automations::run_due_stale(host, now) {
+        work.automations = fired;
+    }
     Ok(work)
 }
 

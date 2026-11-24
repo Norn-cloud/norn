@@ -50,6 +50,8 @@ pub mod flow_performs;
 pub mod flow_source_map;
 pub mod function;
 mod graph;
+/// Record-level ZEN guard expression admission and evaluation (`AUTOMATION-1`).
+pub mod guard_expr;
 /// Closure-keyed structural admission evidence reuse.
 pub mod incremental;
 mod inheritance;

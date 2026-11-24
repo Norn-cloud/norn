@@ -398,6 +398,92 @@ pub fn list_actions_on<E: SqlEngine>(
     })
 }
 
+/// ACTION-CATALOG-STATE-1: compute the callable action ids offered for each
+/// readable record in `records` in its current lifecycle state, in one
+/// `callable_actions` check per page. Returns `None` when the cell serves no
+/// callable actions for `actor` (or has no actions installed for `object_type`),
+/// so callers without actions omit `offers`. A withheld record receives `None`
+/// so lifecycle state is never disclosed (D67).
+pub(crate) fn offers_for_records<E: SqlEngine>(
+    host: &DevHost<E>,
+    scope: &crate::scope::ScopeQuery,
+    actor: &str,
+    object_type: &str,
+    rows: &[(bool, &norn_cell::ObjectRecord)],
+) -> Result<Option<Vec<Option<Vec<String>>>>, Refusal> {
+    let Ok(callable) = callable_actions(
+        host,
+        &ActionQuery {
+            org_id: scope.org_id.clone(),
+            environment_id: scope.environment_id.clone(),
+            version: None,
+        },
+        Some(actor),
+    ) else {
+        return Ok(None);
+    };
+    let targeting: Vec<&ActionRoot> = callable
+        .actions
+        .iter()
+        .filter_map(|(_, action)| {
+            let kind = match &action.effect_program {
+                Some(
+                    ActionEffectProgram::UpsertInputObject { object_kind, .. }
+                    | ActionEffectProgram::FireTransition { object_kind, .. }
+                    | ActionEffectProgram::MutateParentWithRows { object_kind, .. },
+                ) => Some(object_kind.as_str()),
+                None => None,
+            };
+            (kind == Some(object_type)).then_some(action)
+        })
+        .collect();
+    if targeting.is_empty() {
+        return Ok(None);
+    }
+    let lifecycles: Vec<(String, Vec<norn_ir::entity_v2::lifecycle::Transition>)> = {
+        let cell = host.cell()?;
+        let reader = cell.store().read();
+        reader
+            .model()
+            .object_types()
+            .filter(|def| def.name.as_str() == object_type)
+            .flat_map(|def| def.lifecycles.iter())
+            .map(|lifecycle| {
+                (
+                    lifecycle.property.as_str().to_owned(),
+                    lifecycle.transitions.clone(),
+                )
+            })
+            .collect()
+    };
+    let mut result = Vec::with_capacity(rows.len());
+    for (readable, record) in rows {
+        if !readable {
+            result.push(None);
+            continue;
+        }
+        let states: Vec<LifecycleState> = lifecycles
+            .iter()
+            .map(|(property, transitions)| {
+                let state = record
+                    .values
+                    .get(property)
+                    .and_then(norn_ir::RuntimeValue::as_str)
+                    .map(str::to_owned);
+                (property.clone(), transitions.clone(), state)
+            })
+            .collect();
+        let mut offered: Vec<String> = targeting
+            .iter()
+            .filter(|action| fires_from(action, &states))
+            .map(|action| action.action_id.clone())
+            .collect();
+        offered.sort();
+        result.push(Some(offered));
+    }
+    Ok(Some(result))
+}
+
 /// One lifecycle of an object: its property, its declared transitions and
 /// the object's current state, if it has one.
 type LifecycleState = (

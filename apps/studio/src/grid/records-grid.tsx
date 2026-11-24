@@ -21,6 +21,7 @@ import { diagnosticsAt, readRecords, type RecordsRead } from "../lib/records-sou
 import { transport } from "../lib/transport.ts"
 import { ACTIONS_UNAVAILABLE, writesWhole, type ActionSummary } from "../lib/actions.ts"
 import { ActionSheet, useActions, type OpenAction } from "../actions/action-sheet.tsx"
+import { BulkActionSheet, type BulkTarget, type OpenBulkAction } from "../actions/bulk-action-sheet.tsx"
 import { offeredFor, recordCatalog } from "../lib/screen/call.ts"
 import { alignRight, isWithheld, TracedCell, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow, RecordName } from "./cells.tsx"
 import { blankClause, FilterEditor, filterable, fromPredicate, toPredicate, type DraftClause } from "./filter-editor.tsx"
@@ -57,6 +58,8 @@ function Shell({ children }: { readonly children: ReactNode }) {
 
 /** The Record column stays put while the others scroll sideways. */
 const STICKY = "sticky left-0 z-10 shadow-[1px_0_0_var(--node-border)]"
+/** Row action buttons stay visible at the end edge while columns scroll sideways. */
+const STICKY_RIGHT = "sticky right-0 z-10 shadow-[-1px_0_0_var(--node-border)]"
 
 /**
  * An object type's records, one server page at a time. Sorting, filtering and paging are the
@@ -67,7 +70,7 @@ const STICKY = "sticky left-0 z-10 shadow-[1px_0_0_var(--node-border)]"
 /** The query a grid shows, as a saved view keeps it. */
 export interface GridQuery { readonly filter: Predicate | null; readonly sort: readonly SortKey[]; readonly columns: readonly string[] }
 
-export function RecordsGrid({ concept, read = readRecords, initial, onQuery, timeline = false }: {
+export function RecordsGrid({ concept, read = readRecords, initial, onQuery, timeline = false, rowActions, bulkActions }: {
   readonly concept: Concept
   readonly read?: Read
   /** The type is a `core.TimeInterval`: the records can also be read as a timeline (lib/timeline.ts). */
@@ -76,6 +79,10 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
   readonly initial?: Partial<GridQuery>
   /** Told the query the grid shows, whenever it changes. */
   readonly onQuery?: (query: GridQuery) => void
+  /** Saved view's configured inline row action ids (rendered only when offered by the cell). */
+  readonly rowActions?: readonly string[]
+  /** Saved view's configured bulk action ids (rendered only when offered by the cell). */
+  readonly bulkActions?: readonly string[]
 }) {
   const name = concept.name
   const fields = useMemo(() => concept.fields.filter(({ id }) => !HIDDEN_FIELDS.has(id)), [concept])
@@ -98,11 +105,19 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
   const [opened, setOpened] = useState<GridRow | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [acting, setActing] = useState<OpenAction | null>(null)
+  const [bulkActing, setBulkActing] = useState<OpenBulkAction | null>(null)
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(() => new Set())
   const [viewing, setViewing] = useState<{ readonly id: string; readonly since: number } | null>(null)
   const navigate = useNavigate()
   const catalog = useActions(name)
   const actions = catalog.data?.kind === "catalog" ? catalog.data.items : []
   const creates = actions.filter(writesWhole)
+  const rowActionSet = useMemo(() => new Set(rowActions ?? []), [rowActions])
+  const bulkCatalog = useMemo(() => {
+    const wanted = new Set(bulkActions ?? [])
+    return wanted.size === 0 ? [] : actions.filter((action) => wanted.has(action.actionId))
+  }, [actions, bulkActions])
+  const hasRowActions = rowActionSet.size > 0 && actions.some((action) => rowActionSet.has(action.actionId))
   // Off with the reason while the cell takes no actions; absent when it offers this reader none.
   const actionsOff = catalog.isError ? (catalog.error instanceof Error ? catalog.error.message : ACTIONS_UNAVAILABLE)
     : catalog.data?.kind === "unavailable" ? ACTIONS_UNAVAILABLE : catalog.data?.kind === "refused" ? catalog.data.message : undefined
@@ -152,11 +167,35 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
   }, [viewing, result.isFetching, result.dataUpdatedAt, page, name, navigate])
 
   const rows = useMemo<readonly GridRow[]>(() => page === undefined ? [] : page.read.document.records.map((record, index) => ({ record, at: `/records/${index}`, numbers: page.read.numbers })), [page])
+  const hasBulk = bulkCatalog.length > 0 && page?.origin !== "recorded"
+  const selectableRows = useMemo(() => rows.filter((row) => !isWithheld(row)), [rows])
+  const selectedRows = useMemo(() => selectableRows.filter((row) => selectedIds.has(row.record.id)), [selectableRows, selectedIds])
+  const allSelected = selectableRows.length > 0 && selectedRows.length === selectableRows.length
+  const toggleSelected = (id: string) => setSelectedIds((cur) => {
+    const next = new Set(cur)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    return next
+  })
+  const toggleAllSelected = () => setSelectedIds(allSelected ? new Set() : new Set(selectableRows.map((r) => r.record.id)))
+  useEffect(() => { setSelectedIds(new Set()) }, [pageIndex, reported])
   const columns = fields.filter(({ id }) => shown.has(id))
+  const showActionsColumn = hasRowActions && page?.origin !== "recorded"
   // Columns never squeeze below a readable width; past the card's width the grid scrolls sideways.
   // Wide enough for a money amount with its currency ("7,800.00 USD") and a lifecycle state.
-  const template = `minmax(14rem,1.4fr) ${columns.map((field) => alignRight(field) ? "minmax(10.5rem,1fr)" : "minmax(11rem,1fr)").join(" ")}`
-  const width = `calc(14rem + ${columns.map((field) => alignRight(field) ? "10.5rem" : "11rem").join(" + ")})`
+  const template = [
+    ...(hasBulk ? ["2.5rem"] : []),
+    "minmax(14rem,1.4fr)",
+    ...columns.map((field) => alignRight(field) ? "minmax(10.5rem,1fr)" : "minmax(11rem,1fr)"),
+    ...(showActionsColumn ? ["minmax(12rem,auto)"] : []),
+  ].join(" ")
+  const widthParts = [
+    ...(hasBulk ? ["2.5rem"] : []),
+    "14rem",
+    ...columns.map((field) => alignRight(field) ? "10.5rem" : "11rem"),
+    ...(showActionsColumn ? ["12rem"] : []),
+  ]
+  const width = `calc(${widthParts.join(" + ")})`
 
   const scroller = useRef<HTMLDivElement>(null)
   const [edges, setEdges] = useState({ right: false })
@@ -305,12 +344,35 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
               onOpen={(row) => setOpened(row)} />
           )
         })()}
+        {hasBulk && selectedRows.length > 0 && (
+          <div role="toolbar" aria-label="Bulk actions" className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+            <span className="font-medium tabular-nums">{selectedRows.length} selected</span>
+            {bulkCatalog.map((action) => {
+              const eligible: BulkTarget[] = selectedRows
+                .filter((row) => offeredFor(actions, row.record).some((offered) => offered.actionId === action.actionId))
+                .map((row) => ({ id: row.record.id, name: nameOf(row) }))
+              return (
+                <Button key={action.actionId} type="button" size="sm" variant="outline" className="h-7 bg-background" disabled={eligible.length === 0}
+                  onClick={() => setBulkActing({ action, targets: eligible })}>
+                  <Play className="size-3" /> {action.title} ({eligible.length})
+                </Button>
+              )
+            })}
+            <span className="flex-1" />
+            <Button type="button" size="sm" variant="ghost" className="h-7" onClick={() => setSelectedIds(new Set())}>Clear selection</Button>
+          </div>
+        )}
         <div className={cn("relative overflow-hidden rounded-lg border bg-card", shownTimeline && "hidden")}>
-          <div ref={scroller} role="grid" tabIndex={0} aria-label={`${concept.title} records`} aria-rowcount={rows.length + 1} aria-colcount={columns.length + 1}
+          <div ref={scroller} role="grid" tabIndex={0} aria-label={`${concept.title} records`} aria-rowcount={rows.length + 1} aria-colcount={columns.length + 1 + (hasBulk ? 1 : 0) + (showActionsColumn ? 1 : 0)}
             aria-busy={result.isFetching} aria-activedescendant={rows.length > 0 ? `row-${active}` : undefined} onKeyDown={onKey} onScroll={measureEdges}
             className={cn("max-h-[60vh] overflow-auto text-[13px] outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset", result.isFetching && "opacity-70")}>
             <div style={{ minWidth: width }}>
               <div role="row" aria-rowindex={1} className="sticky top-0 z-20 grid border-b border-node-border bg-muted" style={{ gridTemplateColumns: template }}>
+                {hasBulk && (
+                  <div role="columnheader" className="flex items-center justify-center bg-muted px-2 py-2">
+                    <input type="checkbox" aria-label="Select all records on this page" checked={allSelected} onChange={toggleAllSelected} />
+                  </div>
+                )}
                 <div role="columnheader" className={cn(STICKY, "flex items-center gap-1.5 bg-muted px-3 py-2 font-medium")}>Record<MarkingChips markings={nameMarkings} catalog={markings} className="inline-flex items-center gap-1 font-normal" /></div>
                 {columns.map((field: Field) => {
                   const key = sort.find(({ property }) => property === field.id)
@@ -328,6 +390,7 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
                     </div>
                   )
                 })}
+                {showActionsColumn && <div role="columnheader" className={cn(STICKY_RIGHT, "flex items-center bg-muted px-3 py-2 font-medium")}>Actions</div>}
               </div>
               {result.isPending && <div className="grid gap-1 p-3" aria-label="Reading records">{Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-6" />)}</div>}
               {page !== undefined && rows.length === 0 && (
@@ -343,23 +406,50 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
                   if (row === undefined) return null
                   const withheld = isWithheld(row)
                   const current = item.index === active
+                  const rowOffered = showActionsColumn && !withheld
+                    ? offeredFor(actions, row.record).filter((action) => rowActionSet.has(action.actionId))
+                    : []
                   return (
                     <div key={`${row.record.objectType}:${row.record.id}`} id={`row-${item.index}`} role="row" aria-rowindex={item.index + 2} aria-selected={current}
                       data-withheld={withheld || undefined}
                       className={cn("group absolute inset-x-0 grid cursor-pointer items-center border-b border-node-border/70", current ? "bg-[color-mix(in_oklab,var(--accent)_75%,var(--card))]" : "bg-card hover:bg-[color-mix(in_oklab,var(--muted)_70%,var(--card))]")}
                       style={{ gridTemplateColumns: template, height: ROW, transform: `translateY(${item.start}px)` }}
                       onClick={() => { setActive(item.index); setOpened(row) }}>
+                      {hasBulk && (
+                        <div role="gridcell" className="flex items-center justify-center px-2" onClick={(event) => event.stopPropagation()}>
+                          {!withheld && (
+                            <input
+                              type="checkbox"
+                              aria-label={`Select ${nameOf(row)}`}
+                              checked={selectedIds.has(row.record.id)}
+                              onChange={() => toggleSelected(row.record.id)}
+                            />
+                          )}
+                        </div>
+                      )}
                       <div role="gridcell" className={cn(STICKY, "truncate bg-inherit px-3 font-medium")}><RecordName row={row} fallback={nameOf(row)} /></div>
                       {withheld
-                        ? <div role="gridcell" aria-colspan={columns.length} className="min-w-0 px-3" style={{ gridColumn: "2 / -1" }}><WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark></div>
-                        : columns.map((field) => <div key={field.id} role="gridcell" className={cn("group/cell min-w-0 truncate px-3", alignRight(field) && "text-right")}><TracedCell field={field} row={row} live={page?.origin === "live"} /></div>)}
+                        ? <div role="gridcell" aria-colspan={columns.length + (showActionsColumn ? 1 : 0)} className="min-w-0 px-3" style={{ gridColumn: hasBulk ? "3 / -1" : "2 / -1" }}><WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark></div>
+                        : <>
+                          {columns.map((field) => <div key={field.id} role="gridcell" className={cn("group/cell min-w-0 truncate px-3", alignRight(field) && "text-right")}><TracedCell field={field} row={row} live={page?.origin === "live"} /></div>)}
+                          {showActionsColumn && (
+                            <div role="gridcell" className={cn(STICKY_RIGHT, "flex items-center gap-1 bg-inherit px-2")} onClick={(event) => event.stopPropagation()}>
+                              {rowOffered.map((action) => (
+                                <Button key={action.actionId} type="button" variant="outline" size="xs" className="h-6 bg-background px-2 text-xs"
+                                  onClick={() => setActing({ action, prefill: { [action.objectIdField]: row.record.id } })}>
+                                  <Play className="size-3" /> {action.title}
+                                </Button>
+                              ))}
+                            </div>
+                          )}
+                        </>}
                     </div>
                   )
                 })}
               </div>
             </div>
           </div>
-          {edges.right && <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 z-30 w-12 bg-gradient-to-l from-card to-transparent" />}
+          {edges.right && !showActionsColumn && <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 z-30 w-12 bg-gradient-to-l from-card to-transparent" />}
         </div>
 
         <nav className="flex items-center justify-end gap-2 text-meta text-muted-foreground" aria-label="Pages">
@@ -373,6 +463,7 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
       <RecordDrawer concept={concept} fields={fields} row={opened} origin={page?.origin} actions={actions} actionsOff={actionsOff} onClose={() => setOpened(null)}
         onAction={(action, id) => { setOpened(null); setActing({ action, prefill: { [action.objectIdField]: id } }) }} />
       <ActionSheet open={acting} onClose={() => setActing(null)} onView={(id) => setViewing({ id, since: Date.now() })} />
+      <BulkActionSheet open={bulkActing} onClose={() => setBulkActing(null)} onDone={() => setSelectedIds(new Set())} />
     </Shell>
   )
 }

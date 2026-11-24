@@ -646,6 +646,11 @@ fn probes(route: Route, ids: &Ids) -> Vec<Probe> {
         Route::TransformsCompile => post("/v1/transforms:compile".into(), json!({})),
         Route::TransformRefresh => post(format!("/v1/transforms/{transform}:refresh"), json!({})),
         Route::Inbox => get("/v1/inbox".into()),
+        Route::AutomationsPreview => {
+            post("/v1/automations:preview".into(), json!({"id": definition}))
+        }
+        Route::AutomationRun => post(format!("/v1/automations/{definition}:run"), json!({})),
+        Route::AutomationRuns => get(format!("/v1/automations/{definition}/runs")),
     }
 }
 
