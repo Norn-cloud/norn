@@ -446,3 +446,32 @@ test("DST spring gap is flagged without shifting; fall repeat matches by epoch i
     starts_at: "2026-11-01T01:30:00-05:00",
   })
 })
+
+test("callAction pins submissions to the bound scope without re-reading /api/me and surfaces 409 workspace.changed", async () => {
+  let meReads = 0
+  let sentUrl: URL | null = null
+  let sentHeaders: Headers | null = null
+  const fetcher = async (input: string, init?: RequestInit) => {
+    const url = new URL(input, "https://studio.test")
+    if (url.pathname === "/api/me") {
+      meReads += 1
+      // Even if the session switched elsewhere to org_other, a bound form must never re-read /api/me.
+      return Response.json({ user: { id: "u" }, organization: { id: "org_other", name: "Other", role: "owner" }, environmentId: "env_other" })
+    }
+    sentUrl = url
+    sentHeaders = new Headers(init?.headers)
+    return Response.json({ code: "workspace.changed", message: "Your active workspace changed. Reload the page before submitting." }, { status: 409 })
+  }
+  const result = await callAction("canon.holding.adjust", '{"id":"h1","quantity":"1.000"}', "k-stale", fetcher, { orgId: "org_original", environmentId: "env_original" })
+  expect(meReads).toBe(0)
+  expect(Object.fromEntries(sentUrl!.searchParams)).toEqual({ orgId: "org_original", environmentId: "env_original" })
+  expect(sentHeaders!.get("x-norn-expected-org")).toBe("org_original")
+  expect(sentHeaders!.get("x-norn-expected-env")).toBe("env_original")
+  expect(result).toEqual({
+    kind: "refused",
+    status: 409,
+    code: "workspace.changed",
+    message: "Your active workspace changed. Reload the page before submitting.",
+    diagnostics: [],
+  })
+})

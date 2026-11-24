@@ -4,8 +4,8 @@ import { refreshMode } from "./live-transport.ts"
 import { forgetReads } from "./session.ts"
 
 /**
- * Client bindings for Studio's governed workspace routes (`/api/workspaces`).
- * Display and invocation only: every permission and quota decision lives on the server.
+ * Client bindings for Studio's workspace listing and switcher activation (`/api/workspaces`).
+ * Display and invocation only: every permission decision lives on the server.
  */
 
 export interface WorkspaceItem {
@@ -15,35 +15,10 @@ export interface WorkspaceItem {
   readonly role: string
   readonly active: boolean
   readonly hasCell: boolean
-  readonly archived: boolean
-  readonly archivedAt: string | null
-  readonly canRename: boolean
-  readonly canArchive: boolean
-  readonly canDelete: boolean
 }
-
-export interface WorkspaceRequestItem {
-  readonly id: string
-  readonly name: string
-  readonly note: string
-  readonly status: "pending" | "approved" | "dismissed"
-  readonly requesterName: string
-  readonly requesterEmail: string
-  readonly createdAt: string
-  readonly canManage: boolean
-  readonly canWithdraw: boolean
-}
-
-export type WorkspaceCreation =
-  | { readonly mode: "self-serve"; readonly allowed: true }
-  | { readonly mode: "self-serve"; readonly allowed: false; readonly reason: string; readonly upgradeUrl: string | null }
-  | { readonly mode: "request" }
 
 export interface WorkspacesDocument {
   readonly workspaces: readonly WorkspaceItem[]
-  readonly archived: readonly WorkspaceItem[]
-  readonly creation: WorkspaceCreation
-  readonly requests: readonly WorkspaceRequestItem[]
   readonly planLabel: string | null
 }
 
@@ -54,7 +29,7 @@ export class WorkspaceError extends Error {
 }
 
 export class SessionRefreshError extends WorkspaceError {
-  constructor(message = "The change succeeded, but refreshing your session failed. Retry refreshing below.") {
+  constructor(message = "The workspace switch succeeded, but refreshing your session failed. Retry refreshing below.") {
     super(503, "SESSION_REFRESH_FAILED", message)
   }
 }
@@ -76,14 +51,11 @@ export async function readWorkspaces(fetcher: Fetch = (input, init) => fetch(inp
     throw new WorkspaceError(response.status, "WORKSPACES_UNAVAILABLE", `Could not load workspaces (${response.status}).`)
   }
   const body = (await response.json().catch(() => null)) as Partial<WorkspacesDocument> | null
-  if (body === null || !Array.isArray(body.workspaces) || !Array.isArray(body.archived) || body.creation === undefined) {
+  if (body === null || !Array.isArray(body.workspaces)) {
     throw new WorkspaceError(response.status, "WORKSPACES_INVALID", "Received an invalid workspace list from the server.")
   }
   return {
     workspaces: body.workspaces,
-    archived: body.archived,
-    creation: body.creation,
-    requests: Array.isArray(body.requests) ? body.requests : [],
     planLabel: typeof body.planLabel === "string" ? body.planLabel : null,
   }
 }
@@ -92,11 +64,11 @@ export function useWorkspaces() {
   return useQuery({ queryKey: WORKSPACES_QUERY_KEY, queryFn: () => readWorkspaces(), retry: false, staleTime: 30_000 })
 }
 
-async function mutate<T>(path: string, method: "POST" | "PATCH" | "DELETE", payload?: unknown, fetcher: Fetch = (input, init) => fetch(input, init)): Promise<T> {
+async function mutate<T>(path: string, method: "POST", payload: unknown, fetcher: Fetch = (input, init) => fetch(input, init)): Promise<T> {
   const response = await fetcher(path, {
     method,
-    headers: { accept: "application/json", ...payload === undefined ? {} : { "content-type": "application/json" } },
-    body: payload === undefined ? undefined : JSON.stringify(payload),
+    headers: { accept: "application/json", "content-type": "application/json" },
+    body: JSON.stringify(payload),
   })
   const parsed = (await response.json().catch(() => null)) as { code?: unknown; message?: unknown; error?: unknown } | null
   if (!response.ok) {
@@ -108,14 +80,7 @@ async function mutate<T>(path: string, method: "POST" | "PATCH" | "DELETE", payl
 }
 
 export const workspaceApi = {
-  create: (name: string, fetcher?: Fetch) => mutate<{ readonly id: string; readonly name: string }>("/api/workspaces", "POST", { name }, fetcher),
   activate: (id: string, fetcher?: Fetch) => mutate<{ readonly activeOrganizationId: string }>(`/api/workspaces/${encodeURIComponent(id)}/activate`, "POST", {}, fetcher),
-  rename: (id: string, name: string, fetcher?: Fetch) => mutate<{ readonly id: string; readonly name: string }>(`/api/workspaces/${encodeURIComponent(id)}`, "PATCH", { name }, fetcher),
-  archive: (id: string, fetcher?: Fetch) => mutate<{ readonly id: string; readonly archived: true; readonly nextActiveOrganizationId: string | null }>(`/api/workspaces/${encodeURIComponent(id)}/archive`, "POST", {}, fetcher),
-  restore: (id: string, activate = true, fetcher?: Fetch) => mutate<{ readonly id: string; readonly archived: false }>(`/api/workspaces/${encodeURIComponent(id)}/restore`, "POST", { activate }, fetcher),
-  remove: (id: string, fetcher?: Fetch) => mutate<{ readonly id: string; readonly deleted: true; readonly nextActiveOrganizationId: string | null }>(`/api/workspaces/${encodeURIComponent(id)}`, "DELETE", undefined, fetcher),
-  requestWorkspace: (name: string, note: string, fetcher?: Fetch) => mutate<{ readonly id: string; readonly name: string; readonly status: "pending" }>("/api/workspaces/requests", "POST", { name, note }, fetcher),
-  decideRequest: (id: string, decision: "approved" | "dismissed", fetcher?: Fetch) => mutate<{ readonly id: string; readonly status: string }>(`/api/workspaces/requests/${encodeURIComponent(id)}/decide`, "POST", { decision }, fetcher),
 }
 
 /**

@@ -235,6 +235,7 @@ const REFUSED: Readonly<Record<string, string>> = {
   "authz.denied": "Not allowed",
   "decision.guard_false": "This step isn't open for this record",
   "defs.stale": "The definitions changed: open the action again",
+  "workspace.changed": "Workspace changed — reload this page",
 }
 
 function FieldRow({ field, label, draft, diagnostics, locked, onEdit }: {

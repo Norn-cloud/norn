@@ -1,4 +1,4 @@
-import { CellUnavailable, readStudioScope, scopedHostFetch } from "./definitions.ts"
+import { CellUnavailable, getDisplayedScope, readStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
 
 /**
  * One scoped call to a cell route, read into the shapes every RUNS route shares: a document, a
@@ -46,9 +46,17 @@ function refusalOf(status: number, text: string): Refusal | null {
 }
 
 /** A scoped cell call. A refusal with a Norn code is a refusal at any status, 404 included; a bare 404 or 503 is "not served". */
-export async function cellCall<T>(path: string, init: RequestInit = {}, fetcher: Fetch = defaultFetch): Promise<CellResult<T>> {
-  let scope
-  try { scope = await readStudioScope(fetcher) } catch (error) { if (error instanceof CellUnavailable) return { kind: "unavailable" }; throw error }
+export async function cellCall<T>(path: string, init: RequestInit = {}, fetcher: Fetch = defaultFetch, boundScope?: StudioScope | null): Promise<CellResult<T>> {
+  const method = (init.method ?? "GET").toUpperCase()
+  const write = method !== "GET" && method !== "HEAD" && method !== "OPTIONS"
+  let scope: StudioScope | null
+  try {
+    scope = boundScope !== undefined
+      ? boundScope
+      : write && fetcher === defaultFetch && getDisplayedScope() !== undefined
+        ? getDisplayedScope()!
+        : await readStudioScope(fetcher)
+  } catch (error) { if (error instanceof CellUnavailable) return { kind: "unavailable" }; throw error }
   if (scope === null) return { kind: "no-cell" }
   const active = scope
   const call = scopedHostFetch(fetcher, "/api/host", async () => active)

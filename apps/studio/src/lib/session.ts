@@ -1,12 +1,14 @@
 import { type QueryClient, queryOptions, useQuery, useQueryClient } from "@tanstack/react-query"
 import { forgetDrafts, sessionKey } from "../actions/kept-drafts.ts"
 import { forgetParkedCalls } from "../actions/parked-calls.ts"
+import { scopeFromAccount, setDisplayedScope } from "./definitions.ts"
 import { refreshMode } from "./live-transport.ts"
 
 /** Who is signed in, as the Worker reports it (/api/me). Display only: the server decides every permission. */
 export interface Account {
   readonly user: { readonly id: string; readonly name: string; readonly email: string }
   readonly organization: { readonly id: string; readonly name: string; readonly role: string } | null
+  readonly environmentId?: string | null
 }
 
 /** Public auth capabilities the server advertises (/api/auth/config). Display only; the server still enforces everything. */
@@ -61,17 +63,20 @@ export function forgetReads(client: QueryClient, options: { readonly refetchActi
   client.removeQueries({ predicate: isReadQuery })
 }
 
+const defaultAccountFetch: Fetch = (input, init) => fetch(input, init)
+
 /**
  * The session query. Whenever a read of it names a different reader than the last one (the session
  * expired and `/api/me` answered 401, someone else signed in, or the organization changed), the
  * previous reader's reads and parked calls are forgotten before the new answer is shown, the way a
  * sign-out forgets them. Hygiene only: every read is the server's decision for whoever asks.
  */
-export function accountQuery(client: QueryClient, fetcher: Fetch = (input, init) => fetch(input, init)) {
+export function accountQuery(client: QueryClient, fetcher: Fetch = defaultAccountFetch) {
   return queryOptions({
     queryKey: SESSION,
     queryFn: async () => {
       const account = await readAccount(fetcher)
+      if (fetcher === defaultAccountFetch) setDisplayedScope(scopeFromAccount(account))
       const previous = client.getQueryData<Account | null>(SESSION)
       if (previous !== undefined && sessionKey(previous) !== sessionKey(account)) {
         // A parked call's exact input and key are the previous reader's: never kept for the next,
@@ -124,6 +129,7 @@ export function useRefreshAccount() {
  */
 export async function endSession(client: QueryClient, signOut: () => Promise<void> = authApi.signOut): Promise<void> {
   await signOut()
+  if (signOut === authApi.signOut) setDisplayedScope(null)
   forgetDrafts()
   forgetParkedCalls()
   refreshMode()

@@ -118,3 +118,37 @@ test("GET /api/auth/config exposes magicLink and inviteOnly without leaking allo
   // Non-GET is refused.
   expect((await readConfig(openWithMail, "POST")).status).toBe(405)
 })
+
+test("an accepted-duplicate sign-up on an invite-only stage keeps the existing account unchanged and leaks nothing", async () => {
+  const { db, env } = stage({ invited: "owner@example.com" })
+  const first = await signUp(env, "owner@example.com")
+  expect(first.status).toBe(200)
+  expect(first.headers.getSetCookie()).toEqual([])
+  const firstBody = await first.json() as { token: unknown; user?: { email?: string } }
+  expect(firstBody.token).toBeNull()
+
+  // Re-submitting the same allowlisted address with a different password returns 200 with no session
+  // and must not create a second user or overwrite the existing password.
+  const duplicate = await worker.fetch(new Request(`${ORIGIN}/api/auth/sign-up/email`, {
+    method: "POST",
+    body: JSON.stringify({ email: "OWNER@example.com", password: "a-different-password-9999", name: "Someone Else" }),
+    headers: { "content-type": "application/json", origin: ORIGIN, "cf-connecting-ip": "198.51.100.240" },
+  }) as Parameters<typeof worker.fetch>[0], env)
+  expect(duplicate.status).toBe(200)
+  expect(duplicate.headers.getSetCookie()).toEqual([])
+  expect(users(db)).toEqual([{ email: "owner@example.com" }])
+
+  // Original password still signs in; the duplicate attempt's password does not.
+  const wrongPw = await worker.fetch(new Request(`${ORIGIN}/api/auth/sign-in/email`, {
+    method: "POST",
+    body: JSON.stringify({ email: "owner@example.com", password: "a-different-password-9999" }),
+    headers: { "content-type": "application/json", origin: ORIGIN, "cf-connecting-ip": "198.51.100.241" },
+  }) as Parameters<typeof worker.fetch>[0], env)
+  expect(wrongPw.status).toBe(401)
+  const rightPw = await worker.fetch(new Request(`${ORIGIN}/api/auth/sign-in/email`, {
+    method: "POST",
+    body: JSON.stringify({ email: "owner@example.com", password: "correct horse battery" }),
+    headers: { "content-type": "application/json", origin: ORIGIN, "cf-connecting-ip": "198.51.100.242" },
+  }) as Parameters<typeof worker.fetch>[0], env)
+  expect(rightPw.status).toBe(200)
+})

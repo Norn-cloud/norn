@@ -1,5 +1,5 @@
-import { forwardToHost, originAllowed, resolveActor } from "./actor.ts"
-import { activeMembership, createAuth, isOrganizationArchived, isProvisioningMetadata, verifyMagicLinkOrigin, type Auth, type MagicLinkMail } from "./auth.ts"
+import { forwardToHost, originAllowed, resolveActor, verifyWriteScope } from "./actor.ts"
+import { activeMembership, createAuth, verifyMagicLinkOrigin, type Auth, type MagicLinkMail } from "./auth.ts"
 import { passwordScrypt } from "./password.ts"
 import { clientIpHeader } from "./client-ip.ts"
 import { connectors } from "./connectors.ts"
@@ -11,14 +11,8 @@ import { polarConfig, settingsOf } from "./polar-config.ts"
 import {
   acceptWorkspaceInvitation,
   activateWorkspace,
-  archiveWorkspace,
   createWorkspace,
-  createWorkspaceRequest,
-  decideWorkspaceRequest,
-  deleteWorkspace,
   listWorkspaces,
-  renameWorkspace,
-  restoreWorkspace,
 } from "./workspaces.ts"
 import { cellScope } from "./scope.ts"
 import { instrumented } from "./telemetry.ts"
@@ -115,8 +109,7 @@ function auth(env: Env): Auth {
   const gateway = url === undefined || clientId === undefined || clientSecret === undefined ? undefined : { url, clientId, clientSecret }
   const billing = polarConfig(env)
   const defaultEnvironmentId = env.STUDIO_DEFAULT_ENVIRONMENT_ID?.trim() || undefined
-  const selfServeOrganizationCreate = env.NORN_HOST === undefined || defaultEnvironmentId !== undefined
-  const instance = createAuth({ ...billing === undefined ? {} : { billing: { config: billing, db: env.AUTH_DB as unknown as BillingDb } }, mcp: mcpOn(env), database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, trustedOrigins: trustedOrigins(env), defaultEnvironmentId, selfServeOrganizationCreate, scrypt: passwordScrypt(env.AUTH_SCRYPT), clientIpHeader: clientIpHeader(env.STUDIO_CLIENT_IP_HEADER), ...signUpEmails(env) === undefined ? {} : { signUpEmails: signUpEmails(env) }, ...sendMagicLink === undefined ? {} : { sendMagicLink }, ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrganizationId: env.STUDIO_DEFAULT_ORG }, ...gateway === undefined ? {} : { gateway } })
+  const instance = createAuth({ ...billing === undefined ? {} : { billing: { config: billing, db: env.AUTH_DB as unknown as BillingDb } }, mcp: mcpOn(env), database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: env.BETTER_AUTH_URL, trustedOrigins: trustedOrigins(env), defaultEnvironmentId, scrypt: passwordScrypt(env.AUTH_SCRYPT), clientIpHeader: clientIpHeader(env.STUDIO_CLIENT_IP_HEADER), ...signUpEmails(env) === undefined ? {} : { signUpEmails: signUpEmails(env) }, ...sendMagicLink === undefined ? {} : { sendMagicLink }, ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrganizationId: env.STUDIO_DEFAULT_ORG }, ...gateway === undefined ? {} : { gateway } })
   const handle = instance.handler
   instance.handler = (request: Request) => guarded(handle, request)
   instances.set(env.AUTH_DB, instance)
@@ -182,8 +175,6 @@ async function workspaceRoute(request: Request, env: Env, pathname: string): Pro
     billing: await billingSettings(env),
     baseURL: env.BETTER_AUTH_URL,
     ...env.NORN_HOST === undefined ? {} : { host: env.NORN_HOST },
-    ...env.STUDIO_DEFAULT_ENVIRONMENT_ID?.trim() ? { defaultEnvironmentId: env.STUDIO_DEFAULT_ENVIRONMENT_ID.trim() } : {},
-    ...env.STUDIO_DEFAULT_ORG === undefined ? {} : { defaultOrganizationId: env.STUDIO_DEFAULT_ORG },
   }
   const run = async (): Promise<Response> => {
     if (decoded.length === 0) {
@@ -195,32 +186,9 @@ async function workspaceRoute(request: Request, env: Env, pathname: string): Pro
       if (request.method !== "POST") return refuse(405, "POST only.", { allow: "POST" })
       return acceptWorkspaceInvitation(request, context)
     }
-    if (decoded.length === 1 && decoded[0] === "requests") {
+    if (decoded.length === 2 && decoded[0] !== "" && decoded[1] === "activate") {
       if (request.method !== "POST") return refuse(405, "POST only.", { allow: "POST" })
-      return createWorkspaceRequest(request, context)
-    }
-    if (decoded.length === 3 && decoded[0] === "requests" && decoded[2] === "decide" && decoded[1] !== "") {
-      if (request.method !== "POST") return refuse(405, "POST only.", { allow: "POST" })
-      return decideWorkspaceRequest(request, context, decoded[1]!)
-    }
-    if (decoded.length === 1 && decoded[0] !== "") {
-      if (request.method === "PATCH") return renameWorkspace(request, context, decoded[0]!)
-      if (request.method === "DELETE") return deleteWorkspace(request, context, decoded[0]!)
-      return refuse(405, "PATCH or DELETE only.", { allow: "PATCH, DELETE" })
-    }
-    if (decoded.length === 2 && decoded[0] !== "") {
-      if (decoded[1] === "activate") {
-        if (request.method !== "POST") return refuse(405, "POST only.", { allow: "POST" })
-        return activateWorkspace(request, context, decoded[0]!)
-      }
-      if (decoded[1] === "archive") {
-        if (request.method !== "POST") return refuse(405, "POST only.", { allow: "POST" })
-        return archiveWorkspace(request, context, decoded[0]!)
-      }
-      if (decoded[1] === "restore") {
-        if (request.method !== "POST") return refuse(405, "POST only.", { allow: "POST" })
-        return restoreWorkspace(request, context, decoded[0]!)
-      }
+      return activateWorkspace(request, context, decoded[0]!)
     }
     return refuse(404, "No such endpoint.")
   }
@@ -279,33 +247,6 @@ function authConfig(request: Request, env: Env): Response {
     { magicLink: magicLinkEnabled(env), inviteOnly: signUpEmails(env) !== undefined },
     { headers: { "cache-control": "no-store" } },
   )
-}
-
-/** Refuse activating an archived workspace through Better Auth's set-active endpoint without leaking org existence to non-members. */
-async function blockArchivedSetActive(request: Request, env: Env): Promise<Response | null> {
-  if (request.method !== "POST") return null
-  const origin = request.headers.get("origin")
-  if (origin === null || !trustedOrigins(env).includes(origin)) return null
-  const session = await auth(env).api.getSession({ headers: request.headers })
-  if (session === null) return null
-  let organizationId: unknown
-  try {
-    organizationId = (JSON.parse(await request.clone().text()) as { organizationId?: unknown } | null)?.organizationId
-  } catch {
-    return null
-  }
-  if (typeof organizationId !== "string" || organizationId === "") return null
-  const { adapter } = await auth(env).$context
-  const member = await adapter.findOne<{ id: string }>({ model: "member", where: [{ field: "userId", value: session.user.id }, { field: "organizationId", value: organizationId }] })
-  if (member === null) return null
-  if (await isOrganizationArchived(auth(env), organizationId)) {
-    return Response.json({ code: "WORKSPACE_ARCHIVED", message: "Restore this workspace before opening it." }, { status: 409, headers: { "cache-control": "no-store" } })
-  }
-  const org = await adapter.findOne<{ metadata?: unknown }>({ model: "organization", where: [{ field: "id", value: organizationId }] })
-  if (org !== null && isProvisioningMetadata(org.metadata)) {
-    return Response.json({ code: "WORKSPACE_PROVISIONING", message: "This workspace is still being provisioned." }, { status: 409, headers: { "cache-control": "no-store" } })
-  }
-  return null
 }
 
 /** The signed-in user and active organization, for the shell. Display only; Norn decides permissions. */
@@ -428,10 +369,6 @@ const handler = {
     const moved = SPLIT_WRITE_PATHS.get(routePath(pathname))
     if (moved !== undefined && await billingSettings(env) !== undefined) return Response.json({ code: "USE_STUDIO_ROUTE", message: `With billing on, this goes through ${moved}.`, route: moved }, { status: 404, headers: { "cache-control": "no-store" } })
     if (routePath(pathname) === "/api/auth/organization/accept-invitation") return acceptInvitation(await auth(env).handler(request))
-    if (routePath(pathname) === "/api/auth/organization/set-active") {
-      const blocked = await blockArchivedSetActive(request, env)
-      if (blocked !== null) return blocked
-    }
     if (pathname === "/api/workspaces" || pathname.startsWith("/api/workspaces/")) return workspaceRoute(request, env, pathname)
     if (pathname.startsWith("/api/auth/")) return auth(env).handler(request)
     if (pathname === "/api/me") return me(request, env)
@@ -441,6 +378,8 @@ const handler = {
       const actor = await resolveActor(request, auth(env))
       if (actor === null) return refuse(401, "Sign in first.")
       if (!originAllowed(request, actor, trustedOrigins(env))) return refuse(403, "Cross-origin request refused.")
+      const mismatch = await verifyWriteScope(request, auth(env), actor, { checkHostQuery: true })
+      if (mismatch !== null) return mismatch
       if (env.NORN_HOST === undefined) return refuse(503, "No Norn host is connected to this deployment.")
       return forwardToHost(request, env.NORN_HOST, auth(env), actor, pathname.slice("/api/host".length))
     }
@@ -449,6 +388,8 @@ const handler = {
       const actor = await resolveActor(request, auth(env))
       if (actor === null) return refuse(401, "Sign in first.")
       if (!originAllowed(request, actor, trustedOrigins(env))) return refuse(403, "Cross-origin request refused.")
+      const mismatch = await verifyWriteScope(request, auth(env), actor)
+      if (mismatch !== null) return mismatch
       if (env.NORN_HOST === undefined) return refuse(503, "No Norn host is connected to this deployment.")
       return questions(request, cellFor(env.NORN_HOST, auth(env), actor), pathname.slice("/api/questions".length))
     }
@@ -460,6 +401,8 @@ const handler = {
       if (actor === null) return refuse(401, "Sign in first.")
       if (actor.actorKind !== "user") return refuse(403, "Sidekick acts for a signed-in person only.")
       if (!originAllowed(request, actor, trustedOrigins(env))) return refuse(403, "Cross-origin request refused.")
+      const mismatch = await verifyWriteScope(request, auth(env), actor)
+      if (mismatch !== null) return mismatch
       if ((await cellScope(auth(env), actor.orgId)).environmentId === null) return refuse(409, "This workspace has no data cell yet.")
       const { grantAllowed, sidekickGrant } = await import("./sidekick.ts")
       if (!grantAllowed(actor.subjectId)) return refuse(429, "Too many Sidekick grants; wait a few minutes.", { "retry-after": "60" })
@@ -471,6 +414,8 @@ const handler = {
       if (actor === null) return refuse(401, "Sign in first.")
       if (actor.actorKind !== "user") return refuse(403, "The assistant acts for a signed-in person only.")
       if (!originAllowed(request, actor, trustedOrigins(env))) return refuse(403, "Cross-origin request refused.")
+      const mismatch = await verifyWriteScope(request, auth(env), actor)
+      if (mismatch !== null) return mismatch
       if (env.NORN_HOST === undefined) return refuse(503, "No Norn host is connected to this deployment.")
       const scope = await cellScope(auth(env), actor.orgId)
       if (scope.environmentId === null) return refuse(409, "This workspace has no data cell yet.")

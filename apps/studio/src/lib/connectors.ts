@@ -1,3 +1,5 @@
+import { EXPECTED_ORG_HEADER, getDisplayedScope } from "./definitions.ts"
+
 /**
  * The Studio Worker's `/api/connectors/*` as the Connections page uses it (#772). The page holds no
  * token and decides nothing: every answer, including whether a verb is allowed, is the server's.
@@ -33,10 +35,15 @@ export function fixAction(value: unknown): FixAction | null {
 }
 
 export async function api<T>(path: string, init?: { readonly method: string; readonly body?: unknown }, fetcher: typeof fetch = fetch): Promise<T> {
+  const method = (init?.method ?? "GET").toUpperCase()
+  const displayed = method !== "GET" && method !== "HEAD" && method !== "OPTIONS" && fetcher === fetch ? getDisplayedScope() : undefined
   const response = await fetcher(`/api/connectors${path}`, {
     method: init?.method ?? "GET",
     credentials: "same-origin",
-    headers: init?.body === undefined ? {} : { "content-type": "application/json" },
+    headers: {
+      ...init?.body === undefined ? {} : { "content-type": "application/json" },
+      ...displayed ? { [EXPECTED_ORG_HEADER]: displayed.orgId } : {},
+    },
     ...init?.body === undefined ? {} : { body: JSON.stringify(init.body) },
   })
   const body = (await response.json().catch(() => null)) as Record<string, unknown> | null

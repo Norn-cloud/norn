@@ -7,7 +7,7 @@ import { PopoverTitle, PopoverTrigger } from "@ui-sdk/react/popover"
 import { Toolbar, ToolbarButton, ToolbarLink } from "@ui-sdk/react/toolbar"
 import { Tree, TreeGroup, TreeItem, TreeItemIndicator, TreeItemLabel } from "@ui-sdk/react/tree"
 import { AssistantPanel, AssistantProvider, useAssistant, type AssistantContent } from "@/assistant-slot"
-import { Archive, ArchiveRestore, Bell, ChevronLeft, ChevronRight, ChevronsUpDown, CloudOff, Inbox as InboxIcon, Keyboard, LayoutGrid, Loader2, LogOut, Pencil, Plus, Search, SlidersHorizontal, Sparkles, Trash2, Wrench, type LucideIcon } from "lucide-react"
+import { Bell, ChevronLeft, ChevronRight, ChevronsUpDown, CloudOff, Keyboard, LayoutGrid, Loader2, LogOut, Search, SlidersHorizontal, Sparkles, Wrench, type LucideIcon } from "lucide-react"
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react"
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
@@ -24,7 +24,6 @@ import { WORKSPACES } from "@/lib/workspaces"
 import { refreshMode, useMode } from "@/lib/live-transport"
 import { useAccount, type Account } from "@/lib/session"
 import { WorkspaceError, switchWorkspaceCaches, useWorkspaces, workspaceApi, type WorkspacesDocument } from "@/lib/workspaces-api"
-import { WorkspaceDialogs, type WorkspaceDialogState } from "@/workspace-dialogs"
 import nornMark from "@/assets/norn-mark.webp"
 import { Keys } from "@/components/keys"
 
@@ -150,20 +149,11 @@ function useOpenWorkspace(doc: WorkspacesDocument | null | undefined) {
 /** An example dataset entry that opens here: published benchmark results, or the recording while no cell is connected. */
 const real = (workspace: (typeof WORKSPACES)[number], live: boolean) => workspace.results !== undefined || (workspace.recorded && !live)
 
-/** The workspace switcher: the user's real workspaces (with create/rename/archive/delete/request) and a separate Examples group. */
-function ScopeSwitcher({
-  archivedNoticeId,
-  onArchived,
-  onCleared,
-}: {
-  readonly archivedNoticeId: string | null
-  readonly onArchived: (workspace: { readonly id: string; readonly name: string }) => void
-  readonly onCleared: (id: string) => void
-}) {
+/** The workspace switcher: the user's real workspaces and a separate labelled Examples group. */
+function ScopeSwitcher() {
   const workspaces = useWorkspaces()
   const doc = workspaces.data
   const { live, open, active } = useOpenWorkspace(doc)
-  const [dialog, setDialog] = useState<WorkspaceDialogState>({ kind: "closed" })
   const [switchError, setSwitchError] = useState<string | null>(null)
   const [switching, setSwitching] = useState(false)
   const [pendingRefresh, setPendingRefresh] = useState(false)
@@ -171,16 +161,7 @@ function ScopeSwitcher({
   const client = useQueryClient()
   const navigate = useNavigate()
 
-  // Clear the Undo notice once a successfully refreshed archive list confirms the workspace is no longer archived.
-  useEffect(() => {
-    if (archivedNoticeId === null || !workspaces.isSuccess || workspaces.data == null) return
-    if (!workspaces.data.archived.some((workspace) => workspace.id === archivedNoticeId)) onCleared(archivedNoticeId)
-  }, [archivedNoticeId, workspaces.isSuccess, workspaces.data, onCleared])
-
   const realWorkspaces = doc?.workspaces ?? []
-  const archivedWorkspaces = doc?.archived ?? []
-  const requests = doc?.requests ?? []
-  const pendingRequests = requests.filter((item) => item.status === "pending").length
   const examples = WORKSPACES.filter((workspace) => real(workspace, live))
 
   async function retrySessionRefresh() {
@@ -221,146 +202,90 @@ function ScopeSwitcher({
     }
   }
 
-  function handleAction(value: string) {
-    if (value === "action:create") {
-      if (doc?.creation.mode === "self-serve") {
-        setDialog(doc.creation.allowed ? { kind: "create" } : { kind: "plan-limit", reason: doc.creation.reason, upgradeUrl: doc.creation.upgradeUrl })
-      }
-      return
-    }
-    if (value === "action:request" || value === "action:requests") { setDialog({ kind: "request" }); return }
-    if (value === "action:rename" && active?.canRename) { setDialog({ kind: "rename", workspace: active }); return }
-    if (value === "action:archive" && active?.canArchive) { setDialog({ kind: "archive", workspace: active }); return }
-    if (value === "action:delete" && active?.canDelete) { setDialog({ kind: "delete", workspace: active }); return }
-    if (value === "action:archived") { setDialog({ kind: "archived" }) }
-  }
-
   const showWorkspaceSection = realWorkspaces.length > 0 || (live && open !== undefined)
-  const showManageActions = active !== undefined && (active.canRename || active.canArchive || active.canDelete)
-  const showCreationAction = doc !== undefined && doc !== null
 
   return (
-    <>
-      <Menu onAction={handleAction}>
-        <MenuTrigger data-scope className="group/scope flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring data-open:bg-sidebar-accent">
-          <span aria-hidden className="flex size-6 shrink-0 items-center justify-center rounded-md bg-foreground text-[0.6875rem] font-semibold text-background">{initials(open?.name ?? "")}</span>
-          <span className="grid min-w-0 flex-1 leading-tight" title={`${open?.name ?? ""} · ${open?.detail ?? ""}`}>
-            <span className="truncate font-medium">{open?.name}</span>
-            <span className="truncate text-xs text-muted-foreground">{open?.detail}</span>
-          </span>
-          <ChevronsUpDown aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-        </MenuTrigger>
-        <KitMenuContent align="start" className="w-72">
-          {showWorkspaceSection && (
-            <>
-              <MenuRadioGroup
-                value={realWorkspaces.length > 0 ? (active ? `ws:${active.id}` : "") : live ? "live" : ""}
-                onValueChange={(next) => { if (next.startsWith("ws:")) void selectWorkspace(next.slice(3)) }}
-              >
-                <KitMenuLabel>Your workspaces</KitMenuLabel>
-                {realWorkspaces.length > 0
-                  ? realWorkspaces.map((workspace) => (
-                      <KitMenuRadioItem key={workspace.id} value={`ws:${workspace.id}`} label={workspace.name} disabled={switching} closeOnSelect className="flex-col items-start gap-0">
-                        <span className="truncate">{workspace.name}</span>
-                        <span className="text-xs text-muted-foreground">{workspace.hasCell ? roleLabel(workspace.role) : `${roleLabel(workspace.role)} · No cell yet`}</span>
-                      </KitMenuRadioItem>
-                    ))
-                  : live && open && (
-                      <KitMenuRadioItem value="live" label={open.name} closeOnSelect className="flex-col items-start gap-0">
-                        <span className="truncate">{open.name}</span>
-                        <span className="text-xs text-muted-foreground">{open.detail}</span>
-                      </KitMenuRadioItem>
-                    )}
-              </MenuRadioGroup>
-              {switchError && (
-                <div role="alert" className="flex items-center justify-between gap-2 px-2 py-1 text-xs text-destructive">
-                  <span>{switchError}</span>
-                  {pendingRefresh && (
-                    <button type="button" disabled={switching} className="shrink-0 underline underline-offset-2" onClick={() => void retrySessionRefresh()}>
-                      Retry refresh
-                    </button>
+    <Menu>
+      <MenuTrigger data-scope className="group/scope flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring data-open:bg-sidebar-accent">
+        <span aria-hidden className="flex size-6 shrink-0 items-center justify-center rounded-md bg-foreground text-[0.6875rem] font-semibold text-background">{initials(open?.name ?? "")}</span>
+        <span className="grid min-w-0 flex-1 leading-tight" title={`${open?.name ?? ""} · ${open?.detail ?? ""}`}>
+          <span className="truncate font-medium">{open?.name}</span>
+          <span className="truncate text-xs text-muted-foreground">{open?.detail}</span>
+        </span>
+        <ChevronsUpDown aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+      </MenuTrigger>
+      <KitMenuContent align="start" className="w-72">
+        {showWorkspaceSection && (
+          <>
+            <MenuRadioGroup
+              value={realWorkspaces.length > 0 ? (active ? `ws:${active.id}` : "") : live ? "live" : ""}
+              onValueChange={(next) => { if (next.startsWith("ws:")) void selectWorkspace(next.slice(3)) }}
+            >
+              <KitMenuLabel>Your workspaces</KitMenuLabel>
+              {realWorkspaces.length > 0
+                ? realWorkspaces.map((workspace) => (
+                    <KitMenuRadioItem key={workspace.id} value={`ws:${workspace.id}`} label={workspace.name} disabled={switching} closeOnSelect className="flex-col items-start gap-0">
+                      <span className="truncate">{workspace.name}</span>
+                      <span className="text-xs text-muted-foreground">{workspace.hasCell ? roleLabel(workspace.role) : `${roleLabel(workspace.role)} · No cell yet`}</span>
+                    </KitMenuRadioItem>
+                  ))
+                : live && open && (
+                    <KitMenuRadioItem value="live" label={open.name} closeOnSelect className="flex-col items-start gap-0">
+                      <span className="truncate">{open.name}</span>
+                      <span className="text-xs text-muted-foreground">{open.detail}</span>
+                    </KitMenuRadioItem>
                   )}
-                </div>
-              )}
-            </>
-          )}
-          {workspaces.isError && (
-            <div role="alert" className="flex items-center justify-between gap-2 px-2 py-1.5 text-xs text-destructive">
-              <span>{workspaces.error instanceof WorkspaceError ? workspaces.error.message : "Could not load workspaces."}</span>
-              <button type="button" className="shrink-0 underline underline-offset-2" onClick={() => void workspaces.refetch()}>Retry</button>
-            </div>
-          )}
-          {(showManageActions || archivedWorkspaces.length > 0) && (
-            <>
-              {showWorkspaceSection && <KitMenuSeparator />}
-              {active?.canRename && <KitMenuItem value="action:rename" label="Rename workspace" closeOnSelect><Pencil aria-hidden />Rename workspace…</KitMenuItem>}
-              {active?.canArchive && <KitMenuItem value="action:archive" label="Archive workspace" closeOnSelect><Archive aria-hidden />Archive workspace…</KitMenuItem>}
-              {active?.canDelete && <KitMenuItem value="action:delete" label="Delete workspace" closeOnSelect className="text-destructive data-highlighted:text-destructive"><Trash2 aria-hidden />Delete workspace…</KitMenuItem>}
-              {archivedWorkspaces.length > 0 && (
-                <KitMenuItem value="action:archived" label="Archived workspaces" closeOnSelect>
-                  <ArchiveRestore aria-hidden /><span>Archived workspaces</span>
-                  <span className="ms-auto text-xs text-muted-foreground tabular-nums">{archivedWorkspaces.length}</span>
-                </KitMenuItem>
-              )}
-            </>
-          )}
-          {showCreationAction && (
-            <>
-              <KitMenuSeparator />
-              {doc.creation.mode === "self-serve" ? (
-                <KitMenuItem value="action:create" label="New workspace" closeOnSelect><Plus aria-hidden />New workspace</KitMenuItem>
-              ) : (
-                <KitMenuItem value="action:request" label="Request a workspace" closeOnSelect><Plus aria-hidden />Request a workspace</KitMenuItem>
-              )}
-              {pendingRequests > 0 && (
-                <KitMenuItem value="action:requests" label="Workspace requests" closeOnSelect>
-                  <InboxIcon aria-hidden /><span>Workspace requests</span>
-                  <span className="ms-auto rounded-full bg-muted px-1.5 text-xs font-medium text-muted-foreground tabular-nums">{pendingRequests}</span>
-                </KitMenuItem>
-              )}
-            </>
-          )}
-          {examples.length > 0 && (
-            <>
-              {(showWorkspaceSection || showManageActions || showCreationAction) && <KitMenuSeparator />}
-              {live ? (
-                <MenuGroup>
-                  <KitMenuLabel>Examples</KitMenuLabel>
-                  {examples.map((workspace) => (
+            </MenuRadioGroup>
+            {switchError && (
+              <div role="alert" className="flex items-center justify-between gap-2 px-2 py-1 text-xs text-destructive">
+                <span>{switchError}</span>
+                {pendingRefresh && (
+                  <button type="button" disabled={switching} className="shrink-0 underline underline-offset-2" onClick={() => void retrySessionRefresh()}>
+                    Retry refresh
+                  </button>
+                )}
+              </div>
+            )}
+          </>
+        )}
+        {workspaces.isError && (
+          <div role="alert" className="flex items-center justify-between gap-2 px-2 py-1.5 text-xs text-destructive">
+            <span>{workspaces.error instanceof WorkspaceError ? workspaces.error.message : "Could not load workspaces."}</span>
+            <button type="button" className="shrink-0 underline underline-offset-2" onClick={() => void workspaces.refetch()}>Retry</button>
+          </div>
+        )}
+        {examples.length > 0 && (
+          <>
+            {showWorkspaceSection && <KitMenuSeparator />}
+            {live ? (
+              <MenuGroup>
+                <KitMenuLabel>Examples</KitMenuLabel>
+                {examples.map((workspace) => (
+                  <KitMenuItem key={workspace.id} value={`example:${workspace.id}`} label={workspace.name} render={<a href={workspace.results} target="_blank" rel="noreferrer" />} className="flex-col items-start gap-0">
+                    <span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail} · results ↗</span>
+                  </KitMenuItem>
+                ))}
+              </MenuGroup>
+            ) : (
+              <MenuRadioGroup value={open?.id ?? ""}>
+                <KitMenuLabel>Examples</KitMenuLabel>
+                {examples.map((workspace) => workspace.results !== undefined
+                  ? (
                     <KitMenuItem key={workspace.id} value={`example:${workspace.id}`} label={workspace.name} render={<a href={workspace.results} target="_blank" rel="noreferrer" />} className="flex-col items-start gap-0">
                       <span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail} · results ↗</span>
                     </KitMenuItem>
+                  )
+                  : (
+                    <KitMenuRadioItem key={workspace.id} value={workspace.id} label={workspace.name} disabled={!workspace.recorded} className="flex-col items-start gap-0">
+                      <span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail}</span>
+                    </KitMenuRadioItem>
                   ))}
-                </MenuGroup>
-              ) : (
-                <MenuRadioGroup value={open?.id ?? ""}>
-                  <KitMenuLabel>Examples</KitMenuLabel>
-                  {examples.map((workspace) => workspace.results !== undefined
-                    ? (
-                      <KitMenuItem key={workspace.id} value={`example:${workspace.id}`} label={workspace.name} render={<a href={workspace.results} target="_blank" rel="noreferrer" />} className="flex-col items-start gap-0">
-                        <span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail} · results ↗</span>
-                      </KitMenuItem>
-                    )
-                    : (
-                      <KitMenuRadioItem key={workspace.id} value={workspace.id} label={workspace.name} disabled={!workspace.recorded} className="flex-col items-start gap-0">
-                        <span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail}</span>
-                      </KitMenuRadioItem>
-                    ))}
-                </MenuRadioGroup>
-              )}
-            </>
-          )}
-        </KitMenuContent>
-      </Menu>
-      <WorkspaceDialogs
-        state={dialog}
-        archived={archivedWorkspaces}
-        requests={requests}
-        onClose={() => setDialog({ kind: "closed" })}
-        onArchived={onArchived}
-        onCleared={onCleared}
-      />
-    </>
+              </MenuRadioGroup>
+            )}
+          </>
+        )}
+      </KitMenuContent>
+    </Menu>
   )
 }
 
@@ -541,13 +466,10 @@ export function diffExpanded(
  * The perspective's sidebar: the workspace switcher, then its spaces (collapsible headings, never
  * walls), each listing its destinations; the open destination lists its items under it.
  */
-function SectionSidebar({ sections, perspective, navigation, pathname, chosen, onChosenChange, archivedNoticeId, onArchived, onCleared }: {
+function SectionSidebar({ sections, perspective, navigation, pathname, chosen, onChosenChange }: {
   readonly sections: readonly Section[]; readonly perspective: Perspective; readonly navigation: Navigation; readonly pathname: string
   readonly chosen: Readonly<Record<string, boolean>>
   readonly onChosenChange: (update: (previous: Readonly<Record<string, boolean>>) => Readonly<Record<string, boolean>>) => void
-  readonly archivedNoticeId: string | null
-  readonly onArchived: (workspace: { readonly id: string; readonly name: string }) => void
-  readonly onCleared: (id: string) => void
 }) {
   const { setOpenMobile } = useSidebar()
   const own = sections.filter((section) => section.perspective === perspective)
@@ -578,7 +500,7 @@ function SectionSidebar({ sections, perspective, navigation, pathname, chosen, o
   const label = PERSPECTIVES.find(({ id }) => id === perspective)?.label ?? ""
   return (
     <div className="flex h-full min-w-0 flex-1 flex-col">
-      <div className="px-2 pt-2 pb-1"><ScopeSwitcher archivedNoticeId={archivedNoticeId} onArchived={onArchived} onCleared={onCleared} /></div>
+      <div className="px-2 pt-2 pb-1"><ScopeSwitcher /></div>
       <nav aria-label={label} className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
         <Tree aria-label={`${label} pages`} mode="none" expandOnPress current={current} expanded={expanded}
           onExpandedChange={(next) => onChosenChange((previous) => diffExpanded(expanded, next, previous))}>
@@ -798,62 +720,6 @@ function ConnectionBanner() {
   )
 }
 
-/** Immediate undo banner after archiving a workspace so the owner can restore it in one click. */
-function ArchiveUndoBanner({ archived, onDismiss }: { readonly archived: { readonly id: string; readonly name: string } | null; readonly onDismiss: (id: string) => void }) {
-  const [restoringId, setRestoringId] = useState<string | null>(null)
-  const [committedId, setCommittedId] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const activeIdRef = useRef<string | null>(archived?.id ?? null)
-  const client = useQueryClient()
-  const navigate = useNavigate()
-
-  useEffect(() => {
-    activeIdRef.current = archived?.id ?? null
-    setError(null)
-    if (archived?.id !== committedId) setCommittedId(null)
-  }, [archived?.id, committedId])
-
-  if (archived === null) return null
-  const target = archived
-  const restoring = restoringId === target.id
-  const committed = committedId === target.id
-
-  async function undo() {
-    setRestoringId(target.id)
-    setError(null)
-    let didCommit = committed
-    try {
-      if (!didCommit) {
-        await workspaceApi.restore(target.id, true)
-        didCommit = true
-        if (activeIdRef.current === target.id) setCommittedId(target.id)
-      }
-      await switchWorkspaceCaches(client)
-      onDismiss(target.id)
-      if (activeIdRef.current === target.id) await navigate({ to: "/" })
-    } catch (err) {
-      if (activeIdRef.current === target.id) {
-        setError(err instanceof WorkspaceError ? err.message : "Could not restore this workspace.")
-      }
-    } finally {
-      setRestoringId((current) => (current === target.id ? null : current))
-    }
-  }
-
-  return (
-    <div role="status" data-workspace-undo className="flex flex-wrap items-center gap-2 border-b bg-muted/60 px-4 py-2 text-sm md:px-8">
-      <span>Archived “{target.name}”.</span>
-      {error && <span role="alert" className="text-destructive">{error}</span>}
-      <div className="ms-auto flex items-center gap-2">
-        <Button type="button" variant="outline" size="xs" disabled={restoring} onClick={() => void undo()}>
-          {restoring ? (committed ? "Refreshing…" : "Restoring…") : committed ? "Retry refresh" : "Undo"}
-        </Button>
-        <Button type="button" variant="ghost" size="xs" disabled={restoring} onClick={() => onDismiss(target.id)}>Dismiss</Button>
-      </div>
-    </div>
-  )
-}
-
 const iconButton = "flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-open:bg-accent [&_svg]:size-4"
 
 /** The page bar's right-hand buttons: the page's own tools, then shortcuts and notifications. */
@@ -939,7 +805,6 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale
   const focusWasInPanelRef = useRef(false)
   const pendingFocusSectionRef = useRef<string | null>(null)
   const [chosenByPerspective, setChosenByPerspective] = useState<Readonly<Record<Perspective, Readonly<Record<string, boolean>>>>>({ workspace: {}, builder: {} })
-  const [archivedNotice, setArchivedNotice] = useState<{ readonly id: string; readonly name: string } | null>(null)
   const updateChosen = (update: (previous: Readonly<Record<string, boolean>>) => Readonly<Record<string, boolean>>) =>
     setChosenByPerspective((all) => ({ ...all, [perspective]: update(all[perspective]) }))
   const expandSection = (path: string) => {
@@ -993,10 +858,7 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale
             onExpandSection={expandSection} />
           <div ref={sidebarPanelRef} className="flex min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
             <SectionSidebar key={perspective} sections={sections} perspective={perspective} navigation={navigation} pathname={pathname}
-              chosen={chosenByPerspective[perspective]} onChosenChange={updateChosen}
-              archivedNoticeId={archivedNotice?.id ?? null}
-              onArchived={setArchivedNotice}
-              onCleared={(id) => setArchivedNotice((current) => (current?.id === id ? null : current))} />
+              chosen={chosenByPerspective[perspective]} onChosenChange={updateChosen} />
           </div>
         </div>
       </Sidebar>
@@ -1014,7 +876,6 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale
             </div>
           </header>
           <ConnectionBanner />
-          <ArchiveUndoBanner archived={archivedNotice} onDismiss={(id) => setArchivedNotice((current) => (current?.id === id ? null : current))} />
           <div className="mx-auto w-full max-w-7xl px-4 py-6 md:px-8"><Outlet /></div>
         </div>
         <Inspector />

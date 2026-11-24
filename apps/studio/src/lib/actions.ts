@@ -1,4 +1,4 @@
-import { CellUnavailable, readStudioScope, scopedHostFetch } from "./definitions.ts"
+import { CellUnavailable, getDisplayedScope, readStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
 
 /**
  * Governed actions from Studio: the catalog the cell offers this reader, and one call.
@@ -158,10 +158,25 @@ export async function listActions(objectKind: string | undefined, fetcher: Fetch
   throw new CellUnavailable(response.status)
 }
 
-/** Send one call. `input` is already-encoded JSON text, so exact numbers reach the cell as typed. */
-export async function callAction(actionId: string, input: string, idempotencyKey: string, fetcher: Fetch = defaultFetch): Promise<CallResult> {
-  const call = await scoped(fetcher)
-  if (call === null) return { kind: "no-cell" }
+/**
+ * Send one call. `input` is already-encoded JSON text, so exact numbers reach the cell as typed.
+ * Bound to `boundScope` (the workspace the form was opened in) or the tab's displayed scope rather
+ * than re-reading `/api/me`, so switching workspaces in another tab cannot redirect a stale form.
+ */
+export async function callAction(
+  actionId: string,
+  input: string,
+  idempotencyKey: string,
+  fetcher: Fetch = defaultFetch,
+  boundScope?: StudioScope | null,
+): Promise<CallResult> {
+  const scope = boundScope !== undefined
+    ? boundScope
+    : fetcher === defaultFetch && getDisplayedScope() !== undefined
+      ? getDisplayedScope()!
+      : await readStudioScope(fetcher)
+  if (scope === null) return { kind: "no-cell" }
+  const call = scopedHostFetch(fetcher, "/api/host", async () => scope)
   const response = await call(`/v1/actions/${encodeURIComponent(actionId)}`, {
     method: "POST",
     headers: { accept: "application/json", "content-type": "application/json" },

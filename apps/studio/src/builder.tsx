@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { list, modKey, sameValue, type Issue } from "@/lib/editor"
 import { questionVerdictOf, type QuestionVerdict } from "./agent/question.tsx"
+import { EXPECTED_ORG_HEADER, getDisplayedScope } from "./lib/definitions.ts"
 import { readDocument } from "./lib/exact.ts"
 import { readMetrics, recentWindow } from "./lib/metrics.ts"
 import type { UnitGroup } from "./lib/answer-anatomy.ts"
@@ -119,7 +120,12 @@ export const checkedFor = <D, R>(check: { readonly variables: D | undefined; rea
   check.variables === draft && (at === undefined || at.ranAt === at.revision) ? { data: check.data, error: check.error } : { data: undefined, error: null }
 
 async function checkQuestion(question: unknown): Promise<QuestionVerdict> {
-  const response = await fetch("/api/questions/check", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ question }) })
+  const displayed = getDisplayedScope()
+  const response = await fetch("/api/questions/check", {
+    method: "POST",
+    headers: { "content-type": "application/json", ...displayed ? { [EXPECTED_ORG_HEADER]: displayed.orgId } : {} },
+    body: JSON.stringify({ question }),
+  })
   const verdict = questionVerdictOf(await response.json().catch(() => null))
   if (!response.ok || verdict === undefined) throw new Error("The checker could not be reached.")
   return verdict

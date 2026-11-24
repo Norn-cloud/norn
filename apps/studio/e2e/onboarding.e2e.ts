@@ -1,8 +1,12 @@
 import { readFileSync } from "node:fs"
 import { expect, test, type Page } from "@playwright/test"
-import type { WorkspaceItem, WorkspaceRequestItem, WorkspacesDocument } from "../src/lib/workspaces-api.ts"
+import { ACTIONS } from "./action-fixtures.ts"
+import { population } from "./object-cell.ts"
+import type { WorkspaceItem, WorkspacesDocument } from "../src/lib/workspaces-api.ts"
 
 const INVITE_ONLY_MESSAGE = "This alpha is invite-only; ask your admin for an invitation."
+const SIGNED_UP_MESSAGE = "If this address can sign up, you can now sign in with your email and password."
+const WORKSPACE_CHANGED_MESSAGE = "Your active workspace changed. Reload the page before submitting."
 const POPULATED_DEFS = JSON.parse(readFileSync(new URL("../../../fixtures/demo/explorer/three-systems.definitions.json", import.meta.url), "utf8")) as unknown[]
 const EMPTY_BASE_DEFS = POPULATED_DEFS.filter((artifact) => {
   const id = (artifact as { artifactId?: string }).artifactId ?? ""
@@ -26,6 +30,7 @@ test.beforeEach(({ }, info) => {
 })
 
 async function signedOut(page: Page, config: { magicLink: boolean; inviteOnly: boolean }, options: { allowlist?: readonly string[] } = {}) {
+  const registered = new Set<string>()
   await page.route("**/api/me", (route) => route.fulfill({ status: 401, json: { error: "Sign in first." } }))
   await page.route("**/api/auth/config", (route) => route.fulfill({ json: config }))
   await page.route("**/api/auth/sign-up/email", async (route) => {
@@ -34,12 +39,15 @@ async function signedOut(page: Page, config: { magicLink: boolean; inviteOnly: b
     if (config.inviteOnly && !(options.allowlist ?? []).includes(email)) {
       return route.fulfill({ status: 403, json: { code: "INVITE_ONLY", message: INVITE_ONLY_MESSAGE } })
     }
-    return route.fulfill({ status: 200, json: { token: null, user: { id: "u_new", email, name: body.name ?? "", emailVerified: false } } })
+    const existing = registered.has(email)
+    registered.add(email)
+    // Both a fresh sign-up and an accepted-duplicate return the same 200 shape with token: null.
+    return route.fulfill({ status: 200, json: { token: null, user: { id: existing ? "u_existing" : "u_new", email, name: body.name ?? "", emailVerified: false } } })
   })
   await page.route("**/api/auth/sign-in/magic-link", (route) => route.fulfill({ status: 200, json: { status: true } }))
 }
 
-test("#1412: invite-only deployment hides Email link tab and refuses non-allowlisted sign-up without claiming Account ready", async ({ page }) => {
+test("#1412: invite-only deployment hides Email link tab, refuses non-allowlisted sign-up, and uses conditional copy on new and duplicate sign-ups", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await signedOut(page, { magicLink: false, inviteOnly: true }, { allowlist: ["invited@example.com"] })
   await page.goto("/")
@@ -51,7 +59,7 @@ test("#1412: invite-only deployment hides Email link tab and refuses non-allowli
   // Config has loaded (invite-only notice is rendered): Email link tab must not exist even when hidden.
   await expect(page.getByRole("tab", { name: "Email link", includeHidden: true })).toHaveCount(0)
 
-  // Non-allowlisted sign-up: renders server's refusal and NEVER says "Account ready".
+  // Non-allowlisted sign-up: renders server's refusal and never shows sign-up confirmation copy.
   await page.getByLabel("Name").fill("New Customer")
   await page.getByLabel("Email").fill("stranger@example.com")
   await page.getByLabel("Password").fill("a-very-long-password-1234")
@@ -61,10 +69,21 @@ test("#1412: invite-only deployment hides Email link tab and refuses non-allowli
   await expect(page.getByRole("tab", { name: "Create account" })).toHaveAttribute("aria-selected", "true")
   await shoot(page, "invite-only-refused")
 
-  // Allowlisted sign-up succeeds and moves cleanly to Sign in.
+  // Allowlisted sign-up succeeds with conditional, privacy-safe copy and moves to Sign in.
   await page.getByLabel("Email").fill("invited@example.com")
   await page.getByRole("button", { name: "Create account" }).click()
-  await expect(page.getByRole("status")).toContainText("Account ready")
+  await expect(page.getByRole("status")).toHaveText(SIGNED_UP_MESSAGE)
+  await expect(page.getByText(/Account ready/i)).toHaveCount(0)
+  await expect(page.getByRole("tab", { name: "Sign in" })).toHaveAttribute("aria-selected", "true")
+
+  // Accepted-duplicate sign-up for the same allowlisted address shows the same conditional copy, never claiming a new account was created.
+  await page.getByRole("tab", { name: "Create account" }).click()
+  await page.getByLabel("Name").fill("Duplicate Attempt")
+  await page.getByLabel("Email").fill("invited@example.com")
+  await page.getByLabel("Password").fill("a-second-long-password-5678")
+  await page.getByRole("button", { name: "Create account" }).click()
+  await expect(page.getByRole("status")).toHaveText(SIGNED_UP_MESSAGE)
+  await expect(page.getByText(/Account ready/i)).toHaveCount(0)
   await expect(page.getByRole("tab", { name: "Sign in" })).toHaveAttribute("aria-selected", "true")
 })
 
@@ -83,26 +102,21 @@ test("#1412: Email link tab appears when the server reports magicLink enabled", 
 
 interface MockWorkspaceState {
   workspaces: WorkspaceItem[]
-  archived: WorkspaceItem[]
-  requests: WorkspaceRequestItem[]
   cells: Map<string, unknown[]>
 }
 
-async function mountWorkspaceServer(
-  page: Page,
-  options: { creation: WorkspacesDocument["creation"]; initial?: Partial<MockWorkspaceState> },
-) {
+async function mountWorkspaceServer(page: Page, initial?: Partial<MockWorkspaceState>) {
   const RAW_ORG_ID = "MPu3nAkCMSqDEjamX5eb9IB6or836fCS"
   const state: MockWorkspaceState = {
-    workspaces: options.initial?.workspaces ?? [
-      { id: RAW_ORG_ID, name: "Core Analytics", slug: "core-analytics", role: "owner", active: true, hasCell: true, archived: false, archivedAt: null, canRename: true, canArchive: true, canDelete: true },
-      { id: "org_secondary_9876", name: "Shared Workspace", slug: "shared-workspace", role: "viewer", active: false, hasCell: true, archived: false, archivedAt: null, canRename: false, canArchive: false, canDelete: false },
+    workspaces: initial?.workspaces ?? [
+      { id: RAW_ORG_ID, name: "Core Analytics", slug: "core-analytics", role: "owner", active: true, hasCell: true },
+      { id: "org_secondary_9876", name: "Shared Workspace", slug: "shared-workspace", role: "viewer", active: false, hasCell: true },
+      { id: "org_empty_4321", name: "Fresh Workspace", slug: "fresh-workspace", role: "owner", active: false, hasCell: true },
     ],
-    archived: options.initial?.archived ?? [],
-    requests: options.initial?.requests ?? [],
-    cells: options.initial?.cells ?? new Map<string, unknown[]>([
+    cells: initial?.cells ?? new Map<string, unknown[]>([
       [RAW_ORG_ID, POPULATED_DEFS],
       ["org_secondary_9876", POPULATED_DEFS],
+      ["org_empty_4321", EMPTY_BASE_DEFS],
     ]),
   }
 
@@ -123,88 +137,16 @@ async function mountWorkspaceServer(
     const url = new URL(route.request().url())
     const method = route.request().method()
     const path = url.pathname.replace(/\/+$/, "")
-    const body = route.request().postData() ? JSON.parse(route.request().postData()!) as Record<string, string> : {}
 
     if (path === "/api/workspaces" && method === "GET") {
-      const doc: WorkspacesDocument = {
-        workspaces: state.workspaces,
-        archived: state.archived,
-        creation: options.creation,
-        requests: state.requests,
-        planLabel: "Pro plan",
-      }
+      const doc: WorkspacesDocument = { workspaces: state.workspaces, planLabel: "Pro plan" }
       return route.fulfill({ json: doc })
-    }
-    if (path === "/api/workspaces" && method === "POST") {
-      const id = `org_created_${state.workspaces.length + state.archived.length + 1}`
-      for (const w of state.workspaces) Object.assign(w, { active: false })
-      const created: WorkspaceItem = {
-        id, name: body.name ?? "Untitled", slug: id, role: "owner", active: true, hasCell: true,
-        archived: false, archivedAt: null, canRename: true, canArchive: true, canDelete: true,
-      }
-      state.workspaces = [...state.workspaces.map((w) => ({ ...w, active: false })), created]
-      state.cells.set(id, EMPTY_BASE_DEFS)
-      return route.fulfill({ json: { id, name: created.name } })
-    }
-    if (path === "/api/workspaces/requests" && method === "POST") {
-      const item: WorkspaceRequestItem = {
-        id: `req_${state.requests.length + 1}`,
-        name: body.name ?? "",
-        note: body.note ?? "",
-        status: "pending",
-        requesterName: "Ada Lovelace",
-        requesterEmail: "ada@example.com",
-        createdAt: new Date().toISOString(),
-        canManage: true,
-        canWithdraw: true,
-      }
-      state.requests = [item, ...state.requests]
-      return route.fulfill({ status: 201, json: item })
-    }
-    const decideMatch = /^\/api\/workspaces\/requests\/([^/]+)\/decide$/.exec(path)
-    if (decideMatch && method === "POST") {
-      const id = decodeURIComponent(decideMatch[1]!)
-      const decision = body.decision as "approved" | "dismissed"
-      state.requests = state.requests.map((r) => r.id === id ? { ...r, status: decision, canManage: false, canWithdraw: false } : r)
-      return route.fulfill({ json: { id, status: decision } })
     }
     const activateMatch = /^\/api\/workspaces\/([^/]+)\/activate$/.exec(path)
     if (activateMatch && method === "POST") {
       const id = decodeURIComponent(activateMatch[1]!)
       state.workspaces = state.workspaces.map((w) => ({ ...w, active: w.id === id }))
       return route.fulfill({ json: { activeOrganizationId: id } })
-    }
-    const archiveMatch = /^\/api\/workspaces\/([^/]+)\/archive$/.exec(path)
-    if (archiveMatch && method === "POST") {
-      const id = decodeURIComponent(archiveMatch[1]!)
-      const target = state.workspaces.find((w) => w.id === id)
-      if (!target) return route.fulfill({ status: 404, json: { code: "NOT_FOUND", message: "Not found" } })
-      const remaining = state.workspaces.filter((w) => w.id !== id).map((w, i) => ({ ...w, active: i === 0 }))
-      state.workspaces = remaining
-      state.archived = [{ ...target, active: false, archived: true, archivedAt: new Date().toISOString(), canRename: false }, ...state.archived]
-      return route.fulfill({ json: { id, archived: true, nextActiveOrganizationId: remaining[0]?.id ?? null } })
-    }
-    const restoreMatch = /^\/api\/workspaces\/([^/]+)\/restore$/.exec(path)
-    if (restoreMatch && method === "POST") {
-      const id = decodeURIComponent(restoreMatch[1]!)
-      const target = state.archived.find((w) => w.id === id)
-      if (!target) return route.fulfill({ status: 404, json: { code: "NOT_ARCHIVED", message: "Not archived" } })
-      state.archived = state.archived.filter((w) => w.id !== id)
-      state.workspaces = [...state.workspaces.map((w) => ({ ...w, active: false })), { ...target, active: true, archived: false, archivedAt: null, canRename: true }]
-      return route.fulfill({ json: { id, archived: false } })
-    }
-    const singleMatch = /^\/api\/workspaces\/([^/]+)$/.exec(path)
-    if (singleMatch && method === "PATCH") {
-      const id = decodeURIComponent(singleMatch[1]!)
-      state.workspaces = state.workspaces.map((w) => w.id === id ? { ...w, name: body.name ?? w.name } : w)
-      return route.fulfill({ json: { id, name: body.name } })
-    }
-    if (singleMatch && method === "DELETE") {
-      const id = decodeURIComponent(singleMatch[1]!)
-      state.archived = state.archived.filter((w) => w.id !== id)
-      const remaining = state.workspaces.filter((w) => w.id !== id)
-      state.workspaces = remaining.map((w, i) => ({ ...w, active: remaining.some((x) => x.active) ? w.active : i === 0 }))
-      return route.fulfill({ json: { id, deleted: true, nextActiveOrganizationId: state.workspaces.find((w) => w.active)?.id ?? null } })
     }
     return route.fulfill({ status: 404, json: { code: "NOT_FOUND", message: "No route" } })
   })
@@ -220,11 +162,11 @@ async function mountWorkspaceServer(
   return { state, RAW_ORG_ID }
 }
 
-test("#1414: switcher separates real workspaces from Examples, never renders raw ids, and supports create -> empty Home -> rename -> archive/undo -> delete", async ({ page }) => {
+test("#1414: honest switcher separates real workspaces from Examples, hides lifecycle actions, never renders raw ids, and switches cleanly", async ({ page }) => {
   const pageErrors: string[] = []
   page.on("pageerror", (error) => pageErrors.push(error.message))
   await page.setViewportSize({ width: 1440, height: 900 })
-  const { RAW_ORG_ID } = await mountWorkspaceServer(page, { creation: { mode: "self-serve", allowed: true } })
+  const { RAW_ORG_ID } = await mountWorkspaceServer(page)
   await page.goto("/")
 
   const trigger = page.locator("[data-scope]")
@@ -241,31 +183,23 @@ test("#1414: switcher separates real workspaces from Examples, never renders raw
   await expect(menu.getByText("Examples")).toBeVisible()
   await expect(menu.getByRole("menuitemradio", { name: /Core Analytics/ })).toBeVisible()
   await expect(menu.getByRole("menuitemradio", { name: /Shared Workspace/ })).toBeVisible()
+  await expect(menu.getByRole("menuitemradio", { name: /Fresh Workspace/ })).toBeVisible()
   await expect(menu).not.toContainText(RAW_ORG_ID)
   await expect(menu).not.toContainText("rehearsal2")
+  // Lifecycle actions (create, rename, archive, delete, request) are not offered in this PR.
+  for (const label of ["New workspace", "Request a workspace", "Rename workspace", "Archive workspace", "Delete workspace", "Archived workspaces"]) {
+    await expect(menu.getByRole("menuitem", { name: new RegExp(label) })).toHaveCount(0)
+  }
   await shoot(page, "switcher")
 
-  // Switching to a viewer workspace updates the active workspace and hides management actions per server flags.
+  // Switching to Shared Workspace updates the active workspace cleanly.
   await menu.getByRole("menuitemradio", { name: /Shared Workspace/ }).click()
   await expect(trigger).toContainText("Shared Workspace")
-  await trigger.click()
-  await expect(page.getByRole("menuitem", { name: "Rename workspace" })).toHaveCount(0)
-  await expect(page.getByRole("menuitem", { name: "Archive workspace" })).toHaveCount(0)
-  await expect(page.getByRole("menuitem", { name: "Delete workspace" })).toHaveCount(0)
-  // Switch back to Core Analytics.
-  await page.getByRole("menuitemradio", { name: /Core Analytics/ }).click()
-  await expect(trigger).toContainText("Core Analytics")
 
-  // Create a new workspace from the switcher -> lands on empty Home with 4-step checklist.
+  // Switching to an empty workspace lands on Home with the 4-step Get started checklist.
   await trigger.click()
-  await page.getByRole("menuitem", { name: "New workspace" }).click()
-  const dialog = page.getByRole("dialog")
-  await expect(dialog.getByRole("heading", { name: "New workspace" })).toBeVisible()
-  await dialog.getByLabel("Workspace name").fill("North Operations")
-  await dialog.getByRole("button", { name: "Create workspace" }).click()
-  await expect(dialog).toBeHidden()
-
-  await expect(trigger).toContainText("North Operations")
+  await page.getByRole("menuitemradio", { name: /Fresh Workspace/ }).click()
+  await expect(trigger).toContainText("Fresh Workspace")
   await expect(page).toHaveURL(/\/$/)
   const main = page.locator("main")
   await expect(main.getByRole("heading", { name: "Get started" })).toBeVisible()
@@ -275,70 +209,7 @@ test("#1414: switcher separates real workspaces from Examples, never renders raw
   await expect(main.getByRole("link", { name: /Dashboard/ })).toBeVisible()
   await shoot(page, "empty-home")
 
-  // Rename the workspace.
-  await trigger.click()
-  await page.getByRole("menuitem", { name: "Rename workspace" }).click()
-  const renameDialog = page.getByRole("dialog")
-  await renameDialog.getByLabel("Workspace name").fill("North Ops Live")
-  await renameDialog.getByRole("button", { name: "Save name" }).click()
-  await expect(renameDialog).toBeHidden()
-  await expect(trigger).toContainText("North Ops Live")
-
-  // Archive the workspace -> Undo banner appears -> clicking Undo restores it!
-  await trigger.click()
-  await page.getByRole("menuitem", { name: "Archive workspace" }).click()
-  await page.getByRole("dialog").getByRole("button", { name: "Archive workspace" }).click()
-  await expect(trigger).toContainText("Core Analytics")
-  const undoBanner = page.locator("[data-workspace-undo]")
-  await expect(undoBanner).toContainText("North Ops Live")
-  await shoot(page, "archive-undo")
-  await undoBanner.getByRole("button", { name: "Undo" }).click()
-  await expect(undoBanner).toHaveCount(0)
-  await expect(trigger).toContainText("North Ops Live")
-
-  // Archive again -> open Archived workspaces -> confirm permanent deletion (Cancel keeps it, Delete permanently removes it and clears Undo notice).
-  await trigger.click()
-  await page.getByRole("menuitem", { name: "Archive workspace" }).click()
-  await page.getByRole("dialog").getByRole("button", { name: "Archive workspace" }).click()
-  await expect(trigger).toContainText("Core Analytics")
-  await expect(undoBanner).toContainText("North Ops Live")
-  await trigger.click()
-  await page.getByRole("menuitem", { name: /Archived workspaces/ }).click()
-  const archivedDialog = page.getByRole("dialog")
-  await expect(archivedDialog).toContainText("North Ops Live")
-  await archivedDialog.getByRole("button", { name: "Delete" }).click()
-  await expect(archivedDialog.getByRole("heading", { name: /Delete “North Ops Live” permanently/ })).toBeVisible()
-  await archivedDialog.getByRole("button", { name: "Cancel" }).click()
-  await expect(archivedDialog).toContainText("North Ops Live")
-  await archivedDialog.getByRole("button", { name: "Delete" }).click()
-  await archivedDialog.getByRole("button", { name: "Delete permanently" }).click()
-  await expect(archivedDialog).toContainText("No archived workspaces.")
-  await archivedDialog.getByRole("button", { name: "Close" }).first().click()
-  await expect(undoBanner).toHaveCount(0)
   expect(pageErrors).toEqual([])
-})
-
-test("#1414: request-only deployment offers Request a workspace and lets admins review recorded requests", async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 900 })
-  await mountWorkspaceServer(page, { creation: { mode: "request" } })
-  await page.goto("/")
-
-  const trigger = page.locator("[data-scope]")
-  await expect(trigger).toContainText("Core Analytics")
-  await trigger.click()
-  await expect(page.getByRole("menuitem", { name: "New workspace" })).toHaveCount(0)
-  await page.getByRole("menuitem", { name: "Request a workspace" }).click()
-
-  const dialog = page.getByRole("dialog")
-  await dialog.getByLabel("Workspace name").fill("Regional Hub")
-  await dialog.getByLabel("Note (optional)").fill("Need a clean cell for regional onboarding")
-  await dialog.getByRole("button", { name: "Submit request" }).click()
-  await expect(dialog.getByText("Request recorded")).toBeVisible()
-  await expect(dialog.getByText("Regional Hub")).toBeVisible()
-  await shoot(page, "request-workspace")
-
-  await dialog.getByRole("button", { name: "Approve" }).click()
-  await expect(dialog.getByText("approved")).toBeVisible()
 })
 
 test("#1414: a slow connecting cell explains what it is waiting for and supports Retry now", async ({ page }) => {
@@ -347,8 +218,8 @@ test("#1414: a slow connecting cell explains what it is waiting for and supports
   }))
   await page.route("**/api/workspaces", (route) => route.fulfill({
     json: {
-      workspaces: [{ id: "org_slow", name: "Cold Workspace", slug: "cold", role: "owner", active: true, hasCell: true, archived: false, archivedAt: null, canRename: true, canArchive: true, canDelete: true }],
-      archived: [], creation: { mode: "self-serve", allowed: true }, requests: [], planLabel: null,
+      workspaces: [{ id: "org_slow", name: "Cold Workspace", slug: "cold", role: "owner", active: true, hasCell: true }],
+      planLabel: null,
     },
   }))
   let attempts = 0
@@ -381,4 +252,132 @@ test("#1414: a slow connecting cell explains what it is waiting for and supports
   } finally {
     releaseFirst?.()
   }
+})
+
+test("stale form in another tab cannot submit into a workspace activated elsewhere: server refuses 409 workspace.changed", async ({ context }) => {
+  const pageErrors: string[] = []
+  const workspaces = [
+    { id: "org_alpha", name: "Core Analytics", slug: "core-analytics", role: "owner", environmentId: "env_alpha" },
+    { id: "org_beta", name: "North Operations", slug: "north-operations", role: "owner", environmentId: "env_beta" },
+  ] as const
+  let activeOrgId: string = workspaces[0].id
+  const rows = population(3)
+  const staleAttempts: { queryOrg: string | null; queryEnv: string | null; headerOrg: string | null; headerEnv: string | null; activeAtTime: string }[] = []
+  let committedBeta = 0
+
+  const currentWorkspace = () => workspaces.find((w) => w.id === activeOrgId) ?? workspaces[0]
+
+  await context.route("**/api/me", (route) => {
+    const cur = currentWorkspace()
+    return route.fulfill({
+      json: {
+        user: { id: "u_tabs", name: "Ada Lovelace", email: "ada@example.com" },
+        organization: { id: cur.id, name: cur.name, role: cur.role },
+        environmentId: cur.environmentId,
+      },
+    })
+  })
+
+  await context.route("**/api/workspaces**", (route) => {
+    const url = new URL(route.request().url())
+    const path = url.pathname.replace(/\/+$/, "")
+    if (path === "/api/workspaces" && route.request().method() === "GET") {
+      const doc: WorkspacesDocument = {
+        workspaces: workspaces.map((w) => ({ id: w.id, name: w.name, slug: w.slug, role: w.role, active: w.id === activeOrgId, hasCell: true })),
+        planLabel: "Pro plan",
+      }
+      return route.fulfill({ json: doc })
+    }
+    const match = /^\/api\/workspaces\/([^/]+)\/activate$/.exec(path)
+    if (match && route.request().method() === "POST") {
+      activeOrgId = decodeURIComponent(match[1]!)
+      return route.fulfill({ json: { activeOrganizationId: activeOrgId } })
+    }
+    return route.fulfill({ status: 404, json: { code: "NOT_FOUND", message: "No route" } })
+  })
+
+  await context.route("**/api/host/v1/**", (route) => {
+    const req = route.request()
+    const url = new URL(req.url())
+    const cur = currentWorkspace()
+    if (url.pathname.endsWith("/v1/definitions")) return route.fulfill({ json: { artifacts: POPULATED_DEFS } })
+    if (url.pathname.endsWith("/v1/inbox")) return route.fulfill({ json: { scanLimit: 10000, sections: [], items: [] } })
+    if (url.pathname.endsWith("/v1/objects/canon.Holding:facets")) {
+      return route.fulfill({ json: { objectType: "canon.Holding", rows: rows.length, withheldRows: 0, quarantinedRows: 0, lowerBound: false, scanLimit: 10000, facets: [] } })
+    }
+    if (url.pathname.endsWith("/v1/objects/canon.Holding")) {
+      const orgId = url.searchParams.get("orgId") ?? cur.id
+      const envId = url.searchParams.get("environmentId") ?? cur.environmentId
+      const records = rows.map((row) => ({
+        objectType: "canon.Holding",
+        id: row.id,
+        scope: `${orgId}/${envId}`,
+        version: 1,
+        withheld: false,
+        withheldProperties: [],
+        values: row.values,
+      }))
+      return route.fulfill({ json: { objectType: "canon.Holding", records, quarantineCount: 0, scannedThrough: null, query: { sort: [], filter: null }, next: null, total: { count: records.length, approximate: false } } })
+    }
+    if (url.pathname.endsWith("/v1/actions") && req.method() === "GET") {
+      const kind = url.searchParams.get("objectKind")
+      return route.fulfill({ json: { items: ACTIONS.filter((a) => kind === null || a.objectKind === kind) } })
+    }
+    if (url.pathname.includes("/v1/actions/") && req.method() === "POST") {
+      const headerOrg = req.headers()["x-norn-expected-org"] ?? null
+      const headerEnv = req.headers()["x-norn-expected-env"] ?? null
+      const queryOrg = url.searchParams.get("orgId")
+      const queryEnv = url.searchParams.get("environmentId")
+      if ((headerOrg !== null && headerOrg !== cur.id) || (queryOrg !== null && queryOrg !== cur.id) || (headerEnv !== null && headerEnv !== cur.environmentId)) {
+        staleAttempts.push({ queryOrg, queryEnv, headerOrg, headerEnv, activeAtTime: cur.id })
+        return route.fulfill({ status: 409, json: { code: "workspace.changed", message: WORKSPACE_CHANGED_MESSAGE, error: WORKSPACE_CHANGED_MESSAGE } })
+      }
+      if (cur.id === "org_beta") committedBeta += 1
+      return route.fulfill({ json: { outcome: "committed", objectType: "canon.Holding", objectId: "demo/holding/0001", version: 2, receipt: { receiptHash: "c".repeat(64), commitSeq: 2, recordedAtMs: Date.now() } } })
+    }
+    return route.fulfill({ status: 404, json: { code: "route.not_found", message: "not served" } })
+  })
+
+  // Tab A opens an action form while the session is in Core Analytics (org_alpha / env_alpha).
+  const tabA = await context.newPage()
+  tabA.on("pageerror", (error) => pageErrors.push(error.message))
+  await tabA.setViewportSize({ width: 1440, height: 900 })
+  await tabA.goto("/objects/canon.Holding")
+  await expect(tabA.locator("[data-scope]")).toContainText("Core Analytics")
+  await expect(tabA.getByText("3 records", { exact: true })).toBeVisible()
+  await tabA.getByRole("button", { name: "New holding" }).click()
+  await tabA.getByRole("menuitem", { name: "Restock holding" }).click()
+  const form = tabA.getByRole("dialog")
+  await form.getByLabel("Holding id").fill("demo/holding/0001")
+  await form.getByRole("button", { name: "Add lot" }).click()
+  await form.getByRole("textbox", { name: "Lot", exact: true }).nth(0).fill("L-1")
+  await form.getByLabel("Quantity").nth(0).fill("5.000")
+
+  // Tab B switches the shared session to North Operations (org_beta / env_beta).
+  const tabB = await context.newPage()
+  tabB.on("pageerror", (error) => pageErrors.push(error.message))
+  await tabB.setViewportSize({ width: 1440, height: 900 })
+  await tabB.goto("/")
+  const triggerB = tabB.locator("[data-scope]")
+  await expect(triggerB).toContainText("Core Analytics")
+  await triggerB.click()
+  await tabB.getByRole("menuitemradio", { name: /North Operations/ }).click()
+  await expect(triggerB).toContainText("North Operations")
+
+  // Returning to stale Tab A and submitting sends org_alpha / env_alpha explicitly;
+  // the server refuses 409 workspace.changed and commits nothing to North Operations.
+  await tabA.bringToFront()
+  await form.getByRole("button", { name: "Restock holding" }).click()
+  const alert = form.getByRole("alert").first()
+  await expect(alert).toContainText("Workspace changed — reload this page")
+  await expect(alert).toContainText(WORKSPACE_CHANGED_MESSAGE)
+  expect(staleAttempts).toEqual([
+    { queryOrg: "org_alpha", queryEnv: "env_alpha", headerOrg: "org_alpha", headerEnv: "env_alpha", activeAtTime: "org_beta" },
+  ])
+  expect(committedBeta).toBe(0)
+  await shoot(tabA, "stale-form")
+
+  await tabB.close()
+  await tabA.close()
+  expect(pageErrors).toEqual([])
 })

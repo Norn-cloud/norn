@@ -8,8 +8,8 @@ import nornMark from "@/assets/norn-mark.webp"
 
 export type Mode = "sign-in" | "sign-up" | "email-link"
 
-/** Shown after an accepted sign-up (allowed email on an invite-only stage, or open sign-up). */
-export const SIGNED_UP = "Account ready. Sign in with your email and password."
+/** Shown after an accepted sign-up response (covers both new accounts and existing ones without revealing which). */
+export const SIGNED_UP = "If this address can sign up, you can now sign in with your email and password."
 
 const MODES: readonly { readonly mode: Mode; readonly label: string }[] = [
   { mode: "sign-in", label: "Sign in" },

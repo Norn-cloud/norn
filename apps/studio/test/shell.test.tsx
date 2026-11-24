@@ -201,10 +201,7 @@ test("#1414: the workspace switcher shows the workspace name and plan/role, neve
   client.setQueryData(["studio-scope"], { orgId: "MPu3nAkCMSqDEjamX5eb9IB6or836fCS", environmentId: "rehearsal2" })
   client.setQueryData(["studio-mode"], { kind: "live", catalog: { document: [], numbers: new Map(), origin: "live" }, counts: {} })
   const doc: WorkspacesDocument = {
-    workspaces: [{ id: "MPu3nAkCMSqDEjamX5eb9IB6or836fCS", name: "Analytical", slug: "analytical", role: "owner", active: true, hasCell: true, archived: false, archivedAt: null, canRename: true, canArchive: true, canDelete: true }],
-    archived: [],
-    creation: { mode: "self-serve", allowed: true },
-    requests: [],
+    workspaces: [{ id: "MPu3nAkCMSqDEjamX5eb9IB6or836fCS", name: "Analytical", slug: "analytical", role: "owner", active: true, hasCell: true }],
     planLabel: "Free plan",
   }
   client.setQueryData(WORKSPACES_QUERY_KEY, doc)
@@ -218,6 +215,9 @@ test("#1414: the workspace switcher shows the workspace name and plan/role, neve
   expect(html).toContain("Live · Free plan")
   expect(html).not.toContain("MPu3nAkCMSqDEjamX5eb9IB6or836fCS")
   expect(html).not.toContain("rehearsal2")
+  expect(html).not.toContain("New workspace")
+  expect(html).not.toContain("Archive workspace")
+  expect(html).not.toContain("Delete workspace")
 })
 
 test("#1414: isEmptyWorkspace identifies cells holding only trusted base artifacts", () => {

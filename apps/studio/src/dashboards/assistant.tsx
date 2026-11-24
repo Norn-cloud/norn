@@ -7,7 +7,7 @@ import { Well } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { dashboardField, type Dashboard } from "@/lib/definitions"
+import { EXPECTED_ORG_HEADER, dashboardField, getDisplayedScope, type Dashboard } from "@/lib/definitions"
 import { SafePrompt, type GuardDocument } from "@/components/safe-prompt"
 import type { QuestionCatalog } from "../builder.tsx"
 import { conceptTitle } from "../lib/catalog.ts"
@@ -37,9 +37,18 @@ interface Listing { readonly proposals: readonly Proposal[]; readonly spentMicro
 
 const BASE = "/api/agent/dashboards"
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${BASE}${path}`, { ...init, headers: { accept: "application/json", ...init?.body ? { "content-type": "application/json" } : {} } })
-  const body = await response.json().catch(() => null) as (T & { error?: string }) | null
-  if (!response.ok || body === null) throw new Error(body?.error ?? (response.status === 401 ? "Sign in again." : response.status === 404 ? "The assistant isn't served here." : `The server did not answer (${response.status}).`))
+  const method = (init?.method ?? "GET").toUpperCase()
+  const displayed = method !== "GET" && method !== "HEAD" && method !== "OPTIONS" ? getDisplayedScope() : undefined
+  const response = await fetch(`${BASE}${path}`, {
+    ...init,
+    headers: {
+      accept: "application/json",
+      ...init?.body ? { "content-type": "application/json" } : {},
+      ...displayed ? { [EXPECTED_ORG_HEADER]: displayed.orgId } : {},
+    },
+  })
+  const body = await response.json().catch(() => null) as (T & { error?: string; message?: string }) | null
+  if (!response.ok || body === null) throw new Error(body?.error ?? body?.message ?? (response.status === 401 ? "Sign in again." : response.status === 404 ? "The assistant isn't served here." : `The server did not answer (${response.status}).`))
   return body
 }
 

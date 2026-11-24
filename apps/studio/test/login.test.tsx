@@ -57,8 +57,9 @@ test("readWorkspaces returns null only on 401/404 and throws retryable Workspace
   await expect(readWorkspaces(async () => { throw new TypeError("offline") })).rejects.toBeInstanceOf(WorkspaceError)
 })
 
-test("after sign-up the page asks the user to sign in, never saying whether the address was new", () => {
-  expect(SIGNED_UP).toBe("Account ready. Sign in with your email and password.")
+test("after sign-up the page asks the user to sign in with conditional wording, never claiming the address was new", () => {
+  expect(SIGNED_UP).toBe("If this address can sign up, you can now sign in with your email and password.")
+  expect(SIGNED_UP).not.toMatch(/account ready/i)
   expect(SIGNED_UP).not.toMatch(/already|exists|registered|taken/i)
 })
 

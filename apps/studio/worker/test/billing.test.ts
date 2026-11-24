@@ -744,7 +744,7 @@ test("a member-limit refusal sends someone who is not the payer to the workspace
 test("without Polar settings, nothing is billed, limited or called", async () => {
   const env = stage(false)
   const { cookie, userId } = await enroll(env, "sam@example.com")
-  for (const name of ["two", "three", "four"]) expect((await post(env, "/api/auth/organization/create", { name, slug: name }, { cookie })).status).toBe(200)
+  for (const name of ["two", "three", "four"]) expect((await post(env, CREATE, { name, slug: name }, { cookie })).status).toBe(200)
   const { id: organizationId } = sql(env).query("select organizationId as id from member where userId = ? order by createdAt limit 1").get(userId) as { id: string }
   for (const email of ["a@example.com", "b@example.com", "c@example.com"]) expect((await post(env, "/api/auth/organization/invite-member", { email, role: "member", organizationId }, { cookie })).status).toBe(200)
   const document = await (await call(env, "/api/billing", { headers: { cookie } })).json()
@@ -1046,7 +1046,7 @@ test("turning billing off lifts every limit, in the API and in the database alik
   // The triggers agree: the billed workspace takes a fourth member, and its payer a second workspace.
   join_(off, organizationId, "user_billed_over", "member")
   expect(members(off, organizationId)).toBe(4)
-  expect((await post(off, "/api/auth/organization/create", { name: "Two", slug: "two" }, { cookie: owner.cookie })).status).toBe(200)
+  expect((await post(off, CREATE, { name: "Two", slug: "two" }, { cookie: owner.cookie })).status).toBe(200)
   // Redeployed with billing on: the limits are back for anything new; what exists stays.
   sql(on).run(billingModeStatement(true))
   expect(() => join_(on, organizationId, "user_billed_more", "member")).toThrow("billing.members_limit")
