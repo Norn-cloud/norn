@@ -421,9 +421,11 @@ fn page_findings(
             .as_ref()
             .is_some_and(|machine| machine.lifecycle.is_some())
     });
-    let lifecycle = names_lifecycle
-        .then(|| crate::ui_lifecycle::check(widget, ux, view.pool(), view.model()))
-        .unwrap_or_default();
+    let lifecycle = if names_lifecycle {
+        crate::ui_lifecycle::check(widget, ux, view.pool(), view.model())
+    } else {
+        Vec::new()
+    };
     let composed =
         |other: &norn_ir::WidgetArtifactRef| super::composed_ux(widget, view.pool(), other);
     let prefix = format!("/payload/ux/pages/{index}/");

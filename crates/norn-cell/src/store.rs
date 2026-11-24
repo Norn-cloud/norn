@@ -2525,7 +2525,7 @@ impl<E: SqlEngine> CellStore<E> {
             }
         }
         if let Some(active) = Self::read_active_definitions(conn)? {
-            crate::definition_scope::verify_active(conn, model, &active)?;
+            crate::definition_scope::check_active_model(model, &active)?;
         }
         Ok(())
     }
@@ -2576,6 +2576,9 @@ impl<E: SqlEngine> CellStore<E> {
                 store.require_cell_id(expected)?;
             }
             let verified = store.verify_history(&pass)?;
+            if let Some(active) = Self::read_active_definitions(&store.conn)? {
+                crate::definition_scope::verify_active(&store.conn, &store.model, &active)?;
+            }
             let fork = crate::fork::load_pin(&store.conn)?;
             refuse_pin_past(fork.as_ref(), verified.head.commits)?;
             // An upgrading open verified from genesis, so record its checkpoint inside this tx.
@@ -3218,9 +3221,9 @@ impl<E: SqlEngine> CellStore<E> {
                     else {
                         return Err(CellError::IdempotencyConflict("tenant provisioning".to_owned()).into());
                     };
-                    crate::definition_scope::verify_active(&self.conn, &self.model, &active)?;
                     let pass = RefCell::default();
                     let verified = self.verify_history(&pass)?;
+                    crate::definition_scope::verify_active(&self.conn, &self.model, &active)?;
                     refuse_pin_past(self.fork.as_ref(), verified.head.commits)?;
                     self.finish_open_scrub(upgrading, &verified)?;
                     self.transparency.replace(verified.transparency);

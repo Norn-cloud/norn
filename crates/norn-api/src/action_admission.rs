@@ -444,22 +444,23 @@ mod tests {
     #[test]
     fn a_retained_candidate_the_scoped_checks_refuse_supplies_no_actions() -> TestResult {
         let artifacts = legacy_set()?;
+        let candidates = [artifacts[1].clone(), artifacts[2].clone()];
+        let base = [artifacts[0].clone()];
         let limits = ResourceLimitProfile::norn_limits_v1();
         let registry = BTreeSet::new();
         let context = EntityArtifactSetContext {
             registry: &registry,
-            base: &[],
+            base: &base,
             tenant: None,
         };
-        let sources = ReceiptSources::new(&values(&artifacts)?, &[])?;
+        let sources = ReceiptSources::new(&values(&candidates)?, &values(&base)?)?;
         let checked = check_artifact_set_with_receipt(&sources, &context, &limits)?;
         assert!(!checked.receipt.admitted, "{:#?}", checked.diagnostics);
-        let narrow = artifacts.get(1).ok_or("extension")?;
         let mut legacy = checked.receipt;
         legacy.admitted = true;
         legacy.diagnostics.count = 0;
         legacy.diagnostics.errors = 0;
-        let whole_set = ScopedView::of(narrow, &artifacts, &[], &registry)
+        let whole_set = ScopedView::of(&artifacts[1], &candidates, &base, &registry)
             .receipt_env(&limits)
             .map_err(|errors| format!("{errors:?}"))?;
         legacy.type_env = Some(whole_set.reference()?);
@@ -469,14 +470,15 @@ mod tests {
     #[test]
     fn a_retained_base_action_the_scoped_checks_refuse_supplies_no_actions() -> TestResult {
         let artifacts = legacy_set()?;
-        let (candidates, base) = artifacts.split_at(2);
+        let candidates = [artifacts[1].clone()];
+        let base = [artifacts[0].clone(), artifacts[2].clone()];
         let registry = BTreeSet::new();
         let context = EntityArtifactSetContext {
             registry: &registry,
-            base,
+            base: &base,
             tenant: None,
         };
-        let sources = ReceiptSources::new(&values(candidates)?, &values(base)?)?;
+        let sources = ReceiptSources::new(&values(&candidates)?, &values(&base)?)?;
         let limits = ResourceLimitProfile::norn_limits_v1();
         let checked = check_artifact_set_with_receipt(&sources, &context, &limits)?;
         assert!(checked.receipt.admitted, "{:#?}", checked.diagnostics);

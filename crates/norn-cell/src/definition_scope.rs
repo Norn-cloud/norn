@@ -196,11 +196,8 @@ pub(crate) fn preflight_candidate<E: SqlEngine>(
     Ok(scope)
 }
 
-/// Refuse to serve the `active` definitions unless `model` is the model they
-/// recorded, the cell is bound to a scope they lie in, and `model` is their
-/// projection (reopen and replayed provisioning).
-pub(crate) fn verify_active<E: SqlEngine>(
-    engine: &E,
+/// Refuse `active` definitions recorded for another model than `model`.
+pub(crate) fn check_active_model(
     model: &Model,
     active: &InstalledDefinitionSet,
 ) -> Result<(), CellError> {
@@ -210,6 +207,18 @@ pub(crate) fn verify_active<E: SqlEngine>(
             found: format!("{} {}", active.ddl_hash, active.model_hash),
         });
     }
+    Ok(())
+}
+
+/// Refuse to serve the `active` definitions unless `model` is the model they
+/// recorded, the cell is bound to a scope they lie in, and `model` is their
+/// projection (reopen and replayed provisioning, once history verifies).
+pub(crate) fn verify_active<E: SqlEngine>(
+    engine: &E,
+    model: &Model,
+    active: &InstalledDefinitionSet,
+) -> Result<(), CellError> {
+    check_active_model(model, active)?;
     let scope = effective_cell_scope(engine, None)?;
     bind_model(
         model,

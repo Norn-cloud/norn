@@ -1056,17 +1056,15 @@ mod tests {
                 { "id": "body", "type": { "kind": "text" } }
             ]
         });
-        let action_call = json!({
-            "name": norn_kernel::ACTION_CALL_TYPE,
-            "properties": [
-                { "id": "actionId", "type": { "kind": "text" } },
-                { "id": "object", "type": { "kind": "json-ext" } }
-            ]
-        });
-        let defs: Vec<ObjectTypeDef> = [&ticket, &ticket_a, &ticket_b, &note, &action_call]
+        let mut defs: Vec<ObjectTypeDef> = [&ticket, &ticket_a, &ticket_b, &note]
             .into_iter()
             .map(|raw| serde_json::from_value(raw.clone()))
             .collect::<Result<_, _>>()?;
+        defs.extend(
+            crate::kernel_record_types()
+                .into_iter()
+                .filter(|record| record.name.as_str() == norn_kernel::ACTION_CALL_TYPE),
+        );
         let model = Model::from_definitions(&defs, &[])?;
         let artifacts = sample_artifacts(&ticket, &ticket_a, &ticket_b, &note);
         let canonical = String::from_utf8(Value::from_json(artifacts)?.canonical_json()?)?;
