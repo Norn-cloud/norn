@@ -70,7 +70,14 @@ enum CellCommand {
 fn artifacts(paths: &[PathBuf]) -> Result<Vec<Box<serde_json::value::RawValue>>, String> {
     let mut files = Vec::new();
     for path in paths {
-        if path.is_dir() {
+        // The named path itself, never what a link there points at.
+        let kind = std::fs::symlink_metadata(path)
+            .map_err(|e| format!("{}: {e}", path.display()))?
+            .file_type();
+        if kind.is_symlink() {
+            return Err(format!("{}: links are refused", path.display()));
+        }
+        if kind.is_dir() {
             let mut inside: Vec<PathBuf> = std::fs::read_dir(path)
                 .map_err(|e| format!("{}: {e}", path.display()))?
                 .map(|entry| entry.map(|entry| entry.path()))
@@ -97,14 +104,23 @@ fn artifacts(paths: &[PathBuf]) -> Result<Vec<Box<serde_json::value::RawValue>>,
 }
 
 /// One artifact file's text: a regular file, never a link or anything else,
-/// read to at most the cell's bound so a huge file is refused unread.
+/// read to at most the cell's bound so a huge file is refused unread. On
+/// Unix the open itself refuses a link (`O_NOFOLLOW`) and cannot block on a
+/// FIFO swapped in after the check (`O_NONBLOCK`).
 fn read_artifact(file: &Path) -> Result<String, String> {
     let shown = file.display();
     let linked = std::fs::symlink_metadata(file).map_err(|e| format!("{shown}: {e}"))?;
     if !linked.file_type().is_file() {
         return Err(format!("{shown}: not a regular file (links are refused)"));
     }
-    let handle = std::fs::File::open(file).map_err(|e| format!("{shown}: {e}"))?;
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let handle = options.open(file).map_err(|e| format!("{shown}: {e}"))?;
     let opened = handle.metadata().map_err(|e| format!("{shown}: {e}"))?;
     if !opened.is_file() || !same_file(&linked, &opened) {
         return Err(format!(
@@ -148,14 +164,16 @@ impl Endpoint {
     /// Parse `url`: absolute, HTTP or HTTPS, with a host and no userinfo.
     /// Errors never echo the URL, which may hold a secret.
     pub(super) fn parse(url: &str) -> Result<Self, String> {
+        // `Uri` drops a fragment silently; refuse it before parsing.
+        if url.contains('#') {
+            return Err("URL must not contain a fragment".into());
+        }
         let uri: ureq::http::Uri = url.parse().map_err(|_e| "URL is not valid")?;
         let authority = uri.authority().ok_or("URL must be absolute")?;
         if authority.as_str().contains('@') {
             return Err("URL must not contain credentials".into());
         }
-        if uri.host().is_none_or(str::is_empty) {
-            return Err("URL names no host".into());
-        }
+        check_authority(authority)?;
         let endpoint = Self { uri };
         if !endpoint.is_https() && !endpoint.is_http() {
             return Err("URL must use http or https".into());
@@ -188,16 +206,34 @@ impl Endpoint {
         self.uri.query().is_some()
     }
 
+    /// Plain HTTP to a loopback address or `localhost`.
+    fn is_loopback_http(&self) -> bool {
+        let host = self.host();
+        self.is_http()
+            && (host.eq_ignore_ascii_case("localhost")
+                || host
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|ip| ip.is_loopback()))
+    }
+
     /// Whether this endpoint may carry credentials: HTTPS, or plain HTTP to
     /// a loopback address or `localhost`.
     fn carries_credentials(&self) -> bool {
-        let host = self.host();
-        self.is_https()
-            || (self.is_http()
-                && (host.eq_ignore_ascii_case("localhost")
-                    || host
-                        .parse::<std::net::IpAddr>()
-                        .is_ok_and(|ip| ip.is_loopback())))
+        self.is_https() || self.is_loopback_http()
+    }
+
+    /// The agent configuration for this endpoint: plain HTTP to loopback is
+    /// reached directly, never through an environment proxy (`HTTP_PROXY`),
+    /// which may be remote and would read its credentials in plaintext.
+    pub(super) fn configure(
+        &self,
+        builder: ureq::config::ConfigBuilder<ureq::typestate::AgentScope>,
+    ) -> ureq::config::ConfigBuilder<ureq::typestate::AgentScope> {
+        if self.is_loopback_http() {
+            builder.proxy(None)
+        } else {
+            builder
+        }
     }
 
     /// `scheme://host[:port]`, where Studio's sign-in lives.
@@ -222,16 +258,55 @@ struct Client {
     origin: String,
 }
 
+/// The authority's host is well formed (an IPv6 literal parses) and any
+/// `:port` is a decimal `u16`: a garbage port is refused, never read as the
+/// scheme's default. Userinfo is refused before this runs.
+fn check_authority(authority: &ureq::http::uri::Authority) -> Result<(), String> {
+    let host = authority.host();
+    if host.is_empty() {
+        return Err("URL names no host".into());
+    }
+    if let Some(literal) = host.strip_prefix('[') {
+        let valid = literal
+            .strip_suffix(']')
+            .is_some_and(|inner| inner.parse::<std::net::Ipv6Addr>().is_ok());
+        if !valid {
+            return Err("URL has a malformed IPv6 host".into());
+        }
+    }
+    let rest = authority
+        .as_str()
+        .strip_prefix(host)
+        .ok_or("URL has a malformed authority")?;
+    if rest.is_empty() {
+        return Ok(());
+    }
+    let port = rest
+        .strip_prefix(':')
+        .filter(|digits| !digits.is_empty() && digits.bytes().all(|byte| byte.is_ascii_digit()))
+        .and_then(|digits| digits.parse::<u16>().ok());
+    if port.is_some() && port == authority.port_u16() {
+        Ok(())
+    } else {
+        Err("URL has an invalid port".into())
+    }
+}
+
 impl Client {
     fn new(target: &Target) -> Result<Self, String> {
-        let agent: ureq::Agent = ureq::Agent::config_builder()
+        let base = target.url.trim_end_matches('/').to_owned();
+        let endpoint = Endpoint::parse(&base)?;
+        if endpoint.has_query() {
+            // API paths are appended to the base; a query there would swallow them.
+            return Err("URL must not contain a query".into());
+        }
+        let agent: ureq::Agent = endpoint
+            .configure(ureq::Agent::config_builder())
             .http_status_as_error(false)
             .max_redirects(0)
             .timeout_global(Some(Duration::from_secs(120)))
             .build()
             .into();
-        let base = target.url.trim_end_matches('/').to_owned();
-        let endpoint = Endpoint::parse(&base)?;
         if (target.token_env.is_some() || target.email.is_some()) && !endpoint.carries_credentials()
         {
             return Err("credentials are sent only over HTTPS (or HTTP to loopback)".into());
@@ -474,11 +549,13 @@ fn body(
     artifacts: &[Box<serde_json::value::RawValue>],
     expected_version: Option<u64>,
 ) -> Result<String, String> {
+    // Each artifact's exact text is spliced in as read: never through
+    // `Value`, which would round a high-precision number.
+    let artifacts = serde_json::to_string(artifacts).map_err(|e| e.to_string())?;
     let body = match expected_version {
-        Some(version) => json!({ "artifacts": artifacts, "expectedVersion": version }),
-        None => json!({ "artifacts": artifacts }),
+        Some(version) => format!(r#"{{"artifacts":{artifacts},"expectedVersion":{version}}}"#),
+        None => format!(r#"{{"artifacts":{artifacts}}}"#),
     };
-    let body = body.to_string();
     if body.len() > MAX_BODY {
         return Err("the pack exceeds the cell's 1 MiB bound".into());
     }
@@ -579,6 +656,33 @@ mod tests {
         Ok(dir)
     }
 
+    #[derive(Clone, Copy)]
+    enum Credential<'a> {
+        Token,
+        SignIn(&'a str),
+    }
+
+    /// A target for `url`, carrying a token or a Studio sign-in when asked.
+    fn target(url: &str, credential: Option<Credential<'_>>) -> Target {
+        let email = credential.and_then(|credential| match credential {
+            Credential::SignIn(email) => Some(email.to_owned()),
+            Credential::Token => None,
+        });
+        Target {
+            url: url.to_owned(),
+            org: "org".to_owned(),
+            env: "env".to_owned(),
+            token_env: matches!(credential, Some(Credential::Token))
+                .then(|| "NORN_TEST_UNSET_TOKEN".to_owned()),
+            password_env: email
+                .as_ref()
+                .map(|_email| "NORN_TEST_UNSET_PASSWORD".to_owned()),
+            email,
+            json: false,
+            paths: Vec::new(),
+        }
+    }
+
     fn admits(url: &str) -> bool {
         Endpoint::parse(url).is_ok_and(|endpoint| endpoint.carries_credentials())
     }
@@ -629,18 +733,8 @@ mod tests {
     #[test]
     fn a_client_sends_no_token_and_signs_in_nowhere_off_loopback() -> TestResult {
         for url in REFUSED {
-            for email in [None, Some("owner@example.test")] {
-                let target = Target {
-                    url: url.to_owned(),
-                    org: "org".to_owned(),
-                    env: "env".to_owned(),
-                    token_env: email.is_none().then(|| "NORN_TEST_UNSET_TOKEN".to_owned()),
-                    email: email.map(str::to_owned),
-                    password_env: email.map(|_email| "NORN_TEST_UNSET_PASSWORD".to_owned()),
-                    json: false,
-                    paths: Vec::new(),
-                };
-                let Err(refused) = Client::new(&target) else {
+            for credential in [Credential::Token, Credential::SignIn("owner@example.test")] {
+                let Err(refused) = Client::new(&target(url, Some(credential))) else {
                     return Err(format!("{url} was admitted").into());
                 };
                 // Refused on the URL, before any secret is read or sent.
@@ -683,6 +777,96 @@ mod tests {
             return Err("an oversized artifact was read".into());
         };
         assert!(refused.contains("exceeds"), "{refused}");
+        std::fs::remove_dir_all(&pack)?;
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_authorities_queries_and_fragments_are_refused() -> TestResult {
+        for url in [
+            "http://127.0.0.1:abc",
+            "http://127.0.0.1:",
+            "http://127.0.0.1:99999",
+            "http://127.0.0.1:8787x",
+            "http://[::1",
+            "http://[not-ipv6]:8787",
+            "https://alpha.norn.cloud#frag",
+            "https://alpha.norn.cloud/api/host#frag",
+        ] {
+            assert!(Endpoint::parse(url).is_err(), "{url} must be refused");
+        }
+        for url in [
+            "https://alpha.norn.cloud?foo=1",
+            "https://alpha.norn.cloud/api?foo=1",
+        ] {
+            let Err(refused) = Client::new(&target(url, None)) else {
+                return Err(format!("{url} was admitted").into());
+            };
+            assert!(refused.contains("query"), "{url}: {refused}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn loopback_http_is_never_proxied() -> TestResult {
+        let proxy = ureq::Proxy::new("http://proxy.example:3128")?;
+        for (url, direct) in [
+            ("http://127.0.0.1:8787", true),
+            ("http://[::1]:8787", true),
+            ("http://localhost:8787", true),
+            ("https://alpha.norn.cloud", false),
+        ] {
+            let config = Endpoint::parse(url)?
+                .configure(ureq::Agent::config_builder().proxy(Some(proxy.clone())))
+                .build();
+            assert_eq!(config.proxy().is_none(), direct, "{url}");
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_pack_directory_is_refused_not_followed() -> TestResult {
+        let root = scratch("linked-dir")?;
+        let outside = root.join("outside");
+        std::fs::create_dir(&outside)?;
+        std::fs::write(outside.join("a.json"), r#"{"secret":true}"#)?;
+        let pack = root.join("pack");
+        std::os::unix::fs::symlink(&outside, &pack)?;
+        let Err(refused) = artifacts(std::slice::from_ref(&pack)) else {
+            return Err("a linked pack directory was read".into());
+        };
+        assert!(refused.contains("links are refused"), "{refused}");
+        std::fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_artifact_is_refused_without_blocking() -> TestResult {
+        let pack = scratch("fifo")?;
+        let fifo = pack.join("a.json");
+        let made = std::process::Command::new("mkfifo").arg(&fifo).status()?;
+        assert!(made.success());
+        let Err(refused) = artifacts(std::slice::from_ref(&pack)) else {
+            return Err("a FIFO artifact was read".into());
+        };
+        assert!(refused.contains("not a regular file"), "{refused}");
+        std::fs::remove_dir_all(&pack)?;
+        Ok(())
+    }
+
+    #[test]
+    fn plan_and_apply_send_exact_numbers() -> TestResult {
+        let pack = scratch("exact")?;
+        std::fs::write(
+            pack.join("a.json"),
+            r#"{"artifactId":"a","amount":1000.00000000000001}"#,
+        )?;
+        let snapshot = artifacts(std::slice::from_ref(&pack))?;
+        for sent in [body(&snapshot, None)?, body(&snapshot, Some(3))?] {
+            assert!(sent.contains(r#""amount":1000.00000000000001"#), "{sent}");
+        }
         std::fs::remove_dir_all(&pack)?;
         Ok(())
     }

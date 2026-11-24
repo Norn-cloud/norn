@@ -2375,6 +2375,7 @@ dependencies = [
  "bytes",
  "clap",
  "futures-util",
+ "libc",
  "norn-api",
  "norn-checker-wasm",
  "norn-decisions",
