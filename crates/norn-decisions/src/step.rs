@@ -8,11 +8,7 @@ use norn_ir::{
 };
 use std::collections::BTreeSet;
 use std::sync::Arc;
-use zen_engine::{
-    TzdbLookup, Variable,
-    meter::{Meter, cost},
-    nodes::DecisionContracts,
-};
+use zen_engine::{TzdbLookup, Variable, meter::Meter, nodes::DecisionContracts};
 
 use crate::convert::from_variable;
 
@@ -122,7 +118,7 @@ impl StepContracts {
             .ok_or_else(|| format!("sub-decision `{key}` has no admitted schema contract"))?;
         let schema = if input { before } else { after };
         if let Some(meter) = meter {
-            meter.charge(cost::deep_size_capped(value, meter.remaining(), &mut 0))?;
+            meter.charge(boundary_units(value, meter.remaining()))?;
         }
         let mut value = from_variable(value)?;
         if project
@@ -199,8 +195,36 @@ impl DecisionContracts for StepContracts {
         meter: Option<&Meter>,
     ) -> Result<Option<Variable>, Box<dyn std::error::Error>> {
         let checked = self.check_declared(key, value, input, meter, input)?;
-        Ok(Some(crate::convert::to_variable(&checked)?))
+        Ok(Some(crate::convert::to_variable_exact(&checked)?))
     }
+}
+
+/// Fuel for carrying `value` across a helper boundary, charged before it is
+/// converted: one unit for every visited value (an empty string included),
+/// plus the UTF-8 bytes of every string and every object key. The walk stops
+/// once past `cap`; any result above `cap` exhausts the meter the same way.
+fn boundary_units(value: &Variable, cap: u64) -> u64 {
+    let bytes = |len: usize| u64::try_from(len).unwrap_or(u64::MAX);
+    let mut units: u64 = 0;
+    let mut pending = vec![value.clone()];
+    while let Some(current) = pending.pop() {
+        if units > cap {
+            break;
+        }
+        units = units.saturating_add(1);
+        match &current {
+            Variable::String(text) => units = units.saturating_add(bytes(text.len())),
+            Variable::Array(items) => pending.extend(items.borrow().iter().cloned()),
+            Variable::Object(members) => {
+                for (key, item) in members.borrow().iter() {
+                    units = units.saturating_add(bytes(key.len()));
+                    pending.push(item.clone());
+                }
+            }
+            Variable::Null | Variable::Bool(_) | Variable::Number(_) | Variable::Dynamic(_) => {}
+        }
+    }
+    units.min(cap.saturating_add(1))
 }
 
 /// Validates a fold's profile, bounds and order keys, returning its derived
@@ -325,6 +349,58 @@ mod tests {
                 .check("other", &valid, true, Some(&meter))
                 .is_err()
         );
+        Ok(())
+    }
+
+    /// #1708: what crosses is exactly what was checked: a decomposed key and
+    /// its composed spelling stay two distinct members, spelled as given.
+    #[test]
+    fn crossing_keeps_every_checked_key_and_string_spelled_as_given() -> Checked {
+        let (composed, decomposed) = ("\u{e9}", "e\u{301}");
+        let record = Schema::Object {
+            properties: BTreeMap::from([
+                (composed.to_owned(), Schema::String(None)),
+                (decomposed.to_owned(), Schema::String(None)),
+            ]),
+            required: [composed.to_owned(), decomposed.to_owned()].into(),
+        };
+        let contracts = StepContracts {
+            schemas: BTreeMap::from([("step".into(), (record.clone(), record))]),
+            ..StepContracts::default()
+        };
+        let value = Value::object([
+            (composed, Value::from(decomposed)),
+            (decomposed, Value::from(composed)),
+        ]);
+        let variable = crate::convert::to_variable_exact(&value)?;
+        for input in [true, false] {
+            let crossed = contracts
+                .cross("step", &variable, input, Some(&Meter::new(1_000)))?
+                .ok_or("a checked value crosses")?;
+            assert_eq!(from_variable(&crossed)?, value);
+        }
+        Ok(())
+    }
+
+    /// #1708: the boundary charge counts every visited value (an empty
+    /// string included) and every object key's bytes.
+    #[test]
+    fn boundary_fuel_counts_key_bytes_and_empty_strings() -> Checked {
+        let units = |value: &Value| -> Result<u64, Box<dyn std::error::Error>> {
+            Ok(boundary_units(&to_variable(value)?, u64::MAX))
+        };
+        let short = units(&Value::object([("a", Value::from(""))]))?;
+        let long = units(&Value::object([("abcdef", Value::from(""))]))?;
+        assert_eq!(long, short.saturating_add(5));
+        let none = units(&Value::Array(Vec::new()))?;
+        let one = units(&Value::Array(vec![Value::from("")]))?;
+        let two = units(&Value::Array(vec![Value::from(""), Value::from("")]))?;
+        assert_eq!((one, two), (none.saturating_add(1), none.saturating_add(2)));
+        let meter = Meter::new(1_000);
+        let value = to_variable(&Value::object([("n", Value::from(1))]))?;
+        contracts().check("step", &value, true, Some(&meter))?;
+        assert_eq!(meter.used(), boundary_units(&value, u64::MAX));
+        assert_eq!(boundary_units(&value, 1), 2);
         Ok(())
     }
 }
