@@ -71,7 +71,7 @@ export interface GridQuery { readonly filter: Predicate | null; readonly sort: r
 export function RecordsGrid({ concept, read = defaultRead, scope, initial, onQuery, timeline = false }: {
   readonly concept: Concept
   readonly read?: Read
-  /** Optional workspace scope binding for this grid's query cache key. */
+  /** The source workspace for a saved view's query cache and facet reads. */
   readonly scope?: StudioScope
   /** The type is a `core.TimeInterval`: the records can also be read as a timeline (lib/timeline.ts). */
   readonly timeline?: boolean
@@ -221,7 +221,7 @@ export function RecordsGrid({ concept, read = defaultRead, scope, initial, onQue
   const off = canQuery ? undefined : SERVER_QUERY_UNAVAILABLE
   const pill = "h-8 rounded-lg px-2.5 text-sm"
 
-  const facets = page?.origin === "live" && <FacetsRail objectType={name} fields={fields} filter={filter} onFilter={(next) => { setDraft(fromPredicate(next)); changeQuery({ filter: next }) }} />
+  const facets = page?.origin === "live" && <FacetsRail objectType={name} fields={fields} filter={filter} scope={scope} onFilter={(next) => { setDraft(fromPredicate(next)); changeQuery({ filter: next }) }} />
   return (
     <Shell>
       <div className={cn("grid gap-4", facets && "xl:grid-cols-[15rem_minmax(0,1fr)]")}>

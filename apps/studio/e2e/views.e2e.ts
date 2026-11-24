@@ -175,6 +175,46 @@ test("views: refuses to write when the active workspace changed after loading th
   expect(cell.installCalls).toHaveLength(0)
 })
 
+test("views: Narrow by discards counts when the active workspace changes mid-read", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const cell = await workspaceCell(page)
+  const id = "studio.view.funnel_application.scoped_facets"
+  cell.defs.set(id, {
+    kind: "view",
+    version: 1,
+    retired: false,
+    updatedAtMs: Date.now(),
+    payload: { title: "Scoped facets", objectType: "funnel.Application" },
+  })
+
+  const facetURL = "**/api/host/v1/objects/funnel.Application:facets?*"
+  let releaseCounts: () => void = () => {}
+  const delayed = new Promise<void>((resolve) => { releaseCounts = resolve })
+  await page.route(facetURL, async (route) => {
+    await delayed
+    await route.fulfill({
+      json: {
+        rows: 1, withheldRows: 0, lowerBound: false,
+        facets: [{ property: "stage", values: [{ value: "late workspace value", count: 1 }], otherRows: 0, nulls: 0 }],
+      },
+    })
+  })
+  try {
+    const [request] = await Promise.all([page.waitForRequest(facetURL), page.goto(`/views/${id}`)])
+    const { searchParams } = new URL(request.url())
+    expect(searchParams.get("orgId")).toBe("org_demo")
+    expect(searchParams.get("environmentId")).toBe("prod")
+    cell.switchScope("org_other", "prod")
+  } finally {
+    releaseCounts()
+  }
+
+  const rail = page.locator("aside").filter({ hasText: "This workspace changed; reload to edit this view." })
+  await expect(rail.getByRole("alert")).toBeVisible()
+  await expect(page.getByText("late workspace value")).toHaveCount(0)
+  await shoot(page, "views-facets-workspace-changed")
+})
+
 test("views: conflict after deletion offers Save as new view and Discard my changes without a dead Reload button", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   const cell = await workspaceCell(page)

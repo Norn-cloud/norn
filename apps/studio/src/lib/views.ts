@@ -35,6 +35,24 @@ export const WORKSPACE_CHANGED_MESSAGE = "This workspace changed; reload to edit
 export const sameScope = (a: StudioScope | null | undefined, b: StudioScope | null | undefined): boolean =>
   a != null && b != null && a.orgId === b.orgId && a.environmentId === b.environmentId
 
+/** Return a saved view's read only while the active workspace matches its source. */
+export async function readViewAtScope<T>(
+  expectedScope: StudioScope,
+  readScope: ScopeProvider,
+  read: () => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  const before = await readScope()
+  if (signal?.aborted || !sameScope(before, expectedScope)) {
+    throw new StudioScopeError(WORKSPACE_CHANGED_MESSAGE)
+  }
+  const result = await read()
+  if (signal?.aborted || !sameScope(await readScope(), expectedScope)) {
+    throw new StudioScopeError(WORKSPACE_CHANGED_MESSAGE)
+  }
+  return result
+}
+
 /** What the cell said to a save: the new version, its checker's findings, or that someone saved first. */
 export type ViewSaved =
   | { readonly saved: true; readonly id: string; readonly version: number }
@@ -216,21 +234,9 @@ export function cellViews(
     query: RecordsQuery,
     expectedScope: StudioScope,
     signal?: AbortSignal,
-  ): Promise<RecordsRead> => {
-    const before = await readScope()
-    if (signal?.aborted || !sameScope(before, expectedScope)) {
-      throw new StudioScopeError(WORKSPACE_CHANGED_MESSAGE)
-    }
-    const page = await readRecordsAtScope(objectType, query, expectedScope, fetcher, signal)
-    if (signal?.aborted) {
-      throw new StudioScopeError(WORKSPACE_CHANGED_MESSAGE)
-    }
-    const after = await readScope()
-    if (!sameScope(after, expectedScope)) {
-      throw new StudioScopeError(WORKSPACE_CHANGED_MESSAGE)
-    }
-    return page
-  }
+  ): Promise<RecordsRead> => readViewAtScope(
+    expectedScope, readScope, () => readRecordsAtScope(objectType, query, expectedScope, fetcher, signal), signal,
+  )
 
   const listAll = async (pinnedScope?: StudioScope | null): Promise<readonly StoredView[]> => {
     // Pin one workspace scope for the entire list + per-id fetch sequence so workspace switches
