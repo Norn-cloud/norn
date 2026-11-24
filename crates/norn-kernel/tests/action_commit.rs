@@ -4806,6 +4806,17 @@ fn independent_person_approval_uses_accountable_identity() {
     }
 }
 
+/// The prepared-intent digest of `call`, when it reaches its commit point.
+fn intent_digest(cell: &Cell, catalog: &TypeCatalog<'_>, call: &ActionCall<'_>) -> Option<String> {
+    if let Ok(norn_kernel::Prepared::Commit(intent)) =
+        norn_kernel::prepare_action_intent(cell, catalog, call, &Allow)
+    {
+        Some(intent.digest)
+    } else {
+        None
+    }
+}
+
 /// AUTH-INDEPENDENT-PERSON (#618): an approval binds the commit it was granted
 /// for, not the call's raw input. Preparing writes nothing. With the input held
 /// fixed, another turn (other command identities) or a changed target refuses
@@ -4819,7 +4830,7 @@ fn approved_intent_binds_the_prepared_commit_not_the_raw_input() {
     let target = seed(&mut cell, ORDER, "SO-1", "draft");
     let approve = approve_with_submit_command("input.so_number");
     let granted = call(&approve, "SO-1", "approve-so-1");
-    let digest = norn_kernel::prepare_action_intent(&cell, &catalog, &granted, &Allow).ok();
+    let digest = intent_digest(&cell, &catalog, &granted);
     assert!(digest.is_some());
     assert_eq!(cell.ledger().len(), 1);
 
@@ -4862,7 +4873,7 @@ fn approved_intent_binds_the_prepared_commit_not_the_raw_input() {
     assert_eq!(cell.ledger().len(), 2);
     assert!(cell.outbox().is_empty());
 
-    let regranted = norn_kernel::prepare_action_intent(&cell, &catalog, &granted, &Allow).ok();
+    let regranted = intent_digest(&cell, &catalog, &granted);
     assert!(regranted.is_some() && regranted != digest);
     let committed = commit_action(
         &mut cell,
@@ -4898,11 +4909,8 @@ fn approved_intent_binds_the_exact_unicode_spelling() {
     };
     let composed = spelled("caf\u{e9}");
     let decomposed = spelled("cafe\u{301}");
-    let digest = |call: &ActionCall<'_>| {
-        norn_kernel::prepare_action_intent(&cell, &catalog, call, &Allow).ok()
-    };
-    let granted = digest(&composed);
-    assert!(granted.is_some() && granted != digest(&decomposed));
+    let granted = intent_digest(&cell, &catalog, &composed);
+    assert!(granted.is_some() && granted != intent_digest(&cell, &catalog, &decomposed));
     let refused = commit_action(
         &mut cell,
         &catalog,

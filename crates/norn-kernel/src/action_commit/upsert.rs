@@ -1,7 +1,7 @@
 use norn_ir::{ActionRoot, FactChange, ObjectTypeName, ResourceLimitProfile, UpsertWriteMode};
 
 use crate::cell_host::{CellHost, FactKey, JsonObject, JsonValue};
-use crate::decision_commit::{DecisionRefusal, FactEvent, TypeCatalog};
+use crate::decision_commit::{FactEvent, TypeCatalog};
 use crate::limits::SliceMeter;
 use crate::naming_series::type_series;
 
@@ -100,16 +100,10 @@ where
         // No honest target exists for some allocator failures. Conceal all
         // refusals alike unless diagnostic access was separately granted, so
         // denied calls cannot distinguish a healthy counter from a bad one.
-        // The host's own answer to the commit and the approval binding it are
-        // past the allocator and say nothing about the counter (#618).
+        // An approval's binding of the allocated commit is past the allocator
+        // and says nothing about the counter (#618).
         return outcome.map_err(|refusal| {
-            if disclose
-                || matches!(
-                    refusal,
-                    ActionRefusal::ApprovedIntentChanged
-                        | ActionRefusal::Decision(DecisionRefusal::Host(_))
-                )
-            {
+            if disclose || matches!(refusal, ActionRefusal::ApprovedIntentChanged) {
                 refusal
             } else {
                 ActionRefusal::TargetNotFound

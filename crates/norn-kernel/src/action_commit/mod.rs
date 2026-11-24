@@ -62,7 +62,7 @@ use crate::envelope::{EnvelopeCounts, TurnEnvelopeMeter, check_decision_envelope
 use crate::limits::EnvelopeLimits;
 
 pub use approval::{
-    independent_accountable_people, prepare_action_intent, prepare_action_intent_with_limits,
+    Prepared, PreparedIntent, independent_accountable_people, prepare_action_intent,
     retained_person_matches, validate_accountable_person,
 };
 pub use automation_input::{AutomationInputViolation, validate_automation_static_input};
@@ -552,6 +552,13 @@ where
         }
         None => None,
     };
+    check_action_turn_meter::<H::Error>(meter.as_deref(), counts)?;
+    // Precision granted after full snapshots were loaded cannot erase their
+    // value-dependent admission. Revocation refuses before any write rather
+    // than using empty values under newly dependent authorization.
+    if reference_only && !authorizer.supports_action_reference_lineage(call.action) {
+        return Err(ActionRefusal::TargetNotFound);
+    }
     approval::bind_approved_intent::<H::Error>(
         call,
         &approval::PreparedCommit {
@@ -580,13 +587,6 @@ where
         link_reads,
         predicate_reads,
     };
-    check_action_turn_meter::<H::Error>(meter.as_deref(), counts)?;
-    // Precision granted after full snapshots were loaded cannot erase their
-    // value-dependent admission. Revocation refuses before any write rather
-    // than using empty values under newly dependent authorization.
-    if reference_only && !authorizer.supports_action_reference_lineage(call.action) {
-        return Err(ActionRefusal::TargetNotFound);
-    }
     let reference_reads = (reference_only && !generated_key)
         .then(|| reference_read_proof(catalog, call.action, authorizer, &commit, &target))
         .flatten();

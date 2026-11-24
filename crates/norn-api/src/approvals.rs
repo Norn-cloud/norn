@@ -1,29 +1,26 @@
 //! APPROVAL-1: a call of an approval-gated action parks as a decision.
 //!
 //! While an active `approval` definition gates an action, the shared action
-//! dispatch runs the kernel's action pipeline against `WouldCommit`, a host
-//! that serves every read but stops at the commit point. Only calls that reach
-//! commit park as one `norn.decision@1` command. Approved calls execute under
+//! dispatch prepares the call without committing it
+//! ([`norn_kernel::prepare_action_intent`]). Only calls that reach commit park
+//! as one `norn.decision@1` command. Approved calls execute under
 //! the requester's own authority, pinned to the action digest
 //! (APPROVAL-REVISION-1) and definitions version (APPROVAL-PIN-1), and recover
 //! only on the requester's own retry (APPROVAL-RECOVERY-1).
 
 use std::collections::BTreeMap;
 
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use http::StatusCode;
+use norn_cell::MAIN_WORLD;
 use norn_cell::decision_ledger::{ApprovalRefused, DecisionRow, Resolution};
 use norn_cell::engine::SqlEngine;
 use norn_cell::flow_run::RunStarter;
-use norn_cell::{CellError, MAIN_WORLD};
 use norn_ir::{RuntimeObject, RuntimeValue};
-use norn_kernel::cell_host::{
-    BoundedFact, CellCommit, CellHost, CommitError, CommitReceipt, DueTimer, FactMutation,
-    FactState, FactWrite, LinkReadTarget, LinkState, Observed, Performed, PredicateObject,
-    PredicateQuery,
-};
+use norn_kernel::cell_host::{CellCommit, CellHost, FactMutation, FactWrite};
 use norn_kernel::{
     ACTION_CALL_TYPE, ActionCallRecord, Command, CommandId, Effect, FactEvent, FactKey,
-    FreshnessPolicy, Generation, IdempotencyKey, LinkKey, LogicalTime,
+    FreshnessPolicy, Generation, IdempotencyKey, LogicalTime,
 };
 use serde::Serialize;
 use serde_json::Value;
@@ -31,9 +28,6 @@ use utoipa::ToSchema;
 
 use crate::host::ActionCell;
 use crate::refusal::Refusal;
-
-/// The sentinel [`WouldCommit`] answers every commit with.
-pub(crate) const WOULD_COMMIT: &str = "approval.would_commit";
 
 /// The step id a parked call's decision carries.
 pub const APPROVAL_STEP: &str = "approval";
@@ -172,15 +166,21 @@ pub(crate) fn held_call(approval: &RuntimeValue) -> Option<HeldCall> {
             .and_then(RuntimeValue::as_str)
             .map(str::to_owned)
     };
-    let Some(RuntimeValue::Object(input)) = approval.get("input") else {
-        return None;
+    let input = match approval.get("exactInput").and_then(RuntimeValue::as_str) {
+        Some(encoded) => decode_exact(encoded)?,
+        None => {
+            let Some(RuntimeValue::Object(input)) = approval.get("input") else {
+                return None;
+            };
+            input.clone()
+        }
     };
     Some(HeldCall {
         definition: text("definition")?,
         revision: norn_ir::runtime::decode(approval.get("revision")?).ok()?,
         call: ParkedCall {
             action: text("action")?,
-            input: input.clone(),
+            input,
             idempotency_key: text("idempotencyKey")?,
             requester: norn_ir::runtime::decode(approval.get("requester")?).ok()?,
             action_digest: text("actionDigest").unwrap_or_default(),
@@ -203,6 +203,22 @@ pub(crate) fn held_call(approval: &RuntimeValue) -> Option<HeldCall> {
             intent_digest: text("intentDigest"),
         },
     })
+}
+
+/// AUTH-INDEPENDENT-PERSON (#618): the parked input as written. The outbox
+/// keeps a command in Norn1 form, which normalizes text, so the exact spelling
+/// the call's approval is granted for travels encoded beside it.
+fn encode_exact(input: &RuntimeObject) -> Result<String, Refusal> {
+    let exact = norn_ir::canonical::canonical_json_exact_of(input).map_err(Refusal::host)?;
+    Ok(URL_SAFE_NO_PAD.encode(exact))
+}
+
+fn decode_exact(encoded: &str) -> Option<RuntimeObject> {
+    let exact = URL_SAFE_NO_PAD.decode(encoded).ok()?;
+    let RuntimeValue::Object(input) = RuntimeValue::from_json_text(exact).ok()? else {
+        return None;
+    };
+    Some(input)
 }
 
 /// The decision a parked call waits on.
@@ -264,17 +280,6 @@ pub(crate) fn gate<E: SqlEngine>(
         }
         after = page.last().map(|record| record.definition.id.clone());
     }
-}
-
-/// Whether a kernel refusal is [`WouldCommit`]'s sentinel: the call passed
-/// every check and reached the commit point.
-pub(crate) fn would_have_committed(refusal: &norn_kernel::ActionRefusal<CellError>) -> bool {
-    matches!(
-        refusal,
-        norn_kernel::ActionRefusal::Decision(norn_kernel::DecisionRefusal::Host(
-            CellError::DecisionRefused(WOULD_COMMIT)
-        ))
-    )
 }
 
 /// The decision request a parked call carries (`norn.decision@1` input).
@@ -649,6 +654,10 @@ fn park<E: SqlEngine>(
             RuntimeValue::Object(parked_call.input.clone()),
         ),
         (
+            "exactInput".to_owned(),
+            text(&encode_exact(&parked_call.input)?),
+        ),
+        (
             "idempotencyKey".to_owned(),
             text(&parked_call.idempotency_key),
         ),
@@ -938,38 +947,6 @@ pub(crate) fn refuse<E: SqlEngine>(
     }
 }
 
-/// A host for one dry run of the kernel's action pipeline over `cell`: every
-/// read is the cell's, and every commit stops with [`WOULD_COMMIT`], so
-/// nothing is written. It keeps the object writes the commit carried, so a
-/// gate's `when` reads the record the call would write (APPROVAL-WHEN-1).
-pub(crate) struct WouldCommit<'a, E: SqlEngine> {
-    cell: &'a ActionCell<E>,
-    writes: Vec<FactWrite>,
-}
-
-impl<'a, E: SqlEngine> WouldCommit<'a, E> {
-    /// A dry run over `cell`.
-    pub(crate) const fn new(cell: &'a ActionCell<E>) -> Self {
-        Self {
-            cell,
-            writes: Vec::new(),
-        }
-    }
-
-    /// The object writes of the commit the dry run reached, if any.
-    pub(crate) fn into_writes(self) -> Vec<FactWrite> {
-        self.writes
-    }
-
-    fn stop<T>(
-        &mut self,
-        commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
-    ) -> Result<T, CommitError<CellError>> {
-        self.writes = commit.writes;
-        Err(CommitError::Host(CellError::DecisionRefused(WOULD_COMMIT)))
-    }
-}
-
 /// APPROVAL-WHEN-1: whether `gate` holds a call whose commit carries
 /// `writes`. Without `when`, every call. Otherwise the call's target record
 /// (the object the kernel's `norn.ActionCall` record names) is compared; a
@@ -1122,119 +1099,6 @@ fn compare(actual: &RuntimeValue, op: &str, expected: &Value) -> Option<bool> {
         ("ge", ordering) => ordering != Ordering::Less,
         _ => return None,
     })
-}
-
-impl<E: SqlEngine> CellHost for WouldCommit<'_, E> {
-    type Event = FactEvent;
-    type Command = RuntimeObject;
-    type Input = RuntimeObject;
-    type Error = CellError;
-
-    fn load(&self, key: &FactKey) -> Result<FactState, CellError> {
-        self.cell.load(key)
-    }
-    fn supports_reference_reads(&self) -> bool {
-        self.cell.supports_reference_reads()
-    }
-    fn load_reference(
-        &self,
-        key: &FactKey,
-        max_bytes: u64,
-    ) -> Result<Option<BoundedFact>, CellError> {
-        self.cell.load_reference(key, max_bytes)
-    }
-    fn load_bounded(
-        &self,
-        key: &FactKey,
-        max_bytes: u64,
-    ) -> Result<Option<BoundedFact>, CellError> {
-        self.cell.load_bounded(key, max_bytes)
-    }
-    fn resolve_accepted_receipt(
-        &self,
-        reference: &norn_kernel::receipt_binding::ReceiptReference,
-        manifest: &norn_ir::function::Digest,
-    ) -> Result<
-        Option<norn_kernel::receipt_binding::ReceiptBinding<norn_kernel::cell_host::JsonObject>>,
-        norn_kernel::receipt_binding::ReceiptBindingError<CellError>,
-    > {
-        self.cell.resolve_accepted_receipt(reference, manifest)
-    }
-    fn load_link(&self, key: &LinkKey) -> Result<LinkState, CellError> {
-        self.cell.load_link(key)
-    }
-    fn read_link_targets(
-        &self,
-        source: &FactKey,
-        link: &str,
-        max_targets: usize,
-        max_key_bytes: u64,
-    ) -> Result<Option<Vec<LinkReadTarget>>, CellError> {
-        self.cell
-            .read_link_targets(source, link, max_targets, max_key_bytes)
-    }
-    fn read_predicate(
-        &self,
-        predicate: &PredicateQuery,
-        max_members: usize,
-        max_bytes: u64,
-    ) -> Result<Option<Vec<PredicateObject>>, CellError> {
-        self.cell.read_predicate(predicate, max_members, max_bytes)
-    }
-    fn read_predicate_for_action(
-        &self,
-        predicate: &PredicateQuery,
-        max_members: usize,
-        max_bytes: u64,
-        authorize: &mut dyn FnMut(&PredicateObject) -> bool,
-    ) -> Result<norn_kernel::PredicateActionRead, CellError> {
-        self.cell
-            .read_predicate_for_action(predicate, max_members, max_bytes, authorize)
-    }
-    fn commit(
-        &mut self,
-        commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
-    ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.stop(commit)
-    }
-    fn commit_action_quantity(
-        &mut self,
-        commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
-        _requests: &[norn_ir::quantity_ledger::QuantityRequest],
-        _idempotency_key: &str,
-    ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.stop(commit)
-    }
-    fn commit_action_references(
-        &mut self,
-        commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
-        _proof: norn_kernel::action_commit::ActionReferenceReads,
-        _quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
-    ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.stop(commit)
-    }
-    fn commit_owned_rows(
-        &mut self,
-        commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
-        _proof: norn_kernel::cell_host::OwnedRowsCommitProof,
-    ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.stop(commit)
-    }
-    fn perform(&mut self) -> Result<Option<Performed<RuntimeObject>>, CellError> {
-        Ok(None)
-    }
-    fn observe(&mut self) -> Result<Option<Observed<RuntimeObject>>, CellError> {
-        Ok(None)
-    }
-    fn clock(&mut self) -> Result<Option<DueTimer<RuntimeObject>>, CellError> {
-        Ok(None)
-    }
-    fn serialize_by(&self, key: &FactKey) -> norn_kernel::cell_host::SerializationLane {
-        self.cell.serialize_by(key)
-    }
-    fn publish(&mut self, _receipt: &CommitReceipt) -> Result<(), CellError> {
-        Ok(())
-    }
 }
 
 #[cfg(test)]

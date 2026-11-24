@@ -1028,8 +1028,11 @@ fn requested_document(
     state: Option<&CallState>,
 ) -> Result<RequestedDecision, Refusal> {
     let input = RuntimeValue::Object(held.call.input.clone());
-    let encoded_input =
-        String::from_utf8(input.canonical_json().map_err(Refusal::host)?).map_err(Refusal::host)?;
+    // The exact spelling the call's approval is granted for (#618).
+    let encoded_input = String::from_utf8(
+        norn_ir::canonical::canonical_json_exact_of(&input).map_err(Refusal::host)?,
+    )
+    .map_err(Refusal::host)?;
     Ok(RequestedDecision {
         id: decision.id.clone(),
         question: decision.request.question.clone(),

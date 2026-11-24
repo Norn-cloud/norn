@@ -235,7 +235,9 @@ expected versions, links, commands with their identities, quantity request
 with a turn-relative reservation lifetime), and
 the kernel commits the approved call only when the commit it hands the host has
 that digest; otherwise `action.approved_intent_changed` (409) is recorded as
-final. A call parked before digests were recorded has none and its approval
+final. The parked call keeps its input's exact spelling (`exactInput`) beside
+the Norn1 command, and the call its requester is served to retry
+(`encodedInput`) is that exact spelling. A call parked before digests were recorded has none and its approval
 runs nothing (`approval.definition_changed`, recorded); a parked requester
 recorded without a person matches its authenticated subject, and one naming a
 person matches only that person. Deciding records the

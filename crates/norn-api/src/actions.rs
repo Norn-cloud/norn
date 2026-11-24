@@ -19,8 +19,8 @@ use http::StatusCode;
 use norn_cell::{MAIN_WORLD, Receipt, compute::lineage::keyed_receipt_handle, engine::SqlEngine};
 use norn_ir::RuntimeValue;
 use norn_kernel::{
-    ACTION_CALL_TYPE, ActionCallRecord, ActionOutcome, DecisionTurn, LogicalTime, Refusable,
-    TypeCatalog,
+    ACTION_CALL_TYPE, ActionCallRecord, ActionOutcome, DecisionTurn, LogicalTime, Prepared,
+    Refusable, TypeCatalog,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -766,32 +766,29 @@ fn through_gate<E: SqlEngine>(
     let Some(gate) = gate else {
         return Ok(Gated::Commit(None));
     };
-    let mut dry_run = crate::approvals::WouldCommit::new(&*cell);
-    let dry = norn_kernel::commit_action(
-        &mut dry_run,
+    let prepared = norn_kernel::prepare_action_intent(
+        &*cell,
         catalog,
         kernel_call,
         &KernelAuthorizer(host.authorizer.as_ref()),
     );
-    let writes = dry_run.into_writes();
-    match dry {
-        Ok(replayed) => Ok(Gated::Replayed(Box::new(replayed))),
+    match prepared {
+        Ok(Prepared::Replayed(replayed)) => Ok(Gated::Replayed(replayed)),
         // APPROVAL-WHEN-1: a call whose record the gate's `when` excludes
         // commits as an ungated call does; an approved one still names the
         // approval it consumes (S6c), so its call reads committed.
-        Err(error)
-            if crate::approvals::would_have_committed(&error)
-                && !crate::approvals::applies(&gate, &writes, |object_type, property| {
-                    crate::approvals::semantics_in(cell.store().model(), object_type, property)
-                }) =>
+        Ok(Prepared::Commit(intent))
+            if !crate::approvals::applies(&gate, &intent.writes, |object_type, property| {
+                crate::approvals::semantics_in(cell.store().model(), object_type, property)
+            }) =>
         {
             Ok(Gated::Commit(approval))
         }
-        Err(error) if crate::approvals::would_have_committed(&error) => {
+        Ok(Prepared::Commit(intent)) => {
             if approval.is_some() {
                 return Ok(Gated::Commit(approval));
             }
-            let parked = parked_call(host, cell, catalog, kernel_call, admitted)?;
+            let parked = parked_call(host, cell, kernel_call, admitted, intent.digest)?;
             Ok(
                 match crate::approvals::hold(cell, &gate, &parked, kernel_call.turn.now)? {
                     crate::approvals::Held::Pending(pending) => Gated::Pending(pending),
@@ -812,33 +809,25 @@ fn through_gate<E: SqlEngine>(
 
 /// The call `kernel_call` parks as, past its gate: its requester's verified
 /// principal, which must name the accountable person an approval needs to be
-/// independent of (#618), and the digest of the commit it would make, which
-/// its approval is granted for (APPROVAL-INTENT-1).
+/// independent of (#618), and `intent_digest`, the digest of the commit it
+/// would make, which its approval is granted for (APPROVAL-INTENT-1).
 fn parked_call<E: SqlEngine>(
     host: &DevHost<E>,
     cell: &crate::host::ActionCell<E>,
-    catalog: &TypeCatalog<'_>,
     kernel_call: &norn_kernel::ActionCall<'_>,
     admitted: &Admitted<'_>,
+    intent_digest: String,
 ) -> Result<crate::approvals::ParkedCall, Refusal> {
-    let action_id = kernel_call.action.action_id.as_str();
     let requester = host
         .authorizer
         .verified_principal(&kernel_call.actor)
         .filter(|requester| requester.verified_accountable_person().is_some())
         .ok_or_else(action_denied)?;
-    let intent_digest = norn_kernel::prepare_action_intent(
-        cell,
-        catalog,
-        kernel_call,
-        &KernelAuthorizer(host.authorizer.as_ref()),
-    )
-    .map_err(|error| kernel_refusal(host, &kernel_call.actor, action_id, &error))?;
     // S5a: a call parks for a step attempt only while that attempt
     // still waits on exactly this call, judged under this hold.
     require_making(cell.store(), admitted.attempt, &kernel_call.idempotency_key)?;
     Ok(crate::approvals::ParkedCall {
-        action: action_id.to_owned(),
+        action: kernel_call.action.action_id.clone(),
         input: kernel_call.input.clone(),
         idempotency_key: kernel_call.idempotency_key.clone(),
         requester,

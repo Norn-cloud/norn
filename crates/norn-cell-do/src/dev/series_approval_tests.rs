@@ -1,7 +1,8 @@
 //! AUTH-INDEPENDENT-PERSON (#618) for an approval-gated create whose key a
 //! naming series generates, through the dev host's own dispatch: the call
 //! parks, the reviewer approves it, and the requester's retry commits only
-//! the number the approval was granted for (APPROVAL-INTENT-1).
+//! the number and the exact text the approval was granted for
+//! (APPROVAL-INTENT-1).
 
 use std::error::Error;
 
@@ -63,8 +64,9 @@ fn documents() -> Vec<Value> {
             "scopeRequired": ["orgId", "environmentId"],
             "idempotent": true,
             "ledgered": true,
-            "inputSchema": { "type": "object", "properties": { "title": { "type": "string" } },
-                "required": ["title"], "additionalProperties": false },
+            "inputSchema": { "type": "object", "additionalProperties": false,
+                "properties": { "no": { "type": "string" }, "title": { "type": "string" } },
+                "required": ["title"] },
             "outputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
             "writes": [{ "entityKind": "test.Note", "change": "created" }],
             "effectProgram": { "kind": "upsert_input_object", "objectIdField": "no",
@@ -109,7 +111,12 @@ fn dev() -> Checked<Dev> {
     })
 }
 
-fn call(dev: &Dev, token: &str, (method, path): (&str, &str), body: &str) -> Checked<(u16, Value)> {
+fn call(
+    dev: &Dev,
+    token: &str,
+    (method, path, query): (&str, &str, &str),
+    body: &str,
+) -> Checked<(u16, Value)> {
     let authorization = format!("Bearer {token}");
     let response = answer(
         &dev.host,
@@ -119,7 +126,7 @@ fn call(dev: &Dev, token: &str, (method, path): (&str, &str), body: &str) -> Che
         &Request {
             method,
             path,
-            query: SCOPE,
+            query,
             authorization: Some(&authorization),
             now: NOW_S,
             body,
@@ -137,7 +144,7 @@ fn gate(dev: &Dev) -> Checked {
     let (status, admitted) = call(
         dev,
         DEVELOPER_TOKEN,
-        ("POST", "/v1/definitions:admit"),
+        ("POST", "/v1/definitions:admit", SCOPE),
         &approval.to_string(),
     )?;
     assert_eq!(status, 200, "{admitted}");
@@ -160,14 +167,15 @@ fn gate(dev: &Dev) -> Checked {
     Ok(())
 }
 
+/// The developer's create under `key`, with `input` as the JSON text it sends.
+fn create_with(dev: &Dev, key: &str, input: &str) -> Checked<(u16, Value)> {
+    let body = format!(r#"{{"input":{input},"idempotencyKey":{}}}"#, json!(key));
+    let path = format!("/v1/actions/{CREATE}");
+    call(dev, DEVELOPER_TOKEN, ("POST", &path, SCOPE), &body)
+}
+
 fn create(dev: &Dev, key: &str) -> Checked<(u16, Value)> {
-    let body = json!({ "input": { "title": key }, "idempotencyKey": key }).to_string();
-    call(
-        dev,
-        DEVELOPER_TOKEN,
-        ("POST", &format!("/v1/actions/{CREATE}")),
-        &body,
-    )
+    create_with(dev, key, &json!({ "title": key }).to_string())
 }
 
 fn approve(dev: &Dev, parked: &Value) -> Checked {
@@ -177,7 +185,7 @@ fn approve(dev: &Dev, parked: &Value) -> Checked {
         .ok_or("no pending decision")?;
     let choice = json!({ "choice": "approve", "idempotencyKey": "approve-1" }).to_string();
     let path = format!("/v1/decisions/{id}:decide");
-    let (status, decided) = call(dev, REVIEWER_TOKEN, ("POST", &path), &choice)?;
+    let (status, decided) = call(dev, REVIEWER_TOKEN, ("POST", &path, SCOPE), &choice)?;
     assert_eq!(status, 200, "{decided}");
     Ok(())
 }
@@ -207,5 +215,46 @@ fn a_generated_key_create_commits_only_the_number_it_was_approved_for() -> Check
             "{refused}"
         );
     }
+    Ok(())
+}
+
+/// A title spelled decomposed (NFD) parks, is approved, and the requester's
+/// retry of exactly the call its requested decision serves (`encodedInput`)
+/// commits that spelling: neither the parked command nor the served call
+/// normalizes it into another intent.
+#[test]
+fn a_decomposed_spelling_survives_parking_and_the_served_retry() -> Checked {
+    let dev = dev()?;
+    gate(&dev)?;
+    let title = "cafe\u{301}";
+    let (status, parked) = create_with(&dev, "spelled-1", &json!({ "title": title }).to_string())?;
+    assert_eq!(status, 202, "{parked}");
+    approve(&dev, &parked)?;
+    let id = parked
+        .pointer("/decision/id")
+        .and_then(Value::as_str)
+        .ok_or("no pending decision")?;
+    let query = format!("{SCOPE}&id={id}");
+    let (status, requested) = call(
+        &dev,
+        DEVELOPER_TOKEN,
+        ("GET", "/v1/decisions:requested", &query),
+        "",
+    )?;
+    assert_eq!(status, 200, "{requested}");
+    let served = requested
+        .pointer("/items/0/call/encodedInput")
+        .and_then(Value::as_str)
+        .ok_or("no served call")?;
+    let (status, committed) = create_with(&dev, "spelled-1", served)?;
+    assert_eq!(status, 200, "{committed}");
+    let key = committed
+        .get("objectId")
+        .and_then(Value::as_str)
+        .ok_or("no object")?;
+    let path = format!("/v1/objects/test.Note/{key}");
+    let (status, note) = call(&dev, DEVELOPER_TOKEN, ("GET", &path, SCOPE), "")?;
+    assert_eq!(status, 200, "{note}");
+    assert_eq!(note.pointer("/values/title"), Some(&json!(title)));
     Ok(())
 }

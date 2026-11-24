@@ -9,6 +9,7 @@
 
 use std::collections::BTreeMap;
 
+use norn_ir::canonical::HashProfile;
 use norn_ir::quantity_ledger::{QuantityOperation, QuantityRequest};
 use serde::Serialize;
 
@@ -25,7 +26,8 @@ use crate::limits::EnvelopeLimits;
 use crate::observations::World;
 
 use super::types::{
-    ActionAuthorizer, ActionCall, ActionParameterPin, ActionReferenceReads, ActionRefusal,
+    ActionAuthorizer, ActionCall, ActionOutcome, ActionParameterPin, ActionReferenceReads,
+    ActionRefusal,
 };
 
 /// Maximum UTF-8 byte length of an accountable-person identifier.
@@ -165,13 +167,32 @@ fn prepared_intent_digest<X>(
     };
     // Exact spelling: the text a call writes is kept as written, so its
     // commitment must not identify Unicode-equivalent spellings.
-    let hex = norn_ir::canonical::domain_hash_exact_hex(PREPARED_INTENT_DOMAIN, &canonical)
-        .map_err(|error| {
-            ActionRefusal::Decision(DecisionRefusal::InvalidOutput {
-                reason: format!("failed to compute prepared intent digest: {error}"),
-            })
-        })?;
+    let exact = norn_ir::canonical::canonical_json_exact_of(&canonical).map_err(|error| {
+        ActionRefusal::Decision(DecisionRefusal::InvalidOutput {
+            reason: format!("failed to compute prepared intent digest: {error}"),
+        })
+    })?;
+    let hex = HashProfile::Norn1.hash_canonical_bytes(&[PREPARED_INTENT_DOMAIN, &exact].concat());
     Ok(format!("sha256:{hex}"))
+}
+
+/// What preparing a call without committing it found
+/// ([`prepare_action_intent`]).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Prepared {
+    /// The call reaches its commit point: the commit it would make.
+    Commit(PreparedIntent),
+    /// The same call already committed: its replay, which commits nothing.
+    Replayed(Box<ActionOutcome>),
+}
+
+/// The commit a call would make now, as an approval of it is granted for.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PreparedIntent {
+    /// Its prepared-intent digest, which the approved commit must match.
+    pub digest: String,
+    /// Its fact writes, the call's own record included.
+    pub writes: Vec<FactWrite>,
 }
 
 /// Bind `commit` to the call's approval, or capture its digest for
@@ -183,14 +204,17 @@ fn prepared_intent_digest<X>(
 pub(super) fn bind_approved_intent<X>(
     call: &ActionCall<'_>,
     commit: &PreparedCommit<'_>,
-    capture: Option<&mut Option<String>>,
+    capture: Option<&mut Option<PreparedIntent>>,
 ) -> Result<(), ActionRefusal<X>> {
     if capture.is_none() && call.approved_intent.is_none() {
         return Ok(());
     }
     let digest = prepared_intent_digest(call, commit)?;
     if let Some(slot) = capture {
-        *slot = Some(digest);
+        *slot = Some(PreparedIntent {
+            digest,
+            writes: commit.writes.to_vec(),
+        });
         return Err(ActionRefusal::TargetNotFound);
     }
     if call.approved_intent.as_deref() == Some(digest.as_str()) {
@@ -319,8 +343,9 @@ where
     }
 }
 
-/// The digest of the commit `call` would make now, without mutating `host`:
-/// what an approval of the call is granted for and bound to at commit.
+/// What `call` would do now, without mutating `host`: the commit it would
+/// make, which an approval of the call is granted for and bound to at commit,
+/// or the replay of the same call already committed.
 ///
 /// # Errors
 ///
@@ -331,28 +356,7 @@ pub fn prepare_action_intent<H>(
     catalog: &TypeCatalog<'_>,
     call: &ActionCall<'_>,
     authorizer: &dyn ActionAuthorizer,
-) -> Result<String, ActionRefusal<H::Error>>
-where
-    H: CellHost + ?Sized,
-    H::Event: From<FactEvent>,
-    H::Command: From<JsonObject>,
-    H::Input: From<JsonObject>,
-{
-    prepare_action_intent_with_limits(host, catalog, call, authorizer, &EnvelopeLimits::V1)
-}
-
-/// [`prepare_action_intent`] under explicit per-decision envelope limits.
-///
-/// # Errors
-///
-/// Returns any [`ActionRefusal`] raised before commit.
-pub fn prepare_action_intent_with_limits<H>(
-    host: &H,
-    catalog: &TypeCatalog<'_>,
-    call: &ActionCall<'_>,
-    authorizer: &dyn ActionAuthorizer,
-    limits: &EnvelopeLimits,
-) -> Result<String, ActionRefusal<H::Error>>
+) -> Result<Prepared, ActionRefusal<H::Error>>
 where
     H: CellHost + ?Sized,
     H::Event: From<FactEvent>,
@@ -368,16 +372,14 @@ where
         authorizer,
         None,
         super::types::EnvelopePolicy {
-            limits,
+            limits: &EnvelopeLimits::V1,
             meter: None,
             capture: Some(&mut captured),
         },
     );
     match (captured, outcome) {
-        (Some(digest), _) => Ok(digest),
+        (Some(intent), _) => Ok(Prepared::Commit(intent)),
+        (None, Ok(replayed)) => Ok(Prepared::Replayed(Box::new(replayed))),
         (None, Err(refusal)) => Err(refusal),
-        (None, Ok(_replayed)) => Err(ActionRefusal::IdempotencyConflict {
-            key: call.idempotency_key.clone(),
-        }),
     }
 }

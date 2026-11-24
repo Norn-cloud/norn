@@ -902,5 +902,5 @@ pub(super) struct Pending {
 pub(super) struct EnvelopePolicy<'a> {
     pub(super) limits: &'a EnvelopeLimits,
     pub(super) meter: Option<&'a mut TurnEnvelopeMeter>,
-    pub(super) capture: Option<&'a mut Option<String>>,
+    pub(super) capture: Option<&'a mut Option<super::approval::PreparedIntent>>,
 }
