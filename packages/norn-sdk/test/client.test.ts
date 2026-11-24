@@ -113,3 +113,12 @@ test("route templates fill in one pass and refuse a missing or unclosed paramete
   expect(() => fillRoute(hostile, {})).toThrow()
   expect(performance.now() - started).toBeLessThan(1_000)
 })
+
+test("a success the route declares without content has no document, never an error", async () => {
+  const { fetch } = cell(202, "")
+  const client = createNornClient({ baseUrl: "https://cell.example", scope, fetch })
+  const accepted = await client.post("/v1/mcp", { body: { jsonrpc: "2.0", method: "notifications/initialized" } as never })
+  expect(accepted.status).toBe(202)
+  expect(accepted.document).toBeUndefined()
+  expect(accepted.numbers.size).toBe(0)
+})

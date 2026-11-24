@@ -36,6 +36,7 @@ export function numberTexts(source: string): ReadonlyMap<string, string> {
     if (first === '"') return stringEnd(source, at)
     if (first === "{" || first === "[") {
       const close = first === "{" ? "}" : "]"
+      const seen = new Set<string>()
       let index = space(source, at + 1)
       for (let position = 0; source[index] !== close; position += 1) {
         let token = String(position)
@@ -46,6 +47,12 @@ export function numberTexts(source: string): ReadonlyMap<string, string> {
           index = space(source, keyEnd)
           if (source[index] !== ":") malformed()
           index += 1
+          // A repeated member replaces the earlier one, as `JSON.parse` keeps the last: forget its numbers.
+          if (seen.has(token)) {
+            const at = `${pointer}/${token}`
+            for (const key of [...texts.keys()]) if (key === at || key.startsWith(`${at}/`)) texts.delete(key)
+          }
+          seen.add(token)
         }
         index = space(source, value(index, `${pointer}/${token}`))
         if (source[index] === ",") index = space(source, index + 1)

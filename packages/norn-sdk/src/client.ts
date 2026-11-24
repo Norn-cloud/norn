@@ -215,6 +215,8 @@ export function createNornClient(options: NornClientOptions): NornClient {
       throw new NornUnavailableError(0, null, undefined, { cause: error })
     }
     if (response.ok) {
+      // A success the route declares without content (`202` to a notification) has no document.
+      if (text.trim() === "") return { status: response.status, document: undefined as T, numbers: new Map(), text, cacheControl: response.headers.get("cache-control"), etag: response.headers.get("etag") }
       let exact
       try { exact = readExact<T>(text) } catch { throw new NornUnavailableError(response.status, text, "The cell's answer was not a document.") }
       return { status: response.status, ...exact, text, cacheControl: response.headers.get("cache-control"), etag: response.headers.get("etag") }

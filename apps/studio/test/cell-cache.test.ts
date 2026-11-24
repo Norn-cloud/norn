@@ -47,6 +47,8 @@ test("only what the server marks storable is kept: a positive max-age, without n
   expect(storableFor("private")).toBeNull()
   expect(storableFor("private, max-age=60")).toBe(60_000)
   expect(storableFor("Max-Age=5, Public")).toBe(5_000)
+  expect(storableFor('private, max-age=60, no-cache="Set-Cookie"')).toBeNull()
+  expect(storableFor("private, max-age=\"60\"")).toBeNull()
 })
 
 test("marked or withheld values are never kept, in the contract's own words", () => {
@@ -139,4 +141,49 @@ test("a scope change forgets the previous scope's documents; a sign-out forgets 
 test("a runtime without IndexedDB keeps nothing", async () => {
   await noStorage.set("k", { route: ROUTE, status: 200, text: "{}", savedAt: 0, expiresAt: Number.MAX_SAFE_INTEGER })
   expect(await noStorage.get("k")).toBeUndefined()
+})
+
+test("a kept copy never overwrites an answer that arrived while storage was read", async () => {
+  const storage = memory()
+  const { options: kept } = await read(storage, record(1), "private, max-age=60")
+  const stored = storage.entries.get(cellCacheKey(scope, kept.queryKey))
+  let releaseStorage: (value: StoredDocument | undefined) => void = () => {}
+  const slow: CellCacheStorage = { ...storage, get: () => new Promise((resolve) => { releaseStorage = resolve }) }
+  const client = new QueryClient()
+  let releaseRead: (response: Response) => void = () => {}
+  const options = cellQueryOptions(client, ROUTE, params, {
+    scope, persist: true, persistence: cellPersistence(slow, restoreDocument),
+    fetch: () => new Promise<Response>((resolve) => { releaseRead = resolve }),
+  })
+  const reading = client.fetchQuery(options).catch((error: unknown) => error)
+  let listener: Parameters<LiveSource["subscribe"]>[1] = () => {}
+  attachLive({ client, live: { subscribe: (_, next) => { listener = next; return () => {} } }, scope, route: ROUTE, queryKey: options.queryKey, path: cellPath(ROUTE, scope, params) })
+  listener({ status: 403, digest: "denied", body: { code: "authz.denied", category: "permission", message: "denied" }, numbers: new Map() })
+  releaseStorage(stored)
+  await Bun.sleep(5)
+  expect(client.getQueryState(options.queryKey)?.data).toBeUndefined()
+  // The read itself starts after the push, so its answer is the newer one.
+  releaseRead(new Response('{"format":"norn/refusal@2","retryable":false,"reason":null,"code":"authz.denied","category":"permission","message":"denied","explanation":"x"}', { status: 403 }))
+  await reading
+  expect(client.getQueryState(options.queryKey)?.data).toBeUndefined()
+  expect(storage.entries.size).toBe(0)
+})
+
+test("a refusal forgets the kept copy; an unreachable cell keeps it", async () => {
+  const storage = memory()
+  const { options } = await read(storage, record(1), "private, max-age=60")
+  const key = cellCacheKey(scope, options.queryKey)
+  const offline = cellQueryOptions(new QueryClient(), ROUTE, params, {
+    scope, persist: true, persistence: cellPersistence(storage, restoreDocument),
+    fetch: async () => { throw new TypeError("network down") },
+  })
+  await new QueryClient().fetchQuery(offline).catch(() => undefined)
+  expect(storage.entries.has(key)).toBe(true)
+  const refusing = new QueryClient()
+  const denied = cellQueryOptions(refusing, ROUTE, params, {
+    scope, persist: true, persistence: cellPersistence(storage, restoreDocument),
+    fetch: async () => new Response('{"format":"norn/refusal@2","retryable":false,"reason":null,"code":"authz.denied","category":"permission","message":"denied","explanation":"x"}', { status: 403 }),
+  })
+  await refusing.fetchQuery(denied).catch(() => undefined)
+  expect(storage.entries.has(key)).toBe(false)
 })

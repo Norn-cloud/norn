@@ -1,5 +1,5 @@
 import { hashKey, type Query, type QueryClient, type QueryKey, type QueryPersister } from "@tanstack/react-query"
-import { sameStudioScope, studioScopeKey, type StudioScope } from "./definitions.ts"
+import { CellUnavailable, sameStudioScope, studioScopeKey, type StudioScope } from "./definitions.ts"
 
 /**
  * The persisted cell cache (#1374): documents kept across reloads so a page can show its last
@@ -52,10 +52,14 @@ export const cellCacheKey = (scope: StudioScope, queryKey: QueryKey): string => 
 /** How long the server lets a client keep a document, from its `Cache-Control`; null when it may not be kept. */
 export function storableFor(cacheControl: string | null): number | null {
   if (cacheControl === null) return null
-  const directives = cacheControl.toLowerCase().split(",").map((directive) => directive.trim())
-  if (directives.includes("no-store") || directives.includes("no-cache")) return null
-  const maxAge = directives.map((directive) => /^max-age=(\d+)$/.exec(directive)?.[1]).find((value) => value !== undefined)
-  const seconds = maxAge === undefined ? 0 : Number(maxAge)
+  // Directive names compare without their arguments: `no-cache="Set-Cookie"` is still `no-cache`.
+  const directives = cacheControl.toLowerCase().split(",").map((directive) => {
+    const [name = "", argument] = directive.split("=", 2)
+    return { name: name.trim(), argument: argument?.trim() }
+  })
+  if (directives.some(({ name }) => name === "no-store" || name === "no-cache")) return null
+  const maxAge = directives.find(({ name }) => name === "max-age")?.argument
+  const seconds = maxAge !== undefined && /^\d+$/.test(maxAge) ? Number(maxAge) : 0
   return seconds > 0 ? seconds * 1000 : null
 }
 
@@ -104,6 +108,14 @@ export interface CellPersistence {
   readonly storage: CellCacheStorage
 }
 
+/**
+ * Whether a failed read says nothing about the document: the cell could not be reached, timed out
+ * or failed (the kept copy may still be shown). Any other failure is the cell's answer (a refusal,
+ * a route it does not serve), and the kept copy is forgotten.
+ */
+const transient = (error: unknown): boolean =>
+  error instanceof CellUnavailable && (error.status === 0 || error.status >= 500 || error.timedOut === true)
+
 /** The query key's scope: cell query keys are `[route, orgId, environmentId, params]`. */
 function scopeOfKey(queryKey: QueryKey): StudioScope | null {
   const [route, orgId, environmentId] = queryKey
@@ -128,9 +140,12 @@ export function cellPersistence(storage: CellCacheStorage, restore: (stored: Sto
   }
   const persister = (async (queryFn, context, query: Query) => {
     const scope = scopeOfKey(context.queryKey)
-    if (scope !== null && query.state.data === undefined) {
+    // Only a read that never had an answer (a fresh page) shows a kept copy, and only when nothing
+    // (a push, a refusal) answered while storage was read.
+    const untouched = () => query.state.dataUpdateCount === 0 && query.state.errorUpdateCount === 0 && query.state.data === undefined && query.state.error == null
+    if (scope !== null && untouched()) {
       const stored = await storage.get(cellCacheKey(scope, context.queryKey)).catch(() => undefined)
-      if (stored !== undefined && stored.expiresAt > now()) {
+      if (stored !== undefined && stored.expiresAt > now() && untouched()) {
         try {
           query.setState({ data: restore(stored), dataUpdatedAt: stored.savedAt, status: "success", error: null })
         } catch {
@@ -138,7 +153,13 @@ export function cellPersistence(storage: CellCacheStorage, restore: (stored: Sto
         }
       }
     }
-    const result = await queryFn(context)
+    let result: unknown
+    try {
+      result = await queryFn(context)
+    } catch (error) {
+      if (scope !== null && !transient(error)) await storage.delete(cellCacheKey(scope, context.queryKey)).catch(() => undefined)
+      throw error
+    }
     const route = context.queryKey[0]
     if (scope !== null && typeof route === "string") await write(scope, context.queryKey, route, result as PersistableDocument)
     return result

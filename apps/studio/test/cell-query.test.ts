@@ -166,6 +166,22 @@ test("a refusal pushed while a read is in flight wins over the older read", asyn
   expect(client.getQueryState(options.queryKey)?.data).toBeUndefined()
 })
 
+test("a push wins over a read that fails after it", async () => {
+  const client = new QueryClient()
+  let fail: (error: Error) => void = () => {}
+  const cell = httpCell(() => new Promise<Response>((_, reject) => { fail = reject }))
+  const options = cellQueryOptions(client, ROUTE, params, { scope, fetch: cell.fetch })
+  const reading = client.fetchQuery(options)
+  const socket = liveCell()
+  const path = cellPath(ROUTE, scope, params)
+  attachLive({ client, live: socket.live, scope, route: ROUTE, queryKey: options.queryKey, path })
+  socket.push(path, 200, "d2", record(2, "12"))
+  while (cell.asked.length === 0) await Bun.sleep(1)
+  fail(new TypeError("network down"))
+  expect((await reading).document.version).toBe(2)
+  expect(client.getQueryState(options.queryKey)?.status).toBe("success")
+})
+
 test("a live refusal leaves the read standing and is reported to the page", async () => {
   const client = new QueryClient()
   const { options } = await readOnce(client)

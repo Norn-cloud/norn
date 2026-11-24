@@ -32,3 +32,10 @@ test("client frames encode to the protocol's wire text", () => {
   // @ts-expect-error A subscription names its path.
   void encodeLiveMessage({ type: "subscribe", id: "s1" })
 })
+
+test("a repeated member keeps only the numbers JSON.parse keeps: the last", () => {
+  const frame = parseLiveFrame('{"type":"snapshot","id":"s1","status":200,"digest":"abc","body":{"value":1.50,"value":null,"nested":{"a":2.0},"nested":{"b":3.00}}}')
+  if (frame === null || !("numbers" in frame)) throw new Error("expected a snapshot")
+  expect(frame.message.body).toEqual({ value: null, nested: { b: 3 } })
+  expect([...frame.numbers]).toEqual([["/nested/b", "3.00"]])
+})

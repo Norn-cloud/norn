@@ -147,18 +147,21 @@ export function cellQueryOptions<P extends GetRoute>(client: QueryClient, route:
       const hash = hashKey(queryKey)
       const before = pushCount(client, hash)
       let read: NornDocument<unknown>
+      // A push that landed while this read was in flight is newer than whatever the read returns.
+      const pushedSince = (): CellData<P> | undefined => {
+        if (pushCount(client, hash) === before) return undefined
+        const pushed = client.getQueryState<CellData<P>, Error>(queryKey)
+        if (pushed?.error != null) throw pushed.error
+        return pushed?.data
+      }
       try {
         read = await (studioCellClient(config.scope, config.fetch).get as unknown as LooseCall)(route, { ...params, signal })
       } catch (error) {
+        const pushed = pushedSince()
+        if (pushed !== undefined) return pushed
         throw studioError(error, what)
       }
-      // A push landed while this read was in flight: the pushed answer (a document or a refusal) is newer.
-      if (pushCount(client, hash) !== before) {
-        const pushed = client.getQueryState<CellData<P>, Error>(queryKey)
-        if (pushed?.data !== undefined) return pushed.data
-        if (pushed?.error != null) throw pushed.error
-      }
-      return asDocument(read)
+      return pushedSince() ?? asDocument(read)
     },
   })
 }
@@ -201,7 +204,10 @@ export function attachLive(options: {
     }
     countPush(client, hash)
     const query: Query | undefined = client.getQueryCache().find({ queryKey, exact: true })
-    query?.setState({ status: "error", error: answerError(snapshot.status, snapshot.body, options.what ?? route), data: undefined, errorUpdatedAt: Date.now(), fetchStatus: "idle" })
+    if (query !== undefined) {
+      const error = answerError(snapshot.status, snapshot.body, options.what ?? route)
+      query.setState({ status: "error", error, data: undefined, errorUpdatedAt: Date.now(), errorUpdateCount: query.state.errorUpdateCount + 1, fetchStatus: "idle" })
+    }
     void options.persistence?.write(scope, queryKey, route, { status: snapshot.status, document: snapshot.body, text: null, cacheControl: null })
   }, options.onRefused ? { onRefused: options.onRefused } : undefined)
 }
