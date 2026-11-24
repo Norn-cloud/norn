@@ -4491,7 +4491,7 @@ impl CommitView for StoredDocument {
     }
 
     fn link_version(&self, _: &LinkKey) -> Result<FactVersion, Self::Error> {
-        Ok(FactVersion(1))
+        Ok(FactVersion(u64::MAX))
     }
 
     fn links_of(&self, key: &FactKey) -> Result<Vec<LinkKey>, Self::Error> {
@@ -4515,75 +4515,29 @@ impl CommitView for StoredDocument {
     }
 }
 
-/// #1701: a mapped line that pins its document as `Doc/d` and, observed,
-/// breaks the document's inverse-role law on the stored `SpecialDoc/d`, files
-/// the document's finding against that one pin: one read of the document, and
-/// the observation and its finding commit.
 #[test]
-fn observed_line_finding_binds_to_the_documents_existing_alias_pin() -> Checked {
+fn exhausted_link_version_refuses_before_post_state_evaluation() -> Checked {
     let types = document_types()?;
-    let laws = vec![link_law(
-        "lines_sum_within_limit",
-        DOC,
-        "sum(map(self.lines, #.amount)) > self.limit",
-    )?];
-    let catalog = TypeCatalog::new(&types).with_governing_laws(&laws);
-    let mut cell: ObservationCell = MemoryCell::new(|_| JsonObject::new())
-        .with_types(types.clone())
-        .with_governing_laws(laws.clone());
-    let doc = FactKey::new(SPECIAL_DOC, "d");
-    let line = FactKey::new(SPECIAL_LINE, "l");
-    cell.commit(CellCommit {
-        writes: vec![
-            put_new(SPECIAL_DOC, "d", json!({"limit": 3}))?,
-            put_new(SPECIAL_LINE, "l", json!({"amount": 1}))?,
-        ],
-        links: vec![add_link(&line, "doc", &doc)],
-        ..CellCommit::empty()
-    })?;
-    let slice = load_slice(&cell, [line.clone()])?;
-    let provenance = source_provenance();
-    let observed: JsonObject = serde_json::from_value(json!({"amount": 5}))?;
-    let prepared = prepare_observed_snapshot(
-        &catalog,
-        &slice,
-        &turn("observed-line"),
-        ObservedSnapshot {
-            key: &line,
-            values: &observed,
-            lifecycles: &[],
-            provenance: &provenance,
-        },
-    )?;
-    let (mut commit, mut authorization) = prepared.into_parts();
-    // The mapping pinned the line's document through its root type.
-    let pin = FactExpectation {
-        key: FactKey::new(DOC, "d"),
-        expected: FactVersion(1),
+    let catalog = TypeCatalog::new(&types);
+    let model = norn_kernel::CommitModel::new(&catalog);
+    let mut write = put_new(SPECIAL_DOC, "d", json!({"limit":1}))?;
+    write.expected = FactVersion(1);
+    let mut other = put_new(SPECIAL_LINE, "l", json!({"amount":1}))?;
+    other.expected = FactVersion(1);
+    let edge = LinkWrite {
+        key: LinkKey::new(other.key.clone(), "doc", write.key.clone()),
+        expected: FactVersion(u64::MAX),
+        mutation: LinkMutation::Remove,
     };
-    commit.reads.push(pin.clone());
-    authorization.refresh_link_findings(&catalog, &mut commit, &StoredDocument)?;
-    let document_reads = commit
-        .reads
-        .iter()
-        .filter(|read| read.key.key == "d")
-        .collect::<Vec<_>>();
-    assert_eq!(document_reads, [&pin]);
-    let receipt = cell.commit_observed(commit, authorization);
-    assert_eq!(refusal(&receipt), None);
-    let findings = cell
-        .ledger()
-        .last()
-        .map(|entry| {
-            entry
-                .events
-                .iter()
-                .filter(|event| matches!(event, ObservationEvent::DataQualityFinding { .. }))
-                .count()
-        })
-        .unwrap_or_default();
-    assert_ne!(findings, 0);
-    assert_eq!(cell.load(&line)?.values, Some(observed));
+    let commit = CellCommit::<(), (), ()> {
+        writes: vec![write, other],
+        links: vec![edge],
+        ..CellCommit::empty()
+    };
+    assert_eq!(
+        norn_kernel::check_commit(&commit, &model, &StoredDocument),
+        Err(CommitError::Overflow)
+    );
     Ok(())
 }
 

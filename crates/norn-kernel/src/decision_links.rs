@@ -781,47 +781,6 @@ pub(crate) fn reject_hostless_links<X>(output: &DecisionOutput) -> Result<(), De
     ))
 }
 
-/// Select the canonical endpoint objects whose full adjacency must be loaded
-/// before commit checking (required owned collections only). Both outgoing
-/// `to: one` and incoming `from: one` checks use bounded `CommitView` proofs.
-pub(crate) fn collect_link_adjacency_objects<E, C, T, V: crate::CommitView + ?Sized>(
-    commit: &CellCommit<E, C, T>,
-    model: CommitModel<'_, '_>,
-    view: &V,
-    objects: &mut BTreeSet<FactKey>,
-) -> Result<(), crate::CommitError<V::Error>> {
-    for write in &commit.links {
-        let key = model.canonical_link(&write.key);
-        let concrete = match commit
-            .writes
-            .iter()
-            .find(|f| f.key.key == key.source.key && model.canonical(&f.key) == key.source)
-        {
-            Some(fact) => match fact.mutation {
-                FactMutation::Put { .. } => Some(fact.key.object_type.clone()),
-                FactMutation::Delete => None,
-            },
-            None => view
-                .concrete(&key.source)
-                .map_err(crate::CommitError::Host)?,
-        };
-        if let Some(concrete) = concrete
-            && model
-                .catalog
-                .owned_collections(&concrete)
-                .iter()
-                .any(|collection| {
-                    model
-                        .link(&concrete, collection.id.as_str())
-                        .is_some_and(|link| link.cardinality.required)
-                })
-        {
-            objects.insert(key.source);
-        }
-    }
-    Ok(())
-}
-
 /// Bounded outgoing `to: one` cardinality check using `CommitView::has_link_target`
 /// (`LIMIT (excluded.len() + 1)`). Fails closed when the host cannot supply a
 /// bounded proof — never falls back to unbounded `links_of`.
