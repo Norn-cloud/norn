@@ -911,3 +911,322 @@ async fn self_consistent_export_with_wrong_timer_preimage_fails_replay_and_clean
         1
     );
 }
+
+#[tokio::test]
+async fn r3_blocker3_restore_replays_verified_historical_classified_link_batch() {
+    let defs: Vec<norn_ir::ObjectTypeDef> = serde_json::from_value(json!([
+        {
+            "name": "restore.Secret",
+            "properties": [{"id": "ssn", "type": {"kind": "text"}, "markings": ["pii.ssn"]}]
+        },
+        {
+            "name": "restore.Public",
+            "properties": [{"id": "name", "type": {"kind": "text"}}],
+            "links": [{"id": "next", "target": "restore.Public", "cardinality": {"to": "many", "from": "many"}}]
+        }
+    ]))
+    .expect("definitions");
+    let classified_model = Model::from_definitions(&defs, &[]).expect("model");
+    let dir = tempfile::tempdir().expect("directory");
+    let export = dir.path().join("export");
+    let target = dir.path().join("restored.sqlite");
+
+    let mut store = CellStore::open_in_memory(classified_model.clone()).expect("store");
+    store.bind("scope", "org_demo/dev").expect("bind");
+    store
+        .commit(&CommitBatch {
+            writes: vec![
+                FactWriteRow::Put {
+                    object_type: "restore.Secret".to_owned(),
+                    key: "S1".to_owned(),
+                    values: BTreeMap::from([("ssn".to_owned(), rv(json!("999-00-1111")))]),
+                },
+                FactWriteRow::Put {
+                    object_type: "restore.Public".to_owned(),
+                    key: "P1".to_owned(),
+                    values: BTreeMap::from([("name".to_owned(), rv(json!("p1")))]),
+                },
+                FactWriteRow::Put {
+                    object_type: "restore.Public".to_owned(),
+                    key: "P2".to_owned(),
+                    values: BTreeMap::from([("name".to_owned(), rv(json!("p2")))]),
+                },
+            ],
+            ..batch(1)
+        })
+        .expect("seed");
+
+    let link_change = LinkChange::Add {
+        object_type: "restore.Public".to_owned(),
+        link: "next".to_owned(),
+        source: "P1".to_owned(),
+        target: "P2".to_owned(),
+        values: BTreeMap::new(),
+        target_type: Some("restore.Public".to_owned()),
+    };
+    // Live commit of a classified read + link mutation must still refuse.
+    let classified_batch = CommitBatch {
+        marking_reads: vec![norn_kernel::FactExpectation {
+            key: norn_kernel::FactKey::new("restore.Secret", "S1"),
+            expected: norn_kernel::FactVersion(1),
+        }],
+        links: vec![link_change.clone()],
+        ..batch(2)
+    };
+    assert!(matches!(
+        store.commit(&classified_batch),
+        Err(norn_cell::CellError::MarkingDeclassificationInvalid(_))
+    ));
+
+    // Construct a verified pre-guard historical export record containing the
+    // classified read lineage + link mutation and verify restore replays it.
+    store
+        .commit(&CommitBatch {
+            links: vec![link_change],
+            ..batch(2)
+        })
+        .expect("unclassified link for receipt template");
+    let first = store.export_record(1).expect("journal").expect("first");
+    let mut second = store.export_record(2).expect("journal").expect("second");
+    second.batch = classified_batch;
+    second.receipt.body.request_hash = hash(&second.batch);
+    second.receipt.hash = hash(&second.receipt.body);
+
+    let mut exporter = Exporter::local(&export).expect("exporter");
+    exporter.append(&first).await.expect("append first");
+    exporter.append(&second).await.expect("append second");
+    let manifest = exporter.verify().await.expect("verified manifest");
+
+    CellStore::restore_from(
+        &mut exporter,
+        &target,
+        classified_model.clone(),
+        "org_demo/dev",
+        &manifest.bindings,
+        StoreOptions::default(),
+    )
+    .await
+    .expect("restore must replay verified historical classified link batch");
+    let rebuilt =
+        CellStore::open(&target, classified_model, StoreOptions::default()).expect("open");
+    let links = rebuilt
+        .read()
+        .links("main", "restore.Public", "next", "P1")
+        .expect("links");
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target, "P2");
+}
+
+fn iface_link_model() -> Model {
+    let definitions: Vec<norn_ir::ObjectTypeDef> = [
+        json!({
+            "name": "test.Node",
+            "properties": [],
+            "links": [{
+                "id": "related",
+                "target": "test.Target",
+                "cardinality": {"to": "many", "from": "many"}
+            }]
+        }),
+        json!({"name": "test.TargetA", "implements": ["test.Target"], "properties": []}),
+        json!({"name": "test.TargetChild", "extends": "test.TargetA", "properties": []}),
+        json!({"name": "test.TargetB", "implements": ["test.Target"], "properties": []}),
+    ]
+    .into_iter()
+    .map(|definition| serde_json::from_value(definition).expect("definition"))
+    .collect();
+    let interface = serde_json::from_value(json!({"name": "test.Target", "properties": []}))
+        .expect("interface");
+    Model::from_definitions_with_interfaces(&definitions, &[], &[interface])
+        .expect("interface model")
+}
+
+#[tokio::test]
+async fn r11_restore_round_trips_unmodified_cross_root_unchecked_export() {
+    let iface_model = iface_link_model();
+    let dir = tempfile::tempdir().expect("directory");
+    let export = dir.path().join("export");
+    let target = dir.path().join("restored.sqlite");
+
+    let mut store = CellStore::open_in_memory(iface_model.clone()).expect("store");
+    store.bind("scope", "org_demo/dev").expect("bind");
+    store
+        .commit(&CommitBatch {
+            facts: [
+                ("test.Node", "source"),
+                ("test.TargetChild", "target"),
+                ("test.TargetB", "target"),
+            ]
+            .into_iter()
+            .map(|(object_type, key)| {
+                serde_json::from_value(json!({
+                    "op": "create", "objectType": object_type, "key": key, "values": {}
+                }))
+                .expect("fact")
+            })
+            .collect(),
+            ..batch(1)
+        })
+        .expect("seed objects");
+
+    let add = |seq: u64, target_type: &str| CommitBatch {
+        links: vec![LinkChange::Add {
+            object_type: "test.Node".to_owned(),
+            link: "related".to_owned(),
+            source: "source".to_owned(),
+            target: "target".to_owned(),
+            values: BTreeMap::new(),
+            target_type: Some(target_type.to_owned()),
+        }],
+        ..batch(seq)
+    };
+    let c2 = store.commit(&add(2, "test.TargetA")).expect("TargetA v1");
+    let c3 = store
+        .commit(&add(3, "test.TargetChild"))
+        .expect("TargetChild v2");
+    let c4 = store.commit(&add(4, "test.TargetB")).expect("TargetB v1");
+    assert_eq!(c2.receipt().body.linked[0].version, 1);
+    assert_eq!(c3.receipt().body.linked[0].version, 2);
+    assert_eq!(c4.receipt().body.linked[0].version, 1);
+
+    let mut exporter = Exporter::local(&export).expect("exporter");
+    export_all(&store, &mut exporter).await;
+    let manifest = exporter.verify().await.expect("verified manifest");
+    CellStore::restore_from(
+        &mut exporter,
+        &target,
+        iface_model.clone(),
+        "org_demo/dev",
+        &manifest.bindings,
+        StoreOptions::default(),
+    )
+    .await
+    .expect("unmodified cross-root export must round-trip restore");
+
+    let mut rebuilt = CellStore::open(&target, iface_model, StoreOptions::default()).expect("open");
+    assert_eq!(
+        rebuilt
+            .read()
+            .link_version(
+                "main",
+                "test.Node",
+                "related",
+                "source",
+                "test.TargetB",
+                "target",
+            )
+            .expect("restored TargetB version"),
+        1
+    );
+    let next_b = rebuilt
+        .commit(&add(5, "test.TargetB"))
+        .expect("post-restore TargetB v2");
+    assert_eq!(next_b.receipt().body.linked[0].version, 2);
+}
+
+#[tokio::test]
+async fn r11_restore_round_trips_governed_host_link_tombstone_and_enforces_monotonicity() {
+    use norn_cell::SqliteCell;
+    use norn_ir::JsonObject;
+    use norn_kernel::{
+        CellCommit, CellHost as _, Command, CommitError, FactEvent, FactKey, FactMutation,
+        FactVersion, FactWrite, LinkKey, LinkMutation, LinkWrite,
+    };
+
+    let iface_model = iface_link_model();
+    let dir = tempfile::tempdir().expect("directory");
+    let (export, target) = (
+        dir.path().join("export"),
+        dir.path().join("restored.sqlite"),
+    );
+    let open_cell = |store| {
+        SqliteCell::<FactEvent, JsonObject, JsonObject>::new(
+            store,
+            "org_demo/dev",
+            |cmd: &Command<JsonObject>| cmd.payload.clone(),
+        )
+        .expect("cell")
+    };
+    let mut cell = open_cell(CellStore::open_in_memory(iface_model.clone()).expect("store"));
+    let seed = CellCommit {
+        writes: [
+            ("test.Node", "source"),
+            ("test.TargetChild", "target"),
+            ("test.TargetB", "target"),
+        ]
+        .into_iter()
+        .map(|(ty, key)| FactWrite {
+            key: FactKey::new(ty, key),
+            expected: FactVersion(0),
+            mutation: FactMutation::Put {
+                values: BTreeMap::new(),
+            },
+        })
+        .collect(),
+        ..CellCommit::empty()
+    };
+    cell.commit(seed).expect("seed objects");
+
+    let edge = |ty: &str| {
+        LinkKey::new(
+            FactKey::new("test.Node", "source"),
+            "related",
+            FactKey::new(ty, "target"),
+        )
+    };
+    let (key_a, key_b) = (edge("test.TargetChild"), edge("test.TargetB"));
+    let link_commit = |key: &LinkKey, expected: u64, mutation: LinkMutation| CellCommit {
+        links: vec![LinkWrite {
+            key: key.clone(),
+            expected: FactVersion(expected),
+            mutation,
+        }],
+        ..CellCommit::empty()
+    };
+    let add = || LinkMutation::Add {
+        values: BTreeMap::new(),
+    };
+    for (expected, mutation, next_ver) in
+        [(0, add(), 1), (1, LinkMutation::Remove, 2), (2, add(), 3)]
+    {
+        let receipt = cell
+            .commit(link_commit(&key_a, expected, mutation))
+            .expect("governed link commit");
+        assert_eq!(receipt.linked[0].version, FactVersion(next_ver));
+    }
+
+    let mut exporter = Exporter::local(&export).expect("exporter");
+    export_all(cell.store(), &mut exporter).await;
+    let manifest = exporter.verify().await.expect("verified manifest");
+    CellStore::restore_from(
+        &mut exporter,
+        &target,
+        iface_model.clone(),
+        "org_demo/dev",
+        &manifest.bindings,
+        StoreOptions::default(),
+    )
+    .await
+    .expect("governed host link export must round-trip restore");
+
+    let mut rebuilt =
+        open_cell(CellStore::open(&target, iface_model, StoreOptions::default()).expect("open"));
+    for mutation in [add(), LinkMutation::Remove] {
+        assert!(matches!(
+            rebuilt.commit(link_commit(&key_b, 0, mutation)),
+            Err(CommitError::EffectiveValues { .. })
+        ));
+    }
+    assert!(matches!(
+        rebuilt.commit(link_commit(&key_a, 2, add())),
+        Err(CommitError::LinkConflict {
+            expected: FactVersion(2),
+            current: FactVersion(3),
+            ..
+        })
+    ));
+    let v4 = rebuilt
+        .commit(link_commit(&key_a, 3, add()))
+        .expect("post-restore v4");
+    assert_eq!(v4.linked[0].version, FactVersion(4));
+}

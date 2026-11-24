@@ -118,6 +118,8 @@ mod ontology_registry;
 mod owned_collections;
 #[path = "path_mapping.rs"]
 mod path_mapping;
+#[path = "predicate_slice_and_links.rs"]
+mod predicate_slice_and_links;
 #[path = "property_types.rs"]
 mod property_types;
 #[path = "quantity_ledger.rs"]

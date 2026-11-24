@@ -1467,13 +1467,13 @@ pub struct CommitBatch {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub marking_reference_reads: Vec<norn_kernel::FactExpectation>,
     /// Kernel-proven property operands of exact-version action inputs.
-    /// Identity and occurrence labels always contribute too; unresolved
-    /// properties remain unknown. Full `marking_reads` take precedence.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub marking_property_reads: Vec<(norn_kernel::FactExpectation, Vec<String>)>,
+    /// Predicate filter and window property dependencies evaluated by this turn
+    /// (covers schema and per-row candidate markings even on empty results).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub marking_predicate_reads: Vec<(norn_ir::ObjectTypeName, Vec<String>)>,
     /// Immutable Function input lineage, independent of freshness/CAS.
-    /// Always resolves the exact historical snapshots: a later visibility
-    /// declassification must not reclassify an already dispatched input.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub marking_historical_reads: Vec<norn_kernel::FactExpectation>,
     /// Trusted adapter outputs whose values were recomputed, even when their
@@ -1892,6 +1892,7 @@ type ProvisionIdentity<'a> =
 /// ID-NORMALIZED-RETAINED: only verified-prefix callers select retained input.
 #[derive(Clone, Copy)]
 enum CommitOrigin<'a> {
+    Host,
     Current,
     Provisioning(&'a str, &'a ProvisionIdentity<'a>),
     Retained(&'a crate::export::ExportRecord),
@@ -1905,11 +1906,7 @@ fn preflight_retained(
     install: &DefinitionInstallContext<'_>,
     change: &crate::retained::RetainedDefinitionChange,
 ) -> Result<(), CellError> {
-    // A retained revision rides the governed install but, unless it is a
-    // flow (an automation that installs into the kernel set), never
-    // changes the kernel: its set and receipt are the active ones, so the
-    // new definitions version has the kernel identity of the one before it
-    // (question pins and historical cutoffs compare that identity).
+    // Non-flow retained revisions keep the prior kernel identity.
     let unchanged = previous.is_some_and(|previous| {
         previous.canonical_set == install.input.canonical_set
             && previous.receipt_sha256 == install.input.receipt_sha256
@@ -2327,7 +2324,7 @@ impl<E: SqlEngine> CellStore<E> {
                 Some(installation),
                 None,
                 CommitOrigin::Provisioning(&identity, &fresh_identity),
-                |_reader| Ok::<(), CellError>(()),
+                |_reader| Ok::<_, CellError>(((), None)),
                 &mut |_point| Ok(()),
             )
             .map_err(|error| match error {
@@ -2859,14 +2856,9 @@ impl<E: SqlEngine> CellStore<E> {
         self.commit_probed_unchecked(batch, &mut |_point| Ok(()))
     }
 
-    /// [`Self::commit_unchecked`] with a fault probe called at every [`CommitPoint`]
-    /// (deterministic crash simulation). A probe error before
-    /// [`CommitPoint::Committed`] rolls the transaction back; at
-    /// [`CommitPoint::Committed`] the commit is already durable and the error
-    /// models a crash before the caller is acknowledged.
+    /// [`Self::commit_unchecked`] with a fault probe called at every [`CommitPoint`].
     ///
     /// # Errors
-    ///
     /// Any [`CellError`], including the probe's.
     pub(crate) fn commit_probed_unchecked(
         &mut self,
@@ -2879,35 +2871,37 @@ impl<E: SqlEngine> CellStore<E> {
         }
     }
 
-    /// Commit `batch` after `guard` admits it, inside the same transaction:
-    /// the guard reads exactly the state the commit applies to (the native
-    /// `CellHost` driver runs the kernel's `check_commit` here), and nothing
-    /// can commit in between. An idempotent replay writes nothing and is not
-    /// guarded.
+    /// Commit `batch` after `guard` admits it in the same transaction.
     ///
     /// # Errors
-    ///
-    /// [`GuardedError::Guard`] when the guard refuses; otherwise as
-    /// [`Self::commit_probed_unchecked`].
+    /// [`GuardedError::Guard`] on refusal; otherwise as [`Self::commit_probed_unchecked`].
     pub(crate) fn commit_guarded_unchecked<T: Default, X>(
         &mut self,
         batch: &CommitBatch,
         guard: impl FnOnce(&StoreReader<'_, E>) -> Result<T, X>,
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<(T, CommitOutcome), GuardedError<X>> {
-        self.commit_guarded_inner(batch, None, None, CommitOrigin::Current, guard, probe)
+        self.commit_guarded_inner(
+            batch,
+            None,
+            None,
+            CommitOrigin::Current,
+            |reader| guard(reader).map(|value| (value, None)),
+            probe,
+        )
     }
 
-    // Only the driver supplies this input; verified replay uses record-bound input.
-    // Public/deserialized batches always derive identity from their own contents.
+    // Driver-only input; verified replay uses record-bound input.
     pub(crate) fn commit_guarded_submitted<T: Default, X>(
         &mut self,
         batch: &CommitBatch,
         submitted: Option<&Value>,
-        guard: impl FnOnce(&StoreReader<'_, E>) -> Result<T, X>,
+        guard: impl FnOnce(
+            &StoreReader<'_, E>,
+        ) -> Result<(T, Option<crate::link_guard::VerifiedMappingProof>), X>,
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<(T, CommitOutcome), GuardedError<X>> {
-        self.commit_guarded_inner(batch, None, submitted, CommitOrigin::Current, guard, probe)
+        self.commit_guarded_inner(batch, None, submitted, CommitOrigin::Host, guard, probe)
     }
 
     /// The verified-prefix callers compare the full resulting receipt and journal.
@@ -2920,7 +2914,7 @@ impl<E: SqlEngine> CellStore<E> {
             None,
             record.quantity_input.as_ref(),
             CommitOrigin::Retained(record),
-            |_reader| Ok::<(), CellError>(()),
+            |_reader| Ok::<_, CellError>(((), None)),
             &mut |_point| Ok(()),
         ) {
             Ok(((), outcome)) => Ok(outcome),
@@ -3091,7 +3085,7 @@ impl<E: SqlEngine> CellStore<E> {
             Some(install),
             None,
             origin,
-            |_reader| Ok::<(), CellError>(()),
+            |_reader| Ok::<_, CellError>(((), None)),
             &mut |_point| Ok(()),
         );
         match result {
@@ -3160,7 +3154,9 @@ impl<E: SqlEngine> CellStore<E> {
         installation: Option<DefinitionInstallContext<'_>>,
         submitted: Option<&Value>,
         origin: CommitOrigin<'_>,
-        guard: impl FnOnce(&StoreReader<'_, E>) -> Result<T, X>,
+        guard: impl FnOnce(
+            &StoreReader<'_, E>,
+        ) -> Result<(T, Option<crate::link_guard::VerifiedMappingProof>), X>,
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<(T, CommitOutcome), GuardedError<X>> {
         // A fenced cell commits nothing (#1551 round 4).
@@ -3231,7 +3227,7 @@ impl<E: SqlEngine> CellStore<E> {
             crate::open_checkpoint::check_fence(&self.conn)?;
             let retained = match origin {
                 CommitOrigin::Retained(record) => Some(record),
-                CommitOrigin::Current | CommitOrigin::Provisioning(..) => None,
+                CommitOrigin::Host | CommitOrigin::Current | CommitOrigin::Provisioning(..) => None,
             };
             let actual_version = active_definition_version(&self.conn)?;
             let (version, install_record, synthetic_batch) = if let Some(install) = &installation {
@@ -3351,7 +3347,7 @@ impl<E: SqlEngine> CellStore<E> {
             if effective_batch.logical_time < reader.clock_floor()? {
                 return Err(CellError::Quantity(norn_kernel::quantity::QuantityError::ClockRegression).into());
             }
-            let admitted = {
+            let (admitted, mapping_proof) = {
                 // The guard only reads: a plan it proves holds for every
                 // bundle it checks (INGEST-DERIVE-ONCE-1).
                 let _pinned = crate::mapping_bundle::PinnedPlans::open(&self.mapping_plans);
@@ -3472,7 +3468,11 @@ impl<E: SqlEngine> CellStore<E> {
             )?;
             let quantity_result = writer.apply_quantity()?;
             probe(CommitPoint::FactsApplied)?;
-            let linked = writer.apply_links()?;
+            let linked = writer.apply_links(crate::link_guard::LinkGuardMode::from_origin(
+                matches!(origin, CommitOrigin::Retained(_)),
+                matches!(origin, CommitOrigin::Host),
+                mapping_proof,
+            ))?;
             probe(CommitPoint::LinksApplied)?;
             if let Some(validate) = self.candidate_validator.get() {
                 let validator_disputes = RefCell::default();
@@ -3556,7 +3556,7 @@ impl<E: SqlEngine> CellStore<E> {
                 // A replayed record keeps the version that first wrote it.
                 match origin {
                     CommitOrigin::Retained(record) => record.storage_version,
-                    CommitOrigin::Current | CommitOrigin::Provisioning(..) => {
+                    CommitOrigin::Host | CommitOrigin::Current | CommitOrigin::Provisioning(..) => {
                         Some(crate::engine_release::STORAGE_VERSION)
                     }
                 },
@@ -4228,7 +4228,7 @@ mod journal_proof_tests {
             None,
             None,
             CommitOrigin::Current,
-            |_reader| Ok::<(), CellError>(()),
+            |_reader| Ok::<_, CellError>(((), None)),
             &mut rebind,
         );
         assert!(
@@ -4251,7 +4251,7 @@ mod journal_proof_tests {
                 None,
                 None,
                 CommitOrigin::Current,
-                |_reader| Ok::<(), CellError>(()),
+                |_reader| Ok::<_, CellError>(((), None)),
                 &mut |_point| Ok(()),
             )
             .expect("authentic commit");
@@ -4288,7 +4288,7 @@ mod journal_proof_tests {
                 None,
                 None,
                 CommitOrigin::Current,
-                |_reader| Ok::<(), CellError>(()),
+                |_reader| Ok::<_, CellError>(((), None)),
                 &mut |_point| Ok(()),
             )
             .expect("the overlapping event commits");

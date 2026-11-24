@@ -37,6 +37,7 @@ test/new-developer.test.ts
 test/ontology-pack.test.ts
 test/pack-link.test.ts
 test/packaging.test.ts
+test/predicate-slice-and-owned-collections.test.ts
 test/profile-corpus.test.ts
 test/purchase-requests.test.ts
 test/question.test.ts

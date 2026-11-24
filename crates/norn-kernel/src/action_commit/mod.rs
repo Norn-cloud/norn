@@ -34,6 +34,7 @@ mod automation_input;
 mod input;
 mod owned_rows;
 mod parameter;
+mod predicate;
 mod receipt;
 mod series;
 mod slice;
@@ -52,10 +53,9 @@ use norn_ir::{ActionEffectProgram, FactChange, ObjectTypeName};
 use crate::action::{ActionCommandRejection, ActionCommandShape, check_action_command};
 use crate::cell_host::{
     CellCommit, CellHost, CommitError, FactKey, FactMutation, FactState, FactWrite, JsonObject,
-    LinkKey, LinkMutation, LinkWrite,
 };
 use crate::decision_commit::{
-    DecisionRefusal, FactEvent, TypeCatalog, prepare_decision_with_limits, widen_effect,
+    DecisionRefusal, FactEvent, TypeCatalog, prepare_decision_with_links_validated, widen_effect,
 };
 use crate::envelope::{EnvelopeCounts, TurnEnvelopeMeter, check_decision_envelope};
 use crate::limits::EnvelopeLimits;
@@ -423,6 +423,7 @@ where
         recorded,
         record,
         series_candidate,
+        decision_links,
         receipt,
     } = pending;
     let generated_key = series_candidate.is_some();
@@ -446,56 +447,12 @@ where
     )?;
     let output = norn_ir::DecisionOutput {
         facts: changes,
+        links: decision_links.clone(),
         commands,
         timers: Vec::new(),
     };
-    let mut prepared = prepare_decision_with_limits(catalog, &slice, &call.turn, &output, limits)?;
-    let mut created_links = Vec::new();
-    // TXN-ATOMIC-1: links only connect captured or proposed endpoints; no extra transaction.
-    for binding in &call.action.create_links {
-        let linked_target = action_link_endpoint::<H::Error>(
-            &effective_input,
-            &binding.target_type,
-            &binding.target_id_field,
-        )?;
-        let source = match &binding.source {
-            Some(source) => action_link_endpoint::<H::Error>(
-                &effective_input,
-                &source.object_type,
-                &source.id_field,
-            )?,
-            None => target.clone(),
-        };
-        if crate::CommitModel::new(catalog)
-            .link(&source.object_type, &binding.link)
-            .is_none_or(|link| link.target.as_str() != binding.target_type)
-            || !prepared.writes.iter().any(|write| {
-                write.key == source && matches!(write.mutation, FactMutation::Put { .. })
-            })
-            || !(slice.get(&linked_target).is_some_and(FactState::exists)
-                || prepared.writes.iter().any(|write| {
-                    write.key == linked_target && matches!(write.mutation, FactMutation::Put { .. })
-                }))
-            || (binding.source.is_some() && call.action.synchronous_rule.is_none())
-            || !created_links.iter().all(|write: &LinkWrite| {
-                write.key != LinkKey::new(source.clone(), &binding.link, linked_target.clone())
-            })
-        {
-            return Err(crate::synchronous_rule::refused(
-                "a link requires a written source and a captured or proposed target",
-            ));
-        }
-        let key = LinkKey::new(source, &binding.link, linked_target);
-        let expected = host.load_link(&key).map_err(host_failure)?.version;
-        created_links.push(LinkWrite {
-            key,
-            expected,
-            mutation: LinkMutation::Add {
-                values: JsonObject::new(),
-            },
-        });
-    }
-
+    let mut prepared =
+        prepare_decision_with_links_validated(catalog, &slice, &call.turn, &output, limits)?;
     for write in &mut prepared.writes {
         let key = write.key.clone();
         authorize_proposed_target(
@@ -507,6 +464,20 @@ where
             std::slice::from_mut(write),
         )?;
     }
+    let created_links = crate::decision_links::prepare_action_commit_links(
+        host,
+        &crate::decision_links::ActionCommitLinks {
+            catalog,
+            call,
+            effective_input: &effective_input,
+            authorizer,
+            target: &target,
+            slice: &slice,
+            prepared_writes: &prepared.writes,
+            decision_links: &decision_links,
+            limits,
+        },
+    )?;
     let record = action_record_with_transition(record, &prepared.events);
     // Transition metadata is added after the earlier precondition/evidence
     // checks, so include the finalized receipt in the aggregate output bound.
@@ -517,7 +488,7 @@ where
     }
     let action_call = format!("{}/{}", call.action.action_id, call.idempotency_key);
     append_command_events(&mut events, &prepared.effects, &action_call);
-    counts.events = events.len();
+    counts.events = events.len().saturating_add(created_links.len());
     check_decision_envelope(limits, counts).map_err(|exceeded| {
         ActionRefusal::Decision(DecisionRefusal::EnvelopeExceeded {
             kind: exceeded.kind,

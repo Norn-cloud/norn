@@ -108,14 +108,23 @@ export function sameStudioScope(a: StudioScope | null | undefined, b: StudioScop
 
 /** Read the active workspace and its cell from the signed-in server session. */
 export async function readStudioScope(fetcher: Fetch = (input, init) => fetch(input, init), signal?: AbortSignal): Promise<StudioScope | null> {
+  signal?.throwIfAborted()
   let response: Response
-  try { response = await fetcher("/api/me", { headers: { accept: "application/json" }, ...(signal === undefined ? {} : { signal }) }) }
+  try { response = await fetcher("/api/me", { headers: { accept: "application/json" }, signal }) }
   catch (error) {
-    if (signal?.aborted) throw error
+    signal?.throwIfAborted()
+    if (error instanceof Error && error.name === "AbortError") throw error
     throw new CellUnavailable(0)
   }
+  signal?.throwIfAborted()
   if (!response.ok) throw new CellUnavailable(response.status)
-  const parsed = accountScope.safeParse(await response.json().catch(() => null))
+  const body: unknown = await response.json().catch((error: unknown) => {
+    signal?.throwIfAborted()
+    if (error instanceof Error && error.name === "AbortError") throw error
+    return null
+  })
+  signal?.throwIfAborted()
+  const parsed = accountScope.safeParse(body)
   if (!parsed.success) throw new StudioScopeError("The server did not report the active workspace scope.")
   const { organization, environmentId } = parsed.data
   return organization === null || environmentId === null ? null : { orgId: organization.id, environmentId }
