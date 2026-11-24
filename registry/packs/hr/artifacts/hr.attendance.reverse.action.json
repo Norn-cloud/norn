@@ -34,7 +34,7 @@
         "targetType": "hr.AttendanceEvent"
       }
     ],
-    "description": "Post a create-only reversing AttendanceEvent linked via `reverses` to a prior AttendanceEvent with matching provider, receiver, and labor capacity (HR-AT-01, HR-AT-04).",
+    "description": "Post a create-only reversing AttendanceEvent linked via `reverses` to a prior AttendanceEvent with inverse REA action (produce <-> consume), exact quantity/unit/currency match, and matching provider, receiver, and labor capacity (HR-AT-01, HR-AT-04).",
     "effectProgram": {
       "entityArtifactId": "hr.AttendanceEvent.entity",
       "entityArtifactVersion": "0.1.0",
@@ -50,6 +50,12 @@
       "additionalProperties": false,
       "properties": {
         "action": {
+          "enum": [
+            "transfer_ownership",
+            "transfer_custody",
+            "consume",
+            "produce"
+          ],
           "type": "string"
         },
         "currency": {
@@ -133,7 +139,8 @@
       "type": "object"
     },
     "preconditions": [
-      "input.quantity > 0",
+      "(input.quantity > 0) and (input.quantity == slice.original.quantity)",
+      "((((((slice.original.action == 'produce') and (input.action == 'consume')) or ((slice.original.action == 'consume') and (input.action == 'produce'))) and ((input.unit == null) == (slice.original.unit == null))) and ((input.unit ?? '') == (slice.original.unit ?? ''))) and ((input.currency == null) == (slice.original.currency == null))) and ((input.currency ?? '') == (slice.original.currency ?? ''))",
       "((((input.id != input.reversesEventId) and (slice.original.id == input.reversesEventId)) and (input.providerId in map(slice.original_provider as p, p.id))) and (input.receiverId in map(slice.original_receiver as r, r.id))) and (input.resourceId in map(slice.original_resource as c, c.id))"
     ],
     "scopeRequired": [

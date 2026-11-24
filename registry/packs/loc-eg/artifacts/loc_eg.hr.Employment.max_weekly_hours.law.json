@@ -14,7 +14,7 @@
   "name": "Egypt Labor Law No. 14 of 2025 48h weekly cap on Egyptian hr.Employment",
   "namespace": "loc_eg",
   "payload": {
-    "condition": "((self.jurisdiction_code ?? '') == 'EG') and (date(self.effective_from) >= date('2025-09-01'))",
+    "condition": "((self.jurisdiction_code ?? '') == 'EG') and ((self.effective_to == null) or (date(self.effective_to ?? self.effective_from) >= date('2025-09-01')))",
     "id": "loc_eg.hr.Employment.max_weekly_hours",
     "lawVersion": "0.1",
     "modality": {
@@ -25,7 +25,7 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/loc-eg/egypt.ts"
     },
-    "rationale": "Conjunctive Egypt Labor Law No. 14 of 2025 (effective 2025-09-01, Arts. 117-123) overlay capping contracted regular weekly hours on Egyptian hr.Employment (jurisdiction_code == 'EG' and effective_from >= 2025-09-01) at 48h.",
+    "rationale": "Conjunctive Egypt Labor Law No. 14 of 2025 (effective 2025-09-01, Arts. 117-123) overlay capping contracted regular weekly hours at 48h on Egyptian hr.Employment active on or after 2025-09-01 (jurisdiction_code == 'EG' and (effective_to == null or effective_to >= 2025-09-01)), including open-ended contracts that began before 2025-09-01.",
     "response": {
       "expression": "self.max_weekly_hours <= 48",
       "kind": "predicate"

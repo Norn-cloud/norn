@@ -1088,6 +1088,19 @@
       },
       {
         "label": {
+          "ar": "أشهر الخدمة المؤهلة"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "hr.LeaveAllocation",
+          "property": "qualifying_service_months"
+        }
+      },
+      {
+        "label": {
           "ar": "من تاريخ"
         },
         "review": {
@@ -4145,6 +4158,19 @@
           "kind": "property",
           "objectType": "loc_eg.LaborProfile",
           "property": "currency"
+        }
+      },
+      {
+        "label": {
+          "ar": "أعمال متقطعة أو تحضيرية"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "loc_eg.LaborProfile",
+          "property": "intermittent_or_preparatory_work"
         }
       },
       {

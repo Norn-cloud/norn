@@ -75,6 +75,16 @@
           "description": "Organizational unit executing this payroll run.",
           "id": "unit",
           "target": "org.OrgUnit"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "description": "Employer monetary payroll fund disbursing this payroll run.",
+          "id": "fund",
+          "target": "hr.PayrollFund"
         }
       ],
       "name": "hr.PayrollRun",

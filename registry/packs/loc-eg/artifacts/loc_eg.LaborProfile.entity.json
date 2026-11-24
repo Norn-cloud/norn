@@ -16,7 +16,7 @@
   "payload": {
     "entityVersion": "2.0",
     "objectType": {
-      "description": "Governed Egyptian labor parameters under Egypt Labor Law No. 14 of 2025 (effective 2025-09-01, Arts. 117-124): Africa/Cairo timezone, EGP currency, max 48h/wk regular, max 8h/day ordinary, max 10h workplace presence, >= 24h weekly rest, annual leave tiers (15d / 21d / 30d / 45d), and >= 7d hazardous/remote supplement.",
+      "description": "Governed Egyptian labor parameters under Egypt Labor Law No. 14 of 2025 (effective 2025-09-01, Arts. 117-124): Africa/Cairo timezone, EGP currency, max 48h/wk regular, max 8h/day ordinary, max 10h workplace presence (12h for Arts. 119/121 intermittent or preparatory work), >= 24h weekly rest, annual leave tiers (prorated 6-11m, 15d / 21d / 30d / 45d), and >= 7d hazardous/remote supplement.",
       "identity": [
         {
           "name": "primary",
@@ -73,6 +73,13 @@
                 "value": "EGP"
               }
             ]
+          }
+        },
+        {
+          "default": false,
+          "id": "intermittent_or_preparatory_work",
+          "type": {
+            "kind": "boolean"
           }
         },
         {

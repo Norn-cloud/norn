@@ -631,6 +631,32 @@ export const RecordAttendance = Norn.action({
   },
 })
 
+const ReverseAttendanceQuantityContext = Schema.Struct({
+  input: Schema.Struct({
+    quantity: Norn.decimal(6),
+  }),
+  slice: Schema.Struct({
+    original: Schema.Struct({
+      quantity: Norn.decimal(6),
+    }),
+  }),
+})
+
+const ReverseAttendanceDenominationContext = Schema.Struct({
+  input: Schema.Struct({
+    action: Schema.Literals(["transfer_ownership", "transfer_custody", "consume", "produce"]),
+    unit: Schema.NullOr(Schema.String),
+    currency: Schema.NullOr(Schema.String),
+  }),
+  slice: Schema.Struct({
+    original: Schema.Struct({
+      action: Schema.Literals(["transfer_ownership", "transfer_custody", "consume", "produce"]),
+      unit: Schema.NullOr(Schema.String),
+      currency: Schema.NullOr(Schema.String),
+    }),
+  }),
+})
+
 const ReverseAttendanceLinksContext = Schema.Struct({
   input: Schema.Struct({
     id: Schema.String,
@@ -651,14 +677,14 @@ export const ReverseAttendance = Norn.action({
   id: "hr.attendance.reverse",
   title: "Reverse posted attendance event",
   version: "0.1.0",
-  description: "Post a create-only reversing AttendanceEvent linked via `reverses` to a prior AttendanceEvent with matching provider, receiver, and labor capacity (HR-AT-01, HR-AT-04).",
+  description: "Post a create-only reversing AttendanceEvent linked via `reverses` to a prior AttendanceEvent with inverse REA action (produce <-> consume), exact quantity/unit/currency match, and matching provider, receiver, and labor capacity (HR-AT-01, HR-AT-04).",
   scopeRequired: ["orgId", "environmentId"],
   idempotent: true,
   ledgered: true,
   access: { artifactId: "hr.access.policy", version: "0.1.0" },
   input: Schema.Struct({
     id: Schema.String,
-    action: Schema.String,
+    action: Schema.Literals(["transfer_ownership", "transfer_custody", "consume", "produce"]),
     occurred_at: Schema.String,
     quantity: Norn.decimal(6),
     unit: Schema.NullOr(Schema.String),
@@ -683,8 +709,19 @@ export const ReverseAttendance = Norn.action({
   ],
   preconditions: [
     Norn.expression(
-      AttendanceQuantityContext,
-      (ctx) => ctx.input.quantity > 0,
+      ReverseAttendanceQuantityContext,
+      (ctx) => ctx.input.quantity > 0 && ctx.input.quantity === ctx.slice.original.quantity,
+      { root: "context" },
+    ),
+    Norn.expression(
+      ReverseAttendanceDenominationContext,
+      (ctx) =>
+        ((ctx.slice.original.action === "produce" && ctx.input.action === "consume") ||
+          (ctx.slice.original.action === "consume" && ctx.input.action === "produce")) &&
+        (ctx.input.unit === null) === (ctx.slice.original.unit === null) &&
+        (ctx.input.unit ?? "") === (ctx.slice.original.unit ?? "") &&
+        (ctx.input.currency === null) === (ctx.slice.original.currency === null) &&
+        (ctx.input.currency ?? "") === (ctx.slice.original.currency ?? ""),
       { root: "context" },
     ),
     Norn.expression(

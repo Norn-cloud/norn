@@ -11,7 +11,7 @@
   "irVersion": "0.1",
   "kind": "law",
   "lifecycle": "active",
-  "name": "Salary slip conserves net_pay = gross_pay - total_deductions without negative net",
+  "name": "Salary slip conserves quantity = net_pay = gross_pay - total_deductions in pure currency",
   "namespace": "hr",
   "payload": {
     "id": "hr.SalarySlip.conservation",
@@ -24,9 +24,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/hr/payroll_expenses.ts"
     },
-    "rationale": "Every salary slip must conserve exact decimal net pay (net_pay == gross_pay - total_deductions >= 0; HR-PR-01, HR-PR-04).",
+    "rationale": "Every salary slip is a monetary commitment (unit == null, currency != null) conserving exact decimal net pay (net_pay == gross_pay - total_deductions >= 0) and matching its REA Commitment quantity (quantity == net_pay; HR-PR-01, HR-PR-04).",
     "response": {
-      "expression": "(((self.gross_pay >= 0) and (self.total_deductions >= 0)) and (self.net_pay == (self.gross_pay - self.total_deductions))) and (self.net_pay >= 0)",
+      "expression": "((((((self.gross_pay >= 0) and (self.total_deductions >= 0)) and (self.net_pay == (self.gross_pay - self.total_deductions))) and (self.net_pay >= 0)) and (self.quantity == self.net_pay)) and (self.unit == null)) and (self.currency != null)",
       "kind": "predicate"
     },
     "scope": {

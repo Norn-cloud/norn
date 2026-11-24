@@ -220,6 +220,7 @@ export const PayrollRun = Norn.type({
   },
   links: [
     { id: "unit", description: "Organizational unit executing this payroll run.", target: OrgUnit, cardinality: { to: "one", from: "many", required: true } },
+    { id: "fund", description: "Employer monetary payroll fund disbursing this payroll run.", target: PayrollFund, cardinality: { to: "one", from: "many", required: true } },
   ],
   lifecycles: [
     {
@@ -338,7 +339,7 @@ export const SalarySlip = Norn.type({
   links: [
     { id: "provider", description: "Employer unit promising monetary compensation.", target: OrgUnit, cardinality: { to: "one", from: "many", required: true } },
     { id: "receiver", description: "Employee receiving monetary compensation.", target: Person, cardinality: { to: "one", from: "many", required: true } },
-    { id: "resource", description: "Employer monetary payroll fund promised by this salary slip.", target: PayrollFund, cardinality: { to: "one", from: "many" } },
+    { id: "resource", description: "Employer monetary payroll fund promised by this salary slip.", target: PayrollFund, cardinality: { to: "one", from: "many", required: true } },
     { id: "payroll_run", description: "Parent payroll run containing this salary slip.", target: PayrollRun, cardinality: { to: "one", from: "many", required: true } },
   ],
   lifecycles: [
@@ -358,6 +359,9 @@ export const SalarySlip = Norn.type({
 })
 
 const SalarySlipConservationSubject = Schema.Struct({
+  quantity: Norn.decimal(6),
+  unit: Schema.NullOr(Schema.String),
+  currency: Schema.NullOr(Schema.String),
   gross_pay: Norn.decimal(6),
   total_deductions: Norn.decimal(6),
   net_pay: Norn.decimal(6),
@@ -365,7 +369,7 @@ const SalarySlipConservationSubject = Schema.Struct({
 
 export const SalarySlipConservation = Norn.law({
   id: "hr.SalarySlip.conservation.law",
-  title: "Salary slip conserves net_pay = gross_pay - total_deductions without negative net",
+  title: "Salary slip conserves quantity = net_pay = gross_pay - total_deductions in pure currency",
   version: "0.1.0",
   dependencies: [{ artifactId: "hr.SalarySlip.entity", kind: "entity", version: "0.1.0", required: true }],
   law: {
@@ -373,7 +377,7 @@ export const SalarySlipConservation = Norn.law({
     id: "hr.SalarySlip.conservation",
     owner: "hr",
     severity: "error",
-    rationale: "Every salary slip must conserve exact decimal net pay (net_pay == gross_pay - total_deductions >= 0; HR-PR-01, HR-PR-04).",
+    rationale: "Every salary slip is a monetary commitment (unit == null, currency != null) conserving exact decimal net pay (net_pay == gross_pay - total_deductions >= 0) and matching its REA Commitment quantity (quantity == net_pay; HR-PR-01, HR-PR-04).",
     provenance: { source: "authoring_sdk", sourcePath: "registry/packs/hr/payroll_expenses.ts" },
     subject: "hr.SalarySlip",
     scope: { root: { kind: "entity", id: "hr.SalarySlip" }, objectTypes: ["hr.SalarySlip"] },
@@ -386,7 +390,10 @@ export const SalarySlipConservation = Norn.law({
           self.gross_pay >= 0 &&
           self.total_deductions >= 0 &&
           self.net_pay === self.gross_pay - self.total_deductions &&
-          self.net_pay >= 0,
+          self.net_pay >= 0 &&
+          self.quantity === self.net_pay &&
+          self.unit === null &&
+          self.currency !== null,
       ),
     },
   },
@@ -420,6 +427,22 @@ export const SalarySlipNegativeNetViolated = Norn.example("salary slip where ded
     gross_pay: 1000,
     total_deductions: 1200,
     net_pay: -200,
+  },
+  expect: "violated",
+})
+
+export const SalarySlipQuantityMismatchViolated = Norn.example("salary slip whose REA commitment quantity diverges from net_pay is refused", {
+  of: SalarySlipConservation,
+  given: {
+    id: "slip_qty_bad",
+    status: "promised",
+    due_at: "2026-11-30T17:00:00Z",
+    quantity: 9000,
+    unit: null,
+    currency: "USD",
+    gross_pay: 5000,
+    total_deductions: 850,
+    net_pay: 4150,
   },
   expect: "violated",
 })
@@ -783,23 +806,38 @@ export const ApprovePayroll = Norn.action({
   },
 })
 
+const PayrollPostFundSlice = Schema.Struct({
+  slice: Schema.Struct({
+    run: Schema.Struct({
+      currency: Schema.Literals(ISO_4217),
+    }),
+    run_fund: Schema.Array(Schema.Struct({
+      unit: Schema.NullOr(Schema.String),
+      currency: Schema.NullOr(Schema.String),
+    })),
+  }),
+})
+
 /**
  * Single-write engine boundary note: this action locks `hr.PayrollRun` as posted
- * after verifying positive gross and exact net conservation; atomic multi-object
- * `hr.SalarySlip` aggregation, `hr.PayrollFund` debit, and ledger accrual posting
- * in one commit wait on engine `#1586` (`synchronousRule` multi-object writer wiring).
+ * after verifying positive gross, exact net conservation, and linked monetary
+ * `hr.PayrollFund` existence & currency agreement via `SliceKey::Link`; atomic
+ * multi-object `hr.SalarySlip` aggregation, `hr.PayrollFund` debit, and ledger
+ * accrual posting in one commit wait on engine `#1586` (`synchronousRule`
+ * multi-object writer wiring).
  */
 export const PostPayroll = Norn.action({
   id: "hr.payroll.post",
   title: "Post payroll run",
   version: "0.1.0",
-  description: "Permanently post a non-empty approved payroll run so its totals become immutable (HR-PR-05, HR-PR-06).",
+  description: "Permanently post a non-empty approved payroll run after verifying its linked PayrollFund exists in matching currency with null UCUM unit (HR-PR-05, HR-PR-06).",
   scopeRequired: ["orgId", "environmentId"],
   idempotent: true,
   ledgered: true,
   access: { artifactId: "hr.access.policy", version: "0.1.0" },
   slice: [
     { name: "run", type: PayrollRun, key: { property: { from: "input", property: "payrollRunId" } } },
+    { name: "run_fund", type: PayrollFund, key: { link: { from: "run", link: "fund" } } },
   ],
   preconditions: [
     Norn.expression(
@@ -808,6 +846,14 @@ export const PostPayroll = Norn.action({
         ctx.slice.run.status === "approved" &&
         ctx.slice.run.total_gross > 0 &&
         ctx.slice.run.total_net === ctx.slice.run.total_gross - ctx.slice.run.total_deductions,
+      { root: "context" },
+    ),
+    Norn.expression(
+      PayrollPostFundSlice,
+      (ctx) =>
+        ctx.slice.run_fund.length === 1 &&
+        ctx.slice.run_fund.every((f) => f.unit === null) &&
+        ctx.slice.run_fund.map((f) => f.currency ?? "").includes(ctx.slice.run.currency),
       { root: "context" },
     ),
   ],

@@ -286,6 +286,7 @@ export const LeaveAllocation = Norn.type({
     leave_kind: LeaveKind,
     entitlement_tier: EntitlementTier,
     hazardous_or_remote: Schema.Boolean,
+    qualifying_service_months: Schema.NullOr(Schema.Int),
     starts_on: Norn.date(),
     ends_on: Norn.date(),
     allocated_days: Norn.decimal(2, { unit: { system: "ucum", code: "d" } }),
@@ -320,25 +321,29 @@ export const LeaveAllocation = Norn.type({
 
 export const LeaveAllocationValid = Norn.law("valid_allocation", {
   on: LeaveAllocation,
-  must: (self) => self.starts_on <= self.ends_on && self.allocated_days > 0 && self.carry_forward_days >= 0,
-  because: "A leave allocation must cover a valid date range (starts_on <= ends_on) with strictly positive allocated_days and non-negative carry_forward_days.",
+  must: (self) =>
+    self.starts_on <= self.ends_on &&
+    self.allocated_days > 0 &&
+    self.carry_forward_days >= 0 &&
+    (self.qualifying_service_months === null || (self.qualifying_service_months ?? 0) >= 0),
+  because: "A leave allocation must cover a valid date range (starts_on <= ends_on) with strictly positive allocated_days, non-negative carry_forward_days, and non-negative qualifying_service_months when provided.",
 })
 
 export const LeaveAllocationValidHolds = Norn.example("valid annual leave allocation holds", {
   of: LeaveAllocationValid,
-  given: { id: "la_1", jurisdiction_code: null, leave_kind: "annual", entitlement_tier: "standard", hazardous_or_remote: false, starts_on: "2026-01-01", ends_on: "2026-12-31", allocated_days: 20, carry_forward_days: 2, status: "active" },
+  given: { id: "la_1", jurisdiction_code: null, leave_kind: "annual", entitlement_tier: "standard", hazardous_or_remote: false, qualifying_service_months: null, starts_on: "2026-01-01", ends_on: "2026-12-31", allocated_days: 20, carry_forward_days: 2, status: "active" },
   expect: "holds",
 })
 
 export const LeaveAllocationReversedDatesViolated = Norn.example("leave allocation with starts_on after ends_on is refused", {
   of: LeaveAllocationValid,
-  given: { id: "la_rev", jurisdiction_code: null, leave_kind: "annual", entitlement_tier: "standard", hazardous_or_remote: false, starts_on: "2026-12-31", ends_on: "2026-01-01", allocated_days: 20, carry_forward_days: 0, status: "active" },
+  given: { id: "la_rev", jurisdiction_code: null, leave_kind: "annual", entitlement_tier: "standard", hazardous_or_remote: false, qualifying_service_months: null, starts_on: "2026-12-31", ends_on: "2026-01-01", allocated_days: 20, carry_forward_days: 0, status: "active" },
   expect: "violated",
 })
 
 export const LeaveAllocationZeroDaysViolated = Norn.example("leave allocation with zero allocated_days is refused", {
   of: LeaveAllocationValid,
-  given: { id: "la_zero", jurisdiction_code: null, leave_kind: "annual", entitlement_tier: "standard", hazardous_or_remote: false, starts_on: "2026-01-01", ends_on: "2026-12-31", allocated_days: 0, carry_forward_days: 0, status: "active" },
+  given: { id: "la_zero", jurisdiction_code: null, leave_kind: "annual", entitlement_tier: "standard", hazardous_or_remote: false, qualifying_service_months: null, starts_on: "2026-01-01", ends_on: "2026-12-31", allocated_days: 0, carry_forward_days: 0, status: "active" },
   expect: "violated",
 })
 

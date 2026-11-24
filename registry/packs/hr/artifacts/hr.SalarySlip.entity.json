@@ -92,6 +92,7 @@
         {
           "cardinality": {
             "from": "many",
+            "required": true,
             "to": "one"
           },
           "description": "Employer monetary payroll fund promised by this salary slip.",

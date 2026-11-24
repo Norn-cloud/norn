@@ -22,12 +22,13 @@ export const EgyptLaborProfile = Norn.type({
   title: "Egypt labor-law profile",
   version: "0.1.0",
   dependencies: [{ artifactId: "core.units", version: "1.0.0", kind: "entity" }],
-  description: "Governed Egyptian labor parameters under Egypt Labor Law No. 14 of 2025 (effective 2025-09-01, Arts. 117-124): Africa/Cairo timezone, EGP currency, max 48h/wk regular, max 8h/day ordinary, max 10h workplace presence, >= 24h weekly rest, annual leave tiers (15d / 21d / 30d / 45d), and >= 7d hazardous/remote supplement.",
+  description: "Governed Egyptian labor parameters under Egypt Labor Law No. 14 of 2025 (effective 2025-09-01, Arts. 117-124): Africa/Cairo timezone, EGP currency, max 48h/wk regular, max 8h/day ordinary, max 10h workplace presence (12h for Arts. 119/121 intermittent or preparatory work), >= 24h weekly rest, annual leave tiers (prorated 6-11m, 15d / 21d / 30d / 45d), and >= 7d hazardous/remote supplement.",
   properties: Schema.Struct({
     id: Schema.String,
     effective_from: Norn.date(),
     iana_timezone: Schema.Literals(["Africa/Cairo"]),
     currency: Schema.Literals(["EGP"]),
+    intermittent_or_preparatory_work: Schema.Boolean,
     max_regular_weekly_hours: Norn.decimal(2, { unit: { system: "ucum", code: "h" } }),
     max_daily_hours: Norn.decimal(2, { unit: { system: "ucum", code: "h" } }),
     max_workplace_presence_hours: Norn.decimal(2, { unit: { system: "ucum", code: "h" } }),
@@ -44,6 +45,7 @@ export const EgyptLaborProfile = Norn.type({
   defaults: {
     iana_timezone: "Africa/Cairo",
     currency: "EGP",
+    intermittent_or_preparatory_work: false,
     seniority_threshold_years: 10,
     weekend_pattern: "friday_saturday",
   },
@@ -53,6 +55,7 @@ export const EgyptLaborProfile = Norn.type({
 })
 
 const EgyptLaborProfileSubject = Schema.Struct({
+  intermittent_or_preparatory_work: Schema.Boolean,
   max_regular_weekly_hours: Norn.decimal(2),
   max_daily_hours: Norn.decimal(2),
   max_workplace_presence_hours: Norn.decimal(2),
@@ -74,7 +77,7 @@ export const EgyptStatutoryFloors = Norn.law({
     id: "loc_eg.LaborProfile.statutory_floors",
     owner: "loc_eg",
     severity: "error",
-    rationale: "Egypt Labor Law No. 14 of 2025 (effective 2025-09-01, Arts. 117-124) caps regular weekly hours at 48h, ordinary daily hours at 8h, and daily workplace presence at 10h, mandates >= 24h consecutive weekly rest, sets annual leave floors of 15d (year 1), 21d (year 2+), 30d (10+ years or age 50+), and 45d (persons with disabilities/short stature), plus >= 7d supplement for hazardous or remote work.",
+    rationale: "Egypt Labor Law No. 14 of 2025 (effective 2025-09-01, Arts. 117-124) caps regular weekly hours at 48h, ordinary daily hours at 8h, and daily workplace presence at 10h (or 12h for Arts. 119/121 intermittent or preparatory work), mandates >= 24h consecutive weekly rest, sets annual leave floors of 15d (year 1), 21d (year 2+), 30d (10+ years or age 50+), and 45d (persons with disabilities/short stature), plus >= 7d supplement for hazardous or remote work.",
     provenance: { source: "authoring_sdk", sourcePath: "registry/packs/loc-eg/egypt.ts" },
     subject: "loc_eg.LaborProfile",
     scope: { root: { kind: "entity", id: "loc_eg.LaborProfile" }, objectTypes: ["loc_eg.LaborProfile"] },
@@ -86,7 +89,9 @@ export const EgyptStatutoryFloors = Norn.law({
         (self) =>
           self.max_regular_weekly_hours <= 48 &&
           self.max_daily_hours <= 8 &&
-          self.max_workplace_presence_hours <= 10 &&
+          (self.intermittent_or_preparatory_work
+            ? self.max_workplace_presence_hours <= 12
+            : self.max_workplace_presence_hours <= 10) &&
           self.min_weekly_rest_hours >= 24 &&
           self.first_year_annual_leave_days >= 15 &&
           self.standard_annual_leave_days >= 21 &&
@@ -105,6 +110,7 @@ export const EgyptBaselineHolds = Norn.example("Law 14/2025 48h / 8h / 10h / 24h
     effective_from: "2025-09-01",
     iana_timezone: "Africa/Cairo",
     currency: "EGP",
+    intermittent_or_preparatory_work: false,
     max_regular_weekly_hours: 48,
     max_daily_hours: 8,
     max_workplace_presence_hours: 10,
@@ -120,6 +126,75 @@ export const EgyptBaselineHolds = Norn.example("Law 14/2025 48h / 8h / 10h / 24h
   expect: "holds",
 })
 
+export const EgyptIntermittent12hPresenceHolds = Norn.example("12h workplace presence holds for Arts. 119/121 intermittent or preparatory work", {
+  of: EgyptStatutoryFloors,
+  given: {
+    id: "eg_intermittent_12h",
+    effective_from: "2025-09-01",
+    iana_timezone: "Africa/Cairo",
+    currency: "EGP",
+    intermittent_or_preparatory_work: true,
+    max_regular_weekly_hours: 48,
+    max_daily_hours: 8,
+    max_workplace_presence_hours: 12,
+    min_weekly_rest_hours: 24,
+    first_year_annual_leave_days: 15,
+    standard_annual_leave_days: 21,
+    senior_annual_leave_days: 30,
+    disability_annual_leave_days: 45,
+    hazardous_remote_supplement_days: 7,
+    seniority_threshold_years: 10,
+    weekend_pattern: "friday_saturday",
+  },
+  expect: "holds",
+})
+
+export const EgyptStandard12hPresenceViolated = Norn.example("12h workplace presence without intermittent/preparatory exception violates 10h cap", {
+  of: EgyptStatutoryFloors,
+  given: {
+    id: "eg_std_12h_bad",
+    effective_from: "2025-09-01",
+    iana_timezone: "Africa/Cairo",
+    currency: "EGP",
+    intermittent_or_preparatory_work: false,
+    max_regular_weekly_hours: 48,
+    max_daily_hours: 8,
+    max_workplace_presence_hours: 12,
+    min_weekly_rest_hours: 24,
+    first_year_annual_leave_days: 15,
+    standard_annual_leave_days: 21,
+    senior_annual_leave_days: 30,
+    disability_annual_leave_days: 45,
+    hazardous_remote_supplement_days: 7,
+    seniority_threshold_years: 10,
+    weekend_pattern: "friday_saturday",
+  },
+  expect: "violated",
+})
+
+export const EgyptIntermittent13hPresenceViolated = Norn.example("13h workplace presence exceeds even Arts. 119/121 12h intermittent exception", {
+  of: EgyptStatutoryFloors,
+  given: {
+    id: "eg_intermittent_13h_bad",
+    effective_from: "2025-09-01",
+    iana_timezone: "Africa/Cairo",
+    currency: "EGP",
+    intermittent_or_preparatory_work: true,
+    max_regular_weekly_hours: 48,
+    max_daily_hours: 8,
+    max_workplace_presence_hours: 13,
+    min_weekly_rest_hours: 24,
+    first_year_annual_leave_days: 15,
+    standard_annual_leave_days: 21,
+    senior_annual_leave_days: 30,
+    disability_annual_leave_days: 45,
+    hazardous_remote_supplement_days: 7,
+    seniority_threshold_years: 10,
+    weekend_pattern: "friday_saturday",
+  },
+  expect: "violated",
+})
+
 export const EgyptShortWeeklyRestViolated = Norn.example("twelve-hour weekly rest violates Law 14/2025 24h weekly rest floor", {
   of: EgyptStatutoryFloors,
   given: {
@@ -127,6 +202,7 @@ export const EgyptShortWeeklyRestViolated = Norn.example("twelve-hour weekly res
     effective_from: "2025-09-01",
     iana_timezone: "Africa/Cairo",
     currency: "EGP",
+    intermittent_or_preparatory_work: false,
     max_regular_weekly_hours: 48,
     max_daily_hours: 8,
     max_workplace_presence_hours: 10,
@@ -149,6 +225,7 @@ export const EgyptOver8hDailyViolated = Norn.example("nine-hour ordinary workday
     effective_from: "2025-09-01",
     iana_timezone: "Africa/Cairo",
     currency: "EGP",
+    intermittent_or_preparatory_work: false,
     max_regular_weekly_hours: 48,
     max_daily_hours: 9,
     max_workplace_presence_hours: 10,
@@ -171,6 +248,7 @@ export const EgyptSubFloorFirstYearLeaveViolated = Norn.example("fourteen-day fi
     effective_from: "2025-09-01",
     iana_timezone: "Africa/Cairo",
     currency: "EGP",
+    intermittent_or_preparatory_work: false,
     max_regular_weekly_hours: 48,
     max_daily_hours: 8,
     max_workplace_presence_hours: 10,
@@ -193,6 +271,7 @@ export const EgyptSubFloorDisabilityLeaveViolated = Norn.example("thirty-day dis
     effective_from: "2025-09-01",
     iana_timezone: "Africa/Cairo",
     currency: "EGP",
+    intermittent_or_preparatory_work: false,
     max_regular_weekly_hours: 48,
     max_daily_hours: 8,
     max_workplace_presence_hours: 10,
@@ -351,6 +430,7 @@ export const EgyptPreferenceProfileNonEgNotApplicable = Norn.example("non-Egypti
 const HrEmploymentOverlaySubject = Schema.Struct({
   jurisdiction_code: Schema.NullOr(Schema.String),
   effective_from: Norn.date(),
+  effective_to: Schema.NullOr(Norn.date()),
   max_weekly_hours: Norn.decimal(2),
 })
 
@@ -364,13 +444,15 @@ export const EgyptEmploymentMaxWeeklyHours = Norn.law({
     id: "loc_eg.hr.Employment.max_weekly_hours",
     owner: "loc_eg",
     severity: "error",
-    rationale: "Conjunctive Egypt Labor Law No. 14 of 2025 (effective 2025-09-01, Arts. 117-123) overlay capping contracted regular weekly hours on Egyptian hr.Employment (jurisdiction_code == 'EG' and effective_from >= 2025-09-01) at 48h.",
+    rationale: "Conjunctive Egypt Labor Law No. 14 of 2025 (effective 2025-09-01, Arts. 117-123) overlay capping contracted regular weekly hours at 48h on Egyptian hr.Employment active on or after 2025-09-01 (jurisdiction_code == 'EG' and (effective_to == null or effective_to >= 2025-09-01)), including open-ended contracts that began before 2025-09-01.",
     provenance: { source: "authoring_sdk", sourcePath: "registry/packs/loc-eg/egypt.ts" },
     subject: "hr.Employment",
     scope: { root: { kind: "entity", id: "hr.Employment" }, objectTypes: ["hr.Employment"] },
     condition: Norn.expression(
       HrEmploymentOverlaySubject,
-      (self) => (self.jurisdiction_code ?? "") === "EG" && Norn.parseDate(self.effective_from) >= Norn.parseDate("2025-09-01"),
+      (self) =>
+        (self.jurisdiction_code ?? "") === "EG" &&
+        (self.effective_to === null || Norn.parseDate(self.effective_to ?? self.effective_from) >= Norn.parseDate("2025-09-01")),
     ),
     modality: { kind: "always" },
     response: {
@@ -392,13 +474,19 @@ export const EgyptEmployment54hViolated = Norn.example("54h Egypt employment con
   expect: "violated",
 })
 
+export const EgyptEmploymentOngoingPre2025Violated = Norn.example("open-ended Egyptian contract started before 2025-09-01 at 54h/wk violates Law 14/2025", {
+  of: EgyptEmploymentMaxWeeklyHours,
+  given: { id: "emp_eg_ongoing_2024", jurisdiction_code: "EG", effective_from: "2024-01-01", effective_to: null, currency: "EGP", base_salary: 16000, hourly_overtime_rate: 130, max_weekly_hours: 54, status: "active" },
+  expect: "violated",
+})
+
 export const EgyptEmploymentNonEgNotApplicable = Norn.example("GB employment contract is outside Egypt Law 14/2025 overlay", {
   of: EgyptEmploymentMaxWeeklyHours,
   given: { id: "emp_gb", jurisdiction_code: "GB", effective_from: "2026-01-01", effective_to: null, currency: "GBP", base_salary: 5000, hourly_overtime_rate: 40, max_weekly_hours: 54, status: "active" },
   expect: "not_applicable",
 })
 
-export const EgyptEmploymentPreEffectiveDateNotApplicable = Norn.example("pre-2025-09-01 historical Egyptian contract is outside Law 14/2025 overlay", {
+export const EgyptEmploymentPreEffectiveDateNotApplicable = Norn.example("Egyptian contract ended before 2025-09-01 is outside Law 14/2025 overlay", {
   of: EgyptEmploymentMaxWeeklyHours,
   given: { id: "emp_eg_hist", jurisdiction_code: "EG", effective_from: "2025-01-01", effective_to: "2025-08-31", currency: "EGP", base_salary: 15000, hourly_overtime_rate: 120, max_weekly_hours: 54, status: "terminated" },
   expect: "not_applicable",
@@ -409,6 +497,7 @@ const HrLeaveAllocationOverlaySubject = Schema.Struct({
   leave_kind: Schema.Literals(["annual", "sick", "unpaid", "emergency", "compensatory"]),
   entitlement_tier: Schema.Literals(["prorated_initial", "first_year", "standard", "senior", "protected_disability"]),
   hazardous_or_remote: Schema.Boolean,
+  qualifying_service_months: Schema.NullOr(Schema.Int),
   starts_on: Norn.date(),
   allocated_days: Norn.decimal(2),
 })
@@ -423,7 +512,7 @@ export const EgyptLeaveAllocationAnnualFloor = Norn.law({
     id: "loc_eg.hr.LeaveAllocation.annual_floor",
     owner: "loc_eg",
     severity: "error",
-    rationale: "Conjunctive Egypt Labor Law No. 14 of 2025 (effective 2025-09-01, Art. 124) overlay on Egyptian annual leave allocations (jurisdiction_code == 'EG', leave_kind == 'annual', starts_on >= 2025-09-01): prorated_initial > 0d; first_year >= 15d (+7d hazardous/remote = 22d); standard >= 21d (+7d = 28d); senior >= 30d (+7d = 37d); protected_disability >= 45d (+7d = 52d).",
+    rationale: "Conjunctive Egypt Labor Law No. 14 of 2025 (effective 2025-09-01, Art. 124) overlay on Egyptian annual leave allocations (jurisdiction_code == 'EG', leave_kind == 'annual', starts_on >= 2025-09-01): prorated_initial requires 6 <= qualifying_service_months < 12 with exact proportional floor 15 * m / 12 (+7d hazardous/remote: 7.5/14.5 at 6m, 8.75/15.75 at 7m, 10/17 at 8m, 11.25/18.25 at 9m, 12.5/19.5 at 10m, 13.75/20.75 at 11m); first_year >= 15d (+7d = 22d); standard >= 21d (+7d = 28d); senior >= 30d (+7d = 37d); protected_disability >= 45d (+7d = 52d).",
     provenance: { source: "authoring_sdk", sourcePath: "registry/packs/loc-eg/egypt.ts" },
     subject: "hr.LeaveAllocation",
     scope: { root: { kind: "entity", id: "hr.LeaveAllocation" }, objectTypes: ["hr.LeaveAllocation"] },
@@ -440,7 +529,13 @@ export const EgyptLeaveAllocationAnnualFloor = Norn.law({
       expression: Norn.expression(
         HrLeaveAllocationOverlaySubject,
         (self) =>
-          (self.entitlement_tier === "prorated_initial" && self.allocated_days > 0) ||
+          (self.entitlement_tier === "prorated_initial" &&
+            (((self.qualifying_service_months ?? 0) === 6 && (self.hazardous_or_remote ? self.allocated_days >= 14.5 : self.allocated_days >= 7.5)) ||
+              ((self.qualifying_service_months ?? 0) === 7 && (self.hazardous_or_remote ? self.allocated_days >= 15.75 : self.allocated_days >= 8.75)) ||
+              ((self.qualifying_service_months ?? 0) === 8 && (self.hazardous_or_remote ? self.allocated_days >= 17 : self.allocated_days >= 10)) ||
+              ((self.qualifying_service_months ?? 0) === 9 && (self.hazardous_or_remote ? self.allocated_days >= 18.25 : self.allocated_days >= 11.25)) ||
+              ((self.qualifying_service_months ?? 0) === 10 && (self.hazardous_or_remote ? self.allocated_days >= 19.5 : self.allocated_days >= 12.5)) ||
+              ((self.qualifying_service_months ?? 0) === 11 && (self.hazardous_or_remote ? self.allocated_days >= 20.75 : self.allocated_days >= 13.75)))) ||
           (self.entitlement_tier === "first_year" && (self.hazardous_or_remote ? self.allocated_days >= 22 : self.allocated_days >= 15)) ||
           (self.entitlement_tier === "standard" && (self.hazardous_or_remote ? self.allocated_days >= 28 : self.allocated_days >= 21)) ||
           (self.entitlement_tier === "senior" && (self.hazardous_or_remote ? self.allocated_days >= 37 : self.allocated_days >= 30)) ||
@@ -450,63 +545,81 @@ export const EgyptLeaveAllocationAnnualFloor = Norn.law({
   },
 })
 
-export const EgyptAnnualLeaveProratedHolds = Norn.example("prorated 7.5-day initial annual leave holds under Law 14/2025 Art. 124", {
+export const EgyptAnnualLeaveProratedHolds = Norn.example("prorated 7.5-day initial annual leave at 6 months holds under Law 14/2025 Art. 124", {
   of: EgyptLeaveAllocationAnnualFloor,
-  given: { id: "la_eg_pro", jurisdiction_code: "EG", leave_kind: "annual", entitlement_tier: "prorated_initial", hazardous_or_remote: false, starts_on: "2026-07-01", ends_on: "2026-12-31", allocated_days: 7.5, carry_forward_days: 0, status: "active" },
+  given: { id: "la_eg_pro", jurisdiction_code: "EG", leave_kind: "annual", entitlement_tier: "prorated_initial", hazardous_or_remote: false, qualifying_service_months: 6, starts_on: "2026-07-01", ends_on: "2026-12-31", allocated_days: 7.5, carry_forward_days: 0, status: "active" },
   expect: "holds",
+})
+
+export const EgyptAnnualLeaveProratedHazardousHolds = Norn.example("prorated 14.5-day hazardous initial annual leave at 6 months holds under Law 14/2025 Art. 124", {
+  of: EgyptLeaveAllocationAnnualFloor,
+  given: { id: "la_eg_pro_haz", jurisdiction_code: "EG", leave_kind: "annual", entitlement_tier: "prorated_initial", hazardous_or_remote: true, qualifying_service_months: 6, starts_on: "2026-07-01", ends_on: "2026-12-31", allocated_days: 14.5, carry_forward_days: 0, status: "active" },
+  expect: "holds",
+})
+
+export const EgyptAnnualLeaveProratedTinyHazardousViolated = Norn.example("0.01-day hazardous prorated allocation is refused under Law 14/2025 Art. 124", {
+  of: EgyptLeaveAllocationAnnualFloor,
+  given: { id: "la_eg_pro_tiny", jurisdiction_code: "EG", leave_kind: "annual", entitlement_tier: "prorated_initial", hazardous_or_remote: true, qualifying_service_months: 6, starts_on: "2026-07-01", ends_on: "2026-12-31", allocated_days: 0.01, carry_forward_days: 0, status: "active" },
+  expect: "violated",
+})
+
+export const EgyptAnnualLeaveProratedUnder6MonthsViolated = Norn.example("prorated allocation with 4 months (< 6m statutory eligibility) is refused under Law 14/2025 Art. 124", {
+  of: EgyptLeaveAllocationAnnualFloor,
+  given: { id: "la_eg_pro_4m", jurisdiction_code: "EG", leave_kind: "annual", entitlement_tier: "prorated_initial", hazardous_or_remote: false, qualifying_service_months: 4, starts_on: "2026-05-01", ends_on: "2026-12-31", allocated_days: 7.5, carry_forward_days: 0, status: "active" },
+  expect: "violated",
 })
 
 export const EgyptAnnualLeaveFirstYear15dHolds = Norn.example("first-year 15-day annual leave allocation holds under Law 14/2025 Art. 124", {
   of: EgyptLeaveAllocationAnnualFloor,
-  given: { id: "la_eg_y1", jurisdiction_code: "EG", leave_kind: "annual", entitlement_tier: "first_year", hazardous_or_remote: false, starts_on: "2026-01-01", ends_on: "2026-12-31", allocated_days: 15, carry_forward_days: 0, status: "active" },
+  given: { id: "la_eg_y1", jurisdiction_code: "EG", leave_kind: "annual", entitlement_tier: "first_year", hazardous_or_remote: false, qualifying_service_months: null, starts_on: "2026-01-01", ends_on: "2026-12-31", allocated_days: 15, carry_forward_days: 0, status: "active" },
   expect: "holds",
 })
 
 export const EgyptAnnualLeaveStandard15dViolated = Norn.example("year-2+ standard 15-day annual leave violates Law 14/2025 Art. 124 21d floor", {
   of: EgyptLeaveAllocationAnnualFloor,
-  given: { id: "la_eg_std_bad", jurisdiction_code: "EG", leave_kind: "annual", entitlement_tier: "standard", hazardous_or_remote: false, starts_on: "2026-01-01", ends_on: "2026-12-31", allocated_days: 15, carry_forward_days: 0, status: "active" },
+  given: { id: "la_eg_std_bad", jurisdiction_code: "EG", leave_kind: "annual", entitlement_tier: "standard", hazardous_or_remote: false, qualifying_service_months: null, starts_on: "2026-01-01", ends_on: "2026-12-31", allocated_days: 15, carry_forward_days: 0, status: "active" },
   expect: "violated",
 })
 
 export const EgyptAnnualLeaveSenior30dHolds = Norn.example("senior 30-day annual leave allocation holds under Law 14/2025 Art. 124", {
   of: EgyptLeaveAllocationAnnualFloor,
-  given: { id: "la_eg_sen", jurisdiction_code: "EG", leave_kind: "annual", entitlement_tier: "senior", hazardous_or_remote: false, starts_on: "2026-01-01", ends_on: "2026-12-31", allocated_days: 30, carry_forward_days: 0, status: "active" },
+  given: { id: "la_eg_sen", jurisdiction_code: "EG", leave_kind: "annual", entitlement_tier: "senior", hazardous_or_remote: false, qualifying_service_months: null, starts_on: "2026-01-01", ends_on: "2026-12-31", allocated_days: 30, carry_forward_days: 0, status: "active" },
   expect: "holds",
 })
 
 export const EgyptAnnualLeaveDisability45dHolds = Norn.example("protected disability 45-day annual leave holds under Law 14/2025 Art. 124", {
   of: EgyptLeaveAllocationAnnualFloor,
-  given: { id: "la_eg_dis", jurisdiction_code: "EG", leave_kind: "annual", entitlement_tier: "protected_disability", hazardous_or_remote: false, starts_on: "2026-01-01", ends_on: "2026-12-31", allocated_days: 45, carry_forward_days: 0, status: "active" },
+  given: { id: "la_eg_dis", jurisdiction_code: "EG", leave_kind: "annual", entitlement_tier: "protected_disability", hazardous_or_remote: false, qualifying_service_months: null, starts_on: "2026-01-01", ends_on: "2026-12-31", allocated_days: 45, carry_forward_days: 0, status: "active" },
   expect: "holds",
 })
 
 export const EgyptAnnualLeaveHazardousStandard21dViolated = Norn.example("hazardous standard 21-day annual leave violates Law 14/2025 Art. 124 +7d (28d) floor", {
   of: EgyptLeaveAllocationAnnualFloor,
-  given: { id: "la_eg_haz_bad", jurisdiction_code: "EG", leave_kind: "annual", entitlement_tier: "standard", hazardous_or_remote: true, starts_on: "2026-01-01", ends_on: "2026-12-31", allocated_days: 21, carry_forward_days: 0, status: "active" },
+  given: { id: "la_eg_haz_bad", jurisdiction_code: "EG", leave_kind: "annual", entitlement_tier: "standard", hazardous_or_remote: true, qualifying_service_months: null, starts_on: "2026-01-01", ends_on: "2026-12-31", allocated_days: 21, carry_forward_days: 0, status: "active" },
   expect: "violated",
 })
 
 export const EgyptAnnualLeaveHazardousStandard28dHolds = Norn.example("hazardous standard 28-day annual leave holds under Law 14/2025 Art. 124", {
   of: EgyptLeaveAllocationAnnualFloor,
-  given: { id: "la_eg_haz_ok", jurisdiction_code: "EG", leave_kind: "annual", entitlement_tier: "standard", hazardous_or_remote: true, starts_on: "2026-01-01", ends_on: "2026-12-31", allocated_days: 28, carry_forward_days: 0, status: "active" },
+  given: { id: "la_eg_haz_ok", jurisdiction_code: "EG", leave_kind: "annual", entitlement_tier: "standard", hazardous_or_remote: true, qualifying_service_months: null, starts_on: "2026-01-01", ends_on: "2026-12-31", allocated_days: 28, carry_forward_days: 0, status: "active" },
   expect: "holds",
 })
 
 export const EgyptSickLeaveNotApplicable = Norn.example("sick leave allocation is outside the annual leave floor overlay", {
   of: EgyptLeaveAllocationAnnualFloor,
-  given: { id: "la_eg_sick", jurisdiction_code: "EG", leave_kind: "sick", entitlement_tier: "standard", hazardous_or_remote: false, starts_on: "2026-01-01", ends_on: "2026-12-31", allocated_days: 5, carry_forward_days: 0, status: "active" },
+  given: { id: "la_eg_sick", jurisdiction_code: "EG", leave_kind: "sick", entitlement_tier: "standard", hazardous_or_remote: false, qualifying_service_months: null, starts_on: "2026-01-01", ends_on: "2026-12-31", allocated_days: 5, carry_forward_days: 0, status: "active" },
   expect: "not_applicable",
 })
 
 export const EgyptAnnualLeaveNonEgNotApplicable = Norn.example("non-Egyptian GB annual leave allocation is outside Egypt Law 14/2025 overlay", {
   of: EgyptLeaveAllocationAnnualFloor,
-  given: { id: "la_gb", jurisdiction_code: "GB", leave_kind: "annual", entitlement_tier: "standard", hazardous_or_remote: false, starts_on: "2026-01-01", ends_on: "2026-12-31", allocated_days: 10, carry_forward_days: 0, status: "active" },
+  given: { id: "la_gb", jurisdiction_code: "GB", leave_kind: "annual", entitlement_tier: "standard", hazardous_or_remote: false, qualifying_service_months: null, starts_on: "2026-01-01", ends_on: "2026-12-31", allocated_days: 10, carry_forward_days: 0, status: "active" },
   expect: "not_applicable",
 })
 
 export const EgyptAnnualLeavePreEffectiveDateNotApplicable = Norn.example("pre-2025-09-01 Egyptian annual leave allocation is outside Law 14/2025 overlay", {
   of: EgyptLeaveAllocationAnnualFloor,
-  given: { id: "la_eg_hist", jurisdiction_code: "EG", leave_kind: "annual", entitlement_tier: "standard", hazardous_or_remote: false, starts_on: "2025-01-01", ends_on: "2025-12-31", allocated_days: 15, carry_forward_days: 0, status: "expired" },
+  given: { id: "la_eg_hist", jurisdiction_code: "EG", leave_kind: "annual", entitlement_tier: "standard", hazardous_or_remote: false, qualifying_service_months: null, starts_on: "2025-01-01", ends_on: "2025-12-31", allocated_days: 15, carry_forward_days: 0, status: "expired" },
   expect: "not_applicable",
 })
 

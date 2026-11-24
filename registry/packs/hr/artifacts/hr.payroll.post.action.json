@@ -12,7 +12,7 @@
       "version": "0.1.0"
     },
     "actionId": "hr.payroll.post",
-    "description": "Permanently post a non-empty approved payroll run so its totals become immutable (HR-PR-05, HR-PR-06).",
+    "description": "Permanently post a non-empty approved payroll run after verifying its linked PayrollFund exists in matching currency with null UCUM unit (HR-PR-05, HR-PR-06).",
     "effectProgram": {
       "entityArtifactId": "hr.PayrollRun.entity",
       "entityArtifactVersion": "0.1.0",
@@ -53,7 +53,8 @@
       "type": "object"
     },
     "preconditions": [
-      "((slice.run.status == 'approved') and (slice.run.total_gross > 0)) and (slice.run.total_net == (slice.run.total_gross - slice.run.total_deductions))"
+      "((slice.run.status == 'approved') and (slice.run.total_gross > 0)) and (slice.run.total_net == (slice.run.total_gross - slice.run.total_deductions))",
+      "((len(slice.run_fund) == 1) and all(slice.run_fund as f, f.unit == null)) and (slice.run.currency in map(slice.run_fund as f, f.currency ?? ''))"
     ],
     "scopeRequired": [
       "orgId",
@@ -69,6 +70,16 @@
         },
         "name": "run",
         "objectType": "hr.PayrollRun"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "run",
+            "link": "fund"
+          }
+        },
+        "name": "run_fund",
+        "objectType": "hr.PayrollFund"
       }
     ],
     "title": "Post payroll run",

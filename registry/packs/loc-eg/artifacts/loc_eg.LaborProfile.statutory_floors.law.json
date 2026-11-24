@@ -24,9 +24,9 @@
       "source": "authoring_sdk",
       "sourcePath": "registry/packs/loc-eg/egypt.ts"
     },
-    "rationale": "Egypt Labor Law No. 14 of 2025 (effective 2025-09-01, Arts. 117-124) caps regular weekly hours at 48h, ordinary daily hours at 8h, and daily workplace presence at 10h, mandates >= 24h consecutive weekly rest, sets annual leave floors of 15d (year 1), 21d (year 2+), 30d (10+ years or age 50+), and 45d (persons with disabilities/short stature), plus >= 7d supplement for hazardous or remote work.",
+    "rationale": "Egypt Labor Law No. 14 of 2025 (effective 2025-09-01, Arts. 117-124) caps regular weekly hours at 48h, ordinary daily hours at 8h, and daily workplace presence at 10h (or 12h for Arts. 119/121 intermittent or preparatory work), mandates >= 24h consecutive weekly rest, sets annual leave floors of 15d (year 1), 21d (year 2+), 30d (10+ years or age 50+), and 45d (persons with disabilities/short stature), plus >= 7d supplement for hazardous or remote work.",
     "response": {
-      "expression": "((((((((self.max_regular_weekly_hours <= 48) and (self.max_daily_hours <= 8)) and (self.max_workplace_presence_hours <= 10)) and (self.min_weekly_rest_hours >= 24)) and (self.first_year_annual_leave_days >= 15)) and (self.standard_annual_leave_days >= 21)) and (self.senior_annual_leave_days >= 30)) and (self.disability_annual_leave_days >= 45)) and (self.hazardous_remote_supplement_days >= 7)",
+      "expression": "((((((((self.max_regular_weekly_hours <= 48) and (self.max_daily_hours <= 8)) and (self.intermittent_or_preparatory_work ? (self.max_workplace_presence_hours <= 12) : (self.max_workplace_presence_hours <= 10))) and (self.min_weekly_rest_hours >= 24)) and (self.first_year_annual_leave_days >= 15)) and (self.standard_annual_leave_days >= 21)) and (self.senior_annual_leave_days >= 30)) and (self.disability_annual_leave_days >= 45)) and (self.hazardous_remote_supplement_days >= 7)",
       "kind": "predicate"
     },
     "scope": {

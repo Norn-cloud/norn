@@ -170,6 +170,15 @@
           }
         },
         {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "qualifying_service_months",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
           "id": "starts_on",
           "type": {
             "kind": "date"
