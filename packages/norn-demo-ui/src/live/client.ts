@@ -3,9 +3,7 @@
 // sent for each path. It never polls and never computes data: a view shows the cell's answer or
 // says it has none yet. An expired token closes the socket with 4401 and the client reconnects at
 // once (the host mints a fresh token per upgrade); any other loss reconnects with backoff, and
-// after `maxFailures` losses without a usable connection the client reports `unavailable` so views
-// can say so. A connection is usable once the cell answers on it: an accept that closes before any
-// answer (a cell shedding excess readers with 1013) is a failure, not a reset of the budget.
+// after `maxFailures` failed opens the client reports `unavailable` so views can say so.
 
 export const LIVE_PROTOCOL = "norn.live.v1"
 
@@ -208,6 +206,13 @@ export class LiveClient {
       this.#setState("open")
       for (const entry of this.#entries.values()) this.#sendSubscribe(entry)
     })
+    // A failed open is any loss before the cell has sent a frame on this socket, an accept included:
+    // a cell shedding excess readers accepts, then closes with 1013. Only a frame from the cell
+    // proves the connection usable and restores the retry budget, so open/close cycles still end
+    // in `unavailable` (and the view's Refresh) instead of retrying forever.
+    socket.addEventListener("message", () => {
+      if (this.#socket === socket) this.#failures = 0
+    })
     socket.addEventListener("message", (event) => {
       if (this.#socket !== socket || typeof event.data !== "string") return
       let message: { type?: unknown; id?: unknown; status?: unknown; digest?: unknown; body?: unknown; code?: unknown; message?: unknown }
@@ -217,8 +222,6 @@ export class LiveClient {
         return
       }
       if (message.type === "refused" && typeof message.code === "string" && typeof message.message === "string") {
-        // The cell answered on this socket: the connection is usable, so the retry budget starts over.
-        this.#failures = 0
         const id = typeof message.id === "string" ? message.id : null
         const entry = id !== null ? this.#byId.get(id) : undefined
         const refusal: LiveRefusal = { code: message.code, message: message.message }
@@ -231,7 +234,6 @@ export class LiveClient {
       }
       const entry = typeof message.id === "string" ? this.#byId.get(message.id) : undefined
       if (!entry || message.type !== "snapshot" || typeof message.status !== "number" || typeof message.digest !== "string") return
-      this.#failures = 0
       entry.refused = undefined
       entry.last = { status: message.status, digest: message.digest, body: message.body }
       for (const subscriber of entry.subscribers) subscriber.listener(entry.last)
