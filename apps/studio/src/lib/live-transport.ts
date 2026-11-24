@@ -241,12 +241,28 @@ type ModeProbe = { readonly controller: AbortController; readonly result: Promis
 const modeByScope = new Map<string, ModeProbe>()
 let unkeyedMode: ModeProbe | undefined
 /**
- * The error the mode query settled on once its bounded retries ran out (or a non-retryable refusal).
- * Until the user retries (`retryMode` → `refreshMode`) or a mode read succeeds, page reads through
- * the transport reuse it instead of starting their own `/v1/definitions` probe, so a settled
- * "Workspace unavailable" issues no further automatic catalog reads.
+ * The error the mode query settled on once its bounded retries ran out (or a non-retryable refusal),
+ * bound to the scope (`studioScopeKey`) and mode generation it was decided in. Until the user
+ * retries (`retryMode` → `refreshMode`) or a mode read succeeds, page reads through the transport in
+ * that same scope and generation reuse it instead of starting their own `/v1/definitions` probe, so
+ * a settled "Workspace unavailable" issues no further automatic catalog reads. Any scope switch
+ * clears it, and a read in another scope or generation never sees it (no refusal detail, such as an
+ * incident ID, crosses workspaces).
  */
-let settledModeFailure: { readonly error: unknown } | undefined
+type SettledModeFailure = { readonly error: unknown; readonly scopeKey: string | null; readonly generation: number }
+let settledModeFailure: SettledModeFailure | undefined
+/** The scope and generation each failed mode-query attempt ran in, so its settle binds to that, not to whatever is current later. */
+const modeAttemptOrigin = new WeakMap<object, { readonly scopeKey: string | null; readonly generation: number }>()
+
+function settledFailureFor(scopeKey: string | null): SettledModeFailure | undefined {
+  const settled = settledModeFailure
+  if (settled === undefined) return undefined
+  if (settled.scopeKey !== scopeKey || settled.generation !== modeGeneration) {
+    settledModeFailure = undefined
+    return undefined
+  }
+  return settled
+}
 const pendingModeControllers = new Set<AbortController>()
 const browserFetch: Fetch = (input, init) => fetch(input, init)
 
@@ -282,6 +298,7 @@ export function currentMode(
       modeGeneration += 1
       modeByScope.clear()
     }
+    if (activeModeScopeKey !== key) settledModeFailure = undefined
     unkeyedMode = undefined
     activeModeScopeKey = key
     const existing = modeByScope.get(key)
@@ -305,7 +322,8 @@ export function currentMode(
     if (existing !== undefined && !existing.controller.signal.aborted) return observeModeProbe(existing, signal)
   }
   if (unkeyedMode !== undefined && !unkeyedMode.controller.signal.aborted) return observeModeProbe(unkeyedMode, signal)
-  if (settledModeFailure !== undefined) return Promise.reject(settledModeFailure.error)
+  const settled = settledFailureFor(activeModeScopeKey)
+  if (settled !== undefined) return Promise.reject(settled.error)
   const gen = modeGeneration
   const probe = startModeProbe((probeSignal) => discoverScope(fetcher, probeSignal).then(async (scope) => {
     const key = studioScopeKey(scope)
@@ -496,21 +514,29 @@ export function modeQuery(scope: StudioScope | null | undefined, enabled = true,
     queryKey: ["studio-mode", scope === undefined ? "outage" : studioScopeKey(scope)],
     enabled,
     queryFn: async ({ signal }) => {
-      if (recoveryClient === undefined) {
-        const mode = await currentMode(browserFetch, scope, signal)
-        settledModeFailure = undefined
-        return mode
+      // `currentMode` switches the active scope (and generation) synchronously, so read the origin after it starts.
+      const read = recoveryClient === undefined ? currentMode(browserFetch, scope, signal) : readMode(browserFetch, undefined, signal)
+      const origin = { scopeKey: activeModeScopeKey, generation: modeGeneration }
+      let mode: Mode
+      try {
+        mode = await read
+      } catch (error) {
+        if (typeof error === "object" && error !== null) modeAttemptOrigin.set(error, origin)
+        throw error
       }
-      const recovered = await readMode(browserFetch, undefined, signal)
-      settledModeFailure = undefined
-      recoveryClient.setQueryData(["studio-scope"], recovered.kind === "live" ? recovered.scope : null)
-      return recovered
+      if (settledModeFailure?.scopeKey === origin.scopeKey) settledModeFailure = undefined
+      if (recoveryClient !== undefined) recoveryClient.setQueryData(["studio-scope"], mode.kind === "live" ? mode.scope : null)
+      return mode
     },
     retry: (failureCount, error) => {
       if (error instanceof ScopeSupersededError) return false
       if (isRetryableModeError(error) && failureCount < MODE_AUTO_RETRIES) return true
-      // Settled: no more automatic retries here, and none through the transport either.
-      settledModeFailure = { error }
+      // Settled: no more automatic retries here, and none through the transport either, but only
+      // while the scope and generation this attempt ran in are still current.
+      const origin = typeof error === "object" && error !== null ? modeAttemptOrigin.get(error) : undefined
+      if (origin !== undefined && origin.scopeKey === activeModeScopeKey && origin.generation === modeGeneration) {
+        settledModeFailure = { error, ...origin }
+      }
       return false
     },
     retryDelay: (attempt) => Math.min(800 * 2 ** attempt, 3200),
