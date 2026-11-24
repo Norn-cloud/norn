@@ -9,6 +9,7 @@ import { useLocale } from "@/lib/locale"
 import { cn } from "@/lib/utils"
 import type { Concept } from "../lib/catalog.ts"
 import { cellCall } from "../lib/cell-read.ts"
+import { readAtScope, readStudioScope, type StudioScope } from "../lib/definitions.ts"
 import { recordName } from "../lib/objects.ts"
 import { LIMITS, type Predicate, type RecordsQuery } from "../lib/records-query.ts"
 import type { RecordsRead } from "../lib/records-source.ts"
@@ -24,9 +25,24 @@ const BAR = 26
 const GAP = 4
 const ZOOM_WORDS: Readonly<Record<Zoom, string>> = { day: "Day", week: "Week", month: "Month" }
 
-async function targetOf(objectType: string, id: string, link: string): Promise<LaneTarget> {
+async function targetOf(
+  objectType: string,
+  id: string,
+  link: string,
+  scope?: StudioScope,
+  signal?: AbortSignal,
+): Promise<LaneTarget> {
   const params = new URLSearchParams({ direction: "out", link, limit: "1" })
-  const read = await cellCall<LinkPage>(`/v1/objects/${encodeURIComponent(objectType)}/${encodeURIComponent(id)}/links?${params}`)
+  const path = `/v1/objects/${encodeURIComponent(objectType)}/${encodeURIComponent(id)}/links?${params}`
+  const init = signal === undefined ? {} : { signal }
+  const read = scope === undefined
+    ? await cellCall<LinkPage>(path, init)
+    : await readAtScope(
+      scope,
+      (s) => readStudioScope(undefined, s),
+      () => cellCall<LinkPage>(path, init, undefined, scope),
+      signal,
+    )
   if (read.kind !== "ok") return { kind: "unavailable" }
   const first = read.value.items[0]?.target
   if (first !== undefined) return { kind: "target", id: first }
@@ -41,8 +57,10 @@ async function targetOf(objectType: string, id: string, link: string): Promise<L
  * link, read from the cell per record. Opening a bar opens the record's drawer (and its offered
  * actions), exactly as a row does in the table.
  */
-export function RecordsTimeline({ concept, rows, window, zoom, loaded, pending, fetching, filter, filterOverflow = 0, read, onZoom, onStep, onToday, onJump, onOpenFilter, onClearFilter, onSwitchToTable, onOpen }: {
+export function RecordsTimeline({ concept, scope, rows, window, zoom, loaded, pending, fetching, filter, filterOverflow = 0, read, onZoom, onStep, onToday, onJump, onOpenFilter, onClearFilter, onSwitchToTable, onOpen }: {
   readonly concept: Concept
+  /** The source workspace scope for lane lookups and nearest-record cache keys. */
+  readonly scope?: StudioScope
   readonly rows: readonly GridRow[]
   readonly window: Span
   readonly zoom: Zoom
@@ -54,7 +72,7 @@ export function RecordsTimeline({ concept, rows, window, zoom, loaded, pending, 
   readonly filter: Predicate | null
   /** How many clauses the active user filter exceeds the Timeline's 6-clause budget by. */
   readonly filterOverflow?: number
-  readonly read: (objectType: string, query: RecordsQuery) => Promise<RecordsRead>
+  readonly read: (objectType: string, query: RecordsQuery, signal?: AbortSignal) => Promise<RecordsRead>
   readonly onZoom: (zoom: Zoom) => void
   readonly onStep: (by: number) => void
   readonly onToday: () => void
@@ -77,10 +95,11 @@ export function RecordsTimeline({ concept, rows, window, zoom, loaded, pending, 
   }), [rows, pending, filterOverflow])
   const unplaced = pending || filterOverflow > 0 ? 0 : rows.length - spans.length
 
+  const scopePrefix = scope === undefined ? [] : [scope.orgId, scope.environmentId]
   const targets = useQueries({
     queries: lane === null || pending || filterOverflow > 0 ? [] : spans.map(({ item }) => ({
-      queryKey: ["timeline-lane", item.record.objectType, item.record.id, lane],
-      queryFn: () => targetOf(item.record.objectType, item.record.id, lane),
+      queryKey: ["timeline-lane", ...scopePrefix, item.record.objectType, item.record.id, lane],
+      queryFn: ({ signal }: { readonly signal: AbortSignal }) => targetOf(item.record.objectType, item.record.id, lane, scope, signal),
       staleTime: 30_000, retry: false,
     })),
   })
@@ -150,8 +169,8 @@ export function RecordsTimeline({ concept, rows, window, zoom, loaded, pending, 
 
   const empty = loaded && !pending && filterOverflow === 0 && rows.length === 0
   const nearestAllowed = empty && (filter?.all.length ?? 0) <= NEAREST_MAX_USER_CLAUSES
-  const after = useQuery({ queryKey: ["timeline-nearest", concept.name, "after", window.end, JSON.stringify(filter)], enabled: nearestAllowed, retry: false, queryFn: () => read(concept.name, { ...nearestQuery(window, filter, "after"), limit: 1 }) })
-  const before = useQuery({ queryKey: ["timeline-nearest", concept.name, "before", window.start, JSON.stringify(filter)], enabled: nearestAllowed, retry: false, queryFn: () => read(concept.name, { ...nearestQuery(window, filter, "before"), limit: 1 }) })
+  const after = useQuery({ queryKey: ["timeline-nearest", ...scopePrefix, concept.name, "after", window.end, JSON.stringify(filter)], enabled: nearestAllowed, retry: false, queryFn: ({ signal }) => read(concept.name, { ...nearestQuery(window, filter, "after"), limit: 1 }, signal) })
+  const before = useQuery({ queryKey: ["timeline-nearest", ...scopePrefix, concept.name, "before", window.start, JSON.stringify(filter)], enabled: nearestAllowed, retry: false, queryFn: ({ signal }) => read(concept.name, { ...nearestQuery(window, filter, "before"), limit: 1 }, signal) })
   const nearestOf = (result: RecordsRead | undefined, direction: "after" | "before") => {
     const record = result?.kind === "page" ? result.read.document.records[0] : undefined
     return nearestJumpTarget(record?.values, direction)

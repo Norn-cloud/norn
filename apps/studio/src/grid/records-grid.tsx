@@ -351,7 +351,7 @@ export function RecordsGrid({ concept, read, scope, initial, onQuery, timeline =
           return (
             <RecordsTimeline concept={concept} rows={loaded ? rows : []} window={span} zoom={zoom}
               loaded={loaded} pending={filterOverflow === 0 && (result.isPending || result.isPlaceholderData)} fetching={result.isFetching} filter={filter}
-              filterOverflow={filterOverflow} read={readRecordsPage}
+              filterOverflow={filterOverflow} scope={scope} read={readRecordsPage}
               onZoom={(next) => { setZoom(next); restart() }} onStep={(by) => { setAnchor((at) => stepAnchor(zoom, at, by)); restart() }}
               onToday={() => { setAnchor(new Date()); restart() }} onJump={(at) => { setAnchor(new Date(at)); restart() }}
               onOpenFilter={() => setFilterOpen(true)} onClearFilter={clearFilter} onSwitchToTable={() => { setLayout("table"); restart(); setNotice(null) }}

@@ -443,7 +443,7 @@ export function syncStudioScopeChange(client: QueryClient, nextScope: StudioScop
     lastObservedScope.delete(client)
     refreshMode()
     purgeStaleScopeQueries(client, "")
-    void client.invalidateQueries({ queryKey: ["studio-scope"] })
+    void client.resetQueries({ queryKey: ["studio-scope"], exact: true })
     void client.invalidateQueries({ queryKey: ["session"] })
     return
   }
