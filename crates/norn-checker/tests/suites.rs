@@ -56,8 +56,6 @@ mod diagnosis;
 mod diagnosis_report;
 #[path = "diagnostic_snapshots.rs"]
 mod diagnostic_snapshots;
-#[path = "duties.rs"]
-mod duties;
 #[path = "entitlement_join_budget.rs"]
 mod entitlement_join_budget;
 #[path = "entity_artifact_set.rs"]

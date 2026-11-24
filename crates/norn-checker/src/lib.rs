@@ -31,15 +31,12 @@ pub mod codes;
 mod concept_roles;
 pub mod connector_path;
 pub mod consistency;
-/// Conservative action/policy projection for finite control analysis.
-pub mod controls_adapter;
 pub mod decision_links;
 mod defined_concepts;
 pub mod definition_catalog;
 pub mod definitions_diff;
 pub mod deontic;
 mod diagnostic;
-pub mod duties;
 pub mod engine_release;
 pub mod entity_artifacts;
 pub mod entity_instance;
