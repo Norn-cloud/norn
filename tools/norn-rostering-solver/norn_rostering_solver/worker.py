@@ -81,7 +81,7 @@ _DEPENDENCY_CLOSURE_DOMAIN = b"norn.function/dependency-closure/v1\0"
 _SOURCE_TREE_DOMAIN = b"norn.function/source-tree/v1\0"
 _LOCAL_OCI_BUNDLE_DOMAIN = b"norn.function/local-oci-bundle/v1\0"
 
-_DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
+_DIGEST_RE = re.compile(r"\Asha256:[0-9a-f]{64}\Z")
 
 _BAD_REQUEST_CODES: frozenset[str] = frozenset(
     {

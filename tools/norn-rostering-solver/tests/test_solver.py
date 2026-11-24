@@ -1196,6 +1196,108 @@ def test_cardinality_limits_enforced_before_model_construction() -> None:
         solve_roster(req_conflict_bomb)
     assert exc_c.value.code == "NORN-SOLVER-LIMIT-EXCEEDED"
 
+    # 7. Split-shift edge bomb: 1 employee × 720 one-minute shifts separated by 1-minute gaps
+    #    (C(720, 2) = 258,840 split-shift pairs > MAX_CONFLICT_CONSTRAINTS = 50,000) fails closed
+    #    immediately in preflight BEFORE constructing CP-SAT variables/constraints!
+    base_split_day = datetime(2026, 11, 28, 0, 0, tzinfo=UTC)
+    split_bomb_emp = (
+        EmployeeInput(
+            employee_id="emp_split_bomb",
+            home_unit_id="branch_maadi",
+            skills=("cashier",),
+            max_regular_weekly_minutes=2400,
+        ),
+    )
+    split_bomb_shifts = tuple(
+        ShiftRequirementInput(
+            shift_id=f"sh_sb_{i:03d}",
+            unit_id="branch_maadi",
+            role_code="cashier",
+            starts_at=base_split_day + timedelta(minutes=2 * i),
+            ends_at=base_split_day + timedelta(minutes=2 * i + 1),
+            required_count=1,
+        )
+        for i in range(720)
+    )
+    assert MAX_CONFLICT_CONSTRAINTS < (720 * 719 // 2)
+    req_split_bomb = SolveRequest(
+        "ros_split_bomb",
+        "branch_maadi",
+        split_bomb_emp,
+        split_bomb_shifts,
+        _cairo_profile(min_rest="0.00", avoid_split=True),
+    )
+    with pytest.raises(LimitExceededError) as exc_sb:
+        solve_roster(req_split_bomb)
+    assert exc_sb.value.code == "NORN-SOLVER-LIMIT-EXCEEDED"
+
+
+def test_huge_min_rest_hours_no_timedelta_overflow_and_nonzero_second_offset() -> None:
+    # 1. Huge `min_rest_hours = "1000000000000"` must NOT trigger `timedelta` `OverflowError`!
+    emp = (
+        EmployeeInput(
+            employee_id="emp_rest",
+            home_unit_id="branch_maadi",
+            skills=("cashier",),
+            max_regular_weekly_hours=Decimal("40.00"),
+            max_overtime_weekly_hours=Decimal("0.00"),
+            overtime_cost_per_hour=Decimal("100.00"),
+        ),
+    )
+    two_shifts = (
+        ShiftRequirementInput("sh_1", "branch_maadi", "cashier", _utc(2026, 11, 28, 6), _utc(2026, 11, 28, 10), 1),
+        ShiftRequirementInput("sh_2", "branch_maadi", "cashier", _utc(2026, 11, 29, 6), _utc(2026, 11, 29, 10), 1),
+    )
+    req_huge_rest = SolveRequest(
+        "ros_huge_rest",
+        "branch_maadi",
+        emp,
+        two_shifts,
+        _cairo_profile(min_rest="1000000000000"),
+    )
+    # Two shifts for 1 employee with 1e12 hours min rest is cleanly infeasible (ZERO OverflowError!).
+    res_huge_rest = solve_roster(req_huge_rest)
+    assert res_huge_rest.status == "infeasible"
+
+    # Single shift with huge min_rest_hours solves cleanly to optimal (ZERO OverflowError!).
+    req_huge_rest_single = SolveRequest(
+        "ros_huge_rest_1",
+        "branch_maadi",
+        emp,
+        (two_shifts[0],),
+        _cairo_profile(min_rest="1000000000000"),
+    )
+    res_single = solve_roster(req_huge_rest_single)
+    assert res_single.status == "optimal"
+
+    # 2. Whole-minute shift with non-zero second offset (`06:00:30Z`–`07:00:30Z` = exact 60 min):
+    #    both solver and independent verifier admit and count it accurately!
+    sec_shift = ShiftRequirementInput(
+        "sh_sec_offset",
+        "branch_maadi",
+        "cashier",
+        datetime(2026, 11, 28, 6, 0, 30, tzinfo=UTC),
+        datetime(2026, 11, 28, 7, 0, 30, tzinfo=UTC),
+        1,
+    )
+    assert sec_shift.duration_minutes == 60
+    assert split_interval_by_local_day(sec_shift.starts_at, sec_shift.ends_at, ZoneInfo("UTC")) == {
+        datetime(2026, 11, 28, tzinfo=UTC).date(): 60,
+    }
+    req_sec = SolveRequest(
+        "ros_sec_offset",
+        "branch_maadi",
+        emp,
+        (sec_shift,),
+        _cairo_profile(max_daily="1.00"),
+    )
+    res_sec = solve_roster(req_sec)
+    assert res_sec.status == "optimal"
+    assert res_sec.verification.passed is True
+    assert res_sec.metrics is not None
+    assert res_sec.metrics.total_regular_minutes == 60
+    assert verify_roster(req_sec, res_sec.assignments).passed is True
+
 
 def test_invalid_utf8_and_response_byte_cap_fail_closed() -> None:
     # 1. Invalid UTF-8 bytes -> 400 NORN-SOLVER-JSON (never 500 traceback!)
@@ -1936,7 +2038,7 @@ def _assert_manifest_passes_norn_checker_rules(manifest: dict[str, object]) -> N
     canon_text = canonical_json(manifest)
     assert unicodedata.normalize("NFC", canon_text) == canon_text
 
-    digest_re = re.compile(r"^sha256:[0-9a-f]{64}$")
+    digest_re = re.compile(r"\Asha256:[0-9a-f]{64}\Z")
     defs = schema["$defs"]
 
     # 3. Implementation (`format != "host"` -> avoids `function.manifest.authored_host`)
@@ -2040,6 +2142,10 @@ def test_function_manifest_strictly_matches_norn_ir_schema_and_checker_rules() -
     assert isinstance(impl_oci, dict)
     assert impl_oci["digest"] == pinned_digest
     assert impl_oci["locator"] == f"ghcr.io/norn-cloud/norn-rostering-solver@{pinned_digest}"
+
+    # 3. Trailing newline in OCI digest MUST be rejected (`\A...\Z`, not `^...$`)!
+    with pytest.raises(ValueError, match="invalid OCI image digest"):
+        build_function_manifest(oci_image_digest=pinned_digest + "\n")
 
 
 def _http_request(

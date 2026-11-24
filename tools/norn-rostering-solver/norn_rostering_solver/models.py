@@ -66,53 +66,52 @@ def _parse_priority(raw: Any, path: str) -> Priority:
 _EPOCH_UTC = datetime(1970, 1, 1, tzinfo=UTC)
 
 
-def _local_day_and_offset(epoch_minute: int, tz: ZoneInfo) -> tuple[date, timedelta | None]:
-    local_dt = (_EPOCH_UTC + timedelta(minutes=epoch_minute)).astimezone(tz)
+def _local_day_and_offset_sec(epoch_second: int, tz: ZoneInfo) -> tuple[date, timedelta | None]:
+    local_dt = (_EPOCH_UTC + timedelta(seconds=epoch_second)).astimezone(tz)
     return local_dt.date(), local_dt.utcoffset()
 
 
 def split_interval_by_local_day(starts_at: datetime, ends_at: datetime, tz: ZoneInfo) -> dict[date, int]:
-    """Split a half-open UTC interval `[starts_at, ends_at)` into exact integer minutes per local calendar day.
+    """Split a whole-minute half-open UTC interval `[starts_at, ends_at)` into exact integer minutes per local calendar day.
 
-    Steps strictly in UTC instants using 60-minute chunks with exact binary search on
-    any local-date or UTC-offset transition, so every UTC minute `[t, t+60s)` is attributed
-    identically to `t.astimezone(tz).date()` — including midnight DST rollbacks where local
-    time returns to the previous calendar day (e.g. `America/St_Johns` 00:01 -> 23:01).
+    Supports any whole-minute interval regardless of second offset (e.g. `06:00:30Z`–`07:00:30Z`).
+    Steps strictly in UTC 60-second quanta (`start_sec + 60 * k`) using 60-quantum chunks with exact
+    binary search on any local-date or UTC-offset transition, so every quantum `[t, t+60s)` is
+    attributed identically to `t.astimezone(tz).date()` — including midnight DST rollbacks where
+    local time returns to the previous calendar day (e.g. `America/St_Johns` 00:01 -> 23:01).
     """
     start_utc = starts_at.astimezone(UTC)
     end_utc = ends_at.astimezone(UTC)
     if end_utc <= start_utc:
         raise SolverContractError("NORN-SOLVER-INTERVAL", "interval ends_at must be strictly after starts_at")
 
-    start_min = timedelta_exact_minutes(start_utc - _EPOCH_UTC, "interval_start")
-    end_min = timedelta_exact_minutes(end_utc - _EPOCH_UTC, "interval_end")
+    start_sec = timedelta_exact_seconds(start_utc - _EPOCH_UTC)
+    total_minutes = timedelta_exact_minutes(end_utc - start_utc, "interval_duration")
 
     by_day: dict[date, int] = {}
-    cur = start_min
-    while cur < end_min:
-        cur_day, cur_offset = _local_day_and_offset(cur, tz)
-        chunk_end = cur + 60 if cur + 60 < end_min else end_min
-        last_day, last_offset = _local_day_and_offset(chunk_end - 1, tz)
+    cur_k = 0
+    while cur_k < total_minutes:
+        cur_day, cur_offset = _local_day_and_offset_sec(start_sec + 60 * cur_k, tz)
+        chunk_end = cur_k + 60 if cur_k + 60 < total_minutes else total_minutes
+        last_day, last_offset = _local_day_and_offset_sec(start_sec + 60 * (chunk_end - 1), tz)
 
         if last_day == cur_day and last_offset == cur_offset:
-            # Uniform local day & UTC offset across `[cur, chunk_end)`.
             seg_end = chunk_end
         else:
-            # Bisect for the exact first UTC minute in `(cur, chunk_end)` where `(date, utcoffset)` changes.
-            lo = cur
+            lo = cur_k
             hi = chunk_end
             while lo + 1 < hi:
                 mid = (lo + hi) // 2
-                m_day, m_offset = _local_day_and_offset(mid, tz)
+                m_day, m_offset = _local_day_and_offset_sec(start_sec + 60 * mid, tz)
                 if m_day == cur_day and m_offset == cur_offset:
                     lo = mid
                 else:
                     hi = mid
             seg_end = hi
 
-        seg_minutes = seg_end - cur
+        seg_minutes = seg_end - cur_k
         by_day[cur_day] = by_day.get(cur_day, 0) + seg_minutes
-        cur = seg_end
+        cur_k = seg_end
     return by_day
 
 
@@ -163,6 +162,14 @@ class TimeWindow:
     def overlaps(self, other: TimeWindow) -> bool:
         """Half-open overlap test: `[a, b)` overlaps `[c, d)` iff `a < d and c < b`."""
         return self.starts_at < other.ends_at and other.starts_at < self.ends_at
+
+    def gap_seconds(self, other: TimeWindow) -> int:
+        """Exact non-negative integer seconds between two non-overlapping intervals (0 if overlapping/touching)."""
+        if self.overlaps(other):
+            return 0
+        if self.ends_at <= other.starts_at:
+            return timedelta_exact_seconds(other.starts_at - self.ends_at)
+        return timedelta_exact_seconds(self.starts_at - other.ends_at)
 
     def gap_minutes(self, other: TimeWindow) -> int:
         """Exact non-negative integer minutes between two non-overlapping intervals (0 if overlapping/touching)."""

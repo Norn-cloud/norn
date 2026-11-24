@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .boundary import PostVerificationError, format_utc, timedelta_exact_minutes
+from .boundary import PostVerificationError, format_utc, timedelta_exact_minutes, timedelta_exact_seconds
 from .models import (
     Assignment,
     EmployeeInput,
@@ -90,16 +90,19 @@ def _count_shift_local_minutes_direct(
     ends_at: datetime,
     tz: ZoneInfo,
 ) -> tuple[dict[date, int], dict[tuple[int, int], int]]:
-    """Independently attribute every single UTC minute `[t, t+60s)` directly to its local calendar day & ISO week.
+    """Independently attribute every 60-second UTC quantum `[start_sec + 60*k, ...)` to its local day & ISO week.
 
+    Supports any whole-minute interval regardless of second offset (e.g. `06:00:30Z`–`07:00:30Z`).
     Intentionally does NOT share `models.split_interval_by_local_day` so the independent
     post-verifier can never share a calendar/DST splitting bug with the solver.
     """
-    start_min = timedelta_exact_minutes(starts_at.astimezone(UTC) - _EPOCH_UTC, "verifier_start")
-    end_min = timedelta_exact_minutes(ends_at.astimezone(UTC) - _EPOCH_UTC, "verifier_end")
+    start_utc = starts_at.astimezone(UTC)
+    end_utc = ends_at.astimezone(UTC)
+    start_sec = timedelta_exact_seconds(start_utc - _EPOCH_UTC)
+    total_minutes = timedelta_exact_minutes(end_utc - start_utc, "verifier_duration")
     daily: dict[date, int] = defaultdict(int)
-    for epoch_min in range(start_min, end_min):
-        local_day = (_EPOCH_UTC + timedelta(minutes=epoch_min)).astimezone(tz).date()
+    for k in range(total_minutes):
+        local_day = (_EPOCH_UTC + timedelta(seconds=start_sec + 60 * k)).astimezone(tz).date()
         daily[local_day] += 1
     weekly: dict[tuple[int, int], int] = defaultdict(int)
     for work_day, mins in daily.items():
@@ -251,13 +254,14 @@ def verify_roster(
                         )
                     )
                 else:
-                    gap = s1.window.gap_minutes(s2.window)
-                    if gap < profile.min_rest_minutes:
+                    gap_sec = s1.window.gap_seconds(s2.window)
+                    min_rest_sec = profile.min_rest_minutes * 60
+                    if gap_sec < min_rest_sec:
                         violations.append(
                             HardLawViolation(
                                 "HR-SH-03:min_rest_violated",
                                 f"employee {emp_id!r} rest gap between {s1.shift_id!r} and {s2.shift_id!r} is "
-                                f"{gap} min (< {profile.min_rest_minutes} min required)",
+                                f"{gap_sec}s (< {min_rest_sec}s required)",
                             )
                         )
 

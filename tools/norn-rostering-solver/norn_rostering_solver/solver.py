@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import replace
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -44,6 +44,7 @@ from .boundary import (
     minor_units_to_decimal,
     minutes_to_hours,
     sha256_digest,
+    timedelta_exact_seconds,
 )
 from .models import (
     CONTRACT_ID,
@@ -156,6 +157,84 @@ def _transfer_eligibility(
     return None
 
 
+_EPOCH_UTC = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def _preflight_pairwise_edges(
+    shifts: list[ShiftRequirementInput],
+    emps_by_shift: list[set[int]],
+    profile: PreferenceProfileInput,
+    tz: ZoneInfo,
+    *,
+    include_split_shifts: bool,
+) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
+    """Compute conflict & split-shift pairs under `MAX_CONFLICT_CONSTRAINTS` BEFORE creating any CP-SAT model.
+
+    Uses pure Python integer UTC epoch seconds for all gap/cutoff comparisons (never
+    constructing `timedelta(minutes=min_rest_minutes)`, so arbitrarily huge `min_rest_hours`
+    cannot raise `OverflowError`).
+    """
+    if not shifts:
+        return [], []
+
+    starts_sec = [timedelta_exact_seconds(sh.starts_at.astimezone(UTC) - _EPOCH_UTC) for sh in shifts]
+    ends_sec = [timedelta_exact_seconds(sh.ends_at.astimezone(UTC) - _EPOCH_UTC) for sh in shifts]
+    min_rest_sec = profile.min_rest_minutes * 60
+
+    # 1. Sweep-line over sorted shifts for pairwise overlap / min-rest conflicts.
+    conflict_pairs: list[tuple[int, int]] = []
+    total_edges = 0
+    for i in range(len(shifts)):
+        emps_i = emps_by_shift[i]
+        if not emps_i:
+            continue
+        cutoff_sec = ends_sec[i] + min_rest_sec
+        for j in range(i + 1, len(shifts)):
+            if starts_sec[j] >= cutoff_sec:
+                break
+            shared_count = len(emps_i & emps_by_shift[j])
+            if shared_count == 0:
+                continue
+            total_edges += shared_count
+            if total_edges > MAX_CONFLICT_CONSTRAINTS:
+                raise LimitExceededError(
+                    f"pairwise conflict/split constraints ({total_edges}) exceed "
+                    f"MAX_CONFLICT_CONSTRAINTS ({MAX_CONFLICT_CONSTRAINTS})"
+                )
+            conflict_pairs.append((i, j))
+
+    # 2. Split-shift pairs on the same local calendar start date (counted under the SAME budget).
+    split_pairs: list[tuple[int, int]] = []
+    if include_split_shifts and profile.avoid_split_shifts:
+        shifts_by_start_date: dict[date, list[int]] = defaultdict(list)
+        for s_idx, sh in enumerate(shifts):
+            if emps_by_shift[s_idx]:
+                shifts_by_start_date[sh.local_start_date(tz)].append(s_idx)
+        for day_indices in shifts_by_start_date.values():
+            if len(day_indices) < 2:
+                continue
+            for a_i in range(len(day_indices)):
+                s1_idx = day_indices[a_i]
+                emps_1 = emps_by_shift[s1_idx]
+                s1_end = ends_sec[s1_idx]
+                for b_i in range(a_i + 1, len(day_indices)):
+                    s2_idx = day_indices[b_i]
+                    s2_start = starts_sec[s2_idx]
+                    if s1_end < s2_start and (s2_start - s1_end) >= min_rest_sec:
+                        shared_count = len(emps_1 & emps_by_shift[s2_idx])
+                        if shared_count == 0:
+                            continue
+                        total_edges += shared_count
+                        if total_edges > MAX_CONFLICT_CONSTRAINTS:
+                            raise LimitExceededError(
+                                f"pairwise conflict/split constraints ({total_edges}) exceed "
+                                f"MAX_CONFLICT_CONSTRAINTS ({MAX_CONFLICT_CONSTRAINTS})"
+                            )
+                        split_pairs.append((s1_idx, s2_idx))
+
+    return conflict_pairs, split_pairs
+
+
 def _add_statutory_temporal_constraints(
     model: cp_model.CpModel,
     employees: list[EmployeeInput],
@@ -163,6 +242,7 @@ def _add_statutory_temporal_constraints(
     x: dict[tuple[int, int], cp_model.IntVar],
     profile: PreferenceProfileInput,
     tz: ZoneInfo,
+    conflict_pairs: list[tuple[int, int]],
 ) -> None:
     """Add non-negotiable statutory hard laws: non-overlap, min rest, max daily hours, max consecutive local days.
 
@@ -173,40 +253,8 @@ def _add_statutory_temporal_constraints(
     if not shifts:
         return
 
-    min_rest_min = profile.min_rest_minutes
     max_daily_min = profile.max_daily_minutes
     max_consec = profile.max_consecutive_days
-
-    # Deterministic sweep-line over shifts sorted by `starts_at`:
-    # Two shifts `s1 = shifts[i]`, `s2 = shifts[j]` (with `s2.starts_at >= s1.starts_at`) conflict
-    # iff `s2.starts_at < s1.ends_at + min_rest_min`. As soon as `s2.starts_at >= cutoff`, no
-    # later shift can conflict with `s1`, so we break immediately and enforce `MAX_CONFLICT_CONSTRAINTS`
-    # BEFORE instantiating CP-SAT constraints.
-    emps_by_shift: list[set[int]] = [set() for _ in range(len(shifts))]
-    for e_idx, s_idx in x:
-        emps_by_shift[s_idx].add(e_idx)
-
-    min_rest_delta = timedelta(minutes=min_rest_min)
-    conflict_pairs: list[tuple[int, int]] = []
-    total_conflict_constraints = 0
-    for i in range(len(shifts)):
-        emps_i = emps_by_shift[i]
-        if not emps_i:
-            continue
-        cutoff = shifts[i].ends_at + min_rest_delta
-        for j in range(i + 1, len(shifts)):
-            if shifts[j].starts_at >= cutoff:
-                break
-            shared_count = len(emps_i & emps_by_shift[j])
-            if shared_count == 0:
-                continue
-            total_conflict_constraints += shared_count
-            if total_conflict_constraints > MAX_CONFLICT_CONSTRAINTS:
-                raise LimitExceededError(
-                    f"pairwise conflict constraints ({total_conflict_constraints}) exceed "
-                    f"MAX_CONFLICT_CONSTRAINTS ({MAX_CONFLICT_CONSTRAINTS})"
-                )
-            conflict_pairs.append((i, j))
 
     # Precompute exact local calendar day minute splits for every shift.
     day_contributions: dict[date, list[tuple[int, int]]] = defaultdict(list)
@@ -357,10 +405,9 @@ def _solve_primary_cpsat(
     tz = request.tz
     auth_transfers = frozenset(request.authorized_transfer_employee_ids)
 
-    model = cp_model.CpModel()
-    x: dict[tuple[int, int], cp_model.IntVar] = {}
-
+    eligible_pairs: list[tuple[int, int]] = []
     eligible_emps_per_shift: list[list[int]] = [[] for _ in range(len(shifts))]
+    emps_sets: list[set[int]] = [set() for _ in range(len(shifts))]
     active_emp_set: set[int] = set()
 
     for e_idx, emp in enumerate(employees):
@@ -371,18 +418,35 @@ def _solve_primary_cpsat(
                 allow_cross_branch_transfers=request.allow_cross_branch_transfers,
                 authorized_transfer_emp_ids=auth_transfers,
             ):
-                x[(e_idx, s_idx)] = model.new_bool_var(f"x_e{e_idx}_s{s_idx}")
+                eligible_pairs.append((e_idx, s_idx))
                 eligible_emps_per_shift[s_idx].append(e_idx)
+                emps_sets[s_idx].add(e_idx)
                 active_emp_set.add(e_idx)
+
+    # Preflight pairwise conflict + split-shift edge budget BEFORE constructing ANY CP-SAT variables/constraints.
+    conflict_pairs, split_pairs = _preflight_pairwise_edges(
+        shifts,
+        emps_sets,
+        profile,
+        tz,
+        include_split_shifts=True,
+    )
 
     # Exact structural infeasibility detection if any shift lacks enough eligible staff.
     for s_idx, sh in enumerate(shifts):
         if len(eligible_emps_per_shift[s_idx]) < sh.required_count:
             return "infeasible", "exhaustive-finite", (), None
+
+    model = cp_model.CpModel()
+    x: dict[tuple[int, int], cp_model.IntVar] = {}
+    for e_idx, s_idx in eligible_pairs:
+        x[(e_idx, s_idx)] = model.new_bool_var(f"x_e{e_idx}_s{s_idx}")
+
+    for s_idx, sh in enumerate(shifts):
         model.add(sum(x[(e_idx, s_idx)] for e_idx in eligible_emps_per_shift[s_idx]) == sh.required_count)
 
     # Statutory temporal hard laws (non-overlap, min rest, max daily hours, max consecutive local days).
-    _add_statutory_temporal_constraints(model, employees, shifts, x, profile, tz)
+    _add_statutory_temporal_constraints(model, employees, shifts, x, profile, tz, conflict_pairs)
 
     # Weekly hour caps + exact overtime minutes + weekly overtime budget cap (split cleanly across ISO weeks).
     week_contributions: dict[tuple[int, int], list[tuple[int, int]]] = defaultdict(list)
@@ -464,29 +528,17 @@ def _solve_primary_cpsat(
             if sh.shift_id in avoid_set:
                 objective_terms.append((2 * pref_weight) * var)
 
-    # 3. Split-shift avoidance (two non-contiguous shifts starting on the same local calendar day).
-    if profile.avoid_split_shifts:
+    # 3. Split-shift avoidance (using preflight-bounded `split_pairs`).
+    if profile.avoid_split_shifts and split_pairs:
         split_weight = _SPLIT_SHIFT_PENALTY_MINOR * _SUB_MINOR_PER_MINOR
-        shifts_by_start_date: dict[date, list[int]] = defaultdict(list)
-        for s_idx, sh in enumerate(shifts):
-            shifts_by_start_date[sh.local_start_date(tz)].append(s_idx)
-        for day_indices in shifts_by_start_date.values():
-            if len(day_indices) < 2:
-                continue
-            for a_i in range(len(day_indices)):
-                for b_i in range(a_i + 1, len(day_indices)):
-                    s1_idx = day_indices[a_i]
-                    s2_idx = day_indices[b_i]
-                    s1 = shifts[s1_idx]
-                    s2 = shifts[s2_idx]
-                    if s1.ends_at < s2.starts_at and s1.window.gap_minutes(s2.window) >= profile.min_rest_minutes:
-                        for e_idx in range(len(employees)):
-                            v1 = x.get((e_idx, s1_idx))
-                            v2 = x.get((e_idx, s2_idx))
-                            if v1 is not None and v2 is not None:
-                                split_v = model.new_bool_var(f"split_e{e_idx}_s{s1_idx}_s{s2_idx}")
-                                model.add(split_v >= v1 + v2 - 1)
-                                objective_terms.append(split_weight * split_v)
+        for s1_idx, s2_idx in split_pairs:
+            for e_idx in range(len(employees)):
+                v1 = x.get((e_idx, s1_idx))
+                v2 = x.get((e_idx, s2_idx))
+                if v1 is not None and v2 is not None:
+                    split_v = model.new_bool_var(f"split_e{e_idx}_s{s1_idx}_s{s2_idx}")
+                    model.add(split_v >= v1 + v2 - 1)
+                    objective_terms.append(split_weight * split_v)
 
     model.minimize(sum(objective_terms))
 
@@ -554,10 +606,10 @@ def _solve_repair_cpsat(
     tz = request.tz
     auth_transfers = frozenset(request.authorized_transfer_employee_ids)
 
-    model = cp_model.CpModel()
-    x: dict[tuple[int, int], cp_model.IntVar] = {}
+    primary_pairs: list[tuple[int, int]] = []
     transfer_vars: dict[tuple[int, int], TransferMode] = {}
     vars_per_shift: list[list[int]] = [[] for _ in range(len(shifts))]
+    emps_sets: list[set[int]] = [set() for _ in range(len(shifts))]
 
     for e_idx, emp in enumerate(employees):
         for s_idx, sh in enumerate(shifts):
@@ -567,14 +619,36 @@ def _solve_repair_cpsat(
                 allow_cross_branch_transfers=request.allow_cross_branch_transfers,
                 authorized_transfer_emp_ids=auth_transfers,
             ):
-                x[(e_idx, s_idx)] = model.new_bool_var(f"rx_e{e_idx}_s{s_idx}")
+                primary_pairs.append((e_idx, s_idx))
                 vars_per_shift[s_idx].append(e_idx)
+                emps_sets[s_idx].add(e_idx)
             elif allow_transfer_slack:
                 mode = _transfer_eligibility(emp, sh)
                 if mode is not None:
-                    x[(e_idx, s_idx)] = model.new_bool_var(f"rt_e{e_idx}_s{s_idx}")
                     transfer_vars[(e_idx, s_idx)] = mode
                     vars_per_shift[s_idx].append(e_idx)
+                    emps_sets[s_idx].add(e_idx)
+
+    if not allow_coverage_slack:
+        for s_idx, sh in enumerate(shifts):
+            if len(vars_per_shift[s_idx]) < sh.required_count:
+                return None
+
+    # Preflight conflict edge budget BEFORE instantiating repair CP-SAT model.
+    conflict_pairs, _ = _preflight_pairwise_edges(
+        shifts,
+        emps_sets,
+        profile,
+        tz,
+        include_split_shifts=False,
+    )
+
+    model = cp_model.CpModel()
+    x: dict[tuple[int, int], cp_model.IntVar] = {}
+    for e_idx, s_idx in primary_pairs:
+        x[(e_idx, s_idx)] = model.new_bool_var(f"rx_e{e_idx}_s{s_idx}")
+    for e_idx, s_idx in sorted(transfer_vars.keys()):
+        x[(e_idx, s_idx)] = model.new_bool_var(f"rt_e{e_idx}_s{s_idx}")
 
     # Coverage constraints (with bounded shortfall slack when enabled).
     shortfall_vars: dict[int, cp_model.IntVar] = {}
@@ -585,12 +659,10 @@ def _solve_repair_cpsat(
             model.add(assigned_sum + sf == sh.required_count)
             shortfall_vars[s_idx] = sf
         else:
-            if len(vars_per_shift[s_idx]) < sh.required_count:
-                return None
             model.add(assigned_sum == sh.required_count)
 
     # Non-negotiable statutory temporal laws (NEVER relaxed).
-    _add_statutory_temporal_constraints(model, employees, shifts, x, profile, tz)
+    _add_statutory_temporal_constraints(model, employees, shifts, x, profile, tz, conflict_pairs)
 
     # Weekly hours & overtime budget constraints (split cleanly across ISO weeks).
     # Statutory `profile.max_weekly_minutes` is NEVER relaxed by overtime repair.
