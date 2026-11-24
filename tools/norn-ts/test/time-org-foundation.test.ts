@@ -159,8 +159,17 @@ describe("time & org foundation packs", () => {
     const exception = byId.get("time.CalendarException.entity")!.payload.objectType
     expect(exception.properties.find((p: any) => p.id === "calendar_date").type).toEqual({ kind: "ref", name: "core.time.date" })
 
+    const workingWindow = byId.get("time.WorkingWindow.entity")!
+    expect(workingWindow.version).toBe("0.2.0")
+    expect(workingWindow.payload.objectType.properties.find((p: any) => p.id === "end_day_offset")).toEqual({
+      id: "end_day_offset",
+      type: { kind: "integer" },
+      default: "0",
+    })
     const windowLaw = byId.get("time.WorkingWindow.valid_local_window.law")!.payload
     expect(windowLaw.response.expression).toContain("resolve_local_timestamp(")
+    expect(windowLaw.response.expression).toContain("self.end_day_offset in [0, 1]")
+    expect(windowLaw.response.expression).toContain("(self.end_day_offset == 1) ? 86400 : 0")
 
     const materialized = byId.get("time.MaterializedWindow.entity")!.payload.objectType
     expect(materialized.implements).toEqual(["core.TimeInterval"])
@@ -205,6 +214,8 @@ describe("time & org foundation packs", () => {
     expect(pre).toContain("input.tzdb_version == slice.calendar.tzdb_version")
     expect(pre).toContain("slice.working_window.start_local")
     expect(pre).toContain("slice.working_window.end_local")
+    expect(pre).toContain("days_between(date(input.calendar_date), date(take(input.end_local_at, 10))) == slice.working_window.end_day_offset")
+    expect(byId.get("time.window.materialize_interval.action")!.version).toBe("0.2.0")
     expect(pre).toContain("days_between(date('2024-01-01'), date(input.calendar_date))")
     expect(pre).toContain("slice.working_window.weekday")
     expect(pre).toContain("resolve_local_timestamp(input.start_local_at, slice.calendar.iana_timezone, slice.calendar.dst_policy)")
@@ -313,5 +324,35 @@ describe("time & org foundation packs", () => {
       tzdb_version: "2025b",
     })
     expect(foldEarlierMismatch).toEqual({ ok: true, verdict: "violated" })
+
+    // WorkingWindow local-shape law: offset 0 needs start < end, offset 1 admits any valid pair,
+    // and only offsets 0 and 1 are admitted.
+    const windowLaw = byId.get("time.WorkingWindow.valid_local_window.law")!.payload
+    const window = (start_local: string, end_local: string, end_day_offset: number) =>
+      checker!.evaluateLaw!(windowLaw, { id: "ww", weekday: "sunday", start_local, end_local, end_day_offset })
+    expect(window("09:00", "17:00", 0)).toEqual({ ok: true, verdict: "holds" })
+    expect(window("22:00", "06:00", 0)).toEqual({ ok: true, verdict: "violated" })
+    expect(window("22:00", "06:00", 1)).toEqual({ ok: true, verdict: "holds" })
+    expect(window("08:00", "08:00", 0)).toEqual({ ok: true, verdict: "violated" })
+    expect(window("08:00", "08:00", 1)).toEqual({ ok: true, verdict: "holds" })
+    expect(window("00:00", "23:59:59", 1)).toEqual({ ok: true, verdict: "holds" })
+    for (const offset of [-1, 2]) expect(window("09:00", "17:00", offset)).toEqual({ ok: true, verdict: "violated" })
+
+    // An overnight end that lands in the spring-forward gap refuses under every policy.
+    for (const dstPolicy of ["reject", "earlier", "later"] as const) {
+      const overnightGap = checker!.evaluateLaw!(matLaw, {
+        id: "mw-overnight-gap",
+        calendar_date: "2026-03-07",
+        start_local_at: "2026-03-07T22:00:00",
+        end_local_at: "2026-03-08T02:30:00",
+        starts_at: "2026-03-08T03:00:00Z",
+        ends_at: "2026-03-08T07:30:00Z",
+        timezone: "America/New_York",
+        dst_policy: dstPolicy,
+        tzdb_version: "2025b",
+      })
+      expect(overnightGap.ok).toBe(false)
+      if (!overnightGap.ok) expect(overnightGap.error.toLowerCase()).toContain("gap")
+    }
   }, 60_000)
 })
