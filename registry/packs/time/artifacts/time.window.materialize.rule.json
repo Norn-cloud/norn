@@ -1,0 +1,153 @@
+{
+  "artifactId": "time.window.materialize.rule",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "rule",
+  "lifecycle": "active",
+  "name": "Materialize local working window to canonical UTC interval",
+  "namespace": "time",
+  "payload": {
+    "contract": "sub_decision",
+    "graph": {
+      "contentType": "application/vnd.gorules.decision",
+      "edges": [
+        {
+          "id": "edge_0",
+          "sourceId": "in",
+          "targetId": "decision",
+          "type": "edge"
+        },
+        {
+          "id": "edge_1",
+          "sourceId": "decision",
+          "targetId": "out",
+          "type": "edge"
+        }
+      ],
+      "nodes": [
+        {
+          "id": "in",
+          "name": "input",
+          "type": "inputNode"
+        },
+        {
+          "content": {
+            "hitPolicy": "first",
+            "inputs": [
+              {
+                "id": "condition",
+                "name": "condition",
+                "type": "expression"
+              }
+            ],
+            "outputs": [
+              {
+                "field": "starts_at",
+                "id": "out_starts_at",
+                "name": "starts_at"
+              },
+              {
+                "field": "ends_at",
+                "id": "out_ends_at",
+                "name": "ends_at"
+              },
+              {
+                "field": "duration_seconds",
+                "id": "out_duration_seconds",
+                "name": "duration_seconds"
+              },
+              {
+                "field": "proper_interval",
+                "id": "out_proper_interval",
+                "name": "proper_interval"
+              }
+            ],
+            "rules": [
+              {
+                "_id": "row_0",
+                "condition": "",
+                "out_duration_seconds": "seconds_between(resolve_local_timestamp(start_local_at, iana_timezone, dst_policy), resolve_local_timestamp(end_local_at, iana_timezone, dst_policy))",
+                "out_ends_at": "resolve_local_timestamp(end_local_at, iana_timezone, dst_policy)",
+                "out_proper_interval": "resolve_local_timestamp(start_local_at, iana_timezone, dst_policy) < resolve_local_timestamp(end_local_at, iana_timezone, dst_policy)",
+                "out_starts_at": "resolve_local_timestamp(start_local_at, iana_timezone, dst_policy)"
+              }
+            ]
+          },
+          "id": "decision",
+          "name": "decision",
+          "type": "decisionTableNode"
+        },
+        {
+          "id": "out",
+          "name": "output",
+          "type": "outputNode"
+        }
+      ]
+    },
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "dst_policy": {
+          "enum": [
+            "reject",
+            "earlier",
+            "later"
+          ],
+          "type": "string"
+        },
+        "end_local_at": {
+          "type": "string"
+        },
+        "iana_timezone": {
+          "type": "string"
+        },
+        "start_local_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "start_local_at",
+        "end_local_at",
+        "iana_timezone",
+        "dst_policy"
+      ],
+      "type": "object"
+    },
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "duration_seconds": {
+          "type": "number"
+        },
+        "ends_at": {
+          "type": "string"
+        },
+        "proper_interval": {
+          "type": "boolean"
+        },
+        "starts_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "starts_at",
+        "ends_at",
+        "duration_seconds",
+        "proper_interval"
+      ],
+      "type": "object"
+    },
+    "ruleId": "time.window.materialize",
+    "ruleVersion": "2.0",
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/time/artifacts/time.window.materialize.rule.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

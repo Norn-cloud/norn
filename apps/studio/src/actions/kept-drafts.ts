@@ -8,9 +8,13 @@ import type { Draft } from "../lib/actions.ts"
  */
 const kept = new Map<string, Draft>()
 
-/** One session: its user and organization. */
-export function sessionKey(account: { readonly user: { readonly id: string }; readonly organization: { readonly id: string } | null } | null | undefined): string {
-  return JSON.stringify([account?.user.id ?? null, account?.organization?.id ?? null])
+/** One session: its user, organization, and active cell environment. */
+export function sessionKey(account: {
+  readonly user: { readonly id: string }
+  readonly organization: { readonly id: string } | null
+  readonly environmentId?: string | null
+} | null | undefined): string {
+  return JSON.stringify([account?.user.id ?? null, account?.organization?.id ?? null, account?.environmentId ?? null])
 }
 
 const key = (session: string, draft: string) => `${session}\u0000${draft}`
