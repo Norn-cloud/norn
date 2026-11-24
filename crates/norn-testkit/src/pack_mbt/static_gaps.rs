@@ -472,12 +472,16 @@ fn collect_referenced_fields(
                 .iter()
                 .find(|i| i.name.as_str() == iface_name.as_str())
             {
-                for invariant in &iface.invariants {
-                    if seen_invariants.insert(invariant.id.as_str().to_owned()) {
-                        record(
-                            invariant.expression.as_str(),
-                            format!("invariant:{}", invariant.id.as_str()),
-                        );
+                for owner in
+                    iface.contract_owners(|name| pack.interfaces.iter().find(|i| i.name == *name))
+                {
+                    for invariant in &owner.invariants {
+                        if seen_invariants.insert(invariant.id.as_str().to_owned()) {
+                            record(
+                                invariant.expression.as_str(),
+                                format!("invariant:{}", invariant.id.as_str()),
+                            );
+                        }
                     }
                 }
             }
@@ -637,7 +641,9 @@ fn detect_immutable_financial_reversal_gap(
         .lifecycles(&object_type.name)
         .values()
         .any(|lc| !lc.immutable.is_empty());
-    if !object_type.immutable && !has_immutable_lifecycle_state {
+    if !super::coverage::is_effectively_immutable(pack, object_type)
+        && !has_immutable_lifecycle_state
+    {
         return;
     }
     let Some(financial_reason) = is_financial_or_ledger_type(object_type) else {

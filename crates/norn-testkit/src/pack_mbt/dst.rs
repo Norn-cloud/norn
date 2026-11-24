@@ -17,7 +17,7 @@ use norn_kernel::cell_host::{
 };
 use norn_kernel::pack_mbt_support::{
     DecisionOutput, FactChange, LawExampleVerdict as Verdict, Lifecycle, ObjectTypeDef,
-    ObjectTypeName, PropertyId, Transition, TransitionId,
+    ObjectTypeName, PropertyId, Transition, TransitionId, ZenExpression,
     evaluate_law_example_runtime as evaluate_law_example,
 };
 use norn_kernel::{
@@ -842,28 +842,27 @@ impl<H: PackHost> DstCaseState<'_, H> {
             .iter()
             .find(|ty| ty.name.as_str() == ty_name);
         while let Some(def) = walk_ty {
-            for invariant in &def.invariants {
-                if evaluate_guards(std::slice::from_ref(&invariant.expression), proposed)
-                    == GuardEval::False
-                {
-                    return true;
-                }
+            let inv_fails = |expr: &ZenExpression| {
+                evaluate_guards(std::slice::from_ref(expr), proposed) == GuardEval::False
+            };
+            if def.invariants.iter().any(|inv| inv_fails(&inv.expression)) {
+                return true;
             }
-            for iface_name in &def.implements {
-                if let Some(iface) = self
-                    .pack
+            let iface_violated = def.implements.iter().any(|iface_name| {
+                self.pack
                     .interfaces
                     .iter()
                     .find(|i| i.name.as_str() == iface_name.as_str())
-                {
-                    for invariant in &iface.invariants {
-                        if evaluate_guards(std::slice::from_ref(&invariant.expression), proposed)
-                            == GuardEval::False
-                        {
-                            return true;
-                        }
-                    }
-                }
+                    .is_some_and(|iface| {
+                        iface
+                            .contract_owners(|n| self.pack.interfaces.iter().find(|i| i.name == *n))
+                            .into_iter()
+                            .flat_map(|owner| &owner.invariants)
+                            .any(|inv| inv_fails(&inv.expression))
+                    })
+            });
+            if iface_violated {
+                return true;
             }
             walk_ty = def.extends.as_ref().and_then(|parent| {
                 self.pack

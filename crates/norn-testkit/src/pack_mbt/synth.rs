@@ -64,6 +64,7 @@ pub fn collect_required_link_graph(
     nodes_by_type.insert(object_type.name.as_str().to_owned(), source_key.clone());
     let mut state = LinkWalkState {
         pack,
+        root_key: source_key,
         seed,
         counter: 0,
         nodes_by_type,
@@ -75,6 +76,7 @@ pub fn collect_required_link_graph(
 
 struct LinkWalkState<'a> {
     pack: &'a AdmittedPack,
+    root_key: &'a FactKey,
     seed: u64,
     counter: u64,
     nodes_by_type: BTreeMap<String, FactKey>,
@@ -108,7 +110,10 @@ fn collect_required_links_recursive(
             (existing, false)
         } else {
             state.counter = state.counter.saturating_add(1);
-            let target_id = format!("req-{link_id}-{}-{}", state.seed, state.counter);
+            let target_id = format!(
+                "req-{}-{link_id}-{}-{}",
+                state.root_key.key, state.seed, state.counter
+            );
             let key = FactKey::new(target_ty.name.as_str(), &target_id);
             let target_values = synthesize_object(
                 state.pack,

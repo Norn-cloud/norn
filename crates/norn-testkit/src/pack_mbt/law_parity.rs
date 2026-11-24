@@ -11,7 +11,7 @@ use norn_kernel::cell_host::{FactKey, FactMutation, FactVersion, FactWrite, Json
 use norn_kernel::governing_laws::LawEvaluationError;
 use norn_kernel::pack_mbt_support::{
     DataQualityOutcome, DataQualityRuleRef, LawExampleVerdict as Verdict, LawIR,
-    evaluate_law_example_runtime as evaluate_law_example,
+    evaluate_law_example_runtime as evaluate_law_example, law_content_pin,
 };
 use norn_kernel::{CellCommit, CommitError, CommitReceipt, TypeCatalog};
 
@@ -119,6 +119,12 @@ where
         ));
     }
 
+    let expected_pin = law_content_pin(law).map_err(|err| {
+        format!(
+            "LAW-EXAMPLE-1 '{}': failed pinning law '{}': {err}",
+            example.name, law.id
+        )
+    })?;
     let mut host = make_host(&format!("law-example-{idx}"))?;
     let key = FactKey::new(law.subject.as_str(), format!("law-ex-{idx}"));
     let seed = u64::try_from(idx).unwrap_or(0).saturating_add(1);
@@ -135,6 +141,7 @@ where
         LawOutcomeCtx {
             law,
             expected_artifact_id,
+            expected_pin: &expected_pin,
             example,
             key: &key,
             ledger_before,
@@ -150,6 +157,7 @@ where
 struct LawOutcomeCtx<'a> {
     law: &'a LawIR,
     expected_artifact_id: &'a str,
+    expected_pin: &'a str,
     example: &'a LawExampleCase,
     key: &'a FactKey,
     ledger_before: usize,
@@ -165,6 +173,7 @@ fn check_law_runtime_outcome<H: PackHost>(
     let LawOutcomeCtx {
         law,
         expected_artifact_id,
+        expected_pin,
         example,
         key,
         ledger_before,
@@ -172,10 +181,11 @@ fn check_law_runtime_outcome<H: PackHost>(
     } = ctx;
     match (checker_verdict, runtime_result) {
         (Verdict::Holds, Ok(_)) => {
-            if !host.has_governing_law(law.subject.as_str(), expected_artifact_id) {
+            let host_pin = host.governing_law_pin(law.subject.as_str(), expected_artifact_id);
+            if host_pin.as_deref() != Some(expected_pin) {
                 return Err(format!(
-                    "LAW-EXAMPLE-1 '{}': host runtime model does not attach law '{}' ({expected_artifact_id}) to subject '{}'",
-                    example.name, law.id, law.subject
+                    "LAW-EXAMPLE-1 '{}': host runtime model does not attach exact law pin for '{}' ({expected_artifact_id}): expected {expected_pin}, host has {host_pin:?}",
+                    example.name, law.id
                 ));
             }
             if host.ledger_len() != ledger_before.saturating_add(1) {
@@ -188,10 +198,11 @@ fn check_law_runtime_outcome<H: PackHost>(
             host.verify_ledger()
         }
         (Verdict::NotApplicable, Ok(_)) => {
-            if !host.has_governing_law(law.subject.as_str(), expected_artifact_id) {
+            let host_pin = host.governing_law_pin(law.subject.as_str(), expected_artifact_id);
+            if host_pin.as_deref() != Some(expected_pin) {
                 return Err(format!(
-                    "LAW-EXAMPLE-1 '{}': host runtime model does not attach law '{}' ({expected_artifact_id}) to subject '{}'",
-                    example.name, law.id, law.subject
+                    "LAW-EXAMPLE-1 '{}': host runtime model does not attach exact law pin for '{}' ({expected_artifact_id}): expected {expected_pin}, host has {host_pin:?}",
+                    example.name, law.id
                 ));
             }
             if host.ledger_len() != ledger_before.saturating_add(1) {
@@ -214,8 +225,10 @@ fn check_law_runtime_outcome<H: PackHost>(
                 DataQualityRuleRef::Law {
                     artifact_id,
                     law_id,
-                    ..
-                } if law_id == &law.id && artifact_id == expected_artifact_id
+                    version,
+                } if law_id == &law.id
+                    && artifact_id == expected_artifact_id
+                    && version == expected_pin
             );
             if err_key != *key
                 || !pin_matches

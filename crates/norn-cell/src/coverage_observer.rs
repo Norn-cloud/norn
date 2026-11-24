@@ -8,18 +8,19 @@
 //!   multi-transition commits and never mis-crediting creations),
 //! - typed immutable refusals (`CommitError::ImmutableObject` and
 //!   `DecisionRefusal::ImmutableStateWrite`),
-//! - evaluated governing-law holds (only when `norn_checker::law_examples::evaluate_runtime`
-//!   returns `Verdict::Holds` and no observed finding violated the law) and exact
-//!   `DataQualityOutcome::NotSatisfied` law/invariant violations (both native
-//!   refusals and observed `DataQualityFinding` ledger events).
+//! - evaluated governing-law holds (evaluated independently per law artifact
+//!   against the committed object and live [`crate::link_laws::CurrentLinks`]
+//!   via [`norn_kernel::governing_laws::evaluate_linked`], only when the law's
+//!   activation condition holds and no observed finding violated the law) and
+//!   exact `DataQualityOutcome::NotSatisfied` law/invariant violations (both
+//!   native refusals and observed `DataQualityFinding` ledger events).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
-use norn_checker::law_examples::{Verdict, evaluate_runtime};
 use norn_ir::{
-    DataQualityFinding, DataQualityOutcome, DataQualityRuleRef, LawIR, LawModality, LawResponse,
-    ObjectTypeName, RuntimeValue,
+    ArtifactKind, ArtifactPayload, DataQualityFinding, DataQualityOutcome, DataQualityRuleRef,
+    JsonValue, LawIR, LawModality, LawResponse, RuntimeValue,
 };
 use norn_kernel::cell_host::{FactKey, FactMutation, FactState};
 use norn_kernel::{
@@ -512,14 +513,13 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
         finding_violated: &BTreeSet<(String, String, String)>,
     ) {
         let model = self.inner.store().model();
-        let catalog = model
-            .type_catalog()
-            .with_governing_laws(model.law_artifacts());
         let reader = self.inner.store().read();
         for item in written {
             let ty_name = item.key.object_type.as_str();
-            let laws = governing_laws_for(model, &item.key.object_type);
-            if laws.is_empty() {
+            let Ok(artifacts) = model.governing_laws(ty_name) else {
+                continue;
+            };
+            if artifacts.is_empty() {
                 continue;
             }
             let effective_values = reader
@@ -527,22 +527,10 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
                 .ok()
                 .flatten()
                 .map_or_else(|| item.values.clone(), |record| record.values);
-            let subject_val = RuntimeValue::Object(effective_values.clone());
-            let mut remaining = 10_000_u64;
-            let evaluated_failed: Option<BTreeSet<String>> = norn_kernel::governing_laws::evaluate(
-                &catalog,
-                &item.key,
-                &effective_values,
-                &mut remaining,
-            )
-            .ok()
-            .map(|failures| {
-                failures
-                    .iter()
-                    .map(|failure| rule_ref_id(&failure.rule_ref))
-                    .collect()
-            });
-            for law in laws {
+            for artifact in &artifacts {
+                let Some(law) = decode_law_artifact(artifact) else {
+                    continue;
+                };
                 if !law.exceptions.is_empty() {
                     continue;
                 }
@@ -555,27 +543,126 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
                 {
                     continue;
                 }
-                let held = match &law.response {
-                    LawResponse::Predicate { .. } => {
-                        matches!(evaluate_runtime(&law, &subject_val), Ok(Verdict::Holds))
-                    }
-                    LawResponse::Invariant { .. } => {
-                        matches!(law.modality, LawModality::Always {})
-                            && law.condition.is_none()
-                            && evaluated_failed
-                                .as_ref()
-                                .is_some_and(|failed| !failed.contains(&law.id))
-                    }
-                    LawResponse::Action { .. }
-                    | LawResponse::Transition { .. }
-                    | LawResponse::TranslationPreserves { .. } => false,
-                };
-                if held {
+                if evaluate_single_law_hold(
+                    model,
+                    &reader,
+                    artifact,
+                    &law,
+                    &item.key,
+                    &effective_values,
+                ) {
                     self.recorder.record_law_hold(law.id);
                 }
             }
         }
     }
+}
+
+fn evaluate_single_law_hold<S: SqlEngine>(
+    model: &crate::model::Model,
+    reader: &crate::read::StoreReader<'_, S>,
+    artifact: &norn_ir::ArtifactEnvelope,
+    law: &LawIR,
+    key: &FactKey,
+    effective_values: &norn_kernel::cell_host::JsonObject,
+) -> bool {
+    match &law.response {
+        LawResponse::Predicate { .. } => {
+            if !linked_law_condition_active(model, reader, artifact, law, key, effective_values) {
+                return false;
+            }
+            let single = [artifact.clone()];
+            let catalog = model.type_catalog().with_governing_laws(&single);
+            let mut links = crate::link_laws::CurrentLinks {
+                reader,
+                world: MAIN_WORLD,
+                subject: key.clone(),
+            };
+            let mut remaining = 10_000_u64;
+            norn_kernel::governing_laws::evaluate_linked(
+                &catalog,
+                key,
+                effective_values,
+                &mut links,
+                &mut remaining,
+            )
+            .is_ok_and(|failures| failures.is_empty())
+        }
+        LawResponse::Invariant { .. } => {
+            if !matches!(law.modality, LawModality::Always {}) || law.condition.is_some() {
+                return false;
+            }
+            let single = [artifact.clone()];
+            let catalog = model.type_catalog().with_governing_laws(&single);
+            let mut links = crate::link_laws::CurrentLinks {
+                reader,
+                world: MAIN_WORLD,
+                subject: key.clone(),
+            };
+            let mut remaining = 10_000_u64;
+            norn_kernel::governing_laws::evaluate_linked(
+                &catalog,
+                key,
+                effective_values,
+                &mut links,
+                &mut remaining,
+            )
+            .is_ok_and(|failures| failures.is_empty())
+        }
+        LawResponse::Action { .. }
+        | LawResponse::Transition { .. }
+        | LawResponse::TranslationPreserves { .. } => false,
+    }
+}
+
+fn linked_law_condition_active<S: SqlEngine>(
+    model: &crate::model::Model,
+    reader: &crate::read::StoreReader<'_, S>,
+    artifact: &norn_ir::ArtifactEnvelope,
+    law: &LawIR,
+    key: &FactKey,
+    effective_values: &norn_kernel::cell_host::JsonObject,
+) -> bool {
+    if law.condition.is_none() {
+        return true;
+    }
+    let mut probe_law = law.clone();
+    probe_law.modality = LawModality::Always {};
+    probe_law.response = LawResponse::Predicate {
+        expression: norn_ir::ZenExpression("false".to_owned()),
+    };
+    let Ok(json_text) = serde_json::to_string(&probe_law) else {
+        return false;
+    };
+    let Ok(json_val) = serde_json::from_str::<JsonValue>(&json_text) else {
+        return false;
+    };
+    let Ok(payload_val) = ArtifactPayload::from_kind_json(&ArtifactKind::Law, json_val) else {
+        return false;
+    };
+    let mut probe_env = artifact.clone();
+    probe_env.payload = payload_val;
+    let single = [probe_env];
+    let catalog = model.type_catalog().with_governing_laws(&single);
+    let mut links = crate::link_laws::CurrentLinks {
+        reader,
+        world: MAIN_WORLD,
+        subject: key.clone(),
+    };
+    let mut remaining = 10_000_u64;
+    // The probe law emits `NotSatisfied` on its `false` predicate iff its activation condition is true.
+    norn_kernel::governing_laws::evaluate_linked(
+        &catalog,
+        key,
+        effective_values,
+        &mut links,
+        &mut remaining,
+    )
+    .is_ok_and(|failures| {
+        failures
+            .iter()
+            .any(|failure| failure.outcome == DataQualityOutcome::NotSatisfied)
+    })
 }
 
 fn rule_ref_id(rule_ref: &DataQualityRuleRef) -> String {
@@ -586,19 +673,10 @@ fn rule_ref_id(rule_ref: &DataQualityRuleRef) -> String {
     }
 }
 
-fn governing_laws_for(model: &crate::model::Model, object_type: &ObjectTypeName) -> Vec<LawIR> {
-    model
-        .governing_laws(object_type.as_str())
-        .map_or_default(|artifacts| {
-            artifacts
-                .into_iter()
-                .filter_map(|artifact| {
-                    serde_json::to_string(&artifact.payload.to_json_value())
-                        .ok()
-                        .and_then(|text| serde_json::from_str::<LawIR>(&text).ok())
-                })
-                .collect()
-        })
+fn decode_law_artifact(artifact: &norn_ir::ArtifactEnvelope) -> Option<LawIR> {
+    serde_json::to_string(&artifact.payload.to_json_value())
+        .ok()
+        .and_then(|text| serde_json::from_str::<LawIR>(&text).ok())
 }
 
 impl<E, C, I, S: SqlEngine> CellHost for ObservedSqliteCell<E, C, I, S>

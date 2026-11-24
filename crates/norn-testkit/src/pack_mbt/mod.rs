@@ -279,11 +279,12 @@ pub trait PackHost: CellHost<Event = FactEvent, Command = JsonObject, Input = Js
         None
     }
 
-    /// Returns whether this host's own runtime model attaches governing law
-    /// artifact `artifact_id` to `object_type` (fail-closed default: `false`).
-    fn has_governing_law(&self, object_type: &str, artifact_id: &str) -> bool {
+    /// Returns the canonical `sha256:...` content pin of the governing law
+    /// artifact `artifact_id` attached to `object_type` in this host's own
+    /// runtime model, or `None` if absent (fail-closed default: `None`).
+    fn governing_law_pin(&self, object_type: &str, artifact_id: &str) -> Option<String> {
         let _ = (object_type, artifact_id);
-        false
+        None
     }
 }
 

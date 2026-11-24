@@ -25,8 +25,10 @@ use norn_ir::{
     ObjectTypeName, PropertyId, RuntimeObject, RuntimeValue, SourceRecordRef, TransitionId,
     UtcTimestamp,
 };
-use norn_kernel::cell_host::{FactKey, FactMutation, FactState, JsonObject};
-use norn_kernel::pack_mbt_support::LawExampleVerdict as Verdict;
+use norn_kernel::cell_host::{
+    FactKey, FactMutation, FactState, FactVersion, FactWrite, JsonObject, LinkMutation, LinkWrite,
+};
+use norn_kernel::pack_mbt_support::{LawExampleVerdict as Verdict, LawIR, law_content_pin};
 use norn_kernel::snapshot_observe::{ObservedSnapshot, commit_observed_snapshot};
 use norn_kernel::{
     CellCommit, CellHost, CommitError, CommitReceipt, DecisionTurn, DueTimer, FactEvent, LinkKey,
@@ -385,6 +387,19 @@ impl BareHost {
         attach_laws: bool,
         drop_set_mutations: bool,
     ) -> Result<Self, String> {
+        let laws: &[ArtifactEnvelope] = if attach_laws {
+            &pack.law_envelopes
+        } else {
+            &[]
+        };
+        Self::open_with_laws(pack, laws, drop_set_mutations)
+    }
+
+    fn open_with_laws(
+        pack: &AdmittedPack,
+        laws: &[ArtifactEnvelope],
+        drop_set_mutations: bool,
+    ) -> Result<Self, String> {
         let dir = tempfile::tempdir().map_err(|e| format!("{e}"))?;
         let db_path = dir.path().join("adv.sqlite");
         let mut all_types = pack.object_types.clone();
@@ -395,11 +410,10 @@ impl BareHost {
             &pack.interfaces,
         )
         .map_err(|e| format!("{e}"))?;
-        let model = if attach_laws {
-            base.with_governing_laws(&pack.law_envelopes)
-                .map_err(|e| format!("{e}"))?
-        } else {
+        let model = if laws.is_empty() {
             base
+        } else {
+            base.with_governing_laws(laws).map_err(|e| format!("{e}"))?
         };
         let recorder = Arc::new(DomainCoverageRecorder::new());
         let inner = FactSqliteCell::open(
@@ -549,14 +563,18 @@ impl PackHost for BareHost {
         self.cell = Some(reopened.into_observed(Arc::clone(&self.recorder)));
         Ok(())
     }
-    fn has_governing_law(&self, object_type: &str, artifact_id: &str) -> bool {
-        self.cell.as_ref().is_some_and(|cell| {
-            cell.inner()
-                .store()
-                .model()
-                .governing_laws(object_type)
-                .is_ok_and(|laws| laws.iter().any(|env| env.artifact_id == artifact_id))
-        })
+    fn governing_law_pin(&self, object_type: &str, artifact_id: &str) -> Option<String> {
+        let cell = self.cell.as_ref()?;
+        let laws = cell
+            .inner()
+            .store()
+            .model()
+            .governing_laws(object_type)
+            .ok()?;
+        let env = laws.iter().find(|env| env.artifact_id == artifact_id)?;
+        let text = serde_json::to_string(&env.payload.to_json_value()).ok()?;
+        let law: LawIR = serde_json::from_str(&text).ok()?;
+        law_content_pin(&law).ok()
     }
 }
 
@@ -890,8 +908,62 @@ fn law_example_parity_positive_case_fails_when_law_missing_from_host() -> Result
         .err()
         .ok_or_else(|| "expected positive-case parity failure when host lacks law".to_owned())?;
     assert!(
-        msg.contains("does not attach law"),
-        "expected host missing-law diagnostic, got: {msg}"
+        msg.contains("does not attach exact law pin"),
+        "expected host missing-law pin diagnostic, got: {msg}"
+    );
+    Ok(())
+}
+
+#[test]
+fn law_example_parity_positive_case_fails_on_stale_law_revision() -> Result<(), String> {
+    let envelopes = vec![
+        self_loop_entity_envelope()?,
+        positive_amount_law_envelope()?,
+    ];
+    let pack = AdmittedPack::from_envelopes("stale_law_rev", &envelopes)?.with_law_examples(vec![
+        LawExampleCase {
+            name: "positive holds must fail when host runs a stale revision under same id"
+                .to_owned(),
+            law_id: "obs.Ticket.positive_amount".to_owned(),
+            subject: runtime_obj(&[
+                ("ticket_id", RuntimeValue::String("T-STALE".to_owned())),
+                ("amount", dec("25.00")?),
+                ("status", RuntimeValue::String("open".to_owned())),
+            ]),
+            expected: Verdict::Holds,
+        },
+    ]);
+    // Same artifactId and law.id, but stale condition (`status == 'closed'`) that makes
+    // the `Holds` example `NotApplicable` on the host.
+    let stale_law: ArtifactEnvelope = serde_json::from_value(json!({
+        "irVersion": "0.1", "artifactId": "obs.Ticket.positive_amount.law", "version": "1.0.0",
+        "kind": "law", "namespace": "obs", "name": "Positive amount (stale)", "lifecycle": "active",
+        "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+        "payload": {
+            "lawVersion": "0.1",
+            "id": "obs.Ticket.positive_amount",
+            "owner": "obs",
+            "severity": "error",
+            "rationale": "Stale revision with different activation condition.",
+            "provenance": {"source": "authoring_sdk"},
+            "scope": {"root": {"kind": "entity", "id": "obs.Ticket"}, "objectTypes": ["obs.Ticket"]},
+            "subject": "obs.Ticket",
+            "condition": "self.status == 'closed'",
+            "modality": {"kind": "always"},
+            "response": {"kind": "predicate", "expression": "self.amount > 0"}
+        }
+    }))
+    .map_err(|err| format!("stale law: {err}"))?;
+    let host_laws = vec![stale_law];
+    let err = run_pack_mbt(&pack, |_| {
+        BareHost::open_with_laws(&pack, &host_laws, false)
+    });
+    let msg = err.err().ok_or_else(|| {
+        "expected positive-case parity failure when host runs a stale law revision".to_owned()
+    })?;
+    assert!(
+        msg.contains("does not attach exact law pin"),
+        "expected exact law pin mismatch diagnostic, got: {msg}"
     );
     Ok(())
 }
@@ -1157,6 +1229,155 @@ fn dst_oracle_catches_fault_injected_corrupted_linked_create() -> Result<(), Str
             && msg.contains("CORRUPTED")
             && msg.contains("minimal sequence"),
         "expected minimized linked-create corruption diagnostic, got: {msg}"
+    );
+    Ok(())
+}
+
+fn linked_and_invariant_pack() -> Result<AdmittedPack, String> {
+    let raw = vec![
+        json!({
+            "irVersion": "0.1", "artifactId": "mix.Account.entity", "version": "1.0.0",
+            "kind": "entity", "namespace": "mix", "name": "Account", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "entityVersion": "2.0",
+                "objectType": {
+                    "name": "mix.Account",
+                    "properties": [
+                        {"id": "account_id", "type": {"kind": "text"}},
+                        {"id": "active", "type": {"kind": "boolean"}}
+                    ]
+                }
+            }
+        }),
+        json!({
+            "irVersion": "0.1", "artifactId": "mix.Charge.entity", "version": "1.0.0",
+            "kind": "entity", "namespace": "mix", "name": "Charge", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "entityVersion": "2.0",
+                "objectType": {
+                    "name": "mix.Charge",
+                    "properties": [
+                        {"id": "charge_id", "type": {"kind": "text"}},
+                        {"id": "total", "type": {"kind": "decimal", "scale": 2}}
+                    ],
+                    "links": [{
+                        "id": "account",
+                        "target": "mix.Account",
+                        "cardinality": {"from": "many", "to": "one", "required": true}
+                    }],
+                    "invariants": [
+                        {"id": "positive_total", "expression": "self.total > 0", "message": "total must be positive"}
+                    ]
+                }
+            }
+        }),
+        json!({
+            "irVersion": "0.1", "artifactId": "mix.Charge.active_account.law", "version": "1.0.0",
+            "kind": "law", "namespace": "mix", "name": "Linked active account", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "lawVersion": "0.1",
+                "id": "mix.Charge.active_account",
+                "owner": "mix",
+                "severity": "error",
+                "rationale": "Charges require an active linked account.",
+                "provenance": {"source": "authoring_sdk"},
+                "scope": {"root": {"kind": "entity", "id": "mix.Charge"}, "objectTypes": ["mix.Charge"]},
+                "subject": "mix.Charge",
+                "modality": {"kind": "always"},
+                "response": {"kind": "predicate", "expression": "self.account.active == true"}
+            }
+        }),
+        json!({
+            "irVersion": "0.1", "artifactId": "mix.Charge.positive_total.law", "version": "1.0.0",
+            "kind": "law", "namespace": "mix", "name": "Invariant total positive", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "lawVersion": "0.1",
+                "id": "mix.Charge.positive_total_law",
+                "owner": "mix",
+                "severity": "error",
+                "rationale": "All charges satisfy positive_total.",
+                "provenance": {"source": "authoring_sdk"},
+                "scope": {"root": {"kind": "entity", "id": "mix.Charge"}, "objectTypes": ["mix.Charge"]},
+                "subject": "mix.Charge",
+                "modality": {"kind": "always"},
+                "response": {"kind": "invariant", "objectType": "mix.Charge", "invariantId": "positive_total"}
+            }
+        }),
+    ];
+    let envelopes: Vec<ArtifactEnvelope> = raw
+        .into_iter()
+        .map(|val| serde_json::from_value(val).map_err(|e| format!("{e}")))
+        .collect::<Result<Vec<_>, _>>()?;
+    AdmittedPack::from_envelopes("linked_and_inv", &envelopes)
+}
+
+#[test]
+fn observed_sqlite_cell_credits_invariant_law_alongside_linked_predicate_law() -> Result<(), String>
+{
+    let pack = linked_and_invariant_pack()?;
+    let model = Model::from_definitions_with_interfaces(
+        &pack.object_types,
+        &pack.property_types,
+        &pack.interfaces,
+    )
+    .map_err(|e| format!("model: {e}"))?
+    .with_governing_laws(&pack.law_envelopes)
+    .map_err(|e| format!("laws: {e}"))?;
+    let recorder = Arc::new(DomainCoverageRecorder::new());
+    let mut cell = FactSqliteCell::open_in_memory(model, "org/dev", |cmd| cmd.payload.clone())
+        .map_err(|e| format!("open: {e}"))?
+        .into_observed(Arc::clone(&recorder));
+
+    let account_key = FactKey::new("mix.Account", "acct-1");
+    let charge_key = FactKey::new("mix.Charge", "chg-1");
+    let commit = CellCommit {
+        writes: vec![
+            FactWrite {
+                key: account_key.clone(),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: runtime_obj(&[
+                        ("account_id", RuntimeValue::String("acct-1".to_owned())),
+                        ("active", RuntimeValue::Bool(true)),
+                    ]),
+                },
+            },
+            FactWrite {
+                key: charge_key.clone(),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: runtime_obj(&[
+                        ("charge_id", RuntimeValue::String("chg-1".to_owned())),
+                        ("total", dec("42.00")?),
+                    ]),
+                },
+            },
+        ],
+        links: vec![LinkWrite {
+            key: LinkKey::new(charge_key, "account", account_key),
+            expected: FactVersion::ABSENT,
+            mutation: LinkMutation::Add {
+                values: JsonObject::new(),
+            },
+        }],
+        ..CellCommit::empty()
+    };
+    cell.commit(commit).map_err(|e| format!("commit: {e}"))?;
+
+    let snap = recorder.snapshot();
+    assert_eq!(
+        snap.law_holds.get("mix.Charge.positive_total_law"),
+        Some(&1),
+        "unrelated invariant-backed law must still be credited alongside a linked predicate law"
+    );
+    assert_eq!(
+        snap.law_holds.get("mix.Charge.active_account"),
+        Some(&1),
+        "linked predicate law with satisfied committed link must also be credited"
     );
     Ok(())
 }

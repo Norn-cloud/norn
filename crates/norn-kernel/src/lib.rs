@@ -115,6 +115,20 @@ pub mod pack_mbt_support {
         PropertyTypeDef, RecordMember, ResourceStatus, SliceKey, Transition, TransitionId,
         WriteChange, ZenExpression, lifecycle_codes,
     };
+
+    /// Computes the canonical `sha256:...` content pin for a retained [`LawIR`],
+    /// matching [`crate::governing_laws`]'s `DataQualityRuleRef::Law::version`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if canonical JSON encoding fails.
+    pub fn law_content_pin(law: &LawIR) -> Result<String, String> {
+        let bytes = norn_ir::canonical::canonical_json_of(law).map_err(|err| err.to_string())?;
+        Ok(format!(
+            "sha256:{}",
+            norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(&bytes)
+        ))
+    }
 }
 pub use norn_ir::{MAX_INTENT_REF_BYTES, MAX_TRACE_ID_BYTES, TraceContext, TraceContextError};
 pub use serde;
