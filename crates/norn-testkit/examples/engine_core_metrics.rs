@@ -1,10 +1,11 @@
 //! Deterministic single-thread micro-benchmark of core Norn engine operations.
 //!
-//! Emits `METRIC {...}` JSON lines consumed by `scripts/metrics/run_probes.py`:
+//! Emits `METRIC {...}` JSON lines consumed by `scripts/metrics/run_probes.py`
+//! (each metric is one batch run with `samples: 1` and operation counts in `workload`):
 //! - `cell.memory.rss_per_cell.bytes` (`VmRSS` delta per open in-memory cell on Linux)
 //! - `cell.commit.throughput.cmd_s` (single-cell governed commits/s)
 //! - `cell.commit.size.bytes` (marginal `SQLite` bytes/commit)
-//! - `cell.read.throughput.ops_s` (governed object reads/s)
+//! - `cell.read.throughput.ops_s` (storage/cell `CellHost::load` reads/s, without caller-level PDP authz)
 //! - `decision.eval.throughput.ops_s` (standalone `JDM` decision evaluations/s)
 //! - `expr.eval.throughput.ops_s` (standalone `ZEN` expression evaluations/s)
 
@@ -205,8 +206,8 @@ fn benchmark_memory_per_cell(
             metric: "cell.memory.rss_per_cell.bytes",
             value: per_cell,
             unit: "bytes",
-            statistic: "mean",
-            samples: RSS_CELL_COUNT,
+            statistic: "single",
+            samples: 1,
             workload: json!({
                 "cells": RSS_CELL_COUNT,
                 "commits_per_cell": RSS_COMMITS_PER_CELL,
@@ -250,8 +251,8 @@ fn benchmark_commit_and_read(
     let bytes_per_commit =
         round2(f64::from(u32::try_from(size_delta)?) / f64::from(COMMIT_MEASURED));
     let commit_workload = json!({
-        "warmup_commits": COMMIT_WARMUP,
-        "measured_commits": COMMIT_MEASURED,
+        "warmup_operations": COMMIT_WARMUP,
+        "operations": COMMIT_MEASURED,
         "journal_mode": "delete",
     });
 
@@ -261,8 +262,8 @@ fn benchmark_commit_and_read(
             metric: "cell.commit.throughput.cmd_s",
             value: commit_cmd_s,
             unit: "per_s",
-            statistic: "mean",
-            samples: COMMIT_MEASURED,
+            statistic: "single",
+            samples: 1,
             workload: commit_workload.clone(),
         },
     )?;
@@ -272,8 +273,8 @@ fn benchmark_commit_and_read(
             metric: "cell.commit.size.bytes",
             value: bytes_per_commit,
             unit: "bytes",
-            statistic: "mean",
-            samples: COMMIT_MEASURED,
+            statistic: "single",
+            samples: 1,
             workload: commit_workload,
         },
     )?;
@@ -322,12 +323,13 @@ fn benchmark_reads(
             metric: "cell.read.throughput.ops_s",
             value: read_ops_s,
             unit: "per_s",
-            statistic: "mean",
-            samples: READ_MEASURED,
+            statistic: "single",
+            samples: 1,
             workload: json!({
                 "objects": total_objects,
-                "warmup_reads": READ_WARMUP,
-                "measured_reads": READ_MEASURED,
+                "warmup_operations": READ_WARMUP,
+                "operations": READ_MEASURED,
+                "read_path": "cell_host_load_no_pdp",
             }),
         },
     )
@@ -423,11 +425,11 @@ fn benchmark_decision(stdout: &mut std::io::StdoutLock<'_>) -> BenchResult<()> {
             metric: "decision.eval.throughput.ops_s",
             value: ops_s,
             unit: "per_s",
-            statistic: "mean",
-            samples: DECISION_MEASURED,
+            statistic: "single",
+            samples: 1,
             workload: json!({
-                "warmup_evals": DECISION_WARMUP,
-                "measured_evals": DECISION_MEASURED,
+                "warmup_operations": DECISION_WARMUP,
+                "operations": DECISION_MEASURED,
                 "nodes": 3,
             }),
         },
@@ -465,11 +467,11 @@ fn benchmark_expression(stdout: &mut std::io::StdoutLock<'_>) -> BenchResult<()>
             metric: "expr.eval.throughput.ops_s",
             value: ops_s,
             unit: "per_s",
-            statistic: "mean",
-            samples: EXPR_MEASURED,
+            statistic: "single",
+            samples: 1,
             workload: json!({
-                "warmup_evals": EXPR_WARMUP,
-                "measured_evals": EXPR_MEASURED,
+                "warmup_operations": EXPR_WARMUP,
+                "operations": EXPR_MEASURED,
                 "expression": "price * quantity - discount",
             }),
         },

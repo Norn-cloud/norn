@@ -112,8 +112,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Cargo target directory for crates/norn-cell-rivet (default: <target-dir>/rivet)",
     )
     args = parser.parse_args(argv)
-    target_dir = Path(args.target_dir)
-    rivet_target_dir = Path(args.rivet_target_dir) if args.rivet_target_dir else target_dir / "rivet"
+    target_dir = Path(args.target_dir).resolve()
+    rivet_target_dir = (
+        Path(args.rivet_target_dir).resolve() if args.rivet_target_dir else target_dir / "rivet"
+    )
 
     for item in measure_artifacts(target_dir, rivet_target_dir):
         print(f"METRIC {json.dumps(item, sort_keys=True)}", flush=True)

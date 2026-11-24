@@ -64,7 +64,7 @@
         "app": "apps/studio",
         "bundler": "vite"
       },
-      "caveats": "Production vite build of apps/studio (including dist/widgets from closeBundle); gzip sizes use deterministic Python gzip level 9 (mtime=0)."
+      "caveats": "Production vite build of apps/studio without prebuilding the Rust WASM checker/engine packages (apps/studio/src/checker, apps/studio/src/engine). `studio.bundle.initial_*` sums only the local entry script/modulepreload/stylesheet assets referenced by dist/index.html; `studio.bundle.js.*`, `studio.bundle.css.*`, and `studio.bundle.total_dist_bytes` cover all emitted files under dist/ (including lazy chunks and dist/widgets from closeBundle). Gzip sizes use deterministic Python gzip level 9 (mtime=0)."
     },
     {
       "name": "binary-and-wasm-sizes",
@@ -75,8 +75,8 @@
         "crates/norn-cell-do/Cargo.toml",
         "scripts/metrics/probe_binary_sizes.py"
       ],
-      "prepare": "TARGET_DIR=\"${CARGO_TARGET_DIR:-$PWD/target}\" && (rustc --print target-libdir --target wasm32-unknown-unknown >/dev/null 2>&1 || rustup target add wasm32-unknown-unknown) && cargo build --locked --release -p norn-cli --bin norn && (cd crates/norn-cell-rivet && CARGO_TARGET_DIR=\"$TARGET_DIR/rivet\" cargo build --locked --release --bin norn-cell-rivet) && cargo rustc --locked -p norn-checker-wasm --lib --target wasm32-unknown-unknown --profile wasm-release --crate-type cdylib && cargo build --locked -p norn-cell-do --lib --target wasm32-unknown-unknown --profile wasm-release",
-      "run": "python3 scripts/metrics/probe_binary_sizes.py",
+      "prepare": "TARGET_DIR=\"${CARGO_TARGET_DIR:-$PWD/target}\"; case \"$TARGET_DIR\" in /*) ;; *) TARGET_DIR=\"$PWD/$TARGET_DIR\" ;; esac; export CARGO_TARGET_DIR=\"$TARGET_DIR\"; rustup target add wasm32-unknown-unknown && cargo build --locked --release -p norn-cli --bin norn && (cd crates/norn-cell-rivet && CARGO_TARGET_DIR=\"$TARGET_DIR/rivet\" cargo build --locked --release --bin norn-cell-rivet) && cargo rustc --locked -p norn-checker-wasm --lib --target wasm32-unknown-unknown --profile wasm-release --crate-type cdylib && cargo build --locked -p norn-cell-do --lib --target wasm32-unknown-unknown --profile wasm-release",
+      "run": "TARGET_DIR=\"${CARGO_TARGET_DIR:-$PWD/target}\"; case \"$TARGET_DIR\" in /*) ;; *) TARGET_DIR=\"$PWD/$TARGET_DIR\" ;; esac; python3 scripts/metrics/probe_binary_sizes.py --target-dir \"$TARGET_DIR\" --rivet-target-dir \"$TARGET_DIR/rivet\"",
       "timeout_s": 1800,
       "workload": {
         "native_profile": "release",
@@ -96,7 +96,7 @@
         "profile": "release",
         "example": "engine_core_metrics"
       },
-      "caveats": "Single-thread deterministic release micro-benchmark on one Boat VM (native bundled SQLite in JournalMode::Delete, in-memory cells for VmRSS delta, standalone JDM decision and ZEN expression loops); measures core Rust engine overhead without HTTP/Rivet transport."
+      "caveats": "Single-thread deterministic release micro-benchmark on one Boat VM (native bundled SQLite in JournalMode::Delete, in-memory cells for VmRSS delta, storage/cell CellHost::load reads without caller-level Cedar PDP authz, standalone JDM decision and ZEN expression loops); each metric is one timed/measured batch (samples=1) with operation counts in workload."
     }
   ]
 }

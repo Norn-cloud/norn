@@ -7,9 +7,11 @@ prices (`pricing.json`), and emits machine-readable JSON, CSV (ready for macro.c
 FP&A import), or Markdown.
 
 Missing inputs are never fabricated: any derived metric whose required measurements
-are absent is emitted with `value = null` and an explicit `missing_inputs` list. Every
-emitted row carries its formula, exact input measurements + timestamps, pricing
-assumptions, and `evidence = "derived-estimate"`.
+are absent is emitted with `value = null` and an explicit `missing_inputs` list.
+Retired host series (`host.celld.*`, `host.orange.*`) never populate live Rivet rows;
+if present, `host.celld.pss_per_cell.bytes` is emitted only in a separate, explicitly
+labeled `historical_proxy` reference section so FP&A models cannot confuse it with live
+Rivet capacity.
 
     python3 scripts/metrics/unit_economics.py --format md
     python3 scripts/metrics/unit_economics.py --format csv --out unit-economics.csv
@@ -55,6 +57,7 @@ def _sibling(name, directory=None):
 HERE = Path(__file__).resolve().parent
 DEFAULT_PRICING = HERE / "pricing.json"
 EVIDENCE_LABEL = "derived-estimate"
+HISTORICAL_PROXY_EVIDENCE = "historical-proxy-retired-celld"
 BYTES_PER_GIB = 1024 ** 3
 BYTES_PER_GB = 1_000_000_000
 ONE_MILLION = 1_000_000.0
@@ -89,6 +92,104 @@ def latest_by_metric(records: list[dict]) -> dict[str, dict]:
     return latest
 
 
+def _is_finite_number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def _require_positive(value, label: str) -> float:
+    if not _is_finite_number(value) or float(value) <= 0.0:
+        raise ValueError(f"pricing parameter `{label}` must be a finite number > 0, got {value!r}")
+    return float(value)
+
+
+def _require_non_negative(value, label: str) -> float:
+    if not _is_finite_number(value) or float(value) < 0.0:
+        raise ValueError(f"pricing parameter `{label}` must be a finite number >= 0, got {value!r}")
+    return float(value)
+
+
+def _validate_pricing(pricing: dict) -> dict[str, float]:
+    cpx = pricing["compute"]["hetzner_cpx62"]
+    return {
+        "hours_per_month": _require_positive(pricing["hours_per_month"], "hours_per_month"),
+        "cpx_vcpu": _require_positive(cpx["vcpu"], "compute.hetzner_cpx62.vcpu"),
+        "cpx_ram_gib": _require_positive(cpx["ram_gib"], "compute.hetzner_cpx62.ram_gib"),
+        "cpx_nvme_gb": _require_positive(cpx["nvme_gb"], "compute.hetzner_cpx62.nvme_gb"),
+        "cpx_monthly_usd": _require_non_negative(cpx["monthly_usd"], "compute.hetzner_cpx62.monthly_usd"),
+        "vol_usd_per_gb_mo": _require_non_negative(
+            pricing["storage"]["hetzner_volume_usd_per_gb_month"]["value"],
+            "storage.hetzner_volume_usd_per_gb_month",
+        ),
+        "r2_usd_per_gb_mo": _require_non_negative(
+            pricing["storage"]["cloudflare_r2_storage_usd_per_gb_month"]["value"],
+            "storage.cloudflare_r2_storage_usd_per_gb_month",
+        ),
+        "cdn_usd_per_gb": _require_non_negative(
+            pricing["bandwidth"]["cdn_egress_usd_per_gb"]["value"],
+            "bandwidth.cdn_egress_usd_per_gb",
+        ),
+        "boat_usd_per_hr": _require_non_negative(
+            pricing["ci"]["boat_vm_usd_per_hour"]["value"],
+            "ci.boat_vm_usd_per_hour",
+        ),
+        "ci_parallel_vms": _require_positive(
+            pricing["ci"]["effective_parallel_vms"]["value"],
+            "ci.effective_parallel_vms",
+        ),
+        "cpu_target": _require_positive(
+            pricing["utilization"]["cpu_target"]["value"],
+            "utilization.cpu_target",
+        ),
+        "ram_ceiling": _require_positive(
+            pricing["utilization"]["ram_ceiling"]["value"],
+            "utilization.ram_ceiling",
+        ),
+        "disk_ceiling": _require_positive(
+            pricing["utilization"]["disk_ceiling"]["value"],
+            "utilization.disk_ceiling",
+        ),
+        "ha_factor": _require_positive(
+            pricing["utilization"]["ha_replication_factor"]["value"],
+            "utilization.ha_replication_factor",
+        ),
+        "tenant_commits_mo": _require_positive(
+            pricing["workload_assumptions"]["active_tenant_commits_per_month"]["value"],
+            "workload_assumptions.active_tenant_commits_per_month",
+        ),
+        "peak_to_avg": _require_positive(
+            pricing["workload_assumptions"]["peak_to_average_cpu_ratio"]["value"],
+            "workload_assumptions.peak_to_average_cpu_ratio",
+        ),
+        "retention_months": _require_positive(
+            pricing["workload_assumptions"]["hot_cell_retention_months"]["value"],
+            "workload_assumptions.hot_cell_retention_months",
+        ),
+    }
+
+
+def _as_of_for_key(pricing: dict, key: str) -> str:
+    """Resolve the `as_of` date of a dotted pricing key (or its enclosing dated object)."""
+    node = pricing
+    last_date: str | None = None
+    for part in key.split("."):
+        if isinstance(node, dict) and isinstance(node.get("as_of"), str):
+            last_date = node["as_of"]
+        if isinstance(node, dict) and part in node:
+            node = node[part]
+        else:
+            break
+    if isinstance(node, dict) and isinstance(node.get("as_of"), str):
+        last_date = node["as_of"]
+    return last_date or "unknown"
+
+
+def _row_pricing_dates(pricing: dict, pricing_keys: list[str]) -> tuple[str, dict[str, str]]:
+    by_key = {key: _as_of_for_key(pricing, key) for key in pricing_keys}
+    unique = sorted(set(by_key.values()))
+    summary = ", ".join(unique) if unique else "unknown"
+    return summary, by_key
+
+
 def _input_ref(row: dict) -> dict:
     return {
         "metric": row["metric"],
@@ -101,12 +202,24 @@ def _input_ref(row: dict) -> dict:
     }
 
 
-def _first_present(latest: dict[str, dict], candidates: tuple[str, ...]) -> dict | None:
+def _first_present(latest: dict[str, dict], candidates: tuple[str, ...], *,
+                   allow_zero: bool = False) -> dict | None:
     for name in candidates:
         row = latest.get(name)
-        if row is not None and isinstance(row.get("value"), (int, float)) and not isinstance(row["value"], bool):
-            if math.isfinite(row["value"]) and row["value"] > 0:
-                return row
+        if row is None:
+            continue
+        val = row.get("value")
+        if not _is_finite_number(val):
+            continue
+        if (val >= 0.0) if allow_zero else (val > 0.0):
+            return row
+    return None
+
+
+def _positive_workload_field(row: dict, key: str) -> float | None:
+    val = row.get("workload", {}).get(key)
+    if _is_finite_number(val) and float(val) > 0.0:
+        return float(val)
     return None
 
 
@@ -116,89 +229,72 @@ def _round_sig(value: float, digits: int = 6) -> float:
     return float(f"{value:.{digits}g}")
 
 
-def _row(metric_id: str, category: str, value, unit: str, formula: str,
+def _row(pricing: dict, metric_id: str, category: str, value, unit: str, formula: str,
          inputs: list[dict], missing_inputs: list[str], pricing_keys: list[str],
-         notes: str = "") -> dict:
+         notes: str = "", evidence: str = EVIDENCE_LABEL) -> dict:
+    as_of_summary, as_of_by_key = _row_pricing_dates(pricing, pricing_keys)
     return {
         "id": metric_id,
         "category": category,
         "value": _round_sig(value) if isinstance(value, float) else value,
         "unit": unit,
-        "evidence": EVIDENCE_LABEL,
+        "evidence": evidence,
         "formula": formula,
         "inputs": inputs,
         "missing_inputs": missing_inputs,
         "pricing_assumptions": pricing_keys,
+        "pricing_as_of": as_of_summary,
+        "pricing_as_of_by_key": as_of_by_key,
         "notes": notes,
     }
 
 
-def _pricing_as_of(pricing: dict) -> str:
-    dates: set[str] = set()
-
-    def walk(node) -> None:
-        if isinstance(node, dict):
-            if isinstance(node.get("as_of"), str):
-                dates.add(node["as_of"])
-            for item in node.values():
-                walk(item)
-
-    walk(pricing)
-    return max(dates) if dates else "unknown"
-
-
-def _resolve_commit_throughput(latest: dict[str, dict]) -> tuple[float | None, dict | None, str]:
-    direct = _first_present(latest, ("cell.commit.throughput.cmd_s",))
-    if direct is not None:
-        return float(direct["value"]), direct, "cell.commit.throughput.cmd_s"
-    latency = _first_present(latest, ("host.celld.commit_one_row.ms", "host.orange.commit_one_row.ms"))
-    if latency is not None:
-        return 1000.0 / float(latency["value"]), latency, f"1000 / {latency['metric']}"
-    return None, None, "cell.commit.throughput.cmd_s"
-
-
-def _resolve_lake_rows_per_s(latest: dict[str, dict]) -> tuple[float | None, float, dict | None, str]:
+def _resolve_lake_rows_per_s(latest: dict[str, dict]) -> tuple[float | None, float | None, dict | None, str, list[str]]:
+    """Resolve lake ingest throughput and positive thread count without fabricating missing workload metadata."""
     direct = _first_present(latest, ("lake.ingest.throughput.rows_s",))
     if direct is not None:
-        threads = float(direct.get("workload", {}).get("threads", 1))
-        return float(direct["value"]), threads, direct, "lake.ingest.throughput.rows_s"
-    duck = _first_present(latest, ("analytics.duckdb.load_parquet_1m.s", "analytics.duckdb.load_csv_1m.s"))
-    if duck is not None:
-        rows = float(duck.get("workload", {}).get("rows", ONE_MILLION))
-        threads = float(duck.get("workload", {}).get("threads", 1))
-        return rows / float(duck["value"]), threads, duck, f"{int(rows):,} / {duck['metric']}"
-    return None, 1.0, None, "lake.ingest.throughput.rows_s"
+        threads = _positive_workload_field(direct, "threads")
+        if threads is not None:
+            return float(direct["value"]), threads, direct, "lake.ingest.throughput.rows_s", []
+        return None, None, None, "lake.ingest.throughput.rows_s", ["lake.ingest.throughput.rows_s(workload.threads>0)"]
+    for metric_id in ("analytics.duckdb.load_parquet_1m.s", "analytics.duckdb.load_csv_1m.s"):
+        duck = _first_present(latest, (metric_id,))
+        if duck is None:
+            continue
+        rows = _positive_workload_field(duck, "rows")
+        threads = _positive_workload_field(duck, "threads")
+        if rows is not None and threads is not None:
+            return rows / float(duck["value"]), threads, duck, f"{int(rows):,} / {duck['metric']}", []
+    return None, None, None, "lake.ingest.throughput.rows_s", ["lake.ingest.throughput.rows_s"]
 
 
 def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = "records") -> dict:
     """Compute all derived unit-economics estimates from `records` and `pricing`."""
     store = _sibling("record")
+    p = _validate_pricing(pricing)
     latest = latest_by_metric(records)
 
-    hours_per_month = float(pricing["hours_per_month"])
-    seconds_per_month = hours_per_month * 3600.0
-
-    cpx = pricing["compute"]["hetzner_cpx62"]
-    cpx_vcpu = float(cpx["vcpu"])
-    cpx_ram_gib = float(cpx["ram_gib"])
-    cpx_nvme_gb = float(cpx["nvme_gb"])
-    cpx_monthly_usd = float(cpx["monthly_usd"])
+    seconds_per_month = p["hours_per_month"] * 3600.0
+    cpx_vcpu = p["cpx_vcpu"]
+    cpx_ram_gib = p["cpx_ram_gib"]
+    cpx_nvme_gb = p["cpx_nvme_gb"]
+    cpx_monthly_usd = p["cpx_monthly_usd"]
     cpx_usd_per_vcpu_s = cpx_monthly_usd / (cpx_vcpu * seconds_per_month)
 
-    vol_usd_per_gb_mo = float(pricing["storage"]["hetzner_volume_usd_per_gb_month"]["value"])
-    r2_usd_per_gb_mo = float(pricing["storage"]["cloudflare_r2_storage_usd_per_gb_month"]["value"])
-    cdn_usd_per_gb = float(pricing["bandwidth"]["cdn_egress_usd_per_gb"]["value"])
-    boat_usd_per_hr = float(pricing["ci"]["boat_vm_usd_per_hour"]["value"])
-    ci_parallel_vms = float(pricing["ci"]["effective_parallel_vms"]["value"])
+    vol_usd_per_gb_mo = p["vol_usd_per_gb_mo"]
+    r2_usd_per_gb_mo = p["r2_usd_per_gb_mo"]
+    cdn_usd_per_gb = p["cdn_usd_per_gb"]
+    boat_usd_per_hr = p["boat_usd_per_hr"]
+    ci_parallel_vms = p["ci_parallel_vms"]
 
-    cpu_target = float(pricing["utilization"]["cpu_target"]["value"])
-    ram_ceiling = float(pricing["utilization"]["ram_ceiling"]["value"])
-    disk_ceiling = float(pricing["utilization"]["disk_ceiling"]["value"])
-    ha_factor = float(pricing["utilization"]["ha_replication_factor"]["value"])
+    cpu_target = p["cpu_target"]
+    ram_ceiling = p["ram_ceiling"]
+    disk_ceiling = p["disk_ceiling"]
+    ha_factor = p["ha_factor"]
 
-    tenant_commits_mo = float(pricing["workload_assumptions"]["active_tenant_commits_per_month"]["value"])
-    peak_to_avg = float(pricing["workload_assumptions"]["peak_to_average_cpu_ratio"]["value"])
-    retention_months = float(pricing["workload_assumptions"]["hot_cell_retention_months"]["value"])
+    tenant_commits_mo = p["tenant_commits_mo"]
+    peak_to_avg = p["peak_to_avg"]
+    retention_months = p["retention_months"]
 
     usable_ram_bytes = cpx_ram_gib * BYTES_PER_GIB * ram_ceiling
     usable_vcpu = cpx_vcpu * cpu_target
@@ -207,15 +303,12 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
 
     rows: list[dict] = []
 
-    # 1. Compute & tenant density
-    mem_row = _first_present(
-        latest,
-        ("cell.memory.rss_per_cell.bytes", "host.celld.pss_per_cell.bytes", "host.orange.pss_per_cell.bytes"),
-    )
+    # 1. Compute & tenant density (live Rivet / core engine series only — never retired celld/orange)
+    mem_row = _first_present(latest, ("host.rivet.pss_per_cell.bytes", "cell.memory.rss_per_cell.bytes"))
     if mem_row is not None:
         tenants_ram = math.floor(usable_ram_bytes / float(mem_row["value"]))
         rows.append(_row(
-            "tenants_per_cpx62_by_ram", "compute", tenants_ram, "tenants",
+            pricing, "tenants_per_cpx62_by_ram", "compute", tenants_ram, "tenants",
             f"floor(({cpx_ram_gib} GiB * {ram_ceiling}) / {mem_row['metric']})",
             [_input_ref(mem_row)], [],
             ["compute.hetzner_cpx62.ram_gib", "utilization.ram_ceiling"],
@@ -224,19 +317,20 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
     else:
         tenants_ram = None
         rows.append(_row(
-            "tenants_per_cpx62_by_ram", "compute", None, "tenants",
+            pricing, "tenants_per_cpx62_by_ram", "compute", None, "tenants",
             f"floor(({cpx_ram_gib} GiB * {ram_ceiling}) / cell.memory.rss_per_cell.bytes)",
             [], ["cell.memory.rss_per_cell.bytes"],
             ["compute.hetzner_cpx62.ram_gib", "utilization.ram_ceiling"],
         ))
 
-    commit_cmd_s, commit_row, commit_expr = _resolve_commit_throughput(latest)
-    if commit_cmd_s is not None and commit_row is not None:
+    commit_row = _first_present(latest, ("host.rivet.commit.throughput.cmd_s", "cell.commit.throughput.cmd_s"))
+    if commit_row is not None:
+        commit_cmd_s = float(commit_row["value"])
         node_cmd_capacity = usable_vcpu * commit_cmd_s
         tenants_cpu = math.floor(node_cmd_capacity / tenant_peak_cmd_s)
         rows.append(_row(
-            "tenants_per_cpx62_by_cpu", "compute", tenants_cpu, "tenants",
-            f"floor(({cpx_vcpu} vCPU * {cpu_target} * ({commit_expr})) / "
+            pricing, "tenants_per_cpx62_by_cpu", "compute", tenants_cpu, "tenants",
+            f"floor(({cpx_vcpu} vCPU * {cpu_target} * {commit_row['metric']}) / "
             f"({int(tenant_commits_mo):,}/mo / {int(seconds_per_month):,}s * {peak_to_avg}x peak))",
             [_input_ref(commit_row)], [],
             [
@@ -247,9 +341,10 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
             notes="Assumes single-cell throughput scales linearly across effective vCPUs for independent tenant cells.",
         ))
     else:
+        commit_cmd_s = None
         tenants_cpu = None
         rows.append(_row(
-            "tenants_per_cpx62_by_cpu", "compute", None, "tenants",
+            pricing, "tenants_per_cpx62_by_cpu", "compute", None, "tenants",
             f"floor(({cpx_vcpu} vCPU * {cpu_target} * cell.commit.throughput.cmd_s) / tenant_peak_cmd_s)",
             [], ["cell.commit.throughput.cmd_s"],
             [
@@ -264,7 +359,7 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
         tenant_hot_bytes = float(commit_size_row["value"]) * tenant_commits_mo * retention_months
         tenants_disk = math.floor(usable_nvme_bytes / tenant_hot_bytes)
         rows.append(_row(
-            "tenants_per_cpx62_by_disk", "compute", tenants_disk, "tenants",
+            pricing, "tenants_per_cpx62_by_disk", "compute", tenants_disk, "tenants",
             f"floor(({cpx_nvme_gb} GB * {disk_ceiling}) / "
             f"(cell.commit.size.bytes * {int(tenant_commits_mo):,} * {retention_months} mo))",
             [_input_ref(commit_size_row)], [],
@@ -278,7 +373,7 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
     else:
         tenants_disk = None
         rows.append(_row(
-            "tenants_per_cpx62_by_disk", "compute", None, "tenants",
+            pricing, "tenants_per_cpx62_by_disk", "compute", None, "tenants",
             f"floor(({cpx_nvme_gb} GB * {disk_ceiling}) / "
             f"(cell.commit.size.bytes * {int(tenant_commits_mo):,} * {retention_months} mo))",
             [], ["cell.commit.size.bytes"],
@@ -289,7 +384,6 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
             ],
         ))
 
-    # Binding constraint requires all three axes (ram, cpu, disk) to be honest about which binds.
     binding_missing: list[str] = []
     binding_inputs: list[dict] = []
     if tenants_ram is None:
@@ -308,21 +402,20 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
     if not binding_missing and tenants_ram is not None and tenants_cpu is not None and tenants_disk is not None:
         binding = min(("ram", tenants_ram), ("cpu", tenants_cpu), ("disk", tenants_disk), key=lambda pair: pair[1])[0]
         rows.append(_row(
-            "binding_constraint", "compute", binding, "axis",
+            pricing, "binding_constraint", "compute", binding, "axis",
             "argmin(tenants_per_cpx62_by_ram, tenants_per_cpx62_by_cpu, tenants_per_cpx62_by_disk)",
             binding_inputs, [],
             ["compute.hetzner_cpx62", "utilization.ram_ceiling", "utilization.cpu_target", "utilization.disk_ceiling"],
         ))
     else:
         rows.append(_row(
-            "binding_constraint", "compute", None, "axis",
+            pricing, "binding_constraint", "compute", None, "axis",
             "argmin(tenants_per_cpx62_by_ram, tenants_per_cpx62_by_cpu, tenants_per_cpx62_by_disk)",
             binding_inputs, binding_missing,
             ["compute.hetzner_cpx62", "utilization.ram_ceiling", "utilization.cpu_target", "utilization.disk_ceiling"],
             notes="Requires RAM, CPU, and disk density inputs to identify the true binding resource without guessing.",
         ))
 
-    # Compute cost per active tenant-month (RAM & CPU compute axes only, with HA replication)
     compute_missing: list[str] = []
     compute_inputs: list[dict] = []
     if tenants_ram is None:
@@ -334,54 +427,63 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
     elif commit_row is not None:
         compute_inputs.append(_input_ref(commit_row))
 
-    if not compute_missing and tenants_ram is not None and tenants_cpu is not None and min(tenants_ram, tenants_cpu) > 0:
+    if not compute_missing and tenants_ram is not None and tenants_cpu is not None:
         tenants_compute = min(tenants_ram, tenants_cpu)
-        usd_tenant_compute = (cpx_monthly_usd * ha_factor) / tenants_compute
-        rows.append(_row(
-            "usd_per_active_tenant_month_compute", "compute", usd_tenant_compute, "USD/tenant-month",
-            f"(${cpx_monthly_usd}/mo * {ha_factor:g}x HA) / min(tenants_per_cpx62_by_ram, tenants_per_cpx62_by_cpu)",
-            compute_inputs, [],
-            ["compute.hetzner_cpx62.monthly_usd", "utilization.ha_replication_factor",
-             "utilization.ram_ceiling", "utilization.cpu_target"],
-            notes=f"Compute-bound tenant density = {tenants_compute:,} tenants per cpx62 node (before disk check).",
-        ))
+        if tenants_compute > 0:
+            usd_tenant_compute = (cpx_monthly_usd * ha_factor) / tenants_compute
+            rows.append(_row(
+                pricing, "usd_per_active_tenant_month_compute", "compute", usd_tenant_compute, "USD/tenant-month",
+                f"(${cpx_monthly_usd}/mo * {ha_factor:g}x HA) / min(tenants_per_cpx62_by_ram, tenants_per_cpx62_by_cpu)",
+                compute_inputs, [],
+                ["compute.hetzner_cpx62.monthly_usd", "utilization.ha_replication_factor",
+                 "utilization.ram_ceiling", "utilization.cpu_target"],
+                notes=f"Compute-bound tenant density = {tenants_compute:,} tenants per cpx62 node (before disk check).",
+            ))
+        else:
+            rows.append(_row(
+                pricing, "usd_per_active_tenant_month_compute", "compute", None, "USD/tenant-month",
+                f"(${cpx_monthly_usd}/mo * {ha_factor:g}x HA) / min(tenants_per_cpx62_by_ram, tenants_per_cpx62_by_cpu)",
+                compute_inputs, [],
+                ["compute.hetzner_cpx62.monthly_usd", "utilization.ha_replication_factor",
+                 "utilization.ram_ceiling", "utilization.cpu_target"],
+                notes="Single tenant exceeds one cpx62 node's compute/RAM ceiling (density = 0 tenants/node).",
+            ))
     else:
         rows.append(_row(
-            "usd_per_active_tenant_month_compute", "compute", None, "USD/tenant-month",
+            pricing, "usd_per_active_tenant_month_compute", "compute", None, "USD/tenant-month",
             f"(${cpx_monthly_usd}/mo * {ha_factor:g}x HA) / min(tenants_per_cpx62_by_ram, tenants_per_cpx62_by_cpu)",
             compute_inputs, compute_missing,
-            ["compute.hetzner_cpx62.monthly_usd", "utilization.ha_replication_factor"],
+            ["compute.hetzner_cpx62.monthly_usd", "utilization.ha_replication_factor",
+             "utilization.ram_ceiling", "utilization.cpu_target"],
         ))
 
-    # Compute cost per 1M commits
     if commit_cmd_s is not None and commit_row is not None:
         effective_node_cmd_s = usable_vcpu * commit_cmd_s
         usd_per_s_ha_node = (cpx_monthly_usd * ha_factor) / seconds_per_month
         usd_1m_commits_compute = (ONE_MILLION / effective_node_cmd_s) * usd_per_s_ha_node
         rows.append(_row(
-            "usd_per_1m_commits_compute", "compute", usd_1m_commits_compute, "USD/1M-commits",
-            f"(1e6 / ({cpx_vcpu} vCPU * {cpu_target} * ({commit_expr}))) * "
+            pricing, "usd_per_1m_commits_compute", "compute", usd_1m_commits_compute, "USD/1M-commits",
+            f"(1e6 / ({cpx_vcpu} vCPU * {cpu_target} * {commit_row['metric']})) * "
             f"(${cpx_monthly_usd}/mo * {ha_factor:g}x HA / {int(seconds_per_month):,}s)",
             [_input_ref(commit_row)], [],
             ["compute.hetzner_cpx62", "utilization.cpu_target", "utilization.ha_replication_factor"],
         ))
     else:
         rows.append(_row(
-            "usd_per_1m_commits_compute", "compute", None, "USD/1M-commits",
+            pricing, "usd_per_1m_commits_compute", "compute", None, "USD/1M-commits",
             f"(1e6 / ({cpx_vcpu} vCPU * {cpu_target} * cell.commit.throughput.cmd_s)) * "
             f"(${cpx_monthly_usd}/mo * {ha_factor:g}x HA / {int(seconds_per_month):,}s)",
             [], ["cell.commit.throughput.cmd_s"],
             ["compute.hetzner_cpx62", "utilization.cpu_target", "utilization.ha_replication_factor"],
         ))
 
-    # Compute cost per 1M standalone decisions
     decision_row = _first_present(latest, ("decision.eval.throughput.ops_s",))
     if decision_row is not None:
         effective_dec_s = usable_vcpu * float(decision_row["value"])
         usd_per_s_ha_node = (cpx_monthly_usd * ha_factor) / seconds_per_month
         usd_1m_decisions = (ONE_MILLION / effective_dec_s) * usd_per_s_ha_node
         rows.append(_row(
-            "usd_per_1m_decisions_compute", "compute", usd_1m_decisions, "USD/1M-decisions",
+            pricing, "usd_per_1m_decisions_compute", "compute", usd_1m_decisions, "USD/1M-decisions",
             f"(1e6 / ({cpx_vcpu} vCPU * {cpu_target} * decision.eval.throughput.ops_s)) * "
             f"(${cpx_monthly_usd}/mo * {ha_factor:g}x HA / {int(seconds_per_month):,}s)",
             [_input_ref(decision_row)], [],
@@ -389,7 +491,7 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
         ))
     else:
         rows.append(_row(
-            "usd_per_1m_decisions_compute", "compute", None, "USD/1M-decisions",
+            pricing, "usd_per_1m_decisions_compute", "compute", None, "USD/1M-decisions",
             f"(1e6 / ({cpx_vcpu} vCPU * {cpu_target} * decision.eval.throughput.ops_s)) * "
             f"(${cpx_monthly_usd}/mo * {ha_factor:g}x HA / {int(seconds_per_month):,}s)",
             [], ["decision.eval.throughput.ops_s"],
@@ -401,7 +503,7 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
         gb_per_1m_hot = (float(commit_size_row["value"]) * ONE_MILLION) / BYTES_PER_GB
         usd_1m_hot_mo = gb_per_1m_hot * ha_factor * vol_usd_per_gb_mo
         rows.append(_row(
-            "usd_per_1m_commits_hot_cell_month", "storage", usd_1m_hot_mo, "USD/1M-commits-month",
+            pricing, "usd_per_1m_commits_hot_cell_month", "storage", usd_1m_hot_mo, "USD/1M-commits-month",
             f"(cell.commit.size.bytes * 1e6 / 1e9) * {ha_factor:g}x HA * ${vol_usd_per_gb_mo}/GB-mo",
             [_input_ref(commit_size_row)], [],
             ["storage.hetzner_volume_usd_per_gb_month", "utilization.ha_replication_factor"],
@@ -409,7 +511,7 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
     else:
         usd_1m_hot_mo = None
         rows.append(_row(
-            "usd_per_1m_commits_hot_cell_month", "storage", None, "USD/1M-commits-month",
+            pricing, "usd_per_1m_commits_hot_cell_month", "storage", None, "USD/1M-commits-month",
             f"(cell.commit.size.bytes * 1e6 / 1e9) * {ha_factor:g}x HA * ${vol_usd_per_gb_mo}/GB-mo",
             [], ["cell.commit.size.bytes"],
             ["storage.hetzner_volume_usd_per_gb_month", "utilization.ha_replication_factor"],
@@ -422,7 +524,7 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
         gb_per_1m_cold = (float(parquet_size_row["value"]) * ONE_MILLION) / BYTES_PER_GB
         usd_1m_cold_mo = gb_per_1m_cold * r2_usd_per_gb_mo
         rows.append(_row(
-            "usd_per_1m_commits_cold_lake_month", "storage", usd_1m_cold_mo, "USD/1M-commits-month",
+            pricing, "usd_per_1m_commits_cold_lake_month", "storage", usd_1m_cold_mo, "USD/1M-commits-month",
             f"({parquet_size_row['metric']} * 1e6 / 1e9) * ${r2_usd_per_gb_mo}/GB-mo",
             [_input_ref(parquet_size_row)], [],
             ["storage.cloudflare_r2_storage_usd_per_gb_month"],
@@ -430,7 +532,7 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
     else:
         usd_1m_cold_mo = None
         rows.append(_row(
-            "usd_per_1m_commits_cold_lake_month", "storage", None, "USD/1M-commits-month",
+            pricing, "usd_per_1m_commits_cold_lake_month", "storage", None, "USD/1M-commits-month",
             f"(lake.parquet.commit_size.bytes * 1e6 / 1e9) * ${r2_usd_per_gb_mo}/GB-mo",
             [], ["lake.parquet.commit_size.bytes"],
             ["storage.cloudflare_r2_storage_usd_per_gb_month"],
@@ -449,7 +551,7 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
 
     if usd_1m_hot_mo is not None and usd_1m_cold_mo is not None and usd_1m_cold_mo > 0:
         rows.append(_row(
-            "hot_to_cold_cost_ratio", "storage", usd_1m_hot_mo / usd_1m_cold_mo, "ratio",
+            pricing, "hot_to_cold_cost_ratio", "storage", usd_1m_hot_mo / usd_1m_cold_mo, "ratio",
             "usd_per_1m_commits_hot_cell_month / usd_per_1m_commits_cold_lake_month",
             ratio_inputs, [],
             [
@@ -460,7 +562,7 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
         ))
     else:
         rows.append(_row(
-            "hot_to_cold_cost_ratio", "storage", None, "ratio",
+            pricing, "hot_to_cold_cost_ratio", "storage", None, "ratio",
             "usd_per_1m_commits_hot_cell_month / usd_per_1m_commits_cold_lake_month",
             ratio_inputs, ratio_missing,
             [
@@ -473,7 +575,7 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
     if usd_1m_hot_mo is not None and commit_size_row is not None:
         usd_100k_storage = usd_1m_hot_mo * (100_000.0 / ONE_MILLION)
         rows.append(_row(
-            "usd_per_100k_cmd_tenant_month_storage", "storage", usd_100k_storage, "USD/tenant-month",
+            pricing, "usd_per_100k_cmd_tenant_month_storage", "storage", usd_100k_storage, "USD/tenant-month",
             "usd_per_1m_commits_hot_cell_month * (100,000 / 1,000,000)",
             [_input_ref(commit_size_row)], [],
             ["storage.hetzner_volume_usd_per_gb_month", "utilization.ha_replication_factor"],
@@ -481,19 +583,19 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
         ))
     else:
         rows.append(_row(
-            "usd_per_100k_cmd_tenant_month_storage", "storage", None, "USD/tenant-month",
+            pricing, "usd_per_100k_cmd_tenant_month_storage", "storage", None, "USD/tenant-month",
             "usd_per_1m_commits_hot_cell_month * (100,000 / 1,000,000)",
             [], ["cell.commit.size.bytes"],
             ["storage.hetzner_volume_usd_per_gb_month", "utilization.ha_replication_factor"],
         ))
 
     # 3. Analytics / Lake ingest
-    rows_per_s, ingest_threads, ingest_row, ingest_expr = _resolve_lake_rows_per_s(latest)
-    if rows_per_s is not None and ingest_row is not None:
+    rows_per_s, ingest_threads, ingest_row, ingest_expr, ingest_missing = _resolve_lake_rows_per_s(latest)
+    if rows_per_s is not None and ingest_threads is not None and ingest_row is not None:
         sec_per_1m_rows = ONE_MILLION / rows_per_s
         usd_1m_rows = sec_per_1m_rows * (ingest_threads / cpu_target) * cpx_usd_per_vcpu_s
         rows.append(_row(
-            "usd_per_1m_rows_landed", "analytics", usd_1m_rows, "USD/1M-rows",
+            pricing, "usd_per_1m_rows_landed", "analytics", usd_1m_rows, "USD/1M-rows",
             f"(1e6 / ({ingest_expr})) * ({ingest_threads:g} vCPU / {cpu_target}) * "
             f"(${cpx_monthly_usd}/mo / ({cpx_vcpu} vCPU * {int(seconds_per_month):,}s))",
             [_input_ref(ingest_row)], [],
@@ -502,23 +604,23 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
         ))
     else:
         rows.append(_row(
-            "usd_per_1m_rows_landed", "analytics", None, "USD/1M-rows",
+            pricing, "usd_per_1m_rows_landed", "analytics", None, "USD/1M-rows",
             "(1e6 / lake.ingest.throughput.rows_s) * (threads / cpu_target) * cpx62_usd_per_vcpu_s",
-            [], ["lake.ingest.throughput.rows_s"],
+            [], ingest_missing,
             ["compute.hetzner_cpx62", "utilization.cpu_target"],
         ))
 
-    # 4. Bandwidth / Frontend
-    js_gz = _first_present(latest, ("studio.bundle.js.gzip_bytes",))
-    css_gz = _first_present(latest, ("studio.bundle.css.gzip_bytes",))
+    # 4. Bandwidth / Frontend (initial cold-load entry assets from dist/index.html; 0 CSS bytes is valid!)
+    js_gz = _first_present(latest, ("studio.bundle.initial_js.gzip_bytes",), allow_zero=False)
+    css_gz = _first_present(latest, ("studio.bundle.initial_css.gzip_bytes",), allow_zero=True)
     bw_missing: list[str] = []
     bw_inputs: list[dict] = []
     if js_gz is None:
-        bw_missing.append("studio.bundle.js.gzip_bytes")
+        bw_missing.append("studio.bundle.initial_js.gzip_bytes")
     else:
         bw_inputs.append(_input_ref(js_gz))
     if css_gz is None:
-        bw_missing.append("studio.bundle.css.gzip_bytes")
+        bw_missing.append("studio.bundle.initial_css.gzip_bytes")
     else:
         bw_inputs.append(_input_ref(css_gz))
 
@@ -526,18 +628,22 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
         transfer_gb = ((float(js_gz["value"]) + float(css_gz["value"])) * 10_000.0) / BYTES_PER_GB
         usd_10k_loads = transfer_gb * cdn_usd_per_gb
         rows.append(_row(
-            "usd_per_10k_studio_loads", "bandwidth", usd_10k_loads, "USD/10k-loads",
-            f"((studio.bundle.js.gzip_bytes + studio.bundle.css.gzip_bytes) * 10,000 / 1e9) * ${cdn_usd_per_gb}/GB",
+            pricing, "usd_per_10k_studio_loads", "bandwidth", usd_10k_loads, "USD/10k-loads",
+            f"((studio.bundle.initial_js.gzip_bytes + studio.bundle.initial_css.gzip_bytes) * 10,000 / 1e9) * ${cdn_usd_per_gb}/GB",
             bw_inputs, [],
             ["bandwidth.cdn_egress_usd_per_gb"],
-            notes=f"{transfer_gb:.3f} GB transferred per 10k cold Studio loads; $0.00 on Cloudflare Pages/R2 zero-egress.",
+            notes=(
+                f"{transfer_gb:.3f} GB transferred per 10k cold Studio initial loads (dist/index.html entry JS+CSS only); "
+                "$0.00 on Cloudflare Pages/R2 zero-egress."
+            ),
         ))
     else:
         rows.append(_row(
-            "usd_per_10k_studio_loads", "bandwidth", None, "USD/10k-loads",
-            f"((studio.bundle.js.gzip_bytes + studio.bundle.css.gzip_bytes) * 10,000 / 1e9) * ${cdn_usd_per_gb}/GB",
+            pricing, "usd_per_10k_studio_loads", "bandwidth", None, "USD/10k-loads",
+            f"((studio.bundle.initial_js.gzip_bytes + studio.bundle.initial_css.gzip_bytes) * 10,000 / 1e9) * ${cdn_usd_per_gb}/GB",
             bw_inputs, bw_missing,
             ["bandwidth.cdn_egress_usd_per_gb"],
+            notes="Uses dist/index.html initial entry JS+CSS gzip transfer (never total dist/ with lazy chunks/widgets).",
         ))
 
     # 5. Engineering / CI
@@ -546,7 +652,7 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
         vm_hours = (float(ci_row["value"]) / 3600.0) * ci_parallel_vms
         usd_pr_ci = vm_hours * boat_usd_per_hr
         rows.append(_row(
-            "usd_per_pr_ci_estimate", "ci", usd_pr_ci, "USD/PR",
+            pricing, "usd_per_pr_ci_estimate", "ci", usd_pr_ci, "USD/PR",
             f"(ci.core.run.s / 3600) * {ci_parallel_vms:g} VMs * ${boat_usd_per_hr}/VM-hr",
             [_input_ref(ci_row)], [],
             ["ci.boat_vm_usd_per_hour", "ci.effective_parallel_vms"],
@@ -554,10 +660,25 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
         ))
     else:
         rows.append(_row(
-            "usd_per_pr_ci_estimate", "ci", None, "USD/PR",
+            pricing, "usd_per_pr_ci_estimate", "ci", None, "USD/PR",
             f"(ci.core.run.s / 3600) * {ci_parallel_vms:g} VMs * ${boat_usd_per_hr}/VM-hr",
             [], ["ci.core.run.s"],
             ["ci.boat_vm_usd_per_hour", "ci.effective_parallel_vms"],
+        ))
+
+    # 6. Historical proxy reference (retired hosts only — strictly separated from live Rivet rows)
+    historical_proxies: list[dict] = []
+    celld_pss = _first_present(latest, ("host.celld.pss_per_cell.bytes",))
+    if celld_pss is not None:
+        celld_ram_tenants = math.floor(usable_ram_bytes / float(celld_pss["value"]))
+        historical_proxies.append(_row(
+            pricing, "retired_celld_reference_tenants_per_cpx62_by_ram", "historical_proxy",
+            celld_ram_tenants, "tenants",
+            f"floor(({cpx_ram_gib} GiB * {ram_ceiling}) / host.celld.pss_per_cell.bytes)",
+            [_input_ref(celld_pss)], [],
+            ["compute.hetzner_cpx62.ram_gib", "utilization.ram_ceiling"],
+            notes="RETIRED celld host reference only (2026-11-12); do NOT use for live Rivet FP&A capacity.",
+            evidence=HISTORICAL_PROXY_EVIDENCE,
         ))
 
     return {
@@ -566,10 +687,10 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
         "evidence": EVIDENCE_LABEL,
         "source": source,
         "currency": pricing.get("currency", "USD"),
-        "pricing_as_of": _pricing_as_of(pricing),
         "records_considered": len(records),
         "pricing": pricing,
         "metrics": rows,
+        "historical_proxies": historical_proxies,
     }
 
 
@@ -594,7 +715,7 @@ def format_csv(report: dict) -> str:
         "pricing_as_of",
         "notes",
     ])
-    for row in report["metrics"]:
+    for row in (*report["metrics"], *report.get("historical_proxies", [])):
         inputs = row["inputs"]
         writer.writerow([
             row["id"],
@@ -607,7 +728,7 @@ def format_csv(report: dict) -> str:
             "; ".join(f"{item['value']} {item['unit']}" for item in inputs),
             "; ".join(item["measured_at"] for item in inputs),
             "; ".join(row["missing_inputs"]),
-            report["pricing_as_of"],
+            row["pricing_as_of"],
             row["notes"],
         ])
     return buf.getvalue()
@@ -627,20 +748,9 @@ def _fmt_value(value, unit: str) -> str:
     return f"{value:,.4g}"
 
 
-def format_markdown(report: dict) -> str:
-    lines = [
-        "# Norn Unit-Economics Estimate",
-        "",
-        f"- **Source:** `{report['source']}` ({report['records_considered']:,} records)",
-        f"- **Evidence:** `{report['evidence']}` (derived from measured metrics + dated list pricing)",
-        f"- **Pricing as of:** `{report['pricing_as_of']}` ({report['currency']})",
-        "",
-        "## Derived Unit Economics",
-        "",
-        "| Category | Metric | Value | Unit | Inputs / Missing |",
-        "|---|---|---:|---|---|",
-    ]
-    for row in report["metrics"]:
+def _md_table_rows(rows: list[dict]) -> list[str]:
+    out = []
+    for row in rows:
         if row["missing_inputs"]:
             detail = "missing: " + ", ".join(f"`{m}`" for m in row["missing_inputs"])
         else:
@@ -648,28 +758,60 @@ def format_markdown(report: dict) -> str:
                 f"`{i['metric']}`={i['value']} {i['unit']} ({i['measured_at'][:10]})"
                 for i in row["inputs"]
             )
-        lines.append(
+        out.append(
             f"| {row['category']} | `{row['id']}` | {_fmt_value(row['value'], row['unit'])} "
-            f"| {row['unit']} | {detail} |"
+            f"| {row['unit']} | {row['pricing_as_of']} | {detail} |"
         )
+    return out
+
+
+def format_markdown(report: dict) -> str:
+    lines = [
+        "# Norn Unit-Economics Estimate",
+        "",
+        f"- **Source:** `{report['source']}` ({report['records_considered']:,} records)",
+        f"- **Evidence:** `{report['evidence']}` (derived from measured metrics + dated list pricing)",
+        f"- **Currency:** `{report['currency']}` (per-row pricing `as_of` dates shown in table)",
+        "",
+        "## Derived Unit Economics (Live Rivet / Core Engine)",
+        "",
+        "| Category | Metric | Value | Unit | Pricing As Of | Inputs / Missing |",
+        "|---|---|---:|---|---|---|",
+        *_md_table_rows(report["metrics"]),
+    ]
+
+    proxies = report.get("historical_proxies", [])
+    if proxies:
+        lines += [
+            "",
+            "## Historical Proxy Reference (Retired Hosts — Do Not Use for Live Rivet FP&A)",
+            "",
+            "| Category | Metric | Value | Unit | Pricing As Of | Inputs / Missing |",
+            "|---|---|---:|---|---|---|",
+            *_md_table_rows(proxies),
+        ]
 
     lines += [
         "",
         "## Formulas & Audit Trail",
         "",
     ]
-    for row in report["metrics"]:
+    for row in (*report["metrics"], *proxies):
         suffix = f" — {row['notes']}" if row["notes"] else ""
-        lines.append(f"- `{row['id']}` (`{row['evidence']}`): `{row['formula']}`{suffix}")
+        lines.append(
+            f"- `{row['id']}` (`{row['evidence']}`, pricing as of `{row['pricing_as_of']}`): "
+            f"`{row['formula']}`{suffix}"
+        )
 
     cpx = report["pricing"]["compute"]["hetzner_cpx62"]
+    region = f" [{cpx['region']}]" if cpx.get("region") else ""
     lines += [
         "",
         "## Pricing & Capacity Assumptions",
         "",
         "| Parameter | Value | As of | Source |",
         "|---|---:|---|---|",
-        f"| Hetzner `cpx62` | ${cpx['monthly_usd']}/mo ({cpx['vcpu']} vCPU, {cpx['ram_gib']} GiB RAM, {cpx['nvme_gb']} GB NVMe) | {cpx['as_of']} | {cpx['source']} |",
+        f"| Hetzner `cpx62`{region} | ${cpx['monthly_usd']}/mo ({cpx['vcpu']} vCPU, {cpx['ram_gib']} GiB RAM, {cpx['nvme_gb']} GB NVMe) | {cpx['as_of']} | {cpx['source']} |",
     ]
     for section in ("storage", "bandwidth", "ci", "utilization", "workload_assumptions"):
         for key, spec in report["pricing"].get(section, {}).items():
