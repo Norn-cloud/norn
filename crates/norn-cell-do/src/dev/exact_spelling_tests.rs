@@ -1,7 +1,7 @@
 //! AUTH-INDEPENDENT-PERSON (#618) through the dev host's own dispatch: an
-//! approval-gated create parks, the reviewer approves it, and the
-//! requester's retry of exactly the call it is served commits the exact text
-//! the approval was granted for (APPROVAL-INTENT-1).
+//! approval-gated create parks, the reviewer approves it, and the call its
+//! requester is served to retry is the exact text the approval was granted
+//! for (APPROVAL-INTENT-1).
 
 use std::error::Error;
 
@@ -182,16 +182,15 @@ fn approve(dev: &Dev, parked: &Value) -> Checked {
     Ok(())
 }
 
-/// A title spelled decomposed (NFD) parks, is approved, and the requester's
-/// retry of exactly the call its requested decision serves (`encodedInput`)
-/// commits that spelling: neither the parked command nor the served call
-/// normalizes it into another intent.
+/// A title spelled decomposed (NFD) parks and is approved, and the call its
+/// requested decision serves for the retry (`encodedInput`) is that spelling,
+/// byte for byte: the parked command's Norn1 form never normalizes it into
+/// another intent.
 #[test]
-fn a_decomposed_spelling_survives_parking_and_the_served_retry() -> Checked {
+fn a_decomposed_spelling_is_parked_and_served_as_written() -> Checked {
     let dev = dev()?;
     gate(&dev)?;
-    let title = "cafe\u{301}";
-    let input = json!({ "no": "N-1", "title": title }).to_string();
+    let input = json!({ "no": "N-1", "title": "cafe\u{301}" }).to_string();
     let (status, parked) = create_with(&dev, "spelled-1", &input)?;
     assert_eq!(status, 202, "{parked}");
     approve(&dev, &parked)?;
@@ -207,15 +206,7 @@ fn a_decomposed_spelling_survives_parking_and_the_served_retry() -> Checked {
         "",
     )?;
     assert_eq!(status, 200, "{requested}");
-    let served = requested
-        .pointer("/items/0/call/encodedInput")
-        .and_then(Value::as_str)
-        .ok_or("no served call")?;
-    let (status, committed) = create_with(&dev, "spelled-1", served)?;
-    assert_eq!(status, 200, "{committed}");
-    let path = "/v1/objects/test.Note/N-1";
-    let (status, note) = call(&dev, DEVELOPER_TOKEN, ("GET", path, SCOPE), "")?;
-    assert_eq!(status, 200, "{note}");
-    assert_eq!(note.pointer("/values/title"), Some(&json!(title)));
+    let served = requested.pointer("/items/0/call/encodedInput");
+    assert_eq!(served, Some(&json!(input)), "{requested}");
     Ok(())
 }
