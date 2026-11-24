@@ -1462,13 +1462,13 @@ pub struct CommitBatch {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub marking_reference_reads: Vec<norn_kernel::FactExpectation>,
     /// Kernel-proven property operands of exact-version action inputs.
-    /// Identity and occurrence labels always contribute too; unresolved
-    /// properties remain unknown. Full `marking_reads` take precedence.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub marking_property_reads: Vec<(norn_kernel::FactExpectation, Vec<String>)>,
+    /// Predicate filter and window property dependencies evaluated by this turn
+    /// (covers schema and per-row candidate markings even on empty results).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub marking_predicate_reads: Vec<(norn_kernel::ObjectTypeName, Vec<String>)>,
     /// Immutable Function input lineage, independent of freshness/CAS.
-    /// Always resolves the exact historical snapshots: a later visibility
-    /// declassification must not reclassify an already dispatched input.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub marking_historical_reads: Vec<norn_kernel::FactExpectation>,
     /// Trusted adapter outputs whose values were recomputed, even when their

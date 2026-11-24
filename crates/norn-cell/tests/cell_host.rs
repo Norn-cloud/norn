@@ -5579,3 +5579,282 @@ fn r4_blocker3_explain_query_plan_seeks_directly_without_world_scan() {
         );
     }
 }
+
+type R7TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
+
+fn r7_predicate_ifc_fixture()
+-> R7TestResult<SqliteCell<norn_kernel::FactEvent, JsonObject, JsonObject>> {
+    let defs: Vec<norn_ir::ObjectTypeDef> = serde_json::from_value(json!([
+        {
+            "name": "pifc.Record",
+            "properties": [
+                {"id": "id", "type": {"kind": "text"}},
+                {"id": "status", "type": {"kind": "text"}},
+                {"id": "tag", "type": {"kind": "text"}},
+                {"id": "ssn", "type": {"kind": "text"}, "markings": ["pii.ssn"]},
+                {"id": "booked_on", "type": {"kind": "date"}, "markings": ["pii.date"]},
+                {"id": "salary", "type": {"kind": "text"}, "markings": ["pii.salary"]}
+            ]
+        },
+        {
+            "name": "pifc.Public",
+            "properties": [
+                {"id": "id", "type": {"kind": "text"}},
+                {"id": "note", "type": {"kind": "text"}}
+            ],
+            "links": [{
+                "id": "linked",
+                "target": "pifc.Public",
+                "cardinality": {"to": "many", "from": "many"}
+            }]
+        }
+    ]))?;
+    let model = common::model_of(&defs);
+    let store = CellStore::open_in_memory(model)?;
+    let mut cell = SqliteCell::new(
+        store,
+        "org_demo/dev",
+        |cmd: &norn_kernel::Command<JsonObject>| cmd.payload.clone(),
+    )?;
+    for id in ["P1", "P2"] {
+        cell.commit(CellCommit {
+            writes: vec![FactWrite {
+                key: FactKey::new("pifc.Public", id),
+                expected: FactVersion(0),
+                mutation: FactMutation::Put {
+                    values: serde_json::from_value(json!({"id": id, "note": "init"}))?,
+                },
+            }],
+            ..CellCommit::empty()
+        })?;
+    }
+    Ok(cell)
+}
+
+fn r7_empty_pred_link_commit(
+    predicate: PredicateQuery,
+    remove: bool,
+) -> CellCommit<norn_kernel::FactEvent, JsonObject, JsonObject> {
+    CellCommit {
+        predicate_reads: vec![norn_kernel::PredicateReadExpectation {
+            predicate,
+            members: Vec::new(),
+        }],
+        links: vec![LinkWrite {
+            key: LinkKey::new(
+                FactKey::new("pifc.Public", "P1"),
+                "linked",
+                FactKey::new("pifc.Public", "P2"),
+            ),
+            expected: FactVersion(u64::from(remove)),
+            mutation: if remove {
+                LinkMutation::Remove
+            } else {
+                LinkMutation::Add {
+                    values: JsonObject::new(),
+                }
+            },
+        }],
+        ..CellCommit::empty()
+    }
+}
+
+fn r7_empty_pred_fact_commit(
+    predicate: PredicateQuery,
+    out_id: &str,
+) -> R7TestResult<CellCommit<norn_kernel::FactEvent, JsonObject, JsonObject>> {
+    Ok(CellCommit {
+        predicate_reads: vec![norn_kernel::PredicateReadExpectation {
+            predicate,
+            members: Vec::new(),
+        }],
+        writes: vec![FactWrite {
+            key: FactKey::new("pifc.Public", out_id),
+            expected: FactVersion(0),
+            mutation: FactMutation::Put {
+                values: serde_json::from_value(json!({"id": out_id, "note": "derived"}))?,
+            },
+        }],
+        ..CellCommit::empty()
+    })
+}
+
+fn r7_put_record(
+    cell: &mut SqliteCell<norn_kernel::FactEvent, JsonObject, JsonObject>,
+    id: &str,
+    expected: u64,
+    tag: &str,
+    ssn: &str,
+    reads: Vec<norn_kernel::FactExpectation>,
+) -> R7TestResult {
+    cell.commit(CellCommit {
+        reads,
+        writes: vec![FactWrite {
+            key: FactKey::new("pifc.Record", id),
+            expected: FactVersion(expected),
+            mutation: FactMutation::Put {
+                values: serde_json::from_value(json!({
+                    "id": id, "status": "open", "tag": tag,
+                    "ssn": ssn, "booked_on": "2026-01-15", "salary": "900"
+                }))?,
+            },
+        }],
+        ..CellCommit::empty()
+    })?;
+    Ok(())
+}
+
+fn r7_note_markings(
+    cell: &SqliteCell<norn_kernel::FactEvent, JsonObject, JsonObject>,
+    id: &str,
+) -> R7TestResult<Vec<String>> {
+    let marks = cell
+        .store()
+        .read()
+        .effective_markings("main", "pifc.Public", id, None)?
+        .ok_or("public markings missing")?;
+    marks
+        .get("note")
+        .cloned()
+        .ok_or_else(|| "note missing".into())
+}
+
+/// R7 Blocker: empty predicate results over schema-classified filter fields
+/// (on both 0-row empty tables and non-empty tables) and classified window/
+/// temporal fields propagate IFC markings to fact writes and refuse links.
+#[test]
+fn r7_empty_predicate_over_classified_filter_window_and_empty_table_propagates_ifc() -> R7TestResult
+{
+    let mut cell = r7_predicate_ifc_fixture()?;
+    let ssn_pred: PredicateQuery =
+        serde_json::from_value(json!({"objectType": "pifc.Record", "filter": {"ssn": "000"}}))?;
+
+    // 1. Empty table (0 rows) over schema-classified filter field -> refuses link & taints fact.
+    let err = cell.commit(r7_empty_pred_link_commit(ssn_pred.clone(), false));
+    assert!(matches!(
+        err,
+        Err(CommitError::Host(
+            CellError::MarkingDeclassificationInvalid(_)
+        ))
+    ));
+    cell.commit(r7_empty_pred_fact_commit(ssn_pred.clone(), "O1")?)?;
+    assert!(
+        r7_note_markings(&cell, "O1")?
+            .iter()
+            .any(|l| l == "pii.ssn")
+    );
+
+    // 2. Non-empty table, 0 matching rows over schema-classified filter -> refuses link & taints fact.
+    r7_put_record(&mut cell, "R1", 0, "plain", "111-11-1111", Vec::new())?;
+    let err = cell.commit(r7_empty_pred_link_commit(ssn_pred.clone(), false));
+    assert!(matches!(
+        err,
+        Err(CommitError::Host(
+            CellError::MarkingDeclassificationInvalid(_)
+        ))
+    ));
+    cell.commit(r7_empty_pred_fact_commit(ssn_pred, "O2")?)?;
+    assert!(
+        r7_note_markings(&cell, "O2")?
+            .iter()
+            .any(|l| l == "pii.ssn")
+    );
+
+    // 3. Classified window/temporal field (`booked_on`) with 0 matches -> refuses link & taints fact.
+    let window_pred: PredicateQuery = serde_json::from_value(json!({
+        "objectType": "pifc.Record",
+        "window": {
+            "property": "booked_on", "kind": "date",
+            "start": "2027-01-01", "end": "2027-12-31",
+            "startInclusive": true, "endInclusive": true
+        }
+    }))?;
+    let err = cell.commit(r7_empty_pred_link_commit(window_pred.clone(), false));
+    assert!(matches!(
+        err,
+        Err(CommitError::Host(
+            CellError::MarkingDeclassificationInvalid(_)
+        ))
+    ));
+    cell.commit(r7_empty_pred_fact_commit(window_pred, "O3")?)?;
+    assert!(
+        r7_note_markings(&cell, "O3")?
+            .iter()
+            .any(|l| l == "pii.date")
+    );
+    Ok(())
+}
+
+/// R7 Blocker: negative control (unclassified filter field does not over-taint
+/// from unrelated schema-classified or dynamically marked fields on non-matching
+/// rows) + dynamically marked filter field with unmarked occurrence propagates IFC.
+#[test]
+fn r7_empty_predicate_dynamic_marking_and_unclassified_negative_control() -> R7TestResult {
+    let mut cell = r7_predicate_ifc_fixture()?;
+    r7_put_record(&mut cell, "R1", 0, "plain", "111-11-1111", Vec::new())?;
+    r7_put_record(&mut cell, "R2", 0, "plain", "222-22-2222", Vec::new())?;
+    // Update ONLY `R2.tag` while reading `R1`: `R2`'s occurrence and `status`
+    // remain unmarked, while schema-unmarked `R2.tag` dynamically inherits `pii.ssn`.
+    r7_put_record(
+        &mut cell,
+        "R2",
+        1,
+        "secret-derived",
+        "222-22-2222",
+        vec![norn_kernel::FactExpectation {
+            key: FactKey::new("pifc.Record", "R1"),
+            expected: FactVersion(1),
+        }],
+    )?;
+    let r2_occ = cell
+        .store()
+        .read()
+        .fact_occurrence_markings("main", "pifc.Record", "R2", None)?
+        .ok_or("R2 occurrence missing")?;
+    assert!(
+        r2_occ.is_empty(),
+        "R2 occurrence must stay unmarked: {r2_occ:?}"
+    );
+    let r2_marks = cell
+        .store()
+        .read()
+        .effective_markings("main", "pifc.Record", "R2", None)?
+        .ok_or("R2 markings missing")?;
+    assert!(r2_marks.get("status").is_some_and(Vec::is_empty));
+    assert!(
+        r2_marks
+            .get("tag")
+            .is_some_and(|m| m.iter().any(|l| l == "pii.ssn"))
+    );
+
+    // Negative control: empty predicate on unclassified `status` must NOT over-taint
+    // from unrelated `salary`/`ssn` or dynamically marked `R2.tag`.
+    let status_pred: PredicateQuery = serde_json::from_value(
+        json!({"objectType": "pifc.Record", "filter": {"status": "closed"}}),
+    )?;
+    let mut clean_commit = r7_empty_pred_fact_commit(status_pred.clone(), "CLEAN")?;
+    clean_commit
+        .links
+        .extend(r7_empty_pred_link_commit(status_pred, false).links);
+    cell.commit(clean_commit)?;
+    assert!(r7_note_markings(&cell, "CLEAN")?.is_empty());
+
+    // Empty predicate on dynamically marked `tag` refuses link & propagates pii.ssn.
+    let tag_pred: PredicateQuery = serde_json::from_value(
+        json!({"objectType": "pifc.Record", "filter": {"tag": "no-match"}}),
+    )?;
+    let err = cell.commit(r7_empty_pred_link_commit(tag_pred.clone(), true));
+    assert!(matches!(
+        err,
+        Err(CommitError::Host(
+            CellError::MarkingDeclassificationInvalid(_)
+        ))
+    ));
+    cell.commit(r7_empty_pred_fact_commit(tag_pred, "DYN")?)?;
+    assert!(
+        r7_note_markings(&cell, "DYN")?
+            .iter()
+            .any(|l| l == "pii.ssn")
+    );
+    Ok(())
+}

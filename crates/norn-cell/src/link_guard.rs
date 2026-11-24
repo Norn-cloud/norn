@@ -6,7 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use norn_kernel::{
     CellCommit, CommitError, FactExpectation, FactKey, FactVersion, LinkKey, LinkMutation,
-    LinkState, PredicateActionRead, PredicateObject, PredicateQuery, PredicateReadExpectation,
+    LinkState, ObjectTypeName, PredicateActionRead, PredicateObject, PredicateQuery,
+    PredicateReadExpectation,
 };
 use norn_projections::ValueEncoding;
 use norn_projections::sqlite_ddl::{
@@ -17,6 +18,7 @@ use crate::MAIN_WORLD;
 use crate::codec::{DecodeContext, ValueOwner};
 use crate::engine::{SqlEngine, SqlRow, params};
 use crate::error::CellError;
+use crate::reactive::{DecodeBudget, ReactiveLimits};
 use crate::read::{LinkRecord, StoreReader, decode_row, query_projected};
 use crate::store::LinkChange;
 use crate::system::{LINK_CREATION, LINK_VERSIONS};
@@ -643,6 +645,144 @@ pub(crate) fn extend_predicate_marking_reads(
             }
         }
     }
+}
+
+/// Extract canonical `(object_type, sorted inspected_properties)` specs from
+/// every predicate read (every filter key plus any temporal/window property)
+/// so `Writer::apply_writes` resolves schema and per-row candidate IFC markings
+/// inside the commit transaction, even when a predicate matches zero rows.
+pub(crate) fn predicate_marking_specs(
+    predicate_reads: &[PredicateReadExpectation],
+) -> Vec<(ObjectTypeName, Vec<String>)> {
+    let mut by_type: BTreeMap<ObjectTypeName, BTreeSet<String>> = BTreeMap::new();
+    for read in predicate_reads {
+        let props = by_type
+            .entry(read.predicate.object_type.clone())
+            .or_default();
+        props.extend(read.predicate.filter.keys().cloned());
+        if let Some(window) = &read.predicate.window {
+            props.insert(window.property.clone());
+        }
+    }
+    by_type
+        .into_iter()
+        .map(|(object_type, props)| (object_type, props.into_iter().collect()))
+        .collect()
+}
+
+/// Resolve IFC markings for all filter and window properties inspected by
+/// `predicate_reads` inside the commit transaction:
+/// - Schema-declared object-level and inspected-property markings across
+///   `object_type` and every concrete subtype (covers empty 0-row tables).
+/// - Per-row occurrence markings and dynamic/stored markings on inspected
+///   properties across all live candidate rows (matching, non-matching, or
+///   truncated) using the same bounded scan (`scan_cap` + `DecodeBudget`),
+///   failing closed with `norn.unknown-lineage` if bounds or snapshots fail.
+/// - Never taints from unrelated classified properties on non-matching rows.
+pub(crate) fn predicate_filter_lineage_markings<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    world: &str,
+    predicate_reads: &[(ObjectTypeName, Vec<String>)],
+) -> Result<BTreeSet<String>, CellError> {
+    let mut labels = BTreeSet::new();
+    if predicate_reads.is_empty() {
+        return Ok(labels);
+    }
+    let profile = norn_ir::ResourceLimitProfile::norn_limits_v1();
+    let scan_cap = usize::try_from(profile.slice.max_records).unwrap_or(usize::MAX);
+    let limits = ReactiveLimits::from_profile(&profile);
+    for (object_type_name, inspected_properties) in predicate_reads {
+        let object_type = object_type_name.as_str();
+        if !reader
+            .model()
+            .object_types()
+            .any(|defined| defined.name.as_str() == object_type)
+        {
+            labels.insert("norn.unknown-lineage".to_owned());
+            continue;
+        }
+        let mut declared_props: BTreeSet<&str> = BTreeSet::new();
+        for def in reader.model().object_types() {
+            if !reader.model().is_a(def.name.as_str(), object_type) {
+                continue;
+            }
+            labels.extend(reader.model().object_markings(def.name.as_str())?);
+            let prop_markings = reader
+                .model()
+                .effective_property_markings(def.name.as_str())?;
+            for prop in inspected_properties {
+                if let Some(declared) = prop_markings.get(prop) {
+                    declared_props.insert(prop.as_str());
+                    labels.extend(declared.iter().cloned());
+                }
+            }
+        }
+        if inspected_properties
+            .iter()
+            .any(|prop| !declared_props.contains(prop.as_str()))
+        {
+            labels.insert("norn.unknown-lineage".to_owned());
+        }
+        let mut budget = DecodeBudget::new(&limits);
+        let Some(records) = reader.list_after_with_budget(
+            world,
+            object_type,
+            scan_cap.saturating_add(1),
+            &mut budget,
+        )?
+        else {
+            labels.insert("norn.unknown-lineage".to_owned());
+            continue;
+        };
+        if records.len() > scan_cap {
+            labels.insert("norn.unknown-lineage".to_owned());
+            continue;
+        }
+        collect_candidate_row_markings(reader, world, &records, inspected_properties, &mut labels)?;
+    }
+    Ok(labels)
+}
+
+fn collect_candidate_row_markings<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    world: &str,
+    records: &[crate::read::ObjectRecord],
+    inspected_properties: &[String],
+    labels: &mut BTreeSet<String>,
+) -> Result<(), CellError> {
+    for record in records {
+        let Some(occurrence) =
+            reader.fact_occurrence_markings(world, &record.object_type, &record.id, None)?
+        else {
+            labels.insert("norn.unknown-lineage".to_owned());
+            continue;
+        };
+        labels.extend(occurrence);
+        if inspected_properties.is_empty() {
+            continue;
+        }
+        let Some(snapshot) =
+            reader.effective_markings(world, &record.object_type, &record.id, None)?
+        else {
+            labels.insert("norn.unknown-lineage".to_owned());
+            continue;
+        };
+        let declared_on_row = reader
+            .model()
+            .effective_property_markings(&record.object_type)?;
+        for prop in inspected_properties {
+            if !declared_on_row.contains_key(prop) {
+                continue;
+            }
+            match snapshot.get(prop) {
+                Some(marks) => labels.extend(marks.iter().cloned()),
+                None => {
+                    labels.insert("norn.unknown-lineage".to_owned());
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Fail-closed IFC check for live link mutations emitted under classified read

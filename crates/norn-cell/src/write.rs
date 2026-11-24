@@ -270,6 +270,11 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         for (read, properties) in &self.batch.marking_property_reads {
             inherited.extend(self.property_lineage_markings(read, properties)?);
         }
+        inherited.extend(crate::link_guard::predicate_filter_lineage_markings(
+            &self.reader(),
+            self.world,
+            &self.batch.marking_predicate_reads,
+        )?);
         let occurrence_inherited = self.occurrence_lineage_markings(&inherited)?;
         let destination_markings = self.value_lineage_markings()?;
         self.link_read_markings.clone_from(&occurrence_inherited);
@@ -309,9 +314,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                 &changed,
             );
             if changed.is_empty() && matches!(write, FactWriteRow::Put { .. }) {
-                // A no-op still emits an observable version and fact event.
-                // Preserved values keep their labels; explicitly recomputed
-                // outputs also refresh their provenance when values are equal.
+                // No-op write: preserve value labels; refresh occurrence and derived lineage.
                 self.apply_occurrence_lineage_to_version(
                     &row.object_type,
                     &row.key,

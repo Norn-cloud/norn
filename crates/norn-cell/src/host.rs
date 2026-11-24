@@ -1040,6 +1040,8 @@ where
             &commit.predicate_reads,
             &mut marking_reads,
         );
+        let marking_predicate_reads =
+            crate::link_guard::predicate_marking_specs(&commit.predicate_reads);
         let mut marking_events = marking_events;
         let mut marking_historical_reads = Vec::new();
         // Function freshness and information lineage are separate contracts.
@@ -1081,6 +1083,7 @@ where
             marking_reads,
             marking_reference_reads: Vec::new(),
             marking_property_reads: Vec::new(),
+            marking_predicate_reads,
             marking_historical_reads,
             marking_value_reads,
             marking_occurrence_reads: None,
