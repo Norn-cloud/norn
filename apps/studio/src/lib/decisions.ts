@@ -66,6 +66,12 @@ export interface Decided {
   readonly receipt: { readonly receiptHash: string; readonly commitSeq: number; readonly recordedAtMs: number }
   readonly run: { readonly id: string; readonly state: string | null }
   readonly call?: DecidedCall
+  /**
+   * PROVISIONAL CONTRACT (#1208, PR #1631 S2): the episode the decision projects to, when the cell
+   * names it. Studio never derives it and only links to it when the cell advertises `learning.Episode`
+   * (S1 capability gate), until the backend lane pins `episodeId` with route-produced fixtures.
+   */
+  readonly episodeId?: string | null
 }
 
 /**
