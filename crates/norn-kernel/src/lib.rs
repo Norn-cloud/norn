@@ -70,6 +70,7 @@ pub mod flow_identity;
 pub mod flow_turn;
 pub mod governing_laws;
 mod guard_diagnostic;
+mod lifecycle_init;
 pub mod limits;
 pub mod naming_series;
 mod partition_slice;
@@ -113,11 +114,10 @@ pub use cell_host::{Authorized, Checked, Committed, Proposed};
 pub use cell_host::{
     BoundedFact, CellCommit, CellHost, CommitError, CommitModel, CommitReceipt, CommitVersions,
     CommitView, Consumed, DueTimer, FactExpectation, FactKey, FactMutation, FactState, FactVersion,
-    FactWrite, LedgerSeq, LifecycleInitRefusal, LinkKey, LinkMutation, LinkReadExpectation,
-    LinkReadTarget, LinkState, LinkWrite, ObservationId, Observed, OwnedRowsCommitProof, Performed,
-    PredicateActionRead, PredicateObject, PredicateQuery, PredicateReadExpectation,
-    PredicateReadMember, Provenance, SerializationLane, WrittenLinkVersion, WrittenVersion,
-    check_commit,
+    FactWrite, LedgerSeq, LinkKey, LinkMutation, LinkReadExpectation, LinkReadTarget, LinkState,
+    LinkWrite, ObservationId, Observed, OwnedRowsCommitProof, Performed, PredicateActionRead,
+    PredicateObject, PredicateQuery, PredicateReadExpectation, PredicateReadMember, Provenance,
+    SerializationLane, WrittenLinkVersion, WrittenVersion, check_commit,
 };
 pub use decider::{
     Decider, Decision, DecisionOf, EnvelopeKind, Step, StepError, StepOf, StepResult, fold, replay,
@@ -137,6 +137,7 @@ pub use effect::{
     InputIdentity, OwnerVersion, Timer, TimerId,
 };
 pub use envelope::{TurnEnvelopeLimits, TurnEnvelopeMeter, TurnEnvelopeUsage};
+pub use lifecycle_init::LifecycleInitRefusal;
 pub use limits::{
     EnvelopeLimits, IngressLimit, IngressLimitExceeded, LimitProfileRef, ResourceLimitProfile,
     SliceLimits, SliceMeter, check_envelope_bytes,

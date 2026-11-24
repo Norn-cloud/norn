@@ -43,6 +43,7 @@ const MAX_LINK_READ_BYTES: usize = 262_144;
 use crate::commit_order::{CommitStage, CommitStages, run_stages};
 use crate::commit_versions::{CurrentVersion, first_conflict};
 use crate::decision_commit::{EffectiveValuesError, TypeCatalog};
+use crate::lifecycle_init::check_first_writes;
 use crate::snapshot_observe::ObservationAuthorization;
 
 /// The model facts a commit is checked against, from the cell's
@@ -381,9 +382,7 @@ pub trait CommitView {
 ///    the current version ([`CommitError::Conflict`]); an object is put only
 ///    as its live concrete type ([`CommitError::TypeMismatch`]); every link
 ///    write matches the current link version ([`CommitError::LinkConflict`]);
-///    an object absent from the pre-state begins every lifecycle in an
-///    admitted initial state or reaches its written state through the
-///    commit's recorded transitions ([`CommitError::LifecycleInitialization`]);
+///    a first write's lifecycles begin initialized (GRAPH-STATE-1);
 /// 4. **endpoints** — no link dangles once the commit applies
 ///    ([`CommitError::DanglingLink`]): both endpoints of every added link
 ///    exist as their named types, and every live link of a deleted object
@@ -569,14 +568,9 @@ impl<E: 'static, C, T, V: CommitView + ?Sized> CommitStages<CommitError<V::Error
             CommitStage::Delivery => check_delivery(commit, view),
             CommitStage::Immutable => check_immutable(commit, model, view),
             CommitStage::Versions => {
-                check_versions(commit, model, view, authorization)?;
-                check_lifecycle_initialization(
-                    commit,
-                    model,
-                    view,
-                    authorization,
-                    self.trusted_owned_rows,
-                )
+                check_versions(commit, model, view, authorization).and_then(|()| {
+                    check_first_writes(commit, model, view, authorization, self.trusted_owned_rows)
+                })
             }
             CommitStage::LinkAuthority => check_link_authority(commit, model, view, authorization),
             CommitStage::Endpoints => {
@@ -649,140 +643,6 @@ fn check_immutable<E, C, T, V: CommitView + ?Sized>(
         }
     }
     Ok(())
-}
-
-/// GRAPH-STATE-1: every object a non-observed commit writes for the first
-/// time — absent from the transaction's pre-state — begins each effective
-/// lifecycle in an admitted initial state, or reaches its written state only
-/// through the transitions the commit records for it, replayed in order from
-/// initialization ([`crate::decision_commit::check_first_write_lifecycles`],
-/// the decision `create` and `transition` rules). This holds for every
-/// admission of every host, so a direct `Put` cannot place a new object in a
-/// state its lifecycle never reached. There is no caller-selectable flag: only
-/// the exact writes a sealed observation's opaque, kernel-prepared
-/// authorization covers reconcile lifecycles under their own evidence
-/// contract instead ([`crate::snapshot_observe`]); every other write in the
-/// same commit is checked here.
-fn check_lifecycle_initialization<E: 'static, C, T, V: CommitView + ?Sized>(
-    commit: &CellCommit<E, C, T>,
-    model: CommitModel<'_, '_>,
-    view: &V,
-    authorization: Option<&ObservationAuthorization>,
-    trusted_owned_rows: bool,
-) -> Result<(), CommitError<V::Error>> {
-    let authorized = authorization.map(ObservationAuthorization::indexed);
-    let mut recorded: Option<BTreeMap<FactKey, Recorded<'_>>> = None;
-    for write in &commit.writes {
-        let FactMutation::Put { values } = &write.mutation else {
-            continue;
-        };
-        // Only the exact write a sealed observation prepared is exempt; any
-        // other write in the same commit is an ordinary command mutation.
-        if authorized
-            .as_ref()
-            .is_some_and(|index| index.authorizes(write))
-        {
-            continue;
-        }
-        let canonical = model.canonical(&write.key);
-        if view
-            .concrete(&canonical)
-            .map_err(CommitError::Host)?
-            .is_some()
-        {
-            continue;
-        }
-        let recorded = recorded.get_or_insert_with(|| recorded_fact_events(commit, model));
-        let (events, observed) = recorded
-            .get(&canonical)
-            .map_or((&[][..], None), |recorded| {
-                (recorded.facts.as_slice(), recorded.observed)
-            });
-        crate::decision_commit::check_first_write_lifecycles(
-            model.catalog,
-            &write.key,
-            values,
-            events,
-            trusted_owned_rows,
-            observed,
-        )
-        .map_err(|refusal| CommitError::LifecycleInitialization {
-            key: write.key.clone(),
-            refusal: Box::new(refusal),
-        })?;
-    }
-    Ok(())
-}
-
-/// What one commit records about one canonical identity.
-#[derive(Default)]
-struct Recorded<'c> {
-    /// The fact events naming it, in ledger order: the kernel's own, and
-    /// those an observation event wraps.
-    facts: Vec<&'c crate::decision_commit::FactEvent>,
-    /// Why an observed lifecycle event names it: an observed transition or
-    /// deletion is history of an object that already existed.
-    observed: Option<&'static str>,
-}
-
-/// What `commit` records for each object, by canonical identity.
-fn recorded_fact_events<'c, E: 'static, C, T>(
-    commit: &'c CellCommit<E, C, T>,
-    model: CommitModel<'_, '_>,
-) -> BTreeMap<FactKey, Recorded<'c>> {
-    use crate::decision_commit::FactEvent;
-    use crate::snapshot_observe::ObservationEvent;
-    let mut recorded: BTreeMap<FactKey, Recorded<'c>> = BTreeMap::new();
-    // Evidence is identified by type: a host whose ledger events are neither
-    // records none, so it creates a lifecycle-bearing object only in an
-    // admitted initial state.
-    for event in &commit.events {
-        let event: &dyn std::any::Any = event;
-        let fact = if let Some(fact) = event.downcast_ref::<FactEvent>() {
-            fact
-        } else {
-            match event.downcast_ref::<ObservationEvent>() {
-                Some(ObservationEvent::ObservedFact { event, .. }) => event,
-                Some(ObservationEvent::ObservedTransition { key, .. }) => {
-                    let entry = recorded.entry(model.canonical(key)).or_default();
-                    if entry.observed.is_none() {
-                        entry.observed =
-                            Some("an observed transition names an unsealed first write");
-                    }
-                    continue;
-                }
-                Some(ObservationEvent::ObservedDeleted { key, .. }) => {
-                    let entry = recorded.entry(model.canonical(key)).or_default();
-                    if entry.observed.is_none() {
-                        entry.observed = Some("an observed deletion names an unsealed first write");
-                    }
-                    continue;
-                }
-                Some(
-                    ObservationEvent::DataQualityFinding { .. }
-                    | ObservationEvent::ObservedRecreated { .. },
-                )
-                | None => continue,
-            }
-        };
-        let key = match fact {
-            FactEvent::Created { key, .. }
-            | FactEvent::Set { key, .. }
-            | FactEvent::Modified { key, .. }
-            | FactEvent::Deleted { key }
-            | FactEvent::Transitioned { key, .. } => key,
-            FactEvent::CommandEnqueued { .. }
-            | FactEvent::NamingSeriesAllocated { .. }
-            | FactEvent::NamingSeriesCounterSeeded { .. }
-            | FactEvent::InvariantRefused { .. } => continue,
-        };
-        recorded
-            .entry(model.canonical(key))
-            .or_default()
-            .facts
-            .push(fact);
-    }
-    recorded
 }
 
 fn check_link_values<E, C, T, V: CommitView + ?Sized>(

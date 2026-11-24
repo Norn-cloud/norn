@@ -1,11 +1,4 @@
 #![cfg(feature = "native")]
-#![allow(
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic,
-    missing_docs,
-    reason = "integration-test crate"
-)]
 
 //! GRAPH-STATE-1 at the shared canonical commit boundary, through the
 //! production `SqliteCell` host: the first write of a lifecycle-bearing
@@ -41,6 +34,10 @@ fn cell() -> Cell {
     open()
 }
 
+#[allow(
+    clippy::expect_used,
+    reason = "test fixture: a failed setup step fails the test"
+)]
 /// A domain-neutral model: guarded lifecycles ([`guarded_types`]), an
 /// inherited one ([`hierarchy_types`]), and guards over temporal and
 /// rules-only inputs ([`replay_types`]).
@@ -207,6 +204,10 @@ fn replay_types() -> [serde_json::Value; 3] {
     ]
 }
 
+#[allow(
+    clippy::expect_used,
+    reason = "test fixture: a failed setup step fails the test"
+)]
 fn values(value: serde_json::Value) -> JsonObject {
     serde_json::from_value(value).expect("values")
 }
@@ -232,6 +233,10 @@ fn put<E>(
     }
 }
 
+#[allow(
+    clippy::expect_used,
+    reason = "test fixture: a failed setup step fails the test"
+)]
 /// Everything a refusal must leave untouched: the verified ledger head, the
 /// stored rows, and the object's absence (no burned version).
 fn snapshot<E: serde::Serialize + 'static>(
@@ -251,6 +256,10 @@ fn unrecorded_because(refusal: &LifecycleInitRefusal, reason: &str) -> bool {
     matches!(refusal, LifecycleInitRefusal::UnrecordedChange { reason: actual } if actual.contains(reason))
 }
 
+#[allow(
+    clippy::panic,
+    reason = "test fixture: a failed setup step fails the test"
+)]
 fn refusal(error: CommitError<norn_cell::CellError>) -> (FactKey, LifecycleInitRefusal) {
     match error {
         CommitError::LifecycleInitialization { key, refusal } => (key, *refusal),
@@ -292,6 +301,10 @@ fn create_and_publish(pages: u64) -> DecisionOutput {
     }
 }
 
+#[allow(
+    clippy::expect_used,
+    reason = "test fixture: a failed setup step fails the test"
+)]
 /// The kernel-prepared commit of [`create_and_publish`] on `cell`.
 fn prepared_create_and_publish(cell: &Cell, pages: u64) -> Commit {
     let model = cell.store().model().clone();
@@ -308,6 +321,10 @@ fn prepared_create_and_publish(cell: &Cell, pages: u64) -> Commit {
     .expect("a legal create-and-transition prepares")
 }
 
+#[allow(
+    clippy::expect_used,
+    reason = "test fixture: a failed setup step fails the test"
+)]
 fn status(cell: &Cell, key: &FactKey) -> Option<String> {
     cell.load(key).expect("loads").values.and_then(|values| {
         values
@@ -674,6 +691,10 @@ fn an_empty_observation_authorization_does_not_exempt_a_forged_first_write() {
     assert_eq!(snapshot(&cell, &key), before);
 }
 
+#[allow(
+    clippy::expect_used,
+    reason = "test fixture: a failed setup step fails the test"
+)]
 /// The synthetic source snapshot the observation fixtures cite.
 fn source_provenance() -> norn_ir::provenance::InstanceProvenance {
     serde_json::from_value(json!({
@@ -685,6 +706,10 @@ fn source_provenance() -> norn_ir::provenance::InstanceProvenance {
     .expect("source provenance")
 }
 
+#[allow(
+    clippy::expect_used,
+    reason = "test fixture: a failed setup step fails the test"
+)]
 /// A sealed observation that creates `D-1` with `pages`.
 fn observe_document(
     cell: &ObservedCell,
@@ -799,6 +824,10 @@ fn created(key: &FactKey, created: serde_json::Value) -> FactEvent {
     }
 }
 
+#[allow(
+    clippy::expect_used,
+    reason = "test fixture: a failed setup step fails the test"
+)]
 fn set(key: &FactKey, property: &str, value: serde_json::Value) -> FactEvent {
     FactEvent::Set {
         key: key.clone(),
@@ -1160,9 +1189,13 @@ fn wrapped_observed_fact_evidence_is_validated_for_an_unsealed_write() {
     assert_eq!(snapshot(&cell, &key), before);
 }
 
+#[allow(
+    clippy::expect_used,
+    reason = "test fixture: a failed setup step fails the test"
+)]
 /// An unsealed first write of `D-1` in its initial state, carrying `event`:
 /// refused for `reason` with no row, version or ledger entry.
-fn refuse_observed_history(event: ObservationEvent, reason: &str) {
+fn assert_observed_history_refused(event: ObservationEvent, reason: &str) {
     let mut cell: ObservedCell = open();
     let key = document();
     let before = snapshot(&cell, &key);
@@ -1179,7 +1212,7 @@ fn refuse_observed_history(event: ObservationEvent, reason: &str) {
 
 #[test]
 fn an_observed_transition_cannot_describe_an_unsealed_first_write() {
-    refuse_observed_history(
+    assert_observed_history_refused(
         ObservationEvent::ObservedTransition {
             key: document(),
             property: PropertyId("status".into()),
@@ -1195,7 +1228,7 @@ fn an_observed_transition_cannot_describe_an_unsealed_first_write() {
 
 #[test]
 fn an_observed_deletion_cannot_describe_an_unsealed_first_write() {
-    refuse_observed_history(
+    assert_observed_history_refused(
         ObservationEvent::ObservedDeleted {
             key: document(),
             tombstoned: true,
