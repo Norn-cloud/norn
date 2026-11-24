@@ -934,14 +934,14 @@ mod tests {
             "name": "demo.TicketA",
             "extends": "demo.Ticket",
             "properties": [
-                { "id": "aTag", "type": { "kind": "text" }, "default": "a" }
+                { "id": "a_tag", "type": { "kind": "text" }, "default": "a" }
             ]
         });
         let ticket_b = json!({
             "name": "demo.TicketB",
             "extends": "demo.Ticket",
             "properties": [
-                { "id": "bTag", "type": { "kind": "text" }, "default": "b" }
+                { "id": "b_tag", "type": { "kind": "text" }, "default": "b" }
             ]
         });
         let note = json!({
@@ -1996,7 +1996,7 @@ mod tests {
                 values: BTreeMap::from([
                     ("status".to_owned(), Value::String("open".into())),
                     ("score".to_owned(), Value::from(10_i64)),
-                    ("aTag".to_owned(), Value::String("from-a".into())),
+                    ("a_tag".to_owned(), Value::String("from-a".into())),
                 ]),
             }],
             ..CommitBatch::default()
@@ -2027,7 +2027,7 @@ mod tests {
                     values: BTreeMap::from([
                         ("status".to_owned(), Value::String("open".into())),
                         ("score".to_owned(), Value::from(25_i64)),
-                        ("bTag".to_owned(), Value::String("from-b".into())),
+                        ("b_tag".to_owned(), Value::String("from-b".into())),
                     ]),
                 },
             ],
@@ -2050,14 +2050,14 @@ mod tests {
             triggers[0]
                 .before_values
                 .as_ref()
-                .and_then(|values| values.get("aTag")),
+                .and_then(|values| values.get("a_tag")),
             Some(&Value::String("from-a".into()))
         );
         assert_eq!(
             triggers[0]
                 .after_values
                 .as_ref()
-                .and_then(|values| values.get("bTag")),
+                .and_then(|values| values.get("b_tag")),
             Some(&Value::String("from-b".into()))
         );
 
@@ -2069,7 +2069,7 @@ mod tests {
             triggers[1]
                 .after_values
                 .as_ref()
-                .and_then(|values| values.get("bTag")),
+                .and_then(|values| values.get("b_tag")),
             Some(&Value::String("from-b".into()))
         );
     }

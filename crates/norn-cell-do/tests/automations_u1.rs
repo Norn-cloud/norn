@@ -576,7 +576,7 @@ mod cases {
         let host = cell.tenant.serving_host().unwrap();
         let stored = host.retained_definition("ops.owner_auto").unwrap().unwrap();
         let authority = stored.definition.authority.expect("server-bound authority");
-        assert_eq!(authority.author.subject, "user-owner-of-org_a");
+        assert_eq!(authority.author.subject, "user:user-owner-of-org_a");
         assert_eq!(authority.action_id, MELT_ACTION);
         assert_eq!(authority.object_type, MELT);
         assert!(authority.revocable);
@@ -679,7 +679,7 @@ mod cases {
                 .authority
                 .as_ref()
                 .map(|a| a.author.subject.as_str()),
-            Some("user-owner-of-org_a"),
+            Some("user:user-owner-of-org_a"),
             "authority must stay bound to installing author, never trigger actor"
         );
         assert_eq!(pending_automation_trigger_count(host).unwrap(), 1);
