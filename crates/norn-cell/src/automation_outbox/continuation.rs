@@ -34,7 +34,19 @@ const AUTOMATION_OUTBOX_CONTINUATION: &str = "_norn_automation_outbox_continuati
 
 /// Version of the automation matching semantics used to create a continuation.
 /// First persisted in storage version 7. Bump only when matching semantics change.
-pub const AUTOMATION_MATCHER_VERSION: u32 = 1;
+///
+/// - `1`: targets and action calls in raw byte order; every preimage captured.
+/// - `2` (#1704): targets in `(nfc(root_type), nfc(object_id), root_type,
+///   object_id)` order and action calls in `(nfc(call_key), call_key)` order,
+///   so a restore (which replays NFC identities) pauses where the live commit
+///   did; at most [`super::MAX_PREIMAGES_PER_COMMIT`] preimages are captured,
+///   in that order, and the first target past them pauses matching.
+pub const AUTOMATION_MATCHER_VERSION: u32 = 2;
+
+/// Matcher versions whose exported continuations a restore accepts. A
+/// version 1 row restores only when the version 2 replay reproduces its
+/// cursor, which holds for every commit whose identities are NFC-stable.
+pub(super) const REPLAYABLE_MATCHER_VERSIONS: [u32; 2] = [1, AUTOMATION_MATCHER_VERSION];
 
 /// Deterministic resume point in `(written objects × rules)` persisted on an
 /// `_norn_automation_outbox_continuation` row when a commit crosses the inline
@@ -48,8 +60,9 @@ pub const AUTOMATION_MATCHER_VERSION: u32 = 1;
 )]
 pub enum AutomationContinuationCursor {
     /// Resume Pass 1 (row-write triggers: `event:created`, `event:updated`,
-    /// `lifecycle_entered`) starting at `(root_type, object_id)` in
-    /// `_norn_fact_values` order (`ORDER BY root_type, id`), at
+    /// `lifecycle_entered`) starting at `(root_type, object_id)` in the
+    /// matcher version's target order (version 2: `(nfc(root_type),
+    /// nfc(object_id), root_type, object_id)`), at
     /// `ancestor_type` within `model.chain(concrete_type)`, strictly after
     /// `after_automation_id` (`None` resumes from the first rule on
     /// `ancestor_type`), then continue through remaining ancestors, remaining
@@ -67,8 +80,8 @@ pub enum AutomationContinuationCursor {
         after_automation_id: Option<String>,
     },
     /// Resume Pass 2 (`event:action` triggers) starting at the committed
-    /// `norn.ActionCall` record `action_call_key` in `_norn_fact_values` order
-    /// (`root_type = 'norn.ActionCall' ORDER BY id`), strictly after
+    /// `norn.ActionCall` record `action_call_key` in the matcher version's
+    /// call order (version 2: `(nfc(call_key), call_key)`), strictly after
     /// `after_automation_id` (`None` resumes from the first rule on
     /// `action_id`), then continue through remaining action calls of the
     /// commit.

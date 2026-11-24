@@ -8,13 +8,26 @@
 //! `_norn_retained_automation_trigger` inside `SqlEngine::definition_writes`.
 //! The commit path probes only touched root hierarchies and committed
 //! `norn.ActionCall` ids via indexed `LIMIT 1` lookups, skips snapshot reads
-//! and JSON serialization when no rule matches, pages rules with keyset
+//! and JSON serialization when no rule matches, captures at most
+//! [`MAX_PREIMAGES_PER_COMMIT`] preimages, pages rules with keyset
 //! cursors (`LIMIT` [`RULE_PAGE_LIMIT`]) so no unbounded rule list is ever
 //! materialized in a commit, records up to [`MAX_CANDIDATES_PER_COMMIT`]
 //! candidates inline, and persists one idempotent continuation row in
 //! `_norn_automation_outbox_continuation` in the same transaction when
 //! matching crosses the inline bound. A business write is never refused or
 //! rolled back because of hidden automation rules.
+//!
+//! ## Replay-stable order (matcher version 2)
+//! Written targets are matched in `(nfc(root_type), nfc(object_id), root_type,
+//! object_id)` order and committed action calls in `(nfc(call_key), call_key)`
+//! order. An export canonicalizes every string to NFC, so a restore replays
+//! the NFC identities: ordering by them first makes the live and replayed
+//! traversals pause at the same target. Raw bytes break ties between
+//! identities that only differ before normalization. Matcher version 1 (the
+//! first v7 builds) ordered raw bytes and captured every preimage; a v1
+//! continuation restores only when this order reproduces its cursor
+//! (always, for NFC-stable ids), and is otherwise refused with
+//! [`CellError::AutomationMatcherUnreplayable`].
 //!
 //! ## Snapshot semantics (filtered per rule against `rule.object_type`)
 //! - **Created / sibling replacement** (`event:created`): `before_values = None`,
@@ -63,6 +76,7 @@ use crate::error::CellError;
 use crate::read::{ObjectRecord, StoreReader, to_i64};
 use crate::store::{CommitBatch, FactWriteRow, WrittenRow};
 
+use continuation::REPLAYABLE_MATCHER_VERSIONS;
 pub use continuation::{
     AUTOMATION_MATCHER_VERSION, AutomationContinuationCursor, AutomationOutboxContinuation,
     current_engine_version,
@@ -89,6 +103,13 @@ pub const RULE_PAGE_LIMIT: usize = 64;
 /// Maximum `(written object × rule)` evaluations performed inline during one
 /// commit before yielding to a transactional continuation row.
 pub const MAX_RULE_SCANS_PER_COMMIT: usize = 4_096;
+
+/// Maximum pre-commit object snapshots (preimages) captured for inline
+/// matching in one commit. Each inline candidate retains at most one preimage,
+/// so the snapshot budget is the candidate budget: targets past it, in
+/// replay order, are never read before the write and are deferred to the
+/// continuation, which reconstructs their preimages from committed history.
+pub const MAX_PREIMAGES_PER_COMMIT: usize = MAX_CANDIDATES_PER_COMMIT;
 
 /// The outbox, continuation, and trigger-projection DDL, applied with the
 /// other system tables (purely additive).
@@ -202,11 +223,63 @@ pub(crate) struct AutomationWatch {
     watched_row_roots: BTreeSet<String>,
     watched_actions: BTreeSet<String>,
     before: BTreeMap<(String, String), Option<ObjectRecord>>,
+    /// The first written `(root, key)` target, in replay order, whose preimage
+    /// fell outside [`MAX_PREIMAGES_PER_COMMIT`]: Pass 1 defers it and every
+    /// later target to the continuation.
+    row_cutoff: Option<(String, String)>,
+    /// The first watched `norn.ActionCall` key, in replay order, whose target
+    /// preimage fell outside the budget: Pass 2 defers it and every later call.
+    action_cutoff: Option<String>,
 }
 
 impl AutomationWatch {
     fn is_empty(&self) -> bool {
         self.watched_row_roots.is_empty() && self.watched_actions.is_empty()
+    }
+}
+
+/// Replay-stable order identity of one `(root type, id)` target (matcher
+/// version 2): the NFC identity an export carries first, then the raw bytes
+/// as the tie-break between identities that collide under NFC.
+type ReplayKey<'a> = (String, String, &'a str, &'a str);
+
+fn replay_key<'a>(root: &'a str, id: &'a str) -> ReplayKey<'a> {
+    (
+        norn_ir::canonical::nfc(root),
+        norn_ir::canonical::nfc(id),
+        root,
+        id,
+    )
+}
+
+/// Whether `(root, id)` sorts at or after `cutoff` in replay order.
+fn at_or_after(root: &str, id: &str, cutoff: Option<(&str, &str)>) -> bool {
+    cutoff.is_some_and(|(cut_root, cut_id)| replay_key(root, id) >= replay_key(cut_root, cut_id))
+}
+
+/// Pre-commit snapshot reads bounded by [`MAX_PREIMAGES_PER_COMMIT`].
+struct PreimageBudget<'r, 's, E: SqlEngine> {
+    reader: &'r StoreReader<'s, E>,
+    world: &'r str,
+    before: BTreeMap<(String, String), Option<ObjectRecord>>,
+}
+
+impl<E: SqlEngine> PreimageBudget<'_, '_, E> {
+    /// Capture `(root, key)`'s preimage unless it is already held. Returns
+    /// `false`, reading nothing, when the budget is spent.
+    fn capture(&mut self, root: &str, key: &str) -> Result<bool, CellError> {
+        let lookup_key = (root.to_owned(), key.to_owned());
+        if self.before.contains_key(&lookup_key) {
+            return Ok(true);
+        }
+        if self.before.len() >= MAX_PREIMAGES_PER_COMMIT {
+            return Ok(false);
+        }
+        // Query through `root` so a write addressing a supertype or subtype
+        // always resolves the live concrete record before mutation.
+        let prior = self.reader.object(self.world, root, key)?;
+        self.before.insert(lookup_key, prior);
+        Ok(true)
     }
 }
 
@@ -328,13 +401,13 @@ pub(crate) fn capture_before<E: SqlEngine>(
         return Ok(AutomationWatch::default());
     }
     let model = reader.model();
-    let action_calls: Vec<_> = action_calls_in_batch(batch)
-        .into_values()
-        .filter_map(|fields| extract_action_call(reader, &fields))
+    let action_calls: Vec<(&str, ActionCallMeta)> = action_calls_in_batch(batch)
+        .into_iter()
+        .filter_map(|(key, fields)| extract_action_call(reader, &fields).map(|call| (key, call)))
         .collect();
     let mut watched_actions = BTreeSet::new();
     let mut checked_actions = BTreeSet::new();
-    for call in &action_calls {
+    for (_, call) in &action_calls {
         if checked_actions.insert(call.action_id.as_str())
             && has_action_rules(reader.conn, &call.action_id)?
         {
@@ -359,37 +432,65 @@ pub(crate) fn capture_before<E: SqlEngine>(
     if watched_row_roots.is_empty() && watched_actions.is_empty() {
         return Ok(AutomationWatch::default());
     }
-    let mut before = BTreeMap::new();
+    // Targets whose preimage inline matching may read, deduplicated by
+    // `(root, key)`, then captured in replay order up to the budget.
+    let mut row_targets: BTreeMap<(&str, &str), bool> = BTreeMap::new();
     let mut type_has_row_rules: HashMap<&str, bool> = HashMap::new();
     let mut target_matches_row_rules: HashMap<&str, bool> = HashMap::new();
     for (ty, key) in touched {
         let root = reader.root_type(ty)?;
-        if watched_row_roots.contains(root)
-            && target_type_may_match_row_rules(
-                reader,
-                ty,
-                &mut type_has_row_rules,
-                &mut target_matches_row_rules,
-            )?
-        {
-            capture_root_snapshot(reader, &batch.world, root, key, &mut before)?;
+        if !watched_row_roots.contains(root) {
+            continue;
+        }
+        let may_match = target_type_may_match_row_rules(
+            reader,
+            ty,
+            &mut type_has_row_rules,
+            &mut target_matches_row_rules,
+        )?;
+        *row_targets.entry((root, key)).or_default() |= may_match;
+    }
+    let mut row_order: Vec<(&str, &str)> = row_targets
+        .into_iter()
+        .filter_map(|(target, may_match)| may_match.then_some(target))
+        .collect();
+    row_order.sort_by_cached_key(|&(root, key)| replay_key(root, key));
+    let mut budget = PreimageBudget {
+        reader,
+        world: &batch.world,
+        before: BTreeMap::new(),
+    };
+    let mut row_cutoff = None;
+    for (root, key) in row_order {
+        if !budget.capture(root, key)? {
+            row_cutoff = Some((root.to_owned(), key.to_owned()));
+            break;
         }
     }
-    for call in &action_calls {
-        if watched_actions.contains(&call.action_id) && model.has_type(&call.target_type) {
-            capture_root_snapshot(
-                reader,
-                &batch.world,
-                &call.target_root,
-                &call.target_key,
-                &mut before,
-            )?;
+    let mut action_order: Vec<(&str, &ActionCallMeta)> = action_calls
+        .iter()
+        .filter(|(_, call)| watched_actions.contains(&call.action_id))
+        .map(|(key, call)| (*key, call))
+        .collect();
+    action_order.sort_by_cached_key(|&(key, _)| replay_key(norn_kernel::ACTION_CALL_TYPE, key));
+    let mut action_cutoff = None;
+    for (call_key, call) in action_order {
+        // Pass 2 runs only after Pass 1 finishes, so a deferred row target
+        // defers every action call too.
+        let captured = row_cutoff.is_none()
+            && (!model.has_type(&call.target_type)
+                || budget.capture(&call.target_root, &call.target_key)?);
+        if !captured {
+            action_cutoff = Some(call_key.to_owned());
+            break;
         }
     }
     Ok(AutomationWatch {
         watched_row_roots,
         watched_actions,
-        before,
+        before: budget.before,
+        row_cutoff,
+        action_cutoff,
     })
 }
 
@@ -428,24 +529,6 @@ fn target_type_may_match_row_rules<'a, E: SqlEngine>(
     }
     target_matches_row_rules.insert(target_type, matched);
     Ok(matched)
-}
-
-fn capture_root_snapshot<E: SqlEngine>(
-    reader: &StoreReader<'_, E>,
-    world: &str,
-    root: &str,
-    key: &str,
-    before: &mut BTreeMap<(String, String), Option<ObjectRecord>>,
-) -> Result<(), CellError> {
-    let lookup_key = (root.to_owned(), key.to_owned());
-    if before.contains_key(&lookup_key) {
-        return Ok(());
-    }
-    // Query through `root` so a write addressing a supertype or subtype always
-    // resolves the live concrete record before mutation.
-    let prior = reader.object(world, root, key)?;
-    before.insert(lookup_key, prior);
-    Ok(())
 }
 
 fn row_rule_matches(
@@ -539,7 +622,10 @@ struct RecordContext<'a> {
     commit_seq: u64,
     watch: &'a AutomationWatch,
     final_rows: &'a BTreeMap<(String, String), &'a WrittenRow>,
-    action_calls: &'a BTreeMap<String, ActionCallMeta>,
+    /// `final_rows` in replay order (matcher version 2).
+    row_order: &'a [(&'a (String, String), &'a WrittenRow)],
+    /// `action_calls` in replay order (matcher version 2).
+    call_order: &'a [(&'a String, &'a ActionCallMeta)],
 }
 
 struct RowTargetCtx<'a> {
@@ -602,7 +688,7 @@ pub(crate) fn record<E: SqlEngine>(
 ) -> Result<Option<AutomationOutboxContinuation>, CellError> {
     let original = retained.and_then(|record| record.automation_continuation.as_ref());
     if let Some(original) = original
-        && original.matcher_version != AUTOMATION_MATCHER_VERSION
+        && !REPLAYABLE_MATCHER_VERSIONS.contains(&original.matcher_version)
     {
         return Err(CellError::EngineUnknownVersion {
             found: format!("automation matcher version {}", original.matcher_version),
@@ -621,7 +707,16 @@ pub(crate) fn record<E: SqlEngine>(
                     && row.recorded_at_ms == batch.logical_time
                     && row.completed_commit_seq.is_none() =>
             {
+                // The exported row is hashed evidence: it keeps the matcher
+                // version that wrote it. Over a restored (NFC) store, matcher
+                // version 1's raw order and version 2's order coincide.
                 Some(row.clone())
+            }
+            (_, Some(row)) if row.matcher_version != AUTOMATION_MATCHER_VERSION => {
+                return Err(CellError::AutomationMatcherUnreplayable {
+                    commit_seq,
+                    matcher_version: row.matcher_version,
+                });
             }
             _ => {
                 return Err(CellError::LedgerCorrupt {
@@ -690,12 +785,20 @@ fn record_inline<E: SqlEngine>(
             final_rows.insert((root, row.key.clone()), row);
         }
     }
+    let mut row_order: Vec<(&(String, String), &WrittenRow)> = final_rows
+        .iter()
+        .map(|(target, row)| (target, *row))
+        .collect();
+    row_order.sort_by_cached_key(|&(target, _)| replay_key(&target.0, &target.1));
+    let mut call_order: Vec<(&String, &ActionCallMeta)> = action_calls.iter().collect();
+    call_order.sort_by_cached_key(|&(key, _)| replay_key(norn_kernel::ACTION_CALL_TYPE, key));
     let ctx = RecordContext {
         batch,
         commit_seq,
         watch,
         final_rows: &final_rows,
-        action_calls: &action_calls,
+        row_order: &row_order,
+        call_order: &call_order,
     };
     let mut budget = MatchBudget::default();
     let mut paused = if watch.watched_row_roots.is_empty() {
@@ -716,13 +819,19 @@ fn record_row_triggers<E: SqlEngine>(
 ) -> Result<Option<AutomationContinuationCursor>, CellError> {
     let model = reader.model();
     let mut actions_by_target = HashMap::new();
-    for call in ctx.action_calls.values() {
+    // The first call per target in replay order names its primary action.
+    for &(_, call) in ctx.call_order {
         actions_by_target
             .entry((call.target_root.as_str(), call.target_key.as_str()))
             .or_insert(call.action_id.as_str());
     }
     let mut row_cache = Page1Cache::default();
-    for (target_key, row) in ctx.final_rows {
+    let row_cutoff = ctx
+        .watch
+        .row_cutoff
+        .as_ref()
+        .map(|(root, key)| (root.as_str(), key.as_str()));
+    for &(target_key, row) in ctx.row_order {
         let (root, key) = target_key;
         if !ctx.watch.watched_row_roots.contains(root) {
             continue;
@@ -733,8 +842,18 @@ fn record_row_triggers<E: SqlEngine>(
             let page = row_cache.get_or_load(reader.conn, ancestor, query_row_rules_page)?;
             first_pages.push((ancestor.as_str(), page));
         }
-        if first_pages.iter().all(|(_, page)| page.rules.is_empty()) {
+        let Some((first_watched, _)) = first_pages.iter().find(|(_, page)| !page.rules.is_empty())
+        else {
             continue;
+        };
+        if at_or_after(root, key, row_cutoff) {
+            // Its preimage was never read: defer it and the rest.
+            return Ok(Some(AutomationContinuationCursor::Row {
+                root_type: root.clone(),
+                object_id: key.clone(),
+                ancestor_type: (*first_watched).to_owned(),
+                after_automation_id: None,
+            }));
         }
         let before_record = ctx.watch.before.get(target_key).and_then(Option::as_ref);
         let after_record = reader.object(&ctx.batch.world, root, key)?;
@@ -838,7 +957,12 @@ fn record_action_triggers<E: SqlEngine>(
 ) -> Result<Option<AutomationContinuationCursor>, CellError> {
     let model = reader.model();
     let mut action_cache = Page1Cache::default();
-    for (call_key, call) in ctx.action_calls {
+    let call_cutoff = ctx
+        .watch
+        .action_cutoff
+        .as_deref()
+        .map(|key| (norn_kernel::ACTION_CALL_TYPE, key));
+    for &(call_key, call) in ctx.call_order {
         if !ctx.watch.watched_actions.contains(&call.action_id) {
             continue;
         }
@@ -846,6 +970,14 @@ fn record_action_triggers<E: SqlEngine>(
             action_cache.get_or_load(reader.conn, &call.action_id, query_action_rules_page)?;
         if first_page.rules.is_empty() {
             continue;
+        }
+        if at_or_after(norn_kernel::ACTION_CALL_TYPE, call_key, call_cutoff) {
+            // Its target preimage was never read: defer it and the rest.
+            return Ok(Some(AutomationContinuationCursor::Action {
+                action_call_key: call_key.clone(),
+                action_id: call.action_id.clone(),
+                after_automation_id: None,
+            }));
         }
         let target_key = (call.target_root.clone(), call.target_key.clone());
         let before_record = ctx.watch.before.get(&target_key).and_then(Option::as_ref);
@@ -988,7 +1120,9 @@ fn insert_candidate<E: SqlEngine>(
 
 #[cfg(all(test, feature = "native"))]
 mod tests {
-    use super::trigger_index::{KIND_ACTION, KIND_CREATED, KIND_LIFECYCLE_ENTERED, KIND_UPDATED};
+    use super::trigger_index::{
+        KIND_ACTION, KIND_CREATED, KIND_LIFECYCLE_ENTERED, KIND_UPDATED, row_rules_for_root_sql,
+    };
     use super::*;
     use crate::Model;
     use crate::flow_run::RunStarter;
@@ -2073,12 +2207,17 @@ mod tests {
             .export_record(commit_seq)?
             .ok_or("missing overflow record")?;
         assert_eq!(record.automation_continuation.as_ref(), Some(&cont));
+        let live_candidates = reopened
+            .read()
+            .automation_triggers_for_commit(MAIN_WORLD, commit_seq)?;
 
         // Represent an export written by a different build without needing a
         // second binary. The last record can be republished under its new hash.
+        // Matcher version 1 (pre-#1704 v7 exports) restores: its NFC-stable
+        // ids order the same under version 2.
         let mut original = cont;
         original.engine_version.push_str("-other-build");
-        for matcher_version in [AUTOMATION_MATCHER_VERSION, u32::MAX] {
+        for matcher_version in [1, AUTOMATION_MATCHER_VERSION, u32::MAX] {
             original.matcher_version = matcher_version;
             record.automation_continuation = Some(original.clone());
             let mut exporter = crate::export::Exporter::new(std::sync::Arc::new(
@@ -2099,7 +2238,7 @@ mod tests {
                 StoreOptions::default(),
             )
             .await;
-            if matcher_version == AUTOMATION_MATCHER_VERSION {
+            if REPLAYABLE_MATCHER_VERSIONS.contains(&matcher_version) {
                 result?;
                 let restored = CellStore::open(&target, model.clone(), StoreOptions::default())?;
                 assert_eq!(
@@ -2108,6 +2247,13 @@ mod tests {
                         .automation_outbox_continuation(commit_seq)?
                         .as_ref(),
                     Some(&original)
+                );
+                // The whole inline candidate set, not only the continuation.
+                assert_eq!(
+                    restored
+                        .read()
+                        .automation_triggers_for_commit(MAIN_WORLD, commit_seq)?,
+                    live_candidates
                 );
             } else {
                 assert!(matches!(
@@ -2471,6 +2617,416 @@ mod tests {
                 .contains_key(&("demo.Ticket".to_owned(), "s-1".to_owned())),
             "common-ancestor rule must still capture preimage for sibling write"
         );
+        Ok(())
+    }
+
+    /// Republish `last` as the final record after `source`'s earlier records
+    /// and restore the chain into `target`.
+    async fn restore_with_last(
+        source: &CellStore,
+        model: &Model,
+        last: &crate::export::ExportRecord,
+        target: &std::path::Path,
+    ) -> TestResult<Result<(), crate::RestoreError>> {
+        let mut exporter = crate::export::Exporter::new(std::sync::Arc::new(
+            object_store::memory::InMemory::new(),
+        ));
+        for seq in 1..last.receipt.body.commit_seq {
+            let prior = source.export_record(seq)?.ok_or("missing prior record")?;
+            exporter.append(&prior).await?;
+        }
+        exporter.append(last).await?;
+        Ok(CellStore::restore_from(
+            &mut exporter,
+            target,
+            model.clone(),
+            SCOPE,
+            &last.bindings,
+            StoreOptions::default(),
+        )
+        .await
+        .map(drop))
+    }
+
+    /// The written ids from `cursor` on, in replay order: the suffix a
+    /// continuation expansion must cover.
+    fn expanded_suffix(ids: &[String], cursor: &AutomationContinuationCursor) -> Vec<String> {
+        let AutomationContinuationCursor::Row {
+            root_type,
+            object_id,
+            ..
+        } = cursor
+        else {
+            return Vec::new();
+        };
+        let mut ordered: Vec<&String> = ids.iter().collect();
+        ordered.sort_by_cached_key(|&id| replay_key(root_type, id));
+        ordered.dedup();
+        ordered
+            .into_iter()
+            .skip_while(|id| *id != object_id)
+            .cloned()
+            .collect()
+    }
+
+    fn put_ticket(key: &str) -> FactWriteRow {
+        FactWriteRow::Put {
+            object_type: "demo.Ticket".to_owned(),
+            key: key.to_owned(),
+            values: BTreeMap::from([
+                ("status".to_owned(), Value::String("open".into())),
+                ("score".to_owned(), Value::from(10_i64)),
+            ]),
+        }
+    }
+
+    fn written_ids(batch: &CommitBatch) -> Vec<String> {
+        batch
+            .writes
+            .iter()
+            .map(|write| write.target().1.to_owned())
+            .collect()
+    }
+
+    /// #1704 golden: one create rule over 255 ASCII ids, a decomposed `é`
+    /// (`e` + U+0301) and `z`. Matcher version 1 ordered raw bytes, so the
+    /// live commit paused at `z` while a restore, replaying the export's NFC
+    /// `é` (which sorts past `z`), paused at `é` and refused a valid prefix.
+    /// Version 2 orders NFC identities first, so both pause at `é`, keep the
+    /// same inline candidates, and leave the same expansion suffix.
+    #[tokio::test]
+    async fn overflow_order_is_replay_stable_across_nfc_export_and_restore() -> TestResult {
+        const DECOMPOSED: &str = "e\u{301}";
+        const COMPOSED: &str = "\u{e9}";
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("nfc.sqlite");
+        let (model, canonical) = sample_model()?;
+        let mut store = CellStore::open(&path, model.clone(), StoreOptions::default())?;
+        store.bind("scope", SCOPE)?;
+        store.install_definitions(model.clone(), install_input(&canonical, 10), Some(0), SCOPE)?;
+        install_automation_for(
+            &mut store,
+            &model,
+            &canonical,
+            1,
+            "ops.on_create",
+            "demo.Ticket",
+            &json!({ "kind": "event", "event": "created" }),
+        )?;
+        let ids: Vec<String> = (0..255_usize)
+            .map(|idx| format!("k-{idx:03}"))
+            .chain([DECOMPOSED.to_owned(), "z".to_owned()])
+            .collect();
+        let batch = CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: SCOPE.to_owned(),
+            logical_time: 200,
+            idempotency_key: Some("nfc-overflow".to_owned()),
+            writes: ids.iter().map(|id| put_ticket(id)).collect(),
+            ..CommitBatch::default()
+        };
+        let CommitOutcome::Committed(receipt) = store.commit(&batch)? else {
+            return Err("expected committed receipt".into());
+        };
+        let commit_seq = receipt.body.commit_seq;
+
+        let live = store
+            .read()
+            .automation_outbox_continuation(commit_seq)?
+            .ok_or("missing live continuation")?;
+        assert_eq!(live.matcher_version, 2);
+        assert_eq!(
+            live.cursor,
+            AutomationContinuationCursor::Row {
+                root_type: "demo.Ticket".to_owned(),
+                object_id: DECOMPOSED.to_owned(),
+                ancestor_type: "demo.Ticket".to_owned(),
+                after_automation_id: None,
+            }
+        );
+        let live_candidates = store
+            .read()
+            .automation_triggers_for_commit(MAIN_WORLD, commit_seq)?;
+        let mut inline_ids: Vec<&str> = live_candidates
+            .iter()
+            .map(|candidate| candidate.key.object_id.as_str())
+            .collect();
+        inline_ids.sort_unstable();
+        let mut expected_inline: Vec<&str> = ids
+            .iter()
+            .map(String::as_str)
+            .filter(|id| *id != DECOMPOSED)
+            .collect();
+        expected_inline.sort_unstable();
+        assert_eq!(inline_ids, expected_inline);
+        assert_eq!(
+            expanded_suffix(&ids, &live.cursor),
+            vec![DECOMPOSED.to_owned()]
+        );
+
+        // The export carries NFC identities, the cursor included.
+        let record = store
+            .export_record(commit_seq)?
+            .ok_or("missing overflow record")?;
+        let exported = record
+            .automation_continuation
+            .clone()
+            .ok_or("missing exported continuation")?;
+        assert_eq!(
+            exported.cursor,
+            AutomationContinuationCursor::Row {
+                root_type: "demo.Ticket".to_owned(),
+                object_id: COMPOSED.to_owned(),
+                ancestor_type: "demo.Ticket".to_owned(),
+                after_automation_id: None,
+            }
+        );
+
+        let target = dir.path().join("restored.sqlite");
+        restore_with_last(&store, &model, &record, &target).await??;
+        let restored = CellStore::open(&target, model.clone(), StoreOptions::default())?;
+        assert_eq!(
+            restored.read().automation_outbox_continuation(commit_seq)?,
+            Some(exported.clone())
+        );
+        assert_eq!(
+            restored
+                .read()
+                .automation_triggers_for_commit(MAIN_WORLD, commit_seq)?,
+            live_candidates
+        );
+        let restored_suffix = expanded_suffix(&written_ids(&record.batch), &exported.cursor);
+        assert_eq!(restored_suffix, vec![COMPOSED.to_owned()]);
+        assert_eq!(
+            restored_suffix,
+            expanded_suffix(&ids, &live.cursor)
+                .iter()
+                .map(|id| norn_ir::canonical::nfc(id))
+                .collect::<Vec<_>>()
+        );
+
+        // A pre-#1704 v7 export of this commit: matcher version 1 paused at
+        // `z` (raw order puts `e` + U+0301 first). Its pause is not
+        // reproducible, so the restore refuses it by type and writes nothing.
+        let mut v1 = record;
+        v1.automation_continuation = Some(AutomationOutboxContinuation {
+            matcher_version: 1,
+            cursor: AutomationContinuationCursor::Row {
+                root_type: "demo.Ticket".to_owned(),
+                object_id: "z".to_owned(),
+                ancestor_type: "demo.Ticket".to_owned(),
+                after_automation_id: None,
+            },
+            ..exported
+        });
+        let v1_target = dir.path().join("restored-v1.sqlite");
+        let refused = restore_with_last(&store, &model, &v1, &v1_target).await?;
+        assert!(
+            matches!(
+                refused,
+                Err(crate::RestoreError::Cell(CellError::AutomationMatcherUnreplayable {
+                    commit_seq: seq,
+                    matcher_version: 1,
+                })) if seq == commit_seq
+            ),
+            "{refused:?}"
+        );
+        assert!(!v1_target.exists());
+        Ok(())
+    }
+
+    /// #1704: preimages are captured in replay order up to
+    /// `MAX_PREIMAGES_PER_COMMIT`; the first target past them pauses Pass 1,
+    /// even when no candidate matched before it.
+    #[test]
+    fn preimage_capture_is_budgeted_and_defers_the_rest() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("preimages.sqlite");
+        let (model, canonical) = sample_model()?;
+        let mut store = CellStore::open(&path, model.clone(), StoreOptions::default())?;
+        store.bind("scope", SCOPE)?;
+        store.install_definitions(model.clone(), install_input(&canonical, 10), Some(0), SCOPE)?;
+        install_automation_for(
+            &mut store,
+            &model,
+            &canonical,
+            1,
+            "ops.on_stalled",
+            "demo.Ticket",
+            &json!({ "kind": "lifecycle_entered", "property": "status", "state": "stalled" }),
+        )?;
+        let count = MAX_PREIMAGES_PER_COMMIT.saturating_add(44);
+        // Written in reverse so batch order is not replay order.
+        let ids: Vec<String> = (0..count).rev().map(|idx| format!("p-{idx:04}")).collect();
+        let batch = CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: SCOPE.to_owned(),
+            logical_time: 300,
+            idempotency_key: Some("preimage-budget".to_owned()),
+            writes: ids.iter().map(|id| put_ticket(id)).collect(),
+            ..CommitBatch::default()
+        };
+        let cutoff = format!("p-{MAX_PREIMAGES_PER_COMMIT:04}");
+        let watch = capture_before(&store.read(), &batch)?;
+        assert_eq!(watch.before.len(), MAX_PREIMAGES_PER_COMMIT);
+        assert!(
+            watch
+                .before
+                .keys()
+                .all(|(_, key)| key.as_str() < cutoff.as_str())
+        );
+        assert_eq!(
+            watch.row_cutoff,
+            Some(("demo.Ticket".to_owned(), cutoff.clone()))
+        );
+        assert_eq!(watch.action_cutoff, None);
+
+        let CommitOutcome::Committed(receipt) = store.commit(&batch)? else {
+            return Err("expected committed receipt".into());
+        };
+        let commit_seq = receipt.body.commit_seq;
+        // Nothing entered `stalled`, so nothing matched inline; the targets
+        // past the budget are deferred all the same.
+        assert!(
+            store
+                .read()
+                .automation_triggers_for_commit(MAIN_WORLD, commit_seq)?
+                .is_empty()
+        );
+        let cont = store
+            .read()
+            .automation_outbox_continuation(commit_seq)?
+            .ok_or("missing continuation")?;
+        assert_eq!(
+            cont.cursor,
+            AutomationContinuationCursor::Row {
+                root_type: "demo.Ticket".to_owned(),
+                object_id: cutoff,
+                ancestor_type: "demo.Ticket".to_owned(),
+                after_automation_id: None,
+            }
+        );
+        Ok(())
+    }
+
+    /// #1704: action-call targets share the preimage budget; the first call
+    /// past it pauses Pass 2 even when no rule's type matched before it.
+    #[test]
+    fn action_preimage_budget_defers_the_remaining_calls() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("action-preimages.sqlite");
+        let (model, canonical) = sample_model()?;
+        let mut store = CellStore::open(&path, model.clone(), StoreOptions::default())?;
+        store.bind("scope", SCOPE)?;
+        store.install_definitions(model.clone(), install_input(&canonical, 10), Some(0), SCOPE)?;
+        // Watches `demo.Note`, so calls on tickets scan it but never match.
+        install_automation_for(
+            &mut store,
+            &model,
+            &canonical,
+            1,
+            "ops.on_ping",
+            "demo.Note",
+            &json!({ "kind": "event", "event": "action", "actionId": "demo.ticket.ping" }),
+        )?;
+        let count = MAX_PREIMAGES_PER_COMMIT.saturating_add(10);
+        let batch = CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: SCOPE.to_owned(),
+            logical_time: 300,
+            idempotency_key: Some("action-preimage-budget".to_owned()),
+            writes: (0..count)
+                .rev()
+                .map(|idx| {
+                    action_call_write(
+                        "demo.ticket.ping",
+                        "demo.Ticket",
+                        &format!("t-{idx:04}"),
+                        &format!("c-{idx:04}"),
+                    )
+                })
+                .collect(),
+            ..CommitBatch::default()
+        };
+        let cutoff = format!("demo.ticket.ping/c-{MAX_PREIMAGES_PER_COMMIT:04}");
+        let watch = capture_before(&store.read(), &batch)?;
+        assert_eq!(watch.before.len(), MAX_PREIMAGES_PER_COMMIT);
+        assert_eq!(watch.row_cutoff, None);
+        assert_eq!(watch.action_cutoff.as_deref(), Some(cutoff.as_str()));
+
+        let CommitOutcome::Committed(receipt) = store.commit(&batch)? else {
+            return Err("expected committed receipt".into());
+        };
+        let commit_seq = receipt.body.commit_seq;
+        assert!(
+            store
+                .read()
+                .automation_triggers_for_commit(MAIN_WORLD, commit_seq)?
+                .is_empty()
+        );
+        let cont = store
+            .read()
+            .automation_outbox_continuation(commit_seq)?
+            .ok_or("missing continuation")?;
+        assert_eq!(
+            cont.cursor,
+            AutomationContinuationCursor::Action {
+                action_call_key: cutoff,
+                action_id: "demo.ticket.ping".to_owned(),
+                after_automation_id: None,
+            }
+        );
+        Ok(())
+    }
+
+    /// #1704: the root probe a raw write runs costs the same number of
+    /// `SQLite` VM steps however many `event:action` rules share the root (the
+    /// `!=` probe measured 410, 4,010 and 40,010 steps at 100, 1k and 10k).
+    #[test]
+    fn root_probe_cost_does_not_grow_with_action_rules() -> TestResult {
+        use rusqlite::OptionalExtension as _;
+        let mut steps = Vec::new();
+        for rules in [100_usize, 1_000, 10_000] {
+            let mut conn = rusqlite::Connection::open_in_memory()?;
+            for ddl in DDL {
+                conn.execute(ddl, [])?;
+            }
+            let tx = conn.transaction()?;
+            {
+                let mut insert = tx.prepare(
+                    "INSERT INTO \"_norn_retained_automation_trigger\" \
+                     (\"automation_id\", \"revision\", \"object_type\", \"root_type\", \"trigger_kind\", \"action_id\") \
+                     VALUES (?1, 1, ?2, ?2, ?3, ?4)",
+                )?;
+                for idx in 0..rules {
+                    insert.execute(rusqlite::params![
+                        format!("ops.a{idx:05}"),
+                        "demo.Ticket",
+                        KIND_ACTION,
+                        "demo.ticket.ping",
+                    ])?;
+                }
+                insert.execute(rusqlite::params![
+                    "ops.note",
+                    "demo.Note",
+                    KIND_CREATED,
+                    None::<String>,
+                ])?;
+            }
+            tx.commit()?;
+            let mut probe = conn.prepare(&row_rules_for_root_sql())?;
+            let found: Option<i64> = probe
+                .query_row(["demo.Ticket"], |row| row.get(0))
+                .optional()?;
+            assert_eq!(found, None);
+            steps.push(probe.reset_status(rusqlite::StatementStatus::VmStep));
+            let found: Option<i64> = probe
+                .query_row(["demo.Note"], |row| row.get(0))
+                .optional()?;
+            assert_eq!(found, Some(1));
+        }
+        assert!(steps.windows(2).all(|pair| pair[0] == pair[1]), "{steps:?}");
+        assert!(steps[0] < 64, "{steps:?}");
         Ok(())
     }
 }

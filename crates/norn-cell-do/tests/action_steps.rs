@@ -202,3 +202,50 @@ fn a_flow_action_step_propagates_optional_trace_context() {
         "{history}"
     );
 }
+
+/// SHA-256 of the receipt and ledger rows [`flow_receipts_and_ledger_match_the_pre_u1_bytes`]
+/// reads, as the build before automations U1 (#1650, `f51541ce72`) wrote them.
+const PRE_U1_FLOW_BYTES_SHA256: &str = "pending";
+
+/// #1704: a cell whose flow runs with no automation installed writes exactly
+/// the receipt and ledger bytes it wrote before automations U1 (#1650), so
+/// the outbox, its trigger index and its continuation leave every
+/// automation-free commit untouched.
+#[test]
+fn flow_receipts_and_ledger_match_the_pre_u1_bytes() {
+    use norn_cell::engine::{NativeEngine, SqlEngine};
+    use sha2::{Digest, Sha256};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("flow-bytes.sqlite");
+    {
+        let engine = NativeEngine::open(&path, norn_cell::StoreOptions::default()).unwrap();
+        let cell = step_cell::cell_on(engine, true);
+        let decided = start_and_approve(&cell, OPERATOR, "melt-run-bytes");
+        assert_eq!(decided["run"]["state"], json!("completed"), "{decided}");
+    }
+    let engine = NativeEngine::open(&path, norn_cell::StoreOptions::default()).unwrap();
+    let rows = |sql: &str| -> String {
+        engine
+            .query_row(sql, &[], |row| row.get::<Option<String>>(0))
+            .unwrap()
+            .unwrap_or_default()
+    };
+    let receipts = rows(
+        "SELECT group_concat(line, char(10)) FROM (SELECT commit_seq || '|' || world || '|' \
+         || coalesce(idempotency_key, '') || '|' || request_hash || '|' || receipt || '|' \
+         || receipt_hash AS line FROM _norn_receipt ORDER BY commit_seq)",
+    );
+    let ledger = rows(
+        "SELECT group_concat(line, char(10)) FROM (SELECT seq || '|' || commit_seq || '|' \
+         || world || '|' || event || '|' || prev_hash || '|' || hash AS line \
+         FROM _norn_ledger ORDER BY seq)",
+    );
+    assert!(!receipts.is_empty() && !ledger.is_empty());
+    let digest = Sha256::digest(format!("{receipts}\n--\n{ledger}"));
+    let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    assert_eq!(
+        hex, PRE_U1_FLOW_BYTES_SHA256,
+        "receipts:\n{receipts}\nledger:\n{ledger}"
+    );
+}

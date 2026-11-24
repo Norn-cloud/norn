@@ -8,10 +8,17 @@ use norn_ir::{ActionRoot, ResourceLimitProfile, RuntimeValue};
 
 use crate::cell_host::JsonObject;
 
+use super::ActionRefusal;
 use super::input::{
-    action_link_key, actor_derived_fields, check_canonical_object_bound, reserved_action_identity,
-    rfc6901_token,
+    action_link_key, actor_derived_fields, check_call_receipt_input, check_canonical_object_bound,
+    reserved_action_identity, rfc6901_token,
 };
+
+/// The shortest target id the runtime can inject (an object key is nonblank):
+/// admission measures the receipt input with it, so a refused static input
+/// overflows the receipt input bound for every matched record. Longer ids are
+/// still bounded per call at dispatch.
+const SHORTEST_TARGET_ID: &str = "_";
 
 /// One defect reported by [`validate_automation_static_input`] when admitting
 /// an automation's `then.input` against its target action's closed input schema.
@@ -124,10 +131,42 @@ pub fn validate_automation_static_input(
         &mut violations,
     );
     if violations.is_empty() {
-        Ok(())
+        check_receipt_input(action, target_id_field, supplied)
     } else {
         Err(violations)
     }
+}
+
+/// #1704: the action-specific receipt input bound, on the input the runtime
+/// will submit (the static input plus the injected target id).
+fn check_receipt_input(
+    action: &ActionRoot,
+    target_id_field: &str,
+    supplied: &JsonObject,
+) -> Result<(), Vec<AutomationInputViolation>> {
+    let mut call_input = supplied.clone();
+    call_input.insert(
+        target_id_field.to_owned(),
+        RuntimeValue::String(SHORTEST_TARGET_ID.into()),
+    );
+    check_call_receipt_input::<()>(action, &call_input).map_err(|refusal| {
+        let message = if let ActionRefusal::InputBoundExceeded {
+            subject,
+            actual_bytes,
+            max_bytes,
+        } = &refusal
+        {
+            format!(
+                "static input with the injected target id is {actual_bytes} canonical bytes, over the {max_bytes}-byte {subject} bound of the target action"
+            )
+        } else {
+            format!("static input is refused by the target action: {refusal:?}")
+        };
+        vec![AutomationInputViolation {
+            pointer: "/then/input".to_owned(),
+            message,
+        }]
+    })
 }
 
 fn check_bounds_and_identity(supplied: &JsonObject) -> Result<(), Vec<AutomationInputViolation>> {
@@ -488,6 +527,98 @@ mod tests {
         without_source.remove("sourceId");
         assert_eq!(
             validate_automation_static_input(&injected_source_action, Some(&without_source)),
+            Ok(())
+        );
+    }
+
+    fn input_with_tag(tag: String) -> JsonObject {
+        JsonObject::from([
+            ("amount".to_owned(), RuntimeValue::String("12.50".into())),
+            (
+                "meta".to_owned(),
+                RuntimeValue::Object(JsonObject::from([(
+                    "reason".to_owned(),
+                    RuntimeValue::String("stale".into()),
+                )])),
+            ),
+            (
+                "tags".to_owned(),
+                RuntimeValue::Array(vec![RuntimeValue::String(tag.into())]),
+            ),
+        ])
+    }
+
+    /// #1704: admission applies the receipt input bound the call meets at
+    /// runtime, on the static input plus the injected target id, so a
+    /// schema-valid input that every dispatch would refuse never installs.
+    #[test]
+    fn refuses_static_input_over_the_receipt_input_bound_with_the_injected_target() {
+        let action = sample_action();
+        let max_bytes = usize::try_from(
+            ResourceLimitProfile::norn_limits_v1()
+                .envelope
+                .max_output_bytes,
+        )
+        .expect("bound");
+        // The exact input the runtime submits: static input plus target id.
+        let call_bytes = |input: &JsonObject| {
+            let mut call = input.clone();
+            call.insert(
+                "orderId".to_owned(),
+                RuntimeValue::String(SHORTEST_TARGET_ID.into()),
+            );
+            norn_ir::canonical::canonical_json_of(&call)
+                .expect("canonical")
+                .len()
+        };
+        let base = call_bytes(&input_with_tag(String::new()));
+        let at_bound = input_with_tag("a".repeat(max_bytes.saturating_sub(base)));
+        assert_eq!(call_bytes(&at_bound), max_bytes);
+        assert_eq!(
+            validate_automation_static_input(&action, Some(&at_bound)),
+            Ok(())
+        );
+        let over = input_with_tag("a".repeat(max_bytes.saturating_sub(base).saturating_add(1)));
+        let errors = validate_automation_static_input(&action, Some(&over))
+            .expect_err("one byte over the receipt input bound");
+        assert_eq!(
+            errors
+                .iter()
+                .map(|error| (error.pointer.as_str(), error.message.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(
+                "/then/input",
+                format!(
+                    "static input with the injected target id is {} canonical bytes, over the {max_bytes}-byte action call receipt input bound of the target action",
+                    max_bytes.saturating_add(1)
+                )
+                .as_str()
+            )]
+        );
+        // The 40 KiB case from the audit: under the 256 KiB slice bound, over
+        // the receipt input bound.
+        assert!(
+            validate_automation_static_input(&action, Some(&input_with_tag("a".repeat(40_960))))
+                .is_err()
+        );
+
+        // An action without preparation whose input normalizes to itself
+        // keeps the runtime fast path, which has no receipt input bound: its
+        // admission does not invent one.
+        let mut raw = serde_json::to_value(sample_action()).expect("action JSON");
+        raw["derive"] = serde_json::json!([]);
+        raw["inputSchema"]["required"] = serde_json::json!(["orderId", "meta"]);
+        for field in ["amount", "updatedBy"] {
+            raw["inputSchema"]["properties"]
+                .as_object_mut()
+                .expect("properties")
+                .remove(field);
+        }
+        let plain: ActionRoot = serde_json::from_value(raw).expect("plain action");
+        let mut large = input_with_tag("a".repeat(40_960));
+        large.remove("amount");
+        assert_eq!(
+            validate_automation_static_input(&plain, Some(&large)),
             Ok(())
         );
     }

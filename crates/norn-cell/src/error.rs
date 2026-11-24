@@ -196,6 +196,20 @@ pub enum CellError {
         /// The stored stamp, truncated.
         found: String,
     },
+    /// AUTOMATION-OUTBOX-1 (#1704): an exported automation continuation was
+    /// written by an earlier matcher version whose pause point this engine's
+    /// replay-stable order does not reproduce (a matcher version 1 commit
+    /// whose ids change under NFC). The restore writes nothing.
+    #[error(
+        "{code}: automation continuation of commit {commit_seq} was written by matcher version {matcher_version}, whose order this engine cannot replay",
+        code = norn_checker::ENGINE_UNKNOWN_VERSION
+    )]
+    AutomationMatcherUnreplayable {
+        /// The commit whose continuation does not replay.
+        commit_seq: u64,
+        /// The matcher version recorded on the exported continuation.
+        matcher_version: u32,
+    },
     /// ENGINE-UPGRADE-1: the cell's storage version has no in-place upgrade
     /// path in this engine, or a migration refused its data (#1494).
     #[error(
