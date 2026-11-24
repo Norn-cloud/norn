@@ -2309,7 +2309,7 @@ fn ancestor_addressed_noop_and_replay_report_subtype_target_version() {
     .unwrap();
     assert_eq!(v2.version, 2);
 
-    // Ancestor-addressed no-op with subtype slice read: fresh and replay both report v2.
+    // Ancestor-addressed no-op with subtype slice read: fresh reports v2.
     let noop_body =
         r#"{"input":{"order_id":"ord-1","title":"ready"},"idempotencyKey":"noop-ancestor-1"}"#;
     let fresh = call(
@@ -2323,6 +2323,18 @@ fn ancestor_addressed_noop_and_replay_report_subtype_target_version() {
     assert_eq!(fresh.outcome, ActionCallOutcome::Committed);
     assert_eq!(fresh.version, 2);
 
+    // Mutate concrete subtype to v3 AFTER the no-op commit so live version != 2.
+    let v3 = call(
+        &host,
+        &query,
+        Some(OPERATOR),
+        "test.special_order.upsert",
+        r#"{"input":{"order_id":"ord-1","title":"post-noop"},"idempotencyKey":"seed-3"}"#,
+    )
+    .unwrap();
+    assert_eq!(v3.version, 3);
+
+    // Replay must still report historical version 2 (not live version 3).
     let replayed = call(
         &host,
         &query,

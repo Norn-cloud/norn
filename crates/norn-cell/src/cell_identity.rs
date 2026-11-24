@@ -205,6 +205,7 @@ impl<E: SqlEngine> CellStore<E> {
     /// # Errors
     /// SQL failure or malformed persisted identity.
     pub fn cell_id(&self) -> Result<Option<CellId>, CellError> {
+        self.read().check_live()?;
         read(&self.conn)
     }
 

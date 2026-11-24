@@ -4647,6 +4647,14 @@ fn trace_context_is_strictly_optional_persists_in_receipts_and_refuses_malformed
 #[test]
 fn ancestor_addressed_noop_action_with_subtype_slice_read_commits_and_reports_version() {
     let mut types = order_types();
+    types[0].properties.push(
+        serde_json::from_value(json!({
+            "id": "note",
+            "type": { "kind": "text" },
+            "constraints": { "nullable": true }
+        }))
+        .unwrap(),
+    );
     let subtype = "commerce.ReviewedOrder";
     types.push(
         serde_json::from_value(json!({
@@ -4660,14 +4668,14 @@ fn ancestor_addressed_noop_action_with_subtype_slice_read_commits_and_reports_ve
         .with_types(types.clone());
     let concrete = seed(&mut cell, subtype, "SO-sub", "draft");
 
-    // Bump the concrete subtype to version 2 so version != 1 and != 0.
+    // Bump an ordinary non-lifecycle property on the concrete subtype to version 2.
     let mut bump_payload =
         fixture("ir/commerce-sales-order-submit-invoice.action.json")["payload"].clone();
     bump_payload["actionId"] = json!("commerce.bump");
     bump_payload["inputSchema"] = json!({
         "type": "object",
-        "properties": { "so_number": { "type": "string" }, "status": { "type": "string" } },
-        "required": ["so_number", "status"],
+        "properties": { "so_number": { "type": "string" }, "note": { "type": "string" } },
+        "required": ["so_number", "note"],
         "additionalProperties": false
     });
     bump_payload["preconditions"] = json!([]);
@@ -4681,7 +4689,7 @@ fn ancestor_addressed_noop_action_with_subtype_slice_read_commits_and_reports_ve
     });
     let bump: ActionRoot = serde_json::from_value(bump_payload.clone()).unwrap();
     let mut bump_call = call(&bump, "SO-sub", "bump-1");
-    bump_call.input = json_object(json!({ "so_number": "SO-sub", "status": "approved" }));
+    bump_call.input = json_object(json!({ "so_number": "SO-sub", "note": "ready" }));
     bump_call.object_type = Some(ObjectTypeName(subtype.to_owned()));
     let ActionOutcome::Committed { target_version, .. } =
         commit_action(&mut cell, &catalog, &bump_call, &Allow).unwrap()
@@ -4700,10 +4708,10 @@ fn ancestor_addressed_noop_action_with_subtype_slice_read_commits_and_reports_ve
         "objectType": subtype,
         "key": { "property": { "from": "input", "property": "so_number" } }
     }]);
-    noop_payload["preconditions"] = json!(["slice.reviewed.status == \"approved\""]);
+    noop_payload["preconditions"] = json!(["slice.reviewed.note == \"ready\""]);
     let noop: ActionRoot = serde_json::from_value(noop_payload).unwrap();
     let mut noop_call = call(&noop, "SO-sub", "noop-ancestor-1");
-    noop_call.input = json_object(json!({ "so_number": "SO-sub", "status": "approved" }));
+    noop_call.input = json_object(json!({ "so_number": "SO-sub", "note": "ready" }));
     noop_call.object_type = Some(ObjectTypeName(ORDER.to_owned()));
 
     let outcome = commit_action(&mut cell, &catalog, &noop_call, &Allow)

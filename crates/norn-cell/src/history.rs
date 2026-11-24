@@ -717,6 +717,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         commit_seq: u64,
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<Option<Receipt>, CellError> {
+        self.check_live()?;
         let bytes: Option<i64> = self.conn.query_optional(
             &format!("SELECT octet_length(\"receipt\") + octet_length(\"receipt_hash\") + COALESCE(octet_length(\"world\"),0) + COALESCE(octet_length(\"idempotency_key\"),0) + COALESCE(octet_length(\"request_hash\"),0) FROM \"{RECEIPT}\" WHERE \"commit_seq\"=?1"),
             params![to_i64(commit_seq,"knowledge frontier")?], |row| row.get(0),
@@ -830,6 +831,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         version: u64,
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<crate::reactive::BudgetedRead, CellError> {
+        self.check_live()?;
         let root = self.root_type(object_type).unwrap_or(object_type);
         let length: Option<i64> = self.conn.query_optional(&format!("SELECT octet_length(f.snapshot)+octet_length(f.hash)+octet_length(r.receipt)+octet_length(r.receipt_hash)+COALESCE(octet_length(r.world),0)+COALESCE(octet_length(r.idempotency_key),0)+COALESCE(octet_length(r.request_hash),0)+128 FROM \"{FACT_VALUES}\" f JOIN \"{RECEIPT}\" r ON r.commit_seq=f.commit_seq WHERE f.world=?1 AND (f.root_type=?2 OR f.object_type=?2) AND f.id=?3 AND f.version=?4"), params![world, root, key, to_i64(version, "fact version")?], |row| row.get(0))?;
         let length = length.ok_or_else(unproven_event)?;

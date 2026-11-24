@@ -362,6 +362,7 @@ impl<E: SqlEngine> CellStore<E> {
     /// # Errors
     /// A store read or corrupt fence value.
     pub fn perform_fence_generation(&self, command_id: &str) -> Result<Option<u64>, CellError> {
+        self.read().check_live()?;
         let fenced: Option<String> = self.conn.query_optional(
             &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
             params![format!("restore:perform_fence:{command_id}")],

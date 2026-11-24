@@ -338,20 +338,13 @@ struct SeedState {
 }
 
 #[derive(Clone)]
-enum AppendCursor {
-    History {
-        after: u64,
-        through: u64,
-        cursor: Vec<SqlValue>,
-        expected_history: Rows,
-        expected_postings: Rows,
-    },
-    Posting {
-        after: u64,
-        through: u64,
-        cursor: Vec<SqlValue>,
-        expected_postings: Rows,
-    },
+struct AppendCursor {
+    after: u64,
+    through: u64,
+    is_history: bool,
+    cursor: Vec<SqlValue>,
+    expected_history: Rows,
+    expected_postings: Rows,
 }
 
 #[derive(Clone)]
@@ -439,19 +432,14 @@ impl QuantityScrub {
         through: u64,
     ) -> Result<(), CellError> {
         if after == 0 {
-            check_no_rows(
-                engine,
+            for sql in [
                 r#"SELECT 1 FROM "_norn_quantity_history" WHERE "commit_seq" <= 0 LIMIT 1"#,
-                &[],
-            )?;
-            check_no_rows(
-                engine,
                 r#"SELECT 1 FROM "_norn_quantity_posting" WHERE "commit_seq" <= 0 LIMIT 1"#,
-                &[],
-            )?;
+            ] {
+                check_no_rows(engine, sql, &[])?;
+            }
         }
-        let mut history = Rows::new();
-        let mut postings = Rows::new();
+        let (mut history, mut postings) = (Rows::new(), Rows::new());
         for receipt in receipts {
             self.replay
                 .step_receipt(receipt, &mut history, &mut postings)?;
@@ -516,13 +504,9 @@ impl QuantityScrub {
             state.digest = crate::open_checkpoint::quantity_seed()?;
         }
         let commits = query_quantity_commits(engine, state.after, state.through, SCRUB_PAGE_I64)?;
-        let mut discard_history = Rows::new();
-        let mut discard_postings = Rows::new();
+        let (mut discard_history, mut discard_postings) = (Rows::new(), Rows::new());
         for &commit in &commits {
-            let receipt = reader
-                .receipt_at(commit)?
-                .filter(|receipt| receipt.body.quantity.is_some())
-                .ok_or(QuantityError::Corrupt)?;
+            let receipt = load_quantity_receipt(reader, commit)?;
             state.digest =
                 crate::open_checkpoint::quantity_extend(&state.digest, commit, &receipt.hash)?;
             self.replay
@@ -531,10 +515,11 @@ impl QuantityScrub {
             discard_postings.clear();
         }
         if commits.len() < SCRUB_PAGE {
-            if state.digest != state.expected_digest {
-                return Err(QuantityError::Corrupt.into());
-            }
-            return Ok(());
+            return if state.digest == state.expected_digest {
+                Ok(())
+            } else {
+                Err(QuantityError::Corrupt.into())
+            };
         }
         state.after = *commits.last().ok_or(QuantityError::Corrupt)?;
         self.seed = Some(state);
@@ -549,9 +534,10 @@ impl QuantityScrub {
         expected_history: Rows,
         expected_postings: Rows,
     ) -> Result<(), CellError> {
-        self.pending_append = Some(AppendCursor::History {
+        self.pending_append = Some(AppendCursor {
             after,
             through,
+            is_history: true,
             cursor: Vec::new(),
             expected_history,
             expected_postings,
@@ -560,63 +546,47 @@ impl QuantityScrub {
     }
 
     fn step_append_page<S: SqlEngine>(&mut self, engine: &S) -> Result<(), CellError> {
-        let next = match self.pending_append.take().ok_or(QuantityError::Corrupt)? {
-            AppendCursor::History {
-                after,
-                through,
-                cursor,
-                expected_history,
-                expected_postings,
-            } => match verify_append_page(engine, true, after, through, &cursor, expected_history)?
-            {
+        let mut state = self.pending_append.take().ok_or(QuantityError::Corrupt)?;
+        if state.is_history {
+            match verify_append_page(
+                engine,
+                true,
+                state.after,
+                state.through,
+                &state.cursor,
+                state.expected_history,
+            )? {
                 PageStep::More {
                     next_cursor,
                     remaining,
-                } => Some(AppendCursor::History {
-                    after,
-                    through,
-                    cursor: next_cursor,
-                    expected_history: remaining,
-                    expected_postings,
-                }),
-                PageStep::Done => {
-                    match verify_append_page(engine, false, after, through, &[], expected_postings)?
-                    {
-                        PageStep::More {
-                            next_cursor,
-                            remaining,
-                        } => Some(AppendCursor::Posting {
-                            after,
-                            through,
-                            cursor: next_cursor,
-                            expected_postings: remaining,
-                        }),
-                        PageStep::Done => None,
-                    }
+                } => {
+                    state.cursor = next_cursor;
+                    state.expected_history = remaining;
+                    self.pending_append = Some(state);
+                    return Ok(());
                 }
-            },
-            AppendCursor::Posting {
-                after,
-                through,
-                cursor,
-                expected_postings,
-            } => {
-                match verify_append_page(engine, false, after, through, &cursor, expected_postings)?
-                {
-                    PageStep::More {
-                        next_cursor,
-                        remaining,
-                    } => Some(AppendCursor::Posting {
-                        after,
-                        through,
-                        cursor: next_cursor,
-                        expected_postings: remaining,
-                    }),
-                    PageStep::Done => None,
+                PageStep::Done => {
+                    state.is_history = false;
+                    state.cursor.clear();
+                    state.expected_history = Rows::new();
                 }
             }
-        };
-        self.pending_append = next;
+        }
+        if let PageStep::More {
+            next_cursor,
+            remaining,
+        } = verify_append_page(
+            engine,
+            false,
+            state.after,
+            state.through,
+            &state.cursor,
+            state.expected_postings,
+        )? {
+            state.cursor = next_cursor;
+            state.expected_postings = remaining;
+            self.pending_append = Some(state);
+        }
         Ok(())
     }
 
@@ -625,24 +595,35 @@ impl QuantityScrub {
         engine: &S,
         reader: &crate::read::StoreReader<'_, S>,
         after: u64,
-        db_commits: u64,
+        mut db_commits: u64,
         target_boundary: Option<super::FormatBoundary>,
         had_suffix: bool,
     ) -> Result<bool, CellError> {
+        let live_db = reader.next_commit_seq()?.saturating_sub(1);
+        if live_db < db_commits {
+            return Err(QuantityError::Corrupt.into());
+        }
+        if live_db > db_commits {
+            db_commits = live_db;
+        }
         if after >= db_commits {
             return self.finish_suffix(engine, db_commits, target_boundary, had_suffix);
         }
         let commits = query_quantity_commits(engine, after, db_commits, SCRUB_PAGE_I64)?;
         if commits.is_empty() {
-            return self.finish_suffix(engine, db_commits, target_boundary, had_suffix);
+            // Check `(after, db_commits]` for rogue/surplus append rows even in
+            // ordinary-only suffixes (strictly bounded `LIMIT 512` keyset pages).
+            self.tail = Some(TailState::SuffixReceipts {
+                after: db_commits,
+                db_commits,
+                had_suffix,
+            });
+            self.start_append_range(engine, after, db_commits, Rows::new(), Rows::new())?;
+            return Ok(false);
         }
-        let mut suffix_history = Rows::new();
-        let mut suffix_postings = Rows::new();
+        let (mut suffix_history, mut suffix_postings) = (Rows::new(), Rows::new());
         for &commit in &commits {
-            let receipt = reader
-                .receipt_at(commit)?
-                .filter(|receipt| receipt.body.quantity.is_some())
-                .ok_or(QuantityError::Corrupt)?;
+            let receipt = load_quantity_receipt(reader, commit)?;
             self.replay
                 .step_receipt(&receipt, &mut suffix_history, &mut suffix_postings)?;
         }
@@ -755,6 +736,16 @@ impl QuantityScrub {
             },
         }
     }
+}
+
+fn load_quantity_receipt<S: SqlEngine>(
+    reader: &crate::read::StoreReader<'_, S>,
+    commit: u64,
+) -> Result<Receipt, CellError> {
+    reader
+        .receipt_at(commit)?
+        .filter(|receipt| receipt.body.quantity.is_some())
+        .ok_or_else(|| QuantityError::Corrupt.into())
 }
 
 fn query_quantity_commits<S: SqlEngine>(
@@ -965,8 +956,7 @@ pub(crate) fn verify<S: SqlEngine>(
         LiveStage::Balances,
         LiveStage::Reservations,
     ] {
-        let mut cursor = Vec::new();
-        let mut remaining = replay.live_rows(stage);
+        let (mut cursor, mut remaining) = (Vec::new(), replay.live_rows(stage));
         while let PageStep::More {
             next_cursor,
             remaining: rest,
@@ -976,20 +966,23 @@ pub(crate) fn verify<S: SqlEngine>(
             remaining = rest;
         }
     }
-    verify_table_rows(
-        engine,
-        "_norn_quantity_history",
-        "world,ledger,account,unit,layer,posted,held,version,commit_seq",
-        5,
-        true,
-        history,
-    )?;
-    verify_table_rows(
-        engine,
-        "_norn_quantity_posting",
-        "world,ledger,id,record,reverses,version,commit_seq",
-        3,
-        false,
-        postings,
-    )
+    for (table, cols, count, is_history, expected) in [
+        (
+            "_norn_quantity_history",
+            "world,ledger,account,unit,layer,posted,held,version,commit_seq",
+            5,
+            true,
+            history,
+        ),
+        (
+            "_norn_quantity_posting",
+            "world,ledger,id,record,reverses,version,commit_seq",
+            3,
+            false,
+            postings,
+        ),
+    ] {
+        verify_table_rows(engine, table, cols, count, is_history, expected)?;
+    }
+    Ok(())
 }

@@ -2364,6 +2364,8 @@ fn existing_store_reader_refuses_when_sibling_fences_after_acquire() {
     let reader = sibling.read();
     assert!(reader.flow_run(MAIN_WORLD, "run-1").is_ok());
     assert!(reader.object(MAIN_WORLD, "fixture.Item", "c0").is_ok());
+    assert!(reader.head_commit_seq().is_ok());
+    assert!(reader.database_revision().is_ok());
     assert!(
         reader
             .source_event_mapping_bundles("conn", "p0", "src", "s1", "e1")
@@ -2388,6 +2390,14 @@ fn existing_store_reader_refuses_when_sibling_fences_after_acquire() {
         "existing StoreReader must refuse object after sibling durable fence"
     );
     assert!(
+        matches!(reader.head_commit_seq(), Err(CellError::Fenced(_))),
+        "existing StoreReader must refuse head_commit_seq after sibling durable fence"
+    );
+    assert!(
+        matches!(reader.database_revision(), Err(CellError::Fenced(_))),
+        "existing StoreReader must refuse database_revision after sibling durable fence"
+    );
+    assert!(
         matches!(
             reader.source_event_mapping_bundles("conn", "p0", "src", "s1", "e1"),
             Err(CellError::Fenced(_))
@@ -2402,6 +2412,26 @@ fn existing_store_reader_refuses_when_sibling_fences_after_acquire() {
             Err(CellError::Fenced(_))
         ),
         "fresh StoreReader must refuse source_event_mapping_bundles on a fenced cell"
+    );
+    let model = engine_fixture::model();
+    let candidate = install_input(&model, "0.2.0");
+    assert!(
+        matches!(
+            sibling.check_definitions(&model, &candidate, None),
+            Err(CellError::Fenced(_))
+        ),
+        "check_definitions must refuse on a fenced cell"
+    );
+    assert!(
+        matches!(sibling.cell_id(), Err(CellError::Fenced(_))),
+        "cell_id must refuse on a fenced cell"
+    );
+    assert!(
+        matches!(
+            sibling.perform_fence_generation("cmd-1"),
+            Err(CellError::Fenced(_))
+        ),
+        "perform_fence_generation must refuse on a fenced cell"
     );
 }
 
@@ -2539,4 +2569,57 @@ fn restart_scrub_after_large_sibling_suffix_stays_within_512_row_bound() {
         Some(final_commits),
         "checkpoint advanced to the sibling-extended head"
     );
+}
+
+/// S10 (#1551 round 9): committing valid same-handle quantity postings between
+/// `Phase::QuantityTail` suffix wakes must not falsely fence the cell.
+#[test]
+fn same_handle_quantity_commit_during_quantity_tail_completes_without_fencing() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    quantity_cell(&path);
+
+    let mut store = open(&path).expect("checkpointed open");
+    assert!(!history_ready(&store));
+    // Step through Receipts and all History chunks until entering QuantityTail.
+    loop {
+        let status = store.scrub_step();
+        if matches!(
+            status,
+            ScrubStatus::Verifying {
+                phase: "history",
+                verified,
+                target,
+                ..
+            } if verified == target
+        ) {
+            break;
+        }
+        assert!(matches!(status, ScrubStatus::Verifying { .. }));
+    }
+
+    // First valid same-handle quantity commit right as QuantityTail starts.
+    commit_quantity(
+        &mut store,
+        EVERY.saturating_add(1),
+        &post(0, "tail-1", "fund", 5),
+    );
+    let mid = store.scrub_step();
+    assert!(
+        matches!(mid, ScrubStatus::Verifying { .. }),
+        "first QuantityTail wake should step suffix receipts cleanly, got {mid:?}"
+    );
+
+    // Second valid same-handle quantity commit between suffix/live wakes.
+    commit_quantity(
+        &mut store,
+        EVERY.saturating_add(2),
+        &post(0, "tail-2", "fund", 7),
+    );
+    assert_eq!(
+        store.scrub_to_end(),
+        ScrubStatus::Idle,
+        "valid same-handle quantity commits between QuantityTail wakes must not falsely fence"
+    );
+    assert!(history_ready(&store));
 }

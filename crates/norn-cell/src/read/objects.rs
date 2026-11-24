@@ -223,6 +223,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
 
     /// The root type of `object_type`'s hierarchy.
     pub(crate) fn root_type(&self, object_type: &str) -> Result<&'a str, CellError> {
+        self.check_live()?;
         self.model
             .chain(object_type)?
             .first()

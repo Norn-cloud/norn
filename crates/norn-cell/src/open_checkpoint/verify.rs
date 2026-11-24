@@ -100,6 +100,16 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     }
 }
 
+/// Result of a periodic post-commit checkpoint attempt.
+enum CheckpointAdvance {
+    Recorded {
+        checkpoint: OpenCheckpoint,
+        genesis_dv: Option<u64>,
+    },
+    Skipped,
+    NeedsGenesisScrub,
+}
+
 /// What [`CellStore::verify_history`] admits and caches on open.
 pub(crate) struct VerifiedHistory {
     pub(crate) head: LedgerHead,
@@ -473,69 +483,97 @@ impl<E: SqlEngine> CellStore<E> {
                 return;
             }
         };
-        let expected_tail_seq = crate::history_selection::receipt_last_sequence(
-            receipt.body.first_event_seq,
-            receipt.body.event_count,
-        );
-        let recorded = self.conn.transaction(|| {
-            // S12: never record a checkpoint on a durably fenced cell.
-            open_checkpoint::check_fence(&self.conn)?;
-            // S10: check the database tail inside the checkpoint transaction
-            // BEFORE verifying, so concurrent commits never advance the
-            // checkpoint past unverified state or exceed MAX_ADVANCE.
-            let tail_commits = self.verifier().next_commit_seq()?.saturating_sub(1);
-            if tail_commits != commits {
-                return Ok(None);
-            }
-            let (tail_seq, tail_hash) = self.verifier().ledger_tail()?;
-            if expected_tail_seq != Some(tail_seq) || tail_hash != receipt.body.ledger_head {
-                return Ok(None);
-            }
-            match (&previous, open_checkpoint::load(&self.conn)?) {
-                (Some(prev), Loaded::Authentic(row)) if row == *prev => {}
-                (Some(_), _) => return Ok(None),
-                (None, Loaded::Authentic(row))
-                    if row.head.commits <= tail_commits && row.head.commits >= commits =>
-                {
-                    return Ok(None);
-                }
-                (None, _) => {}
-            }
-            let from = previous
-                .as_ref()
-                .map_or_else(LedgerHead::genesis, |previous| previous.head.clone());
-            if from.commits >= commits
-                || commits.saturating_sub(from.commits) > open_checkpoint::MAX_ADVANCE
-            {
-                return Ok(None);
-            }
-            let pass = RefCell::default();
-            let reader = self.verifier().with_transaction_verified_receipts(&pass);
-            let (head, boundary) = match &previous {
-                Some(previous) => {
-                    reader.verify_ledger_from_open_checkpoint(&from, previous.boundary)?
-                }
-                None => reader.verify_ledger_with_boundary(&from)?,
-            };
-            if head.commits != commits || head.seq != tail_seq || head.hash != tail_hash {
-                return Ok(None);
-            }
-            let log = self.transparency.borrow();
-            self.receipt_digests_match_log(from.commits, &log)?;
-            crate::cell_identity::verify_history_after(&self.conn, previous.as_ref())?;
-            self.verify_definition_history(previous.as_ref())?;
-            self.verifier().verify_value_history_after(from.commits)?;
-            let recorded = self.record_open_checkpoint(previous.clone(), &head, boundary, &log)?;
-            let dv = self.conn.external_data_version()?;
-            Ok(recorded.map(|checkpoint| (checkpoint, dv)))
-        });
+        let baseline_dv = self.scrub.borrow().baseline_dv();
+        let recorded = self
+            .conn
+            .transaction(|| self.advance_checkpoint_tx(receipt, previous.as_ref(), baseline_dv));
         match recorded {
-            Ok(Some((checkpoint, dv))) => self.scrub.borrow_mut().validated(checkpoint, dv),
-            Ok(None) => self.scrub.borrow_mut().invalidate(),
+            Ok(CheckpointAdvance::Recorded {
+                checkpoint,
+                genesis_dv,
+            }) => self.scrub.borrow_mut().validated(checkpoint, genesis_dv),
+            Ok(CheckpointAdvance::Skipped) => self.scrub.borrow_mut().invalidate(),
+            Ok(CheckpointAdvance::NeedsGenesisScrub) => {
+                self.scrub.borrow_mut().invalidate();
+                self.start_catch_up(receipt);
+            }
             Err(error) => {
                 tracing::warn!(%error, commits, "open checkpoint not recorded; the last one stands");
             }
         }
+    }
+
+    fn advance_checkpoint_tx(
+        &self,
+        receipt: &Receipt,
+        previous: Option<&OpenCheckpoint>,
+        baseline_dv: Option<u64>,
+    ) -> Result<CheckpointAdvance, CellError> {
+        let commits = receipt.body.commit_seq;
+        let expected_tail_seq = crate::history_selection::receipt_last_sequence(
+            receipt.body.first_event_seq,
+            receipt.body.event_count,
+        );
+        // S12: never record a checkpoint on a durably fenced cell.
+        open_checkpoint::check_fence(&self.conn)?;
+        // S10 (#1551 round 9): detect any external write since the last
+        // fully verified baseline; never advance via suffix-only checks or
+        // absorb a sibling edit into `baseline_dv`.
+        let current_dv = self.conn.external_data_version()?;
+        let external_write = (baseline_dv.is_some() && current_dv != baseline_dv)
+            || (self.conn.read_isolation() != crate::engine::ReadIsolation::ExclusiveSynchronous
+                && current_dv.is_none());
+        if external_write {
+            return Ok(CheckpointAdvance::NeedsGenesisScrub);
+        }
+        // S10: check the database tail inside the checkpoint transaction
+        // BEFORE verifying, so concurrent commits never advance the
+        // checkpoint past unverified state or exceed MAX_ADVANCE.
+        let tail_commits = self.verifier().next_commit_seq()?.saturating_sub(1);
+        if tail_commits != commits {
+            return Ok(CheckpointAdvance::Skipped);
+        }
+        let (tail_seq, tail_hash) = self.verifier().ledger_tail()?;
+        if expected_tail_seq != Some(tail_seq) || tail_hash != receipt.body.ledger_head {
+            return Ok(CheckpointAdvance::Skipped);
+        }
+        match (previous, open_checkpoint::load(&self.conn)?) {
+            (Some(prev), Loaded::Authentic(row)) if row == *prev => {}
+            (Some(_), _) => return Ok(CheckpointAdvance::Skipped),
+            (None, Loaded::Authentic(row))
+                if row.head.commits <= tail_commits && row.head.commits >= commits =>
+            {
+                return Ok(CheckpointAdvance::Skipped);
+            }
+            (None, _) => {}
+        }
+        let from = previous.map_or_else(LedgerHead::genesis, |prev| prev.head.clone());
+        if from.commits >= commits
+            || commits.saturating_sub(from.commits) > open_checkpoint::MAX_ADVANCE
+        {
+            return Ok(CheckpointAdvance::Skipped);
+        }
+        let pass = RefCell::default();
+        let reader = self.verifier().with_transaction_verified_receipts(&pass);
+        let (head, boundary) = match previous {
+            Some(prev) => reader.verify_ledger_from_open_checkpoint(&from, prev.boundary)?,
+            None => reader.verify_ledger_with_boundary(&from)?,
+        };
+        if head.commits != commits || head.seq != tail_seq || head.hash != tail_hash {
+            return Ok(CheckpointAdvance::Skipped);
+        }
+        let log = self.transparency.borrow();
+        self.receipt_digests_match_log(from.commits, &log)?;
+        crate::cell_identity::verify_history_after(&self.conn, previous)?;
+        self.verify_definition_history(previous)?;
+        self.verifier().verify_value_history_after(from.commits)?;
+        let recorded = self.record_open_checkpoint(previous.cloned(), &head, boundary, &log)?;
+        Ok(recorded.map_or(CheckpointAdvance::Skipped, |checkpoint| {
+            CheckpointAdvance::Recorded {
+                checkpoint,
+                genesis_dv: previous.is_none().then_some(current_dv).flatten(),
+            }
+        }))
     }
 
     /// S10 (#1551 round 3): hand a checkpoint gap longer than a commit may

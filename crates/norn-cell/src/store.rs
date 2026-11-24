@@ -3140,6 +3140,7 @@ impl<E: SqlEngine> CellStore<E> {
         input: &InstalledDefinitionInput,
         expected_version: Option<u64>,
     ) -> Result<InstalledDefinitionSet, CellError> {
+        self.read().check_live()?;
         let install = DefinitionInstallContext {
             candidate_model,
             input,

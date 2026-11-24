@@ -771,21 +771,18 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     }
 
     /// Current commit cursor, read without decoding the receipt history.
-    ///
     /// # Errors
-    /// SQL engine errors or an out-of-range commit sequence.
+    /// SQL engine errors, out-of-range commit sequence, or [`CellError::Fenced`].
     pub fn head_commit_seq(&self) -> Result<u64, CellError> {
+        self.check_live()?;
         Ok(self.next_commit_seq()?.saturating_sub(1))
     }
 
-    /// The engine's revision of the whole database as this connection sees it
-    /// ([`SqlEngine::read_cache_revision`]): equal revisions imply unchanged
-    /// contents, including writes that carry no receipt and commits by other
-    /// connections. `None` when the engine offers no revision.
-    ///
+    /// Database revision (`SqlEngine::read_cache_revision`), or `None` if unsupported.
     /// # Errors
-    /// Backend revision-read failures.
+    /// Backend revision-read failures or [`CellError::Fenced`].
     pub fn database_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
+        self.check_live()?;
         self.conn.read_cache_revision()
     }
 
@@ -1044,6 +1041,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         max_rows: usize,
         budget: &mut DecodeBudget,
     ) -> Result<(Vec<(String, String)>, bool), CellError> {
+        self.check_live()?;
         let tables = self.model().tables(object_type)?;
         let mut provided = BTreeMap::new();
         for (property, value) in key {
@@ -1479,6 +1477,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         target: &str,
         limit: usize,
     ) -> Result<Vec<(String, String)>, CellError> {
+        self.check_live()?;
         let limit = i64::try_from(limit)
             .unwrap_or(MAX_SAFE_INTEGER)
             .min(MAX_SAFE_INTEGER);

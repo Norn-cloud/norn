@@ -495,10 +495,14 @@ impl Scrub {
         self.validated.clone().map_or(Advance::Seed, Advance::From)
     }
 
-    pub(crate) fn validated(&mut self, checkpoint: OpenCheckpoint, data_version: Option<u64>) {
+    pub(crate) const fn baseline_dv(&self) -> Option<u64> {
+        self.baseline_dv
+    }
+
+    pub(crate) fn validated(&mut self, checkpoint: OpenCheckpoint, genesis_dv: Option<u64>) {
         self.validated = Some(checkpoint);
-        if data_version.is_some() {
-            self.baseline_dv = data_version;
+        if genesis_dv.is_some() {
+            self.baseline_dv = genesis_dv;
         }
     }
 
@@ -597,7 +601,7 @@ impl<E: SqlEngine> CellStore<E> {
                 if checkpoint.is_some() {
                     scrub.validated = checkpoint;
                 }
-                if run.data_version.is_some() {
+                if run.start.is_none() && run.data_version.is_some() {
                     scrub.baseline_dv = run.data_version;
                 }
                 tracing::info!(

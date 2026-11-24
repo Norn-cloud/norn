@@ -356,6 +356,7 @@ impl<E: SqlEngine> CellStore<E> {
     ) -> Result<Option<crate::source_agreement::SourceDisagreementCounts>, CellError> {
         self.conn.transaction(|| {
             let reader = self.read();
+            reader.check_live()?;
             let mut budget = question_budget()?;
             let grain = plan.grain().as_str();
             let frontier_receipt = match cutoff {
