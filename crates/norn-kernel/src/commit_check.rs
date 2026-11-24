@@ -373,9 +373,8 @@ pub trait CommitView {
 /// the same refusal. Objects and links are compared by canonical identity.
 /// Order:
 ///
-/// 1. **shape** — no object written twice ([`CommitError::DuplicateKey`]),
-///    a read of an object the commit already expects (through any alias)
-///    at the same version ([`CommitError::Conflict`]), no link twice
+/// 1. **shape** — no object twice across `reads` then `writes`
+///    ([`CommitError::DuplicateKey`]), no link twice
 ///    ([`CommitError::DuplicateLink`]), and every link a declared link of
 ///    its source's type to an admitted target type
 ///    ([`CommitError::LinkTarget`]); every declared posting group is decoded,
@@ -1844,7 +1843,17 @@ fn check_shape<E, C, T, V: CommitView + ?Sized>(
     trusted_owned_rows: bool,
 ) -> Result<(), CommitError<V::Error>> {
     check_commit_identifiers(commit)?;
-    check_fact_expectations(commit, model, view)?;
+    let mut seen = BTreeSet::new();
+    let keys = commit
+        .reads
+        .iter()
+        .map(|read| &read.key)
+        .chain(commit.writes.iter().map(|write| &write.key));
+    for key in keys {
+        if !seen.insert(model.canonical(key)) {
+            return Err(CommitError::DuplicateKey { key: key.clone() });
+        }
+    }
     let mut links = BTreeSet::new();
     for write in &commit.links {
         if !links.insert(model.canonical_link(&write.key)) {
@@ -1910,51 +1919,6 @@ fn check_shape<E, C, T, V: CommitView + ?Sized>(
                     key: write.key.source.clone(),
                 });
             }
-        }
-    }
-    Ok(())
-}
-
-/// One canonical object holds one expectation (#1701). Two writes of one
-/// object are a duplicate. A read that names an object the commit already
-/// expects, through any hierarchy alias (a receipt pin on a supertype, a
-/// write of the concrete subtype), merges with it when both expect one
-/// version and is stale when they differ.
-fn check_fact_expectations<E, C, T, V: CommitView + ?Sized>(
-    commit: &CellCommit<E, C, T>,
-    model: CommitModel<'_, '_>,
-    view: &V,
-) -> Result<(), CommitError<V::Error>> {
-    let mut pinned: BTreeMap<FactKey, (&FactKey, FactVersion)> = BTreeMap::new();
-    for write in &commit.writes {
-        if pinned
-            .insert(model.canonical(&write.key), (&write.key, write.expected))
-            .is_some()
-        {
-            return Err(CommitError::DuplicateKey {
-                key: write.key.clone(),
-            });
-        }
-    }
-    for read in &commit.reads {
-        let canonical = model.canonical(&read.key);
-        let found = pinned.get(&canonical).copied();
-        let Some((prior_key, prior)) = found else {
-            pinned.insert(canonical, (&read.key, read.expected));
-            continue;
-        };
-        if prior != read.expected {
-            let current = view.version(&canonical).map_err(CommitError::Host)?;
-            let (key, expected) = if read.expected == current {
-                (prior_key, prior)
-            } else {
-                (&read.key, read.expected)
-            };
-            return Err(CommitError::Conflict {
-                key: key.clone(),
-                expected,
-                current,
-            });
         }
     }
     Ok(())

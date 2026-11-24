@@ -1380,13 +1380,13 @@ impl ObservationAuthorization {
         let mut remaining = EvaluationBudget::default().units();
         for (subject, (provenance, observation_id)) in subjects {
             let Some(values) = view
-                .object_values(&subject)
+                .object_values(&model.canonical(&subject))
                 .map_err(|_host| refuse("a linked subject's values cannot be read"))?
             else {
                 continue;
             };
             let expected = view
-                .version(&subject)
+                .version(&model.canonical(&subject))
                 .map_err(|_host| refuse("a linked subject's version cannot be read"))?;
             let mut held_links =
                 crate::commit_check::CommitLinks::new(&before, model, view, &subject);

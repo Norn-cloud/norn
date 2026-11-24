@@ -178,3 +178,45 @@ fn receipt_schema_keeps_exact_number_guidance_on_runtime_value_fields() {
         assert!(text.contains("JSON.parse"), "{text}");
     }
 }
+
+/// #1701: a receipt pin on a supertype and a write of its concrete subtype
+/// are one expectation: the same version adds no read (reads stay disjoint
+/// from writes), another version is a stale read; an untouched object's pin
+/// is a new read.
+#[test]
+fn receipt_pins_merge_with_writes_by_canonical_identity() -> Result<(), serde_json::Error> {
+    let types: Vec<norn_ir::ObjectTypeDef> = serde_json::from_value(serde_json::json!([
+        {"name": "receipt.Base"},
+        {"name": "receipt.Child", "extends": "receipt.Base"}
+    ]))?;
+    let catalog = crate::decision_commit::TypeCatalog::new(&types);
+    let writes = [FactWrite {
+        key: FactKey::new("receipt.Child", "k"),
+        expected: FactVersion(3),
+        mutation: FactMutation::Put {
+            values: JsonObject::new(),
+        },
+    }];
+    let pin = |key: &str, version| FactExpectation {
+        key: FactKey::new("receipt.Base", key),
+        expected: FactVersion(version),
+    };
+    let mut reads = Vec::new();
+    let merged =
+        super::receipt::merge_receipt_pins::<()>(&catalog, &[pin("k", 3)], &writes, &mut reads);
+    assert!(merged.is_ok());
+    assert_eq!(reads.len(), 0);
+    let stale =
+        super::receipt::merge_receipt_pins::<()>(&catalog, &[pin("k", 2)], &writes, &mut reads);
+    assert!(matches!(
+        stale,
+        Err(ActionRefusal::StalePreconditionRead { ref key, link: None })
+            if *key == FactKey::new("receipt.Base", "k")
+    ));
+    assert_eq!(reads.len(), 0);
+    let fresh =
+        super::receipt::merge_receipt_pins::<()>(&catalog, &[pin("other", 1)], &writes, &mut reads);
+    assert!(fresh.is_ok());
+    assert_eq!(reads, [pin("other", 1)]);
+    Ok(())
+}

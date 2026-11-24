@@ -44,50 +44,42 @@ pub(super) fn links_after_commit<E, C, T, V: CommitView + ?Sized>(
 }
 
 /// The values an object has once the commit applies; `None` when it is
-/// deleted, absent, or unprovable by this host.
+/// deleted, absent, or unprovable by this host. `object` may name any type of
+/// its hierarchy: it is written and stored by its canonical identity.
 pub(super) fn values_after_commit<E, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
     view: &V,
     object: &FactKey,
 ) -> Result<Option<crate::cell_host::JsonObject>, CommitError<V::Error>> {
+    let canonical = model.canonical(object);
     if let Some(write) = commit
         .writes
         .iter()
         .rev()
-        .find(|write| model.canonical(&write.key) == *object)
+        .find(|write| model.canonical(&write.key) == canonical)
     {
         return Ok(match &write.mutation {
             FactMutation::Put { values } => Some(values.clone()),
             FactMutation::Delete => None,
         });
     }
-    view.object_values(object).map_err(CommitError::Host)
+    view.object_values(&canonical).map_err(CommitError::Host)
 }
 
 /// The canonical object `canonical` as the commit leaves it, keyed by its
 /// post-commit concrete type ([`concrete_after`]: a subtype this commit
-/// creates is that subtype, not its hierarchy root); the root when the host
-/// cannot name it. `None` when the commit deletes it: a deleted object has
-/// no law left to hold and is no member of an inverse role (#1701).
+/// creates is that subtype, not its hierarchy root). `None` when it is absent
+/// once the commit applies (deleted by it, or never stored): an absent object
+/// has no law to hold and is no member of an inverse role (#1701).
 pub(super) fn subject_after<E, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
     view: &V,
     canonical: &FactKey,
 ) -> Result<Option<FactKey>, CommitError<V::Error>> {
-    let deleted = commit.writes.iter().any(|write| {
-        matches!(write.mutation, FactMutation::Delete) && model.canonical(&write.key) == *canonical
-    });
-    if deleted {
-        return Ok(None);
-    }
-    let concrete = concrete_after(commit, model, view, canonical)?
-        .unwrap_or_else(|| canonical.object_type.clone());
-    Ok(Some(FactKey::new(
-        concrete.as_str(),
-        canonical.key.as_str(),
-    )))
+    Ok(concrete_after(commit, model, view, canonical)?
+        .map(|concrete| FactKey::new(concrete.as_str(), canonical.key.as_str())))
 }
 
 /// LAW-LINK-1: a subject's link targets as the commit leaves them, read

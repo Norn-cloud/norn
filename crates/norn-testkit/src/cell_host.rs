@@ -100,8 +100,6 @@ use proptest_state_machine::{ReferenceStateMachine, StateMachineTest};
 use crate::coverage::{self, Coverage};
 use crate::runner::{Failure, Settings};
 
-mod admit_shape;
-
 // ------------------------------------------------------------ reference host
 
 /// One committed ledger entry of a [`MemoryCell`].
@@ -1478,7 +1476,7 @@ impl CellModel {
 
     fn admit(&self, commit: &LawCommit) -> Result<CommitVersions, CommitError<Infallible>> {
         self.with_model(|model| {
-            admit_shape::admit_shape(&self.facts, commit, *model)?;
+            Self::admit_shape(commit, *model)?;
             if let Some(consumed) = &commit.consumes
                 && !self.pending(consumed)
             {
@@ -1508,6 +1506,41 @@ impl CellModel {
             }
             Ok(CommitVersions { written, linked })
         })
+    }
+
+    fn admit_shape(
+        commit: &LawCommit,
+        model: CommitModel<'_, '_>,
+    ) -> Result<(), CommitError<Infallible>> {
+        let mut keys = BTreeSet::new();
+        for key in commit
+            .reads
+            .iter()
+            .map(|read| &read.key)
+            .chain(commit.writes.iter().map(|write| &write.key))
+        {
+            if !keys.insert(model.canonical(key)) {
+                return Err(CommitError::DuplicateKey { key: key.clone() });
+            }
+        }
+        let mut links = BTreeSet::new();
+        for write in &commit.links {
+            if !links.insert(model.canonical_link(&write.key)) {
+                return Err(CommitError::DuplicateLink {
+                    key: Box::new(write.key.clone()),
+                });
+            }
+        }
+        for write in &commit.links {
+            let declared = model.link(&write.key.source.object_type, &write.key.link);
+            if !declared.is_some_and(|link| model.is_a(&write.key.target.object_type, &link.target))
+            {
+                return Err(CommitError::LinkTarget {
+                    key: Box::new(write.key.clone()),
+                });
+            }
+        }
+        Ok(())
     }
 
     fn admit_versions(

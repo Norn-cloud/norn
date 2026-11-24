@@ -4219,6 +4219,7 @@ fn val_exact_invariants_admit_and_evaluate_temporal_functions_with_decimals()
 // ------------------------------------------- #1701: post-commit link laws
 
 const DOC: &str = "linklaw.Doc";
+const SPECIAL_DOC: &str = "linklaw.SpecialDoc";
 const LINE: &str = "linklaw.Line";
 const SPECIAL_LINE: &str = "linklaw.SpecialLine";
 const OWNER: &str = "linklaw.Owner";
@@ -4282,6 +4283,7 @@ fn refusal<T>(result: &Result<T, CommitError<std::convert::Infallible>>) -> Opti
 fn document_cell() -> Result<CommandCell, serde_json::Error> {
     let types: Vec<ObjectTypeDef> = serde_json::from_value(json!([
         {"name": DOC, "properties": [{"id": "limit", "type": {"kind": "integer"}}]},
+        {"name": SPECIAL_DOC, "extends": DOC},
         {"name": LINE, "properties": [{"id": "amount", "type": {"kind": "integer"}}]},
         {"name": SPECIAL_LINE, "extends": LINE, "links": [{
             "id": "doc", "target": DOC, "cardinality": {"to": "one", "from": "many"},
@@ -4329,6 +4331,31 @@ fn inverse_role_law_rechecks_a_stored_document_for_a_new_subtype_line() -> Check
         // A document without lines holds its law.
         cell.commit(CellCommit {
             writes: vec![put_new(DOC, "d", json!({"limit": limit}))?],
+            ..CellCommit::empty()
+        })?;
+        let line = FactKey::new(SPECIAL_LINE, "l");
+        let result = cell.commit(CellCommit {
+            writes: vec![put_new(SPECIAL_LINE, "l", json!({"amount": 1}))?],
+            links: vec![add_link(&line, "doc", &doc)],
+            ..CellCommit::empty()
+        });
+        let expected = (!admitted).then_some("core.laws.violated");
+        assert_eq!(refusal(&result), expected, "limit {limit}");
+        assert_eq!(cell.load(&line)?.exists(), admitted);
+    }
+    Ok(())
+}
+
+/// #1701: a stored document of a subtype is read by its canonical identity
+/// (as every host stores it) and judged by its subtype's laws when a new line
+/// links to it.
+#[test]
+fn inverse_role_law_rechecks_a_stored_subtype_document_for_a_new_line() -> Checked {
+    for (limit, admitted) in [(0, false), (1, true)] {
+        let mut cell = document_cell()?;
+        let doc = FactKey::new(SPECIAL_DOC, "d");
+        cell.commit(CellCommit {
+            writes: vec![put_new(SPECIAL_DOC, "d", json!({"limit": limit}))?],
             ..CellCommit::empty()
         })?;
         let line = FactKey::new(SPECIAL_LINE, "l");
@@ -4406,5 +4433,30 @@ fn deleting_and_unlinking_a_law_governed_subject_rechecks_only_its_survivors() -
         assert_eq!(cell.load(&task)?.exists(), !admitted);
         assert_eq!(cell.load_link(&link)?.exists(), !admitted);
     }
+    Ok(())
+}
+
+/// #1701: removing an already-absent law-read link from a task that was never
+/// stored re-checks no subject for that task: it has no law to hold.
+#[test]
+fn removing_an_absent_law_read_link_from_an_absent_subject_commits() -> Checked {
+    let mut cell = owner_cell()?;
+    let owner = FactKey::new(OWNER, "o");
+    cell.commit(CellCommit {
+        writes: vec![put_new(OWNER, "o", json!({"capacity": 10, "minimum": 0}))?],
+        ..CellCommit::empty()
+    })?;
+    let ghost = FactKey::new(TASK, "ghost");
+    let result = cell.commit(CellCommit {
+        links: vec![LinkWrite {
+            key: LinkKey::new(ghost.clone(), "owner", owner.clone()),
+            expected: FactVersion::ABSENT,
+            mutation: LinkMutation::Remove,
+        }],
+        ..CellCommit::empty()
+    });
+    assert_eq!(refusal(&result), None);
+    assert!(!cell.load(&ghost)?.exists());
+    assert!(cell.load(&owner)?.exists());
     Ok(())
 }
