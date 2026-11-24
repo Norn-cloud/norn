@@ -12,32 +12,19 @@ import { keptDrafts, sessionKey } from "./kept-drafts.ts"
 import { parkedCalls } from "./parked-calls.ts"
 import type { ParkedCall } from "../lib/screen/call.ts"
 
-/** Query options for a type- or record-scoped action catalog read. */
-export const actionsQueryOptions = (objectKind: string, objectId?: string) => ({
-  queryKey: ["actions", objectKind, objectId ?? null] as const,
-  queryFn: () => listActions(objectKind, undefined, objectId),
-  retry: false as const,
-  staleTime: objectId === undefined ? 60_000 : 0,
-})
-
 /**
  * The actions the cell offers this reader for one object type, or for one record in its current
  * state (the server filters; Studio shows what it gets).
  */
 export function useActions(objectKind: string, objectId?: string, enabled = true) {
-  return useQuery<CatalogRead>({ ...actionsQueryOptions(objectKind, objectId), enabled })
+  return useQuery<CatalogRead>({ queryKey: ["actions", objectKind, objectId ?? null], queryFn: () => listActions(objectKind, undefined, objectId), retry: false, staleTime: objectId === undefined ? 60_000 : 0, enabled })
 }
 
-const draftKey = (open: OpenAction) =>
-  open.defaults !== undefined && Object.keys(open.defaults).length > 0
-    ? `${open.action.actionId}:${JSON.stringify(open.prefill ?? {})}:${JSON.stringify(open.defaults)}`
-    : `${open.action.actionId}:${JSON.stringify(open.prefill ?? {})}`
+const draftKey = (open: OpenAction) => `${open.action.actionId}:${JSON.stringify(open.prefill ?? {})}`
 
 export interface OpenAction {
   readonly action: ActionSummary
   readonly prefill?: Readonly<Record<string, string>>
-  /** Editable initial values supplied by the server (e.g. a suggested fix's arguments). */
-  readonly defaults?: Readonly<Record<string, Draft>>
   /** Open on this parked call (the inbox's "Approved, run it"), as the cell serves it. */
   readonly parked?: ParkedCall
   /** Run the parked call as soon as the cell offers it. */
@@ -107,10 +94,8 @@ export function ActionSheet({ open, onClose, onView }: { readonly open: OpenActi
       <Sheet open={open !== null} onOpenChange={(next) => { if (!next) request() }}>
         <SheetContent className="w-[min(36rem,100vw)] gap-0 overflow-y-auto border-node-border shadow-float sm:max-w-xl"
           onOpenAutoFocus={(event) => {
-            // Start in the first empty editable field (or first editable field when all are filled),
-            // not on the close button or the wizard's step bar.
-            const inputs = [...((event.currentTarget as HTMLElement | null)?.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>("form input:not([readonly]), form select, form textarea") ?? [])]
-            const first = inputs.find((el) => el.value === "") ?? inputs[0]
+            // Start in the first field to fill, not on the close button or the wizard's step bar.
+            const first = (event.currentTarget as HTMLElement | null)?.querySelector<HTMLElement>("form input:not([readonly]), form select, form textarea")
             if (first) { event.preventDefault(); first.focus() }
           }}>
           {open !== null && <>
@@ -134,7 +119,7 @@ export function ActionSheet({ open, onClose, onView }: { readonly open: OpenActi
                 parked={parked} runNow={open.runNow === true && parked === open.parked}
                 onParked={(call) => parkedCalls.set(session, draftKey(open), call)} onUnparked={() => parkedCalls.delete(session, draftKey(open))}
                 onChanged={() => invalidate(open.action.objectKind)}
-                technical={technical} prefill={open.prefill} defaults={open.defaults} onDirty={setDirty} onClose={close}
+                technical={technical} prefill={open.prefill} onDirty={setDirty} onClose={close}
                 onView={onView === undefined ? undefined : (id) => { close(); onView(id) }} />
             </div>
           </>}

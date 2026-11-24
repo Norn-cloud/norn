@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link, useRouter } from "@tanstack/react-router"
-import { ChevronRight, CircleAlert, Inbox as InboxIcon, Plug, ShieldAlert, Wand2, type LucideIcon } from "lucide-react"
+import { ChevronRight, CircleAlert, Inbox as InboxIcon, Plug, ShieldAlert, type LucideIcon } from "lucide-react"
 import type { ComponentProps, MouseEvent, ReactNode } from "react"
 import { EmptyState } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
@@ -20,9 +20,8 @@ type Decision = Extract<Item, { kind: "decision" }>
 type Source = Extract<Item, { kind: "source_error" }>
 
 /** A server-given Studio route (it may carry a query), followed in the app; a modified click keeps the browser's own. */
-export function RouteLink({ to, state, children, className, ...rest }: {
+export function RouteLink({ to, children, className, ...rest }: {
   readonly to: string
-  readonly state?: Readonly<Record<string, unknown>>
   readonly children: ReactNode
   readonly className?: string
 } & Omit<ComponentProps<"a">, "href" | "onClick" | "children" | "className">) {
@@ -30,8 +29,7 @@ export function RouteLink({ to, state, children, className, ...rest }: {
   const follow = (event: MouseEvent<HTMLAnchorElement>) => {
     if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
     event.preventDefault()
-    if (state !== undefined) router.history.push(to, state as never)
-    else router.history.push(to)
+    router.history.push(to)
   }
   return <a {...rest} href={to} onClick={follow} className={className}>{children}</a>
 }
@@ -128,7 +126,7 @@ function GroupHead({ icon: Icon, title, count, description, children }: { readon
   )
 }
 
-/** One law and the records it holds back: open it for each record, its finding in words and the fix the server suggests. */
+/** One law and the records it holds back: open it for each record, its finding in words and a link to review the record. */
 function HeldBack({ group }: { readonly group: Group }) {
   return (
     <Collapsible defaultOpen={group.records.length <= 3}>
@@ -153,10 +151,8 @@ function HeldBack({ group }: { readonly group: Group }) {
                 </div>
               )}
               {record.suggestedFix && (
-                <Button asChild size="xs" variant="secondary" className="ms-auto" title={record.suggestedFix.title}>
-                  <RouteLink to={record.target} state={{ suggestedFix: { objectType: record.objectType, id: record.id, fix: record.suggestedFix } }}>
-                    <Wand2 aria-hidden />{record.suggestedFix.label}
-                  </RouteLink>
+                <Button asChild size="xs" variant="secondary" className="ms-auto">
+                  <RouteLink to={record.target}>Review fix</RouteLink>
                 </Button>
               )}
             </div>

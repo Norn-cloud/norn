@@ -23,7 +23,7 @@ const group = (records: unknown[]) => ({
 })
 const sections = [{ kind: "held_back", count: 1, shown: 1, approximate: false }, { kind: "decision", count: 0, shown: 0, approximate: false }, { kind: "source_error", count: 0, shown: 0, approximate: false }]
 
-test("home: the inbox groups held-back records by law, each with its finding in words and the fix the server offers", async ({ page }) => {
+test("home: the inbox groups held-back records by law, each with its finding in words and a link to review a suggested fix", async ({ page }) => {
   await cell(page, { scanLimit: 10000, sections, items: [group([{
     objectType: "docs.ScannedDocument", id: "SCAN-INV-1042", target: "/sources/docs.ScannedDocument/SCAN-INV-1042",
     finding: { id: "f1", words: "total 720.00 ≠ lines 72.00", message: "m", compared: {} }, values: { doc_number: "INV-1042" },
@@ -33,9 +33,10 @@ test("home: the inbox groups held-back records by law, each with its finding in 
   await expect(page.getByRole("heading", { name: "Needs attention" })).toBeVisible()
   await expect(page.getByText("An itemized document's total equals the sum of its lines")).toBeVisible()
   await expect(page.getByText("total 720.00 ≠ lines 72.00")).toBeVisible()
-  await expect(page.getByRole("link", { name: "Review" })).toHaveAttribute("href", "/objects/docs.ScannedDocument?population=held_back")
-  await page.getByRole("link", { name: "Use 72.00" }).click()
+  await expect(page.getByRole("link", { name: "Review", exact: true })).toHaveAttribute("href", "/objects/docs.ScannedDocument?population=held_back")
+  await page.getByRole("link", { name: "Review fix", exact: true }).click()
   await expect(page).toHaveURL(/\/sources\/docs\.ScannedDocument\/SCAN-INV-1042$/)
+  expect(await page.evaluate(() => window.history.state?.suggestedFix)).toBeUndefined()
 })
 
 test("home: a member's inbox names the held record with no finding words and no fix (the server sends none)", async ({ page }) => {
@@ -43,7 +44,7 @@ test("home: a member's inbox names the held record with no finding words and no 
   await page.goto("/")
   await expect(page.getByRole("link", { name: "SCAN-INV-1042" })).toBeVisible()
   await expect(page.getByText("total 720.00")).toHaveCount(0)
-  await expect(page.getByRole("link", { name: /Use / })).toHaveCount(0)
+  await expect(page.getByRole("link", { name: "Review fix", exact: true })).toHaveCount(0)
 })
 
 test("home: a record two laws disagree on offers no fix and names both laws", async ({ page }) => {
@@ -55,7 +56,7 @@ test("home: a record two laws disagree on offers no fix and names both laws", as
   await page.goto("/")
   await expect(page.getByText("Needs review: 2 laws disagree")).toBeVisible()
   await expect(page.getByText("total 72.00 ≠ lines 720.00")).toBeVisible()
-  await expect(page.getByRole("link", { name: /Use / })).toHaveCount(0)
+  await expect(page.getByRole("link", { name: "Review fix", exact: true })).toHaveCount(0)
 })
 
 test("home: nothing to do says so", async ({ page }) => {

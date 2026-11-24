@@ -4,7 +4,7 @@ import { session } from "./object-cell.ts"
 
 // RULES: each rule in plain words, grouped by type and rule, with the records it holds back now
 // (lower-bound counts, withholding and disagreement semantics, main's record title resolution, and
-// the server's fix-offer link), platform rules folded under System, the /guarantees → /rules
+// the record review link), platform rules folded under System, the /guarantees → /rules
 // redirect, held-work reachability from Workspace/Inbox, and the record & type Rules tabs.
 const root = new URL("../../../", import.meta.url)
 const read = (path: string) => JSON.parse(readFileSync(new URL(path, root), "utf8")) as { artifactId?: string; payload?: Record<string, unknown> }
@@ -38,24 +38,6 @@ const warningLaw = {
   version: "0.1.0",
 }
 const artifacts = [...base, ...scans.filter(({ artifactId }) => !seen.has(artifactId)), warningLaw]
-
-const correctActionArtifact = scans.find(({ artifactId }) => artifactId === "docs.scanned_document.correct.action")?.payload as {
-  actionId: string
-  title: string
-  inputSchema: unknown
-  effectProgram: { kind: string; objectIdField: string; objectKind: string }
-}
-
-const correctActionSummary = {
-  actionId: correctActionArtifact.actionId,
-  title: correctActionArtifact.title,
-  description: "Record the printed total on a scanned document with its evidence and reason.",
-  objectKind: correctActionArtifact.effectProgram.objectKind,
-  effect: correctActionArtifact.effectProgram.kind,
-  objectIdField: correctActionArtifact.effectProgram.objectIdField,
-  inputSchema: correctActionArtifact.inputSchema,
-  uiEffects: { irreversible: false, destructive: false, money: ["total"] },
-}
 
 const heldLines = {
   kind: "held_back",
@@ -221,12 +203,10 @@ async function shoot(page: Page, name: string) {
 interface CellOptions {
   readonly inbox?: unknown
   readonly profile?: { readonly rows: number; readonly quarantinedRows: number; readonly approximate: boolean; readonly scanLimit: number }
-  readonly actionsFor?: (kind: string | null, callCount: number) => readonly unknown[]
+  readonly servesRecord?: boolean
 }
 
 async function cell(page: Page, options: CellOptions = {}) {
-  const actionCalls: { readonly actionId: string; readonly body: { readonly input: Record<string, unknown>; readonly idempotencyKey: string } }[] = []
-  let catalogReads = 0
   await session(page)
   await page.route("**/api/host/v1/**", (route) => {
     const url = new URL(route.request().url())
@@ -236,27 +216,11 @@ async function cell(page: Page, options: CellOptions = {}) {
     if (path.endsWith("/v1/inbox")) return route.fulfill({ json: options.inbox ?? defaultInbox })
     if (path.endsWith("/v1/decisions")) return route.fulfill({ json: { items: [], total: 0, approximate: false, serverNowMs: Date.UTC(2026, 10, 23, 12, 0, 0) } })
     if (path.endsWith("/v1/decisions/requested")) return route.fulfill({ json: { items: [], serverNowMs: Date.UTC(2026, 10, 23, 12, 0, 0) } })
-    if (path.endsWith("/v1/actions") && route.request().method() === "GET") {
-      catalogReads += 1
-      const kind = url.searchParams.get("objectKind")
-      const items = options.actionsFor
-        ? options.actionsFor(kind, catalogReads)
-        : (kind === null || kind === "docs.ScannedDocument" ? [correctActionSummary] : [])
-      return route.fulfill({ json: { items } })
-    }
-    if (path.includes("/v1/actions/") && route.request().method() === "POST") {
-      const actionId = decodeURIComponent(path.split("/v1/actions/")[1] ?? "")
-      const body = route.request().postDataJSON() as { input: Record<string, unknown>; idempotencyKey: string }
-      actionCalls.push({ actionId, body })
-      return route.fulfill({
-        json: {
-          outcome: "committed",
-          objectType: "docs.ScannedDocument",
-          objectId: String(body.input["id"] ?? "SCAN-INV-0042"),
-          version: 2,
-          receipt: { receiptHash: "sha256:receipt-correct-1", commitSeq: 413, recordedAtMs: Date.UTC(2026, 10, 23, 12, 1, 0) },
-        },
-      })
+    const notFound = { status: 404, json: { code: "object.not_found", message: "no such readable object" } }
+    if (path.endsWith("/v1/actions")) {
+      return url.searchParams.has("objectId") && !options.servesRecord
+        ? route.fulfill(notFound)
+        : route.fulfill({ json: { items: [] } })
     }
     if (path.endsWith("/v1/objects/docs.ScannedDocument:profile")) {
       const profile = options.profile ?? { rows: 9500, quarantinedRows: 500, approximate: true, scanLimit: 10000 }
@@ -265,16 +229,16 @@ async function cell(page: Page, options: CellOptions = {}) {
     if (path.endsWith("/v1/objects/docs.ScannedDocument:quarantined")) {
       return route.fulfill({ json: { objectType: "docs.ScannedDocument", items: [{ id: "SCAN-INV-0042", openFindings: 1 }], approximate: true, scanLimit: 10000 } })
     }
-    if (path.endsWith("/v1/objects/docs.ScannedDocument/SCAN-INV-0042")) return route.fulfill({ json: scannedRecord })
-    if (path.endsWith("/v1/objects/docs.ScannedDocument/SCAN-INV-0042/links")) return route.fulfill({ json: { objectType: "docs.ScannedDocument", id: "SCAN-INV-0042", items: [], next: null } })
+    if (path.endsWith("/v1/objects/docs.ScannedDocument/SCAN-INV-0042")) return route.fulfill(options.servesRecord ? { json: scannedRecord } : notFound)
+    if (path.endsWith("/v1/objects/docs.ScannedDocument/SCAN-INV-0042/links")) return route.fulfill(options.servesRecord ? { json: { objectType: "docs.ScannedDocument", id: "SCAN-INV-0042", items: [], next: null } } : notFound)
     if (path.endsWith("/v1/objects/docs.ScannedDocument/SCAN-INV-0042/findings")) {
       return route.fulfill({
         json: {
           objectType: "docs.ScannedDocument",
           id: "SCAN-INV-0042",
-          quarantined: true,
+          quarantined: !options.servesRecord,
           evidence: [],
-          findings: [{
+          findings: options.servesRecord ? [] : [{
             id: "f1",
             ruleRef: { kind: "law", artifactId: "canon.ItemizedDocument.total_matches_lines.law", lawId: "canon.ItemizedDocument.total_matches_lines", version: "sha256:1" },
             severity: "error",
@@ -292,7 +256,6 @@ async function cell(page: Page, options: CellOptions = {}) {
     }
     return route.fulfill({ status: 404, json: { code: "route.not_found", message: "not served" } })
   })
-  return { actionCalls }
 }
 
 test.beforeEach(({ }, info) => { test.skip(Boolean(process.env.E2E_BASE), `${info.title}: replays recorded cell documents`) })
@@ -379,8 +342,8 @@ test("rules: /guarantees redirects preserving suffix/query/hash, nav & palette u
   await expect(page.getByText("docs.ScannedDocument", { exact: true }).first()).toBeVisible()
 })
 
-test("rules: held-record counts preserve lower bounds (including profile), scope withholding/disagreement to rows, and open the real suggested-fix action flow", async ({ page }) => {
-  const { actionCalls } = await cell(page)
+test("rules: held-record counts preserve lower bounds (including profile), scope withholding/disagreement to rows, and link to the quarantined record", async ({ page }) => {
+  await cell(page)
   await page.goto("/rules")
 
   // StatStrip labels per-rule holds accurately and names shown type-rule groups, never "rules".
@@ -404,15 +367,14 @@ test("rules: held-record counts preserve lower bounds (including profile), scope
   await expect(chip).toHaveAttribute("data-approximate", "true")
   await expect(chip).toHaveAttribute("title", /At least 500 held back.*10,000 rows/)
 
-  // Record 1 (scoped to its row): main's title resolution uses id (never guessing doc_number INV-0042), shows finding and server's fix offer.
+  // Record 1 (scoped to its row): main's title resolution uses id (never guessing doc_number INV-0042), shows the finding and a link to review the record.
   const row1 = rule.locator('[data-held-record="SCAN-INV-0042"]')
   await expect(row1.getByRole("link", { name: "SCAN-INV-0042", exact: true })).toHaveAttribute("href", "/sources/docs.ScannedDocument/SCAN-INV-0042")
   await expect(row1.getByRole("link", { name: "INV-0042", exact: true })).toHaveCount(0)
   await expect(row1).toContainText("total 720.00 ≠ lines 72.00")
   await expect(row1).not.toContainText("Needs review")
-  const fix = row1.getByRole("link", { name: "Use 72.00" })
-  await expect(fix).toHaveAttribute("href", "/sources/docs.ScannedDocument/SCAN-INV-0042")
-  await expect(fix).toHaveAttribute("title", "Correct an extracted total")
+  const review = row1.getByRole("link", { name: "Review fix", exact: true })
+  await expect(review).toHaveAttribute("href", "/sources/docs.ScannedDocument/SCAN-INV-0042")
 
   // Record 2 (scoped to its row): label resolves via recordName; disagreement shows badge and other finding, and offers no fix control.
   const row2 = rule.locator('[data-held-record="SCAN-INV-0043"]')
@@ -420,7 +382,7 @@ test("rules: held-record counts preserve lower bounds (including profile), scope
   await expect(row2).toContainText("total 720.00 ≠ lines 72.00")
   await expect(row2).toContainText("Needs review: 2 laws disagree")
   await expect(row2).toContainText("total 720.00 ≠ ledger entry 72.00")
-  await expect(row2.getByRole("link", { name: /Use / })).toHaveCount(0)
+  await expect(row2.getByRole("link", { name: "Review fix", exact: true })).toHaveCount(0)
   await expect(row2.getByRole("link")).toHaveCount(1)
 
   // Record 3 (scoped to its row): withheld values/finding shows record id link only, with no finding details, disagreement, or fix controls.
@@ -436,34 +398,14 @@ test("rules: held-record counts preserve lower bounds (including profile), scope
   const reviewAll = rule.getByRole("link", { name: "Review all 500+" })
   await expect(reviewAll).toHaveAttribute("href", "/objects/docs.ScannedDocument?population=held_back")
 
-  // Following the fix offer opens the record AND launches the server-offered action sheet with server-supplied arguments prefilled.
-  await fix.click()
+  await review.click()
   await expect(page).toHaveURL(/\/sources\/docs\.ScannedDocument\/SCAN-INV-0042$/)
   await expect(page.getByRole("heading", { name: "SCAN-INV-0042", level: 1 })).toBeVisible()
-  const sheet = page.getByRole("dialog")
-  await expect(sheet.getByRole("heading", { name: "Correct an extracted total" })).toBeVisible()
-  await expect(sheet.locator('[data-pointer="/id"] input')).toHaveValue("SCAN-INV-0042")
-  await expect(sheet.locator('[data-pointer="/id"] input')).toHaveAttribute("readonly", "")
-  await expect(sheet.locator('[data-pointer="/total"] input')).toHaveValue("72.00")
-  await expect(sheet.locator('[data-pointer="/correction_evidence"] input')).toHaveValue("SCAN-INV-0042~total")
-  await expect(sheet.locator('[data-pointer="/correction_reason"] input')).toHaveValue("")
-
-  // Completing the missing required input submits the governed action with the server's arguments and shows the receipt.
-  await sheet.locator('[data-pointer="/correction_reason"] input').fill("OCR misread 72.00 as 720.00")
-  await sheet.getByRole("button", { name: "Correct an extracted total" }).click()
-  await expect(sheet.getByRole("status")).toContainText("SCAN-INV-0042")
-  expect(actionCalls).toHaveLength(1)
-  expect(actionCalls[0]?.actionId).toBe("docs.scanned_document.correct")
-  expect(actionCalls[0]?.body.input).toEqual({
-    id: "SCAN-INV-0042",
-    currency: "USD",
-    total: "72.00",
-    correction_evidence: "SCAN-INV-0042~total",
-    correction_reason: "OCR misread 72.00 as 720.00",
-  })
-  await shoot(page, "rules-fix-receipt")
-  await sheet.getByRole("button", { name: "Done", exact: true }).click()
-  await expect(sheet).toBeHidden()
+  await expect(page.getByRole("status").filter({ hasText: "Held in quarantine" })).toBeVisible()
+  await expect(page.getByText("total 720.00 ≠ lines 72.00", { exact: true })).toBeVisible()
+  await expect(page.getByRole("dialog")).toHaveCount(0)
+  expect(await page.evaluate(() => window.history.state?.suggestedFix)).toBeUndefined()
+  await shoot(page, "rules-review-quarantine")
 
   // Going back and clicking Review all lands directly on the type's Quarantine tab.
   await page.goBack()
@@ -537,7 +479,7 @@ test("rules: held-work view is reachable from Workspace Home and from Inbox", as
 })
 
 test("rules: the record page and object type page both expose a Rules tab leading with authored names", async ({ page }) => {
-  await cell(page)
+  await cell(page, { servesRecord: true })
   // Record page Rules tab.
   await page.goto("/sources/docs.ScannedDocument/SCAN-INV-0042")
   await expect(page.getByRole("heading", { name: "SCAN-INV-0042", level: 1 })).toBeVisible()
@@ -555,39 +497,6 @@ test("rules: the record page and object type page both expose a Rules tab leadin
   await page.getByRole("tab", { name: "Rules" }).click()
   const rule = page.locator('[data-law="canon.ItemizedDocument.total_matches_lines"]').first()
   await expect(rule).toContainText("500+ held back")
-  await expect(rule.getByRole("link", { name: "Use 72.00" })).toHaveAttribute("href", "/sources/docs.ScannedDocument/SCAN-INV-0042")
+  await expect(rule.getByRole("link", { name: "Review fix", exact: true })).toHaveAttribute("href", "/sources/docs.ScannedDocument/SCAN-INV-0042")
   await shoot(page, "rules-type-tab")
-})
-
-test("rules: suggested-fix navigation reads the live action catalog instead of consuming a stale cached read", async ({ page }) => {
-  // First visit caches an empty action catalog for SCAN-INV-0042; later live reads offer the fix action.
-  let offerAction = false
-  await cell(page, {
-    actionsFor: (kind) => (offerAction && (kind === null || kind === "docs.ScannedDocument") ? [correctActionSummary] : []),
-  })
-  await page.goto("/sources/docs.ScannedDocument/SCAN-INV-0042")
-  await expect(page.getByRole("heading", { name: "SCAN-INV-0042", level: 1 })).toBeVisible()
-  await expect(page.getByRole("button", { name: "Correct an extracted total" })).toHaveCount(0)
-
-  // Navigate via SPA (keeping QueryClient cache warm) to Rules, flip the server to offer the action, and follow Use 72.00.
-  offerAction = true
-  await page.getByRole("link", { name: "All rules" }).click()
-  await expect(page).toHaveURL((url) => url.pathname === "/rules")
-  const rule = page.locator('[data-law="canon.ItemizedDocument.total_matches_lines"]').first()
-  await rule.locator('[data-held-record="SCAN-INV-0042"]').getByRole("link", { name: "Use 72.00" }).click()
-  await expect(page).toHaveURL(/\/sources\/docs\.ScannedDocument\/SCAN-INV-0042$/)
-  const sheet = page.getByRole("dialog")
-  await expect(sheet.getByRole("heading", { name: "Correct an extracted total" })).toBeVisible()
-  await expect(sheet.locator('[data-pointer="/total"] input')).toHaveValue("72.00")
-
-  // Reverse direction: cache now holds the action, but server withdraws it before the next fix navigation.
-  await sheet.getByRole("button", { name: "Close" }).click()
-  await expect(sheet).toBeHidden()
-  offerAction = false
-  await page.getByRole("link", { name: "All rules" }).click()
-  await expect(page).toHaveURL((url) => url.pathname === "/rules")
-  await rule.locator('[data-held-record="SCAN-INV-0042"]').getByRole("link", { name: "Use 72.00" }).click()
-  await expect(page).toHaveURL(/\/sources\/docs\.ScannedDocument\/SCAN-INV-0042$/)
-  await expect(page.getByRole("button", { name: "Correct an extracted total" })).toHaveCount(0)
-  await expect(page.getByRole("dialog")).toHaveCount(0)
 })

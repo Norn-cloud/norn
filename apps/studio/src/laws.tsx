@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query"
 import type { ReactNode } from "react"
-import { Scale, ShieldAlert, ShieldCheck, Wand2 } from "lucide-react"
+import { Scale, ShieldAlert, ShieldCheck } from "lucide-react"
 import { Chip } from "@/components/chip"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
@@ -62,8 +62,8 @@ function HeldCountChip({ held, scanLimit }: { readonly held: Group; readonly sca
 
 /**
  * The first held-back records the server returned for one rule, each with its finding in words (when
- * disclosed to this reader), disagreement note (when multiple laws hold it) and the fix the server
- * offers, followed by the link into the type's held-back review flow.
+ * disclosed to this reader), disagreement note (when multiple laws hold it) and a review link when the server suggests
+ * a fix, followed by the link into the type's held-back review flow.
  */
 function HeldRecords({ held }: { readonly held: Group }) {
   const shown = held.records.slice(0, HELD_EXAMPLES)
@@ -77,10 +77,8 @@ function HeldRecords({ held }: { readonly held: Group }) {
             <RouteLink to={record.target} className="font-medium underline-offset-4 hover:underline">{recordName(record)}</RouteLink>
             {record.finding && <span className="min-w-0 flex-1 text-muted-foreground tabular-nums">{record.finding.words}</span>}
             {record.suggestedFix && (
-              <Button asChild size="xs" variant="secondary" className="ms-auto" title={record.suggestedFix.title}>
-                <RouteLink to={record.target} state={{ suggestedFix: { objectType: record.objectType, id: record.id, fix: record.suggestedFix } }}>
-                  <Wand2 aria-hidden />{record.suggestedFix.label}
-                </RouteLink>
+              <Button asChild size="xs" variant="secondary" className="ms-auto">
+                <RouteLink to={record.target}>Review fix</RouteLink>
               </Button>
             )}
             {others.length > 0 && (
@@ -104,7 +102,7 @@ function HeldRecords({ held }: { readonly held: Group }) {
 /**
  * One law: its name in plain words (the artifact's name, or its `law:` label in the reader's
  * language), why it exists, how the cell holds it and, live, the records it is holding back right
- * now with the fix the server suggests for each. Everything here is the server's: Studio judges nothing.
+ * now. Everything here is the server's: Studio judges nothing.
  */
 function LawRow({ law, held, scanLimit }: { readonly law: Law; readonly held: Group | undefined; readonly scanLimit?: number }) {
   const { view } = useView()

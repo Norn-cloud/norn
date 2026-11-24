@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 import {
-  ACTIONS_UNAVAILABLE, callAction, decimalExample, escapePointer, instantText, isDiagnosticPlaced, offsetSuffix, pickerDateTime, rebaseFields, resolveDateTime, seedDraft, selectedAlternative, sentMembers, inputPointer, itemNoun, newIdempotencyKey, receiptVerb, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
+  ACTIONS_UNAVAILABLE, callAction, decimalExample, escapePointer, instantText, isDiagnosticPlaced, offsetSuffix, pickerDateTime, rebaseFields, resolveDateTime, selectedAlternative, sentMembers, inputPointer, itemNoun, newIdempotencyKey, receiptVerb, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
   type ActionReceipt, type ActionSummary, type Diagnostic, type Draft, type FormField, type Section, type Spec,
 } from "../lib/actions.ts"
 import { parkedOf, type ParkedCall, type Phase } from "../lib/screen/call.ts"
@@ -35,7 +35,7 @@ const unreachable = (phase: Extract<Phase, { kind: "failed" }>) =>
  * decides; the form shows each refusal at the field its pointer names, and the receipt on success.
  * A draft keeps one idempotency key until it changes, so a retry after an outage never commits twice.
  */
-export function ActionForm({ action, objectTitle, technical = false, prefill = {}, defaults = {}, onDirty, onClose, onView, remembered, onDraft, onCommitted, onChanged, parked, onParked, onUnparked, runNow = false, call = callAction }: {
+export function ActionForm({ action, objectTitle, technical = false, prefill = {}, onDirty, onClose, onView, remembered, onDraft, onCommitted, onChanged, parked, onParked, onUnparked, runNow = false, call = callAction }: {
   readonly action: ActionSummary
   /** The object type in words ("Holding"), for the business sentence on success. */
   readonly objectTitle: string
@@ -45,8 +45,6 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   readonly onView?: (objectId: string) => void
   /** Values the entry point already knows (the record's id for a transition); shown, not editable. */
   readonly prefill?: Readonly<Record<string, string>>
-  /** Editable initial values supplied by the server (e.g. a suggested fix's derived arguments). */
-  readonly defaults?: Readonly<Record<string, Draft>>
   readonly onDirty?: (dirty: boolean) => void
   readonly onClose?: () => void
   /** A draft kept from earlier in this session, to start from instead of the empty form. */
@@ -69,7 +67,7 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   const fields = useMemo(() => fieldsOf(action.inputSchema), [action])
   const sections = useMemo(() => sectionsOf(fields, groupsOf(action.inputSchema), action.objectIdField), [fields, action])
   const blocked = useMemo(() => unsupported(fields), [fields])
-  const initial = useMemo(() => seedDraft(fields, defaults, prefill), [fields, defaults, prefill])
+  const initial = useMemo(() => Object.entries(prefill).reduce<Draft>((draft, [name, value]) => withDraftAt(draft, `/${escapePointer(name)}`, value), emptyDraft(fields)), [fields, prefill])
   const [draft, setDraft] = useState<Draft>(remembered ?? initial)
   // A kept draft is unsent work: the sheet treats it as dirty from the start.
   useEffect(() => { if (remembered !== undefined && JSON.stringify(remembered) !== JSON.stringify(initial)) onDirty?.(true) }, [])
