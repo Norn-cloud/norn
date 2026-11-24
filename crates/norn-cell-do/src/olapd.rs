@@ -36,6 +36,15 @@
 //! one operation at a time; that operation is its one cleanup owner, so a
 //! store, replayed or not, never removes an attempt still downloading or
 //! one a later landing made.
+//!
+//! Rolling-deploy / rollback contract (D136/#1661): deploy `norn-olapd`
+//! before cell callers switch to `/v2/evaluate` and `/v2/profile`, and roll
+//! back callers before retiring `/v2/*`. During rollout and rollback,
+//! `norn-olapd` dual-serves `/v1/evaluate` & `/v1/profile` (omitting
+//! `provenance` for older `deny_unknown_fields` callers) alongside
+//! `/v2/evaluate` & `/v2/profile` (requiring verified provenance, refusing
+//! missing provenance with `409 core.compute.stale_input`). Calling `/v2/*`
+//! against an older pre-v2 sidecar fails closed with `401` at the gate.
 
 use std::ffi::OsString;
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
@@ -51,8 +60,8 @@ use norn_cell::analytics::engine::{Engine, Settings};
 use norn_cell::analytics::{
     AnalyticalEngine, EngineOutcome, EngineRefusal, EvaluateRequest, ExportRequest,
     FrontierRequest, LandRequest, LandResponse, LineageRequest, MembersRequest, PageRequest,
-    ProfileRequest, SettleRequest, StoreBody, SyncRequest, TenantId, dispatch_evaluate,
-    dispatch_members,
+    ProfileRequest, STALE_INPUT_CODE, SettleRequest, StoreBody, SyncRequest, TenantId,
+    dispatch_evaluate, dispatch_members,
 };
 use norn_kernel::LogicalTime;
 use serde::Serialize;
@@ -497,7 +506,7 @@ fn connection(
             let resp = dispatch_evaluate(engine, &r)?;
             if resp.provenance.is_none() {
                 return Err(refusal(
-                    "analytics.engine",
+                    STALE_INPUT_CODE,
                     "v2 evaluate response omitted provenance",
                 ));
             }
@@ -513,7 +522,7 @@ fn connection(
             let resp = engine.profile_objects(&r)?;
             if resp.provenance.is_none() {
                 return Err(refusal(
-                    "analytics.engine",
+                    STALE_INPUT_CODE,
                     "v2 profile response omitted provenance",
                 ));
             }

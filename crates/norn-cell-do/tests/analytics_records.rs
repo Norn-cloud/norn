@@ -39,6 +39,9 @@ const SCOPE: &str = "orgId=org_demo&environmentId=dev";
 struct Loading(InProcess, Mutex<BTreeMap<String, Vec<u8>>>);
 
 impl Transport for Loading {
+    fn capabilities(&self) -> norn_cell::analytics::EngineCapabilities {
+        self.0.capabilities()
+    }
     fn resumed(&self) -> Option<EngineAnswer> {
         None
     }
@@ -697,6 +700,9 @@ fn dataset_lineage_requires_values_and_sources_capabilities() {
 struct PanicTransport;
 
 impl Transport for PanicTransport {
+    fn capabilities(&self) -> norn_cell::analytics::EngineCapabilities {
+        norn_cell::analytics::EngineCapabilities::duckdb_default()
+    }
     fn resumed(&self) -> Option<EngineAnswer> {
         None
     }

@@ -6,12 +6,12 @@ use std::sync::{Mutex, PoisonError};
 
 use norn_api::analytics_routes::{EngineAnswer, EngineCall, Transport};
 use norn_api::olap_credential::{Issuer, body_digest};
-use norn_cell::analytics::TenantId;
 #[cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
 use norn_cell::analytics::{
-    AnalyticalEngine, EngineCapabilities, EngineOutcome, EngineRefusal, dispatch_evaluate,
+    AnalyticalEngine, EngineOutcome, EngineRefusal, STALE_INPUT_CODE, dispatch_evaluate,
     dispatch_members,
 };
+use norn_cell::analytics::{EngineCapabilities, TenantId};
 #[cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
 use serde::Serialize;
 
@@ -22,17 +22,20 @@ use serde::Serialize;
 pub struct Exchange {
     issuer: Issuer,
     tenant: TenantId,
+    capabilities: EngineCapabilities,
     answer: Mutex<Option<EngineAnswer>>,
     pending: Mutex<Option<EngineCall>>,
 }
 
 impl Exchange {
-    /// The link of the cell whose engine database is `tenant`, minting with `issuer`.
+    /// The link of the cell whose engine database is `tenant`, minting with `issuer`,
+    /// targeting a sidecar qualified for `capabilities`.
     #[must_use]
-    pub const fn new(issuer: Issuer, tenant: TenantId) -> Self {
+    pub const fn new(issuer: Issuer, tenant: TenantId, capabilities: EngineCapabilities) -> Self {
         Self {
             issuer,
             tenant,
+            capabilities,
             answer: Mutex::new(None),
             pending: Mutex::new(None),
         }
@@ -67,6 +70,9 @@ impl Exchange {
 }
 
 impl Transport for Exchange {
+    fn capabilities(&self) -> EngineCapabilities {
+        self.capabilities
+    }
     fn resumed(&self) -> Option<EngineAnswer> {
         self.answer
             .lock()
@@ -128,7 +134,7 @@ impl<A: AnalyticalEngine> Transport for InProcess<A> {
                 let resp = dispatch_evaluate(engine, r)?;
                 if resp.provenance.is_none() {
                     return Err(EngineRefusal {
-                        code: "analytics.engine".to_owned(),
+                        code: STALE_INPUT_CODE.to_owned(),
                         detail: "v2 evaluate response omitted provenance".to_owned(),
                     });
                 }
@@ -144,7 +150,7 @@ impl<A: AnalyticalEngine> Transport for InProcess<A> {
                 let resp = engine.profile_objects(r)?;
                 if resp.provenance.is_none() {
                     return Err(EngineRefusal {
-                        code: "analytics.engine".to_owned(),
+                        code: STALE_INPUT_CODE.to_owned(),
                         detail: "v2 profile response omitted provenance".to_owned(),
                     });
                 }

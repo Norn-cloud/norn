@@ -1,9 +1,5 @@
-//! D136/#1661: typed analytical engine boundary, capability declarations,
-//! snapshot provenance verification, and fail-closed refusals.
-//!
-//! This module compiles on every target (including `wasm32` and
-//! `--no-default-features`) with zero native or `DuckDB` imports. Concrete
-//! backend implementations live behind their respective feature gates.
+//! D136/#1661: typed analytical engine boundary, capabilities, provenance, and refusals.
+//! Compiles on all targets (including `wasm32` / `--no-default-features`) with no native imports.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -56,7 +52,6 @@ impl AnalyticalEngineId {
             Self::DataFusion => "datafusion",
         }
     }
-
     /// Convert to the shared [`ComputeEngine`] envelope discriminator.
     #[must_use]
     pub const fn into_compute_engine(self) -> ComputeEngine {
@@ -81,7 +76,6 @@ impl From<AnalyticalEngineId> for ComputeEngine {
 
 impl TryFrom<ComputeEngine> for AnalyticalEngineId {
     type Error = AnalyticalRefusal;
-
     fn try_from(engine: ComputeEngine) -> Result<Self, Self::Error> {
         match engine {
             ComputeEngine::Duckdb => Ok(Self::DuckDb),
@@ -121,7 +115,6 @@ impl Capability {
         Self::IcebergZeroCopy,
         Self::MarkingsEnforced,
     ];
-
     /// Stable lowercase identifier for diagnostics and logs.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -134,7 +127,6 @@ impl Capability {
             Self::MarkingsEnforced => "markings_enforced",
         }
     }
-
     const fn wire_field(self) -> &'static str {
         match self {
             Self::ExactBitemporal => "exactBitemporal",
@@ -145,7 +137,6 @@ impl Capability {
             Self::MarkingsEnforced => "markingsEnforced",
         }
     }
-
     const fn mask(self) -> u8 {
         match self {
             Self::ExactBitemporal => 1 << 0,
@@ -158,13 +149,7 @@ impl Capability {
     }
 }
 
-/// D136/#1661: individual capabilities an [`AnalyticalEngine`] qualifies for.
-///
-/// Stored as a compact bitset covering all six capabilities
-/// (`exact_bitemporal`, `live_sub_second`, `vector`, `geo`,
-/// `iceberg_zero_copy`, `markings_enforced`). Unqualified capabilities stay
-/// `false`. Callers check required capabilities before execution and fail
-/// closed on any missing capability.
+/// D136/#1661 bitset of capabilities an [`AnalyticalEngine`] qualifies for (fail-closed).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct EngineCapabilities(u8);
 
@@ -174,16 +159,11 @@ impl EngineCapabilities {
     pub const fn none() -> Self {
         Self(0)
     }
-
-    /// Capabilities demonstrated by the existing `DuckDB` engine:
-    /// exact bitemporal reads over the governed mirror (`ASOF-KNOWLEDGE-1`,
-    /// `METRIC-SNAPSHOT-ASOF-1`); all other capabilities stay `false` until
-    /// independently qualified.
+    /// Capabilities qualified by `DuckDB` (`exact_bitemporal` only).
     #[must_use]
     pub const fn duckdb_default() -> Self {
         Self::none().with(Capability::ExactBitemporal, true)
     }
-
     /// Return a copy with `capability` set to `supported`.
     #[must_use]
     pub const fn with(self, capability: Capability, supported: bool) -> Self {
@@ -193,51 +173,42 @@ impl EngineCapabilities {
             Self(self.0 & !capability.mask())
         }
     }
-
     /// Exact bitemporal (as-of knowledge cutoff / valid-time snapshot) reads.
     #[must_use]
     pub const fn exact_bitemporal(self) -> bool {
         self.supports(Capability::ExactBitemporal)
     }
-
     /// Live sub-second freshness / incremental mirror reads.
     #[must_use]
     pub const fn live_sub_second(self) -> bool {
         self.supports(Capability::LiveSubSecond)
     }
-
     /// Vector similarity / embedding execution.
     #[must_use]
     pub const fn vector(self) -> bool {
         self.supports(Capability::Vector)
     }
-
     /// Geospatial predicates and indexing.
     #[must_use]
     pub const fn geo(self) -> bool {
         self.supports(Capability::Geo)
     }
-
     /// Zero-copy Apache Iceberg table scanning.
     #[must_use]
     pub const fn iceberg_zero_copy(self) -> bool {
         self.supports(Capability::IcebergZeroCopy)
     }
-
     /// Engine-side marking enforcement for protected columns/rows.
     #[must_use]
     pub const fn markings_enforced(self) -> bool {
         self.supports(Capability::MarkingsEnforced)
     }
-
     /// Whether `capability` is qualified on this engine.
     #[must_use]
     pub const fn supports(self, capability: Capability) -> bool {
         (self.0 & capability.mask()) != 0
     }
-
     /// Fail closed if `capability` is not qualified.
-    ///
     /// # Errors
     /// [`AnalyticalRefusal::UnsupportedCapability`] when `capability` is `false`.
     pub fn require_capability(self, capability: Capability) -> Result<(), AnalyticalRefusal> {
@@ -253,9 +224,7 @@ impl EngineCapabilities {
             })
         }
     }
-
     /// Fail closed if any capability requested in `required` is absent.
-    ///
     /// # Errors
     /// [`AnalyticalRefusal::UnsupportedCapability`] for the first missing capability.
     pub fn require(self, required: Self) -> Result<(), AnalyticalRefusal> {
@@ -266,13 +235,9 @@ impl EngineCapabilities {
         }
         Ok(())
     }
-
-    /// Fail closed when a read touches marked columns without engine-side
-    /// marking enforcement (`PRIVACY-1` / `MANIFEST-MARK-1`).
-    ///
+    /// Fail closed when marked columns are read without engine-side marking enforcement.
     /// # Errors
-    /// [`AnalyticalRefusal::InsufficientProtection`] when `has_marked_columns`
-    /// is true and `markings_enforced` is false.
+    /// [`AnalyticalRefusal::InsufficientProtection`] when `has_marked_columns` and `!markings_enforced`.
     pub fn verify_markings_protection(
         self,
         has_marked_columns: bool,
@@ -482,14 +447,21 @@ pub enum ReadSnapshot {
         table: String,
         /// Committed load / cache identity actually read.
         load: String,
+        /// Active cell model hash generation bound to this read.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model_pin: Option<String>,
     },
 }
 
 impl ReadSnapshot {
-    /// Build the snapshot identity from a verified [`Source`] and active mirror
-    /// schema pin generation (when reading a mirror).
+    /// Build the snapshot identity from a verified [`Source`], active model
+    /// hash generation, and active mirror schema pin generation.
     #[must_use]
-    pub fn from_source_with_schema(source: &Source, schema_pin: Option<String>) -> Self {
+    pub fn from_source_with_pins(
+        source: &Source,
+        model_pin: Option<String>,
+        schema_pin: Option<String>,
+    ) -> Self {
         match source {
             Source::Mirror {
                 world,
@@ -503,21 +475,29 @@ impl ReadSnapshot {
                 table: table.clone(),
                 frontier: *frontier,
                 scope: scope.clone(),
-                model_pin: model.clone(),
+                model_pin: model_pin.or_else(|| model.clone()),
                 schema_pin,
             },
             Source::Dataset { table, load } => Self::Dataset {
                 table: table.clone(),
                 load: load.clone(),
+                model_pin,
             },
         }
     }
 
-    /// Build the snapshot identity from a verified [`Source`] without an
-    /// explicit schema pin.
+    /// Build the snapshot identity from a verified [`Source`] and active mirror
+    /// schema pin generation (when reading a mirror).
+    #[must_use]
+    pub fn from_source_with_schema(source: &Source, schema_pin: Option<String>) -> Self {
+        Self::from_source_with_pins(source, None, schema_pin)
+    }
+
+    /// Build the snapshot identity from a verified [`Source`] without explicit
+    /// model or schema pins.
     #[must_use]
     pub fn from_source(source: &Source) -> Self {
-        Self::from_source_with_schema(source, None)
+        Self::from_source_with_pins(source, None, None)
     }
 }
 
@@ -557,8 +537,8 @@ impl SnapshotProvenance {
     }
 
     /// Verify that the snapshot actually read matches the cell's prepared
-    /// tenant, world/table/scope, model pin, active schema pin generation,
-    /// and commit frontier or dataset load.
+    /// tenant, world/table/scope, active model pin, active schema pin
+    /// generation, and commit frontier or dataset load.
     ///
     /// # Errors
     /// [`AnalyticalRefusal::StaleRead`] on any mismatch or missing expected pin.
@@ -566,6 +546,7 @@ impl SnapshotProvenance {
         &self,
         expected_tenant: &TenantId,
         expected_source: &Source,
+        expected_model_pin: Option<&str>,
         expected_schema_pin: Option<&str>,
     ) -> Result<(), AnalyticalRefusal> {
         if &self.tenant != expected_tenant {
@@ -604,7 +585,9 @@ impl SnapshotProvenance {
                             .to_owned(),
                     });
                 }
-                if model_pin != exp_model {
+                if let Some(expected_model) = expected_model_pin.or(exp_model.as_deref())
+                    && model_pin.as_deref() != Some(expected_model)
+                {
                     return Err(AnalyticalRefusal::StaleRead {
                         detail: "analytical response model pin does not match prepared model"
                             .to_owned(),
@@ -621,7 +604,11 @@ impl SnapshotProvenance {
                 Ok(())
             }
             (
-                ReadSnapshot::Dataset { table, load },
+                ReadSnapshot::Dataset {
+                    table,
+                    load,
+                    model_pin,
+                },
                 Source::Dataset {
                     table: exp_table,
                     load: exp_load,
@@ -631,6 +618,15 @@ impl SnapshotProvenance {
                     return Err(AnalyticalRefusal::StaleRead {
                         detail: "analytical response dataset load does not match prepared manifest"
                             .to_owned(),
+                    });
+                }
+                if let Some(expected_model) = expected_model_pin
+                    && model_pin.as_deref() != Some(expected_model)
+                {
+                    return Err(AnalyticalRefusal::StaleRead {
+                        detail:
+                            "analytical dataset response model pin does not match prepared model"
+                                .to_owned(),
                     });
                 }
                 Ok(())
@@ -683,8 +679,8 @@ impl SnapshotProvenance {
 }
 
 /// Verify that a [`ProfileResponse`] carries provenance matching `tenant`,
-/// `source`, `expected_schema_pin`, and explicit `Some(Freshness::Exact)`
-/// before returning `approximate: false`.
+/// `source`, `expected_model_pin`, `expected_schema_pin`, and explicit
+/// `Some(Freshness::Exact)` before returning `approximate: false`.
 ///
 /// # Errors
 /// [`AnalyticalRefusal::StaleRead`] when provenance is absent, mismatched,
@@ -693,6 +689,7 @@ pub fn verify_profile_provenance<'a>(
     response: &'a ProfileResponse,
     tenant: &TenantId,
     source: &Source,
+    expected_model_pin: Option<&str>,
     expected_schema_pin: Option<&str>,
 ) -> Result<&'a SnapshotProvenance, AnalyticalRefusal> {
     let provenance = response
@@ -701,7 +698,7 @@ pub fn verify_profile_provenance<'a>(
         .ok_or_else(|| AnalyticalRefusal::StaleRead {
             detail: "analytical profile response omitted snapshot provenance".to_owned(),
         })?;
-    provenance.verify_against(tenant, source, expected_schema_pin)?;
+    provenance.verify_against(tenant, source, expected_model_pin, expected_schema_pin)?;
     if provenance.freshness != Some(Freshness::Exact) {
         return Err(AnalyticalRefusal::StaleRead {
             detail: "analytical profile response requires explicit exact freshness".to_owned(),
@@ -878,31 +875,24 @@ impl AnalyticalEngine for super::engine::Engine {
     fn engine_id(&self) -> AnalyticalEngineId {
         AnalyticalEngineId::DuckDb
     }
-
     fn capabilities(&self) -> EngineCapabilities {
         EngineCapabilities::duckdb_default()
     }
-
     fn mirror_frontier(&self, request: &FrontierRequest) -> EngineOutcome<FrontierResponse> {
         self.frontier(request)
     }
-
     fn mirror_sync(&self, request: &SyncRequest) -> EngineOutcome<FrontierResponse> {
         self.sync(request)
     }
-
     fn evaluate_question(&self, request: &EvaluateRequest) -> EngineOutcome<EvaluateResponse> {
         self.evaluate(request)
     }
-
     fn query_members(&self, request: &MembersRequest) -> EngineOutcome<MembersResponse> {
         self.members(request)
     }
-
     fn load_dataset(&self, request: &LoadRequest, file: &Path) -> EngineOutcome<LoadResponse> {
         self.load(request, file)
     }
-
     fn land_dataset(
         &self,
         request: &LandRequest,
@@ -910,11 +900,9 @@ impl AnalyticalEngine for super::engine::Engine {
     ) -> EngineOutcome<LandResponse> {
         self.land(request, fetch)
     }
-
     fn settle_dataset(&self, request: &SettleRequest) -> EngineOutcome<LandResponse> {
         self.settle(request)
     }
-
     fn store_dataset(
         &self,
         request: &StoreRequest,
@@ -922,7 +910,6 @@ impl AnalyticalEngine for super::engine::Engine {
     ) -> EngineOutcome<LandResponse> {
         self.store(request, send)
     }
-
     fn store_dataset_json(
         &self,
         body: &StoreBody,
@@ -930,23 +917,18 @@ impl AnalyticalEngine for super::engine::Engine {
     ) -> EngineOutcome<Box<RawValue>> {
         self.store_json(body, send)
     }
-
     fn query_lineage(&self, request: &LineageRequest) -> EngineOutcome<LineageResponse> {
         self.lineage(request)
     }
-
     fn query_page(&self, request: &PageRequest) -> EngineOutcome<PageResponse> {
         self.page(request)
     }
-
     fn profile_objects(&self, request: &ProfileRequest) -> EngineOutcome<ProfileResponse> {
         self.profile(request)
     }
-
     fn export_dataset(&self, request: &ExportRequest) -> EngineOutcome<PathBuf> {
         self.export(request)
     }
-
     fn admit_transform(
         &self,
         plan: &TransformPlan,

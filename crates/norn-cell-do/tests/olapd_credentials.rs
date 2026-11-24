@@ -369,7 +369,11 @@ fn the_exchange_mints_each_call_for_its_own_tenant() {
     let host = issuer("k1", 7);
     let keyring = Keyring::parse(&host.public_spec()).unwrap();
     let a = tenant("org_a/prod");
-    let exchange = Exchange::new(issuer("k1", 7), a.clone());
+    let exchange = Exchange::new(
+        issuer("k1", 7),
+        a.clone(),
+        norn_cell::analytics::EngineCapabilities::duckdb_default(),
+    );
     let call = EngineCall {
         op: "frontier".to_owned(),
         digest: "d".to_owned(),
@@ -958,21 +962,26 @@ fn send_path(
     path: &str,
     authorization: Option<&str>,
     body: &str,
-) -> Vec<u8> {
-    let mut stream = TcpStream::connect(addr).unwrap();
+) -> std::io::Result<Vec<u8>> {
+    let mut stream = TcpStream::connect(addr)?;
     let authorization = authorization.map_or_default(|value| format!("authorization: {value}\r\n"));
     write!(
         stream,
         "{method} {path} HTTP/1.1\r\nhost: olapd\r\n{authorization}content-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
         body.len()
-    )
-    .unwrap();
+    )?;
     let mut response = Vec::new();
-    stream.read_to_end(&mut response).unwrap();
-    response
+    stream.read_to_end(&mut response)?;
+    Ok(response)
 }
 
-fn by_v2(addr: SocketAddr, issuer: &Issuer, of: &TenantId, op: &str, body: &str) -> Vec<u8> {
+fn by_v2(
+    addr: SocketAddr,
+    issuer: &Issuer,
+    of: &TenantId,
+    op: &str,
+    body: &str,
+) -> std::io::Result<Vec<u8>> {
     let full_op = format!("v2/{op}");
     let credential = mint(issuer, of, &full_op, body);
     send_path(
@@ -1140,7 +1149,10 @@ impl norn_cell::analytics::AnalyticalEngine for MissingProvenanceEngine {
     }
 }
 
-fn compat_bodies(of: &TenantId) -> (String, String) {
+fn compat_bodies(
+    of: &TenantId,
+    model_pin: Option<&str>,
+) -> Result<(String, String), serde_json::Error> {
     let source = norn_cell::analytics::Source::Mirror {
         world: WORLD.to_owned(),
         table: "shop.Sale".to_owned(),
@@ -1168,24 +1180,24 @@ fn compat_bodies(of: &TenantId) -> (String, String) {
             time_link: None,
         },
         inline_members: 100,
-    })
-    .unwrap();
+        model_pin: model_pin.map(str::to_owned),
+    })?;
     let profile_body = serde_json::to_string(&norn_cell::analytics::ProfileRequest {
         tenant: of.clone(),
         source,
         columns: vec!["amount".to_owned()],
-    })
-    .unwrap();
-    (eval_body, profile_body)
+        model_pin: model_pin.map(str::to_owned),
+        cell_revision: Some("0".to_owned()),
+    })?;
+    Ok((eval_body, profile_body))
 }
 
-#[test]
-fn olapd_v1_omits_provenance_for_legacy_consumers_and_v2_enforces_it() {
-    let host = issuer("k1", 77);
-    let daemon = daemon(&[&host]);
-    let of = tenant("org_compat/prod");
-    let schema_pin = "pin-compat-v1";
-    let init = serde_json::to_string(&norn_cell::analytics::FrontierRequest {
+fn compat_frontier_body(
+    of: &TenantId,
+    schema_pin: &str,
+    model_pin: &str,
+) -> Result<String, serde_json::Error> {
+    serde_json::to_string(&norn_cell::analytics::FrontierRequest {
         tenant: of.clone(),
         world: WORLD.to_owned(),
         tables: vec![TableSchema {
@@ -1207,23 +1219,99 @@ fn olapd_v1_omits_provenance_for_legacy_consumers_and_v2_enforces_it() {
             ],
         }],
         links: Vec::new(),
+        model_pin: Some(model_pin.to_owned()),
     })
-    .unwrap();
+}
+
+/// Simulates a pre-v2 `norn-olapd` sidecar whose gate only strips `/v1/` and
+/// rejects unknown path prefixes (including `/v2/*`) with `401`.
+fn spawn_legacy_v1_only_sidecar(keyring: Keyring) -> std::io::Result<SocketAddr> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let addr = listener.local_addr()?;
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let Ok(cloned) = stream.try_clone() else {
+                continue;
+            };
+            let mut reader = BufReader::new(cloned);
+            let mut head = String::new();
+            if reader.read_line(&mut head).is_err() {
+                continue;
+            }
+            let path = head.split_whitespace().nth(1).unwrap_or_default();
+            let mut auth = None;
+            let mut len = 0_usize;
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).is_err() || line.trim().is_empty() {
+                    break;
+                }
+                if let Some((name, value)) = line.split_once(':') {
+                    if name.eq_ignore_ascii_case("authorization") {
+                        auth = Some(value.trim().to_owned());
+                    } else if name.eq_ignore_ascii_case("content-length") {
+                        len = value.trim().parse().unwrap_or(0);
+                    }
+                }
+            }
+            let mut body_bytes = vec![0_u8; len];
+            if reader.read_exact(&mut body_bytes).is_err() {
+                continue;
+            }
+            let op = path.strip_prefix("/v1/").unwrap_or("");
+            let token = auth.as_deref().and_then(|h| h.strip_prefix("Bearer "));
+            let admitted = token
+                .and_then(|cred| {
+                    keyring
+                        .verify(cred, op, &body_digest(&body_bytes), NOW)
+                        .ok()
+                })
+                .is_some();
+            let (status_line, resp_body) = if admitted && op == "evaluate" {
+                (
+                    "200 OK",
+                    "{\"population\":0,\"excluded\":[],\"buckets\":[],\"unlinked\":0}",
+                )
+            } else {
+                (
+                    "401 Unauthorized",
+                    "{\"code\":\"analytics.unauthorized\",\"detail\":\"the caller is not the cell\"}",
+                )
+            };
+            let _sent = write!(
+                stream,
+                "HTTP/1.1 {status_line}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{resp_body}",
+                resp_body.len()
+            );
+        }
+    });
+    Ok(addr)
+}
+
+#[test]
+fn olapd_v1_omits_provenance_for_legacy_consumers_and_v2_enforces_it()
+-> Result<(), Box<dyn std::error::Error>> {
+    let host = issuer("k1", 77);
+    let daemon = daemon(&[&host]);
+    let of = tenant("org_compat/prod");
+    let schema_pin = "pin-compat-v1";
+    let model_pin = "model-compat-v1";
+    let init = compat_frontier_body(&of, schema_pin, model_pin)?;
     let initialized = daemon.by(&host, &of, "frontier", &init);
     assert_eq!(status(&initialized), "200", "{}", body(&initialized));
-    let (eval_body, profile_body) = compat_bodies(&of);
+    let (eval_body, profile_body) = compat_bodies(&of, Some(model_pin))?;
 
-    // (a) Legacy /v1/evaluate and /v1/profile omit `provenance` and decode under legacy deny_unknown_fields.
+    // (1) Old caller -> new olapd: /v1/* omits provenance and decodes under deny_unknown_fields.
     let v1_eval = daemon.by(&host, &of, "evaluate", &eval_body);
     assert_eq!(status(&v1_eval), "200", "{}", body(&v1_eval));
     assert!(!body(&v1_eval).contains("provenance"), "{}", body(&v1_eval));
-    let decoded_v1_eval: LegacyEvaluateWire = serde_json::from_str(&body(&v1_eval)).unwrap();
+    let decoded_v1_eval: LegacyEvaluateWire = serde_json::from_str(&body(&v1_eval))?;
     assert_eq!(decoded_v1_eval.population, 0);
 
     let v1_prof = daemon.by(&host, &of, "profile", &profile_body);
     assert_eq!(status(&v1_prof), "200", "{}", body(&v1_prof));
     assert!(!body(&v1_prof).contains("provenance"), "{}", body(&v1_prof));
-    let decoded_v1_prof: LegacyProfileWire = serde_json::from_str(&body(&v1_prof)).unwrap();
+    let decoded_v1_prof: LegacyProfileWire = serde_json::from_str(&body(&v1_prof))?;
     assert_eq!(decoded_v1_prof.rows, 0);
 
     // OLAP-03: a v1 credential never authorizes a v2 route.
@@ -1234,25 +1322,10 @@ fn olapd_v1_omits_provenance_for_legacy_consumers_and_v2_enforces_it() {
         "/v2/evaluate",
         Some(&format!("Bearer {v1_cred}")),
         &eval_body,
-    );
+    )?;
     assert_eq!(status(&cross), "401", "{}", body(&cross));
 
-    // (b) /v2/evaluate and /v2/profile emit and verify full provenance including schema_pin & Exact freshness.
-    let v2_eval = by_v2(daemon.addr, &host, &of, "evaluate", &eval_body);
-    assert_eq!(status(&v2_eval), "200", "{}", body(&v2_eval));
-    let eval_resp: norn_cell::analytics::EvaluateResponse =
-        serde_json::from_str(&body(&v2_eval)).unwrap();
-    let eval_prov = eval_resp
-        .provenance
-        .expect("v2 evaluate carries provenance");
-    assert_eq!(
-        eval_prov.engine,
-        norn_cell::analytics::AnalyticalEngineId::DuckDb
-    );
-    assert_eq!(
-        eval_prov.freshness,
-        Some(norn_cell::compute::Freshness::Exact)
-    );
+    // (2) New caller -> new olapd: /v2/* emits and verifies model_pin, schema_pin & Exact freshness.
     let expected_source = norn_cell::analytics::Source::Mirror {
         world: WORLD.to_owned(),
         table: "shop.Sale".to_owned(),
@@ -1261,39 +1334,96 @@ fn olapd_v1_omits_provenance_for_legacy_consumers_and_v2_enforces_it() {
         excluded: Vec::new(),
         model: None,
     };
-    assert!(
-        eval_prov
-            .verify_against(&of, &expected_source, Some(schema_pin))
-            .is_ok()
+    let v2_eval = by_v2(daemon.addr, &host, &of, "evaluate", &eval_body)?;
+    assert_eq!(status(&v2_eval), "200", "{}", body(&v2_eval));
+    let eval_resp: norn_cell::analytics::EvaluateResponse = serde_json::from_str(&body(&v2_eval))?;
+    let eval_prov = eval_resp
+        .provenance
+        .ok_or("v2 evaluate omitted provenance")?;
+    assert_eq!(
+        eval_prov.engine,
+        norn_cell::analytics::AnalyticalEngineId::DuckDb
     );
+    assert_eq!(
+        eval_prov.freshness,
+        Some(norn_cell::compute::Freshness::Exact)
+    );
+    eval_prov.verify_against(&of, &expected_source, Some(model_pin), Some(schema_pin))?;
 
-    let v2_prof = by_v2(daemon.addr, &host, &of, "profile", &profile_body);
+    let v2_prof = by_v2(daemon.addr, &host, &of, "profile", &profile_body)?;
     assert_eq!(status(&v2_prof), "200", "{}", body(&v2_prof));
-    let prof_resp: norn_cell::analytics::ProfileResponse =
-        serde_json::from_str(&body(&v2_prof)).unwrap();
+    let prof_resp: norn_cell::analytics::ProfileResponse = serde_json::from_str(&body(&v2_prof))?;
     let prof_prov = norn_cell::analytics::verify_profile_provenance(
         &prof_resp,
         &of,
         &expected_source,
+        Some(model_pin),
         Some(schema_pin),
-    )
-    .expect("v2 profile provenance verifies");
+    )?;
     assert_eq!(
         prof_prov.engine,
         norn_cell::analytics::AnalyticalEngineId::DuckDb
     );
+
+    // (3) Rolled-back caller -> new olapd: /v1/* continues succeeding after /v2/* traffic.
+    let rollback_eval = daemon.by(&host, &of, "evaluate", &eval_body);
+    assert_eq!(status(&rollback_eval), "200", "{}", body(&rollback_eval));
+    assert!(!body(&rollback_eval).contains("provenance"));
+    let rollback_prof = daemon.by(&host, &of, "profile", &profile_body);
+    assert_eq!(status(&rollback_prof), "200", "{}", body(&rollback_prof));
+    assert!(!body(&rollback_prof).contains("provenance"));
+    Ok(())
 }
 
 #[test]
-fn olapd_v2_refuses_missing_provenance_fail_closed() {
+fn olapd_v2_refuses_stale_model_pin_with_409() -> Result<(), Box<dyn std::error::Error>> {
+    let host = issuer("k1", 80);
+    let daemon = daemon(&[&host]);
+    let of = tenant("org_compat/prod");
+    let init = compat_frontier_body(&of, "pin-compat-v1", "model-compat-v1")?;
+    let initialized = daemon.by(&host, &of, "frontier", &init);
+    assert_eq!(status(&initialized), "200", "{}", body(&initialized));
+
+    // Mismatched model_pin on live /v2/* read fails closed with 409 core.compute.stale_input.
+    let (stale_eval_body, stale_prof_body) = compat_bodies(&of, Some("model-compat-v2"))?;
+    let stale_eval = by_v2(daemon.addr, &host, &of, "evaluate", &stale_eval_body)?;
+    assert_eq!(status(&stale_eval), "409", "{}", body(&stale_eval));
+    assert!(body(&stale_eval).contains("core.compute.stale_input"));
+    let stale_prof = by_v2(daemon.addr, &host, &of, "profile", &stale_prof_body)?;
+    assert_eq!(status(&stale_prof), "409", "{}", body(&stale_prof));
+    assert!(body(&stale_prof).contains("core.compute.stale_input"));
+    Ok(())
+}
+
+#[test]
+fn new_caller_against_pre_v2_olapd_fails_closed_with_401() -> Result<(), Box<dyn std::error::Error>>
+{
+    let host = issuer("k1", 79);
+    let of = tenant("org_compat/prod");
+    let keyring = Keyring::parse(&host.public_spec())?;
+    let legacy_addr = spawn_legacy_v1_only_sidecar(keyring)?;
+    let (eval_body, profile_body) = compat_bodies(&of, Some("model-compat-v1"))?;
+
+    // (4) New caller -> old pre-v2 olapd: /v1/evaluate still works, /v2/* fails closed 401.
+    let legacy_v1 = by_at(legacy_addr, &host, &of, "evaluate", &eval_body);
+    assert_eq!(status(&legacy_v1), "200", "{}", body(&legacy_v1));
+    let v2_eval = by_v2(legacy_addr, &host, &of, "evaluate", &eval_body)?;
+    assert_eq!(status(&v2_eval), "401", "{}", body(&v2_eval));
+    let v2_prof = by_v2(legacy_addr, &host, &of, "profile", &profile_body)?;
+    assert_eq!(status(&v2_prof), "401", "{}", body(&v2_prof));
+    Ok(())
+}
+
+#[test]
+fn olapd_v2_refuses_missing_provenance_fail_closed() -> Result<(), Box<dyn std::error::Error>> {
     let host = issuer("k1", 78);
     let of = tenant("org_compat/prod");
-    let (eval_body, profile_body) = compat_bodies(&of);
-    let stub_dir = tempfile::tempdir().unwrap();
+    let (eval_body, profile_body) = compat_bodies(&of, Some("model-compat-v1"))?;
+    let stub_dir = tempfile::tempdir()?;
     let stub_keys = stub_dir.path().join("keyring");
     write_keyring(&stub_keys, &[&host]);
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let stub_addr = listener.local_addr().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let stub_addr = listener.local_addr()?;
     let stub_clock = Arc::new(ManualClock::at(NOW));
     let stub_engine: Arc<dyn norn_cell::analytics::AnalyticalEngine> =
         Arc::new(MissingProvenanceEngine);
@@ -1306,14 +1436,25 @@ fn olapd_v2_refuses_missing_provenance_fail_closed() {
             Arc::new(NoSeam),
         )
     });
-    // Missing provenance on /v2/evaluate and /v2/profile fails closed.
-    let stub_v2_eval = by_v2(stub_addr, &host, &of, "evaluate", &eval_body);
-    assert_eq!(status(&stub_v2_eval), "500", "{}", body(&stub_v2_eval));
-    let stub_v2_prof = by_v2(stub_addr, &host, &of, "profile", &profile_body);
-    assert_eq!(status(&stub_v2_prof), "500", "{}", body(&stub_v2_prof));
+    // Missing provenance on /v2/evaluate and /v2/profile fails closed with 409 core.compute.stale_input.
+    let stub_v2_eval = by_v2(stub_addr, &host, &of, "evaluate", &eval_body)?;
+    assert_eq!(status(&stub_v2_eval), "409", "{}", body(&stub_v2_eval));
+    assert!(
+        body(&stub_v2_eval).contains("core.compute.stale_input"),
+        "{}",
+        body(&stub_v2_eval)
+    );
+    let stub_v2_prof = by_v2(stub_addr, &host, &of, "profile", &profile_body)?;
+    assert_eq!(status(&stub_v2_prof), "409", "{}", body(&stub_v2_prof));
+    assert!(
+        body(&stub_v2_prof).contains("core.compute.stale_input"),
+        "{}",
+        body(&stub_v2_prof)
+    );
     // Legacy /v1/evaluate and /v1/profile still answer cleanly without provenance.
     let stub_v1_eval = by_at(stub_addr, &host, &of, "evaluate", &eval_body);
     assert_eq!(status(&stub_v1_eval), "200", "{}", body(&stub_v1_eval));
     let stub_v1_prof = by_at(stub_addr, &host, &of, "profile", &profile_body);
     assert_eq!(status(&stub_v1_prof), "200", "{}", body(&stub_v1_prof));
+    Ok(())
 }

@@ -758,6 +758,8 @@ fn a_reader_sees_no_row_of_a_landing_until_it_is_stored() {
                 load: load.into(),
             },
             columns: vec!["country".into()],
+            model_pin: None,
+            cell_revision: None,
         })
     };
     let current = read(&stored).expect("the stored dataset");

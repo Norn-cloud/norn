@@ -674,14 +674,12 @@ impl<E: SqlEngine> Tenant<E> {
         self.base.sha256()
     }
 
-    /// D102: answer questions, loads and exports on the tenant analytics
-    /// engine the host reaches; without it the cell has no analytics.
-    /// OLAP-CRED-1: `issuer` is the host's signing key; every call carries a
-    /// credential it mints for this cell's own tenant.
+    /// D102/OLAP-CRED-1: enable tenant analytics signed by `issuer`.
     pub fn enable_analytics(&mut self, issuer: norn_api::olap_credential::Issuer) {
         let tenant = norn_cell::analytics::TenantId::of_scope(&self.scope.key());
+        let caps = norn_cell::analytics::EngineCapabilities::duckdb_default();
         self.engine
-            .get_or_insert_with(|| crate::olap::Exchange::new(issuer, tenant));
+            .get_or_insert_with(|| crate::olap::Exchange::new(issuer, tenant, caps));
     }
 
     /// Re-enter with the engine's answer to the call the last request ended with.

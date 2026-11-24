@@ -24,9 +24,9 @@ mod store_body;
 pub use assemble::{Prepared, bucket_value};
 pub use backend::{
     AdmittedTransform, AnalyticalEngine, AnalyticalEngineId, AnalyticalRefusal, Capability,
-    EngineCapabilities, EngineOutcome, ProtectionReason, ReadSnapshot, SnapshotProvenance,
-    StoreBody, dispatch_evaluate, dispatch_members, required_evaluate_capabilities,
-    required_members_capabilities, verify_profile_provenance,
+    EngineCapabilities, EngineOutcome, MARKED_COLUMN_CODE, ProtectionReason, ReadSnapshot,
+    STALE_INPUT_CODE, SnapshotProvenance, StoreBody, dispatch_evaluate, dispatch_members,
+    required_evaluate_capabilities, required_members_capabilities, verify_profile_provenance,
 };
 pub use lower::{lower, table_schema};
 pub use mirror::MirrorBatch;
@@ -214,13 +214,14 @@ pub struct FrontierRequest {
     pub tenant: TenantId,
     /// The execution world.
     pub world: String,
-    /// The current schemas of every mirrored root type; any changed pin
-    /// clears the world's mirror, so it is synced again from the start.
+    /// Current schemas of every mirrored root type; a changed pin resets the mirror.
     pub tables: Vec<TableSchema>,
-    /// Every link table the mirror keeps edges of; a changed set clears the
-    /// mirror as a changed pin does.
+    /// Link tables kept by the mirror; a changed set resets the mirror.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub links: Vec<String>,
+    /// Active cell model hash generation; a changed model resets and rebinds the mirror.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_pin: Option<String>,
 }
 
 /// The last commit the mirror applied for the world.
@@ -245,16 +246,12 @@ pub struct SyncRequest {
     pub through: u64,
     /// Every version committed in `(after, through]`, in commit order.
     pub rows: Vec<MirrorRow>,
-    /// Every link edge those commits changed, in commit order, as it stands
-    /// after its last change.
+    /// Every link edge changed in those commits, in commit order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub links: Vec<LinkEdge>,
 }
 
-/// One link edge a commit changed (METRIC-GRAIN-LINK-1): whether it is
-/// live after its last change, and the commit of that change. The mirror
-/// keeps each edge's latest state, so an answer through a link is exact
-/// only at a frontier no edge of that link changed after.
+/// One link edge changed by a commit (METRIC-GRAIN-LINK-1): latest state and commit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LinkEdge {
@@ -463,10 +460,11 @@ pub struct EvaluateRequest {
     pub source: Source,
     /// The lowered question.
     pub query: Lowered,
-    /// Members are returned inline when the population has at most this many
-    /// rows (the plan's bound); otherwise each bucket carries its count and
-    /// membership digest and members are paged.
+    /// Inline member bound; larger populations return counts + membership digests.
     pub inline_members: u64,
+    /// Active cell model hash generation validated and attested by the engine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_pin: Option<String>,
 }
 
 /// A bucket's grouping value as the engine grouped it.
@@ -842,20 +840,11 @@ pub struct RuleCheck {
     pub predicate: Option<RowPredicate>,
     /// The value the predicate must have (`always`: true, `never`: false).
     pub expect: bool,
-    /// MANIFEST-LAWS-1 (S2): a bound on the fuel the per-row evaluator
-    /// charges for the rule's operations, apart from the data they read
-    /// ([`rule_fuel`]). The engine adds what each row's values cost and
-    /// leaves a row whose rules may cost more than [`row_fuel`] to the
-    /// per-row evaluator. A landing's first check also carries the row's
-    /// typed-property charge, paid once per row before any rule.
+    /// MANIFEST-LAWS-1 (S2): static rule fuel bound ([`rule_fuel`]); rows exceeding [`row_fuel`] fall back per-row.
     pub fuel: u64,
 }
 
-/// MANIFEST-LAWS-1 (S2): the fuel the per-row evaluator gives one row's
-/// rules: its invariants share one decide budget and its governing laws
-/// another (`snapshot_observe::observation_rule_findings`). The engine
-/// compares the bound of all of a row's rules together against one budget,
-/// so it never decides a row either budget would refuse.
+/// MANIFEST-LAWS-1 (S2): per-row decide fuel budget (`snapshot_observe::observation_rule_findings`).
 #[must_use]
 pub fn row_fuel() -> u64 {
     norn_ir::ResourceLimitProfile::norn_limits_v1()
@@ -863,31 +852,20 @@ pub fn row_fuel() -> u64 {
         .fuel_units
 }
 
-/// Fuel a rule's evaluation is charged at most beside its nodes: entering
-/// the rule, reading its result, and the checks around it.
+/// Base fuel charged per rule entry and check.
 pub const RULE_FUEL: u64 = 64;
-/// Fuel one node of a rule's ZEN source is charged at most beside the data
-/// it reads: every node compiles to a few opcodes of one unit each, and an
-/// exact decimal site to a few more.
+/// Upper-bound fuel charged per ZEN AST node.
 pub const NODE_FUEL: u64 = 16;
 
-/// MANIFEST-LAWS-1 (S2): the static part of a rule's fuel bound: [`RULE_FUEL`]
-/// and [`NODE_FUEL`] for each node of its ZEN sources (the condition's
-/// too), counted before lowering, so a `??` the lowering drops is still
-/// paid for.
+/// MANIFEST-LAWS-1 (S2): static rule fuel bound (`RULE_FUEL + NODE_FUEL * nodes`).
 #[must_use]
 pub fn rule_fuel(nodes: u64) -> u64 {
     RULE_FUEL.saturating_add(NODE_FUEL.saturating_mul(nodes))
 }
 
-/// D102 / MANIFEST-LAWS-1 (S1): engine calls one request may make, on every
-/// host: the Durable Object's Worker takes this bound from the cell, and
-/// the native host's landing loop is bounded by it too.
+/// D102 / MANIFEST-LAWS-1 (S1): maximum engine calls one request may make.
 pub const MAX_ENGINE_STEPS: u32 = 64;
-/// MANIFEST-LAWS-1 (S1): residue pages one landing may take. A landing is
-/// one land call, a settle per page, and a store, so its calls fit
-/// [`MAX_ENGINE_STEPS`]; the engine refuses a landing whose residue takes
-/// more ([`RESIDUE_EXCEEDED`]) and drops its staging.
+/// MANIFEST-LAWS-1 (S1): maximum residue pages per landing (`MAX_ENGINE_STEPS - 2`).
 pub const MAX_RESIDUE_PAGES: u32 = MAX_ENGINE_STEPS - 2;
 /// Residue rows one page carries at most.
 pub const RESIDUE_PAGE_ROWS: u32 = 2_000;
@@ -1126,6 +1104,12 @@ pub struct ProfileRequest {
     pub source: Source,
     /// The properties to profile, in order.
     pub columns: Vec<String>,
+    /// Active cell model hash generation validated and attested by the engine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_pin: Option<String>,
+    /// Prepared cell revision token bound into the request digest for re-entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cell_revision: Option<String>,
 }
 
 /// The percentiles a profile reports, by nearest rank.

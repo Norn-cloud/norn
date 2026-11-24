@@ -85,7 +85,10 @@ fn every_runtime_engine_validates_against_the_contract() -> Result<(), Box<dyn s
         let decoded: Engine = serde_json::from_value(encoded.clone())?;
         assert_eq!(decoded, engine);
         let mut document = answer.clone();
-        document["engine"] = encoded;
+        document
+            .as_object_mut()
+            .ok_or("answer fixture must be a JSON object")?
+            .insert("engine".to_owned(), encoded);
         let errors: Vec<String> = validator
             .iter_errors(&document)
             .map(|error| error.to_string())

@@ -40,24 +40,22 @@ pub const MAX_STEPS: u32 = norn_cell::analytics::MAX_ENGINE_STEPS;
 /// Lifetime of the presigned URLs a load reads and lands through, in seconds.
 const LOAD_URL_SECONDS: u64 = 900;
 
-/// One engine operation, as the host sends it: `POST /v1/<op>` with `body`.
+/// One engine call (`POST /v1/<op>`, or `/<op>` for `v2/*` ops).
+/// Rollout/rollback: deploy `norn-olapd` (/v1 + /v2 dual-served) before callers
+/// switch to `v2/*`; roll back callers before retiring `/v2/*`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct EngineCall {
-    /// `frontier`, `sync`, `evaluate`, `members`, `profile`, `page`, `land`,
-    /// `store` or `export`.
+    /// Operation name (`frontier`, `sync`, `v2/evaluate`, `members`, `v2/profile`, `page`, `land`, `store`, `export`).
     pub op: String,
-    /// Identity of the call; the answer names it, so a stale answer is never used.
+    /// Call identity echoed in the answer so stale answers are ignored.
     pub digest: String,
-    /// The typed request, as JSON.
+    /// Typed JSON request body.
     pub body: String,
-    /// The host streams a successful answer to the caller with these headers
-    /// instead of re-entering (an export).
+    /// Response headers when the host streams the answer directly (exports).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream: Option<BTreeMap<String, String>>,
-    /// OLAP-CRED-1: the cell's credential for this call, the host's bearer
-    /// to the engine. The host transport attaches it when it hands the call
-    /// to the host; it names the cell's own tenant only.
+    /// OLAP-CRED-1: cell-minted tenant-scoped bearer credential for this call.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential: Option<String>,
 }
@@ -92,9 +90,7 @@ impl EngineCall {
 /// How the cell reaches its engine.
 pub trait Transport: Send + Sync {
     /// D136/#1661 capabilities qualified by the engine this transport reaches.
-    fn capabilities(&self) -> norn_cell::analytics::EngineCapabilities {
-        norn_cell::analytics::EngineCapabilities::duckdb_default()
-    }
+    fn capabilities(&self) -> norn_cell::analytics::EngineCapabilities;
     /// The answer the host re-entered the cell with, once.
     fn resumed(&self) -> Option<EngineAnswer>;
     /// Perform `call` now, or `None` when the host must perform it and re-enter.
@@ -509,7 +505,10 @@ pub struct DatasetLoadRequest {
     /// columns by; needed only when more than one maps onto it.
     #[serde(default)]
     pub mapping: Option<String>,
-    /// MANIFEST-04: caller idempotency key (same key + different request -> 409 `dataset.request_conflict`).
+    /// MANIFEST-04: the caller's key for this load. A retry with the same
+    /// key and the same request answers with the first load's receipt; the
+    /// same key with another request is refused (409
+    /// `dataset.request_conflict`). A load without a key always commits.
     #[serde(default)]
     pub request_key: Option<String>,
 }
@@ -617,15 +616,27 @@ impl From<&ManifestFile> for NornDatasetFile {
     }
 }
 
-/// BULK-LOAD-1 / MANIFEST-03: load a completed upload into the tenant's engine
-/// as dataset `objectType` (typed, SHA-256 verified, quarantined with reasons,
-/// committed via manifest, reported under `upload` connection, authorized by
-/// `SyncSource("upload")` and `SyncSource("upload.<type>")`).
+/// BULK-LOAD-1: load a completed upload into the tenant's engine as the
+/// dataset `objectType`, typed by that admitted definition. The engine reads
+/// the object through a presigned URL, verifies its SHA-256, types every row,
+/// and quarantines a row it cannot type (or that misses a required value)
+/// with its reason. The load becomes the dataset's current one when its
+/// manifest commits; each row traces to `(uri, sha256, row)`. The load is
+/// reported as a run of the type's `upload` connection, as the cell's own
+/// observations (SYNC-REPORT-1).
+///
+/// MANIFEST-03: a load is decided exactly as an observation load of the
+/// same rows: `SyncSource("upload")` and the destination connection's own
+/// grant (`SyncSource("upload.<type>")`), an admitted mapping onto the type
+/// that the load binds its columns by, and the markings a write of those
+/// rows would carry. A mapping or marking bulk ingest cannot enforce is
+/// refused, never loaded unchecked.
 ///
 /// # Errors
-/// Denied caller (403), unknown upload or type (404), changed file or
-/// unenforced mapping/marking (422), stale pins or reused key (409), or
-/// unreachable engine.
+/// A denied caller (one opaque 403), an unknown upload or type (404), a
+/// changed file (`bulk.digest_mismatch`, 422), a mapping or marking bulk
+/// ingest cannot enforce (422), stale pins or a reused request key (409), or
+/// an unreachable engine.
 #[utoipa::path(post, path = "/v1/datasets:load", params(ScopeQuery), request_body = DatasetLoadRequest, responses((status = 200, description = "The load.", body = NornDatasetLoad), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 404, description = "The request was refused: not found.", body = Refusal), (status = 409, description = "The definitions changed while the dataset landed, or the request key names another request.", body = Refusal), (status = 422, description = "The file was refused.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal)))]
 #[allow(
     clippy::too_many_lines,
@@ -2062,15 +2073,7 @@ fn page_clause(
     })
 }
 
-/// PRIVACY-1: whether `object_type`'s current stored values may leave as
-/// they are stored: the cell holds no marking label, or it declares no
-/// marking and no live row of the type carries one, so its labels (the
-/// kernel's on its own records, or earlier versions') are elsewhere (#1547).
-/// A loaded dataset with any effective column marking (manifest union current
-/// model) never leaves as raw stored values.
-///
-/// # Errors
-/// A store failure.
+/// PRIVACY-1: whether `object_type`'s current stored values may leave as stored.
 fn stored_values_leave<E: SqlEngine>(
     host: &DevHost<E>,
     reader: &norn_cell::StoreReader<'_, E>,
@@ -2091,18 +2094,15 @@ fn stored_values_leave<E: SqlEngine>(
         || (!crate::privacy::declares(&catalog) && unlabeled(reader, object_type)))
 }
 
-/// S3 (#1547): `decide`, how `object_type`'s stored values may reach the
-/// engine, and the analytics source an engine call reads, at one cell
-/// version. A commit by any
-/// connection between the decision and the frontier would let a row the
-/// decision never saw into the call, so the two are bracketed by the cell's
-/// version (head and foreign-write revision): a moved version is read again,
-/// up to three times, then refused with the retryable `object.snapshot_moved`.
-/// The engine reads the rows live at that frontier.
-///
-/// # Errors
-/// A moved snapshot, an engine without a revision, or a store failure.
+/// S3 (#1547): bracket `decide` and `analytics_source` at one cell version (retries 3x).
 type CellVersion = (u64, Option<(u64, u64)>);
+
+fn format_cell_version((head, rev): CellVersion) -> String {
+    match rev {
+        Some((a, b)) => format!("{head}:{a}:{b}"),
+        None => head.to_string(),
+    }
+}
 
 fn decided_source<E: SqlEngine, T>(
     host: &DevHost<E>,
@@ -2124,11 +2124,7 @@ fn decided_source<E: SqlEngine, T>(
     Err(crate::object_routes::snapshot_moved())
 }
 
-/// Whether every live row of `object_type` has a complete marking snapshot
-/// with no label on any of its properties. For a loaded dataset whose rows
-/// live in the engine, this checks the effective dataset markings (manifest
-/// union current model). An unknown type, an incomplete snapshot or an
-/// unbounded summary counts as labeled: it fails closed.
+/// Whether every live row of `object_type` has no marking label (fails closed).
 fn unlabeled<E: SqlEngine>(reader: &norn_cell::StoreReader<'_, E>, object_type: &str) -> bool {
     match reader.dataset_manifest(norn_cell::MAIN_WORLD, object_type) {
         Ok(Some(current)) => {
@@ -2224,11 +2220,7 @@ pub fn profile_objects<E: SqlEngine>(
     transport: &dyn Transport,
 ) -> Result<crate::object_profile::NornObjectProfile, Refusal> {
     use norn_cell::analytics::{ProfileRequest, ProfileResponse};
-    // PRIVACY-1: the engine mirror holds stored values; a cell that declares
-    // markings profiles natively, over projected values, unless no live row
-    // of this type carries a label on any of its properties. A loaded dataset
-    // lives only in the engine, so it always passes the authorization gate
-    // first and then refuses if any effective column is marked.
+    // PRIVACY-1: marked mirror types profile natively; datasets pass gate then refuse if marked.
     let native_only = {
         let guard = host.cell()?;
         let reader = guard.store().read();
@@ -2246,8 +2238,6 @@ pub fn profile_objects<E: SqlEngine>(
     let values = uniform_gate(host, scope, actor, object_type, access)?;
     let guard = host.cell()?;
     let store = guard.store();
-    // After the gate, so a denied caller costs what it did: the decision
-    // again, with the profiled frontier, at one cell version (S3, #1547).
     let (plan, source, _snapshot, start_version) =
         decided_source(host, store, object_type, |reader| {
             decide_profile(host, reader, object_type)
@@ -2280,6 +2270,8 @@ pub fn profile_objects<E: SqlEngine>(
             tenant: tenant.clone(),
             source: source.clone(),
             columns: table.columns.iter().map(|c| c.id.clone()).collect(),
+            model_pin: Some(model_pin.clone()),
+            cell_revision: Some(format_cell_version(start_version)),
         },
     )
     .map_err(engine_failure)?;
@@ -2298,6 +2290,7 @@ pub fn profile_objects<E: SqlEngine>(
         &profile,
         &tenant,
         &source,
+        Some(model_pin.as_str()),
         expected_schema_pin,
     )
     .map_err(|_stale| crate::object_routes::snapshot_moved())?;

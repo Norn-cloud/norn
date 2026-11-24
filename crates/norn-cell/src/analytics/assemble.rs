@@ -237,11 +237,13 @@ impl<E: SqlEngine> CellStore<E> {
             Source::Dataset { .. } => None,
         };
         let (query_pin, definition_pin) = self.question_pins(plan, cutoff)?;
+        let model_pin = self.model().model_hash().to_owned();
         let request = EvaluateRequest {
             tenant: tenant.clone(),
             source,
             query,
             inline_members: u64::try_from(bound).unwrap_or(u64::MAX),
+            model_pin: Some(model_pin.clone()),
         };
         Ok(Prepared {
             request,
@@ -251,7 +253,7 @@ impl<E: SqlEngine> CellStore<E> {
             revision,
             query_pin,
             definition_pin,
-            model_pin: self.model().model_hash().to_owned(),
+            model_pin,
             schema_pin,
             known_at: cutoff.map(|cutoff| (cutoff, receipt)),
         })
@@ -396,7 +398,7 @@ impl<E: SqlEngine> CellStore<E> {
 
     /// Cell-produced empty answer when the caller's population gate denied
     /// reading the grain. Performs no engine call and fabricates no
-    /// [`SnapshotProvenance`], attributing the empty authorized result directly
+    /// [`super::SnapshotProvenance`], attributing the empty authorized result directly
     /// to [`crate::compute::Engine::Cell`].
     ///
     /// # Errors
@@ -511,6 +513,7 @@ impl<E: SqlEngine> CellStore<E> {
         provenance.verify_against(
             &prepared.request.tenant,
             &prepared.request.source,
+            Some(prepared.model_pin.as_str()),
             prepared.schema_pin.as_deref(),
         )?;
         let engine_id = provenance.engine;

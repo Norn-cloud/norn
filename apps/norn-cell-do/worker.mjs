@@ -214,8 +214,10 @@ export class Cell {
     return this.cell.fetch(request.method, url.pathname, url.search.slice(1), request.headers.get("authorization") ?? undefined, Date.now(), body);
   }
   /**
-   * D102: perform one engine call the cell asked for, with the credential the
+   * D102/D136: perform one engine call the cell asked for, with the credential the
    * cell minted for it; the cell decided the call and checks the answer.
+   * Rollout/rollback: deploy norn-olapd (/v1 + /v2 dual-served) before callers
+   * switch to v2/*, and roll back callers before retiring /v2/*.
    */
   async engine(call) {
     try {

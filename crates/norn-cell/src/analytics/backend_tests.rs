@@ -112,30 +112,27 @@ fn snapshot_provenance_verifies_tenant_world_model_schema_frontier_and_dataset_l
     let good = SnapshotProvenance::new(
         AnalyticalEngineId::DataFusion,
         tenant.clone(),
-        ReadSnapshot::from_source_with_schema(&mirror, Some("pin-v1".to_owned())),
+        ReadSnapshot::from_source_with_pins(
+            &mirror,
+            Some("model-v1".to_owned()),
+            Some("pin-v1".to_owned()),
+        ),
     )
     .with_freshness(Freshness::Exact);
     assert!(
-        good.verify_against(&tenant, &mirror, Some("pin-v1"))
+        good.verify_against(&tenant, &mirror, Some("model-v1"), Some("pin-v1"))
             .is_ok()
     );
     assert!(matches!(
-        good.verify_against(&tenant, &mirror, Some("pin-v2")),
+        good.verify_against(&tenant, &mirror, Some("model-v1"), Some("pin-v2")),
         Err(AnalyticalRefusal::StaleRead { .. })
     ));
     assert!(matches!(
-        good.verify_against(&other_tenant, &mirror, Some("pin-v1")),
+        good.verify_against(&tenant, &mirror, Some("model-v2"), Some("pin-v1")),
         Err(AnalyticalRefusal::StaleRead { .. })
     ));
-
-    let missing_schema_pin = SnapshotProvenance::new(
-        AnalyticalEngineId::DataFusion,
-        tenant.clone(),
-        ReadSnapshot::from_source(&mirror),
-    )
-    .with_freshness(Freshness::Exact);
     assert!(matches!(
-        missing_schema_pin.verify_against(&tenant, &mirror, Some("pin-v1")),
+        good.verify_against(&other_tenant, &mirror, Some("model-v1"), Some("pin-v1")),
         Err(AnalyticalRefusal::StaleRead { .. })
     ));
 
@@ -148,7 +145,7 @@ fn snapshot_provenance_verifies_tenant_world_model_schema_frontier_and_dataset_l
         model: Some("model-v1".to_owned()),
     };
     assert!(matches!(
-        good.verify_against(&tenant, &moved_frontier, Some("pin-v1")),
+        good.verify_against(&tenant, &moved_frontier, Some("model-v1"), Some("pin-v1")),
         Err(AnalyticalRefusal::StaleRead { .. })
     ));
 
@@ -161,7 +158,46 @@ fn snapshot_provenance_verifies_tenant_world_model_schema_frontier_and_dataset_l
         model: Some("model-v2".to_owned()),
     };
     assert!(matches!(
-        good.verify_against(&tenant, &moved_model, Some("pin-v1")),
+        good.verify_against(&tenant, &moved_model, Some("model-v2"), Some("pin-v1")),
+        Err(AnalyticalRefusal::StaleRead { .. })
+    ));
+}
+
+#[test]
+fn snapshot_provenance_enforces_live_model_pin_schema_pin_and_dataset_load() {
+    let tenant = TenantId::of_scope("org_demo/dev");
+    let live_mirror = Source::Mirror {
+        world: "main".to_owned(),
+        table: "demo.Order".to_owned(),
+        frontier: 7,
+        scope: "org_demo/dev".to_owned(),
+        excluded: Vec::new(),
+        model: None,
+    };
+    let live_missing_model_pin = SnapshotProvenance::new(
+        AnalyticalEngineId::DataFusion,
+        tenant.clone(),
+        ReadSnapshot::from_source_with_schema(&live_mirror, Some("pin-v1".to_owned())),
+    )
+    .with_freshness(Freshness::Exact);
+    assert!(matches!(
+        live_missing_model_pin.verify_against(
+            &tenant,
+            &live_mirror,
+            Some("model-v1"),
+            Some("pin-v1")
+        ),
+        Err(AnalyticalRefusal::StaleRead { .. })
+    ));
+
+    let missing_schema_pin = SnapshotProvenance::new(
+        AnalyticalEngineId::DataFusion,
+        tenant.clone(),
+        ReadSnapshot::from_source(&live_mirror),
+    )
+    .with_freshness(Freshness::Exact);
+    assert!(matches!(
+        missing_schema_pin.verify_against(&tenant, &live_mirror, Some("model-v1"), Some("pin-v1")),
         Err(AnalyticalRefusal::StaleRead { .. })
     ));
 
@@ -170,20 +206,34 @@ fn snapshot_provenance_verifies_tenant_world_model_schema_frontier_and_dataset_l
         load: "load-1".to_owned(),
     };
     assert!(matches!(
-        good.verify_against(&tenant, &dataset, None),
+        live_missing_model_pin.verify_against(&tenant, &dataset, None, None),
         Err(AnalyticalRefusal::StaleRead { .. })
     ));
     let ds_prov = SnapshotProvenance::new(
         AnalyticalEngineId::DuckDb,
         tenant,
-        ReadSnapshot::from_source(&dataset),
+        ReadSnapshot::from_source_with_pins(&dataset, Some("model-v1".to_owned()), None),
     )
     .with_freshness(Freshness::Exact);
     assert!(
         ds_prov
-            .verify_against(&TenantId::of_scope("org_demo/dev"), &dataset, None)
+            .verify_against(
+                &TenantId::of_scope("org_demo/dev"),
+                &dataset,
+                Some("model-v1"),
+                None
+            )
             .is_ok()
     );
+    assert!(matches!(
+        ds_prov.verify_against(
+            &TenantId::of_scope("org_demo/dev"),
+            &dataset,
+            Some("model-v2"),
+            None
+        ),
+        Err(AnalyticalRefusal::StaleRead { .. })
+    ));
 }
 
 #[test]
@@ -196,7 +246,7 @@ fn verify_profile_provenance_requires_explicit_exact_freshness() {
     let ds_prov = SnapshotProvenance::new(
         AnalyticalEngineId::DuckDb,
         tenant.clone(),
-        ReadSnapshot::from_source(&dataset),
+        ReadSnapshot::from_source_with_pins(&dataset, Some("model-v1".to_owned()), None),
     )
     .with_freshness(Freshness::Exact);
     let profile = ProfileResponse {
@@ -205,7 +255,11 @@ fn verify_profile_provenance_requires_explicit_exact_freshness() {
         columns: Vec::new(),
         provenance: Some(ds_prov),
     };
-    assert!(verify_profile_provenance(&profile, &tenant, &dataset, None).is_ok());
+    assert!(verify_profile_provenance(&profile, &tenant, &dataset, Some("model-v1"), None).is_ok());
+    assert!(matches!(
+        verify_profile_provenance(&profile, &tenant, &dataset, Some("model-v2"), None),
+        Err(AnalyticalRefusal::StaleRead { .. })
+    ));
 
     for non_exact in [
         None,
@@ -216,7 +270,7 @@ fn verify_profile_provenance_requires_explicit_exact_freshness() {
         let mut bad_prov = SnapshotProvenance::new(
             AnalyticalEngineId::DuckDb,
             tenant.clone(),
-            ReadSnapshot::from_source(&dataset),
+            ReadSnapshot::from_source_with_pins(&dataset, Some("model-v1".to_owned()), None),
         );
         bad_prov.freshness = non_exact;
         let bad_profile = ProfileResponse {
@@ -226,7 +280,7 @@ fn verify_profile_provenance_requires_explicit_exact_freshness() {
             provenance: Some(bad_prov),
         };
         assert!(matches!(
-            verify_profile_provenance(&bad_profile, &tenant, &dataset, None),
+            verify_profile_provenance(&bad_profile, &tenant, &dataset, Some("model-v1"), None),
             Err(AnalyticalRefusal::StaleRead { .. })
         ));
     }
@@ -285,6 +339,7 @@ fn strict_law_and_markings_fail_closed_including_missing_engine_freshness() {
         ReadSnapshot::Dataset {
             table: "demo.Order".to_owned(),
             load: "load-1".to_owned(),
+            model_pin: None,
         },
     )
     .with_freshness(Freshness::Exact);
@@ -398,7 +453,11 @@ mod store_tests {
                     SnapshotProvenance::new(
                         self.id,
                         request.tenant.clone(),
-                        ReadSnapshot::from_source(&request.source),
+                        ReadSnapshot::from_source_with_pins(
+                            &request.source,
+                            request.model_pin.clone(),
+                            None,
+                        ),
                     )
                     .with_freshness(Freshness::Exact),
                 ),
@@ -668,12 +727,53 @@ mod store_tests {
             Err(CellError::ComputeRefused(code)) if code == STALE_INPUT_CODE
         ));
 
+        // Missing model pin on live mirror provenance refuses fail-closed.
+        let prepared = store.analytics_prepare(&plan, exact_context.clone(), &tenant)?;
+        assert_eq!(
+            prepared.request().model_pin.as_deref(),
+            Some(store.model().model_hash())
+        );
+        let no_model_pin = SnapshotProvenance::new(
+            AnalyticalEngineId::DataFusion,
+            tenant.clone(),
+            ReadSnapshot::from_source_with_schema(
+                &prepared.request().source,
+                prepared.schema_pin().map(str::to_owned),
+            ),
+        )
+        .with_freshness(Freshness::Exact);
+        assert!(matches!(
+            store.analytics_answer(prepared, empty_eval_response(Some(no_model_pin))),
+            Err(CellError::ComputeRefused(code)) if code == STALE_INPUT_CODE
+        ));
+
+        // Mismatched model pin on live mirror provenance refuses fail-closed.
+        let prepared = store.analytics_prepare(&plan, exact_context.clone(), &tenant)?;
+        let wrong_model_pin = SnapshotProvenance::new(
+            AnalyticalEngineId::DataFusion,
+            tenant.clone(),
+            ReadSnapshot::from_source_with_pins(
+                &prepared.request().source,
+                Some("stale-model-hash".to_owned()),
+                prepared.schema_pin().map(str::to_owned),
+            ),
+        )
+        .with_freshness(Freshness::Exact);
+        assert!(matches!(
+            store.analytics_answer(prepared, empty_eval_response(Some(wrong_model_pin))),
+            Err(CellError::ComputeRefused(code)) if code == STALE_INPUT_CODE
+        ));
+
         // Missing schema pin on mirror provenance refuses fail-closed.
         let prepared = store.analytics_prepare(&plan, exact_context.clone(), &tenant)?;
         let no_schema_pin = SnapshotProvenance::new(
             AnalyticalEngineId::DataFusion,
             tenant.clone(),
-            ReadSnapshot::from_source(&prepared.request().source),
+            ReadSnapshot::from_source_with_pins(
+                &prepared.request().source,
+                prepared.request().model_pin.clone(),
+                None,
+            ),
         )
         .with_freshness(Freshness::Exact);
         assert!(matches!(
@@ -682,12 +782,13 @@ mod store_tests {
         ));
 
         // Mismatched tenant in provenance refuses fail-closed.
-        let prepared = store.analytics_prepare(&plan, exact_context.clone(), &tenant)?;
+        let prepared = store.analytics_prepare(&plan, exact_context, &tenant)?;
         let wrong_tenant = SnapshotProvenance::new(
             AnalyticalEngineId::DataFusion,
             TenantId::of_scope("org_other/dev"),
-            ReadSnapshot::from_source_with_schema(
+            ReadSnapshot::from_source_with_pins(
                 &prepared.request().source,
+                prepared.request().model_pin.clone(),
                 prepared.schema_pin().map(str::to_owned),
             ),
         )
@@ -696,14 +797,33 @@ mod store_tests {
             store.analytics_answer(prepared, empty_eval_response(Some(wrong_tenant))),
             Err(CellError::ComputeRefused(code)) if code == STALE_INPUT_CODE
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn assemble_strict_and_empty_authorized_answers_propagate_engine_id()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (store, plan) = order_metric_fixture()?;
+        let tenant = TenantId::of_scope("org_demo/dev");
+        let exact_context = QueryContext {
+            world: MAIN_WORLD.to_owned(),
+            scope: "org_demo/dev".to_owned(),
+            population_pin: "test".to_owned(),
+            authorization_epoch: 1,
+            mapping_pin: "test".to_owned(),
+            now_ms: 10_000,
+            source_cursors: BTreeMap::new(),
+            watermarks: BTreeMap::new(),
+        };
 
         // Strict law read refuses missing engine freshness (`freshness: None`).
         let prepared = store.analytics_prepare(&plan, exact_context.clone(), &tenant)?;
         let missing_freshness = SnapshotProvenance::new(
             AnalyticalEngineId::DataFusion,
             tenant.clone(),
-            ReadSnapshot::from_source_with_schema(
+            ReadSnapshot::from_source_with_pins(
                 &prepared.request().source,
+                prepared.request().model_pin.clone(),
                 prepared.schema_pin().map(str::to_owned),
             ),
         );
@@ -717,8 +837,9 @@ mod store_tests {
         let valid_prov = SnapshotProvenance::new(
             AnalyticalEngineId::DataFusion,
             tenant.clone(),
-            ReadSnapshot::from_source_with_schema(
+            ReadSnapshot::from_source_with_pins(
                 &prepared.request().source,
+                prepared.request().model_pin.clone(),
                 prepared.schema_pin().map(str::to_owned),
             ),
         )
@@ -815,8 +936,9 @@ mod store_tests {
         let prov = SnapshotProvenance::new(
             AnalyticalEngineId::DataFusion,
             tenant,
-            ReadSnapshot::from_source_with_schema(
+            ReadSnapshot::from_source_with_pins(
                 &prepared.request().source,
+                prepared.request().model_pin.clone(),
                 prepared.schema_pin().map(str::to_owned),
             ),
         )

@@ -754,8 +754,8 @@
         "tags": [
           "crate::analytics_routes"
         ],
-        "summary": "BULK-LOAD-1 / MANIFEST-03: load a completed upload into the tenant's engine\nas dataset `objectType` (typed, SHA-256 verified, quarantined with reasons,\ncommitted via manifest, reported under `upload` connection, authorized by\n`SyncSource(\"upload\")` and `SyncSource(\"upload.<type>\")`).",
-        "description": "# Errors\nDenied caller (403), unknown upload or type (404), changed file or\nunenforced mapping/marking (422), stale pins or reused key (409), or\nunreachable engine.",
+        "summary": "BULK-LOAD-1: load a completed upload into the tenant's engine as the\ndataset `objectType`, typed by that admitted definition. The engine reads\nthe object through a presigned URL, verifies its SHA-256, types every row,\nand quarantines a row it cannot type (or that misses a required value)\nwith its reason. The load becomes the dataset's current one when its\nmanifest commits; each row traces to `(uri, sha256, row)`. The load is\nreported as a run of the type's `upload` connection, as the cell's own\nobservations (SYNC-REPORT-1).",
+        "description": "MANIFEST-03: a load is decided exactly as an observation load of the\nsame rows: `SyncSource(\"upload\")` and the destination connection's own\ngrant (`SyncSource(\"upload.<type>\")`), an admitted mapping onto the type\nthat the load binds its columns by, and the markings a write of those\nrows would carry. A mapping or marking bulk ingest cannot enforce is\nrefused, never loaded unchecked.\n\n# Errors\nA denied caller (one opaque 403), an unknown upload or type (404), a\nchanged file (`bulk.digest_mismatch`, 422), a mapping or marking bulk\ningest cannot enforce (422), stale pins or a reused request key (409), or\nan unreachable engine.",
         "operationId": "load_dataset",
         "parameters": [
           {
@@ -5451,7 +5451,7 @@
               "string",
               "null"
             ],
-            "description": "MANIFEST-04: caller idempotency key (same key + different request -> 409 `dataset.request_conflict`)."
+            "description": "MANIFEST-04: the caller's key for this load. A retry with the same\nkey and the same request answers with the first load's receipt; the\nsame key with another request is refused (409\n`dataset.request_conflict`). A load without a key always commits."
           },
           "uploadId": {
             "type": "string",

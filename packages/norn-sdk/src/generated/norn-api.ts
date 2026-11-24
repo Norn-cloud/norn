@@ -171,14 +171,26 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * BULK-LOAD-1 / MANIFEST-03: load a completed upload into the tenant's engine
-         *     as dataset `objectType` (typed, SHA-256 verified, quarantined with reasons,
-         *     committed via manifest, reported under `upload` connection, authorized by
-         *     `SyncSource("upload")` and `SyncSource("upload.<type>")`).
-         * @description # Errors
-         *     Denied caller (403), unknown upload or type (404), changed file or
-         *     unenforced mapping/marking (422), stale pins or reused key (409), or
-         *     unreachable engine.
+         * BULK-LOAD-1: load a completed upload into the tenant's engine as the
+         *     dataset `objectType`, typed by that admitted definition. The engine reads
+         *     the object through a presigned URL, verifies its SHA-256, types every row,
+         *     and quarantines a row it cannot type (or that misses a required value)
+         *     with its reason. The load becomes the dataset's current one when its
+         *     manifest commits; each row traces to `(uri, sha256, row)`. The load is
+         *     reported as a run of the type's `upload` connection, as the cell's own
+         *     observations (SYNC-REPORT-1).
+         * @description MANIFEST-03: a load is decided exactly as an observation load of the
+         *     same rows: `SyncSource("upload")` and the destination connection's own
+         *     grant (`SyncSource("upload.<type>")`), an admitted mapping onto the type
+         *     that the load binds its columns by, and the markings a write of those
+         *     rows would carry. A mapping or marking bulk ingest cannot enforce is
+         *     refused, never loaded unchecked.
+         *
+         *     # Errors
+         *     A denied caller (one opaque 403), an unknown upload or type (404), a
+         *     changed file (`bulk.digest_mismatch`, 422), a mapping or marking bulk
+         *     ingest cannot enforce (422), stale pins or a reused request key (409), or
+         *     an unreachable engine.
          */
         post: operations["load_dataset"];
         delete?: never;
@@ -1238,7 +1250,12 @@ export interface components {
             mapping?: string | null;
             /** @description The admitted object type the rows are typed by. */
             objectType: string;
-            /** @description MANIFEST-04: caller idempotency key (same key + different request -> 409 `dataset.request_conflict`). */
+            /**
+             * @description MANIFEST-04: the caller's key for this load. A retry with the same
+             *     key and the same request answers with the first load's receipt; the
+             *     same key with another request is refused (409
+             *     `dataset.request_conflict`). A load without a key always commits.
+             */
             requestKey?: string | null;
             /** @description A completed upload of this cell. */
             uploadId: string;

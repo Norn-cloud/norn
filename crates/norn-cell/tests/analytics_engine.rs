@@ -475,32 +475,30 @@ fn a_row_of_another_scope_refuses_as_stale() {
         engine.evaluate(&request).expect_err("refused").code,
         "core.compute.stale_input"
     );
-    assert_eq!(
-        engine
-            .profile(&norn_cell::analytics::ProfileRequest {
-                tenant: request.tenant.clone(),
-                source: request.source.clone(),
-                columns: vec!["recovered".to_owned()],
-            })
-            .expect_err("profile refuses wrong scope")
-            .code,
-        "core.compute.stale_input"
-    );
+    assert!(matches!(
+        engine.profile(&norn_cell::analytics::ProfileRequest {
+            tenant: request.tenant.clone(),
+            source: request.source.clone(),
+            columns: vec!["recovered".to_owned()],
+            model_pin: None,
+            cell_revision: None,
+        }),
+        Err(ref refused) if refused.code == "core.compute.stale_input"
+    ));
     if let Source::Mirror { scope, model, .. } = &mut request.source {
         *scope = "synthetic".into();
         *model = Some("wrong-model-hash".into());
     }
-    assert_eq!(
-        engine
-            .profile(&norn_cell::analytics::ProfileRequest {
-                tenant: request.tenant,
-                source: request.source,
-                columns: vec!["recovered".to_owned()],
-            })
-            .expect_err("profile refuses wrong model")
-            .code,
-        "core.compute.unsupported_engine"
-    );
+    assert!(matches!(
+        engine.profile(&norn_cell::analytics::ProfileRequest {
+            tenant: request.tenant,
+            source: request.source,
+            columns: vec!["recovered".to_owned()],
+            model_pin: None,
+            cell_revision: None,
+        }),
+        Err(ref refused) if refused.code == "core.compute.unsupported_engine"
+    ));
 }
 
 /// A batch that does not continue the mirror's frontier is refused whole.
@@ -726,6 +724,7 @@ proptest::proptest! {
                 source: Source::Dataset { table: TYPE.into(), load: "load-1".into() },
                 query: lower(&plan).expect("lowered"),
                 inline_members: 100,
+                model_pin: None,
             })
             .expect("dataset answer");
         proptest::prop_assert_eq!(totals(&response), exact_totals(&exact));
@@ -802,6 +801,8 @@ fn load_timestamp(text: &str) -> Option<(i64, u32)> {
                 load: "t".into(),
             },
             columns: vec!["at".into()],
+            model_pin: None,
+            cell_revision: None,
         })
         .expect("profile");
     match profile.columns[0].ranks.get(&1).cloned() {
@@ -927,6 +928,7 @@ fn bulk_path_measurements() {
         },
         query: lower(&plan).expect("lowered"),
         inline_members: 100,
+        model_pin: None,
     };
     let mut times = Vec::new();
     for _ in 0..11 {
@@ -954,6 +956,8 @@ fn bulk_path_measurements() {
                 "occurred_at".into(),
                 "metal".into(),
             ],
+            model_pin: None,
+            cell_revision: None,
         })
         .expect("profile");
     println!(
@@ -1825,6 +1829,8 @@ mod sources_pack {
                 tenant: tenant(),
                 source: source.clone(),
                 columns,
+                model_pin: None,
+                cell_revision: None,
             })
             .expect("profile");
         assert_eq!(profile.rows, 2);
@@ -1969,6 +1975,8 @@ mod alias_names {
                 tenant: tenant(),
                 source: source.clone(),
                 columns: columns.clone(),
+                model_pin: None,
+                cell_revision: None,
             })
             .expect("profile");
         assert_eq!(profile.rows, 3);
@@ -2437,6 +2445,7 @@ fn a_landing_is_staged_by_attempt_and_read_only_at_its_stored_cache_identity() {
             source: source(load),
             query: lower(&plan).expect("lowered"),
             inline_members: 100,
+            model_pin: None,
         })
     };
     // Landed but not stored: no reader sees the rows, at any identity.
@@ -2483,6 +2492,8 @@ fn a_landing_is_staged_by_attempt_and_read_only_at_its_stored_cache_identity() {
                 tenant: tenant(),
                 source: source(&cache),
                 columns: vec!["input".into()],
+                model_pin: None,
+                cell_revision: None,
             })
             .expect("profile")
     };

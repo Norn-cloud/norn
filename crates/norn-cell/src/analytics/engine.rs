@@ -537,11 +537,19 @@ impl Engine {
     pub fn frontier(&self, request: &FrontierRequest) -> Outcome<FrontierResponse> {
         self.with(&request.tenant, |conn| {
             let mut stale = meta(conn, "links")?.unwrap_or_default() != request.links.join("\n");
+            if let Some(model_pin) = request.model_pin.as_deref() {
+                stale |= meta(conn, "model_pin")?.as_deref() != Some(model_pin);
+            }
             for table in &request.tables {
                 stale |= meta(conn, &format!("pin:{}", table.name))?.as_deref() != Some(&table.pin);
             }
             if stale {
-                reset_mirror(conn, &request.tables, &request.links)?;
+                reset_mirror(
+                    conn,
+                    &request.tables,
+                    &request.links,
+                    request.model_pin.as_deref(),
+                )?;
             }
             let frontier = meta(conn, &format!("frontier:{}", request.world))?
                 .and_then(|v| v.parse().ok())
@@ -588,7 +596,7 @@ impl Engine {
     /// mirror has not reached (`analytics.frontier_behind`), or a stale load.
     pub fn evaluate(&self, request: &EvaluateRequest) -> Outcome<EvaluateResponse> {
         self.with(&request.tenant, |conn| {
-            let scope = Scope::new(conn, &request.source)?;
+            let scope = Scope::new(conn, &request.source, request.model_pin.as_deref())?;
             let (cell, bad) = match &request.source {
                 Source::Mirror { scope, .. } => (
                     Frag::bind("\":scope\" <> ?", Sql::Text(scope.clone())),
@@ -673,7 +681,7 @@ impl Engine {
     /// As [`Self::evaluate`].
     pub fn members(&self, request: &MembersRequest) -> Outcome<MembersResponse> {
         self.with(&request.tenant, |conn| {
-            let scope = Scope::new(conn, &request.source)?;
+            let scope = Scope::new(conn, &request.source, None)?;
             let projection = Projection::build(&request.query, &scope)?;
             let members = projection.page(
                 conn,
@@ -1207,7 +1215,7 @@ impl Engine {
     /// An unknown column, a comparison its kind does not take, or a stale source.
     pub fn page(&self, request: &PageRequest) -> Outcome<PageResponse> {
         self.with(&request.tenant, |conn| {
-            let scope = Scope::new(conn, &request.source)?;
+            let scope = Scope::new(conn, &request.source, None)?;
             let mut conditions = vec![scope.population.clone()];
             if !request.ids.is_empty() {
                 conditions.push(Frag::fmt("\":id\" IN ({})", &[&id_list(&request.ids)]));
@@ -1303,7 +1311,7 @@ impl Engine {
     /// An unknown column or a stale source.
     pub fn profile(&self, request: &ProfileRequest) -> Outcome<ProfileResponse> {
         self.with(&request.tenant, |conn| {
-            let scope = Scope::new(conn, &request.source)?;
+            let scope = Scope::new(conn, &request.source, request.model_pin.as_deref())?;
             scope.verify_mirror_rows(conn, &request.source)?;
             let rows = query_u64(
                 conn,
@@ -1356,7 +1364,7 @@ impl Engine {
             .map_err(|error| refusal("analytics.engine", error.to_string()))?
             .join(name);
         self.with(&request.tenant, |conn| {
-            let scope = Scope::new(conn, &request.source)?;
+            let scope = Scope::new(conn, &request.source, None)?;
             let mut select = vec![
                 format!("{} AS id", ident(":id")),
                 format!("{} AS version", ident(":v")),
@@ -1420,7 +1428,12 @@ fn set_meta(conn: &Connection, key: &str, value: &str) -> Outcome<()> {
     Ok(())
 }
 
-fn reset_mirror(conn: &Connection, tables: &[TableSchema], links: &[String]) -> Outcome<()> {
+fn reset_mirror(
+    conn: &Connection,
+    tables: &[TableSchema],
+    links: &[String],
+    model_pin: Option<&str>,
+) -> Outcome<()> {
     db(conn.execute_batch("BEGIN TRANSACTION"))?;
     let reset = (|| {
         let mut statement = db(conn.prepare(
@@ -1432,7 +1445,7 @@ fn reset_mirror(conn: &Connection, tables: &[TableSchema], links: &[String]) -> 
             db(conn.execute_batch(&format!("DROP TABLE {}", ident(&name))))?;
         }
         db(conn.execute_batch(
-            "DELETE FROM \":meta\" WHERE key LIKE 'frontier:%' OR key LIKE 'pin:%'",
+            "DELETE FROM \":meta\" WHERE key LIKE 'frontier:%' OR key LIKE 'pin:%' OR key = 'model_pin'",
         ))?;
         for table in tables {
             let columns: Vec<String> = table.columns.iter().map(column_ddl).collect();
@@ -1474,6 +1487,9 @@ fn reset_mirror(conn: &Connection, tables: &[TableSchema], links: &[String]) -> 
             )))?;
         }
         set_meta(conn, "links", &links.join("\n"))?;
+        if let Some(pin) = model_pin {
+            set_meta(conn, "model_pin", pin)?;
+        }
         Ok(())
     })();
     match reset {
@@ -1725,12 +1741,14 @@ struct Scope {
     at: Option<(String, u64)>,
     /// At a knowledge cutoff, the model every version read must be of.
     model: Option<String>,
+    /// Active cell model hash generation attested in snapshot provenance.
+    active_model_pin: Option<String>,
     /// Active mirror table schema pin generation read from `:meta`.
     schema_pin: Option<String>,
 }
 
 impl Scope {
-    fn new(conn: &Connection, source: &Source) -> Outcome<Self> {
+    fn new(conn: &Connection, source: &Source, expected_model_pin: Option<&str>) -> Outcome<Self> {
         match source {
             Source::Mirror {
                 world,
@@ -1755,6 +1773,12 @@ impl Scope {
                 if schema.pin != schema_pin {
                     return Err(refusal(STALE, "mirror schema pin disagrees with schema"));
                 }
+                let stored_model_pin = meta(conn, "model_pin")?;
+                if let Some(expected) = expected_model_pin
+                    && stored_model_pin.as_deref() != Some(expected)
+                {
+                    return Err(refusal(STALE, "mirror model pin does not match"));
+                }
                 let at = Frag::bind("?", Sql::UBigInt(*frontier));
                 let all = Frag::fmt(
                     "(\":w\" = {} AND \":from\" <= {} AND (\":to\" IS NULL OR \":to\" > {}))",
@@ -1778,6 +1802,7 @@ impl Scope {
                     excluded: excluded.clone(),
                     at: Some((world.clone(), *frontier)),
                     model: model.clone(),
+                    active_model_pin: stored_model_pin.or_else(|| model.clone()),
                     schema_pin: Some(schema_pin),
                 })
             }
@@ -1802,6 +1827,7 @@ impl Scope {
                     excluded: Vec::new(),
                     at: None,
                     model: None,
+                    active_model_pin: expected_model_pin.map(str::to_owned),
                     schema_pin: None,
                 })
             }
@@ -1840,7 +1866,11 @@ impl Scope {
     }
 
     fn read_snapshot(&self, source: &Source) -> ReadSnapshot {
-        ReadSnapshot::from_source_with_schema(source, self.schema_pin.clone())
+        ReadSnapshot::from_source_with_pins(
+            source,
+            self.active_model_pin.clone(),
+            self.schema_pin.clone(),
+        )
     }
 
     fn column(&self, id: &str) -> Outcome<&Column> {
