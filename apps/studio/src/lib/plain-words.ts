@@ -11,8 +11,8 @@ import { CellRefusal } from "./live-transport.ts"
  */
 const PLAIN: Readonly<Record<string, Readonly<Record<Locale, string>>>> = {
   "metric.validation.invalid_currency": {
-    en: "This number is money, but its record type doesn't say which currency each amount is in, so the amounts can't be added up safely.",
-    ar: "هذا الرقم مبلغ مالي، لكن نوع السجل لا يحدد عملة كل مبلغ، لذلك لا يمكن جمع المبالغ بأمان.",
+    en: "This metric's currency setup isn't valid (for example, a count with a currency, a number with both a unit and a currency, or an invalid currency column), so its amounts can't be combined safely.",
+    ar: "إعداد العملة لهذا المقياس غير صالح (مثل عدد بعملة، أو رقم بوحدة وعملة معًا، أو عمود عملة غير صالح)، لذلك لا يمكن جمع مبالغه بأمان.",
   },
   "metric.validation.mixed_currency": {
     en: "These amounts are in more than one currency. Break the answer out by currency, or pick one currency, to add them up.",
@@ -43,8 +43,8 @@ const PLAIN: Readonly<Record<string, Readonly<Record<Locale, string>>>> = {
     ar: "لا يمكن جمع هذا الرقم عبر المجموعات، لذلك لا يوجد إجمالي عام.",
   },
   "question.validation.semi_additive_time": {
-    en: "This is a balance: it's read at the end of each period, not added up over time.",
-    ar: "هذا رصيد: يُقرأ في نهاية كل فترة، ولا يُجمع عبر الزمن.",
+    en: "This is a balance: it isn't summed across time, and instead reduces each period using its declared rule (such as first, last, min, or max).",
+    ar: "هذا رصيد: لا يُجمع عبر الزمن، بل يُختصر لكل فترة وفق قاعدته المعلنة (مثل الأول أو الأخير أو الأدنى أو الأعلى).",
   },
   "question.validation.invalid_window": {
     en: "The time range is empty or backwards. Pick a start before the end.",
@@ -75,8 +75,8 @@ const PLAIN: Readonly<Record<string, Readonly<Record<Locale, string>>>> = {
     ar: "هذا التغيير يخالف قاعدة، لذلك لم يُحفظ شيء.",
   },
   "decision.law_not_satisfied": {
-    en: "A rule blocks this choice for your role.",
-    ar: "تمنع قاعدة هذا الخيار لدورك.",
+    en: "A rule prevents this choice from proceeding for your role.",
+    ar: "تمنع قاعدة إتمام هذا الخيار لدورك.",
   },
   "decision.guard_false": {
     en: "This step isn't open for this record right now.",
@@ -166,40 +166,6 @@ export function plainMetricLabel(label: string): string {
     return `${cap(spaced(prop))} at period end (as of ${spaced(time)}, per ${conceptTitle(type)})`
   }
   return label
-}
-
-/**
- * Rewrite derived-metric formula/proof fragments inside a restatement string into plain words for
- * Business mode (e.g. `sum(a) / sum(b); sum(c); conservation [] (a ÷ b)` → `C (a ÷ b)`).
- * Technical view keeps the raw server restatement verbatim.
- */
-export function plainRestatement(text: string): string {
-  // 1) Declared ratio already followed by its "(a ÷ b)" clause: avoid repeating "(a ÷ b)" twice.
-  let out = text.replace(
-    /sum\(([^)]+)\)\s*\/\s*sum\(([^)]+)\);\s*sum\(([^)]+)\)(?:;\s*conservation\s*\[[^\]]*\])?(\s*\([^)]*÷[^)]*\))/gi,
-    (_m, _num: string, _den: string, prop: string, tail: string) => `${cap(spaced(prop))}${tail}`,
-  )
-  // 2) Declared ratio without a trailing "(a ÷ b)" clause.
-  out = out.replace(
-    /sum\(([^)]+)\)\s*\/\s*sum\(([^)]+)\);\s*sum\(([^)]+)\)(?:;\s*conservation\s*\[[^\]]*\])?/gi,
-    (_m, num: string, den: string, prop: string) => `${cap(spaced(prop))} (${spaced(num)} ÷ ${spaced(den)})`,
-  )
-  // 3) Conserved ratio with law digest.
-  out = out.replace(
-    /sum\(([^)]+)\)\s*\/\s*sum\(([^)]+)\);\s*law\s+[^\s(]+/gi,
-    (_m, num: string, den: string) => `${cap(spaced(num))} ÷ ${spaced(den)}`,
-  )
-  // 4) Simple derived sum with conservation proof.
-  out = out.replace(
-    /sum\(([^)]+)\);\s*conservation\s*\[[^\]]*\]/gi,
-    (_m, prop: string) => `Total ${spaced(prop)}`,
-  )
-  // 5) Snapshot label with raw object type id.
-  out = out.replace(
-    /\b([a-z0-9_]+),\s*as of\s+([a-z0-9_]+);\s*last value per\s+((?:[a-z][a-z0-9_]*\.)+[A-Z][A-Za-z0-9]*)\s+at each period's end/gi,
-    (_m, prop: string, time: string, type: string) => `${cap(spaced(prop))} at period end (as of ${spaced(time)}, per ${conceptTitle(type)})`,
-  )
-  return out
 }
 
 /** Patterns that betray an internal runtime/worker message rather than user-facing copy. */

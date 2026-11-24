@@ -70,33 +70,77 @@ describe("sheetMarkup", () => {
     expect(needsConfirm(decision, "approve")).toBe(true)
     expect(needsConfirm(decision, "reject")).toBe(false)
   })
-  test("refusalPanelMarkup renders disclosed Request/Check/Result with Decided at and redacted with Received at", () => {
+  test("refusalPanelMarkup distinguishes unevaluated decider laws from evaluated law violations and redacted refusals", () => {
     const receivedAt = new Date("2027-01-15T09:30:00Z")
     const laws = {
       "canon.refund.limit.law": { id: "canon.refund.limit", name: "Refund authority limit", rationale: "Refunds over 1,000 EUR need finance approval." },
     }
-    const disclosed = refusalPanelMarkup(
+    // 1. Disclosed unevaluated decider law (empty values, cannot-evaluate explanation): renders "Not evaluated", never "Fails" or choice as checked operand.
+    const unevaluated = refusalPanelMarkup(
+      {
+        code: "decision.law_not_satisfied",
+        message: "the decider law is not satisfied",
+        explanation: "this decision names a law the cell cannot evaluate for the caller",
+        decidedAt: "2027-01-15T08:00:00Z",
+        reason: {
+          law: "canon.refund.limit",
+          pin: { artifactId: "canon.refund.limit.law", version: "sha256:1" },
+          subject: "decision/dec_1",
+          values: {},
+        },
+      },
+      { decision, choiceLabel: "Approve", note: "Customer asked", locale: "en", technical: false, caller: "user:sara", laws, receivedAt },
+    )
+    expect(unevaluated.variant).toBe("disclosed")
+    expect(unevaluated.html).toContain('data-verdict="not-evaluated"')
+    expect(unevaluated.html).toContain("Not evaluated")
+    expect(unevaluated.html).toContain("This choice could not be checked against a rule")
+    expect(unevaluated.html).not.toContain('data-verdict="fails"')
+    expect(unevaluated.html).not.toContain("data-checked=")
+    expect(unevaluated.html).toContain("Decided at")
+    expect(unevaluated.html).toContain('datetime="2027-01-15T08:00:00Z"')
+    expect(unevaluated.html).toContain("user:sara")
+
+    // Even if a legacy payload includes `choice` in `reason.values` on `decision.law_not_satisfied`, it is never shown as an evaluated operand.
+    const legacyChoiceOnly = refusalPanelMarkup(
       {
         code: "decision.law_not_satisfied",
         message: "the decider law is not satisfied",
         decidedAt: "2027-01-15T08:00:00Z",
         reason: {
           law: "canon.refund.limit",
-          pin: { artifactId: "canon.refund.limit.law", version: "sha256:1" },
           subject: "decision/dec_1",
-          values: { choice: "approve", amount: "1240.00" },
+          values: { choice: "approve" },
+        },
+      },
+      { decision, choiceLabel: "Approve", note: "", locale: "en", technical: false, caller: "user:sara", laws, receivedAt },
+    )
+    expect(legacyChoiceOnly.html).toContain('data-verdict="not-evaluated"')
+    expect(legacyChoiceOnly.html).not.toContain('data-checked="choice"')
+
+    // 2. Disclosed evaluated law failure (`core.laws.violated` with real evaluated operands): renders "Fails" and checked operand chips.
+    const evaluated = refusalPanelMarkup(
+      {
+        code: "core.laws.violated",
+        message: "a declared precondition does not hold",
+        decidedAt: "2027-01-15T08:00:00Z",
+        reason: {
+          law: "canon.refund.limit",
+          pin: { artifactId: "canon.refund.limit.law", version: "sha256:1" },
+          subject: "canon.Refund/ref-1",
+          values: { amount: "1240.00", role_limit: "1000.00" },
         },
       },
       { decision, choiceLabel: "Approve", note: "Customer asked", locale: "en", technical: false, caller: "user:sara", laws, receivedAt },
     )
-    expect(disclosed.variant).toBe("disclosed")
-    expect(disclosed.html).toContain("Refunds over 1,000 EUR need finance approval.")
-    expect(disclosed.html).toContain('data-verdict="fails"')
-    expect(disclosed.html).toContain('data-checked="amount"')
-    expect(disclosed.html).toContain("Decided at")
-    expect(disclosed.html).toContain('datetime="2027-01-15T08:00:00Z"')
-    expect(disclosed.html).toContain("user:sara")
+    expect(evaluated.variant).toBe("disclosed")
+    expect(evaluated.html).toContain("Refunds over 1,000 EUR need finance approval.")
+    expect(evaluated.html).toContain('data-verdict="fails"')
+    expect(evaluated.html).toContain('data-checked="amount"')
+    expect(evaluated.html).toContain('data-checked="role_limit"')
+    expect(evaluated.html).toContain("Decided at")
 
+    // 3. Redacted refusal: hides law/values and labels local timestamp as "Received at" when server omits `decidedAt`.
     const redacted = refusalPanelMarkup(
       { code: "decision.law_not_satisfied", message: "the decider law is not satisfied", reason: null },
       { decision, choiceLabel: "Approve", note: "", locale: "en", technical: false, caller: "user:member", laws, receivedAt },

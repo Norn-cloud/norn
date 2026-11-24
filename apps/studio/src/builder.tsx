@@ -8,11 +8,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { CellUnavailable, fetchWithTimeout, parseUnavailableDetail } from "@/lib/definitions"
 import { list, modKey, sameValue, type Issue } from "@/lib/editor"
-import { useView } from "@/lib/view"
 import { questionVerdictOf, type QuestionVerdict } from "./agent/question.tsx"
 import { readDocument } from "./lib/exact.ts"
 import { readMetrics, recentWindow } from "./lib/metrics.ts"
-import { plainRestatement } from "./lib/plain-words.ts"
 import type { UnitGroup } from "./lib/answer-anatomy.ts"
 import type { Question } from "./lib/transport.ts"
 import { UnitGroups } from "./questions.tsx"
@@ -311,21 +309,13 @@ export function QuestionBuilder({ catalog, guard, initial, onUse, unsupported, c
   )
 }
 
-/** The checker's admission, quietly: its own restatement is one click away. */
+/** The checker's admission, quietly: its own restatement is one click away, verbatim. */
 function Checked({ verdict }: { readonly verdict: QuestionVerdict }) {
-  const { view } = useView()
-  const raw = verdict.restatement?.text
-  const shown = raw === undefined ? "The checker admitted this question." : view === "technical" ? raw : plainRestatement(raw)
+  const canonical = verdict.restatement?.text
   return (
     <details className="group text-meta text-muted-foreground">
       <summary className="flex cursor-pointer list-none items-center gap-1.5"><CircleCheck aria-hidden className="size-3.5 text-success" />Checked by the server<span className="underline-offset-4 group-open:hidden hover:underline">· what it read</span></summary>
-      <p className="mt-1.5 max-w-[72ch] text-pretty">{shown}</p>
-      {view !== "technical" && raw !== undefined && shown !== raw && (
-        <details className="mt-1 text-xs text-muted-foreground">
-          <summary className="cursor-pointer select-none">Technical wording</summary>
-          <p className="mt-1 font-mono [overflow-wrap:anywhere]">{raw}</p>
-        </details>
-      )}
+      <p className="mt-1.5 max-w-[72ch] text-pretty">{canonical ?? "The checker admitted this question."}</p>
     </details>
   )
 }

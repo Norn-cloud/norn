@@ -1,12 +1,14 @@
 import { expect, test } from "bun:test"
-import { CellUnavailable, fetchWithTimeout, lastReachableAt, resetCellReachable } from "../src/lib/definitions.ts"
+import { CellUnavailable, fetchWithTimeout, isReadMethod, lastReachableAt, resetCellReachable, scopedHostFetch } from "../src/lib/definitions.ts"
 import { CellRefusal, isRetryableModeError, readMode } from "../src/lib/live-transport.ts"
-import { explainError, plainMetricLabel, plainRestatement } from "../src/lib/plain-words.ts"
+import { explainError, plainMetricLabel, plainWords } from "../src/lib/plain-words.ts"
 import { formatLastReachable, isWorkspaceUnavailableError } from "../src/components/load-state.tsx"
+
+const ME = { user: { id: "u" }, organization: { id: "org_1", name: "Org", role: "admin" }, environmentId: "env_1" }
 
 test("a non-retryable cell failure (503 cell.unopenable) is never auto-retried and preserves incident metadata", async () => {
   const fetcher = async (input: string) => {
-    if (input === "/api/me") return Response.json({ user: { id: "u" }, organization: { id: "org_1", name: "Org", role: "admin" }, environmentId: "env_1" })
+    if (input === "/api/me") return Response.json(ME)
     return Response.json({
       format: "norn/refusal@2",
       code: "cell.unopenable",
@@ -36,15 +38,43 @@ test("a non-retryable cell failure (503 cell.unopenable) is never auto-retried a
   expect(isWorkspaceUnavailableError(err)).toBe(true)
 })
 
-test("transient 503 and network failures remain eligible for brief automatic retry", () => {
+test("transient 503, HTML 502 gateway errors, and bare network errors on /v1/definitions remain retryable and never fall back to recorded", async () => {
   expect(isRetryableModeError(new CellUnavailable(503, "temporarily busy", { retryable: true }))).toBe(true)
   expect(isRetryableModeError(new CellUnavailable(503))).toBe(true)
   expect(isRetryableModeError(new CellUnavailable(0, "network down", { timedOut: true }))).toBe(true)
   expect(isRetryableModeError(new CellUnavailable(503, "broken", { retryable: false }))).toBe(false)
   expect(isRetryableModeError(new CellRefusal(403, "authz.denied", "denied", { retryable: false }))).toBe(false)
+
+  // Bare TypeError on /v1/definitions normalizes into a retryable CellUnavailable(0).
+  let networkErr: unknown
+  try {
+    await readMode(async (input: string) => {
+      if (input === "/api/me") return Response.json(ME)
+      throw new TypeError("Failed to fetch")
+    })
+  } catch (error) {
+    networkErr = error
+  }
+  expect(networkErr).toBeInstanceOf(CellUnavailable)
+  expect((networkErr as CellUnavailable).status).toBe(0)
+  expect(isRetryableModeError(networkErr)).toBe(true)
+
+  // HTML 502 Bad Gateway from proxy throws retryable CellUnavailable(502) instead of returning { kind: "recorded" }.
+  let gatewayErr: unknown
+  try {
+    await readMode(async (input: string) => {
+      if (input === "/api/me") return Response.json(ME)
+      return new Response("<html><body>502 Bad Gateway</body></html>", { status: 502, headers: { "content-type": "text/html" } })
+    })
+  } catch (error) {
+    gatewayErr = error
+  }
+  expect(gatewayErr).toBeInstanceOf(CellUnavailable)
+  expect((gatewayErr as CellUnavailable).status).toBe(502)
+  expect(isRetryableModeError(gatewayErr)).toBe(true)
 })
 
-test("plainMetricLabel and plainRestatement remove raw sum/conservation jargon for Business mode", () => {
+test("plainMetricLabel formats derived metric labels and plainWords matches checker semantics accurately", () => {
   const raw = "sum(completed_count) / sum(application_count); sum(completion_rate); conservation []"
   expect(plainMetricLabel(raw)).toBe("Completion rate (completed count ÷ application count)")
   expect(plainMetricLabel("sum(quantity); conservation [law.a@1]")).toBe("Total quantity")
@@ -52,11 +82,14 @@ test("plainMetricLabel and plainRestatement remove raw sum/conservation jargon f
   expect(plainMetricLabel("quantity, as of observed_at; last value per canon.Holding at each period's end"))
     .toBe("Quantity at period end (as of observed at, per Holding)")
 
-  const restatement = "sum(completed_count) / sum(application_count); sum(completion_rate); conservation [] (completed_count ÷ application_count) of canon.Application records, by week of submitted_at"
-  const plain = plainRestatement(restatement)
-  expect(plain).toBe("Completion rate (completed_count ÷ application_count) of canon.Application records, by week of submitted_at")
-  expect(plain).not.toContain("sum(")
-  expect(plain).not.toContain("conservation []")
+  // Accurate copy: invalid_currency covers counts with currency / unit+currency / invalid column (not just missing source);
+  // semi_additive_time covers first/last/min/max (not only period end).
+  const invalidCurrencyEn = plainWords("metric.validation.invalid_currency", "en") ?? ""
+  expect(invalidCurrencyEn).not.toContain("record type doesn't say which currency")
+  expect(invalidCurrencyEn).toContain("currency setup")
+  const semiAdditiveEn = plainWords("question.validation.semi_additive_time", "en") ?? ""
+  expect(semiAdditiveEn).not.toContain("read at the end of each period")
+  expect(semiAdditiveEn).toContain("first, last, min, or max")
 })
 
 test("explainError hides raw internal worker strings in Business mode while preserving server explanation and Technical details", () => {
@@ -82,21 +115,104 @@ test("explainError hides raw internal worker strings in Business mode while pres
   expect(uncodedNoise.raw).toContain("Worker failed: handler is waiting on nothing")
 })
 
-test("fetchWithTimeout aborts stalled requests cleanly as a timed-out CellUnavailable", async () => {
-  const stalled = (_input: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+test("fetchWithTimeout aborts stalled headers AND headers-first stalled body reads, and honors caller abort mid-body", async () => {
+  // 1. Stalled before headers arrive.
+  const stalledHeaders = (_input: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
     init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")))
   })
   let caught: unknown
   try {
-    await fetchWithTimeout(stalled, "/api/host/v1/definitions", {}, 25)
+    await fetchWithTimeout(stalledHeaders, "/api/host/v1/definitions", {}, 25)
   } catch (error) {
     caught = error
   }
   expect(caught).toBeInstanceOf(CellUnavailable)
-  const err = caught as CellUnavailable
-  expect(err.timedOut).toBe(true)
-  expect(err.code).toBe("cell.timeout")
-  expect(isWorkspaceUnavailableError(err)).toBe(true)
+  expect((caught as CellUnavailable).timedOut).toBe(true)
+  expect((caught as CellUnavailable).code).toBe("cell.timeout")
+  expect(isWorkspaceUnavailableError(caught)).toBe(true)
+
+  // 2. Headers arrive immediately, then body stalls past deadline: must time out and cancel upstream reader.
+  let upstreamCancelled = false
+  let completed = false
+  const stalledBody = async () => new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"partial":'))
+      },
+      cancel() {
+        upstreamCancelled = true
+      },
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  )
+  const response = await fetchWithTimeout(stalledBody, "/api/host/v1/questions:metrics", {}, 30, () => { completed = true })
+  let bodyErr: unknown
+  try {
+    await response.text()
+  } catch (error) {
+    bodyErr = error
+  }
+  expect(bodyErr).toBeInstanceOf(CellUnavailable)
+  expect((bodyErr as CellUnavailable).timedOut).toBe(true)
+  expect((bodyErr as CellUnavailable).code).toBe("cell.timeout")
+  expect(upstreamCancelled).toBe(true)
+  expect(completed).toBe(false)
+
+  // 3. Headers arrive immediately, body stalls, caller aborts (e.g. Retry): rejects with caller abort and cancels upstream.
+  let callerCancelled = false
+  const caller = new AbortController()
+  const stalledForCaller = async () => new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("{"))
+      },
+      cancel() {
+        callerCancelled = true
+      },
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  )
+  const response2 = await fetchWithTimeout(stalledForCaller, "/api/host/v1/questions:metrics", { signal: caller.signal }, 5_000)
+  setTimeout(() => caller.abort(new DOMException("Caller retry", "AbortError")), 20)
+  let abortErr: unknown
+  try {
+    await response2.text()
+  } catch (error) {
+    abortErr = error
+  }
+  expect(abortErr).toBeInstanceOf(DOMException)
+  expect((abortErr as DOMException).name).toBe("AbortError")
+  expect(callerCancelled).toBe(true)
+})
+
+test("scopedHostFetch applies the default read deadline to GET/HEAD only and never wraps mutating POST/PUT/PATCH/DELETE", async () => {
+  expect(isReadMethod(undefined)).toBe(true)
+  expect(isReadMethod("GET")).toBe(true)
+  expect(isReadMethod("head")).toBe(true)
+  expect(isReadMethod("POST")).toBe(false)
+  expect(isReadMethod("PUT")).toBe(false)
+  expect(isReadMethod("PATCH")).toBe(false)
+  expect(isReadMethod("DELETE")).toBe(false)
+
+  const seenSignals: { method: string | undefined; signal: AbortSignal | null | undefined }[] = []
+  const fetcher = async (_input: string, init?: RequestInit) => {
+    seenSignals.push({ method: init?.method, signal: init?.signal })
+    return Response.json({ ok: true })
+  }
+  const scoped = scopedHostFetch(fetcher, "/api/host", async () => ({ orgId: "org_1", environmentId: "env_1" }))
+
+  // Read gets a timeout-bound AbortSignal injected.
+  await (await scoped("/v1/definitions")).text()
+  expect(seenSignals[0]?.signal).toBeDefined()
+
+  // Mutating POST with no signal gets NO injected 12 s AbortSignal.
+  await (await scoped("/v1/actions/demo.act", { method: "POST", body: "{}" })).text()
+  expect(seenSignals[1]?.signal).toBeUndefined()
+
+  // Mutating POST with its own declared signal passes that exact signal through untouched.
+  const own = new AbortController()
+  await (await scoped("/v1/decisions/dec_1:decide", { method: "POST", body: "{}", signal: own.signal })).text()
+  expect(seenSignals[2]?.signal).toBe(own.signal)
 })
 
 test("formatLastReachable reports null when unseen and human words once reachable", () => {

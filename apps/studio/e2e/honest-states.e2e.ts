@@ -78,6 +78,62 @@ test("slow response: shows skeleton, then slow notice, then bounded timeout with
   }
 })
 
+test("headers-first stalled body: deadline cancels the hung body stream and Retry starts a new request that recovers", async ({ page }) => {
+  await session(page)
+  await page.route("**/api/host/v1/**", (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith("/v1/definitions")) return route.fulfill({ json: { artifacts: definitions } })
+    return route.fulfill({ status: 404, json: { code: "route.not_found", message: "not served" } })
+  })
+  // Simulate a server that returns 200 headers immediately then stalls mid-body on attempt 1, and answers cleanly on attempt 2.
+  await page.addInitScript(() => {
+    const nativeFetch = window.fetch.bind(window)
+    const state = { attempts: 0, cancelled: false }
+    ;(window as unknown as { __stalledBody: typeof state }).__stalledBody = state
+    window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url
+      if (url.includes("/v1/questions:metrics")) {
+        state.attempts += 1
+        if (state.attempts === 1) {
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('{"metrics":['))
+            },
+            cancel() {
+              state.cancelled = true
+            },
+          })
+          return Promise.resolve(new Response(stream, { status: 200, headers: { "content-type": "application/json" } }))
+        }
+        return Promise.resolve(new Response(JSON.stringify({ metrics: [] }), { status: 200, headers: { "content-type": "application/json" } }))
+      }
+      return nativeFetch(input, init)
+    }) as typeof fetch
+  })
+
+  await page.clock.install()
+  await page.goto("/metrics")
+  await expect(page.locator('[data-load-state="loading"]')).toBeVisible()
+
+  // Past 12 s while headers have already arrived and only the body is stalled: must abort and cancel the hung stream.
+  await page.clock.runFor(4_500)
+  await expect(page.locator('[data-load-state="slow"]')).toBeVisible()
+  await page.clock.runFor(8_000)
+
+  const timedOut = page.locator("[data-workspace-unavailable]")
+  await expect(timedOut).toBeVisible()
+  await expect(timedOut).toContainText("The workspace took too long to respond")
+  const afterTimeout = await page.evaluate(() => (window as unknown as { __stalledBody: { attempts: number; cancelled: boolean } }).__stalledBody)
+  expect(afterTimeout).toEqual({ attempts: 1, cancelled: true })
+
+  // Clicking Retry starts request #2 (never stuck on the hung attempt #1) and recovers.
+  await page.clock.resume()
+  await timedOut.getByRole("button", { name: "Retry" }).click()
+  await expect(page.locator('[data-load-state="empty"]')).toBeVisible()
+  const afterRetry = await page.evaluate(() => (window as unknown as { __stalledBody: { attempts: number; cancelled: boolean } }).__stalledBody)
+  expect(afterRetry.attempts).toBe(2)
+})
+
 test("server error: shows plain reason and server explanation (never hidden), tucks raw worker noise under Technical, and Retry recovers", async ({ page }) => {
   await session(page)
   let fail = true
@@ -156,6 +212,7 @@ test("unreachable cell: 503 cell.unopenable (retryable: false) never shows Retry
   })
 
   // First load reaches the cell once so Last reachable is recorded.
+  await page.clock.install()
   await page.goto("/")
   await expect(page.getByText("Nothing needs you")).toBeVisible()
 
@@ -176,19 +233,218 @@ test("unreachable cell: 503 cell.unopenable (retryable: false) never shows Retry
   await expect(page.locator('[data-connection="retrying"]')).toHaveCount(0)
   await expect(page.getByText("Retrying…")).toHaveCount(0)
   await expect(banner.getByRole("button", { name: "Retry" })).toBeEnabled()
+  await page.clock.resume()
   await shoot(page, "cell-unavailable")
+  await page.clock.install()
 
-  // Wait briefly to confirm automatic retries do NOT spin for retryable: false.
+  // Advance the fake clock across the full automatic-retry backoff window (10 s > 5.6 s) to confirm zero retries fire for retryable: false.
   const hitsAfterFail = definitionHits
-  await page.waitForTimeout(1_500)
+  await page.clock.runFor(10_000)
   expect(definitionHits).toBe(hitsAfterFail)
   expect(hitsAfterFail).toBeGreaterThan(hitsBefore)
 
   // Clicking Retry once the cell recovers restores both the live workspace and the Sources page.
+  await page.clock.resume()
   unopenable = false
   await banner.getByRole("button", { name: "Retry" }).click()
   await expect(banner).toHaveCount(0)
   await expect(page.locator("[data-workspace-unavailable]")).toHaveCount(0)
+})
+
+test("transient HTML 502 on /v1/definitions: retries cleanly through the bounded backoff window and settles to Workspace unavailable without falling back to recorded", async ({ page }) => {
+  await session(page)
+  let gatewayDown = false
+  let definitionHits = 0
+  await page.route("**/api/host/v1/**", (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith("/v1/definitions")) {
+      definitionHits += 1
+      if (gatewayDown) {
+        return route.fulfill({ status: 502, contentType: "text/html", body: "<html><body>502 Bad Gateway</body></html>" })
+      }
+      return route.fulfill({ json: { artifacts: definitions } })
+    }
+    if (path.endsWith("/v1/inbox")) return route.fulfill({ json: { scanLimit: 1000, sections: [], items: [] } })
+    return route.fulfill({ status: 404, json: { code: "route.not_found", message: "not served" } })
+  })
+
+  await page.clock.install()
+  await page.goto("/")
+  await expect(page.getByText("Nothing needs you")).toBeVisible()
+
+  gatewayDown = true
+  const before = definitionHits
+  await page.reload()
+
+  // First attempt fails with HTML 502: Studio enters bounded retrying (never falling back to recorded).
+  await expect(page.locator('[data-connection="retrying"]')).toBeVisible()
+  await expect(page.getByText("Recorded data")).toHaveCount(0)
+
+  // Drive through the 800 ms + 1600 ms + 3200 ms mode-retry delays (3 automatic retries after the initial attempt).
+  await page.clock.runFor(900)
+  await page.clock.runFor(1_700)
+  await page.clock.runFor(3_300)
+
+  const banner = page.locator('[data-connection="unavailable"]')
+  await expect(banner).toBeVisible()
+  await expect(banner).toContainText("Workspace unavailable")
+  // Let any parallel query retries (e.g. catalog's 1 s + 2 s + 4 s backoff) finish settling, then confirm retries stop completely.
+  await page.clock.runFor(5_000)
+  const settledHits = definitionHits - before
+  expect(settledHits).toBeGreaterThanOrEqual(4)
+  expect(settledHits).toBeLessThanOrEqual(8)
+
+  // No further retries fire once settled across a full 15 s quiet window.
+  await page.clock.runFor(15_000)
+  expect(definitionHits - before).toBe(settledHits)
+
+  // Explicit Retry recovers once the gateway is back.
+  await page.clock.resume()
+  gatewayDown = false
+  await banner.getByRole("button", { name: "Retry" }).click()
+  await expect(banner).toHaveCount(0)
+  await expect(page.getByText("Nothing needs you")).toBeVisible()
+})
+
+test("CSV load write deadlines: a 15 s dataset load succeeds without hitting the 12 s read timeout; a 90 s timeout enters Outcome unknown, blocks duplicate submission, and reconciles via source.Connection", async ({ page }) => {
+  await session(page)
+  const sha = "cd".repeat(32)
+  let loadCalls = 0
+  let mode: "slow-ok" | "timeout-then-land" = "slow-ok"
+  let connectionLanded = false
+  const slowLoad: { release?: () => void } = {}
+  const pendingReleases: (() => void)[] = []
+  const connectionEntity = {
+    artifactId: "source.Connection.entity",
+    dependencies: [],
+    irVersion: "0.1",
+    kind: "entity",
+    lifecycle: "active",
+    name: "Connection",
+    namespace: "source",
+    version: "0.1.0",
+    payload: { entityVersion: "2.0", objectType: { name: "source.Connection", implements: [], properties: [{ id: "status", type: { kind: "text" } }] } },
+  }
+
+  await page.route("https://storage.example/**", (route) => route.fulfill({ status: 200, body: "" }))
+  await page.route("**/api/host/v1/**", async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith("/v1/definitions")) return route.fulfill({ json: { artifacts: [...(definitions as unknown[]), connectionEntity] } })
+    if (path.endsWith("/v1/objects/source.Connection")) return route.fulfill({ json: { records: [] } })
+    if (path.endsWith("/v1/objects/source.Connection/upload.sale")) {
+      if (!connectionLanded) return route.fulfill({ status: 404, json: { code: "object.not_found", message: "not found" } })
+      return route.fulfill({
+        json: {
+          objectType: "source.Connection",
+          id: "upload.sale",
+          version: 1,
+          values: {
+            status: "ok",
+            last_sync_ended_at: "2027-01-15T08:05:00Z",
+            watermark: JSON.stringify({ sha256: sha, rows: 2 }),
+            rows_read: 2,
+            rows_landed: 2,
+            rows_quarantined: 0,
+          },
+        },
+      })
+    }
+    if (path.endsWith("/v1/uploads:begin")) {
+      return route.fulfill({ json: { uploadId: "up_1", putUrl: "https://storage.example/up_1", putHeaders: { "content-type": "text/csv" }, expiresAt: "2027-01-15T09:00:00Z" } })
+    }
+    if (path.endsWith("/v1/uploads/up_1:complete")) {
+      return route.fulfill({
+        json: {
+          uri: "s3://uploads/up_1.csv",
+          sha256: sha,
+          size: 42,
+          rows: 2,
+          columns: [
+            { id: "sku", name: "sku", inferred: "text", nullable: false, samples: ["A1", "A2"] },
+            { id: "amount", name: "amount", inferred: "decimal", nullable: false, samples: ["10.00", "20.00"] },
+          ],
+        },
+      })
+    }
+    if (path.endsWith("/v1/uploads/up_1:define")) {
+      return route.fulfill({ json: { objectType: "upload.Sale", definitionsVersion: 2, sourceSchema: "s", mapping: "m" } })
+    }
+    if (path.endsWith("/v1/datasets:load")) {
+      loadCalls += 1
+      const body = route.request().postDataJSON() as { requestKey?: string }
+      expect(typeof body.requestKey).toBe("string")
+      if (mode === "slow-ok") {
+        await new Promise<void>((resolve) => {
+          slowLoad.release = resolve
+          pendingReleases.push(resolve)
+        })
+        return route.fulfill({ json: { objectType: "upload.Sale", rows: 2, rejected: 0, reasons: {}, bytes: 42, millis: 15_000 } })
+      }
+      // Timeout path: hold open until cleaned up in finally so the 90 s write deadline fires.
+      await new Promise<void>((resolve) => { pendingReleases.push(resolve) })
+      return route.abort()
+    }
+    return route.fulfill({ status: 404, json: { code: "route.not_found", message: "not served" } })
+  })
+
+  try {
+    await page.clock.install()
+    await page.goto("/sources")
+
+    // 1. Slow 15 s dataset load succeeds without tripping the 12 s read timeout.
+    await page.getByRole("button", { name: "Upload a CSV" }).first().click()
+    const dialog = page.getByRole("dialog", { name: "Upload a CSV" })
+    await dialog.getByLabel("CSV file").setInputFiles({ name: "sales.csv", mimeType: "text/csv", buffer: Buffer.from("sku,amount\nA1,10.00\nA2,20.00\n") })
+    await dialog.getByRole("button", { name: "Upload", exact: true }).click()
+    await expect(dialog.getByLabel("Type name")).toBeVisible()
+    await dialog.getByLabel("Type name").fill("Sale")
+    await dialog.getByRole("button", { name: "Load 2 rows as a dataset" }).click()
+    await expect.poll(() => loadCalls).toBe(1)
+    // Advance 15 s (>12 s read deadline): the POST write must still be in flight, NOT aborted at 12 s.
+    await page.clock.runFor(15_000)
+    await expect(dialog.getByRole("button", { name: "Loading…" })).toBeDisabled()
+    await expect(dialog.locator('[data-load-outcome="unknown"]')).toHaveCount(0)
+    slowLoad.release?.()
+    await expect(dialog).toContainText("2 rows loaded into upload.Sale in 15000 ms.")
+    expect(loadCalls).toBe(1)
+
+    // Close and reopen for part 2: 90 s timeout enters Outcome unknown, blocks duplicate submission, and reconciles via source.Connection.
+    await page.keyboard.press("Escape")
+    await expect(dialog).toBeHidden()
+    mode = "timeout-then-land"
+    loadCalls = 0
+    connectionLanded = false
+
+    await page.getByRole("button", { name: "Upload a CSV" }).first().click()
+    await dialog.getByLabel("CSV file").setInputFiles({ name: "sales.csv", mimeType: "text/csv", buffer: Buffer.from("sku,amount\nA1,10.00\nA2,20.00\n") })
+    await dialog.getByRole("button", { name: "Upload", exact: true }).click()
+    await expect(dialog.getByLabel("Type name")).toBeVisible()
+    await dialog.getByLabel("Type name").fill("Sale")
+    await dialog.getByRole("button", { name: "Load 2 rows as a dataset" }).click()
+    await expect.poll(() => loadCalls).toBe(1)
+
+    // Advance past the 90 s UPLOAD_STEP_MS deadline: must enter Outcome unknown and block re-submission.
+    await page.clock.runFor(91_000)
+    const unknown = dialog.locator('[data-load-outcome="unknown"]')
+    await expect(unknown).toBeVisible()
+    await expect(unknown).toHaveAttribute("data-reconcile-state", "unresolved")
+    await expect(unknown).toContainText("Outcome unknown")
+    await expect(unknown).toContainText("Re-submitting is blocked")
+    await expect(dialog.getByRole("button", { name: /Load .* as a dataset/ })).toHaveCount(0)
+    await expect(dialog.getByRole("button", { name: "As governed records" })).toHaveCount(0)
+    expect(loadCalls).toBe(1)
+    await page.clock.resume()
+    await shoot(page, "upload-outcome-unknown")
+
+    // Once the server finishes writing source.Connection, "Check again" reconciles cleanly without issuing a second write.
+    connectionLanded = true
+    await unknown.getByRole("button", { name: "Check again" }).click()
+    await expect(dialog).toContainText("2 rows loaded into upload.Sale (confirmed from the workspace).")
+    expect(loadCalls).toBe(1)
+  } finally {
+    for (const release of pendingReleases) release()
+    await page.unrouteAll({ behavior: "ignoreErrors" })
+  }
 })
 
 test("empty states: Metrics, Dashboards and Inbox each show an honest empty state with a next step", async ({ page }) => {

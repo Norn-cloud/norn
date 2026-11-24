@@ -102,11 +102,11 @@ const WORDS = {
     leaveBody: "Nothing has been sent. Your choice and note will be cleared; the decision stays in your inbox.", left: "{0} left", lapsed: "Expired",
     "call.committed": "The approved call committed.", "call.refused": "The approved call was refused ({0}); this approval never runs it again.",
     "call.not_executed": "Approved; waiting for the requester to run it.",
-    refusedBadge: "Refused", refusedDisclosedHead: "This choice breaks a rule, so nothing was decided.", refusedRedactedHead: "Refused by a rule. Nothing was decided.",
+    refusedBadge: "Refused", refusedDisclosedHead: "This choice breaks a rule, so nothing was decided.", refusedNotEvaluatedHead: "This choice could not be checked against a rule, so nothing was decided.", refusedRedactedHead: "Refused by a rule. Nothing was decided.",
     stepRequest: "The request", stepCheck: "The check", stepResult: "The result",
     reqDecision: "Decision", reqChoice: "Choice", reqNote: "Note",
     resWho: "Who", resDecidedAt: "Decided at", resReceivedAt: "Received at", resWhy: "Why", resKept: "Kept",
-    you: "You", fails: "Fails", refusedRedactedCheck: "It does not say which rule, or which values, to your role.",
+    you: "You", fails: "Fails", notEvaluated: "Not evaluated", refusedRedactedCheck: "It does not say which rule, or which values, to your role.",
     refusedRedactedWhy: "A rule this choice would break. Your role is not told which.",
     refusedKept: "Nothing was decided. The cell keeps no receipt of a refused call.",
     checkedValues: "The values it checked",
@@ -129,11 +129,11 @@ const WORDS = {
     leaveBody: "لم يُرسل شيء. سيُمسح اختيارك وملاحظتك؛ ويبقى القرار في صندوقك.", left: "متبقٍ {0}", lapsed: "انتهت المهلة",
     "call.committed": "نُفّذ الإجراء الموافق عليه.", "call.refused": "رُفض الإجراء الموافق عليه ({0})؛ ولن تنفّذه هذه الموافقة مرة أخرى.",
     "call.not_executed": "تمت الموافقة ولم يُنفّذ بعد: يُنفّذ عندما يعيد مقدّم الطلب المحاولة.",
-    refusedBadge: "مرفوض", refusedDisclosedHead: "هذا الاختيار يخالف قاعدة، لذلك لم يُتخذ قرار.", refusedRedactedHead: "مرفوض بموجب قاعدة. لم يُتخذ قرار.",
+    refusedBadge: "مرفوض", refusedDisclosedHead: "هذا الاختيار يخالف قاعدة، لذلك لم يُتخذ قرار.", refusedNotEvaluatedHead: "تعذّر التحقق من هذا الاختيار وفق القاعدة، لذلك لم يُتخذ قرار.", refusedRedactedHead: "مرفوض بموجب قاعدة. لم يُتخذ قرار.",
     stepRequest: "الطلب", stepCheck: "الفحص", stepResult: "النتيجة",
     reqDecision: "القرار", reqChoice: "الاختيار", reqNote: "الملاحظة",
     resWho: "من", resDecidedAt: "وقت القرار", resReceivedAt: "وقت الاستلام", resWhy: "السبب", resKept: "المحفوظ",
-    you: "أنت", fails: "فشل", refusedRedactedCheck: "لا تذكر الخلية القاعدة أو القيم لدورك.",
+    you: "أنت", fails: "فشل", notEvaluated: "لم يُقيَّم", refusedRedactedCheck: "لا تذكر الخلية القاعدة أو القيم لدورك.",
     refusedRedactedWhy: "قاعدة يخالفها هذا الاختيار. لا يُكشف لدورك أي قاعدة.",
     refusedKept: "لم يُتخذ أي قرار. لا تحتفظ الخلية بإيصال لطلب مرفوض.",
     checkedValues: "القيم التي فُحصت",
@@ -337,6 +337,13 @@ export function refusalPanelMarkup(
   const subject = text(rawReason.subject) ?? ""
   const values = record(rawReason.values)
   const valueEntries = Object.entries(values)
+  // On `decision.law_not_satisfied`, the chosen option belongs in "The request", not as an evaluated law operand.
+  const checkedEntries = code === "decision.law_not_satisfied"
+    ? valueEntries.filter(([k]) => k !== "choice")
+    : valueEntries
+  // A decider law the cell could not evaluate carries no evaluated operands (or states it could not evaluate).
+  const unevaluated = disclosed && code === "decision.law_not_satisfied"
+    && (checkedEntries.length === 0 || /cannot evaluate/i.test(explanation))
   // Catalog metadata is read ONLY when the server disclosed the law reason; never on a redacted refusal.
   const lawInfo = disclosed ? (context.laws?.[pinArtifact ?? ""] ?? context.laws?.[law]) : undefined
 
@@ -354,8 +361,8 @@ export function refusalPanelMarkup(
   const checkBody = disclosed
     ? (() => {
         const lead = lawInfo?.rationale ?? (message || law)
-        const chips = valueEntries.length > 0
-          ? `<div class="norn-checked-list" aria-label="${escape(w.checkedValues)}">${valueEntries.map(([k, v]) =>
+        const chips = checkedEntries.length > 0
+          ? `<div class="norn-checked-list" aria-label="${escape(w.checkedValues)}">${checkedEntries.map(([k, v]) =>
             `<span class="norn-checked-chip" data-checked="${escape(k)}"><span class="norn-checked-key">${escape(k.replaceAll(".", " ").replaceAll("_", " "))}</span><span class="norn-checked-val">${escape(typeof v === "string" ? v : JSON.stringify(v))}</span></span>`).join("")}</div>`
           : ""
         const extraNote = explanation !== "" && explanation !== lead && explanation !== message && explanation !== UNPROVEN_DETAIL
@@ -363,7 +370,10 @@ export function refusalPanelMarkup(
         const tech = context.technical
           ? `<div class="norn-refusal-tech"><span>${escape([code, subject].filter(Boolean).join(" · "))}</span>${pinArtifact ? `<span>${escape(`${pinArtifact}@${pinVersion ?? "?"}`)}</span>` : ""}${explanation ? `<span>${escape(explanation)}</span>` : ""}</div>`
           : ""
-        return `<p class="norn-refusal-check-lead"><span>${escape(lead)}</span><span class="norn-chip" data-tone="risk-high" data-verdict="fails">${escape(w.fails)}</span></p>${chips}${extraNote}${tech}`
+        const verdictTone = unevaluated ? "risk-medium" : "risk-high"
+        const verdictAttr = unevaluated ? "not-evaluated" : "fails"
+        const verdictLabel = unevaluated ? w.notEvaluated : w.fails
+        return `<p class="norn-refusal-check-lead"><span>${escape(lead)}</span><span class="norn-chip" data-tone="${verdictTone}" data-verdict="${verdictAttr}">${escape(verdictLabel)}</span></p>${chips}${extraNote}${tech}`
       })()
     : (() => {
         const parts: string[] = []
@@ -382,11 +392,15 @@ export function refusalPanelMarkup(
     ? (lawInfo?.name ?? lawInfo?.rationale ?? (message || explanation || law))
     : (message !== "" && !GENERIC_LAW_MESSAGE.has(message) ? message : w.refusedRedactedWhy)
 
+  const headerText = disclosed
+    ? (unevaluated ? w.refusedNotEvaluatedHead : w.refusedDisclosedHead)
+    : w.refusedRedactedHead
+
   const html = `
     <div class="norn-refusal-card">
       <div class="norn-refusal-header">
         <span class="norn-chip" data-tone="risk-high">${escape(w.refusedBadge)}</span>
-        <span class="norn-refusal-head">${escape(disclosed ? w.refusedDisclosedHead : w.refusedRedactedHead)}</span>
+        <span class="norn-refusal-head">${escape(headerText)}</span>
       </div>
       <ol class="norn-refusal-steps">
         <li class="norn-refusal-step">

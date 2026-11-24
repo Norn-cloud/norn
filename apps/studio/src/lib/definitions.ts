@@ -151,46 +151,189 @@ export function resetCellReachable(): void {
   try { globalThis.sessionStorage?.removeItem(REACHABLE_KEY) } catch { /* ignore */ }
 }
 
-/** Default per-request deadline (ms) so a hung host never spins a surface forever. */
+/** Default per-request deadline (ms) for idempotent reads so a hung host never spins a surface forever. */
 export const CELL_FETCH_TIMEOUT_MS = 12_000
 
-/** Bound one fetch call with a timeout, preserving any caller-supplied AbortSignal. */
-export async function fetchWithTimeout(fetcher: Fetch, input: string, init?: RequestInit, timeoutMs = CELL_FETCH_TIMEOUT_MS): Promise<Response> {
-  if (init?.signal?.aborted) throw new CellUnavailable(0)
+const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"])
+const NULL_BODY_STATUSES = new Set([101, 204, 205, 304])
+
+/** Whether an HTTP method is an idempotent read eligible for the default read deadline. */
+export function isReadMethod(method?: string): boolean {
+  return method === undefined || READ_METHODS.has(method.toUpperCase())
+}
+
+/** RequestInit with an optional per-call deadline override (reads only; writes supply their own deadline). */
+export type ScopedRequestInit = RequestInit & { readonly timeoutMs?: number }
+
+const timeoutError = (): CellUnavailable =>
+  new CellUnavailable(0, "The workspace did not answer in time.", { timedOut: true, retryable: true, code: "cell.timeout" })
+
+/**
+ * Bound one fetch call with a deadline that stays active through response body consumption,
+ * preserving any caller-supplied AbortSignal. Unexpected transport/stream errors normalize into a
+ * retryable `CellUnavailable(0)` unless the caller aborted the request.
+ */
+export async function fetchWithTimeout(
+  fetcher: Fetch,
+  input: string,
+  init?: RequestInit,
+  timeoutMs = CELL_FETCH_TIMEOUT_MS,
+  onComplete?: () => void,
+): Promise<Response> {
+  const callerSignal = init?.signal
+  if (callerSignal?.aborted) {
+    throw callerSignal.reason ?? new DOMException("Aborted", "AbortError")
+  }
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(new DOMException("Timed out", "TimeoutError")), timeoutMs)
-  const onCallerAbort = () => controller.abort(init?.signal?.reason)
-  init?.signal?.addEventListener("abort", onCallerAbort, { once: true })
+  let timedOut = false
+  let cleaned = false
+  const onCallerAbort = () => controller.abort(callerSignal?.reason ?? new DOMException("Aborted", "AbortError"))
+  const timer = setTimeout(() => {
+    timedOut = true
+    controller.abort(new DOMException("Timed out", "TimeoutError"))
+  }, timeoutMs)
+  const cleanup = () => {
+    if (cleaned) return
+    cleaned = true
+    clearTimeout(timer)
+    callerSignal?.removeEventListener("abort", onCallerAbort)
+  }
+  callerSignal?.addEventListener("abort", onCallerAbort, { once: true })
+
+  let response: Response
   try {
-    return await fetcher(input, { ...init, signal: controller.signal })
+    response = await fetcher(input, { ...init, signal: controller.signal })
   } catch (error) {
-    if (init?.signal?.aborted) throw error
-    const timedOut = controller.signal.aborted
+    cleanup()
+    if (callerSignal?.aborted) throw error
+    const isTimeout = timedOut
+      || controller.signal.aborted
       || (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError"))
       || (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError"))
-    if (timedOut) {
-      throw new CellUnavailable(0, "The workspace did not answer in time.", { timedOut: true, retryable: true, code: "cell.timeout" })
-    }
-    throw error
-  } finally {
-    clearTimeout(timer)
-    init?.signal?.removeEventListener("abort", onCallerAbort)
+    if (isTimeout) throw timeoutError()
+    if (error instanceof CellUnavailable || error instanceof StudioScopeError) throw error
+    throw new CellUnavailable(0, undefined, { retryable: true })
   }
+
+  if (response.body === null || NULL_BODY_STATUSES.has(response.status)) {
+    cleanup()
+    if (response.ok) onComplete?.()
+    return response
+  }
+
+  const reader = response.body.getReader()
+  const abortReason = (): unknown =>
+    callerSignal?.aborted
+      ? (callerSignal.reason ?? new DOMException("Aborted", "AbortError"))
+      : timeoutError()
+
+  let onAbort: (() => void) | null = null
+  let streamFailure: unknown = undefined
+  const finish = () => {
+    if (onAbort !== null) {
+      controller.signal.removeEventListener("abort", onAbort)
+      onAbort = null
+    }
+    cleanup()
+  }
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(streamController) {
+      onAbort = () => {
+        const reason = abortReason()
+        streamFailure = reason
+        finish()
+        void reader.cancel(reason).catch(() => {})
+        try { streamController.error(reason) } catch { /* already closed or errored */ }
+      }
+      if (controller.signal.aborted) {
+        onAbort()
+        return
+      }
+      controller.signal.addEventListener("abort", onAbort, { once: true })
+    },
+    async pull(streamController) {
+      if (controller.signal.aborted) {
+        const reason = abortReason()
+        streamFailure = reason
+        finish()
+        void reader.cancel(reason).catch(() => {})
+        try { streamController.error(reason) } catch { /* already closed or errored */ }
+        return
+      }
+      try {
+        const { done, value } = await reader.read()
+        if (controller.signal.aborted) {
+          const reason = abortReason()
+          streamFailure = reason
+          finish()
+          void reader.cancel(reason).catch(() => {})
+          try { streamController.error(reason) } catch { /* already closed or errored */ }
+          return
+        }
+        if (done) {
+          finish()
+          if (response.ok) onComplete?.()
+          try { streamController.close() } catch { /* already closed */ }
+          return
+        }
+        streamController.enqueue(value)
+      } catch (error) {
+        finish()
+        const normalized = callerSignal?.aborted
+          ? error
+          : (timedOut || controller.signal.aborted
+            ? timeoutError()
+            : (error instanceof CellUnavailable || error instanceof StudioScopeError
+              ? error
+              : new CellUnavailable(0, undefined, { retryable: true })))
+        streamFailure = normalized
+        try { streamController.error(normalized) } catch { /* already errored */ }
+      }
+    },
+    async cancel(reason) {
+      finish()
+      await reader.cancel(reason).catch(() => {})
+    },
+  })
+
+  const wrapped = new Response(stream, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
+  })
+  // Chromium's BodyStreamBuffer may rewrite custom ReadableStream errors into generic TypeErrors
+  // during .text()/.json()/.arrayBuffer(); rethrow the exact bound timeout/abort failure instead.
+  const preserveFailure = (error: unknown): never => {
+    if (streamFailure !== undefined) throw streamFailure
+    throw error
+  }
+  const rawText = wrapped.text.bind(wrapped)
+  wrapped.text = () => rawText().catch(preserveFailure)
+  const rawJson = wrapped.json.bind(wrapped)
+  wrapped.json = () => rawJson().catch(preserveFailure)
+  const rawArrayBuffer = wrapped.arrayBuffer.bind(wrapped)
+  wrapped.arrayBuffer = () => rawArrayBuffer().catch(preserveFailure)
+  return wrapped
 }
 
 /** Read the active workspace and its cell from the signed-in server session. */
 export async function readStudioScope(fetcher: Fetch = (input, init) => fetch(input, init)): Promise<StudioScope | null> {
   let response: Response
-  try { response = await fetchWithTimeout(fetcher, "/api/me", { headers: { accept: "application/json" } }) }
-  catch (error) {
+  let text: string
+  try {
+    response = await fetchWithTimeout(fetcher, "/api/me", { headers: { accept: "application/json" } })
+    text = await response.text()
+  } catch (error) {
     if (error instanceof CellUnavailable) throw error
-    throw new CellUnavailable(0)
+    throw new CellUnavailable(0, undefined, { retryable: true })
   }
+  let body: unknown = null
+  try { body = JSON.parse(text) } catch { body = null }
   if (!response.ok) {
-    const body = await response.json().catch(() => null)
     throw new CellUnavailable(response.status, typeof (body as { message?: unknown } | null)?.message === "string" ? (body as { message: string }).message : undefined, parseUnavailableDetail(body))
   }
-  const parsed = accountScope.safeParse(await response.json().catch(() => null))
+  const parsed = accountScope.safeParse(body)
   if (!parsed.success) throw new StudioScopeError("The server did not report the active workspace scope.")
   const { organization, environmentId } = parsed.data
   return organization === null || environmentId === null ? null : { orgId: organization.id, environmentId }
@@ -200,8 +343,13 @@ export function useStudioScope() {
   return useQuery({ queryKey: ["studio-scope"], queryFn: () => readStudioScope(), retry: false })
 }
 
-/** Every scoped host call uses a fresh server-reported scope. The host still authorizes the request. */
-export function scopedHostFetch(fetcher: Fetch, base = "/api/host", scope: ScopeProvider = () => readStudioScope()): Fetch {
+/**
+ * Every scoped host call uses a fresh server-reported scope. The host still authorizes the request.
+ * Idempotent reads (`GET`/`HEAD`/`OPTIONS`) are bounded by the read deadline (`CELL_FETCH_TIMEOUT_MS`
+ * or `init.timeoutMs`) through body completion. Mutating writes (`POST`/`PUT`/`PATCH`/`DELETE`)
+ * are never cut off by the 12 s read deadline and keep their own declared deadline and signal.
+ */
+export function scopedHostFetch(fetcher: Fetch, base = "/api/host", scope: ScopeProvider = () => readStudioScope()): (input: string, init?: ScopedRequestInit) => Promise<Response> {
   return async (path, init) => {
     const active = await scope()
     if (active === null) throw new StudioScopeError(NO_DATA_CELL)
@@ -209,7 +357,12 @@ export function scopedHostFetch(fetcher: Fetch, base = "/api/host", scope: Scope
     const query = new URLSearchParams(search)
     query.set("orgId", active.orgId)
     query.set("environmentId", active.environmentId)
-    const response = await fetchWithTimeout(fetcher, `${base}${pathname}?${query}`, init)
+    const url = `${base}${pathname}?${query}`
+    const { timeoutMs, ...requestInit } = init ?? {}
+    if (isReadMethod(requestInit.method)) {
+      return fetchWithTimeout(fetcher, url, init === undefined ? undefined : requestInit, timeoutMs ?? CELL_FETCH_TIMEOUT_MS, recordCellReachable)
+    }
+    const response = await fetcher(url, init === undefined ? undefined : requestInit)
     if (response.ok) recordCellReachable()
     return response
   }

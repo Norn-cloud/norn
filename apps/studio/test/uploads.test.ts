@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test"
-import { columnId, define, kindOf, loadDataset, upload, uploadFailure } from "../src/lib/uploads.ts"
+import { UploadOutcomeUnknownError, columnId, define, isUncertainWriteError, kindOf, loadDataset, reconcileUploadConnection, upload, uploadConnectionId, uploadFailure } from "../src/lib/uploads.ts"
 
 const original = globalThis.fetch
 afterEach(() => { globalThis.fetch = original })
@@ -64,4 +64,74 @@ test("a storage the browser cannot reach fails the upload with that reason, befo
   const unreachable = async () => { throw new TypeError("Failed to fetch") }
   await expect(upload(new File(["a,b\n1,2\n"], "x.csv", { type: "text/csv" }), unreachable)).rejects.toThrow("could not reach the storage")
   expect(calls.map(({ url }) => new URL(url, "http://studio").pathname)).toEqual(["/api/host/v1/uploads:begin"])
+})
+
+test("loadDataset sends requestKey for idempotency and raises UploadOutcomeUnknownError on client timeout without claiming nothing was loaded", async () => {
+  const loaded = { objectType: "upload.Sale", load: "l1", uri: "s3://x", sha256: "s", rows: 50, rejected: 0, reasons: {}, bytes: 100, millis: 40 }
+  const calls = cell(200, loaded)
+  expect(await loadDataset("up_1", "upload.Sale", "req-key-1")).toEqual(loaded)
+  expect(calls[0]?.body).toEqual({ uploadId: "up_1", objectType: "upload.Sale", requestKey: "req-key-1" })
+
+  // A stalled write timing out raises UploadOutcomeUnknownError (not "nothing was loaded").
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    if (String(input) === "/api/me") return Response.json(ME)
+    return new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => reject(init.signal?.reason ?? new DOMException("Timed out", "TimeoutError")))
+    })
+  }) as typeof fetch
+  let caught: unknown
+  try {
+    await loadDataset("up_1", "upload.Sale", "req-key-2", 25)
+  } catch (error) {
+    caught = error
+  }
+  expect(caught).toBeInstanceOf(UploadOutcomeUnknownError)
+  expect(isUncertainWriteError(caught)).toBe(true)
+  expect((caught as Error).message).toContain("outcome is unknown")
+  expect((caught as Error).message).not.toContain("nothing was loaded")
+})
+
+test("reconcileUploadConnection matches only an advanced source.Connection with the uploaded sha256", async () => {
+  expect(uploadConnectionId("Sale")).toBe("upload.sale")
+  expect(uploadConnectionId("upload.Sale")).toBe("upload.sale")
+  const sha = "ab".repeat(32)
+
+  // Prior run with same sha256 and same version/endedAt must NOT falsely reconcile.
+  cell(200, {
+    id: "upload.sale",
+    version: 2,
+    values: {
+      last_sync_ended_at: "2027-01-15T08:00:00Z",
+      watermark: JSON.stringify({ sha256: sha, rows: 10 }),
+      rows_read: 10,
+      rows_landed: 10,
+      rows_quarantined: 0,
+    },
+  })
+  expect(await reconcileUploadConnection({ connectionId: "upload.sale", sha256: sha, baselineVersion: 2, baselineEndedAt: "2027-01-15T08:00:00Z" })).toBeNull()
+
+  // Advanced version with matching sha256 reconciles cleanly with its counts and reasons.
+  cell(200, {
+    id: "upload.sale",
+    version: 3,
+    values: {
+      last_sync_ended_at: "2027-01-15T08:05:00Z",
+      watermark: JSON.stringify({ sha256: sha, rows: 12 }),
+      rows_read: 12,
+      rows_landed: 11,
+      rows_quarantined: 1,
+      quarantine_reasons: JSON.stringify({ "bulk.not_decimal": 1 }),
+    },
+  })
+  const reconciled = await reconcileUploadConnection({ connectionId: "upload.sale", sha256: sha, baselineVersion: 2, baselineEndedAt: "2027-01-15T08:00:00Z" })
+  expect(reconciled).toEqual({
+    id: "upload.sale",
+    version: 3,
+    endedAt: "2027-01-15T08:05:00Z",
+    watermarkSha256: sha,
+    rowsRead: 12,
+    rowsLanded: 11,
+    rowsQuarantined: 1,
+    quarantineReasons: { "bulk.not_decimal": 1 },
+  })
 })

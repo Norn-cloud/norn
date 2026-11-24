@@ -4,7 +4,7 @@
  * apart from transport.ts, which finds recordings with Vite's import.meta.glob.
  */
 import { useQuery } from "@tanstack/react-query"
-import { CellUnavailable, StudioScopeError, parseUnavailableDetail, readStudioScope, recordCellReachable, scopedHostFetch, type StudioScope, type UnavailableDetail } from "./definitions.ts"
+import { CellUnavailable, StudioScopeError, parseUnavailableDetail, readStudioScope, recordCellReachable, scopedHostFetch, type ScopedRequestInit, type StudioScope, type UnavailableDetail } from "./definitions.ts"
 import { readDocument, type Read } from "./exact.ts"
 import { readsOf } from "./objects.ts"
 import type { Artifact, Envelope, LinkPage, ObjectPage, ObjectRecord, SourceLineage, Transport } from "./transport.ts"
@@ -72,18 +72,32 @@ export async function readMode(fetcher: Fetch): Promise<Mode> {
   }
   if (scope === null) return { kind: "recorded" }
   const active = scope
-  const response = await scopedHostFetch(fetcher, "/api/host", async () => active)("/v1/definitions", { headers: { accept: "application/json" } })
-  const text = await response.text()
-  // Only this deployment's own "no host connected" answer means there is no cell; any other 503 is a cell that
-  // did not answer (a busy or restarting host), raised and retried rather than replaced by the recording.
-  if (response.status === 404 || (response.status === 503 && (() => { try { return (JSON.parse(text) as { error?: unknown }).error === NO_HOST } catch { return false } })())) return { kind: "recorded" }
-  let parsed: unknown
-  try { parsed = JSON.parse(text) } catch { return { kind: "recorded" } }
-  if (!response.ok) {
-    const raw = parsed as { message?: unknown } | null
-    const message = typeof raw?.message === "string" && raw.message !== "" ? raw.message : undefined
-    throw new CellUnavailable(response.status, message, parseUnavailableDetail(parsed))
+  let response: Response
+  let text: string
+  try {
+    response = await scopedHostFetch(fetcher, "/api/host", async () => active)("/v1/definitions", { headers: { accept: "application/json" } })
+    text = await response.text()
+  } catch (error) {
+    if (error instanceof CellUnavailable || error instanceof StudioScopeError) throw error
+    throw new CellUnavailable(0, undefined, { retryable: true })
   }
+  // Only 404 or this deployment's own "no host connected" 503 means there is no cell; any other
+  // non-OK answer (including HTML 502/503/504 gateway errors or cell refusals) is raised so Studio
+  // retries transient outages or shows the refusal rather than swapping a live cell for the recording.
+  if (response.status === 404) return { kind: "recorded" }
+  let parsed: unknown = null
+  let isJson = false
+  try { parsed = JSON.parse(text); isJson = true } catch { /* non-JSON body */ }
+  if (response.status === 503 && isJson && (parsed as { error?: unknown } | null)?.error === NO_HOST) {
+    return { kind: "recorded" }
+  }
+  if (!response.ok) {
+    const raw = isJson ? (parsed as { message?: unknown } | null) : null
+    const message = typeof raw?.message === "string" && raw.message !== "" ? raw.message : undefined
+    throw new CellUnavailable(response.status, message, isJson ? parseUnavailableDetail(parsed) : {})
+  }
+  // A 200 HTML page (static SPA fallback with no Worker) means no live cell is connected.
+  if (!isJson) return { kind: "recorded" }
   const artifacts = (parsed as { artifacts?: unknown } | null)?.artifacts
   if (!Array.isArray(artifacts)) throw new CellUnavailable(response.status, "The cell's definitions read carried no artifacts.")
   recordCellReachable()
@@ -164,7 +178,7 @@ export class CellRefusal extends Error {
  * explanation, `retryable`, and `incidentId` as {@link CellUnavailable}; any other Norn refusal is
  * {@link CellRefusal}.
  */
-export async function cellRead<T>(path: string, what: string, init: RequestInit = {}, fetcher: Fetch = browserFetch): Promise<Read<T>> {
+export async function cellRead<T>(path: string, what: string, init: ScopedRequestInit = {}, fetcher: Fetch = browserFetch): Promise<Read<T>> {
   const call = scopedHostFetch(fetcher, "/api/host", () => readStudioScope(fetcher))
   const response = await call(path, { ...init, headers: { accept: "application/json", ...init.body === undefined ? {} : { "content-type": "application/json" }, ...init.headers } })
   const text = await response.text()

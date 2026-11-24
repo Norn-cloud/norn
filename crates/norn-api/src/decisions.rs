@@ -39,7 +39,7 @@ use utoipa::{IntoParams, ToSchema};
 use crate::approvals::{CallState, HeldCall};
 use crate::authz::{AccessRequest, Operation, ReadCapability, ReadRequest};
 pub use crate::decision_refusal::DECISION_REFUSAL_ACTION;
-use crate::decision_refusal::{check_answer, disclose_decision_refusal};
+use crate::decision_refusal::check_answer;
 use crate::flow_definitions::DECISION_FUNCTION;
 use crate::flow_driver::{AsStarter, Delivery, result_turn};
 use crate::host::{ActionCell, DevHost};
@@ -1333,10 +1333,9 @@ fn decide_held<E: SqlEngine>(
             "its deadline passed before anyone decided",
         )));
     }
-    let revealable = disclose_decision_refusal(host, actor, &decision, body);
-    check_answer(&cell, &decision, body, revealable)?;
+    check_answer(host, actor, &cell, &decision, body)?;
     let recorded = match &decision.call {
-        None => record(&mut cell, &decision, body, actor, now, revealable)?,
+        None => record(&mut cell, &decision, body, actor, now)?,
         Some(held) => record_call(&mut cell, &decision, held, body, actor)?,
     };
     if !recorded {
@@ -1461,7 +1460,6 @@ fn record<E: SqlEngine>(
     body: &DecideRequest,
     actor: &str,
     now: LogicalTime,
-    revealable: bool,
 ) -> Result<bool, Refusal> {
     let row = cell
         .store()
@@ -1491,7 +1489,6 @@ fn record<E: SqlEngine>(
         &flow,
         delivery(StepOutcome::Output(output.clone())),
         now,
-        revealable,
     )?;
     if cell
         .complete_parked(&decision.command, decision.generation, output.clone())
@@ -1500,13 +1497,7 @@ fn record<E: SqlEngine>(
     {
         return Ok(false);
     }
-    let commit = result_turn(
-        cell,
-        &flow,
-        delivery(StepOutcome::Output(output)),
-        now,
-        revealable,
-    )?;
+    let commit = result_turn(cell, &flow, delivery(StepOutcome::Output(output)), now)?;
     let resolved = DecisionResolved {
         decision_id: decision.id.clone(),
         command_id: decision.command.0.clone(),
@@ -1666,7 +1657,6 @@ pub(crate) fn expire<E: SqlEngine>(
         &flow,
         delivery(StepOutcome::Failure(failure.clone())),
         now,
-        false,
     )?;
     // An expiry recorded earlier whose resolving commit never landed is
     // resumed with exactly that recorded result; anything else recorded
@@ -1679,13 +1669,7 @@ pub(crate) fn expire<E: SqlEngine>(
     {
         return Ok(());
     }
-    let commit = result_turn(
-        cell,
-        &flow,
-        delivery(StepOutcome::Failure(failure)),
-        now,
-        false,
-    )?;
+    let commit = result_turn(cell, &flow, delivery(StepOutcome::Failure(failure)), now)?;
     let resolved = DecisionResolved {
         decision_id: decision.id.clone(),
         command_id: decision.command.0.clone(),

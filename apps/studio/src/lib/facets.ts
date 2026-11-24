@@ -1,3 +1,4 @@
+import { CellUnavailable } from "./definitions.ts"
 import { cellRead } from "./live-transport.ts"
 import type { Read } from "./exact.ts"
 import type { Clause, Predicate } from "./records-query.ts"
@@ -39,9 +40,15 @@ export async function readFacets(objectType: string, filter: Predicate | null, p
   const search = query.toString()
   let read: Read<Facets>
   try {
-    read = await cellRead<Facets>(`/v1/objects/${encodeURIComponent(objectType)}:facets${search === "" ? "" : `?${search}`}`, "Facets are", { signal: AbortSignal.timeout(deadlineMs) })
+    read = await cellRead<Facets>(`/v1/objects/${encodeURIComponent(objectType)}:facets${search === "" ? "" : `?${search}`}`, "Facets are", { signal: AbortSignal.timeout(deadlineMs), timeoutMs: deadlineMs })
   } catch (error) {
-    if (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")) throw new FacetsTimedOut()
+    if (
+      (error instanceof CellUnavailable && error.timedOut === true)
+      || (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError"))
+      || (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError"))
+    ) {
+      throw new FacetsTimedOut()
+    }
     throw error
   }
   // An answer that is not a facets document is not counted from: it reads as not served.

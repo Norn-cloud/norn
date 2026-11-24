@@ -21,7 +21,7 @@ use norn_cell::engine::SqlEngine;
 use norn_ir::{RuntimeObject, RuntimeValue};
 use norn_kernel::{
     CellCommit, CommandId, Consumed, DecisionTurn, EnvelopeLimits, FactEvent, FactKey, Generation,
-    LogicalTime, Refusable, World,
+    LogicalTime, World,
 };
 
 use norn_cell::flow_run::RunStarter;
@@ -61,14 +61,13 @@ fn refused(code: &str, message: &str) -> Refusal {
 ///
 /// # Errors
 /// The run object is gone; the rule refused the turn (`run.turn_refused`,
-/// `run.flow_inadmissible`); the kernel refused its output (projected under
-/// `revealable`, DIAG-DISCLOSE-1); a host failure.
+/// `run.flow_inadmissible`); the kernel refused its output (`422` without
+/// disclosing flow run operands); a host failure.
 pub(crate) fn result_turn<E: SqlEngine>(
     cell: &ActionCell<E>,
     flow: &InstalledFlow,
     delivery: Delivery<'_>,
     now: LogicalTime,
-    revealable: bool,
 ) -> Result<CellCommit<FactEvent, RuntimeObject, RuntimeObject>, Refusal> {
     let key = FactKey::new(flow.object_type.clone(), delivery.run_id.to_owned());
     let slice = norn_kernel::load_slice(cell, [key.clone()]).map_err(Refusal::host)?;
@@ -119,16 +118,7 @@ pub(crate) fn result_turn<E: SqlEngine>(
         &output,
         &EnvelopeLimits::V1,
     )
-    .map_err(|error| {
-        let kernel = error.refusal();
-        let internal = kernel.category == norn_kernel::RefusalCategory::Internal;
-        let projected = Refusal::from_kernel(kernel, revealable);
-        if internal {
-            projected.with_cause(crate::refusal::error_chain(&error))
-        } else {
-            projected
-        }
-    })
+    .map_err(|refusal| refused(refusal.code(), "the flow's result turn was refused"))
 }
 
 /// The most action steps one [`drive_run`] executes; a run whose steps
@@ -791,7 +781,7 @@ fn deliver_in<E: SqlEngine>(
         StepOutcome::Output(object) | StepOutcome::Failure(object) => object.clone(),
     };
     // The flow must accept the result before anything is recorded.
-    result_turn(cell, &flow, delivery.clone(), now, false)?;
+    result_turn(cell, &flow, delivery.clone(), now)?;
     if !recorded
         && cell
             .complete_parked(delivery.command, delivery.generation, result)
@@ -800,7 +790,7 @@ fn deliver_in<E: SqlEngine>(
     {
         return Ok(());
     }
-    let commit = result_turn(cell, &flow, delivery, now, false)?;
+    let commit = result_turn(cell, &flow, delivery, now)?;
     norn_kernel::CellHost::commit(cell, commit).map_err(|error| {
         let norn_kernel::CommitError::Host(host_error) = error else {
             return Refusal::new(

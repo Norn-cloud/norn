@@ -177,14 +177,14 @@ test("validate: a law refuses a choice; it reads under that option with the serv
   expect(cell.calls.map((c) => JSON.parse(c.body).choice)).toEqual(["approve", "reject"])
 })
 
-test("validate: a disclosed decision law refusal renders the 3-step Request / Check / Result panel with checked values and Decided at", async ({ page }) => {
+test("validate: a disclosed evaluated law refusal renders Fails with checked operands and Decided at", async ({ page }) => {
   await inbox(page)
   await page.route("**/api/host/v1/decisions/*:decide**", (route) => route.fulfill({
-    status: 403,
+    status: 422,
     json: {
       format: "norn/refusal@2",
-      code: "decision.law_not_satisfied",
-      category: "permission",
+      code: "core.laws.violated",
+      category: "precondition",
       retryable: false,
       message: "Refunds over 1,000.00 USD need a finance manager's approval.",
       decidedAt: "2027-01-15T08:00:00Z",
@@ -194,7 +194,7 @@ test("validate: a disclosed decision law refusal renders the 3-step Request / Ch
         subject: "canon.Refund/ref-1042",
         values: { amount: "1240.00 USD", role_limit: "1000.00 USD" },
       },
-      diagnostics: [{ code: "decision.law_not_satisfied", message: "Refunds over 1,000.00 USD need a finance manager's approval.", span: null }],
+      diagnostics: [{ code: "core.laws.violated", message: "Refunds over 1,000.00 USD need a finance manager's approval.", span: null }],
     },
   }))
   await open(page, "Refund 1,240.00 USD")
@@ -216,6 +216,45 @@ test("validate: a disclosed decision law refusal renders the 3-step Request / Ch
   await expect(result.locator('time[datetime="2027-01-15T08:00:00Z"]')).toBeVisible()
   await expect(result).toContainText("Nothing was decided.")
   await shoot(page, "refused-disclosed")
+})
+
+test("validate: an unevaluated decision law refusal renders Not evaluated without listing choice as a checked value", async ({ page }) => {
+  await inbox(page)
+  await page.route("**/api/host/v1/decisions/*:decide**", (route) => route.fulfill({
+    status: 403,
+    json: {
+      format: "norn/refusal@2",
+      code: "decision.law_not_satisfied",
+      category: "permission",
+      retryable: false,
+      message: "the decider law is not satisfied",
+      explanation: "this decision names a law the cell cannot evaluate for the caller",
+      decidedAt: "2027-01-15T08:00:00Z",
+      reason: {
+        law: "canon.refund.approval_authority",
+        pin: { artifactId: "canon.refund.approval_authority.law", version: "sha256:abc123" },
+        subject: "decision/dec_refund",
+        values: {},
+      },
+    },
+  }))
+  await open(page, "Refund 1,240.00 USD")
+  await sheet(page).getByLabel("Approve").check()
+  await sheet(page).getByRole("button", { name: "Decide: Approve" }).click()
+  await sheet(page).getByRole("button", { name: "Yes, approve" }).click()
+
+  const panel = sheet(page).locator('[data-option="approve"] [data-refusal="disclosed"]')
+  await expect(panel).toBeVisible()
+  await expect(panel).toContainText("This choice could not be checked against a rule, so nothing was decided.")
+  await expect(panel.getByRole("region", { name: "The request" })).toContainText("Approve")
+  const check = panel.getByRole("region", { name: "The check" })
+  await expect(check.locator('[data-verdict="not-evaluated"]')).toHaveText("Not evaluated")
+  await expect(check.locator('[data-verdict="fails"]')).toHaveCount(0)
+  await expect(check.locator("[data-checked]")).toHaveCount(0)
+  const result = panel.getByRole("region", { name: "The result" })
+  await expect(result).toContainText("Decided at")
+  await expect(result.locator('time[datetime="2027-01-15T08:00:00Z"]')).toBeVisible()
+  await shoot(page, "refused-not-evaluated")
 })
 
 test("validate: a note the cell refuses lands on the note field", async ({ page }) => {

@@ -6,6 +6,7 @@ import { LoadState } from "@/components/load-state"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { CellUnavailable } from "@/lib/definitions"
 import type { Read } from "@/lib/exact"
 import { CellRefusal, NotServed, cellRead } from "@/lib/live-transport"
 import { transport, type Artifact } from "@/lib/transport"
@@ -63,7 +64,7 @@ function SyncNow({ id }: { readonly id: string }) {
 const READ_DEADLINE_MS = 20_000
 
 /** What a failed read says: the deadline in words, or the cell's own refusal. */
-const failure = (error: Error) => error.name === "TimeoutError" || error.name === "AbortError"
+const failure = (error: Error) => (error instanceof CellUnavailable && error.timedOut === true) || error.name === "TimeoutError" || error.name === "AbortError"
   ? `The cell did not answer within ${READ_DEADLINE_MS / 1000} seconds.`
   : error.message
 
@@ -79,7 +80,7 @@ export function SourceConnections() {
   const connections = useQuery({
     enabled: installed === true,
     queryKey: ["source-connections"],
-    queryFn: () => cellRead<Page>(`/v1/objects/${CONNECTION_TYPE}?limit=200`, "Source connections are", { signal: AbortSignal.timeout(READ_DEADLINE_MS) }),
+    queryFn: () => cellRead<Page>(`/v1/objects/${CONNECTION_TYPE}?limit=200`, "Source connections are", { signal: AbortSignal.timeout(READ_DEADLINE_MS), timeoutMs: READ_DEADLINE_MS }),
     retry: false,
     // While a sync runs, read again until it lands.
     refetchInterval: (query) => query.state.data?.document.records.some(({ values }) => values.status === "syncing") ? 3000 : false,
