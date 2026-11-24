@@ -16,7 +16,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use norn_api::live::{LiveServerMessage, codes};
+use norn_api::live::{LiveRefusal, LiveServerMessage};
 use norn_api::scope::CellScope;
 use rivetkit::{Ctx, WebSocket, WsMessage};
 use serde_json::Value;
@@ -218,14 +218,7 @@ async fn handle(
         })
         .map(str::to_owned);
     let Some(id) = id else {
-        send(
-            &socket.ws,
-            &LiveServerMessage::refused(
-                None,
-                codes::INVALID_ID,
-                "a subscription id is 1 to 64 letters, digits or _.:-",
-            ),
-        );
+        send(&socket.ws, &LiveRefusal::InvalidId.frame(None));
         return true;
     };
     match parsed.get("type").and_then(Value::as_str) {
@@ -239,14 +232,7 @@ async fn handle(
                 .and_then(Value::as_str)
                 .and_then(subscribable)
             else {
-                send(
-                    &socket.ws,
-                    &LiveServerMessage::refused(
-                        Some(&id),
-                        codes::NOT_SUBSCRIBABLE,
-                        "a subscription names one of this cell's GET routes",
-                    ),
-                );
+                send(&socket.ws, &LiveRefusal::NotSubscribable.frame(Some(&id)));
                 return true;
             };
             {
@@ -254,11 +240,7 @@ async fn handle(
                 if !state.subs.contains_key(&id) && state.subs.len() >= MAX_SUBSCRIPTIONS {
                     send(
                         &socket.ws,
-                        &LiveServerMessage::refused(
-                            Some(&id),
-                            codes::TOO_MANY_SUBSCRIPTIONS,
-                            format!("at most {MAX_SUBSCRIPTIONS} subscriptions per socket"),
-                        ),
+                        &LiveRefusal::TooManySubscriptions.frame(Some(&id)),
                     );
                     return true;
                 }
@@ -274,14 +256,7 @@ async fn handle(
             evaluate(actor, socket, Some(&id)).await
         }
         Some(_) | None => {
-            send(
-                &socket.ws,
-                &LiveServerMessage::refused(
-                    Some(&id),
-                    codes::UNKNOWN_MESSAGE,
-                    "messages are subscribe or unsubscribe",
-                ),
-            );
+            send(&socket.ws, &LiveRefusal::UnknownMessage.frame(Some(&id)));
             true
         }
     }

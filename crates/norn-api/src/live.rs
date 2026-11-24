@@ -36,6 +36,53 @@ pub mod codes {
     pub const UNKNOWN_MESSAGE: &str = "live.unknown_message";
 }
 
+/// A frame the protocol refuses, with its stable code and words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveRefusal {
+    /// The frame's `id` is not 1 to 64 letters, digits or `_.:-`.
+    InvalidId,
+    /// The path is not one of the cell's GET routes.
+    NotSubscribable,
+    /// The socket holds [`MAX_SUBSCRIPTIONS`] subscriptions already.
+    TooManySubscriptions,
+    /// The frame is neither `subscribe` nor `unsubscribe`.
+    UnknownMessage,
+}
+
+impl LiveRefusal {
+    /// The stable machine code (`live.*`).
+    #[must_use]
+    pub const fn code(self) -> &'static str {
+        match self {
+            Self::InvalidId => codes::INVALID_ID,
+            Self::NotSubscribable => codes::NOT_SUBSCRIBABLE,
+            Self::TooManySubscriptions => codes::TOO_MANY_SUBSCRIPTIONS,
+            Self::UnknownMessage => codes::UNKNOWN_MESSAGE,
+        }
+    }
+
+    /// The one-line summary a `refused` frame carries.
+    #[must_use]
+    pub fn message(self) -> String {
+        match self {
+            Self::InvalidId => "a subscription id is 1 to 64 letters, digits or _.:-".to_owned(),
+            Self::NotSubscribable => {
+                "a subscription names one of this cell's GET routes".to_owned()
+            }
+            Self::TooManySubscriptions => {
+                format!("at most {MAX_SUBSCRIPTIONS} subscriptions per socket")
+            }
+            Self::UnknownMessage => "messages are subscribe or unsubscribe".to_owned(),
+        }
+    }
+
+    /// The `refused` frame for the client frame `id` (none when it named no valid id).
+    #[must_use]
+    pub fn frame(self, id: Option<&str>) -> LiveServerMessage {
+        LiveServerMessage::refused(id, self.code(), self.message())
+    }
+}
+
 /// A frame a client sends on a live socket (`norn.live.v1`). A frame larger
 /// than 4096 UTF-8 bytes closes the socket with 1009; one that is not JSON
 /// closes it with 1007.
@@ -138,7 +185,7 @@ fn body_schema() -> Schema {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, reason = "fixed frames")]
 mod tests {
-    use super::{LiveClientMessage, LiveServerMessage, codes};
+    use super::{LiveClientMessage, LiveRefusal, LiveServerMessage, codes};
 
     /// The typed frames are the wire frames both hosts send.
     #[test]
@@ -163,6 +210,13 @@ mod tests {
         assert_eq!(
             refused.to_text().unwrap(),
             r#"{"type":"refused","id":null,"code":"live.invalid_id","message":"a subscription id is 1 to 64"}"#
+        );
+        assert_eq!(
+            LiveRefusal::TooManySubscriptions
+                .frame(Some("s9"))
+                .to_text()
+                .unwrap(),
+            r#"{"type":"refused","id":"s9","code":"live.too_many_subscriptions","message":"at most 8 subscriptions per socket"}"#
         );
         let subscribe: LiveClientMessage =
             serde_json::from_str(r#"{"type":"subscribe","id":"s1","path":"/v1/runs/r"}"#).unwrap();
