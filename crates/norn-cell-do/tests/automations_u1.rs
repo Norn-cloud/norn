@@ -1101,9 +1101,13 @@ mod cases {
         let (status, refused) = call(&cell, "POST", &path, APPROVER, &invalid_body);
         let (baseline_status, baseline_refused) =
             call(&baseline, "POST", &path, APPROVER, &invalid_body);
-        assert_ne!(baseline_status, 200, "{baseline_refused}");
-        assert_eq!(status, baseline_status);
-        assert!(baseline_refused["code"].is_string(), "{baseline_refused}");
+        assert_eq!(status, 422, "{refused}");
+        assert_eq!(
+            refused["code"],
+            json!("action.precondition_failed"),
+            "{refused}"
+        );
+        assert_eq!(status, baseline_status, "{baseline_refused}");
         assert_eq!(refused["code"], baseline_refused["code"]);
         assert!(
             !refused

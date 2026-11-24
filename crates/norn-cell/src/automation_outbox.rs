@@ -51,7 +51,7 @@
 mod continuation;
 mod trigger_index;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use norn_ir::{FactChange, RuntimeValue as Value};
 use serde::{Deserialize, Serialize};
@@ -232,12 +232,28 @@ struct ActionCallMeta {
     target_key: String,
 }
 
+struct ActionCallFields<'a> {
+    action_id: Option<&'a Value>,
+    object: Option<&'a Value>,
+    metadata_set: bool,
+}
+
+impl<'a> ActionCallFields<'a> {
+    fn from_values(values: &'a BTreeMap<String, Value>) -> Self {
+        Self {
+            action_id: values.get("actionId"),
+            object: values.get("object"),
+            metadata_set: false,
+        }
+    }
+}
+
 fn extract_action_call<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
-    values: &BTreeMap<String, Value>,
+    fields: &ActionCallFields<'_>,
 ) -> Option<ActionCallMeta> {
-    let action_id = values.get("actionId").and_then(Value::as_str)?;
-    let object = values.get("object").and_then(Value::as_object)?;
+    let action_id = fields.action_id?.as_str()?;
+    let object = fields.object?.as_object()?;
     let target_type = object.get("objectType").and_then(Value::as_str)?;
     let target_key = object.get("key").and_then(Value::as_str)?;
     let target_root = reader
@@ -252,10 +268,10 @@ fn extract_action_call<E: SqlEngine>(
     })
 }
 
-fn action_calls_in_batch<E: SqlEngine>(
-    reader: &StoreReader<'_, E>,
-    batch: &CommitBatch,
-) -> BTreeMap<String, ActionCallMeta> {
+fn action_calls_in_batch(batch: &CommitBatch) -> BTreeMap<&str, ActionCallFields<'_>> {
+    // The writer applies legacy rows before canonical facts. Fold both in
+    // that order so the same final metadata drives pre-commit snapshots and
+    // candidate recording. A Set alone does not introduce a new action call.
     let mut calls = BTreeMap::new();
     for write in &batch.writes {
         let (object_type, key) = write.target();
@@ -264,11 +280,7 @@ fn action_calls_in_batch<E: SqlEngine>(
         }
         match write {
             FactWriteRow::Put { values, .. } => {
-                if let Some(meta) = extract_action_call(reader, values) {
-                    calls.insert(key.to_owned(), meta);
-                } else {
-                    calls.remove(key);
-                }
+                calls.insert(key, ActionCallFields::from_values(values));
             }
             FactWriteRow::Delete { .. } => {
                 calls.remove(key);
@@ -282,14 +294,24 @@ fn action_calls_in_batch<E: SqlEngine>(
         }
         match fact {
             FactChange::Create { values, .. } => {
-                if let Some(meta) = extract_action_call(reader, values) {
-                    calls.insert(key.to_owned(), meta);
-                }
+                calls.insert(key, ActionCallFields::from_values(values));
             }
             FactChange::Delete { .. } => {
                 calls.remove(key);
             }
-            FactChange::Set { .. } | FactChange::Transition { .. } => {}
+            FactChange::Set {
+                property, value, ..
+            } => {
+                if let Some(fields) = calls.get_mut(key) {
+                    match property.as_str() {
+                        "actionId" => fields.action_id = Some(value),
+                        "object" => fields.object = Some(value),
+                        _ => continue,
+                    }
+                    fields.metadata_set = true;
+                }
+            }
+            FactChange::Transition { .. } => {}
         }
     }
     calls
@@ -306,10 +328,13 @@ pub(crate) fn capture_before<E: SqlEngine>(
         return Ok(AutomationWatch::default());
     }
     let model = reader.model();
-    let action_calls = action_calls_in_batch(reader, batch);
+    let action_calls: Vec<_> = action_calls_in_batch(batch)
+        .into_values()
+        .filter_map(|fields| extract_action_call(reader, &fields))
+        .collect();
     let mut watched_actions = BTreeSet::new();
     let mut checked_actions = BTreeSet::new();
-    for call in action_calls.values() {
+    for call in &action_calls {
         if checked_actions.insert(call.action_id.as_str())
             && has_action_rules(reader.conn, &call.action_id)?
         {
@@ -341,7 +366,7 @@ pub(crate) fn capture_before<E: SqlEngine>(
             capture_root_snapshot(reader, &batch.world, root, key, &mut before)?;
         }
     }
-    for call in action_calls.values() {
+    for call in &action_calls {
         if watched_actions.contains(&call.action_id) && model.has_type(&call.target_type) {
             capture_root_snapshot(
                 reader,
@@ -578,6 +603,28 @@ pub(crate) fn record<E: SqlEngine>(
     Ok(continuation)
 }
 
+fn committed_action_calls<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    batch: &CommitBatch,
+) -> Result<BTreeMap<String, ActionCallMeta>, CellError> {
+    let mut calls = BTreeMap::new();
+    for (key, fields) in action_calls_in_batch(batch) {
+        let metadata = if fields.metadata_set {
+            reader
+                .object(&batch.world, norn_kernel::ACTION_CALL_TYPE, key)?
+                .and_then(|row| {
+                    extract_action_call(reader, &ActionCallFields::from_values(&row.values))
+                })
+        } else {
+            extract_action_call(reader, &fields)
+        };
+        if let Some(metadata) = metadata {
+            calls.insert(key.to_owned(), metadata);
+        }
+    }
+    Ok(calls)
+}
+
 fn record_inline<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     batch: &CommitBatch,
@@ -589,7 +636,7 @@ fn record_inline<E: SqlEngine>(
         return Ok(None);
     }
     let model = reader.model();
-    let action_calls = action_calls_in_batch(reader, batch);
+    let action_calls = committed_action_calls(reader, batch)?;
     let mut final_rows: BTreeMap<(String, String), &WrittenRow> = BTreeMap::new();
     for row in written {
         if model.has_type(&row.object_type) {
@@ -622,7 +669,7 @@ fn record_row_triggers<E: SqlEngine>(
     budget: &mut MatchBudget,
 ) -> Result<Option<AutomationContinuationCursor>, CellError> {
     let model = reader.model();
-    let mut actions_by_target = BTreeMap::new();
+    let mut actions_by_target = HashMap::new();
     for call in ctx.action_calls.values() {
         actions_by_target
             .entry((call.target_root.as_str(), call.target_key.as_str()))
@@ -1341,6 +1388,68 @@ mod tests {
     }
 
     #[test]
+    fn action_call_metadata_is_matched_after_same_batch_sets() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let (mut store, model, canonical) =
+            open_with_ticket_automations(&dir.path().join("updated-call.sqlite"))?;
+        for (version, rule, action) in [
+            (3, "ops.on_ping", "demo.ticket.ping"),
+            (4, "ops.on_remove", "demo.ticket.remove"),
+        ] {
+            install_automation_for(
+                &mut store,
+                &model,
+                &canonical,
+                version,
+                rule,
+                "demo.Ticket",
+                &json!({ "kind": "event", "event": "action", "actionId": action }),
+            )?;
+        }
+        store.commit(&ticket_batch("seed-target", 80, "open"))?;
+        let call_key = "demo.ticket.ping/edited";
+        let set = |property: &str, value: Value| FactChange::Set {
+            object_type: ObjectTypeName(norn_kernel::ACTION_CALL_TYPE.to_owned()),
+            key: call_key.to_owned(),
+            property: norn_ir::PropertyId(property.to_owned()),
+            value,
+        };
+        let batch = CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: SCOPE.to_owned(),
+            logical_time: 100,
+            writes: vec![action_call_write(
+                "demo.ticket.ping",
+                "demo.Ticket",
+                "original",
+                "edited",
+            )],
+            facts: vec![
+                set("actionId", Value::String("demo.ticket.remove".into())),
+                set(
+                    "object",
+                    Value::from_json_text(r#"{"objectType":"demo.Ticket","key":"t-1"}"#)?,
+                ),
+            ],
+            ..CommitBatch::default()
+        };
+
+        let outcome = store.commit(&batch)?;
+        let triggers = store
+            .read()
+            .automation_triggers_for_commit(MAIN_WORLD, outcome.receipt().body.commit_seq)?;
+        let [candidate] = triggers.as_slice() else {
+            return Err("expected one trigger for the final action".into());
+        };
+        assert_eq!(candidate.key.automation_id, "ops.on_remove");
+        assert_eq!(candidate.key.object_id, "t-1");
+        assert_eq!(candidate.action_id.as_deref(), Some("demo.ticket.remove"));
+        assert!(candidate.before_values.is_some());
+        assert_eq!(candidate.before_values, candidate.after_values);
+        Ok(())
+    }
+
+    #[test]
     fn invalid_automation_revision_rolls_back_retained_state_and_trigger_index() -> TestResult {
         let dir = tempfile::tempdir()?;
         let (mut store, model, canonical) =
@@ -1360,6 +1469,14 @@ mod tests {
             ),
             (
                 r#"{"enabled":true,"objectType":"demo.Unknown","when":{"kind":"event","event":"created"}}"#,
+                true,
+            ),
+            (
+                r#"{"enabled":false,"objectType":"demo.Unknown","when":{"kind":"event","event":"created"}}"#,
+                true,
+            ),
+            (
+                r#"{"enabled":true,"objectType":"demo.Unknown","when":{"kind":"stale","property":"updatedAt","durationMs":60000}}"#,
                 true,
             ),
         ] {

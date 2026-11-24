@@ -95,11 +95,12 @@ impl Page1Cache {
     }
 }
 
-fn parse_watched_rule(
+fn parse_watched_rule<'a>(
+    model: &'a Model,
     automation_id: &str,
     revision: u64,
     payload: &str,
-) -> Result<Option<WatchedRule>, CellError> {
+) -> Result<Option<(WatchedRule, &'a str)>, CellError> {
     let invalid = |field: &str| {
         CellError::DefinitionReceiptInvalid(format!(
             "automation {automation_id} has an invalid {field}"
@@ -115,6 +116,10 @@ fn parse_watched_rule(
         .and_then(serde_json::Value::as_str)
         .filter(|name| !name.trim().is_empty())
         .ok_or_else(|| invalid("object type"))?;
+    let root_type = model
+        .chain(object_type)?
+        .first()
+        .ok_or_else(|| CellError::Engine(format!("missing root type for {object_type}")))?;
     let when = value.get("when").ok_or_else(|| invalid("trigger"))?;
     let field = |key: &str| {
         when.get(key)
@@ -145,11 +150,16 @@ fn parse_watched_rule(
         }
         _ => return Err(invalid("trigger kind")),
     };
-    Ok(enabled.then(|| WatchedRule {
-        automation_id: automation_id.to_owned(),
-        revision,
-        object_type: object_type.to_owned(),
-        matcher,
+    Ok(enabled.then(|| {
+        (
+            WatchedRule {
+                automation_id: automation_id.to_owned(),
+                revision,
+                object_type: object_type.to_owned(),
+                matcher,
+            },
+            root_type.as_str(),
+        )
     }))
 }
 
@@ -173,14 +183,15 @@ pub(crate) fn sync_trigger_index<E: SqlEngine>(
     if !authorized {
         return Ok(());
     }
-    let Some(rule) = parse_watched_rule(&definition.id, definition.revision, &definition.payload)?
+    let Some((rule, root_type)) = parse_watched_rule(
+        model,
+        &definition.id,
+        definition.revision,
+        &definition.payload,
+    )?
     else {
         return Ok(());
     };
-    let root_type = model
-        .chain(&rule.object_type)?
-        .first()
-        .ok_or_else(|| CellError::Engine(format!("missing root type for {}", rule.object_type)))?;
     let (action_id, lifecycle_property, lifecycle_state) = match &rule.matcher {
         TriggerMatcher::Created | TriggerMatcher::Updated => (None, None, None),
         TriggerMatcher::Action { action_id } => (Some(action_id.as_str()), None, None),
