@@ -641,9 +641,12 @@ fn a_refused_update_preserves_every_visible_row() -> Result<(), Box<dyn std::err
         engine.sync(&update).map_err(|r| r.code),
         Err("core.compute.stale_input".to_owned())
     );
-    assert_eq!(super::backend::mirror_rows(dir.path(), &tenant(), TYPE), visible);
+    assert_eq!(
+        super::backend::mirror_rows(dir.path(), &tenant(), TYPE),
+        visible
+    );
     assert_eq!(engine.frontier(&mirror).map_err(|r| r.detail)?, frontier);
-    let prepared = store.analytics_prepare(&plan, context.clone(), &tenant())?;
+    let prepared = store.analytics_prepare(&plan, context, &tenant())?;
     let refused = engine
         .evaluate(prepared.request())
         .map(|_| ())
