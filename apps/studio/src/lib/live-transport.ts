@@ -240,13 +240,6 @@ let activeModeScopeKey: string | null = null
 type ModeProbe = { readonly controller: AbortController; readonly result: Promise<Mode> }
 const modeByScope = new Map<string, ModeProbe>()
 let unkeyedMode: ModeProbe | undefined
-/**
- * The error the mode query settled on once its bounded retries ran out (or a non-retryable refusal).
- * Until the user retries (`retryMode` → `refreshMode`) or a mode read succeeds, page reads through
- * the transport reuse it instead of starting their own `/v1/definitions` probe, so a settled
- * "Workspace unavailable" issues no further automatic catalog reads.
- */
-let settledModeFailure: { readonly error: unknown } | undefined
 const pendingModeControllers = new Set<AbortController>()
 const browserFetch: Fetch = (input, init) => fetch(input, init)
 
@@ -305,7 +298,6 @@ export function currentMode(
     if (existing !== undefined && !existing.controller.signal.aborted) return observeModeProbe(existing, signal)
   }
   if (unkeyedMode !== undefined && !unkeyedMode.controller.signal.aborted) return observeModeProbe(unkeyedMode, signal)
-  if (settledModeFailure !== undefined) return Promise.reject(settledModeFailure.error)
   const gen = modeGeneration
   const probe = startModeProbe((probeSignal) => discoverScope(fetcher, probeSignal).then(async (scope) => {
     const key = studioScopeKey(scope)
@@ -496,23 +488,15 @@ export function modeQuery(scope: StudioScope | null | undefined, enabled = true,
     queryKey: ["studio-mode", scope === undefined ? "outage" : studioScopeKey(scope)],
     enabled,
     queryFn: async ({ signal }) => {
-      if (recoveryClient === undefined) {
-        const mode = await currentMode(browserFetch, scope, signal)
-        settledModeFailure = undefined
-        return mode
-      }
+      if (recoveryClient === undefined) return currentMode(browserFetch, scope, signal)
       const recovered = await readMode(browserFetch, undefined, signal)
-      settledModeFailure = undefined
       recoveryClient.setQueryData(["studio-scope"], recovered.kind === "live" ? recovered.scope : null)
       return recovered
     },
-    retry: (failureCount, error) => {
-      if (error instanceof ScopeSupersededError) return false
-      if (isRetryableModeError(error) && failureCount < MODE_AUTO_RETRIES) return true
-      // Settled: no more automatic retries here, and none through the transport either.
-      settledModeFailure = { error }
-      return false
-    },
+    retry: (failureCount, error) =>
+      !(error instanceof ScopeSupersededError)
+      && isRetryableModeError(error)
+      && failureCount < MODE_AUTO_RETRIES,
     retryDelay: (attempt) => Math.min(800 * 2 ** attempt, 3200),
     staleTime: Infinity,
   })
@@ -556,5 +540,4 @@ export function refreshMode(): void {
   activeModeScopeKey = null
   modeByScope.clear()
   unkeyedMode = undefined
-  settledModeFailure = undefined
 }
