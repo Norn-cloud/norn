@@ -1,4 +1,5 @@
 import type { Field, Scalar } from "./catalog.ts"
+import type { StudioScope } from "./definitions.ts"
 
 /**
  * The object-records query contract Studio proposes to the cell (`GET /v1/objects/{type}`).
@@ -74,6 +75,9 @@ export interface RecordsQuery {
 export const LIMITS = { pageSize: 50, maxPageSize: 200, sortKeys: 3, clauses: 8, inValues: 50 } as const
 
 export const EMPTY_QUERY: RecordsQuery = { sort: [], filter: null, limit: LIMITS.pageSize }
+
+export const recordsQueryPrefix = (objectType: string, scope?: StudioScope) =>
+  ["records", objectType, ...(scope === undefined ? [] : [scope.orgId, scope.environmentId])] as const
 
 const ORDERED = ["eq", "ne", "lt", "lte", "gt", "gte", "between"] as const
 const PRESENCE = ["empty", "present"] as const

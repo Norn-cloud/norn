@@ -89,6 +89,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         frontier: u64,
         limit: usize,
     ) -> Result<Vec<String>, CellError> {
+        // S7/S8 (#1551 round 5): scanning `_norn_fact_values` requires verified history.
+        self.check_history("source disagreement history")?;
         let mut ids = std::collections::BTreeSet::new();
         let bound = i64::try_from(limit).unwrap_or(i64::MAX);
         for property in partition {
@@ -108,6 +110,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// Whether a steward's review accepts finding `id` at `frontier`
     /// (`source.AgreementReview`, keyed by the finding id).
     fn accepted(&self, world: &str, id: &str, frontier: Option<u64>) -> Result<bool, CellError> {
+        self.check_history("source disagreement history")?;
         if !self.model().has_type(REVIEW) {
             return Ok(false);
         }
@@ -137,6 +140,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         frontier: Option<u64>,
         partition: &[PropertyId],
     ) -> Result<(Vec<ObjectRecord>, Vec<Reports>), CellError> {
+        // S7/S8 (#1551 round 5): scanning `_norn_fact_values` requires verified history.
+        self.check_history("source disagreement history")?;
         let frontier = frontier.map(|f| to_i64(f, "frontier")).transpose()?;
         let rows = self.conn.query(
             &format!("SELECT \"version\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND (\"root_type\" = ?2 OR \"object_type\" = ?2) AND \"id\" = ?3 AND (?4 IS NULL OR \"commit_seq\" <= ?4) ORDER BY \"version\" LIMIT 4097"),
@@ -178,6 +183,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         key: &str,
         frontier: Option<u64>,
     ) -> Result<Vec<SourceDisagreement>, CellError> {
+        self.check_live()?;
         let partition = self.partition_of(object_type);
         if partition.is_empty() {
             return Ok(Vec::new());
@@ -291,6 +297,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         member: &mut dyn FnMut(&str) -> Result<bool, CellError>,
         visible: &mut dyn FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Option<SourceDisagreementCounts>, CellError> {
+        self.check_live()?;
         let partition = self.partition_of(grain);
         if partition.is_empty() {
             return Ok(None);

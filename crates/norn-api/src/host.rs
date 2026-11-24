@@ -12,7 +12,7 @@ use norn_cell::{
 use norn_ir::{RuntimeObject, RuntimeValue};
 use norn_kernel::{Command, FactEvent, ObservationEvent, Observed};
 use std::ops::{Deref, DerefMut};
-use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard};
+use std::sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard, atomic::Ordering};
 
 pub(crate) type ActionCell<E> = norn_cell::SqliteCell<FactEvent, RuntimeObject, RuntimeObject, E>;
 /// A single tenant's cell and definition epoch. Unconfigured authorization denies.
@@ -22,7 +22,7 @@ pub struct DevHost<E: SqlEngine> {
     definitions: RwLock<()>,
     /// Always `Some` outside [`DevHost::ingest`], which holds the lock while
     /// it maps one page of source rows under the observation profile.
-    cell: Mutex<Option<ActionCell<E>>>,
+    pub(crate) cell: Mutex<Option<ActionCell<E>>>,
     /// Requests waiting for [`Self::cell`]; a load yields to them between
     /// its commits (INGEST-YIELD-1).
     waiting: std::sync::atomic::AtomicUsize,
@@ -435,15 +435,14 @@ impl<E: SqlEngine> DevHost<E> {
         matches && allowed
     }
     pub(crate) fn cell(&self) -> Result<CellGuard<'_, E>, Refusal> {
-        self.waiting
-            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        self.waiting.fetch_add(1, Ordering::AcqRel);
         let guard = self.cell.lock();
-        self.waiting
-            .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        self.waiting.fetch_sub(1, Ordering::AcqRel);
         let guard = guard.map_err(Refusal::host)?;
-        if guard.is_none() {
-            return Err(Refusal::host("the cell is unavailable"));
-        }
+        let cell = guard
+            .as_ref()
+            .ok_or_else(|| Refusal::host("the cell is unavailable"))?;
+        Refusal::check_scrub(cell.store().scrub_status())?;
         Ok(CellGuard(guard))
     }
 

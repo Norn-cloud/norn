@@ -118,6 +118,7 @@ impl<E: SqlEngine> CellStore<E> {
         mut access: impl FnMut(&ObjectRecord) -> Result<RowAccess, CellError>,
         now_ms: u64,
     ) -> Result<Served, CellError> {
+        self.read().check_live()?;
         self.conn.transaction(|| {
             let snapshot = self.transform_snapshot(plan, (world, scope), &mut access)?;
             let Some(policy) = plan.materialization else {
@@ -186,10 +187,12 @@ impl<E: SqlEngine> CellStore<E> {
         mut access: impl FnMut(&ObjectRecord) -> Result<RowAccess, CellError>,
         now_ms: u64,
     ) -> Result<Option<MaterializationState>, CellError> {
+        self.check_writable()?;
         if plan.materialization.is_none() {
             return Err(refused("core.compute.stale_input"));
         }
         self.conn.transaction(|| {
+            crate::open_checkpoint::check_fence(&self.conn)?;
             let snapshot = self.transform_snapshot(plan, (world, scope), &mut access)?;
             if !snapshot.whole {
                 return Ok(None);
