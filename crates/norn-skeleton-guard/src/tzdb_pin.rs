@@ -272,11 +272,11 @@ fn extract_sole_loader_binding(block: &syn::Block) -> Option<(String, String)> {
     let Type::Path(static_ty) = static_item.ty.as_ref() else {
         return None;
     };
-    if !static_ty
+    if static_ty
         .path
         .segments
         .last()
-        .is_some_and(|seg| seg.ident == "OnceLock")
+        .is_none_or(|seg| seg.ident != "OnceLock")
     {
         return None;
     }

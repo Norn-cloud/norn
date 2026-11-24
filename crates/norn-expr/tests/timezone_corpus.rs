@@ -191,8 +191,10 @@ impl Fingerprint {
     }
 }
 
+type Transition = (Timestamp, Offset, Offset);
+
 /// The pre-2100 transitions of `zone`, with the offsets before and after.
-fn transitions(zone: &str) -> Result<Vec<(Timestamp, Offset, Offset)>, Box<dyn std::error::Error>> {
+fn transitions(zone: &str) -> Result<Vec<Transition>, Box<dyn std::error::Error>> {
     let data = TzdbBundle::v2025b()
         .tzif(zone)
         .ok_or_else(|| format!("zone `{zone}` missing from tzdb 2025b"))?;
