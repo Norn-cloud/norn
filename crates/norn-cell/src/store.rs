@@ -1884,6 +1884,7 @@ type ProvisionIdentity<'a> =
 /// ID-NORMALIZED-RETAINED: only verified-prefix callers select retained input.
 #[derive(Clone, Copy)]
 enum CommitOrigin<'a> {
+    Host,
     Current,
     Provisioning(&'a str, &'a ProvisionIdentity<'a>),
     Retained(&'a crate::export::ExportRecord),
@@ -2932,7 +2933,7 @@ impl<E: SqlEngine> CellStore<E> {
         ) -> Result<(T, Option<crate::link_guard::VerifiedMappingProof>), X>,
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<(T, CommitOutcome), GuardedError<X>> {
-        self.commit_guarded_inner(batch, None, submitted, CommitOrigin::Current, guard, probe)
+        self.commit_guarded_inner(batch, None, submitted, CommitOrigin::Host, guard, probe)
     }
 
     /// The verified-prefix callers compare the full resulting receipt and journal.
@@ -3263,7 +3264,7 @@ impl<E: SqlEngine> CellStore<E> {
                     &self.model,
                     install,
                     actual_version,
-                    match origin { CommitOrigin::Retained(record) => Some(record), CommitOrigin::Current | CommitOrigin::Provisioning(..) => None },
+                    match origin { CommitOrigin::Retained(record) => Some(record), CommitOrigin::Host | CommitOrigin::Current | CommitOrigin::Provisioning(..) => None },
                 )?;
                 self.law_checked.set(preflight.migration.law_checked);
                 crate::migration::apply_model_migration(
@@ -3482,11 +3483,11 @@ impl<E: SqlEngine> CellStore<E> {
             crate::decision_ledger::apply(&writer.reader(), effective_batch, commit_seq)?;
             let quantity_result = writer.apply_quantity()?;
             probe(CommitPoint::FactsApplied)?;
-            let linked = writer.apply_links(match (origin, mapping_proof) {
-                (CommitOrigin::Retained(_), _) => crate::link_guard::LinkGuardMode::RetainedReplay,
-                (_, Some(proof)) => crate::link_guard::LinkGuardMode::VerifiedMapping(proof),
-                (_, None) => crate::link_guard::LinkGuardMode::Live,
-            })?;
+            let linked = writer.apply_links(crate::link_guard::LinkGuardMode::from_origin(
+                matches!(origin, CommitOrigin::Retained(_)),
+                matches!(origin, CommitOrigin::Host),
+                mapping_proof,
+            ))?;
             probe(CommitPoint::LinksApplied)?;
             if let Some(validate) = self.candidate_validator.get() {
                 let validator_disputes = RefCell::default();
@@ -3570,7 +3571,7 @@ impl<E: SqlEngine> CellStore<E> {
                 // A replayed record keeps the version that first wrote it.
                 match origin {
                     CommitOrigin::Retained(record) => record.storage_version,
-                    CommitOrigin::Current | CommitOrigin::Provisioning(..) => {
+                    CommitOrigin::Host | CommitOrigin::Current | CommitOrigin::Provisioning(..) => {
                         Some(crate::engine_release::STORAGE_VERSION)
                     }
                 },

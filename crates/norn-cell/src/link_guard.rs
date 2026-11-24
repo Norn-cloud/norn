@@ -40,21 +40,44 @@ impl VerifiedMappingProof {
 /// Admission mode for link write guards inside `Writer::apply_links`.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum LinkGuardMode {
-    /// Ordinary live commit: enforce both IFC read-marking and slot-identity guards.
-    Live,
-    /// In-transaction guard verified non-empty mapping bundles and exact
-    /// `mapping_link_plan` equality: exempt static mapping links from
-    /// `check_link_read_markings`, still enforce slot-identity guards.
+    /// Governed `CellHost` live commit (`commit_guarded_submitted`): enforce both
+    /// IFC read-marking and physical-slot target-identity guards.
+    Host,
+    /// Governed `CellHost` mapping commit whose in-transaction guard verified
+    /// non-empty mapping bundles and exact `mapping_link_plan` equality: exempt
+    /// static mapping links from `check_link_read_markings`, still enforce
+    /// physical-slot target-identity guards.
     VerifiedMapping(VerifiedMappingProof),
+    /// Direct low-level `CellStore` commit (non-`CellHost`): still enforces IFC
+    /// read-marking checks and monotonic slot versioning while allowing
+    /// interface target-type replacement on the physical slot.
+    UncheckedStore,
     /// Verified history replay (`restore`): skip live-admission guards.
     RetainedReplay,
 }
 
 impl LinkGuardMode {
+    /// Select the link guard mode for a commit transaction.
+    pub(crate) const fn from_origin(
+        is_retained: bool,
+        is_host: bool,
+        mapping_proof: Option<VerifiedMappingProof>,
+    ) -> Self {
+        if is_retained {
+            Self::RetainedReplay
+        } else if !is_host {
+            Self::UncheckedStore
+        } else if let Some(proof) = mapping_proof {
+            Self::VerifiedMapping(proof)
+        } else {
+            Self::Host
+        }
+    }
+
     /// Whether `check_link_read_markings` must run for this commit.
     pub(crate) const fn check_read_markings(self) -> bool {
         match self {
-            Self::Live => true,
+            Self::Host | Self::UncheckedStore => true,
             Self::VerifiedMapping(proof) => !proof.exempt_link_read_markings(),
             Self::RetainedReplay => false,
         }
@@ -62,7 +85,7 @@ impl LinkGuardMode {
 
     /// Whether `check_slot_target_match` must run for this commit.
     pub(crate) const fn check_slot_target(self) -> bool {
-        !matches!(self, Self::RetainedReplay)
+        matches!(self, Self::Host | Self::VerifiedMapping(_))
     }
 }
 
@@ -461,9 +484,10 @@ fn verify_link_endpoint_tables<S: SqlEngine>(
     Ok(())
 }
 
-/// Defense-in-depth inside `Writer::apply_links` (live/mapping commits): a
-/// link mutation must never overwrite a version slot (live or tombstoned) or
-/// live legacy row belonging to a different or ambiguous canonical target root.
+/// Defense-in-depth inside `Writer::apply_links` (governed `CellHost` and
+/// verified mapping commits): a link mutation must never overwrite a version
+/// slot (live or tombstoned) or live legacy row belonging to a different or
+/// ambiguous canonical target root.
 pub(crate) fn check_slot_target_match<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     world: &str,

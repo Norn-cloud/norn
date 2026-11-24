@@ -664,10 +664,38 @@ fn interface_target_type_change_with_the_same_key_starts_new_creation() {
         creation(&store).expect("different typed target"),
         vec![changed_target]
     );
+    assert_eq!(
+        store
+            .read()
+            .link_version(
+                MAIN_WORLD,
+                "test.Node",
+                "related",
+                "source",
+                "test.TargetB",
+                "target",
+            )
+            .expect("monotonic link version across target-type change"),
+        3
+    );
     link_commit(&mut store, add("test.TargetB"));
     assert_eq!(
         creation(&store).expect("new target replacement"),
         vec![changed_target]
+    );
+    assert_eq!(
+        store
+            .read()
+            .link_version(
+                MAIN_WORLD,
+                "test.Node",
+                "related",
+                "source",
+                "test.TargetB",
+                "target",
+            )
+            .expect("next link version"),
+        4
     );
 }
 

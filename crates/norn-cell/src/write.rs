@@ -3019,7 +3019,11 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                 &target_type,
                 target,
             )?;
-            let version = next(previous_version, "link version")?;
+            let slot_version = self
+                .reader()
+                .link_version_row(self.world, &table_name, source, target)?
+                .map_or(0, |(existing, _)| existing);
+            let version = next(previous_version.max(slot_version), "link version")?;
             let live_identity = self
                 .conn
                 .query_optional(
