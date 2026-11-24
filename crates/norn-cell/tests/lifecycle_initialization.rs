@@ -506,12 +506,20 @@ fn forged_creations_and_unrecorded_writes_are_refused_with_no_effects() {
         LifecycleInitRefusal::UnrecordedChange { .. }
     ));
 
-    // A direct lifecycle set recorded as an ordinary property write.
+    // A direct lifecycle set recorded as an ordinary property write, after a
+    // recorded transition so the replay (not the final-row check) refuses it.
     let mut direct_set = legal;
     direct_set.events = vec![
         FactEvent::Created {
             key: key.clone(),
             values: values(json!({ "status": "draft", "pages": 3 })),
+        },
+        FactEvent::Transitioned {
+            key: key.clone(),
+            lifecycle: PropertyId("status".into()),
+            transition: TransitionId("submit".into()),
+            from: "draft".into(),
+            to: "submitted".into(),
         },
         FactEvent::Set {
             key: key.clone(),
