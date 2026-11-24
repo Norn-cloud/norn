@@ -183,7 +183,13 @@ fn is_scaled_allowed_function(
 
 #[derive(Debug, Clone, Copy)]
 enum ExactFrame {
-    Site(crate::scaled::ScaledArithmetic),
+    Site {
+        arithmetic: crate::scaled::ScaledArithmetic,
+        /// `true` when this site belongs to an exact-arithmetic scope (an exact
+        /// meter or an explicit 3-argument `round(..., scale, mode)`), `false`
+        /// when it is a 2-argument `round` inheriting an `OrderedFold` meter.
+        isolated_exact: bool,
+    },
     Suspended,
     Legacy,
 }
@@ -225,7 +231,7 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
 
     fn active_exact_site(&self) -> Option<crate::scaled::ScaledArithmetic> {
         match self.exact_sites.last().copied() {
-            Some(ExactFrame::Site(site)) => Some(site),
+            Some(ExactFrame::Site { arithmetic, .. }) => Some(arithmetic),
             Some(ExactFrame::Suspended) => None,
             Some(ExactFrame::Legacy) | None => self.meter.and_then(|meter| meter.arithmetic()),
         }
@@ -234,7 +240,20 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
     fn in_exact_site_scope(&self) -> bool {
         self.exact_sites
             .iter()
-            .any(|frame| matches!(frame, ExactFrame::Site(_)))
+            .any(|frame| matches!(frame, ExactFrame::Site { .. }))
+    }
+
+    fn should_suspend_exact_site(&self) -> bool {
+        self.meter.is_some_and(|meter| meter.exact_arithmetic())
+            || self.exact_sites.iter().any(|frame| {
+                matches!(
+                    frame,
+                    ExactFrame::Site {
+                        isolated_exact: true,
+                        ..
+                    }
+                )
+            })
     }
 
     /// Follow unconditional forward jumps (for example from a ternary true arm)
@@ -412,8 +431,7 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
             match op {
                 Opcode::ExactSite { scale, rounding } => {
                     let inherited = self.active_exact_site();
-                    let exact = self.in_exact_site_scope()
-                        || self.meter.is_some_and(|meter| meter.exact_arithmetic());
+                    let exact = self.should_suspend_exact_site();
                     let site = crate::scaled::ScaledArithmetic::rounding_site(
                         *scale, *rounding, inherited, exact,
                     )
@@ -428,13 +446,19 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
                         });
                     }
                     self.exact_sites.push(match site {
-                        Some(site) => ExactFrame::Site(site),
+                        Some(arithmetic) => ExactFrame::Site {
+                            arithmetic,
+                            isolated_exact: exact || rounding.is_some(),
+                        },
                         None => ExactFrame::Legacy,
                     });
                 }
                 Opcode::Rescale { scale } => {
                     let value = self.pop()?;
-                    let result = if let Some(ExactFrame::Site(site)) = self.exact_sites.last() {
+                    let result = if let Some(ExactFrame::Site {
+                        arithmetic: site, ..
+                    }) = self.exact_sites.last()
+                    {
                         let Number(value) = value else {
                             return Err(OpcodeErr {
                                 opcode: "Rescale".into(),
@@ -466,9 +490,7 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
                     self.exact_sites.pop();
                 }
                 Opcode::ExactSiteSuspend => {
-                    let in_exact = self.in_exact_site_scope()
-                        || self.meter.is_some_and(|meter| meter.exact_arithmetic());
-                    self.exact_sites.push(if in_exact {
+                    self.exact_sites.push(if self.should_suspend_exact_site() {
                         ExactFrame::Suspended
                     } else {
                         ExactFrame::Legacy

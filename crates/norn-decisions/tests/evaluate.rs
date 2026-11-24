@@ -2125,6 +2125,60 @@ fn val_exact_decision_assignment_admits_and_evaluates_temporal_and_decimal_expre
 }
 
 #[test]
+fn ordered_fold_two_arg_round_preserves_fold_policy_in_conditions_and_call_args()
+-> Result<(), Box<dyn std::error::Error>> {
+    use zen_engine::{
+        Isolate, Variable,
+        meter::Meter,
+        scaled::{Rounding, ScaledArithmetic},
+    };
+
+    let mut isolate = Isolate::with_environment(Variable::Null);
+    let profile = ScaledArithmetic {
+        scale: 2,
+        rounding: Rounding::HalfAwayFromZero,
+    };
+    isolate.set_meter(Some(Meter::new(1_000).with_arithmetic(profile)));
+
+    // 2-argument `round(..., 2)` inherits the OrderedFold meter policy, so
+    // ternary conditions and call arguments retain the fold's arithmetic site.
+    assert_eq!(
+        isolate
+            .run_standard("round((1 / 2 > 0) ? 1 : 2, 2)")
+            .map_err(|err| format!("fold 2-arg round ternary condition: {err:?}"))?,
+        Variable::Number("1".parse()?)
+    );
+    assert_eq!(
+        isolate
+            .run_standard("round(len([1 / 2]), 2)")
+            .map_err(|err| format!("fold 2-arg round call arg: {err:?}"))?,
+        Variable::Number("1".parse()?)
+    );
+    assert_eq!(
+        isolate
+            .run_standard("round((round(1.25, 1) > 1) ? 1 : 2, 2)")
+            .map_err(|err| format!("fold nested 2-arg round condition: {err:?}"))?,
+        Variable::Number("1".parse()?)
+    );
+
+    // Explicit 3-argument `round(..., scale, mode)` enters an isolated exact
+    // site, so bare division and undeclared 2-arg `round` inside its condition
+    // or non-`round` call arguments still fail closed.
+    for isolated_refusal in [
+        "round((1 / 2 > 0) ? 1 : 2, 2, 'half_even')",
+        "round((round(1.25, 1) > 1) ? 1 : 2, 2, 'half_even')",
+        "round(len([1 / 2]), 2, 'half_even')",
+    ] {
+        assert!(
+            isolate.run_standard(isolated_refusal).is_err(),
+            "explicit 3-arg round must isolate `{isolated_refusal}` even under fold meter"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn time_window_materialize_sub_decision_executes_and_refuses_dst_anomalies() {
     let sub = rule(&json!({
         "ruleFile": "registry/packs/time/artifacts/time.window.materialize.rule.json"
