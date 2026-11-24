@@ -205,7 +205,8 @@ fn a_flow_action_step_propagates_optional_trace_context() {
 
 /// SHA-256 of the receipt and ledger rows [`flow_receipts_and_ledger_match_the_pre_u1_bytes`]
 /// reads, as the build before automations U1 (#1650, `f51541ce72`) wrote them.
-const PRE_U1_FLOW_BYTES_SHA256: &str = "pending";
+const PRE_U1_FLOW_BYTES_SHA256: &str =
+    "37486316913f7a28786a73fc7d515c0ef335ce5094a91d614c9c70f3adea384c";
 
 /// #1704: a cell whose flow runs with no automation installed writes exactly
 /// the receipt and ledger bytes it wrote before automations U1 (#1650), so
@@ -242,8 +243,7 @@ fn flow_receipts_and_ledger_match_the_pre_u1_bytes() {
          FROM _norn_ledger ORDER BY seq)",
     );
     assert!(!receipts.is_empty() && !ledger.is_empty());
-    let digest = Sha256::digest(format!("{receipts}\n--\n{ledger}"));
-    let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    let hex = format!("{:x}", Sha256::digest(format!("{receipts}\n--\n{ledger}")));
     assert_eq!(
         hex, PRE_U1_FLOW_BYTES_SHA256,
         "receipts:\n{receipts}\nledger:\n{ledger}"

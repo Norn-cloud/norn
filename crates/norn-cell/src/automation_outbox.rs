@@ -257,10 +257,11 @@ fn at_or_after(root: &str, id: &str, cutoff: Option<(&str, &str)>) -> bool {
     cutoff.is_some_and(|(cut_root, cut_id)| replay_key(root, id) >= replay_key(cut_root, cut_id))
 }
 
-/// Pre-commit snapshot reads bounded by [`MAX_PREIMAGES_PER_COMMIT`].
+/// Pre-commit snapshot reads bounded by `limit` ([`preimage_limit`]).
 struct PreimageBudget<'r, 's, E: SqlEngine> {
     reader: &'r StoreReader<'s, E>,
     world: &'r str,
+    limit: usize,
     before: BTreeMap<(String, String), Option<ObjectRecord>>,
 }
 
@@ -272,7 +273,7 @@ impl<E: SqlEngine> PreimageBudget<'_, '_, E> {
         if self.before.contains_key(&lookup_key) {
             return Ok(true);
         }
-        if self.before.len() >= MAX_PREIMAGES_PER_COMMIT {
+        if self.before.len() >= self.limit {
             return Ok(false);
         }
         // Query through `root` so a write addressing a supertype or subtype
@@ -390,12 +391,30 @@ fn action_calls_in_batch(batch: &CommitBatch) -> BTreeMap<&str, ActionCallFields
     calls
 }
 
+/// How many preimages [`capture_before`] may hold for a commit: the
+/// [`MAX_PREIMAGES_PER_COMMIT`] budget for a live commit and for the replay of
+/// a continuation written under it (matcher version 2 or later). Replaying a
+/// record with no continuation, or with a matcher version 1 one, captures
+/// without the cap: the live commit then never paused at a preimage cutoff
+/// (version 1 had none; under version 2 no rule-bearing target lay past it),
+/// so the uncapped replay reproduces it exactly, and pre-#1704 v7 exports keep
+/// restoring.
+pub(crate) fn preimage_limit(retained: Option<&crate::export::ExportRecord>) -> usize {
+    match retained.map(|record| record.automation_continuation.as_ref()) {
+        None => MAX_PREIMAGES_PER_COMMIT,
+        Some(Some(row)) if row.matcher_version != 1 => MAX_PREIMAGES_PER_COMMIT,
+        Some(_) => usize::MAX,
+    }
+}
+
 /// Capture pre-commit state for objects touched by `batch` via indexed
-/// `LIMIT 1` probes. Returns immediately with zero object reads when no rule
-/// matches.
+/// `LIMIT 1` probes, holding at most `limit` preimages (see
+/// [`preimage_limit`]). Returns immediately with zero object reads when no
+/// rule matches.
 pub(crate) fn capture_before<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     batch: &CommitBatch,
+    limit: usize,
 ) -> Result<AutomationWatch, CellError> {
     if batch.writes.is_empty() && batch.facts.is_empty() {
         return Ok(AutomationWatch::default());
@@ -458,6 +477,7 @@ pub(crate) fn capture_before<E: SqlEngine>(
     let mut budget = PreimageBudget {
         reader,
         world: &batch.world,
+        limit,
         before: BTreeMap::new(),
     };
     let mut row_cutoff = None;
@@ -1981,7 +2001,7 @@ mod tests {
             }],
             ..CommitBatch::default()
         };
-        let watch = capture_before(&store.read(), &unrelated)?;
+        let watch = capture_before(&store.read(), &unrelated, MAX_PREIMAGES_PER_COMMIT)?;
         assert!(
             watch.is_empty(),
             "unrelated write must match zero indexed triggers"
@@ -2556,7 +2576,7 @@ mod tests {
             }],
             ..CommitBatch::default()
         };
-        let watch_a = capture_before(&store.read(), &update_a)?;
+        let watch_a = capture_before(&store.read(), &update_a, MAX_PREIMAGES_PER_COMMIT)?;
         assert!(
             watch_a.before.is_empty(),
             "unrelated sibling write must skip preimage reads"
@@ -2574,7 +2594,7 @@ mod tests {
             }],
             ..CommitBatch::default()
         };
-        let watch_super = capture_before(&store.read(), &supertype_set)?;
+        let watch_super = capture_before(&store.read(), &supertype_set, MAX_PREIMAGES_PER_COMMIT)?;
         assert!(
             watch_super
                 .before
@@ -2610,7 +2630,8 @@ mod tests {
             &json!({ "kind": "event", "event": "updated" }),
         )?;
         seed_ticket_a(&mut base_store)?;
-        let watch_with_base = capture_before(&base_store.read(), &update_a)?;
+        let watch_with_base =
+            capture_before(&base_store.read(), &update_a, MAX_PREIMAGES_PER_COMMIT)?;
         assert!(
             watch_with_base
                 .before
@@ -2688,20 +2709,14 @@ mod tests {
             .collect()
     }
 
-    /// #1704 golden: one create rule over 255 ASCII ids, a decomposed `é`
-    /// (`e` + U+0301) and `z`. Matcher version 1 ordered raw bytes, so the
-    /// live commit paused at `z` while a restore, replaying the export's NFC
-    /// `é` (which sorts past `z`), paused at `é` and refused a valid prefix.
-    /// Version 2 orders NFC identities first, so both pause at `é`, keep the
-    /// same inline candidates, and leave the same expansion suffix.
-    #[tokio::test]
-    async fn overflow_order_is_replay_stable_across_nfc_export_and_restore() -> TestResult {
-        const DECOMPOSED: &str = "e\u{301}";
-        const COMPOSED: &str = "\u{e9}";
-        let dir = tempfile::tempdir()?;
-        let path = dir.path().join("nfc.sqlite");
+    /// A store with one `event:created` rule on `demo.Ticket` and one commit
+    /// creating a ticket per id; returns the store, model and commit.
+    fn commit_created_tickets(
+        path: &std::path::Path,
+        ids: &[String],
+    ) -> TestResult<(CellStore, Model, u64)> {
         let (model, canonical) = sample_model()?;
-        let mut store = CellStore::open(&path, model.clone(), StoreOptions::default())?;
+        let mut store = CellStore::open(path, model.clone(), StoreOptions::default())?;
         store.bind("scope", SCOPE)?;
         store.install_definitions(model.clone(), install_input(&canonical, 10), Some(0), SCOPE)?;
         install_automation_for(
@@ -2713,22 +2728,37 @@ mod tests {
             "demo.Ticket",
             &json!({ "kind": "event", "event": "created" }),
         )?;
-        let ids: Vec<String> = (0..255_usize)
-            .map(|idx| format!("k-{idx:03}"))
-            .chain([DECOMPOSED.to_owned(), "z".to_owned()])
-            .collect();
         let batch = CommitBatch {
             world: MAIN_WORLD.to_owned(),
             scope: SCOPE.to_owned(),
             logical_time: 200,
-            idempotency_key: Some("nfc-overflow".to_owned()),
+            idempotency_key: Some("created-tickets".to_owned()),
             writes: ids.iter().map(|id| put_ticket(id)).collect(),
             ..CommitBatch::default()
         };
         let CommitOutcome::Committed(receipt) = store.commit(&batch)? else {
             return Err("expected committed receipt".into());
         };
-        let commit_seq = receipt.body.commit_seq;
+        Ok((store, model, receipt.body.commit_seq))
+    }
+
+    /// #1704 golden: one create rule over 255 ASCII ids, a decomposed `é`
+    /// (`e` + U+0301) and `z`. Matcher version 1 ordered raw bytes, so the
+    /// live commit paused at `z` while a restore, replaying the export's NFC
+    /// `é` (which sorts past `z`), paused at `é` and refused a valid prefix.
+    /// Version 2 orders NFC identities first, so both pause at `é`, keep the
+    /// same inline candidates, and leave the same expansion suffix.
+    #[tokio::test]
+    async fn overflow_order_is_replay_stable_across_nfc_export_and_restore() -> TestResult {
+        const DECOMPOSED: &str = "e\u{301}";
+        const COMPOSED: &str = "\u{e9}";
+        let dir = tempfile::tempdir()?;
+        let ids: Vec<String> = (0..255_usize)
+            .map(|idx| format!("k-{idx:03}"))
+            .chain([DECOMPOSED.to_owned(), "z".to_owned()])
+            .collect();
+        let (store, model, commit_seq) =
+            commit_created_tickets(&dir.path().join("nfc.sqlite"), &ids)?;
 
         let live = store
             .read()
@@ -2805,9 +2835,20 @@ mod tests {
                 .collect::<Vec<_>>()
         );
 
-        // A pre-#1704 v7 export of this commit: matcher version 1 paused at
-        // `z` (raw order puts `e` + U+0301 first). Its pause is not
-        // reproducible, so the restore refuses it by type and writes nothing.
+        assert_v1_raw_order_export_is_refused(&store, &model, record, exported, dir.path()).await
+    }
+
+    /// A pre-#1704 v7 export of the golden commit: matcher version 1 paused
+    /// at `z` (raw order puts `e` + U+0301 first). Its pause is not
+    /// reproducible, so the restore refuses it by type and writes nothing.
+    async fn assert_v1_raw_order_export_is_refused(
+        store: &CellStore,
+        model: &Model,
+        record: crate::export::ExportRecord,
+        exported: AutomationOutboxContinuation,
+        dir: &std::path::Path,
+    ) -> TestResult {
+        let commit_seq = exported.trigger_commit_seq;
         let mut v1 = record;
         v1.automation_continuation = Some(AutomationOutboxContinuation {
             matcher_version: 1,
@@ -2819,8 +2860,8 @@ mod tests {
             },
             ..exported
         });
-        let v1_target = dir.path().join("restored-v1.sqlite");
-        let refused = restore_with_last(&store, &model, &v1, &v1_target).await?;
+        let v1_target = dir.join("restored-v1.sqlite");
+        let refused = restore_with_last(store, model, &v1, &v1_target).await?;
         assert!(
             matches!(
                 refused,
@@ -2837,9 +2878,12 @@ mod tests {
 
     /// #1704: preimages are captured in replay order up to
     /// `MAX_PREIMAGES_PER_COMMIT`; the first target past them pauses Pass 1,
-    /// even when no candidate matched before it.
-    #[test]
-    fn preimage_capture_is_budgeted_and_defers_the_rest() -> TestResult {
+    /// even when no candidate matched before it. The export restores with the
+    /// same pause, and the same commit exported by a pre-#1704 build (matcher
+    /// version 1 captured every preimage, so it recorded no continuation)
+    /// still restores.
+    #[tokio::test]
+    async fn preimage_capture_is_budgeted_and_defers_the_rest() -> TestResult {
         let dir = tempfile::tempdir()?;
         let path = dir.path().join("preimages.sqlite");
         let (model, canonical) = sample_model()?;
@@ -2867,7 +2911,7 @@ mod tests {
             ..CommitBatch::default()
         };
         let cutoff = format!("p-{MAX_PREIMAGES_PER_COMMIT:04}");
-        let watch = capture_before(&store.read(), &batch)?;
+        let watch = capture_before(&store.read(), &batch, MAX_PREIMAGES_PER_COMMIT)?;
         assert_eq!(watch.before.len(), MAX_PREIMAGES_PER_COMMIT);
         assert!(
             watch
@@ -2887,24 +2931,48 @@ mod tests {
         let commit_seq = receipt.body.commit_seq;
         // Nothing entered `stalled`, so nothing matched inline; the targets
         // past the budget are deferred all the same.
-        assert!(
+        assert_eq!(
             store
                 .read()
-                .automation_triggers_for_commit(MAIN_WORLD, commit_seq)?
-                .is_empty()
+                .automation_triggers_for_commit(MAIN_WORLD, commit_seq)?,
+            Vec::new()
         );
-        let cont = store
+        let continuation = store
             .read()
             .automation_outbox_continuation(commit_seq)?
             .ok_or("missing continuation")?;
         assert_eq!(
-            cont.cursor,
+            continuation.cursor,
             AutomationContinuationCursor::Row {
                 root_type: "demo.Ticket".to_owned(),
                 object_id: cutoff,
                 ancestor_type: "demo.Ticket".to_owned(),
                 after_automation_id: None,
             }
+        );
+
+        let record = store.export_record(commit_seq)?.ok_or("missing record")?;
+        let target = dir.path().join("restored.sqlite");
+        restore_with_last(&store, &model, &record, &target).await??;
+        let restored = CellStore::open(&target, model.clone(), StoreOptions::default())?;
+        assert_eq!(
+            restored.read().automation_outbox_continuation(commit_seq)?,
+            Some(continuation)
+        );
+        let mut pre_1704 = record;
+        pre_1704.automation_continuation = None;
+        let v1_target = dir.path().join("restored-v1.sqlite");
+        restore_with_last(&store, &model, &pre_1704, &v1_target).await??;
+        let restored = CellStore::open(&v1_target, model.clone(), StoreOptions::default())?;
+        assert_eq!(
+            restored.read().automation_outbox_continuation(commit_seq)?,
+            None
+        );
+        assert_eq!(
+            restored
+                .read()
+                .automation_triggers_for_commit(MAIN_WORLD, commit_seq)?,
+            Vec::new()
         );
         Ok(())
     }
@@ -2949,7 +3017,7 @@ mod tests {
             ..CommitBatch::default()
         };
         let cutoff = format!("demo.ticket.ping/c-{MAX_PREIMAGES_PER_COMMIT:04}");
-        let watch = capture_before(&store.read(), &batch)?;
+        let watch = capture_before(&store.read(), &batch, MAX_PREIMAGES_PER_COMMIT)?;
         assert_eq!(watch.before.len(), MAX_PREIMAGES_PER_COMMIT);
         assert_eq!(watch.row_cutoff, None);
         assert_eq!(watch.action_cutoff.as_deref(), Some(cutoff.as_str()));
@@ -2958,18 +3026,18 @@ mod tests {
             return Err("expected committed receipt".into());
         };
         let commit_seq = receipt.body.commit_seq;
-        assert!(
+        assert_eq!(
             store
                 .read()
-                .automation_triggers_for_commit(MAIN_WORLD, commit_seq)?
-                .is_empty()
+                .automation_triggers_for_commit(MAIN_WORLD, commit_seq)?,
+            Vec::new()
         );
-        let cont = store
+        let continuation = store
             .read()
             .automation_outbox_continuation(commit_seq)?
             .ok_or("missing continuation")?;
         assert_eq!(
-            cont.cursor,
+            continuation.cursor,
             AutomationContinuationCursor::Action {
                 action_call_key: cutoff,
                 action_id: "demo.ticket.ping".to_owned(),

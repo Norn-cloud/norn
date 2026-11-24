@@ -3459,7 +3459,9 @@ impl<E: SqlEngine> CellStore<E> {
             }
             crate::flow_run::check_starts(&writer.reader(), effective_batch)?;
             crate::decision_ledger::check(&writer.reader(), effective_batch)?;
-            let watch = automation_outbox::capture_before(&writer.reader(), effective_batch)?;
+            let watch = automation_outbox::capture_before(
+                &writer.reader(), effective_batch, automation_outbox::preimage_limit(retained),
+            )?;
             let written = writer.apply_writes()?;
             crate::flow_run::apply(&writer.reader(), effective_batch, &written, commit_seq)?;
             crate::decision_ledger::apply(&writer.reader(), effective_batch, commit_seq)?;

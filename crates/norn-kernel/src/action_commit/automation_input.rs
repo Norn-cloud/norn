@@ -543,7 +543,7 @@ mod tests {
             ),
             (
                 "tags".to_owned(),
-                RuntimeValue::Array(vec![RuntimeValue::String(tag.into())]),
+                RuntimeValue::Array(vec![RuntimeValue::String(tag)]),
             ),
         ])
     }
