@@ -10,6 +10,7 @@ import { CellRefusal, NotServed, cellRead } from "@/lib/live-transport"
 import { transport, type Artifact } from "@/lib/transport"
 import { systemName } from "./lib/catalog.ts"
 import { connectionStatus, watermarkText } from "./lib/format.ts"
+import { usePinnedScope } from "./lib/session.ts"
 import { UploadCsv } from "./upload-csv.tsx"
 
 /** The platform sources pack's connection type: one record per connected system or upload. */
@@ -41,8 +42,9 @@ const count = (read: Read<Page>, index: number, key: string, value: unknown) =>
 
 function SyncNow({ id }: { readonly id: string }) {
   const client = useQueryClient()
+  const pinnedScope = usePinnedScope(id)
   const sync = useMutation({
-    mutationFn: () => cellRead<unknown>(`/v1/sources/${encodeURIComponent(id)}:sync`, "Syncing is", { method: "POST", body: "{}" }),
+    mutationFn: () => cellRead<unknown>(`/v1/sources/${encodeURIComponent(id)}:sync`, "Syncing is", { method: "POST", body: "{}" }, undefined, pinnedScope),
     onSettled: () => client.invalidateQueries({ queryKey: ["source-connections"] }),
   })
   return (

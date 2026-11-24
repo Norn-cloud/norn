@@ -1,13 +1,20 @@
 import { createContext, use, useEffect, useState, type ReactNode } from "react"
+import {
+  applyCustomTheme,
+  effectiveBaseSkin,
+  persistCustomTheme,
+  storedCustomTheme,
+  type StudioTheme,
+} from "./studio-theme.ts"
 
 /**
  * Swappable visual skin applied to the document root (`data-skin`).
- * - `open`: airy open-canvas surface with whisper hairlines and minimal nesting (default).
- * - `polar`: deep carbon surfaces with crisp white hierarchy and precision metallic hairlines.
+ * - `polar`: strict Polar / Linear monochrome surfaces (black/grey/white) with colour reserved for data, status, badges, CTAs, and the knot (default).
+ * - `open`: airy open-canvas surface with double-shell cards and crisp blue accent.
  * - `luma`: two-surface architectural mist shell with knot-violet accent.
  * - `glass`: translucent liquid-glass surfaces with backdrop blur and specular hairlines.
  */
-export type Skin = "open" | "polar" | "luma" | "glass"
+export type Skin = "polar" | "open" | "luma" | "glass"
 
 /**
  * Swappable chrome layout applied to the shell (`data-shell`).
@@ -22,8 +29,8 @@ export const SKINS: readonly {
   readonly detail: string
   readonly swatch: string
 }[] = [
-  { id: "open", label: "Open", detail: "Double-shell white canvas, blue accent", swatch: "#3a6df0" },
   { id: "polar", label: "Polar", detail: "Monochrome ink and flat hairlines", swatch: "#18181b" },
+  { id: "open", label: "Open", detail: "Double-shell white canvas, blue accent", swatch: "#3a6df0" },
   { id: "luma", label: "Luma", detail: "Two-surface mist and knot violet", swatch: "#554ce8" },
   { id: "glass", label: "Glass", detail: "Translucent frosted liquid glass", swatch: "#dbe6ff" },
 ]
@@ -41,18 +48,18 @@ const SKIN_KEY = "norn.studio.skin"
 const SHELL_KEY = "norn.studio.shell"
 
 export const isSkin = (value: unknown): value is Skin =>
-  value === "open" || value === "polar" || value === "luma" || value === "glass"
+  value === "polar" || value === "open" || value === "luma" || value === "glass"
 
 export const isShellChrome = (value: unknown): value is ShellChrome =>
   value === "sidebar" || value === "dock"
 
-/** The skin kept from the last visit, else the open-canvas default. */
+/** The skin kept from the last visit, else the monochrome Polar default. */
 export function storedSkin(): Skin {
   try {
     const kept = globalThis.localStorage?.getItem(SKIN_KEY)
     if (isSkin(kept)) return kept
   } catch { /* storage blocked: fall through */ }
-  return "open"
+  return "polar"
 }
 
 /** The shell chrome kept from the last visit, else the sidebar workbench. */
@@ -64,15 +71,38 @@ export function storedShellChrome(): ShellChrome {
   return "sidebar"
 }
 
-/** Apply `data-skin` and `data-shell` attributes onto the document root so tokens cascade everywhere. */
+/** Resolve OS dark-mode preference when no custom theme forces an explicit appearance. */
+function systemPrefersDark(): boolean {
+  if (typeof globalThis.window === "undefined" || typeof globalThis.window.matchMedia !== "function") return false
+  return globalThis.window.matchMedia("(prefers-color-scheme: dark)").matches
+}
+
+/** Apply `data-skin`, `data-shell`, `.dark` (honoring forced custom theme appearance), and any custom JSON theme tokens. */
 export function applyAppearance(
   skin: Skin,
   shell: ShellChrome,
   root: HTMLElement | undefined = globalThis.document?.documentElement,
+  customTheme: StudioTheme | null = null,
 ) {
   if (!root) return
-  root.dataset.skin = skin
+  root.dataset.skin = customTheme ? effectiveBaseSkin(customTheme) : skin
   root.dataset.shell = shell
+  if (typeof root.classList?.toggle === "function") {
+    if (customTheme?.appearance === "dark") {
+      root.classList.toggle("dark", true)
+    } else if (customTheme?.appearance === "light") {
+      root.classList.toggle("dark", false)
+    } else if (root.dataset.forcedAppearance !== undefined) {
+      root.classList.toggle("dark", systemPrefersDark())
+    }
+  }
+  if (customTheme?.appearance) {
+    root.dataset.forcedAppearance = customTheme.appearance
+  } else {
+    delete root.dataset.forcedAppearance
+  }
+  const isDark = root.classList?.contains("dark") ?? false
+  applyCustomTheme(customTheme, isDark, root)
 }
 
 interface AppearanceContextValue {
@@ -80,45 +110,84 @@ interface AppearanceContextValue {
   readonly setSkin: (skin: Skin) => void
   readonly shell: ShellChrome
   readonly setShell: (shell: ShellChrome) => void
+  readonly customTheme: StudioTheme | null
+  readonly setCustomTheme: (theme: StudioTheme) => void
+  readonly clearCustomTheme: () => void
 }
 
 const AppearanceContext = createContext<AppearanceContextValue>({
-  skin: "open",
+  skin: "polar",
   setSkin: () => {},
   shell: "sidebar",
   setShell: () => {},
+  customTheme: null,
+  setCustomTheme: () => {},
+  clearCustomTheme: () => {},
 })
 
 export function AppearanceProvider({
   children,
   initialSkin,
   initialShell,
+  initialCustomTheme,
 }: {
   readonly children: ReactNode
   readonly initialSkin?: Skin
   readonly initialShell?: ShellChrome
+  readonly initialCustomTheme?: StudioTheme | null
 }) {
   const [skin, setSkinState] = useState<Skin>(() => initialSkin ?? storedSkin())
   const [shell, setShellState] = useState<ShellChrome>(() => initialShell ?? storedShellChrome())
+  const [customTheme, setCustomThemeState] = useState<StudioTheme | null>(
+    () => (initialCustomTheme !== undefined ? initialCustomTheme : storedCustomTheme()),
+  )
 
   useEffect(() => {
-    applyAppearance(skin, shell)
-  }, [skin, shell])
+    applyAppearance(skin, shell, undefined, customTheme)
+  }, [skin, shell, customTheme])
+
+  // Keep custom JSON theme light/dark variants synced when the document root toggles `.dark`.
+  useEffect(() => {
+    const root = globalThis.document?.documentElement
+    if (!root || !customTheme || typeof MutationObserver === "undefined") return
+    const observer = new MutationObserver(() => {
+      applyCustomTheme(customTheme, root.classList.contains("dark"), root)
+    })
+    observer.observe(root, { attributes: true, attributeFilter: ["class"] })
+    return () => observer.disconnect()
+  }, [customTheme])
 
   const setSkin = (next: Skin) => {
     setSkinState(next)
-    applyAppearance(next, shell)
+    setCustomThemeState(null)
+    persistCustomTheme(null)
+    applyAppearance(next, shell, undefined, null)
     try { globalThis.localStorage?.setItem(SKIN_KEY, next) } catch { /* not kept */ }
   }
 
   const setShell = (next: ShellChrome) => {
     setShellState(next)
-    applyAppearance(skin, next)
+    applyAppearance(skin, next, undefined, customTheme)
     try { globalThis.localStorage?.setItem(SHELL_KEY, next) } catch { /* not kept */ }
   }
 
+  const setCustomTheme = (theme: StudioTheme) => {
+    const nextSkin = effectiveBaseSkin(theme)
+    setSkinState(nextSkin)
+    setCustomThemeState(theme)
+    persistCustomTheme(theme)
+    applyAppearance(nextSkin, shell, undefined, theme)
+    try { globalThis.localStorage?.setItem(SKIN_KEY, nextSkin) } catch { /* not kept */ }
+  }
+
+  const clearCustomTheme = () => {
+    setCustomThemeState(null)
+    persistCustomTheme(null)
+    applyAppearance(skin, shell, undefined, null)
+  }
+
   return (
-    <AppearanceContext value={{ skin, setSkin, shell, setShell }}>
+    <AppearanceContext value={{ skin, setSkin, shell, setShell, customTheme, setCustomTheme, clearCustomTheme }}>
       {children}
     </AppearanceContext>
   )

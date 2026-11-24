@@ -11,7 +11,6 @@ use crate::functions::InternalFunction;
 use crate::variable::{DynamicVariable, VariableType};
 use crate::Variable;
 use jiff::civil::{Date, DateTime, Time};
-use jiff::tz::{AmbiguousOffset, TimeZone};
 use jiff::Span;
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
@@ -22,9 +21,44 @@ use std::fmt::{Display, Formatter};
 use std::rc::Rc;
 use thiserror::Error;
 
-/// The one zone name `jiff-tzdb` 0.1.4 carries that `chrono-tz` 0.10.4 did not.
+/// The one zone name upstream tzdb carries that Norn never admits.
 /// Refusing it keeps the accepted IANA identifiers identical to Norn's pinned 597-zone set.
 const NOT_A_PINNED_IANA_ZONE: &str = "Factory";
+
+/// Offset-free civil local wall-clock fields passed to [`TzdbLookup`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalWallTime {
+    pub year: i16,
+    pub month: i8,
+    pub day: i8,
+    pub hour: i8,
+    pub minute: i8,
+    pub second: i8,
+    pub nanosecond: i32,
+}
+
+/// Result of resolving a [`LocalWallTime`] against a pre-parsed IANA timezone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolvedLocalOffset {
+    /// Single unambiguous UTC offset in seconds.
+    Unambiguous(i32),
+    /// Nonexistent wall time inside a DST spring-forward gap.
+    Gap,
+    /// Ambiguous wall time inside a DST fall-back fold (earlier and later UTC offsets in seconds).
+    Fold { before: i32, after: i32 },
+}
+
+/// Explicit, immutable lookup interface for a versioned offline IANA timezone
+/// database bundle injected into a [`crate::vm::VM`] or [`crate::Isolate`] (#1440).
+///
+/// Lookup must be exact, case-sensitive, and consult timezones already parsed
+/// at bundle admission so evaluation performs zero TZif decoding; no host
+/// zoneinfo or global mutable state may be consulted.
+pub trait TzdbLookup: Send + Sync + std::fmt::Debug {
+    /// Resolves `wall` in exact case-sensitive IANA zone `name`, or returns
+    /// `None` if `name` is unknown or forbidden.
+    fn resolve_local_offset(&self, name: &str, wall: LocalWallTime) -> Option<ResolvedLocalOffset>;
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum TemporalError {
@@ -46,6 +80,8 @@ pub enum TemporalError {
     InvalidLocalTimestamp,
     #[error("unknown IANA timezone; expected a canonical zone in the pinned database")]
     InvalidTimezone,
+    #[error("no IANA timezone database configured for expression evaluation")]
+    TzdbNotConfigured,
     #[error("invalid DST policy; expected 'reject', 'earlier', or 'later'")]
     InvalidDstPolicy,
     #[error("local wall time does not exist in this timezone (DST spring-forward gap)")]
@@ -199,23 +235,38 @@ impl Temporal {
         local_wall_time: &str,
         iana_tz: &str,
         dst_policy: &str,
+        tzdb: &dyn TzdbLookup,
     ) -> Result<Self, TemporalError> {
         let local = Self::parse_local_datetime(local_wall_time)?;
-        let tz = pinned_timezone(iana_tz)?;
+        if iana_tz == NOT_A_PINNED_IANA_ZONE {
+            return Err(TemporalError::InvalidTimezone);
+        }
+        let wall = LocalWallTime {
+            year: local.year(),
+            month: local.month(),
+            day: local.day(),
+            hour: local.hour(),
+            minute: local.minute(),
+            second: local.second(),
+            nanosecond: local.subsec_nanosecond(),
+        };
+        let resolved = tzdb
+            .resolve_local_offset(iana_tz, wall)
+            .ok_or(TemporalError::InvalidTimezone)?;
         if !matches!(dst_policy, "reject" | "earlier" | "later") {
             return Err(TemporalError::InvalidDstPolicy);
         }
-        let offset = match tz.to_ambiguous_timestamp(local).offset() {
-            AmbiguousOffset::Unambiguous { offset } => offset,
-            AmbiguousOffset::Gap { .. } => return Err(TemporalError::NonexistentLocalTime),
-            AmbiguousOffset::Fold { before, after } => match dst_policy {
+        let offset_seconds = match resolved {
+            ResolvedLocalOffset::Unambiguous(seconds) => seconds,
+            ResolvedLocalOffset::Gap => return Err(TemporalError::NonexistentLocalTime),
+            ResolvedLocalOffset::Fold { before, after } => match dst_policy {
                 "reject" => return Err(TemporalError::AmbiguousLocalTime),
                 "earlier" => before,
                 "later" => after,
                 _ => return Err(TemporalError::InvalidDstPolicy),
             },
         };
-        let utc = shift(local, -i64::from(offset.seconds())).ok_or(TemporalError::OutOfRange)?;
+        let utc = shift(local, -i64::from(offset_seconds)).ok_or(TemporalError::OutOfRange)?;
         if !in_range(utc.year()) {
             return Err(TemporalError::OutOfRange);
         }
@@ -239,13 +290,17 @@ fn in_range(year: i16) -> bool {
     (1..=9999).contains(&year)
 }
 
-fn pinned_timezone(name: &str) -> Result<TimeZone, TemporalError> {
-    match jiff_tzdb::get(name) {
-        Some((canonical, data)) if canonical == name && name != NOT_A_PINNED_IANA_ZONE => {
-            TimeZone::tzif(name, data).map_err(|_| TemporalError::InvalidTimezone)
-        }
-        Some(_) | None => Err(TemporalError::InvalidTimezone),
-    }
+/// Evaluates `resolve_local_timestamp` using the VM's explicit [`TzdbLookup`].
+pub(crate) fn call_resolve_local_timestamp(
+    args: Arguments<'_>,
+    tzdb: Option<&dyn TzdbLookup>,
+) -> anyhow::Result<Variable> {
+    anyhow::ensure!(args.len() == 3, "expected 3 temporal arguments");
+    let tzdb = tzdb.ok_or(TemporalError::TzdbNotConfigured)?;
+    Ok(
+        Temporal::resolve_local_timestamp(args.str(0)?, args.str(1)?, args.str(2)?, tzdb)?
+            .into_variable(),
+    )
 }
 
 fn diff_seconds(a: &DateTime, b: &DateTime) -> Decimal {
@@ -473,12 +528,11 @@ pub(crate) fn definition(kind: InternalFunction) -> Rc<dyn FunctionDefinition> {
                     };
                     Ok(Variable::Number(overlap))
                 }
-                F::ResolveLocalTimestamp => Ok(Temporal::resolve_local_timestamp(
-                    args.str(0)?,
-                    args.str(1)?,
-                    args.str(2)?,
-                )?
-                .into_variable()),
+                F::ResolveLocalTimestamp => {
+                    // VM dispatches ResolveLocalTimestamp directly with its explicit TzdbLookup.
+                    // Any direct call outside the VM fails closed rather than reading ambient state.
+                    Err(TemporalError::TzdbNotConfigured.into())
+                }
                 _ => unreachable!("not a deterministic temporal builtin"),
             }
         }),

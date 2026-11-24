@@ -55,13 +55,36 @@ impl Decision {
         self.evaluate_with_opts(context, Default::default()).await
     }
 
+    /// Norn (#1440): evaluates a decision with an explicit offline IANA tzdb lookup.
+    pub async fn evaluate_with_tzdb(
+        &self,
+        context: Variable,
+        tzdb: Option<Arc<dyn zen_expression::temporal::TzdbLookup>>,
+    ) -> Result<DecisionGraphResponse, Box<EvaluationError>> {
+        self.evaluate_with_opts_and_tzdb(context, Default::default(), tzdb)
+            .await
+    }
+
     /// Evaluates a decision using in-memory reference with advanced options
     pub async fn evaluate_with_opts(
         &self,
         context: Variable,
         options: EvaluationOptions,
     ) -> Result<DecisionGraphResponse, Box<EvaluationError>> {
-        let mut decision_graph = DecisionGraph::try_new(self.graph_config(options))?;
+        self.evaluate_with_opts_and_tzdb(context, options, None)
+            .await
+    }
+
+    /// Norn (#1440): evaluates a decision with advanced options and an explicit offline IANA tzdb lookup.
+    pub async fn evaluate_with_opts_and_tzdb(
+        &self,
+        context: Variable,
+        options: EvaluationOptions,
+        tzdb: Option<Arc<dyn zen_expression::temporal::TzdbLookup>>,
+    ) -> Result<DecisionGraphResponse, Box<EvaluationError>> {
+        let mut config = self.graph_config(options);
+        config.extensions.tzdb = tzdb;
+        let mut decision_graph = DecisionGraph::try_new(config)?;
 
         let response = decision_graph.evaluate(context).await?;
 
@@ -78,8 +101,21 @@ impl Decision {
         options: EvaluationOptions,
         meter: zen_expression::meter::Meter,
     ) -> Result<DecisionGraphResponse, Box<EvaluationError>> {
+        self.evaluate_metered_with_tzdb(context, options, meter, None)
+            .await
+    }
+
+    /// Norn (#1440): metered evaluation with an explicit offline IANA tzdb lookup.
+    pub async fn evaluate_metered_with_tzdb(
+        &self,
+        context: Variable,
+        options: EvaluationOptions,
+        meter: zen_expression::meter::Meter,
+        tzdb: Option<Arc<dyn zen_expression::temporal::TzdbLookup>>,
+    ) -> Result<DecisionGraphResponse, Box<EvaluationError>> {
         let mut config = self.graph_config(options);
         config.extensions.meter = Some(meter);
+        config.extensions.tzdb = tzdb;
         let mut decision_graph = DecisionGraph::try_new(config)?;
 
         let response = decision_graph.evaluate(context).await?;

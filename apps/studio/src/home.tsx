@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button"
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group"
 import { Skeleton } from "@/components/ui/skeleton"
 import { conceptTitle } from "./lib/catalog.ts"
+import { useStudioScope } from "./lib/definitions.ts"
 import { evaluateQuestion, type Evaluation } from "./lib/evaluate.ts"
 import { member } from "./lib/exact.ts"
 import { FRESHNESS, groupDigits } from "./lib/format.ts"
@@ -70,7 +71,7 @@ export function HomePage() {
       {mode.isError
         ? <WorkspaceUnavailable error={mode.error} isFetching={mode.isFetching} onRetry={retry} />
         : mode.isPending
-          ? <LoadState status="pending" skeleton="cards" loadingLabel="Connecting to workspace" onRetry={retry}>{() => null}</LoadState>
+          ? <LoadState status="pending" bone="home-key-numbers" skeleton="cards" loadingLabel="Connecting to workspace" onRetry={retry}>{() => null}</LoadState>
           : empty
             ? <EmptyWorkspaceChecklist />
             : <>
@@ -123,16 +124,18 @@ const totalable = (metric: MetricSummary) => metric.timeProperty !== null && (me
 function KeyNumbers() {
   const live = useMode().data?.kind === "live"
   const { view } = useView()
-  const metrics = useQuery({ queryKey: ["metrics"], queryFn: readMetrics, retry: false, enabled: live })
+  const scope = useStudioScope()
+  const scopeKey = scope.data ? `${scope.data.orgId}:${scope.data.environmentId}` : ""
+  const metrics = useQuery({ queryKey: ["metrics", scopeKey], queryFn: ({ signal }) => readMetrics({ signal, scope: scope.data }), retry: false, enabled: live && !scope.isPending })
   const picked = (metrics.data?.document.metrics ?? []).filter(totalable).slice(0, KEY_NUMBERS)
   const window = recentWindow(Date.now())
   const answers = useQueries({
     queries: picked.map((metric) => ({
-      queryKey: ["key-number", metric.name, window.start],
+      queryKey: ["key-number", scopeKey, metric.name, window.start],
       queryFn: () => evaluateQuestion({
         irVersion: "0.1", name: "studio.key_number", objectSet: metric.objectType, aggregate: [{ metric: metric.name }],
         window: { start: window.start, end: window.end }, freshness: { kind: "live", maxAgeMs: 60_000 }, calendar: "iso_utc",
-      }),
+      }, undefined, scope.data),
       retry: false,
       staleTime: 60_000,
     })),
@@ -153,6 +156,7 @@ function KeyNumbers() {
         error={metrics.error}
         isFetching={metrics.isFetching}
         onRetry={() => void metrics.refetch()}
+        bone="home-key-numbers"
         skeleton="cards"
         loadingLabel="Reading key numbers"
         isEmpty={() => picked.length === 0}

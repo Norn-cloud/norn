@@ -104,11 +104,19 @@ use crate::{Expression, Number, UnaryTest};
 pub(crate) mod bounds;
 mod cost;
 mod sites;
+mod tzdb;
 pub(crate) mod units;
 use units::{Operand, Operation, exact_type, expected_exact_type};
 pub(crate) use units::{decimal_destination, validate_exact_environment};
 
 pub use bounds::StructuralLimits;
+pub use tzdb::{
+    check_expression, check_expression_in, check_expression_under, check_expression_under_in,
+    check_expression_with, check_expression_with_in, check_expression_with_root_bounds,
+    check_expression_with_root_bounds_in, check_expression_with_sources,
+    check_expression_with_sources_in, check_unary, check_unary_in, check_unary_with,
+    check_unary_with_in,
+};
 
 /// The checker profile: the admitted grammar documented in this module, its
 /// structural bounds ([`StructuralLimits::NORN_EXPR_4`]), and the static cost
@@ -341,8 +349,29 @@ pub fn certify_expression(
     expected: &Type,
     limits: &ResourceLimitProfile,
 ) -> Result<(CheckedExpression, FuelCertificate), String> {
+    certify_expression_in(
+        expression,
+        env,
+        expected,
+        limits,
+        crate::temporal::TzdbBundle::default_bundle(),
+    )
+}
+
+/// [`certify_expression`] against an explicit versioned
+/// [`TzdbBundle`](crate::temporal::TzdbBundle).
+///
+/// # Errors
+/// Refuses unsupported expressions, over-budget or overflowing bounds.
+pub fn certify_expression_in(
+    expression: &Expression,
+    env: &ZenTypeEnv,
+    expected: &Type,
+    limits: &ResourceLimitProfile,
+    tzdb: &crate::temporal::TzdbBundle,
+) -> Result<(CheckedExpression, FuelCertificate), String> {
     let checked = check_expression_with_sources_and_root_bounds(
-        expression, env, expected, limits, None, true,
+        expression, env, expected, limits, None, true, tzdb,
     )
     .map(|(checked, _)| checked)
     .map_err(|errors| format!("expression cost admission refused: {errors:?}"))?;
@@ -499,24 +528,6 @@ impl CheckedExpression {
     pub const fn cost(&self) -> CostEstimate {
         self.cost
     }
-}
-
-/// Type-checks `expr` in `env` under [`CHECKER_PROFILE`] and the shipped limit
-/// profile `norn.limits/1`, and checks its result against `expected`.
-///
-/// [`check_expression_with`] under
-/// [`ResourceLimitProfile::norn_limits_v1`], returning only the type.
-///
-/// # Errors
-///
-/// Every [`Diagnostic`] found.
-pub fn check_expression(
-    expr: &Expression,
-    env: &ZenTypeEnv,
-    expected: &Type,
-) -> Result<InferredType, Vec<Diagnostic>> {
-    check_expression_with(expr, env, expected, &ResourceLimitProfile::norn_limits_v1())
-        .map(CheckedExpression::into_inferred)
 }
 
 /// Validates the source-level bounds and exact numeric literals used by an
@@ -838,37 +849,6 @@ fn validate_source(
     }
 }
 
-/// Type-checks `expr` in `env` under [`CHECKER_PROFILE`] and checks its result
-/// against `expected`, bounding it by `limits`.
-///
-/// Returns the proved [`InferredType`] of the result and its [`CostEstimate`],
-/// or every finding. See the module docs for the admitted grammar. Numeric
-/// scale and integrality are not proved statically: a `number` result is
-/// assignable to `integer`/`decimal`. Date and timestamp properties retain
-/// distinct inferred types and may be projected to unformatted string-shaped
-/// rule outputs; shared temporal property invariants enforce their wire formats
-/// before admitted expressions run on committed values. Duration remains an
-/// ordinary string.
-///
-/// Before any recursive walk the expression must pass the structural bounds
-/// ([`StructuralLimits::NORN_EXPR_4`]; closures nest at most
-/// `limits.slice.max_relation_depth` deep). After it type-checks, its static
-/// worst-case cost on a conforming slice must be at most
-/// `limits.decide.fuel_units` (`expr.cost.exceeds_budget` otherwise, with the
-/// estimate in the message).
-///
-/// # Errors
-///
-/// Every [`Diagnostic`] found.
-pub fn check_expression_with(
-    expr: &Expression,
-    env: &ZenTypeEnv,
-    expected: &Type,
-    limits: &ResourceLimitProfile,
-) -> Result<CheckedExpression, Vec<Diagnostic>> {
-    check_expression_with_sources(expr, env, expected, limits).map(|(checked, _)| checked)
-}
-
 /// Enforced bounds on one independently bounded expression-context root.
 ///
 /// These are assumptions of the cost proof, not runtime enforcement or
@@ -884,58 +864,14 @@ pub struct RootCostBounds {
     pub max_records: u64,
 }
 
-/// Checks an expression whose named context roots have independent enforced
-/// bounds. Costs from separate roots add; their bytes are never pooled.
-/// Unlisted roots retain the default shared context bound from `limits`.
-/// Structural, type, and fuel gates are identical to [`check_expression_with`].
-///
-/// # Errors
-///
-/// Every [`Diagnostic`] found by the expression checker.
-pub fn check_expression_with_root_bounds(
+pub(crate) fn check_typed_expression_in(
     expr: &Expression,
     env: &ZenTypeEnv,
     expected: &Type,
     limits: &ResourceLimitProfile,
-    root_bounds: &BTreeMap<String, RootCostBounds>,
+    tzdb: &crate::temporal::TzdbBundle,
 ) -> Result<CheckedExpression, Vec<Diagnostic>> {
-    check_expression_with_sources_and_root_bounds(
-        expr,
-        env,
-        expected,
-        limits,
-        Some(root_bounds),
-        true,
-    )
-    .map(|(checked, _)| checked)
-}
-
-/// Checks an expression with the same bounds and grammar as
-/// [`check_expression_with`], retaining its owned construction sources.
-///
-/// Provenance is unavailable when any required AST span or literal member key
-/// cannot be projected faithfully. Parentheses are unwrapped, while arbitrary
-/// operations remain scalar sources; this is not an integrality proof.
-///
-/// # Errors
-///
-/// Every [`Diagnostic`] found by the expression checker.
-pub fn check_expression_with_sources(
-    expr: &Expression,
-    env: &ZenTypeEnv,
-    expected: &Type,
-    limits: &ResourceLimitProfile,
-) -> Result<(CheckedExpression, Option<ConstructionSource>), Vec<Diagnostic>> {
-    check_expression_with_sources_and_root_bounds(expr, env, expected, limits, None, false)
-}
-
-pub(crate) fn check_typed_expression(
-    expr: &Expression,
-    env: &ZenTypeEnv,
-    expected: &Type,
-    limits: &ResourceLimitProfile,
-) -> Result<CheckedExpression, Vec<Diagnostic>> {
-    check_expression_with_sources_and_root_bounds(expr, env, expected, limits, None, true)
+    check_expression_with_sources_and_root_bounds(expr, env, expected, limits, None, true, tzdb)
         .map(|(checked, _)| checked)
 }
 
@@ -989,6 +925,7 @@ struct AnalysisContext<'a> {
     exact_enabled: bool,
     /// Read paths a guarding condition proved non-null.
     assumed: &'a [Vec<String>],
+    tzdb: &'a crate::temporal::TzdbBundle,
 }
 struct Analysis {
     inferred: Option<InferredType>,
@@ -1013,6 +950,7 @@ fn analyze_expression(
         root_bounds,
         exact_enabled,
         assumed,
+        tzdb,
     } = *context;
     let structural = StructuralLimits::NORN_EXPR_4;
     let span = |node: &Node<'_>| metadata.get(&address(node)).map_or((0, 0), |m| m.span);
@@ -1036,7 +974,7 @@ fn analyze_expression(
             runtime_source: Ok(source.to_owned()),
         };
     }
-    let mut checker = Checker::new(env, metadata, None);
+    let mut checker = Checker::new(env, metadata, None, tzdb);
     checker.exact_math = exact_enabled;
     checker.non_null = assumed.to_vec();
     let expectation = checker.expectation(expected);
@@ -1081,50 +1019,42 @@ fn analyze_expression(
     }
 }
 
-fn check_expression_with_sources_and_root_bounds(
+pub(super) struct CheckOptions<'a> {
+    pub(super) limits: &'a ResourceLimitProfile,
+    pub(super) root_bounds: Option<&'a BTreeMap<String, RootCostBounds>>,
+    pub(super) exact_enabled: bool,
+    pub(super) assumed: &'a [Vec<String>],
+    pub(super) tzdb: &'a crate::temporal::TzdbBundle,
+}
+
+pub(super) fn check_expression_with_sources_and_root_bounds(
     expr: &Expression,
     env: &ZenTypeEnv,
     expected: &Type,
     limits: &ResourceLimitProfile,
     root_bounds: Option<&BTreeMap<String, RootCostBounds>>,
     exact_enabled: bool,
+    tzdb: &crate::temporal::TzdbBundle,
 ) -> Result<(CheckedExpression, Option<ConstructionSource>), Vec<Diagnostic>> {
-    check_guarded(expr, env, expected, limits, root_bounds, exact_enabled, &[])
-}
-
-/// [`check_expression`] for an expression evaluated only when a guarding
-/// condition holds (a law's response under its condition): every literal read
-/// path the condition proves non-null is read as non-null.
-///
-/// # Errors
-///
-/// Every [`Diagnostic`] found.
-pub fn check_expression_under(
-    expr: &Expression,
-    condition: &Expression,
-    env: &ZenTypeEnv,
-    expected: &Type,
-) -> Result<InferredType, Vec<Diagnostic>> {
     check_guarded(
         expr,
         env,
         expected,
-        &ResourceLimitProfile::norn_limits_v1(),
-        None,
-        false,
-        &condition_null_guards(condition),
+        &CheckOptions {
+            limits,
+            root_bounds,
+            exact_enabled,
+            assumed: &[],
+            tzdb,
+        },
     )
-    .map(|(checked, _)| checked.into_inferred())
 }
 
-fn check_guarded(
+pub(super) fn check_guarded(
     expr: &Expression,
     env: &ZenTypeEnv,
     expected: &Type,
-    limits: &ResourceLimitProfile,
-    root_bounds: Option<&BTreeMap<String, RootCostBounds>>,
-    exact_enabled: bool,
-    assumed: &[Vec<String>],
+    options: &CheckOptions<'_>,
 ) -> Result<(CheckedExpression, Option<ConstructionSource>), Vec<Diagnostic>> {
     let source = expr.source();
     let structural = StructuralLimits::NORN_EXPR_4;
@@ -1136,10 +1066,11 @@ fn check_guarded(
         source,
         env,
         expected,
-        limits,
-        root_bounds,
-        exact_enabled,
-        assumed,
+        limits: options.limits,
+        root_bounds: options.root_bounds,
+        exact_enabled: options.exact_enabled,
+        assumed: options.assumed,
+        tzdb: options.tzdb,
     };
     let outcome = intellisense.with_ast(source, false, |ast, metadata| {
         analyze_expression(ast, metadata, &context)
@@ -1163,8 +1094,16 @@ fn check_guarded(
     };
     // Only declared exact sites use error-on-zero division. Plain Number keeps
     // the legacy nullable division contract in this same checker.
-    if exact_enabled && !exact {
-        return check_guarded(expr, env, expected, limits, root_bounds, false, assumed);
+    if options.exact_enabled && !exact {
+        return check_guarded(
+            expr,
+            env,
+            expected,
+            &CheckOptions {
+                exact_enabled: false,
+                ..*options
+            },
+        );
     }
     if !diagnostics.is_empty() {
         return Err(diagnostics);
@@ -1183,7 +1122,7 @@ fn check_guarded(
             span,
         }]
     })?;
-    if exact_enabled && exact {
+    if options.exact_enabled && exact {
         diagnostics.extend(validate_lowered_source(&runtime_source, span));
     }
     // Cross-check: zen's strict analysis must not report an error either.
@@ -1200,7 +1139,7 @@ fn check_guarded(
             span,
         }]);
     }
-    let cost = lowered_cost(source, &runtime_source, cost, limits, span)?;
+    let cost = lowered_cost(source, &runtime_source, cost, options.limits, span)?;
     Ok((
         CheckedExpression {
             inferred,
@@ -1338,46 +1277,12 @@ fn within_budget(
 /// The name of a unary test's subject, the column value it tests.
 pub const SUBJECT_VARIABLE: &str = "$";
 
-/// Type-checks the unary test `test` against a subject `$` of type `subject`
-/// in `env`, under the same allowlist as [`check_expression`] and the shipped
-/// limit profile `norn.limits/1`.
-///
-/// [`check_unary_with`] under [`ResourceLimitProfile::norn_limits_v1`].
-///
-/// # Errors
-///
-/// Every [`Diagnostic`] found.
-pub fn check_unary(
-    test: &UnaryTest,
-    env: &ZenTypeEnv,
-    subject: &Type,
-) -> Result<(), Vec<Diagnostic>> {
-    check_unary_with(test, env, subject, &ResourceLimitProfile::norn_limits_v1()).map(|_| ())
-}
-
-/// Type-checks the unary test `test` against a subject `$` of type `subject`
-/// in `env`, under the same allowlist, structural bounds, and cost bound as
-/// [`check_expression_with`], and returns its [`CostEstimate`] (one cell
-/// evaluation; the subject is bounded like a slice of its own).
-///
-/// zen desugars each part of a unary test (joined by `,` as `or`, or by `and`
-/// / `or`) into a standard expression over `$`; see [`UnaryTest`]. Every part
-/// must check as a non-null `bool` under [`CHECKER_PROFILE`]. Invalid dynamic
-/// temporal operands can still fail with a typed runtime error. In
-/// particular `> 5` on a nullable subject is `expr.type.nullable` (handle it
-/// with `$ != null and ($ ?? 0) > 5`, or a non-null column), and `'retired'`
-/// against an enum subject that lacks that value is
-/// `expr.type.constant_comparison`. The empty wildcard test always checks,
-/// at no cost.
-///
-/// # Errors
-///
-/// Every [`Diagnostic`] found.
-pub fn check_unary_with(
+pub(super) fn check_unary_with_bundle(
     test: &UnaryTest,
     env: &ZenTypeEnv,
     subject: &Type,
     limits: &ResourceLimitProfile,
+    tzdb: &crate::temporal::TzdbBundle,
 ) -> Result<CostEstimate, Vec<Diagnostic>> {
     if test.is_wildcard() {
         return Ok(CostEstimate(0));
@@ -1401,7 +1306,7 @@ pub fn check_unary_with(
         if !found.is_empty() {
             return (found, whole, None);
         }
-        let mut checker = Checker::new(env, metadata, Some(subject));
+        let mut checker = Checker::new(env, metadata, Some(subject), tzdb);
         checker.unary_test(ast);
         let cost = checker
             .diagnostics
@@ -1758,6 +1663,7 @@ struct Checker<'a> {
     /// response is evaluated only when its condition holds. Expressions in
     /// the profile itself never narrow.
     non_null: Vec<Vec<String>>,
+    tzdb: &'a crate::temporal::TzdbBundle,
 }
 
 /// The literal read paths `node` proves non-null when it evaluates to
@@ -1873,7 +1779,12 @@ fn address(node: &Node<'_>) -> usize {
 }
 
 impl<'a> Checker<'a> {
-    fn new(env: &'a ZenTypeEnv, metadata: &'a AstMetadata, subject: Option<&'a Type>) -> Self {
+    fn new(
+        env: &'a ZenTypeEnv,
+        metadata: &'a AstMetadata,
+        subject: Option<&'a Type>,
+        tzdb: &'a crate::temporal::TzdbBundle,
+    ) -> Self {
         Self {
             env,
             metadata,
@@ -1886,6 +1797,7 @@ impl<'a> Checker<'a> {
             exact: false,
             exact_math: false,
             non_null: Vec::new(),
+            tzdb,
         }
     }
 
@@ -2282,7 +2194,7 @@ impl<'a> Checker<'a> {
     fn iana_timezone_text(&mut self, node: &Node<'_>) -> Option<()> {
         self.string(node)?;
         if let Node::String(text) = unparenthesized(node)
-            && crate::temporal::validate_timezone(text).is_err()
+            && crate::temporal::validate_timezone_in(text, self.tzdb).is_err()
         {
             return self.report(
                 node,
