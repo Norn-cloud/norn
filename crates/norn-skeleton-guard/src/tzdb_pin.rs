@@ -203,6 +203,12 @@ fn check_source_json(workspace_root: &Path, pin: &TzdbBundlePin, out: &mut Vec<V
     }
 }
 
+fn has_cfg_attr(attrs: &[syn::Attribute]) -> bool {
+    attrs
+        .iter()
+        .any(|attr| attr.path().is_ident("cfg") || attr.path().is_ident("cfg_attr"))
+}
+
 fn is_inherent_tzdb_bundle_impl(item_impl: &syn::ItemImpl) -> bool {
     if item_impl.trait_.is_some() {
         return false;
@@ -210,7 +216,12 @@ fn is_inherent_tzdb_bundle_impl(item_impl: &syn::ItemImpl) -> bool {
     let Type::Path(type_path) = item_impl.self_ty.as_ref() else {
         return false;
     };
-    type_path.qself.is_none() && type_path.path.is_ident("TzdbBundle")
+    type_path.qself.is_none()
+        && type_path
+            .path
+            .segments
+            .last()
+            .is_some_and(|seg| seg.ident == "TzdbBundle")
 }
 
 fn extract_from_bytes_verified_args(expr: &Expr) -> Option<(String, String)> {
@@ -268,6 +279,9 @@ fn extract_sole_loader_binding(block: &syn::Block) -> Option<(String, String)> {
     let Some(Stmt::Item(Item::Static(static_item))) = block.stmts.first() else {
         return None;
     };
+    if has_cfg_attr(&static_item.attrs) {
+        return None;
+    }
     let static_name = static_item.ident.to_string();
     let Type::Path(static_ty) = static_item.ty.as_ref() else {
         return None;
@@ -302,8 +316,8 @@ fn extract_sole_loader_binding(block: &syn::Block) -> Option<(String, String)> {
 }
 
 struct RustTzdbPins {
-    const_strs: BTreeMap<String, String>,
-    const_includes: BTreeMap<String, String>,
+    const_strs: BTreeMap<String, Option<String>>,
+    const_includes: BTreeMap<String, Option<String>>,
     loader_bindings: BTreeMap<String, Option<(String, String)>>,
 }
 
@@ -316,25 +330,42 @@ fn collect_rust_tzdb_pins(parsed: &syn::File) -> RustTzdbPins {
     for item in &parsed.items {
         if let Item::Const(item_const) = item {
             let name = item_const.ident.to_string();
+            let cfg_gated = has_cfg_attr(&item_const.attrs);
             if let Expr::Lit(ExprLit {
                 lit: Lit::Str(lit), ..
             }) = item_const.expr.as_ref()
             {
-                pins.const_strs.insert(name, lit.value());
+                let value = (!cfg_gated).then(|| lit.value());
+                pins.const_strs
+                    .entry(name)
+                    .and_modify(|slot| *slot = None)
+                    .or_insert(value);
             } else if let Expr::Macro(ExprMacro { mac, .. }) = item_const.expr.as_ref()
                 && mac.path.is_ident("include_bytes")
                 && let Ok(lit) = mac.parse_body::<LitStr>()
             {
-                pins.const_includes.insert(name, lit.value());
+                let value = (!cfg_gated).then(|| lit.value());
+                pins.const_includes
+                    .entry(name)
+                    .and_modify(|slot| *slot = None)
+                    .or_insert(value);
+            } else if cfg_gated {
+                pins.const_strs.insert(name.clone(), None);
+                pins.const_includes.insert(name, None);
             }
         } else if let Item::Impl(item_impl) = item
             && is_inherent_tzdb_bundle_impl(item_impl)
         {
+            let impl_cfg_gated = has_cfg_attr(&item_impl.attrs);
             for impl_item in &item_impl.items {
                 if let ImplItem::Fn(method) = impl_item {
                     let fn_name = method.sig.ident.to_string();
-                    let binding = extract_sole_loader_binding(&method.block);
-                    // Any duplicate method definition invalidates the binding.
+                    let binding = if impl_cfg_gated || has_cfg_attr(&method.attrs) {
+                        None
+                    } else {
+                        extract_sole_loader_binding(&method.block)
+                    };
+                    // Any cfg-gating or duplicate method definition invalidates the binding.
                     pins.loader_bindings
                         .entry(fn_name)
                         .and_modify(|slot| *slot = None)
@@ -374,7 +405,7 @@ fn check_rust_digest_pins(workspace_root: &Path, pins: &[TzdbBundlePin], out: &m
         if ast_pins
             .const_strs
             .get(pin.release_const)
-            .map(String::as_str)
+            .and_then(Option::as_deref)
             != Some(pin.release)
         {
             out.push(violation(
@@ -388,7 +419,7 @@ fn check_rust_digest_pins(workspace_root: &Path, pins: &[TzdbBundlePin], out: &m
         if ast_pins
             .const_strs
             .get(pin.sha256_const)
-            .map(String::as_str)
+            .and_then(Option::as_deref)
             != Some(pin.sha256)
         {
             out.push(violation(
@@ -402,7 +433,7 @@ fn check_rust_digest_pins(workspace_root: &Path, pins: &[TzdbBundlePin], out: &m
         if ast_pins
             .const_includes
             .get(pin.bytes_const)
-            .map(String::as_str)
+            .and_then(Option::as_deref)
             != Some(pin.include_rel_path)
         {
             out.push(violation(

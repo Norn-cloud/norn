@@ -572,16 +572,16 @@ fn validate_tzif_exact_framing(data: &[u8]) -> bool {
 }
 
 /// Enforces RFC 9636 §3.3.2 for `TZif` V2 footers: transition-rule time hours
-/// must be in `0..=24` (rejecting V3+ negative hours and hours `> 24`).
+/// must be unsigned ASCII digits in `0..=24` (rejecting V3+ signed `-`/`+`
+/// hours and hours `> 24`).
 fn validate_v2_posix_tz_footer(footer: &str) -> bool {
     for rule in footer.split(',').skip(1) {
         if let Some((_, time_part)) = rule.split_once('/') {
             let hour_str = time_part.split(':').next().unwrap_or("");
-            if hour_str.is_empty() || hour_str.starts_with('-') {
+            if hour_str.is_empty() || !hour_str.bytes().all(|byte| byte.is_ascii_digit()) {
                 return false;
             }
-            let digits = hour_str.strip_prefix('+').unwrap_or(hour_str);
-            let Ok(hour) = digits.parse::<u16>() else {
+            let Ok(hour) = hour_str.parse::<u16>() else {
                 return false;
             };
             if hour > 24 {

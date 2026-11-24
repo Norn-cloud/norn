@@ -617,7 +617,11 @@ fn tzdb_decoder_rejects_malformed_overlapping_trailing_and_oversized_bundles()
         blob.push(b'\n');
         blob
     };
-    for v3_only_footer in ["EST5EDT,M3.2.0/26,M11.1.0/2", "EST5EDT,M3.2.0/-1,M11.1.0/2"] {
+    for v3_only_footer in [
+        "EST5EDT,M3.2.0/26,M11.1.0/2",
+        "EST5EDT,M3.2.0/-1,M11.1.0/2",
+        "EST5EDT,M3.2.0/+2,M11.1.0/2",
+    ] {
         let v2_blob = make_tzif_with_footer(b'2', v3_only_footer);
         let v2_bundle = encode_tzdb_synthetic("2099z", &[("Test/Zone", &v2_blob)])?;
         assert_eq!(
