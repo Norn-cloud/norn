@@ -275,7 +275,7 @@ isolated deployment made for the run, never at a stage that serves anyone:
    wasm-bindgen "$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release/norn_cell_do.wasm" --target web --out-name norn_cell_do --out-dir "$P/pkg"
    cargo rustc --locked -p norn-cell --no-default-features --example workers_sql --target wasm32-unknown-unknown --profile wasm-release
    wasm-bindgen "$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release/examples/workers_sql.wasm" --target web --out-name workers_sql --out-dir "$P/probe-pkg"
-   cp apps/norn-cell-do/{worker.mjs,subscribe.mjs} "$P/"
+   cp apps/norn-cell-do/{worker.mjs,subscribe.mjs,wake.mjs,connect_vars.mjs,telemetry.mjs,otlp.mjs} "$P/"
    cp apps/norn-cell-do/conformance/worker.mjs "$P/conformance.mjs"
    cp apps/norn-cell-do/conformance/wrangler.json "$P/"
    ```
