@@ -19,6 +19,8 @@ async function chooseFromAccountMenu(page: Page, name: string) {
 const fixture = JSON.parse(readFileSync(new URL("../test/fixtures/learning-episode.json", import.meta.url), "utf8")) as { readonly records: readonly { readonly id: string; readonly values: Record<string, unknown> }[] }
 /** The served receipt and refusal documents the action route's own test writes (#1203, #1215). */
 const served = JSON.parse(readFileSync(new URL("../test/fixtures/action-call.json", import.meta.url), "utf8")) as { readonly committed: { readonly receipt: object }; readonly conflict: object }
+/** The served run and decision envelopes from #1630. */
+const servedDecisionRun = JSON.parse(readFileSync(new URL("../test/fixtures/decision-run.json", import.meta.url), "utf8")) as typeof import("../test/fixtures/decision-run.json")
 
 /**
  * The learning pack's triage actions as the catalog would list them for learning.Episode: the names
@@ -359,7 +361,7 @@ test("list: Workspace Learning space lists episodes, sends flat server agreement
 test("links: See episode renders from a run receipt and decided inbox sheet only when episodeId is returned AND learning.Episode is advertised", async ({ page }) => {
   await session(page)
   await advertiseLearning(page, { objectTypes: [] })
-  const cell = await decisionCell(page)
+  await decisionCell(page)
   const records = structuredClone(fixture.records)
   await page.route("**/api/host/v1/objects/learning.Episode/**", (route) => {
     const id = decodeURIComponent(new URL(route.request().url()).pathname.split("/").pop() ?? "")
@@ -367,15 +369,20 @@ test("links: See episode renders from a run receipt and decided inbox sheet only
     return found ? route.fulfill({ json: found }) : route.fulfill({ status: 404, json: { code: "object.not_found", message: "Not found" } })
   })
 
-  // Inject an episodeId onto a completed run receipt and override :decide to return episodeId.
-  const run = cell.runs.get("run_count_3")!
-  run.steps[0]!.receipts.push({ kind: "decision", receiptHash: "a".repeat(64), commitSeq: 4812, recordedAtMs: Date.now(), executor: "you", episodeId: "ep_demo_overridden" } as never)
+  // Serve a completed run built from the route-pinned envelope with provisional `episodeId` on a step receipt,
+  // and override :decide to return provisional `episodeId` on the server reply.
+  const runWithEpisode = structuredClone(servedDecisionRun.runCompleted.json) as Record<string, unknown>
+  runWithEpisode["id"] = "run_count_3"
+  const runSteps = runWithEpisode["steps"] as { receipts: unknown[] }[]
+  runSteps[0]!.receipts = [{ kind: "decision", receiptHash: "a".repeat(64), commitSeq: 4812, recordedAtMs: Date.now(), executor: "you", episodeId: "ep_demo_overridden" }]
+  await page.route("**/api/host/v1/runs/run_count_3**", (route) => route.fulfill({ json: runWithEpisode }))
   await page.route("**/api/host/v1/decisions/*:decide**", (route) => route.fulfill({
     json: {
+      ...servedDecisionRun.decided.json,
       outcome: "decided",
-      decision: { id: "dec_UmVjb3VudC1iaW4", choice: "recount", decidedBy: "you", decidedAtMs: Date.now() },
-      receipt: { receiptHash: "b".repeat(64), commitSeq: 4999, recordedAtMs: Date.now() },
-      run: { id: "run_count_4", state: "running" },
+      decision: { ...servedDecisionRun.decided.json.decision, id: "dec_UmVjb3VudC1iaW4", choice: "recount", decidedBy: "you", decidedAtMs: Date.now() },
+      receipt: { ...servedDecisionRun.decided.json.receipt, receiptHash: "b".repeat(64), commitSeq: 4999, recordedAtMs: Date.now() },
+      run: { ...servedDecisionRun.decided.json.run, id: "run_count_4", state: "running" },
       episodeId: "ep_demo_overridden",
     },
   }))
