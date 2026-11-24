@@ -33,7 +33,7 @@ use super::{AUTOMATION_OUTBOX, AutomationTriggerCandidate, AutomationTriggerKey}
 const AUTOMATION_OUTBOX_CONTINUATION: &str = "_norn_automation_outbox_continuation";
 
 /// Version of the automation matching semantics used to create a continuation.
-/// Bump only when those semantics change.
+/// First persisted in storage version 7. Bump only when matching semantics change.
 pub const AUTOMATION_MATCHER_VERSION: u32 = 1;
 
 /// Deterministic resume point in `(written objects × rules)` persisted on an
