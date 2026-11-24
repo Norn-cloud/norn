@@ -1,21 +1,23 @@
 # Norn Design System
 
 This is the one design and UI engineering contract for every Norn UI: Studio (`apps/studio/`), the
-apps compiled and rendered through `@norn/ui`, first-party wedge apps such as the Family Business HR
-app, and custom or AI-generated Norn apps. Every new screen, primitive, skin or visual change must
+apps compiled and rendered through `@norn/ui`, first-party apps built on Norn, and custom or
+AI-generated Norn apps. Every new screen, primitive, skin or visual change must
 conform. Where a rule here and a screen disagree, the screen is wrong; the gap list at the end
 (section 18) tracks the known ones.
 
 The spec merges two sources. Studio's contract supplies the architecture: server-driven UI with no
 client authority, Base UI + Vercel UI SDK primitives, Geist, `boneyard-js` skeletons, the StudioTheme
-JSON and the honesty rules. The HR wedge app (a private first-party app built on Norn, descended from the v6
-mockups) supplies the look: the owner judged it better. **Where the
-two conflict, the wedge's pattern wins, unless Studio's rule is stricter about authority, honesty,
+JSON and the honesty rules. The reference first-party app (private, built on Norn, descended from
+the v6 mockups) supplies the look: the owner judged it better. **Where the two conflict, the
+first-party app's pattern wins, unless Studio's rule is stricter about authority, honesty,
 accessibility or RTL.** Each such call is recorded where it is made, and in the token diff
 (section 17).
 
-Status words used below: **CURRENT** means shipped and enforced; **TARGET** means required for new
-work and tracked as a gap until the code catches up.
+Status words used below: **CURRENT** means shipped in `apps/studio` today (and, where a gate is
+named, enforced by it); **TARGET** means required for new work but not yet built, and tracked as a
+gap in section 18. A section marked CURRENT may contain TARGET items; those are marked inline. A
+TARGET rule is never described as shipped.
 
 ---
 
@@ -36,14 +38,17 @@ work and tracked as a gap until the code catches up.
    "verified" or "zero" from silence.
 6. **Both directions are first-class.** Arabic and English are designed together; RTL is not a
    mirror added later.
-7. **Agents use the same controls as people.** Every control is a named, accessible primitive bound
-   to a declared Norn action, so the Sidekick and automation drive exactly what a person drives.
+7. **Agents use the same controls as people.** Every control is a named, accessible primitive, so
+   the Sidekick and automation drive exactly what a person drives. Controls that change domain
+   state go through a declared Norn action that the cell authorizes; local view controls (scheme,
+   skin, navigation, opening a sheet) stay local state or URL state and are not cell actions
+   (section 16.1).
 8. **Domain-agnostic Studio.** `apps/studio/src/` never names a business domain. Domain words live
-   in packs (`registry/packs/`) and fixtures; wedge apps carry their own vocabulary.
+   in packs (`registry/packs/`) and fixtures; first-party apps carry their own vocabulary.
 
 ---
 
-## 2. Stack (CURRENT)
+## 2. Stack (CURRENT unless marked)
 
 | Layer | Choice | Rule |
 | --- | --- | --- |
@@ -52,7 +57,7 @@ work and tracked as a gap until the code catches up.
 | Headless primitives | Base UI (`@base-ui/react`, MIT) | Dialog (sheets, modals), Popover, Tabs, Toggle, DirectionProvider. |
 | Styling | Tailwind v4 + CSS custom properties | `@layer ui-sdk;` first, then Tailwind; tokens via `@theme inline`. No CSS-in-JS, no Panda. |
 | Icons | `lucide-react` | 1.6–1.7 stroke; size from the type step they sit beside. |
-| Fonts | Geist Variable, Geist Mono Variable, Cairo (Arabic) | Self-hosted via `@fontsource-variable/*`. |
+| Fonts | Geist Variable, Geist Mono Variable (CURRENT); Cairo Variable for Arabic (**TARGET, not yet installed**) | Self-hosted via `@fontsource-variable/*`. |
 | Skeletons | `boneyard-js` (`boneyard-js/react`, MIT) | Through `BoneSkeleton` and `LoadState bone="…"` only. |
 
 **Banned:** `radix-ui`, `@radix-ui/*`, `cmdk`, `--radix-*` anywhere in first-party code, its
@@ -73,11 +78,12 @@ on skin, shell or scheme.
 | --- | --- | --- |
 | `data-skin` | `open` (default), `polar`, `luma`, `glass` | Palette, radii, shadows. |
 | `.dark` | present or absent | Light or dark scheme (OS preference unless the user or a theme forces one). |
-| `data-shell` | `dock` (default), `sidebar` | Frame chrome and navigation geometry only (section 9). |
+| `data-shell` | `dock` (TARGET default; `sidebar` is today's default), `sidebar` | Frame chrome and navigation geometry only (section 9). A user preference, persisted per browser. |
+| *(no attribute)* `minimal` | route-level, not a `data-shell` value | Chromeless routes (login, OAuth, embeds) render outside the shell (section 9.3). A stored preference can never select it. |
 | `data-density` | `comfortable` (default), `compact` | Row heights (`--density-*`); `compact` for builder views. |
 | `dir`, `lang` | `ltr` / `rtl`, BCP 47 | Direction and font pairing (section 14). |
 
-**Default skin is `open`** (the wedge's default and the look the owner chose). `polar` is the
+**Default skin is `open`** (TARGET; the first-party app's default and the look the owner chose). `polar` is the
 first-class monochrome alternative. `luma` and `glass` remain supported skins and follow the same
 geometry rules. This replaces Studio's earlier `polar` default; see section 17 for why.
 
@@ -88,7 +94,7 @@ declarative theme (`version: 1`, `baseSkin`, `appearance`, `accent`, `canvas`, `
 never geometry, z-index or arbitrary CSS. Every theme is sanitized against CSS injection and must
 pass the contrast gate (section 16) before it applies. New tokens this spec adds that are colours
 (`subtle-foreground`, `line`, `action-dot`, `action-soft`, the dot and avatar tokens) join the
-allowlist; geometry tokens never do.
+allowlist (TARGET); geometry tokens never do.
 
 ---
 
@@ -115,20 +121,51 @@ on, including the well, and must pass section 16.
 | `--muted-foreground` | #6a6a6f | #9b9ba3 | #5c5c66 | #9d9da6 | Secondary text, counts, status labels, metrics. |
 | `--subtle-foreground` | #85858b | #6a6a72 | #85858b | #686870 | **Decorative only:** separators (`×`, `·`), info glyphs, chevrons. Never the only carrier of information. |
 
-### 4.2 Action
+### 4.2 Action: fill and text are separate roles
 
-| Token | open light | open dark | polar light | polar dark |
-| --- | --- | --- | --- | --- |
-| `--action` (CTA fill, text-on-surface accent) | #2e60e0 | #2e60e0 | #18181b | #f4f4f5 |
-| `--action-hover` | #2451c7 | #2451c7 | #2c2c32 | #e4e4e7 |
-| `--action-foreground` | #ffffff | #ffffff | #fafafa | #141416 |
-| `--action-dot` | #7f9ef4 | #6f97ff | #71717a | #a1a1aa |
-| `--action-soft` (selected wash) | rgb(58 109 240 / .10) | rgb(91 140 255 / .14) | rgb(24 24 27 / .08) | rgb(244 244 245 / .10) |
-| `--action-fill` (active segment) | rgb(58 109 240 / .14) | rgb(91 140 255 / .20) | rgb(24 24 27 / .12) | rgb(244 244 245 / .16) |
-| `--ring` | #2e60e0 | #5b8cff | #52525b | #a1a1aa |
-| `--link` | #2451c7 | #7da4ff | #18181b | #e4e4e7 |
+The CTA **fill** and the accent **text** are different tokens, because one blue cannot be both in a
+dark scheme (open dark #2e60e0 carries white at 5.43:1 but is only 3.13:1 as text on the well). This
+is the split Studio's CSS and the StudioTheme validator already use (`studio-theme.ts` checks
+`action` as text on background, card and popover, and `primary-foreground` on `primary` and on
+`action-hover`), so the spec follows the code rather than the reverse.
 
-`--primary*` aliases `--action*`. `--knot` (#5b52f0 / #7c74ff) is reserved for the Norn mark.
+| Role | Token | open L | open D | polar L | polar D | luma L | luma D |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| CTA fill | `--primary` | #2e60e0 | #2e60e0 | #18181b | #f4f4f5 | #554ce8 | #6258ec |
+| CTA hover fill | `--action-hover` | #2451c7 | #2451c7 | #2c2c32 | #e4e4e7 | #4940dc | #695ff0 |
+| CTA ink | `--primary-foreground` (= `--action-foreground`) | #ffffff | #ffffff | #fafafa | #141416 | #ffffff | #ffffff |
+| Accent text, accent borders | `--action` | #2e60e0 | #6b98ff | #18181b | #f4f4f5 | #554ce8 | #7c74ff |
+| Inline link | `--link` | #2451c7 | #7da4ff | #18181b | #e4e4e7 | #4f46e5 | #938cff |
+| Focus ring | `--ring` | #2e60e0 | #5b8cff | #52525b | #a1a1aa | #554ce8 | #7c74ff |
+| Accent dot | `--action-dot` | #7f9ef4 | #6f97ff | #71717a | #a1a1aa | `--action` | `--action` |
+| Non-text wash | `--action-soft` | rgb(58 109 240 / .10) | rgb(91 140 255 / .14) | rgb(24 24 27 / .08) | rgb(244 244 245 / .10) | `--action` @ 10% | `--action` @ 14% |
+
+- **Solid fills use `--primary`, never `--action`.** `bg-action` with `--action-foreground` is a
+  defect in dark schemes (white on open-dark #6b98ff is 2.78:1; on luma-dark #7c74ff 3.62:1).
+- **`--action` is text.** It must reach 4.5:1 on canvas, card, well, well-hover and popover.
+- **`--action-soft` carries no text.** It is for drop targets, canvas selection halos and chart
+  highlights only: muted text on it falls below 4.5:1 (4.35:1 on the open-light well). Selected
+  rows use `--card` + ring (section 10); the active segment uses `--card` (section 10). There is
+  no `--action-fill` token.
+- **`glass`** sets no action tokens, so it inherits `open`'s row for its scheme. Its translucent
+  surfaces are measured composited over its `--canvas` (#eef1f8 / #0b0d17); the decorative
+  radial tint must not be used to lift a failing pair. A StudioTheme with `baseSkin: "glass"`
+  starts from the same inherited palette and passes the same validator.
+- `--knot` (#5b52f0 / #7c74ff) is reserved for the Norn mark.
+
+Measured pairs (WCAG 2.x relative luminance; the lowest surface of canvas, card, well, well-hover and
+popover for text; canvas, card and well for the ring). Floors: 4.5:1 text, 3:1 ring and indicator.
+
+| Skin / scheme | CTA ink on fill | on hover fill | `--action` text (min) | `--link` (min) | `--ring` (min) | `--dock-indicator` on dock |
+| --- | --- | --- | --- | --- | --- | --- |
+| open L | 5.43 | 6.83 | 4.68 | 5.88 | 4.98 | 6.05 |
+| open D | 5.43 | 6.83 | 5.64 | 6.43 | 5.38 | 5.71 |
+| polar L | 16.97 | 13.29 | 15.41 | 15.41 | 7.16 | 15.30 |
+| polar D | 16.74 | 14.50 | 14.42 | 12.49 | 6.70 | 14.42 |
+| luma L | 5.86 | 6.88 | 5.23 | 5.62 | 5.32 | 6.05 |
+| luma D | 5.09 | 4.67 | 4.52 | 5.79 | 4.93 | 5.71 |
+| glass L | 5.43 | 6.83 | 4.80 | 6.04 | 4.80 | 3.66 |
+| glass D | 5.43 | 6.83 | 5.38 | 6.14 | 5.23 | 6.64 |
 
 ### 4.3 Status: dots and text are separate tokens
 
@@ -167,14 +204,19 @@ signed delta, an "After" value, a page-head live line).
 
   Every light pair measures ≥ 5.0:1. The disc index is a stable hash of the **principal or record
   id**, never the display name, so a rename or a switch between Arabic and English keeps the colour.
-  Hard-coded hex in components (the wedge's `DISC_BG`/`DISC_FG`) is replaced by these tokens.
+  Hard-coded hex in components (the first-party app's `DISC_BG`/`DISC_FG`) is replaced by these tokens.
 
 ### 4.5 Dock
 
 `--dock-surface` #1d1d20 / #222226, `--dock-well` #34343a / #3a3a41, `--dock-border`
-rgb(255 255 255 / .08), `--dock-foreground` #ffffff, `--dock-muted` #a5a5ad (6.9:1 on the dock),
-`--dock-ring` #93b4ff, `--dock-indicator` = `--action` dot. The dock is dark in every skin and
-scheme; `glass` makes it translucent.
+rgb(255 255 255 / .08), `--dock-foreground` #ffffff, `--dock-muted` #a5a5ad (6.87:1 / 6.48:1 on the
+light- and dark-scheme dock), `--dock-ring` #93b4ff. The dock is dark in every skin and scheme;
+`glass` makes it translucent (rgb(24 26 36 / .82) / rgb(18 20 34 / .80)).
+
+`--dock-indicator` is its **own token**, never an alias of `--action`, because the dock is dark
+even in light schemes (polar-light `--action` #18181b on the dock is 1.05:1). Values (CURRENT in
+`index.css`): #6b98ff in `open`, `luma` and `glass`; #f4f4f5 in `polar`. It must reach 3:1 on the
+actual dock surface (`apps/studio/test/contrast.test.ts`, CURRENT); see the table in 4.2.
 
 ---
 
@@ -187,7 +229,7 @@ Radii are **pixel** values, not rem: geometry must not change with the 90% root 
 | `--radius-panel` | 20px | 16px | 16px | 20px | ShellCard, StatWell outer rim. |
 | `--panel-inset` | 4px | 4px | 4px | 4px | Padding between rim and well. |
 | `--radius-well` | 15px | 11px | 11px | 15px | Inner well. |
-| `--radius-row` | 11px | 11px | 11px | 11px | ListRow, menu row (10px). |
+| `--radius-row` | 11px | 11px | 11px | 11px | ListRow and menu rows (one value). |
 | `--radius-sheet` | 24px | 24px | 24px | 24px | DetailSheet. |
 | `--radius-search` | 18px | 18px | 18px | 18px | Page search field. |
 | `--radius-dock` | 26px | 26px | 26px | 26px | Floating dock. |
@@ -195,6 +237,9 @@ Radii are **pixel** values, not rem: geometry must not change with the 90% root 
 | `--radius` | 8px | 8px | 8px | 8px | Form inputs, code blocks. |
 | `--radius-chip` | 5px | 5px | 5px | 5px | SourceTag. |
 | pills | full | full | full | full | Top-bar controls, every button, segmented controls. |
+
+Radii, geometry tokens and every value in sections 5, 9 and 11 written in px are TARGET until the
+restyle lane lands (section 18); today's radii are rem.
 
 **Concentric rule:** `radius-panel = radius-well + panel-inset + 1px border`. 15 + 4 + 1 = 20;
 11 + 4 + 1 = 16. A skin that changes one changes the other. Every skin keeps the double shell; no
@@ -221,8 +266,9 @@ rather than a darker shadow.
 ## 7. Spacing and layout
 
 - **Root scale:** `html { font-size: 90% }`, so `1rem = 14.4px`. Never CSS `zoom` (it breaks
-  `@xyflow/react` pointer maths). Anything that must be an exact pixel size (touch targets, radii,
-  dots) is written in px.
+  `@xyflow/react` pointer maths). Tailwind's spacing scale is rem-based, so `3` is 10.8px and `4`
+  is 14.4px here. Anything that must be an exact pixel size (touch targets, radii, dots, the sheet
+  inset, slide distances) is written as an arbitrary px value (`top-[12px]`, `min-h-[44px]`).
 - **Canvas:** content `max-width: 1220px`, centred, `px-6 sm:px-8`. Top bar `max-width: 1260px`.
 - **Vertical rhythm:** page head `pt-6 pb-5`; `gap-4` between cards in a band; `mt-6` between bands.
 - **Dock clearance:** in dock shell, the scroll container ends with `pb-32` so the last row clears
@@ -249,12 +295,12 @@ Fonts: `--font-sans: "Geist Variable", "Cairo Variable", ui-sans-serif, system-u
 | 2 | `--text-body` | 1rem | 14.4 | 1.45 | -0.003em | 400 | List titles, card titles, Props, buttons, menu rows, inputs, prose. |
 | 3 | `--text-heading` | 1.35rem | 19.4 | 1.25 | -0.02em | 500 | Sheet titles, dialog titles. |
 | 4 | `--text-title` | 1.85rem | 26.6 | 1.15 | -0.025em | 500 | Page `h1`. |
-| 5 | `--text-figure` | 2rem | 28.8 | 1 | -0.025em | 400 | StatWell values, hero numbers. Unit at `0.54em`, muted, `tracking-normal`. |
+| 5 | `--text-figure` | 2rem | 28.8 | 1 | -0.025em | 400 | StatWell values, hero numbers. The unit beside a figure is step 2 (`--text-body`), muted, `tracking-normal`. |
 
 **No other sizes.** No `text-[0.88rem]`, `text-[11px]`, `text-xs`/`text-sm` drift in first-party
 screens. Mono runs use step 1 or 2 in the mono family with `letter-spacing: -0.01em`. Canvas edge
 labels and minimap text are the one exception (they scale with the canvas zoom) and stay inside
-`index.css`. Migration: Studio's `--text-panel` maps to `--text-body`, `--text-section` to
+`index.css`. Figure units are not an exception: they use step 2. Migration: Studio's `--text-panel` maps to `--text-body`, `--text-section` to
 `--text-heading`; the old names are deleted once the restyle lane lands (no shims).
 
 ### 8.2 Weights
@@ -271,7 +317,7 @@ labels and minimap text are the one exception (they scale with the canvas zoom) 
 
 Shells own frame chrome and navigation only. A view never knows which shell it is in.
 
-### 9.1 `dock` (default for operators and every app surface)
+### 9.1 `dock` (TARGET default for operators and every app surface)
 
 - **Top bar:** `h-[4.5rem]`, **no bottom border**, no background change from the canvas. Start
   side: Norn mark (32px), then a workspace pill (`rounded-full`, `h-9`, 24px org disc, name,
@@ -282,9 +328,11 @@ Shells own frame chrome and navigation only. A view never knows which shell it i
   `gap-1`, ring `--dock-border`, `--dock-shadow`. Built on UI SDK `Toolbar` with
   `aria-label="<app> navigation"`. Contents: up to six destinations, a hairline separator, the
   assistant trigger, the appearance tray. More than six destinations go behind a "More" menu.
-  - Destination: 40px round button, 18px icon, `aria-label` = its name, `aria-current="page"` when
-    active, active fill `--dock-well`. Attention marker: 6px `--dock-indicator` dot at
-    `top-[7px] end-[7px]` with a 2px `--dock-surface` ring.
+  - Destination: 40px round button (`size-[40px]`), 18px icon, `aria-label` = its name,
+    `aria-current="page"` when active, active fill `--dock-well`. Attention marker: 6px
+    `--dock-indicator` dot at `top-[7px] end-[7px]` with a 2px `--dock-surface` ring. The dot is
+    never the only signal: the destination's accessible name carries the state too (for example
+    "Inbox, new activity" via `aria-description` or a visually hidden span; TARGET).
   - ≥ 640px: icon-only with a top tooltip carrying the label.
   - **< 640px: every destination shows its label** under the icon (`--text-meta`) and every target
     is at least **44 × 44 CSS px** (written in px, since `size-10` is only 36px at the 90% root).
@@ -297,10 +345,12 @@ Collapsible spaces rail grouped by workspace or lens, never an alphabetical dump
 schema names. Pairs with `data-density="compact"`. The top bar keeps its controls; breadcrumbs live
 in the bar, not in the page.
 
-### 9.3 `minimal`
+### 9.3 `minimal` (route-level, TARGET)
 
-Chromeless canvas for embedded or single-task surfaces (kiosk, OAuth, login). No dock, no sidebar;
-the page still has a title and an honest exit.
+Chromeless canvas for embedded or single-task surfaces (kiosk, OAuth, login). It is **not** a
+`data-shell` value: the route decides it and renders outside the shell, so a stored shell
+preference can never strip the chrome from an operator view or add it to a login page. No dock, no
+sidebar; the page still has a title and an honest exit.
 
 ---
 
@@ -313,20 +363,21 @@ compose these; they do not restyle them with ad-hoc classes.
 | --- | --- | --- | --- |
 | **PageHead** | `min-h-12 pt-6 pb-5`; `h1` (step 4, 500); a status (`Live`: pulsing dot + step 2 text in the status's text token); end side: page controls, at most one primary action, overflow menu. | One line of purpose under the title only when the page is not obvious. | Breadcrumbs in the page; two primary buttons; a status as a filled pill. |
 | **ShellCard** | `card` rim, `--radius-panel`, `--panel-inset` padding, `--panel-shadow`. Header `h-11 ps-3.5 pe-3`: icon (muted, 1.6 stroke), title (step 2, 400), count (muted), end: control or "See all ›" (muted, chevron `rtl:rotate-180`). Body: one well, `flex-1`. Optional footnote in the well (step 1, muted). | Use for every grouped list, table, chart or prose block. | A card inside a well; a well without a card; a bordered box inside a well. |
-| **StatWell** | ShellCard shape; label row `h-9 px-3.5` (step 2, 400, optional info glyph with a tooltip); well `px-4 pt-3.5 pb-3`, value (step 5, 400) with unit prefix at 0.54em muted, sub at the end (step 1, muted). | 2–4 in a band at the top of a page; numbers from the server only. | Coloured values; trend arrows in saturated colour; a value the cell did not return shown as `0`. |
+| **StatWell** | ShellCard shape; label row `h-9 px-3.5` (step 2, 400, optional info glyph with a tooltip); well `px-4 pt-3.5 pb-3`, value (step 5, 400) with its unit at step 2 muted, sub at the end (step 1, muted). | 2–4 in a band at the top of a page; numbers from the server only. | Coloured values; trend arrows in saturated colour; a value the cell did not return shown as `0`. |
 | **ListRow** | Button, `h-12` (`min-h-[44px]` below 640px), `--radius-row`, `px-3`, `gap-3`. Lead: 6px dot, 28px Initials disc or 28px TypeDisc. Title (step 2, 400), mono code (step 1, muted), SourceTag, end: muted metric or StatusDot. Hover `--well-hover`; selected `--card` + 1px `--panel-border` ring. | Open the DetailSheet on activate; keep the row's own accessible name = its title. | Filled status pills; zebra stripes; more than one end slot. |
 | **DataTable** | Inside a ShellCard well: header row step 1 muted 400, hairline row dividers, `--density-cell` rows, tabular numbers, hover wash. | Only for genuinely dense, column-compared data (`@tanstack/react-virtual`). | As the default layout when a list → sheet fits. |
 | **StatusDot** | 6px dot (`--dot-*`) + step 1–2 text in `--muted-foreground`. | Every record status, lifecycle state, freshness. | Colour-only status; coloured label text; icon + dot + pill together. |
 | **SourceTag** | Mono, step 1, `h-[1.2rem]`, `--radius-chip`, `ring-1 --line`, no fill, muted text. | Source systems, rails, kinds, short codes. | A tinted or filled background; more than two per row. |
 | **Initials / TypeDisc** | 28px (rows), 36px (top bar), 24px (menus); Initials uses the avatar tokens; TypeDisc is `card` + `ring-1 --line` + muted 15px icon. | Hash by id. | Photos without consent; hard-coded hex. |
 | **Pill / PillButton** | `rounded-full`, `h-9` (`min-h-[44px]` below 640px when interactive), `ring-1 --input` or `--well` fill for passive info pills, step 2. | Secondary actions, filters, top-bar controls. | Bold; coloured fills. |
-| **PrimaryButton** | `rounded-full`, `h-9 px-4.5` (`min-h-[44px]` below 640px), `--action` fill, `--action-foreground`, step 2 at 500, inset top highlight. | Exactly one per view or sheet. | A second solid button next to it; icon-only primary. |
+| **PrimaryButton** | `rounded-full`, `h-9 px-4.5` (`min-h-[44px]` below 640px), `--primary` fill, `--action-hover` on hover, `--primary-foreground` ink, step 2 at 500, inset top highlight. | Exactly one per view or sheet. | A second solid button next to it; icon-only primary. |
 | **SegmentedControl** | UI SDK; `rounded-full` track in `--well`, active segment `--card` + 500. | Branch/lens/period switches of ≤ 6 options. | Tabs styled as pills elsewhere. |
 | **Search** | `--radius-search`, `h-12`, `card` + `--panel-border`, leading icon, `/` key hint chip. | One per page, top of content. | A search inside every card. |
 | **Props** | A well, `p-1.5`; rows `min-h-10 gap-4 px-2.5 py-2.5`; key column `w-32` muted, value foreground, step 2. | Key/value facts in a sheet or refusal. | Bold keys; a table for two columns of facts. |
 | **Section** | Label (step 2, muted) with optional end slot, then a well. | Grouping inside a sheet. | Headings with rules or uppercase. |
-| **Menu / Popover** | UI SDK; `--popover`, `--radius-popup`, `--popup-shadow`, ring `--panel-border`, rows `rounded-[10px] px-2.5 py-2`. | Grouped radio items with a muted group label. | Nested menus more than one level. |
+| **Menu / Popover** | UI SDK; `--popover`, `--radius-popup`, `--popup-shadow`, ring `--panel-border`, rows `--radius-row` `px-2.5 py-2`. | Grouped radio items with a muted group label. | Nested menus more than one level. |
 | **EmptyState** | 40px muted icon tile, title (step 2, 400), one sentence why, next step. | Always say what fills it and offer the action if the principal may take it. | "No data" with nothing else; a bold title. |
+| **Form input** | `--radius`, `h-9` (`min-h-[44px]` below 640px), 1px `--input` border, `--card` fill, visible label above. | The `--input` hairline is 1.27–1.43:1, below the 3:1 non-text floor, so an essential input also carries a second boundary cue (a `--well` fill against `--card`, or its label and a 3:1 focus ring). | A hairline as the only way to find the field. |
 | **Canvas nodes** (`@xyflow/react`) | Studio's node elevation, 12px radius, accent selection ring, destructive failing ring. | Keep as is; weights follow section 8.2. | Bold node titles. |
 
 **Box rule (replaces "zero box-in-box").** Allowed frames are: ShellCard/StatWell (with exactly one
@@ -351,19 +402,22 @@ DetailSheet; the sheet's one primary action commits through a declared Norn acti
 **DetailSheet (TARGET single primitive):**
 
 - Built on the Base UI `Dialog` (focus trap, `inert` background, Escape, return focus to the row).
-- Position: `fixed top-3 bottom-3 end-3` (12px inset on three sides), `w-[33rem]`,
-  `max-w-[calc(100vw-24px)]`, `--radius-sheet`, `card` + `--panel-border`, `--sheet-shadow`.
-  Below 640px it insets 8px on all sides and fills the width.
+- Position: `fixed top-[12px] bottom-[12px] end-[12px]` (exactly 12px on three sides; `top-3` would
+  be 10.8px at this root), `w-[33rem]`, `max-w-[calc(100vw-24px)]`, `--radius-sheet`, `card` +
+  `--panel-border`, `--sheet-shadow`. Below 640px it uses `inset-[8px]` and fills the width.
 - Backdrop: `bg-black/[0.08]` + 1px blur light; `bg-black/50` dark. The page behind stays visible.
 - Header `px-6 pt-5 pb-4`: lead disc (Initials/TypeDisc, 48px), title (step 3, 500), sub line
-  (step 1, muted: mono id, SourceTag, time), close button (36px, round, `aria-label`).
+  (step 1, muted: mono id, SourceTag, time), close button (`size-[36px]`, round, `aria-label`;
+  `min-h-[44px] min-w-[44px]` hit area below 640px).
 - Optional meta row `px-6 pb-4`: passive info pills (`--well` + ring), at most four.
 - Body `px-5 pb-5 gap-5`, scrolls: Sections, each a well:
   - **What Norn found:** Props of the server's facts.
   - **What changes (if you approve):** Before → After rows: label, old value muted with a
-    `→` (mirrored in RTL), new value in the matching text status token. Comes from the server's
-    dry-run, never computed in the browser.
-  - **Receipt:** receipt id (mono, end of the section label) and one line on what commit does.
+    `→` (mirrored in RTL), new value in the matching text status token. Rendered only when the
+    server supplies a dry-run (TARGET); never computed in the browser. With no dry-run the section
+    is omitted, not filled with a guess.
+  - **Before dispatch** there is no receipt: the sheet states in one line what commit will do.
+    The receipt section appears only after the server returns a `receipt` (section 12.4).
 - Footer `px-5 py-4`, top hairline `--line`: secondary action(s) as PillButtons on the start side,
   **one PrimaryButton** on the end side. If the principal may not take the action, the cell's
   refusal replaces the button (section 12.3); the button is not shown disabled with no reason.
@@ -401,26 +455,66 @@ numbers as current; stale data carries its "as of" time.
 
 ### 12.3 Refused and withheld (mandatory)
 
-When the cell refuses a read or withholds fields:
+A refusal renders **only what the server sent**. The wire type is `Refusal`
+(`crates/norn-api/src/refusal.rs`, `norn/refusal@2`; typed in the SDK by #1686 and in Studio as the
+`refused` arm of `CallResult`, `src/lib/actions.ts`). Its fields split into what every refusal
+carries and what only some disclose:
 
-- **Whole view refused:** the PageHead keeps its title; its status is a held `Live` ("Withheld by
-  the cell"). The body is one ShellCard with a lock icon, a title naming what was withheld, one
-  plain sentence on why, and Props: principal, marking, policy, receipt id. No half-rendered shell,
-  no placeholder zeros, no blurred data.
-- **Fields withheld:** the cell sends redacted placeholders on the wire; the UI renders them as
-  `MaskedValue` (`data-masked`) with the marking in the tooltip. The browser never holds the real
-  value to hide.
-- **Action refused at dispatch:** the cell's reason replaces the primary action, in the sheet
-  footer, with the policy name. Denied calls never enter an approval queue (`APPROVAL-1`); only
-  authorized calls that hit an approval gate park for sign-off, shown as held.
+| Field | Always sent | Renders as |
+| --- | --- | --- |
+| `message` | yes | The card or footer title, verbatim. |
+| `code` | yes | Mono, step 1, muted, after the title (`scope.denied`). |
+| `category` | yes | Chooses the icon and next step: `visibility` / `permission` → lock, no retry; `conflict` / `precondition` → reload; `limit` → wait; `invalid` → fix the input; `internal` → incident. |
+| `retryable` | yes | Shows Retry only when `true`. |
+| `explanation` | yes (may be generic) | One plain sentence under the title. |
+| `reason` (law, subject, values, pin) | optional (null when not disclosed) | A "What refused" Props section: the law's name, the subject, and the checked values by path. |
+| `diagnostics` | optional (absent when empty) | A list of findings, each with its code and pointer. |
+| `incidentId` | optional (internal refusals) | Mono, with copy, in the footer line. |
+| `decidedAt` (Studio call path) | optional | "Refused at <time>" in the sub line. |
 
-### 12.4 Receipts (mandatory)
+**Absent sections render nothing:** no "Policy: —", no "unknown", no placeholder, no text the
+browser composed to sound specific. A bare opaque denial (the one read denial in
+`crates/norn-api/src/authz.rs`, the same document whatever was denied) is a complete, valid
+rendering: title, code, explanation, and no Props. The refusal does not carry a principal, policy
+name, marking or receipt id, so the UI never shows those as if it did. The signed-in principal may
+appear in the top bar as usual, never inside the refusal as evidence.
 
-Every committed action returns a receipt; the UI shows it. After commit the sheet shows the receipt
-id (mono), the Before → After that actually happened (from the server), and a link to lineage. The
-top bar's **guarantee tick bar** (10 hairline ticks, filled `--dot-live` per satisfied guarantee,
-`n/m` count, popover listing each guarantee in plain words and the current receipt) shows the
-workspace's live laws. Its contents come from the server; the UI hard-codes none.
+- **Whole view refused:** the PageHead keeps its title; its status is a held dot with the label
+  "Withheld by the cell". The body is one ShellCard with a lock icon and the refusal above. No
+  half-rendered shell, no placeholder zeros, no blurred data.
+- **Fields withheld (CURRENT, `components/masked-value.tsx`):** the cell sends projected
+  placeholders on the wire; the UI renders them as `MaskedValue` with the projection word
+  (`masked`, `pseudonymised`, `withheld`) and the markings **when the projection lists any**. The
+  browser never holds the real value to hide.
+- **Action refused at dispatch:** the refusal replaces the primary action in the sheet footer:
+  `message`, then `reason` when sent. Denied calls never enter an approval queue (`APPROVAL-1`);
+  only authorized calls that hit an approval gate park for sign-off, shown as held.
+
+### 12.4 Call outcomes and receipts (mandatory)
+
+A dispatched action resolves to exactly one arm of `CallResult` (CURRENT, `src/lib/actions.ts`,
+reduced by `src/lib/screen/call.ts`). Each arm has one rendering:
+
+| Arm | Wire | Renders as |
+| --- | --- | --- |
+| `receipt` | `ActionReceipt`: `outcome` (`committed` / `replayed`), object type, id, version, and `receipt` { `receiptHash`, `commitSeq`, `recordedAtMs` } | Live dot, "Recorded", the receipt hash (mono, shortened, full value in copy and tooltip), the commit sequence and time. `replayed` says "Already recorded" and shows the earlier receipt: nothing new was committed. Undo only when the server offers it. |
+| `pending` | HTTP 202, `decision` { `id`, `expiresAtMs` } | Held dot, "Sent for approval", the decision id (mono) and its expiry. Nothing committed; no receipt is shown. |
+| `refused` | `Refusal` (section 12.3) | The refusal replaces the primary action. |
+| `no-cell` | no cell is connected | An unavailable state that says no cell is connected and how to start one (`norn dev`); no Retry loop. |
+| `unavailable` | the cell does not serve action routes (404 without a refusal, or 503) | "This cell doesn't take actions from Studio yet." No Retry. |
+| (thrown) | network failure | "Couldn't reach the cell", with Retry. |
+
+- **One idempotency key per user intent.** The draft holds one `idempotencyKey`; a retry of the same
+  intent resends the same key (so a lost response replays instead of committing twice); editing the
+  draft mints a new key. Never one key per click.
+- **Development runs against a real cell.** `norn dev` serves a project's own SQLite cell on
+  loopback; screens are proven against it, never against hand-written mock responses.
+- After commit the sheet shows the receipt, the Before → After that actually happened (when the
+  server returns it), and a link to lineage.
+
+The top bar's **guarantee tick bar** (TARGET: 10 hairline ticks, filled `--dot-live` per satisfied
+guarantee, `n/m` count, popover listing each guarantee in plain words and the current receipt) shows
+the workspace's live laws. Its contents come from the server; the UI hard-codes none.
 
 ### 12.5 Empty
 
@@ -438,6 +532,9 @@ the principal may take it.
   `--link`), never the dot tokens.
 - Status text is `--muted-foreground` next to its dot. No tinted or filled pills for status, kind
   or source (SourceTag is outline only).
+- Chart **labels** (axis text, value labels, legends) use text tokens (`--foreground`,
+  `--muted-foreground`), never a series colour: `--chart-3` light is 4.33:1 on well-hover and
+  `--chart-5` 3.75:1 on white. Series marks themselves need 3:1 against their surface.
 - Proportional visualizers are the preferred way to show shares: `h-2.5` rounded segmented bars
   with a dot legend (name, amount, share), and the top-bar tick bar.
 - Large structural regions (canvas, shell, cards, wells, tables, chrome) stay neutral in every skin.
@@ -455,12 +552,12 @@ the principal may take it.
 - `[dir="rtl"] :where(p, h1…h6, li, label, button, a, dt, dd, figcaption, span):not([dir])
   { unicode-bidi: plaintext }` (CURRENT, `LABEL-LOCALE-1`): untranslated English keeps its order
   inside an RTL page.
-- Codes, ids, money, times and mono runs render inside `<bdi>` / `dir="ltr"` so `EMP-005`,
+- Codes, ids, money, times and mono runs render inside `<bdi>` / `dir="ltr"` so `REC-005`,
   `RC-74ceaaad` and `11-9` never reorder.
 - **Digits:** Western (latn) digits for all data (codes, amounts, times, dates, counts) in both
   locales so tables align and copy matches. Arabic-Indic digits only in prose when the pack's
   locale asks. Never mix both in one view.
-- **Font pairing:** Cairo for Arabic, matched to Geist's x-height; same weights (400/500).
+- **Font pairing (TARGET):** Cairo for Arabic, matched to Geist's x-height; same weights (400/500).
 - Tables, schedules and dock order mirror. Charts with a time axis keep time running in the reading
   direction of the locale.
 - Every screen ships with an Arabic Playwright row and an RTL screenshot (section 16).
@@ -470,7 +567,8 @@ the principal may take it.
 ## 15. Motion
 
 - Popups and menus: 150ms opacity + scale 0.95 from `--transform-origin`.
-- Sheet: 150ms opacity + 16px inline-axis slide from its edge.
+- Sheet: 150ms opacity + exactly 16px inline-axis slide from its edge (`translate-x-[16px]`, with
+  `rtl:-translate-x-[16px]`; `translate-x-4` would be 14.4px at this root).
 - Hover and selection: 150–200ms colour transitions; canvas nodes lift 1.5px with `--ease-spring`.
 - Live indicators: one slow ping (2.4s) on the PageHead live dot only.
 - Active canvas edges: slow dash flow.
@@ -485,9 +583,18 @@ the principal may take it.
 - Every interactive element is a Base UI or UI SDK primitive (never a `div` with `onClick`), with a
   stable accessible name: its visible label, or `aria-label` for icon-only controls. Names are
   unique within a view.
-- Every state-changing control is an `ActionTrigger` bound to a declared Norn action or transition.
-  The Sidekick drives those same named controls through UI SDK `createAgent`; it gets no private
-  endpoints and no extra authority, and the cell authorizes its calls exactly as a person's.
+- Every control that changes **domain state** is an `ActionTrigger` bound to a declared Norn action
+  or transition, dispatched through the typed, server-authorized call path (section 12.4). Local
+  view controls are not cell actions and get no `ActionTrigger`: scheme and skin (local state,
+  `src/lib/appearance.tsx`), navigation, opening or closing a sheet, filters and selection (URL
+  state). They are still named, accessible primitives an agent can operate.
+- The Sidekick drives those same named controls through UI SDK `createAgent` (TARGET); it gets no
+  private endpoints and no extra authority, and the cell authorizes its calls exactly as a person's.
+- **Keyboard handlers on Base UI composites** (Toolbar, ToggleGroup, RadioGroup, Tabs) run in the
+  bubble-phase `onKeyDown`, alongside Base UI's `CompositeRoot`, never in `onKeyDownCapture`. Work
+  that must run after Base UI's roving `focus()` (which it schedules with one `queueMicrotask`) is
+  deferred inside that same handler, as `components/ui/toggle-group.tsx` does; capture-phase
+  handlers race the roving focus and select the wrong item.
 - Primitives carry `data-slot` names (`panel`, `well`, `kpi`, `list-row`, `detail-sheet`,
   `floating-dock`) so tests, skins and agents target structure, not class strings.
 - Selection and open sheets live in the URL, so an agent and a person share state by link.
@@ -498,13 +605,15 @@ the principal may take it.
 2. **No Radix** (`apps/studio/test/ui-primitives-guard.test.ts`, CURRENT).
 3. **Contrast** (`apps/studio/test/contrast.test.ts`, `studio-theme.test.ts`, CURRENT; extend to
    the new tokens): across every skin × scheme, text ≥ 4.5:1 on its real surface (card **and**
-   well, resting, hover, selected); figures at step 5 ≥ 3:1; focus rings and graph edges ≥ 3:1;
-   `--action-foreground` on `--action` ≥ 4.5:1; avatar pairs ≥ 4.5:1. Dots are exempt only
+   well, resting, hover, selected), including step-5 figures and their units; `--action` as text ≥
+   4.5:1 on the same surfaces; `--primary-foreground` on `--primary` and on `--action-hover` ≥
+   4.5:1; focus rings, graph edges, chart marks and `--dock-indicator` on the dock ≥ 3:1; avatar
+   pairs ≥ 4.5:1. Dots are exempt only
    because they are always paired with a label; a gate check for that pairing is TARGET (see
    section 18).
    `--subtle-foreground` may not carry information.
 4. **Touch:** interactive targets ≥ 44 × 44 CSS px below 640px (dock, ListRow, pills, buttons,
-   sheet close), written in px; ≥ 32px elsewhere.
+   sheet close, form inputs), written in px; ≥ 32px elsewhere.
 5. **Focus:** every control shows `focus-visible` outline 2px in `--ring` (dock: `--dock-ring`).
 6. **Type lock (TARGET lint):** no arbitrary `text-[…]` sizes and no `font-semibold`/`font-bold` in
    first-party screens; `font-medium` only on the allowed elements.
@@ -538,42 +647,44 @@ the principal may take it.
   `bilalgursen/liquid-glass` (MIT; optional single WebGL2 shader behind `glass`, CSS fallback
   mandatory).
 
-### 17.1 Token diff: Studio `index.css` vs the HR wedge
+### 17.1 Token diff: Studio `index.css` vs the first-party app
 
 Same token, different values. "Pick" is what this spec adopts.
 
-| Skin / scheme | Token | Studio | Wedge | Pick | Why |
+| Skin / scheme | Token | Studio | First-party app | Pick | Why |
 | --- | --- | --- | --- | --- | --- |
-| all | default skin | `polar` | `open` | `open` | Owner chose the wedge look; `open` is still neutral surfaces with one accent, so colour discipline holds. `polar` stays one click away. |
+| all | default skin | `polar` | `open` | `open` | Owner chose the first-party app's look; `open` is still neutral surfaces with one accent, so colour discipline holds. `polar` stays one click away. |
 | all | default shell | `sidebar` | dock | `dock` | Non-negotiable 5; Studio's own spec already named the dock the target default. Builders opt into `sidebar`. |
 | open L | `--radius-panel` / `--radius-well` | 1.25rem / 0.9375rem (18 / 13.5px at 90%) | 20px / 15px | 20px / 15px | Non-negotiable 1; px so geometry does not scale with the root. |
 | open L | `--action`, `--primary`, `--ring` | #2e60e0 | #3a6df0 | #2e60e0 | White on #3a6df0 is 4.54:1 (knife-edge) and #3a6df0 as text on the well is 4.16:1 (fails); #2e60e0 is 5.43:1. Accessibility is stricter. #3a6df0 stays as `--chart-1`. |
 | open L | `--action-hover` | #2451c7 | #2d5de0 | #2451c7 | Follows the action pick. |
-| open L | `--muted-foreground` | #5c5c63 | #6e6e73 | #6a6a6f | The wedge's grey, one step darker: #6e6e73 is 4.37:1 on `--well-hover` #eeeeee (fails); #6a6a6f is 5.38 / 4.93 / 4.64:1 on card, well and hover. |
-| open L | `--subtle-foreground` | — | #a0a0a6 | #85858b, decorative only | #a0a0a6 is 2.39:1 on the well; wedge used it for counts. Counts move to muted; subtle keeps ≥ 3:1 for glyphs. |
-| open L | `--success` | #1f7a4d | #1f9d61 | text #1f7a4d, dot #1f9d61 | Wedge green is 3.47:1 as text (fails). Split into text and dot tokens. |
-| open L | `--warning` | #8a5600 | #e09a2b | text #8a5600, dot #e09a2b | Wedge amber is 2.38:1 as text. |
-| open L | `--destructive` | #b83228 | #e5484d | fill/text #b83228, dot #e5484d | Wedge red is 3.91:1 with white. |
-| open L | `--chart-3`, `--chart-4` | #b45309, #9a1ca6 | #e09a2b, #7c5cff | Studio's | Studio's set is AA-tuned for chart labels; wedge's amber fails 3:1. |
-| open L | `--line`, `--action-dot`, `--action-soft`, `--action-fill`, `--popup-shadow`, `--sheet-shadow` | — | defined | wedge | New tokens Studio lacks. |
+| open L | `--muted-foreground` | #5c5c63 | #6e6e73 | #6a6a6f | The app's grey, one step darker: #6e6e73 is 4.37:1 on `--well-hover` #eeeeee (fails); #6a6a6f is 5.38 / 4.93 / 4.64:1 on card, well and hover. |
+| open L | `--subtle-foreground` | — | #a0a0a6 | #85858b, decorative only | #a0a0a6 is 2.39:1 on the well; the app used it for counts. Counts move to muted; subtle keeps ≥ 3:1 for glyphs. |
+| open L | `--success` | #1f7a4d | #1f9d61 | text #1f7a4d, dot #1f9d61 | The app's green is 3.47:1 as text (fails). Split into text and dot tokens. |
+| open L | `--warning` | #8a5600 | #e09a2b | text #8a5600, dot #e09a2b | The app's amber is 2.38:1 as text. |
+| open L | `--destructive` | #b83228 | #e5484d | fill/text #b83228, dot #e5484d | The app's red is 3.91:1 with white. |
+| open L | `--chart-3`, `--chart-4` | #b45309, #9a1ca6 | #e09a2b, #7c5cff | Studio's | Studio's set is AA-tuned; the app's amber fails 3:1 as a mark. Labels still use text tokens (section 13). |
+| open L | `--line`, `--action-dot`, `--action-soft`, `--popup-shadow`, `--sheet-shadow` | — | defined | app's | New tokens Studio lacks. `--action-fill` is dropped: muted text on it fails (section 4.2). |
 | open L | `--font-sans` | Geist only | Geist + Cairo | Geist + Cairo | RTL first-class. |
-| open D | `--action` / `--action-foreground` | #6b98ff / #ffffff | #5b8cff / #ffffff | #2e60e0 / #ffffff | Both shipped pairs fail as a CTA (2.78:1 and 3.16:1). #2e60e0 with white is 5.43:1 and matches light. `--ring` #5b8cff and `--link` #7da4ff keep the bright blue for focus and links (6.1:1 on canvas). |
-| open D | `--primary` | #2e60e0 | #5b8cff | #2e60e0 | Alias of action. |
-| open D | `--destructive-text` | #f07b73 | #ff6b6f | #ff6b6f | Wedge passes (6.14:1 on well) and matches its dot. |
+| open D | `--primary` (CTA fill) / ink | #2e60e0 / #ffffff | #5b8cff / #ffffff | #2e60e0 / #ffffff | White on the app's #5b8cff is 3.16:1. #2e60e0 is 5.43:1 and matches light. |
+| open D | `--action` (accent text) | #6b98ff | #5b8cff | #6b98ff | Studio's; ≥ 5.64:1 on every dark surface. #2e60e0 as text would be 3.58 / 3.36 / 3.13 / 2.88:1 on canvas, card, well, hover. `--link` #7da4ff is 7.98:1 on canvas; `--ring` #5b8cff is 6.14:1. |
+| open D | `--destructive-text` | #f07b73 | #ff6b6f | #ff6b6f | The app's passes (6.14:1 on well) and matches its dot. |
 | open D | `--panel-shadow` | `inset 0 1px 0 rgb(255 255 255/.02)` | same | same | — |
 | polar L | `--radius-panel` / `--radius-well` | 0.75rem / 0.5rem (10.8 / 7.2px) | 16px / 11px | 16px / 11px | Non-negotiable 1. |
 | polar L | panel inset | 0 (flattened KPI and panel wells) | 4px double shell | 4px | Non-negotiable 1: the double shell is the only nesting pattern in every skin. |
-| polar L | `--panel-shadow` | none | `0 1px 2px rgb(0 0 0/.02)` | wedge | A whisper of lift separates the rim from `#f6f6f8` canvas. |
-| polar L | `--muted-foreground` | #585861 | #5c5c66 | #5c5c66 | Passes (6.18:1 on well); wedge wins. |
+| polar L | `--panel-shadow` | none | `0 1px 2px rgb(0 0 0/.02)` | app's | A whisper of lift separates the rim from `#f6f6f8` canvas. |
+| polar L | `--muted-foreground` | #585861 | #5c5c66 | #5c5c66 | Passes (6.18:1 on well); the app's wins. |
 | polar L | `--subtle-foreground` | — | #9696a0 | #85858b | #9696a0 is 2.74:1 on the well. |
 | polar L | `--card-foreground`, `--foreground` | #18181b | #18181b | same | — |
-| polar D | `--card` | #161618 | #151517 | #151517 | Wedge; matches `open` dark card. |
-| polar D | `--panel-border` | #26262b | #25252a | #25252a | Wedge. |
-| polar D | `--panel-shadow` | inset .04 | inset .03 | .03 | Wedge. |
+| polar D | `--card` | #161618 | #151517 | #151517 | The app's; matches `open` dark card. |
+| polar D | `--panel-border` | #26262b | #25252a | #25252a | The app's. |
+| polar D | `--panel-shadow` | inset .04 | inset .03 | .03 | The app's. |
 | polar D | `--subtle-foreground` | — | #686870 | #686870 | 3.11:1 on well; decorative only. |
 | luma, glass | radii | 0.6875/0.5rem, 1/0.75rem | 20/15px (inherited) | 16/11px, 20/15px | Concentric rule; Studio's luma and glass palettes are more complete and stay. |
+| luma D | CTA fill | `--primary` #6258ec | — | #6258ec | White on it is 5.09:1 (hover #695ff0 4.67:1). Luma's `--action` #7c74ff is text only: white on it is 3.62:1. |
+| all | `--dock-indicator` | #6b98ff, polar #f4f4f5 | `--action` | Studio's | The dock is dark in every scheme; `--action` on it is 1.05:1 in polar light and 2.92:1 for #2e60e0 in open dark. |
 | all | avatar colours | — | hard-coded hex in `Initials` | `--avatar-n-*` tokens, hashed by id | Non-negotiable 6. |
-| all | type sizes | `--text-meta/panel/section/title/figure` = 0.8125/0.9375/1.0625/1.75/2rem | ad-hoc 0.65–2.1rem | 0.84/1/1.35/1.85/2rem (section 8.1) | Non-negotiable 6; the wedge's visual sizes, locked to five. |
+| all | type sizes | `--text-meta/panel/section/title/figure` = 0.8125/0.9375/1.0625/1.75/2rem | ad-hoc 0.65–2.1rem | 0.84/1/1.35/1.85/2rem (section 8.1) | Non-negotiable 6; the app's visual sizes, locked to five. The app's 0.54em figure unit becomes step 2. |
 
 ---
 
@@ -590,10 +701,12 @@ Measured on `origin/main` at `ff0f95bd5e`. **Not fixed here**; the restyle lane 
   rule; `[data-skin="polar"] [data-slot="panel"] { padding: 0 }` and the polar KPI well override
   flatten the double shell.
 - [ ] Missing tokens: `--subtle-foreground`, `--line`, `--action-dot`, `--action-soft`,
-  `--action-fill`, `--dot-*`, `--avatar-*`, `--popup-shadow`, `--sheet-shadow`, `--panel-inset`,
+  `--dot-*`, `--avatar-*`, `--popup-shadow`, `--sheet-shadow`, `--panel-inset`,
   `--radius-row/sheet/search/dock/popup`; StudioTheme allowlist needs the new colour tokens.
-- [ ] Open dark `--action` #6b98ff with `--action-foreground` #ffffff is 2.78:1.
-- [ ] `--font-sans` has no Arabic pairing (no Cairo).
+- [ ] Solid `bg-action` fills (4 uses) put `--action-foreground` on the text-role `--action`: 2.78:1
+  on open-dark #6b98ff and 3.62:1 on luma-dark #7c74ff. Solid fills move to `bg-primary`.
+- [ ] `--font-sans` has no Arabic pairing (no Cairo; not in `package.json`).
+- [ ] No `minimal` route-level chromeless frame; login and OAuth use shadcn `Card`.
 - [ ] Type tokens are 0.8125/0.9375/1.0625/1.75/2rem; body is 0.875rem.
 
 **Weights and sizes**
@@ -649,7 +762,7 @@ Measured on `origin/main` at `ff0f95bd5e`. **Not fixed here**; the restyle lane 
 
 - [ ] `FloatingDock` is icon-only at every width; no labels below 640px; buttons are `size-10`
   (36px at the 90% root), under the 44px target.
-- [ ] Dock attention dot uses physical `right-[7px]`.
+- [ ] Dock attention dot uses physical `right-[7px]` and is colour-only (no accessible text).
 - [ ] Dock-mode top bar (`data-slot="dock-topbar"`) is borderless but `h-[4.4rem]` on
   `bg-background`, and has no guarantee tick bar, language pill or scheme toggle.
 - [ ] The top-bar Notifications popover renders a hard-coded "Nothing yet." instead of a
