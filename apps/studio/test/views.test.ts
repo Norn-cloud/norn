@@ -9,8 +9,10 @@ import { catalogOf } from "../src/lib/catalog.ts"
 import type { Fetch } from "../src/lib/cell-read.ts"
 import { StudioScopeError, type StudioScope } from "../src/lib/definitions.ts"
 import { readDocument } from "../src/lib/exact.ts"
-import { EMPTY_QUERY, recordsQueryParams } from "../src/lib/records-query.ts"
+import { facetsQuery } from "../src/lib/facets.ts"
+import { EMPTY_QUERY, recordsQueryParams, recordsQueryPrefix } from "../src/lib/records-query.ts"
 import type { RecordsRead } from "../src/lib/records-source.ts"
+import { init, update } from "../src/lib/screen/call.ts"
 import type { Artifact, ObjectPage } from "../src/lib/transport.ts"
 import {
   cellViews,
@@ -30,6 +32,7 @@ import { WITHHELD_ROW } from "../src/grid/cells.tsx"
 import type { ViewsBarNotice } from "../src/grid/views-bar.tsx"
 
 mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
+const { invalidateActionReads } = await import("../src/actions/action-sheet.tsx")
 const { RecordsGrid } = await import("../src/grid/records-grid.tsx")
 const { deletedViewNotice } = await import("../src/grid/views-bar.tsx")
 const { reloadConflictingView, scopedDeletedView, ViewDetail, ViewEditor } = await import("../src/views.tsx")
@@ -47,6 +50,35 @@ const SAMPLE_VIEW: SavedView = {
   sort: "score:asc",
   columns: ["score", "stage"],
 }
+
+test("an action receipt invalidates the saved-view records and facet counts for its record type", () => {
+  const objectType = SAMPLE_VIEW.objectType
+  const filter = SAMPLE_VIEW.filter ?? null
+  const params = recordsQueryParams({ ...EMPTY_QUERY, filter }).toString()
+  const keys = [
+    [...recordsQueryPrefix(objectType, SCOPE_A), params],
+    [...recordsQueryPrefix(objectType), params],
+    facetsQuery({ objectType, filter, scope: SCOPE_A }).queryKey,
+    facetsQuery({ objectType, filter: null, scope: SCOPE_A, property: "stage" }).queryKey,
+    facetsQuery({ objectType, filter }).queryKey,
+  ]
+  const unrelated = ["records", "demo.Other", SCOPE_A.orgId, SCOPE_A.environmentId, params]
+  const client = new QueryClient()
+  for (const key of [...keys, unrelated]) client.setQueryData(key, [])
+
+  const [sending] = update(init({ actionId: "demo.record.update", risky: false }, "key"), { kind: "submit", input: "{}" })
+  const [, commands] = update(sending, { kind: "answered", result: { kind: "receipt", receipt: {
+    outcome: "committed", objectType, objectId: "row-1", version: 2,
+    receipt: { receiptHash: "receipt", commitSeq: 2, recordedAtMs: 1 },
+  } } })
+  for (const command of commands) {
+    if (command.kind === "refetch") invalidateActionReads(client, objectType)
+  }
+
+  for (const key of keys) expect(client.getQueryState(key)?.isInvalidated).toBe(true)
+  expect(client.getQueryState(unrelated)?.isInvalidated).toBe(false)
+  client.clear()
+})
 
 test("views helpers normalize payloads, preserve space and column order, duplicate within length bound and map pointers", () => {
   const draft: SavedView = {
@@ -457,7 +489,7 @@ test("bound preview and detail reads pin to the draft scope, refuse on switch be
 
   // 4. RecordsGrid with explicit scope keys its cache by orgId/environmentId and hides rows on StudioScopeError.
   const gridClient = new QueryClient({ defaultOptions: { queries: { refetchOnMount: false, retryOnMount: false } } })
-  const scopedGridKey = ["records", SCOPE_A.orgId, SCOPE_A.environmentId, concept.name, recordsQueryParams(EMPTY_QUERY).toString()] as const
+  const scopedGridKey = ["records", concept.name, SCOPE_A.orgId, SCOPE_A.environmentId, recordsQueryParams(EMPTY_QUERY).toString()] as const
   await expect(gridClient.fetchQuery({
     queryKey: scopedGridKey,
     queryFn: ({ signal }) => store.preview(concept.name, EMPTY_QUERY, SCOPE_A, signal),

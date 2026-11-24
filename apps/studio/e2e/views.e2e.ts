@@ -80,6 +80,8 @@ test("views: create 'Applications needing help' in Operations Space, keep column
   await actionSheet.getByRole("button", { name: "Done" }).click()
   await page.keyboard.press("Escape")
   await expect(grid).not.toContainText("Ben Park")
+  await expect(grid).toContainText("Ada Reyes")
+  await shoot(page, "views-after-action")
 
   // 4. Edit, rename, duplicate, delete and undo.
   await page.getByRole("link", { name: "Edit" }).click()

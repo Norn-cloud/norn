@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils"
 import type { Concept, Field } from "../lib/catalog.ts"
 import { NO_DATA_CELL, StudioScopeError, type StudioScope } from "../lib/definitions.ts"
 import { recordName } from "../lib/objects.ts"
-import { cycleSort, DATA_CHANGED, LIMITS, recordsQueryParams, SERVER_QUERY_UNAVAILABLE, sortable, totalText, type Predicate, type RecordsQuery, type SortKey } from "../lib/records-query.ts"
+import { cycleSort, DATA_CHANGED, LIMITS, recordsQueryParams, recordsQueryPrefix, SERVER_QUERY_UNAVAILABLE, sortable, totalText, type Predicate, type RecordsQuery, type SortKey } from "../lib/records-query.ts"
 import { diagnosticsAt, readRecords, type RecordsRead } from "../lib/records-source.ts"
 import { transport } from "../lib/transport.ts"
 import { ACTIONS_UNAVAILABLE, writesWhole, type ActionSummary } from "../lib/actions.ts"
@@ -132,15 +132,16 @@ export function RecordsGrid({ concept, read = defaultRead, scope, initial, onQue
     limit: shownTimeline ? LIMITS.maxPageSize : limit,
     ...cursors[pageIndex] === undefined ? {} : { after: cursors[pageIndex] },
   }
-  const scopePrefix = scope ? [scope.orgId, scope.environmentId] as const : []
-  const key = ["records", ...scopePrefix, name, recordsQueryParams(query).toString()] as const
+  const prefix = recordsQueryPrefix(name, scope)
+  const key = [...prefix, recordsQueryParams(query).toString()] as const
   const result = useQuery({ queryKey: key, queryFn: ({ signal }) => read(name, query, signal), placeholderData: keepPreviousData, retry: false, enabled: filterOverflow === 0 })
   const data = result.data
 
   const restart = () => { setCursors([undefined]); setPageIndex(0); setActive(0) }
   useEffect(() => {
     if (data?.kind !== "restart") return
-    void client.removeQueries({ queryKey: ["records", ...scopePrefix, name] })
+    // An unscoped restart leaves saved-view pages in their own caches.
+    void client.removeQueries({ queryKey: prefix, predicate: ({ queryKey }) => queryKey.length === key.length })
     restart()
     setNotice(DATA_CHANGED)
   }, [data, client, name, scope?.orgId, scope?.environmentId])

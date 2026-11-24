@@ -64,7 +64,7 @@ export function facetsQuery({ objectType, filter, scope, property }: {
   const scopePrefix = scope === undefined ? [] : [scope.orgId, scope.environmentId]
   const properties = property === undefined ? undefined : [property]
   return queryOptions({
-    queryKey: ["facets", ...scopePrefix, objectType, JSON.stringify(filter), ...(properties ?? [])],
+    queryKey: ["facets", objectType, ...scopePrefix, JSON.stringify(filter), ...(properties ?? [])],
     queryFn: () => readFacets(objectType, filter, properties, scope, fetcher),
     retry: false,
   })

@@ -17,7 +17,7 @@ import { NO_DATA_CELL, StudioScopeError, useStudioScope, type Finding, type Stud
 import type { Issue } from "./lib/editor.ts"
 import { useMode } from "./lib/live-transport.ts"
 import { recordName } from "./lib/objects.ts"
-import { LIMITS, propertyWithheld, sortable, totalText, type RecordsQuery, type SortKey } from "./lib/records-query.ts"
+import { LIMITS, propertyWithheld, recordsQueryPrefix, sortable, totalText, type RecordsQuery, type SortKey } from "./lib/records-query.ts"
 import { offersTimeline } from "./lib/timeline.ts"
 import {
   cellViews,
@@ -427,7 +427,7 @@ export function ViewDetail({ initialRemoved, store = views }: {
   const detailScopeMismatch = active != null && !sameScope(activeScope, active.scope)
   useEffect(() => {
     if (detailScopeMismatch && active != null) {
-      void client.cancelQueries({ queryKey: ["records", active.scope.orgId, active.scope.environmentId] })
+      void client.cancelQueries({ queryKey: recordsQueryPrefix(active.view.objectType, active.scope) })
     }
   }, [client, detailScopeMismatch, active])
   const detailRead = useCallback(
