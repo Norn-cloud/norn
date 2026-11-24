@@ -21,6 +21,7 @@ use crate::model::Model;
 use crate::store::{Receipt, ReceiptBody};
 use crate::system::RECEIPT;
 
+mod definitions;
 mod findings;
 mod ledger;
 mod links;
@@ -28,11 +29,11 @@ mod objects;
 mod pagination;
 mod queue;
 
-pub use findings::FindingLedgerPage;
-pub use ledger::{LedgerEntry, LedgerHead};
-pub(crate) use ledger::{
+pub(crate) use definitions::{
     active_definition_version, definition_by_version, validate_active_definition_pointer,
 };
+pub use findings::FindingLedgerPage;
+pub use ledger::{LedgerEntry, LedgerHead};
 pub use links::{
     LinkDirection, LinkEdgeRecord, LinkPagePosition, LinkReadPage, LinkRecord, LinkRef,
 };
@@ -63,10 +64,17 @@ fn decode_receipts(rows: Vec<Vec<SqlValue>>) -> Result<Vec<Receipt>, CellError> 
                 reason: "receipt columns disagree with the hashed receipt".to_owned(),
             });
         }
-        out.push(Receipt {
-            body,
-            hash: row.get(5)?,
-        });
+        let hash: String = row.get(5)?;
+        // A historical read serves only a receipt whose body still hashes to
+        // its stored digest, the leaf the transparency root is built from
+        // (OPEN-CHECKPOINT-1: an open from a checkpoint never re-reads it).
+        if hash_json(&body)? != hash {
+            return Err(CellError::LedgerCorrupt {
+                seq: commit_seq,
+                reason: "receipt hash does not verify".to_owned(),
+            });
+        }
+        out.push(Receipt { body, hash });
     }
     Ok(out)
 }
@@ -267,20 +275,28 @@ pub(crate) fn receipt_by_key(
     world: &str,
     key: &str,
 ) -> Result<Option<Receipt>, CellError> {
-    let row: Option<(String, String)> = conn.query_optional(
+    // The same columns `receipt_at` reads, decoded the same way (S4, #1551
+    // round 2): the hashed body's own world and key must be the ones looked
+    // up, so a changed lookup column never returns another world's receipt.
+    let rows = conn.query(
         &format!(
-            "SELECT \"receipt\", \"receipt_hash\" FROM \"{RECEIPT}\" WHERE \"world\" = ?1 AND \"idempotency_key\" = ?2"
+            "SELECT \"commit_seq\", \"world\", \"idempotency_key\", \"request_hash\", \"receipt\", \"receipt_hash\" FROM \"{RECEIPT}\" WHERE \"world\" = ?1 AND \"idempotency_key\" = ?2 LIMIT 2"
         ),
         params![world, key],
-        |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
-    row.map(|(body, hash)| {
-        Ok(Receipt {
-            body: serde_json::from_str(&body)?,
-            hash,
+    let mut receipts = decode_receipts(rows)?.into_iter();
+    let receipt = receipts.next();
+    if receipts.next().is_some()
+        || receipt.as_ref().is_some_and(|receipt| {
+            receipt.body.world != world || receipt.body.idempotency_key.as_deref() != Some(key)
         })
-    })
-    .transpose()
+    {
+        return Err(CellError::LedgerCorrupt {
+            seq: receipt.map_or(0, |receipt| receipt.body.commit_seq),
+            reason: "receipt columns disagree with the hashed receipt".to_owned(),
+        });
+    }
+    Ok(receipt)
 }
 
 /// Decode `columns` from `row` starting at column `offset` (the stored
@@ -347,6 +363,12 @@ pub struct StoreReader<'a, E: SqlEngine = DefaultEngine> {
     /// The receipt cache belongs to one read-only pass inside a transaction:
     /// nothing writes while it lives, so it holds without a read revision.
     pub(crate) verified_receipts_transaction: bool,
+    /// OPEN-CHECKPOINT-1 (#1551 round 4): which history reads wait for the
+    /// cell's scrub. Open on every reader but the store's served one.
+    pub(crate) history_gate: crate::scrub::Gate,
+    /// S12 (#1551 round 7): live scrub reference so even an already-acquired
+    /// served reader observes local and sibling durable fences via `data_version`.
+    pub(crate) live_scrub: Option<&'a std::cell::RefCell<crate::scrub::Scrub>>,
 }
 
 impl<'a, E: SqlEngine> StoreReader<'a, E> {
@@ -361,7 +383,78 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             source_disputes_transaction: false,
             verified_receipts: None,
             verified_receipts_transaction: false,
+            history_gate: crate::scrub::Gate::OPEN,
+            live_scrub: None,
         }
+    }
+
+    /// The same reader, refusing the history reads `gate` holds back.
+    #[must_use]
+    pub(crate) const fn with_history_gate(mut self, gate: crate::scrub::Gate) -> Self {
+        self.history_gate = gate;
+        self
+    }
+
+    /// Attach the store's live scrub state for dynamic fence checks (S12).
+    #[must_use]
+    pub(crate) const fn with_live_scrub(
+        mut self,
+        scrub: &'a std::cell::RefCell<crate::scrub::Scrub>,
+    ) -> Self {
+        self.live_scrub = Some(scrub);
+        self
+    }
+
+    /// S12 (#1551 round 7): fail closed on a local or sibling durable fence,
+    /// checking `_norn_meta` whenever `PRAGMA data_version` changed since the
+    /// last clean check (zero extra SQL queries on the hot path).
+    pub(crate) fn check_live(&self) -> Result<(), CellError> {
+        self.history_gate.refuse_fenced()?;
+        let Some(scrub) = self.live_scrub else {
+            return Ok(());
+        };
+        scrub.borrow().refuse_fenced()?;
+        if self.conn.read_isolation() != crate::engine::ReadIsolation::ExclusiveSynchronous {
+            match self.conn.external_data_version() {
+                Ok(Some(dv)) => {
+                    if scrub.borrow().fence_checked_dv() != Some(dv) {
+                        if let Some(finding) = crate::open_checkpoint::read_fence_open(self.conn)? {
+                            scrub.borrow_mut().record_durable_fence(finding.clone());
+                            return Err(CellError::Fenced(finding));
+                        }
+                        scrub.borrow_mut().set_fence_checked_dv(dv);
+                    }
+                }
+                Ok(None) | Err(_) => {
+                    if let Some(finding) = crate::open_checkpoint::read_fence_open(self.conn)? {
+                        scrub.borrow_mut().record_durable_fence(finding.clone());
+                        return Err(CellError::Fenced(finding));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// S7/S8/S12: fail closed on a durable fence first, then refuse while
+    /// covered history is still unverified.
+    pub(crate) fn check_history(&self, what: &'static str) -> Result<(), CellError> {
+        self.check_live()?;
+        self.history_gate.history(what)
+    }
+
+    /// S8/S12: fail closed on a durable fence first, then gate ledger reads
+    /// that reach covered history.
+    pub(crate) fn check_ledger(&self, after: u64) -> Result<(), CellError> {
+        self.check_live()?;
+        self.history_gate.ledger(after)
+    }
+
+    /// S4/S12: fail closed on a durable fence first, then gate idempotency
+    /// lookup misses while covered receipts remain unverified.
+    pub(crate) fn check_receipt_miss(&self) -> Result<(), CellError> {
+        self.check_live()?;
+        self.history_gate.receipt_miss()
     }
 
     /// A receipt cache for one read-only pass inside a transaction.
@@ -452,6 +545,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         &self,
         include: impl Fn(&str) -> bool,
     ) -> Result<BTreeMap<String, Vec<String>>, CellError> {
+        self.check_history("dump")?;
         let names: Vec<String> = self
             .conn
             .query(

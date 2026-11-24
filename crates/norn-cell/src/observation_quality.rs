@@ -184,6 +184,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         object_type: &str,
         key: &str,
     ) -> Result<Vec<(DataQualityFinding, bool)>, CellError> {
+        self.check_history("observation quality findings")?;
         let current = self.object(world, object_type, key)?;
         if let Some(record) = current.as_ref()
             && self
@@ -205,6 +206,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         current: Option<&ObjectRecord>,
         frontier: Option<u64>,
     ) -> Result<Vec<(DataQualityFinding, bool)>, CellError> {
+        // S8 (#1551 round 5): scanning `_norn_ledger` for findings requires
+        // verified history so deleted covered events cannot un-quarantine records.
+        self.check_history("observation quality findings")?;
         let mut seen = BTreeSet::new();
         let mut findings = Vec::new();
         let mut after = 0i64;

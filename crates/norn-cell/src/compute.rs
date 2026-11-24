@@ -356,6 +356,7 @@ impl<E: SqlEngine> CellStore<E> {
     ) -> Result<Option<crate::source_agreement::SourceDisagreementCounts>, CellError> {
         self.conn.transaction(|| {
             let reader = self.read();
+            reader.check_live()?;
             let mut budget = question_budget()?;
             let grain = plan.grain().as_str();
             let frontier_receipt = match cutoff {
@@ -511,6 +512,10 @@ impl<E: SqlEngine> CellStore<E> {
             let max = self.check_question_plan(plan)?;
             let mut revision = self.verified_head()?;
             let reader = self.read();
+            // S7 (#1551): gate historical/as-of compute before population selection.
+            if cutoff.is_some() || plan.as_of() {
+                reader.check_history("historical compute")?;
+            }
             let mut budget = question_budget()?;
             let mut historical_receipt = None;
             let mut frontier_receipt = None;

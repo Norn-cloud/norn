@@ -129,6 +129,9 @@ impl<S: SqlEngine> HistoryRead<'_, '_, S> {
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<HistoricalEvidence, CellError> {
         let reader = self.reader;
+        // S7 (#1551 round 4): the selection trusts that every version it
+        // scans is present, which the scrub proves for the covered history.
+        reader.check_history("as-of reads")?;
         reader.select_evidence_known_at_with_budget(
             world,
             kind,
@@ -219,7 +222,7 @@ fn history_projection_is_subset(proposed: &Value, authenticated: &Value) -> bool
     }
 }
 
-fn materialize_historical_values(
+pub(crate) fn materialize_historical_values(
     model: &Model,
     object_type: &norn_ir::ObjectTypeName,
     stored: &BTreeMap<String, Value>,
@@ -298,20 +301,36 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(model)
     }
 
-    fn proven_snapshot(
+    pub(crate) fn root_type_or_self<'a>(
+        &'a self,
+        object_type: &'a str,
+    ) -> Result<&'a str, CellError> {
+        self.check_live()?;
+        match self.root_type(object_type) {
+            Ok(root) => Ok(root),
+            Err(CellError::UnknownObjectType(_)) => Ok(object_type),
+            Err(error) => Err(error),
+        }
+    }
+
+    pub(crate) fn proven_snapshot(
         &self,
         world: &str,
         object_type: &str,
         key: &str,
         version: u64,
     ) -> Result<FactSnapshot, CellError> {
-        let root = self.root_type(object_type).unwrap_or(object_type);
-        let row: Option<(String, String, i64, String)> = self.conn.query_optional(
-            &format!("SELECT \"snapshot\", \"hash\", \"commit_seq\", \"root_type\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND (\"root_type\" = ?2 OR \"object_type\" = ?2) AND \"id\" = ?3 AND \"version\" = ?4"),
+        let root = self.root_type_or_self(object_type)?;
+        let mut rows = self.conn.query(
+            &format!("SELECT \"snapshot\", \"hash\", \"commit_seq\", \"root_type\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND (\"root_type\" = ?2 OR \"object_type\" = ?2) AND \"id\" = ?3 AND \"version\" = ?4 LIMIT 2"),
             params![world, root, key, to_i64(version, "fact version")?],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
-        let (encoded, hash, commit, stored_root) = row.ok_or_else(unproven_snapshot)?;
+        if rows.len() > 1 {
+            return Err(unproven_snapshot());
+        }
+        let row = SqlRow(rows.pop().ok_or_else(unproven_snapshot)?);
+        let (encoded, hash, commit, stored_root): (String, String, i64, String) =
+            (row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?);
         let snapshot = decode_snapshot(world, object_type, key, version, &encoded, &hash)?;
         if snapshot.root_type != stored_root {
             return Err(unproven_snapshot());
@@ -446,6 +465,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         id: &str,
         commit_seq: u64,
     ) -> Result<u64, CellError> {
+        // S7 (#1551 round 4): `MAX(version)` trusts the scan's completeness.
+        self.check_history("as-of reads")?;
         let root = self.root_type(object_type)?;
         let version: Option<Option<i64>> = self.conn.query_optional(
             &format!("SELECT MAX(\"version\") FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND \"root_type\" = ?2 AND \"id\" = ?3 AND \"commit_seq\" <= ?4"),
@@ -488,7 +509,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         key: &str,
         version: u64,
     ) -> Result<FactVersionEvidence, CellError> {
-        let root = self.root_type(object_type).unwrap_or(object_type);
+        let root = self.root_type_or_self(object_type)?;
         self.fact_version_evidence_at_root(world, root, object_type, key, version)
     }
 
@@ -558,7 +579,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         version: u64,
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<Option<FactVersionEvidence>, CellError> {
-        let root = self.root_type(object_type).unwrap_or(object_type);
+        self.check_live()?;
+        let root = self.root_type_or_self(object_type)?;
         self.fact_version_evidence_at_root_with_budget(
             world,
             root,
@@ -609,6 +631,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         known_as_of: KnowledgeCutoff,
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<HistoricalEvidence, CellError> {
+        // S7 (#1551): gate historical reads before touching frontier receipts or history scans.
+        self.check_history("as-of reads")?;
         let mut history = self.history_read();
         if known_as_of.frontier > 0 && history.receipt(known_as_of.frontier, budget)?.is_none() {
             return Ok(HistoricalEvidence::Exhausted);
@@ -710,6 +734,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         commit_seq: u64,
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<Option<Receipt>, CellError> {
+        self.check_live()?;
         let bytes: Option<i64> = self.conn.query_optional(
             &format!("SELECT octet_length(\"receipt\") + octet_length(\"receipt_hash\") + COALESCE(octet_length(\"world\"),0) + COALESCE(octet_length(\"idempotency_key\"),0) + COALESCE(octet_length(\"request_hash\"),0) FROM \"{RECEIPT}\" WHERE \"commit_seq\"=?1"),
             params![to_i64(commit_seq,"knowledge frontier")?], |row| row.get(0),
@@ -746,6 +771,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         cutoff: KnowledgeCutoff,
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<Option<HistoricalFrame>, CellError> {
+        // S7 (#1551): gate historical frames before frontier lookup or population selection.
+        self.check_history("historical frames")?;
         if cutoff.frontier == 0 {
             return Ok(Some(HistoricalFrame {
                 revision: LedgerHead::genesis(),
@@ -786,38 +813,6 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .scope)
     }
 
-    pub(crate) fn verify_value_history(&self) -> Result<(), CellError> {
-        for receipt in self.receipt_stream() {
-            let receipt = receipt?;
-            for row in receipt.body.written {
-                let stored: Option<(String, String, String)> = self.conn.query_optional(
-                    &format!("SELECT root_type,snapshot,hash FROM \"{FACT_VALUES}\" WHERE world=?1 AND commit_seq=?2 AND object_type=?3 AND id=?4 AND version=?5"),
-                    params![receipt.body.world, to_i64(receipt.body.commit_seq, "fact commit")?, row.object_type, row.key, to_i64(row.version, "fact version")?],
-                    |record| Ok((record.get(0)?, record.get(1)?, record.get(2)?)),
-                )?;
-                let (root, encoded, hash) = stored.ok_or_else(unproven_snapshot)?;
-                let snapshot = decode_snapshot(
-                    &receipt.body.world,
-                    &row.object_type,
-                    &row.key,
-                    row.version,
-                    &encoded,
-                    &hash,
-                )?;
-                if snapshot.root_type != root
-                    || snapshot.object_type != row.object_type
-                    || !crate::receipt_commitment::receipt_digest_matches(
-                        row.snapshot_sha256.as_deref(),
-                        &hash,
-                    )
-                {
-                    return Err(unproven_snapshot());
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// Read one exact historical version only after verifying its immutable proof.
     /// A proven tombstone returns `None`; missing or corrupted proofs refuse.
     ///
@@ -853,7 +848,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         version: u64,
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<crate::reactive::BudgetedRead, CellError> {
-        let root = self.root_type(object_type).unwrap_or(object_type);
+        let root = self.root_type_or_self(object_type)?;
         let length: Option<i64> = self.conn.query_optional(&format!("SELECT octet_length(f.snapshot)+octet_length(f.hash)+octet_length(r.receipt)+octet_length(r.receipt_hash)+COALESCE(octet_length(r.world),0)+COALESCE(octet_length(r.idempotency_key),0)+COALESCE(octet_length(r.request_hash),0)+128 FROM \"{FACT_VALUES}\" f JOIN \"{RECEIPT}\" r ON r.commit_seq=f.commit_seq WHERE f.world=?1 AND (f.root_type=?2 OR f.object_type=?2) AND f.id=?3 AND f.version=?4"), params![world, root, key, to_i64(version, "fact version")?], |row| row.get(0))?;
         let length = length.ok_or_else(unproven_event)?;
         if !budget.charge_rows(2) || !budget.charge(to_u64(length, "historical snapshot bytes")?) {
@@ -881,7 +876,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         through: Option<u64>,
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<Option<Vec<ObjectRecord>>, CellError> {
-        let root = self.root_type(object_type).unwrap_or(object_type);
+        // S7 (#1551 round 4): a version list (history, as-of metrics) is
+        // complete only once the scrub has proven the covered history.
+        self.check_history("version history")?;
+        let root = self.root_type_or_self(object_type)?;
         // At a knowledge cutoff only versions committed by its frontier exist.
         let through = through.map_or(Ok(crate::engine::MAX_SAFE_INTEGER), |commit| {
             to_i64(commit, "commit frontier")
@@ -1192,7 +1190,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(())
     }
 
-    fn verify_prior_absence(&self, snapshot: &FactSnapshot) -> Result<(), CellError> {
+    pub(crate) fn verify_prior_absence(&self, snapshot: &FactSnapshot) -> Result<(), CellError> {
         if snapshot.version > 1 {
             let prior = self.proven_snapshot(
                 &snapshot.world,
@@ -2518,13 +2516,13 @@ pub(crate) fn decode_snapshot(
     Ok(snapshot)
 }
 
-fn unproven_snapshot() -> CellError {
+pub(crate) fn unproven_snapshot() -> CellError {
     CellError::HistoricalValueUnproven(
         "historical value commitment is missing or invalid".to_owned(),
     )
 }
 
-fn unproven_event() -> CellError {
+pub(crate) fn unproven_event() -> CellError {
     CellError::HistoricalValueUnproven(
         "event payload has no unique committed value proof".to_owned(),
     )

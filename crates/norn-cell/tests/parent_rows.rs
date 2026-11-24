@@ -541,7 +541,10 @@ fn parent_and_rows_commit_once_then_reorder_keeps_stable_ids() {
         &Allow,
     )
     .expect("commits parent and rows");
-    let ActionOutcome::Committed { receipt, record } = committed else {
+    let ActionOutcome::Committed {
+        receipt, record, ..
+    } = committed
+    else {
         panic!("expected a new action commit, got {committed:?}");
     };
 
@@ -1950,7 +1953,10 @@ fn mixed_row_operations_apply_original_versions_once_and_commit_final_order() {
         &Allow,
     )
     .expect("updates, removes, adds, and reorders in one parent commit");
-    let ActionOutcome::Committed { receipt, record } = committed else {
+    let ActionOutcome::Committed {
+        receipt, record, ..
+    } = committed
+    else {
         panic!("expected a new mixed-row commit, got {committed:?}");
     };
 

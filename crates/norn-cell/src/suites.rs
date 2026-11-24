@@ -63,6 +63,8 @@ mod linked_time_question;
 mod markings;
 #[path = "../tests/normalized_identity.rs"]
 mod normalized_identity;
+#[path = "../tests/open_from_checkpoint.rs"]
+mod open_from_checkpoint;
 #[path = "../tests/parked.rs"]
 mod parked;
 #[path = "../tests/quantity_refusal_boundary.rs"]

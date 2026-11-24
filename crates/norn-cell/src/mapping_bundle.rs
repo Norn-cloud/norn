@@ -267,6 +267,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         source_id: &str,
         event_id: &str,
     ) -> Result<Vec<MappingBundle>, CellError> {
+        self.check_live()?;
         let [connector_instance, partition, source, source_id, event_id]: [String; 5] =
             serde_json::from_slice(&norn_ir::canonical::canonical_json_of(&(
                 connector_instance,
@@ -307,6 +308,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         version: u64,
         object_type: &str,
     ) -> Result<String, CellError> {
+        self.check_live()?;
         self.retained_definition_model(version)?
             .chain(object_type)?
             .first()
@@ -656,6 +658,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// model cannot root (an interface link target): the caller then keeps
     /// the batch's own order.
     pub fn mapping_footprint(&self, input: &MappingInput) -> Result<MappingFootprint, CellError> {
+        self.check_live()?;
         let version = self.active_definitions_version()?.ok_or_else(mismatch)?;
         let plan = self.mapping_plan(input, version)?;
         let compiled = plan.compiled.as_ref().map_err(|_diagnostics| mismatch())?;
@@ -678,6 +681,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// # Errors
     /// Changed pins, raw evidence or derived output refuse `core.boundary.bundle_mismatch`.
     pub fn recheck_mapping_bundle(&self, bundle: &MappingBundle) -> Result<(), CellError> {
+        self.check_live()?;
         let active = self.active_definitions_version()?.ok_or_else(mismatch)?;
         if bundle.definitions_version > active
             || !self.definitions_version_retained(bundle.definitions_version)?
@@ -742,8 +746,7 @@ impl<E: SqlEngine> CellStore<E> {
         raw: &Observed<RuntimeValue>,
         input: &MappingInput,
     ) -> Result<(String, bool), CellError> {
-        self.conn
-            .transaction(|| self.capture_mapping_bundle(raw, input))
+        self.write_tx(|| self.capture_mapping_bundle(raw, input))
     }
 
     /// MAP-REPROCESS-1: retain an explicitly re-derived bundle at its own
@@ -764,8 +767,7 @@ impl<E: SqlEngine> CellStore<E> {
             input: norn_ir::runtime::encode(bundle).map_err(CellError::Encoding)?,
         };
         let encoded = norn_ir::runtime::encode(&observed).map_err(CellError::Encoding)?;
-        self.conn
-            .transaction(|| crate::store::inject_observation(&self.conn, &id, &encoded))?;
+        self.write_tx(|| crate::store::inject_observation(&self.conn, &id, &encoded))?;
         Ok(id)
     }
 
