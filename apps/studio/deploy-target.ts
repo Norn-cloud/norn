@@ -2,6 +2,9 @@ import { existsSync, readFileSync, readdirSync, type Dirent } from "node:fs"
 import { join } from "node:path"
 import { exportConfig } from "../norn-cell-do/otlp.mjs"
 
+// Enables client disconnect signals for the read requests the Studio Worker forwards.
+export const STUDIO_WORKER_COMPATIBILITY_FLAGS = ["nodejs_compat", "enable_request_signal"] as const
+
 /**
  * Which Studio a stage runs:
  * - `recorded-demo`: production (studio, studio-demo). The static recorded Studio plus the assistant

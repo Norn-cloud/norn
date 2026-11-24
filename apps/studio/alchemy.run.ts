@@ -1,7 +1,7 @@
 import alchemy from "alchemy"
 import { createCloudflareApi, D1Database, EmailSender, Vite, WorkerRef } from "alchemy/cloudflare"
 import { FileSystemStateStore } from "alchemy/state"
-import { authDeploy, cellHost, cellHostUrl, cloudflareCredentials, DEFAULT_ENVIRONMENTS, deployTarget, otelSettings, requireSignInRecipe, requireWorkerScript, scanState, useCloudflareCredentials } from "./deploy-target.ts"
+import { authDeploy, cellHost, cellHostUrl, cloudflareCredentials, DEFAULT_ENVIRONMENTS, deployTarget, otelSettings, requireSignInRecipe, requireWorkerScript, scanState, STUDIO_WORKER_COMPATIBILITY_FLAGS, useCloudflareCredentials } from "./deploy-target.ts"
 import { billingModeStatement } from "./worker/billing.ts"
 import { polarConfig } from "./worker/polar-config.ts"
 
@@ -76,7 +76,7 @@ export const studio = await Vite("studio", {
   assets: { directory: "dist", run_worker_first: ["/api/*"] },
   entrypoint: "./worker/index.ts",
   compatibilityDate: "2026-10-20",
-  compatibilityFlags: ["nodejs_compat"],
+  compatibilityFlags: [...STUDIO_WORKER_COMPATIBILITY_FLAGS],
   // Never write the Worker's secrets into the local wrangler.jsonc.
   wrangler: { secrets: false },
   bindings: {

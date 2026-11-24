@@ -1,13 +1,14 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate, useSearch } from "@tanstack/react-router"
-import { CheckCircle2, Hourglass, Inbox, Play, RefreshCw, ShieldAlert, Sparkles } from "lucide-react"
+import { CheckCircle2, Hourglass, Inbox, Play, RefreshCw, ShieldAlert, Sparkles, Workflow } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
+import { LoadState } from "@/components/load-state"
 import { EmptyState, PageHeader } from "@/components/panel"
 import { Button } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
-import type { CellResult } from "../lib/cell-read.ts"
-import { NO_DATA_CELL } from "../lib/definitions.ts"
+import type { CellResult, Refusal as CellReadRefusal } from "../lib/cell-read.ts"
+import { CellUnavailable, NO_DATA_CELL } from "../lib/definitions.ts"
+import { CellRefusal } from "../lib/live-transport.ts"
 import { useLiveRefresh } from "../lib/live-reads.ts"
 import { badgeText, cellNow, countDecisions, DECISIONS_UNAVAILABLE, flowTitle, listDecisions, listRequested, parkedFrom, remaining, requestedAction, requestedPath, requestedWords, stepTitle, type Decision, type DecisionsPage, type RequestedDecision, type RequestedPage } from "../lib/decisions.ts"
 import { listActions } from "../lib/actions.ts"
@@ -36,6 +37,19 @@ export function useDecisionBadge(): string | undefined {
   // The cell says when the count changes (UI-LIVE-1); nothing polls.
   useLiveRefresh("/v1/decisions?state=pending&limit=0", ["decisions", "count"])
   return count.data?.kind === "ok" && count.data.value.total > 0 ? badgeText(count.data.value) : undefined
+}
+
+function inboxRefusalError(refusal: CellReadRefusal): Error {
+  const body = refusal.body
+  const explanation = typeof body["explanation"] === "string" ? body["explanation"] : undefined
+  const incidentId = typeof body["incidentId"] === "string" ? body["incidentId"] : undefined
+  const retryable = typeof body["retryable"] === "boolean" ? body["retryable"] : undefined
+  const category = typeof body["category"] === "string" ? body["category"] : undefined
+  const decidedAt = typeof body["decidedAt"] === "string" ? body["decidedAt"] : undefined
+  if (refusal.status >= 500 || retryable === false) {
+    return new CellUnavailable(refusal.status, refusal.message, { code: refusal.code, explanation, incidentId, retryable, category, decidedAt })
+  }
+  return new CellRefusal(refusal.status, refusal.code, refusal.message, { explanation, incidentId, retryable, category, decidedAt })
 }
 
 /** `/decisions`: what waits on you, soonest deadline first, in the cell's order. */
@@ -68,18 +82,13 @@ export function DecisionsPage() {
   const heldCount = heldSection && (heldSection.count > 0 || heldSection.approximate) ? heldCountText(heldSection.count, heldSection.approximate) : undefined
 
   const body = (() => {
-    if (read.isPending) return <div className="grid gap-2" aria-label="Reading decisions">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-16 rounded-lg" />)}</div>
-    if (read.isError) return (
-      <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-        <span>{read.error instanceof Error ? read.error.message : "The decisions could not be read."}</span><span className="flex-1" />
-        <Button variant="outline" size="sm" onClick={() => void read.refetch()}>Retry</Button>
-      </div>
-    )
+    if (read.isPending) return <LoadState status="pending" skeleton="list" loadingLabel="Reading decisions" onRetry={refresh}>{() => null}</LoadState>
+    if (read.isError) return <LoadState status="error" error={read.error} isFetching={read.isFetching} onRetry={() => void read.refetch()}>{() => null}</LoadState>
     const result = read.data?.result
     if (result?.kind === "no-cell") return <EmptyState icon={Inbox} title="No data cell">{NO_DATA_CELL}</EmptyState>
     if (result?.kind === "unavailable") return <EmptyState icon={Inbox} title="Not served yet">{DECISIONS_UNAVAILABLE}</EmptyState>
-    if (result?.kind === "refused") return <p role="alert" className="text-sm text-destructive">{result.refusal.message}</p>
-    if (open.length === 0) return <EmptyState icon={Inbox} title="Nothing waits on you">When a flow asks you to decide, it shows here.</EmptyState>
+    if (result?.kind === "refused") return <LoadState status="error" error={inboxRefusalError(result.refusal)} isFetching={read.isFetching} onRetry={() => void read.refetch()}>{() => null}</LoadState>
+    if (open.length === 0) return <EmptyState icon={Inbox} title="Nothing waits on you" next={<Button asChild size="sm" variant="outline"><Link to="/workflows"><Workflow />View workflows</Link></Button>}>When a flow asks you to decide, it shows here.</EmptyState>
     return (
       // One ruled list, not a stack of cards: the question leads, its deadline sits at the end, the rest is one quiet line.
       <ol className="divide-y overflow-hidden rounded-lg border bg-card" aria-label="Decisions waiting on you">
