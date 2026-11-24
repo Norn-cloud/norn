@@ -145,7 +145,7 @@ fn host_with(
         "name": TYPE,
         "properties": [
             {"id": "name", "type": {"kind": "text"}},
-            {"id": "email", "type": {"kind": "text"}, "markings": ["pii.contact"]}
+            {"id": "email", "type": {"kind": "text"}, "constraints": {"nullable": true}, "markings": ["pii.contact"]}
         ]
     }))
     .unwrap();
@@ -906,7 +906,7 @@ fn a_reader_who_may_not_reveal_a_context_field_cannot_probe_its_value() -> Resul
 fn a_hidden_context_field_reads_the_same_null_or_populated() -> Result<(), String> {
     let with_email = |email: V| FactWriteRow::Put {
         object_type: TYPE.into(),
-        key: "c3".into(),
+        key: "c4".into(),
         values: BTreeMap::from([
             ("name".to_owned(), V::from("Grace")),
             ("email".to_owned(), email),
@@ -914,7 +914,7 @@ fn a_hidden_context_field_reads_the_same_null_or_populated() -> Result<(), Strin
     };
     let without_email = FactWriteRow::Put {
         object_type: TYPE.into(),
-        key: "c3".into(),
+        key: "c4".into(),
         values: BTreeMap::from([("name".to_owned(), V::from("Grace"))]),
     };
     let text = "Summarize this customer.";
@@ -922,7 +922,7 @@ fn a_hidden_context_field_reads_the_same_null_or_populated() -> Result<(), Strin
         &[vec![with_email(V::from("grace@example.com"))]],
         "viewer",
         text,
-        &["c3"],
+        &["c4"],
     )?;
     let expected = shown(&populated)?;
     assert!(
@@ -930,9 +930,9 @@ fn a_hidden_context_field_reads_the_same_null_or_populated() -> Result<(), Strin
         "{}",
         populated.safe_prompt
     );
-    assert_eq!(populated.withheld, ["shop.Customer/c3.email"]);
+    assert_eq!(populated.withheld, ["shop.Customer/c4.email"]);
     for (case, write) in [("null", with_email(V::Null)), ("absent", without_email)] {
-        let hidden = guarded_in(&[vec![write]], "viewer", text, &["c3"])?;
+        let hidden = guarded_in(&[vec![write]], "viewer", text, &["c4"])?;
         assert_eq!(
             hidden.safe_prompt.as_bytes(),
             populated.safe_prompt.as_bytes(),

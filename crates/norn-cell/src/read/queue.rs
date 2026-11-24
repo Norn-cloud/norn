@@ -170,8 +170,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     }
 
     /// DECISION-SCAN-1 (#1702): whether a parked command is enqueued after
-    /// position `after`, by row existence alone: no row is read or decoded,
-    /// so an undecodable row past a bounded scan never fails the scan.
+    /// position `after`, checking row existence without Rust command or result
+    /// deserialization (SQL `json_extract` still reads `command` JSON to match
+    /// parked rows).
     ///
     /// Without an index of its own (a new outbox index is a storage version,
     /// as `_norn_marking_version_nonempty` was) this walks the unconsumed rows
