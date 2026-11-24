@@ -831,7 +831,7 @@ pub(crate) fn record<E: SqlEngine>(
                         row.matcher_version == 1 && !commit_has_nfc_ambiguous_target(batch, written)
                     }
                 };
-                if paused != Some(&row.cursor) || !same_partition {
+                if paused.as_ref() != Some(&row.cursor) || !same_partition {
                     return Err(CellError::AutomationMatcherUnreplayable {
                         commit_seq,
                         matcher_version: row.matcher_version,
