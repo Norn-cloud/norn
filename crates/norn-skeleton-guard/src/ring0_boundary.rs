@@ -225,8 +225,7 @@ pub fn check_ring0_dependencies(metadata: &Metadata) -> Vec<Violation> {
                 let rename_note = dep
                     .rename
                     .as_deref()
-                    .map(|rename| format!(" (renamed as `{rename}`)"))
-                    .unwrap_or_default();
+                    .map_or_default(|rename| format!(" (renamed as `{rename}`)"));
                 out.push(violation(
                     rule,
                     format!(
@@ -602,8 +601,7 @@ pub fn check_ring1_ui_feature_seam(metadata: &Metadata) -> Vec<Violation> {
                     let rename_note = dep
                         .rename
                         .as_deref()
-                        .map(|rename| format!(" (renamed as `{rename}`)"))
-                        .unwrap_or_default();
+                        .map_or_default(|rename| format!(" (renamed as `{rename}`)"));
                     out.push(violation(
                         "ring1-ui-internal-feature-leak",
                         format!(

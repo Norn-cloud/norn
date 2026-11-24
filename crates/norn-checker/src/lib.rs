@@ -245,7 +245,7 @@ pub fn is_canonical_timestamp(text: &str) -> bool {
 }
 
 #[cfg(test)]
-mod ring0_widget_boundary_tests {
+mod ring0_boundary_tests {
     use crate::{Diagnostic, DiagnosticCode, DiagnosticSeverity, Span};
 
     #[test]

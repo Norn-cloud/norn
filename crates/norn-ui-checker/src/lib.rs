@@ -492,7 +492,6 @@ mod ring1_composition_tests {
                         "id": "mass",
                         "type": {
                             "kind": "decimal",
-                            "precision": 12,
                             "scale": 3,
                             "unit": { "system": "ucum", "code": "kg" }
                         }

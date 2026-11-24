@@ -4374,7 +4374,7 @@ mod tests {
         assert_eq!(
             findings(fixture(WIDGET_FIXTURE)),
             [(
-                "widget.validation.invalid_payload".to_string(),
+                crate::codes::WIDGET_RING1_REQUIRED.to_string(),
                 "payload".to_string()
             )]
         );

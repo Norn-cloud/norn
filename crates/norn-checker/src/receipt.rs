@@ -1948,7 +1948,6 @@ mod retained_setting_tests {
             identifier_profile: HISTORICAL_IDENTIFIER_PROFILE,
             flow_source_map: None,
             retained: true,
-            ui: None,
         })
         .expect("historical validation")
         .receipt;
