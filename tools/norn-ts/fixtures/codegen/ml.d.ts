@@ -5,10 +5,15 @@
 export type NornJson = null | boolean | number | string | ReadonlyArray<NornJson> | { readonly [key: string]: NornJson }
 
 /** sha256 over the canonical JSON of the definitions this file types and every base definition they resolve through. */
-export type DefinitionsDigest = "sha256:159d9d53f3be7c8a856d1212efb4de7c4a033c569b22e298ce0e54b484bd8b9b"
+export type DefinitionsDigest = "sha256:285fdba4a4f61821703fc476a1aeba157fd5af59b9ffdda909b3badcebdf2457"
 
 /** Each action id → the input a caller sends (actor-derived fields excluded) and the output it declares. */
 export type ActionMap = {
+  /** Claim the training queue */
+  readonly "ml.queue.claim": {
+    readonly input: Readonly<Record<string, never>>
+    readonly output: Readonly<Record<string, never>>
+  }
   /** Record a training run */
   readonly "ml.run.record": {
     readonly input: {
@@ -39,6 +44,11 @@ export type ActionMap = {
     readonly output: {
       readonly "run_id": string
     }
+  }
+  /** Record a scheduler heartbeat */
+  readonly "ml.scheduler.heartbeat": {
+    readonly input: Readonly<Record<string, never>>
+    readonly output: Readonly<Record<string, never>>
   }
 }
 

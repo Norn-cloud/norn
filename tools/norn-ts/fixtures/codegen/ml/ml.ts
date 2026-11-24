@@ -66,3 +66,28 @@ export const StartRun = Norn.action({
   writes: [{ type: TrainingRun, change: "modified" }],
   effect: { kind: "fire_transition", type: TrainingRun, objectIdField: "run_id", lifecycle: "stage", transition: "start" },
 })
+
+// A closed empty input: the caller sends `{}` and nothing else.
+export const Heartbeat = Norn.action({
+  id: "ml.scheduler.heartbeat",
+  title: "Record a scheduler heartbeat",
+  version: "1.0.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: false,
+  input: Schema.Struct({}),
+  output: Schema.Struct({}),
+})
+
+// An input whose only member is the verified caller: emptied for the caller, never sent.
+export const ClaimQueue = Norn.action({
+  id: "ml.queue.claim",
+  title: "Claim the training queue",
+  version: "1.0.0",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: false,
+  input: Schema.Struct({ claimed_by: Schema.String }),
+  output: Schema.Struct({}),
+  fromCaller: ["claimed_by"],
+})

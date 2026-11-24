@@ -24,6 +24,22 @@ void ml.call("ml.run.record", run, { idempotencyKey: key })
 void ml.call("ml.run.start", start, { idempotencyKey: key, definitionsVersion: 4 })
 void ml.pinned(5).call("ml.run.start", { ...start, reason: "rerun" }, { idempotencyKey: key })
 
+// A closed empty input is exactly `{}`: natively empty, or emptied by its actor-derived member.
+void ml.call("ml.scheduler.heartbeat", {}, { idempotencyKey: key })
+void ml.call("ml.queue.claim", {}, { idempotencyKey: key })
+// @ts-expect-error A closed empty input is an object, never a primitive.
+void ml.call("ml.scheduler.heartbeat", 42, { idempotencyKey: key })
+// @ts-expect-error Nor text.
+void ml.call("ml.scheduler.heartbeat", "hi", { idempotencyKey: key })
+// @ts-expect-error Nor an object with a member it does not declare.
+void ml.call("ml.scheduler.heartbeat", { extra: 1 }, { idempotencyKey: key })
+// @ts-expect-error An input emptied by actor-field removal is no primitive either.
+void ml.call("ml.queue.claim", 42, { idempotencyKey: key })
+// @ts-expect-error ACTION-ACTOR-1: its only member is the verified caller's, never sent.
+void ml.call("ml.queue.claim", { claimed_by: "someone-else" }, { idempotencyKey: key })
+// @ts-expect-error Nor an undeclared member.
+void ml.call("ml.queue.claim", { extra: 1 }, { idempotencyKey: key })
+
 // @ts-expect-error An action id the definitions do not declare.
 void tracking.call("tracking.parcel.teleport", parcel, { idempotencyKey: key })
 // @ts-expect-error Another definition set's action is not this client's.

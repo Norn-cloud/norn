@@ -127,7 +127,8 @@ function cell(host: (url: URL, init?: RequestInit) => Response, me: unknown = ME
 }
 
 test("the catalog is read scoped, filtered by kind on the server, and absent routes read as unavailable", async () => {
-  const live = cell(() => Response.json({ definitionsVersion: 1, items: [{ actionId: "a" }] }))
+  const summary = { actionId: "a", title: "A", objectKind: "canon.Holding", effect: "upsert_input_object", objectIdField: "id", inputSchema: {}, uiEffects: { irreversible: false, destructive: false, money: [] } }
+  const live = cell(() => Response.json({ definitionsVersion: 1, items: [summary] }))
   expect(await listActions("canon.Holding", live.fetcher)).toMatchObject({ kind: "catalog", items: [{ actionId: "a" }] })
   expect(live.calls[0]?.url.pathname).toBe("/api/host/v1/actions")
   expect(Object.fromEntries(live.calls[0]!.url.searchParams)).toEqual({ objectKind: "canon.Holding", orgId: "org_demo", environmentId: "analytics" })
@@ -225,6 +226,9 @@ test("a 404, whatever its body, or a 503 that is not a Refusal@2, is not served;
   const notFound = () => Response.json({ code: "route.not_found", message: "No such route." }, { status: 404 })
   expect(await listActions(undefined, cell(notFound).fetcher)).toEqual({ kind: "unavailable" })
   expect(await callAction("a", "{}", "k", cell(notFound).fetcher)).toEqual({ kind: "unavailable" })
+  // A write a gateway answered 503 may have been applied: an error saying so, never "not served".
+  const gateway = await callAction("a", "{}", "k", cell(() => new Response("", { status: 503 })).fetcher).then(() => null, (error: unknown) => error as Error)
+  expect(gateway?.message).toContain("original idempotency key")
   expect(await listActions(undefined, cell(() => Response.json({ code: "host.down", message: "down" }, { status: 503 })).fetcher)).toEqual({ kind: "unavailable" })
   const unconfigured = { format: "norn/refusal@2", code: "action.receipts_unconfigured", category: "internal", retryable: true, message: "this cell cannot commit governed actions now", explanation: "no lineage key", reason: null }
   expect(await callAction("a", "{}", "k", cell(() => Response.json(unconfigured, { status: 503 })).fetcher)).toMatchObject({ kind: "refused", status: 503, code: "action.receipts_unconfigured", retryable: true })

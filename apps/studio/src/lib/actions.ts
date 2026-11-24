@@ -60,10 +60,15 @@ async function scoped(fetcher: Fetch, options: ActionScopeOptions = {}) {
   return { kind: "ok", client: createNornClient({ scope, fetch: scopedHostFetch(fetcher, "/api/host", async () => scope) }) } as const
 }
 
-/** The SDK's "cell did not answer" as Studio's: a route the cell does not serve is a state, anything else an error. */
-function unanswered(error: unknown): { readonly kind: "unavailable" } {
-  if (error instanceof NornUnavailable && error.notServed) return { kind: "unavailable" }
-  if (error instanceof NornUnavailable) throw new CellUnavailable(error.status, error.status === 0 ? undefined : error.message)
+/**
+ * The SDK's "no readable answer" as Studio's. A route the cell does not serve is a state: for a
+ * read, any `notServed` answer; for a write, only one that applied nothing (a 404). Anything else
+ * is an error carrying the SDK's own words, which say when a write's outcome is unknown and that a
+ * retry must reuse its key (the form's retry does).
+ */
+function unanswered(error: unknown, write: boolean): { readonly kind: "unavailable" } {
+  if (error instanceof NornUnavailable && (write ? error.outcome === "not-applied" : error.notServed)) return { kind: "unavailable" }
+  if (error instanceof NornUnavailable) throw new CellUnavailable(error.status, error.message)
   throw error
 }
 
@@ -89,7 +94,7 @@ export async function listActions(
     read = await resolved.client.listActions(objectKind === undefined ? {} : { objectKind, ...objectId === undefined ? {} : { objectId } }, options.signal)
   } catch (error) {
     if (options.signal?.aborted) return { kind: "scope-changed" }
-    return unanswered(error)
+    return unanswered(error, false)
   }
   if (options.signal?.aborted) return { kind: "scope-changed" }
   // Studio pins no definitions version, so the client's own stale check never applies.
@@ -111,7 +116,7 @@ export async function callAction(
   try {
     return await resolved.client.callEncoded(actionId, input, { idempotencyKey, ...options.signal === undefined ? {} : { signal: options.signal } })
   } catch (error) {
-    return unanswered(error)
+    return unanswered(error, true)
   }
 }
 

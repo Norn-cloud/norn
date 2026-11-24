@@ -14,8 +14,12 @@ too.
 `createNornClient<ActionMap>({ baseUrl, scope, definitionsVersion })` lists the
 actions a cell offers and calls one. Its wire shapes are the generated
 `Schemas[...]` documents. A call answers one of three arms,
-`receipt | pending | refused`; a route the cell does not serve, an answer it
-does not document, or no answer at all (`status` 0) throws `NornUnavailable`.
+`receipt | pending | refused`, each validated against the contract. Anything
+else throws `NornUnavailable` (a success status with a malformed document:
+`NornUnexpectedResponse`). Its `outcome` is `not-applied` only for a route the
+cell does not serve (404); otherwise it is `unknown`, because the request may
+have been applied before its answer was lost: retry a write with its original
+idempotency key, never a new one.
 
 Mint one idempotency key per user intent with `createIntentKey()` (or
 `client.intent(...)`) and resend that key on every retry of that intent; it is

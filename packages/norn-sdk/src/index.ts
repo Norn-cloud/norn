@@ -4,7 +4,7 @@ export type { components } from "./generated/norn-api.ts"
 export type Schemas = components["schemas"]
 
 /** The generic governed-action client. */
-export { createIntentKey, createNornClient, NornUnavailable, readRefusal } from "./client.ts"
+export { createIntentKey, createNornClient, NornUnavailable, NornUnexpectedResponse, readRefusal } from "./client.ts"
 export type {
   ActionCatalog, ActionContract, ActionId, ActionInput, ActionMapShape, ActionOutput, ActionReceipt, ActionSummary,
   CallOptions, CallResult, Diagnostic, Fetch, Immutable, Intent, NornClient, NornClientOptions, ObjectFields, ObjectMapShape,

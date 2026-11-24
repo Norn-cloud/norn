@@ -99,7 +99,26 @@ test("CODEGEN-TS-3: a shape outside the closed dialect, or two definitions of on
   refused(withInput("epochs", { type: "integer", enum: [1, 2] }), "`enum` is not admitted in a closed `integer` schema")
   refused(withInput("epochs", { type: "integer", nornType: { kind: "decimal", scale: 0 } }), "`nornType` is not admitted in a closed `integer` schema")
   refused(withInput("model", { type: "string", nornType: { kind: "decimal", scale: 2 } }), "`nornType` is not admitted in a closed `string` schema")
-  refused(withInput("learning_rate", { type: "number", nornType: { kind: "money" } }), "`nornType` on a number is not a decimal")
+  refused(withInput("learning_rate", { type: "number", nornType: { kind: "money" } }), "`nornType` is not a bounded Decimal refinement: it is not a decimal")
+  // VAL-EXACT-1 bounds, as `decimal_refinement` admits them.
+  const decimal = (nornType: object) => withInput("learning_rate", { type: "number", nornType: { kind: "decimal", ...nornType } })
+  refused(decimal({ scale: 19 }), "scale is not an integer in 0..=18")
+  refused(decimal({ scale: 1.5 }), "scale is not an integer in 0..=18")
+  refused(decimal({ scale: -1 }), "scale is not an integer in 0..=18")
+  refused(decimal({}), "scale is not an integer in 0..=18")
+  refused(decimal({ scale: 2, precision: 4 }), "`precision` is not a Decimal member")
+  refused(decimal({ scale: 2, unit: { code: "kg", system: "ucum" }, currencySource: { property: "currency", links: [] } }), "a unit and a currency source are exclusive")
+  refused(decimal({ scale: 2, perUnit: { code: "kg", system: "ucum" } }), "a per-unit rate needs a currency source and no unit")
+  refused(decimal({ scale: 2, unit: { code: "k g", system: "ucum" } }), "unit has no code")
+  refused(decimal({ scale: 2, currencySource: { property: " ", links: [] } }), "currencySource names no property")
+  // The bounded JSON value leaf is an action-input form; an output may not declare one.
+  const jsonOutput = ml()
+  jsonOutput.find((a) => a.artifactId === "ml.run.record.action")!.payload.outputSchema.properties.run_id = { type: ["array", "boolean", "null", "number", "object", "string"] }
+  refused(jsonOutput, "ml.run.record.action#/outputSchema/properties/run_id: the JSON value domain leaf is admitted in an action input only")
+  // An entity decimal is bounded the same way.
+  const wideEntity = ml()
+  wideEntity.find((a) => a.artifactId === "ml.TrainingRun.entity")!.payload.objectType.properties.find((p: { id: string }) => p.id === "learning_rate").type.scale = 19
+  refused(wideEntity, "a decimal's scale is not an integer in 0..=18")
   refused(withInput("model", { type: "string", format: "date" }), "`format` is not admitted in a closed `string` schema")
   refused(withInput("model", { type: ["object", "null"], properties: {}, additionalProperties: false }), "a nullable `object` is not admitted in an action input")
   refused(withInput("model", { type: "object", properties: {} }), "an object schema is not closed")
@@ -198,12 +217,24 @@ test("CODEGEN-TS-6: the caller's input excludes actor-derived fields and makes d
     const caller = generated.slice(generated.indexOf("readonly input: {"), generated.indexOf("readonly output: {"))
     return caller.includes('readonly "label"?: string') ? "optional" : caller.includes('"label"') ? "required" : "dropped"
   }
+  // Drops: a literal `actor` path, the root, the pointer, a closure builtin, an assignment or a
+  // sequence, in any position (after a range's `..`, inside a template expression, as a computed
+  // member), and anything that does not lex. ZEN strings have no escapes (the vendored lexer ends a
+  // string at the next matching quote), so `"a\"actor"` is the string `a\`, then `actor`, then an
+  // unterminated string: a lexer error the kernel counts as a read.
   for (const expression of [
-    "actor.subjectId", "$root.actor.subjectId", "$.actor", "sum(map(input.lines, #))", "count(input.lines, # > 0)",
-    "filter(input.tags, true)", "flatMap(input.lines, [1])", "x = actor; x", "a = 1; a", 'input.label ?? "actor"',
-    "input.weight in [0..actor.max_weight]", "input.n in [0..count(input.lines, true)]",
+    "actor.subjectId", "actor", "$root.actor.subjectId", "$.actor", "$", "sum(map(input.lines, #))", "count(input.lines, # > 0)",
+    "filter(input.tags, true)", "flatMap(input.lines, [1])", "x = actor; x", "a = 1; a", "input.lines[actor.index]",
+    "input.weight in [0..actor.max_weight]", "input.n in [0..count(input.lines, true)]", "`${actor.subjectId}`",
+    'input.label ?? "a\\"actor"', 'input.label ?? "unterminated', "input.label ?? @",
   ]) expect([expression, labelWith(expression)]).toEqual([expression, "dropped"])
-  for (const expression of ["factor(input.id)", "input.actor", "input.label ?? input.parcel_id", "input.weight >= 1", "input.a == input.b", "input.a != 2", "input.a <= 3"]) {
+  // Keeps: `actor` or a builtin's name inside a string, a member named `actor` (also after `?.`), an
+  // identifier that merely contains `actor`, a builtin used as a method name, and comparisons.
+  for (const expression of [
+    'input.label ?? "actor"', "input.label ?? 'actor'", 'input.label ?? "count("', "input.label ?? '$root #; ='", "`label ${input.parcel_id}`",
+    "factor(input.id)", "input.actor", "input?.actor", "input.label ?? input.parcel_id", "input.tags.map", "input.weight >= 1",
+    "input.a == input.b", "input.a != 2", "input.a <= 3", "input.label ?? null", "0..10",
+  ]) {
     expect([expression, labelWith(expression)]).toEqual([expression, "optional"])
   }
 })
@@ -219,5 +250,5 @@ test("CODEGEN-TS-4: generated maps type the client: unknown actions, wrong field
   const diagnostics = ts.getPreEmitDiagnostics(program).map((d) => ts.flattenDiagnosticMessageText(d.messageText, "\n"))
   // Zero diagnostics means every `@ts-expect-error` line is a real error (TS2578 otherwise).
   expect(diagnostics).toEqual([])
-  expect(readFileSync(usage, "utf8").match(/^\/\/ @ts-expect-error/gm)?.length).toBe(16)
+  expect(readFileSync(usage, "utf8").match(/^\/\/ @ts-expect-error/gm)?.length).toBe(22)
 })

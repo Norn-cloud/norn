@@ -23,6 +23,7 @@
  * submissions stay two calls. There is no mock mode; `norn dev` serves the real routes locally.
  */
 import type { components } from "./generated/norn-api.ts"
+import { conforms } from "./shapes.ts"
 
 type Wire = components["schemas"]
 
@@ -96,7 +97,10 @@ export interface Refusal {
   readonly incidentId?: string
 }
 
-/** What the cell answered one call with. Exactly three arms; anything else throws `NornUnavailable`. */
+/**
+ * What the cell answered one call with. Exactly three arms; anything else throws `NornUnavailable`
+ * (or `NornUnexpectedResponse`), whose `outcome` says whether the request may have been applied.
+ */
 export type CallResult =
   | { readonly kind: "receipt"; readonly receipt: ActionReceipt }
   | { readonly kind: "pending"; readonly decision: PendingDecision }
@@ -112,18 +116,40 @@ export type ActionCatalog =
   | ({ readonly kind: "refused" } & Refusal)
 
 /**
- * The cell answered with neither a decision nor a refusal it documents, or did not answer, so
- * nothing was read or saved. `notServed`: the cell does not serve the route (404, or a 503 that is
- * not a Refusal@2). `status` 0: the request never got an answer (the network failed; see `cause`).
+ * The cell did not answer with a document this client can read: no receipt, decision or refusal.
+ * `notServed`: the route is not served (404, or a 503 that is not a Refusal@2). `status` 0: no
+ * answer arrived, or it broke off while it was read (see `cause`).
+ *
+ * `outcome` says what is known of the request. `not-applied` only for a 404: the route does not
+ * exist, so nothing was done. Otherwise it is `unknown`: the request may have reached the cell and
+ * been applied before its answer was lost or garbled. Retry a write with its original idempotency
+ * key, never a fresh one, so the cell replays it instead of applying it twice; a read can simply
+ * be repeated.
  */
 export class NornUnavailable extends Error {
   readonly status: number
   readonly notServed: boolean
+  readonly outcome: "not-applied" | "unknown"
   constructor(status: number, message?: string, options?: { readonly cause?: unknown }) {
-    super(message ?? `The cell did not answer (${status || "network"}); nothing was read or saved.`, options)
+    const notApplied = status === 404
+    super(message ?? (notApplied
+      ? "The cell does not serve this route; nothing was read or saved."
+      : `The cell's answer (${status === 0 ? "none arrived" : status}) could not be read, so the outcome is unknown: the request may have been applied. Retry a write with its original idempotency key, never a new one.`), options)
     this.name = "NornUnavailable"
     this.status = status
     this.notServed = status === 404 || status === 503
+    this.outcome = notApplied ? "not-applied" : "unknown"
+  }
+}
+
+/**
+ * A success status (2xx) whose document is not the one the contract declares: the cell said it
+ * succeeded, so for a write the outcome is unknown, never failed. Retry with the original key.
+ */
+export class NornUnexpectedResponse extends NornUnavailable {
+  constructor(status: number, document: string) {
+    super(status, `The cell answered ${status} with a document that is not ${document}, so the outcome is unknown: the request may have been applied. Retry a write with its original idempotency key, never a new one.`)
+    this.name = "NornUnexpectedResponse"
   }
 }
 
@@ -162,15 +188,6 @@ export function readRefusal(status: number, text: string): Refusal | null {
     ...typeof decidedAt === "string" && decidedAt !== "" ? { decidedAt } : {},
     ...typeof incidentId === "string" && incidentId !== "" ? { incidentId } : {},
   }
-}
-
-/** Whether a 2xx body is the receipt `norn_api` documents. */
-function isReceipt(value: unknown): value is ActionReceipt {
-  if (!isRecord(value)) return false
-  const { outcome, objectType, objectId, version, receipt } = value
-  return (outcome === "committed" || outcome === "replayed") && typeof objectType === "string" && typeof objectId === "string"
-    && typeof version === "number" && isRecord(receipt) && typeof receipt["receiptHash"] === "string"
-    && typeof receipt["commitSeq"] === "number" && typeof receipt["recordedAtMs"] === "number"
 }
 
 export interface NornClientOptions {
@@ -278,15 +295,16 @@ export function createNornClient<M extends ActionMapShape<M> = UntypedActions>(o
     if (status === 202) {
       const pending = parsed(text)
       const decision = isRecord(pending) ? pending["decision"] : undefined
-      if (isRecord(pending) && pending["outcome"] === "pending" && isRecord(decision) && typeof decision["id"] === "string" && typeof decision["expiresAtMs"] === "number") {
-        return { kind: "pending", decision: { id: decision["id"], expiresAtMs: decision["expiresAtMs"] } }
+      if (isRecord(pending) && pending["outcome"] === "pending" && conforms("PendingDecision", decision)) {
+        const { id, expiresAtMs } = decision as PendingDecision
+        return { kind: "pending", decision: { id, expiresAtMs } }
       }
-      throw new NornUnavailable(status, "The cell answered 202 without a pending decision; nothing was saved.")
+      throw new NornUnexpectedResponse(status, "a pending decision")
     }
     if (ok) {
       const receipt = parsed(text)
-      if (!isReceipt(receipt)) throw new NornUnavailable(status, "The cell's answer was not a receipt; nothing is known to be saved.")
-      return { kind: "receipt", receipt }
+      if (!conforms("ActionReceipt", receipt)) throw new NornUnexpectedResponse(status, "an action receipt")
+      return { kind: "receipt", receipt: receipt as ActionReceipt }
     }
     return { kind: "refused", ...refusalOrThrow(status, text) }
   }
@@ -304,12 +322,11 @@ export function createNornClient<M extends ActionMapShape<M> = UntypedActions>(o
       const { status, ok, text } = await request("/v1/actions", params, { headers: { accept: "application/json" }, ...signal === undefined ? {} : { signal } })
       if (ok) {
         const document = parsed(text)
-        if (!isRecord(document) || !Array.isArray(document["items"]) || typeof document["definitionsVersion"] !== "number") {
-          throw new NornUnavailable(status, "The cell's action catalog was not a catalog document.")
-        }
-        const served = document["definitionsVersion"]
+        if (!conforms("NornActionCatalog", document)) throw new NornUnexpectedResponse(status, "an action catalog")
+        const catalog = document as { readonly definitionsVersion: number; readonly items: readonly ActionSummary[] }
+        const served = catalog.definitionsVersion
         if (pin !== undefined && served !== pin) return { kind: "stale", pinned: pin, served }
-        return { kind: "catalog", items: document["items"] as ActionSummary[], definitionsVersion: served }
+        return { kind: "catalog", items: catalog.items, definitionsVersion: served }
       }
       return { kind: "refused", ...refusalOrThrow(status, text) }
     },

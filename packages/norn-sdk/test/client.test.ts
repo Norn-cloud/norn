@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 // Wire documents in the shapes crates/norn-cell-do/tests/actions.rs pins, with neutral names.
 import served from "./fixtures/action-call.json"
-import { createIntentKey, createNornClient, NornUnavailable, type CallResult } from "../src/index.ts"
+import { createIntentKey, createNornClient, NornUnavailable, NornUnexpectedResponse, type CallResult } from "../src/index.ts"
 
 interface Sent { readonly url: string; readonly method: string; readonly body: string | null; readonly headers: Record<string, string> }
 
@@ -53,29 +53,42 @@ test("SDK-CALL-1: a call answers exactly receipt, pending or refused", async () 
   expect(results.map(label)).toEqual([served.committed.objectId, served.pending.decision.id, "action.idempotency_conflict", "action.receipts_unconfigured"])
 })
 
-test("SDK-CALL-2: what is none of the three arms throws NornUnavailable; nothing is guessed", async () => {
-  for (const [response, status, notServed] of [
-    [new Response("", { status: 404 }), 404, true],
-    // A 404 is the route's absence even when its body is a refusal (`route.not_found`).
-    [Response.json(served.routeNotFound, { status: 404 }), 404, true],
-    [new Response("", { status: 503 }), 503, true],
-    // A gateway's 503 with a `code` is still not a Refusal@2.
-    [Response.json({ code: "host.down", message: "down" }, { status: 503 }), 503, true],
-    [new Response("<html>bad gateway</html>", { status: 502 }), 502, false],
-    [Response.json({ outcome: "pending" }, { status: 202 }), 202, false],
-    [new Response("not json", { status: 200 }), 200, false],
-    // A 2xx is a receipt only when it is one.
-    [Response.json({}), 200, false],
-    [Response.json([]), 200, false],
-    [Response.json({ ...served.committed, outcome: "maybe" }), 200, false],
-    [Response.json({ ...served.committed, receipt: { receiptHash: "h" } }), 200, false],
+test("SDK-CALL-2: what is none of the three arms throws NornUnavailable, saying whether the request may have been applied", async () => {
+  const notApplied = "not-applied", unknown = "unknown"
+  for (const [response, status, notServed, outcome, unexpected] of [
+    // A 404 is the route's absence, even when its body is a refusal (`route.not_found`): nothing was done.
+    [new Response("", { status: 404 }), 404, true, notApplied, false],
+    [Response.json(served.routeNotFound, { status: 404 }), 404, true, notApplied, false],
+    // Anything else may have been applied before its answer was garbled.
+    [new Response("", { status: 503 }), 503, true, unknown, false],
+    [Response.json({ code: "host.down", message: "down" }, { status: 503 }), 503, true, unknown, false],
+    [new Response("<html>bad gateway</html>", { status: 502 }), 502, false, unknown, false],
+    // A success status is a success document only when it is one; the cell said it succeeded.
+    [Response.json({ outcome: "pending" }, { status: 202 }), 202, false, unknown, true],
+    [Response.json({ outcome: "pending", decision: { id: "d", expiresAtMs: 1.5 } }, { status: 202 }), 202, false, unknown, true],
+    [new Response("not json", { status: 200 }), 200, false, unknown, true],
+    [Response.json({}), 200, false, unknown, true],
+    [Response.json([]), 200, false, unknown, true],
+    [Response.json({ ...served.committed, outcome: "maybe" }), 200, false, unknown, true],
+    [Response.json({ ...served.committed, receipt: { receiptHash: "h" } }), 200, false, unknown, true],
+    [Response.json({ ...served.committed, version: 1.5 }), 200, false, unknown, true],
+    [Response.json({ ...served.committed, version: -1 }), 200, false, unknown, true],
+    [Response.json({ ...served.committed, trace: {} }), 200, false, unknown, true],
+    [Response.json({ ...served.committed, trace: { traceId: 7 } }), 200, false, unknown, true],
   ] as const) {
     const client = createNornClient({ scope, fetch: cell(() => response.clone()).fetch })
-    const error = await failure(client.call("any.action", {}, { idempotencyKey: "k" }))
+    const error = await failure(client.call("any.action", {}, { idempotencyKey: "k" })) as NornUnavailable
     expect(error).toBeInstanceOf(NornUnavailable)
-    expect((error as NornUnavailable).status).toBe(status)
-    expect((error as NornUnavailable).notServed).toBe(notServed)
+    expect([status, error.status, error.notServed, error.outcome, error instanceof NornUnexpectedResponse]).toEqual([status, status, notServed, outcome, unexpected])
+    // An unknown outcome never claims nothing was saved; it says to retry with the original key.
+    if (outcome === unknown) {
+      expect(error.message).not.toContain("nothing was")
+      expect(error.message).toContain("original idempotency key")
+    } else expect(error.message).toContain("nothing was read or saved")
   }
+  // A receipt that carries a whole trace is a receipt.
+  const traced = createNornClient({ scope, fetch: cell(() => Response.json({ ...served.committed, trace: { traceId: "t-1" } })).fetch })
+  expect((await traced.call("any.action", {}, { idempotencyKey: "k" })).kind).toBe("receipt")
 })
 
 test("SDK-CALL-3: no answer at all is NornUnavailable with status 0 and its cause; an abort or a host error passes through", async () => {
@@ -84,7 +97,8 @@ test("SDK-CALL-3: no answer at all is NornUnavailable with status 0 and its caus
   const error = await failure(offline.call("any.action", {}, { idempotencyKey: "k" })) as NornUnavailable
   expect(error).toBeInstanceOf(NornUnavailable)
   expect([error.status, error.notServed, error.cause]).toEqual([0, false, lost])
-  expect(error.message).toContain("(network)")
+  expect(error.outcome).toBe("unknown")
+  expect(error.message).toContain("could not be read, so the outcome is unknown")
   expect(await failure(offline.listActions())).toBeInstanceOf(NornUnavailable)
 
   const controller = new AbortController()
@@ -135,7 +149,7 @@ test("SDK-INTENT-1: one key per user intent, reused on retry and never derived f
 
 test("SDK-DEFS-1: a definitions version pins calls; a catalog from another version reads as stale", async () => {
   const wire = cell((sent) => sent.method === "GET"
-    ? Response.json({ definitionsVersion: 8, items: [{ actionId: "ml.model.register" }] })
+    ? Response.json({ definitionsVersion: 8, items: [summary] })
     : Response.json(served.stale, { status: served.status.stale }))
   const version = (sent: Sent) => new URL(sent.url, "http://x").searchParams.get("version")
   const pinned = createNornClient<Actions>({ scope, fetch: wire.fetch, definitionsVersion: 7 })
@@ -148,7 +162,7 @@ test("SDK-DEFS-1: a definitions version pins calls; a catalog from another versi
   // Read the version from the catalog and pin to it, without rebuilding the client.
   const open = createNornClient<Actions>({ scope, fetch: wire.fetch })
   const catalog = await open.listActions({ objectKind: "ml.Model", objectId: "m-1" })
-  expect(catalog).toEqual({ kind: "catalog", items: [{ actionId: "ml.model.register" }] as never, definitionsVersion: 8 })
+  expect(catalog).toEqual({ kind: "catalog", items: [summary] as never, definitionsVersion: 8 })
   expect(wire.sent.at(-1)!.url).toBe("/v1/actions?orgId=org_a&environmentId=dev&objectKind=ml.Model&objectId=m-1")
   if (catalog.kind !== "catalog") throw new Error("catalog")
   const current = open.pinned(catalog.definitionsVersion)
@@ -171,6 +185,12 @@ test("SDK-REFUSAL-1: a malformed finding is skipped, never a crash", async () =>
   expect(result.kind === "refused" && result.diagnostics).toEqual([{ code: "x", message: "m", pointer: null }, { code: "y", message: "n", pointer: "/input/a" }])
 })
 
+const summary = {
+  actionId: "ml.model.register", title: "Register a model", objectKind: "ml.Model", effect: "upsert_input_object",
+  objectIdField: "model_id", inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  uiEffects: { destructive: false, irreversible: false, money: [] },
+}
+
 test("SDK-CATALOG-1: catalog refusals, unserved routes and malformed documents", async () => {
   const denied = createNornClient({ scope, fetch: cell(() => Response.json(served.denied, { status: 403 })).fetch })
   expect(await denied.listActions()).toMatchObject({ kind: "refused", status: 403, code: "authz.denied", category: "permission" })
@@ -178,9 +198,14 @@ test("SDK-CATALOG-1: catalog refusals, unserved routes and malformed documents",
   expect(((await failure(absent.listActions())) as NornUnavailable).notServed).toBe(true)
   const unconfigured = createNornClient({ scope, fetch: cell(() => Response.json(served.unconfigured, { status: 503 })).fetch })
   expect(await unconfigured.listActions()).toMatchObject({ kind: "refused", status: 503, code: "action.receipts_unconfigured" })
-  for (const document of [{ items: "no", definitionsVersion: 1 }, { items: [] }, []]) {
+  for (const document of [
+    { items: "no", definitionsVersion: 1 }, { items: [] }, [], { definitionsVersion: 1, items: [null] },
+    { definitionsVersion: 1, items: [{ actionId: "a" }] }, { definitionsVersion: 1.5, items: [] },
+    { definitionsVersion: 1, items: [{ ...summary, uiEffects: { destructive: false, irreversible: false } }] },
+    { definitionsVersion: 1, items: [{ ...summary, effect: "teleport" }] },
+  ]) {
     const garbled = createNornClient({ scope, fetch: cell(() => Response.json(document)).fetch })
-    expect(await failure(garbled.listActions())).toBeInstanceOf(NornUnavailable)
+    expect([document, await failure(garbled.listActions())]).toEqual([document, expect.any(NornUnexpectedResponse)])
   }
   // An objectId without an objectKind names nothing: it is not sent.
   const wire = cell(() => Response.json({ definitionsVersion: 1, items: [] }))

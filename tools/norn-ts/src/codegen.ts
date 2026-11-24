@@ -22,6 +22,7 @@ import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { canonicalJson, type Json } from "./canonical.ts"
 import { isArtifact, readArtifacts } from "./pack.ts"
+import { mayReadActor } from "./zen-tokens.ts"
 
 export class CodegenError extends Error {
   constructor(readonly at: string, message: string) {
@@ -40,6 +41,11 @@ const key = (name: string): string => JSON.stringify(name)
 const pad = (depth: number): string => "  ".repeat(depth)
 const pointer = (name: string): string => name.replaceAll("~", "~0").replaceAll("/", "~1")
 const JSON_DOMAIN = "array,boolean,null,number,object,string"
+/**
+ * A closed object with no members. TypeScript's `{}` admits any non-null value (`42`, `"x"`, an
+ * object with members); this admits only an object with none.
+ */
+const CLOSED_EMPTY = "Readonly<Record<string, never>>"
 
 /** Display labels (D66) admitted beside any closed action-input schema node (never an output); they never change its type. */
 const LABELS = ["title", "description"]
@@ -76,6 +82,34 @@ function schemaDoc(node: unknown): string | null {
   return [text, decimal].filter((v): v is string => v !== null && v !== "").join(" ") || null
 }
 
+const DECIMAL_MEMBERS = new Set(["kind", "scale", "unit", "currencySource", "perUnit", "rounding", "additivity", "unitSource"])
+const unitCode = (unit: unknown): boolean => record(unit) && typeof unit["code"] === "string" && unit["code"] !== "" && !/\s/.test(unit["code"])
+
+/**
+ * VAL-EXACT-1, as `norn_expr::schema::decimal_refinement` admits it: a Decimal of integer scale
+ * 0..=18; a unit and a currency source are exclusive; a per-unit rate needs a currency source and
+ * no unit; unit codes are non-empty with no whitespace; a currency source names a property.
+ */
+function decimalRefinement(norn: unknown, at: string): void {
+  const refuse = (why: string) => { throw new CodegenError(at, `\`nornType\` is not a bounded Decimal refinement: ${why}`) }
+  if (!record(norn) || norn["kind"] !== "decimal") refuse("it is not a decimal")
+  const site = norn as Node
+  const stray = Object.keys(site).find((member) => !DECIMAL_MEMBERS.has(member))
+  if (stray !== undefined) refuse(`\`${stray}\` is not a Decimal member`)
+  const scale = site["scale"]
+  if (typeof scale !== "number" || !Number.isInteger(scale) || scale < 0 || scale > 18) refuse("scale is not an integer in 0..=18")
+  const { unit, currencySource, perUnit } = site
+  if (unit !== undefined && !unitCode(unit)) refuse("unit has no code")
+  if (perUnit !== undefined && !unitCode(perUnit)) refuse("perUnit has no code")
+  if (currencySource !== undefined) {
+    const source = currencySource as { property?: unknown; links?: unknown }
+    if (!record(currencySource) || typeof source.property !== "string" || source.property.trim() === ""
+      || (source.links !== undefined && (!Array.isArray(source.links) || source.links.some((l) => typeof l !== "string" || l.trim() === "")))) refuse("currencySource names no property")
+  }
+  if (unit !== undefined && currencySource !== undefined) refuse("a unit and a currency source are exclusive")
+  if (perUnit !== undefined && (unit !== undefined || currencySource === undefined)) refuse("a per-unit rate needs a currency source and no unit")
+}
+
 /** A closed action schema node as a TypeScript type. */
 function schemaType(schema: unknown, at: string, depth: number, mode: Mode, root = false): string {
   if (!record(schema)) throw new CodegenError(at, "a schema node is not an object")
@@ -101,8 +135,8 @@ function schemaType(schema: unknown, at: string, depth: number, mode: Mode, root
     case "number": {
       const norn = schema["nornType"]
       if (norn === undefined) return "number"
-      if (record(norn) && norn["kind"] === "decimal") return "string"
-      throw new CodegenError(at, "`nornType` on a number is not a decimal")
+      decimalRefinement(norn, at)
+      return "string"
     }
     case "boolean": return "boolean"
     case "null": return "null"
@@ -118,6 +152,8 @@ function unionType(schema: Node, members: readonly unknown[], at: string, depth:
   const names = [...new Set(members as string[])].sort()
   if (names.length !== members.length) throw new CodegenError(at, "a type array repeats a name")
   if (names.join() === JSON_DOMAIN) {
+    // `Schema::parse_action` admits the bounded JSON leaf in action inputs only.
+    if (mode !== "input") throw new CodegenError(at, "the JSON value domain leaf is admitted in an action input only")
     if (Object.keys(schema).length !== 1) throw new CodegenError(at, "the JSON value domain leaf admits only `type`")
     return "NornJson"
   }
@@ -142,7 +178,7 @@ function objectType(schema: Node, at: string, depth: number, mode: Mode, omit: R
   }
   const required = new Set(requiredList as string[])
   const names = Object.keys(properties).filter((name) => !omit.has(name)).sort(compare)
-  if (names.length === 0) return "{}"
+  if (names.length === 0) return CLOSED_EMPTY
   const lines = names.map((name) => {
     const child = properties[name]
     const comment = schemaDoc(child)
@@ -154,23 +190,11 @@ function objectType(schema: Node, at: string, depth: number, mode: Mode, omit: R
 
 /**
  * ACTION-ACTOR-1 (`norn_kernel::actor_derived_fields`): a derivation the caller may not pre-empt
- * (`inputRequired: false`) that may read the verified actor. The kernel decides on the parsed
- * expression (`norn_expr::expression_read_paths`): a literal `actor…` path reads it, and so may
- * the root (`$`, `$root`), a closure (`#`, and the builtins that take one), a `;` sequence or an
- * assignment. Codegen has no parser, so it fails closed lexically on every one of those tokens,
- * including after a range's `..` (`[0..actor.limit]`). It does not judge parseability: an admitted
- * set never carries an expression that does not parse, and a compiled set given to codegen should
- * be an admitted one. A token inside a string literal over-drops, which is safe: a dropped field is
- * never offered, while an offered actor field is one the kernel refuses. `input.actor` (a member)
- * and `factor(...)` (another identifier) are not reads.
+ * (`inputRequired: false`) whose expression may read the verified actor, as `mayReadActor` decides
+ * it on the expression's ZEN tokens (`./zen-tokens.ts`): an `actor` name that is not a member, or a
+ * root, pointer, closure, assignment or sequence, anywhere outside a string. Such a field is not
+ * the caller's to send: the kernel refuses any caller value for it.
  */
-const MAY_READ_ACTOR: readonly RegExp[] = [
-  /(^|[^A-Za-z0-9_$.]|\.\.)actor\b/,
-  /[$#;]/,
-  /(^|[^=!<>])=($|[^=])/,
-  /(^|[^A-Za-z0-9_$.]|\.\.)(map|filter|some|all|none|one|count|flatMap)\s*\(/,
-]
-const mayReadActor = (expression: string): boolean => MAY_READ_ACTOR.some((pattern) => pattern.test(expression))
 
 function callerInput(payload: Node, at: string): string {
   const schema = payload["inputSchema"]
@@ -203,7 +227,12 @@ function propertyType(type: unknown, at: string, catalog: Catalog, depth: number
   switch (type["kind"]) {
     case "text": case "timestamp": case "date": case "duration": return "string"
     case "integer": return "number"
-    case "decimal": case "decimal-binding": return "string"
+    case "decimal": {
+      const scale = type["scale"]
+      if (typeof scale !== "number" || !Number.isInteger(scale) || scale < 0 || scale > 18) throw new CodegenError(at, "a decimal's scale is not an integer in 0..=18")
+      return "string"
+    }
+    case "decimal-binding": return "string"
     case "boolean": return "boolean"
     case "json-ext": return "NornJson"
     case "enum": {
@@ -234,7 +263,7 @@ function propertyType(type: unknown, at: string, catalog: Catalog, depth: number
 
 /** EntityIR v2 has one absence policy, nullable: every stored field is present, maybe `null`. */
 function fieldsType(properties: readonly Property[], at: string, catalog: Catalog, depth: number, seen: readonly string[] = []): string {
-  if (properties.length === 0) return "{}"
+  if (properties.length === 0) return CLOSED_EMPTY
   const ids = new Set<string>()
   const lines = [...properties].sort((a, b) => compare(String(a?.id), String(b?.id))).map((property) => {
     if (!record(property) || typeof property.id !== "string") throw new CodegenError(at, "a property has no id")
