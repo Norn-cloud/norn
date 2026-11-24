@@ -7,6 +7,46 @@ import { type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 import { toggleVariants } from "@/components/ui/toggle"
 
+function isRadioArrowKey(
+  key: string,
+  orientation: "horizontal" | "vertical",
+  modifiers?: { altKey?: boolean; ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean },
+): boolean {
+  if (modifiers?.altKey || modifiers?.ctrlKey || modifiers?.metaKey || modifiers?.shiftKey) {
+    return false
+  }
+  return orientation === "vertical"
+    ? key === "ArrowUp" || key === "ArrowDown"
+    : key === "ArrowLeft" || key === "ArrowRight"
+}
+
+function createArrowSelectGuard() {
+  let armed = false
+  let token = 0
+  return {
+    arm() {
+      const current = ++token
+      armed = true
+      // Runs in the same bubble-phase onKeyDown stack as Base UI's CompositeRoot (which
+      // schedules roving focus() via one queueMicrotask()). Nesting one additional
+      // queueMicrotask guarantees cleanup runs strictly after Base UI's focus microtask
+      // (yet still within the same keydown microtask checkpoint), so valid arrow navigation
+      // selects the focused radio while a same-axis no-op (e.g. a loopFocus={false}
+      // boundary) disarms before any subsequent focus event.
+      queueMicrotask(() => {
+        queueMicrotask(() => {
+          if (token === current) armed = false
+        })
+      })
+    },
+    consume(): boolean {
+      const active = armed
+      armed = false
+      return active
+    },
+  }
+}
+
 const ToggleGroupContext = React.createContext<
   VariantProps<typeof toggleVariants> & {
     spacing?: number
@@ -106,14 +146,14 @@ function ToggleGroup(props: ToggleGroupProps) {
     () => normalizedDefaultValue ?? []
   )
   const selected = normalizedValue ?? uncontrolled
-  const pendingArrowSelect = React.useRef(false)
-  const { onKeyDownCapture, ...groupRest } = rest
+  const arrowGuardRef = React.useRef<ReturnType<typeof createArrowSelectGuard> | null>(null)
+  if (arrowGuardRef.current === null) {
+    arrowGuardRef.current = createArrowSelectGuard()
+  }
+  const arrowGuard = arrowGuardRef.current
+  const { onKeyDown, ...groupRest } = rest
 
-  const consumeArrowSelect = React.useCallback(() => {
-    const active = pendingArrowSelect.current
-    pendingArrowSelect.current = false
-    return active
-  }, [])
+  const consumeArrowSelect = React.useCallback(() => arrowGuard.consume(), [arrowGuard])
 
   const selectRadio = React.useCallback(
     (nextValue: string) => {
@@ -136,20 +176,11 @@ function ToggleGroup(props: ToggleGroupProps) {
       orientation={orientation}
       multiple={isSingle ? false : (multiple ?? true)}
       value={selected}
-      onKeyDownCapture={(event) => {
-        const isOrientationArrow =
-          orientation === "vertical"
-            ? event.key === "ArrowUp" || event.key === "ArrowDown"
-            : event.key === "ArrowLeft" || event.key === "ArrowRight"
-        if (isSingle && isOrientationArrow) {
-          pendingArrowSelect.current = true
-          // Base UI moves roving focus synchronously during keydown; clear immediately
-          // after so a no-op arrow press can never arm a later pointer or Tab focus.
-          queueMicrotask(() => {
-            pendingArrowSelect.current = false
-          })
+      onKeyDown={(event) => {
+        onKeyDown?.(event)
+        if (isSingle && isRadioArrowKey(event.key, orientation, event)) {
+          arrowGuard.arm()
         }
-        onKeyDownCapture?.(event)
       }}
       onValueChange={(next) => {
         if (normalizedValue === undefined) setUncontrolled(next)
@@ -235,4 +266,4 @@ function ToggleGroupItem({
   )
 }
 
-export { ToggleGroup, ToggleGroupItem }
+export { ToggleGroup, ToggleGroupItem, createArrowSelectGuard, isRadioArrowKey }

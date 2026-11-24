@@ -5,7 +5,7 @@ import { Blend, Database, Fingerprint, House, Inbox, Network, Plug, ShieldCheck 
 import { renderToStaticMarkup } from "react-dom/server"
 import { ChromeDock, ChromeDockOption, ChromeDockTray, ChromeDockTrigger, chromeDockPrimitive } from "../src/components/ui/chrome-dock.tsx"
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "../src/components/ui/command.tsx"
-import { ToggleGroup, ToggleGroupItem } from "../src/components/ui/toggle-group.tsx"
+import { ToggleGroup, ToggleGroupItem, createArrowSelectGuard, isRadioArrowKey } from "../src/components/ui/toggle-group.tsx"
 import { AppearanceProvider, SHELLS, SKINS, applyAppearance, isShellChrome, isSkin, storedShellChrome, storedSkin } from "../src/lib/appearance.tsx"
 import type { Account } from "../src/lib/session.ts"
 import { Shell, type Section } from "../src/shell.tsx"
@@ -198,6 +198,44 @@ test("ToggleGroup emits radiogroup/radio/aria-checked without aria-pressed in si
   expect(multiHtml).toContain('aria-pressed="false"')
   expect(multiHtml).not.toContain('role="radio"')
   expect(multiHtml).not.toContain("aria-checked=")
+})
+
+test("ToggleGroup arrow-select guard survives Base UI's bubble-phase focus microtask and disarms after a loopFocus={false} boundary no-op", async () => {
+  expect(isRadioArrowKey("ArrowRight", "horizontal")).toBe(true)
+  expect(isRadioArrowKey("ArrowLeft", "horizontal")).toBe(true)
+  expect(isRadioArrowKey("ArrowUp", "horizontal")).toBe(false)
+  expect(isRadioArrowKey("ArrowDown", "horizontal")).toBe(false)
+  expect(isRadioArrowKey("ArrowRight", "horizontal", { shiftKey: true })).toBe(false)
+  expect(isRadioArrowKey("ArrowUp", "vertical")).toBe(true)
+  expect(isRadioArrowKey("ArrowDown", "vertical")).toBe(true)
+  expect(isRadioArrowKey("ArrowLeft", "vertical")).toBe(false)
+
+  // 1. Capture arms guard, then Base UI CompositeRoot schedules focus() via one queueMicrotask()
+  //    during bubble phase: consume() must see true when that focus microtask fires.
+  const guard = createArrowSelectGuard()
+  guard.arm()
+  const consumedDuringFocus = await new Promise<boolean>((resolve) => {
+    queueMicrotask(() => resolve(guard.consume()))
+  })
+  expect(consumedDuringFocus).toBe(true)
+  expect(guard.consume()).toBe(false)
+
+  // 2. Same-axis no-op at a loopFocus={false} boundary: capture arms guard, Base UI does not
+  //    move focus, and the nested microtask disarms before any subsequent non-arrow focus event.
+  guard.arm()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  expect(guard.consume()).toBe(false)
+
+  // 3. Rapid consecutive arrow keys: an earlier press's cleanup never cancels a newer press.
+  guard.arm()
+  const secondConsumed = await new Promise<boolean>((resolve) => {
+    queueMicrotask(() => {
+      guard.arm()
+      queueMicrotask(() => resolve(guard.consume()))
+    })
+  })
+  expect(secondConsumed).toBe(true)
+  expect(guard.consume()).toBe(false)
 })
 
 test("first-party Command palette renders accessible combobox, listbox, group, and option roles without cmdk", () => {

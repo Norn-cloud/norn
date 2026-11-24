@@ -241,8 +241,14 @@ test("single-select ToggleGroup preserves radiogroup/radio ARIA semantics and ar
   await expect(list).not.toHaveAttribute("aria-pressed", /.+/)
 
   await graph.focus()
-  // A no-op cross-axis arrow key must not arm selection for a subsequent focus change.
+  // A no-op cross-axis arrow key or modified same-axis arrow key must not arm selection.
   await page.keyboard.press("ArrowUp")
+  await list.focus()
+  await expect(graph).toHaveAttribute("aria-checked", "true")
+  await expect(list).toHaveAttribute("aria-checked", "false")
+
+  await graph.focus()
+  await page.keyboard.press("Shift+ArrowRight")
   await list.focus()
   await expect(graph).toHaveAttribute("aria-checked", "true")
   await expect(list).toHaveAttribute("aria-checked", "false")
@@ -252,4 +258,9 @@ test("single-select ToggleGroup preserves radiogroup/radio ARIA semantics and ar
   await expect(list).toBeFocused()
   await expect(list).toHaveAttribute("aria-checked", "true")
   await expect(graph).toHaveAttribute("aria-checked", "false")
+
+  await page.keyboard.press("ArrowLeft")
+  await expect(graph).toBeFocused()
+  await expect(graph).toHaveAttribute("aria-checked", "true")
+  await expect(list).toHaveAttribute("aria-checked", "false")
 })
