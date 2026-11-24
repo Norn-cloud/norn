@@ -3,14 +3,19 @@
 // sent for each path. It never polls and never computes data: a view shows the cell's answer or
 // says it has none yet. An expired token closes the socket with 4401 and the client reconnects at
 // once (the host mints a fresh token per upgrade); any other loss reconnects with backoff, and
-// after `maxFailures` failed opens the client reports `unavailable` so views can say so.
+// after `maxFailures` failed opens the client reports `unavailable` so views can say so. The frames
+// are the contract's (`@norn/sdk` `LiveClientMessage` / `LiveServerMessage`).
 
-export const LIVE_PROTOCOL = "norn.live.v1"
+import { encodeLiveMessage, LIVE_MAX_MESSAGE, LIVE_PROTOCOL, parseLiveFrame, type LiveClientMessage } from "../../../norn-sdk/src/live.ts"
+
+export { LIVE_PROTOCOL }
 
 export interface LiveSnapshot {
   readonly status: number
   readonly digest: string
   readonly body: unknown
+  /** The exact text of every number in `body`, by RFC 6901 pointer (exact decimals, #1271). */
+  readonly numbers: ReadonlyMap<string, string>
 }
 
 export interface LiveRefusal {
@@ -67,7 +72,7 @@ interface Entry {
 
 const OPEN = 1
 /** The cell closes a socket with 1009 on any client frame larger than 4096 bytes. */
-const MAX_MESSAGE = 4096
+const MAX_MESSAGE = LIVE_MAX_MESSAGE
 const utf8 = new TextEncoder()
 
 export class LiveClient {
@@ -137,13 +142,13 @@ export class LiveClient {
     this.#options.onState?.(state)
   }
 
-  #send(message: unknown) {
-    if (this.#socket?.readyState === OPEN) this.#socket.send(JSON.stringify(message))
+  #send(message: LiveClientMessage) {
+    if (this.#socket?.readyState === OPEN) this.#socket.send(encodeLiveMessage(message))
   }
 
   #sendSubscribe(entry: Entry) {
     if (entry.refused?.code === "live.not_subscribable") return
-    const wire = JSON.stringify({ type: "subscribe", id: entry.id, path: entry.path })
+    const wire = encodeLiveMessage({ type: "subscribe", id: entry.id, path: entry.path })
     if (utf8.encode(wire).byteLength > MAX_MESSAGE) {
       // Never send a frame larger than MAX_MESSAGE: the cell closes the shared socket with 1009.
       const refusal: LiveRefusal = { code: "live.not_subscribable", message: "subscription exceeds the live protocol frame limit" }
@@ -196,16 +201,12 @@ export class LiveClient {
     })
     socket.addEventListener("message", (event) => {
       if (this.#socket !== socket || typeof event.data !== "string") return
-      let message: { type?: unknown; id?: unknown; status?: unknown; digest?: unknown; body?: unknown; code?: unknown; message?: unknown }
-      try {
-        message = JSON.parse(event.data) as typeof message
-      } catch {
-        return
-      }
-      if (message.type === "refused" && typeof message.code === "string" && typeof message.message === "string") {
-        const id = typeof message.id === "string" ? message.id : null
+      const frame = parseLiveFrame(event.data)
+      if (frame === null) return
+      if (!("numbers" in frame)) {
+        const { id, code, message } = frame.message
         const entry = id !== null ? this.#byId.get(id) : undefined
-        const refusal: LiveRefusal = { code: message.code, message: message.message }
+        const refusal: LiveRefusal = { code, message }
         if (entry) {
           entry.refused = refusal
           for (const subscriber of entry.subscribers) subscriber.onRefused?.(refusal)
@@ -213,10 +214,11 @@ export class LiveClient {
         this.#options.onRefused?.({ ...refusal, id, path: entry?.path ?? null })
         return
       }
-      const entry = typeof message.id === "string" ? this.#byId.get(message.id) : undefined
-      if (!entry || message.type !== "snapshot" || typeof message.status !== "number" || typeof message.digest !== "string") return
+      const { message, numbers } = frame
+      const entry = this.#byId.get(message.id)
+      if (!entry) return
       entry.refused = undefined
-      entry.last = { status: message.status, digest: message.digest, body: message.body }
+      entry.last = { status: message.status, digest: message.digest, body: message.body, numbers }
       for (const subscriber of entry.subscribers) subscriber.listener(entry.last)
     })
     socket.addEventListener("close", (event) => {

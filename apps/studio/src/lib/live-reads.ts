@@ -12,7 +12,8 @@ import { type StudioScope, useStudioScope } from "./definitions.ts"
 let client: LiveClient | null = null
 let scopeOf: StudioScope | null = null
 
-function live(scope: StudioScope): LiveClient {
+/** The page's one live socket for `scope`; a new scope closes the previous scope's socket. */
+export function live(scope: StudioScope): LiveClient {
   if (client === null || scopeOf?.orgId !== scope.orgId || scopeOf.environmentId !== scope.environmentId) {
     client?.close()
     scopeOf = scope

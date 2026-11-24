@@ -16,9 +16,10 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use norn_api::live::{LiveServerMessage, codes};
 use norn_api::scope::CellScope;
 use rivetkit::{Ctx, WebSocket, WsMessage};
-use serde_json::{Value, json};
+use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use tokio::sync::{Mutex, mpsc};
 
@@ -26,12 +27,12 @@ use crate::actor::{CellActor, now_ms, scope_of};
 use crate::core::Call;
 
 /// The subprotocol a client asks for.
-pub const PROTOCOL: &str = "norn.live.v1";
+pub const PROTOCOL: &str = norn_api::live::PROTOCOL;
 /// Subscriptions per socket.
-pub const MAX_SUBSCRIPTIONS: usize = 8;
+pub const MAX_SUBSCRIPTIONS: usize = norn_api::live::MAX_SUBSCRIPTIONS;
 /// Sockets per cell actor.
 pub const MAX_SOCKETS: usize = 256;
-const MAX_MESSAGE: usize = 4096;
+const MAX_MESSAGE: usize = norn_api::live::MAX_MESSAGE;
 /// The router's first frame.
 pub const HELLO: &str = "norn.hello";
 
@@ -78,8 +79,10 @@ impl Sockets {
     }
 }
 
-fn send(ws: &WebSocket, message: &Value) {
-    ws.send(WsMessage::Text(message.to_string()));
+fn send(ws: &WebSocket, message: &LiveServerMessage) {
+    if let Ok(text) = message.to_text() {
+        ws.send(WsMessage::Text(text));
+    }
 }
 
 fn digest(text: &str) -> String {
@@ -95,7 +98,10 @@ fn digest(text: &str) -> String {
 /// A path a subscription may name: one of this cell's GET routes, never the
 /// live route itself.
 fn subscribable(path: &str) -> Option<(String, String)> {
-    if path.len() > 512 || !path.starts_with("/v1/") || path.starts_with("/v1/subscribe") {
+    if path.len() > norn_api::live::MAX_PATH
+        || !path.starts_with("/v1/")
+        || path.starts_with("/v1/subscribe")
+    {
         return None;
     }
     let (pathname, query) = path.split_once('?').unwrap_or((path, ""));
@@ -214,7 +220,11 @@ async fn handle(
     let Some(id) = id else {
         send(
             &socket.ws,
-            &json!({"type": "refused", "id": null, "code": "live.invalid_id", "message": "a subscription id is 1 to 64 letters, digits or _.:-"}),
+            &LiveServerMessage::refused(
+                None,
+                codes::INVALID_ID,
+                "a subscription id is 1 to 64 letters, digits or _.:-",
+            ),
         );
         return true;
     };
@@ -231,7 +241,11 @@ async fn handle(
             else {
                 send(
                     &socket.ws,
-                    &json!({"type": "refused", "id": id, "code": "live.not_subscribable", "message": "a subscription names one of this cell's GET routes"}),
+                    &LiveServerMessage::refused(
+                        Some(&id),
+                        codes::NOT_SUBSCRIBABLE,
+                        "a subscription names one of this cell's GET routes",
+                    ),
                 );
                 return true;
             };
@@ -240,7 +254,11 @@ async fn handle(
                 if !state.subs.contains_key(&id) && state.subs.len() >= MAX_SUBSCRIPTIONS {
                     send(
                         &socket.ws,
-                        &json!({"type": "refused", "id": id, "code": "live.too_many_subscriptions", "message": format!("at most {MAX_SUBSCRIPTIONS} subscriptions per socket")}),
+                        &LiveServerMessage::refused(
+                            Some(&id),
+                            codes::TOO_MANY_SUBSCRIPTIONS,
+                            format!("at most {MAX_SUBSCRIPTIONS} subscriptions per socket"),
+                        ),
                     );
                     return true;
                 }
@@ -258,7 +276,11 @@ async fn handle(
         Some(_) | None => {
             send(
                 &socket.ws,
-                &json!({"type": "refused", "id": id, "code": "live.unknown_message", "message": "messages are subscribe or unsubscribe"}),
+                &LiveServerMessage::refused(
+                    Some(&id),
+                    codes::UNKNOWN_MESSAGE,
+                    "messages are subscribe or unsubscribe",
+                ),
             );
             true
         }
@@ -346,10 +368,10 @@ async fn evaluate(actor: &Arc<CellActor>, socket: &Arc<LiveSocket>, only: Option
             continue;
         }
         sub.digest.clone_from(&value);
-        let body = serde_json::from_str::<Value>(&reply.body).unwrap_or(Value::Null);
+        // The GET's own bytes: exact decimals stay the number tokens it sent.
         send(
             &socket.ws,
-            &json!({"type": "snapshot", "id": id, "status": reply.status, "digest": value, "body": body}),
+            &LiveServerMessage::snapshot(&id, reply.status, &value, reply.body),
         );
     }
     true

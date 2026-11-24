@@ -65,7 +65,7 @@ test("one wire subscription per path; every listener gets the cell's answers, a 
   socket.snapshot("s1", "d1", { items: [] })
   client.subscribe("/v1/decisions?state=pending", (s) => b.push(s))
   expect(socket.sent).toHaveLength(1)
-  expect(b).toEqual([{ status: 200, digest: "d1", body: { items: [] } }])
+  expect(b).toEqual([{ status: 200, digest: "d1", body: { items: [] }, numbers: new Map() }])
   socket.snapshot("s1", "d2", { items: [1] })
   expect(a.map((s) => s.digest)).toEqual(["d1", "d2"])
   expect(b.map((s) => s.digest)).toEqual(["d1", "d2"])
