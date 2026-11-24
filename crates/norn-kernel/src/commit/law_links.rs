@@ -1,4 +1,4 @@
-use super::post_state::{PostRow, PostState};
+use super::post_state::{PostRow, Projection};
 use crate::cell_host::{CommitError, FactKey};
 use crate::commit_check::CommitView;
 use crate::governing_laws::{LawEvaluationError, LinkTargets, LinkedTarget};
@@ -7,13 +7,13 @@ use norn_ir::ObjectTypeName;
 pub(crate) const MAX_LINK_LAW_SUBJECTS: usize = 4096;
 
 pub(crate) struct CommitLinks<'p, 'c, 'a, V: CommitView + ?Sized> {
-    post: &'p PostState<'c, 'a, V>,
+    post: &'p Projection<'c, 'a, V>,
     subject: FactKey,
     host: Option<V::Error>,
 }
 
 impl<'p, 'c, 'a, V: CommitView + ?Sized> CommitLinks<'p, 'c, 'a, V> {
-    pub(crate) fn new(post: &'p PostState<'c, 'a, V>, subject: &FactKey) -> Self {
+    pub(crate) fn new(post: &'p Projection<'c, 'a, V>, subject: &FactKey) -> Self {
         Self {
             post,
             subject: post.model().canonical(subject),

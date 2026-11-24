@@ -24,7 +24,7 @@ use crate::cell_host::{
     FactMutation, FactState, FactVersion, FactWrite, JsonObject, JsonValue, LinkKey, LinkMutation,
     LinkReadExpectation, LinkWrite,
 };
-use crate::commit::{CommitLinks, PostState, linked_subjects};
+use crate::commit::{CommitLinks, Projection, linked_subjects};
 use crate::commit_check::{InvariantEvaluationError, InvariantFailure, evaluate_invariants};
 use crate::decision_commit::{
     DecisionRefusal, DecisionTurn, FactEvent, FactSlice, TypeCatalog, modified_event,
@@ -1246,7 +1246,7 @@ impl ObservationAuthorization {
     ) -> Result<(), ObservationRefusal> {
         let model = crate::CommitModel::new(catalog);
         let refuse = |error: String| ObservationRefusal::Encoding(format!("LAW-LINK-1: {error}"));
-        let post = PostState::preview(&commit.writes, &commit.links, model, view)
+        let post = Projection::preview(&commit.writes, &commit.links, model, view)
             .map_err(|e| refuse(e.code().into()))?;
         let mut remaining = EvaluationBudget::default().units();
         for authorized in &mut self.writes {
@@ -1343,7 +1343,7 @@ impl ObservationAuthorization {
             }
         };
         let post =
-            PostState::preview(&commit.writes, &commit.links, model, view).map_err(from_commit)?;
+            Projection::preview(&commit.writes, &commit.links, model, view).map_err(from_commit)?;
         let written: BTreeSet<FactKey> = commit
             .writes
             .iter()

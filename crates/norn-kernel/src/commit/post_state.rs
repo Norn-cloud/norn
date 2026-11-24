@@ -1,8 +1,8 @@
 //! Canonical identity indexes shared by every reader of the proposed state.
 use super::overlay_core::{EdgeDelta, RowChange, RowSource, edge_delta, resolve};
 use crate::cell_host::{
-    CommitError, CommitVersions, FactKey, FactMutation, FactVersion, FactWrite, JsonObject,
-    LinkKey, LinkMutation, LinkWrite, WrittenLinkVersion, WrittenVersion,
+    CellCommit, CommitError, CommitVersions, FactKey, FactMutation, FactVersion, FactWrite,
+    JsonObject, LinkKey, LinkMutation, LinkWrite, WrittenLinkVersion, WrittenVersion,
 };
 use crate::{CommitModel, CommitView};
 use norn_ir::ObjectTypeName;
@@ -64,22 +64,47 @@ struct PutRow<'c> {
     values: JsonObject,
 }
 
+/// The admitted projection and the exact ordered successors used to construct it.
+/// Observation preparation can build a Projection, but cannot obtain a PostState.
 pub(crate) struct PostState<'c, 'a, V: ?Sized> {
+    projection: Projection<'c, 'a, V>,
+    plan: VersionPlan,
+}
+impl<'c, 'a, V: CommitView + ?Sized> PostState<'c, 'a, V> {
+    pub(super) fn seal<E, C, T>(
+        commit: &'c CellCommit<E, C, T>,
+        model: CommitModel<'c, 'a>,
+        view: &'c V,
+        plan: VersionPlan,
+    ) -> Result<Self, CommitError<V::Error>> {
+        let projection = Projection::project(&commit.writes, &commit.links, model, view, &plan)?;
+        Ok(Self { projection, plan })
+    }
+    pub(super) fn into_versions(self) -> CommitVersions {
+        self.plan.0
+    }
+}
+impl<'c, 'a, V: ?Sized> std::ops::Deref for PostState<'c, 'a, V> {
+    type Target = Projection<'c, 'a, V>;
+    fn deref(&self) -> &Self::Target {
+        &self.projection
+    }
+}
+pub(crate) struct Projection<'c, 'a, V: ?Sized> {
     model: CommitModel<'c, 'a>,
     view: &'c V,
-    plan: VersionPlan,
     rows: BTreeMap<Canon, RowChange>,
     puts: Vec<PutRow<'c>>,
     edges: BTreeMap<FactKey, Vec<(LinkKey, bool)>>,
 }
 
-impl<'c, 'a, V: CommitView + ?Sized> PostState<'c, 'a, V> {
-    pub(super) fn seal(
+impl<'c, 'a, V: CommitView + ?Sized> Projection<'c, 'a, V> {
+    fn project(
         writes: &'c [FactWrite],
         links: &'c [LinkWrite],
         model: CommitModel<'c, 'a>,
         view: &'c V,
-        plan: VersionPlan,
+        plan: &VersionPlan,
     ) -> Result<Self, CommitError<V::Error>> {
         let mut rows = BTreeMap::new();
         let mut puts = Vec::new();
@@ -123,7 +148,6 @@ impl<'c, 'a, V: CommitView + ?Sized> PostState<'c, 'a, V> {
         Ok(Self {
             model,
             view,
-            plan,
             rows,
             puts,
             edges,
@@ -137,12 +161,12 @@ impl<'c, 'a, V: CommitView + ?Sized> PostState<'c, 'a, V> {
         model: CommitModel<'c, 'a>,
         view: &'c V,
     ) -> Result<Self, CommitError<V::Error>> {
-        Self::seal(
+        Self::project(
             writes,
             links,
             model,
             view,
-            VersionPlan::checked(writes, links)?,
+            &VersionPlan::checked(writes, links)?,
         )
     }
     pub(crate) fn snapshot(&self) -> Self {
@@ -152,26 +176,19 @@ impl<'c, 'a, V: CommitView + ?Sized> PostState<'c, 'a, V> {
             rows: BTreeMap::new(),
             puts: Vec::new(),
             edges: BTreeMap::new(),
-            plan: VersionPlan(CommitVersions {
-                written: Vec::new(),
-                linked: Vec::new(),
-            }),
         }
     }
-    pub(super) fn before(&self) -> &'c V {
+    pub(crate) fn before(&self) -> &'c V {
         self.view
     }
     pub(crate) fn model(&self) -> CommitModel<'c, 'a> {
         self.model
     }
-    pub(super) fn into_versions(self) -> CommitVersions {
-        self.plan.0
-    }
     fn source(&self, key: &Canon) -> Result<RowSource<'_, PutRow<'c>>, CommitError<V::Error>> {
         resolve(&self.puts, self.rows.get(key).copied()).ok_or(CommitError::Overflow)
     }
 
-    pub(super) fn concrete(
+    pub(crate) fn concrete(
         &self,
         key: &FactKey,
     ) -> Result<Option<ObjectTypeName>, CommitError<V::Error>> {

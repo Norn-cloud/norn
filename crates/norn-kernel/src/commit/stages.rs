@@ -75,13 +75,7 @@ impl<E, C, T, V: CommitView + ?Sized> CommitStages<CommitError<V::Error>>
                         check_versions(commit, model, view, authorization)?;
                         let plan = VersionPlan::checked(&commit.writes, &commit.links)?;
                         self.phase = Phase::Post(PostStages {
-                            post: PostState::seal(
-                                &commit.writes,
-                                &commit.links,
-                                model,
-                                view,
-                                plan,
-                            )?,
+                            post: PostState::seal(commit, model, view, plan)?,
                             links: BTreeMap::new(),
                         });
                         Ok(())

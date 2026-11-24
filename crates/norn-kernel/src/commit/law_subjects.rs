@@ -1,4 +1,4 @@
-use super::post_state::PostRow;
+use super::post_state::{PostRow, Projection};
 use super::{CommitLinks, MAX_LINK_LAW_SUBJECTS, PostState};
 use crate::cell_host::{CellCommit, CommitError, FactKey, FactMutation, LinkKey};
 use crate::commit_check::CommitView;
@@ -11,7 +11,7 @@ use std::collections::BTreeSet;
 /// targets its forward link reaches before and after the commit, so a source
 /// that moves re-checks both the subject it leaves and the one it joins.
 fn inverse_subjects<V: CommitView + ?Sized>(
-    post: &PostState<'_, '_, V>,
+    post: &Projection<'_, '_, V>,
     index: &crate::governing_laws::LinkLawIndex,
     source: &FactKey,
     concrete: &ObjectTypeName,
@@ -58,7 +58,7 @@ fn inverse_subjects<V: CommitView + ?Sized>(
 /// than [`MAX_LINK_LAW_SUBJECTS`] on one target refuses the commit
 /// (`core.compute.bound_exceeded`); it is never checked partially.
 pub(crate) fn linked_subjects<V: CommitView + ?Sized>(
-    post: &PostState<'_, '_, V>,
+    post: &Projection<'_, '_, V>,
     index: &crate::governing_laws::LinkLawIndex,
     written: &FactKey,
     skip: &BTreeSet<FactKey>,
@@ -275,7 +275,7 @@ fn law_subjects<E, C, T, V: CommitView + ?Sized>(
 }
 
 fn evaluate<V: CommitView + ?Sized>(
-    on: &PostState<'_, '_, V>,
+    on: &Projection<'_, '_, V>,
     key: &FactKey,
     values: &crate::cell_host::JsonObject,
     remaining: &mut u64,
