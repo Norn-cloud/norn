@@ -90,7 +90,23 @@ impl Expression {
         env: &crate::ZenTypeEnv,
         expected: &crate::Type,
     ) -> Result<crate::CheckedExpression, Vec<crate::Diagnostic>> {
-        crate::check::check_typed_expression(self, env, expected)
+        self.check_typed_with(env, expected, &ResourceLimitProfile::norn_limits_v1())
+    }
+
+    /// VAL-ROUND: check the shared type grammar and the declared exact-site profile
+    /// against an explicit resource limit profile, falling back to the plain profile
+    /// when no exact decimal read, exact destination, or explicit three-argument
+    /// `round(..., scale, mode)` site is present.
+    ///
+    /// # Errors
+    /// Returns structural/type findings or refusals from the exact arithmetic profile.
+    pub fn check_typed_with(
+        &self,
+        env: &crate::ZenTypeEnv,
+        expected: &crate::Type,
+        limits: &ResourceLimitProfile,
+    ) -> Result<crate::CheckedExpression, Vec<crate::Diagnostic>> {
+        crate::check::check_typed_expression(self, env, expected, limits)
     }
 
     /// VAL-EXACT-1: the compile [`Self::evaluate_admitted_metered`] runs before
