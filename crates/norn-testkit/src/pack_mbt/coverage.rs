@@ -145,7 +145,11 @@ impl DomainCoverage {
     }
 
     /// Increments an immutable refusal counter.
-    pub fn hit_immutable_refusal(&mut self, object_type: impl Into<String>, target: impl Into<String>) {
+    pub fn hit_immutable_refusal(
+        &mut self,
+        object_type: impl Into<String>,
+        target: impl Into<String>,
+    ) {
         bump(
             &mut self.immutable_refusals,
             ImmutableTarget {
@@ -190,7 +194,10 @@ impl DomainCoverage {
     /// Merges another coverage tally into `self`.
     pub fn merge(&mut self, other: &Self) {
         merge_counts(&mut self.transitions, &other.transitions);
-        merge_counts(&mut self.disallowed_transitions, &other.disallowed_transitions);
+        merge_counts(
+            &mut self.disallowed_transitions,
+            &other.disallowed_transitions,
+        );
         merge_counts(&mut self.immutable_refusals, &other.immutable_refusals);
         merge_counts(&mut self.law_holds, &other.law_holds);
         merge_counts(&mut self.law_violations, &other.law_violations);
@@ -200,7 +207,11 @@ impl DomainCoverage {
 
     /// Produces a structured gap report against `plan`.
     #[must_use]
-    pub fn report(&self, pack_name: impl Into<String>, plan: &DomainCoveragePlan) -> DomainCoverageReport {
+    pub fn report(
+        &self,
+        pack_name: impl Into<String>,
+        plan: &DomainCoveragePlan,
+    ) -> DomainCoverageReport {
         let uncovered_transitions = plan
             .transitions
             .iter()

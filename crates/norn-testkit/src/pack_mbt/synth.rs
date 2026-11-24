@@ -42,7 +42,12 @@ pub fn synthesize_object(
     let key_props: BTreeSet<&str> = object_type
         .identity
         .first()
-        .map(|spec| spec.properties.iter().map(norn_kernel::norn_ir::PropertyId::as_str).collect())
+        .map(|spec| {
+            spec.properties
+                .iter()
+                .map(norn_kernel::norn_ir::PropertyId::as_str)
+                .collect()
+        })
         .unwrap_or_default();
 
     let mut values = JsonObject::new();
@@ -93,7 +98,9 @@ pub fn synthesize_guard_satisfying(
     }
     // Try flipping every non-lifecycle boolean property on/off as a small finite search.
     let bool_props = non_lifecycle_bool_properties(object_type, lifecycle);
-    let combos = 1usize.checked_shl(u32::try_from(bool_props.len().min(6)).unwrap_or(0)).unwrap_or(1);
+    let combos = 1usize
+        .checked_shl(u32::try_from(bool_props.len().min(6)).unwrap_or(0))
+        .unwrap_or(1);
     for mask in 0..combos {
         let mut candidate = base.clone();
         for (idx, prop_id) in bool_props.iter().take(6).enumerate() {
@@ -192,7 +199,11 @@ pub fn pick_non_lifecycle_mutation(
     let key_props: BTreeSet<&str> = object_type
         .identity
         .iter()
-        .flat_map(|spec| spec.properties.iter().map(norn_kernel::norn_ir::PropertyId::as_str))
+        .flat_map(|spec| {
+            spec.properties
+                .iter()
+                .map(norn_kernel::norn_ir::PropertyId::as_str)
+        })
         .collect();
 
     for prop in &object_type.properties {
@@ -211,10 +222,7 @@ pub fn pick_non_lifecycle_mutation(
 
 /// Evaluates whether all `guards` return `true` on `values`.
 #[must_use]
-pub fn guards_hold(
-    guards: &[norn_kernel::norn_ir::ZenExpression],
-    values: &JsonObject,
-) -> bool {
+pub fn guards_hold(guards: &[norn_kernel::norn_ir::ZenExpression], values: &JsonObject) -> bool {
     let Ok(self_val) = ExprValue::try_from(&JsonValue::Object(values.clone())) else {
         return false;
     };
@@ -343,17 +351,21 @@ fn json_default_to_runtime(
 ) -> Option<JsonValue> {
     let resolved = resolve_property_type(&prop.property_type, shared);
     match (resolved, raw) {
-        (PropertyType::Integer {} | PropertyType::Decimal { .. }, norn_kernel::norn_ir::JsonValue::String(text)) => {
-            Decimal::parse_wire(text).ok().map(JsonValue::Number)
-        }
+        (
+            PropertyType::Integer {} | PropertyType::Decimal { .. },
+            norn_kernel::norn_ir::JsonValue::String(text),
+        ) => Decimal::parse_wire(text).ok().map(JsonValue::Number),
         (_, norn_kernel::norn_ir::JsonValue::Bool(b)) => Some(JsonValue::Bool(*b)),
         (_, norn_kernel::norn_ir::JsonValue::String(s)) => Some(JsonValue::String(s.clone())),
-        (_, norn_kernel::norn_ir::JsonValue::Number(n)) => {
-            Decimal::parse_wire(&n.to_string()).ok().map(JsonValue::Number)
-        }
-        (_, norn_kernel::norn_ir::JsonValue::Null | norn_kernel::norn_ir::JsonValue::Array(_) | norn_kernel::norn_ir::JsonValue::Object(_)) => {
-            None
-        }
+        (_, norn_kernel::norn_ir::JsonValue::Number(n)) => Decimal::parse_wire(&n.to_string())
+            .ok()
+            .map(JsonValue::Number),
+        (
+            _,
+            norn_kernel::norn_ir::JsonValue::Null
+            | norn_kernel::norn_ir::JsonValue::Array(_)
+            | norn_kernel::norn_ir::JsonValue::Object(_),
+        ) => None,
     }
 }
 
@@ -426,7 +438,9 @@ fn alternate_value(
             Some(JsonValue::String(format!("mut-{prop_id}-{nonce}")))
         }
         PropertyType::Integer {} => {
-            let next = i64::try_from(nonce % 10_000).unwrap_or(0).saturating_add(101);
+            let next = i64::try_from(nonce % 10_000)
+                .unwrap_or(0)
+                .saturating_add(101);
             Some(JsonValue::from(next))
         }
         PropertyType::Decimal { .. } => {
@@ -445,7 +459,10 @@ fn alternate_value(
         PropertyType::Timestamp {} => Some(JsonValue::String("2026-06-20T15:30:00Z".to_owned())),
         PropertyType::JsonExt {} => {
             let mut obj = JsonObject::new();
-            obj.insert("nonce".to_owned(), JsonValue::from(i64::try_from(nonce).unwrap_or(1)));
+            obj.insert(
+                "nonce".to_owned(),
+                JsonValue::from(i64::try_from(nonce).unwrap_or(1)),
+            );
             Some(JsonValue::Object(obj))
         }
     }

@@ -210,9 +210,10 @@ where
             "pack DST failed on pack '{}': {reason}; minimal sequence: {minimal_steps:?}",
             pack.name
         )),
-        Err(TestError::Abort(reason)) => {
-            Err(format!("pack DST aborted on pack '{}': {reason}", pack.name))
-        }
+        Err(TestError::Abort(reason)) => Err(format!(
+            "pack DST aborted on pack '{}': {reason}",
+            pack.name
+        )),
     }
 }
 
@@ -405,7 +406,9 @@ impl<H: PackHost> DstCaseState<'_, H> {
                 Err(refusal) if refusal.code() == "decision.object_missing" => {
                     ensure_unchanged(self.host, before, "transition on missing entity")
                 }
-                other => Err(format!("expected object_missing on absent {ty_name}: {other:?}")),
+                other => Err(format!(
+                    "expected object_missing on absent {ty_name}: {other:?}"
+                )),
             },
             Some(from_state) => {
                 let allowed_from = transition.from.iter().any(|src| src == &from_state);
@@ -428,7 +431,9 @@ impl<H: PackHost> DstCaseState<'_, H> {
                         });
                         Ok(())
                     }
-                    (false, Err(refusal)) if refusal.code() == lifecycle_codes::UNDECLARED_WRITE => {
+                    (false, Err(refusal))
+                        if refusal.code() == lifecycle_codes::UNDECLARED_WRITE =>
+                    {
                         self.coverage.hit_disallowed_transition(DomainTransition {
                             object_type: ty_name.to_owned(),
                             lifecycle: prop.to_owned(),

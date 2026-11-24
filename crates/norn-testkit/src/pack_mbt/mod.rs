@@ -245,9 +245,7 @@ impl AdmittedPack {
 /// Implemented for `MemoryCell` (in-memory reference host) and for file-backed
 /// `SqliteCell` / `ObservedSqliteCell` (real SQLite durability, crash/reopen,
 /// and `verify_ledger()`).
-pub trait PackHost:
-    CellHost<Event = FactEvent, Command = JsonObject, Input = JsonObject>
-{
+pub trait PackHost: CellHost<Event = FactEvent, Command = JsonObject, Input = JsonObject> {
     /// Current committed ledger entry count (used to prove zero ledger writes
     /// on every refused transition, immutable write, law violation, or Cedar
     /// denial).

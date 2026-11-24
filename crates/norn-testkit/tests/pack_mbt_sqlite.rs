@@ -25,9 +25,7 @@ use norn_kernel::{
 use norn_testkit::pack_mbt::driver::run_pack_mbt;
 use norn_testkit::pack_mbt::dst::{PackDstConfig, run_pack_dst};
 use norn_testkit::pack_mbt::static_gaps::{GapSeverity, StructuralGap, analyze_static_gaps};
-use norn_testkit::pack_mbt::{
-    AdmittedPack, LawExampleCase, PackHost, action_call_object_type,
-};
+use norn_testkit::pack_mbt::{AdmittedPack, LawExampleCase, PackHost, action_call_object_type};
 use serde_json::json;
 use tempfile::TempDir;
 
@@ -79,7 +77,9 @@ impl SqlitePackHost {
         })
     }
 
-    fn cell_ref(&self) -> Result<&ObservedSqliteCell<FactEvent, JsonObject, JsonObject>, CellError> {
+    fn cell_ref(
+        &self,
+    ) -> Result<&ObservedSqliteCell<FactEvent, JsonObject, JsonObject>, CellError> {
         self.cell
             .as_ref()
             .ok_or_else(|| CellError::Engine("cell closed".to_owned()))
@@ -105,7 +105,9 @@ impl CellHost for SqlitePackHost {
     }
 
     fn supports_reference_reads(&self) -> bool {
-        self.cell.as_ref().is_some_and(CellHost::supports_reference_reads)
+        self.cell
+            .as_ref()
+            .is_some_and(CellHost::supports_reference_reads)
     }
 
     fn load_reference(
@@ -283,16 +285,20 @@ fn load_envelopes_from_dir(dir: &Path) -> Result<Vec<ArtifactEnvelope>, String> 
     paths.sort();
     let mut envelopes = Vec::with_capacity(paths.len());
     for path in paths {
-        let raw = fs::read_to_string(&path)
-            .map_err(|err| format!("read {}: {err}", path.display()))?;
-        let env: ArtifactEnvelope = serde_json::from_str(&raw)
-            .map_err(|err| format!("parse {}: {err}", path.display()))?;
+        let raw =
+            fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))?;
+        let env: ArtifactEnvelope =
+            serde_json::from_str(&raw).map_err(|err| format!("parse {}: {err}", path.display()))?;
         envelopes.push(env);
     }
     Ok(envelopes)
 }
 
-fn load_registry_pack(name: &str, pack_dirs: &[&str], include_core: bool) -> Result<AdmittedPack, String> {
+fn load_registry_pack(
+    name: &str,
+    pack_dirs: &[&str],
+    include_core: bool,
+) -> Result<AdmittedPack, String> {
     let root = repo_root();
     let mut envelopes = Vec::new();
     let mut seen_ids = BTreeSet::new();
@@ -304,7 +310,9 @@ fn load_registry_pack(name: &str, pack_dirs: &[&str], include_core: bool) -> Res
         }
     }
     for dir in pack_dirs {
-        for env in load_envelopes_from_dir(&root.join("registry/packs").join(dir).join("artifacts"))? {
+        for env in
+            load_envelopes_from_dir(&root.join("registry/packs").join(dir).join("artifacts"))?
+        {
             if seen_ids.insert(env.artifact_id.clone()) {
                 envelopes.push(env);
             }
@@ -331,7 +339,9 @@ fn real_tracking_pack_passes_sqlite_mbt_and_dst() -> Result<(), String> {
     let pack = load_registry_pack("tracking", &["tracking"], false)?;
     let recorder = Arc::new(DomainCoverageRecorder::new());
 
-    let mbt = run_pack_mbt(&pack, |_| SqlitePackHost::open(&pack, Arc::clone(&recorder)))?;
+    let mbt = run_pack_mbt(&pack, |_| {
+        SqlitePackHost::open(&pack, Arc::clone(&recorder))
+    })?;
     assert!(mbt.valid_transitions_run >= 3);
     assert!(mbt.disallowed_transitions_checked >= 9);
     mbt.coverage.check_transitions_covered()?;
@@ -352,7 +362,10 @@ fn real_tracking_pack_passes_sqlite_mbt_and_dst() -> Result<(), String> {
     assert!(!cell_snap.transitions.is_empty());
 
     let gaps = analyze_static_gaps(&pack);
-    assert!(gaps.defects().is_empty(), "unexpected tracking defects:\n{gaps}");
+    assert!(
+        gaps.defects().is_empty(),
+        "unexpected tracking defects:\n{gaps}"
+    );
     Ok(())
 }
 
@@ -361,7 +374,9 @@ fn real_ml_pack_passes_sqlite_mbt_cedar_matrix_and_dst() -> Result<(), String> {
     let pack = load_registry_pack("ml", &["tracking", "ml"], false)?;
     let recorder = Arc::new(DomainCoverageRecorder::new());
 
-    let mbt = run_pack_mbt(&pack, |_| SqlitePackHost::open(&pack, Arc::clone(&recorder)))?;
+    let mbt = run_pack_mbt(&pack, |_| {
+        SqlitePackHost::open(&pack, Arc::clone(&recorder))
+    })?;
     assert!(mbt.valid_transitions_run >= 6);
     assert!(mbt.cedar_checks_run >= 12);
     mbt.coverage.check_transitions_covered()?;
@@ -420,8 +435,18 @@ fn real_time_and_org_packs_pass_law_example_sqlite_runtime_parity() -> Result<()
         SqlitePackHost::open(&time_pack, Arc::clone(&time_rec))
     })?;
     assert_eq!(time_report.law_examples_checked, 2);
-    assert!(time_rec.snapshot().law_holds.contains_key("time.Calendar.tzdb_version_pinned"));
-    assert!(time_rec.snapshot().law_violations.contains_key("time.Calendar.tzdb_version_pinned"));
+    assert!(
+        time_rec
+            .snapshot()
+            .law_holds
+            .contains_key("time.Calendar.tzdb_version_pinned")
+    );
+    assert!(
+        time_rec
+            .snapshot()
+            .law_violations
+            .contains_key("time.Calendar.tzdb_version_pinned")
+    );
 
     let org_pack = load_registry_pack("org", &["org"], true)?.with_law_examples(vec![
         LawExampleCase {
@@ -429,7 +454,10 @@ fn real_time_and_org_packs_pass_law_example_sqlite_runtime_parity() -> Result<()
             law_id: "org.OrgUnit.kind_is_organization".to_owned(),
             subject: runtime_obj(&[
                 ("id", RuntimeValue::String("ou-1".to_owned())),
-                ("display_name", RuntimeValue::String("Engineering".to_owned())),
+                (
+                    "display_name",
+                    RuntimeValue::String("Engineering".to_owned()),
+                ),
                 ("kind", RuntimeValue::String("organization".to_owned())),
                 ("code", RuntimeValue::String("ENG".to_owned())),
             ]),
@@ -452,8 +480,18 @@ fn real_time_and_org_packs_pass_law_example_sqlite_runtime_parity() -> Result<()
         SqlitePackHost::open(&org_pack, Arc::clone(&org_rec))
     })?;
     assert_eq!(org_report.law_examples_checked, 2);
-    assert!(org_rec.snapshot().law_holds.contains_key("org.OrgUnit.kind_is_organization"));
-    assert!(org_rec.snapshot().law_violations.contains_key("org.OrgUnit.kind_is_organization"));
+    assert!(
+        org_rec
+            .snapshot()
+            .law_holds
+            .contains_key("org.OrgUnit.kind_is_organization")
+    );
+    assert!(
+        org_rec
+            .snapshot()
+            .law_violations
+            .contains_key("org.OrgUnit.kind_is_organization")
+    );
     Ok(())
 }
 
@@ -658,7 +696,9 @@ fn o2c_sod_pack_achieves_100_percent_domain_coverage_with_crash_reopen_dst() -> 
     let pack = build_o2c_sod_pack()?;
     let recorder = Arc::new(DomainCoverageRecorder::new());
 
-    let mbt = run_pack_mbt(&pack, |_| SqlitePackHost::open(&pack, Arc::clone(&recorder)))?;
+    let mbt = run_pack_mbt(&pack, |_| {
+        SqlitePackHost::open(&pack, Arc::clone(&recorder))
+    })?;
     // Every declared transition, immutable terminal refusal, Cedar/SoD rule, and law must be 100% covered!
     mbt.coverage.check_transitions_covered()?;
     mbt.coverage.check_immutable_refusals_covered()?;
@@ -680,7 +720,10 @@ fn o2c_sod_pack_achieves_100_percent_domain_coverage_with_crash_reopen_dst() -> 
         |_| SqlitePackHost::open(&pack, Arc::clone(&recorder)),
     )?;
     assert_eq!(dst.cases_run, 24);
-    assert!(dst.crashes_recovered >= 1, "expected at least one SQLite crash/reopen cycle");
+    assert!(
+        dst.crashes_recovered >= 1,
+        "expected at least one SQLite crash/reopen cycle"
+    );
 
     // Verify Static Gap Detector confirms approve action DOES have SoD (not flagged).
     let gaps = analyze_static_gaps(&pack);
@@ -817,7 +860,9 @@ fn law_example_parity_catches_wrong_expectation() -> Result<(), String> {
         expected: Verdict::Holds,
     }];
     let recorder = Arc::new(DomainCoverageRecorder::new());
-    let err = run_pack_mbt(&pack, |_| SqlitePackHost::open(&pack, Arc::clone(&recorder)));
+    let err = run_pack_mbt(&pack, |_| {
+        SqlitePackHost::open(&pack, Arc::clone(&recorder))
+    });
     assert!(err.is_err(), "expected LAW-EXAMPLE-1 mismatch to fail");
     Ok(())
 }

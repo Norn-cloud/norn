@@ -24,7 +24,9 @@ use norn_kernel::authz::{
     AccessRequest, ActorKind, AttrValue, AuthzSchema, CapabilityGrant, Delegation, Pdp,
     PrincipalInput, ResourceInput, ScopeKey, compile_all_projected, infer_principal_attributes,
 };
-use norn_kernel::cell_host::{FactKey, FactMutation, FactVersion, FactWrite, JsonObject, JsonValue};
+use norn_kernel::cell_host::{
+    FactKey, FactMutation, FactVersion, FactWrite, JsonObject, JsonValue,
+};
 use norn_kernel::norn_authz::ValidatedPolicySet;
 use norn_kernel::norn_authz::norn_projections::{
     CedarAttribute, CedarPrincipalAttribute, project_cedar_schema_with_catalog,
@@ -130,7 +132,10 @@ where
     Ok(PackMbtReport {
         pack_name: pack.name.clone(),
         evidence: vec![
-            ("lifecycle_walks_and_refusals", EvidenceLevel::ExhaustiveFinite),
+            (
+                "lifecycle_walks_and_refusals",
+                EvidenceLevel::ExhaustiveFinite,
+            ),
             ("immutable_state_refusals", EvidenceLevel::ExhaustiveFinite),
             ("cedar_and_sod_matrix", EvidenceLevel::ExhaustiveFinite),
             ("law_example_runtime_parity", EvidenceLevel::RuntimeEnforced),
@@ -249,7 +254,8 @@ fn bfs_paths_to_states(lifecycle: &Lifecycle) -> BTreeMap<String, (String, Vec<S
             continue;
         };
         for transition in &lifecycle.transitions {
-            if transition.from.iter().any(|src| src == &state) && !paths.contains_key(&transition.to)
+            if transition.from.iter().any(|src| src == &state)
+                && !paths.contains_key(&transition.to)
             {
                 let mut next_path = prefix.clone();
                 next_path.push(transition.id.as_str().to_owned());
@@ -292,7 +298,15 @@ where
                 *seq,
             );
             init_vals.insert(prop.to_owned(), JsonValue::String(init_state.clone()));
-            seed_and_walk(&mut host, ctx.catalog, ctx.object_type, prop, &id, init_vals, prefix)?;
+            seed_and_walk(
+                &mut host,
+                ctx.catalog,
+                ctx.object_type,
+                prop,
+                &id,
+                init_vals,
+                prefix,
+            )?;
             fire_transition_expect_ok(
                 &mut host,
                 ctx,
@@ -357,7 +371,10 @@ where
     };
     let ty_name = ctx.object_type.name.as_str();
     let prop = ctx.lifecycle.property.as_str();
-    bad_values.insert(prop.to_owned(), JsonValue::String(spec.init_state.to_owned()));
+    bad_values.insert(
+        prop.to_owned(),
+        JsonValue::String(spec.init_state.to_owned()),
+    );
     let mut neg_host = make_host(&format!("lc-guard-{ty_name}-{}", spec.seq))?;
     if seed_and_walk(
         &mut neg_host,
@@ -404,7 +421,8 @@ where
 {
     let ty_name = ctx.object_type.name.as_str();
     let prop = ctx.lifecycle.property.as_str();
-    let immutable_set: BTreeSet<&str> = ctx.lifecycle.immutable.iter().map(String::as_str).collect();
+    let immutable_set: BTreeSet<&str> =
+        ctx.lifecycle.immutable.iter().map(String::as_str).collect();
     let all_guards: Vec<_> = ctx
         .lifecycle
         .transitions
@@ -425,7 +443,15 @@ where
             *seq,
         );
         init_values.insert(prop.to_owned(), JsonValue::String(init_state.clone()));
-        seed_and_walk(&mut host, ctx.catalog, ctx.object_type, prop, &id, init_values.clone(), prefix)?;
+        seed_and_walk(
+            &mut host,
+            ctx.catalog,
+            ctx.object_type,
+            prop,
+            &id,
+            init_values.clone(),
+            prefix,
+        )?;
 
         check_disallowed_transitions(&mut host, ctx, state, &id, *seq, totals)?;
         check_direct_lifecycle_write(&mut host, ctx, state, &id, *seq, totals)?;
@@ -607,8 +633,16 @@ fn fire_transition_expect_ok<H: PackHost>(
     let ty_name = ctx.object_type.name.as_str();
     let prop = ctx.lifecycle.property.as_str();
     let before = host.ledger_len();
-    fire_transition_decision(host, ctx.catalog, ty_name, prop, id, transition_id, turn_nonce)
-        .map_err(|err| format!("{ty_name}.{prop}.{transition_id} failed: {err}"))?;
+    fire_transition_decision(
+        host,
+        ctx.catalog,
+        ty_name,
+        prop,
+        id,
+        transition_id,
+        turn_nonce,
+    )
+    .map_err(|err| format!("{ty_name}.{prop}.{transition_id} failed: {err}"))?;
     if host.ledger_len() != before.saturating_add(1) {
         return Err(format!(
             "{ty_name}.{prop}.{transition_id} did not append exactly 1 ledger entry"
@@ -803,7 +837,15 @@ where
                 (res_ok.clone(), prin_ok.clone()),
             );
             assert_denied(&pdp, &deny_req, "unauthorized role", &hint, action_id)?;
-            verify_action_denied_zero_writes(ctx, action_id, &pdp, hint.clone(), deny_req, make_host, seq)?;
+            verify_action_denied_zero_writes(
+                ctx,
+                action_id,
+                &pdp,
+                hint.clone(),
+                deny_req,
+                make_host,
+                seq,
+            )?;
             count = count.saturating_add(1);
         }
 
@@ -833,7 +875,15 @@ where
                 (res_self, prin_self),
             );
             assert_denied(&pdp, &self_req, "self-approver SoD", &hint, action_id)?;
-            verify_action_denied_zero_writes(ctx, action_id, &pdp, hint.clone(), self_req, make_host, seq)?;
+            verify_action_denied_zero_writes(
+                ctx,
+                action_id,
+                &pdp,
+                hint.clone(),
+                self_req,
+                make_host,
+                seq,
+            )?;
             count = count.saturating_add(1);
         }
     }
@@ -906,12 +956,21 @@ where
     H: PackHost,
     F: FnMut(&str) -> Result<H, String>,
 {
-    let Some(admitted) = ctx.pack.actions.iter().find(|a| a.root.action_id == action_id) else {
-        with_cov(ctx.coverage, |cov| cov.hit_cedar_deny(hint.policy_id, hint.rule_id));
+    let Some(admitted) = ctx
+        .pack
+        .actions
+        .iter()
+        .find(|a| a.root.action_id == action_id)
+    else {
+        with_cov(ctx.coverage, |cov| {
+            cov.hit_cedar_deny(hint.policy_id, hint.rule_id)
+        });
         return Ok(());
     };
     let Some(effect) = &admitted.root.effect_program else {
-        with_cov(ctx.coverage, |cov| cov.hit_cedar_deny(hint.policy_id, hint.rule_id));
+        with_cov(ctx.coverage, |cov| {
+            cov.hit_cedar_deny(hint.policy_id, hint.rule_id)
+        });
         return Ok(());
     };
     let target = effect.target();
@@ -921,7 +980,9 @@ where
         .iter()
         .find(|ty| ty.name.as_str() == target.object_kind)
     else {
-        with_cov(ctx.coverage, |cov| cov.hit_cedar_deny(hint.policy_id, hint.rule_id));
+        with_cov(ctx.coverage, |cov| {
+            cov.hit_cedar_deny(hint.policy_id, hint.rule_id)
+        });
         return Ok(());
     };
 
@@ -929,7 +990,10 @@ where
     let mut host = make_host(&format!("cedar-deny-{action_id}-{}", *seq))?;
     let obj_id = format!("cedar-obj-{}", *seq);
     let mut input = synthesize_object(ctx.pack, object_type, &obj_id, *seq);
-    input.insert(target.object_id_field.to_owned(), JsonValue::String(obj_id.clone()));
+    input.insert(
+        target.object_id_field.to_owned(),
+        JsonValue::String(obj_id.clone()),
+    );
     if let Some(allowed_props) = admitted
         .root
         .input_schema
@@ -991,7 +1055,9 @@ where
         }
         Err(_) => {
             assert_zero_ledger_writes(&host, ledger_before, action_id, "pre-authz refusal")?;
-            with_cov(ctx.coverage, |cov| cov.hit_cedar_deny(hint.policy_id, hint.rule_id));
+            with_cov(ctx.coverage, |cov| {
+                cov.hit_cedar_deny(hint.policy_id, hint.rule_id)
+            });
             host.verify_ledger()
         }
         Ok(_) => Err(format!(
@@ -1213,9 +1279,11 @@ fn apply_resource_condition(
     match &rc.value {
         ResourceOperand::Literal(lit) => {
             let val = match lit {
-                AccessLiteral::Bool(b) => {
-                    AttrValue::Bool(if rc.op == ResourceCompareOp::Ne { !*b } else { *b })
-                }
+                AccessLiteral::Bool(b) => AttrValue::Bool(if rc.op == ResourceCompareOp::Ne {
+                    !*b
+                } else {
+                    *b
+                }),
                 AccessLiteral::Long(n) => {
                     let adjusted = match rc.op {
                         ResourceCompareOp::Eq | ResourceCompareOp::Le | ResourceCompareOp::Ge => *n,
@@ -1236,7 +1304,10 @@ fn apply_resource_condition(
         ResourceOperand::PrincipalAttribute(pa) => {
             let p_name = pa.principal_attribute.clone();
             if rc.op == ResourceCompareOp::Ne {
-                res.insert(rc.name.clone(), AttrValue::String("actor-requester".to_owned()));
+                res.insert(
+                    rc.name.clone(),
+                    AttrValue::String("actor-requester".to_owned()),
+                );
                 let caller = if violate_sod {
                     "actor-requester"
                 } else {
@@ -1245,8 +1316,10 @@ fn apply_resource_condition(
                 prin.insert(p_name, AttrValue::String(caller.to_owned()));
             } else {
                 res.insert(rc.name.clone(), AttrValue::String("shared-attr".to_owned()));
-                if matches!(principal_attrs.get(&p_name), Some(CedarPrincipalAttribute::StringSet))
-                {
+                if matches!(
+                    principal_attrs.get(&p_name),
+                    Some(CedarPrincipalAttribute::StringSet)
+                ) {
                     prin.insert(p_name, AttrValue::StringSet(vec!["shared-attr".to_owned()]));
                 } else {
                     prin.insert(p_name, AttrValue::String("shared-attr".to_owned()));

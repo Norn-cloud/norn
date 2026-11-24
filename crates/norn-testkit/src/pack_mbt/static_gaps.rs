@@ -10,9 +10,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
 
 use norn_kernel::norn_expr::expression_read_paths;
-use norn_kernel::norn_ir::access::{
-    AccessCondition, AccessIr, ResourceCompareOp, ResourceOperand,
-};
+use norn_kernel::norn_ir::access::{AccessCondition, AccessIr, ResourceCompareOp, ResourceOperand};
 use norn_kernel::norn_ir::{
     ActionEffectProgram, ActionUiEffect, LawResponse, Lifecycle, ObjectTypeDef, PropertyType,
     WriteChange,
@@ -385,7 +383,11 @@ fn collect_referenced_fields(
             for guard in &transition.guards {
                 record(
                     guard.as_str(),
-                    format!("guard:{}.{}", lifecycle.property.as_str(), transition.id.as_str()),
+                    format!(
+                        "guard:{}.{}",
+                        lifecycle.property.as_str(),
+                        transition.id.as_str()
+                    ),
                 );
             }
         }
@@ -461,7 +463,9 @@ fn is_financial_or_ledger_type(object_type: &ObjectTypeDef) -> Option<String> {
         }
     }
     let lower_name = object_type.name.local_name().to_ascii_lowercase();
-    for keyword in ["posting", "journal", "ledger", "invoice", "payment", "payroll", "payout"] {
+    for keyword in [
+        "posting", "journal", "ledger", "invoice", "payment", "payroll", "payout",
+    ] {
         if lower_name.contains(keyword) {
             return Some(format!("financial/ledger entity name contains '{keyword}'"));
         }
@@ -495,9 +499,17 @@ fn has_reversal_or_compensation(pack: &AdmittedPack, object_type: &str) -> bool 
             return true;
         }
         let lower_id = action.root.action_id.to_ascii_lowercase();
-        if ["reverse", "reversal", "void", "compensat", "refund", "credit_note", "storno"]
-            .iter()
-            .any(|kw| lower_id.contains(kw))
+        if [
+            "reverse",
+            "reversal",
+            "void",
+            "compensat",
+            "refund",
+            "credit_note",
+            "storno",
+        ]
+        .iter()
+        .any(|kw| lower_id.contains(kw))
         {
             return true;
         }

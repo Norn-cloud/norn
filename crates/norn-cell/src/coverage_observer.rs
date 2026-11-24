@@ -99,7 +99,11 @@ impl DomainCoverageRecorder {
     }
 
     /// Records one immutable-state or immutable-object refusal.
-    pub fn record_immutable_refusal(&self, object_type: impl Into<String>, state: impl Into<String>) {
+    pub fn record_immutable_refusal(
+        &self,
+        object_type: impl Into<String>,
+        state: impl Into<String>,
+    ) {
         self.with_lock(|snap| {
             bump(
                 &mut snap.immutable_refusals,
@@ -119,11 +123,7 @@ impl DomainCoverageRecorder {
     }
 
     /// Records a Cedar allow hit for `(policy_id, rule_id)`.
-    pub fn record_cedar_allow(
-        &self,
-        policy_id: impl Into<String>,
-        rule_id: impl Into<String>,
-    ) {
+    pub fn record_cedar_allow(&self, policy_id: impl Into<String>, rule_id: impl Into<String>) {
         self.with_lock(|snap| {
             bump(
                 &mut snap.cedar_allows,
@@ -136,11 +136,7 @@ impl DomainCoverageRecorder {
     }
 
     /// Records a Cedar deny hit for `(policy_id, rule_id_or_reason)`.
-    pub fn record_cedar_deny(
-        &self,
-        policy_id: impl Into<String>,
-        rule_id: impl Into<String>,
-    ) {
+    pub fn record_cedar_deny(&self, policy_id: impl Into<String>, rule_id: impl Into<String>) {
         self.with_lock(|snap| {
             bump(
                 &mut snap.cedar_denies,
@@ -242,7 +238,8 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
                 .object(MAIN_WORLD, type_name, &write.key.key)
                 .ok()
                 .flatten();
-            let before_states = extract_states(before_obj.as_ref().map(|r| &r.values), &lifecycle_props);
+            let before_states =
+                extract_states(before_obj.as_ref().map(|r| &r.values), &lifecycle_props);
             let after_states = extract_states(Some(values), &lifecycle_props);
             let governing_law_ids = governing_law_ids_for(model, type_name);
             captured.push(PreWriteObservation {
@@ -427,8 +424,7 @@ where
         max_members: usize,
         max_bytes: u64,
     ) -> Result<Option<Vec<PredicateObject>>, CellError> {
-        self.inner
-            .read_predicate(predicate, max_members, max_bytes)
+        self.inner.read_predicate(predicate, max_members, max_bytes)
     }
 
     fn read_link_targets(
