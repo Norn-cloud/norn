@@ -91,6 +91,11 @@ test("SDK-CALL-3: no answer at all is NornUnavailable with status 0 and its caus
   controller.abort()
   const aborted = createNornClient({ scope, fetch: async () => { throw new TypeError("aborted") } })
   expect(await failure(aborted.call("any.action", {}, { idempotencyKey: "k", signal: controller.signal }))).not.toBeInstanceOf(NornUnavailable)
+  // A body that stops arriving is no answer either.
+  const broken = { status: 200, ok: true, text: async () => { throw new TypeError("terminated") } } as unknown as Response
+  const truncated = await failure(createNornClient({ scope, fetch: async () => broken }).call("any.action", {}, { idempotencyKey: "k" })) as NornUnavailable
+  expect(truncated).toBeInstanceOf(NornUnavailable)
+  expect([truncated.status, (truncated.cause as Error).message]).toEqual([0, "terminated"])
   class HostError extends Error {}
   const host = createNornClient({ scope, fetch: async () => { throw new HostError("scope moved") } })
   expect(await failure(host.call("any.action", {}, { idempotencyKey: "k" }))).toBeInstanceOf(HostError)
@@ -157,6 +162,13 @@ test("SDK-DEFS-1: a definitions version pins calls; a catalog from another versi
   // Unpinned: no version is sent.
   await open.call("ml.model.register", { model_id: "m-1" }, { idempotencyKey: "k" })
   expect(new URL(wire.sent.at(-1)!.url, "http://x").searchParams.has("version")).toBe(false)
+})
+
+test("SDK-REFUSAL-1: a malformed finding is skipped, never a crash", async () => {
+  const refusal = { ...served.invalidKey, diagnostics: [null, 7, { code: "x", message: "m", span: null }, { code: "y", message: "n", span: { pointer: "/input/a" } }] }
+  const client = createNornClient({ scope, fetch: cell(() => Response.json(refusal, { status: 400 })).fetch })
+  const result = await client.call("any.action", {}, { idempotencyKey: "k" })
+  expect(result.kind === "refused" && result.diagnostics).toEqual([{ code: "x", message: "m", pointer: null }, { code: "y", message: "n", pointer: "/input/a" }])
 })
 
 test("SDK-CATALOG-1: catalog refusals, unserved routes and malformed documents", async () => {

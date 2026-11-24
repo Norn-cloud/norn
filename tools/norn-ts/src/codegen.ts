@@ -41,7 +41,7 @@ const pad = (depth: number): string => "  ".repeat(depth)
 const pointer = (name: string): string => name.replaceAll("~", "~0").replaceAll("/", "~1")
 const JSON_DOMAIN = "array,boolean,null,number,object,string"
 
-/** Display labels (D66) admitted beside any closed schema node; they never change its type. */
+/** Display labels (D66) admitted beside any closed action-input schema node (never an output); they never change its type. */
 const LABELS = ["title", "description"]
 /**
  * The members each closed schema type admits, exactly as `norn_expr::schema::Schema::parse_action`
@@ -82,7 +82,7 @@ function schemaType(schema: unknown, at: string, depth: number, mode: Mode, root
   const type = schema["type"]
   if (Array.isArray(type)) return unionType(schema, type, at, depth, mode)
   if (typeof type !== "string" || ADMITTED[type] === undefined) throw new CodegenError(at, `schema type ${JSON.stringify(type)} is not in the closed dialect`)
-  const allowed = [...ADMITTED[type]!, ...LABELS, ...(root && mode === "input" && type === "object" ? ["x-norn"] : [])]
+  const allowed = [...ADMITTED[type]!, ...(mode === "input" ? LABELS : []), ...(root && mode === "input" && type === "object" ? ["x-norn"] : [])]
   const unknown = Object.keys(schema).find((member) => !allowed.includes(member))
   if (unknown !== undefined) throw new CodegenError(at, `\`${unknown}\` is not admitted in a closed \`${type}\` schema`)
   for (const label of LABELS) {
@@ -134,8 +134,8 @@ function unionType(schema: Node, members: readonly unknown[], at: string, depth:
  */
 function objectType(schema: Node, at: string, depth: number, mode: Mode, omit: ReadonlySet<string>, optional: ReadonlySet<string>): string {
   if (schema["additionalProperties"] !== false) throw new CodegenError(at, "an object schema is not closed (`additionalProperties: false`)")
-  const properties = schema["properties"] ?? {}
-  if (!record(properties)) throw new CodegenError(at, "`properties` is not an object")
+  const properties = schema["properties"]
+  if (!record(properties)) throw new CodegenError(at, "an object schema has no `properties` object")
   const requiredList = schema["required"] ?? []
   if (!Array.isArray(requiredList) || !requiredList.every((name) => typeof name === "string" && name in properties)) {
     throw new CodegenError(at, "`required` names a member the object does not declare")
@@ -154,12 +154,21 @@ function objectType(schema: Node, at: string, depth: number, mode: Mode, omit: R
 
 /**
  * ACTION-ACTOR-1 (`norn_kernel::actor_derived_fields`): a derivation the caller may not pre-empt
- * (`inputRequired: false`) that reads the verified actor. The kernel decides "reads" on the parsed
- * expression and treats an unparseable one as reading it; codegen has no parser, so it counts any
- * `actor` reference outside a member access as a read. That can only drop a field, never offer one
- * the kernel refuses.
+ * (`inputRequired: false`) that may read the verified actor. The kernel decides on the parsed
+ * expression (`norn_expr::expression_read_paths`): a literal `actor…` path reads it, and so may
+ * the root (`$`, `$root`), a closure (`#`, and the builtins that take one), a `;` sequence or an
+ * assignment, as may an expression that does not parse. Codegen has no parser, so it fails closed
+ * lexically on every one of those tokens. A token inside a string literal over-drops, which is safe:
+ * a dropped field is never offered, while an offered actor field is one the kernel refuses.
+ * `input.actor` (a member) and `factor(...)` (another identifier) are not reads.
  */
-const READS_ACTOR = /(^|[^A-Za-z0-9_$.])actor\b/
+const MAY_READ_ACTOR: readonly RegExp[] = [
+  /(^|[^A-Za-z0-9_$.])actor\b/,
+  /[$#;]/,
+  /(^|[^=!<>])=($|[^=])/,
+  /(^|[^A-Za-z0-9_$.])(map|filter|some|all|none|one|count|flatMap)\s*\(/,
+]
+const mayReadActor = (expression: string): boolean => MAY_READ_ACTOR.some((pattern) => pattern.test(expression))
 
 function callerInput(payload: Node, at: string): string {
   const schema = payload["inputSchema"]
@@ -173,7 +182,7 @@ function callerInput(payload: Node, at: string): string {
       throw new CodegenError(`${at}#/derive/${index}`, "a derivation is not `{ field, expression, inputRequired }`")
     }
     if (step["inputRequired"]) return
-    if (READS_ACTOR.test(step["expression"])) omit.add(step["field"])
+    if (mayReadActor(step["expression"])) omit.add(step["field"])
     else optional.add(step["field"])
   })
   // Validate the whole root (including the omitted members) before projecting it.

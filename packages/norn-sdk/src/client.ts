@@ -144,9 +144,9 @@ export function readRefusal(status: number, text: string): Refusal | null {
   if (!isRecord(body) || typeof body["code"] !== "string") return null
   const { code, message, diagnostics, category, retryable, explanation, reason, decidedAt, incidentId } = body
   const list = Array.isArray(diagnostics)
-    ? diagnostics.map((d: { code?: unknown; message?: unknown; pointer?: unknown; span?: { pointer?: unknown } | null }) => ({
+    ? diagnostics.filter(isRecord).map((d: { code?: unknown; message?: unknown; pointer?: unknown; span?: unknown }) => ({
       code: String(d.code ?? ""), message: String(d.message ?? ""),
-      pointer: typeof d.span?.pointer === "string" ? d.span.pointer : typeof d.pointer === "string" ? d.pointer : null,
+      pointer: isRecord(d.span) && typeof d.span["pointer"] === "string" ? d.span["pointer"] : typeof d.pointer === "string" ? d.pointer : null,
     }))
     : []
   const disclosed = isRecord(reason) && typeof reason["law"] === "string" && typeof reason["subject"] === "string" && isRecord(reason["values"]) ? reason as RefusalReason : undefined
@@ -245,7 +245,15 @@ export function createNornClient<M extends ActionMapShape<M> = UntypedActions>(o
       if (error instanceof TypeError && !init.signal?.aborted) throw new NornUnavailable(0, undefined, { cause: error })
       throw error
     }
-    return { status: response.status, ok: response.ok, text: await response.text() }
+    let text: string
+    try {
+      text = await response.text()
+    } catch (error) {
+      // A body that stops arriving is no answer either; an abort passes through.
+      if (error instanceof TypeError && !init.signal?.aborted) throw new NornUnavailable(0, undefined, { cause: error })
+      throw error
+    }
+    return { status: response.status, ok: response.ok, text }
   }
 
   /** A non-2xx answer: its refusal, else the route is not served (404/503) or the cell did not answer. */

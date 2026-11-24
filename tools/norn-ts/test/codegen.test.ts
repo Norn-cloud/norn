@@ -103,6 +103,11 @@ test("CODEGEN-TS-3: a shape outside the closed dialect, or two definitions of on
   refused(withInput("model", { type: "string", format: "date" }), "`format` is not admitted in a closed `string` schema")
   refused(withInput("model", { type: ["object", "null"], properties: {}, additionalProperties: false }), "a nullable `object` is not admitted in an action input")
   refused(withInput("model", { type: "object", properties: {} }), "an object schema is not closed")
+  refused(withInput("model", { type: "object", additionalProperties: false }), "an object schema has no `properties` object")
+  // Display labels are an action-input form; an output schema is the bare dialect.
+  const labelledOutput = ml()
+  labelledOutput.find((a) => a.artifactId === "ml.run.record.action")!.payload.outputSchema.properties.run_id.title = "Run"
+  refused(labelledOutput, "ml.run.record.action#/outputSchema/properties/run_id: `title` is not admitted in a closed `string` schema")
 
   const notObject = ml()
   notObject.find((a) => a.kind === "action")!.payload = ["not", "an", "object"]
@@ -182,6 +187,24 @@ test("CODEGEN-TS-6: the caller's input excludes actor-derived fields and makes d
   const objects = text.slice(text.indexOf("export type ObjectMap"))
   expect(objects).toContain('readonly "registered_by": string')
   expect(objects).toContain('readonly "label": string')
+
+  // `norn_expr::expression_read_paths` counts the root, closures, sequences and assignments as
+  // possible actor reads; codegen fails closed on each of them lexically.
+  const labelWith = (expression: string) => {
+    const set = structuredClone(compiled("tracking").artifacts) as Array<{ artifactId: string; payload: any }>
+    const action = set.find((a) => a.artifactId === "tracking.parcel.register.action")!
+    action.payload.derive = action.payload.derive.map((step: { field: string }) => step.field === "label" ? { ...step, expression } : step)
+    const generated = generateTypes(set, { base: catalogs() })
+    const caller = generated.slice(generated.indexOf("readonly input: {"), generated.indexOf("readonly output: {"))
+    return caller.includes('readonly "label"?: string') ? "optional" : caller.includes('"label"') ? "required" : "dropped"
+  }
+  for (const expression of [
+    "actor.subjectId", "$root.actor.subjectId", "$.actor", "sum(map(input.lines, #))", "count(input.lines, # > 0)",
+    "filter(input.tags, true)", "flatMap(input.lines, [1])", "x = actor; x", "a = 1; a", 'input.label ?? "actor"',
+  ]) expect([expression, labelWith(expression)]).toEqual([expression, "dropped"])
+  for (const expression of ["factor(input.id)", "input.actor", "input.label ?? input.parcel_id", "input.weight >= 1", "input.a == input.b", "input.a != 2", "input.a <= 3"]) {
+    expect([expression, labelWith(expression)]).toEqual([expression, "optional"])
+  }
 })
 
 test("CODEGEN-TS-4: generated maps type the client: unknown actions, wrong fields and JS numbers for decimals do not compile", () => {
