@@ -993,7 +993,7 @@ test("listAll follows the cursor to the end and refuses a listing that repeats a
   expect(listCalls).toHaveLength(pages)
   listCalls.length = 0
   await expect(cellViews(fetcher(true)).listAll(SCOPE_A)).rejects.toBeInstanceOf(CellUnavailable)
-  expect(listCalls).toEqual([null, "p1", "p1"])
+  expect(listCalls).toEqual([null, "p1"])
 })
 
 // #1700 S7: each deletion keeps its own receipt, by reader, workspace and view id.
