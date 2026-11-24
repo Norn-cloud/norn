@@ -202,6 +202,7 @@ pub(crate) fn make_isolate(
         isolate.set_local(Variable::nodes_key(), nodes.clone());
     }
     isolate.set_meter(extensions.meter.clone());
+    isolate.set_tzdb(extensions.tzdb.clone());
 
     isolate
 }

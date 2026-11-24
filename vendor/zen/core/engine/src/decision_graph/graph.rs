@@ -150,6 +150,7 @@ impl DecisionGraph {
         let meter = self.config.extensions.meter.clone();
         {
             walker.meter = meter.clone();
+            walker.tzdb = self.config.extensions.tzdb.clone();
         }
 
         while let Some(nid) = walker.next(&mut self.graph, tracer.trace_callback()) {

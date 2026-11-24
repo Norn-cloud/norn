@@ -19,6 +19,7 @@ pub mod authz;
 pub mod automation_definitions;
 pub mod clock;
 pub mod contracts;
+pub(crate) mod decision_refusal;
 pub mod decisions;
 pub mod olap_credential;
 pub mod openapi;

@@ -305,6 +305,17 @@ fn evaluation_error_json(profile: &str, error: ExprError, units_used: u64) -> St
             "code": "expr.result.unsupported",
             "typeName": type_name,
         }),
+        ExprError::TzdbMismatch {
+            admitted,
+            evaluated,
+        } => json!({
+            "code": "expr.tzdb.mismatch",
+            "admitted": admitted,
+            "evaluated": evaluated,
+            "message": format!(
+                "prepared expression was admitted for tzdb `{admitted}`, not `{evaluated}`"
+            ),
+        }),
         _ => json!({
             "code": "expr.error.unknown",
             "message": "expression evaluation failed with an unclassified error",

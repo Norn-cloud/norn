@@ -38,6 +38,8 @@ import { transport, type ObjectReads, type SourceLineage } from "./lib/transport
 import { countText, linkGroups, type CountedLinkPage, type LinkGroup } from "./lib/record-page.ts"
 import { maskedOf } from "./lib/privacy.ts"
 import { MaskedValue } from "@/components/masked-value"
+import { LoadState } from "@/components/load-state"
+import { refreshMode } from "./lib/live-transport.ts"
 import { SourceChip } from "@/components/source-chip"
 import { RecentChanges, RulesKept, WhoCanAct, useTypeAccess } from "./record-rail.tsx"
 import { RecordLineage } from "./record-lineage.tsx"
@@ -132,11 +134,21 @@ export function ObjectPage() {
       </header>
       {data && concept && broken[0] && <Broken concept={concept} reads={data} finding={broken[0]} heldBack={heldBack} />}
       {problem !== undefined && <p role="alert" className="text-destructive">{problem}</p>}
-      {problem === undefined && (reads.isPending || catalogRead.isPending) && <p className="text-muted-foreground">Reading the record…</p>}
-      {reads.isError && <p className="text-destructive">{reads.error.message}</p>}
+      {problem === undefined && (reads.isPending || catalogRead.isPending || reads.isError || catalogRead.isError) && (
+        <LoadState
+          status={reads.isError || catalogRead.isError ? "error" : "pending"}
+          error={reads.error ?? catalogRead.error}
+          isFetching={reads.isFetching || catalogRead.isFetching}
+          onRetry={() => { refreshMode(); void catalogRead.refetch(); void reads.refetch() }}
+          skeleton="detail"
+          loadingLabel="Reading the record"
+        >
+          {() => null}
+        </LoadState>
+      )}
       {reads.isSuccess && data === null && (live
         ? <QuarantinedRecord objectType={name} id={id} onDone={readAgain} />
-        : <p className="text-muted-foreground">This record is not available yet.</p>)}
+        : <EmptyState icon={Rows3} title="Record not available" next={<Button asChild size="sm" variant="outline"><Link to="/objects/$type" params={{ type: name }}>Back to {concept?.title ?? conceptTitle(name)}</Link></Button>}>This record is not available yet.</EmptyState>)}
       {data && concept && (
         <Tabs value={tab} onValueChange={setTab}>
           <TabsList variant="line" className="w-full justify-start overflow-x-auto">
@@ -444,13 +456,13 @@ function Facts({ concept, reads, onLineage, sources }: {
             const masked = maskedOf(reads.object.document, field.id)
             const system = systemOf(field.id)
             return (
-              <div key={field.id} data-fact={field.id} className="grid min-h-row-read grid-cols-[minmax(0,11rem)_minmax(0,1fr)_auto] items-center gap-3 px-3">
+              <div key={field.id} data-fact={field.id} className="grid min-h-row-read grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5 px-3 py-2 sm:grid-cols-[minmax(0,11rem)_minmax(0,1fr)_auto]">
                 <dt className="flex min-w-0 items-center gap-1.5 text-muted-foreground" title={field.id}><span className="truncate">{field.label ?? field.id.replaceAll("_", " ")}</span><MarkingChips markings={field.markings} catalog={markings} /></dt>
-                <dd className={cn("flex min-w-0 items-center gap-2", field.decimal && "tabular-nums")}>
-                  <span className="min-w-0 truncate font-medium"><FactValue field={field} reads={reads} onLineage={onLineage} /></span>
+                <dd className={cn("col-span-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5 sm:col-span-1", field.decimal && "tabular-nums")}>
+                  <span className={cn("min-w-0 font-medium", masked === null ? "truncate" : "max-w-full")}><FactValue field={field} reads={reads} onLineage={onLineage} /></span>
                   {masked !== null && <HiddenTag revealable={masked.revealable} />}
                 </dd>
-                <dd className="flex justify-end">{system !== undefined && <SourceChip system={system} />}</dd>
+                <dd className="col-start-2 row-start-1 flex justify-end sm:col-start-3 sm:row-start-auto">{system !== undefined && <SourceChip system={system} />}</dd>
               </div>
             )
           })}

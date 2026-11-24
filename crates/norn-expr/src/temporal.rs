@@ -15,16 +15,16 @@ use jiff::civil::{Date, DateTime, Time};
 use jiff::tz::{AmbiguousOffset, TimeZone};
 use jiff::{Span, Timestamp};
 
-/// IANA timezone database release of the exact-pinned `jiff-tzdb` data (the
-/// only timezone data used here), for naming-series allocation and local
-/// timestamp resolution provenance.
-/// It is the release `chrono-tz` 0.10.4 had; moving it is #1440.
-pub const NAMING_SERIES_TZDB_VERSION: &str = "2025b";
+pub use crate::tzdb::{
+    LocalCivilWallTime, LocalOffsetResolution, MAX_TZDB_BUNDLE_BYTES, MAX_TZDB_RELEASE_LEN,
+    MAX_TZDB_ZONE_BLOB_BYTES, MAX_TZDB_ZONE_NAME_LEN, MAX_TZDB_ZONES, TZDB_BUNDLE_MAGIC,
+    TZDB_RELEASE_2025B, TZDB_RELEASE_2026C, TZDB_SHA256_2025B, TZDB_SHA256_2026C, TzdbBundle,
+    TzdbBundleError, TzdbCatalog,
+};
 
-/// The one zone name `jiff-tzdb` 0.1.4 carries that `chrono-tz` 0.10.4 did
-/// not (tzdb's `factory` file). Refusing it keeps the accepted names exactly
-/// `chrono-tz` 0.10.4's 597.
-const NOT_A_CHRONO_TZ_ZONE: &str = "Factory";
+/// Operational default IANA timezone database release (`2025b`), for
+/// naming-series allocation and local timestamp resolution provenance (#1440).
+pub const NAMING_SERIES_TZDB_VERSION: &str = TZDB_RELEASE_2025B;
 
 /// Explicit disambiguation policy for local wall-clock times during a DST
 /// fall-back fold (`TIME-DST`). Nonexistent spring-forward gaps are always
@@ -129,14 +129,25 @@ pub struct NamingSeriesDate {
     pub day: u8,
 }
 
-/// Validates a declared timezone against the pinned IANA database.
+/// Validates a declared timezone against the operational default IANA tzdb
+/// bundle (`2025b`).
 ///
 /// # Errors
 ///
 /// Returns [`TemporalError::InvalidTimezone`] when the timezone is not
 /// present in that database.
 pub fn validate_timezone(timezone: &str) -> Result<(), TemporalError> {
-    pinned_timezone(timezone).map(|_| ())
+    validate_timezone_in(timezone, TzdbBundle::default_bundle())
+}
+
+/// Validates a declared timezone against an explicit versioned [`TzdbBundle`].
+///
+/// # Errors
+///
+/// Returns [`TemporalError::InvalidTimezone`] when the timezone is not
+/// present in `bundle`.
+pub fn validate_timezone_in(timezone: &str, bundle: &TzdbBundle) -> Result<(), TemporalError> {
+    bundle.timezone(timezone).map(|_| ())
 }
 
 /// Validates an offset-free local wall-clock timestamp in years `0001..9999`.
@@ -150,14 +161,9 @@ pub fn validate_local_timestamp(value: &str) -> Result<(), TemporalError> {
     local_wall_datetime(value).map(|_| ())
 }
 
-/// Resolves an offset-free local wall-clock timestamp in a pinned IANA
-/// timezone under an explicit DST policy, returning its canonical UTC RFC 3339
-/// timestamp (`TIME-PIN-1`, `TIME-DST`).
-///
-/// Nonexistent spring-forward wall times are always refused with
-/// [`TemporalError::NonexistentLocalTime`]. Ambiguous fall-back wall times are
-/// refused under [`DstPolicy::Reject`] and disambiguated deterministically
-/// under [`DstPolicy::Earlier`] or [`DstPolicy::Later`].
+/// Resolves an offset-free local wall-clock timestamp in the operational
+/// default IANA tzdb bundle (`2025b`) under an explicit DST policy, returning
+/// its canonical UTC RFC 3339 timestamp (`TIME-PIN-1`, `TIME-DST`).
 ///
 /// # Errors
 ///
@@ -171,8 +177,38 @@ pub fn resolve_local_timestamp(
     iana_timezone: &str,
     policy: DstPolicy,
 ) -> Result<String, TemporalError> {
+    resolve_local_timestamp_in(
+        local_wall_time,
+        iana_timezone,
+        policy,
+        TzdbBundle::default_bundle(),
+    )
+}
+
+/// Resolves an offset-free local wall-clock timestamp in an explicit
+/// [`TzdbBundle`] under an explicit DST policy, returning its canonical UTC
+/// RFC 3339 timestamp (`TIME-PIN-1`, `TIME-DST`, `#1440`).
+///
+/// Nonexistent spring-forward wall times are always refused with
+/// [`TemporalError::NonexistentLocalTime`]. Ambiguous fall-back wall times are
+/// refused under [`DstPolicy::Reject`] and disambiguated deterministically
+/// under [`DstPolicy::Earlier`] or [`DstPolicy::Later`].
+///
+/// # Errors
+///
+/// Returns [`TemporalError::InvalidLocalTimestamp`],
+/// [`TemporalError::InvalidTimezone`],
+/// [`TemporalError::NonexistentLocalTime`],
+/// [`TemporalError::AmbiguousLocalTime`], or
+/// [`TemporalError::InstantOutOfRange`].
+pub fn resolve_local_timestamp_in(
+    local_wall_time: &str,
+    iana_timezone: &str,
+    policy: DstPolicy,
+    bundle: &TzdbBundle,
+) -> Result<String, TemporalError> {
     let local = local_wall_datetime(local_wall_time)?;
-    let timezone = pinned_timezone(iana_timezone)?;
+    let timezone = bundle.timezone(iana_timezone)?;
     let offset = match timezone.to_ambiguous_timestamp(local).offset() {
         AmbiguousOffset::Unambiguous { offset } => offset,
         AmbiguousOffset::Gap { .. } => return Err(TemporalError::NonexistentLocalTime),
@@ -239,21 +275,8 @@ fn local_wall_datetime(value: &str) -> Result<DateTime, TemporalError> {
     Ok(date.to_datetime(time))
 }
 
-/// The pinned database's zone with exactly this identifier. `jiff_tzdb::get`
-/// ignores ASCII case, so the canonical name must match byte for byte, as
-/// `chrono-tz`'s `FromStr` required. The data is read from `jiff-tzdb`
-/// directly: `jiff::tz::db()` would consult the host's zoneinfo when another
-/// crate enables that feature.
-fn pinned_timezone(name: &str) -> Result<TimeZone, TemporalError> {
-    match jiff_tzdb::get(name) {
-        Some((canonical, data)) if canonical == name && name != NOT_A_CHRONO_TZ_ZONE => {
-            TimeZone::tzif(name, data).map_err(|_parse_error| TemporalError::InvalidTimezone)
-        }
-        Some(_) | None => Err(TemporalError::InvalidTimezone),
-    }
-}
-
-/// Converts a supplied Unix epoch-millisecond commit instant to a local date.
+/// Converts a supplied Unix epoch-millisecond commit instant to a local date
+/// using the operational default IANA tzdb bundle (`2025b`).
 ///
 /// This function reads no clock. The caller supplies the time that belongs to
 /// the commit so replay uses the same instant and pinned timezone data.
@@ -267,8 +290,26 @@ pub fn naming_series_date_at(
     epoch_millis: i64,
     timezone: &str,
 ) -> Result<NamingSeriesDate, TemporalError> {
-    let timezone = pinned_timezone(timezone)?;
-    let date = local_date(epoch_millis, &timezone)?;
+    naming_series_date_at_in(epoch_millis, timezone, TzdbBundle::default_bundle())
+}
+
+/// Converts a supplied Unix epoch-millisecond commit instant to a local date
+/// using an explicit versioned [`TzdbBundle`] (`#1440`).
+///
+/// This function reads no clock or global timezone state.
+///
+/// # Errors
+///
+/// Returns [`TemporalError::InvalidTimezone`] for an unknown IANA timezone in
+/// `bundle`, or [`TemporalError::InstantOutOfRange`] if the instant cannot be
+/// represented or converts to a local year outside `0000` through `9999`.
+pub fn naming_series_date_at_in(
+    epoch_millis: i64,
+    timezone: &str,
+    bundle: &TzdbBundle,
+) -> Result<NamingSeriesDate, TemporalError> {
+    let timezone = bundle.timezone(timezone)?;
+    let date = local_date(epoch_millis, timezone)?;
     let year = date.year();
     if !(0..=9_999).contains(&year) {
         return Err(TemporalError::InstantOutOfRange);
@@ -592,9 +633,10 @@ fn timestamp_shape(value: &str) -> Result<(), TemporalError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        DstPolicy, NAMING_SERIES_TZDB_VERSION, NamingSeriesDate, TemporalError,
-        canonical_timestamp, naming_series_date_at, resolve_local_timestamp,
-        timestamp_ordering_key, validate_date, validate_timezone,
+        DstPolicy, NAMING_SERIES_TZDB_VERSION, NamingSeriesDate, TemporalError, TzdbBundle,
+        canonical_timestamp, naming_series_date_at, naming_series_date_at_in,
+        resolve_local_timestamp, resolve_local_timestamp_in, timestamp_ordering_key, validate_date,
+        validate_timezone, validate_timezone_in,
     };
 
     #[test]
@@ -814,10 +856,13 @@ mod tests {
 
     #[test]
     fn the_named_tzdb_version_is_the_pinned_data() {
-        assert_eq!(jiff_tzdb::VERSION, Some(NAMING_SERIES_TZDB_VERSION));
+        let b25 = TzdbBundle::v2025b();
+        let b26 = TzdbBundle::v2026c();
+        assert_eq!(b25.release(), NAMING_SERIES_TZDB_VERSION);
+        assert_eq!(b26.release(), "2026c");
         // tzdb 2026c moved America/Edmonton to year-round UTC-6 from
         // 2026-12-01; in 2025b it is back on MST (UTC-7) that winter, so
-        // 2027-01-01T06:30Z is still 2026-12-31 there. A data bump fails here.
+        // 2027-01-01T06:30Z is 2026-12-31 23:30 in 2025b and 2027-01-01 00:30 in 2026c.
         assert_eq!(
             naming_series_date_at(1_798_785_000_000, "America/Edmonton"),
             Ok(NamingSeriesDate {
@@ -826,41 +871,84 @@ mod tests {
                 day: 31,
             })
         );
+        assert_eq!(
+            naming_series_date_at_in(1_798_785_000_000, "America/Edmonton", b25),
+            Ok(NamingSeriesDate {
+                year: 2026,
+                month: 12,
+                day: 31,
+            })
+        );
+        assert_eq!(
+            naming_series_date_at_in(1_798_785_000_000, "America/Edmonton", b26),
+            Ok(NamingSeriesDate {
+                year: 2027,
+                month: 1,
+                day: 1,
+            })
+        );
+        assert_eq!(
+            resolve_local_timestamp_in(
+                "2026-12-31T23:30:00",
+                "America/Edmonton",
+                DstPolicy::Reject,
+                b25
+            ),
+            Ok("2027-01-01T06:30:00Z".to_owned())
+        );
+        assert_eq!(
+            resolve_local_timestamp_in(
+                "2027-01-01T00:30:00",
+                "America/Edmonton",
+                DstPolicy::Reject,
+                b26
+            ),
+            Ok("2027-01-01T06:30:00Z".to_owned())
+        );
+        assert_eq!(
+            resolve_local_timestamp_in(
+                "2026-12-31T23:30:00",
+                "America/Edmonton",
+                DstPolicy::Reject,
+                b26
+            ),
+            Ok("2027-01-01T05:30:00Z".to_owned())
+        );
     }
 
     #[test]
     fn the_zone_names_are_exactly_chrono_tz_0_10_4s() {
-        let names: Vec<&str> = jiff_tzdb::available()
-            .filter(|name| *name != "Factory")
-            .collect();
-        assert_eq!(names.len(), 597);
-        for name in &names {
-            assert_eq!(validate_timezone(name), Ok(()), "{name}");
-        }
-        // Links from `backward` and `etcetera` are names in their own right.
-        for name in ["US/Eastern", "Etc/GMT+5", "UTC", "Zulu", "Asia/Calcutta"] {
-            assert!(names.contains(&name), "{name}");
-        }
-        // `Factory` (tzdb's `factory` file) was never part of chrono-tz, the
-        // lookup is case-sensitive as chrono-tz's `FromStr` was, and only
-        // whole names match.
-        for name in [
-            "Factory",
-            "factory",
-            "america/new_york",
-            "AMERICA/NEW_YORK",
-            "America/New_York ",
-            "America",
-            "",
-            "localtime",
-            "posixrules",
-            "EST5EDT,M3.2.0,M11.1.0",
-        ] {
-            assert_eq!(
-                validate_timezone(name),
-                Err(TemporalError::InvalidTimezone),
-                "{name:?}"
-            );
+        for bundle in [TzdbBundle::v2025b(), TzdbBundle::v2026c()] {
+            let names: Vec<&str> = bundle.zone_names().collect();
+            assert_eq!(names.len(), 597, "release {}", bundle.release());
+            for name in &names {
+                assert_eq!(validate_timezone_in(name, bundle), Ok(()), "{name}");
+            }
+            // Links from `backward` and `etcetera` are names in their own right.
+            for name in ["US/Eastern", "Etc/GMT+5", "UTC", "Zulu", "Asia/Calcutta"] {
+                assert!(names.contains(&name), "{name}");
+            }
+            // `Factory` (tzdb's `factory` file) was never part of chrono-tz, the
+            // lookup is case-sensitive as chrono-tz's `FromStr` was, and only
+            // whole names match.
+            for name in [
+                "Factory",
+                "factory",
+                "america/new_york",
+                "AMERICA/NEW_YORK",
+                "America/New_York ",
+                "America",
+                "",
+                "localtime",
+                "posixrules",
+                "EST5EDT,M3.2.0,M11.1.0",
+            ] {
+                assert_eq!(
+                    validate_timezone_in(name, bundle),
+                    Err(TemporalError::InvalidTimezone),
+                    "{name:?}"
+                );
+            }
         }
     }
 
