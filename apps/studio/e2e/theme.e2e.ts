@@ -181,7 +181,7 @@ async function shot(page: Page, name: string, locator?: Locator) {
 }
 
 for (const scheme of ["light", "dark"] as const) {
-  test(`theme v4 (${scheme}): two-surface shell, tinted panels, primary button states (rest/hover/focus/disabled), and layered surfaces`, async ({ page }) => {
+  test(`theme v4 (${scheme}): Polar monochrome default + Open v6 double-shell geometry, primary button states (rest/hover/focus), and layered surfaces`, async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.emulateMedia({ colorScheme: scheme })
     await recorded(page)
@@ -191,10 +191,11 @@ for (const scheme of ["light", "dark"] as const) {
     await expect(page.locator('[data-slot="panel"]').first()).toBeVisible()
     await expect(page.locator('[data-slot="table-header"]').first()).toBeVisible()
 
-    // HTML scheme class matches system color scheme.
+    // HTML scheme class matches system color scheme, and default first-party skin is Polar monochrome.
     await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains("dark"))).toBe(scheme === "dark")
+    await expect.poll(() => page.evaluate(() => document.documentElement.dataset.skin)).toBe("polar")
 
-    const metrics = await page.evaluate(() => {
+    const measureLayout = () => page.evaluate(() => {
       const shell = document.querySelector<HTMLElement>('[data-slot="sidebar-wrapper"]')!
       const inset = document.querySelector<HTMLElement>('[data-slot="sidebar-inset"]')!
       const panel = document.querySelector<HTMLElement>('[data-slot="panel"]')!
@@ -242,61 +243,91 @@ for (const scheme of ["light", "dark"] as const) {
       }
     })
 
-    // 1. Two-surface shell: rail/sidebar ground differs from the raised page surface, with radius, hairline & shadow.
-    expect(metrics.shellBg).not.toBe(metrics.pageBg)
-    expect(metrics.pageRadius).toBeGreaterThanOrEqual(10)
-    expect(metrics.pageBorder).toBeGreaterThanOrEqual(0.5)
-    expect(metrics.pageShadow).not.toBe("none")
+    const polar = await measureLayout()
 
-    // Dark mode layers progress upward in luminance: shell < page < card < well, and active segment sits above its track.
-    // Light mode lifts pure white page above soft shell ground, with signature v6 soft inner wells (#f5f5f5).
-    const shellLum = luminance(rgb(metrics.shellBg))
-    const pageLum = luminance(rgb(metrics.pageBg))
-    const panelLum = luminance(rgb(metrics.panelBg))
-    const wellLum = luminance(rgb(metrics.kpiWellBg))
-    const trackLum = luminance(rgb(metrics.perspTrackBg))
-    const activeLum = luminance(rgb(metrics.perspActiveBg))
+    // 1. Two-surface shell: rail/sidebar ground differs from the raised page surface, with radius, hairline & shadow.
+    expect(polar.shellBg).not.toBe(polar.pageBg)
+    expect(polar.pageRadius).toBeGreaterThanOrEqual(10)
+    expect(polar.pageBorder).toBeGreaterThanOrEqual(0.5)
+    expect(polar.pageShadow).not.toBe("none")
+
+    // Polar monochrome layers: shell < page (both), page < panel (dark), active segment > track.
+    const polarShellLum = luminance(rgb(polar.shellBg))
+    const polarPageLum = luminance(rgb(polar.pageBg))
+    const polarPanelLum = luminance(rgb(polar.panelBg))
+    const polarTrackLum = luminance(rgb(polar.perspTrackBg))
+    const polarActiveLum = luminance(rgb(polar.perspActiveBg))
+    expect(polarShellLum).toBeLessThan(polarPageLum)
+    expect(polarActiveLum).toBeGreaterThan(polarTrackLum)
     if (scheme === "dark") {
-      expect(shellLum).toBeLessThan(pageLum)
-      expect(pageLum).toBeLessThan(panelLum)
-      expect(panelLum).toBeLessThan(wellLum)
-      expect(activeLum).toBeGreaterThan(trackLum)
-    } else {
-      expect(shellLum).toBeLessThan(pageLum)
-      expect(wellLum).toBeLessThan(pageLum)
-      expect(activeLum).toBeGreaterThan(trackLum)
+      expect(polarPageLum).toBeLessThan(polarPanelLum)
     }
 
-    // 2. Signature Open v6 double-shell geometry: 20px outer panel/stat rim (~18px at 90% root) wrapping a 15px (~13.5px) inner well.
-    expect(metrics.kpiWellBg).not.toBe(metrics.pageBg)
-    expect(metrics.panelRadius).toBeGreaterThanOrEqual(14)
-    expect(metrics.panelRadius).toBeLessThanOrEqual(21)
-    expect(metrics.kpiRadius).toBeGreaterThanOrEqual(14)
-    expect(metrics.kpiRadius).toBeLessThanOrEqual(21)
-    expect(metrics.kpiWellRadius).toBeGreaterThanOrEqual(11)
-    expect(metrics.kpiWellRadius).toBeLessThanOrEqual(16)
+    // 2. Polar flat monochrome geometry: crisp 12px (~10.8px at 90% root) panel radius and monochrome primary CTA.
+    expect(polar.panelRadius).toBeGreaterThanOrEqual(9)
+    expect(polar.panelRadius).toBeLessThanOrEqual(14)
+    expect(polar.kpiRadius).toBeGreaterThanOrEqual(9)
+    expect(polar.kpiRadius).toBeLessThanOrEqual(14)
 
-    // 3. Primary action button: crisp cobalt blue accent, ~7-9px radius, >= 4.5:1 at rest & hover, visible keyboard focus.
+    // 3. Polar primary action button: strictly monochrome (no blue/purple tint), ~7-9px radius, >= 4.5:1 rest & hover, visible focus.
     const primary = page.locator('[data-slot="button"][data-variant="default"]').first()
-    const [pr, pg, pb] = rgb(metrics.primaryBg)
-    expect(pb).toBeGreaterThan(pr + 40)
-    expect(pb).toBeGreaterThan(pg + 60)
-    expect(metrics.primaryRadius).toBeGreaterThanOrEqual(6)
-    expect(metrics.primaryRadius).toBeLessThanOrEqual(9)
+    const [ppr, ppg, ppb] = rgb(polar.primaryBg)
+    expect(Math.max(ppr, ppg, ppb) - Math.min(ppr, ppg, ppb)).toBeLessThanOrEqual(8)
+    expect(polar.primaryRadius).toBeGreaterThanOrEqual(6)
+    expect(polar.primaryRadius).toBeLessThanOrEqual(9)
 
     const primaryRest = await measureRenderedContrast(primary)
-    expect(primaryRest.ratio, `${scheme} primary rest contrast`).toBeGreaterThanOrEqual(4.5)
+    expect(primaryRest.ratio, `${scheme} polar primary rest contrast`).toBeGreaterThanOrEqual(4.5)
     await primary.hover()
     const primaryHover = await measureRenderedContrast(primary)
-    expect(primaryHover.ratio, `${scheme} primary hover contrast`).toBeGreaterThanOrEqual(4.5)
+    expect(primaryHover.ratio, `${scheme} polar primary hover contrast`).toBeGreaterThanOrEqual(4.5)
     // Keyboard focus via Tab onto primary button from the previous header control.
     await page.getByRole("button", { name: "Notifications" }).focus()
     await moveFocusWithKey(page, primary, "Tab", 25)
     await expectVisibleFocusOutline(primary)
 
     // 4. Table header has a quiet tint distinct from pure page background, and KPI figures use tabular-nums.
-    expect(metrics.thBg).not.toBe(metrics.pageBg)
-    expect(metrics.kpiVariantNumeric).toContain("tabular-nums")
+    expect(polar.thBg).not.toBe(polar.pageBg)
+    expect(polar.kpiVariantNumeric).toContain("tabular-nums")
+
+    // 5. Switch to Open v6 skin and verify signature double-shell geometry + cobalt primary CTA remain intact.
+    await page.evaluate(() => {
+      localStorage.setItem("norn.studio.skin", "open")
+    })
+    await page.reload()
+    await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible()
+    await expect(page.locator('[data-slot="stat-strip"]')).toBeVisible()
+    await expect(page.locator('[data-slot="panel"]').first()).toBeVisible()
+    await expect(page.locator('[data-slot="table-header"]').first()).toBeVisible()
+    await expect.poll(() => page.evaluate(() => document.documentElement.dataset.skin)).toBe("open")
+
+    const open = await measureLayout()
+    const openShellLum = luminance(rgb(open.shellBg))
+    const openPageLum = luminance(rgb(open.pageBg))
+    const openPanelLum = luminance(rgb(open.panelBg))
+    const openWellLum = luminance(rgb(open.kpiWellBg))
+    const openTrackLum = luminance(rgb(open.perspTrackBg))
+    const openActiveLum = luminance(rgb(open.perspActiveBg))
+    if (scheme === "dark") {
+      expect(openShellLum).toBeLessThan(openPageLum)
+      expect(openPageLum).toBeLessThan(openPanelLum)
+      expect(openPanelLum).toBeLessThan(openWellLum)
+      expect(openActiveLum).toBeGreaterThan(openTrackLum)
+    } else {
+      expect(openShellLum).toBeLessThan(openPageLum)
+      expect(openWellLum).toBeLessThan(openPageLum)
+      expect(openActiveLum).toBeGreaterThan(openTrackLum)
+    }
+    expect(open.kpiWellBg).not.toBe(open.pageBg)
+    expect(open.panelRadius).toBeGreaterThanOrEqual(14)
+    expect(open.panelRadius).toBeLessThanOrEqual(21)
+    expect(open.kpiRadius).toBeGreaterThanOrEqual(14)
+    expect(open.kpiRadius).toBeLessThanOrEqual(21)
+    expect(open.kpiWellRadius).toBeGreaterThanOrEqual(11)
+    expect(open.kpiWellRadius).toBeLessThanOrEqual(16)
+    const [opr, opg, opb] = rgb(open.primaryBg)
+    expect(opb).toBeGreaterThan(opr + 40)
+    expect(opb).toBeGreaterThan(opg + 60)
   })
 
   test(`theme v4 (${scheme}): keyboard focus stays visible on selected line tabs, selected Perspective button, active rail link and current sidebar item`, async ({ page }) => {

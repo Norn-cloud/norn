@@ -27,10 +27,10 @@ const sections: readonly Section[] = [
 ]
 
 test("appearance validators and defaults cover all four skins and both shell layouts", () => {
-  expect(SKINS.map(({ id }) => id)).toEqual(["open", "polar", "luma", "glass"])
+  expect(SKINS.map(({ id }) => id)).toEqual(["polar", "open", "luma", "glass"])
   expect(SHELLS.map(({ id }) => id)).toEqual(["sidebar", "dock"])
-  expect(isSkin("open")).toBe(true)
   expect(isSkin("polar")).toBe(true)
+  expect(isSkin("open")).toBe(true)
   expect(isSkin("luma")).toBe(true)
   expect(isSkin("glass")).toBe(true)
   expect(isSkin("unknown")).toBe(false)
@@ -40,20 +40,20 @@ test("appearance validators and defaults cover all four skins and both shell lay
 })
 
 test("applyAppearance writes data-skin and data-shell onto the root element", () => {
-  const root = { dataset: {} as Record<string, string> } as unknown as HTMLElement
+  const root = { dataset: {} as Record<string, string>, classList: { contains: () => false }, style: { setProperty: () => {}, removeProperty: () => {} } } as unknown as HTMLElement
   applyAppearance("polar", "dock", root)
   expect(root.dataset.skin).toBe("polar")
   expect(root.dataset.shell).toBe("dock")
 })
 
-test("blocked localStorage falls back cleanly to open skin and sidebar chrome", () => {
+test("blocked localStorage falls back cleanly to polar monochrome skin and sidebar chrome", () => {
   const saved = Object.getOwnPropertyDescriptor(globalThis, "localStorage")
   Object.defineProperty(globalThis, "localStorage", {
     configurable: true,
     get: () => { throw new DOMException("blocked", "SecurityError") },
   })
   try {
-    expect(storedSkin()).toBe("open")
+    expect(storedSkin()).toBe("polar")
     expect(storedShellChrome()).toBe("sidebar")
     expect(renderToStaticMarkup(<AppearanceProvider><span>ok</span></AppearanceProvider>)).toBe("<span>ok</span>")
   } finally {
@@ -210,8 +210,8 @@ test("ToggleGroup arrow-select guard survives Base UI's bubble-phase focus micro
   expect(isRadioArrowKey("ArrowDown", "vertical")).toBe(true)
   expect(isRadioArrowKey("ArrowLeft", "vertical")).toBe(false)
 
-  // 1. Capture arms guard, then Base UI CompositeRoot schedules focus() via one queueMicrotask()
-  //    during bubble phase: consume() must see true when that focus microtask fires.
+  // 1. Bubble-phase onKeyDown arms guard, then Base UI CompositeRoot schedules focus() via one queueMicrotask()
+  //    in the same event stack: consume() must see true when that focus microtask fires.
   const guard = createArrowSelectGuard()
   guard.arm()
   const consumedDuringFocus = await new Promise<boolean>((resolve) => {
@@ -220,7 +220,7 @@ test("ToggleGroup arrow-select guard survives Base UI's bubble-phase focus micro
   expect(consumedDuringFocus).toBe(true)
   expect(guard.consume()).toBe(false)
 
-  // 2. Same-axis no-op at a loopFocus={false} boundary: capture arms guard, Base UI does not
+  // 2. Same-axis no-op at a loopFocus={false} boundary: bubble-phase onKeyDown arms guard, Base UI does not
   //    move focus, and the nested microtask disarms before any subsequent non-arrow focus event.
   guard.arm()
   await new Promise((resolve) => setTimeout(resolve, 0))

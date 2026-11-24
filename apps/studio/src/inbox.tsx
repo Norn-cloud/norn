@@ -66,6 +66,7 @@ export function Inbox() {
         error={inbox.error}
         isFetching={inbox.isFetching}
         onRetry={() => void inbox.refetch()}
+        bone="home-inbox"
         skeleton="list"
         loadingLabel="Reading what needs attention"
         isEmpty={() => total === 0}
