@@ -17,6 +17,7 @@ Norn Studio is an open operational canvas, not a CRUD admin panel. Content sits 
 | **The Weave** | Visual language | Source-colored convergence threads and soft semantic washes that trace provenance without loud fills. |
 | **Floorplan** | MIT | Multi-level semantic zoom, plain-English job cards, dashed **Blueprint** overlays for uncommitted proposals. |
 | **Archify** | Apache-2.0 | `SRC` span evidence badges and `Before / Delta / After` architectural diffs. |
+| **`bilalgursen/liquid-glass`** | MIT | Single WebGL2 refraction shader + reduced-motion CSS fallback layered purely over `@ui-sdk` behaviors. |
 
 ### Zero box-in-box rule
 
@@ -26,6 +27,7 @@ Norn Studio is an open operational canvas, not a CRUD admin panel. Content sits 
   2. Modals, sheets, and inspection drawers.
   3. Active hover or keyboard/pointer selection states.
   4. A single floating dock (`ControlDock`).
+  5. Dashed **Blueprint** outlines marking uncommitted draft proposals on the Semantic Map (`#1664`).
 
 ### Banned patterns
 
@@ -65,15 +67,20 @@ Themes contain **zero business logic**—no conditional queries, permission chec
 | `open` | Airy light open canvas (default). |
 | `polar` | Deep carbon layered dark surfaces, crisp monochrome contrast, restrained knot-violet accent. |
 | `luma` | Soft neutral daylight surfaces with low-contrast tonal separation. |
-| `glass` | Translucent liquid-glass overlays and floating docks over the canvas. |
+| `glass` | Translucent liquid-glass overlays and floating docks over the canvas (CSS fallback mandatory; optional single-shader WebGL2 refraction layered over `@ui-sdk`, respecting `prefers-reduced-motion`). |
 
 Tenants may supply a **brand token overlay** (accent, focus ring, surface tint, radius tokens) layered on top of a built-in skin; overlays are constrained to approved CSS variables and must pass the same contrast floors.
+
+### Performance & loading discipline (TARGET)
+
+- **Load on intent:** Use TanStack Router `defaultPreload: "intent"` (`defaultPreloadDelay: 50`) and `autoCodeSplitting`; warm critical queries in route loaders and lazy-load heavy tools (`@xyflow/react`, `recharts`, `shiki`, WASM checker, optional WebGL shader) on hover/focus/activation.
+- **Cold-entry budgets & profiling:** Gate first-view JS/CSS Brotli budgets in CI, enable React Compiler auto-memoization, and profile heavy filtering/typing interactions (`LCP <= 2.5s`, `INP <= 200ms`, `CLS <= 0.1`). Keep **React DOM 19** as the default renderer; alternative synchronous renderers (such as TanStack Redact) require measured Boat proof of both cold-entry wins and zero INP/portal regressions.
 
 ### Swappable shell presets
 
 Shells own frame chrome and navigation geometry only; view components must never couple to a specific shell:
 
-- `bottom-dock` — Pure open canvas with a single floating dark pill dock and minimal corner controls (default).
+- `bottom-dock` — Pure open canvas with a single floating dark pill dock and minimal corner controls (TARGET default).
 - `sidebar-spaces` — Collapsible space-oriented navigation rail (grouped by workspace/lens, never an alphabetical table dump).
 - `minimal` — Chromeless canvas for embedded or focused single-task surfaces.
 
@@ -81,26 +88,26 @@ Shells own frame chrome and navigation geometry only; view components must never
 
 ## 3. Hard Primitives Mandate — No Radix in First-Party Code
 
-- **`radix-ui`, `@radix-ui/*`, and `--radix-*` are strictly banned in first-party Studio code.** This rule is enforced by a CI guard test.
-- **Delete instead of preserving (`AGENTS.md`).** Do not wrap Radix primitives behind compatibility shims or add new Radix imports. Legacy Radix files under `src/components/ui/` exist solely as migration debt to be deleted as components move to the approved stack.
+- **`radix-ui`, `@radix-ui/*`, and `--radix-*` are strictly banned in first-party Studio code.** Automated CI enforcement (`apps/studio/test/ui-primitives-guard.test.ts`) is a **TARGET** gate landing with the Base UI / UI SDK hard-cutover PR.
+- **Delete instead of preserving (`AGENTS.md`).** Do not wrap Radix primitives behind compatibility shims or add new Radix imports. Existing legacy Radix imports in `apps/studio/src/components/ui/` and `apps/studio/src/lib/locale.tsx` (plus `--radix-*` references in `apps/studio/src/components/ui/shadcn.css`) are migration debt to be deleted cleanly in the cutover PR.
 
 ### Approved web primitive stack
 
 1. **React 19** — core rendering runtime.
 2. **Vercel UI SDK (`@ui-sdk/core` + `@ui-sdk/react`, Apache-2.0)** — atomic interaction behaviors, controllable UI state primitives, and native `createAgent` Sidekick control.
-3. **Base UI (`@base-ui/react`, MIT)** — accessible headless primitives for standard overlays and controls (dialogs, popovers, menus, tabs, tooltips, toggles, sheets).
+3. **Base UI (`@base-ui/react`, MIT)** — accessible headless primitives for standard overlays and controls (dialogs, popovers, menus, tabs, tooltips, toggles, sheets, direction provider).
 
-### Long-term universal runtime trajectory
+### Long-term universal runtime trajectory (TARGET)
 
-Screens are authored declaratively in typed TypeScript (`tools/norn-ts`) and compile to canonical UI IR rather than binding domain semantics directly to DOM libraries. Keeping primitives strictly declarative preserves a clean compilation target for **`@expo/ui`** (native mobile) and **Expo `Exact`** once it matures, with zero rewrite of tenant definitions or authorization rules.
+Screens are authored declaratively in typed TypeScript (`tools/norn-ts`) and compile to canonical UI IR rather than binding domain semantics directly to DOM libraries. Keeping primitives declarative preserves a **TARGET** compilation path for **`@expo/ui`** (native mobile) and **Expo `Exact`** once it matures, without rewriting tenant definitions or authorization rules.
 
 ---
 
-## 4. 3-Layer Arbitrary Checked UI Contract (`#1638` + `@norn/ui`)
+## 4. 3-Layer Arbitrary Checked UI Contract (TARGET, building on `#1638`)
 
-Norn must render arbitrary tenant and AI-authored applications—creative studios (e.g., Fashn.ai, Higgsfield, Luma AI, Lovart), realtime customer globes, HR schedulers, lending desks—without collapsing every product into generic CRUD tables and without allowing unverified agentic UI drift.
+Norn's **TARGET** UI runtime renders arbitrary tenant and AI-authored applications—creative studios (e.g., Fashn.ai, Higgsfield, Luma AI, Lovart), realtime customer globes, HR schedulers, lending desks—without collapsing every product into generic CRUD tables and without allowing unverified agentic UI drift. (`#1638` extracts the existing Ring-1 `norn-ui-checker` with behavioral parity; the runtime Screen Capability Manifest and spatial/media DSL below are **TARGET** extensions built on top of it.)
 
-### Layer 1 — Typed UI DSL / Spatial & Media Primitives (`@norn/ui`)
+### Layer 1 — Typed UI DSL / Spatial & Media Primitives (`@norn/ui`, TARGET)
 
 Every screen composes from declarative, IR-serializable primitives:
 
@@ -114,20 +121,20 @@ Every screen composes from declarative, IR-serializable primitives:
 - `DataGrid` — virtualized grid (`@tanstack/react-table` + `@tanstack/react-virtual`) reserved for genuinely dense tabular workflows.
 - `ActionTrigger` — checked action invocation bound directly to a declared Norn action or transition.
 
-### Layer 2 — Automatic Server-Derived Security (`norn-ui-checker` `#1638` + Cedar + Markings)
+### Layer 2 — Server-Only Authorization & Redaction (`norn-ui-checker` + Cell Host + Cedar + Markings)
 
-Studio holds **zero hand-written frontend authorization logic**. Security is enforced mechanically across compile time and runtime:
+Studio and `@norn/ui` hold **zero authorization authority** and **never receive unredacted restricted values** to hide in the browser:
 
-- **Compile-time (`norn-ui-checker`, `#1638`):** Validates every UI binding, object/field read, marking flow, and action target against the canonical IR before a screen can publish.
-- **Runtime (Screen Capability Manifest):** The cell host evaluates Cedar policies and data Markings for the active principal and scope, returning a **Screen Capability Manifest** with the screen payload. `@norn/ui` enforces it automatically:
-  - **Whole-screen lock:** If core screen reads are denied, the entire page locks closed with a server-authored explanation—never a half-rendered broken shell.
-  - **Field masking/withholding:** Restricted fields automatically blur, mask, or withhold (`data-masked`), preserving honest status without leaking underlying values.
-  - **Action gating (`APPROVAL-1`):** Unauthorized actions disable or route through approval gates automatically, surfacing server refusal reasons instead of client-side guesses.
+- **Compile-time (`norn-ui-checker`, TARGET extension beyond `#1638`'s parity extraction):** Validates every UI binding, object/field read, marking flow, and action target against the canonical IR before a screen can publish.
+- **Runtime (Cell Host enforcement — authoritative):**
+  - **Pre-serialization redaction & withholding:** The cell host evaluates Cedar policies and Markings **before serialization**, withholding or replacing restricted fields with explicit redacted/masked placeholders on the wire. `@norn/ui` only renders those cell-returned placeholders (such as `data-masked` visual treatment) and never blurs raw restricted data in the browser.
+  - **Whole-screen lock (TARGET Screen Capability Manifest):** When the cell refuses core screen reads for the active principal/scope, Studio renders a fail-closed locked state with the cell's reason—never a half-rendered shell.
+  - **Dispatch-time action authorization & `APPROVAL-1` (`docs/spec/core/04-transactions-effects.md`):** The cell authorizes every action at dispatch. **Denied calls are refused immediately and never enter an approval queue.** Only an action call that **passes** Cedar authorization and matches an active approval gate parks under `APPROVAL-1` for human sign-off. Studio reflects capability hints and surfaces authoritative cell refusals without client-side authz guesses.
 
 ### Layer 3 — Thin Swappable Presentation & Skin Overlay
 
 - Applies `[data-skin]`, shell preset, density, and locale direction on top of Layers 1 and 2 without altering data flow or security boundaries.
-- **Sandboxed custom renderers:** Arbitrary tenant visualizers (custom WebGL globes, bespoke stage canvases, interactive domain charts) run sandboxed and receive **only** Cedar-filtered, marking-evaluated props plus checked `<NornAction>` callbacks—never raw cell clients, unfiltered state stores, or unguarded network access.
+- **Sandboxed custom renderers (TARGET):** Arbitrary tenant visualizers (custom WebGL globes, bespoke stage canvases, interactive domain charts) run sandboxed and receive **only** already-authorized, cell-redacted props plus checked `<NornAction>` dispatch callbacks—never raw cell clients, unfiltered state stores, or unguarded network access.
 
 ---
 
@@ -141,22 +148,23 @@ Truth status is a **server-only authority**. Never infer "verified" from the abs
 Quarantined  >  Withheld  >  Imported (unverified)  >  Verified fact
 ```
 
-### Semantic Map (Islands / Lenses)
+### Semantic Map (Islands / Lenses, TARGET `#1664`)
 
 Underneath, the workspace is one flat System-of-Record (SoR) ontology (`norn-ir` + `#45` CodeGraph). On top, users navigate arbitrary color-coded **Islands** through switchable **Lenses** without duplicating truth:
 
 - **Zoom 0 — Landscape:** Color-coded Islands connected by bundled cross-island bridges (The Weave source-colored convergence threads and soft semantic washes).
 - **Zoom 1 — Island Expansion:** Plain-English job/object cards (Floorplan) with local flow rails and active dependency highlights.
 - **Zoom 2 — Living Dossier:** Executable rules in plain language, interactive lifecycle/witness stepper, and Archify-style `SRC` span evidence badges linking every claim directly to its source span.
+- **Cell-side withholding across the entire map:** The cell filters Semantic Map projections before serialization across **nodes, edges, aggregate island/bridge counts, and `SRC` source spans** so restricted entities never leak through counts, link labels, or file paths.
 
 Switching Lenses re-projects the exact same underlying SoR graph (for example: operational flow, authority/markings, or lineage) rather than maintaining separate stale diagrams.
 
-### SoR → Projection Ripple
+### SoR → Projection Ripple (TARGET `#1664`)
 
 Changes to the System of Record ripple visibly and honestly into every dependent projection:
 
-- **Pre-commit (`#1371`):** Show `Before / Delta / After` architectural diffs (Archify) alongside dashed **Blueprint** overlays (Floorplan) on the canvas so operators see exact downstream impact before committing.
-- **Post-commit (`#1650`):** The transactional outbox automatically updates deterministic projections and emits Marking/IFC-safe **`Stale`** update tasks for anchored human or agent documents—never silently letting docs drift and never leaking restricted fields across marking boundaries.
+- **Pre-commit (TARGET, building on `#1371`):** Show `Before / Delta / After` architectural diffs (Archify) alongside dashed **Blueprint** overlays (Floorplan) on the canvas so operators see exact downstream impact before committing.
+- **Post-commit (TARGET, building on `#1650`'s server-side trigger outbox):** Future projection-ripple handlers consume committed outbox triggers to refresh deterministic projections and emit Marking/IFC-safe **`Stale`** update tasks for anchored human or agent documents—never silently letting docs drift and never leaking restricted fields across marking boundaries.
 
 ---
 
@@ -164,7 +172,7 @@ Changes to the System of Record ripple visibly and honestly into every dependent
 
 Every Studio PR must satisfy all applicable gates before merge:
 
-1. **Domain-agnostic Studio (`apps/studio/test/domain-words.test.ts`):** `apps/studio/src/` must never name a business domain (identifiers or prose). Domain vocabulary belongs exclusively in packs (`registry/packs/`) and test fixtures. There is no allowlist.
-2. **No-Radix CI guard:** First-party Studio code must not introduce `radix-ui`, `@radix-ui/*`, or `--radix-*`. Migration PRs must strictly shrink legacy Radix usage toward zero.
-3. **Contrast & focus gate (`apps/studio/test/contrast.test.ts`):** All tokens, skins, buttons, chips, badges, tabs, and shell controls must pass automated WCAG AA contrast and focus-outline invariants across themes.
-4. **Browser proof on Boat before merge:** Visual, layout, skin, shell, and interaction changes require Playwright E2E coverage (`bun run e2e`) plus real rendered **light, dark, and active skin screenshots** captured on Boat before merge. Static markup tests never substitute for rendered browser proof.
+1. **Domain-agnostic Studio (`apps/studio/test/domain-words.test.ts` — CURRENT):** `apps/studio/src/` must never name a business domain (identifiers or prose). Domain vocabulary belongs exclusively in packs (`registry/packs/`) and test fixtures. There is no allowlist.
+2. **No-Radix CI guard (`apps/studio/test/ui-primitives-guard.test.ts` — TARGET, landing with the hard-cutover PR):** First-party Studio code and `apps/studio/package.json` must contain zero `radix-ui`, `@radix-ui/*`, or `--radix-*` references.
+3. **Contrast & focus gate (`apps/studio/test/contrast.test.ts` — CURRENT for `:root`/`.dark`; TARGET to expand across all four `data-skin` sets in the cutover PR):** All tokens, skins, buttons, chips, badges, tabs, and shell controls must pass automated WCAG AA contrast and focus-outline invariants across themes.
+4. **Browser proof on Boat before merge (CURRENT):** Visual, layout, skin, shell, and interaction changes require Playwright E2E coverage (`bun run e2e`) plus real rendered **light, dark, and active skin screenshots** captured on Boat before merge. Static markup tests never substitute for rendered browser proof.
