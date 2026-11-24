@@ -97,7 +97,7 @@ test("SDK-CALL-2: what is none of the three arms throws NornUnavailable, saying 
   expect((await traced.call("any.action", {}, { idempotencyKey: "k" })).kind).toBe("receipt")
 })
 
-test("SDK-CALL-3: no answer at all is NornUnavailable with status 0 and its cause; an abort or a host error passes through", async () => {
+test("SDK-CALL-3: no answer, or an abort once a write was sent, is NornUnavailable (outcome unknown, the error its cause)", async () => {
   const lost = new TypeError("fetch failed")
   const offline = createNornClient({ scope, fetch: async () => { throw lost } })
   const error = await failure(offline.call("any.action", {}, { idempotencyKey: "k" })) as NornUnavailable
@@ -107,10 +107,30 @@ test("SDK-CALL-3: no answer at all is NornUnavailable with status 0 and its caus
   expect(error.message).toContain("could not be read, so the outcome is unknown")
   expect(await failure(offline.listActions())).toBeInstanceOf(NornUnavailable)
 
-  const controller = new AbortController()
-  controller.abort()
-  const aborted = createNornClient({ scope, fetch: async () => { throw new TypeError("aborted") } })
-  expect(await failure(aborted.call("any.action", {}, { idempotencyKey: "k", signal: controller.signal }))).not.toBeInstanceOf(NornUnavailable)
+  // Aborted before it was sent: nothing was sent, and the abort passes through as is.
+  const early = new AbortController()
+  early.abort()
+  let sent = 0
+  const counting = createNornClient({ scope, fetch: async () => { sent++; return Response.json(served.committed) } })
+  const notSent = await failure(counting.call("any.action", {}, { idempotencyKey: "k", signal: early.signal }))
+  expect([notSent instanceof NornUnavailable, (notSent as Error).name, sent]).toEqual([false, "AbortError", 0])
+  // Aborted once sent: a write may have been applied, so its outcome is unknown, the abort its cause.
+  for (const during of ["fetch", "body"] as const) {
+    const controller = new AbortController()
+    const abort = new DOMException("The operation was aborted.", "AbortError")
+    const fetchAborted = async () => {
+      controller.abort(abort)
+      if (during === "fetch") throw abort
+      return { status: 200, ok: true, text: async () => { throw abort } } as unknown as Response
+    }
+    const write = await failure(createNornClient({ scope, fetch: fetchAborted }).call("any.action", {}, { idempotencyKey: "k", signal: controller.signal })) as NornUnavailable
+    expect([during, write instanceof NornUnavailable, write.outcome, write.status, write.cause]).toEqual([during, true, "unknown", 0, abort])
+  }
+  // A read's abort passes through as is.
+  const reading = new AbortController()
+  const readAbort = new DOMException("The operation was aborted.", "AbortError")
+  const read = await failure(createNornClient({ scope, fetch: async () => { reading.abort(readAbort); throw readAbort } }).listActions({}, reading.signal))
+  expect(read).toBe(readAbort)
   // A body that stops arriving is no answer either.
   const broken = { status: 200, ok: true, text: async () => { throw new TypeError("terminated") } } as unknown as Response
   const truncated = await failure(createNornClient({ scope, fetch: async () => broken }).call("any.action", {}, { idempotencyKey: "k" })) as NornUnavailable
@@ -184,11 +204,30 @@ test("SDK-DEFS-1: a definitions version pins calls; a catalog from another versi
   expect(new URL(wire.sent.at(-1)!.url, "http://x").searchParams.has("version")).toBe(false)
 })
 
-test("SDK-REFUSAL-1: a malformed finding is skipped, never a crash", async () => {
-  const refusal = { ...served.invalidKey, diagnostics: [null, 7, { code: "x", message: "m", span: null }, { code: "y", message: "n", span: { pointer: "/input/a" } }] }
-  const client = createNornClient({ scope, fetch: cell(() => Response.json(refusal, { status: 400 })).fetch })
+test("SDK-REFUSAL-1: only a whole Refusal@2 envelope is a refusal; anything less is an unknown outcome", async () => {
+  const partial = [
+    { format: "norn/refusal@2", code: "x.y" },
+    (({ retryable: _, ...rest }) => rest)(served.conflict),
+    (({ reason: _, ...rest }) => rest)(served.conflict),
+    { ...served.conflict, category: "law" },
+    { ...served.conflict, reason: { law: "l" } },
+    { ...served.invalidKey, diagnostics: [null] },
+    { ...served.invalidKey, diagnostics: [{ code: "y", message: "n", pointer: "/input/a" }] },
+  ]
+  for (const [status, body] of partial.flatMap((b) => [[500, b], [409, b]] as const)) {
+    const client = createNornClient({ scope, fetch: cell(() => Response.json(body, { status })).fetch })
+    const error = await failure(client.call("any.action", {}, { idempotencyKey: "k" })) as NornUnavailable
+    expect([status, body, error instanceof NornUnavailable, error.outcome]).toEqual([status, body, true, "unknown"])
+  }
+  // A whole envelope keeps its findings, each at its span's pointer.
+  const findings = { ...served.invalidKey, diagnostics: [{ code: "x", severity: "error", message: "m", span: null }, { code: "y", severity: "error", message: "n", span: { pointer: "/input/a" } }] }
+  const client = createNornClient({ scope, fetch: cell(() => Response.json(findings, { status: 400 })).fetch })
   const result = await client.call("any.action", {}, { idempotencyKey: "k" })
   expect(result.kind === "refused" && result.diagnostics).toEqual([{ code: "x", message: "m", pointer: null }, { code: "y", message: "n", pointer: "/input/a" }])
+  // A disclosed reason is validated too, and kept.
+  const reason = { law: "fixture.total_ok", subject: "fixture.Record/r-1", values: { total: "3" }, pin: { kind: "law", artifactId: "fixture.total_ok.law", lawId: "total_ok", version: "1.0.0" } }
+  const disclosed = createNornClient({ scope, fetch: cell(() => Response.json({ ...served.precondition, reason }, { status: 422 })).fetch })
+  expect(await disclosed.call("any.action", {}, { idempotencyKey: "k" })).toMatchObject({ kind: "refused", reason })
 })
 
 const summary = {

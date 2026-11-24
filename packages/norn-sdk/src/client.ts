@@ -81,17 +81,17 @@ export interface Diagnostic {
 }
 
 /**
- * A Refusal@2 as read: its generated members, with each finding's pointer lifted out of its span.
- * `category`, `retryable` and `explanation` are absent only when a host answered without them.
+ * A Refusal@2 as read: the whole envelope the contract requires (`conforms("Refusal")`), with each
+ * finding's pointer lifted out of its span and a `null` reason omitted.
  */
 export interface Refusal {
   readonly status: number
   readonly code: Wire["Refusal"]["code"]
   readonly message: Wire["Refusal"]["message"]
   readonly diagnostics: readonly Diagnostic[]
-  readonly category?: RefusalCategory
-  readonly retryable?: boolean
-  readonly explanation?: string
+  readonly category: RefusalCategory
+  readonly retryable: boolean
+  readonly explanation: string
   readonly reason?: RefusalReason
   readonly decidedAt?: string
   readonly incidentId?: string
@@ -163,33 +163,29 @@ function parsed(text: string): unknown {
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value)
-const CATEGORIES: readonly RefusalCategory[] = ["visibility", "permission", "precondition", "conflict", "invalid", "limit", "internal"]
 
-/** Read a Refusal@2 body (`format: "norn/refusal@2"`); null when the text is not one. A finding's pointer is read at `span.pointer` or `pointer`. */
+/**
+ * Read a Refusal@2 body: null unless it is the whole envelope the contract requires
+ * (`format: "norn/refusal@2"`, code, category, message, explanation, retryable, reason, and
+ * well-formed findings), since anything less (a gateway's `{ code, message }`, a truncated body) is
+ * not the cell's answer and the request behind it may have been applied.
+ */
 export function readRefusal(status: number, text: string): Refusal | null {
   const body = parsed(text)
-  // Only the cell's own document is a refusal: a gateway's or proxy's `{ code, message }` is not,
-  // since the request behind it may have reached the cell and been applied.
-  if (!isRecord(body) || body["format"] !== "norn/refusal@2" || typeof body["code"] !== "string") return null
-  const { code, message, diagnostics, category, retryable, explanation, reason, decidedAt, incidentId } = body
-  const list = Array.isArray(diagnostics)
-    ? diagnostics.filter(isRecord).map((d: { code?: unknown; message?: unknown; pointer?: unknown; span?: unknown }) => ({
-      code: String(d.code ?? ""), message: String(d.message ?? ""),
-      pointer: isRecord(d.span) && typeof d.span["pointer"] === "string" ? d.span["pointer"] : typeof d.pointer === "string" ? d.pointer : null,
-    }))
-    : []
-  const disclosed = isRecord(reason) && typeof reason["law"] === "string" && typeof reason["subject"] === "string" && isRecord(reason["values"]) ? reason as RefusalReason : undefined
+  if (!conforms("Refusal", body)) return null
+  const refusal = body as Wire["Refusal"]
+  const diagnostics = (refusal.diagnostics ?? []).map((d) => ({ code: d.code, message: d.message, pointer: d.span?.pointer ?? null }))
   return {
     status,
-    code,
-    message: typeof message === "string" ? message : code,
-    diagnostics: list,
-    ...CATEGORIES.includes(category as RefusalCategory) ? { category: category as RefusalCategory } : {},
-    ...typeof retryable === "boolean" ? { retryable } : {},
-    ...typeof explanation === "string" ? { explanation } : {},
-    ...disclosed ? { reason: disclosed } : {},
-    ...typeof decidedAt === "string" && decidedAt !== "" ? { decidedAt } : {},
-    ...typeof incidentId === "string" && incidentId !== "" ? { incidentId } : {},
+    code: refusal.code,
+    message: refusal.message,
+    diagnostics,
+    category: refusal.category,
+    retryable: refusal.retryable,
+    explanation: refusal.explanation,
+    ...refusal.reason === null ? {} : { reason: refusal.reason as RefusalReason },
+    ...typeof refusal.decidedAt === "string" && refusal.decidedAt !== "" ? { decidedAt: refusal.decidedAt } : {},
+    ...typeof refusal.incidentId === "string" && refusal.incidentId !== "" ? { incidentId: refusal.incidentId } : {},
   }
 }
 
@@ -254,24 +250,33 @@ export function createNornClient<M extends ActionMapShape<M> = UntypedActions>(o
   const base = options.baseUrl ?? ""
   const pin = options.definitionsVersion
 
-  async function request(path: string, query: Record<string, string>, init: RequestInit): Promise<{ status: number; text: string; ok: boolean }> {
+  /**
+   * One request. `write`: a POST that may change the cell. A signal aborted before the request is
+   * sent throws its abort as is (nothing was sent). Once it is sent, a write that gets no readable
+   * answer (the network failed, the body broke off, or the caller aborted) may have been applied:
+   * `NornUnavailable` with outcome `unknown`, the original error as its `cause`. A read's abort
+   * passes through as is; a read's lost answer is `NornUnavailable` too.
+   */
+  async function request(path: string, query: Record<string, string>, init: RequestInit, write: boolean): Promise<{ status: number; text: string; ok: boolean }> {
     const search = new URLSearchParams({ orgId: options.scope.orgId, environmentId: options.scope.environmentId, ...query })
     const extra = options.headers === undefined ? {} : await options.headers()
+    init.signal?.throwIfAborted()
+    const lost = (error: unknown): never => {
+      const aborted = init.signal?.aborted === true
+      if ((error instanceof TypeError && !aborted) || (aborted && write)) throw new NornUnavailable(0, undefined, { cause: error })
+      throw error
+    }
     let response: Response
     try {
       response = await fetcher(`${base}${path}?${search}`, { ...init, headers: { ...extra, ...init.headers as Record<string, string> } })
     } catch (error) {
-      // `fetch` rejects with a TypeError when no answer arrives; an abort, or a host's own error, passes through.
-      if (error instanceof TypeError && !init.signal?.aborted) throw new NornUnavailable(0, undefined, { cause: error })
-      throw error
+      return lost(error)
     }
     let text: string
     try {
       text = await response.text()
     } catch (error) {
-      // A body that stops arriving is no answer either; an abort passes through.
-      if (error instanceof TypeError && !init.signal?.aborted) throw new NornUnavailable(0, undefined, { cause: error })
-      throw error
+      return lost(error)
     }
     return { status: response.status, ok: response.ok, text }
   }
@@ -293,7 +298,7 @@ export function createNornClient<M extends ActionMapShape<M> = UntypedActions>(o
       headers: { accept: "application/json", "content-type": "application/json" },
       body: `{"input":${input},"idempotencyKey":${JSON.stringify(call.idempotencyKey)}${trace}}`,
       ...call.signal === undefined ? {} : { signal: call.signal },
-    })
+    }, true)
     if (status === 202) {
       const pending = parsed(text)
       const decision = isRecord(pending) ? pending["decision"] : undefined
@@ -321,7 +326,7 @@ export function createNornClient<M extends ActionMapShape<M> = UntypedActions>(o
         params["objectKind"] = query.objectKind
         if (query.objectId !== undefined) params["objectId"] = query.objectId
       }
-      const { status, ok, text } = await request("/v1/actions", params, { headers: { accept: "application/json" }, ...signal === undefined ? {} : { signal } })
+      const { status, ok, text } = await request("/v1/actions", params, { headers: { accept: "application/json" }, ...signal === undefined ? {} : { signal } }, false)
       if (ok) {
         const document = parsed(text)
         if (!conforms("NornActionCatalog", document)) throw new NornUnexpectedResponse(status, "an action catalog")

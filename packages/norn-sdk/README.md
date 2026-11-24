@@ -14,12 +14,15 @@ too.
 `createNornClient<ActionMap>({ baseUrl, scope, definitionsVersion })` lists the
 actions a cell offers and calls one. Its wire shapes are the generated
 `Schemas[...]` documents. A call answers one of three arms,
-`receipt | pending | refused`, each validated against the contract. Anything
-else throws `NornUnavailable` (a success status with a malformed document:
-`NornUnexpectedResponse`). Its `outcome` is `not-applied` only for a route the
-cell does not serve (404); otherwise it is `unknown`, because the request may
-have been applied before its answer was lost: retry a write with its original
-idempotency key, never a new one.
+`receipt | pending | refused`, each validated against the contract
+(`src/shapes.ts`, diffed against the OpenAPI document by its tests): a refusal
+is only a whole Refusal@2 envelope. Anything else throws `NornUnavailable` (a
+success status with a malformed document: `NornUnexpectedResponse`). Its
+`outcome` is `not-applied` only for a route the cell does not serve (404, for
+that request alone); otherwise it is `unknown`, because the request may have
+been applied before its answer was lost, including when a write is aborted
+after it was sent: retry a write with its original idempotency key, never a new
+one. A signal aborted before sending throws its abort; nothing was sent.
 
 Mint one idempotency key per user intent with `createIntentKey()` (or
 `client.intent(...)`) and resend that key on every retry of that intent; it is

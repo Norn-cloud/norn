@@ -22,7 +22,7 @@ import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { canonicalJson, type Json } from "./canonical.ts"
 import { isArtifact, readArtifacts } from "./pack.ts"
-import { mayReadActor } from "./zen-tokens.ts"
+import { mayReadActor } from "./zen-reads.ts"
 
 export class CodegenError extends Error {
   constructor(readonly at: string, message: string) {
@@ -69,7 +69,7 @@ type Mode = "input" | "output"
 
 function decimalDoc(norn: Node): string {
   const parts = [`Exact decimal text${typeof norn["scale"] === "number" ? `, scale ${norn["scale"]}` : ""}`]
-  if (record(norn["unit"]) && typeof norn["unit"]["code"] === "string") parts.push(`unit ${norn["unit"]["code"]}`)
+  if (record(norn["unit"]) && typeof norn["unit"]["code"] === "string") parts.push(`unit ${doc(norn["unit"]["code"])}`)
   return `${parts.join(", ")}.`
 }
 
@@ -83,31 +83,91 @@ function schemaDoc(node: unknown): string | null {
 }
 
 const DECIMAL_MEMBERS = new Set(["kind", "scale", "unit", "currencySource", "perUnit", "rounding", "additivity", "unitSource"])
+const UNIT_SYSTEMS = ["ucum", "qudt"]
+const ROUNDINGS = ["refuse", "toward_zero", "half_even", "half_away_from_zero"]
+const ADDITIVITIES = ["undeclared", "additive", "semi_additive", "non_additive"]
 const unitCode = (unit: unknown): boolean => record(unit) && typeof unit["code"] === "string" && unit["code"] !== "" && !/\s/.test(unit["code"])
 
 /**
- * VAL-EXACT-1, as `norn_expr::schema::decimal_refinement` admits it: a Decimal of integer scale
+ * A Decimal property type as `norn_ir::PropertyType::Decimal` decodes it (every member typed,
+ * no member it does not declare): `scale` a whole number; `unit`/`perUnit` a `UnitRef` with both a
+ * `system` (`ucum`, `qudt`) and a `code`; `rounding` one of its modes; `additivity` a tagged
+ * contract; `currencySource` a `DimensionPath`; `unitSource` property ids. A present member is
+ * never `null`.
+ */
+function decimalShape(site: Node, refuse: (why: string) => never): void {
+  const stray = Object.keys(site).find((member) => !DECIMAL_MEMBERS.has(member))
+  if (stray !== undefined) refuse(`\`${stray}\` is not a Decimal member`)
+  const scale = site["scale"]
+  if (typeof scale !== "number" || !Number.isInteger(scale) || scale < 0) refuse("scale is not a whole number")
+  for (const member of ["unit", "perUnit"]) {
+    const unit = site[member]
+    if (unit === undefined) continue
+    if (!record(unit) || Object.keys(unit).some((k) => k !== "system" && k !== "code")) refuse(`${member} is not a unit reference`)
+    const ref = unit as Node
+    if (!UNIT_SYSTEMS.includes(ref["system"] as string)) refuse(`${member} names no unit system (${UNIT_SYSTEMS.join(", ")})`)
+    if (typeof ref["code"] !== "string") refuse(`${member} has no code`)
+  }
+  const rounding = site["rounding"]
+  if (rounding !== undefined && !ROUNDINGS.includes(rounding as string)) refuse(`rounding is not one of ${ROUNDINGS.join(", ")}`)
+  const additivity = site["additivity"]
+  if (additivity !== undefined) {
+    const contract = additivity as Node
+    const ratio = record(additivity) && contract["kind"] === "ratio"
+      && typeof contract["numerator"] === "string" && typeof contract["denominator"] === "string" && Object.keys(contract).length === 3
+    const plain = record(additivity) && ADDITIVITIES.includes(contract["kind"] as string) && Object.keys(contract).length === 1
+    if (!ratio && !plain) refuse("additivity is not an aggregation contract")
+  }
+  const currencySource = site["currencySource"]
+  if (currencySource !== undefined) {
+    const source = currencySource as Node
+    if (!record(currencySource) || Object.keys(source).some((k) => k !== "property" && k !== "links") || typeof source["property"] !== "string"
+      || (source["links"] !== undefined && (!Array.isArray(source["links"]) || !source["links"].every((l) => typeof l === "string")))) refuse("currencySource is not a dimension path")
+  }
+  const unitSource = site["unitSource"]
+  if (unitSource !== undefined && (!Array.isArray(unitSource) || !unitSource.every((id) => typeof id === "string"))) refuse("unitSource is not a list of property ids")
+}
+
+/**
+ * VAL-EXACT-1, as `norn_expr::schema::decimal_refinement` admits it: a well-formed Decimal of scale
  * 0..=18; a unit and a currency source are exclusive; a per-unit rate needs a currency source and
  * no unit; unit codes are non-empty with no whitespace; a currency source names a property.
  */
 function decimalRefinement(norn: unknown, at: string): void {
-  const refuse = (why: string) => { throw new CodegenError(at, `\`nornType\` is not a bounded Decimal refinement: ${why}`) }
+  const refuse = (why: string): never => { throw new CodegenError(at, `\`nornType\` is not a bounded Decimal refinement: ${why}`) }
   if (!record(norn) || norn["kind"] !== "decimal") refuse("it is not a decimal")
   const site = norn as Node
-  const stray = Object.keys(site).find((member) => !DECIMAL_MEMBERS.has(member))
-  if (stray !== undefined) refuse(`\`${stray}\` is not a Decimal member`)
-  const scale = site["scale"]
-  if (typeof scale !== "number" || !Number.isInteger(scale) || scale < 0 || scale > 18) refuse("scale is not an integer in 0..=18")
+  decimalShape(site, refuse)
+  if ((site["scale"] as number) > 18) refuse("scale is not an integer in 0..=18")
   const { unit, currencySource, perUnit } = site
   if (unit !== undefined && !unitCode(unit)) refuse("unit has no code")
   if (perUnit !== undefined && !unitCode(perUnit)) refuse("perUnit has no code")
   if (currencySource !== undefined) {
-    const source = currencySource as { property?: unknown; links?: unknown }
-    if (!record(currencySource) || typeof source.property !== "string" || source.property.trim() === ""
-      || (source.links !== undefined && (!Array.isArray(source.links) || source.links.some((l) => typeof l !== "string" || l.trim() === "")))) refuse("currencySource names no property")
+    const source = currencySource as { property: string; links?: readonly string[] }
+    if (source.property.trim() === "" || (source.links ?? []).some((l) => l.trim() === "")) refuse("currencySource names no property")
   }
   if (unit !== undefined && currencySource !== undefined) refuse("a unit and a currency source are exclusive")
   if (perUnit !== undefined && (unit !== undefined || currencySource === undefined)) refuse("a per-unit rate needs a currency source and no unit")
+}
+
+/**
+ * An EntityIR decimal, as `norn_checker::property_types` admits it: a well-formed Decimal whose
+ * scale is at most MAX_DECIMAL_SCALE (28, ZEN's exact decimal range), and at most 18 for a per-unit
+ * rate or a declared rounding other than `refuse`; a rate needs a currency source, no unit and a
+ * code; a unit source excludes a static unit, currency or rate.
+ */
+function entityDecimal(type: Node, at: string): void {
+  const refuse = (why: string): never => { throw new CodegenError(at, why) }
+  decimalShape(type, (why) => refuse(`a decimal is not well-formed: ${why}`))
+  const scale = type["scale"] as number
+  const exactProfile = type["perUnit"] !== undefined || (type["rounding"] !== undefined && type["rounding"] !== "refuse")
+  const max = exactProfile ? 18 : 28
+  if (scale > max) refuse(`a decimal's scale is not an integer in 0..=${max}${exactProfile ? " (a rate or a rounding decimal)" : ""}`)
+  const { unit, currencySource, perUnit, unitSource } = type
+  if (perUnit !== undefined && (currencySource === undefined || unit !== undefined || !unitCode(perUnit))) refuse("a per-unit rate needs a currency source, no unit and a code")
+  if (Array.isArray(unitSource) && unitSource.length > 0 && (unit !== undefined || currencySource !== undefined || perUnit !== undefined)) {
+    refuse("a decimal with a static unit, a currency source or a rate declares no unit source")
+  }
 }
 
 /** A closed action schema node as a TypeScript type. */
@@ -191,9 +251,9 @@ function objectType(schema: Node, at: string, depth: number, mode: Mode, omit: R
 /**
  * ACTION-ACTOR-1 (`norn_kernel::actor_derived_fields`): a derivation the caller may not pre-empt
  * (`inputRequired: false`) whose expression may read the verified actor, as `mayReadActor` decides
- * it on the expression's ZEN tokens (`./zen-tokens.ts`): an `actor` name that is not a member, or a
- * root, pointer, closure, assignment or sequence, anywhere outside a string. Such a field is not
- * the caller's to send: the kernel refuses any caller value for it.
+ * it on the expression's parsed ZEN AST (`./zen-reads.ts`): a literal `actor…` path, a `$root`, a
+ * closure (or its pointer) or an assignment anywhere, or an expression that does not parse. Such a
+ * field is not the caller's to send: the kernel refuses any caller value for it.
  */
 
 function callerInput(payload: Node, at: string): string {
@@ -227,18 +287,7 @@ function propertyType(type: unknown, at: string, catalog: Catalog, depth: number
   switch (type["kind"]) {
     case "text": case "timestamp": case "date": case "duration": return "string"
     case "integer": return "number"
-    case "decimal": {
-      // EntityIR decimals, as `norn_checker::property_types` bounds them: scale up to
-      // MAX_DECIMAL_SCALE (28, ZEN's exact decimal range), and up to 18 for a per-unit rate or a
-      // declared rounding other than `refuse`. Action `nornType` sites keep their own 0..=18.
-      const scale = type["scale"]
-      const exactProfile = type["perUnit"] !== undefined || (type["rounding"] !== undefined && type["rounding"] !== "refuse")
-      const max = exactProfile ? 18 : 28
-      if (typeof scale !== "number" || !Number.isInteger(scale) || scale < 0 || scale > max) {
-        throw new CodegenError(at, `a decimal's scale is not an integer in 0..=${max}${exactProfile ? " (a rate or a rounding decimal)" : ""}`)
-      }
-      return "string"
-    }
+    case "decimal": entityDecimal(type, at); return "string"
     case "decimal-binding": return "string"
     case "boolean": return "boolean"
     case "json-ext": return "NornJson"

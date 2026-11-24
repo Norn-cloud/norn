@@ -464,7 +464,7 @@ export async function workspaceCell(page: Page): Promise<WorkspaceCell> {
     const body = route.request().postDataJSON() as { input: Record<string, unknown>; idempotencyKey: string }
     actionCalls.push({ actionId, idempotencyKey: body.idempotencyKey, input: body.input })
     const res = runActionOnRecord(actionId, body.input, body.idempotencyKey)
-    if (!res.ok) return route.fulfill({ status: res.status, json: { code: res.code, category: "law", message: res.message, explanation: res.message } })
+    if (!res.ok) return route.fulfill({ status: res.status, json: { format: "norn/refusal@2", code: res.code, category: res.status === 403 ? "permission" : res.status === 409 ? "conflict" : "precondition", retryable: false, reason: null, message: res.message, explanation: res.message } })
     return route.fulfill({ json: res.receipt })
   })
 

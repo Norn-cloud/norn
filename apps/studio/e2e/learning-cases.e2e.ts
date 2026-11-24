@@ -311,9 +311,14 @@ async function mountCell(page: Page, options: MountOptions = {}) {
         return route.fulfill({
           status: 422,
           json: {
+            format: "norn/refusal@2",
             code: "action.precondition_failed",
+            category: "precondition",
+            retryable: false,
+            reason: null,
             message: "Only episodes with a recorded outcome can be curated.",
-            diagnostics: [{ code: "learning.episode_unmeasured", message: "Episode outcome is not recorded yet.", span: { pointer: "/episodeId" } }],
+            explanation: "a declared precondition does not hold",
+            diagnostics: [{ code: "learning.episode_unmeasured", severity: "error", message: "Episode outcome is not recorded yet.", span: { pointer: "/episodeId" } }],
           },
         })
       }

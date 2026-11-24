@@ -144,7 +144,7 @@ test("a call sends the encoded input and its key; a refusal keeps every diagnost
   expect(await callAction("constitution.melt.convert", '{"input_fine_g":12.000}', "k1", ok.fetcher)).toEqual({ kind: "receipt", receipt: receipt as never })
   expect(ok.calls[0]?.url.pathname).toBe("/api/host/v1/actions/constitution.melt.convert")
   expect(ok.calls[0]?.body).toBe('{"input":{"input_fine_g":12.000},"idempotencyKey":"k1"}')
-  const refused = cell(() => Response.json({ format: "norn/refusal@2", code: "action.input_invalid", message: "The input does not fit.", diagnostics: [{ code: "x", message: "m", pointer: "/input/a" }, { code: "y", message: "n", pointer: "/input/b" }] }, { status: 422 }))
+  const refused = cell(() => Response.json({ format: "norn/refusal@2", code: "action.input_invalid", category: "invalid", retryable: false, reason: null, message: "The input does not fit.", explanation: "the input does not satisfy the declared schema", diagnostics: [{ code: "x", severity: "error", message: "m", span: { pointer: "/input/a" } }, { code: "y", severity: "error", message: "n", span: { pointer: "/input/b" } }] }, { status: 422 }))
   const result = await callAction("a", "{}", "k", refused.fetcher)
   expect(result).toMatchObject({ kind: "refused", status: 422, code: "action.input_invalid" })
   expect(result.kind === "refused" && result.diagnostics.map((d) => d.pointer)).toEqual(["/input/a", "/input/b"])

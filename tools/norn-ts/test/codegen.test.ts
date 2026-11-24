@@ -103,9 +103,21 @@ test("CODEGEN-TS-3: a shape outside the closed dialect, or two definitions of on
   // VAL-EXACT-1 bounds, as `decimal_refinement` admits them.
   const decimal = (nornType: object) => withInput("learning_rate", { type: "number", nornType: { kind: "decimal", ...nornType } })
   refused(decimal({ scale: 19 }), "scale is not an integer in 0..=18")
-  refused(decimal({ scale: 1.5 }), "scale is not an integer in 0..=18")
-  refused(decimal({ scale: -1 }), "scale is not an integer in 0..=18")
-  refused(decimal({}), "scale is not an integer in 0..=18")
+  refused(decimal({ scale: 1.5 }), "scale is not a whole number")
+  refused(decimal({ scale: -1 }), "scale is not a whole number")
+  refused(decimal({}), "scale is not a whole number")
+  // Every member decodes as norn_ir::PropertyType::Decimal decodes it.
+  refused(decimal({ scale: 2, unit: { code: "kg" } }), "unit names no unit system (ucum, qudt)")
+  refused(decimal({ scale: 2, unit: { code: "kg", system: "si" } }), "unit names no unit system (ucum, qudt)")
+  refused(decimal({ scale: 2, unit: { code: "kg", system: "ucum", label: "x" } }), "unit is not a unit reference")
+  refused(decimal({ scale: 2, unit: { system: "ucum" } }), "unit has no code")
+  refused(decimal({ scale: 2, rounding: "up" }), "rounding is not one of refuse, toward_zero, half_even, half_away_from_zero")
+  refused(decimal({ scale: 2, rounding: null }), "rounding is not one of")
+  refused(decimal({ scale: 2, additivity: { kind: "summable" } }), "additivity is not an aggregation contract")
+  refused(decimal({ scale: 2, additivity: { kind: "ratio", numerator: "a" } }), "additivity is not an aggregation contract")
+  refused(decimal({ scale: 2, currencySource: { property: "model", links: [1] } }), "currencySource is not a dimension path")
+  refused(decimal({ scale: 2, unitSource: "model" }), "unitSource is not a list of property ids")
+  expect(generateTypes(decimal({ scale: 2, rounding: "half_even", additivity: { kind: "ratio", numerator: "a", denominator: "b" } }), { base: catalogs() })).toContain('readonly "learning_rate": string')
   refused(decimal({ scale: 2, precision: 4 }), "`precision` is not a Decimal member")
   refused(decimal({ scale: 2, unit: { code: "kg", system: "ucum" }, currencySource: { property: "currency", links: [] } }), "a unit and a currency source are exclusive")
   refused(decimal({ scale: 2, perUnit: { code: "kg", system: "ucum" } }), "a per-unit rate needs a currency source and no unit")
@@ -126,6 +138,9 @@ test("CODEGEN-TS-3: a shape outside the closed dialect, or two definitions of on
   expect(generateTypes(entityDecimal({ scale: 28 }), { base: catalogs() })).toContain('readonly "learning_rate": string')
   expect(generateTypes(entityDecimal({ scale: 28, rounding: "refuse" }), { base: catalogs() })).toContain('readonly "learning_rate": string')
   refused(entityDecimal({ scale: 29 }), "a decimal's scale is not an integer in 0..=28")
+  refused(entityDecimal({ scale: 2, unit: { code: "kg" } }), "a decimal is not well-formed: unit names no unit system")
+  refused(entityDecimal({ scale: 2, unitSource: ["model"], unit: { system: "ucum", code: "kg" } }), "declares no unit source")
+  refused(entityDecimal({ scale: 2, perUnit: { system: "ucum", code: "kg" } }), "a per-unit rate needs a currency source, no unit and a code")
   refused(entityDecimal({ scale: 19, rounding: "half_even" }), "a decimal's scale is not an integer in 0..=18 (a rate or a rounding decimal)")
   refused(entityDecimal({ scale: 19, perUnit: { system: "ucum", code: "kg" }, currencySource: { property: "model", links: [] } }), "a decimal's scale is not an integer in 0..=18 (a rate or a rounding decimal)")
   // The repository's own precision fixture declares an entity decimal of scale 28.
@@ -172,6 +187,17 @@ test("CODEGEN-TS-3: a shape outside the closed dialect, or two definitions of on
   identical.artifactId = "fixture.identical.entity"
   const types = (text: string) => text.replace(/^export type DefinitionsDigest = .*$/m, "")
   expect(types(generateTypes(tracking, { base: [...catalogs(), identical] }))).toBe(types(readFileSync(join(FIXTURES, "tracking.d.ts"), "utf8")))
+
+  // Text interpolated into a JSDoc comment can never close it early.
+  const hostile = ml()
+  const record = hostile.find((a) => a.artifactId === "ml.run.record.action")!.payload
+  record.title = "Close */ export const pwned = 1 /*"
+  record.inputSchema.properties.learning_rate = { type: "number", title: "rate */ x", nornType: { kind: "decimal", scale: 2, unit: { system: "ucum", code: "*/kg" } } }
+  const escaped = generateTypes(hostile, { base: catalogs() })
+  for (const line of escaped.split("\n").filter((l) => l.includes("/**"))) expect(line.indexOf("*/")).toBe(line.length - 2)
+  expect(escaped).toContain("Close *\\/ export const pwned = 1 /*")
+  expect(escaped).toContain("unit *\\/kg")
+  expect(escaped).not.toMatch(/^\s*export\s+const/m)
 
   // Extension members never shadow a member of their target, whichever artifact comes first.
   const entityV2 = readArtifactSet(join(REPO, "fixtures/ir/entity-v2/artifact-set")) as Array<{ artifactId: string; kind: string; payload: any }>
@@ -229,23 +255,29 @@ test("CODEGEN-TS-6: the caller's input excludes actor-derived fields and makes d
     const caller = generated.slice(generated.indexOf("readonly input: {"), generated.indexOf("readonly output: {"))
     return caller.includes('readonly "label"?: string') ? "optional" : caller.includes('"label"') ? "required" : "dropped"
   }
-  // Drops: a literal `actor` path, the root, the pointer, a closure builtin, an assignment or a
-  // sequence, in any position (after a range's `..`, inside a template expression, as a computed
-  // member), and anything that does not lex. ZEN strings have no escapes (the vendored lexer ends a
-  // string at the next matching quote), so `"a\"actor"` is the string `a\`, then `actor`, then an
-  // unterminated string: a lexer error the kernel counts as a read.
+  // The kernel decides on the parsed ZEN AST (`collect_paths`); codegen parses the same way.
+  // Drops: a literal `actor…` path anywhere (a computed member, an interval bound, a template
+  // expression), `$root`, a closure builtin, an assignment, and anything that does not lex or parse:
+  // ZEN strings have no escapes (`"a\"actor"` is an unterminated string), ZEN has no optional
+  // chaining (`input?.actor`), no bare ranges (`0..10`), no postfix on an object literal, and only
+  // its own builtins and date methods (`factor(…)`, `.notAMethod()` are parse errors).
   for (const expression of [
-    "actor.subjectId", "actor", "$root.actor.subjectId", "$.actor", "$", "sum(map(input.lines, #))", "count(input.lines, # > 0)",
+    "actor.subjectId", "actor", "$root.actor.subjectId", "sum(map(input.lines, #))", "count(input.lines, # > 0)",
     "filter(input.tags, true)", "flatMap(input.lines, [1])", "x = actor; x", "a = 1; a", "input.lines[actor.index]",
-    "input.weight in [0..actor.max_weight]", "input.n in [0..count(input.lines, true)]", "`${actor.subjectId}`",
-    'input.label ?? "a\\"actor"', 'input.label ?? "unterminated', "input.label ?? @",
+    "input.weight in [0..actor.max_weight]", "input.n in [0..count(input.lines, true)]", "`${actor.subjectId}`", "{[actor.k]: 1}",
+    'input.label ?? "a\\"actor"', 'input.label ?? "unterminated', "input.label ?? @", "input.label +", "(input.label", "[1, 2",
+    "factor(input.id)", "input?.actor", "0..10", "{ a: input.x }.a", "input.d.notAMethod()",
   ]) expect([expression, labelWith(expression)]).toEqual([expression, "dropped"])
-  // Keeps: `actor` or a builtin's name inside a string, a member named `actor` (also after `?.`), an
-  // identifier that merely contains `actor`, a builtin used as a method name, and comparisons.
+  // Keeps: names inside strings, unquoted object keys (strings to ZEN), members named `actor`, a bare
+  // `$` or top-level `#` (identifiers, not the root or a closure pointer), builtins, date methods,
+  // intervals, slices, conditionals, and operators.
   for (const expression of [
     'input.label ?? "actor"', "input.label ?? 'actor'", 'input.label ?? "count("', "input.label ?? '$root #; ='", "`label ${input.parcel_id}`",
-    "factor(input.id)", "input.actor", "input?.actor", "input.label ?? input.parcel_id", "input.tags.map", "input.weight >= 1",
-    "input.a == input.b", "input.a != 2", "input.a <= 3", "input.label ?? null", "0..10",
+    "{actor: input.label}", "{ actor: { nested: [input.a, input.b] } }", "input.actor", "$.actor", "$", "#", "actor_id",
+    "input.label ?? input.parcel_id", "input.tags.map", "upper(input.label)", "input.d.isBefore(input.e)", "input.weight in [0..10]",
+    "[1, 2][0]", "input.list[1:2]", "(input.a + 1) * 2", "not input.flag", "!input.flag", "input.a ? input.b : input.c",
+    "input.weight >= 1", "input.a == input.b", "input.a != 2", "input.a <= 3", "input.label ?? null", "input.x in ['a', 'b']",
+    "input.label == 'x' and input.y > 2 or not input.z",
   ]) {
     expect([expression, labelWith(expression)]).toEqual([expression, "optional"])
   }

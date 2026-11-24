@@ -106,7 +106,7 @@ export function approvalCell(now = Date.UTC(2026, 10, 21, 9)): ApprovalCell {
         return route.fulfill({ status: 202, json: { outcome: "pending", decision: { id: fresh.id, expiresAtMs: fresh.expiresAtMs } } })
       }
       if (same.status === "pending") return route.fulfill({ status: 202, json: { outcome: "pending", decision: { id: same.id, expiresAtMs: same.expiresAtMs } } })
-      if (same.status === "rejected") return route.fulfill({ status: 409, json: { format: "norn/refusal@2", code: "approval.rejected", category: "conflict", retryable: false, message: "a decider rejected this call", diagnostics: [] } })
+      if (same.status === "rejected") return route.fulfill({ status: 409, json: { format: "norn/refusal@2", code: "approval.rejected", category: "conflict", retryable: false, reason: null, message: "a decider rejected this call", explanation: "the decision this call waited on was rejected", diagnostics: [] } })
       // Approved: the requester's own retry, decided again under their current authority.
       if (revoked.has(actor.id)) return refuse(route, "denied")
       same.state = "committed"
