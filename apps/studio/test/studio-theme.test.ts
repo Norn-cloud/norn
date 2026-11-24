@@ -3,6 +3,7 @@ import { applyAppearance } from "../src/lib/appearance.tsx"
 import {
   STUDIO_THEME_PRESETS,
   applyCustomTheme,
+  effectiveThemePalette,
   exportStudioThemeJson,
   parseStudioTheme,
   resolveCustomThemeTokens,
@@ -238,4 +239,54 @@ test("exportStudioThemeJson produces valid WCAG-AA StudioTheme JSON for every bu
     const parsed = parseStudioTheme(raw)
     expect(parsed.ok, `${skin} export should validate: ${JSON.stringify(parsed.issues)}`).toBe(true)
   }
+})
+
+// #1705: every built-in skin, unchanged, passes the gate it applies to custom themes.
+test("every built-in skin passes the rendered-pair contrast gate in light and dark", () => {
+  for (const baseSkin of ["polar", "open", "luma", "glass"] as const) {
+    expect(validateStudioThemeContrast({ version: 1, name: baseSkin, baseSkin }), baseSkin).toEqual([])
+  }
+})
+
+// #1705: the gate reads the colours index.css paints, not a hand-kept copy.
+test("the gate validates the rendered palette: dark Luma hover is index.css's #695ff0", () => {
+  expect(effectiveThemePalette({ version: 1, name: "Luma", baseSkin: "luma" }, "dark")["action-hover"]).toBe("#695ff0")
+  expect(effectiveThemePalette({ version: 1, name: "Polar", baseSkin: "polar" }, "dark")["dock-ring"]).toBe("#e4e4e7")
+})
+
+// #1705: pairs the old gate missed.
+test("the gate catches white initials on a white dock-active and foregrounds lost on surface-subtle", () => {
+  const dock = parseStudioTheme({ version: 1, name: "White dock", colors: { "dock-active": "#ffffff" } })
+  expect(dock.ok).toBe(false)
+  if (!dock.ok) expect(dock.issues.map((i) => i.path)).toContain("contrast.light.dock-foreground (on dock-active)")
+  const subtle = parseStudioTheme({ version: 1, name: "Dim subtle", appearance: "light", colors: { "surface-subtle": "#6b6b73" } })
+  expect(subtle.ok).toBe(false)
+  if (!subtle.ok) {
+    const paths = subtle.issues.map((i) => i.path)
+    expect(paths).toContain("contrast.light.foreground (on surface-subtle)")
+    expect(paths).toContain("contrast.light.muted-foreground (on surface-subtle)")
+    expect(paths).toContain("contrast.light.secondary-foreground (on surface-subtle)")
+  }
+})
+
+// #1705: a malformed colour is refused; a valid one is stored and applied as canonical CSS.
+test("colours are parsed by culori and written as canonical CSS; mixed-syntax rgb() is refused", () => {
+  const mixed = parseStudioTheme({ version: 1, name: "Mixed", colors: { foreground: "rgb(24, 24 27)" } })
+  expect(mixed.ok).toBe(false)
+  if (!mixed.ok) expect(mixed.issues.map((i) => i.path)).toEqual(["colors.foreground"])
+
+  const modern = parseStudioTheme({ version: 1, name: "Modern", baseSkin: "polar", appearance: "light", colors: { foreground: " rgb(24 24 27) ", "surface-subtle": "oklch(0.97 0 0)", "dock-border": "rgb(255 255 255 / 8%)" } })
+  expect(modern.ok, JSON.stringify(modern.issues)).toBe(true)
+  if (!modern.ok) return
+  expect(modern.theme.colors).toEqual({ foreground: "#18181b", "surface-subtle": "#f5f5f5", "dock-border": "rgba(255, 255, 255, 0.08)" })
+  const { element, styles } = fakeRoot()
+  applyCustomTheme(modern.theme, false, element)
+  expect(styles.get("--foreground")).toBe("#18181b")
+  expect(styles.get("--dock-border")).toBe("rgba(255, 255, 255, 0.08)")
+
+  // A theme object that skipped parsing still only ever writes canonical, allowlisted colours.
+  const { element: raw, styles: rawStyles } = fakeRoot()
+  applyCustomTheme({ version: 1, name: "Raw", colors: { foreground: "rgb(24, 24 27)", background: "RED" } }, false, raw)
+  expect(rawStyles.has("--foreground")).toBe(false)
+  expect(rawStyles.get("--background")).toBe("#ff0000")
 })

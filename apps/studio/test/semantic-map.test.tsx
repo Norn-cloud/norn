@@ -317,6 +317,70 @@ test("buildSemanticMap reflects server rule-holding sums, avoids false green on 
   ])
 })
 
+// #1705: the inbox returns at most 20 held-back groups; 21 one-record rules must read as at least 20.
+test("buildSemanticMap marks counts as lower bounds when the inbox capped its groups or sources", () => {
+  const groups = Array.from({ length: 20 }, (_, index) => ({
+    kind: "held_back" as const, objectType: "app.Item", count: 1, approximate: false, title: `Rule ${index}`,
+    target: "/objects/app.Item?population=held_back",
+    ruleRef: { kind: "law" as const, artifactId: `law:${index}`, lawId: `law.${index}`, version: "sha256:1" }, records: [],
+  }))
+  const inbox: Inbox = {
+    scanLimit: 500,
+    sections: [
+      { kind: "held_back", count: 21, shown: 20, approximate: false },
+      { kind: "decision", count: 0, shown: 0, approximate: false },
+      { kind: "source_error", count: 0, shown: 0, approximate: false },
+    ],
+    items: groups,
+  }
+  const map = buildSemanticMap(sampleCatalog(), { kind: "live", inbox })
+  const item = map.nodesById.get("app.Item")!
+  expect(item.ruleHoldings).toBe(20)
+  expect(item.ruleHoldingsApproximate).toBe(true)
+  expect(map.islandsById.get(item.islandId)!.ruleHoldingsApproximate).toBe(true)
+  expect(map.totals.alerts).toMatchObject({ ruleHoldings: 21, ruleHoldingsApproximate: true, bounded: true })
+
+  const sources: Inbox = {
+    scanLimit: 500,
+    sections: [
+      { kind: "held_back", count: 0, shown: 0, approximate: false },
+      { kind: "decision", count: 0, shown: 0, approximate: false },
+      { kind: "source_error", count: 21, shown: 20, approximate: false },
+    ],
+    items: Array.from({ length: 20 }, (_, index) => ({ kind: "source_error" as const, id: `conn_${index}`, target: "/connections", values: { mapping_id: "mapping.gamma_secondary" } })),
+  }
+  const capped = buildSemanticMap(sampleCatalog(), { kind: "live", inbox: sources })
+  const gamma = capped.nodesById.get("app.Item")!
+  expect(gamma.sourceErrors).toBe(20)
+  expect(gamma.sourceErrorsApproximate).toBe(true)
+  expect(capped.islandsById.get(gamma.islandId)!.sourceErrorsApproximate).toBe(true)
+  expect(capped.totals.alerts?.sourceErrorsApproximate).toBe(true)
+})
+
+// #1705: a source error's own id is its connection record's id; only a named mapping or an unambiguous system places it.
+test("buildSemanticMap never joins a source error on its connection id, and an unplaced error keeps every island unknown", () => {
+  const inbox: Inbox = {
+    scanLimit: 500,
+    sections: [
+      { kind: "held_back", count: 0, shown: 0, approximate: false },
+      { kind: "decision", count: 0, shown: 0, approximate: false },
+      { kind: "source_error", count: 1, shown: 1, approximate: false },
+    ],
+    // The id reads like a mapping id, and the system name is shared by two mappings: neither places it.
+    items: [{ kind: "source_error", id: "mapping.alpha_primary", target: "/connections", values: { system: "Shared Connector", status: "failed" } }],
+  }
+  const map = buildSemanticMap(sampleCatalog(), { kind: "live", inbox })
+  const alpha = map.islandsById.get("system:mapping.alpha_primary")!
+  expect(alpha.sourceErrors).toBe(0)
+  expect(alpha.attention).toBe("unknown")
+  expect([...map.islandsById.values()].every((island) => island.attention === "unknown")).toBe(true)
+  expect(map.totals.alerts).toMatchObject({ sourceErrors: 1, sourceErrorsApproximate: true, bounded: true })
+
+  const named = buildSemanticMap(sampleCatalog(), { kind: "live", inbox: { ...inbox, items: [{ kind: "source_error", id: "conn_9", target: "/connections", values: { system: "Gamma Feed" } }] } })
+  expect(named.nodesById.get("app.Item")!.sourceErrors).toBe(1)
+  expect(named.nodesById.get("app.Item")!.sourceErrorsApproximate).toBe(false)
+})
+
 test("every boneyard-js .bones.json capture uses valid 0..100 percentage x/w coordinates with zero horizontal overflow", () => {
   const dir = resolve(import.meta.dir, "../src/bones")
   const files = readdirSync(dir).filter((f) => f.endsWith(".bones.json"))

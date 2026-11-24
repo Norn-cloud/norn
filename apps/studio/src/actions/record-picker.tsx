@@ -1,10 +1,10 @@
 import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query"
-import { Check, ChevronsUpDown, RefreshCw, X } from "lucide-react"
+import { Combobox } from "@base-ui/react/combobox"
+import { Check, ChevronsUpDown, RefreshCw, Search, X } from "lucide-react"
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command"
+import { useLayer } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { cn } from "@/lib/utils"
 import type { Concept } from "../lib/catalog.ts"
 import { useCatalog } from "../lib/use-catalog.ts"
@@ -110,12 +110,54 @@ export const pickerSnapshotMoved = (pages: readonly (PickerPage | null | undefin
   (pages ?? []).some((page) => page?.snapshotMoved === true)
 
 /**
+ * One option in a picker's list. Every option is keyed by its kind, and a record by its id under
+ * that kind, so a record whose id reads like an action ("__clear") is still that record.
+ */
+export type PickerChoice =
+  | { readonly kind: "record"; readonly key: string; readonly id: string; readonly title: string }
+  | { readonly kind: "clear"; readonly key: string }
+  | { readonly kind: "more"; readonly key: string }
+  | { readonly kind: "reload"; readonly key: string }
+  | { readonly kind: "typed"; readonly key: string; readonly id: string }
+
+/** A choice's key: its kind, then a record's or typed id. Two choices are the same option only when their keys match. */
+export const choiceKey = (choice: Pick<PickerChoice, "kind"> & { readonly id?: string }): string =>
+  choice.id === undefined ? choice.kind : `${choice.kind}:${choice.id}`
+
+const recordChoice = (record: PickedRecord): PickerChoice => ({ kind: "record", key: choiceKey({ kind: "record", id: record.id }), ...record })
+
+/**
+ * The options a picker lists, in order: Reload when the snapshot moved; else Clear (optional
+ * fields with a value), the records, Show more (or Retry), and "Use the id" for a typed id that
+ * no listed record has.
+ */
+export function pickerChoices({ records, moved, optional, value, more, typed }: {
+  readonly records: readonly PickedRecord[]; readonly moved: boolean; readonly optional: boolean
+  readonly value: string; readonly more: boolean; readonly typed: string
+}): readonly PickerChoice[] {
+  const choices: PickerChoice[] = []
+  if (moved) choices.push({ kind: "reload", key: "reload" })
+  if (!moved && optional && value !== "") choices.push({ kind: "clear", key: "clear" })
+  if (!moved) choices.push(...records.map(recordChoice))
+  if (!moved && more) choices.push({ kind: "more", key: "more" })
+  if (typed !== "" && !records.some((record) => record.id === typed)) choices.push({ kind: "typed", key: choiceKey({ kind: "typed", id: typed }), id: typed })
+  return choices
+}
+
+const sameChoice = (a: PickerChoice, b: PickerChoice): boolean => a.key === b.key
+
+const option = "flex cursor-default items-center gap-2 rounded-lg px-3 py-2 text-sm outline-none select-none data-highlighted:bg-muted data-highlighted:text-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
+
+/**
  * A field that names an existing record (the cell's `inputLinks`): a searchable list of the
  * records of its type this reader can see, by title, which sets the record's id. Search runs on
  * the server over the type's title property; more records load a page at a time; an id can always
  * be typed, so every record stays reachable. Optional fields can always be cleared back to empty.
  * The cell still decides the call; a record that doesn't exist is refused there. When the records
  * can't be read, the id is typed.
+ *
+ * Base UI's Combobox (input inside the popup) owns the keyboard, focus, highlight and ARIA wiring;
+ * the cell lists and narrows the records, so the combobox never filters them itself.
  */
 export function RecordPicker({ objectKind, value, onPick, aria, read = readRecords }: {
   readonly objectKind: string; readonly value: string; readonly onPick: (id: string) => void; readonly aria: Aria
@@ -123,6 +165,7 @@ export function RecordPicker({ objectKind, value, onPick, aria, read = readRecor
 }) {
   const { catalog } = useCatalog()
   const client = useQueryClient()
+  const layer = useLayer()
   const target = catalog?.byName.get(objectKind)
   const property = titleProperty(target)
   const [open, setOpen] = useState(false)
@@ -147,78 +190,77 @@ export function RecordPicker({ objectKind, value, onPick, aria, read = readRecor
   if (search.trim() === "" && !moved && pickerMode({ data: first, isError: pages.isError && first === undefined }) === "type") {
     return <Input {...aria} className="h-9" placeholder="Type the record's id" value={value} onChange={(e) => onPick(e.target.value)} />
   }
-  const pick = (id: string, title?: string) => {
-    if (title !== undefined) setTitles((known) => new Map(known).set(id, title))
-    onPick(id)
-    setOpen(false)
-    setSearch("")
-  }
-  const reload = () => { void client.resetQueries({ queryKey }) }
   const optional = aria["aria-required"] !== true
-  const chosen = value === "" ? null : titles.get(value) ?? records.find((record) => record.id === value)?.title ?? value
   const typed = search.trim()
+  const choices = pickerChoices({ records, moved, optional, value, more: pages.hasNextPage || pageFailure !== null, typed })
+  const chosenTitle = value === "" ? null : titles.get(value) ?? records.find((record) => record.id === value)?.title ?? value
+  const selected = value === "" ? null : recordChoice({ id: value, title: chosenTitle ?? value })
   const noun = target?.title.toLowerCase() ?? "record"
+  const close = () => { setOpen(false); setSearch("") }
+  const choose = (choice: PickerChoice | null, details: Combobox.Root.ChangeEventDetails) => {
+    if (choice === null) return
+    // Show more and Reload act on the list and keep it open; they never become the field's value.
+    if (choice.kind === "more" || choice.kind === "reload") {
+      details.cancel()
+      if (choice.kind === "more") void pages.fetchNextPage()
+      else void client.resetQueries({ queryKey })
+      return
+    }
+    if (choice.kind === "record") setTitles((known) => new Map(known).set(choice.id, choice.title))
+    onPick(choice.kind === "clear" ? "" : choice.id)
+    close()
+  }
   return (
     <div className="flex items-center gap-1.5">
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <Button {...aria} type="button" variant="outline" role="combobox" aria-expanded={open}
-            className={cn(control, "flex min-w-0 flex-1 items-center justify-between gap-2 font-normal")}>
-            {chosen === null
-              ? <span className="text-muted-foreground">Choose a {noun}…</span>
-              : <span className="flex min-w-0 items-baseline gap-2"><span className="truncate">{chosen}</span>{chosen !== value && <span className="truncate font-mono text-xs text-muted-foreground">{value}</span>}</span>}
-            <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent align="start" className="w-[min(28rem,90vw)] rounded-node border-node-border p-0 shadow-float">
-          {/* The cell lists and narrows the records; the list shows them in its order, unfiltered here. */}
-          <Command shouldFilter={false} label={`Choose a ${noun}`}>
-            <CommandInput placeholder={property === undefined ? "Type an id" : `Search ${noun} by ${property.replaceAll("_", " ")} or type an id`} value={search} onValueChange={setSearch} />
-            <CommandList>
-              {pages.isPending && <p className="px-3 py-2 text-meta text-muted-foreground">Reading {noun} records…</p>}
-              {moved && (
-                <div role="status" className="grid gap-2 px-3 py-2 text-meta text-muted-foreground">
-                  <p className="flex items-center gap-1.5"><RefreshCw className="size-3.5 shrink-0" aria-hidden />{DATA_CHANGED} Reload to read from page 1.</p>
-                </div>
-              )}
-              {moved && (
-                <CommandItem value="__reload" onSelect={reload}>
-                  <RefreshCw className="size-3.5" aria-hidden /> Reload list
-                </CommandItem>
-              )}
-              {!pages.isPending && !moved && records.length === 0 && <CommandEmpty>{typed === "" ? `No ${noun} records to choose.` : property === undefined ? "Search isn't offered for this type." : `No ${noun} matches “${typed}”.`}</CommandEmpty>}
-              {search.trim() !== "" && !moved && first === null && <p className="px-3 py-2 text-meta text-muted-foreground">The cell can't search these records; use the id.</p>}
-              {optional && value !== "" && (
-                <CommandItem value="__clear" onSelect={() => pick("")}>
-                  <X className="size-3.5 text-muted-foreground" aria-hidden /> Clear selection
-                </CommandItem>
-              )}
-              {records.length > 0 && (
-                <CommandGroup>
-                  {records.map((record) => (
-                    <CommandItem key={record.id} value={record.id} onSelect={() => pick(record.id, record.title)}>
-                      <Check className={cn("size-3.5", record.id === value ? "opacity-100" : "opacity-0")} aria-hidden />
-                      <span className="min-w-0 flex-1 truncate">{record.title}</span>
-                      {record.title !== record.id && <span className="truncate font-mono text-xs text-muted-foreground">{record.id}</span>}
-                    </CommandItem>
-                  ))}
-                </CommandGroup>
-              )}
-              {!moved && pageFailure !== null && (
-                <p role="alert" className="px-3 py-2 text-meta text-destructive">{pageFailure}</p>
-              )}
-              {!moved && (pages.hasNextPage || pageFailure !== null) && (
-                <CommandItem value="__more" onSelect={() => void pages.fetchNextPage()} disabled={pages.isFetchingNextPage}>
-                  {pages.isFetchingNextPage ? "Reading…" : pageFailure !== null ? "Retry" : "Show more"}
-                </CommandItem>
-              )}
-              {typed !== "" && !records.some((record) => record.id === typed) && (
-                <CommandItem value="__typed" onSelect={() => pick(typed)}>Use the id <code className="text-xs">{typed}</code></CommandItem>
-              )}
-            </CommandList>
-          </Command>
-        </PopoverContent>
-      </Popover>
+      <Combobox.Root<PickerChoice>
+        items={choices}
+        filter={null}
+        value={selected}
+        onValueChange={choose}
+        isItemEqualToValue={sameChoice}
+        itemToStringLabel={(choice) => choice.kind === "record" ? choice.title : choice.key}
+        inputValue={search}
+        onInputValueChange={(next) => setSearch(next)}
+        open={open}
+        onOpenChange={(next) => { if (next) setOpen(true); else close() }}
+        autoHighlight
+      >
+        <Combobox.Trigger {...aria}
+          className={cn(control, "flex min-w-0 flex-1 items-center justify-between gap-2 font-normal outline-none focus-visible:ring-2 focus-visible:ring-ring/50")}>
+          {chosenTitle === null
+            ? <span className="text-muted-foreground">Choose a {noun}…</span>
+            : <span className="flex min-w-0 items-baseline gap-2"><span className="truncate">{chosenTitle}</span>{chosenTitle !== value && <span className="truncate font-mono text-xs text-muted-foreground">{value}</span>}</span>}
+          <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+        </Combobox.Trigger>
+        <Combobox.Portal container={layer}>
+          <Combobox.Positioner align="start" sideOffset={4} className="z-50 outline-none">
+            <Combobox.Popup aria-label={`Choose a ${noun}`}
+              className="flex max-h-[min(24rem,var(--available-height))] w-[min(28rem,90vw)] origin-(--transform-origin) flex-col overflow-hidden rounded-node border border-node-border bg-popover p-1 text-popover-foreground shadow-float outline-none transition-[opacity,scale] duration-100 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0">
+              <div className="flex items-center gap-2 border-b border-border/60 px-3">
+                <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+                <Combobox.Input aria-label={`Search ${noun} records`}
+                  placeholder={property === undefined ? "Type an id" : `Search ${noun} by ${property.replaceAll("_", " ")} or type an id`}
+                  className="h-10 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground" />
+              </div>
+              <Combobox.Status className="grid gap-1 px-3 empty:hidden [&>p]:py-2 text-meta text-muted-foreground">
+                {pages.isPending && <p>Reading {noun} records…</p>}
+                {moved && <p className="flex items-center gap-1.5"><RefreshCw className="size-3.5 shrink-0" aria-hidden />{DATA_CHANGED} Reload to read from page 1.</p>}
+                {!pages.isPending && !moved && records.length === 0 && <p>{typed === "" ? `No ${noun} records to choose.` : property === undefined ? "Search isn't offered for this type." : `No ${noun} matches “${typed}”.`}</p>}
+                {typed !== "" && !moved && first === null && <p>The cell can't search these records; use the id.</p>}
+              </Combobox.Status>
+              {!moved && pageFailure !== null && <p role="alert" className="px-3 py-2 text-meta text-destructive">{pageFailure}</p>}
+              <Combobox.List aria-label={`${target?.title ?? "Record"} records`} className="min-h-0 flex-1 scroll-py-1 overflow-y-auto overscroll-contain empty:hidden">
+                {choices.map((choice) => (
+                  <Combobox.Item key={choice.key} value={choice} className={option}
+                    disabled={choice.kind === "more" && pages.isFetchingNextPage}>
+                    <ChoiceLabel choice={choice} value={value} fetching={pages.isFetchingNextPage} failed={pageFailure !== null} />
+                  </Combobox.Item>
+                ))}
+              </Combobox.List>
+            </Combobox.Popup>
+          </Combobox.Positioner>
+        </Combobox.Portal>
+      </Combobox.Root>
       {optional && value !== "" && (
         <Button type="button" variant="ghost" size="icon" className="size-9 shrink-0 text-muted-foreground hover:text-foreground"
           aria-label="Clear selection" title="Clear selection" onClick={() => onPick("")}>
@@ -227,4 +269,20 @@ export function RecordPicker({ objectKind, value, onPick, aria, read = readRecor
       )}
     </div>
   )
+}
+
+/** What one option reads as. */
+function ChoiceLabel({ choice, value, fetching, failed }: { readonly choice: PickerChoice; readonly value: string; readonly fetching: boolean; readonly failed: boolean }) {
+  switch (choice.kind) {
+    case "record":
+      return <>
+        <Check className={cn("size-3.5 shrink-0", choice.id === value ? "opacity-100" : "opacity-0")} aria-hidden />
+        <span className="min-w-0 flex-1 truncate">{choice.title}</span>
+        {choice.title !== choice.id && <span className="truncate font-mono text-xs text-muted-foreground">{choice.id}</span>}
+      </>
+    case "clear": return <><X className="size-3.5 text-muted-foreground" aria-hidden /> Clear selection</>
+    case "reload": return <><RefreshCw className="size-3.5" aria-hidden /> Reload list</>
+    case "more": return <>{fetching ? "Reading…" : failed ? "Retry" : "Show more"}</>
+    case "typed": return <>Use the id <code className="text-xs">{choice.id}</code></>
+  }
 }
