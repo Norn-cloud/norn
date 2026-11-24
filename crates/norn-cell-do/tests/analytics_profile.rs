@@ -73,6 +73,9 @@ fn the_engine_profile_equals_the_exact_profile_of_every_demo_type() {
     }
 }
 
+/// A change made to an engine answer.
+type Edit = fn(&mut EngineAnswer);
+
 /// A transport whose engine answers `profile` and then has `edit` applied.
 struct Edited<F>(InProcess, F);
 
@@ -136,7 +139,7 @@ fn a_profile_is_answered_only_over_the_snapshot_decided() -> Result<(), Box<dyn 
     let names = host.object_type_names().map_err(|r| format!("{r:?}"))?;
     let path = format!("/v1/objects/{}:profile", names.first().ok_or("a type")?);
     let request = profile_request(&path);
-    let cases: [(&str, fn(&mut EngineAnswer), u16); 6] = [
+    let cases: [(&str, Edit, u16); 6] = [
         (
             "stale read",
             |a| set(a, "/provenance/freshness", json!("stale")),
@@ -194,7 +197,7 @@ fn a_profile_of_another_model_is_never_accepted() -> Result<(), Box<dyn std::err
         "name": "demo.Extra",
         "properties": [{"id": "note", "type": {"kind": "text"}}]
     }))?;
-    let cell = |objects: &[norn_ir::ObjectTypeDef]| -> Result<_, Box<dyn std::error::Error>> {
+    let build = |objects: &[norn_ir::ObjectTypeDef]| -> Result<_, Box<dyn std::error::Error>> {
         let scope = seed::demo_scope();
         let store = norn_cell::CellStore::open_in_memory(norn_cell::Model::from_definitions(
             objects,
@@ -211,8 +214,8 @@ fn a_profile_of_another_model_is_never_accepted() -> Result<(), Box<dyn std::err
             .with_authorizer(policy);
         Ok((host, principals, pins))
     };
-    let (first, first_principals, first_pins) = cell(std::slice::from_ref(&item))?;
-    let (second, second_principals, second_pins) = cell(&[item, extra])?;
+    let (first, first_principals, first_pins) = build(std::slice::from_ref(&item))?;
+    let (second, second_principals, second_pins) = build(&[item, extra])?;
     assert_eq!(first_pins.1, second_pins.1);
     assert_ne!(first_pins.0, second_pins.0);
 

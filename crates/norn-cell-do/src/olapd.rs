@@ -275,7 +275,7 @@ pub fn serve_with(
         let (engine, gate, active) = (Arc::clone(&engine), Arc::clone(&gate), Arc::clone(&active));
         std::thread::spawn(move || {
             // A broken connection affects only itself.
-            let _ignored = connection(&stream, &engine, &gate);
+            let _ignored = connection(&stream, engine.as_ref(), &gate);
             active.fetch_sub(1, Ordering::SeqCst);
         });
     }
@@ -465,13 +465,13 @@ fn connection(
         tenant: &tenant,
     };
     match request.path.as_str() {
-        "/v1/frontier" => call.answer(|r: FrontierRequest| engine.frontier(&r)),
-        "/v1/sync" => call.answer(|r: SyncRequest| engine.sync(&r)),
+        "/v1/frontier" => call.answer(|r: FrontierRequest| engine.mirror_frontier(&r)),
+        "/v1/sync" => call.answer(|r: SyncRequest| engine.mirror_sync(&r)),
         "/v1/evaluate" => call.answer(|r: EvaluateRequest| dispatch_evaluate(engine, &r)),
         "/v1/members" => call.answer(|r: MembersRequest| dispatch_members(engine, &r)),
-        "/v1/profile" => call.answer(|r: ProfileRequest| engine.profile(&r)),
-        "/v1/page" => call.answer(|r: PageRequest| engine.page(&r)),
-        "/v1/lineage" => call.answer(|r: LineageRequest| engine.lineage(&r)),
+        "/v1/profile" => call.answer(|r: ProfileRequest| engine.profile_objects(&r)),
+        "/v1/page" => call.answer(|r: PageRequest| engine.query_page(&r)),
+        "/v1/lineage" => call.answer(|r: LineageRequest| engine.query_lineage(&r)),
         "/v1/land" => call.answer(|r: LandRequest| land(engine, &r)),
         "/v1/settle" => call.answer(|r: SettleRequest| settle(engine, &r)),
         "/v1/store" => call.answer(|r: StoreBody| {
@@ -688,7 +688,7 @@ fn upload(
 /// mints, downloading it into the attempt's own source file. The engine
 /// holds the attempt throughout; a failed landing removes it.
 fn land(engine: &dyn AnalyticalEngine, request: &LandRequest) -> EngineOutcome<LandResponse> {
-    engine.land(request, &mut |file| {
+    engine.land_dataset(request, &mut |file| {
         download(&agent(), &request.load.file.url, file)
     })
 }
@@ -697,7 +697,7 @@ fn land(engine: &dyn AnalyticalEngine, request: &LandRequest) -> EngineOutcome<L
 /// takes the attempt by its token and owns its cleanup: a refused settle
 /// removes the attempt it took, and nothing else.
 fn settle(engine: &dyn AnalyticalEngine, request: &SettleRequest) -> EngineOutcome<LandResponse> {
-    engine.settle(request)
+    engine.settle_dataset(request)
 }
 
 /// MANIFEST-LAND-1: send an attempt's landed files to their content-addressed
@@ -717,7 +717,7 @@ fn store(
         sha256(request.landed.data.as_ref()),
         sha256(request.landed.held.as_ref()),
     );
-    engine.store(body, &mut |data, held| {
+    engine.store_dataset(body, &mut |data, held| {
         let agent = agent();
         upload(&agent, &request.data.url, data, &data_sha256)?;
         upload(&agent, &request.held.url, held, &held_sha256)
@@ -744,7 +744,7 @@ fn export(call: &Call<'_>, engine: &dyn AnalyticalEngine) -> std::io::Result<()>
         norn_cell::analytics::ExportFormat::Parquet => "application/vnd.apache.parquet",
         norn_cell::analytics::ExportFormat::Jsonl => "application/x-ndjson",
     };
-    let path = match engine.export(&parsed) {
+    let path = match engine.export_dataset(&parsed) {
         Ok(path) => path,
         Err(refused) => return refuse(stream, status_of(&refused), &refused),
     };

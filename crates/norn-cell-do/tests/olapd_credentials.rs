@@ -199,7 +199,7 @@ fn body(response: &[u8]) -> String {
 }
 
 fn frontier(of: &TenantId) -> String {
-    json!({ "tenant": of, "world": WORLD, "tables": [] }).to_string()
+    json!({ "tenant": of, "world": WORLD, "tables": [], "modelPin": "m" }).to_string()
 }
 
 fn sync(of: &TenantId, after: u64, through: u64) -> String {
@@ -417,7 +417,8 @@ fn a_credential_is_good_for_its_own_operation_and_body_only() {
     let read = mint(&host, &a, "frontier", &frontier(&a));
     // Another operation (a write), and another body for the same operation.
     assert_eq!(daemon.call("sync", &read, &sync(&a, 0, 3)), uniform);
-    let staging = json!({ "tenant": &a, "world": "staging", "tables": [] }).to_string();
+    let staging =
+        json!({ "tenant": &a, "world": "staging", "tables": [], "modelPin": "m" }).to_string();
     assert_eq!(daemon.call("frontier", &read, &staging), uniform);
     assert_eq!(daemon.call("export", &read, &export(&a)), uniform);
     // Nothing was written; the request it was minted for still answers.

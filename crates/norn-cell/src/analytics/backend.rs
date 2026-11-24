@@ -192,7 +192,7 @@ pub fn dispatch_evaluate(
     {
         return Err(unsupported());
     }
-    engine.evaluate(request)
+    engine.evaluate_question(request)
 }
 
 /// Page `request`'s members on `engine` only if it answers them exactly.
@@ -209,7 +209,7 @@ pub fn dispatch_members(
     {
         return Err(unsupported());
     }
-    engine.members(request)
+    engine.query_members(request)
 }
 
 /// D136: the typed operations the tenant analytics sidecar serves. No
@@ -222,28 +222,28 @@ pub trait AnalyticalEngine: Send + Sync {
     ///
     /// # Errors
     /// An engine refusal.
-    fn frontier(&self, request: &FrontierRequest) -> EngineOutcome<FrontierResponse>;
+    fn mirror_frontier(&self, request: &FrontierRequest) -> EngineOutcome<FrontierResponse>;
     /// Apply one contiguous batch of commits to the mirror.
     ///
     /// # Errors
     /// `analytics.frontier_moved`, or an engine refusal.
-    fn sync(&self, request: &SyncRequest) -> EngineOutcome<FrontierResponse>;
+    fn mirror_sync(&self, request: &SyncRequest) -> EngineOutcome<FrontierResponse>;
     /// Answer a lowered question, naming the snapshot read.
     ///
     /// # Errors
     /// A Core 03 refusal, a stale source, or an engine refusal.
-    fn evaluate(&self, request: &EvaluateRequest) -> EngineOutcome<EvaluateResponse>;
+    fn evaluate_question(&self, request: &EvaluateRequest) -> EngineOutcome<EvaluateResponse>;
     /// Page one bucket's members in identity order.
     ///
     /// # Errors
-    /// As [`Self::evaluate`].
-    fn members(&self, request: &MembersRequest) -> EngineOutcome<MembersResponse>;
+    /// As [`Self::evaluate_question`].
+    fn query_members(&self, request: &MembersRequest) -> EngineOutcome<MembersResponse>;
     /// MANIFEST-LAND-1: land a dataset upload in an attempt the engine mints;
     /// `fetch` downloads the source into the attempt's file.
     ///
     /// # Errors
     /// A `bulk.*` refusal, or an engine refusal.
-    fn land(
+    fn land_dataset(
         &self,
         request: &LandRequest,
         fetch: &mut dyn FnMut(std::fs::File) -> EngineOutcome<()>,
@@ -252,13 +252,13 @@ pub trait AnalyticalEngine: Send + Sync {
     ///
     /// # Errors
     /// A stale, busy or unknown attempt, or an engine refusal.
-    fn settle(&self, request: &SettleRequest) -> EngineOutcome<LandResponse>;
+    fn settle_dataset(&self, request: &SettleRequest) -> EngineOutcome<LandResponse>;
     /// MANIFEST-LAND-1: store an attempt's landed files through `send`; a
     /// replay answers the recorded bytes.
     ///
     /// # Errors
     /// A stale, busy or unknown attempt, a digest mismatch, or a refused send.
-    fn store(
+    fn store_dataset(
         &self,
         body: &StoreBody,
         send: &mut dyn FnMut(&Path, &Path) -> EngineOutcome<()>,
@@ -267,22 +267,22 @@ pub trait AnalyticalEngine: Send + Sync {
     ///
     /// # Errors
     /// A cold dataset, a stale load, or an engine refusal.
-    fn lineage(&self, request: &LineageRequest) -> EngineOutcome<LineageResponse>;
+    fn query_lineage(&self, request: &LineageRequest) -> EngineOutcome<LineageResponse>;
     /// One filtered, sorted page of a source's rows.
     ///
     /// # Errors
     /// An unknown column, a comparison its kind does not take, or a stale source.
-    fn page(&self, request: &PageRequest) -> EngineOutcome<PageResponse>;
+    fn query_page(&self, request: &PageRequest) -> EngineOutcome<PageResponse>;
     /// Exact column profiles of a source, naming the snapshot read.
     ///
     /// # Errors
     /// An unknown column or a stale source.
-    fn profile(&self, request: &ProfileRequest) -> EngineOutcome<ProfileResponse>;
+    fn profile_objects(&self, request: &ProfileRequest) -> EngineOutcome<ProfileResponse>;
     /// Export a source's rows into a tenant scratch file.
     ///
     /// # Errors
     /// An unknown column or a stale source.
-    fn export(&self, request: &ExportRequest) -> EngineOutcome<PathBuf>;
+    fn export_dataset(&self, request: &ExportRequest) -> EngineOutcome<PathBuf>;
 }
 
 #[cfg(all(feature = "duckdb", feature = "native"))]
@@ -290,46 +290,46 @@ impl AnalyticalEngine for super::engine::Engine {
     fn capabilities(&self) -> EngineCapabilities {
         EngineCapabilities::DUCKDB
     }
-    fn frontier(&self, request: &FrontierRequest) -> EngineOutcome<FrontierResponse> {
-        Self::frontier(self, request)
+    fn mirror_frontier(&self, request: &FrontierRequest) -> EngineOutcome<FrontierResponse> {
+        self.frontier(request)
     }
-    fn sync(&self, request: &SyncRequest) -> EngineOutcome<FrontierResponse> {
-        Self::sync(self, request)
+    fn mirror_sync(&self, request: &SyncRequest) -> EngineOutcome<FrontierResponse> {
+        self.sync(request)
     }
-    fn evaluate(&self, request: &EvaluateRequest) -> EngineOutcome<EvaluateResponse> {
-        Self::evaluate(self, request)
+    fn evaluate_question(&self, request: &EvaluateRequest) -> EngineOutcome<EvaluateResponse> {
+        self.evaluate(request)
     }
-    fn members(&self, request: &MembersRequest) -> EngineOutcome<MembersResponse> {
-        Self::members(self, request)
+    fn query_members(&self, request: &MembersRequest) -> EngineOutcome<MembersResponse> {
+        self.members(request)
     }
-    fn land(
+    fn land_dataset(
         &self,
         request: &LandRequest,
         fetch: &mut dyn FnMut(std::fs::File) -> EngineOutcome<()>,
     ) -> EngineOutcome<LandResponse> {
-        Self::land(self, request, fetch)
+        self.land(request, fetch)
     }
-    fn settle(&self, request: &SettleRequest) -> EngineOutcome<LandResponse> {
-        Self::settle(self, request)
+    fn settle_dataset(&self, request: &SettleRequest) -> EngineOutcome<LandResponse> {
+        self.settle(request)
     }
-    fn store(
+    fn store_dataset(
         &self,
         body: &StoreBody,
         send: &mut dyn FnMut(&Path, &Path) -> EngineOutcome<()>,
     ) -> EngineOutcome<Box<RawValue>> {
         self.store_json(body, send)
     }
-    fn lineage(&self, request: &LineageRequest) -> EngineOutcome<LineageResponse> {
-        Self::lineage(self, request)
+    fn query_lineage(&self, request: &LineageRequest) -> EngineOutcome<LineageResponse> {
+        self.lineage(request)
     }
-    fn page(&self, request: &PageRequest) -> EngineOutcome<PageResponse> {
-        Self::page(self, request)
+    fn query_page(&self, request: &PageRequest) -> EngineOutcome<PageResponse> {
+        self.page(request)
     }
-    fn profile(&self, request: &ProfileRequest) -> EngineOutcome<ProfileResponse> {
-        Self::profile(self, request)
+    fn profile_objects(&self, request: &ProfileRequest) -> EngineOutcome<ProfileResponse> {
+        self.profile(request)
     }
-    fn export(&self, request: &ExportRequest) -> EngineOutcome<PathBuf> {
-        Self::export(self, request)
+    fn export_dataset(&self, request: &ExportRequest) -> EngineOutcome<PathBuf> {
+        self.export(request)
     }
 }
 

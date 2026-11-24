@@ -121,13 +121,13 @@ impl<A: AnalyticalEngine> Transport for InProcess<A> {
     fn call(&self, call: &EngineCall) -> Option<EngineAnswer> {
         let engine: &dyn AnalyticalEngine = &self.0;
         let (status, body) = match call.op.as_str() {
-            "frontier" => Self::run(&call.body, |r| engine.frontier(r)),
-            "sync" => Self::run(&call.body, |r| engine.sync(r)),
+            "frontier" => Self::run(&call.body, |r| engine.mirror_frontier(r)),
+            "sync" => Self::run(&call.body, |r| engine.mirror_sync(r)),
             "evaluate" => Self::run(&call.body, |r| dispatch_evaluate(engine, r)),
             "members" => Self::run(&call.body, |r| dispatch_members(engine, r)),
-            "profile" => Self::run(&call.body, |r| engine.profile(r)),
-            "page" => Self::run(&call.body, |r| engine.page(r)),
-            "lineage" => Self::run(&call.body, |r| engine.lineage(r)),
+            "profile" => Self::run(&call.body, |r| engine.profile_objects(r)),
+            "page" => Self::run(&call.body, |r| engine.query_page(r)),
+            "lineage" => Self::run(&call.body, |r| engine.query_lineage(r)),
             _ => (404, String::new()),
         };
         Some(EngineAnswer {

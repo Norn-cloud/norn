@@ -366,7 +366,7 @@ impl<E: SqlEngine> CellStore<E> {
             &request.model_pin,
             prepared.schema_pin.as_deref(),
         )?;
-        self.assemble(prepared, Some(response))
+        Self::assemble(prepared, Some(response))
     }
 
     /// The answer to a caller the population gate denies: the cell's own
@@ -379,7 +379,7 @@ impl<E: SqlEngine> CellStore<E> {
         prepared: Prepared,
     ) -> Result<QueryResult, CellError> {
         self.check_prepared(&prepared)?;
-        self.assemble(prepared, None)
+        Self::assemble(prepared, None)
     }
 
     /// A current answer is exact only at the head, model and dataset load it
@@ -411,7 +411,6 @@ impl<E: SqlEngine> CellStore<E> {
     }
 
     fn assemble(
-        &self,
         prepared: Prepared,
         response: Option<EvaluateResponse>,
     ) -> Result<QueryResult, CellError> {
@@ -482,7 +481,7 @@ impl<E: SqlEngine> CellStore<E> {
         prepared: Prepared,
         response: EvaluateResponse,
     ) -> Result<crate::compute::HistoricalQuestionResult, CellError> {
-        self.known_at(prepared, |prepared| {
+        Self::known_at(prepared, |prepared| {
             self.analytics_answer(prepared, response)
         })
     }
@@ -496,13 +495,12 @@ impl<E: SqlEngine> CellStore<E> {
         &self,
         prepared: Prepared,
     ) -> Result<crate::compute::HistoricalQuestionResult, CellError> {
-        self.known_at(prepared, |prepared| {
+        Self::known_at(prepared, |prepared| {
             self.analytics_empty_authorized_answer(prepared)
         })
     }
 
     fn known_at(
-        &self,
         prepared: Prepared,
         answer: impl FnOnce(Prepared) -> Result<QueryResult, CellError>,
     ) -> Result<crate::compute::HistoricalQuestionResult, CellError> {
