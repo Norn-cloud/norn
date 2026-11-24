@@ -1,4 +1,4 @@
-import { expect, test, type Browser, type Page } from "@playwright/test"
+import { expect, test as base, type Page } from "@playwright/test"
 import { actionCell } from "./action-cell.ts"
 import { APPROVER, approvalCell, REQUESTER, type ApprovalCell } from "./approval-cell.ts"
 import { objectCell, population } from "./object-cell.ts"
@@ -7,6 +7,17 @@ import { objectCell, population } from "./object-cell.ts"
 // cell stand-in: the requester submits a gated call, it parks, an approver approves it (which runs
 // nothing), and the requester's "Approved, run it" sends exactly the parked call and shows what the
 // cell answered. SHOTS=<dir> saves every state in light and dark for review.
+
+const test = base.extend<{ approverPage: Page }>({
+  approverPage: async ({ browser }, use) => {
+    const page = await browser.newPage()
+    try {
+      await use(page)
+    } finally {
+      await page.close()
+    }
+  },
+})
 
 const shots = process.env.SHOTS
 async function shoot(page: Page, name: string) {
@@ -26,8 +37,7 @@ const sheet = (page: Page) => page.getByRole("dialog")
 const runIt = (page: Page) => page.getByRole("button", { name: "Approved, run it" })
 
 /** The requester's browser on the holdings grid, with the action and approval stand-ins. */
-async function requester(browser: Browser, cell: ApprovalCell) {
-  const page = await (await browser.newContext()).newPage()
+async function requester(page: Page, cell: ApprovalCell) {
   const objects = await objectCell(page, population(12))
   const actions = await actionCell(page, objects)
   await cell.install(page, REQUESTER)
@@ -37,8 +47,7 @@ async function requester(browser: Browser, cell: ApprovalCell) {
 }
 
 /** The approver's browser on the decisions inbox. */
-async function approver(browser: Browser, cell: ApprovalCell) {
-  const page = await (await browser.newContext()).newPage()
+async function approver(page: Page, cell: ApprovalCell) {
   await cell.install(page, APPROVER)
   await page.goto("/decisions")
   return page
@@ -64,15 +73,15 @@ async function approve(page: Page) {
   await expect(sheet(page).locator('[data-region="outcome-call"]')).toHaveText("Approved; waiting for the requester to run it.")
 }
 
-test("run: submit, park, the approver approves, the requester runs it from the sheet, committed", async ({ browser }) => {
+test("run: submit, park, the approver approves, the requester runs it from the sheet, committed", async ({ page, approverPage }) => {
   const cell = approvalCell()
-  const asker = await requester(browser, cell)
+  const asker = await requester(page, cell)
   await park(asker.page)
   // While a decider has it there is nothing to run.
   await expect(runIt(asker.page)).toHaveCount(0)
   await shoot(asker.page, "parked")
 
-  const decider = await approver(browser, cell)
+  const decider = await approver(approverPage, cell)
   await approve(decider)
   await shoot(decider, "approver-decided")
   // The approver is not the requester: the cell offers them nothing to run, anywhere.
@@ -94,9 +103,9 @@ test("run: submit, park, the approver approves, the requester runs it from the s
   expect(asker.actions.calls.filter((c) => c.actionId === "canon.holding.adjust")).toHaveLength(1)
 })
 
-test("run: the requester sees the approved call in their inbox and runs it from there", async ({ browser }) => {
+test("run: the requester sees the approved call in their inbox and runs it from there", async ({ page, approverPage }) => {
   const cell = approvalCell()
-  const asker = await requester(browser, cell)
+  const asker = await requester(page, cell)
   await park(asker.page)
   await sheet(asker.page).getByRole("region", { name: "Sent for approval" }).getByRole("button", { name: "Close" }).click()
 
@@ -109,7 +118,7 @@ test("run: the requester sees the approved call in their inbox and runs it from 
   await expect(runIt(asker.page)).toHaveCount(0)
   await shoot(asker.page, "inbox-pending")
 
-  await approve(await approver(browser, cell))
+  await approve(await approver(approverPage, cell))
   await expect(mine.getByRole("button", { name: "Approved, run it" })).toBeVisible()
   await shoot(asker.page, "inbox-approved")
   await mine.getByRole("button", { name: "Approved, run it" }).click()
@@ -119,11 +128,11 @@ test("run: the requester sees the approved call in their inbox and runs it from 
   await expect(mine).toHaveCount(0)
 })
 
-test("never: an approver who is not the requester never sees run it", async ({ browser }) => {
+test("never: an approver who is not the requester never sees run it", async ({ page, approverPage }) => {
   const cell = approvalCell()
-  const asker = await requester(browser, cell)
+  const asker = await requester(page, cell)
   await park(asker.page)
-  const decider = await approver(browser, cell)
+  const decider = await approver(approverPage, cell)
   // Before and after deciding: no request of theirs, no offer, in the inbox or the decision sheet.
   await expect(decider.getByRole("list", { name: "Your requests" })).toHaveCount(0)
   await approve(decider)
@@ -137,11 +146,11 @@ test("never: an approver who is not the requester never sees run it", async ({ b
   expect(read).toMatchObject({ items: [] })
 })
 
-test("revoked: a requester whose role was revoked after parking gets the cell's refusal, plainly", async ({ browser }) => {
+test("revoked: a requester whose role was revoked after parking gets the cell's refusal, plainly", async ({ page, approverPage }) => {
   const cell = approvalCell()
-  const asker = await requester(browser, cell)
+  const asker = await requester(page, cell)
   await park(asker.page)
-  await approve(await approver(browser, cell))
+  await approve(await approver(approverPage, cell))
   cell.revoke(REQUESTER)
   await expect(runIt(asker.page)).toBeVisible()
   await runIt(asker.page).click()
@@ -153,10 +162,10 @@ test("revoked: a requester whose role was revoked after parking gets the cell's 
   await shoot(asker.page, "revoked")
 })
 
-test("decide (direct call): the approver's sheet offers no run to open, before or after, and says the call waits for its requester", async ({ browser }) => {
+test("decide (direct call): the approver's sheet offers no run to open, before or after, and says the call waits for its requester", async ({ page, approverPage }) => {
   const cell = approvalCell()
-  await park((await requester(browser, cell)).page)
-  const decider = await approver(browser, cell)
+  await park((await requester(page, cell)).page)
+  const decider = await approver(approverPage, cell)
   await decider.getByRole("list", { name: "Decisions waiting on you" }).getByRole("button").filter({ hasText: "Adjust this holding's counted quantity?" }).click()
   await expect(decider.locator("norn-decision-sheet .norn-sheet")).toHaveAttribute("data-engine", "ready", { timeout: 30_000 })
   // No run waits on a direct call: the sheet links to none.
