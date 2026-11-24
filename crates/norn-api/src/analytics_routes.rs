@@ -1,20 +1,10 @@
-//! D102: the routes of a host whose analytics run on the tenant's engine.
+//! D102/D136: routes of a host whose analytics run on the tenant's engine.
 //!
-//! Questions on such a host are answered by the engine, never by an
-//! analytics scan of the cell's own store; the cell keeps admission,
-//! authorization, the row gates and the answer's lineage, and verifies every
-//! engine answer. Datasets load into the engine from the object store at bulk
-//! speed, and an authorized reader exports a type's rows from it. No route
-//! here accepts SQL, a table or a column expression (#733): the engine's
-//! operations are typed, and the cell builds every one.
-//!
-//! An engine answer is a short exchange of operations: the mirror's frontier,
-//! sync batches of committed versions until the mirror reaches the verified
-//! head, then the question, export or load. The exchange is stateless: each
-//! step is decided from the last answer alone, so a host that cannot block on
-//! I/O (a Durable Object) ends the request with the call, performs it, and
-//! re-enters with the answer; the request is then decided again from the
-//! start, authorization included.
+//! Questions run on the engine rather than scanning the cell's store; the cell
+//! keeps admission, authorization, row gates, lineage and answer verification.
+//! Operations are typed with no caller-supplied SQL or expressions (#733).
+//! The exchange (frontier -> sync -> op) is stateless so Durable Objects can
+//! yield and re-enter with full re-authorization on every step.
 
 use std::collections::BTreeMap;
 
@@ -57,17 +47,14 @@ pub struct EngineCall {
     /// `frontier`, `sync`, `evaluate`, `members`, `profile`, `page`, `land`,
     /// `store` or `export`.
     pub op: String,
-    /// Identity of the call; the answer names it, so a stale answer is never used.
+    /// Call identity echoed in the answer so stale answers are ignored.
     pub digest: String,
-    /// The typed request, as JSON.
+    /// Typed JSON request body.
     pub body: String,
-    /// The host streams a successful answer to the caller with these headers
-    /// instead of re-entering (an export).
+    /// Response headers when the host streams the answer directly (exports).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream: Option<BTreeMap<String, String>>,
-    /// OLAP-CRED-1: the cell's credential for this call, the host's bearer
-    /// to the engine. The host transport attaches it when it hands the call
-    /// to the host; it names the cell's own tenant only.
+    /// OLAP-CRED-1: cell-minted tenant-scoped bearer credential for this call.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential: Option<String>,
 }
@@ -101,6 +88,8 @@ impl EngineCall {
 
 /// How the cell reaches its engine.
 pub trait Transport: Send + Sync {
+    /// What the engine this transport reaches answers exactly (D136).
+    fn capabilities(&self) -> norn_cell::analytics::EngineCapabilities;
     /// The answer the host re-entered the cell with, once.
     fn resumed(&self) -> Option<EngineAnswer>;
     /// Perform `call` now, or `None` when the host must perform it and re-enter.
@@ -141,7 +130,18 @@ fn exchange<E: SqlEngine>(
     world: Option<(&str, u64)>,
     last: &EngineCall,
 ) -> Result<EngineAnswer, CellError> {
-    let mut answer = transport.resumed();
+    exchange_from(store, transport, tenant, world, last, transport.resumed())
+}
+
+/// [`exchange`], re-entered with `answer`.
+fn exchange_from<E: SqlEngine>(
+    store: &CellStore<E>,
+    transport: &dyn Transport,
+    tenant: &TenantId,
+    world: Option<(&str, u64)>,
+    last: &EngineCall,
+    mut answer: Option<EngineAnswer>,
+) -> Result<EngineAnswer, CellError> {
     let Some((world, head)) = world else {
         return match answer.filter(|a| a.digest == last.digest) {
             Some(answer) => Ok(answer),
@@ -191,6 +191,12 @@ fn evaluate_on<E: SqlEngine>(
     tenant: &TenantId,
     request: &EvaluateRequest,
 ) -> Result<EvaluateResponse, CellError> {
+    if !transport
+        .capabilities()
+        .answers(&request.query, &request.source)
+    {
+        return Err(CellError::ComputeRefused(UNSUPPORTED_ENGINE));
+    }
     let call = EngineCall::new("evaluate", request)?;
     let answer = exchange(
         store,
@@ -297,8 +303,12 @@ impl<E: SqlEngine> QuestionRuntime<E> for EngineQuestions<'_, E> {
         let scope = context.scope.clone();
         let admitted = visible(&gate_record(&grain, ALL_MEMBERS, &scope))?;
         let prepared = store.analytics_prepare(plan, context, &self.tenant)?;
-        let response = self.respond(store, &prepared, admitted)?;
-        let mut result = store.analytics_answer(prepared, response)?;
+        let mut result = if admitted {
+            let response = evaluate_on(store, self.transport, &self.tenant, prepared.request())?;
+            store.analytics_answer(prepared, response)?
+        } else {
+            store.analytics_empty_authorized_answer(prepared)?
+        };
         finish_answer(store, plan, &mut result, None, visible)?;
         Ok(result)
     }
@@ -316,32 +326,14 @@ impl<E: SqlEngine> QuestionRuntime<E> for EngineQuestions<'_, E> {
         let grain = plan.grain().as_str().to_owned();
         let admitted = visible(&gate_record(&grain, ALL_MEMBERS, &context.scope))?;
         let prepared = store.analytics_prepare_known_at(plan, context, &self.tenant, cutoff)?;
-        let response = self.respond(store, &prepared, admitted)?;
-        let mut answer = store.analytics_answer_known_at(prepared, response)?;
+        let mut answer = if admitted {
+            let response = evaluate_on(store, self.transport, &self.tenant, prepared.request())?;
+            store.analytics_answer_known_at(prepared, response)?
+        } else {
+            store.analytics_empty_authorized_answer_known_at(prepared)?
+        };
         finish_answer(store, plan, &mut answer.result, Some(cutoff), visible)?;
         Ok(answer)
-    }
-}
-
-impl<E: SqlEngine> EngineQuestions<'_, E> {
-    /// The engine's answer to `prepared`, or none when the caller may not
-    /// count the grain's rows.
-    fn respond(
-        &self,
-        store: &CellStore<E>,
-        prepared: &norn_cell::analytics::Prepared,
-        admitted: bool,
-    ) -> Result<EvaluateResponse, CellError> {
-        if admitted {
-            evaluate_on(store, self.transport, &self.tenant, &prepared.request)
-        } else {
-            Ok(EvaluateResponse {
-                population: 0,
-                excluded: Vec::new(),
-                buckets: Vec::new(),
-                unlinked: 0,
-            })
-        }
     }
 }
 
@@ -467,7 +459,7 @@ pub fn export_objects<E: SqlEngine>(
     // markings exports nothing; a marked value leaves only through a reveal.
     // The decision and the frontier the engine exports are read at one cell
     // version (S3, #1547), and the engine exports the rows live at it.
-    let (leave, source, snapshot) = decided_source(host, store, object_type, |reader| {
+    let (leave, source, snapshot, _version) = decided_source(host, store, object_type, |reader| {
         stored_values_leave(host, reader, object_type)
     })?;
     if !leave {
@@ -2101,15 +2093,7 @@ fn page_clause(
     })
 }
 
-/// PRIVACY-1: whether `object_type`'s current stored values may leave as
-/// they are stored: the cell holds no marking label, or it declares no
-/// marking and no live row of the type carries one, so its labels (the
-/// kernel's on its own records, or earlier versions') are elsewhere (#1547).
-/// A loaded dataset with any effective column marking (manifest union current
-/// model) never leaves as raw stored values.
-///
-/// # Errors
-/// A store failure.
+/// PRIVACY-1: whether `object_type`'s current stored values may leave as stored.
 fn stored_values_leave<E: SqlEngine>(
     host: &DevHost<E>,
     reader: &norn_cell::StoreReader<'_, E>,
@@ -2130,23 +2114,16 @@ fn stored_values_leave<E: SqlEngine>(
         || (!crate::privacy::declares(&catalog) && unlabeled(reader, object_type)))
 }
 
-/// S3 (#1547): `decide`, how `object_type`'s stored values may reach the
-/// engine, and the analytics source an engine call reads, at one cell
-/// version. A commit by any
-/// connection between the decision and the frontier would let a row the
-/// decision never saw into the call, so the two are bracketed by the cell's
-/// version (head and foreign-write revision): a moved version is read again,
-/// up to three times, then refused with the retryable `object.snapshot_moved`.
-/// The engine reads the rows live at that frontier.
-///
-/// # Errors
-/// A moved snapshot, an engine without a revision, or a store failure.
+/// A cell version: its head and foreign-write revision.
+type CellVersion = (u64, Option<(u64, u64)>);
+
+/// S3 (#1547): bracket `decide` and `analytics_source` at one cell version (retries 3x).
 fn decided_source<E: SqlEngine, T>(
     host: &DevHost<E>,
     store: &CellStore<E>,
     object_type: &str,
     decide: impl Fn(&norn_cell::StoreReader<'_, E>) -> Result<T, Refusal>,
-) -> Result<(T, norn_cell::analytics::Source, String), Refusal> {
+) -> Result<(T, norn_cell::analytics::Source, String, CellVersion), Refusal> {
     for _attempt in 0..3 {
         let reader = store.read();
         let start = crate::object_routes::cell_version(&reader)?;
@@ -2155,7 +2132,7 @@ fn decided_source<E: SqlEngine, T>(
             .analytics_source(norn_cell::MAIN_WORLD, &host.scope().key(), object_type)
             .map_err(engine_failure)?;
         if crate::object_routes::cell_version(&reader)? == start {
-            return Ok((decision, source, snapshot));
+            return Ok((decision, source, snapshot, start));
         }
     }
     Err(crate::object_routes::snapshot_moved())
@@ -2166,22 +2143,22 @@ fn decided_source<E: SqlEngine, T>(
 /// live in the engine, this checks the effective dataset markings (manifest
 /// union current model). An unknown type, an incomplete snapshot or an
 /// unbounded summary counts as labeled: it fails closed.
-fn unlabeled<E: SqlEngine>(reader: &norn_cell::StoreReader<'_, E>, object_type: &str) -> bool {
-    match reader.dataset_manifest(norn_cell::MAIN_WORLD, object_type) {
-        Ok(Some(current)) => {
-            return reader
-                .effective_dataset_markings(&current.manifest)
-                .is_ok_and(|markings| markings.is_empty());
-        }
-        Ok(None) => {}
-        Err(_) => return false,
+fn unlabeled<E: SqlEngine>(r: &norn_cell::StoreReader<'_, E>, object_type: &str) -> bool {
+    match r.dataset_manifest(norn_cell::MAIN_WORLD, object_type) {
+        Ok(Some(c)) => r
+            .effective_dataset_markings(&c.manifest)
+            .is_ok_and(|m| m.is_empty()),
+        Ok(None) => mirror_unlabeled(r, object_type),
+        Err(_) => false,
     }
-    let Ok(properties) = reader.model().effective_property_types(object_type) else {
+}
+
+fn mirror_unlabeled<E: SqlEngine>(r: &norn_cell::StoreReader<'_, E>, object_type: &str) -> bool {
+    let Ok(properties) = r.model().effective_property_types(object_type) else {
         return false;
     };
     properties.iter().all(|(property, _)| {
-        reader
-            .property_marking_summary(norn_cell::MAIN_WORLD, object_type, property)
+        r.property_marking_summary(norn_cell::MAIN_WORLD, object_type, property)
             .is_ok_and(|labels| labels.is_some_and(|labels| labels.is_empty()))
     })
 }
@@ -2215,23 +2192,42 @@ fn decide_profile<E: SqlEngine>(
         }
         return Ok(ProfilePlan::Engine);
     }
-    if host.marking_catalog(reader)?.is_empty() || unlabeled(reader, object_type) {
+    if host.marking_catalog(reader)?.is_empty() || mirror_unlabeled(reader, object_type) {
         Ok(ProfilePlan::Engine)
     } else {
         Ok(ProfilePlan::Native)
     }
 }
 
-/// HOST-READ-5 on the engine (D102): the profile of every row of
-/// `object_type` the caller may read, in the exact profile's shape and
-/// semantics (nearest-rank quantiles, equal-population bins, calendar labels,
-/// Tukey far-out values), computed by the tenant's engine over the same
-/// snapshot an export reads. A caller without Values on the type sees the
-/// rows counted as withheld and no value statistic.
+fn profile_exchange<E: SqlEngine>(
+    store: &CellStore<E>,
+    transport: &dyn Transport,
+    tenant: &TenantId,
+    source: &Source,
+    call: &EngineCall,
+    resumed: Option<EngineAnswer>,
+) -> Result<norn_cell::analytics::ProfileResponse, Refusal> {
+    use crate::object_routes::snapshot_moved;
+    if matches!(&resumed, Some(a) if a.op == call.op && a.digest != call.digest) {
+        return Err(snapshot_moved());
+    }
+    let world = mirror_world(source);
+    let answer =
+        exchange_from(store, transport, tenant, world, call, resumed).map_err(engine_failure)?;
+    if answer.status != 200 {
+        let err = refused(&answer.body);
+        if matches!(err, CellError::ComputeRefused("core.compute.stale_input")) {
+            return Err(snapshot_moved());
+        }
+        return Err(engine_failure(err));
+    }
+    decode(&answer.body).map_err(engine_failure)
+}
+
+/// HOST-READ-5 on the engine (D102/D136): authorized column profile.
 ///
 /// # Errors
-/// A denied gate (one opaque 403), a marked dataset column (`privacy.marked_column`, 403),
-/// an unknown type (404), or an unreachable engine.
+/// Denied (403), marked column (403), unknown type (404), stale (409), or engine error.
 pub fn profile_objects<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -2240,44 +2236,38 @@ pub fn profile_objects<E: SqlEngine>(
     access: &dyn ObjectAccess,
     transport: &dyn Transport,
 ) -> Result<crate::object_profile::NornObjectProfile, Refusal> {
-    use norn_cell::analytics::{ProfileRequest, ProfileResponse};
-    // PRIVACY-1: the engine mirror holds stored values; a cell that declares
-    // markings profiles natively, over projected values, unless no live row
-    // of this type carries a label on any of its properties. A loaded dataset
-    // lives only in the engine, so it always passes the authorization gate
-    // first and then refuses if any effective column is marked.
+    use crate::object_routes::{cell_version, not_found, snapshot_moved};
+    use norn_cell::analytics::ProfileRequest;
+    let resumed = transport.resumed();
+    let resumed_profile = resumed.as_ref().is_some_and(|a| a.op == "profile");
+    let native = || {
+        if resumed_profile {
+            return Err(snapshot_moved());
+        }
+        crate::object_profile::get_object_profile(host, scope, actor, object_type, access)
+    };
     let native_only = {
         let guard = host.cell()?;
-        let reader = guard.store().read();
-        let is_dataset = reader
-            .dataset_manifest(norn_cell::MAIN_WORLD, object_type)
+        let r = guard.store().read();
+        r.dataset_manifest(norn_cell::MAIN_WORLD, object_type)
             .map_err(Refusal::host)?
-            .is_some();
-        !(is_dataset
-            || host.marking_catalog(&reader)?.is_empty()
-            || unlabeled(&reader, object_type))
+            .is_none()
+            && !host.marking_catalog(&r)?.is_empty()
+            && !mirror_unlabeled(&r, object_type)
     };
     if native_only {
-        return crate::object_profile::get_object_profile(host, scope, actor, object_type, access);
+        return native();
     }
     let values = uniform_gate(host, scope, actor, object_type, access)?;
     let guard = host.cell()?;
     let store = guard.store();
-    // After the gate, so a denied caller costs what it did: the decision
-    // again, with the profiled frontier, at one cell version (S3, #1547).
-    let (plan, source, _snapshot) = decided_source(host, store, object_type, |reader| {
-        decide_profile(host, reader, object_type)
+    let (plan, source, _snapshot, start_version) = decided_source(host, store, object_type, |r| {
+        decide_profile(host, r, object_type)
     })?;
     match plan {
         ProfilePlan::Native => {
             drop(guard);
-            return crate::object_profile::get_object_profile(
-                host,
-                scope,
-                actor,
-                object_type,
-                access,
-            );
+            return native();
         }
         ProfilePlan::RefusedColumn(column) => return Err(marked_column(&column)),
         ProfilePlan::Engine => {}
@@ -2285,7 +2275,8 @@ pub fn profile_objects<E: SqlEngine>(
     let declared = store
         .model()
         .effective_property_types(object_type)
-        .map_err(|_unknown| crate::object_routes::not_found())?;
+        .map_err(|_unknown| not_found())?;
+    let model_pin = store.model().model_hash().to_owned();
     let table = store.analytics_table(object_type).map_err(engine_failure)?;
     let tenant = TenantId::of_scope(&host.scope().key());
     let call = EngineCall::new(
@@ -2294,15 +2285,23 @@ pub fn profile_objects<E: SqlEngine>(
             tenant: tenant.clone(),
             source: source.clone(),
             columns: table.columns.iter().map(|c| c.id.clone()).collect(),
+            model_pin: model_pin.clone(),
+            cell_revision: format!("{start_version:?}"),
         },
     )
     .map_err(engine_failure)?;
-    let answer = exchange(store, transport, &tenant, mirror_world(&source), &call)
-        .map_err(engine_failure)?;
-    if answer.status != 200 {
-        return Err(engine_failure(refused(&answer.body)));
+    let profile = profile_exchange(store, transport, &tenant, &source, &call, resumed)?;
+    let schema_pin = matches!(source, Source::Mirror { .. }).then_some(table.pin.as_str());
+    if store.model().model_hash() != model_pin
+        || cell_version(&store.read())? != start_version
+        || profile
+            .provenance
+            .verify(&tenant, &source, &model_pin, schema_pin)
+            .is_err()
+    {
+        return Err(snapshot_moved());
     }
-    let profile: ProfileResponse = decode(&answer.body).map_err(engine_failure)?;
+    let rows = if values { profile.rows } else { 0 };
     let properties = declared
         .iter()
         .map(|(property, declared_type)| {
@@ -2311,18 +2310,17 @@ pub fn profile_objects<E: SqlEngine>(
                 .iter()
                 .find(|c| &c.column == property)
                 .filter(|_| values);
-            let rows = if values { profile.rows } else { 0 };
             property_profile(property, declared_type.as_ref(), column, rows)
         })
         .collect::<Result<_, _>>()?;
     Ok(crate::object_profile::NornObjectProfile {
         object_type: object_type.to_owned(),
-        rows: if values { profile.rows } else { 0 },
+        rows,
         withheld_rows: if values { 0 } else { profile.rows },
         quarantined_rows: profile.quarantined,
         approximate: false,
         scan_limit: profile.rows,
-        engine: "duckdb".into(),
+        engine: profile.provenance.engine.as_str().to_owned(),
         properties,
     })
 }
