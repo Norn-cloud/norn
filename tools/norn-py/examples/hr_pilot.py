@@ -2,31 +2,39 @@
 
 Demonstrates:
 - PII `MarkingsCatalog` + `Annotated[..., Marking(...)]`
-- `core.TimeInterval` interface (`role="happening"`) with symbolically traced `timestamp_before` invariant
-- `Employee` (`role="thing"`), `LeaveRequest` (`StrEnum` lifecycle + guards), `Shift` (`role="happening"`)
-- Per-record `LawIR` traced via `Sym[T]` + exact `Decimal` (zero `float`, zero `unsafeZen`)
-- External OR-Tools CP-SAT solver declared strictly as a `fn_ref` handle (`perform` boundary)
+- `hr_pilot.TimeSpan` interface (`role="happening"`) with symbolically traced `timestamp_before` invariant
+  (distinct from `registry/core`'s `core.TimeInterval.interface@0.1.0` so there is no artifact collision)
+- `Employee` (`role="thing"`), `LeaveRequest` (`StrEnum` lifecycle + guards + pinned `core.units@1.0.0`),
+  `Shift` (`role="happening"` + pinned `core.units@1.0.0`)
+- Concrete static field typing via `Field[T]`, `Timestamp`, `Quantity[Literal["h"|"d"]]`, `Money`, `Link`
+- Per-record `LawIR` traced via `Sym[Shift]` + exact `Decimal` (zero `float`, zero `unsafeZen`)
+- External OR-Tools CP-SAT solver declared strictly as a `fn_ref` handle (spike prototype outside collector)
 """
 
 from __future__ import annotations
 
 from decimal import Decimal
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Literal
 
 from norn_py import (
-    BoolTag,
     Concept,
+    DependencyPin,
     Expr,
+    Field,
     KeySpec,
     Link,
     Marking,
     MarkingDecl,
     MarkingsCatalog,
+    Money,
+    Quantity,
     Sym,
+    Timestamp,
     UnitRef,
     all_of,
     decimal_type,
+    field_default,
     fn_ref,
     invariant,
     law,
@@ -39,6 +47,7 @@ from norn_py import (
     transition,
 )
 
+CORE_UNITS = DependencyPin("core.units", "1.0.0", kind="entity")
 HOURS = UnitRef(system="ucum", code="h")
 DAYS = UnitRef(system="ucum", code="d")
 
@@ -73,21 +82,21 @@ HR_MARKINGS = MarkingsCatalog(
 )
 
 
-class TimeInterval(
+class TimeSpan(
     Concept,
-    name="core.TimeInterval",
-    title="Time interval",
+    name="hr_pilot.TimeSpan",
+    title="HR pilot time span",
     version="0.1.0",
     interface=True,
     role="happening",
-    description="Half-open UTC interval [starts_at, ends_at) for happenings (shifts, leaves, bookings).",
+    description="Half-open UTC interval [starts_at, ends_at) for HR pilot happenings (shifts, leaves).",
 ):
-    starts_at: Annotated[str, timestamp_type("utc")]
-    ends_at: Annotated[str, timestamp_type("utc")]
-    timezone: str | None
+    starts_at: Annotated[Field[Timestamp], timestamp_type("utc")]
+    ends_at: Annotated[Field[Timestamp], timestamp_type("utc")]
+    timezone: Field[str | None]
 
     @invariant("proper_interval", message="starts_at must be strictly before ends_at")
-    def _proper_interval(s: Sym[TimeInterval]) -> Expr[BoolTag]:
+    def _proper_interval(s: Sym[TimeSpan]) -> Expr[bool]:
         return timestamp_before(s.starts_at, s.ends_at)
 
 
@@ -99,12 +108,16 @@ class Employee(
     role="thing",
     identity=(KeySpec("primary", ("id",)),),
 ):
-    id: str
-    display_name: str
-    gender: Annotated[str, Marking("pii.demographic")]
-    national_id: Annotated[str, Marking("pii.gov_id")]
-    currency: str
-    base_salary: Annotated[Decimal, decimal_type(2, currency="currency"), Marking("pii.compensation")]
+    id: Field[str]
+    display_name: Field[str]
+    gender: Annotated[Field[str], Marking("pii.demographic")]
+    national_id: Annotated[Field[str], Marking("pii.gov_id")]
+    currency: Field[str]
+    base_salary: Annotated[
+        Field[Money[Literal["currency"]]],
+        decimal_type(2, currency="currency"),
+        Marking("pii.compensation"),
+    ]
 
 
 class LeaveStatus(StrEnum):
@@ -115,22 +128,27 @@ class LeaveStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+def _positive_leave_days(s: Sym[LeaveRequest]) -> Expr[bool]:
+    return s.days > Decimal("0.00")
+
+
 class LeaveRequest(
     Concept,
     name="hr.LeaveRequest",
     title="Leave request",
     version="0.1.0",
     role="happening",
-    implements=(TimeInterval,),
+    implements=(TimeSpan,),
     identity=(KeySpec("primary", ("id",)),),
+    dependencies=(CORE_UNITS,),
 ):
-    id: str
-    starts_at: Annotated[str, timestamp_type("utc")]
-    ends_at: Annotated[str, timestamp_type("utc")]
-    timezone: str | None
-    days: Annotated[Decimal, decimal_type(2, unit=DAYS)]
-    status: LeaveStatus = LeaveStatus.DRAFT
-    employee: Annotated[Link[Employee], link(Employee, to="one", from_="many", required=True)]
+    id: Field[str]
+    starts_at: Annotated[Field[Timestamp], timestamp_type("utc")]
+    ends_at: Annotated[Field[Timestamp], timestamp_type("utc")]
+    timezone: Field[str | None]
+    days: Annotated[Field[Quantity[Literal["d"]]], decimal_type(2, unit=DAYS)]
+    status: Field[LeaveStatus] = field_default(LeaveStatus.DRAFT)
+    employee: Annotated[Field[Link[Employee]], link(Employee, to="one", from_="many", required=True)]
 
     state = lifecycle(
         "status",
@@ -142,7 +160,7 @@ class LeaveRequest(
                 "submit",
                 from_=(LeaveStatus.DRAFT,),
                 to=LeaveStatus.PENDING,
-                guards=(lambda s: s.days > Decimal("0.00"),),
+                guards=(_positive_leave_days,),
             ),
             transition(
                 "approve",
@@ -169,15 +187,16 @@ class Shift(
     title="Shift commitment",
     version="0.1.0",
     role="happening",
-    implements=(TimeInterval,),
+    implements=(TimeSpan,),
     identity=(KeySpec("primary", ("id",)),),
+    dependencies=(CORE_UNITS,),
 ):
-    id: str
-    starts_at: Annotated[str, timestamp_type("utc")]
-    ends_at: Annotated[str, timestamp_type("utc")]
-    timezone: str | None
-    hours: Annotated[Decimal, decimal_type(2, unit=HOURS)]
-    employee: Annotated[Link[Employee], link(Employee, to="one", from_="many", required=True)]
+    id: Field[str]
+    starts_at: Annotated[Field[Timestamp], timestamp_type("utc")]
+    ends_at: Annotated[Field[Timestamp], timestamp_type("utc")]
+    timezone: Field[str | None]
+    hours: Annotated[Field[Quantity[Literal["h"]]], decimal_type(2, unit=HOURS)]
+    employee: Annotated[Field[Link[Employee]], link(Employee, to="one", from_="many", required=True)]
 
 
 @law(
@@ -188,7 +207,7 @@ class Shift(
     subject=Shift,
     rationale="Every committed shift must have a positive half-open UTC interval and bounded hours.",
 )
-def shift_bounds(s: Sym[Shift]) -> Expr[BoolTag]:
+def shift_bounds(s: Sym[Shift]) -> Expr[bool]:
     return all_of(
         timestamp_before(s.starts_at, s.ends_at),
         s.hours > Decimal("0.00"),
