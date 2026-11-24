@@ -106,7 +106,7 @@ export const Source = Norn.sourceSchema({
 export const Mapping = Norn.mapping({
   id: "erpnext.three.mapping",
   title: "erpnext synthetic observations to the REA canon",
-  version: "0.1.0",
+  version: "0.2.0",
   source: {schemaId: "erpnext.three.source", version: "0.1.0", sha256: "eb61ffb42f8a4d6b0ee9f3f153fa647e7a03779c96622ba1f6568e16bc234574"},
   sourceContract: {kind: "generic"},
   interfaces: [Catalog, Resource, Agent, AgentRole, Commitment, EconomicEvent, LedgerEffect, Settlement],

@@ -20,7 +20,7 @@ function TableHeader({ className, ...props }: React.ComponentProps<"thead">) {
   return (
     <thead
       data-slot="table-header"
-      className={cn("[&_tr]:border-b", className)}
+      className={cn("[&_tr]:border-b [&_tr]:border-border/85 [&_tr]:bg-surface-subtle/85 [&_tr]:hover:bg-surface-subtle/85", className)}
       {...props}
     />
   )
@@ -41,7 +41,7 @@ function TableFooter({ className, ...props }: React.ComponentProps<"tfoot">) {
     <tfoot
       data-slot="table-footer"
       className={cn(
-        "border-t bg-muted/50 font-medium [&>tr]:last:border-b-0",
+        "border-t bg-surface-subtle/80 font-medium [&>tr]:last:border-b-0",
         className
       )}
       {...props}
@@ -54,7 +54,7 @@ function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
     <tr
       data-slot="table-row"
       className={cn(
-        "border-b transition-colors hover:bg-muted/60 has-aria-expanded:bg-muted/60 data-[state=selected]:bg-muted",
+        "border-b border-border/70 transition-colors duration-150 hover:bg-surface-subtle/80 has-aria-expanded:bg-surface-subtle/80 data-[state=selected]:bg-action/8",
         className
       )}
       {...props}
@@ -67,7 +67,7 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
     <th
       data-slot="table-head"
       className={cn(
-        "h-9 px-3 text-start align-middle text-xs font-medium whitespace-nowrap text-muted-foreground [&:has([role=checkbox])]:pe-0",
+        "h-9 px-3.5 text-start align-middle text-xs font-medium tracking-[0.01em] whitespace-nowrap text-muted-foreground [&:has([role=checkbox])]:pe-0",
         className
       )}
       {...props}
@@ -80,7 +80,7 @@ function TableCell({ className, ...props }: React.ComponentProps<"td">) {
     <td
       data-slot="table-cell"
       className={cn(
-        "h-cell px-3 py-1.5 align-middle whitespace-nowrap [&:has([role=checkbox])]:pe-0",
+        "h-cell px-3.5 py-2 align-middle whitespace-nowrap tabular-nums [&:has([role=checkbox])]:pe-0",
         className
       )}
       {...props}

@@ -1,5 +1,5 @@
 {
-  "bundleDigest": "acaf0f7b54a7356028508a823a3b7e4b4be286801d68257ea39c6fd29aa0e95f",
+  "bundleDigest": "96c4e94b3a5fe61cc63d64c53b0c95d9e10ec73523e99a7a3b5888a48bbce704",
   "sourceRecordRef": {
     "system": "synthetic-erpnext",
     "record": "Item/erpnext/demo/Item/SYN-ERPNEXT-item"
@@ -11,8 +11,8 @@
   "documentDigest": "f756bcab0ec98eb3d7150a66abe66436dea99887521fa34c4dfa3486cf797c09",
   "mappingPin": {
     "artifactId": "erpnext.three.mapping",
-    "version": "0.1.0",
-    "sha256": "1d538ebe3e9a2c5307c49eebd2713a83a7b831ef467a48ec8e2d9aaed1f0a5c5"
+    "version": "0.2.0",
+    "sha256": "1a08febe3975be4fe9a6408e7d0479cec083d90046dd703c6f10dad6c6a6381d"
   },
   "fieldProvenance": {
     "code": {
@@ -20,7 +20,7 @@
         "system": "synthetic-erpnext",
         "record": "Item/erpnext/demo/Item/SYN-ERPNEXT-item"
       },
-      "mappingVersion": "erpnext.three.mapping@0.1.0",
+      "mappingVersion": "erpnext.three.mapping@0.2.0",
       "transform": "item.code",
       "recordedAt": "2026-11-02T12:00:00Z",
       "sourceFields": [
@@ -34,7 +34,7 @@
         "system": "synthetic-erpnext",
         "record": "Item/erpnext/demo/Item/SYN-ERPNEXT-item"
       },
-      "mappingVersion": "erpnext.three.mapping@0.1.0",
+      "mappingVersion": "erpnext.three.mapping@0.2.0",
       "transform": "item.id",
       "recordedAt": "2026-11-02T12:00:00Z",
       "sourceFields": [
@@ -47,7 +47,7 @@
         "system": "synthetic-erpnext",
         "record": "Item/erpnext/demo/Item/SYN-ERPNEXT-item"
       },
-      "mappingVersion": "erpnext.three.mapping@0.1.0",
+      "mappingVersion": "erpnext.three.mapping@0.2.0",
       "transform": "item.label",
       "recordedAt": "2026-11-02T12:00:00Z",
       "sourceFields": [

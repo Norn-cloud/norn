@@ -2105,22 +2105,23 @@ fn retain_as_before_decimal_text(
     .expect("legacy row");
 }
 
+/// The retained main-era definition set that
+/// `fixtures/mapping-bundle-main-decimal-text.json` identifies by
+/// `definitionsDigest` (`9f89a042c3858669edc4a065634afe2bb11f300273bd300c954789f436f0de63`).
+fn main_decimal_text_definitions() -> Vec<ArtifactEnvelope> {
+    serde_json::from_str(include_str!(
+        "fixtures/mapping-bundle-main-definitions.json"
+    ))
+    .expect("retained main-era definitions")
+}
+
 /// The cell, holding row and inbox id of one `ERPNext` holding whose quantity
-/// is exact decimal text, retained but not processed. The main-era fixture
-/// (`fixtures/mapping-bundle-main-decimal-text.json`) was captured by this
-/// exact sequence on the merged main parent's code.
+/// is exact decimal text, retained against the historical main-era definition
+/// set so the verbatim `fixtures/mapping-bundle-main-decimal-text.json` bundle
+/// replays against the exact definitions it originally pinned.
 fn decimal_text_holding(path: &Path) -> (Cell, Value, String) {
-    // The frozen main-era bundle fixture was captured before `core.time` and
-    // `core.TimeInterval` joined `registry/core/artifacts/`; install that exact
-    // historical definition set so the untouched main-era bundle verifies
-    // against the definitions it was captured under.
     let mut cell = setup_with(path, |artifacts| {
-        artifacts.retain(|artifact| {
-            !matches!(
-                artifact.artifact_id.as_str(),
-                "core.time" | "core.TimeInterval.interface"
-            )
-        });
+        *artifacts = main_decimal_text_definitions();
     });
     let source = fixture("erpnext");
     let rows = source["snapshot"].as_array().expect("rows");

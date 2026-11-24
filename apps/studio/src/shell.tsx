@@ -161,10 +161,10 @@ function ScopeSwitcher() {
 
   return (
     <Menu>
-      <MenuTrigger data-scope className="group/scope flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-start text-sm outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-ring data-open:bg-sidebar-accent">
-        <span aria-hidden className="flex size-6 shrink-0 items-center justify-center rounded-md bg-foreground text-[0.6875rem] font-semibold text-background">{initials(open?.name ?? "")}</span>
+      <MenuTrigger data-scope className="group/scope flex w-full min-w-0 items-center gap-2.5 rounded-lg px-2 py-1.5 text-start text-sm transition-[color,background-color] duration-150 outline-none hover:bg-sidebar-accent focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring data-open:bg-sidebar-accent">
+        <span aria-hidden className="flex size-6 shrink-0 items-center justify-center rounded-md bg-background text-[0.6875rem] font-semibold text-foreground shadow-control ring-1 ring-border/90 dark:bg-card">{initials(open?.name ?? "")}</span>
         <span className="grid min-w-0 flex-1 leading-tight" title={`${open?.name ?? ""} · ${open?.detail ?? ""}`}>
-          <span className="truncate font-medium">{open?.name}</span>
+          <span className="truncate font-semibold tracking-[-0.01em] text-sidebar-foreground">{open?.name}</span>
           <span className="truncate text-xs text-muted-foreground">{open?.detail}</span>
         </span>
         <ChevronsUpDown aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
@@ -246,7 +246,7 @@ export function AccountMenu({ account, onSignOut }: { readonly account: Account;
   return (
     <Menu onAction={(value) => { if (value === "sign-out") onSignOut() }}>
       <Hint label={`${user.name} · ${organization ? `${organization.name} · ${organization.role}` : "No organization"}`}>
-        <ToolbarButton render={<MenuTrigger />} aria-label="Account" className="flex size-8 items-center justify-center rounded-full bg-background text-[0.6875rem] font-medium ring-1 ring-border outline-none hover:ring-foreground/30 focus-visible:ring-2 focus-visible:ring-ring">
+        <ToolbarButton render={<MenuTrigger />} aria-label="Account" className="flex size-8 items-center justify-center rounded-full bg-background text-[0.6875rem] font-medium ring-1 ring-border outline-none hover:ring-foreground/30 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">
           {initials(user.name || user.email)}
         </ToolbarButton>
       </Hint>
@@ -279,7 +279,8 @@ function useNavigation(sections: readonly Section[]) {
 
 type Navigation = ReturnType<typeof useNavigation>
 
-const railButton = "relative flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-[1.0625rem]"
+const railButton = "relative flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-[color,background-color] duration-150 outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring [&_svg]:size-[1.0625rem]"
+const railActive = "bg-action/12 text-action ring-1 ring-inset ring-action/20 hover:bg-action/15 hover:text-action dark:bg-action/18 dark:ring-action/30"
 
 /** One destination on the rail: its icon, its name as a hint, and its count. */
 function RailLink({ section, count, firstHref, active, onExpandSection }: {
@@ -288,14 +289,14 @@ function RailLink({ section, count, firstHref, active, onExpandSection }: {
   const { setOpen, setOpenMobile } = useSidebar()
   const Icon = section.icon
   const label = count ? `${section.label}, ${count} open` : section.label
-  const badge = count && <span data-count className="absolute -end-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[0.625rem] leading-none font-semibold text-destructive-foreground tabular-nums ring-2 ring-sidebar">{count}</span>
+  const badge = count && <span data-count className="absolute -end-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[0.625rem] leading-none font-semibold text-destructive-foreground tabular-nums ring-2 ring-shell">{count}</span>
   // A destination without its own index page (Records) opens its first item, or expands the sidebar when none is loaded yet.
   const to = section.index === false ? firstHref : section.path
   if (to === undefined) {
     return (
       <Hint label={section.label}>
         <ToolbarButton aria-label={label} data-active={active || undefined} onClick={() => { onExpandSection?.(section.path); setOpen(true) }}
-          className={cn(railButton, active && "bg-sidebar-accent text-foreground")}>
+          className={cn(railButton, active && railActive)}>
           <Icon aria-hidden />{badge}
         </ToolbarButton>
       </Hint>
@@ -307,7 +308,7 @@ function RailLink({ section, count, firstHref, active, onExpandSection }: {
         render={<Link to={to} activeOptions={{ exact: to === "/" }} onClick={() => setOpenMobile(false)} />}
         aria-label={label}
         data-active={active || undefined}
-        className={cn(railButton, "data-[status=active]:bg-sidebar-accent data-[status=active]:text-foreground", active && "bg-sidebar-accent text-foreground")}
+        className={cn(railButton, "data-[status=active]:bg-action/12 data-[status=active]:text-action data-[status=active]:ring-1 data-[status=active]:ring-inset data-[status=active]:ring-action/20 dark:data-[status=active]:bg-action/18 dark:data-[status=active]:ring-action/30", active && railActive)}
       >
         <Icon aria-hidden />{badge}
       </ToolbarLink>
@@ -320,7 +321,7 @@ function AssistantToggle({ title }: { readonly title: string }) {
   const { open, toggle } = useAssistant()
   return (
     <Hint label={<>{title} <Keys className="opacity-70">⌘J</Keys></>}>
-      <ToolbarButton aria-label={title} aria-pressed={open} onClick={toggle} className={cn(railButton, "aria-pressed:bg-sidebar-accent aria-pressed:text-foreground")}>
+      <ToolbarButton aria-label={title} aria-pressed={open} onClick={toggle} className={cn(railButton, "aria-pressed:bg-action/12 aria-pressed:text-action aria-pressed:ring-1 aria-pressed:ring-inset aria-pressed:ring-action/20 dark:aria-pressed:bg-action/18")}>
         <Sparkles aria-hidden />
       </ToolbarButton>
     </Hint>
@@ -343,9 +344,9 @@ function Rail({ sections, perspective, navigation, current, account, onSignOut, 
   const groups = [...new Set(own.map(({ group }) => group))]
   const firstHref = (section: Section) => navigation.menus.get(section.path)?.find(({ href }) => !href.startsWith("#"))?.href
   return (
-    <div ref={railRef} className="h-full shrink-0">
-      <Toolbar orientation="vertical" aria-label="Studio" className="flex h-full w-(--sidebar-width-icon) flex-col items-center gap-1 py-2">
-        <Link to="/" aria-label="Norn Studio home" className="mb-2 flex size-8 items-center justify-center rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring">
+    <div ref={railRef} className="h-full shrink-0 border-e border-sidebar-border/75 group-data-[collapsible=icon]:border-e-0">
+      <Toolbar orientation="vertical" aria-label="Studio" className="flex h-full w-(--sidebar-width-icon) flex-col items-center gap-1 py-2.5">
+        <Link to="/" aria-label="Norn Studio home" className="mb-2 flex size-8 items-center justify-center rounded-lg outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">
           <img src={nornMark} alt="" width={24} height={24} className="size-6 object-contain" />
         </Link>
         {global.map((section) => <RailLink key={section.path} section={section} count={navigation.badges.get(section.path)} />)}
@@ -369,8 +370,8 @@ function Rail({ sections, perspective, navigation, current, account, onSignOut, 
 }
 
 // Focus stays on the tree item; its row is the label inside.
-const focusRow = "outline-none focus-visible:[&>[data-slot=tree-label]]:ring-2 focus-visible:[&>[data-slot=tree-label]]:ring-ring"
-const row = "flex h-7 w-full min-w-0 items-center gap-2 rounded-md px-2 text-sm text-sidebar-foreground/80 outline-none hover:bg-sidebar-accent hover:text-sidebar-foreground data-current:bg-sidebar-accent data-current:font-medium data-current:text-sidebar-foreground [&_svg]:size-4 [&_svg]:shrink-0"
+const focusRow = "outline-none focus-visible:[&>[data-slot=tree-label]]:relative focus-visible:[&>[data-slot=tree-label]]:z-10 focus-visible:[&>[data-slot=tree-label]]:outline-2 focus-visible:[&>[data-slot=tree-label]]:outline-solid focus-visible:[&>[data-slot=tree-label]]:outline-offset-1 focus-visible:[&>[data-slot=tree-label]]:outline-ring"
+const row = "relative flex h-7.5 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-sm text-sidebar-foreground/80 transition-[color,background-color] duration-150 outline-none hover:bg-sidebar-accent hover:text-sidebar-foreground data-current:bg-background data-current:font-medium data-current:text-foreground data-current:shadow-control data-current:ring-1 data-current:ring-border/80 dark:data-current:bg-card dark:data-current:ring-border data-current:[&_svg]:text-action data-current:before:absolute data-current:before:inset-y-1.5 data-current:before:start-0 data-current:before:w-[2.5px] data-current:before:rounded-full data-current:before:bg-action [&_svg]:size-4 [&_svg]:shrink-0"
 
 /** The current page's tree value: the item that claims the longest prefix of it, else its destination. */
 function currentOf(sections: readonly Section[], navigation: Navigation, pathname: string): string | null {
@@ -443,11 +444,11 @@ function SectionSidebar({ sections, perspective, navigation, pathname, chosen, o
             if (space === "") return items
             return (
               <TreeItem key={space} value={`space:${space}`} label={space} className={cn("mt-4 first:mt-2", focusRow)}>
-                <TreeItemLabel className="group/heading flex h-6 w-full items-center gap-1 rounded-md px-2 text-xs font-medium text-muted-foreground outline-none hover:text-foreground">
+                <TreeItemLabel className="group/heading flex h-6 w-full items-center gap-1 rounded-md px-2 text-[0.6875rem] font-semibold tracking-[0.04em] text-muted-foreground uppercase outline-none hover:text-foreground">
                   <span className="truncate">{space}</span>
                   <TreeItemIndicator className="ms-auto flex opacity-0 transition-[opacity,rotate] group-hover/heading:opacity-100 data-expanded:rotate-90"><ChevronRight aria-hidden className="size-3.5" /></TreeItemIndicator>
                 </TreeItemLabel>
-                <TreeGroup className="mt-0.5 space-y-px">{items}</TreeGroup>
+                <TreeGroup className="mt-1 space-y-0.5">{items}</TreeGroup>
               </TreeItem>
             )
           })}
@@ -541,10 +542,10 @@ function Crumbs({ section, entries, pathname }: { readonly section: Section; rea
  */
 function PerspectiveSwitch({ perspective, onChange }: { readonly perspective: Perspective; readonly onChange: (next: Perspective) => void }) {
   return (
-    <div role="group" aria-label="Perspective" data-perspective={perspective} className="flex h-8 shrink-0 items-center rounded-md bg-muted p-0.5">
+    <div role="group" aria-label="Perspective" data-perspective={perspective} className="flex h-8 shrink-0 items-center rounded-lg border border-border/80 bg-surface-subtle p-0.5 dark:bg-shell">
       {PERSPECTIVES.map(({ id, label }) => (
         <button key={id} type="button" aria-pressed={perspective === id} onClick={() => onChange(id)}
-          className="flex h-7 items-center gap-1.5 rounded-[0.3125rem] px-1.5 text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-xs dark:aria-pressed:bg-accent @sm:px-2 @lg:px-2.5 [&_svg]:size-3.5">
+          className="flex h-[1.625rem] items-center gap-1.5 rounded-md px-1.5 text-sm text-muted-foreground transition-[color,background-color,box-shadow] duration-150 outline-none hover:text-foreground focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-control aria-pressed:ring-1 aria-pressed:ring-border/70 aria-pressed:[&_svg]:text-action dark:aria-pressed:bg-accent dark:aria-pressed:ring-border @sm:px-2 @lg:px-2.5 [&_svg]:size-3.5">
           {id === "workspace" ? <LayoutGrid aria-hidden /> : <Wrench aria-hidden />}<span className="sr-only @lg:not-sr-only">{label}</span>
         </button>
       ))}
@@ -563,11 +564,11 @@ function CommandMenu({ sections, navigation, onPerspective }: { readonly section
   ])
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger shortcut="mod+k" aria-label="Search" className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring @2xl:w-full @2xl:justify-start @2xl:gap-2 @2xl:border @2xl:bg-background @2xl:px-2.5">
-        <Search aria-hidden className="size-4 shrink-0" /><span className="hidden truncate @2xl:inline">Search…</span><Keys className="ms-auto hidden text-xs @2xl:inline">⌘K</Keys>
+      <DialogTrigger shortcut="mod+k" aria-label="Search" className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-[color,background-color,border-color] duration-150 outline-none hover:bg-surface-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring @2xl:w-full @2xl:justify-start @2xl:gap-2 @2xl:border @2xl:border-border/90 @2xl:bg-surface-subtle/70 @2xl:px-2.5 @2xl:hover:border-input @2xl:hover:bg-surface-subtle">
+        <Search aria-hidden className="size-4 shrink-0" /><span className="hidden truncate @2xl:inline">Search…</span><Keys className="ms-auto hidden rounded border border-border/90 bg-background px-1.5 py-0.5 text-[0.6875rem] leading-none text-muted-foreground @2xl:inline">⌘K</Keys>
       </DialogTrigger>
-      <DialogBackdrop className="fixed inset-0 bg-black/40 transition-opacity duration-150 data-starting-style:opacity-0 data-ending-style:opacity-0" />
-      <DialogContent className="fixed top-[12vh] left-1/2 m-0 w-[min(36rem,calc(100vw-2rem))] -translate-x-1/2 overflow-hidden rounded-xl bg-popover p-0 text-popover-foreground shadow-2xl ring-1 ring-border outline-none transition-[opacity,scale] duration-150 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0">
+      <DialogBackdrop className="fixed inset-0 bg-black/40 backdrop-blur-[2px] transition-opacity duration-150 data-starting-style:opacity-0 data-ending-style:opacity-0" />
+      <DialogContent className="fixed top-[12vh] left-1/2 m-0 w-[min(36rem,calc(100vw-2rem))] -translate-x-1/2 overflow-hidden rounded-2xl bg-popover p-0 text-popover-foreground shadow-float ring-1 ring-border outline-none transition-[opacity,scale] duration-150 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0">
         <DialogTitle className="sr-only">Search Studio</DialogTitle>
         <Command onAction={(value) => {
           setOpen(false)
@@ -648,7 +649,7 @@ function ConnectionBanner() {
   )
 }
 
-const iconButton = "flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring data-open:bg-accent [&_svg]:size-4"
+const iconButton = "flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring data-open:bg-accent [&_svg]:size-4"
 
 /** The page bar's right-hand buttons: the page's own tools, then shortcuts and notifications. */
 function BarButtons({ tools }: { readonly tools?: ReactNode }) {
@@ -779,8 +780,8 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale
 
   return (
     <>
-      <Sidebar collapsible="icon" side={directionOf(locale) === "rtl" ? "right" : "left"} className="overflow-hidden border-sidebar-border">
-        <div className="flex size-full min-w-0 flex-row bg-sidebar">
+      <Sidebar collapsible="icon" side={directionOf(locale) === "rtl" ? "right" : "left"} className="overflow-hidden border-none!">
+        <div className="flex size-full min-w-0 flex-row bg-shell">
           <Rail sections={sections} perspective={perspective} navigation={navigation} current={current} account={account}
             onSignOut={onSignOut} assistant={assistant} railRef={railRef}
             onExpandSection={expandSection} />
@@ -790,11 +791,11 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale
           </div>
         </div>
       </Sidebar>
-      <SidebarInset className="min-w-0 flex-row overflow-hidden">
+      <SidebarInset className="min-w-0 flex-row overflow-clip bg-background md:my-2 md:me-2 md:ms-0 md:rounded-shell md:border md:border-border/90 md:shadow-shell">
         <div className="@container flex min-w-0 flex-1 flex-col">
-          <header className="flex h-12 shrink-0 items-center justify-between gap-1 border-b px-2 @sm:gap-2 @sm:px-3 @2xl:gap-3 @2xl:px-4 @4xl:grid @4xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+          <header className="flex h-12 shrink-0 items-center justify-between gap-1 border-b border-border/80 bg-background/95 px-2 @sm:gap-2 @sm:px-3 @2xl:gap-3 @2xl:px-4 @4xl:grid @4xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
             <div className="flex min-w-0 flex-1 items-center gap-1.5">
-              <SidebarTrigger ref={triggerRef} className="-ms-1 size-8 shrink-0 rounded-md text-muted-foreground" />
+              <SidebarTrigger ref={triggerRef} className="-ms-1 size-8 shrink-0 rounded-lg text-muted-foreground" />
               <div className="hidden min-w-0 overflow-hidden @[17rem]:block">{current && <Crumbs key={current.path} section={current} entries={navigation.menus.get(current.path) ?? []} pathname={pathname} />}</div>
             </div>
             <div className="flex shrink-0 justify-center @2xl:w-48 @4xl:w-72 @5xl:w-96"><CommandMenu sections={sections} navigation={navigation} onPerspective={switchTo} /></div>
@@ -804,7 +805,7 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale
             </div>
           </header>
           <ConnectionBanner />
-          <div className="mx-auto w-full max-w-7xl px-4 py-6 md:px-8"><Outlet /></div>
+          <div className="mx-auto w-full max-w-7xl px-5 py-7 md:px-9 md:py-8"><Outlet /></div>
         </div>
         <Inspector />
         <AssistantPanel assistant={assistant} />
@@ -831,7 +832,7 @@ function LocalizedShell({ sections, tools, assistant, account, onSignOut }: { re
   useHashScroll()
   return (
     <ViewProvider><InspectorProvider><TooltipProvider>
-      <SidebarProvider data-shell="workbench" data-density={density} className="bg-background" style={{ "--sidebar-width": "17rem", "--sidebar-width-icon": "3rem" } as CSSProperties}>
+      <SidebarProvider data-shell="workbench" data-density={density} className="bg-shell" style={{ "--sidebar-width": "17rem", "--sidebar-width-icon": "3rem" } as CSSProperties}>
         <WorkbenchFrame sections={sections} tools={tools} assistant={assistant} account={account} onSignOut={onSignOut}
           locale={locale} pathname={pathname} perspective={perspective} navigation={navigation} current={current} switchTo={switchTo} />
       </SidebarProvider>
