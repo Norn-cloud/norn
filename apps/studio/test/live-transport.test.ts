@@ -1,6 +1,6 @@
 import { expect, spyOn, test } from "bun:test"
 import { QueryClient, QueryObserver, queryOptions } from "@tanstack/react-query"
-import { NotServed, currentMode, liveTransport, modeQuery, readMode, refreshMode, retryMode } from "../src/lib/live-transport.ts"
+import { NotServed, ScopeSupersededError, currentMode, liveTransport, modeQuery, readMode, refreshMode, retryMode } from "../src/lib/live-transport.ts"
 import { recordedTransport, transport } from "../src/lib/transport.ts"
 
 const ME = { user: { id: "user:dev", name: "user:dev", email: "" }, organization: { id: "local", name: "shop", role: "local developer" }, environmentId: "dev" }
@@ -19,10 +19,11 @@ function server(routes: Record<string, readonly [number, string]>, me: readonly 
   return { calls, fetcher }
 }
 
-test("a cell that answers its definitions is live, with the artifacts and their exact numbers", async () => {
+test("a cell that answers its definitions is live, with its scope, artifacts and exact numbers", async () => {
   const { fetcher, calls } = server({ "/v1/definitions": [200, DEFINITIONS] })
   const mode = await readMode(fetcher)
   if (mode.kind !== "live") throw new Error("expected live")
+  expect(mode.scope).toEqual({ orgId: "local", environmentId: "dev" })
   expect(mode.catalog.origin).toBe("live")
   expect(mode.catalog.document.map((artifact) => artifact.artifactId)).toEqual(["shop.Product.entity"])
   expect(mode.catalog.numbers.get("/0/payload/scale")).toBe("2.50")
@@ -31,7 +32,8 @@ test("a cell that answers its definitions is live, with the artifacts and their 
 
 test("Retry cancels the transport's shared probe before starting its replacement", async () => {
   const client = new QueryClient()
-  const observer = new QueryObserver(client, modeQuery)
+  const query = modeQuery({ orgId: ME.organization.id, environmentId: ME.environmentId })
+  const observer = new QueryObserver(client, query)
   const probes: string[] = []
   let markFirstStarted = () => {}
   const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve })
@@ -67,7 +69,7 @@ test("Retry cancels the transport's shared probe before starting its replacement
 
     expect(probes).toEqual(["first", "aborted", "replacement"])
     expect(await transportResult).toBeInstanceOf(DOMException)
-    const replacement = client.getQueryData(modeQuery.queryKey)
+    const replacement = client.getQueryData(query.queryKey)
     if (replacement?.kind !== "live") throw new Error("expected a live replacement")
     expect(await currentMode()).toBe(replacement)
   } finally {
@@ -80,7 +82,8 @@ test("Retry cancels the transport's shared probe before starting its replacement
 
 test("Retry during the session body read leaves the catalog and mode caches live", async () => {
   const client = new QueryClient()
-  const observer = new QueryObserver(client, modeQuery)
+  const query = modeQuery(undefined)
+  const observer = new QueryObserver(client, query)
   const catalogQuery = queryOptions({ queryKey: ["catalog"], queryFn: transport.catalog })
   let markBodyReading = () => {}
   const bodyReading = new Promise<void>((resolve) => { markBodyReading = resolve })
@@ -119,7 +122,7 @@ test("Retry during the session body read leaves the catalog and mode caches live
     expect(firstSignal?.reason).toBeInstanceOf(DOMException)
     expect(await firstCatalog).toBe(firstSignal?.reason)
     expect(client.getQueryData(catalogQuery.queryKey)).toBeUndefined()
-    expect(client.getQueryData(modeQuery.queryKey)).toBeUndefined()
+    expect(client.getQueryData(query.queryKey)).toBeUndefined()
 
     const nextCatalog = client.fetchQuery(catalogQuery)
     finishCatalog()
@@ -128,7 +131,7 @@ test("Retry during the session body read leaves the catalog and mode caches live
     expect(catalog.origin).toBe("live")
     expect(catalog.document.map((artifact) => artifact.artifactId)).toEqual(["shop.Product.entity"])
     expect(client.getQueryData(catalogQuery.queryKey)?.origin).toBe("live")
-    expect(client.getQueryData(modeQuery.queryKey)).toMatchObject({ kind: "live", catalog })
+    expect(client.getQueryData(query.queryKey)).toMatchObject({ kind: "live", catalog })
     expect(recorded).not.toHaveBeenCalled()
   } finally {
     finishCatalog()
@@ -140,6 +143,82 @@ test("Retry during the session body read leaves the catalog and mode caches live
   }
 })
 
+test("currentMode keys cached catalogs by org + environment and rejects superseded in-flight reads (S1)", async () => {
+  refreshMode()
+  const scopeA = { orgId: "org_demo", environmentId: "env-a" }
+  const scopeB = { orgId: "org_demo", environmentId: "env-b" }
+  const calls: string[] = []
+  let releaseA!: () => void
+  const gateA = new Promise<void>((resolve) => { releaseA = resolve })
+
+  const fetcher = async (input: string) => {
+    calls.push(input)
+    if (input.includes("environmentId=env-a")) {
+      await gateA
+      return new Response('{"admitted":true,"version":1,"artifacts":[{"artifactId":"learning.Episode.entity","kind":"entity","lifecycle":"active","payload":{"objectType":{"name":"learning.Episode"}}}]}', { status: 200 })
+    }
+    return new Response('{"admitted":true,"version":2,"artifacts":[]}', { status: 200 })
+  }
+
+  // Start env-a catalog read, then switch scope to env-b before env-a finishes.
+  const inflightA = currentMode(fetcher, scopeA)
+  const modeB = await currentMode(fetcher, scopeB)
+  if (modeB.kind !== "live") throw new Error("expected live env-b")
+  expect(modeB.scope).toEqual(scopeB)
+  expect(modeB.catalog.document).toEqual([])
+
+  // Late resolution of env-a must be superseded and never replace env-b's cached mode.
+  releaseA()
+  await expect(inflightA).rejects.toBeInstanceOf(ScopeSupersededError)
+  const cachedB = await currentMode(fetcher, scopeB)
+  expect(cachedB).toBe(modeB)
+  expect(calls).toEqual([
+    "/api/host/v1/definitions?orgId=org_demo&environmentId=env-a",
+    "/api/host/v1/definitions?orgId=org_demo&environmentId=env-b",
+  ])
+  refreshMode()
+})
+
+test.each([
+  { selectedEnvironment: "env-b", discoveryStatus: 200 },
+  { selectedEnvironment: "env-b", discoveryStatus: 404 },
+  { selectedEnvironment: "dev", discoveryStatus: 200 },
+])("unkeyed discovery with status $discoveryStatus respects the selected $selectedEnvironment scope", async ({ selectedEnvironment, discoveryStatus }) => {
+  refreshMode()
+  const scopeA = { orgId: "local", environmentId: "dev" }
+  const selected = { orgId: "local", environmentId: selectedEnvironment }
+  let startDiscovery!: () => void
+  let releaseDiscovery!: () => void
+  const started = new Promise<void>((resolve) => { startDiscovery = resolve })
+  const release = new Promise<void>((resolve) => { releaseDiscovery = resolve })
+  const discover = async (input: string) => {
+    if (input === "/api/me") return Response.json(ME)
+    expect(input).toBe("/api/host/v1/definitions?orgId=local&environmentId=dev")
+    startDiscovery()
+    await release
+    return new Response(DEFINITIONS, { status: discoveryStatus })
+  }
+  const pending = currentMode(discover)
+  await started
+  const discoveryOutcome = pending.catch((error: unknown) => error)
+  try {
+    const keyedFetch = async () => new Response(DEFINITIONS)
+    const next = currentMode(keyedFetch, selected)
+    if (selectedEnvironment !== scopeA.environmentId) await next
+    releaseDiscovery()
+    if (selectedEnvironment === scopeA.environmentId) {
+      expect(next).toBe(pending)
+      expect(await discoveryOutcome).toMatchObject({ kind: "live", scope: scopeA })
+    } else {
+      expect(await discoveryOutcome).toBeInstanceOf(ScopeSupersededError)
+    }
+    expect(await currentMode(keyedFetch)).toBe(await next)
+  } finally {
+    releaseDiscovery()
+    refreshMode()
+  }
+})
+
 test("the catalog's per-type counts are the cell's, kept only when well formed; none when it sends none", async () => {
   const counted = '{"admitted":true,"version":3,"artifacts":[],"objectCounts":{"shop.Product":{"count":12,"approximate":false},"shop.Order":{"count":500,"approximate":true},"shop.Bad":{"count":-1,"approximate":false},"shop.Odd":{"count":3}}}'
   const mode = await readMode(server({ "/v1/definitions": [200, counted] }).fetcher)
@@ -148,6 +227,12 @@ test("the catalog's per-type counts are the cell's, kept only when well formed; 
   expect(await liveTransport(mode.catalog, server({}).fetcher, mode.counts).objectCounts()).toEqual(mode.counts)
   const plain = await readMode(server({ "/v1/definitions": [200, DEFINITIONS] }).fetcher)
   expect(plain.kind === "live" && plain.counts).toEqual({})
+  expect(plain.kind === "live" && plain.publishedQuestions.size).toBe(0)
+
+  const withQuestions = '{"admitted":true,"version":3,"artifacts":[],"publishedQuestions":["learning.misfit_by_law","",42,"learning.triage_over_time"]}'
+  const qMode = await readMode(server({ "/v1/definitions": [200, withQuestions] }).fetcher)
+  if (qMode.kind !== "live") throw new Error("expected live")
+  expect([...qMode.publishedQuestions]).toEqual(["learning.misfit_by_law", "learning.triage_over_time"])
 })
 
 test("no session, no cell, no host or a page that is not a document reads the recording; a refusal is the cell's error", async () => {
@@ -155,12 +240,25 @@ test("no session, no cell, no host or a page that is not a document reads the re
   expect(await readMode(server({}, [200, { ...ME, environmentId: null }]).fetcher)).toEqual({ kind: "recorded" })
   expect(await readMode(server({}, [200, "<!doctype html>"]).fetcher)).toEqual({ kind: "recorded" })
   expect(await readMode(server({ "/v1/definitions": [503, '{"error":"No Norn host is connected to this deployment."}'] }).fetcher)).toEqual({ kind: "recorded" })
+  expect(await readMode(server({ "/v1/definitions": [404, "<!doctype html>"] }).fetcher)).toEqual({ kind: "recorded" })
   expect(await readMode(server({ "/v1/definitions": [200, "<!doctype html>"] }).fetcher)).toEqual({ kind: "recorded" })
   // An outage is not "nothing connected": a session server that fails (5xx) or cannot be reached is raised, and retried.
   await expect(readMode(server({}, [503, { error: "upstream unavailable" }]).fetcher)).rejects.toThrow("did not answer (503)")
   await expect(readMode(async () => { throw new TypeError("Failed to fetch") })).rejects.toThrow("did not answer (network)")
   await expect(readMode(server({ "/v1/definitions": [503, '{"error":"norn dev at http://127.0.0.1:4174 did not answer; is it still running?"}'] }).fetcher)).rejects.toThrow("did not answer")
   await expect(readMode(server({ "/v1/definitions": [403, '{"code":"authz.denied","message":"the read request is not authorized"}'] }).fetcher)).rejects.toThrow("the read request is not authorized")
+})
+
+test("an HTML catalog outage rejects the mode read and the next attempt can connect", async () => {
+  refreshMode()
+  const { fetcher } = server({ "/v1/definitions": [502, "<!doctype html>Bad Gateway"] })
+  const recovered = server({ "/v1/definitions": [200, DEFINITIONS] })
+  try {
+    await expect(currentMode(fetcher)).rejects.toThrow("did not answer (502)")
+    await expect(currentMode(recovered.fetcher)).resolves.toMatchObject({ kind: "live" })
+  } finally {
+    refreshMode()
+  }
 })
 
 const live = async (routes: Record<string, readonly [number, string]>) => {

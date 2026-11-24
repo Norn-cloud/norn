@@ -95,6 +95,17 @@ export const NO_DATA_CELL = "This workspace has no data cell yet."
 export class StudioScopeError extends Error {}
 const accountScope = z.object({ organization: z.object({ id: z.string().min(1) }).nullable(), environmentId: z.string().min(1).nullable() })
 
+/** Stable cache key for one server-reported `(orgId, environmentId)` scope. */
+export function studioScopeKey(scope: StudioScope | null | undefined): string {
+  return scope == null ? "none" : JSON.stringify([scope.orgId, scope.environmentId])
+}
+
+/** Whether two server-reported scopes identify the exact same org and cell environment. */
+export function sameStudioScope(a: StudioScope | null | undefined, b: StudioScope | null | undefined): boolean {
+  if (a == null || b == null) return a == null && b == null
+  return a.orgId === b.orgId && a.environmentId === b.environmentId
+}
+
 /** Read the active workspace and its cell from the signed-in server session. */
 export async function readStudioScope(fetcher: Fetch = (input, init) => fetch(input, init), signal?: AbortSignal): Promise<StudioScope | null> {
   signal?.throwIfAborted()
