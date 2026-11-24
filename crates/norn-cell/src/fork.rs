@@ -171,6 +171,15 @@ impl<E: ForkEngine> CellStore<E> {
     /// head; a storage-version refusal when the copy is not at this engine's
     /// storage version; ledger verification or engine errors otherwise.
     pub fn fork(&self, world: &str, base: &LedgerHead) -> Result<Self, CellError> {
+        self.persist_pending_fence();
+        // S12 (#1551 round 5): check durable fence BEFORE pending-scrub
+        // Verifying so a sibling handle with an incomplete scrub fails closed
+        // with Fenced once the cell is fenced.
+        self.scrub.borrow().refuse_fenced()?;
+        crate::open_checkpoint::check_fence(&self.conn)?;
+        // S13 (#1551): refuse forking while a checkpointed cell's history
+        // scrub is incomplete.
+        self.scrub.borrow().refuse_fork()?;
         let parent = self
             .fork_pin()
             .map_or(MAIN_WORLD, |pin| pin.world.as_str())
@@ -191,6 +200,8 @@ impl<E: ForkEngine> CellStore<E> {
         // version since this store opened it; the copy is admitted before its
         // head is read or its pin written.
         crate::engine_release::require_current(&engine)?;
+        // S12: refuse copying a cell fenced durably by another handle.
+        crate::open_checkpoint::check_fence(&engine)?;
         // Another handle may commit between the head check and the copy: the
         // copy itself must hold exactly `base`, or the fork refuses.
         let copied = copied_head(&engine, self.model())?;
@@ -296,10 +307,13 @@ impl<E: SqlEngine> CellStore<E> {
     ///
     /// SQL engine errors.
     pub fn image(&self) -> Result<StoreImage, CellError> {
+        self.persist_pending_fence();
+        self.read().check_history("store image")?;
         let platform = self.conn.platform_table_globs();
         let filter = " AND name NOT GLOB ?".repeat(platform.len());
         let globs: Vec<SqlValue> = platform.iter().map(|glob| SqlValue::from(*glob)).collect();
         self.conn.transaction(|| {
+            crate::open_checkpoint::check_fence(&self.conn)?;
             let catalog = self.conn.query(
                 &format!(
                     "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE 1{filter} ORDER BY type, name"

@@ -34,11 +34,75 @@ The version metadata the engine checks is compiled in: `CHANNEL` lists each stor
 A refused or failed open leaves the file byte-identical. Nothing is committed until every check that can refuse the file has passed:
 
 - The native engine (`NativeEngine::open`) admits the storage version before it sets the journal mode, which SQLite stores in the file.
-- An open runs the schema step, the migrations, and the verification of the whole ledger, every receipt, the definition history, the fork pin and an expected cell identity in one transaction. The migrations run before this engine's schema statements, so each step sees the layout it was written for. If any later check fails (a model mismatch, a ledger that does not verify), the upgrade rolls back with it.
+- An open runs the schema step, the migrations, and the verification of the history, the fork pin and an expected cell identity in one transaction. The migrations run before this engine's schema statements, so each step sees the layout it was written for. If any later check fails (a model mismatch, a ledger that does not verify), the upgrade rolls back with it.
+- The history is verified from the cell's open checkpoint (storage version 6, OPEN-CHECKPOINT-1, #1533), or from genesis when it has none. See [Checkpointed open](#checkpointed-open).
 - Provisioning an existing cell admits it again and runs the migrations at the start of its write transaction, before any other statement, so a second opener that changed the version after the first check is caught.
-- A fork admits the copied snapshot and refuses unless it is at this engine's storage version, before it reads the copy's head or writes its pin. A copy is never migrated.
+- A fork admits the copied snapshot and refuses unless it is at this engine's storage version, before it reads the copy's head or writes its pin. A copy is never migrated. A fork is also refused while a checkpointed open's history scrub is incomplete (`cell.verifying`) or while the cell is fenced (`cell.fenced`), so a fork only copies scrub-verified history.
 
 Hosts already turn an open refusal into `cell.unopenable`, and the reason reaches only a definition writer.
+
+## Checkpointed open
+
+From storage version 6 an open does not re-verify every commit from the first one. `_norn_open_checkpoint` holds one row: a ledger head this engine verified (commit count, last event sequence and hash), the RFC 6962 root of the receipt digests of those commits, the quantity boundary in force at it, a digest of the `(commit, receipt digest)` list of the quantity receipts it covers, the commit and stored digest of the last export record it covers, a digest of every retained definition version it covers, and a MAC. The code is `crates/norn-cell/src/open_checkpoint.rs` (the row, its MAC, durable fence and the genesis-parity table), `crates/norn-cell/src/open_checkpoint/verify.rs` (verification and checkpoint advancement) and `crates/norn-cell/src/scrub.rs` (the history scrub).
+
+### Claim and threat model
+
+- **Who we defend against:** anyone who can rewrite the cell file (its rows, digests and the checkpoint row together) but does not hold the host's checkpoint key.
+- **The claim:** a checkpointed cell detects every edit a genesis open detects. Edits to live state are detected at open. Edits to history are detected within one scrub, before any read that depends on that history being complete is served.
+- **Forging a checkpoint needs the key.** The row is authenticated by HMAC-SHA256 under a key held outside the cell file: the host's secret store (OpenBao or a hosted secret store in alpha, `NORN_CHECKPOINT_KEY` on the Durable Object host). The dev host makes a random key on first use and keeps it beside the cell, in `.norn/checkpoint.key` (owner-only), never in the cell file. Tests draw a random key per process. No key is written into the source. The MAC covers every column and the cell's identity binding, so a row copied from another cell does not verify either.
+- **Fail-safe:** a missing key, a cell with no identity, a malformed or unparseable checkpoint row, or a row whose MAC does not verify gives a genesis open, never a refusal. The same holds for a checkpoint past the end of the file, as after a restore that trimmed history. A lost or rotated key costs open time, not the cell.
+- **Not claimed:** a rollback of the whole file to an older consistent state, which a genesis open does not detect either. An attacker who holds the key. Proving history complete without reading it; a per-row authenticated index (a Merkle index over value versions and selectors) is a post-beta option.
+
+### What an open checks
+
+An open from an authentic checkpoint verifies all live state, and the history after the checkpoint, exactly as a genesis open does:
+
+- **The anchor.** The ledger entry at the checkpoint's sequence carries its hash, and its last commit's receipt names that head and verifies. The receipt digests of the commits it covers rebuild its root.
+- **The suffix.** Everything after the checkpoint: the chain, receipts and their logical time order, the definition history, the value history and each export record's cell identity.
+- **Live state, in full:**
+  - The object identities, over the current state.
+  - The cell identity binding against the last export record the checkpoint pins.
+  - The definitions: every retained version it covers folds to its definitions digest, and the version active at it is proven again against its typed export record.
+  - The quantity projections, replayed from every quantity receipt and compared row for row. The receipt table's quantity indexes list those receipts, and the list must fold to the checkpoint's quantity digest.
+  - The schema, storage version, markings and fork pin.
+
+### The history scrub
+
+The history before the checkpoint is verified after the open, by the scrub. It runs the checks a genesis open runs, from genesis to the head the open verified, in bounded steps between commits:
+
+1. **Receipts:** each body against its digest, its lookup columns against its body, each digest against the one the open loaded, and the rebuilt root against the checkpoint's.
+2. **History:** the ledger chain, every export record's identity, every definition install (superseded ones included), and every value version against its receipt.
+3. **Seed:** the checkpoint at that head, built only from what the scrub verified, MAC'd and recorded.
+
+Placement:
+
+- The scrub runs on the cell's own connection, one step per wake of the host's due-work clock (`norn_api::timers`): the Durable Object's alarm, and the dev host's timer loop.
+- A step reads at most 512 receipts or verifies 64 commits, each step in its own transaction, so a commit waits for at most one step.
+- A separate read connection over a WAL snapshot was considered and not used. A Durable Object has one storage connection and no threads, and an in-memory cell cannot be opened twice, so one stepped scrub serves every host.
+- On a Durable Object the scrub's state lives in memory. An evicted object scrubs again on its next open, and its alarm keeps it awake while the scrub runs.
+
+Until the scrub ends, reads that depend on history being complete are refused with the retryable `cell.verifying`. Live reads and writes are served.
+
+| Held back until | Reads |
+|---|---|
+| the history phase ends | as-of reads (`version_as_of`, knowledge-cutoff evidence), historical frames and analytics/compute queries over history (gated before population selection), version lists (object history), `ledger()`, ledger and finding-ledger pages that reach an entry the checkpoint covers, export and transparency reads covering checkpointed history, and `fork()` |
+| the receipts phase ends | a commit or `receipt_by_idempotency_key` lookup whose idempotency key finds no receipt: the miss cannot be dated, and a changed selector could hide a covered receipt, so the miss is refused as retryable rather than treated as absent or committed twice |
+
+Each scrub step stages its progress and applies it to in-memory state only after its transaction commits, so a transient SQLite failure never loses or corrupts scrub state. A defect (or exhausted transient retries) fences the cell durably: the checkpoint row is dropped and `_norn_meta` records `open_checkpoint:fenced` in one transaction, so every commit, read, fork, sibling handle and subsequent reopen fails closed with `cell.fenced`. The finding is logged and returned by the host's due-work report.
+
+### When a checkpoint is written
+
+- **By a commit.** After every 128th commit, and only from the checkpoint this handle validated, once the scrub has verified the history it covers. Inside the checkpoint's own transaction, the commit re-checks the tail anchor against concurrent writes, re-runs the pins an open runs on that checkpoint, verifies everything it newly covers, and builds the new root only from digests equal to the ones on disk. A commit verifies at most 256 commits. A longer gap is handed to the scrub, which closes it off the commit path and seeds the next checkpoint. A commit never runs a catch-up from genesis. A history of 256 commits or fewer is checkpointed from genesis by its first due commit.
+- **By the scrub.** At the end of every scrub, at the head it verified. That covers after a checkpointed open, after a genesis open of a history over 256 commits (where the scrub only rebuilds what the seed records), and after a restore.
+- **By an upgrading open,** which writes anyway.
+- **Never otherwise.** A same-version open writes nothing. The row is metadata: it is never part of a receipt, a ledger event or an export. A failed write keeps the previous checkpoint.
+
+### Restores
+
+- **Whole-file snapshots** (a file copy, a Durable Object point-in-time bookmark, a Rivet actor snapshot) restore the checkpoint with the history it covers, and are consistent.
+- **A restore that trims history** (an LTX-cut point-in-time restore) may leave a checkpoint past its end. The open then verifies from genesis, and the scrub re-seeds the checkpoint at the restored head.
+- **The earlier runbook step** `DELETE FROM "_norn_open_checkpoint" WHERE "commits" > ?cut` is no longer needed, and stays harmless.
+- **This repository's restore** (`restore.rs`) replays an export into a new file, so it never carries a checkpoint over.
 
 ## Exports and restore
 

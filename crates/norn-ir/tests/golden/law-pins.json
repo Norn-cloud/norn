@@ -20,5 +20,10 @@
   "registry/core/artifacts/core.analytics.restatement_policy.law.json#/payload": "sha256:6411cda959ac4fb05c1e95494508beb4a7a2a749cc5518396a04fd2db6410430",
   "registry/packs/canon/artifacts/canon.ItemizedDocument.total_matches_lines.law.json#/payload": "sha256:18f52fd6fea89c188a2295a098a01b66e949a90c77ec002447a857351651eada",
   "registry/packs/demo-erpnext/artifacts/demo.erpnext.purity.law.json#/payload": "sha256:73ed6579985cbd585a92a9e80ee0febcd45e9e93836fdad57aa9417b32138eaa",
-  "registry/packs/ml/artifacts/ml.promotion_policy.law.json#/payload": "sha256:28490dcafd59948a98dcb621e09fe8eb69004c9de0f61ac2ce3402364e76803c"
+  "registry/packs/ml/artifacts/ml.promotion_policy.law.json#/payload": "sha256:28490dcafd59948a98dcb621e09fe8eb69004c9de0f61ac2ce3402364e76803c",
+  "registry/packs/org/artifacts/org.Membership.valid_date_range.law.json#/payload": "sha256:d25a5848ab1f3b022f26ac19f64274c9eebb563ed8bb86d870bf35913ef5dae2",
+  "registry/packs/org/artifacts/org.OrgUnit.kind_is_organization.law.json#/payload": "sha256:6080d2c140f5ba403474e4290209fe11ea6896305387cfd18b389505f5425df7",
+  "registry/packs/time/artifacts/time.Calendar.tzdb_version_pinned.law.json#/payload": "sha256:a880f79483b00fbaa61d9e63a171703fd24e6b74e5f383159d1a15e8c8007a1d",
+  "registry/packs/time/artifacts/time.MaterializedWindow.resolved_matches_bounds.law.json#/payload": "sha256:fb478c7ee0005cff5b68bf6c10cc628cbfe75e12ded2d7bab55a5634fdf1a36f",
+  "registry/packs/time/artifacts/time.WorkingWindow.valid_local_window.law.json#/payload": "sha256:0c7dd30cba684ca8eb0416de366f14954e0303b647fc57497c761c75731273c2"
 }

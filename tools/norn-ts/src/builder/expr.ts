@@ -32,6 +32,7 @@ export type CallFn =
   | "upper"
   | "trim"
   | "len"
+  | "take"
   | "contains"
   | "startsWith"
   | "endsWith"
@@ -41,6 +42,7 @@ export type CallFn =
   | "date"
   | "timestamp"
   | "sum"
+  | "floor"
   | "days_between"
   | "add_days"
   | "seconds_between"
@@ -77,6 +79,10 @@ export const unsafeZen = (text: string, schema: ValueSchema): Expr => ({ _tag: "
 
 /** `sum(list of numbers)`; zen sums an empty list to 0. */
 export const sum = (list: Expr): Expr => call("sum", list)
+/** `floor(number)`: exact integer floor in `norn-zen/7`. */
+export const floor = (value: Expr): Expr => call("floor", value)
+/** `take(text, maxScalars)`: bounded Unicode scalar prefix in `norn-zen/7`. */
+export const take = (value: Expr, maxScalars: Expr): Expr => call("take", value, maxScalars)
 /** A calendar date operand: raw date text is parsed through `date(...)`, as norn-zen/7 requires. */
 const asDate = (value: Expr): Expr => (temporalKind(value) === "date" ? value : call("date", value))
 /** A UTC timestamp operand: raw timestamp text is parsed through `timestamp(...)`, as norn-zen/7 requires. */
@@ -278,6 +284,10 @@ export function typeOf(expr: Expr, scope: Scope): ValueSchema {
         if (args.length !== 1 || args[0]?.type !== "array" || !isNumeric(args[0].items)) throw new ExprError("NORN-FLOW-EXPRESSION", "sum expects a list of numbers")
         return numberSchema
       }
+      if (expr.fn === "floor") {
+        if (args.length !== 1 || !isNumeric(args[0]!)) throw new ExprError("NORN-FLOW-EXPRESSION", "floor expects a number")
+        return integer
+      }
       if (expr.fn === "days_between" || expr.fn === "add_days") {
         if (args.length !== 2) throw new ExprError("NORN-FLOW-EXPRESSION", `${expr.fn} expects 2 arguments`)
         const dates = expr.fn === "days_between" ? expr.args : expr.args.slice(0, 1)
@@ -307,6 +317,10 @@ export function typeOf(expr: Expr, scope: Scope): ValueSchema {
       if (expr.fn === "len") {
         if (args.length !== 1 || (args[0]?.type !== "string" && args[0]?.type !== "array")) throw new ExprError("NORN-FLOW-EXPRESSION", "length expects a string or array")
         return integer
+      }
+      if (expr.fn === "take") {
+        if (args.length !== 2 || args[0]?.type !== "string" || args[1]?.type !== "integer") throw new ExprError("NORN-FLOW-EXPRESSION", "take expects a string and an integer literal cap")
+        return text()
       }
       const arity = ["lower", "upper", "trim", "date", "timestamp"].includes(expr.fn) ? 1 : 2
       if (args.length !== arity || args.some((a) => a.type !== "string")) throw new ExprError("NORN-FLOW-EXPRESSION", `${expr.fn} expects ${arity} string arguments`)

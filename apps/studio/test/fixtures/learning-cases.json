@@ -1,0 +1,116 @@
+{
+  "contract": "CuratedCase and EvalSet records in the served NornObjectRecord envelope (#1208, #1220 L-3). Replace with fixtures written by the learning pack's route tests once Train 2 lands.",
+  "cases": [
+    {
+      "objectType": "learning.CuratedCase",
+      "id": "case_credit_phone_01",
+      "scope": "org_demo/analytics",
+      "version": 2,
+      "values": {
+        "episodeId": "ep_demo_overridden",
+        "decisionReceipt": {
+          "receiptHash": "sha256:5f0c9a1e7b2d4c6a8e0f1b3d5c7a9e2f4b6d8c0a1e3f5b7d9c2a4e6f8b0d1c3a",
+          "commitSeq": 4812
+        },
+        "outcomeReceipt": {
+          "receiptHash": "sha256:7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e6d",
+          "commitSeq": 5120
+        },
+        "question": "Release the held shipment?",
+        "expectedChoice": "release",
+        "agreement": "overridden",
+        "protected": true,
+        "note": "Phone-confirmed remittance cleared in 2 days; protect against overly strict auto-refusal.",
+        "curatedBy": "a manager",
+        "curatedAtMs": 1794510000000,
+        "evalSetIds": ["eval_credit_holdout_v1", "eval_credit_draft_v2"]
+      }
+    },
+    {
+      "objectType": "learning.CuratedCase",
+      "id": "case_credit_overdue_02",
+      "scope": "org_demo/analytics",
+      "version": 1,
+      "values": {
+        "episodeId": "ep_demo_accepted",
+        "decisionReceipt": {
+          "receiptHash": "sha256:3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d",
+          "commitSeq": 4901
+        },
+        "outcomeReceipt": {
+          "receiptHash": "sha256:8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b1a0f9e8d7c6b5a4f3e2d1c0b9a8f7e",
+          "commitSeq": 5180
+        },
+        "question": "Approve the restock order?",
+        "expectedChoice": "approve",
+        "agreement": "accepted",
+        "protected": false,
+        "note": "Baseline routine approval under the existing limit.",
+        "curatedBy": "you",
+        "curatedAtMs": 1794520000000,
+        "evalSetIds": ["eval_credit_draft_v2"]
+      }
+    }
+  ],
+  "evalSets": [
+    {
+      "objectType": "learning.EvalSet",
+      "id": "eval_credit_draft_v2",
+      "scope": "org_demo/analytics",
+      "version": 3,
+      "values": {
+        "name": "Credit release regression",
+        "splitKey": "credit_release_q4",
+        "setVersion": 2,
+        "status": "unsealed",
+        "sealedAtMs": null,
+        "sealedBy": null,
+        "parentSetId": "eval_credit_holdout_v1",
+        "caseRefs": [
+          {
+            "caseId": "case_credit_phone_01",
+            "episodeId": "ep_demo_overridden",
+            "receiptHash": "sha256:5f0c9a1e7b2d4c6a8e0f1b3d5c7a9e2f4b6d8c0a1e3f5b7d9c2a4e6f8b0d1c3a",
+            "protected": true,
+            "label": "Release the held shipment? (phone-confirmed payment)"
+          },
+          {
+            "caseId": "case_credit_overdue_02",
+            "episodeId": "ep_demo_accepted",
+            "receiptHash": "sha256:3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d",
+            "protected": false,
+            "label": "Approve the restock order?"
+          }
+        ],
+        "createdBy": "a manager",
+        "createdAtMs": 1794530000000
+      }
+    },
+    {
+      "objectType": "learning.EvalSet",
+      "id": "eval_credit_holdout_v1",
+      "scope": "org_demo/analytics",
+      "version": 2,
+      "values": {
+        "name": "Credit release holdout",
+        "splitKey": "credit_release_q4",
+        "setVersion": 1,
+        "status": "sealed",
+        "sealedAtMs": 1794515000000,
+        "sealedBy": "a manager",
+        "parentSetId": null,
+        "caseRefs": [
+          {
+            "caseId": "case_credit_phone_01",
+            "episodeId": "ep_demo_overridden",
+            "receiptHash": "sha256:5f0c9a1e7b2d4c6a8e0f1b3d5c7a9e2f4b6d8c0a1e3f5b7d9c2a4e6f8b0d1c3a",
+            "protected": true,
+            "label": "Release the held shipment? (phone-confirmed payment)"
+          }
+        ],
+        "createdBy": "a manager",
+        "createdAtMs": 1794505000000
+      }
+    }
+  ]
+}

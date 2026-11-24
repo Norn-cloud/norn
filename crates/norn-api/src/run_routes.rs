@@ -574,12 +574,16 @@ fn commit_start<E: SqlEngine>(
         world: World::Main,
         consumes: None,
     };
-    let commit = norn_kernel::decision_cell_commit::<_, _, _, norn_cell::CellError>(
-        &catalog,
-        &slice,
-        &turn,
-        &output,
-        &EnvelopeLimits::V1,
+    let mut meter = norn_kernel::TurnEnvelopeMeter::with_limits(
+        EnvelopeLimits::V1,
+        norn_kernel::TurnEnvelopeLimits {
+            max_events: u64::from(EnvelopeLimits::V1.max_events),
+            max_commands: u64::from(EnvelopeLimits::V1.max_commands),
+            max_timers: u64::from(EnvelopeLimits::V1.max_timers),
+        },
+    );
+    let commit = norn_kernel::decision_cell_commit_with_host_and_meter(
+        &*cell, &catalog, &slice, &turn, &output, &mut meter,
     )
     .map_err(|refusal| turn_refused(refusal.code(), "the flow's start turn was refused"))?;
     let start = RunStart {

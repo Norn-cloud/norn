@@ -95,6 +95,7 @@ impl<E: SqlEngine> CellStore<E> {
         tenant: &TenantId,
         world: &str,
     ) -> Result<FrontierRequest, CellError> {
+        self.check_writable()?;
         Ok(FrontierRequest {
             tenant: tenant.clone(),
             world: world.to_owned(),
@@ -116,10 +117,14 @@ impl<E: SqlEngine> CellStore<E> {
         after: u64,
         limit: usize,
     ) -> Result<MirrorBatch, CellError> {
+        self.persist_pending_fence();
+        let reader = self.read();
+        // S7/S8 (#1551 round 5): never mirror covered `_norn_fact_values` rows
+        // into DuckDB while the history scrub has not verified them.
+        reader.check_history("analytics mirror sync")?;
         let head = self.verified_head()?.commits;
         let tables = self.analytics_tables()?;
         let model = self.model();
-        let reader = self.read();
         self.conn.transaction(|| {
             let bound = to_i64(u64::try_from(limit.saturating_add(1)).unwrap_or(u64::MAX), "limit")?;
             let sql = format!(

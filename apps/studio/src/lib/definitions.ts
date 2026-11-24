@@ -317,17 +317,32 @@ export async function fetchWithTimeout(
   return wrapped
 }
 
+/** Stable cache key for one server-reported `(orgId, environmentId)` scope. */
+export function studioScopeKey(scope: StudioScope | null | undefined): string {
+  return scope == null ? "none" : JSON.stringify([scope.orgId, scope.environmentId])
+}
+
+/** Whether two server-reported scopes identify the exact same org and cell environment. */
+export function sameStudioScope(a: StudioScope | null | undefined, b: StudioScope | null | undefined): boolean {
+  if (a == null || b == null) return a == null && b == null
+  return a.orgId === b.orgId && a.environmentId === b.environmentId
+}
+
 /** Read the active workspace and its cell from the signed-in server session. */
-export async function readStudioScope(fetcher: Fetch = (input, init) => fetch(input, init)): Promise<StudioScope | null> {
+export async function readStudioScope(fetcher: Fetch = (input, init) => fetch(input, init), signal?: AbortSignal): Promise<StudioScope | null> {
+  signal?.throwIfAborted()
   let response: Response
   let text: string
   try {
-    response = await fetchWithTimeout(fetcher, "/api/me", { headers: { accept: "application/json" } })
+    response = await fetchWithTimeout(fetcher, "/api/me", { headers: { accept: "application/json" }, ...(signal === undefined ? {} : { signal }) })
     text = await response.text()
   } catch (error) {
+    signal?.throwIfAborted()
+    if (error instanceof Error && error.name === "AbortError") throw error
     if (error instanceof CellUnavailable) throw error
     throw new CellUnavailable(0, undefined, { retryable: true })
   }
+  signal?.throwIfAborted()
   let body: unknown = null
   try { body = JSON.parse(text) } catch { body = null }
   if (!response.ok) {

@@ -62,6 +62,13 @@ describe("sheetMarkup", () => {
     const ar = sheetMarkup(document, decision, "ar")
     expect(ar).toContain('dir="rtl"')
     expect(ar).toContain("قرّر")
+    expect(ar).toContain("عرض الحلقة")
+  })
+  test("outcome markup reserves a hidden See episode link for when the cell supplies episodeId", () => {
+    const episodeLinks = tree.filter((n) => n.nodeName === "a" && attr(n, "data-region") === "outcome-episode")
+    expect(episodeLinks).toHaveLength(1)
+    expect(episodeLinks[0]!.attrs?.some((a) => a.name === "hidden")).toBe(true)
+    expect(sheetMarkup(document, decision, "en")).toContain("See episode")
   })
   test("decide sends the choice, a non-empty note, and the key", () => {
     const request = decideRequest("dec_1", { choice: "approve", note: "  " }, "k1")

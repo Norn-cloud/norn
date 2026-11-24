@@ -4,14 +4,14 @@ import { LoadState } from "@/components/load-state"
 import { EmptyState, PageHeader } from "@/components/panel"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { refreshMode, useMode } from "@/lib/live-transport"
+import { refreshMode } from "@/lib/live-transport"
 import { useCatalog } from "../sources.tsx"
 import { LawsPanel } from "../laws.tsx"
 import { ProfilePanel } from "./profile-panel.tsx"
 import { QuarantinePanel } from "./quarantine-panel.tsx"
 import { useState } from "react"
 import type { StoredView } from "../lib/views.ts"
-import { RecordsGrid, type GridQuery } from "./records-grid.tsx"
+import { RecordsGrid, type DisplayedGridQuery } from "./records-grid.tsx"
 import { offersTimeline } from "../lib/timeline.ts"
 import { ViewsBar, openedQuery } from "./views-bar.tsx"
 
@@ -23,11 +23,11 @@ export function RecordsPage() {
   const concept = catalog?.byName.get(type)
   // A `core.TimeInterval` (through any parent) can be read as a timeline too; the catalog says which types are.
   const timeline = catalog !== undefined && concept !== undefined && offersTimeline(catalog, concept)
-  // A profile is the connected cell's; recordings carry none.
-  const live = useMode().data?.kind === "live"
+  // Use the same read for the catalog and its layout so mode discovery cannot remount an active grid.
+  const live = read.data?.origin === "live"
   // The open saved view (none: every record) and the query the grid shows, for saving.
   const [view, setView] = useState<StoredView | null>(null)
-  const [query, setQuery] = useState<GridQuery>()
+  const [query, setQuery] = useState<DisplayedGridQuery>()
   const initialTab = search.population === "held_back" ? "quarantine" : "records"
   return (
     <div className="space-y-4">

@@ -2,6 +2,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query"
 import { MarkingChips, useMarkingCatalog } from "@/components/marking-chip"
 import { Link, useParams } from "@tanstack/react-router"
 import { LifecycleStepper } from "@/components/lifecycle-stepper"
+import { sentence } from "@/components/lifecycle-view"
+import { useLocale } from "./lib/locale.tsx"
 import { Clock, GitCommitHorizontal, Pause, ShieldX } from "lucide-react"
 import { Chip, FactChip } from "@/components/chip"
 import { FactStatusBadge, deriveFactStatus } from "@/components/fact-status-badge"
@@ -80,6 +82,7 @@ export function ObjectPage() {
   // `#lineage` (a traced number's record) opens on where it came from.
   const [tab, setTab] = useState(() => typeof location !== "undefined" && location.hash === "#lineage" ? "lineage" : "overview")
   const { view } = useView()
+  const { locale } = useLocale()
   const data = reads.data
   const lineage = data?.source?.document
   const problem = readProblem(catalogRead, reads)
@@ -156,11 +159,15 @@ export function ObjectPage() {
               <div className="min-w-0 space-y-6">
                 {view === "technical" && <p className="text-pretty text-muted-foreground">{summaryOf(concept, data, catalog?.concepts ?? [])}</p>}
                 <Facts concept={concept} reads={data} onLineage={() => setTab("lineage")} sources={sources} />
-                {concept.lifecycles.map((lifecycle) => (
-                  <Panel key={lifecycle.property} icon={GitBranch} label={`Lifecycle · ${lifecycle.property.replaceAll("_", " ")}`}>
-                    <Well className="px-4 py-3"><LifecycleStepper lifecycle={lifecycle} record={data.object.document} /></Well>
-                  </Panel>
-                ))}
+                {concept.lifecycles.map((lifecycle) => {
+                  const field = concept.fields.find((candidate) => candidate.id === lifecycle.property)
+                  return (
+                    <Panel key={lifecycle.property} icon={GitBranch} label={`${locale === "ar" ? "دورة الحياة" : "Lifecycle"} · ${field?.label ?? sentence(lifecycle.property)}`}
+                      action={<Link to="/objects/$type" params={{ type: name }} hash="lifecycle" className="underline-offset-4 hover:underline">{locale === "ar" ? "العرض الشامل للنوع" : "Type-wide view"}</Link>}>
+                      <Well className="px-4 py-3"><LifecycleStepper lifecycle={lifecycle} record={data.object.document} concept={concept} /></Well>
+                    </Panel>
+                  )
+                })}
                 {live && <Findings objectType={name} id={id} actionFor={corrections.actionFor} />}
                 {live ? <div id="record-history" className="scroll-mt-6"><History objectType={name} id={id} /></div> : <Panel icon={HistoryIcon} label="History"><Well>
                   <Empty icon={HistoryIcon} action={<Button variant="outline" size="sm" onClick={() => setTab("lineage")}>See where it came from</Button>}>A recorded snapshot keeps no change history. Version {data.object.document.version} is the one stored.</Empty>

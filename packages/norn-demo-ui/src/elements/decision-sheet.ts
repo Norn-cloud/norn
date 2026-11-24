@@ -79,6 +79,12 @@ export interface SheetOptions {
   readonly onClose?: () => void
   /** Follow an in-app link (the run). */
   readonly navigate?: (path: string) => void
+  /**
+   * PROVISIONAL CONTRACT (#1208, PR #1631 S1/S2): whether the current scoped cell advertises
+   * `learning.Episode` so a server-supplied `episodeId` on `:decide` may link to `/episodes/$id`.
+   * Defaults to false (fail-closed behind the S1 capability gate).
+   */
+  readonly canOpenEpisode?: () => boolean
   /** Every step, for telemetry and tests. */
   readonly onStep?: (snapshot: Snapshot, msg: Msg | null) => void
 }
@@ -93,7 +99,7 @@ const WORDS = {
     "confirm.bodyNoScope": "You're choosing \"{0}\". The run goes on with it as soon as the cell records it.",
     "confirm.call": "You're choosing \"{0}\" ({1}). The cell records it; an approved call runs when its requester runs it.",
     "confirm.callNoScope": "You're choosing \"{0}\". The cell records it; an approved call runs when its requester runs it.",
-    failed: "The cell did not answer; nothing was decided.", openRun: "Open run", seeRun: "See the run go on", back: "Back to inbox",
+    failed: "The cell did not answer; nothing was decided.", openRun: "Open run", seeRun: "See the run go on", seeEpisode: "See episode", back: "Back to inbox",
     decidedAs: "Decided: {0} · {1}", byYou: "by you", byOther: "by {0}", replayed: " (already recorded; the cell returned the first receipt)",
     details: "Details", copy: "Copy", receipt: "Receipt", commit: "Commit", recorded: "Recorded", decision: "Decision",
     resolvedDecided: "Decided by {0} at {1}", resolvedChoice: ": {0}", anotherDecider: "another decider", resolvedBody: "Someone else got there first. Nothing you chose was sent.",
@@ -120,7 +126,7 @@ const WORDS = {
     "confirm.bodyNoScope": "تختار «{0}». يتابع التشغيل به فور تسجيل الخلية له.",
     "confirm.call": "تختار «{0}» ({1}). تسجّله الخلية؛ ويُنفّذ الإجراء الموافق عليه عندما ينفّذه مقدّم الطلب.",
     "confirm.callNoScope": "تختار «{0}». تسجّله الخلية؛ ويُنفّذ الإجراء الموافق عليه عندما ينفّذه مقدّم الطلب.",
-    failed: "لم تُجب الخلية؛ لم يُتخذ أي قرار.", openRun: "فتح التشغيل", seeRun: "تابع التشغيل", back: "العودة إلى الصندوق",
+    failed: "لم تُجب الخلية؛ لم يُتخذ أي قرار.", openRun: "فتح التشغيل", seeRun: "تابع التشغيل", seeEpisode: "عرض الحلقة", back: "العودة إلى الصندوق",
     decidedAs: "تقرّر: {0} · {1}", byYou: "بواسطتك", byOther: "بواسطة {0}", replayed: " (مسجّل من قبل؛ أعادت الخلية الإيصال الأول)",
     details: "التفاصيل", copy: "نسخ", receipt: "الإيصال", commit: "الالتزام", recorded: "سُجّل", decision: "القرار",
     resolvedDecided: "قرّر {0} عند {1}", resolvedChoice: ": {0}", anotherDecider: "صاحب قرار آخر", resolvedBody: "سبقك شخص آخر. لم يُرسل شيء مما اخترته.",
@@ -270,6 +276,7 @@ export function sheetMarkup(document: SheetDocument, decision: SheetDecision, lo
         <p class="norn-meta" data-region="outcome-body"></p>
         <p class="norn-meta" data-region="outcome-call" hidden></p>
         <a class="norn-link" data-region="outcome-run" data-link hidden>${escape(w.seeRun)}</a>
+        <a class="norn-link" data-region="outcome-episode" data-link hidden>${escape(w.seeEpisode)}</a>
         <details class="norn-details" data-region="outcome-details" hidden>
           <summary class="norn-meta">${escape(w.details)}</summary>
           <dl class="norn-dl"></dl>
@@ -486,6 +493,7 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     const title = q('[data-region="outcome-title"]')
     const body = q('[data-region="outcome-body"]')
     const run = q<HTMLAnchorElement>('[data-region="outcome-run"]')
+    const episode = q<HTMLAnchorElement>('[data-region="outcome-episode"]')
     const details = q('[data-region="outcome-details"]')
     const callLine = q('[data-region="outcome-call"]')
     if (!card || !title || !body || !run || !details || !callLine) return
@@ -500,6 +508,7 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
     if (callState === null) callLine.removeAttribute("data-call-state")
     else callLine.setAttribute("data-call-state", callState)
     run.hidden = true
+    if (episode) episode.hidden = true
     details.hidden = true
     let heading = ""
     let words = ""
@@ -513,6 +522,12 @@ export function mountDecisionSheet(root: HTMLElement, options: SheetOptions): Dr
       if (runId && !directCall(decision)) {
         run.href = `/runs/${encodeURIComponent(runId)}`
         run.hidden = false
+      }
+      // PROVISIONAL CONTRACT (#1208, PR #1631 S1/S2): only link when the cell advertises learning.Episode and supplies episodeId.
+      const episodeId = text(doc.episodeId)
+      if (episode && episodeId && options.canOpenEpisode?.() === true) {
+        episode.href = `/episodes/${encodeURIComponent(episodeId)}`
+        episode.hidden = false
       }
       const receipt = record(doc.receipt)
       const rows: [string, string][] = [

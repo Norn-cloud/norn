@@ -1,7 +1,10 @@
-import { CellUnavailable } from "./definitions.ts"
+import { queryOptions } from "@tanstack/react-query"
+import { defaultFetch, type Fetch } from "./cell-read.ts"
+import { CellUnavailable, readStudioScope, type StudioScope } from "./definitions.ts"
 import { cellRead } from "./live-transport.ts"
 import type { Read } from "./exact.ts"
 import type { Clause, Predicate } from "./records-query.ts"
+import { readViewAtScope } from "./views.ts"
 
 /** One value of a property and the counted rows holding it (`GET /v1/objects/{type}:facets`). */
 export interface FacetValue { readonly value: string | boolean; readonly count: number }
@@ -24,7 +27,6 @@ export interface Facets {
   readonly facets: readonly Facet[]
 }
 
-/** The cell's facets for `filter`, of every categorical property or of `properties` only. */
 /** How long the rail waits for the cell's counts before it says they did not arrive (a cold or busy cell). */
 export const FACETS_DEADLINE_MS = 15_000
 
@@ -33,14 +35,22 @@ export class FacetsTimedOut extends Error {
   constructor() { super(`The cell didn't send the counts within ${FACETS_DEADLINE_MS / 1000} seconds.`) }
 }
 
-export async function readFacets(objectType: string, filter: Predicate | null, properties?: readonly string[], deadlineMs: number = FACETS_DEADLINE_MS) {
+/** The facets route path for `objectType`, optionally narrowed by `filter` and `properties`. */
+export function facetsPath(objectType: string, filter: Predicate | null, properties?: readonly string[]): string {
   const query = new URLSearchParams()
   if (filter !== null && filter.all.length > 0) query.set("filter", JSON.stringify(filter))
   if (properties !== undefined) query.set("properties", properties.join(","))
   const search = query.toString()
+  return `/v1/objects/${encodeURIComponent(objectType)}:facets${search === "" ? "" : `?${search}`}`
+}
+
+/** The cell's facets for `filter`, of every categorical property or of `properties` only. */
+async function readFacets(objectType: string, filter: Predicate | null, properties: readonly string[] | undefined, scope: StudioScope | undefined, fetcher: Fetch) {
   let read: Read<Facets>
   try {
-    read = await cellRead<Facets>(`/v1/objects/${encodeURIComponent(objectType)}:facets${search === "" ? "" : `?${search}`}`, "Facets are", { signal: AbortSignal.timeout(deadlineMs), timeoutMs: deadlineMs })
+    const path = facetsPath(objectType, filter, properties)
+    const ask = () => cellRead<Facets>(path, "Facets are", { signal: AbortSignal.timeout(FACETS_DEADLINE_MS), timeoutMs: FACETS_DEADLINE_MS }, fetcher, scope)
+    read = scope === undefined ? await ask() : await readViewAtScope(scope, () => readStudioScope(fetcher), ask)
   } catch (error) {
     if (
       (error instanceof CellUnavailable && error.timedOut === true)
@@ -54,6 +64,21 @@ export async function readFacets(objectType: string, filter: Predicate | null, p
   // An answer that is not a facets document is not counted from: it reads as not served.
   if (!isFacets(read.document)) throw new Error("The cell's answer is not a facets document, so nothing is counted here.")
   return read
+}
+
+export function facetsQuery({ objectType, filter, scope, property }: {
+  readonly objectType: string
+  readonly filter: Predicate | null
+  readonly scope?: StudioScope
+  readonly property?: string
+}, fetcher: Fetch = defaultFetch) {
+  const scopePrefix = scope === undefined ? [] : [scope.orgId, scope.environmentId]
+  const properties = property === undefined ? undefined : [property]
+  return queryOptions({
+    queryKey: ["facets", objectType, ...scopePrefix, JSON.stringify(filter), ...(properties ?? [])],
+    queryFn: () => readFacets(objectType, filter, properties, scope, fetcher),
+    retry: false,
+  })
 }
 
 /** Whether `value` has the facets document's shape: counts, a flag and one facet per property. */

@@ -1,14 +1,26 @@
 import { type QueryClient, queryOptions, useQuery, useQueryClient } from "@tanstack/react-query"
 import { forgetDrafts, sessionKey } from "../actions/kept-drafts.ts"
 import { forgetParkedCalls } from "../actions/parked-calls.ts"
+import { sameStudioScope, type StudioScope } from "./definitions.ts"
+import { refreshMode } from "./live-transport.ts"
 
 /** Who is signed in, as the Worker reports it (/api/me). Display only: the server decides every permission. */
 export interface Account {
   readonly user: { readonly id: string; readonly name: string; readonly email: string }
   readonly organization: { readonly id: string; readonly name: string; readonly role: string } | null
+  readonly environmentId?: string | null
 }
 
+/** Public auth capabilities the server advertises (/api/auth/config). Display only; the server still enforces everything. */
+export interface AuthConfig {
+  readonly magicLink: boolean
+  readonly inviteOnly: boolean
+}
+
+export const DEFAULT_AUTH_CONFIG: AuthConfig = { magicLink: false, inviteOnly: false }
+
 const SESSION = ["session"] as const
+const AUTH_CONFIG = ["auth-config"] as const
 
 /** A refusal the auth server explained, shown to the user as is. */
 export class AuthRefusal extends Error {}
@@ -22,16 +34,51 @@ async function readAccount(fetcher: Fetch): Promise<Account | null> {
   return (await response.json()) as Account
 }
 
+/** Read which sign-in methods this deployment actually supports; throws on transient failures so queries can retry. */
+export async function readAuthConfig(fetcher: Fetch = (input, init) => fetch(input, init)): Promise<AuthConfig> {
+  const response = await fetcher("/api/auth/config", { headers: { accept: "application/json" } })
+  if (!response.ok) throw new Error(`Auth config check failed (${response.status}).`)
+  const body = (await response.json().catch(() => null)) as { magicLink?: unknown; inviteOnly?: unknown } | null
+  if (body === null || typeof body !== "object") throw new Error("Auth config response was invalid.")
+  return { magicLink: body.magicLink === true, inviteOnly: body.inviteOnly === true }
+}
+
+/** Server-reported auth capabilities for the login screen; hides unsupported methods until confirmed. */
+export function useAuthConfig() {
+  return useQuery({ queryKey: AUTH_CONFIG, queryFn: () => readAuthConfig(), staleTime: 60_000, retry: 1 })
+}
+
+const isReadQuery = (query: { readonly queryKey: readonly unknown[] }) =>
+  query.queryKey[0] !== SESSION[0] && query.queryKey[0] !== AUTH_CONFIG[0]
+
 /** Forget every read made as the reader who made it (records, picker choices, the inbox): all but the session itself. */
-function forgetReads(client: QueryClient): void {
-  client.removeQueries({ predicate: (query) => query.queryKey[0] !== SESSION[0] })
+export function forgetReads(client: QueryClient, options: { readonly refetchActive?: boolean; readonly deferActiveRefetch?: boolean } = {}): void {
+  refreshMode()
+  void client.cancelQueries({ predicate: isReadQuery })
+  if (options.refetchActive) {
+    client.removeQueries({ predicate: isReadQuery, type: "inactive" })
+    const resetActive = () => { void client.resetQueries({ predicate: isReadQuery, type: "active" }) }
+    if (options.deferActiveRefetch) queueMicrotask(resetActive)
+    else resetActive()
+    return
+  }
+  client.removeQueries({ predicate: isReadQuery })
+}
+
+function accountScopeOf(account: Account | null): StudioScope | null | undefined {
+  if (account === null) return null
+  if (account.environmentId === undefined) return undefined
+  return account.organization === null || account.environmentId === null
+    ? null
+    : { orgId: account.organization.id, environmentId: account.environmentId }
 }
 
 /**
- * The session query. Whenever a read of it names a different reader than the last one (the session
- * expired and `/api/me` answered 401, someone else signed in, or the organization changed), the
- * previous reader's reads and parked calls are forgotten before the new answer is shown, the way a
- * sign-out forgets them. Hygiene only: every read is the server's decision for whoever asks.
+ * The session query. Whenever a read of it names a different reader or scope than the last one
+ * (the session expired and `/api/me` answered 401, someone else signed in, the organization
+ * changed, or the organization's cell environment changed), the previous reader/scope's reads and
+ * parked calls are forgotten before the new answer is shown, the way a sign-out forgets them.
+ * Hygiene only: every read is the server's decision for whoever asks.
  */
 export function accountQuery(client: QueryClient, fetcher: Fetch = (input, init) => fetch(input, init)) {
   return queryOptions({
@@ -40,10 +87,20 @@ export function accountQuery(client: QueryClient, fetcher: Fetch = (input, init)
       const account = await readAccount(fetcher)
       const previous = client.getQueryData<Account | null>(SESSION)
       if (previous !== undefined && sessionKey(previous) !== sessionKey(account)) {
-        // A parked call's exact input and key are the previous reader's: never kept for the next,
-        // nor for the same reader coming back after a tenant switch or an expiry.
+        // A parked call's exact input and key are the previous reader/scope's: never kept for the
+        // next, nor for the same reader coming back after a tenant/environment switch or expiry.
         forgetParkedCalls()
-        forgetReads(client)
+        const sameReader = previous !== null && account !== null
+          && previous.user.id === account.user.id
+          && (previous.organization?.id ?? null) === (account.organization?.id ?? null)
+        const nextScope = accountScopeOf(account)
+        const cachedScope = client.getQueryData<StudioScope | null>(["studio-scope"])
+        // If only the environment changed and `useStudioScope` / `syncStudioScopeChange` already
+        // switched `["studio-scope"]` and purged old caches, keep the new scope's in-flight mode read.
+        if (!(sameReader && nextScope !== undefined && cachedScope !== undefined && sameStudioScope(cachedScope, nextScope))) {
+          // Defer active query resets until the new session is published.
+          forgetReads(client, { refetchActive: account !== null, deferActiveRefetch: true })
+        }
       }
       return account
     },
@@ -61,8 +118,8 @@ export function useAccount() {
 async function call(path: string, body: Record<string, string>): Promise<void> {
   const response = await fetch(`/api/auth${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
   if (response.ok) return
-  const reason = await response.json().catch(() => null) as { message?: string } | null
-  throw new AuthRefusal(response.status === 429 ? "Too many attempts. Wait a few minutes and try again." : reason?.message ?? `Sign-in failed (${response.status}).`)
+  const reason = await response.json().catch(() => null) as { message?: string; error?: string } | null
+  throw new AuthRefusal(response.status === 429 ? "Too many attempts. Wait a few minutes and try again." : reason?.message ?? reason?.error ?? `Sign-in failed (${response.status}).`)
 }
 
 export const authApi = {

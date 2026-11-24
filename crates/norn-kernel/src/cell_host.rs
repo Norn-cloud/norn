@@ -67,7 +67,8 @@ pub type JsonValue = norn_ir::RuntimeValue;
 use crate::effect::{CommandId, Effect, Generation, Timer, TimerId};
 use crate::observations::LogicalTime;
 pub use crate::predicate_read::{
-    PredicateObject, PredicateQuery, PredicateReadExpectation, PredicateReadMember,
+    PredicateActionRead, PredicateObject, PredicateQuery, PredicateReadExpectation,
+    PredicateReadMember,
 };
 use crate::snapshot_observe::{ObservationAuthorization, ObservationEvent};
 
@@ -1236,17 +1237,11 @@ pub trait CellHost {
         Ok(None)
     }
 
-    /// Reads every live object matching `predicate`, in canonical key order,
-    /// for a turn that folds or lists them ([`crate::predicate_read`]).
-    /// Returns at most `max_members + 1` objects so the caller can refuse an
-    /// over-bound set. `max_bytes` bounds the stored candidate bytes the host
-    /// may read while enumerating, so a large record cannot exhaust memory
-    /// before the caller sees it. `None` means this host cannot provide a
-    /// complete, atomicity-safe enumeration within those bounds; callers must
-    /// fail closed.
+    /// Reads every live object matching `predicate` for a turn; returns at most
+    /// `max_members + 1` objects within `max_bytes`, or `None` when unsupported
+    /// or over bound.
     ///
     /// # Errors
-    ///
     /// Returns the host read failure.
     fn read_predicate(
         &self,
@@ -1258,32 +1253,41 @@ pub trait CellHost {
         Ok(None)
     }
 
-    /// **commit**: atomically consume the delivery, apply the writes, append
-    /// the events as one ledger entry, and enqueue the effects, after
-    /// [`check_commit`] admits it.
-    ///
-    /// Enqueue semantics, in effect order:
-    ///
-    /// - `Perform` appends the command to the outbox. A command whose id was
-    ///   already enqueued at the same or a newer generation (pending or
-    ///   completed) is a no-op, so a re-issue never re-executes; a newer
-    ///   generation of a pending command replaces it in place and fences the
-    ///   old generation's result.
-    /// - `Schedule` inserts or replaces a timer by id; the new incarnation is
-    ///   this commit's ledger position.
-    /// - `CancelTimer` removes it (absent is a no-op).
+    /// Reads matching predicate objects for an action, running `authorize` on
+    /// every matched row before surfacing host-side dispute refusals.
     ///
     /// # Errors
+    /// Returns the host read failure once every matched row is authorized.
+    fn read_predicate_for_action(
+        &self,
+        predicate: &PredicateQuery,
+        max_members: usize,
+        max_bytes: u64,
+        authorize: &mut dyn FnMut(&PredicateObject) -> bool,
+    ) -> Result<PredicateActionRead, Self::Error> {
+        let Some(mut objects) =
+            self.read_predicate(predicate, usize::MAX.saturating_sub(1), max_bytes)?
+        else {
+            return Ok(PredicateActionRead::Concealed);
+        };
+        if objects.iter().any(|object| !authorize(object)) {
+            return Ok(PredicateActionRead::Concealed);
+        }
+        objects.truncate(max_members.saturating_add(1));
+        Ok(PredicateActionRead::Admitted(objects))
+    }
+
+    /// **commit**: atomically consume the delivery, apply writes and links,
+    /// append events, and enqueue effects after [`check_commit`] admits it.
     ///
+    /// # Errors
     /// A [`CommitError`]; nothing was applied.
     fn commit(
         &mut self,
         commit: CellCommit<Self::Event, Self::Command, Self::Input>,
     ) -> Result<CommitReceipt, CommitError<Self::Error>>;
 
-    /// Atomically commit one authorized proposal and its ordered partition postings.
-    /// Fact/link and balance fences cover the entire proposal, including absences.
-    /// Unsupported hosts fail closed without publishing business writes.
+    /// Atomically commit one proposal and its ordered partition postings.
     ///
     /// # Errors
     /// A commit refusal; nothing was applied.
@@ -1297,8 +1301,7 @@ pub trait CellHost {
     }
 
     /// Commit an action whose kernel proof distinguishes reference existence
-    /// from classified values. Hosts without this precision retain full
-    /// lineage through their ordinary commit path.
+    /// from classified values.
     ///
     /// # Errors
     /// A commit refusal; nothing was applied.
@@ -1368,46 +1371,32 @@ pub trait CellHost {
         self.commit(commit)
     }
 
-    /// **perform**: execute the oldest pending command, idempotently and with
-    /// the host's bounded retry, and return its result. If that command was
-    /// already performed and its result not yet consumed, return the recorded
-    /// result without executing again. `None` when the outbox is empty.
+    /// **perform**: execute the oldest pending command idempotently, or `None` when empty.
     ///
     /// # Errors
-    ///
     /// The host's failure; the command stays pending.
     fn perform(&mut self) -> Result<Option<Performed<Self::Input>>, Self::Error>;
 
-    /// **observe**: the oldest pending external observation, not removed until
-    /// consumed. `None` when there is none.
+    /// **observe**: the oldest pending external observation, or `None`.
     ///
     /// # Errors
-    ///
     /// The host's failure.
     fn observe(&mut self) -> Result<Option<Observed<Self::Input>>, Self::Error>;
 
-    /// **clock**: the pending timer with the earliest due time (ties by id)
-    /// that is due at the host's current time, not removed until consumed.
-    /// `None` when no timer is due.
+    /// **clock**: the earliest due pending timer (ties by id), or `None`.
     ///
     /// # Errors
-    ///
     /// The host's failure.
     fn clock(&mut self) -> Result<Option<DueTimer<Self::Input>>, Self::Error>;
 
-    /// The ordering lane a commit touching `key` joins. Hosts without
-    /// concurrent writers keep the default: one lane for the cell.
+    /// The ordering lane a commit touching `key` joins (default: cell-wide).
     fn serialize_by(&self, _key: &FactKey) -> SerializationLane {
         SerializationLane::Cell
     }
 
-    /// Pushes an accepted commit to the cell's live subscribers (reactive
-    /// queries, ruling 2026-09-25 §10). Called after `commit` succeeds; it is
-    /// not part of the commit transaction, and subscribers resynchronize from
-    /// the ledger if a push is lost.
+    /// Pushes an accepted commit to live subscribers after `commit` succeeds.
     ///
     /// # Errors
-    ///
     /// The host's failure; the commit itself stands.
     fn publish(&mut self, receipt: &CommitReceipt) -> Result<(), Self::Error>;
 }

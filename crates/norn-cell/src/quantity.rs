@@ -16,7 +16,7 @@ use crate::read::{LedgerEntry, StoreReader, entry_hash, to_i64, to_u64};
 use crate::{CellError, CommitBatch, Model, Receipt, ReceiptBody};
 
 mod replay;
-pub(crate) use replay::verify as verify_projections;
+pub(crate) use replay::{QuantityScrub, verify as verify_projections};
 
 pub(crate) const EXPIRY_TIMER_PREFIX: &str = "norn.quantity.expiry/";
 

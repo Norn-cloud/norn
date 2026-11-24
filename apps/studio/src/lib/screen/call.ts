@@ -185,9 +185,11 @@ function exact(value: unknown): boolean {
 }
 
 /**
- * The undo the receipt names (`undo: { actionId, input }`, from the action's declared compensation),
- * or null. Studio never works out an inverse itself. An offer whose input it cannot send back
- * exactly (a number JSON parsing may have rounded) is not offered.
+ * PROVISIONAL CONTRACT (#1208, PR #1631 S2): the undo the receipt names (`undo: { actionId, input }`,
+ * from the action's declared compensation), or null. Studio never works out an inverse itself; the
+ * field shape remains provisional until `norn-api` emits compensation offers and pins them with
+ * route-produced fixtures. An offer whose input it cannot send back exactly (a number JSON parsing
+ * may have rounded) is not offered.
  */
 export function undoOf(receipt: ActionReceipt): UndoOffer | null {
   const undo = (receipt as unknown as { readonly undo?: unknown }).undo

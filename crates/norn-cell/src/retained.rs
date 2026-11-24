@@ -329,6 +329,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         id: &str,
         revision: Option<u64>,
     ) -> Result<Option<RetainedDefinitionRecord>, CellError> {
+        self.check_live()?;
         let revision = match revision {
             Some(revision) => Some(revision),
             None => current_revision(self.conn, id)?,
@@ -349,6 +350,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         after: Option<&str>,
         limit: u32,
     ) -> Result<Vec<RetainedDefinitionRecord>, CellError> {
+        self.check_live()?;
         let rows = self.conn.query(
             &format!(
                 "SELECT {COLUMNS} FROM \"{RETAINED_DEFINITION}\" AS \"d\" WHERE \"kind\" = ?1 AND \"id\" > ?2 \

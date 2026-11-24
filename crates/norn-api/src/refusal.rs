@@ -24,6 +24,12 @@ pub mod codes {
     pub const INVALID_REQUEST: &str = "request.invalid";
     /// The cell host failed.
     pub const HOST_ERROR: &str = "host.error";
+    /// OPEN-CHECKPOINT-1 (#1551): the cell is verifying its history after an
+    /// open from its checkpoint; the read or write waits for it (retryable).
+    pub const CELL_VERIFYING: &str = "cell.verifying";
+    /// OPEN-CHECKPOINT-1 (#1551): the cell's history did not verify; it is
+    /// fenced and serves nothing.
+    pub const CELL_FENCED: &str = "cell.fenced";
 }
 
 /// What the caller can do about a refusal: the kernel refusal taxonomy's
@@ -463,16 +469,130 @@ impl Refusal {
         .with_category(RefusalCategory::Precondition)
     }
 
-    /// A host failure (the request changed nothing).
+    /// Map a [`norn_cell::CellError`] directly to a [`Refusal`], preserving
+    /// typed `cell.verifying` (retryable 503) and `cell.fenced` (fail-closed
+    /// 503) even when wrapped inside [`norn_cell::CellError::ObservationCommit`].
+    #[must_use]
+    pub fn from_cell_error(error: &norn_cell::CellError) -> Self {
+        if let Some(refusal) = Self::cell_availability_refusal(error) {
+            return refusal;
+        }
+        Self::host(error)
+    }
+
+    fn cell_availability_refusal(error: &norn_cell::CellError) -> Option<Self> {
+        if matches!(error, norn_cell::CellError::Verifying(_)) {
+            return Some(Self::verifying());
+        }
+        if matches!(error, norn_cell::CellError::Fenced(_)) {
+            return Some(Self::fenced(error));
+        }
+        if let norn_cell::CellError::ObservationCommit(commit) = error
+            && let norn_kernel::CommitError::Host(inner) = commit.as_ref()
+        {
+            return Self::cell_availability_refusal(inner);
+        }
+        None
+    }
+
+    /// Map a kernel [`norn_kernel::CommitError<norn_cell::CellError>`] on a
+    /// host-internal commit path to a [`Refusal`], preserving typed
+    /// `cell.verifying` and `cell.fenced` instead of returning non-retryable
+    /// `500 host.error` (OPEN-CHECKPOINT-1, #1551 round 5).
+    #[must_use]
+    pub fn from_commit_host_error(error: &norn_kernel::CommitError<norn_cell::CellError>) -> Self {
+        if let norn_kernel::CommitError::Host(host_error) = error {
+            return Self::from_cell_error(host_error);
+        }
+        Self::host(format!("{error:?}"))
+    }
+
+    /// If an [`norn_kernel::ActionRefusal<norn_cell::CellError>`] wraps a
+    /// `cell.verifying` or `cell.fenced` host error, return its typed refusal
+    /// directly so kernel commit paths never downgrade it to `500 commit.host`.
+    #[must_use]
+    pub fn from_action_host_error(
+        error: &norn_kernel::ActionRefusal<norn_cell::CellError>,
+    ) -> Option<Self> {
+        let norn_kernel::ActionRefusal::Decision(norn_kernel::DecisionRefusal::Host(host_error)) =
+            error
+        else {
+            return None;
+        };
+        Self::cell_availability_refusal(host_error)
+    }
+
+    /// Whether this refusal is never recorded as a permanent approval refusal
+    /// (internal/visibility/permission or verifying/fenced cell).
+    #[must_use]
+    pub fn is_unrecorded_approval_refusal(&self) -> bool {
+        matches!(
+            self.category,
+            RefusalCategory::Internal | RefusalCategory::Permission | RefusalCategory::Visibility
+        ) || matches!(
+            self.code.as_str(),
+            codes::CELL_VERIFYING | codes::CELL_FENCED
+        )
+    }
+
+    /// A host failure (the request changed nothing). A cell still
+    /// verifying its history, or fenced by it, answers its own refusal.
     #[must_use]
     pub fn host(detail: impl std::fmt::Display) -> Self {
+        let cause = detail.to_string();
+        if cause.starts_with(codes::CELL_VERIFYING) {
+            return Self::verifying();
+        }
+        if cause.starts_with(codes::CELL_FENCED) {
+            return Self::fenced(cause);
+        }
         Self::new(
             StatusCode::INTERNAL_SERVER_ERROR,
             codes::HOST_ERROR,
             "the cell host failed; nothing was committed",
             Self::UNPROVEN_DETAIL,
         )
-        .with_cause(detail)
+        .with_cause(cause)
+    }
+
+    /// OPEN-CHECKPOINT-1 (#1551): the cell opened from its checkpoint and
+    /// has not finished verifying the history this request depends on.
+    /// Nothing changed; retry.
+    #[must_use]
+    pub fn verifying() -> Self {
+        let mut refusal = Self::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            codes::CELL_VERIFYING,
+            "the cell is verifying its history",
+            "this request depends on history the cell is still verifying; nothing was committed; retry",
+        )
+        .with_category(RefusalCategory::Precondition);
+        refusal.retryable = true;
+        refusal
+    }
+
+    /// OPEN-CHECKPOINT-1 (#1551): the cell's history did not verify, so it
+    /// serves nothing until an operator restores it.
+    #[must_use]
+    pub fn fenced(finding: impl std::fmt::Display) -> Self {
+        Self::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            codes::CELL_FENCED,
+            "the cell's history did not verify; it serves nothing",
+            Self::UNPROVEN_DETAIL,
+        )
+        .with_cause(finding)
+    }
+
+    /// Refuse if the cell's history scrub has fenced it.
+    ///
+    /// # Errors
+    /// [`Self::fenced`] when `status` is [`norn_cell::ScrubStatus::Fenced`].
+    pub fn check_scrub(status: norn_cell::ScrubStatus) -> Result<(), Self> {
+        if let norn_cell::ScrubStatus::Fenced { finding } = status {
+            return Err(Self::fenced(finding));
+        }
+        Ok(())
     }
 }
 

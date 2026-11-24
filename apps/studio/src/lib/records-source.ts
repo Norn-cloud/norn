@@ -45,6 +45,51 @@ function recordedPage(read: Read<ObjectPage> | null): RecordsRead {
   return { kind: "page", read, origin: "recorded", served: null, next: nextCursor(read.document), total: null }
 }
 
+async function fetchLiveRecords(
+  objectType: string,
+  query: RecordsQuery,
+  scope: StudioScope,
+  fetcher: Fetch,
+  recorded: RecordsDeps["recorded"] | null,
+  signal?: AbortSignal,
+): Promise<RecordsRead> {
+  const response = await scopedHostFetch(fetcher, "/api/host", async () => scope)(
+    recordsPath(objectType, query),
+    { headers: { accept: "application/json" }, ...(signal ? { signal } : {}) },
+  )
+  const text = await response.text()
+  if (response.ok) {
+    const read = readDocument<ObjectPage>(text, "live")
+    return { kind: "page", read, origin: "live", served: servedQuery(read.document), next: nextCursor(read.document), total: totalOf(read.document) }
+  }
+  // A 404 or 503 falls back before decoding the body, which may come from the proxy.
+  if (response.status === 404 || response.status === 503) {
+    if (query.sort.length > 0 || query.filter !== null) return { kind: "refused", status: response.status, code: "studio.query_unavailable", message: "This cell can't sort or filter records yet.", diagnostics: [] }
+    return recorded === null ? { kind: "none" } : recordedPage(await recorded(objectType, query.after))
+  }
+  const refusal = refusalOf(response.status, text)
+  if (snapshotMoved(response.status, refusal?.code)) return { kind: "restart" }
+  if (refusal !== null) {
+    const { status, code, message, diagnostics } = refusal
+    return { kind: "refused", status, code, message, diagnostics }
+  }
+  throw new CellUnavailable(response.status)
+}
+
+/**
+ * Read one page of `objectType` records pinned explicitly to `scope` without re-reading `/api/me`
+ * or falling back to recorded fixtures. Callers verify the active workspace before and after dispatch.
+ */
+export async function readRecordsAtScope(
+  objectType: string,
+  query: RecordsQuery,
+  scope: StudioScope,
+  fetcher: Fetch = defaults.fetcher,
+  signal?: AbortSignal,
+): Promise<RecordsRead> {
+  return fetchLiveRecords(objectType, query, scope, fetcher, null, signal)
+}
+
 /**
  * Read one page of `objectType` records for `query` from the cell, as the signed-in actor.
  *
@@ -64,25 +109,7 @@ export async function readRecords(objectType: string, query: RecordsQuery, deps:
     throw error
   }
   if (scope === null) return { kind: "no-cell" }
-  const active = scope
-  const response = await scopedHostFetch(deps.fetcher, "/api/host", async () => active)(recordsPath(objectType, query), { headers: { accept: "application/json" } })
-  const text = await response.text()
-  if (response.ok) {
-    const read = readDocument<ObjectPage>(text, "live")
-    return { kind: "page", read, origin: "live", served: servedQuery(read.document), next: nextCursor(read.document), total: totalOf(read.document) }
-  }
-  // A 404 or 503 falls back before decoding the body, which may come from the proxy.
-  if (response.status === 404 || response.status === 503) {
-    if (query.sort.length > 0 || query.filter !== null) return { kind: "refused", status: response.status, code: "studio.query_unavailable", message: "This cell can't sort or filter records yet.", diagnostics: [] }
-    return recordedPage(await deps.recorded(objectType, query.after))
-  }
-  const refusal = refusalOf(response.status, text)
-  if (snapshotMoved(response.status, refusal?.code)) return { kind: "restart" }
-  if (refusal !== null) {
-    const { status, code, message, diagnostics } = refusal
-    return { kind: "refused", status, code, message, diagnostics }
-  }
-  throw new CellUnavailable(response.status)
+  return fetchLiveRecords(objectType, query, scope, deps.fetcher, deps.recorded)
 }
 
 /** The diagnostics that point at one part of the request, e.g. `/filter/all/2`. */

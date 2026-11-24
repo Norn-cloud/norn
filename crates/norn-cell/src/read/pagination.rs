@@ -108,6 +108,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         after: Option<&str>,
         limit: usize,
     ) -> Result<BTreeSet<String>, CellError> {
+        self.check_live()?;
         let tables = self.model.tables(object_type)?;
         let Some(root) = tables.first() else {
             return Err(CellError::UnknownObjectType(object_type.to_owned()));
@@ -177,6 +178,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         object_type: &str,
         max_rows: usize,
     ) -> Result<(Vec<(String, String)>, bool), CellError> {
+        self.check_live()?;
         let root = self.root_type(object_type)?;
         let table = self.model.table(root)?;
         let sql = format!(

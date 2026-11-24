@@ -26,6 +26,10 @@ const newKey = newIdempotencyKey
 /** The form's input fields that name a record, by pointer → object type (the cell's `inputLinks`). */
 const Links = createContext<ReadonlyMap<string, string>>(new Map())
 
+/** Served enum value labels (L-i18n `labels` artifact, #1220): `(pointer, value) => label`. */
+export type EnumLabelLookup = (pointer: string, value: string) => string | undefined
+const EnumLabels = createContext<EnumLabelLookup>(() => undefined)
+
 /** The words for a call that never reached a deciding cell. */
 const unreachable = (phase: Extract<Phase, { kind: "failed" }>) =>
   phase.reason === "no-cell" ? "This workspace has no data cell yet." : phase.reason === "unavailable" ? ACTIONS_UNAVAILABLE : phase.message ?? "The cell did not answer; nothing was saved."
@@ -35,7 +39,7 @@ const unreachable = (phase: Extract<Phase, { kind: "failed" }>) =>
  * decides; the form shows each refusal at the field its pointer names, and the receipt on success.
  * A draft keeps one idempotency key until it changes, so a retry after an outage never commits twice.
  */
-export function ActionForm({ action, objectTitle, technical = false, prefill = {}, onDirty, onClose, onView, remembered, onDraft, onCommitted, onChanged, parked, onParked, onUnparked, runNow = false, call = callAction }: {
+export function ActionForm({ action, objectTitle, technical = false, prefill = {}, onDirty, onClose, onView, remembered, onDraft, onCommitted, onChanged, parked, onParked, onUnparked, runNow = false, call = callAction, enumLabel }: {
   readonly action: ActionSummary
   /** The object type in words ("Holding"), for the business sentence on success. */
   readonly objectTitle: string
@@ -63,10 +67,13 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   /** Run the parked call as soon as the cell offers it (the inbox's "Approved, run it" opened this form). */
   readonly runNow?: boolean
   readonly call?: Call
+  /** Display labels for enum choices, read from the cell's L-i18n `labels` artifact (#1220). */
+  readonly enumLabel?: EnumLabelLookup
 }) {
   const fields = useMemo(() => fieldsOf(action.inputSchema), [action])
   const sections = useMemo(() => sectionsOf(fields, groupsOf(action.inputSchema), action.objectIdField), [fields, action])
   const blocked = useMemo(() => unsupported(fields), [fields])
+  const lookupEnum = useMemo<EnumLabelLookup>(() => enumLabel ?? (() => undefined), [enumLabel])
   const initial = useMemo(() => Object.entries(prefill).reduce<Draft>((draft, [name, value]) => withDraftAt(draft, `/${escapePointer(name)}`, value), emptyDraft(fields)), [fields, prefill])
   const [draft, setDraft] = useState<Draft>(remembered ?? initial)
   // A kept draft is unsent work: the sheet treats it as dirty from the start.
@@ -161,6 +168,7 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
   const go = (to: number) => { moved.current = true; setStep(to); setReached((r) => Math.max(r, to)); dispatch({ kind: "back" }) }
   const shown = wizard ? (step < review ? [sections[step]!] : []) : sections
   return (
+    <EnumLabels.Provider value={lookupEnum}>
     <Links.Provider value={links}>
     <form ref={formRef} noValidate className="grid gap-5" aria-label={action.title} aria-busy={phase.kind === "sending"}
       onSubmit={(event) => {
@@ -218,6 +226,21 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
       </div>
     </form>
     </Links.Provider>
+    </EnumLabels.Provider>
+  )
+}
+
+/** An enum choice: uses L-i18n labels from the cell when served, keeping the raw value on the wire (#1220). */
+function ChoiceSelect({ aria, pointer, value, values, onEdit }: {
+  readonly aria: Aria; readonly pointer: string; readonly value: string; readonly values: readonly string[]
+  readonly onEdit: (pointer: string, value: Draft) => void
+}) {
+  const labelFor = useContext(EnumLabels)
+  return (
+    <select {...aria} className={control} value={value} onChange={(e) => onEdit(pointer, e.target.value)}>
+      <option value="">Choose…</option>
+      {values.map((v) => <option key={v} value={v}>{labelFor(pointer, v) ?? v}</option>)}
+    </select>
   )
 }
 
@@ -325,12 +348,7 @@ function Widget({ spec, pointer, label, value, root, diagnostics, onEdit, aria, 
         </select>
       )
     case "choice":
-      return (
-        <select {...aria} className={control} value={text} onChange={(e) => onEdit(pointer, e.target.value)}>
-          <option value="">Choose…</option>
-          {spec.values.map((v) => <option key={v} value={v}>{v}</option>)}
-        </select>
-      )
+      return <ChoiceSelect aria={aria} pointer={pointer} value={text} values={spec.values} onEdit={onEdit} />
     case "fixed": return <p {...aria} className="text-sm"><code>{spec.value}</code></p>
     case "json": return <Textarea {...aria} className="min-h-20 font-mono text-xs" spellCheck={false} placeholder="JSON" value={text} onChange={(e) => onEdit(pointer, e.target.value)} />
     case "object":

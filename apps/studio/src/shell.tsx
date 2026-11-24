@@ -7,7 +7,7 @@ import { PopoverTitle, PopoverTrigger } from "@ui-sdk/react/popover"
 import { Toolbar, ToolbarButton, ToolbarLink } from "@ui-sdk/react/toolbar"
 import { Tree, TreeGroup, TreeItem, TreeItemIndicator, TreeItemLabel } from "@ui-sdk/react/tree"
 import { AssistantPanel, AssistantProvider, useAssistant, type AssistantContent } from "@/assistant-slot"
-import { Bell, ChevronLeft, ChevronRight, ChevronsUpDown, CloudOff, Keyboard, LayoutGrid, LogOut, Search, SlidersHorizontal, Sparkles, Wrench, type LucideIcon } from "lucide-react"
+import { Bell, ChevronLeft, ChevronRight, ChevronsUpDown, CloudOff, Keyboard, LayoutGrid, Loader2, LogOut, Search, SlidersHorizontal, Sparkles, Wrench, type LucideIcon } from "lucide-react"
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react"
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
@@ -20,13 +20,14 @@ import { KINDS, type Kind } from "@/lib/kinds"
 import { cn } from "@/lib/utils"
 import { ViewProvider, useView } from "@/lib/view"
 import { LOCALES, LocaleProvider, directionOf, isLocale, useLocale } from "@/lib/locale"
-import { WORKSPACES, WORKSPACE_GROUPS } from "@/lib/workspaces"
-import { isRetryableModeError, refreshMode, useMode } from "@/lib/live-transport"
-import { lastReachableAt, useStudioScope } from "@/lib/definitions"
+import { WORKSPACES } from "@/lib/workspaces"
+import { isRetryableModeError, retryMode, useMode } from "@/lib/live-transport"
+import { lastReachableAt } from "@/lib/definitions"
 import { CopyId } from "@/components/copy-id"
 import { formatLastReachable } from "@/components/load-state"
 import { explainError } from "@/lib/plain-words"
 import { useAccount, type Account } from "@/lib/session"
+import { WorkspaceError, useWorkspaces, type WorkspacesDocument } from "@/lib/workspaces-api"
 import nornMark from "@/assets/norn-mark.webp"
 import { Keys } from "@/components/keys"
 
@@ -48,6 +49,8 @@ export interface Section {
   readonly paths?: readonly string[]
   /** False when the destination has no page of its own and only groups its items (Records). */
   readonly index?: false
+  /** True when menu entries carrying `group` pin directly into that Space in the sidebar. */
+  readonly pinned?: boolean
 }
 
 export interface MenuEntry {
@@ -112,32 +115,60 @@ export function decoded(segment: string): string {
   }
 }
 
-/** The open workspace as the server reported it; until the mode is decided it says so, never naming the recording. */
-function useOpenWorkspace() {
-  const mode = useMode()
-  const scope = useStudioScope()
-  const account = useAccount()
-  const live = mode.data?.kind === "live"
-  const recorded = WORKSPACES.find(({ recorded }) => recorded)
-  const retrying = !mode.isError && mode.failureCount > 0 && isRetryableModeError(mode.failureReason)
-  const open = live
-    ? { id: "live", name: account.data?.organization?.name ?? scope.data?.orgId ?? "Connected cell", detail: `Live cell${scope.data ? ` · ${scope.data.orgId}/${scope.data.environmentId}` : ""}` }
-    : mode.data?.kind !== "recorded"
-      ? {
-          id: "pending",
-          name: account.data?.organization?.name ?? scope.data?.orgId ?? "Workspace",
-          detail: mode.isError ? "Workspace unavailable" : retrying ? "Reconnecting…" : "Connecting…",
-        }
-      : recorded && { id: recorded.id, name: recorded.name, detail: recorded.detail }
-  return { live, open }
+const roleLabel = (role: string) => role === "" ? "" : `${role[0]!.toUpperCase()}${role.slice(1)}`
+
+/** Delays showing the "connecting slowly" hint so fast local/warm loads stay quiet. */
+const CONNECTING_HINT_MS = 3_000
+const recordedWorkspace = WORKSPACES.find(({ recorded }) => recorded)
+
+/** True once the initial mode probe has been waiting longer than `CONNECTING_HINT_MS`. */
+function useSlowConnecting(mode: ReturnType<typeof useMode>): boolean {
+  const [slow, setSlow] = useState(false)
+  const waiting = mode.data === undefined && mode.isPending && !mode.isError
+  useEffect(() => {
+    if (!waiting) { setSlow(false); return }
+    const timer = setTimeout(() => setSlow(true), CONNECTING_HINT_MS)
+    return () => clearTimeout(timer)
+  }, [waiting])
+  return waiting && slow
 }
 
-/** A workspace entry that does something here: published results, or the recording while no cell is connected. */
+/** The open workspace as the server reported it; never renders raw org or environment ids. */
+function useOpenWorkspace(doc: WorkspacesDocument | null | undefined) {
+  const mode = useMode()
+  const account = useAccount()
+  const slow = useSlowConnecting(mode)
+  const live = mode.data?.kind === "live"
+  const recorded = mode.data?.kind === "recorded"
+  const retrying = !mode.isError && mode.failureCount > 0 && isRetryableModeError(mode.failureReason)
+  const active = doc?.workspaces.find((workspace) => workspace.active)
+  const organization = active ?? account.data?.organization
+  const open = live
+    ? { name: organization?.name ?? "Connected workspace", detail: organization?.role ? `Live · ${roleLabel(organization.role)}` : "Live workspace" }
+    : recorded
+      ? organization
+        ? { name: organization.name, detail: "Recorded demo data" }
+        : recordedWorkspace
+      : {
+          name: organization?.name ?? "Workspace",
+          detail: mode.isError ? "Workspace unavailable" : retrying ? "Reconnecting…" : slow ? "Connecting to cell…" : "Connecting…",
+        }
+  const workspaceOpen = organization != null || live
+  return { live, open, active, workspaceOpen, recordedSelection: recorded ? recordedWorkspace?.id : undefined }
+}
+
+/** An example dataset entry that opens here: published benchmark results, or the recording while no cell is connected. */
 const real = (workspace: (typeof WORKSPACES)[number], live: boolean) => workspace.results !== undefined || (workspace.recorded && !live)
 
-/** The scope switcher: the open workspace, and the others that open from here. */
+/** The workspace switcher: the user's real workspaces and a separate labelled Examples group. */
 function ScopeSwitcher() {
-  const { live, open } = useOpenWorkspace()
+  const workspaces = useWorkspaces()
+  const doc = workspaces.data
+  const { live, open, active, workspaceOpen, recordedSelection } = useOpenWorkspace(doc)
+  const realWorkspaces = doc?.workspaces ?? []
+  const examples = WORKSPACES.filter((workspace) => real(workspace, live))
+  const showWorkspaceSection = realWorkspaces.length > 0 || workspaceOpen
+
   return (
     <Menu>
       <MenuTrigger data-scope className="group/scope flex w-full min-w-0 items-center gap-2.5 rounded-lg px-2 py-1.5 text-start text-sm transition-[color,background-color] duration-150 outline-none hover:bg-sidebar-accent focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring data-open:bg-sidebar-accent">
@@ -149,31 +180,53 @@ function ScopeSwitcher() {
         <ChevronsUpDown aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
       </MenuTrigger>
       <KitMenuContent align="start" className="w-72">
-        <MenuRadioGroup value={live ? "live" : open?.id ?? ""}>
-          {live && open && (
-            <KitMenuRadioItem value="live" className="flex-col items-start gap-0">
-              <span>{open.name}</span><span className="text-xs text-muted-foreground">{open.detail}</span>
-            </KitMenuRadioItem>
-          )}
-          {/* Only what opens: the recorded workspace and published results; nothing greyed out or "coming soon". */}
-          {WORKSPACE_GROUPS.filter((group) => WORKSPACES.some((workspace) => workspace.group === group && real(workspace, live))).map((group, index) => (
-            <div key={group} role="none">
-              {(index > 0 || live) && <KitMenuSeparator />}
-              <KitMenuLabel>{group}</KitMenuLabel>
-              {WORKSPACES.filter((workspace) => workspace.group === group && real(workspace, live)).map((workspace) => workspace.results !== undefined
+        {showWorkspaceSection && (
+          <>
+            <MenuRadioGroup value={active ? `ws:${active.id}` : workspaceOpen ? "current" : ""}>
+              <KitMenuLabel>Your workspaces</KitMenuLabel>
+              {workspaceOpen && active === undefined && open && (
+                <KitMenuRadioItem value="current" label={open.name} closeOnSelect className="flex-col items-start gap-0">
+                  <span className="truncate">{open.name}</span>
+                  <span className="text-xs text-muted-foreground">{open.detail}</span>
+                </KitMenuRadioItem>
+              )}
+              {realWorkspaces.map((workspace) => (
+                <KitMenuRadioItem key={workspace.id} value={`ws:${workspace.id}`} label={workspace.name} disabled={!workspace.active} closeOnSelect className="flex-col items-start gap-0">
+                  <span className="truncate">{workspace.name}</span>
+                  <span className="text-xs text-muted-foreground">{workspace.hasCell ? roleLabel(workspace.role) : `${roleLabel(workspace.role)} · No cell yet`}</span>
+                </KitMenuRadioItem>
+              ))}
+            </MenuRadioGroup>
+            {realWorkspaces.some((workspace) => !workspace.active) && (
+              <p className="px-2 py-1.5 text-xs text-muted-foreground">Switching workspaces is coming soon.</p>
+            )}
+          </>
+        )}
+        {workspaces.isError && (
+          <div role="alert" className="flex items-center justify-between gap-2 px-2 py-1.5 text-xs text-destructive">
+            <span>{workspaces.error instanceof WorkspaceError ? workspaces.error.message : "Could not load workspaces."}</span>
+            <button type="button" className="shrink-0 underline underline-offset-2" onClick={() => void workspaces.refetch()}>Retry</button>
+          </div>
+        )}
+        {examples.length > 0 && (
+          <>
+            {showWorkspaceSection && <KitMenuSeparator />}
+            <MenuRadioGroup value={recordedSelection ?? ""}>
+              <KitMenuLabel>Examples</KitMenuLabel>
+              {examples.map((workspace) => workspace.results !== undefined
                 ? (
-                  <KitMenuItem key={workspace.id} value={workspace.id} label={workspace.name} render={<a href={workspace.results} target="_blank" rel="noreferrer" />} className="flex-col items-start gap-0">
+                  <KitMenuItem key={workspace.id} value={`example:${workspace.id}`} label={workspace.name} render={<a href={workspace.results} target="_blank" rel="noreferrer" />} className="flex-col items-start gap-0">
                     <span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail} · results ↗</span>
                   </KitMenuItem>
                 )
                 : (
-                  <KitMenuRadioItem key={workspace.id} value={workspace.id} label={workspace.name} disabled={live || !workspace.recorded} className="flex-col items-start gap-0">
+                  <KitMenuRadioItem key={workspace.id} value={workspace.id} label={workspace.name} className="flex-col items-start gap-0">
                     <span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail}</span>
                   </KitMenuRadioItem>
                 ))}
-            </div>
-          ))}
-        </MenuRadioGroup>
+            </MenuRadioGroup>
+          </>
+        )}
       </KitMenuContent>
     </Menu>
   )
@@ -366,7 +419,12 @@ function SectionSidebar({ sections, perspective, navigation, pathname, chosen, o
   const own = sections.filter((section) => section.perspective === perspective)
   const open = destinationOf(own, pathname, navigation.menus)
   const current = currentOf(own, navigation, pathname)
-  const spaces = [...new Set(own.map(({ group }) => group ?? ""))]
+  const spaces = [
+    ...new Set([
+      ...own.map(({ group }) => group ?? ""),
+      ...own.filter((section) => section.pinned).flatMap((section) => (navigation.menus.get(section.path) ?? []).map((entry) => entry.group ?? "").filter(Boolean)),
+    ]),
+  ]
   // Spaces start open, the open destination's items show, and a destination's first group of items starts open;
   // the reader's own choices win, except that the current page's row is never hidden.
   const defaults = new Map<string, boolean>()
@@ -374,15 +432,20 @@ function SectionSidebar({ sections, perspective, navigation, pathname, chosen, o
   for (const space of spaces) defaults.set(`space:${space}`, true)
   for (const section of own) {
     const entries = navigation.menus.get(section.path) ?? []
+    const destEntries = section.pinned ? entries.filter((entry) => !entry.group) : entries
     const active = section === open
-    if (entries.length > 0) defaults.set(`dest:${section.path}`, active || section.index === false)
-    const headings = [...new Set(entries.map(({ group }) => group ?? ""))].filter((heading) => heading !== "")
+    if (destEntries.length > 0) defaults.set(`dest:${section.path}`, active || section.index === false)
+    const headings = [...new Set(destEntries.map(({ group }) => group ?? ""))].filter((heading) => heading !== "")
     headings.forEach((heading, index) => defaults.set(`group:${section.path}:${heading}`, index === 0))
     if (active) holding.add(`space:${section.group ?? ""}`)
     const at = entries.find(({ href }) => href === current)
     if (at) {
-      holding.add(`space:${section.group ?? ""}`).add(`dest:${section.path}`)
-      if (at.group) holding.add(`group:${section.path}:${at.group}`)
+      if (section.pinned && at.group) {
+        holding.add(`space:${at.group}`)
+      } else {
+        holding.add(`space:${section.group ?? ""}`).add(`dest:${section.path}`)
+        if (at.group) holding.add(`group:${section.path}:${at.group}`)
+      }
     }
   }
   const values = [...defaults.keys()]
@@ -397,7 +460,28 @@ function SectionSidebar({ sections, perspective, navigation, pathname, chosen, o
           onExpandedChange={(next) => onChosenChange((previous) => diffExpanded(expanded, next, previous))}>
           {spaces.map((space) => {
             const members = own.filter((section) => (section.group ?? "") === space)
-            const items = members.map((section) => <Destination key={section.path} section={section} entries={navigation.menus.get(section.path) ?? []} badge={navigation.badges.get(section.path)} close={close} />)
+            const pinnedItems = own.filter((section) => section.pinned).flatMap((section) =>
+              (navigation.menus.get(section.path) ?? [])
+                .filter((entry) => entry.group === space)
+                .map((entry) => {
+                  const Icon = entry.icon ?? section.icon
+                  return (
+                    <TreeItem key={entry.href} value={entry.href} label={typeof entry.label === "string" ? entry.label : undefined} className={focusRow}>
+                      <TreeItemLabel render={<Link {...target(section, entry.href)} onClick={close} />} className={row}>
+                        <Icon aria-hidden /><span className="truncate">{entry.label}</span>
+                      </TreeItemLabel>
+                    </TreeItem>
+                  )
+                }),
+            )
+            const items = [
+              ...members.map((section) => {
+                const entries = navigation.menus.get(section.path) ?? []
+                const shownEntries = section.pinned ? entries.filter((entry) => !entry.group) : entries
+                return <Destination key={section.path} section={section} entries={shownEntries} badge={navigation.badges.get(section.path)} close={close} />
+              }),
+              ...pinnedItems,
+            ]
             if (space === "") return items
             return (
               <TreeItem key={space} value={`space:${space}`} label={space} className={cn("mt-4 first:mt-2", focusRow)}>
@@ -577,6 +661,7 @@ function CommandMenu({ sections, navigation, onPerspective }: { readonly section
 
 /**
  * Honest cell connection banner (#1424):
+ * - Slow initial cold start (`data-connection="connecting"`): explains why and offers Retry now.
  * - Brief automatic retry on transient outages (`data-connection="retrying"`): never lingers forever.
  * - Persistent failure or non-retryable refusal such as `503 cell.unopenable` (`data-connection="unavailable"`):
  *   never says "Retrying…"; shows "Workspace unavailable", what the server said, incident id when logged,
@@ -585,15 +670,26 @@ function CommandMenu({ sections, navigation, onPerspective }: { readonly section
 function ConnectionBanner() {
   const queryClient = useQueryClient()
   const mode = useMode()
+  const slow = useSlowConnecting(mode)
   const { locale } = useLocale()
   const { view } = useView()
-  if (mode.data !== undefined || (mode.failureCount === 0 && !mode.isError)) return null
-  const retrying = !mode.isError && isRetryableModeError(mode.failureReason)
   const retry = () => {
-    refreshMode()
-    void mode.refetch()
+    void retryMode(queryClient)
     void queryClient.invalidateQueries({ predicate: (query) => query.state.status === "error" })
   }
+  if (mode.data !== undefined) return null
+  if (mode.failureCount === 0 && !mode.isError) {
+    if (!slow) return null
+    return (
+      <div role="status" data-connection="connecting" className="flex flex-wrap items-center gap-2 border-b bg-muted/50 px-4 py-2 text-sm md:px-8">
+        <Loader2 aria-hidden className="size-4 shrink-0 animate-spin text-muted-foreground" />
+        <span className="font-medium">Connecting to your workspace cell…</span>
+        <span className="text-muted-foreground">Starting a cold cell can take a moment.</span>
+        <Button type="button" variant="outline" size="xs" className="ms-auto" onClick={retry}>Retry now</Button>
+      </div>
+    )
+  }
+  const retrying = !mode.isError && isRetryableModeError(mode.failureReason)
   if (retrying) {
     return (
       <div role="status" data-connection="retrying" className="flex flex-wrap items-center gap-2 border-b border-tone-amber/30 bg-tone-amber/10 px-4 py-2 text-sm text-tone-amber md:px-8">

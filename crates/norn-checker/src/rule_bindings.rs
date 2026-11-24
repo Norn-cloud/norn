@@ -122,6 +122,10 @@ pub(crate) fn validate_rule_bindings(
                 "parameter selection is not supported for rule bindings".into(),
                 &format!("{path}.key"),
             ),
+            SliceKey::Predicate { .. } => invalid(
+                "predicate selection is not supported for rule bindings".into(),
+                &format!("{path}.key"),
+            ),
             SliceKey::TriggerObject => {
                 // Every trigger must name an object of exactly this type, so
                 // the key is never applied to an unrelated type.
@@ -256,14 +260,16 @@ pub(crate) fn validate_rule_bindings(
             .and_then(|member| member.get("type"))
             .and_then(JsonValue::as_string);
         let expected = match &entry.key {
-            SliceKey::TriggerChanges | SliceKey::Link { .. } => "array",
+            SliceKey::TriggerChanges | SliceKey::Link { .. } | SliceKey::Predicate { .. } => {
+                "array"
+            }
             SliceKey::TriggerObject
             | SliceKey::TriggerBefore
             | SliceKey::TriggerAfter
             | SliceKey::Property { .. }
             | SliceKey::Parameter { .. } => "object",
         };
-        // A link list holds object records; triggerChanges holds strings.
+        // A link or predicate list holds object records; triggerChanges holds strings.
         let items = member
             .as_object()
             .and_then(|member| member.get("items"))
@@ -271,7 +277,7 @@ pub(crate) fn validate_rule_bindings(
             .and_then(|items| items.get("type"))
             .and_then(JsonValue::as_string);
         let expected_items = match &entry.key {
-            SliceKey::Link { .. } => Some("object"),
+            SliceKey::Link { .. } | SliceKey::Predicate { .. } => Some("object"),
             SliceKey::TriggerChanges => Some("string"),
             SliceKey::TriggerObject
             | SliceKey::TriggerBefore

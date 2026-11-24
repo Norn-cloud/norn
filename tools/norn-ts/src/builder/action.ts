@@ -11,8 +11,30 @@ import { type BuildDiagnostic, Diagnostics, type SourceLocation, located } from 
 import type { ObjectTypeDef } from "./entity.ts"
 import { type EnvelopeOptions, type DependencyPin, envelope, pinnedDependencies } from "./envelope.ts"
 import type { InputGroup, Labels, ObjectSchema } from "./schema.ts"
-import type { SliceDecl } from "./rule.ts"
+import type { PredicateWindow, SliceDecl } from "./rule.ts"
 import type { Localized } from "./labels.ts"
+
+/** Fold function for a bounded action aggregate (`AggregateFunction`). */
+export type AggregateFunction =
+  | { readonly kind: "sum"; readonly property: string }
+  | { readonly kind: "count" }
+
+/** One bounded fenced aggregate input read by action preconditions (`ActionAggregateInput`). */
+export interface ActionAggregateInput {
+  readonly name: string
+  readonly objectType: string
+  readonly filter?: Readonly<Record<string, string>>
+  readonly window?: PredicateWindow
+  readonly aggregate: AggregateFunction
+  readonly maxItems: number
+}
+
+/** Trusted row-level conditions and derivations for one owned collection (`OwnedCollectionAction`). */
+export interface OwnedCollectionAction {
+  readonly id: string
+  readonly preconditions?: ReadonlyArray<string>
+  readonly derive?: Readonly<Record<string, string>>
+}
 
 /** One ordered, deterministic ZEN transformation of the action input. */
 export interface ActionInputDerivation {
@@ -55,6 +77,14 @@ interface EffectTarget {
 export type ActionEffect =
   | ({ readonly kind: "upsert_input_object"; readonly writeMode?: UpsertWriteMode } & EffectTarget)
   | ({ readonly kind: "fire_transition"; readonly lifecycle: string; readonly transition: string; readonly acceptReceipt?: ReceiptAcceptance } & EffectTarget)
+  | ({
+      readonly kind: "mutate_parent_with_rows"
+      readonly parentValuesField: string
+      readonly rowOpsField: string
+      readonly parentVersionField: string
+      readonly parentDeleteField?: string
+      readonly collections?: ReadonlyArray<OwnedCollectionAction>
+    } & EffectTarget)
 
 /** Host-resolved Function evidence; result values never come from action JSON. */
 export interface ReceiptAcceptance {
@@ -89,6 +119,8 @@ export interface ActionDef extends Localized {
   readonly inputGroups?: ReadonlyArray<InputGroup>
   /** Ordered read slice, with property keys rooted at `from: "input"`. */
   readonly slice: ReadonlyArray<SliceDecl>
+  /** Bounded fenced aggregate inputs over stored objects. */
+  readonly aggregates?: ReadonlyArray<ActionAggregateInput>
   /** Ordered ZEN expressions applied before input validation and preconditions. */
   readonly derive: ReadonlyArray<ActionInputDerivation>
   /** Boolean ZEN Expressions over `input` and the declared `slice`. */
@@ -139,6 +171,34 @@ export function upsertInputObject(
   return { kind: "upsert_input_object", ...target(type, objectIdField), ...(writeMode ? { writeMode } : {}) }
 }
 
+/** Atomically mutate a parent object and its declared owned child collections. */
+export function mutateParentWithRows(
+  type: Pick<ObjectTypeDef, "name" | "version">,
+  objectIdField: string,
+  options: {
+    readonly parentValuesField: string
+    readonly rowOpsField: string
+    readonly parentVersionField: string
+    readonly parentDeleteField?: string
+    readonly collections?: ReadonlyArray<OwnedCollectionAction>
+  },
+): ActionEffect {
+  const collections = (options.collections ?? []).map((collection) => ({
+    id: collection.id,
+    ...(collection.preconditions && collection.preconditions.length > 0 ? { preconditions: [...collection.preconditions] } : {}),
+    ...(collection.derive && Object.keys(collection.derive).length > 0 ? { derive: { ...collection.derive } } : {}),
+  }))
+  return {
+    kind: "mutate_parent_with_rows",
+    ...target(type, objectIdField),
+    parentValuesField: options.parentValuesField,
+    rowOpsField: options.rowOpsField,
+    parentVersionField: options.parentVersionField,
+    ...(options.parentDeleteField !== undefined ? { parentDeleteField: options.parentDeleteField } : {}),
+    ...(collections.length > 0 ? { collections } : {}),
+  }
+}
+
 export type ActionBuildResult =
   | { readonly ok: true; readonly artifact: Json }
   | { readonly ok: false; readonly diagnostics: ReadonlyArray<BuildDiagnostic> }
@@ -176,6 +236,13 @@ export function lowerAction(def: ActionDef, options: EnvelopeOptions): ActionBui
     inputSchema: labelledInput(def),
     outputSchema: def.output,
     slice: omitEmpty(def.slice.map(({ optional, ...entry }) => (optional === true ? { ...entry, optional } : entry))),
+    aggregates: omitEmpty(
+      (def.aggregates ?? []).map(({ filter, window, ...entry }) => ({
+        ...entry,
+        ...(filter && Object.keys(filter).length > 0 ? { filter } : {}),
+        ...(window ? { window } : {}),
+      })),
+    ),
     derive: omitEmpty(def.derive.map(({ inputRequired, ...entry }) => (inputRequired === false ? { ...entry, inputRequired } : entry))),
     preconditions: omitEmpty(def.preconditions),
     commands: omitEmpty(def.commands),

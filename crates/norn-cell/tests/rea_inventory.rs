@@ -1083,6 +1083,7 @@ fn inv_receive_transfer_fifo_sell_refuses_over_delivery_and_reopens() {
     let ActionOutcome::Committed {
         receipt: moved_receipt,
         record: moved_record,
+        ..
     } = fixture
         .invoke(
             &mut cell,

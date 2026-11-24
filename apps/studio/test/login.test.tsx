@@ -2,33 +2,64 @@ import { expect, test } from "bun:test"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { renderToStaticMarkup } from "react-dom/server"
 import { LoginPage, SIGNED_UP, type Mode } from "../src/login.tsx"
+import { readAuthConfig, type AuthConfig } from "../src/lib/session.ts"
 
-const render = (initial: Mode) => renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><LoginPage initial={initial} /></QueryClientProvider>)
+const render = (initial: Mode, config?: AuthConfig) =>
+  renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><LoginPage initial={initial} config={config} /></QueryClientProvider>)
 
-test("sign-in asks for email and password and offers the other ways in", () => {
-  const html = render("sign-in")
-  expect(html).toContain('autoComplete="current-password"')
-  expect(html).toContain('type="email"')
-  expect(html).toContain("Create account")
-  expect(html).toContain("Email link")
-  expect(html).not.toContain('name="name"')
+test("sign-in asks for email and password and hides Email link unless server config enables it", () => {
+  const withoutMagic = render("sign-in")
+  expect(withoutMagic).toContain('autoComplete="current-password"')
+  expect(withoutMagic).toContain('type="email"')
+  expect(withoutMagic).toContain("Create account")
+  expect(withoutMagic).not.toContain("Email link")
+  expect(withoutMagic).not.toContain('name="name"')
+
+  // Even requesting email-link initially falls back to sign-in when magic links are off.
+  expect(render("email-link", { magicLink: false, inviteOnly: false })).not.toContain("Send link")
+
+  // When server config reports magicLink: true, the Email link tab is shown.
+  const withMagic = render("sign-in", { magicLink: true, inviteOnly: false })
+  expect(withMagic).toContain("Email link")
 })
 
-test("creating an account asks for a name and a 12-character password", () => {
-  const html = render("sign-up")
-  expect(html).toContain('name="name"')
-  expect(html).toContain('minLength="12"')
-  expect(html).toContain('autoComplete="new-password"')
+test("creating an account asks for a name and a 12-character password and states invite-only when configured", () => {
+  const open = render("sign-up", { magicLink: false, inviteOnly: false })
+  expect(open).toContain('name="name"')
+  expect(open).toContain('minLength="12"')
+  expect(open).toContain('autoComplete="new-password"')
+  expect(open).not.toContain("invite-only")
+
+  const inviteOnly = render("sign-up", { magicLink: false, inviteOnly: true })
+  expect(inviteOnly).toContain("invite-only")
+  expect(inviteOnly).not.toContain("Email link")
 })
 
-test("an email link needs only the address", () => {
-  const html = render("email-link")
+test("an email link needs only the address when the server enables magic links", () => {
+  const html = render("email-link", { magicLink: true, inviteOnly: false })
   expect(html).not.toContain('type="password"')
   expect(html).toContain("Send link")
 })
 
-test("after sign-up the page asks the user to sign in, never saying whether the address was new", () => {
-  expect(SIGNED_UP).toBe("Account ready. Sign in with your email and password.")
+test("readAuthConfig parses server booleans strictly and rejects transient failures so queries can retry", async () => {
+  expect(await readAuthConfig(async () => Response.json({ magicLink: true, inviteOnly: true }))).toEqual({ magicLink: true, inviteOnly: true })
+  expect(await readAuthConfig(async () => Response.json({ magicLink: false, inviteOnly: false }))).toEqual({ magicLink: false, inviteOnly: false })
+  expect(await readAuthConfig(async () => Response.json({ magicLink: "yes", inviteOnly: 1 }))).toEqual({ magicLink: false, inviteOnly: false })
+  await expect(readAuthConfig(async () => new Response(null, { status: 503 }))).rejects.toThrow("503")
+  await expect(readAuthConfig(async () => { throw new TypeError("offline") })).rejects.toThrow("offline")
+})
+
+test("readWorkspaces returns null only on 401/404 and throws retryable WorkspaceError on 503/offline", async () => {
+  const { readWorkspaces, WorkspaceError } = await import("../src/lib/workspaces-api.ts")
+  expect(await readWorkspaces(async () => new Response(null, { status: 401 }))).toBeNull()
+  expect(await readWorkspaces(async () => new Response(null, { status: 404 }))).toBeNull()
+  await expect(readWorkspaces(async () => new Response(null, { status: 503 }))).rejects.toBeInstanceOf(WorkspaceError)
+  await expect(readWorkspaces(async () => { throw new TypeError("offline") })).rejects.toBeInstanceOf(WorkspaceError)
+})
+
+test("after sign-up the page asks the user to sign in with conditional wording, never claiming the address was new", () => {
+  expect(SIGNED_UP).toBe("If this address can sign up, you can now sign in with your email and password.")
+  expect(SIGNED_UP).not.toMatch(/account ready/i)
   expect(SIGNED_UP).not.toMatch(/already|exists|registered|taken/i)
 })
 
@@ -132,4 +163,38 @@ test("a tenant switch forgets parked calls, and switching back does not restore 
   parkedCalls.set(sessionKey(inOrg("o1")), form, call)
   expect(await read(new Response(null, { status: 401 }))).toBeNull()
   expect(parkedCalls.get(sessionKey(inOrg("o1")), form)).toBeUndefined()
+})
+
+// PR #1631 S1: changing the active cell environment within the SAME user and org invalidates the
+// session key, forgets parked calls, and clears cached mode/learning queries.
+test("an environment switch within the same user and org invalidates sessionKey, parked calls, and cached reads", async () => {
+  const { accountQuery } = await import("../src/lib/session.ts")
+  const { sessionKey } = await import("../src/actions/kept-drafts.ts")
+  const { forgetParkedCalls, parkedCalls } = await import("../src/actions/parked-calls.ts")
+  forgetParkedCalls()
+  const inEnv = (environmentId: string | null) => ({
+    user: { id: "u1", name: "Alice", email: "a@example.com" },
+    organization: { id: "org_demo", name: "Demo", role: "member" },
+    environmentId,
+  })
+  expect(sessionKey(inEnv("env-a"))).not.toBe(sessionKey(inEnv("env-b")))
+  expect(sessionKey(inEnv("env-a"))).not.toBe(sessionKey(inEnv(null)))
+
+  const answers: Response[] = []
+  const client = new QueryClient()
+  const read = (answer: Response) => {
+    answers.push(answer)
+    return client.fetchQuery({ ...accountQuery(client, async () => answers.shift() as Response), staleTime: 0 })
+  }
+  const call = { decision: { id: "dec_env", expiresAtMs: 9 }, input: '{"amount":"5"}', key: "k-env" }
+  await read(Response.json(inEnv("env-a")))
+  parkedCalls.set(sessionKey(inEnv("env-a")), "learning.triage:{}", call)
+  client.setQueryData(["studio-mode", '["org_demo","env-a"]'], { kind: "live" })
+  client.setQueryData(["learning", "episodes", '["org_demo","env-a"]', ""], { kind: "page" })
+
+  // Same user, same org, NEW environment -> parked calls and cached reads are cleared.
+  await read(Response.json(inEnv("env-b")))
+  expect(parkedCalls.get(sessionKey(inEnv("env-a")), "learning.triage:{}")).toBeUndefined()
+  expect(client.getQueryData(["studio-mode", '["org_demo","env-a"]'])).toBeUndefined()
+  expect(client.getQueryData(["learning", "episodes", '["org_demo","env-a"]', ""])).toBeUndefined()
 })

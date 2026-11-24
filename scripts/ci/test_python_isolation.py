@@ -85,16 +85,34 @@ class Workflows(unittest.TestCase):
             self.assertTrue(any("pycache_prefix" in e for e in isolation.workflow_errors("w.yml", line)), line)
 
     def test_the_trusted_runner_invocation_is_pinned(self) -> None:
-        for path in isolation.TRUSTED_WORKFLOWS:
-            text = (REPO / path).read_text(encoding="utf-8")
-            self.assertEqual(isolation.workflow_errors(path, text), [], path)
-            for label, before, after in (("no -B", " -B ", " "), ("no prefix", ' -X pycache_prefix="$(mktemp -d)"', ""),
-                                         ("shared prefix", '"$(mktemp -d)"', "/tmp/cache")):
-                mutated = text.replace(isolation.TRUSTED_WORKFLOW_RUN,
-                                       isolation.TRUSTED_WORKFLOW_RUN.replace(before, after))
-                self.assertTrue(any("trusted runner" in e for e in isolation.workflow_errors(path, mutated)), label)
-            twice = text + f"      - run: {isolation.TRUSTED_WORKFLOW_RUN}\n"
-            self.assertTrue(any("exactly once" in e for e in isolation.workflow_errors(path, twice)))
+        run = f"run: {isolation.TRUSTED_WORKFLOW_RUN}\n"
+        for path in (isolation.CI_POLICY_WORKFLOW, isolation.TRUSTED_POLICY_WORKFLOW,
+                     isolation.TRUSTED_MERGE_GROUP_WORKFLOW):
+            self.assertEqual(isolation.workflow_errors(path, run, requires_runner=True), [], path)
+            for before, after in ((" -B ", " "), (' -X pycache_prefix="$(mktemp -d)"', ""),
+                                  ('"$(mktemp -d)"', "/tmp/cache")):
+                errors = isolation.workflow_errors(path, run.replace(before, after), requires_runner=True)
+                self.assertTrue(any("trusted runner" in error for error in errors), (path, before))
+            self.assertTrue(any("exactly once" in error
+                                for error in isolation.workflow_errors(path, run * 2, requires_runner=True)))
+
+    def test_trusted_policy_workflow_layouts(self) -> None:
+        legacy = isolation.CI_POLICY_WORKFLOW
+        split = isolation.TRUSTED_POLICY_WORKFLOW
+        run = f"run: {isolation.TRUSTED_WORKFLOW_RUN}\n"
+        for workflows, expected in (
+                ({legacy: run}, []),
+                ({legacy: "", split: run}, []),
+                ({legacy: "", split: ""}, [split]),
+                ({legacy: "", split: run.replace("--root candidate", "--root trusted")}, [split]),
+                ({legacy: run, split: run}, [legacy]),
+                ({legacy: run, split: ""}, [legacy, split])):
+            with self.subTest(workflows=workflows), git_tree({
+                **workflows, isolation.TRUSTED_MERGE_GROUP_WORKFLOW: run,
+            }) as root:
+                errors = isolation.check(Path(root), GATE_SOURCE)
+                self.assertEqual(sorted({error.split(":", 1)[0] for error in errors
+                                  if error.startswith(".github/workflows/")}), expected)
 
 
 class Runner(unittest.TestCase):

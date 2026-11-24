@@ -49,6 +49,7 @@ pub mod fork;
 mod history;
 mod history_selection;
 pub mod host;
+mod link_guard;
 mod link_laws;
 pub mod mapping_bundle;
 pub mod mapping_conflict;
@@ -62,6 +63,8 @@ mod mapping_process;
 mod migration;
 pub mod mining;
 mod observation_quality;
+mod open_checkpoint;
+pub use open_checkpoint::CheckpointKey;
 pub mod provision;
 pub use observation_quality::AuthoritativePage;
 mod identity;
@@ -75,6 +78,8 @@ mod receipt_commitment;
 #[cfg(feature = "native")]
 pub mod restore;
 pub mod retained;
+mod scrub;
+pub use scrub::ScrubStatus;
 pub mod source_agreement;
 pub mod source_provenance;
 pub mod store;
@@ -107,8 +112,8 @@ pub use mapping_process::{MappingOutcome, QuarantineReason};
 pub use model::{BindingIndexSpec, Model, ModelDefinitionSnapshot};
 pub use read::{
     BindingSortValue, BindingSortedCandidate, BindingSortedPosition, FindingLedgerPage,
-    LedgerEntry, LedgerHead, LinkRecord, ObjectRecord, PendingCommand, PendingObservation,
-    PendingTimer, RunRecord, StoreReader,
+    LedgerEntry, LedgerHead, LinkRecord, MarkedQuestionPath, ObjectRecord, PendingCommand,
+    PendingObservation, PendingTimer, RunRecord, StoreReader,
 };
 #[cfg(feature = "native")]
 pub use restore::{HistoryDiagnosis, PrefixRestore, RestoreError, RestoreReport, UnprovenEntry};

@@ -1550,9 +1550,10 @@ fn integer_literal(value: &Value) -> Option<i128> {
     }
 }
 
-/// An IR literal as an instance value. A number is re-read from its
-/// shortest decimal rendering, so an integral value is a JSON integer.
-pub(crate) fn instance_json(literal: &JsonValue) -> Result<Value, InstanceError> {
+/// An IR literal as an instance value (shortest decimal rendering).
+/// # Errors
+/// Returns [`InstanceError::TypeMismatch`] if a number cannot be rendered.
+pub fn instance_json(literal: &JsonValue) -> Result<Value, InstanceError> {
     Ok(match literal {
         JsonValue::Null => Value::Null,
         JsonValue::Bool(value) => Value::Bool(*value),
@@ -1576,8 +1577,7 @@ pub(crate) fn instance_json(literal: &JsonValue) -> Result<Value, InstanceError>
 pub struct EffectiveKey {
     /// The key name.
     pub name: KeyName,
-    /// The type that declares the key: its objects and its subtypes'
-    /// objects share one key space.
+    /// The type that declares the key: its objects and subtypes share one key space.
     pub declared_by: ObjectTypeName,
     /// Components, in tuple order.
     pub components: Vec<PropertyId>,
