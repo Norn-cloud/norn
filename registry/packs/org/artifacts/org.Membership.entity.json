@@ -77,9 +77,6 @@
           }
         },
         {
-          "constraints": {
-            "nullable": true
-          },
           "id": "valid_from",
           "type": {
             "kind": "ref",
