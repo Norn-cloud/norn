@@ -3465,7 +3465,7 @@ impl<E: SqlEngine> CellStore<E> {
             let written = writer.apply_writes()?;
             crate::flow_run::apply(&writer.reader(), effective_batch, &written, commit_seq)?;
             crate::decision_ledger::apply(&writer.reader(), effective_batch, commit_seq)?;
-            let automation_continuation = automation_outbox::record(
+            let automation = automation_outbox::record(
                 &writer.reader(), effective_batch, &written, commit_seq, version, &watch, retained,
             )?;
             let quantity_result = writer.apply_quantity()?;
@@ -3562,7 +3562,7 @@ impl<E: SqlEngine> CellStore<E> {
                         Some(crate::engine_release::STORAGE_VERSION)
                     }
                 },
-                automation_continuation,
+                automation,
                 entries,
             )?;
             probe(CommitPoint::ReceiptWritten)?;

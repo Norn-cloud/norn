@@ -14,11 +14,43 @@ use super::input::{
     reserved_action_identity, rfc6901_token,
 };
 
-/// The shortest target id the runtime can inject (an object key is nonblank):
-/// admission measures the receipt input with it, so a refused static input
-/// overflows the receipt input bound for every matched record. Longer ids are
-/// still bounded per call at dispatch.
+/// The shortest target id the runtime can inject when the target id schema
+/// leaves it unconstrained (an object key is nonblank). See
+/// [`shortest_target_id`].
 const SHORTEST_TARGET_ID: &str = "_";
+
+/// The legal target id with the smallest canonical encoding, which admission
+/// injects to measure the receipt input: a refused static input then
+/// overflows the bound for every matched record, and longer ids stay bounded
+/// per call at dispatch. An action input string schema admits only `enum`
+/// as a constraint (`norn_expr::schema`, which refuses `const`,
+/// `minLength` and `pattern`), so an enum on the target id field is the one
+/// lower bound to derive; without one, the bound is one byte.
+fn shortest_target_id(action: &ActionRoot, target_id_field: &str) -> RuntimeValue {
+    let encoded_len = |id: &str| {
+        norn_ir::canonical::canonical_json_of(&RuntimeValue::String(id.into()))
+            .map_or(usize::MAX, |bytes| bytes.len())
+    };
+    action
+        .input_schema
+        .get("properties")
+        .and_then(|properties| properties.as_object())
+        .and_then(|properties| properties.get(target_id_field))
+        .and_then(|schema| schema.as_object())
+        .and_then(|schema| schema.get("enum"))
+        .and_then(|values| values.as_array())
+        .and_then(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_string())
+                .filter(|id| !id.trim().is_empty())
+                .min_by_key(|id| (encoded_len(id), *id))
+        })
+        .map_or_else(
+            || RuntimeValue::String(SHORTEST_TARGET_ID.into()),
+            |id| RuntimeValue::String(id.into()),
+        )
+}
 
 /// One defect reported by [`validate_automation_static_input`] when admitting
 /// an automation's `then.input` against its target action's closed input schema.
@@ -147,7 +179,7 @@ fn check_receipt_input(
     let mut call_input = supplied.clone();
     call_input.insert(
         target_id_field.to_owned(),
-        RuntimeValue::String(SHORTEST_TARGET_ID.into()),
+        shortest_target_id(action, target_id_field),
     );
     check_call_receipt_input::<()>(action, &call_input).map_err(|refusal| {
         let message = if let ActionRefusal::InputBoundExceeded {
@@ -620,6 +652,59 @@ mod tests {
         assert_eq!(
             validate_automation_static_input(&plain, Some(&large)),
             Ok(())
+        );
+    }
+
+    /// #1704 round 2: when the target id schema is an enum, admission
+    /// measures the legal id with the smallest canonical encoding, not a
+    /// one-byte placeholder. With `AB` the shortest legal id, an input that
+    /// would fit with `_` but not with `AB` can never run, so it is refused.
+    #[test]
+    fn measures_the_shortest_legal_enum_target_id() {
+        let mut raw = serde_json::to_value(sample_action()).expect("action JSON");
+        raw["inputSchema"]["properties"]["orderId"]["enum"] =
+            serde_json::json!(["ABCD", "AB", "ABC"]);
+        let action: ActionRoot = serde_json::from_value(raw).expect("enum action");
+        let max_bytes = usize::try_from(
+            ResourceLimitProfile::norn_limits_v1()
+                .envelope
+                .max_output_bytes,
+        )
+        .expect("bound");
+        let call_bytes = |input: &JsonObject, id: &str| {
+            let mut call = input.clone();
+            call.insert("orderId".to_owned(), RuntimeValue::String(id.into()));
+            norn_ir::canonical::canonical_json_of(&call)
+                .expect("canonical")
+                .len()
+        };
+        let base = call_bytes(&input_with_tag(String::new()), "AB");
+        let fits = input_with_tag("a".repeat(max_bytes.saturating_sub(base)));
+        assert_eq!(call_bytes(&fits, "AB"), max_bytes);
+        assert_eq!(
+            validate_automation_static_input(&action, Some(&fits)),
+            Ok(())
+        );
+        // Astra's case: exactly at the bound with a one-byte id, one byte
+        // over it with every legal id.
+        let never_runs = input_with_tag("a".repeat(max_bytes.saturating_sub(base).saturating_add(1)));
+        assert_eq!(call_bytes(&never_runs, SHORTEST_TARGET_ID), max_bytes);
+        assert_eq!(call_bytes(&never_runs, "AB"), max_bytes.saturating_add(1));
+        let errors = validate_automation_static_input(&action, Some(&never_runs))
+            .expect_err("over the bound with every legal id");
+        assert_eq!(
+            errors
+                .iter()
+                .map(|error| (error.pointer.as_str(), error.message.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(
+                "/then/input",
+                format!(
+                    "static input with the injected target id is {} canonical bytes, over the {max_bytes}-byte action call receipt input bound of the target action",
+                    max_bytes.saturating_add(1)
+                )
+                .as_str()
+            )]
         );
     }
 }

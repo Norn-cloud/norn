@@ -196,12 +196,13 @@ pub enum CellError {
         /// The stored stamp, truncated.
         found: String,
     },
-    /// AUTOMATION-OUTBOX-1 (#1704): an exported automation continuation was
-    /// written by an earlier matcher version whose pause point this engine's
-    /// replay-stable order does not reproduce (a matcher version 1 commit
-    /// whose ids change under NFC). The restore writes nothing.
+    /// AUTOMATION-OUTBOX-1 (#1704): the replay of an exported automation
+    /// continuation is not provably equivalent to the live commit: its cursor
+    /// or inline candidate set differs from the exported evidence, a version
+    /// 2 record lacks that evidence, or a version 1 record (which has none)
+    /// orders NFC-ambiguous target ids. The restore writes nothing.
     #[error(
-        "{code}: automation continuation of commit {commit_seq} was written by matcher version {matcher_version}, whose order this engine cannot replay",
+        "{code}: automation continuation of commit {commit_seq} (matcher version {matcher_version}) does not replay equivalently in this engine",
         code = norn_checker::ENGINE_UNKNOWN_VERSION
     )]
     AutomationMatcherUnreplayable {

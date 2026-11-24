@@ -23,11 +23,19 @@
 //! order. An export canonicalizes every string to NFC, so a restore replays
 //! the NFC identities: ordering by them first makes the live and replayed
 //! traversals pause at the same target. Raw bytes break ties between
-//! identities that only differ before normalization. Matcher version 1 (the
-//! first v7 builds) ordered raw bytes and captured every preimage; a v1
-//! continuation restores only when this order reproduces its cursor
-//! (always, for NFC-stable ids), and is otherwise refused with
-//! [`CellError::AutomationMatcherUnreplayable`].
+//! identities that only differ before normalization.
+//!
+//! A cursor alone does not prove a replay equivalent: two traversals can
+//! pause at the same target after emitting different candidates. So a paused
+//! commit's export also carries [`AutomationInlineEvidence`], and a restore
+//! accepts the continuation only when the replayed cursor and inline
+//! candidate set both match. Matcher version 1 (the first v7 builds) ordered
+//! raw bytes, captured every preimage and exported no evidence; a v1
+//! continuation restores only when its cursor matches and no target id in
+//! the commit is NFC-ambiguous. Anything else is refused with
+//! [`CellError::AutomationMatcherUnreplayable`]. Target ids that collide under
+//! NFC within one commit cannot restore at all: the exported batch is NFC
+//! (`ExportRecord::batch`), so the restored store would hold fewer objects.
 //!
 //! ## Snapshot semantics (filtered per rule against `rule.object_type`)
 //! - **Created / sibling replacement** (`event:created`): `before_values = None`,
@@ -688,6 +696,76 @@ fn emit_candidate<E: SqlEngine>(
     )
 }
 
+/// What [`record`] wrote for one commit: the continuation row, when matching
+/// paused, and the export-only evidence of the inline candidates before it.
+pub(crate) struct RecordedAutomation {
+    pub(crate) continuation: Option<AutomationOutboxContinuation>,
+    pub(crate) inline: Option<AutomationInlineEvidence>,
+}
+
+/// Export-only evidence of the inline candidates a paused commit recorded
+/// (#1704). An export carries NFC identities, so a cursor alone does not pin
+/// the inline/deferred partition: two traversals can pause at the same target
+/// after emitting different candidates. A restore replays the commit and
+/// accepts its continuation only when the replayed candidates encode to the
+/// same canonical (NFC) set.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AutomationInlineEvidence {
+    /// Inline candidates the commit recorded before pausing.
+    pub candidate_count: u64,
+    /// Norn1 hash of the candidates' canonical JSON encodings, sorted.
+    pub candidates_hash: String,
+}
+
+fn inline_evidence<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    world: &str,
+    commit_seq: u64,
+) -> Result<AutomationInlineEvidence, CellError> {
+    let mut encoded = reader
+        .automation_triggers_for_commit(world, commit_seq)?
+        .iter()
+        .map(canonical_json)
+        .collect::<Result<Vec<_>, _>>()?;
+    encoded.sort_unstable();
+    Ok(AutomationInlineEvidence {
+        candidate_count: u64::try_from(encoded.len())
+            .map_err(|_overflow| CellError::OutOfRange("automation candidate count"))?,
+        candidates_hash: crate::codec::hash_json(&encoded)?,
+    })
+}
+
+/// Whether some other spelling of `id` normalizes to it under NFC, so an
+/// NFC export cannot tell which spelling the live commit wrote. Exact for
+/// ASCII: no ASCII character decomposes, and the only canonical singletons
+/// onto ASCII are KELVIN SIGN, GREEK QUESTION MARK and GREEK VARIA (asserted
+/// over every scalar by `nfc_ambiguity_is_exact_for_ascii`); every other
+/// character counts as ambiguous.
+fn nfc_ambiguous(id: &str) -> bool {
+    id.chars()
+        .any(|ch| !ch.is_ascii() || NFC_SINGLETON_ASCII_TARGETS.contains(&ch))
+}
+
+/// The ASCII characters that a different code point normalizes to under NFC.
+const NFC_SINGLETON_ASCII_TARGETS: [char; 3] = ['K', ';', '`'];
+
+/// Whether any target identity the matcher orders in this commit is
+/// [`nfc_ambiguous`]: a written object id, a committed action call key, or an
+/// action call's target id.
+fn commit_has_nfc_ambiguous_target(batch: &CommitBatch, written: &[WrittenRow]) -> bool {
+    written.iter().any(|row| nfc_ambiguous(&row.key))
+        || action_calls_in_batch(batch).iter().any(|(key, fields)| {
+            nfc_ambiguous(key)
+                || fields
+                    .object
+                    .and_then(Value::as_object)
+                    .and_then(|object| object.get("key"))
+                    .and_then(Value::as_str)
+                    .is_some_and(nfc_ambiguous)
+        })
+}
+
 /// Record matching automation trigger candidates inside the triggering commit's
 /// `SQLite` transaction (Pass 1: row-write triggers; Pass 2: `event:action`
 /// driven from committed `norn.ActionCall` records).
@@ -697,6 +775,15 @@ fn emit_candidate<E: SqlEngine>(
 /// candidates are written inline, and any remaining work persists one
 /// idempotent continuation row in `_norn_automation_outbox_continuation` in the
 /// same transaction for U2 to expand from committed history.
+///
+/// A replay of an exported record with a continuation proves equivalence: the
+/// replayed cursor must equal the exported one and the replayed inline
+/// candidates must match the record's [`AutomationInlineEvidence`]. A matcher
+/// version 1 record carries no evidence; it is accepted only when no target in
+/// the commit is [`nfc_ambiguous`], since then the live ids are the NFC ids
+/// and both orders traverse identical targets identically. Anything else is
+/// refused with [`CellError::AutomationMatcherUnreplayable`] before the
+/// restore writes its file.
 pub(crate) fn record<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     batch: &CommitBatch,
@@ -705,7 +792,7 @@ pub(crate) fn record<E: SqlEngine>(
     definitions_version: u64,
     watch: &AutomationWatch,
     retained: Option<&crate::export::ExportRecord>,
-) -> Result<Option<AutomationOutboxContinuation>, CellError> {
+) -> Result<RecordedAutomation, CellError> {
     let original = retained.and_then(|record| record.automation_continuation.as_ref());
     if let Some(original) = original
         && !REPLAYABLE_MATCHER_VERSIONS.contains(&original.matcher_version)
@@ -715,30 +802,50 @@ pub(crate) fn record<E: SqlEngine>(
         });
     }
     let paused = record_inline(reader, batch, written, commit_seq, watch)?;
-    let continuation = if let Some(export) = retained {
+    let inline = paused
+        .as_ref()
+        .map(|_| inline_evidence(reader, &batch.world, commit_seq))
+        .transpose()?;
+    let recorded = if let Some(export) = retained {
         match (paused.as_ref(), original) {
-            (None, None) => None,
-            (Some(cursor), Some(row))
-                if row.cursor == *cursor
-                    && row.trigger_commit_seq == commit_seq
-                    && row.world == batch.world
-                    && Some(row.storage_version) == export.storage_version
-                    && row.definitions_version == definitions_version
-                    && row.recorded_at_ms == batch.logical_time
-                    && row.completed_commit_seq.is_none() =>
-            {
-                // The exported row is hashed evidence: it keeps the matcher
-                // version that wrote it. Over a restored (NFC) store, matcher
-                // version 1's raw order and version 2's order coincide.
-                Some(row.clone())
+            (None, None) => RecordedAutomation {
+                continuation: None,
+                inline,
+            },
+            (_, Some(row)) => {
+                if row.trigger_commit_seq != commit_seq
+                    || row.world != batch.world
+                    || Some(row.storage_version) != export.storage_version
+                    || row.definitions_version != definitions_version
+                    || row.recorded_at_ms != batch.logical_time
+                    || row.completed_commit_seq.is_some()
+                {
+                    return Err(CellError::LedgerCorrupt {
+                        seq: commit_seq,
+                        reason: "automation continuation does not match replay".to_owned(),
+                    });
+                }
+                let same_partition = match &export.automation_inline {
+                    Some(evidence) => inline.as_ref() == Some(evidence),
+                    None => {
+                        row.matcher_version == 1
+                            && !commit_has_nfc_ambiguous_target(batch, written)
+                    }
+                };
+                if paused != Some(&row.cursor) || !same_partition {
+                    return Err(CellError::AutomationMatcherUnreplayable {
+                        commit_seq,
+                        matcher_version: row.matcher_version,
+                    });
+                }
+                // The exported row and evidence are hashed evidence: they keep
+                // the matcher version that wrote them.
+                RecordedAutomation {
+                    continuation: Some(row.clone()),
+                    inline: export.automation_inline.clone(),
+                }
             }
-            (_, Some(row)) if row.matcher_version != AUTOMATION_MATCHER_VERSION => {
-                return Err(CellError::AutomationMatcherUnreplayable {
-                    commit_seq,
-                    matcher_version: row.matcher_version,
-                });
-            }
-            _ => {
+            (Some(_), None) => {
                 return Err(CellError::LedgerCorrupt {
                     seq: commit_seq,
                     reason: "automation continuation does not match replay".to_owned(),
@@ -746,22 +853,25 @@ pub(crate) fn record<E: SqlEngine>(
             }
         }
     } else {
-        paused.map(|cursor| AutomationOutboxContinuation {
-            trigger_commit_seq: commit_seq,
-            world: batch.world.clone(),
-            cursor,
-            storage_version: crate::engine_release::STORAGE_VERSION,
-            engine_version: current_engine_version(),
-            definitions_version,
-            matcher_version: AUTOMATION_MATCHER_VERSION,
-            recorded_at_ms: batch.logical_time,
-            completed_commit_seq: None,
-        })
+        RecordedAutomation {
+            continuation: paused.map(|cursor| AutomationOutboxContinuation {
+                trigger_commit_seq: commit_seq,
+                world: batch.world.clone(),
+                cursor,
+                storage_version: crate::engine_release::STORAGE_VERSION,
+                engine_version: current_engine_version(),
+                definitions_version,
+                matcher_version: AUTOMATION_MATCHER_VERSION,
+                recorded_at_ms: batch.logical_time,
+                completed_commit_seq: None,
+            }),
+            inline,
+        }
     };
-    if let Some(row) = &continuation {
+    if let Some(row) = &recorded.continuation {
         continuation::insert_continuation(reader.conn, row)?;
     }
-    Ok(continuation)
+    Ok(recorded)
 }
 
 fn committed_action_calls<E: SqlEngine>(
@@ -2233,13 +2343,29 @@ mod tests {
 
         // Represent an export written by a different build without needing a
         // second binary. The last record can be republished under its new hash.
-        // Matcher version 1 (pre-#1704 v7 exports) restores: its NFC-stable
-        // ids order the same under version 2.
+        // Matcher version 1 (pre-#1704 v7 exports, which carry no inline
+        // evidence) restores: its ids are ASCII, so not NFC-ambiguous, and
+        // order the same under version 2. A version 2 record must carry the
+        // evidence.
         let mut original = cont;
         original.engine_version.push_str("-other-build");
-        for matcher_version in [1, AUTOMATION_MATCHER_VERSION, u32::MAX] {
+        let evidence = record.automation_inline.clone();
+        assert_eq!(
+            evidence.as_ref().map(|evidence| evidence.candidate_count),
+            Some(u64::try_from(MAX_CANDIDATES_PER_COMMIT)?)
+        );
+        for (case, (matcher_version, inline)) in [
+            (1, None),
+            (AUTOMATION_MATCHER_VERSION, evidence.clone()),
+            (AUTOMATION_MATCHER_VERSION, None),
+            (u32::MAX, evidence),
+        ]
+        .into_iter()
+        .enumerate()
+        {
             original.matcher_version = matcher_version;
             record.automation_continuation = Some(original.clone());
+            record.automation_inline.clone_from(&inline);
             let mut exporter = crate::export::Exporter::new(std::sync::Arc::new(
                 object_store::memory::InMemory::new(),
             ));
@@ -2248,7 +2374,7 @@ mod tests {
                 exporter.append(&prior).await?;
             }
             exporter.append(&record).await?;
-            let target = path.with_file_name(format!("restored-{matcher_version}.sqlite"));
+            let target = path.with_file_name(format!("restored-{case}.sqlite"));
             let result = CellStore::restore_from(
                 &mut exporter,
                 &target,
@@ -2258,7 +2384,16 @@ mod tests {
                 StoreOptions::default(),
             )
             .await;
-            if REPLAYABLE_MATCHER_VERSIONS.contains(&matcher_version) {
+            if matcher_version == AUTOMATION_MATCHER_VERSION && inline.is_none() {
+                assert!(matches!(
+                    result,
+                    Err(crate::RestoreError::Cell(CellError::AutomationMatcherUnreplayable {
+                        commit_seq: seq,
+                        matcher_version: AUTOMATION_MATCHER_VERSION,
+                    })) if seq == commit_seq
+                ));
+                assert!(!target.exists());
+            } else if REPLAYABLE_MATCHER_VERSIONS.contains(&matcher_version) {
                 result?;
                 let restored = CellStore::open(&target, model.clone(), StoreOptions::default())?;
                 assert_eq!(
@@ -2715,19 +2850,30 @@ mod tests {
         path: &std::path::Path,
         ids: &[String],
     ) -> TestResult<(CellStore, Model, u64)> {
+        commit_tickets(path, ids, true)
+    }
+
+    /// [`commit_created_tickets`], with the create rule only when `rule`.
+    fn commit_tickets(
+        path: &std::path::Path,
+        ids: &[String],
+        rule: bool,
+    ) -> TestResult<(CellStore, Model, u64)> {
         let (model, canonical) = sample_model()?;
         let mut store = CellStore::open(path, model.clone(), StoreOptions::default())?;
         store.bind("scope", SCOPE)?;
         store.install_definitions(model.clone(), install_input(&canonical, 10), Some(0), SCOPE)?;
-        install_automation_for(
-            &mut store,
-            &model,
-            &canonical,
-            1,
-            "ops.on_create",
-            "demo.Ticket",
-            &json!({ "kind": "event", "event": "created" }),
-        )?;
+        if rule {
+            install_automation_for(
+                &mut store,
+                &model,
+                &canonical,
+                1,
+                "ops.on_create",
+                "demo.Ticket",
+                &json!({ "kind": "event", "event": "created" }),
+            )?;
+        }
         let batch = CommitBatch {
             world: MAIN_WORLD.to_owned(),
             scope: SCOPE.to_owned(),
@@ -2874,6 +3020,202 @@ mod tests {
         );
         assert!(!v1_target.exists());
         Ok(())
+    }
+
+    fn row_cursor(object_id: &str) -> AutomationContinuationCursor {
+        AutomationContinuationCursor::Row {
+            root_type: "demo.Ticket".to_owned(),
+            object_id: object_id.to_owned(),
+            ancestor_type: "demo.Ticket".to_owned(),
+            after_automation_id: None,
+        }
+    }
+
+    /// The inline candidates of `commit_seq`, with NFC object ids, sorted:
+    /// what an export of them carries.
+    fn nfc_candidates(
+        store: &CellStore,
+        commit_seq: u64,
+    ) -> TestResult<Vec<AutomationTriggerCandidate>> {
+        let mut candidates = store
+            .read()
+            .automation_triggers_for_commit(MAIN_WORLD, commit_seq)?;
+        for candidate in &mut candidates {
+            candidate.key.object_id = norn_ir::canonical::nfc(&candidate.key.object_id);
+        }
+        candidates.sort_by(|left, right| left.key.cmp(&right.key));
+        Ok(candidates)
+    }
+
+    fn assert_unreplayable(
+        result: &Result<(), crate::RestoreError>,
+        commit_seq: u64,
+        matcher_version: u32,
+    ) {
+        assert!(
+            matches!(
+                result,
+                Err(crate::RestoreError::Cell(CellError::AutomationMatcherUnreplayable {
+                    commit_seq: seq,
+                    matcher_version: version,
+                })) if *seq == commit_seq && *version == matcher_version
+            ),
+            "{result:?}"
+        );
+    }
+
+    /// #1704 round 2 (Astra blocker 1): one create rule over `a000`..`a254`,
+    /// a decomposed `é` (`e` + U+0301), `×` and ANGSTROM SIGN (U+212B, NFC
+    /// `Å`). Raw order (version 1) puts `é` before `×` before U+212B, so a v1
+    /// commit emits `é` inline and pauses at `×`; NFC order puts `Å` before
+    /// `×` before `é`, so a replay emits `Å` and pauses at `×` too. The cursor
+    /// matches while the partition differs: version 2 proves the partition
+    /// with inline evidence, and a v1 record (no evidence) with an
+    /// NFC-ambiguous target is refused.
+    #[tokio::test]
+    async fn equal_cursor_with_a_swapped_partition_is_refused() -> TestResult {
+        const DECOMPOSED: &str = "e\u{301}";
+        const ANGSTROM: &str = "\u{212b}";
+        const TIMES: &str = "\u{d7}";
+        let dir = tempfile::tempdir()?;
+        let ids: Vec<String> = (0..255_usize)
+            .map(|idx| format!("a{idx:03}"))
+            .chain([DECOMPOSED, TIMES, ANGSTROM].map(str::to_owned))
+            .collect();
+        let (store, model, commit_seq) =
+            commit_created_tickets(&dir.path().join("swap.sqlite"), &ids)?;
+
+        // Version 2, live: `Å` (raw U+212B) inline, paused at `×`.
+        let live = store
+            .read()
+            .automation_outbox_continuation(commit_seq)?
+            .ok_or("missing live continuation")?;
+        assert_eq!(live.cursor, row_cursor(TIMES));
+        let live_ids: BTreeSet<String> = store
+            .read()
+            .automation_triggers_for_commit(MAIN_WORLD, commit_seq)?
+            .into_iter()
+            .map(|candidate| candidate.key.object_id)
+            .collect();
+        assert_eq!(live_ids.len(), MAX_CANDIDATES_PER_COMMIT);
+        assert!(live_ids.contains(ANGSTROM) && !live_ids.contains(DECOMPOSED));
+
+        // The version 2 export restores, with the same candidates.
+        let record = store
+            .export_record(commit_seq)?
+            .ok_or("missing overflow record")?;
+        assert!(record.automation_inline.is_some());
+        let target = dir.path().join("restored.sqlite");
+        restore_with_last(&store, &model, &record, &target).await??;
+        let restored = CellStore::open(&target, model.clone(), StoreOptions::default())?;
+        assert_eq!(
+            nfc_candidates(&restored, commit_seq)?,
+            nfc_candidates(&store, commit_seq)?
+        );
+
+        // A v1 export of the commit: version 1 emitted `é` and paused at `×`,
+        // the same cursor. It carries no evidence and its targets are
+        // NFC-ambiguous, so the restore refuses it and writes nothing.
+        let mut v1 = record.clone();
+        v1.automation_inline = None;
+        v1.automation_continuation = Some(AutomationOutboxContinuation {
+            matcher_version: 1,
+            ..live.clone()
+        });
+        let v1_target = dir.path().join("restored-v1.sqlite");
+        assert_unreplayable(
+            &restore_with_last(&store, &model, &v1, &v1_target).await?,
+            commit_seq,
+            1,
+        );
+        assert!(!v1_target.exists());
+
+        // Evidence of another partition (the v1 one) is refused too.
+        let mut swapped = record;
+        swapped.automation_inline = Some(AutomationInlineEvidence {
+            candidates_hash: crate::codec::hash_json("the v1 partition")?,
+            ..swapped.automation_inline.ok_or("missing evidence")?
+        });
+        let swapped_target = dir.path().join("restored-swapped.sqlite");
+        assert_unreplayable(
+            &restore_with_last(&store, &model, &swapped, &swapped_target).await?,
+            commit_seq,
+            AUTOMATION_MATCHER_VERSION,
+        );
+        assert!(!swapped_target.exists());
+        Ok(())
+    }
+
+    /// #1704 round 2 (Astra blocker 2): 255 ASCII ids plus both spellings of
+    /// `é` in one commit. Live has 257 distinct targets and, ordering the
+    /// spellings by raw bytes, pauses at the composed one. The export carries
+    /// the batch in NFC (`ExportRecord::batch`), so it cannot tell the two
+    /// spellings apart: the restored store would hold one object where the
+    /// live store holds two. The restore refuses the continuation by type and
+    /// writes nothing; without any rule, the data restore refuses the same
+    /// commit on its own.
+    #[tokio::test]
+    async fn nfc_colliding_targets_in_one_commit_are_refused() -> TestResult {
+        const DECOMPOSED: &str = "e\u{301}";
+        const COMPOSED: &str = "\u{e9}";
+        let dir = tempfile::tempdir()?;
+        let ids: Vec<String> = (0..255_usize)
+            .map(|idx| format!("a{idx:03}"))
+            .chain([DECOMPOSED, COMPOSED].map(str::to_owned))
+            .collect();
+        let (store, model, commit_seq) =
+            commit_created_tickets(&dir.path().join("collide.sqlite"), &ids)?;
+        let live = store
+            .read()
+            .automation_outbox_continuation(commit_seq)?
+            .ok_or("missing live continuation")?;
+        assert_eq!(live.cursor, row_cursor(COMPOSED));
+        let record = store
+            .export_record(commit_seq)?
+            .ok_or("missing overflow record")?;
+        let written = written_ids(&record.batch);
+        assert_eq!(written.len(), 257);
+        assert_eq!(written.iter().collect::<BTreeSet<_>>().len(), 256);
+        let target = dir.path().join("restored.sqlite");
+        assert_unreplayable(
+            &restore_with_last(&store, &model, &record, &target).await?,
+            commit_seq,
+            AUTOMATION_MATCHER_VERSION,
+        );
+        assert!(!target.exists());
+
+        let (plain, plain_model, plain_seq) =
+            commit_tickets(&dir.path().join("plain.sqlite"), &ids, false)?;
+        let plain_record = plain
+            .export_record(plain_seq)?
+            .ok_or("missing plain record")?;
+        assert!(plain_record.automation_continuation.is_none());
+        let plain_target = dir.path().join("restored-plain.sqlite");
+        let refused = restore_with_last(&plain, &plain_model, &plain_record, &plain_target).await?;
+        assert!(refused.is_err(), "{refused:?}");
+        assert!(!plain_target.exists());
+        Ok(())
+    }
+
+    /// The premise of [`nfc_ambiguous`]: every scalar that NFC maps to
+    /// ASCII other than itself is one of three singletons, onto
+    /// [`NFC_SINGLETON_ASCII_TARGETS`].
+    #[test]
+    fn nfc_ambiguity_is_exact_for_ascii() {
+        let onto_ascii: Vec<(char, String)> = (0..=u32::from(char::MAX))
+            .filter_map(char::from_u32)
+            .filter_map(|ch| {
+                let normalized = norn_ir::canonical::nfc(&ch.to_string());
+                (normalized != ch.to_string() && normalized.is_ascii()).then_some((ch, normalized))
+            })
+            .collect();
+        assert_eq!(
+            onto_ascii,
+            [('\u{37e}', ";"), ('\u{1fef}', "`"), ('\u{212a}', "K")]
+                .map(|(ch, ascii)| (ch, ascii.to_owned()))
+        );
+        assert!(!nfc_ambiguous("a254"));
+        assert!(nfc_ambiguous("Kelvin") && nfc_ambiguous("\u{e9}") && nfc_ambiguous("\u{d7}"));
     }
 
     /// #1704: preimages are captured in replay order up to

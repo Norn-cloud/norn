@@ -44,8 +44,9 @@ const AUTOMATION_OUTBOX_CONTINUATION: &str = "_norn_automation_outbox_continuati
 pub const AUTOMATION_MATCHER_VERSION: u32 = 2;
 
 /// Matcher versions whose exported continuations a restore accepts. A
-/// version 1 row restores only when the version 2 replay reproduces its
-/// cursor, which holds for every commit whose identities are NFC-stable.
+/// version 2 row restores only with matching inline evidence and cursor; a
+/// version 1 row (no evidence) only when its cursor matches and no target id
+/// in the commit is NFC-ambiguous (see `super::record`).
 pub(super) const REPLAYABLE_MATCHER_VERSIONS: [u32; 2] = [1, AUTOMATION_MATCHER_VERSION];
 
 /// Deterministic resume point in `(written objects × rules)` persisted on an
