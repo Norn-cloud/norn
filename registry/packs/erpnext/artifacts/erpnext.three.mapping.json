@@ -17,37 +17,37 @@
       "artifactId": "core.Resource.interface",
       "kind": "entity",
       "required": true,
-      "version": "0.1.0"
+      "version": "0.2.0"
     },
     {
       "artifactId": "core.Agent.interface",
       "kind": "entity",
       "required": true,
-      "version": "0.1.0"
+      "version": "0.2.0"
     },
     {
       "artifactId": "core.AgentRole.interface",
       "kind": "entity",
       "required": true,
-      "version": "0.1.0"
+      "version": "0.2.0"
     },
     {
       "artifactId": "core.Commitment.interface",
       "kind": "entity",
       "required": true,
-      "version": "0.1.0"
+      "version": "0.2.0"
     },
     {
       "artifactId": "core.EconomicEvent.interface",
       "kind": "entity",
       "required": true,
-      "version": "0.1.0"
+      "version": "0.2.0"
     },
     {
       "artifactId": "core.LedgerEffect.interface",
       "kind": "entity",
       "required": true,
-      "version": "0.1.0"
+      "version": "0.2.0"
     },
     {
       "artifactId": "canon.Settlement.interface",
@@ -532,5 +532,5 @@
     "sourcePath": "registry/packs/erpnext/artifacts/erpnext.three.mapping.json"
   },
   "scope": {},
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

@@ -296,7 +296,7 @@ export const RestSource = Norn.sourceSchema({
 export const RestMapping = Norn.mapping({
   id: "odoo.rest.mapping",
   title: "Odoo REST observations to the REA canon",
-  version: "0.1.0",
+  version: "0.2.0",
   source: {schemaId: "odoo.rest.source", version: "0.1.0", sha256: "b6fbf57e1178f8913782544fd20ab7ca5f4fa86eebdcbfacdfef48aa3a15573a"},
   sourceContract: {kind: "generic"},
   interfaces: [Catalog, Resource, Agent, AgentRole, Commitment],

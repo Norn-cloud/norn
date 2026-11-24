@@ -13,6 +13,7 @@ import { sharedEngine } from "../lib/canvas/checker.ts"
 import { defaultFetch } from "../lib/cell-read.ts"
 import { scopedHostFetch } from "../lib/definitions.ts"
 import { flowTitle, remaining, stepTitle, urgent, type Decision, type Risk } from "../lib/decisions.ts"
+import { useLearningCapabilities } from "../lib/learning/capabilities.ts"
 import sheetDocument from "./decision-sheet.widget.json"
 
 const RISK_TINT: Readonly<Record<Risk, string>> = { low: "--tint-route", medium: "--tint-wait", high: "--tint-law" }
@@ -60,6 +61,9 @@ export function DecisionSheet({ decision, now, onClose, onSettled }: {
 }) {
   const { locale } = useLocale()
   const navigate = useNavigate()
+  const learning = useLearningCapabilities()
+  const episodesAvailable = useRef(learning.episodes)
+  episodesAvailable.current = learning.episodes
   // Loaded once per page, starting when the inbox renders, so it compiles while the person reads.
   // The sheet draws its first state without it and takes input once it is here.
   const engine = useQuery({ queryKey: ["checker-engine"], queryFn: () => sharedEngine(), staleTime: Infinity, retry: false })
@@ -83,6 +87,7 @@ export function DecisionSheet({ decision, now, onClose, onSettled }: {
       locale: locale === "ar" ? "ar" : "en",
       ...(now === undefined ? {} : { now }),
       navigate: (path) => void navigate({ to: path }),
+      canOpenEpisode: () => episodesAvailable.current,
       onClose: () => callbacks.current.onClose(),
       onSettled: (state) => { if (state !== "closed") callbacks.current.onSettled() },
     }

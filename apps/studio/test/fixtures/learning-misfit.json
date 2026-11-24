@@ -1,0 +1,129 @@
+{
+  "contract": "learning.misfit_by_law and learning.triage_over_time answers in the served NornQueryResult envelope (#1208, #1220 L-4). Replace with fixtures written by the learning pack's question route tests once served.",
+  "misfitByLaw": {
+    "queryPin": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "definitionPin": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "engine": "cell",
+    "revision": {
+      "seq": 5210,
+      "hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "commits": 5210
+    },
+    "effectiveAsOf": "2026-11-23T00:00:00Z",
+    "knownAsOf": 5210,
+    "grain": "learning.Episode",
+    "lineageRef": "lin_misfit_5210",
+    "freshness": "exact",
+    "complete": true,
+    "world": "main",
+    "scope": "org_demo/analytics",
+    "populationPin": "pop_demo_1",
+    "authorizationEpoch": 4,
+    "mappingPin": "map_demo_1",
+    "nowMs": 1795400000000,
+    "sourceCursors": {},
+    "watermarks": {},
+    "exclusions": {},
+    "rows": {
+      "[\"demo.credit.hold_over_limit\",\"override\"]": {
+        "bucket": ["demo.credit.hold_over_limit", "override"],
+        "totals": [5, 12],
+        "value": 0.417,
+        "members": {
+          "ep_demo_overridden": { "version": 3, "amounts": [1, 1] },
+          "ep_credit_02": { "version": 1, "amounts": [1, 1] },
+          "ep_credit_03": { "version": 1, "amounts": [0, 1] }
+        }
+      },
+      "[\"demo.credit.hold_over_limit\",\"exception\"]": {
+        "bucket": ["demo.credit.hold_over_limit", "exception"],
+        "totals": [3, 12],
+        "value": 0.25,
+        "members": {
+          "ep_demo_overridden": { "version": 3, "amounts": [1, 1] },
+          "ep_credit_02": { "version": 1, "amounts": [0, 1] },
+          "ep_credit_03": { "version": 1, "amounts": [0, 1] }
+        }
+      },
+      "[\"demo.discount.max_margin\",\"override\"]": {
+        "bucket": ["demo.discount.max_margin", "override"],
+        "totals": [4, 20],
+        "value": 0.2,
+        "members": {
+          "ep_disc_01": { "version": 1, "amounts": [1, 1] },
+          "ep_disc_02": { "version": 1, "amounts": [0, 1] },
+          "ep_disc_03": { "version": 1, "amounts": [0, 1] }
+        }
+      },
+      "[\"demo.discount.max_margin\",\"exception\"]": {
+        "bucket": ["demo.discount.max_margin", "exception"],
+        "totals": [2, 20],
+        "value": 0.1,
+        "members": {
+          "ep_disc_01": { "version": 1, "amounts": [0, 1] },
+          "ep_disc_02": { "version": 1, "amounts": [1, 1] },
+          "ep_disc_03": { "version": 1, "amounts": [0, 1] }
+        }
+      },
+      "[\"demo.refund.window_days\",\"override\"]": {
+        "bucket": ["demo.refund.window_days", "override"],
+        "totals": [],
+        "value": null,
+        "suppressed": true,
+        "members": {
+          "ep_ref_01": { "version": 1, "amounts": null },
+          "ep_ref_02": { "version": 1, "amounts": null }
+        }
+      },
+      "[\"demo.refund.window_days\",\"exception\"]": {
+        "bucket": ["demo.refund.window_days", "exception"],
+        "totals": [],
+        "value": null,
+        "suppressed": true,
+        "members": {
+          "ep_ref_01": { "version": 1, "amounts": null },
+          "ep_ref_02": { "version": 1, "amounts": null }
+        }
+      }
+    }
+  },
+  "triageOverTime": {
+    "queryPin": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+    "definitionPin": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "engine": "cell",
+    "revision": {
+      "seq": 5210,
+      "hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+      "commits": 5210
+    },
+    "effectiveAsOf": "2026-11-23T00:00:00Z",
+    "knownAsOf": 5210,
+    "grain": "learning.Episode",
+    "lineageRef": "lin_triage_5210",
+    "freshness": "exact",
+    "complete": true,
+    "world": "main",
+    "scope": "org_demo/analytics",
+    "populationPin": "pop_demo_1",
+    "authorizationEpoch": 4,
+    "mappingPin": "map_demo_1",
+    "nowMs": 1795400000000,
+    "sourceCursors": {},
+    "watermarks": {},
+    "exclusions": {},
+    "rows": {
+      "[\"2026-11-02\",\"exception\"]": { "bucket": ["2026-11-02", "exception"], "totals": [4], "value": 4, "members": { "ep_1": { "version": 1, "amounts": [1] } } },
+      "[\"2026-11-02\",\"noise\"]": { "bucket": ["2026-11-02", "noise"], "totals": [2], "value": 2, "members": { "ep_2": { "version": 1, "amounts": [1] } } },
+      "[\"2026-11-02\",\"pattern\"]": { "bucket": ["2026-11-02", "pattern"], "totals": [5], "value": 5, "members": { "ep_3": { "version": 1, "amounts": [1] } } },
+      "[\"2026-11-02\",\"gap\"]": { "bucket": ["2026-11-02", "gap"], "totals": [1], "value": 1, "members": { "ep_4": { "version": 1, "amounts": [1] } } },
+      "[\"2026-11-09\",\"exception\"]": { "bucket": ["2026-11-09", "exception"], "totals": [3], "value": 3, "members": { "ep_5": { "version": 1, "amounts": [1] } } },
+      "[\"2026-11-09\",\"noise\"]": { "bucket": ["2026-11-09", "noise"], "totals": [1], "value": 1, "members": { "ep_6": { "version": 1, "amounts": [1] } } },
+      "[\"2026-11-09\",\"pattern\"]": { "bucket": ["2026-11-09", "pattern"], "totals": [7], "value": 7, "members": { "ep_7": { "version": 1, "amounts": [1] } } },
+      "[\"2026-11-09\",\"gap\"]": { "bucket": ["2026-11-09", "gap"], "totals": [3], "value": 3, "members": { "ep_8": { "version": 1, "amounts": [1] } } },
+      "[\"2026-11-16\",\"exception\"]": { "bucket": ["2026-11-16", "exception"], "totals": [2], "value": 2, "members": { "ep_9": { "version": 1, "amounts": [1] } } },
+      "[\"2026-11-16\",\"noise\"]": { "bucket": ["2026-11-16", "noise"], "totals": [1], "value": 1, "members": { "ep_10": { "version": 1, "amounts": [1] } } },
+      "[\"2026-11-16\",\"pattern\"]": { "bucket": ["2026-11-16", "pattern"], "totals": [9], "value": 9, "members": { "ep_11": { "version": 1, "amounts": [1] } } },
+      "[\"2026-11-16\",\"gap\"]": { "bucket": ["2026-11-16", "gap"], "totals": [2], "value": 2, "members": { "ep_12": { "version": 1, "amounts": [1] } } }
+    }
+  }
+}
