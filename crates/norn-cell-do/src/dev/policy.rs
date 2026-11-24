@@ -230,6 +230,33 @@ impl Authorizer for LocalDeveloper {
     fn disclose_refusal_detail(&self, request: &RefusalDetailRequest<'_>) -> bool {
         self.is(request.actor)
     }
+    fn authorize_automation_grant(
+        &self,
+        request: &norn_api::authz::AutomationGrantRequest<'_>,
+    ) -> Result<norn_api::authz::VerifiedAutomationGrant, Refusal> {
+        if !self.is(request.actor) || request.matched_types.is_empty() {
+            return Err(norn_api::authz::read_denied());
+        }
+        if request.action.access.is_none() {
+            return Ok(norn_api::authz::VerifiedAutomationGrant {
+                parent_grant_ids: vec!["norn.dev.local_developer".to_owned()],
+            });
+        }
+        let parent_grant_ids = self
+            .actions
+            .read()
+            .ok()
+            .and_then(|slot| slot.as_ref().ok().cloned().flatten())
+            .and_then(|policy| {
+                policy.authorize_automation_grant(
+                    &local_caller(request.actor),
+                    &request.action.action_id,
+                    request.matched_types,
+                )
+            })
+            .ok_or_else(norn_api::authz::read_denied)?;
+        Ok(norn_api::authz::VerifiedAutomationGrant { parent_grant_ids })
+    }
     fn authorize(&self, request: &AccessRequest<'_>) -> Result<(), Refusal> {
         if request.actor.is_some_and(|actor| self.is(actor)) {
             Ok(())

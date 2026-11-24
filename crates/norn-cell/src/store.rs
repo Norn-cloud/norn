@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "native")]
 use tokio::sync::Notify;
 
+use crate::automation_outbox;
 use crate::codec::{canonical_json, hash_json};
 #[cfg(feature = "native")]
 use crate::engine::NativeEngine;
@@ -39,7 +40,7 @@ use crate::read::{
 use crate::system::{
     DEFINITION_ACTIVE, DEFINITION_ADMISSION_RECEIPT, DEFINITION_LAYOUT, DEFINITION_REGISTRY,
     DEFINITION_VERSION, INBOX, MARKING_CURRENT, MARKING_SNAPSHOT, MARKING_VERSION, META, OUTBOX,
-    RUN, STORE_FORMAT, SYSTEM_DDL, ensure_marking_subject, marking_subject,
+    RUN, STORE_FORMAT, ensure_marking_subject, marking_subject,
 };
 use crate::write::Writer;
 
@@ -2461,15 +2462,7 @@ impl<E: SqlEngine> CellStore<E> {
         // Ordered migrations see the layout they were written for: before
         // this engine's schema statements, inside the open transaction.
         crate::engine_release::upgrade(conn)?;
-        for statement in SYSTEM_DDL
-            .iter()
-            .chain(&crate::flow_run::DDL)
-            .chain(&crate::decision_ledger::DDL)
-            .chain(&crate::due_retry::DDL)
-        {
-            conn.execute_batch(statement)?;
-        }
-        conn.execute_batch(crate::decision_ledger::BACKFILL_APPROVED_CALLS)?;
+        crate::system::init_core_tables(conn)?;
         // Claim endpoints of bundles consumed before the table existed; a
         // no-op for every bundle already indexed.
         conn.execute(&crate::system::claim_endpoints_of("1"), params![])?;
@@ -3206,14 +3199,7 @@ impl<E: SqlEngine> CellStore<E> {
                     crate::engine_release::upgrade(&self.conn)?;
                     // A file provisioned before a system table existed gains it here,
                     // so the next run start or write finds it (idempotent DDL).
-                    for statement in SYSTEM_DDL
-            .iter()
-            .chain(&crate::flow_run::DDL)
-            .chain(&crate::decision_ledger::DDL)
-            .chain(&crate::due_retry::DDL) {
-                        self.conn.execute_batch(statement)?;
-                    }
-                    self.conn.execute_batch(crate::decision_ledger::BACKFILL_APPROVED_CALLS)?;
+                    crate::system::init_core_tables(&self.conn)?;
                     crate::retained::init(&self.conn)?;
                     crate::compute::materialize::init(&self.conn)?;
                     let binding = |key: &str| self.conn.query_optional(
@@ -3239,6 +3225,10 @@ impl<E: SqlEngine> CellStore<E> {
             }
             // S12: sibling handles fail closed on a durable fence.
             crate::open_checkpoint::check_fence(&self.conn)?;
+            let retained = match origin {
+                CommitOrigin::Retained(record) => Some(record),
+                CommitOrigin::Host | CommitOrigin::Current | CommitOrigin::Provisioning(..) => None,
+            };
             let actual_version = active_definition_version(&self.conn)?;
             let (version, install_record, synthetic_batch) = if let Some(install) = &installation {
                 let preflight = preflight_definition_install(
@@ -3246,7 +3236,7 @@ impl<E: SqlEngine> CellStore<E> {
                     &self.model,
                     install,
                     actual_version,
-                    match origin { CommitOrigin::Retained(record) => Some(record), CommitOrigin::Host | CommitOrigin::Current | CommitOrigin::Provisioning(..) => None },
+                    retained,
                 )?;
                 self.law_checked.set(preflight.migration.law_checked);
                 crate::migration::apply_model_migration(
@@ -3431,6 +3421,7 @@ impl<E: SqlEngine> CellStore<E> {
                     for change in record.retained.iter().chain(&record.riding) {
                         crate::retained::insert(
                             &self.conn,
+                            install.candidate_model,
                             &change.definition,
                             version,
                             commit_seq,
@@ -3449,6 +3440,7 @@ impl<E: SqlEngine> CellStore<E> {
                     )?;
                     Ok(())
                 })?;
+                automation_outbox::void_retired(&self.conn, record.retained.iter().chain(&record.riding), commit_seq)?;
                 self.conn.execute(
                     &format!("UPDATE \"{META}\" SET \"value\" = ?1 WHERE \"key\" = 'ddl_hash'"),
                     params![install.candidate_model.ddl_hash()],
@@ -3467,9 +3459,13 @@ impl<E: SqlEngine> CellStore<E> {
             }
             crate::flow_run::check_starts(&writer.reader(), effective_batch)?;
             crate::decision_ledger::check(&writer.reader(), effective_batch)?;
+            let watch = automation_outbox::capture_before(&writer.reader(), effective_batch)?;
             let written = writer.apply_writes()?;
             crate::flow_run::apply(&writer.reader(), effective_batch, &written, commit_seq)?;
             crate::decision_ledger::apply(&writer.reader(), effective_batch, commit_seq)?;
+            let automation_continuation = automation_outbox::record(
+                &writer.reader(), effective_batch, &written, commit_seq, version, &watch, retained,
+            )?;
             let quantity_result = writer.apply_quantity()?;
             probe(CommitPoint::FactsApplied)?;
             let linked = writer.apply_links(crate::link_guard::LinkGuardMode::from_origin(
@@ -3564,6 +3560,7 @@ impl<E: SqlEngine> CellStore<E> {
                         Some(crate::engine_release::STORAGE_VERSION)
                     }
                 },
+                automation_continuation,
                 entries,
             )?;
             probe(CommitPoint::ReceiptWritten)?;

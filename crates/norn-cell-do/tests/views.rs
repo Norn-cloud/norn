@@ -775,6 +775,7 @@ fn seeded_legacy_views_cell(legacy_views: &[(&str, &str, &Value)]) -> TestResult
                 payload_sha256: payload_sha256(&canonical),
                 payload: canonical,
                 signoff: None,
+                authority: None,
             },
             expected_revision: None,
         };

@@ -78,10 +78,14 @@ pub const CHANNEL: &[StorageVersion] = &[
         version: 6,
         change: "OPEN-CHECKPOINT-1 (#1533): _norn_open_checkpoint holds the last verified ledger head and its receipt root; an open verifies only the history after it",
     },
+    StorageVersion {
+        version: 7,
+        change: "#1424 U1: transactional automation trigger outbox (_norn_automation_outbox), lossless outbox continuation (_norn_automation_outbox_continuation), indexed trigger projection (_norn_retained_automation_trigger), and server-bound retained definition authority (_norn_retained_authority). The definitions.installed diff carries an optional retained.authority audit object for automation installs only.",
+    },
 ];
 
 /// The storage version this engine writes.
-pub const STORAGE_VERSION: u32 = 6;
+pub const STORAGE_VERSION: u32 = 7;
 
 /// The oldest storage version this engine upgrades in place. Raising it
 /// retires the steps below it; an older cell must first open on a bridge
@@ -340,6 +344,9 @@ fn migrate_to<E: SqlEngine>(_engine: &E, to: u32) -> Result<(), CellError> {
         // created by the schema statements that follow the chain; the upgrading
         // open then verifies the whole history and records its head there. No row
         // is rewritten.
+        // Version 7 (#1424 U1) adds the automation outbox, continuation,
+        // trigger projection, and retained authority tables through the schema
+        // statements that follow the chain. Previously committed rows are unchanged.
         2..=STORAGE_VERSION => Ok(()),
         _ => Err(CellError::EngineUpgradeUnsupported {
             cell: to.saturating_sub(1),
