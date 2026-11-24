@@ -72,15 +72,19 @@ fn aligned(value: Decimal, scale: u32) -> Result<i128, ArithmeticError> {
         .ok_or(ArithmeticError::Overflow)
 }
 
+/// Wide accumulator for decimal-valued subtree rollups.
+#[derive(Default)]
+pub struct DecimalAccumulator(crate::decimal_sum::DecimalSum);
+
 impl Quantity for Decimal {
-    type Sum = crate::decimal_sum::DecimalSum;
+    type Sum = DecimalAccumulator;
 
     fn accumulate(sum: &mut Self::Sum, term: &Self) -> Result<(), ArithmeticError> {
-        sum.push(*term).ok_or(ArithmeticError::Overflow)
+        sum.0.push(*term).ok_or(ArithmeticError::Overflow)
     }
 
     fn finish(sum: Self::Sum) -> Result<Self, ArithmeticError> {
-        sum.total().ok_or(ArithmeticError::Overflow)
+        sum.0.total().ok_or(ArithmeticError::Overflow)
     }
 
     fn zero() -> Self {

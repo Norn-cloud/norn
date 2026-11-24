@@ -31,20 +31,10 @@ pub fn add(sum: ExactSum, value: i64) -> Result<ExactSum, BoundExceeded> {
 /// # Errors
 /// Refuses a magnitude outside the bounded profile.
 pub fn decide(sum: ExactSum) -> Result<i128, BoundExceeded> {
-    decide_parts(sum.total().ok_or(BoundExceeded)?, sum.magnitude())
-}
-
-/// Apply the same decision to a transport's exact total and magnitude.
-///
-/// # Errors
-/// Refuses inconsistent magnitudes and sums outside the profile.
-pub fn decide_parts(total: i128, magnitude: U160) -> Result<i128, BoundExceeded> {
-    if magnitude > U160::from_u128(MAX_SUM.unsigned_abs())
-        || magnitude < U160::from_u128(total.unsigned_abs())
-    {
+    if sum.magnitude() > U160::from_u128(MAX_SUM.unsigned_abs()) {
         return Err(BoundExceeded);
     }
-    Ok(total)
+    sum.total().ok_or(BoundExceeded)
 }
 
 /// Divide same-unit sums, rounding once to scale six, midpoint away from zero.

@@ -5,14 +5,14 @@ use rust_decimal::Decimal;
 
 /// Splitting at the decimal point avoids ever scaling a large integer by 10^28.
 #[derive(Default)]
-pub struct DecimalSum {
+pub(crate) struct DecimalSum {
     whole: ExactSum,
     fractional: ExactSum,
 }
 
 impl DecimalSum {
     /// Include a decimal without rounding its coefficient.
-    pub fn push(&mut self, value: Decimal) -> Option<()> {
+    pub(crate) fn push(&mut self, value: Decimal) -> Option<()> {
         let divisor = 10_i128.checked_pow(value.scale())?;
         let whole = self.whole.add(value.mantissa().checked_div(divisor)?)?;
         let residual = value.mantissa().checked_rem(divisor)?;
@@ -24,7 +24,7 @@ impl DecimalSum {
 
     /// Normalize after cancellation, then check the final 96-bit coefficient.
     #[must_use]
-    pub fn total(&self) -> Option<Decimal> {
+    pub(crate) fn total(&self) -> Option<Decimal> {
         let fraction = self.fractional.total()?;
         let unit = 10_i128.checked_pow(28)?;
         let whole = self

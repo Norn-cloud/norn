@@ -449,15 +449,37 @@ fn assemble_row(
     {
         return Err(CellError::Engine("operand arity".to_owned()));
     }
+    if bucket.count > u64::from(u32::MAX) {
+        return Err(refused("core.compute.bound_exceeded"));
+    }
     let mut totals = Vec::with_capacity(arity);
     for (total, magnitude) in bucket.totals.iter().zip(&bucket.magnitude) {
         let total = coefficient_sum(total)?;
-        let magnitude = u128::try_from(coefficient_sum(magnitude)?)
-            .map_err(|_| CellError::Engine("negative magnitude".into()))?;
-        totals.push(
-            math::decide_parts(total, norn_ir::exact_sum::U160::from_u128(magnitude))
-                .map_err(|_| refused("core.compute.bound_exceeded"))?,
-        );
+        let magnitude = coefficient_sum(magnitude)?;
+        // From T=P-N and M=P+N recover the two nonnegative subtotals
+        // without forming M+T, which could overflow for an invalid response.
+        let excess = magnitude
+            .checked_sub(
+                total
+                    .checked_abs()
+                    .ok_or_else(|| refused("core.compute.bound_exceeded"))?,
+            )
+            .filter(|v| *v >= 0 && v & 1 == 0)
+            .ok_or_else(|| CellError::Engine("inconsistent bucket magnitude".into()))?;
+        let lesser = excess >> 1;
+        let greater = magnitude
+            .checked_sub(lesser)
+            .ok_or_else(|| refused("core.compute.bound_exceeded"))?;
+        let (pos, neg) = if total < 0 {
+            (lesser, greater)
+        } else {
+            (greater, lesser)
+        };
+        let sum = norn_ir::ExactSum::ZERO
+            .add(pos)
+            .and_then(|s| s.add(neg.wrapping_neg()))
+            .ok_or_else(|| refused("core.compute.bound_exceeded"))?;
+        totals.push(math::decide(sum).map_err(|_| refused("core.compute.bound_exceeded"))?);
     }
     let value_number = match totals.as_slice() {
         [sum] => Some(decimal(*sum)?),

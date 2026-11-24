@@ -271,7 +271,7 @@ impl<E: SqlEngine> CellStore<E> {
                     .get(bucket)
                     .ok_or_else(incomplete)?
                     .iter()
-                    .map(|n| decimal(*n))
+                    .map(|n| decimal(super::math::decide(*n).map_err(|_| incomplete())?))
                     .collect::<Result<Vec<_>, _>>()?;
                 if sums != row.totals {
                     return Err(incomplete());

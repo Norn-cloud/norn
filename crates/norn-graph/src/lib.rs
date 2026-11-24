@@ -27,5 +27,5 @@ pub use algorithms::{
 pub use graph::{
     Budget, BudgetExceeded, Direction, Error, Graph, Limit, reachability, topological_order,
 };
-pub use quantity::{ArithmeticError, Quantity};
+pub use quantity::{ArithmeticError, DecimalAccumulator, Quantity};
 pub use rust_decimal::Decimal;
