@@ -23,7 +23,7 @@ const DRAFT_PROPOSAL = {
   title: "Draft gap proposal",
   description: "Draft a definition diff citing episodes for review and replay.",
   objectKind: "learning.GapProposal",
-  effect: "create_object",
+  effect: "upsert_input_object",
   objectIdField: "proposalId",
   uiEffects: { irreversible: false, destructive: false, money: [] },
   inputSchema: {

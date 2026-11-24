@@ -20,7 +20,7 @@ const CURATE_CASE = {
   title: "Curate case",
   description: "Pin a measured episode as a ledger-referenced curated case.",
   objectKind: "learning.CuratedCase",
-  effect: "create_object",
+  effect: "upsert_input_object",
   objectIdField: "caseId",
   uiEffects: { irreversible: false, destructive: false, money: [] },
   inputSchema: {
@@ -75,7 +75,7 @@ const CREATE_EVAL_SET = {
   title: "New eval set",
   description: "Create an unsealed eval set under a split key.",
   objectKind: "learning.EvalSet",
-  effect: "create_object",
+  effect: "upsert_input_object",
   objectIdField: "evalSetId",
   uiEffects: { irreversible: false, destructive: false, money: [] },
   inputSchema: {
