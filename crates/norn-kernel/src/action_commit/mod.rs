@@ -70,7 +70,7 @@ pub use types::{
     OWNED_ROWS_TYPE, owned_rows_manifest_key,
 };
 
-use input::{action_link_endpoint, build_action_commands, check_action_record_size};
+use input::{build_action_commands, check_action_record_size};
 use owned_rows::commit_parent_rows;
 use receipt::consume_receipt;
 use slice::{authorize_slice_type, reference_read_proof};

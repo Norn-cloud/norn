@@ -857,20 +857,6 @@ pub fn actor_derived_fields(action: &ActionRoot) -> std::collections::BTreeSet<S
         .collect()
 }
 
-pub(super) fn action_link_endpoint<X>(
-    input: &JsonObject,
-    object_type: &str,
-    field: &str,
-) -> Result<crate::cell_host::FactKey, ActionRefusal<X>> {
-    input
-        .get(field)
-        .and_then(action_link_key)
-        .map(|key| crate::cell_host::FactKey::new(object_type, key))
-        .ok_or_else(|| ActionRefusal::InvalidInput {
-            field: field.to_owned(),
-        })
-}
-
 pub(super) fn action_link_key(value: &RuntimeValue) -> Option<&str> {
     value.as_str().filter(|key| !key.trim().is_empty())
 }
