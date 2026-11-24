@@ -267,8 +267,18 @@ pass when the reply came after the work.
 restarts and backups report **not tested**). Point it only at a fresh,
 isolated deployment made for the run, never at a stage that serves anyone:
 
-1. Build the project as above (a `fixtures` build; the production deploy
-   script refuses one).
+1. Build the Worker project in `$P` (a `fixtures` build; the production
+   deploy script refuses one), next to the reference written above:
+
+   ```sh
+   cargo build --locked -p norn-cell-do --features fixtures --target wasm32-unknown-unknown --profile wasm-release
+   wasm-bindgen "$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release/norn_cell_do.wasm" --target web --out-name norn_cell_do --out-dir "$P/pkg"
+   cargo rustc --locked -p norn-cell --no-default-features --example workers_sql --target wasm32-unknown-unknown --profile wasm-release
+   wasm-bindgen "$CARGO_TARGET_DIR/wasm32-unknown-unknown/wasm-release/examples/workers_sql.wasm" --target web --out-name workers_sql --out-dir "$P/probe-pkg"
+   cp apps/norn-cell-do/{worker.mjs,subscribe.mjs} "$P/"
+   cp apps/norn-cell-do/conformance/worker.mjs "$P/conformance.mjs"
+   cp apps/norn-cell-do/conformance/wrangler.json "$P/"
+   ```
 2. Write a separate, untracked opt-in config for a new, throwaway name and
    deploy it; the checked-in `wrangler.json` stays disabled. `NORN_LINEAGE_KEY`
    is the reference's public lineage key (the ledger heads only match native
