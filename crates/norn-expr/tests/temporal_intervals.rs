@@ -19,7 +19,8 @@
     clippy::large_futures
 )]
 
-//! `norn-zen/7` temporal interval and DST resolution conformance tests (#1584).
+//! `norn-zen/7` temporal interval and DST resolution conformance tests (#1584),
+//! and the Allen-relation and civil-day laws of `verification/owl-time-v1` (#1713).
 
 mod support;
 
@@ -173,6 +174,337 @@ fn zen7_temporal_intervals_dst_resolution_and_no_epoch_builtins() {
     ] {
         refused(forbidden, &Type::Json, OUTSIDE);
     }
+}
+
+/// Every proper interval `[start, end)` with endpoints in `0..6`.
+fn grid_intervals() -> Vec<(u8, u8)> {
+    (0..6_u8)
+        .flat_map(|start| (start + 1..6).map(move |end| (start, end)))
+        .collect()
+}
+
+/// The grid instant `second` as a timestamp literal.
+fn grid_timestamp(second: u8) -> String {
+    format!("timestamp('2025-03-09T14:00:0{second}Z')")
+}
+
+/// Exhaustive-finite: all 225 ordered pairs of the 15 proper intervals with
+/// endpoints in `0..6`, and all 3,375 triples for the compositions (#1713).
+#[test]
+fn allen_relations_partition_the_grid_and_agree_with_the_interval_builtins() {
+    use norn_expr::temporal::{AllenRelation, allen_relation};
+
+    let intervals = grid_intervals();
+    assert_eq!(intervals.len(), 15);
+    let mut seen = Vec::new();
+    for &(a, b) in &intervals {
+        for &(c, d) in &intervals {
+            let pair = format!("[{a}, {b}) and [{c}, {d})");
+
+            // Jointly exhaustive and pairwise disjoint: exactly one endpoint
+            // predicate holds, and the classifier returns it.
+            let relation = allen_relation(&a, &b, &c, &d).expect("proper intervals");
+            let holding: Vec<AllenRelation> = AllenRelation::ALL
+                .into_iter()
+                .filter(|candidate| candidate.holds(&a, &b, &c, &d))
+                .collect();
+            assert_eq!(holding, vec![relation], "{pair}");
+
+            // Converse: swapping the intervals swaps every relation.
+            assert_eq!(
+                allen_relation(&c, &d, &a, &b),
+                Some(relation.converse()),
+                "{pair}"
+            );
+            for candidate in AllenRelation::ALL {
+                assert_eq!(candidate.converse().converse(), candidate);
+                assert_eq!(
+                    candidate.holds(&a, &b, &c, &d),
+                    candidate.converse().holds(&c, &d, &a, &b),
+                    "{candidate:?} for {pair}"
+                );
+            }
+
+            // Boundary: the relation shares an instant exactly when some grid
+            // instant lies in both half-open intervals.
+            let shared = (0..6_u8).any(|t| a <= t && t < b && c <= t && t < d);
+            assert_eq!(relation.shares_instant(), shared, "{pair}");
+            assert_eq!(
+                shared,
+                !matches!(
+                    relation,
+                    AllenRelation::Before
+                        | AllenRelation::After
+                        | AllenRelation::Meets
+                        | AllenRelation::MetBy
+                ),
+                "{pair}"
+            );
+
+            // The shipped `norn-zen/7` builtins agree on the same intervals.
+            let args = [a, b, c, d].map(grid_timestamp).join(", ");
+            let builtin = |name: &str| {
+                eval(&format!("{name}({args})"), Value::object::<&str>([]))
+                    .unwrap_or_else(|error| panic!("{name} for {pair}: {error:?}"))
+            };
+            assert_eq!(builtin("intervals_overlap"), Value::Bool(shared), "{pair}");
+            let gap = i16::from(c) - i16::from(b);
+            let gap = gap.max(i16::from(a) - i16::from(d)).max(0);
+            assert_eq!(
+                builtin("interval_gap_seconds"),
+                num(&gap.to_string()),
+                "{pair}"
+            );
+            assert_eq!(
+                gap > 0,
+                matches!(relation, AllenRelation::Before | AllenRelation::After),
+                "{pair}"
+            );
+            let intersection = (i16::from(b.min(d)) - i16::from(a.max(c))).max(0);
+            assert_eq!(
+                builtin("interval_intersection_seconds"),
+                num(&intersection.to_string()),
+                "{pair}"
+            );
+            assert_eq!(intersection > 0, shared, "{pair}");
+
+            if !seen.contains(&relation) {
+                seen.push(relation);
+            }
+        }
+    }
+    // Non-vacuity: the grid realizes every one of the thirteen relations.
+    assert_eq!(seen.len(), AllenRelation::ALL.len());
+
+    // Adjacent `[a, b)` and `[b, c)` meet without overlapping.
+    assert_eq!(allen_relation(&0, &2, &2, &5), Some(AllenRelation::Meets));
+    assert!(!AllenRelation::Meets.shares_instant());
+
+    // Compositions used for scheduling.
+    let relate = |x: (u8, u8), y: (u8, u8)| allen_relation(&x.0, &x.1, &y.0, &y.1);
+    let mut composed = 0_u32;
+    for &x in &intervals {
+        for &y in &intervals {
+            for &z in &intervals {
+                let expected = match (relate(x, y), relate(y, z)) {
+                    (Some(AllenRelation::Before), Some(AllenRelation::Before))
+                    | (Some(AllenRelation::Meets), Some(AllenRelation::Meets))
+                    | (Some(AllenRelation::Before), Some(AllenRelation::Meets))
+                    | (Some(AllenRelation::Meets), Some(AllenRelation::Before))
+                    | (Some(AllenRelation::During), Some(AllenRelation::Before)) => {
+                        AllenRelation::Before
+                    }
+                    (Some(AllenRelation::During), Some(AllenRelation::During)) => {
+                        AllenRelation::During
+                    }
+                    (Some(AllenRelation::Contains), Some(AllenRelation::Contains)) => {
+                        AllenRelation::Contains
+                    }
+                    (Some(AllenRelation::After), Some(AllenRelation::After)) => {
+                        AllenRelation::After
+                    }
+                    _ => continue,
+                };
+                assert_eq!(relate(x, z), Some(expected), "{x:?} {y:?} {z:?}");
+                composed += 1;
+            }
+        }
+    }
+    assert!(composed > 0);
+
+    // Fail closed: an improper interval has no relation and satisfies none.
+    for (start, end, other_start, other_end) in [(3, 3, 0, 1), (4, 2, 0, 1), (0, 1, 5, 5)] {
+        assert_eq!(allen_relation(&start, &end, &other_start, &other_end), None);
+        assert!(
+            AllenRelation::ALL
+                .into_iter()
+                .all(|relation| !relation.holds(&start, &end, &other_start, &other_end))
+        );
+    }
+}
+
+/// A civil day is one calendar date; its physical length is whatever the
+/// pinned zone rules make it. Real 23-hour, 24-hour and 25-hour days (and
+/// Lord Howe's 23.5-hour and 24.5-hour days) from both pinned tzdb bundles,
+/// probed at every wall-clock minute (#1713).
+#[test]
+fn civil_days_keep_their_physical_length_and_dst_gaps_fail_closed() {
+    use norn_expr::temporal::{
+        DstPolicy, TemporalError, TzdbBundle, resolve_local_timestamp_in, timestamp_ordering_key,
+    };
+
+    const POLICIES: [DstPolicy; 3] = [DstPolicy::Reject, DstPolicy::Earlier, DstPolicy::Later];
+    // (zone, civil day, next civil day, gap minutes, fold minutes, physical seconds)
+    const DAYS: [(&str, &str, &str, i64, i64, i64); 8] = [
+        (
+            "America/New_York",
+            "2025-03-09",
+            "2025-03-10",
+            60,
+            0,
+            82_800,
+        ),
+        ("America/New_York", "2025-06-15", "2025-06-16", 0, 0, 86_400),
+        (
+            "America/New_York",
+            "2025-11-02",
+            "2025-11-03",
+            0,
+            60,
+            90_000,
+        ),
+        // Egypt moves its clocks at local midnight.
+        ("Africa/Cairo", "2025-04-25", "2025-04-26", 60, 0, 82_800),
+        ("Africa/Cairo", "2025-07-01", "2025-07-02", 0, 0, 86_400),
+        ("Africa/Cairo", "2025-10-30", "2025-10-31", 0, 60, 90_000),
+        // Lord Howe Island shifts by half an hour.
+        (
+            "Australia/Lord_Howe",
+            "2025-10-05",
+            "2025-10-06",
+            30,
+            0,
+            84_600,
+        ),
+        (
+            "Australia/Lord_Howe",
+            "2025-04-06",
+            "2025-04-07",
+            0,
+            30,
+            88_200,
+        ),
+    ];
+
+    let seconds = |utc: &str| timestamp_ordering_key(utc).expect("canonical UTC").0;
+    for bundle in [TzdbBundle::v2025b(), TzdbBundle::v2026c()] {
+        for (zone, day, next, gap, fold, physical) in DAYS {
+            let context = format!("{zone} {day} (tzdb {})", bundle.release());
+            let resolve =
+                |local: &str, policy| resolve_local_timestamp_in(local, zone, policy, bundle);
+            // The first instant of a civil day: its first wall-clock minute
+            // that exists (01:00 when the clocks spring forward at midnight).
+            let first_instant = |date: &str| {
+                (0..1_440)
+                    .find_map(|minute| {
+                        let local = format!("{date}T{:02}:{:02}:00", minute / 60, minute % 60);
+                        resolve(&local, DstPolicy::Earlier).ok()
+                    })
+                    .map(|utc| seconds(&utc))
+                    .expect("a civil day has an instant")
+            };
+
+            let (mut gap_minutes, mut fold_minutes) = (0_i64, 0_i64);
+            for minute in 0..1_440 {
+                let local = format!("{day}T{:02}:{:02}:00", minute / 60, minute % 60);
+                let [reject, earlier, later] = POLICIES.map(|policy| resolve(&local, policy));
+                match reject {
+                    // An unambiguous wall time needs no policy.
+                    Ok(_) => {
+                        assert_eq!(earlier, reject, "{context} {local}");
+                        assert_eq!(later, reject, "{context} {local}");
+                    }
+                    // A nonexistent wall time is refused under every policy.
+                    Err(TemporalError::NonexistentLocalTime) => {
+                        gap_minutes += 1;
+                        assert_eq!(earlier, reject, "{context} {local}");
+                        assert_eq!(later, reject, "{context} {local}");
+                    }
+                    // A repeated wall time is refused unless a side is chosen,
+                    // and the two sides are the fold apart.
+                    Err(TemporalError::AmbiguousLocalTime) => {
+                        fold_minutes += 1;
+                        let earlier = seconds(&earlier.expect("earlier side"));
+                        let later = seconds(&later.expect("later side"));
+                        assert_eq!(later - earlier, fold * 60, "{context} {local}");
+                    }
+                    Err(other) => panic!("{context} {local}: {other:?}"),
+                }
+            }
+            assert_eq!((gap_minutes, fold_minutes), (gap, fold), "{context}");
+
+            // One civil day, and never a silently assumed 24 hours.
+            let length = first_instant(next) - first_instant(day);
+            assert_eq!(length, physical, "{context}");
+            assert_eq!(length, 86_400 - gap * 60 + fold * 60, "{context}");
+        }
+
+        // Cairo, 2025-04-25: the civil day has no midnight. The last second of
+        // the 24th and the first instant of the 25th (01:00) are one second
+        // apart, and nothing in between resolves under any policy.
+        let cairo =
+            |local: &str, policy| resolve_local_timestamp_in(local, "Africa/Cairo", policy, bundle);
+        for policy in POLICIES {
+            for missing in [
+                "2025-04-25T00:00:00",
+                "2025-04-25T00:30:00",
+                "2025-04-25T00:59:59.999999999",
+            ] {
+                assert_eq!(
+                    cairo(missing, policy),
+                    Err(TemporalError::NonexistentLocalTime),
+                    "{missing} under {policy:?}"
+                );
+            }
+            assert_eq!(
+                cairo("2025-04-24T23:59:59", policy).as_deref(),
+                Ok("2025-04-24T21:59:59Z")
+            );
+            assert_eq!(
+                cairo("2025-04-25T01:00:00", policy).as_deref(),
+                Ok("2025-04-24T22:00:00Z")
+            );
+        }
+    }
+
+    // The same separation in checked expressions: one civil day apart is
+    // 23, 24 or 25 physical hours, and a physical day added to a 23-hour
+    // day's midnight lands at 01:00 on the next civil day.
+    let empty = || Value::object::<&str>([]);
+    let physical = |zone: &str, day: &str, next: &str| {
+        format!(
+            "seconds_between(resolve_local_timestamp('{day}T00:00:00', '{zone}', 'reject'), \
+             resolve_local_timestamp('{next}T00:00:00', '{zone}', 'reject'))"
+        )
+    };
+    for (zone, day, next, expected) in [
+        ("America/New_York", "2025-03-09", "2025-03-10", "82800"),
+        ("America/New_York", "2025-06-15", "2025-06-16", "86400"),
+        ("America/New_York", "2025-11-02", "2025-11-03", "90000"),
+        ("Africa/Cairo", "2025-10-30", "2025-10-31", "90000"),
+    ] {
+        assert_eq!(
+            eval(
+                &format!("days_between(date('{day}'), date('{next}'))"),
+                empty()
+            )
+            .unwrap(),
+            num("1")
+        );
+        assert_eq!(
+            eval(&physical(zone, day, next), empty()).unwrap(),
+            num(expected),
+            "{zone} {day}"
+        );
+    }
+    assert_eq!(
+        eval(
+            "add_seconds(resolve_local_timestamp('2025-03-09T00:00:00', 'America/New_York', 'reject'), 86400) \
+             == resolve_local_timestamp('2025-03-10T01:00:00', 'America/New_York', 'reject')",
+            empty()
+        )
+        .unwrap(),
+        Value::Bool(true)
+    );
+    // Cairo's 2025-04-25 has no midnight, so measuring it from midnight is a
+    // refusal, not a 24-hour answer.
+    assert!(matches!(
+        eval(
+            &physical("Africa/Cairo", "2025-04-25", "2025-04-26"),
+            empty()
+        ),
+        Err(ExprError::Evaluation { .. })
+    ));
 }
 
 #[test]

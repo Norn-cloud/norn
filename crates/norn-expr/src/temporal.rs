@@ -7,6 +7,9 @@
 //! subsecond precision is preserved to nanoseconds. Naming-series calendar
 //! rendering uses pinned IANA timezone data and an explicitly supplied commit
 //! instant; no clock or locale is consulted.
+//!
+//! [`AllenRelation`] and [`allen_relation`] classify two proper half-open
+//! intervals `[start, end)` by Allen's thirteen relations.
 
 use std::fmt;
 use std::ops::Range;
@@ -15,6 +18,9 @@ use jiff::civil::{Date, DateTime, Time};
 use jiff::tz::{AmbiguousOffset, TimeZone};
 use jiff::{Span, Timestamp};
 
+mod allen;
+
+pub use self::allen::{AllenRelation, allen_relation};
 pub use crate::tzdb::{
     LocalCivilWallTime, LocalOffsetResolution, MAX_TZDB_BUNDLE_BYTES, MAX_TZDB_RELEASE_LEN,
     MAX_TZDB_ZONE_BLOB_BYTES, MAX_TZDB_ZONE_NAME_LEN, MAX_TZDB_ZONES, TZDB_BUNDLE_MAGIC,
