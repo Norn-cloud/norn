@@ -160,7 +160,7 @@ test("misfit board & learning charts: renders both charts, exact tables, D53 sup
   // Clicking "Episodes" navigates to /learning/episodes without sending a dotted law filter (S2).
   await creditRow.getByRole("link", { name: "Episodes" }).click()
   await expect(page).toHaveURL(/\/learning\/episodes$/)
-  expect(episodeQueries.length).toBeGreaterThan(0)
+  await expect.poll(() => episodeQueries.length).toBeGreaterThan(0)
   expect(episodeQueries.every((u) => !(u.searchParams.get("filter") ?? "").includes("."))).toBe(true)
 })
 

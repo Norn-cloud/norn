@@ -215,6 +215,16 @@ export interface PathEquation {
 /** The EntityIR extension slot normative rules live in (norn-checker `NORMATIVE_SLOT`). */
 export const NORMATIVE_SLOT = "norn.normative/1.0.0"
 
+/** A declared parent-owned ordered collection of child objects (`OwnedChildCollection`). */
+export interface OwnedChildCollectionDecl {
+  readonly id: string
+  readonly childType: string
+  readonly rowIdProperty: string
+  readonly orderingKey: string
+  readonly cascadeOnParentDelete: boolean
+  readonly maxRows: number
+}
+
 export interface ObjectTypeDef extends TypeMetaBase {
   readonly pathEquations?: ReadonlyArray<PathEquation>
   /** Obligations, prohibitions and permissions over this type, in the `norn.normative/1.0.0` slot. */
@@ -223,6 +233,7 @@ export interface ObjectTypeDef extends TypeMetaBase {
   readonly extends?: string
   readonly implements: ReadonlyArray<string>
   readonly links: ReadonlyArray<LinkDecl>
+  readonly ownedCollections?: ReadonlyArray<OwnedChildCollectionDecl>
   readonly identity: ReadonlyArray<KeyDecl>
   readonly lifecycles: ReadonlyArray<LifecycleDecl>
   readonly at?: SourceLocation
@@ -279,11 +290,12 @@ export function objectType(
     readonly extends?: string | ObjectTypeDef
     readonly implements?: ReadonlyArray<string | InterfaceDef>
     readonly links?: ReadonlyArray<LinkDecl>
+    readonly ownedCollections?: ReadonlyArray<OwnedChildCollectionDecl>
     readonly identity?: ReadonlyArray<KeyDecl>
     readonly lifecycles?: ReadonlyArray<LifecycleDecl>
   } & At,
 ): ObjectTypeDef {
-  const { at, extends: supertype, implements: implemented = [], links = [], identity = [], lifecycles = [], ...rest } = meta
+  const { at, extends: supertype, implements: implemented = [], links = [], ownedCollections = [], identity = [], lifecycles = [], ...rest } = meta
   return located(
     {
       _tag: "ObjectType" as const,
@@ -291,6 +303,7 @@ export function objectType(
       ...(supertype === undefined ? {} : { extends: typeof supertype === "string" ? supertype : supertype.name }),
       implements: implemented.map((i) => (typeof i === "string" ? i : i.name)),
       links: [...links],
+      ...(ownedCollections.length > 0 ? { ownedCollections: [...ownedCollections] } : {}),
       identity: [...identity],
       lifecycles: [...lifecycles],
     },
@@ -395,6 +408,7 @@ export function lowerEntity(def: EntityDef, options: EnvelopeOptions): EntityBui
                 cardinality: cardinalityJson(l.cardinality),
               })),
             ),
+            ownedCollections: omitEmpty(def.ownedCollections ?? []),
             identity: omitEmpty(def.identity),
             lifecycles: omitEmpty(
               def.lifecycles.map((l) => ({

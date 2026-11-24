@@ -69,6 +69,7 @@ pub mod jdm;
 pub mod layout;
 pub mod limit_profile;
 pub mod lineage;
+pub mod link_change;
 pub mod mapping;
 pub mod mapping_evidence;
 pub mod marking;
@@ -188,7 +189,7 @@ pub use flow_source_map::{
 pub use jdm::{JdmGraph, JdmNode, JdmNodeType};
 pub use layout::{
     ArtifactLayout, CanvasPosition, ColumnLayout, EdgeLayout, LAYOUT_SIDECAR_VERSION, LayoutField,
-    LayoutSidecar, LayoutViewport, NodeLayout, RowLayout,
+    LayoutSidecar, LayoutViewport, NodeLayout, RowLayout, layout_sidecar_schema,
 };
 pub use limit_profile::{
     DecideBudget, EnvelopeLimits, HelperLimits, LIMIT_PROFILE_HASH_PROFILE, LimitProfileRef,
@@ -198,6 +199,9 @@ pub use limit_profile::{
 pub use lineage::{
     DecisionRef, LineageCommit, LineageInput, LineageLink, LineageObject, LineageObservation,
     LineageTrigger, commit_stable_id, object_stable_id,
+};
+pub use link_change::{
+    LINK_CHANGE_MEMBERS, LINK_CHANGE_REQUIRED_MEMBERS, LinkChange, LinkChangeOp, link_change_schema,
 };
 pub use marking::{MARKING_ID_PATTERN, MarkingId, MarkingIr, MarkingSeverity, MaskPolicy};
 pub use members::{EmptyList, IrVersion01, JsonFalse, ProposalMetadata, WholeNumber};
@@ -210,9 +214,9 @@ pub use provenance::{
     UTC_TIMESTAMP_PATTERN, UtcTimestamp, instance_provenance_schema,
 };
 pub use rule::{
-    DECIDE_INPUT_MEMBERS, DECIDE_OUTPUT_MEMBERS, JsonObject, MAX_RULE_CAUSAL_DEPTH,
-    RULE_IR_V1_VERSION, RULE_IR_V2_VERSION, RuleContractV2, RuleDecisionV1, RuleRoot,
-    RuleSourceCommand, RuleTrigger, SliceDeclaration, SliceKey,
+    DECIDE_INPUT_MEMBERS, DECIDE_OPTIONAL_OUTPUT_MEMBERS, DECIDE_OUTPUT_MEMBERS, JsonObject,
+    MAX_RULE_CAUSAL_DEPTH, RULE_IR_V1_VERSION, RULE_IR_V2_VERSION, RuleContractV2, RuleDecisionV1,
+    RuleRoot, RuleSourceCommand, RuleTrigger, SliceDeclaration, SliceKey,
 };
 pub use runtime::{Decimal, RuntimeObject, RuntimeValue, RuntimeValueError, WIRE_DECIMAL_GRAMMAR};
 pub use sealing::{
@@ -2211,12 +2215,6 @@ pub fn diagnostic_severity_schema() -> Schema {
 #[must_use]
 pub fn diagnostic_remediation_schema() -> Schema {
     schema_for!(DiagnosticRemediation)
-}
-
-/// JSON Schema for the versioned editor-layout sidecar.
-#[must_use]
-pub fn layout_sidecar_schema() -> Schema {
-    schema_for!(LayoutSidecar)
 }
 
 /// Emit the JSON Schema for the closed payload root selected by an envelope kind.

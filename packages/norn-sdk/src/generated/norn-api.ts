@@ -9731,7 +9731,7 @@ export interface components {
             optional?: boolean;
         };
         /** @description Where a [`SliceDeclaration`]'s key comes from. */
-        NornIrSliceKey: components["schemas"]["NornIrSliceKeyOneOf0"] | "triggerObject" | "triggerBefore" | "triggerAfter" | "triggerChanges" | components["schemas"]["NornIrSliceKeyOneOf5"] | components["schemas"]["NornIrSliceKeyOneOf6"];
+        NornIrSliceKey: components["schemas"]["NornIrSliceKeyOneOf0"] | "triggerObject" | "triggerBefore" | "triggerAfter" | "triggerChanges" | components["schemas"]["NornIrSliceKeyOneOf5"] | components["schemas"]["NornIrSliceKeyOneOf6"] | components["schemas"]["NornIrSliceKeyOneOf7"];
         /** @description A unique effective parameter selected from an earlier authorized link list. */
         NornIrSliceKeyOneOf0: {
             parameter: components["schemas"]["NornIrSliceKeyOneOf0PropertyParameter"];
@@ -9778,6 +9778,32 @@ export interface components {
             from: string;
             /** @description The link id, declared on that entry's type or a supertype. */
             link: string;
+        };
+        /**
+         * @description Bounded predicate read over stored objects of the entry's type, fenced
+         *     into the commit's `predicate_reads` (`TXN-PHANTOM`, #1586).
+         */
+        NornIrSliceKeyOneOf7: {
+            predicate: components["schemas"]["NornIrSliceKeyOneOf7PropertyPredicate"];
+        };
+        NornIrSliceKeyOneOf7PropertyPredicate: {
+            filter?: components["schemas"]["NornIrSliceKeyOneOf7PropertyPredicatePropertyFilter"];
+            /**
+             * Format: uint32
+             * @description Optional cap on matching objects (further bounded by the limit
+             *     profile's `slice.max_records`). Exceeding refuses; never truncates.
+             */
+            maxItems?: number;
+            /** @description Optional window over one date or timestamp property. */
+            window?: components["schemas"]["NornIrAggregateWindow"];
+        };
+        /**
+         * @description Equality filter: each stored indexed-scalar property must equal the
+         *     named action input field. An empty filter matches every object of
+         *     the type within the bound.
+         */
+        NornIrSliceKeyOneOf7PropertyPredicatePropertyFilter: {
+            [key: string]: string;
         };
         /** @description Bounds on the declared input slice (§1 row 3), enforced while reading. */
         NornIrSliceLimits: {

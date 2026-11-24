@@ -117,7 +117,7 @@ where
         .clone_from(&preparation.precondition_outcomes);
     record.parameter_pins.clone_from(&slice.parameter_pins);
     check_action_record_size::<H::Error>(call.action, &record, limits)?;
-    let mut changes = if let Some(rule) = rule {
+    let (mut changes, decision_links) = if let Some(rule) = rule {
         let output = rule.evaluate(
             call,
             &preparation.effective_input,
@@ -167,9 +167,9 @@ where
                 )?;
             }
         }
-        output.facts
+        (output.facts, output.links)
     } else {
-        Vec::new()
+        (Vec::new(), Vec::new())
     };
     let receipt = match accept_receipt {
         Some(declaration) => {
@@ -206,6 +206,7 @@ where
             recorded,
             record,
             series_candidate: None,
+            decision_links,
             receipt,
         },
         EnvelopePolicy { limits, meter },
