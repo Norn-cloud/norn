@@ -468,3 +468,83 @@ test("DST spring gap is flagged without shifting; fall repeat matches by epoch i
     starts_at: "2026-11-01T01:30:00-05:00",
   })
 })
+
+test("callAction pins submissions to the bound scope without re-reading /api/me and surfaces 409 workspace.changed", async () => {
+  let meReads = 0
+  let sentUrl: URL | null = null
+  let sentHeaders: Headers | null = null
+  const fetcher = async (input: string, init?: RequestInit) => {
+    const url = new URL(input, "https://studio.test")
+    if (url.pathname === "/api/me") {
+      meReads += 1
+      // Even if the session switched elsewhere to org_other, a bound form must never re-read /api/me.
+      return Response.json({ user: { id: "u" }, organization: { id: "org_other", name: "Other", role: "owner" }, environmentId: "env_other" })
+    }
+    sentUrl = url
+    sentHeaders = new Headers(init?.headers)
+    return Response.json({ format: "norn/refusal@2", code: "workspace.changed", category: "conflict", retryable: false, reason: null, message: "Your active workspace changed. Reload the page before submitting.", explanation: "" }, { status: 409 })
+  }
+  const result = await callAction("canon.holding.adjust", '{"id":"h1","quantity":"1.000"}', "k-stale", fetcher, { orgId: "org_original", environmentId: "env_original" })
+  expect(meReads).toBe(0)
+  expect(Object.fromEntries(sentUrl!.searchParams)).toEqual({ orgId: "org_original", environmentId: "env_original" })
+  expect(sentHeaders!.get("x-norn-expected-org")).toBe("org_original")
+  expect(sentHeaders!.get("x-norn-expected-env")).toBe("env_original")
+  expect(result).toEqual({
+    kind: "refused",
+    status: 409,
+    code: "workspace.changed",
+    message: "Your active workspace changed. Reload the page before submitting.",
+    category: "conflict",
+    retryable: false,
+    explanation: "",
+    diagnostics: [],
+  })
+})
+
+test("callAction preserves an explicit null scope pin and notifies onScopeMismatch on 409 workspace.changed without replaying", async () => {
+  // 1. Explicit `{ scope: null }` returns no-cell with zero network calls even if a fetcher would report another scope.
+  let calls = 0
+  const noCell = await callAction(
+    "canon.holding.adjust",
+    "{}",
+    "k-nocell",
+    async () => { calls += 1; return Response.json({}) },
+    { scope: null },
+  )
+  expect(noCell).toEqual({ kind: "no-cell" })
+  expect(calls).toBe(0)
+
+  // 2. On 409 workspace.changed, onScopeMismatch receives the re-read scope and the write is never replayed.
+  let writes = 0
+  const observed: ({ orgId: string; environmentId: string } | null | undefined)[] = []
+  const mismatchFetcher = async (input: string) => {
+    const url = new URL(input, "https://studio.test")
+    if (url.pathname === "/api/me") {
+      return Response.json({ organization: { id: "org_new" }, environmentId: "env_new" })
+    }
+    writes += 1
+    return Response.json({ format: "norn/refusal@2", code: "workspace.changed", category: "conflict", retryable: false, reason: null, message: "Workspace changed", explanation: "" }, { status: 409 })
+  }
+  const refused = await callAction("canon.holding.adjust", "{}", "k-learning", mismatchFetcher, {
+    scope: { orgId: "org_old", environmentId: "env_old" },
+    onScopeMismatch: (actual) => { observed.push(actual) },
+  })
+  expect(writes).toBe(1)
+  expect(observed).toEqual([{ orgId: "org_new", environmentId: "env_new" }])
+  expect(refused).toMatchObject({ kind: "refused", status: 409, code: "workspace.changed" })
+
+  // 3. If the follow-up /api/me read fails (503/timeout), onScopeMismatch receives undefined (not null)
+  //    so callers close the old gate without overwriting ["studio-scope"] with null ("no cell").
+  const outageObserved: ({ orgId: string; environmentId: string } | null | undefined)[] = []
+  const outageFetcher = async (input: string) => {
+    const url = new URL(input, "https://studio.test")
+    if (url.pathname === "/api/me") return new Response("unavailable", { status: 503 })
+    return Response.json({ format: "norn/refusal@2", code: "workspace.changed", category: "conflict", retryable: false, reason: null, message: "Workspace changed", explanation: "" }, { status: 409 })
+  }
+  const outageRefused = await callAction("canon.holding.adjust", "{}", "k-outage", outageFetcher, {
+    scope: { orgId: "org_old", environmentId: "env_old" },
+    onScopeMismatch: (actual) => { outageObserved.push(actual) },
+  })
+  expect(outageObserved).toEqual([undefined])
+  expect(outageRefused).toMatchObject({ kind: "refused", status: 409, code: "workspace.changed" })
+})

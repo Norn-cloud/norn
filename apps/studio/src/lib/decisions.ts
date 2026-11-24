@@ -1,4 +1,5 @@
 import { cellCall, defaultFetch, humanize, type CellResult, type Diagnostic, type Fetch } from "./cell-read.ts"
+import type { StudioScope } from "./definitions.ts"
 import type { ActionSummary } from "../../../../packages/norn-sdk/src/index.ts"
 import type { ParkedCall } from "./screen/call.ts"
 
@@ -103,11 +104,11 @@ export async function listDecisions(options: { readonly flow?: string; readonly 
 /** The count for the shell's badge: `limit=0`. */
 export const countDecisions = (fetcher: Fetch = defaultFetch) => listDecisions({ limit: 0 }, fetcher)
 
-export async function decide(id: string, body: { readonly choice: string; readonly note?: string }, idempotencyKey: string, fetcher: Fetch = defaultFetch): Promise<DecideResult> {
+export async function decide(id: string, body: { readonly choice: string; readonly note?: string }, idempotencyKey: string, fetcher: Fetch = defaultFetch, boundScope?: StudioScope | null): Promise<DecideResult> {
   const payload = { choice: body.choice, ...body.note ? { note: body.note } : {}, idempotencyKey }
   const result = await cellCall<Decided>(`/v1/decisions/${encodeURIComponent(id)}:decide`, {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload),
-  }, fetcher)
+  }, fetcher, boundScope)
   switch (result.kind) {
     case "ok": return { kind: "decided", decided: result.value }
     case "refused": {

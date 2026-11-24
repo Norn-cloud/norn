@@ -2,6 +2,7 @@ import { AtSign, CircleCheck, CreditCard, Hash, Landmark, LoaderCircle, MapPin, 
 import { Fragment, useState, type CSSProperties } from "react"
 import { cn } from "@/lib/utils"
 import { cellCall } from "@/lib/cell-read"
+import { usePinnedScope } from "@/lib/session"
 
 /**
  * PRIVACY-GUARD-1 in Studio: what the model was sent and what came back. The cell tokenized the
@@ -90,6 +91,7 @@ function Flow({ model }: { readonly model: string }) {
 }
 
 export function SafePrompt({ guard }: { readonly guard: GuardDocument }) {
+  const pinnedScope = usePinnedScope(guard.guardId)
   const [original, setOriginal] = useState<{ readonly kind: "idle" } | { readonly kind: "busy" } | { readonly kind: "shown"; readonly segments: readonly RestoredSegment[] } | { readonly kind: "error"; readonly message: string }>({ kind: "idle" })
   const revealable = guard.tokens.some((token) => token.revealable)
   const legend = guard.tokens.filter((token, index, all) => all.findIndex((other) => other.kind === token.kind) === index || all.length <= 6)
@@ -101,7 +103,7 @@ export function SafePrompt({ guard }: { readonly guard: GuardDocument }) {
     const result = await cellCall<{ segments: RestoredSegment[] }>(`/v1/guard/${guard.guardId}:restore`, {
       method: "POST", headers: { "content-type": "application/json" },
       body: JSON.stringify({ text: guard.safePrompt, idempotencyKey: `original-${guard.guardId}-${globalThis.crypto.randomUUID()}` }),
-    })
+    }, undefined, pinnedScope)
     setOriginal(result.kind === "ok" ? { kind: "shown", segments: result.value.segments } : { kind: "error", message: result.kind === "refused" ? result.refusal.message : "The cell could not restore the prompt." })
   }
   const shown = original.kind === "shown" ? original.segments : splitTokens(guard.safePrompt, guard.tokens)

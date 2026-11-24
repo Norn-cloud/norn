@@ -12,7 +12,7 @@ import { callAction, type CallAnswer } from "./actions.ts"
 import { createIntentKey, type ActionReceipt } from "../../../../packages/norn-sdk/src/index.ts"
 import { cellCall, type CellResult, type Fetch } from "./cell-read.ts"
 import { requestedPath, requestedWords, type RequestedDecision } from "./decisions.ts"
-import { CellUnavailable, readStudioScope, scopedHostFetch } from "./definitions.ts"
+import { CellUnavailable, readStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
 import { readableTime } from "./format.ts"
 
 export const IMPORT_TRIAGE_UNAVAILABLE = "This cell doesn't serve import triage yet."
@@ -1123,8 +1123,9 @@ export function commitAliasBinding(
   },
   idempotencyKey = createIntentKey(),
   fetcher?: Fetch,
+  boundScope?: StudioScope | null,
 ): Promise<CallAnswer> {
-  return callAction(actionId, JSON.stringify(payload), idempotencyKey, fetcher)
+  return callAction(actionId, JSON.stringify(payload), idempotencyKey, fetcher, boundScope)
 }
 
 export function commitEntityCreateAndBind(
@@ -1138,8 +1139,9 @@ export function commitEntityCreateAndBind(
   },
   idempotencyKey = createIntentKey(),
   fetcher?: Fetch,
+  boundScope?: StudioScope | null,
 ): Promise<CallAnswer> {
-  return callAction(actionId, JSON.stringify(payload), idempotencyKey, fetcher)
+  return callAction(actionId, JSON.stringify(payload), idempotencyKey, fetcher, boundScope)
 }
 
 export function commitAliasIgnore(
@@ -1152,8 +1154,9 @@ export function commitAliasIgnore(
   },
   idempotencyKey = createIntentKey(),
   fetcher?: Fetch,
+  boundScope?: StudioScope | null,
 ): Promise<CallAnswer> {
-  return callAction(actionId, JSON.stringify(payload), idempotencyKey, fetcher)
+  return callAction(actionId, JSON.stringify(payload), idempotencyKey, fetcher, boundScope)
 }
 
 export function commitRowPromotion(
@@ -1171,8 +1174,9 @@ export function commitRowPromotion(
   },
   idempotencyKey = createIntentKey(),
   fetcher?: Fetch,
+  boundScope?: StudioScope | null,
 ): Promise<CallAnswer> {
-  return callAction(actionId, JSON.stringify(payload), idempotencyKey, fetcher)
+  return callAction(actionId, JSON.stringify(payload), idempotencyKey, fetcher, boundScope)
 }
 
 export function commitSupersessionDecision(
@@ -1190,6 +1194,7 @@ export function commitSupersessionDecision(
   },
   idempotencyKey = createIntentKey(),
   fetcher?: Fetch,
+  boundScope?: StudioScope | null,
 ): Promise<CallAnswer> {
-  return callAction(actionId, JSON.stringify(payload), idempotencyKey, fetcher)
+  return callAction(actionId, JSON.stringify(payload), idempotencyKey, fetcher, boundScope)
 }

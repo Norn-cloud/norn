@@ -10,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { type ActionReceipt } from "../../../../packages/norn-sdk/src/index.ts"
 import type { CellResult } from "@/lib/cell-read"
 import { NO_DATA_CELL } from "@/lib/definitions"
+import { usePinnedScope } from "@/lib/session"
 import {
   batchLockedRowIds,
   classifyTriageActionResult,
@@ -124,6 +125,7 @@ export function ImportTriagePage() {
   })
 
   const workspace = read.data?.kind === "ok" ? read.data.value : undefined
+  const pinnedScope = usePinnedScope(workspace?.batchId ?? "")
   const workspaceRef = useRef<ImportTriageWorkspace | undefined>(workspace)
   workspaceRef.current = workspace
 
@@ -385,11 +387,11 @@ export function ImportTriagePage() {
     try {
       let rawResult
       if (currentDraft.mode === "match") {
-        rawResult = await commitAliasBinding(actionId, payload as Parameters<typeof commitAliasBinding>[1], key)
+        rawResult = await commitAliasBinding(actionId, payload as Parameters<typeof commitAliasBinding>[1], key, undefined, pinnedScope)
       } else if (currentDraft.mode === "create") {
-        rawResult = await commitEntityCreateAndBind(actionId, payload as Parameters<typeof commitEntityCreateAndBind>[1], key)
+        rawResult = await commitEntityCreateAndBind(actionId, payload as Parameters<typeof commitEntityCreateAndBind>[1], key, undefined, pinnedScope)
       } else {
-        rawResult = await commitAliasIgnore(actionId, payload as Parameters<typeof commitAliasIgnore>[1], key)
+        rawResult = await commitAliasIgnore(actionId, payload as Parameters<typeof commitAliasIgnore>[1], key, undefined, pinnedScope)
       }
 
       const classified = classifyTriageActionResult(rawResult)
@@ -621,7 +623,7 @@ export function ImportTriagePage() {
     })
 
     try {
-      const rawResult = await commitRowPromotion(currentWorkspace.actions.promoteRow, payload, key)
+      const rawResult = await commitRowPromotion(currentWorkspace.actions.promoteRow, payload, key, undefined, pinnedScope)
       const classified = classifyTriageActionResult(rawResult)
       if (classified.kind === "receipt") {
         // Never optimistically mark submitted values as "Verified fact" from a receipt alone.
@@ -827,7 +829,7 @@ export function ImportTriagePage() {
     }))
 
     try {
-      const rawResult = await commitSupersessionDecision(currentWorkspace.actions.resolveSupersession, payload, key)
+      const rawResult = await commitSupersessionDecision(currentWorkspace.actions.resolveSupersession, payload, key, undefined, pinnedScope)
       const classified = classifyTriageActionResult(rawResult)
       if (classified.kind === "receipt") {
         const resolution: SupersessionResolution = {

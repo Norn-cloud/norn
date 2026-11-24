@@ -1,9 +1,12 @@
 import { readFileSync } from "node:fs"
 import { expect, test, type Page, type Request } from "@playwright/test"
+import { ACTIONS } from "./action-fixtures.ts"
+import { population } from "./object-cell.ts"
 import type { WorkspacesDocument } from "../src/lib/workspaces-api.ts"
 
 const INVITE_ONLY_MESSAGE = "This alpha is invite-only; ask your admin for an invitation."
 const SIGNED_UP_MESSAGE = "If this address can sign up, you can now sign in with your email and password."
+const WORKSPACE_CHANGED_MESSAGE = "Your active workspace changed. Reload the page before submitting."
 const POPULATED_DEFS = JSON.parse(readFileSync(new URL("../../../fixtures/demo/explorer/three-systems.definitions.json", import.meta.url), "utf8")) as unknown[]
 const EMPTY_BASE_DEFS = POPULATED_DEFS.filter((artifact) => {
   const id = (artifact as { artifactId?: string }).artifactId ?? ""
@@ -238,4 +241,134 @@ test("#1414: a slow connecting cell explains what it is waiting for and supports
   } finally {
     releaseFirst?.()
   }
+})
+
+test("#1643: stale action form stays pinned to its opening workspace and refuses after another tab switches sessions", async ({ context }) => {
+  const pageErrors: string[] = []
+  const workspaces = [
+    { id: "org_alpha", name: "Core Analytics", slug: "core-analytics", role: "owner", environmentId: "env_alpha" },
+    { id: "org_beta", name: "North Operations", slug: "north-operations", role: "owner", environmentId: "env_beta" },
+  ] as const
+  let activeOrgId: string = workspaces[0].id
+  const rows = population(3)
+  const staleAttempts: { queryOrg: string | null; queryEnv: string | null; headerOrg: string | null; headerEnv: string | null; activeAtTime: string }[] = []
+  let committedBeta = 0
+
+  const currentWorkspace = () => workspaces.find((w) => w.id === activeOrgId) ?? workspaces[0]
+
+  await context.route("**/api/me", (route) => {
+    const cur = currentWorkspace()
+    return route.fulfill({
+      json: {
+        user: { id: "u_tabs", name: "Ada Lovelace", email: "ada@example.com" },
+        organization: { id: cur.id, name: cur.name, role: cur.role },
+        environmentId: cur.environmentId,
+      },
+    })
+  })
+
+  await context.route("**/api/workspaces**", (route) => {
+    const url = new URL(route.request().url())
+    const path = url.pathname.replace(/\/+$/, "")
+    if (path === "/api/workspaces" && route.request().method() === "GET") {
+      const doc: WorkspacesDocument = {
+        workspaces: workspaces.map((w) => ({ id: w.id, name: w.name, slug: w.slug, role: w.role, active: w.id === activeOrgId, hasCell: true })),
+      }
+      return route.fulfill({ json: doc })
+    }
+    const match = /^\/api\/workspaces\/([^/]+)\/activate$/.exec(path)
+    if (match && route.request().method() === "POST") {
+      activeOrgId = decodeURIComponent(match[1]!)
+      return route.fulfill({ json: { activeOrganizationId: activeOrgId } })
+    }
+    return route.fulfill({ status: 404, json: { code: "NOT_FOUND", message: "No route" } })
+  })
+
+  await context.route("**/api/host/v1/**", (route) => {
+    const req = route.request()
+    const url = new URL(req.url())
+    const cur = currentWorkspace()
+    if (url.pathname.endsWith("/v1/definitions")) return route.fulfill({ json: { artifacts: POPULATED_DEFS } })
+    if (url.pathname.endsWith("/v1/inbox")) return route.fulfill({ json: { scanLimit: 10000, sections: [], items: [] } })
+    if (url.pathname.endsWith("/v1/objects/canon.Holding:facets")) {
+      return route.fulfill({ json: { objectType: "canon.Holding", rows: rows.length, withheldRows: 0, quarantinedRows: 0, lowerBound: false, scanLimit: 10000, facets: [] } })
+    }
+    if (url.pathname.endsWith("/v1/objects/canon.Holding")) {
+      const orgId = url.searchParams.get("orgId") ?? cur.id
+      const envId = url.searchParams.get("environmentId") ?? cur.environmentId
+      const records = rows.map((row) => ({
+        objectType: "canon.Holding",
+        id: row.id,
+        scope: `${orgId}/${envId}`,
+        version: 1,
+        withheld: false,
+        withheldProperties: [],
+        values: row.values,
+      }))
+      return route.fulfill({ json: { objectType: "canon.Holding", records, quarantineCount: 0, scannedThrough: null, query: { sort: [], filter: null }, next: null, total: { count: records.length, approximate: false } } })
+    }
+    if (url.pathname.endsWith("/v1/actions") && req.method() === "GET") {
+      const kind = url.searchParams.get("objectKind")
+      return route.fulfill({ json: { definitionsVersion: 1, items: ACTIONS.filter((a) => kind === null || a.objectKind === kind) } })
+    }
+    if (url.pathname.includes("/v1/actions/") && req.method() === "POST") {
+      const headerOrg = req.headers()["x-norn-expected-org"] ?? null
+      const headerEnv = req.headers()["x-norn-expected-env"] ?? null
+      const queryOrg = url.searchParams.get("orgId")
+      const queryEnv = url.searchParams.get("environmentId")
+      if ((headerOrg !== null && headerOrg !== cur.id) || (queryOrg !== null && queryOrg !== cur.id) || (headerEnv !== null && headerEnv !== cur.environmentId)) {
+        staleAttempts.push({ queryOrg, queryEnv, headerOrg, headerEnv, activeAtTime: cur.id })
+        return route.fulfill({ status: 409, json: { format: "norn/refusal@2", code: "workspace.changed", category: "conflict", retryable: false, reason: null, message: WORKSPACE_CHANGED_MESSAGE, explanation: "", error: WORKSPACE_CHANGED_MESSAGE } })
+      }
+      if (cur.id === "org_beta") committedBeta += 1
+      return route.fulfill({ json: { outcome: "committed", objectType: "canon.Holding", objectId: "demo/holding/0001", version: 2, receipt: { receiptHash: "c".repeat(64), commitSeq: 2, recordedAtMs: Date.now() } } })
+    }
+    return route.fulfill({ status: 404, json: { code: "route.not_found", message: "not served" } })
+  })
+
+  // Tab A opens an action form while the session is in Core Analytics (org_alpha / env_alpha).
+  const tabA = await context.newPage()
+  tabA.on("pageerror", (error) => pageErrors.push(error.message))
+  await tabA.setViewportSize({ width: 1440, height: 900 })
+  await tabA.goto("/objects/canon.Holding")
+  await expect(tabA.locator("[data-scope]")).toContainText("Core Analytics")
+  await expect(tabA.getByText("3 records", { exact: true })).toBeVisible()
+  await tabA.getByRole("button", { name: "New holding" }).click()
+  await tabA.getByRole("menuitem", { name: "Restock holding" }).click()
+  const form = tabA.getByRole("dialog")
+  await form.getByLabel("Holding id").fill("demo/holding/0001")
+  await form.getByRole("button", { name: "Add lot" }).click()
+  await form.getByRole("textbox", { name: "Lot", exact: true }).nth(0).fill("L-1")
+  await form.getByLabel("Quantity").nth(0).fill("5.000")
+
+  // Tab B activates North Operations (org_beta / env_beta) on the shared session.
+  const tabB = await context.newPage()
+  tabB.on("pageerror", (error) => pageErrors.push(error.message))
+  await tabB.setViewportSize({ width: 1440, height: 900 })
+  await tabB.goto("/")
+  await expect(tabB.locator("[data-scope]")).toContainText("Core Analytics")
+  const switched = await tabB.evaluate(async () => {
+    const res = await fetch("/api/workspaces/org_beta/activate", { method: "POST" })
+    return res.status
+  })
+  expect(switched).toBe(200)
+  await tabB.reload()
+  await expect(tabB.locator("[data-scope]")).toContainText("North Operations")
+
+  // Returning to stale Tab A and submitting sends org_alpha / env_alpha explicitly;
+  // the server refuses 409 workspace.changed and commits nothing to North Operations.
+  await tabA.bringToFront()
+  await form.getByRole("button", { name: "Restock holding" }).click()
+  const alert = form.getByRole("alert").first()
+  await expect(alert).toContainText("Workspace changed — reload this page")
+  await expect(alert).toContainText(WORKSPACE_CHANGED_MESSAGE)
+  expect(staleAttempts).toEqual([
+    { queryOrg: "org_alpha", queryEnv: "env_alpha", headerOrg: "org_alpha", headerEnv: "env_alpha", activeAtTime: "org_beta" },
+  ])
+  expect(committedBeta).toBe(0)
+  await shoot(tabA, "stale-form")
+
+  await tabB.close()
+  await tabA.close()
+  expect(pageErrors).toEqual([])
 })

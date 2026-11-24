@@ -2,7 +2,7 @@ import {
   createNornClient, NornUnavailable,
   type ActionCatalog, type ActionSummary, type CallResult, type Diagnostic, type Fetch,
 } from "../../../../packages/norn-sdk/src/index.ts"
-import { CellUnavailable, readStudioScope, sameStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
+import { CellUnavailable, defaultFetch, readStudioScope, resolveWriteScope, sameStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
 
 /**
  * Governed actions from Studio: the catalog the cell offers this reader, and one call, through
@@ -39,18 +39,22 @@ export type CatalogRead =
 /** A call's answer as Studio shows it: the cell's three (receipt, pending, refused), or no cell to ask. */
 export type CallAnswer = CallResult | { readonly kind: "no-cell" } | { readonly kind: "unavailable" }
 
-export interface ActionScopeOptions {
-  readonly scope?: StudioScope
+export interface ListActionsScopeOptions {
+  readonly scope?: StudioScope | null
   readonly signal?: AbortSignal
   readonly onScopeMismatch?: (actual: StudioScope | null) => void
 }
 
+export interface ActionScopeOptions {
+  readonly scope?: StudioScope | null
+  readonly signal?: AbortSignal
+  readonly onScopeMismatch?: (actual: StudioScope | null | undefined) => void
+}
+
 export const ACTIONS_UNAVAILABLE = "This cell doesn't take actions from Studio yet."
 
-const defaultFetch: Fetch = (input, init) => fetch(input, init)
-
 /** The SDK client for the active scope, through the Studio Worker's `/api/host` forwarding. */
-async function scoped(fetcher: Fetch, options: ActionScopeOptions = {}) {
+async function scoped(fetcher: Fetch, options: ListActionsScopeOptions = {}) {
   const scope = await readStudioScope(fetcher, options.signal)
   if (options.scope !== undefined && !sameStudioScope(scope, options.scope)) {
     options.onScopeMismatch?.(scope)
@@ -84,7 +88,7 @@ export async function listActions(
   objectKind: string | undefined,
   fetcher: Fetch = defaultFetch,
   objectId?: string,
-  options: ActionScopeOptions = {},
+  options: ListActionsScopeOptions = {},
 ): Promise<CatalogRead> {
   let resolved
   try { resolved = await scoped(fetcher, options) } catch (error) {
@@ -106,22 +110,35 @@ export async function listActions(
   return read.kind === "catalog" ? { kind: "catalog", items: read.items } : { kind: "refused", status: read.status, code: read.code, message: read.message }
 }
 
+const isStudioScopeArg = (value: StudioScope | null | ActionScopeOptions | undefined): value is StudioScope | null =>
+  value === null || (value !== undefined && "orgId" in value && "environmentId" in value)
+
 /** Send one call. `input` is already-encoded JSON text, so exact numbers reach the cell as typed. */
 export async function callAction(
   actionId: string,
   input: string,
   idempotencyKey: string,
   fetcher: Fetch = defaultFetch,
-  options: ActionScopeOptions = {},
+  boundOrOptions?: StudioScope | null | ActionScopeOptions,
 ): Promise<CallAnswer> {
-  const resolved = await scoped(fetcher, options)
-  if (resolved.kind === "no-cell") return { kind: "no-cell" }
-  if (resolved.kind === "scope-changed") return { kind: "unavailable" }
+  const boundScope = isStudioScopeArg(boundOrOptions) ? boundOrOptions : boundOrOptions?.scope
+  const signal = isStudioScopeArg(boundOrOptions) ? undefined : boundOrOptions?.signal
+  const onScopeMismatch = isStudioScopeArg(boundOrOptions) ? undefined : boundOrOptions?.onScopeMismatch
+  const scope = await resolveWriteScope(fetcher, boundScope)
+  if (scope === null) return { kind: "no-cell" }
+  const client = createNornClient({ scope, fetch: scopedHostFetch(fetcher, "/api/host", async () => scope) })
+  let result: CallResult
   try {
-    return await resolved.client.callEncoded(actionId, input, { idempotencyKey, ...options.signal === undefined ? {} : { signal: options.signal } })
+    result = await client.callEncoded(actionId, input, { idempotencyKey, ...signal === undefined ? {} : { signal } })
   } catch (error) {
     return unanswered(error, true)
   }
+  // The cell refused because the workspace moved under this call: say where it is now.
+  if (result.kind === "refused" && result.status === 409 && result.code === "workspace.changed" && onScopeMismatch !== undefined) {
+    const actual = await readStudioScope(fetcher, signal).then((next) => next, () => undefined)
+    onScopeMismatch(actual)
+  }
+  return result
 }
 
 // ---- The form a closed input schema implies -------------------------------------------------

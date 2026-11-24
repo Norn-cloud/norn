@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { CellUnavailable, StudioScopeError, scopedHostFetch, type ScopeProvider } from "./definitions.ts"
+import { CellUnavailable, StudioScopeError, defaultFetch, scopedHostFetch, type ScopeProvider } from "./definitions.ts"
 
 const summary = z.object({ id: z.string(), title: z.string(), version: z.number(), lifecycle: z.string() })
 const page = z.object({ items: z.array(summary), cursor: z.string().nullable().optional() })
@@ -23,7 +23,7 @@ async function checkedWords(text: string, sha256: string) {
 /** The cell owns authorization, validation, versions, and the sign-off record. */
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>
 
-export function questionDefinitions(fetcher: Fetch = (input, init) => fetch(input, init), scope?: ScopeProvider) {
+export function questionDefinitions(fetcher: Fetch = defaultFetch, scope?: ScopeProvider) {
   const scoped = scopedHostFetch(fetcher, "/api/host", scope)
   const call = async (path: string, query: Record<string, string> = {}, body?: unknown): Promise<unknown> => {
     let response: Response
