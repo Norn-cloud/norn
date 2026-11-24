@@ -7,13 +7,14 @@ import { HiddenWriter } from "@/components/hidden-writer"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { cn } from "@/lib/utils"
 import { systemName } from "../lib/catalog.ts"
+import { useStudioScope } from "../lib/definitions.ts"
 import { readMetrics } from "../lib/metrics.ts"
 import { atScale } from "../lib/objects.ts"
 import { readableTime } from "../lib/format.ts"
 import { useView } from "../lib/view.tsx"
 import { byValidTime, timePropertyOf, timeline, writerCounts, type TimelineEntry, type WriterKind } from "../lib/record-page.ts"
 import { useCatalog } from "../sources.tsx"
-import { changedProperties, historyUnavailable, readHistory, versionValue, type ObjectVersion } from "./review.ts"
+import { changedProperties, historyQueryKey, historyUnavailable, readHistory, versionValue, type ObjectVersion } from "./review.ts"
 
 /** Who or what wrote one version, in a line. */
 function Writer({ version }: { readonly version: ObjectVersion }) {
@@ -41,8 +42,11 @@ type Time = "known" | "valid"
  * cell places this type in time by); filters keep one kind of writer.
  */
 export function History({ objectType, id }: { readonly objectType: string; readonly id: string }) {
-  const read = useQuery({ queryKey: ["history", objectType, id], queryFn: () => readHistory(objectType, id), retry: false })
-  const metrics = useQuery({ queryKey: ["metrics"], queryFn: readMetrics, retry: false, staleTime: 60_000 })
+  const scope = useStudioScope()
+  const boundScope = scope.data ?? null
+  const scopeKey = boundScope ? `${boundScope.orgId}:${boundScope.environmentId}` : ""
+  const read = useQuery({ queryKey: historyQueryKey(objectType, id, boundScope), queryFn: () => readHistory(objectType, id, boundScope), enabled: scope.isSuccess, retry: false })
+  const metrics = useQuery({ queryKey: ["metrics", scopeKey], queryFn: () => readMetrics(boundScope), enabled: scope.isSuccess, retry: false, staleTime: 60_000 })
   const [time, setTime] = useState<Time>("known")
   const [only, setOnly] = useState<WriterKind | null>(null)
   const [open, setOpen] = useState<ReadonlySet<number>>(new Set())

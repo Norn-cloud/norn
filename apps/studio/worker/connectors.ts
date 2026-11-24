@@ -1,9 +1,10 @@
+import { decryptOAuthToken } from "better-auth/oauth2"
 import { AccessUnavailable, decide, toolBinding, workspace } from "./access.ts"
-import { originAllowed, resolveActor } from "./actor.ts"
+import { originAllowed, resolveActor, verifyWriteScope } from "./actor.ts"
 import type { Auth } from "./auth.ts"
 import { BindingDefinitions, bindingDefinitionId, CellUnavailable, type Install } from "./binding-definitions.ts"
 import { cellScope } from "./scope.ts"
-import { abandonSave, adoptCell, beginCreate, beginEdit, connectorString, connectorVersion, finishSave, getBinding, listBindings, manifestDigest, readDraft, removeBinding, runInput, toolManifest, type Binding } from "./bindings.ts"
+import { abandonCreateWithTombstone, abandonSave, adoptCell, adoptCommittedEdit, adoptReadyCell, beginCreate, beginEdit, clearOrphan, connectorString, connectorVersion, finishSave, getBinding, listBindings, listOrphans, manifestDigest, readDraft, removeBinding, runInput, toolManifest, type Binding } from "./bindings.ts"
 import { Gateway, GatewayError } from "./gateway.ts"
 
 /**
@@ -42,6 +43,12 @@ export interface ConnectorDeps {
  */
 export const PENDING_CREATE_LEASE_MS = 2 * 60 * 1000
 
+/**
+ * How long an abandoned create's tombstone stays watched for a late cell commit before being
+ * garbage-collected when the cell still reports the definition absent.
+ */
+export const ORPHAN_RETENTION_MS = 24 * 60 * 60 * 1000
+
 /** How the person fixes a refusal; the page renders one button per kind. */
 export type FixAction =
   | { readonly kind: "sign_in_gateway" }
@@ -61,7 +68,42 @@ async function gatewayAccount(auth: Auth, request: Request): Promise<string | nu
   return accounts.find((account) => account.providerId === GATEWAY_PROVIDER)?.id ?? null
 }
 
-/** The person's gateway grant, refreshed by Better Auth when it has expired; null when not linked. */
+/**
+ * The person's gateway grant, read-only (for GET routes): decrypts a currently valid stored access
+ * token without ever refreshing or persisting to D1. Expired refreshable grants report
+ * `expired_refreshable` so callers refresh explicitly via an origin-checked POST `/refresh`.
+ */
+type ReadOnlyGrant =
+  | { readonly kind: "token"; readonly token: string }
+  | { readonly kind: "expired_refreshable" }
+  | { readonly kind: "none" }
+
+async function readOnlyGrant(auth: Auth, userId: string, now: number): Promise<ReadOnlyGrant> {
+  const ctx = await auth.$context
+  const account = await ctx.adapter.findOne<{
+    id: string
+    accessToken?: string | null
+    refreshToken?: string | null
+    accessTokenExpiresAt?: string | number | Date | null
+  }>({
+    model: "account",
+    where: [{ field: "userId", value: userId }, { field: "providerId", value: GATEWAY_PROVIDER }],
+  })
+  if (account === null) return { kind: "none" }
+  const expiresAt = account.accessTokenExpiresAt == null ? null : new Date(account.accessTokenExpiresAt).getTime()
+  const expired = expiresAt !== null && Number.isFinite(expiresAt) && expiresAt - now < 5_000
+  if (expired || !account.accessToken) {
+    return account.refreshToken ? { kind: "expired_refreshable" } : { kind: "none" }
+  }
+  try {
+    const token = await decryptOAuthToken(account.accessToken, ctx as unknown as Parameters<typeof decryptOAuthToken>[1])
+    return token ? { kind: "token", token } : account.refreshToken ? { kind: "expired_refreshable" } : { kind: "none" }
+  } catch {
+    return { kind: "none" }
+  }
+}
+
+/** The person's gateway grant, refreshed by Better Auth when expired (for origin-checked mutations only). */
 async function grant(auth: Auth, request: Request): Promise<string | null> {
   const accountId = await gatewayAccount(auth, request)
   if (accountId === null) return null
@@ -128,8 +170,17 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
   // Service keys cannot hold a person's gateway grant.
   if (actor.actorKind !== "user") return refusal(403, "connectors.user_only", "Connectors act for a signed-in person, not an API key.")
   if (!originAllowed(request, actor, env.trustedOrigins ?? [env.BETTER_AUTH_URL])) return refusal(403, "connectors.origin", "Cross-origin request refused.")
-  // The cell scope is the session's: its active organization and that organization's environment.
-  const { environmentId } = await cellScope(auth, actor.orgId)
+  const scopeCheck = await verifyWriteScope(request, auth, actor, { requireEnv: deps.host !== undefined })
+  if (!scopeCheck.ok) {
+    const failed = await scopeCheck.response.clone().json().catch(() => null) as { code?: unknown } | null
+    if (failed?.code === "workspace.no_cell") {
+      return refusal(409, "connectors.no_environment", "Your organization has no cell environment yet, so connectors cannot be used.", { kind: "ask_admin" })
+    }
+    return scopeCheck.response
+  }
+  // Reuse the validated scope from verifyWriteScope on mutations so downstream PDP and cell
+  // operations stay pinned to the exact (orgId, environmentId) pair verified at admission.
+  const environmentId = scopeCheck.scope !== undefined ? scopeCheck.scope.environmentId : (await cellScope(auth, actor.orgId)).environmentId
   // Every connector verb is the host PDP's decision (#1036); the Worker holds no role logic.
   const ask = async (checks: Parameters<typeof decide>[4]) => {
     try {
@@ -153,7 +204,8 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
   // Bindings are Norn's own records: viewing and removing them needs no gateway.
   const shown = (binding: Binding) => ({ ...binding, connectorRef: connectorString(binding.connector) })
   // Without a cell host there is nothing to scope: the binding stays a local record, as before.
-  const cellFor = () => deps.host === undefined ? new BindingDefinitions(undefined, auth, actor, "") : environmentId === null ? null : new BindingDefinitions(deps.host, auth, actor, environmentId)
+  const cellFor = (targetEnv: string | null = environmentId) =>
+    deps.host === undefined ? new BindingDefinitions(undefined, auth, actor, "") : targetEnv === null ? null : new BindingDefinitions(deps.host, auth, actor, targetEnv)
   const noEnvironment = () => refusal(409, "connectors.no_environment", "Your organization has no cell environment yet, so tool bindings cannot be saved there.", { kind: "ask_admin" })
   /** A definition write that did not land is a typed refusal; `null` when it landed or the stage keeps bindings locally. */
   const cellRefusal = (outcome: Install) =>
@@ -162,16 +214,44 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
         : outcome.kind === "denied" ? refusal(403, "connectors.binding_denied", `The cell does not let you save or remove tool bindings (${outcome.code}).`, { kind: "ask_admin" })
         : null
   /**
-   * Settle a binding a save left pending, from what the cell holds: the cell's version and fields
-   * when it has the definition, otherwise undo the save (a create is deleted, an edit restored).
-   * Returns the settled binding, null when it was deleted, or the binding still pending when the
-   * cell cannot be asked now, or when a create is younger than its lease (its install may still
-   * be running: the row's creation time is when the intent was recorded).
+   * Settle a binding a save left pending, from what the cell holds in the exact environment that
+   * started the pending save, guarded by its unique attempt id and previous version so a newer
+   * completed save can never be overwritten. Both creates and edits are fenced against premature
+   * abandon while their lease is still active (cell already holding a newer version is safe to adopt).
    */
-  const reconcile = async (binding: Binding): Promise<Binding | null> => {
-    if (binding.state !== "pending" || binding.pendingDefinition === null) return binding
-    if (binding.pendingSave === "create" && (deps.now ?? Date.now)() - binding.updatedAt < PENDING_CREATE_LEASE_MS) return binding
-    const cell = cellFor()
+  const confirmedRetired = (outcome: Install | null): boolean =>
+    outcome !== null && (
+      outcome.kind === "installed"
+      || (outcome.kind === "refused" && outcome.findings.some((f) => f.code === "definition.already_retired"))
+    )
+  const reconcile = async (binding: Binding, checkReady = false): Promise<Binding | null> => {
+    if (binding.state !== "pending") {
+      // On explicit POST /bindings:reconcile, also heal ready bindings if the cell already holds a
+      // newer committed active version (e.g. a timed-out edit that committed after its intent was abandoned).
+      if (!checkReady || binding.definition === null || deps.host === undefined) return binding
+      const cell = cellFor(environmentId)
+      if (cell === null) return binding
+      let held: Awaited<ReturnType<BindingDefinitions["get"]>>
+      try {
+        held = await cell.get(binding.definition.id)
+      } catch (error) {
+        if (error instanceof CellUnavailable) return binding
+        throw error
+      }
+      if (held.kind === "found" && held.lifecycle === "active" && held.version > binding.definition.version) {
+        await adoptReadyCell(db, actor.orgId, binding.id, binding.definition.id, held.version, held.payload, binding.definition.version)
+        return await getBinding(db, actor.orgId, binding.id)
+      }
+      return binding
+    }
+    if (binding.pendingDefinition === null) return binding
+    const now = (deps.now ?? Date.now)()
+    // Fence BOTH creates and edits during their active lease so reconciliation never adopts or
+    // abandons an in-flight save before its own finishSave commits.
+    if (binding.pendingStartedAt !== null && now - binding.pendingStartedAt < PENDING_CREATE_LEASE_MS) return binding
+    const targetEnv = binding.pendingEnvironmentId ?? environmentId
+    if (binding.pendingEnvironmentId !== null && environmentId !== null && binding.pendingEnvironmentId !== environmentId) return binding
+    const cell = cellFor(targetEnv)
     if (cell === null) return binding
     let held: Awaited<ReturnType<BindingDefinitions["get"]>>
     try {
@@ -180,14 +260,61 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
       if (error instanceof CellUnavailable) return binding
       throw error
     }
-    if (held.kind === "found" && (binding.definition === null || held.version > binding.definition.version)) await adoptCell(db, actor.orgId, binding.id, binding.pendingDefinition, held.version, held.payload)
-    else if (await abandonSave(db, actor.orgId, binding.id, binding.pendingSave ?? "edit", binding.definition) === "deleted") return null
+    if (held.kind === "found" && held.lifecycle === "active" && (binding.definition === null || held.version > binding.definition.version)) {
+      await adoptCell(db, actor.orgId, binding.id, binding.pendingDefinition, held.version, held.payload, binding.pendingAttempt, binding.definition?.version ?? null)
+    } else if (binding.pendingSave === "create") {
+      // Record a durable orphan tombstone atomically with deleting the expired create row so any
+      // late cell commit after a lost response/timeout is still discovered and retired on reconcile.
+      if (await abandonCreateWithTombstone(db, actor.orgId, binding.id, binding.pendingAttempt, now) === "deleted") return null
+    } else if (await abandonSave(db, actor.orgId, binding.id, binding.pendingSave ?? "edit", binding.definition, binding.pendingAttempt) === "deleted") {
+      return null
+    }
     return await getBinding(db, actor.orgId, binding.id)
+  }
+  /** Sweep abandoned create tombstones: retire any active definition that committed late in the cell. */
+  const sweepOrphans = async (): Promise<void> => {
+    if (deps.host === undefined) return
+    const now = (deps.now ?? Date.now)()
+    const orphans = await listOrphans(db, actor.orgId)
+    for (const orphan of orphans) {
+      if (orphan.environmentId !== null && environmentId !== null && orphan.environmentId !== environmentId) continue
+      const cell = cellFor(orphan.environmentId ?? environmentId)
+      if (cell === null) continue
+      let held: Awaited<ReturnType<BindingDefinitions["get"]>>
+      try {
+        held = await cell.get(orphan.definitionId)
+      } catch (error) {
+        if (error instanceof CellUnavailable) continue
+        throw error
+      }
+      if (held.kind === "found") {
+        if (held.lifecycle === "retired") {
+          await clearOrphan(db, actor.orgId, orphan.bindingId)
+          continue
+        }
+        const retired = await cell.retire(orphan.definitionId, held.version).catch((error: unknown) => {
+          if (error instanceof CellUnavailable) return null
+          throw error
+        })
+        // Clear the tombstone ONLY on affirmative retirement evidence (never on `local`/missing route).
+        if (confirmedRetired(retired)) {
+          await clearOrphan(db, actor.orgId, orphan.bindingId)
+        }
+      } else if (held.kind === "absent" && held.confirmed && now - orphan.abandonedAt >= ORPHAN_RETENTION_MS) {
+        await clearOrphan(db, actor.orgId, orphan.bindingId)
+      }
+    }
   }
   const settled = async (id: string) => { const binding = await getBinding(db, actor.orgId, id); return binding === null ? null : await reconcile(binding) }
   const stillPending = () => refusal(409, "connectors.binding_pending", "This binding is still being saved. Try again in a moment.")
   if (route === "GET /bindings") {
-    const rows = await Promise.all((await listBindings(db, actor.orgId)).map(reconcile))
+    const rows = await listBindings(db, actor.orgId)
+    return ok({ bindings: rows.map(shown), manage })
+  }
+  if (route === "POST /bindings:reconcile") {
+    if (!manage) return denied("reconcile tool bindings")
+    const rows = await Promise.all((await listBindings(db, actor.orgId)).map((binding) => reconcile(binding, true)))
+    await sweepOrphans()
     return ok({ bindings: rows.filter((b): b is Binding => b !== null).map(shown), manage })
   }
   if (request.method === "DELETE" && bindingRoute !== null) {
@@ -226,8 +353,29 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
     if (accountId !== null) await auth.api.unlinkAccount({ body: { accountId }, headers: request.headers })
     return ok({ linked: false })
   }
-  const token = await (deps.grant ?? grant)(auth, request)
-  if (route === "GET /status") return ok({ gateway: gatewayOrigin, linked: token !== null })
+  if (route === "POST /refresh") {
+    const refreshed = await (deps.grant ?? grant)(auth, request)
+    if (refreshed === null) return refusal(409, "connectors.not_linked", "Sign in to the tool gateway first.", { kind: "sign_in_gateway" })
+    return ok({ gateway: gatewayOrigin, linked: true })
+  }
+  let token: string | null
+  if (request.method === "GET" && deps.grant === undefined) {
+    const stored = await readOnlyGrant(auth, actor.subjectId, (deps.now ?? Date.now)())
+    if (route === "GET /status") {
+      return ok({
+        gateway: gatewayOrigin,
+        linked: stored.kind !== "none",
+        ...stored.kind === "expired_refreshable" ? { refreshRequired: true } : {},
+      })
+    }
+    if (stored.kind === "expired_refreshable") {
+      return refusal(401, "connectors.refresh_required", "Your gateway session needs refresh before continuing.", { kind: "sign_in_gateway" })
+    }
+    token = stored.kind === "token" ? stored.token : null
+  } else {
+    token = await (deps.grant ?? grant)(auth, request)
+    if (route === "GET /status") return ok({ gateway: gatewayOrigin, linked: token !== null })
+  }
   if (token === null) return refusal(409, "connectors.not_linked", "Sign in to the tool gateway first.", { kind: "sign_in_gateway" })
   const gateway = new Gateway(gatewayOrigin, token, deps.fetch ?? fetch)
   let app: string | null = null
@@ -292,10 +440,17 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
       const definitionId = existing?.definition?.id ?? bindingDefinitionId(id)
       const cell = cellFor()
       if (cell === null) return noEnvironment()
-      // Record the intent first, so a failure at any point below leaves a pending row that
-      // reconciliation settles against the cell, never a half-saved binding.
-      if (existing === undefined) await beginCreate(db, actor.orgId, actor.subjectId, draft, { manifestDigest: digest, connector }, id, definitionId)
-      else await beginEdit(db, actor.orgId, id, definitionId)
+      // Record the intent with a unique attempt id and validated environment so reconciliation,
+      // finish, and abandon writes match only this attempt and never overwrite a newer save.
+      const attemptId = crypto.randomUUID()
+      const expectedPreviousVersion = existing?.definition?.version ?? null
+      const now = (deps.now ?? Date.now)()
+      if (existing === undefined) {
+        await beginCreate(db, actor.orgId, actor.subjectId, draft, { manifestDigest: digest, connector }, id, definitionId, attemptId, environmentId, now)
+      } else {
+        const claimed = await beginEdit(db, actor.orgId, id, definitionId, attemptId, environmentId, expectedPreviousVersion, now)
+        if (!claimed) return refusal(409, "connectors.binding_conflict", "Someone changed this binding since it was opened. Reload it and try again.")
+      }
       let outcome: Install
       try {
         outcome = await cell.install(definitionId, { connector, inputSchema: tool.inputSchema, outputSchema: tool.outputSchema, manifestDigest: digest, label: draft.label, inputMapping: draft.inputMapping, runRole: draft.runRole }, existing?.definition?.version)
@@ -306,17 +461,54 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
       }
       const refused = cellRefusal(outcome)
       if (refused !== null) {
+        if (outcome.kind === "conflict" && existing !== undefined) {
+          // A version conflict means the cell already moved past `expectedPreviousVersion` (e.g.,
+          // from an earlier late-committing save). Adopt the authoritative cell version when
+          // reachable instead of blindly restoring stale local fields.
+          const held = await cell.get(definitionId).catch(() => null)
+          if (held !== null && held.kind === "found" && held.lifecycle === "active" && (expectedPreviousVersion === null || held.version > expectedPreviousVersion)) {
+            await adoptCell(db, actor.orgId, id, definitionId, held.version, held.payload, attemptId, expectedPreviousVersion)
+            return refused
+          }
+        }
         // The cell decided no: nothing was installed, so the intent is undone.
-        await abandonSave(db, actor.orgId, id, existing === undefined ? "create" : "edit", existing?.definition ?? null)
+        await abandonSave(db, actor.orgId, id, existing === undefined ? "create" : "edit", existing?.definition ?? null, attemptId)
         return refused
       }
       const definition = outcome.kind === "installed" ? { id: outcome.id, version: outcome.version } : null
-      return ok({ binding: shown(await finishSave(db, actor.orgId, actor.subjectId, id, draft, { manifestDigest: digest, connector, definition })) })
+      const savedAt = (deps.now ?? Date.now)()
+      const saved = await finishSave(db, actor.orgId, actor.subjectId, id, draft, { manifestDigest: digest, connector, definition }, attemptId, expectedPreviousVersion, savedAt)
+      if (saved === null) {
+        // The pending attempt was either ADOPTED by reconciliation or ABANDONED/SUPERSEDED after
+        // lease expiry while `cell.install` was in flight. Distinguish the two before compensating
+        // so we NEVER retire a definition that D1 already adopted, while still retiring orphaned
+        // abandoned creates and syncing abandoned edits to the cell's committed version.
+        if (outcome.kind === "installed") {
+          const current = await getBinding(db, actor.orgId, id)
+          if (current !== null && current.state === "ready" && current.definition?.id === outcome.id && current.definition.version === outcome.version) {
+            return ok({ binding: shown(current) })
+          }
+          if (current === null) {
+            const retired = await cell.retire(outcome.id, outcome.version).catch(() => null)
+            // Clear the tombstone ONLY when the cell affirmatively confirms retirement (never on `local`).
+            if (confirmedRetired(retired)) {
+              await clearOrphan(db, actor.orgId, id).catch(() => undefined)
+            }
+          } else if (existing !== undefined) {
+            const synced = await adoptCommittedEdit(db, actor.orgId, actor.subjectId, id, draft, { manifestDigest: digest, connector, definition }, expectedPreviousVersion, savedAt)
+            if (synced === null && (await getBinding(db, actor.orgId, id)) === null) {
+              await cell.retire(outcome.id, outcome.version).catch(() => undefined)
+            }
+          }
+        }
+        return refusal(409, "connectors.binding_conflict", "This binding save was superseded before it finished. Reload and try again.")
+      }
+      return ok({ binding: shown(saved) })
     }
 
     const runRoute = /^\/bindings\/([^/]+)\/run$/.exec(path)
     if (request.method === "POST" && runRoute !== null) {
-      const binding = await settled(part(runRoute, 1))
+      const binding = await getBinding(db, actor.orgId, part(runRoute, 1))
       if (binding === null) return refusal(404, "connectors.binding_not_found", "No such tool binding.")
       if (binding.state === "pending") return stillPending()
       // Running is decided on the binding's cell definition, whose runRole the host reads itself.
@@ -324,6 +516,25 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
       const runDecision = await ask([{ action: "connector.run", resource: toolBinding(binding.definition.id) }])
       if (runDecision instanceof AccessUnavailable) return unavailable(runDecision)
       if (runDecision[0]?.decision !== "permit") return denied(`run ${binding.label}`)
+      // Verify the local binding row's version matches the authoritative active cell definition
+      // before merging fixed inputs so a stale or retired row can never run.
+      if (deps.host !== undefined) {
+        const cell = cellFor()
+        if (cell === null) return noEnvironment()
+        let held: Awaited<ReturnType<BindingDefinitions["get"]>>
+        try {
+          held = await cell.get(binding.definition.id)
+        } catch (error) {
+          if (error instanceof CellUnavailable) return refusal(503, "connectors.cell_unavailable", error.message)
+          throw error
+        }
+        if (held.kind === "absent" || (held.kind === "found" && held.lifecycle === "retired")) {
+          return refusal(409, "connectors.binding_not_in_cell", `${binding.label} is no longer stored in the cell.`)
+        }
+        if (held.kind === "found" && held.version !== binding.definition.version) {
+          return refusal(409, "connectors.binding_conflict", "This binding changed in the cell since it was last synced. Reconcile or reload it before running.")
+        }
+      }
       const input = (await json(request))?.input
       if (typeof input !== "object" || input === null || Array.isArray(input)) return refusal(400, "connectors.invalid_request", "Send {input: {…}} for the fields the binding does not fix.", undefined, "input")
       const merged = runInput(binding, input as Record<string, unknown>)

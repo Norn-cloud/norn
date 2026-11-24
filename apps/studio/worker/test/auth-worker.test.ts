@@ -314,7 +314,11 @@ test("client organization metadata cannot assign or replace reserved cell bindin
   const own = db.query(`select "organizationId" from "member"`).get() as { organizationId: string }
   const stored = () => JSON.parse((db.query(`select "metadata" from "organization" where "id" = ?`).get(own.organizationId) as { metadata: string }).metadata) as Record<string, unknown>
   expect(stored().environmentId).toBe("server-cell")
-  const created = await post(env, "/api/auth/organization/create", { name: "Other", slug: "other-workspace", metadata: { environmentId: "analytics", "norn.test": "forged", label: "kept" } }, { cookie })
+  // Direct Better Auth organization/create is disabled; Studio's /api/workspaces strips reserved keys.
+  const directCreate = await post(env, "/api/auth/organization/create", { name: "Blocked", slug: "blocked-workspace" }, { cookie })
+  expect(directCreate.status).toBe(403)
+  expect(await directCreate.json()).toMatchObject({ code: "ORGANIZATION_CREATE_DISABLED" })
+  const created = await post(env, "/api/workspaces", { name: "Other", slug: "other-workspace", metadata: { environmentId: "analytics", "norn.test": "forged", label: "kept" } }, { cookie })
   expect(created.status).toBe(200)
   const row = db.query(`select "metadata" from "organization" where "slug" = 'other-workspace'`).get() as { metadata: string }
   expect(JSON.parse(row.metadata)).toEqual({ label: "kept" })
@@ -451,6 +455,7 @@ test("#1460: a failed accept-invitation that refreshes an aging session still de
   const env = stage()
   const db = env.AUTH_DB as unknown as Database
   const signedIn = await enroll(env, "refresh@example.com", "Refresh")
+  db.run(`update "user" set "emailVerified" = 1 where "email" = 'refresh@example.com'`)
   const cookie = cookieOf(signedIn)
   // Age the session past updateAge (24h) while keeping it valid (7d lifetime) so Better Auth's
   // session middleware refreshes it and emits a new Set-Cookie on the next authenticated call.

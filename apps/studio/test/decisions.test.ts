@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test"
 import { badgeText, cellNow, countDecisions, decide, flowTitle, listDecisions, listRequested, needsConfirm, parkedFrom, remaining, requestedAction, requestedWords, runnable, stepTitle, urgent, type RequestedDecision } from "../src/lib/decisions.ts"
+import { defaultFetch, setDisplayedScope } from "../src/lib/definitions.ts"
 import type { ActionSummary } from "../src/lib/actions.ts"
 import { getRun, newRunId, phaseOf, refreshEvery, runTitle, startRun, type RunStep } from "../src/lib/runs.ts"
 
@@ -163,4 +164,35 @@ test("a served requested call without its exact text and key is not offered", as
   const live = cell(() => Response.json({ items: [good, { ...good, id: "dec_2", call: { action: "ops.refund", input: {} } }, { id: "dec_3" }], serverNowMs: 1 }))
   const read = await listRequested(undefined, live.fetcher)
   expect(read.kind === "ok" ? read.value.items.map((item) => item.id) : null).toEqual(["dec_1"])
+})
+
+test("decide and startRun via defaultFetch stay bound to their pinned scope without calling /api/me", async () => {
+  const original = globalThis.fetch
+  const seen: { url: string; headers: Headers }[] = []
+  let meCalls = 0
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input)
+    if (url === "/api/me") { meCalls += 1; return Response.json(ME) }
+    seen.push({ url, headers: new Headers(init?.headers) })
+    if (url.includes(":decide")) return Response.json({ outcome: "decided", decision: { id: "dec_1", choice: "a", decidedBy: "you", decidedAtMs: 1 }, receipt: { receiptHash: "h", commitSeq: 1, recordedAtMs: 1 }, run: { id: "r", state: "running" } })
+    return Response.json({ id: "run_1" }, { status: 201 })
+  }) as typeof fetch
+  try {
+    const pinned = { orgId: "org_a", environmentId: "env_a" }
+    setDisplayedScope({ orgId: "org_b", environmentId: "env_b" })
+    const decided = await decide("dec_1", { choice: "a" }, "k1", defaultFetch, pinned)
+    expect(decided.kind).toBe("decided")
+    const started = await startRun("canon.daily_totals", "run_1", defaultFetch, pinned)
+    expect(started.kind).toBe("ok")
+    expect(meCalls).toBe(0)
+    expect(seen).toHaveLength(2)
+    for (const call of seen) {
+      expect(call.url).toContain("orgId=org_a&environmentId=env_a")
+      expect(call.headers.get("x-norn-expected-org")).toBe("org_a")
+      expect(call.headers.get("x-norn-expected-env")).toBe("env_a")
+    }
+  } finally {
+    setDisplayedScope(undefined)
+    globalThis.fetch = original
+  }
 })
