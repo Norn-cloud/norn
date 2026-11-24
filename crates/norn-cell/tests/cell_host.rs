@@ -4638,7 +4638,6 @@ fn r2_blocker2b_classified_action_cannot_emit_dynamic_link_between_unmarked_endp
             ("environmentId".to_owned(), "dev".to_owned()),
         ]),
         actor: "operator".to_owned(),
-        accountable_person: None,
         approved_intent: None,
         input: serde_json::from_value(json!({"id": "P1", "p1": "P1", "p2": "P2", "sec": "SEC1"}))
             .expect("input"),
@@ -4870,7 +4869,6 @@ fn r2_blocker5_nullable_row_reconciles_across_predicate_and_point_slice_reads() 
             ("environmentId".to_owned(), "dev".to_owned()),
         ]),
         actor: "operator".to_owned(),
-        accountable_person: None,
         approved_intent: None,
         input: serde_json::from_value(json!({"task_id": "T1", "group": "alpha", "note": "ok"}))
             .expect("input"),
@@ -5068,7 +5066,6 @@ fn r3_blocker2_classified_aggregate_precondition_cannot_emit_dynamic_link() {
             ("environmentId".to_owned(), "dev".to_owned()),
         ]),
         actor: "operator".to_owned(),
-        accountable_person: None,
         approved_intent: None,
         input: serde_json::from_value(json!({"id": "P1", "p1": "P1", "p2": "P2", "sec": "SEC1"}))
             .expect("input"),
@@ -5212,7 +5209,6 @@ fn r3_blocker4_sqlite_hidden_row_past_max_items_plus_one_conceals_as_target_not_
                 ("environmentId".to_owned(), "dev".to_owned()),
             ]),
             actor: "operator".to_owned(),
-            accountable_person: None,
             approved_intent: None,
             input: serde_json::from_value(json!({"item_id": format!("W{idx}"), "grp": "g"}))
                 .expect("input"),

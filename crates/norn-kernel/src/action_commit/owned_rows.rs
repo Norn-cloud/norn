@@ -1071,7 +1071,6 @@ where
         precondition_outcomes: Vec::new(),
         parameter_pins: Vec::new(),
         actor: call.actor.clone(),
-        accountable_person: call.accountable_person.map(str::to_owned),
         turn: call.turn.id.clone(),
         transition: String::new(),
         from: String::new(),

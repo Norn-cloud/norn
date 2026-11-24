@@ -148,7 +148,6 @@ fn call<'a>(action: &'a norn_ir::ActionRoot, input: JsonObject, request: &str) -
             ("environmentId".into(), "dev".into()),
         ]),
         actor: "test:operator".into(),
-        accountable_person: None,
         approved_intent: None,
         input,
         idempotency_key: request.into(),

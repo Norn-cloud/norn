@@ -456,7 +456,6 @@ fn existence_never_leaks_matrix() {
             ("environmentId".to_owned(), "dev".to_owned()),
         ]),
         actor: "agent:outsider".to_owned(),
-        accountable_person: None,
         approved_intent: None,
         input: JsonObject::from([(
             "so_number".to_owned(),

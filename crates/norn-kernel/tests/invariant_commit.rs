@@ -512,7 +512,6 @@ fn action_call<'a>(
             ("environmentId".to_owned(), "test".to_owned()),
         ]),
         actor: "agent:test".to_owned(),
-        accountable_person: None,
         approved_intent: None,
         input: object(input),
         idempotency_key: idempotency_key.to_owned(),
@@ -636,7 +635,6 @@ fn numeric_string_action_call<'a>(
             ("environmentId".to_owned(), "test".to_owned()),
         ]),
         actor: "agent:test".to_owned(),
-        accountable_person: None,
         approved_intent: None,
         input: object(input),
         idempotency_key: idempotency_key.to_owned(),
@@ -2710,7 +2708,6 @@ fn quality_invariants_consume_no_command_fuel_across_raw_decision_and_action_wri
             ("environmentId".to_owned(), "test".to_owned()),
         ]),
         actor: "agent:test".to_owned(),
-        accountable_person: None,
         approved_intent: None,
         input: object(json!({
             "record_id": "quality-action",

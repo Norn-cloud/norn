@@ -936,14 +936,6 @@ fn check_scope<X>(call: &ActionCall<'_>) -> Result<(), ActionRefusal<X>> {
             return Err(ActionRefusal::MissingScope { key: key.clone() });
         }
     }
-    if call
-        .accountable_person
-        .is_some_and(|person| validate_accountable_person(Some(person)).is_none())
-    {
-        return Err(ActionRefusal::InvalidInput {
-            field: "accountablePerson".to_owned(),
-        });
-    }
     if let Some(trace) = &call.trace {
         trace
             .validate()

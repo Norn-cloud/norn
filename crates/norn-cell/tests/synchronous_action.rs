@@ -151,7 +151,6 @@ fn call(action: &ActionRoot) -> ActionCall<'_> {
             ("environmentId".into(), "dev".into()),
         ]),
         actor: "SO-1".into(),
-        accountable_person: None,
         approved_intent: None,
         input: serde_json::from_value(json!({"so_number":"SO-1"})).unwrap(),
         idempotency_key: "atomic-request".into(),

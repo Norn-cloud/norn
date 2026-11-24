@@ -13,7 +13,6 @@ use crate::envelope::TurnEnvelopeMeter;
 use crate::limits::EnvelopeLimits;
 use crate::naming_series::SeriesCandidate;
 
-use super::approval::{retained_person_matches, validate_accountable_person};
 pub use super::parameter::ActionParameterPin;
 pub use super::receipt::ActionReferenceReads;
 
@@ -62,10 +61,6 @@ pub struct ActionCall<'a> {
     pub scope: BTreeMap<String, String>,
     /// The calling actor's identity.
     pub actor: String,
-    /// AUTH-INDEPENDENT-PERSON (#618): the authenticated accountable person
-    /// behind `actor`, from the host's verified principal; never a session or
-    /// agent id standing in for one.
-    pub accountable_person: Option<&'a str>,
     /// The prepared-intent digest ([`super::prepare_action_intent`]) of the
     /// commit an approval of this call was granted for, read by the host from
     /// its approval record. The call commits only as exactly that commit.
@@ -366,10 +361,6 @@ pub struct ActionCallRecord {
     pub parameter_pins: Vec<ActionParameterPin>,
     /// The actor.
     pub actor: String,
-    /// AUTH-INDEPENDENT-PERSON (#618): the authenticated accountable person
-    /// behind `actor`; absent on records retained before people were bound.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub accountable_person: Option<String>,
     /// The turn the call committed in.
     pub turn: String,
     /// The fired transition.
@@ -414,7 +405,6 @@ impl ActionCallRecord {
             precondition_outcomes: Vec::new(),
             parameter_pins: Vec::new(),
             actor: call.actor.clone(),
-            accountable_person: call.accountable_person.map(str::to_owned),
             turn: call.turn.id.clone(),
             transition: transition.as_str().to_owned(),
             from: String::new(),
@@ -426,10 +416,6 @@ impl ActionCallRecord {
 
     pub(super) fn binds_same_call(&self, other: &Self) -> bool {
         crate::replay_decision::same_call(&self.call_identity(), &other.call_identity())
-            && retained_person_matches(
-                self.accountable_person.as_deref(),
-                other.accountable_person.as_deref(),
-            )
     }
 
     const fn call_identity(
@@ -455,14 +441,12 @@ impl ActionCallRecord {
         object_type: &ObjectTypeName,
         input: &JsonObject,
         actor: &str,
-        accountable_person: Option<&str>,
         trace: Option<&TraceContext>,
     ) -> bool {
         self.action_id == action_id
             && self.object.object_type == *object_type
             && self.input == *input
             && self.actor == actor
-            && retained_person_matches(self.accountable_person.as_deref(), accountable_person)
             && self.trace.as_ref() == trace
     }
 
@@ -551,9 +535,6 @@ impl ActionCallRecord {
         if let Some(effect_kind) = &self.effect_kind {
             values.insert("effectKind".to_owned(), string(effect_kind));
         }
-        if let Some(person) = &self.accountable_person {
-            values.insert("accountablePerson".to_owned(), string(person));
-        }
         if let Some(trace) = &self.trace {
             values.insert("trace".to_owned(), trace.to_runtime_value());
         }
@@ -621,13 +602,6 @@ impl ActionCallRecord {
                 decoded
             }
         };
-        let accountable_person = match values.get("accountablePerson") {
-            None | Some(JsonValue::Null) => None,
-            Some(JsonValue::String(person)) => {
-                Some(validate_accountable_person(Some(person))?.to_owned())
-            }
-            _ => return None,
-        };
         let trace = match values.get("trace") {
             None | Some(JsonValue::Null) => None,
             Some(value) => {
@@ -653,7 +627,6 @@ impl ActionCallRecord {
             precondition_outcomes,
             parameter_pins,
             actor: string("actor")?,
-            accountable_person,
             turn: string("turn")?,
             transition: string("transition")?,
             from: string("from")?,

@@ -372,7 +372,6 @@ fn call<'a>(action: &'a ActionRoot, so_number: &str, key: &str) -> ActionCall<'a
         action_version: "0.1.0",
         scope: scope(),
         actor: "agent:ops".to_owned(),
-        accountable_person: None,
         approved_intent: None,
         input: JsonObject::from([(
             "so_number".to_owned(),
@@ -4879,54 +4878,4 @@ fn approved_intent_binds_the_prepared_commit_not_the_raw_input() {
         "{committed:?}"
     );
     assert_eq!(cell.outbox().len(), 1);
-}
-
-/// AUTH-INDEPENDENT-PERSON (#618): a record committed without a person, as
-/// every record before people were bound, replays unchanged for its subject's
-/// retry that now names one; a record naming a person never replays for
-/// another person under the same subject and key.
-#[test]
-fn a_retained_record_replays_for_its_subject_and_never_swaps_people() {
-    let types = order_types();
-    let catalog = TypeCatalog::new(&types);
-    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
-    seed(&mut cell, ORDER, "SO-1", "draft");
-    seed(&mut cell, ORDER, "SO-2", "draft");
-    let approve = approve();
-    let legacy = call(&approve, "SO-1", "legacy");
-    let committed = commit_action(&mut cell, &catalog, &legacy, &Allow);
-    assert!(
-        matches!(committed, Ok(ActionOutcome::Committed { .. })),
-        "{committed:?}"
-    );
-    let named = ActionCall {
-        accountable_person: Some("person:alice"),
-        ..legacy
-    };
-    let replayed = commit_action(&mut cell, &catalog, &named, &Allow);
-    assert!(
-        matches!(&replayed, Ok(ActionOutcome::Replayed { record }) if record.accountable_person.is_none()),
-        "{replayed:?}"
-    );
-
-    let alice = ActionCall {
-        accountable_person: Some("person:alice"),
-        ..call(&approve, "SO-2", "person")
-    };
-    let committed = commit_action(&mut cell, &catalog, &alice, &Allow);
-    assert!(
-        matches!(committed, Ok(ActionOutcome::Committed { .. })),
-        "{committed:?}"
-    );
-    let ledger = cell.ledger().len();
-    let bob = ActionCall {
-        accountable_person: Some("person:bob"),
-        ..alice
-    };
-    let swapped = commit_action(&mut cell, &catalog, &bob, &Allow);
-    assert!(
-        matches!(&swapped, Err(refusal) if refusal.code() == "action.idempotency_conflict"),
-        "{swapped:?}"
-    );
-    assert_eq!(cell.ledger().len(), ledger);
 }

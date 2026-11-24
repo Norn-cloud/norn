@@ -147,7 +147,6 @@ fn exercise(artifacts: &[ArtifactEnvelope], base: &[ArtifactEnvelope]) -> Result
                     ("environmentId".into(), "dev".into()),
                 ]),
                 actor: "driver:operator".into(),
-                accountable_person: None,
                 approved_intent: None,
                 input: serde_json::from_value(
                     json!({"id":"melt", "input_fine_g":input.to_string(),"output_fine_g":output.to_string()}),

@@ -286,7 +286,6 @@ fn call<'a>(action: &'a ActionRoot, key: &str, input: Value) -> ActionCall<'a> {
             ("environmentId".to_owned(), "dev".to_owned()),
         ]),
         actor: "test:operator".to_owned(),
-        accountable_person: None,
         approved_intent: None,
         input: serde_json::from_value(input).expect("action input decodes"),
         idempotency_key: key.to_owned(),

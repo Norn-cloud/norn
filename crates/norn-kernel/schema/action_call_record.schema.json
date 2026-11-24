@@ -82,13 +82,6 @@
       "description": "The actor.",
       "type": "string"
     },
-    "accountablePerson": {
-      "description": "AUTH-INDEPENDENT-PERSON (#618): the authenticated accountable person\nbehind `actor`; absent on records retained before people were bound.",
-      "type": [
-        "string",
-        "null"
-      ]
-    },
     "turn": {
       "description": "The turn the call committed in.",
       "type": "string"

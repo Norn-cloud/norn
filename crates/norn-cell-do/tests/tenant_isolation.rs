@@ -142,9 +142,14 @@ fn signed(signer: &SigningKey, kind: &str, org: &str, role: &str) -> String {
     } else {
         "password"
     };
-    let claims = json!({ "iss": ISSUER, "aud": "norn-host", "sub": format!("{role}-of-{org}"),
-            "iat": NOW - 10, "exp": NOW + 290,
-            "norn": { "kind": kind, "org": org, "role": role, "amr": amr } });
+    let sub = format!("{role}-of-{org}");
+    let mut norn = json!({ "kind": kind, "org": org, "role": role, "amr": amr });
+    // As Studio issues it: a user's token names the person accountable for it.
+    if kind == "user" {
+        norn["accountablePerson"] = json!(sub);
+    }
+    let claims = json!({ "iss": ISSUER, "aud": "norn-host", "sub": sub,
+            "iat": NOW - 10, "exp": NOW + 290, "norn": norn });
     let head = URL_SAFE_NO_PAD.encode(json!({ "alg": "EdDSA", "kid": "k1" }).to_string());
     let body = URL_SAFE_NO_PAD.encode(claims.to_string());
     let signature = signer.sign(format!("{head}.{body}").as_bytes());

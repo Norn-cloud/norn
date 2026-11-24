@@ -180,7 +180,6 @@ fn decide<'a>(action: &'a ActionRoot, run: &str, receipt: &str, key: &str) -> Ac
         action_version: "1.0.0",
         scope: scope(),
         actor: "user:ada".to_owned(),
-        accountable_person: None,
         approved_intent: None,
         input: JsonObject::from([
             ("run_id".to_owned(), JsonValue::String(run.to_owned())),

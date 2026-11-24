@@ -6748,13 +6748,6 @@
           "to"
         ],
         "properties": {
-          "accountablePerson": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "AUTH-INDEPENDENT-PERSON (#618): the authenticated accountable person\nbehind `actor`; absent on records retained before people were bound."
-          },
           "actionArtifactId": {
             "type": [
               "string",
@@ -33235,6 +33228,10 @@
             ],
             "description": "The denominator metric, for a ratio."
           },
+          "display": {
+            "type": "string",
+            "description": "Plain-word display name for business views, when declared or derived."
+          },
           "expression": {
             "type": [
               "string",
@@ -33273,21 +33270,21 @@
             "items": {
               "type": "string"
             },
-            "description": "The to-one links from the measured object to the object holding\n[`Self::time_property`] (METRIC-GRAIN-LINK-1: a posting's time is its\nevent's); empty when the time is the object's own."
+            "description": "To-one links to the object holding [`Self::time_property`] (METRIC-GRAIN-LINK-1); empty when local."
           },
           "timeProperty": {
             "type": [
               "string",
               "null"
             ],
-            "description": "The time property its buckets use, for a simple metric: a property of\nthe measured object, or of the object [`Self::time_links`] reach."
+            "description": "The time property its buckets use, for a simple metric."
           },
           "unitPartition": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "Properties a question over this metric must group by or fix with an\n`eq` filter (`eq null` included): its unit sources, such as `unit` and\n`currency`. Empty when its values share one unit."
+            "description": "Unit-source properties a question over this metric must partition or fix (`eq`)."
           }
         }
       },
@@ -35683,6 +35680,10 @@
                 "type": "object",
                 "description": "The rarely present parts of a refusal, boxed so every refusal stays small.\nIts fields sit flat in the refusal, exactly where the restatement always\ndid, so the wire shape only gains `incidentId` (D84).",
                 "properties": {
+                  "decidedAt": {
+                    "type": "string",
+                    "description": "The host clock instant (RFC 3339 UTC) at which the cell decided this\nrefusal, when the boundary supplied a clock."
+                  },
                   "incidentId": {
                     "type": "string",
                     "description": "INCIDENT-1: the id under which the host logged this internal\nrefusal's cause. The caller quotes it; the cause is never served."

@@ -1981,7 +1981,6 @@ fn action_call<'a>(
             ("environmentId".to_owned(), "dev".to_owned()),
         ]),
         actor: actor.to_owned(),
-        accountable_person: None,
         approved_intent: None,
         input: BTreeMap::from([
             ("id".to_owned(), JsonValue::String(id.to_owned())),

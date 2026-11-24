@@ -63,9 +63,10 @@ fn jwks() -> String {
 }
 
 fn token(org: &str, role: &str) -> String {
-    let claims = json!({ "iss": ISSUER, "aud": "norn-host", "sub": format!("{role}-of-{org}"),
-            "iat": NOW - 10, "exp": NOW + 290,
-            "norn": { "kind": "user", "org": org, "role": role, "amr": "password" } });
+    let sub = format!("{role}-of-{org}");
+    let claims = json!({ "iss": ISSUER, "aud": "norn-host", "sub": sub, "iat": NOW - 10,
+            "exp": NOW + 290, "norn": { "kind": "user", "org": org, "role": role,
+            "amr": "password", "accountablePerson": sub } });
     let head = URL_SAFE_NO_PAD.encode(json!({ "alg": "EdDSA", "kid": "k1" }).to_string());
     let body = URL_SAFE_NO_PAD.encode(claims.to_string());
     let signature = key().sign(format!("{head}.{body}").as_bytes());

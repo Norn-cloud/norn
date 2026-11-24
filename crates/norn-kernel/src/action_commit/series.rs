@@ -1,5 +1,6 @@
 use norn_ir::{
     FactChange, KeyName, NamingSeriesIR, ObjectTypeName, PropertyId, ResourceLimitProfile,
+    TraceContext,
 };
 
 use crate::cell_host::{CellHost, FactKey, FactState, JsonObject, JsonValue};
@@ -53,7 +54,15 @@ where
         // therefore retains the original generated key after time or counter
         // state advances.
         let recorded = host.load(&record_key).map_err(host_failure)?;
-        if let Some(record) = recorded_generated_call(&recorded, call, object_type)? {
+        if let Some(record) = recorded_generated_call(
+            &recorded,
+            &call.action.action_id,
+            object_type,
+            &call.input,
+            &call.actor,
+            call.trace.as_ref(),
+            &call.idempotency_key,
+        )? {
             validate_generated_replay_input(
                 host,
                 catalog,
@@ -141,7 +150,6 @@ where
             precondition_outcomes,
             parameter_pins: slice.parameter_pins.clone(),
             actor: call.actor.clone(),
-            accountable_person: call.accountable_person.map(str::to_owned),
             turn: call.turn.id.clone(),
             transition: String::new(),
             from: String::new(),
@@ -189,7 +197,15 @@ where
                 // A consumed delivery is not retried, but an exact concurrent
                 // winner may have committed this call under the same key.
                 let raced = host.load(&record_key).map_err(host_failure)?;
-                if let Some(record) = recorded_generated_call(&raced, call, object_type)? {
+                if let Some(record) = recorded_generated_call(
+                    &raced,
+                    &call.action.action_id,
+                    object_type,
+                    &call.input,
+                    &call.actor,
+                    call.trace.as_ref(),
+                    &call.idempotency_key,
+                )? {
                     validate_generated_replay_input(
                         host,
                         catalog,
@@ -262,13 +278,16 @@ fn validate_generated_replay_input<H: CellHost + ?Sized>(
 
 fn recorded_generated_call<X>(
     recorded: &FactState,
-    call: &ActionCall<'_>,
+    action_id: &str,
     object_type: &ObjectTypeName,
+    input: &JsonObject,
+    actor: &str,
+    trace: Option<&TraceContext>,
+    key: &str,
 ) -> Result<Option<ActionCallRecord>, ActionRefusal<X>> {
     if recorded.version == crate::cell_host::FactVersion::ABSENT {
         return Ok(None);
     }
-    let key = &call.idempotency_key;
     let Some(values) = &recorded.values else {
         return Err(ActionRefusal::IdempotencyConflict {
             key: key.to_owned(),
@@ -279,14 +298,7 @@ fn recorded_generated_call<X>(
             key: key.to_owned(),
         });
     };
-    if record.binds_same_generated_call(
-        &call.action.action_id,
-        object_type,
-        &call.input,
-        &call.actor,
-        call.accountable_person,
-        call.trace.as_ref(),
-    ) {
+    if record.binds_same_generated_call(action_id, object_type, input, actor, trace) {
         Ok(Some(record))
     } else {
         Err(ActionRefusal::IdempotencyConflict {
