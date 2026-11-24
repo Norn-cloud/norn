@@ -14,9 +14,9 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import type { Concept, Field } from "../lib/catalog.ts"
-import { NO_DATA_CELL } from "../lib/definitions.ts"
+import { NO_DATA_CELL, StudioScopeError, type StudioScope } from "../lib/definitions.ts"
 import { recordName } from "../lib/objects.ts"
-import { cycleSort, DATA_CHANGED, LIMITS, recordsQueryParams, SERVER_QUERY_UNAVAILABLE, sortable, totalText, type Predicate, type RecordsQuery, type SortKey } from "../lib/records-query.ts"
+import { cycleSort, DATA_CHANGED, LIMITS, recordsQueryParams, recordsQueryPrefix, SERVER_QUERY_UNAVAILABLE, sortable, totalText, type Predicate, type RecordsQuery, type SortKey } from "../lib/records-query.ts"
 import { diagnosticsAt, readRecords, type RecordsRead } from "../lib/records-source.ts"
 import { transport } from "../lib/transport.ts"
 import { ACTIONS_UNAVAILABLE, writesWhole, type ActionSummary } from "../lib/actions.ts"
@@ -36,7 +36,8 @@ const PAGE_SIZES = [50, 100, LIMITS.maxPageSize] as const
 const HIDDEN_FIELDS = new Set(["id", "label", "display_name"])
 const RECORDED = "Replayed documents the engine produced. The cell doesn't serve live records here yet."
 
-export type Read = (objectType: string, query: RecordsQuery) => Promise<RecordsRead>
+export type Read = (objectType: string, query: RecordsQuery, signal?: AbortSignal) => Promise<RecordsRead>
+const defaultRead: Read = (objectType, query) => readRecords(objectType, query)
 
 const nameOf = (row: GridRow) => isWithheld(row) ? row.record.id : recordName(row.record)
 
@@ -68,15 +69,23 @@ const STICKY = "sticky left-0 z-10 shadow-[1px_0_0_var(--node-border)]"
 /** The query a grid shows, as a saved view keeps it. */
 export interface GridQuery { readonly filter: Predicate | null; readonly sort: readonly SortKey[]; readonly columns: readonly string[] }
 
-export function RecordsGrid({ concept, read = readRecords, initial, onQuery, timeline = false }: {
+export type DisplayedGridQuery = GridQuery & { readonly initialColumns: readonly string[] }
+
+export function visibleDrawerRow(row: GridRow | null, error: Error | null): GridRow | null {
+  return error instanceof StudioScopeError ? null : row
+}
+
+export function RecordsGrid({ concept, read = defaultRead, scope, initial, onQuery, timeline = false }: {
   readonly concept: Concept
   readonly read?: Read
+  /** The source workspace for a saved view's query cache and facet reads. */
+  readonly scope?: StudioScope
   /** The type is a `core.TimeInterval`: the records can also be read as a timeline (lib/timeline.ts). */
   readonly timeline?: boolean
   /** The query to open with: a saved view's. */
   readonly initial?: Partial<GridQuery>
   /** Told the query the grid shows, whenever it changes. */
-  readonly onQuery?: (query: GridQuery) => void
+  readonly onQuery?: (query: DisplayedGridQuery) => void
 }) {
   const name = concept.name
   const fields = useMemo(() => concept.fields.filter(({ id }) => !HIDDEN_FIELDS.has(id)), [concept])
@@ -90,11 +99,19 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
   const [limit, setLimit] = useState<number>(LIMITS.pageSize)
   const [cursors, setCursors] = useState<readonly (string | undefined)[]>([undefined])
   const [pageIndex, setPageIndex] = useState(0)
-  const [shown, setShown] = useState<ReadonlySet<string>>(() => new Set(initial?.columns?.filter((id) => fields.some((field) => field.id === id)) ?? fields.slice(0, DEFAULT_COLUMNS).map(({ id }) => id)))
-  // The columns in the definition's order, as a view keeps them.
-  const shownList = fields.filter(({ id }) => shown.has(id)).map(({ id }) => id)
+  const [initialColumns] = useState<readonly string[]>(() => {
+    const valid = new Set(fields.map(({ id }) => id))
+    const saved = [...new Set(initial?.columns)].filter((id) => valid.has(id))
+    return saved.length > 0 ? saved : fields.slice(0, DEFAULT_COLUMNS).map(({ id }) => id)
+  })
+  const [shownOrder, setShownOrder] = useState(initialColumns)
+  const shown = useMemo(() => new Set(shownOrder), [shownOrder])
+  const fieldById = useMemo(() => new Map(fields.map((field) => [field.id, field])), [fields])
+  // Preserve saved column order when configured; fall back to catalog order for default columns.
+  const columns = useMemo(() => shownOrder.flatMap((id) => { const f = fieldById.get(id); return f ? [f] : [] }), [shownOrder, fieldById])
+  const shownList = useMemo(() => columns.map(({ id }) => id), [columns])
   const reported = JSON.stringify({ filter, sort, shownList })
-  useEffect(() => { onQuery?.({ filter, sort, columns: shownList }) }, [reported])
+  useEffect(() => { onQuery?.({ filter, sort, columns: shownList, initialColumns }) }, [reported])
   const [active, setActive] = useState(0)
   const [opened, setOpened] = useState<GridRow | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -131,20 +148,23 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
     limit: shownTimeline ? LIMITS.maxPageSize : limit,
     ...cursors[pageIndex] === undefined ? {} : { after: cursors[pageIndex] },
   }
-  const key = ["records", name, recordsQueryParams(query).toString()] as const
-  const result = useQuery({ queryKey: key, queryFn: () => read(name, query), placeholderData: keepPreviousData, retry: false, enabled: filterOverflow === 0 })
+  const prefix = recordsQueryPrefix(name, scope)
+  const key = [...prefix, recordsQueryParams(query).toString()] as const
+  const result = useQuery({ queryKey: key, queryFn: ({ signal }) => read(name, query, signal), placeholderData: keepPreviousData, retry: false, enabled: filterOverflow === 0 })
   const data = result.data
 
   const restart = () => { setCursors([undefined]); setPageIndex(0); setActive(0) }
   useEffect(() => {
     if (data?.kind !== "restart") return
-    void client.removeQueries({ queryKey: ["records", name] })
+    // An unscoped restart leaves saved-view pages in their own caches.
+    void client.removeQueries({ queryKey: prefix, predicate: ({ queryKey }) => queryKey.length === key.length })
     restart()
     setNotice(DATA_CHANGED)
-  }, [data, client, name])
+  }, [data, client, name, scope?.orgId, scope?.environmentId])
 
   // Controls are on only when the last page says the cell applied the query.
-  const page = data?.kind === "page" ? data : undefined
+  const scopeChanged = result.isError && result.error instanceof StudioScopeError
+  const page = !scopeChanged && data?.kind === "page" ? data : undefined
   // While a refused or restarting read is shown, keep what the last page said.
   const lastServed = useRef(false)
   if (page !== undefined) lastServed.current = page.served !== null
@@ -161,7 +181,6 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
   }, [viewing, result.isFetching, result.dataUpdatedAt, page, name, navigate])
 
   const rows = useMemo<readonly GridRow[]>(() => page === undefined ? [] : page.read.document.records.map((record, index) => ({ record, at: `/records/${index}`, numbers: page.read.numbers })), [page])
-  const columns = fields.filter(({ id }) => shown.has(id))
   // Columns never squeeze below a readable width; past the card's width the grid scrolls sideways.
   // Wide enough for a money amount with its currency ("7,800.00 USD") and a lifecycle state.
   const template = `minmax(14rem,1.4fr) ${columns.map((field) => alignRight(field) ? "minmax(10.5rem,1fr)" : "minmax(11rem,1fr)").join(" ")}`
@@ -219,7 +238,7 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
   const off = canQuery ? undefined : SERVER_QUERY_UNAVAILABLE
   const pill = "h-8 rounded-lg px-2.5 text-sm"
 
-  const facets = page?.origin === "live" && <FacetsRail objectType={name} fields={fields} filter={filter} onFilter={(next) => { setDraft(fromPredicate(next)); changeQuery({ filter: next }) }} />
+  const facets = page?.origin === "live" && <FacetsRail objectType={name} fields={fields} filter={filter} scope={scope} onFilter={(next) => { setDraft(fromPredicate(next)); changeQuery({ filter: next }) }} />
   return (
     <Shell>
       <div className={cn("grid gap-4", facets && "xl:grid-cols-[15rem_minmax(0,1fr)]")}>
@@ -283,7 +302,7 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
                   {fields.map((field) => (
                     <DropdownMenuCheckboxItem key={field.id} checked={shown.has(field.id)} disabled={shown.has(field.id) && shown.size === 1}
                       onSelect={(event) => event.preventDefault()}
-                      onCheckedChange={(checked) => setShown((current) => { const next = new Set(current); if (checked) next.add(field.id); else next.delete(field.id); return next })}>
+                      onCheckedChange={(checked) => setShownOrder((current) => checked ? (current.includes(field.id) ? current : [...current, field.id]) : current.filter((id) => id !== field.id))}>
                       {field.id.replaceAll("_", " ")}
                     </DropdownMenuCheckboxItem>
                   ))}
@@ -402,7 +421,7 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
         )}
       </div>
       </div>
-      <RecordDrawer concept={concept} fields={fields} row={opened} origin={page?.origin} actions={actions} actionsOff={actionsOff} onClose={() => setOpened(null)}
+      <RecordDrawer concept={concept} fields={fields} row={visibleDrawerRow(opened, result.error)} origin={page?.origin} actions={actions} actionsOff={actionsOff} onClose={() => setOpened(null)}
         onAction={(action, id) => { setOpened(null); setActing({ action, prefill: { [action.objectIdField]: id } }) }} />
       <ActionSheet open={acting} onClose={() => setActing(null)} onView={(id) => setViewing({ id, since: Date.now() })} />
     </Shell>
