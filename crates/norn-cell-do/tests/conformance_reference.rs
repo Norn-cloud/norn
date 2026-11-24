@@ -1,8 +1,8 @@
 //! The host conformance suite's native reference (D122, #1130, #786).
 //!
 //! This test owns the request script that `apps/norn-cell-do/conformance`
-//! replays on every Workers host (celld, `OpenOrange` on a Rivet Engine,
-//! Wrangler): a sequence of governed definition installs, refusals,
+//! replays on every cell host (the native Rivet host, or a deployed Workers
+//! host by URL): a sequence of governed definition installs, refusals,
 //! retirements and reads on the analytics cell, all at one fixed clock. It
 //! serves the script through the same tenant dispatch the Durable Object
 //! binding (`src/wasm.rs`) runs, over `NativeEngine`, and records each
