@@ -67,7 +67,7 @@ fn add_automation_tables(image: &mut Value) {
             "table",
             "_norn_automation_outbox_continuation",
             "_norn_automation_outbox_continuation",
-            "CREATE TABLE \"_norn_automation_outbox_continuation\" (\n  \"trigger_commit_seq\" INTEGER NOT NULL,\n  \"world\" TEXT NOT NULL,\n  \"cursor\" TEXT NOT NULL,\n  \"storage_version\" INTEGER NOT NULL,\n  \"engine_version\" TEXT NOT NULL,\n  \"definitions_version\" INTEGER NOT NULL,\n  \"recorded_at_ms\" INTEGER NOT NULL,\n  \"completed_commit_seq\" INTEGER,\n  PRIMARY KEY (\"trigger_commit_seq\")\n)",
+            "CREATE TABLE \"_norn_automation_outbox_continuation\" (\n  \"trigger_commit_seq\" INTEGER NOT NULL,\n  \"world\" TEXT NOT NULL,\n  \"cursor\" TEXT NOT NULL,\n  \"storage_version\" INTEGER NOT NULL,\n  \"engine_version\" TEXT NOT NULL,\n  \"definitions_version\" INTEGER NOT NULL,\n  \"matcher_version\" INTEGER NOT NULL,\n  \"recorded_at_ms\" INTEGER NOT NULL,\n  \"completed_commit_seq\" INTEGER,\n  PRIMARY KEY (\"trigger_commit_seq\")\n)",
         ),
         (
             "index",
@@ -147,6 +147,7 @@ fn add_automation_tables(image: &mut Value) {
                 "storage_version",
                 "engine_version",
                 "definitions_version",
+                "matcher_version",
                 "recorded_at_ms",
                 "completed_commit_seq"
             ],

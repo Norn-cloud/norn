@@ -36,13 +36,14 @@
 //!   revision to remain the current active revision and reauthorize the
 //!   author's live grant (`parent_grant_ids` + `author`) and concrete target
 //!   row under the dispatch hold.
-//! - **Lossless continuation expansion:** before draining candidates, U2 must
-//!   expand any pending `_norn_automation_outbox_continuation` rows from
-//!   committed history at `trigger_commit_seq` (before = state at `seq - 1`,
-//!   after = state at `seq`) using the recorded `cursor`, `storage_version`,
-//!   `engine_version`, and `definitions_version`, inserting remaining
-//!   candidates idempotently into `_norn_automation_outbox` and still enforcing
-//!   the active-revision and live-grant checks above before dispatch.
+//! - **Lossless continuation expansion:** select each rule's latest retained
+//!   revision at or below the pinned definitions version, then filter to
+//!   active, enabled, bound rules. Resume from receipt writes, retained action
+//!   calls, and historical versions (including tombstones) with the recorded
+//!   matcher version and cursor. Insert candidates idempotently before
+//!   draining and apply the dispatch checks above. During a #1551 scrub,
+//!   retry gated as-of reads without advancing the cursor. Retain the required
+//!   history until expansion completes.
 
 mod continuation;
 mod trigger_index;
@@ -60,7 +61,8 @@ use crate::read::{ObjectRecord, StoreReader, to_i64};
 use crate::store::{CommitBatch, FactWriteRow, WrittenRow};
 
 pub use continuation::{
-    AutomationContinuationCursor, AutomationOutboxContinuation, current_engine_version,
+    AUTOMATION_MATCHER_VERSION, AutomationContinuationCursor, AutomationOutboxContinuation,
+    current_engine_version,
 };
 use trigger_index::{
     Page1Cache, RulePage, TriggerMatcher, WatchedRule, has_action_rules, has_row_rules_for_root,
@@ -114,6 +116,7 @@ pub(crate) const DDL: [&str; 9] = [
   "storage_version" INTEGER NOT NULL,
   "engine_version" TEXT NOT NULL,
   "definitions_version" INTEGER NOT NULL,
+  "matcher_version" INTEGER NOT NULL,
   "recorded_at_ms" INTEGER NOT NULL,
   "completed_commit_seq" INTEGER,
   PRIMARY KEY ("trigger_commit_seq")
@@ -509,9 +512,66 @@ pub(crate) fn record<E: SqlEngine>(
     commit_seq: u64,
     definitions_version: u64,
     watch: &AutomationWatch,
-) -> Result<(), CellError> {
+    retained: Option<&crate::export::ExportRecord>,
+) -> Result<Option<AutomationOutboxContinuation>, CellError> {
+    let original = retained.and_then(|record| record.automation_continuation.as_ref());
+    if let Some(original) = original
+        && original.matcher_version != AUTOMATION_MATCHER_VERSION
+    {
+        return Err(CellError::EngineUnknownVersion {
+            found: format!("automation matcher version {}", original.matcher_version),
+        });
+    }
+    let paused = record_inline(reader, batch, written, commit_seq, watch)?;
+    let continuation = if let Some(export) = retained {
+        match (paused.as_ref(), original) {
+            (None, None) => None,
+            (Some(cursor), Some(row))
+                if row.cursor == *cursor
+                    && row.trigger_commit_seq == commit_seq
+                    && row.world == batch.world
+                    && Some(row.storage_version) == export.storage_version
+                    && row.definitions_version == definitions_version
+                    && row.recorded_at_ms == batch.logical_time
+                    && row.completed_commit_seq.is_none() =>
+            {
+                Some(row.clone())
+            }
+            _ => {
+                return Err(CellError::LedgerCorrupt {
+                    seq: commit_seq,
+                    reason: "automation continuation does not match replay".to_owned(),
+                });
+            }
+        }
+    } else {
+        paused.map(|cursor| AutomationOutboxContinuation {
+            trigger_commit_seq: commit_seq,
+            world: batch.world.clone(),
+            cursor,
+            storage_version: crate::engine_release::STORAGE_VERSION,
+            engine_version: current_engine_version(),
+            definitions_version,
+            matcher_version: AUTOMATION_MATCHER_VERSION,
+            recorded_at_ms: batch.logical_time,
+            completed_commit_seq: None,
+        })
+    };
+    if let Some(row) = &continuation {
+        continuation::insert_continuation(reader.conn, row)?;
+    }
+    Ok(continuation)
+}
+
+fn record_inline<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    batch: &CommitBatch,
+    written: &[WrittenRow],
+    commit_seq: u64,
+    watch: &AutomationWatch,
+) -> Result<Option<AutomationContinuationCursor>, CellError> {
     if watch.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
     let model = reader.model();
     let action_calls = action_calls_in_batch(reader, batch);
@@ -538,19 +598,7 @@ pub(crate) fn record<E: SqlEngine>(
     if paused.is_none() && !watch.watched_actions.is_empty() {
         paused = record_action_triggers(reader, &ctx, &mut budget)?;
     }
-    if let Some(cursor) = paused {
-        continuation::insert_continuation(
-            reader.conn,
-            &continuation::ContinuationRecord {
-                trigger_commit_seq: commit_seq,
-                world: &batch.world,
-                cursor: &cursor,
-                definitions_version,
-                recorded_at_ms: batch.logical_time,
-            },
-        )?;
-    }
-    Ok(())
+    Ok(paused)
 }
 
 fn record_row_triggers<E: SqlEngine>(
@@ -1495,8 +1543,8 @@ mod tests {
     /// cleanly with exactly `MAX` inline candidates and one idempotent
     /// continuation row in the same transaction; a rolled-back transaction
     /// leaves neither candidates nor a continuation row.
-    #[test]
-    fn unrelated_write_skips_work_and_large_batch_records_transactional_continuation() {
+    #[tokio::test]
+    async fn unrelated_write_skips_work_and_large_batch_records_transactional_continuation() {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("hotpath.sqlite");
         let (model, canonical) = sample_model();
@@ -1678,6 +1726,7 @@ mod tests {
         assert_eq!(cont.storage_version, crate::engine_release::STORAGE_VERSION);
         assert_eq!(cont.engine_version, current_engine_version());
         assert_eq!(cont.definitions_version, receipt.body.definitions_version);
+        assert_eq!(cont.matcher_version, AUTOMATION_MATCHER_VERSION);
         assert_eq!(cont.recorded_at_ms, 200);
         assert_eq!(cont.completed_commit_seq, None);
 
@@ -1688,16 +1737,9 @@ mod tests {
         ));
         continuation::insert_continuation(
             store.read().conn,
-            &continuation::ContinuationRecord {
-                trigger_commit_seq: commit_seq,
-                world: MAIN_WORLD,
-                cursor: &AutomationContinuationCursor::Action {
-                    action_call_key: "ignored".to_owned(),
-                    action_id: "ignored".to_owned(),
-                    after_automation_id: None,
-                },
-                definitions_version: 999,
+            &AutomationOutboxContinuation {
                 recorded_at_ms: 999,
+                ..cont.clone()
             },
         )
         .expect("duplicate continuation insert ignored");
@@ -1709,7 +1751,8 @@ mod tests {
 
         // 4. Reopen durability: both inline candidates and continuation row survive restart.
         drop(store);
-        let reopened = CellStore::open(&path, model, StoreOptions::default()).expect("reopen");
+        let reopened =
+            CellStore::open(&path, model.clone(), StoreOptions::default()).expect("reopen");
         assert_eq!(
             reopened
                 .read()
@@ -1722,8 +1765,66 @@ mod tests {
                 .read()
                 .automation_outbox_continuation(commit_seq)
                 .expect("reopened cont"),
-            Some(cont)
+            Some(cont.clone())
         );
+
+        let mut record = reopened
+            .export_record(commit_seq)
+            .expect("overflow journal")
+            .expect("overflow record");
+        assert_eq!(record.automation_continuation.as_ref(), Some(&cont));
+
+        // Represent an export written by a different build without needing a
+        // second binary. The last record can be republished under its new hash.
+        let mut original = cont;
+        original.engine_version.push_str("-other-build");
+        for matcher_version in [AUTOMATION_MATCHER_VERSION, u32::MAX] {
+            original.matcher_version = matcher_version;
+            record.automation_continuation = Some(original.clone());
+            let mut exporter = crate::export::Exporter::new(std::sync::Arc::new(
+                object_store::memory::InMemory::new(),
+            ));
+            for seq in 1..commit_seq {
+                let prior = reopened
+                    .export_record(seq)
+                    .expect("prior journal")
+                    .expect("prior record");
+                exporter.append(&prior).await.expect("publish prefix");
+            }
+            exporter.append(&record).await.expect("publish overflow");
+            let target = dir
+                .path()
+                .join(format!("restored-{matcher_version}.sqlite"));
+            let result = CellStore::restore_from(
+                &mut exporter,
+                &target,
+                model.clone(),
+                SCOPE,
+                &record.bindings,
+                StoreOptions::default(),
+            )
+            .await;
+            if matcher_version == AUTOMATION_MATCHER_VERSION {
+                result.expect("restore overflow");
+                let restored = CellStore::open(&target, model.clone(), StoreOptions::default())
+                    .expect("open restored cell");
+                assert_eq!(
+                    restored
+                        .read()
+                        .automation_outbox_continuation(commit_seq)
+                        .expect("restored continuation")
+                        .as_ref(),
+                    Some(&original)
+                );
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(crate::RestoreError::Cell(CellError::EngineUnknownVersion { found }))
+                        if found == format!("automation matcher version {matcher_version}")
+                ));
+                assert!(!target.exists());
+            }
+        }
     }
 
     /// S4: indexed rule lookups use `LIMIT` with keyset cursors, and a pause in

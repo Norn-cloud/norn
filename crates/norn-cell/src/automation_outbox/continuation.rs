@@ -10,12 +10,12 @@
 //! transaction.
 //!
 //! ## U2 drain obligation
-//! U2's drain must expand pending continuation rows from committed history at
-//! `trigger_commit_seq` (before = state at `trigger_commit_seq - 1`, after =
-//! state at `trigger_commit_seq`) under the recorded `storage_version`,
-//! `engine_version`, and `definitions_version`, inserting expanded candidates
-//! idempotently into `_norn_automation_outbox` and enforcing live-grant
-//! reauthorization before dispatch or proposal.
+//! Resume under the recorded matcher version and cursor. Reconstruct the match
+//! from receipt writes, retained action calls, and historical versions at
+//! `trigger_commit_seq - 1` and `trigger_commit_seq`, including tombstones.
+//! An absent action target can have a nonzero version. During a #1551 scrub,
+//! gated as-of reads must retry without advancing the cursor. Retain the
+//! required history until expansion completes.
 
 use std::collections::BTreeMap;
 
@@ -31,6 +31,10 @@ use super::{AUTOMATION_OUTBOX, AutomationTriggerCandidate, AutomationTriggerKey}
 /// The transactional continuation table for commits that exceed the inline
 /// automation-matching bound.
 const AUTOMATION_OUTBOX_CONTINUATION: &str = "_norn_automation_outbox_continuation";
+
+/// Version of the automation matching semantics used to create a continuation.
+/// Bump only when those semantics change.
+pub const AUTOMATION_MATCHER_VERSION: u32 = 1;
 
 /// Deterministic resume point in `(written objects × rules)` persisted on an
 /// `_norn_automation_outbox_continuation` row when a commit crosses the inline
@@ -86,7 +90,7 @@ pub enum AutomationContinuationCursor {
 /// Idempotent on `trigger_commit_seq`. U2 expands the remaining candidates
 /// from committed history at `trigger_commit_seq` (before = state at
 /// `trigger_commit_seq - 1`, after = state at `trigger_commit_seq`) under the
-/// pinned storage, engine, and definitions versions.
+/// pinned storage, engine, definitions, and matcher versions.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AutomationOutboxContinuation {
@@ -105,6 +109,8 @@ pub struct AutomationOutboxContinuation {
     /// Active cell definitions version (`receipt.body.definitions_version`) at
     /// the triggering commit.
     pub definitions_version: u64,
+    /// Matching semantics that U2 must use for expansion.
+    pub matcher_version: u32,
     /// Logical time (ms) of the triggering commit.
     pub recorded_at_ms: u64,
     /// Commit sequence that finished expanding this continuation, or `None`
@@ -113,8 +119,7 @@ pub struct AutomationOutboxContinuation {
     pub completed_commit_seq: Option<u64>,
 }
 
-/// Engine version identifier recorded on continuation rows for deterministic
-/// replay by U2.
+/// Producer release label recorded on continuation rows.
 #[must_use]
 pub fn current_engine_version() -> String {
     format!(
@@ -124,39 +129,35 @@ pub fn current_engine_version() -> String {
     )
 }
 
-pub(super) struct ContinuationRecord<'a> {
-    pub(super) trigger_commit_seq: u64,
-    pub(super) world: &'a str,
-    pub(super) cursor: &'a AutomationContinuationCursor,
-    pub(super) definitions_version: u64,
-    pub(super) recorded_at_ms: u64,
-}
-
 pub(super) fn insert_continuation<E: SqlEngine>(
     conn: &E,
-    record: &ContinuationRecord<'_>,
+    record: &AutomationOutboxContinuation,
 ) -> Result<(), CellError> {
-    let cursor_json = serde_json::to_string(record.cursor).map_err(CellError::Json)?;
-    let engine_version = current_engine_version();
+    let cursor_json = serde_json::to_string(&record.cursor).map_err(CellError::Json)?;
     conn.execute(
         &format!(
             "INSERT OR IGNORE INTO \"{AUTOMATION_OUTBOX_CONTINUATION}\" (\
               \"trigger_commit_seq\", \"world\", \"cursor\", \"storage_version\", \
-              \"engine_version\", \"definitions_version\", \"recorded_at_ms\", \
-              \"completed_commit_seq\"\
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL)"
+              \"engine_version\", \"definitions_version\", \"matcher_version\", \
+              \"recorded_at_ms\", \"completed_commit_seq\"\
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
         ),
         params![
             to_i64(record.trigger_commit_seq, "continuation trigger commit seq")?,
-            record.world,
+            record.world.as_str(),
             cursor_json,
-            i64::from(crate::engine_release::STORAGE_VERSION),
-            engine_version,
+            i64::from(record.storage_version),
+            record.engine_version.as_str(),
             to_i64(
                 record.definitions_version,
                 "continuation definitions version"
             )?,
+            i64::from(record.matcher_version),
             to_i64(record.recorded_at_ms, "continuation recorded_at_ms")?,
+            record
+                .completed_commit_seq
+                .map(|seq| to_i64(seq, "continuation completed commit seq"))
+                .transpose()?,
         ],
     )
 }
@@ -169,7 +170,7 @@ pub(super) fn limit_to_sql(limit: usize) -> i64 {
 
 const SELECT_COLUMNS: &str = "\"world\", \"automation_id\", \"revision\", \"trigger_commit_seq\", \"object_type\", \"object_id\", \"object_version\", \"trigger_kind\", \"action_id\", \"before_values\", \"after_values\", \"recorded_at_ms\", \"consumed_commit_seq\", \"voided_commit_seq\"";
 
-const CONTINUATION_SELECT_COLUMNS: &str = "\"trigger_commit_seq\", \"world\", \"cursor\", \"storage_version\", \"engine_version\", \"definitions_version\", \"recorded_at_ms\", \"completed_commit_seq\"";
+const CONTINUATION_SELECT_COLUMNS: &str = "\"trigger_commit_seq\", \"world\", \"cursor\", \"storage_version\", \"engine_version\", \"definitions_version\", \"matcher_version\", \"recorded_at_ms\", \"completed_commit_seq\"";
 
 fn decode_snapshot(text: Option<&str>) -> Result<Option<BTreeMap<String, Value>>, CellError> {
     text.map(|raw| {
@@ -224,7 +225,7 @@ fn decode_continuation(values: Vec<SqlValue>) -> Result<AutomationOutboxContinua
     let storage_version = u32::try_from(row.get::<i64>(3)?)
         .map_err(|_overflow| CellError::OutOfRange("continuation storage version"))?;
     let completed_commit_seq = row
-        .get::<Option<i64>>(7)?
+        .get::<Option<i64>>(8)?
         .map(|seq| to_u64(seq, "continuation completed commit seq"))
         .transpose()?;
     Ok(AutomationOutboxContinuation {
@@ -234,7 +235,9 @@ fn decode_continuation(values: Vec<SqlValue>) -> Result<AutomationOutboxContinua
         storage_version,
         engine_version: row.get(4)?,
         definitions_version: to_u64(row.get(5)?, "continuation definitions version")?,
-        recorded_at_ms: to_u64(row.get(6)?, "continuation recorded_at_ms")?,
+        matcher_version: u32::try_from(row.get::<i64>(6)?)
+            .map_err(|_overflow| CellError::OutOfRange("automation matcher version"))?,
+        recorded_at_ms: to_u64(row.get(7)?, "continuation recorded_at_ms")?,
         completed_commit_seq,
     })
 }

@@ -3247,6 +3247,10 @@ impl<E: SqlEngine> CellStore<E> {
                     return Ok((T::default(), CommitOutcome::Replayed(receipt)));
                 }
             }
+            let retained = match origin {
+                CommitOrigin::Retained(record) => Some(record),
+                CommitOrigin::Current | CommitOrigin::Provisioning(..) => None,
+            };
             let actual_version = active_definition_version(&self.conn)?;
             let (version, install_record, synthetic_batch) = if let Some(install) = &installation {
                 let preflight = preflight_definition_install(
@@ -3254,7 +3258,7 @@ impl<E: SqlEngine> CellStore<E> {
                     &self.model,
                     install,
                     actual_version,
-                    match origin { CommitOrigin::Retained(record) => Some(record), CommitOrigin::Current | CommitOrigin::Provisioning(..) => None },
+                    retained,
                 )?;
                 self.law_checked.set(preflight.migration.law_checked);
                 crate::migration::apply_model_migration(
@@ -3474,7 +3478,9 @@ impl<E: SqlEngine> CellStore<E> {
             let written = writer.apply_writes()?;
             crate::flow_run::apply(&writer.reader(), effective_batch, &written, commit_seq)?;
             crate::decision_ledger::apply(&writer.reader(), effective_batch, commit_seq)?;
-            automation_outbox::record(&writer.reader(), effective_batch, &written, commit_seq, version, &watch)?;
+            let automation_continuation = automation_outbox::record(
+                &writer.reader(), effective_batch, &written, commit_seq, version, &watch, retained,
+            )?;
             let quantity_result = writer.apply_quantity()?;
             probe(CommitPoint::FactsApplied)?;
             let linked = writer.apply_links()?;
@@ -3565,6 +3571,7 @@ impl<E: SqlEngine> CellStore<E> {
                         Some(crate::engine_release::STORAGE_VERSION)
                     }
                 },
+                automation_continuation,
                 entries,
             )?;
             probe(CommitPoint::ReceiptWritten)?;
