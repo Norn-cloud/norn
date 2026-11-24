@@ -765,7 +765,8 @@ function BarButtons({ tools }: { readonly tools?: ReactNode }) {
  * inspector and assistant docked on the end side.
  */
 export function Shell(props: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly assistant?: AssistantContent; readonly account: Account; readonly onSignOut: () => void }) {
-  return <LocaleProvider><PerspectiveProvider><AssistantProvider available={props.assistant !== undefined}><LocalizedShell {...props} /></AssistantProvider></PerspectiveProvider></LocaleProvider>
+  const scopeKey = `${props.account.user.id}:${props.account.organization?.id ?? ""}:${props.account.environmentId ?? ""}`
+  return <LocaleProvider><PerspectiveProvider><AssistantProvider available={props.assistant !== undefined} scopeKey={scopeKey}><LocalizedShell {...props} /></AssistantProvider></PerspectiveProvider></LocaleProvider>
 }
 
 /**

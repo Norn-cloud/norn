@@ -6,8 +6,8 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { api, ConnectorError, fixLabel, offersButton, startFix, type AccountDetail, type Inventory, type Requirement, type Status } from "./lib/connectors.ts"
-import type { WorkspaceScope } from "./lib/definitions.ts"
-import { usePinnedWorkspaceScope } from "./lib/session.ts"
+import { workspaceScopeFromAccount, type WorkspaceScope } from "./lib/definitions.ts"
+import { useAccount, usePinnedWorkspaceScope } from "./lib/session.ts"
 import { CodedMessage } from "@/components/coded-message"
 
 /**
@@ -24,7 +24,9 @@ export function ConnectorProblem({ error, scope }: { readonly error: unknown; re
   const [failed, setFailed] = useState<string | null>(null)
   const pinnedScope = usePinnedWorkspaceScope(error)
   const typed = error instanceof ConnectorError ? error : null
-  const effectiveScope = scope !== undefined ? scope : typed?.scope !== undefined ? typed.scope : pinnedScope
+  // Prefer the error's own recorded originating scope so recovery actions stay bound to the
+  // workspace that produced the failure even after a refresh or workspace switch.
+  const effectiveScope = typed?.scope !== undefined ? typed.scope : scope !== undefined ? scope : pinnedScope
   const action = typed?.action ?? null
   return (
     <div role="alert" data-code={typed?.code} className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
@@ -44,13 +46,14 @@ function AccountRow({ app, requirement, label, scope }: { readonly app: string; 
   const [open, setOpen] = useState(false)
   const pinnedRowScope = usePinnedWorkspaceScope(`${app}:${requirement.requirement}:${account ?? ""}`)
   const effectiveScope = scope !== undefined ? scope : pinnedRowScope
-  const renameScope = usePinnedWorkspaceScope(renaming !== null ? `rename:${app}:${account ?? ""}` : false)
+  const scopeKey = effectiveScope ? `${effectiveScope.orgId}:${effectiveScope.environmentId ?? ""}` : ""
   const refresh = () => client.invalidateQueries({ queryKey: ["connectors"] })
   const connect = useMutation({ mutationFn: () => api<{ url: string }>(`/apps/${encodeURIComponent(app)}/accounts/${encodeURIComponent(requirement.requirement)}/connect`, { method: "POST", body: account === null ? {} : { account }, scope: effectiveScope }), onSuccess: go })
-  const rename = useMutation({ mutationFn: (next: string) => api(`/accounts/${encodeURIComponent(account ?? "")}`, { method: "PATCH", body: { label: next }, scope: renameScope ?? effectiveScope }), onSuccess: () => { setRenaming(null); return refresh() } })
+  // Inherit the row's originating scope for rename so opening the input after a refresh never targets another workspace.
+  const rename = useMutation({ mutationFn: (next: string) => api(`/accounts/${encodeURIComponent(account ?? "")}`, { method: "PATCH", body: { label: next }, scope: effectiveScope }), onSuccess: () => { setRenaming(null); return refresh() } })
   // Unlinks the account from this app's requirement; the gateway deletes it only when no other app uses it.
   const disconnect = useMutation({ mutationFn: () => api(`/apps/${encodeURIComponent(app)}/accounts/${encodeURIComponent(requirement.requirement)}/${encodeURIComponent(account ?? "")}`, { method: "DELETE", scope: effectiveScope }), onSuccess: refresh })
-  const detail = useQuery({ queryKey: ["connectors", "account", account], queryFn: () => api<AccountDetail>(`/accounts/${encodeURIComponent(account ?? "")}`), enabled: open && account !== null })
+  const detail = useQuery({ queryKey: ["connectors", "account", account, scopeKey], queryFn: () => api<AccountDetail>(`/accounts/${encodeURIComponent(account ?? "")}`, { scope: effectiveScope }), enabled: open && account !== null })
   const error = connect.error ?? rename.error ?? disconnect.error
   return (
     <div className="border-t first:border-t-0" data-requirement={requirement.requirement}>
@@ -95,7 +98,8 @@ function AccountRow({ app, requirement, label, scope }: { readonly app: string; 
 }
 
 function AppAccounts({ app, name, inventory, scope }: { readonly app: string; readonly name: string; readonly inventory: Inventory; readonly scope?: WorkspaceScope | null }) {
-  const requirements = useQuery({ queryKey: ["connectors", "requirements", app], queryFn: () => api<{ requirements: readonly Requirement[] }>(`/apps/${encodeURIComponent(app)}/accounts`) })
+  const scopeKey = scope ? `${scope.orgId}:${scope.environmentId ?? ""}` : ""
+  const requirements = useQuery({ queryKey: ["connectors", "requirements", app, scopeKey], queryFn: () => api<{ requirements: readonly Requirement[] }>(`/apps/${encodeURIComponent(app)}/accounts`, { scope }) })
   const labelOf = (account: string | null) => inventory.accounts.find((entry) => entry.id === account)?.label ?? null
   return (
     <section aria-label={name} className="rounded-md border bg-background">
@@ -110,10 +114,14 @@ function AppAccounts({ app, name, inventory, scope }: { readonly app: string; re
 
 export function ConnectionsPage({ children }: { readonly children?: ReactNode }) {
   const client = useQueryClient()
-  const status = useQuery({ queryKey: ["connectors", "status"], queryFn: () => api<Status>("/status"), retry: false })
+  const account = useAccount()
+  const activeScope = account.data !== undefined ? workspaceScopeFromAccount(account.data) : undefined
+  const scopeKey = activeScope ? `${activeScope.orgId}:${activeScope.environmentId ?? ""}` : ""
+  const status = useQuery({ queryKey: ["connectors", "status", scopeKey], queryFn: () => api<Status>("/status", { scope: activeScope }), retry: false })
   const linked = status.data?.linked === true
-  const inventory = useQuery({ queryKey: ["connectors", "inventory"], queryFn: () => api<Inventory>("/inventory"), enabled: linked, retry: false })
-  const pinnedScope = usePinnedWorkspaceScope(status.data?.gateway ?? true)
+  const inventory = useQuery({ queryKey: ["connectors", "inventory", scopeKey], queryFn: () => api<Inventory>("/inventory", { scope: activeScope }), enabled: linked, retry: false })
+  const fallbackPinnedScope = usePinnedWorkspaceScope(status.data?.gateway ?? true)
+  const pinnedScope = activeScope !== undefined ? activeScope : fallbackPinnedScope
   const link = useMutation({ mutationFn: () => api<{ url: string }>("/link", { method: "POST", scope: pinnedScope }), onSuccess: go })
   const unlink = useMutation({ mutationFn: () => api("/unlink", { method: "POST", scope: pinnedScope }), onSuccess: () => client.invalidateQueries({ queryKey: ["connectors"] }) })
 

@@ -368,6 +368,7 @@ async function oauthConsentContext(request: Request, env: Env): Promise<Response
     ))
   }
   const approvalToken = await issueConsentApproval(env.AUTH_DB as unknown as ProvisionDb, {
+    sessionId: session.session.id,
     sessionToken: session.session.token,
     userId: session.user.id,
     organizationId: member.organizationId,

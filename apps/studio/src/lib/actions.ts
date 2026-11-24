@@ -1,4 +1,4 @@
-import { CellUnavailable, defaultFetch, getDisplayedScope, isDefaultFetch, readStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
+import { CellUnavailable, defaultFetch, readStudioScope, resolveWriteScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
 
 /**
  * Governed actions from Studio: the catalog the cell offers this reader, and one call.
@@ -169,11 +169,7 @@ export async function callAction(
   fetcher: Fetch = defaultFetch,
   boundScope?: StudioScope | null,
 ): Promise<CallResult> {
-  const scope = boundScope !== undefined
-    ? boundScope
-    : getDisplayedScope() !== undefined
-      ? getDisplayedScope()!
-      : await readStudioScope(fetcher)
+  const scope = await resolveWriteScope(fetcher, boundScope)
   if (scope === null) return { kind: "no-cell" }
   const call = scopedHostFetch(fetcher, "/api/host", async () => scope)
   const response = await call(`/v1/actions/${encodeURIComponent(actionId)}`, {

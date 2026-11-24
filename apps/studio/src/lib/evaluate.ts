@@ -1,7 +1,7 @@
 import type { Answer } from "./transport.ts"
 import { readDocument, type Read } from "./exact.ts"
 import { isAnswer, isTrace, type Fetch, type LiveRead, type Refusal, type Trace } from "./live.ts"
-import { CellUnavailable, NO_DATA_CELL, StudioScopeError, defaultFetch, getDisplayedScope, isDefaultFetch, readStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
+import { CellUnavailable, NO_DATA_CELL, StudioScopeError, defaultFetch, resolveWriteScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
 
 /**
  * Running a question built in Studio (F2b, CELL-DO's final shape, query/evaluate
@@ -60,12 +60,10 @@ export async function untilNotPending<T>(ask: () => Promise<T>, pending: (result
 type PostResult = { readonly status: number; readonly text: string } | { readonly noCell: true } | { readonly scopeStatus: number } | undefined
 async function post(path: string, body: unknown, fetcher: Fetch, boundScope?: StudioScope | null): Promise<PostResult> {
   try {
-    const scopeProvider = boundScope !== undefined
-      ? async () => boundScope
-      : getDisplayedScope() !== undefined
-        ? async () => getDisplayedScope()!
-        : () => readStudioScope(fetcher)
-    const scoped = scopedHostFetch(fetcher, "/api/host", scopeProvider)
+    // Capture the originating scope ONCE before entering the analytics queue/retry loop so retries
+    // never reread a newer displayed workspace mid-flight.
+    const captured = await resolveWriteScope(fetcher, boundScope)
+    const scoped = scopedHostFetch(fetcher, "/api/host", async () => captured)
     return await inAnalyticsLane(() => untilNotPending(async () => {
       const response = await scoped(path, { method: "POST", headers: { "content-type": "application/json", accept: "application/json" }, body: JSON.stringify(body) })
       return { status: response.status, text: await response.text() }

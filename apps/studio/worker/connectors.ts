@@ -162,7 +162,8 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
   // Bindings are Norn's own records: viewing and removing them needs no gateway.
   const shown = (binding: Binding) => ({ ...binding, connectorRef: connectorString(binding.connector) })
   // Without a cell host there is nothing to scope: the binding stays a local record, as before.
-  const cellFor = () => deps.host === undefined ? new BindingDefinitions(undefined, auth, actor, "") : environmentId === null ? null : new BindingDefinitions(deps.host, auth, actor, environmentId)
+  const cellFor = (targetEnv: string | null = environmentId) =>
+    deps.host === undefined ? new BindingDefinitions(undefined, auth, actor, "") : targetEnv === null ? null : new BindingDefinitions(deps.host, auth, actor, targetEnv)
   const noEnvironment = () => refusal(409, "connectors.no_environment", "Your organization has no cell environment yet, so tool bindings cannot be saved there.", { kind: "ask_admin" })
   /** A definition write that did not land is a typed refusal; `null` when it landed or the stage keeps bindings locally. */
   const cellRefusal = (outcome: Install) =>
@@ -171,16 +172,16 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
         : outcome.kind === "denied" ? refusal(403, "connectors.binding_denied", `The cell does not let you save or remove tool bindings (${outcome.code}).`, { kind: "ask_admin" })
         : null
   /**
-   * Settle a binding a save left pending, from what the cell holds: the cell's version and fields
-   * when it has the definition, otherwise undo the save (a create is deleted, an edit restored).
-   * Returns the settled binding, null when it was deleted, or the binding still pending when the
-   * cell cannot be asked now, or when a create is younger than its lease (its install may still
-   * be running: the row's creation time is when the intent was recorded).
+   * Settle a binding a save left pending, from what the cell holds in the exact environment that
+   * started the pending save, guarded by its unique attempt id and previous version so a newer
+   * completed save can never be overwritten.
    */
   const reconcile = async (binding: Binding): Promise<Binding | null> => {
     if (binding.state !== "pending" || binding.pendingDefinition === null) return binding
     if (binding.pendingSave === "create" && (deps.now ?? Date.now)() - binding.updatedAt < PENDING_CREATE_LEASE_MS) return binding
-    const cell = cellFor()
+    const targetEnv = binding.pendingEnvironmentId ?? environmentId
+    if (binding.pendingEnvironmentId !== null && environmentId !== null && binding.pendingEnvironmentId !== environmentId) return binding
+    const cell = cellFor(targetEnv)
     if (cell === null) return binding
     let held: Awaited<ReturnType<BindingDefinitions["get"]>>
     try {
@@ -189,8 +190,11 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
       if (error instanceof CellUnavailable) return binding
       throw error
     }
-    if (held.kind === "found" && (binding.definition === null || held.version > binding.definition.version)) await adoptCell(db, actor.orgId, binding.id, binding.pendingDefinition, held.version, held.payload)
-    else if (await abandonSave(db, actor.orgId, binding.id, binding.pendingSave ?? "edit", binding.definition) === "deleted") return null
+    if (held.kind === "found" && (binding.definition === null || held.version > binding.definition.version)) {
+      await adoptCell(db, actor.orgId, binding.id, binding.pendingDefinition, held.version, held.payload, binding.pendingAttempt, binding.definition?.version ?? null)
+    } else if (await abandonSave(db, actor.orgId, binding.id, binding.pendingSave ?? "edit", binding.definition, binding.pendingAttempt) === "deleted") {
+      return null
+    }
     return await getBinding(db, actor.orgId, binding.id)
   }
   const settled = async (id: string) => { const binding = await getBinding(db, actor.orgId, id); return binding === null ? null : await reconcile(binding) }
@@ -200,6 +204,7 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
     return ok({ bindings: rows.map(shown), manage })
   }
   if (route === "POST /bindings:reconcile") {
+    if (!manage) return denied("reconcile tool bindings")
     const rows = await Promise.all((await listBindings(db, actor.orgId)).map(reconcile))
     return ok({ bindings: rows.filter((b): b is Binding => b !== null).map(shown), manage })
   }
@@ -305,10 +310,16 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
       const definitionId = existing?.definition?.id ?? bindingDefinitionId(id)
       const cell = cellFor()
       if (cell === null) return noEnvironment()
-      // Record the intent first, so a failure at any point below leaves a pending row that
-      // reconciliation settles against the cell, never a half-saved binding.
-      if (existing === undefined) await beginCreate(db, actor.orgId, actor.subjectId, draft, { manifestDigest: digest, connector }, id, definitionId)
-      else await beginEdit(db, actor.orgId, id, definitionId)
+      // Record the intent with a unique attempt id and validated environment so reconciliation,
+      // finish, and abandon writes match only this attempt and never overwrite a newer save.
+      const attemptId = crypto.randomUUID()
+      const expectedPreviousVersion = existing?.definition?.version ?? null
+      if (existing === undefined) {
+        await beginCreate(db, actor.orgId, actor.subjectId, draft, { manifestDigest: digest, connector }, id, definitionId, attemptId, environmentId)
+      } else {
+        const claimed = await beginEdit(db, actor.orgId, id, definitionId, attemptId, environmentId, expectedPreviousVersion)
+        if (!claimed) return refusal(409, "connectors.binding_conflict", "Someone changed this binding since it was opened. Reload it and try again.")
+      }
       let outcome: Install
       try {
         outcome = await cell.install(definitionId, { connector, inputSchema: tool.inputSchema, outputSchema: tool.outputSchema, manifestDigest: digest, label: draft.label, inputMapping: draft.inputMapping, runRole: draft.runRole }, existing?.definition?.version)
@@ -320,16 +331,16 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
       const refused = cellRefusal(outcome)
       if (refused !== null) {
         // The cell decided no: nothing was installed, so the intent is undone.
-        await abandonSave(db, actor.orgId, id, existing === undefined ? "create" : "edit", existing?.definition ?? null)
+        await abandonSave(db, actor.orgId, id, existing === undefined ? "create" : "edit", existing?.definition ?? null, attemptId)
         return refused
       }
       const definition = outcome.kind === "installed" ? { id: outcome.id, version: outcome.version } : null
-      return ok({ binding: shown(await finishSave(db, actor.orgId, actor.subjectId, id, draft, { manifestDigest: digest, connector, definition })) })
+      return ok({ binding: shown(await finishSave(db, actor.orgId, actor.subjectId, id, draft, { manifestDigest: digest, connector, definition }, attemptId, expectedPreviousVersion)) })
     }
 
     const runRoute = /^\/bindings\/([^/]+)\/run$/.exec(path)
     if (request.method === "POST" && runRoute !== null) {
-      const binding = await settled(part(runRoute, 1))
+      const binding = await getBinding(db, actor.orgId, part(runRoute, 1))
       if (binding === null) return refusal(404, "connectors.binding_not_found", "No such tool binding.")
       if (binding.state === "pending") return stillPending()
       // Running is decided on the binding's cell definition, whose runRole the host reads itself.

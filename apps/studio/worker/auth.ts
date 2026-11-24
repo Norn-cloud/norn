@@ -149,9 +149,26 @@ export async function fetchClientMetadata(input: RequestInfo | URL, init?: Reque
  * `postLogin.consentReferenceId` lookup within that same request stays bound to that exact workspace
  * (re-verifying that specific membership/readiness, never falling back to a different workspace).
  */
+/** Encode an immutable OAuth grant reference binding organization + membership generation. */
+export const encodeGrantRef = (organizationId: string, memberId: string): string => `${organizationId}|${memberId}`
+
+/** Parse an immutable OAuth grant reference; returns null for legacy bare-org references without a generation. */
+export function parseGrantRef(referenceId: unknown): { readonly organizationId: string; readonly memberId: string } | null {
+  if (typeof referenceId !== "string") return null
+  const parts = referenceId.split("|")
+  if (parts.length !== 2) return null
+  const [organizationId, memberId] = parts
+  if (!organizationId || !memberId || organizationId.trim() === "" || memberId.trim() === "") return null
+  return { organizationId, memberId }
+}
+
 interface OAuthConsentScope {
   referenceId?: string
   memberId?: string
+  claimedApprovalId?: string
+  consentUserId?: string
+  consentClientId?: string
+  existedBeforeConsent?: boolean
 }
 const oauthScopeStore = new AsyncLocalStorage<OAuthConsentScope>()
 
@@ -168,6 +185,7 @@ async function sha256Hex(value: string): Promise<string> {
 export async function issueConsentApproval(
   db: ProvisionDb,
   args: {
+    readonly sessionId: string
     readonly sessionToken: string
     readonly userId: string
     readonly organizationId: string
@@ -182,11 +200,15 @@ export async function issueConsentApproval(
   const expiresIso = new Date(now.getTime() + CONSENT_APPROVAL_TTL_MS).toISOString()
   const id = crypto.randomUUID()
   const identifier = `oauth-approval:${tokenHash}`
+  const grantRef = encodeGrantRef(args.organizationId, args.memberId)
   const payload = JSON.stringify({
+    type: "consent_approval",
+    sessionId: args.sessionId,
     sessionToken: args.sessionToken,
     userId: args.userId,
     organizationId: args.organizationId,
     memberId: args.memberId,
+    grantRef,
     queryHash,
   })
   const inserted = await dbFirst<{ id: string }>(
@@ -195,7 +217,7 @@ export async function issueConsentApproval(
      select ?, ?, ?, ?, ?, ?
      where exists (
        select 1 from "session" s
-       where s."token" = ? and s."userId" = ? and ${LIVE_SESSION_S_SQL}
+       where s."id" = ? and s."token" = ? and s."userId" = ? and ${LIVE_SESSION_S_SQL}
      )
      and exists (
        select 1 from "member" m
@@ -204,7 +226,7 @@ export async function issueConsentApproval(
      )
      returning "id"`,
     id, identifier, payload, expiresIso, nowIso, nowIso,
-    args.sessionToken, args.userId,
+    args.sessionId, args.sessionToken, args.userId,
     args.memberId, args.organizationId, args.userId,
   )
   return inserted === null ? null : token
@@ -244,9 +266,13 @@ const assistantAuthorization = (baseURL: string, self: Self) => [
         const store = oauthScopeStore.getStore()
         const pinned = store?.referenceId
         if (pinned !== undefined) {
+          const parsed = parseGrantRef(pinned)
+          if (parsed === null) {
+            throw new APIError("CONFLICT", { code: "NO_ACTIVE_WORKSPACE", message: "Select a ready workspace before authorizing an assistant." })
+          }
           // Never re-run null-fallback: confirm this exact validated workspace & membership generation is still ready.
-          const verified = await activeMembershipWithAdapter(adapter, user.id, pinned)
-          if (verified === null || verified.organizationId !== pinned || (store?.memberId !== undefined && verified.memberId !== store.memberId)) {
+          const verified = await activeMembershipWithAdapter(adapter, user.id, parsed.organizationId)
+          if (verified === null || verified.organizationId !== parsed.organizationId || verified.memberId !== parsed.memberId) {
             throw new APIError("CONFLICT", { code: "NO_ACTIVE_WORKSPACE", message: "Select a ready workspace before authorizing an assistant." })
           }
           return pinned
@@ -256,25 +282,27 @@ const assistantAuthorization = (baseURL: string, self: Self) => [
         if (member === null) {
           throw new APIError("CONFLICT", { code: "NO_ACTIVE_WORKSPACE", message: "Select a ready workspace before authorizing an assistant." })
         }
+        const grantRef = encodeGrantRef(member.organizationId, member.memberId)
         if (store !== undefined) {
-          store.referenceId = member.organizationId
+          store.referenceId = grantRef
           store.memberId = member.memberId
         }
-        return member.organizationId
+        return grantRef
       },
       shouldRedirect: () => false,
     },
     customAccessTokenClaims: async ({ user, referenceId }) => {
-      if (typeof referenceId !== "string" || referenceId === "" || typeof user?.id !== "string" || user.id === "") {
+      const parsed = parseGrantRef(referenceId)
+      if (parsed === null || typeof user?.id !== "string" || user.id === "") {
         throw new APIError("FORBIDDEN", { code: "WORKSPACE_REQUIRED", message: "Assistant access requires a workspace-scoped grant." })
       }
       const adapter = (await self.auth?.$context)?.adapter as AdapterLike | undefined
       if (adapter === undefined) throw new APIError("INTERNAL_SERVER_ERROR", { message: "Auth context unavailable." })
-      const member = await activeMembershipWithAdapter(adapter, user.id, referenceId)
-      if (member === null || member.organizationId !== referenceId) {
-        throw new APIError("FORBIDDEN", { code: "WORKSPACE_REQUIRED", message: "Assistant access requires an active ready workspace membership." })
+      const member = await activeMembershipWithAdapter(adapter, user.id, parsed.organizationId)
+      if (member === null || member.organizationId !== parsed.organizationId || member.memberId !== parsed.memberId) {
+        throw new APIError("FORBIDDEN", { code: "WORKSPACE_REQUIRED", message: "Assistant access requires the original active ready workspace membership." })
       }
-      return { [ORG_CLAIM]: referenceId, [MEMBER_CLAIM]: member.memberId }
+      return { [ORG_CLAIM]: parsed.organizationId, [MEMBER_CLAIM]: parsed.memberId }
     },
   }),
   cimd({ fetchClientMetadataResource: (input, init) => fetchClientMetadata(input, init), isMetadataDocumentUrlAllowed: cimdAllowed }),
@@ -514,6 +542,22 @@ export async function commitActivateSession(
   )
 }
 
+export async function commitClearActiveSession(
+  db: ProvisionDb,
+  args: { readonly token: string; readonly userId: string },
+): Promise<CommittedSessionRow | null> {
+  const at = new Date().toISOString()
+  return dbFirst<CommittedSessionRow>(
+    db,
+    `update "session" set "activeOrganizationId" = null, "updatedAt" = ?
+     where "token" = ? and "userId" = ? and ${LIVE_SESSION_SQL}
+     returning "id", "token", "userId", "expiresAt", "createdAt", "updatedAt", "ipAddress", "userAgent", "activeOrganizationId", "authMethod"`,
+    at,
+    args.token,
+    args.userId,
+  )
+}
+
 export async function isSessionLive(db: ProvisionDb, token: string, userId: string): Promise<boolean> {
   return (await dbFirst<{ live: number }>(
     db,
@@ -557,16 +601,16 @@ export async function commitAcceptInvitation(
     readonly baseURL: string
   },
 ): Promise<AcceptInvitationOutcome> {
+  // Scope target lookup strictly to the caller's email so absent and foreign-recipient invitations
+  // produce one uniform 400 INVITATION_NOT_FOUND refusal without leaking invitation existence.
   const invitation = await dbFirst<{ id: string; organizationId: string; email: string; role: string | null; status: string; expiresAt: unknown }>(
     db,
-    `select "id", "organizationId", "email", "role", "status", "expiresAt" from "invitation" where "id" = ?`,
+    `select "id", "organizationId", "email", "role", "status", "expiresAt" from "invitation" where "id" = ? and lower("email") = lower(?)`,
     args.invitationId,
+    args.userEmail,
   )
   if (invitation === null || !(expiryOf(invitation.expiresAt) > Date.now()) || invitation.status !== "pending") {
     return { kind: "refused", status: 400, code: "INVITATION_NOT_FOUND", message: INVITATION_GONE }
-  }
-  if (invitation.email.toLowerCase() !== args.userEmail.toLowerCase()) {
-    return { kind: "refused", status: 403, code: "YOU_ARE_NOT_THE_RECIPIENT_OF_THE_INVITATION", message: "You are not the recipient of the invitation" }
   }
   if (!args.emailVerified) {
     return { kind: "refused", status: 403, code: "EMAIL_VERIFICATION_REQUIRED_BEFORE_ACCEPTING_OR_REJECTING_INVITATION", message: "Email verification required before accepting or rejecting invitation" }
@@ -588,12 +632,12 @@ export async function commitAcceptInvitation(
   }
   const at = new Date().toISOString()
   const member = { id: crypto.randomUUID(), organizationId: invitation.organizationId, userId: args.userId, role, createdAt: at }
+  let batchResults: readonly (readonly Record<string, unknown>[])[]
   try {
-    // All three writes commit in one serialized transaction: invitation status update guarded by
-    // live session ownership/expiry, recipient verification, org readiness, and member cap; member
-    // insert guarded by changes() = 1; and session activation guarded by the new member row,
-    // READY_ORG_SQL, and live session expiry so a concurrent sign-out commits zero workspace rows.
-    await atomically(db as unknown as ProvisionDb, [
+    // All three writes commit in one serialized transaction. Session expiry is evaluated ONCE in
+    // Statement 1; Statement 2 and Statement 3 chain via changes() = 1 and return their committed
+    // rows directly so no second clock evaluation or post-batch read can diverge from the commit.
+    batchResults = await atomicallyWithResults(db as unknown as ProvisionDb, [
       {
         sql: `update "invitation" set "status" = 'accepted' where "id" = ? and "status" = 'pending'
           and ${LIVE_EXPIRY_SQL(`"expiresAt"`)}
@@ -604,15 +648,14 @@ export async function commitAcceptInvitation(
         params: [args.invitationId, args.sessionToken, args.userId, args.userId],
       },
       {
-        sql: `insert into "member" ("id", "organizationId", "userId", "role", "createdAt") select ?, ?, ?, ?, ? where changes() = 1`,
+        sql: `insert into "member" ("id", "organizationId", "userId", "role", "createdAt") select ?, ?, ?, ?, ? where changes() = 1 returning "id"`,
         params: [member.id, member.organizationId, member.userId, member.role, member.createdAt],
       },
       {
         sql: `update "session" set "activeOrganizationId" = ?, "updatedAt" = ?
-          where "token" = ? and "userId" = ? and ${LIVE_SESSION_SQL}
-            and exists (select 1 from "member" m join "organization" o on o."id" = m."organizationId"
-                        where m."id" = ? and m."organizationId" = ? and m."userId" = ? and ${READY_ORG_SQL})`,
-        params: [member.organizationId, at, args.sessionToken, args.userId, member.id, member.organizationId, args.userId],
+          where "token" = ? and "userId" = ? and changes() = 1
+          returning "activeOrganizationId", "updatedAt"`,
+        params: [member.organizationId, at, args.sessionToken, args.userId],
       },
     ])
   } catch (error) {
@@ -632,15 +675,9 @@ export async function commitAcceptInvitation(
     }
     throw error
   }
-  const committedSession = await dbFirst<{ activeOrganizationId: string | null }>(
-    db,
-    `select "activeOrganizationId" from "session" where "token" = ? and "userId" = ? and "activeOrganizationId" = ? and "updatedAt" = ?`,
-    args.sessionToken,
-    args.userId,
-    member.organizationId,
-    at,
-  )
-  if (await dbFirst(db, `select 1 as "joined" from "member" where "id" = ?`, member.id) === null || committedSession === null) {
+  const insertedMember = batchResults[1]?.[0]
+  const activatedSession = batchResults[2]?.[0]
+  if (insertedMember === undefined || activatedSession === undefined) {
     if (!(await isSessionLive(db, args.sessionToken, args.userId))) {
       return { kind: "refused", status: 401, code: "UNAUTHORIZED", message: "Sign in first." }
     }
@@ -654,7 +691,7 @@ export async function commitAcceptInvitation(
     }
     return { kind: "refused", status: 400, code: "INVITATION_NOT_FOUND", message: INVITATION_GONE }
   }
-  return { kind: "accepted", invitation: { ...invitation, status: "accepted" }, member, updatedAt: at }
+  return { kind: "accepted", invitation: { ...invitation, status: "accepted" }, member, updatedAt: String(activatedSession.updatedAt ?? at) }
 }
 
 /** Hash an API key identically to `@better-auth/api-key`'s `defaultKeyHasher` (unpadded base64url SHA-256). */
@@ -854,18 +891,37 @@ async function stateOf(db: ProvisionDb, userId: string): Promise<string | undefi
   return row?.status
 }
 
-/** Execute the statements in one database transaction (a D1 batch): all of them commit, or none. */
-export async function atomically(db: ProvisionDb, statements: readonly SqlStatement[]): Promise<void> {
+/** Execute statements in one database transaction (a D1 batch) and return each statement's rows. */
+export async function atomicallyWithResults(db: ProvisionDb, statements: readonly SqlStatement[]): Promise<readonly (readonly Record<string, unknown>[])[]> {
   if (db.batch) {
     const prepared = statements.map(({ sql, params }) => {
       const statement = db.prepare(sql)
       if (!statement.bind) throw new Error("D1 statement binding unavailable")
       return statement.bind(...params)
     })
-    await db.batch(prepared)
-  } else if (db.transaction) {
-    db.transaction(() => { for (const { sql, params } of statements) db.prepare(sql).run?.(...params) })()
-  } else throw new Error("Atomic provisioning is unavailable")
+    const results = await db.batch(prepared) as { results?: Record<string, unknown>[] }[] | undefined
+    return statements.map((_, index) => results?.[index]?.results ?? [])
+  }
+  if (db.transaction) {
+    let out: Record<string, unknown>[][] = []
+    db.transaction(() => {
+      out = statements.map(({ sql, params }) => {
+        const stmt = db.prepare(sql)
+        if (/\breturning\b/i.test(sql) && stmt.all) {
+          return (stmt.all(...params) ?? []) as Record<string, unknown>[]
+        }
+        stmt.run?.(...params)
+        return []
+      })
+    })()
+    return out
+  }
+  throw new Error("Atomic provisioning is unavailable")
+}
+
+/** Execute the statements in one database transaction (a D1 batch): all of them commit, or none. */
+export async function atomically(db: ProvisionDb, statements: readonly SqlStatement[]): Promise<void> {
+  await atomicallyWithResults(db, statements)
 }
 
 async function provisionWorkspace(db: ProvisionDb, secret: string, user: { id: string; name: string; email: string }, defaultEnvironmentId?: string, billed = false) {
@@ -1089,7 +1145,8 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
           const body = (ctx.body ?? {}) as Record<string, unknown>
           const bodyOrg = nonEmptyString(body.organizationId)
           const headerOrg = nonEmptyString((ctx.headers ?? ctx.request?.headers)?.get("x-norn-expected-org"))
-          if (bodyOrg === null) {
+          let targetOrgId = bodyOrg
+          if (targetOrgId === null) {
             if (headerOrg === null) {
               throw apiError(400, { code: "WORKSPACE_SCOPE_REQUIRED", message: "Workspace scope header is required for organization mutations." }, responseHeaders)
             }
@@ -1102,10 +1159,72 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
             if (active.organizationId !== headerOrg) {
               throw apiError(409, { code: "WORKSPACE_CHANGED", message: "Your active workspace changed. Reload the page before submitting." }, responseHeaders)
             }
-            return { context: { ...ctx, body: { ...body, organizationId: active.organizationId } } }
-          }
-          if (headerOrg !== null && headerOrg !== bodyOrg) {
+            targetOrgId = active.organizationId
+          } else if (headerOrg !== null && headerOrg !== targetOrgId) {
             throw apiError(409, { code: "WORKSPACE_CHANGED", message: "Your active workspace changed. Reload the page before submitting." }, responseHeaders)
+          }
+          // Scope target-member lookups to the authorized workspace before Better Auth inspects
+          // global member IDs or roles, preventing foreign-org member/owner existence oracles (S5).
+          const db = config.database as unknown as ProvisionDb
+          if (path === "/organization/remove-member") {
+            const caller = await dbFirst<{ id: string }>(db, `select "id" from "member" where "organizationId" = ? and "userId" = ?`, targetOrgId, session.user.id)
+            if (caller === null) throw apiError(400, { code: "MEMBER_NOT_FOUND", message: "Member not found" }, responseHeaders)
+            const targetKey = nonEmptyString(body.memberIdOrEmail)
+            if (targetKey !== null) {
+              const target = targetKey.includes("@")
+                ? await dbFirst<{ id: string }>(db, `select m."id" from "member" m join "user" u on u."id" = m."userId" where m."organizationId" = ? and lower(u."email") = lower(?)`, targetOrgId, targetKey)
+                : await dbFirst<{ id: string }>(db, `select "id" from "member" where "organizationId" = ? and "id" = ?`, targetOrgId, targetKey)
+              if (target === null) throw apiError(400, { code: "MEMBER_NOT_FOUND", message: "Member not found" }, responseHeaders)
+            }
+          } else if (path === "/organization/update-member-role") {
+            const caller = await dbFirst<{ id: string }>(db, `select "id" from "member" where "organizationId" = ? and "userId" = ?`, targetOrgId, session.user.id)
+            if (caller === null) throw apiError(400, { code: "MEMBER_NOT_FOUND", message: "Member not found" }, responseHeaders)
+            const targetId = nonEmptyString(body.memberId)
+            if (targetId !== null) {
+              const target = await dbFirst<{ id: string }>(db, `select "id" from "member" where "organizationId" = ? and "id" = ?`, targetOrgId, targetId)
+              if (target === null) throw apiError(400, { code: "MEMBER_NOT_FOUND", message: "Member not found" }, responseHeaders)
+            }
+          }
+          if (bodyOrg === null) {
+            return { context: { ...ctx, body: { ...body, organizationId: targetOrgId } } }
+          }
+          return
+        }
+        if (path === "/organization/cancel-invitation") {
+          const session = await getSessionFromCtx(ctx, { disableCookieCache: true })
+          const responseHeaders = responseHeadersOf(ctx)
+          if (session === null) return
+          const invitationId = nonEmptyString((ctx.body as { invitationId?: unknown } | undefined)?.invitationId)
+          if (invitationId === null) return
+          const db = config.database as unknown as ProvisionDb
+          // Scope invitation lookup to workspaces the caller belongs to so foreign IDs match absent IDs.
+          const scoped = await dbFirst<{ id: string }>(
+            db,
+            `select i."id" from "invitation" i join "member" m on m."organizationId" = i."organizationId" where i."id" = ? and m."userId" = ?`,
+            invitationId,
+            session.user.id,
+          )
+          if (scoped === null) {
+            throw apiError(400, { code: "INVITATION_NOT_FOUND", message: INVITATION_GONE }, responseHeaders)
+          }
+          return
+        }
+        if (path === "/organization/reject-invitation") {
+          const session = await getSessionFromCtx(ctx, { disableCookieCache: true })
+          const responseHeaders = responseHeadersOf(ctx)
+          if (session === null) return
+          const invitationId = nonEmptyString((ctx.body as { invitationId?: unknown } | undefined)?.invitationId)
+          if (invitationId === null) return
+          const db = config.database as unknown as ProvisionDb
+          // Scope invitation lookup to the caller's own email so foreign invitations match absent ones.
+          const scoped = await dbFirst<{ id: string }>(
+            db,
+            `select "id" from "invitation" where "id" = ? and lower("email") = lower(?)`,
+            invitationId,
+            session.user.email,
+          )
+          if (scoped === null) {
+            throw apiError(400, { code: "INVITATION_NOT_FOUND", message: INVITATION_GONE }, responseHeaders)
           }
           return
         }
@@ -1114,7 +1233,18 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
           const responseHeaders = responseHeadersOf(ctx)
           if (session === null) throw apiError(401, { code: "UNAUTHORIZED", message: "Unauthorized" }, responseHeaders)
           const body = ctx.body as { organizationId?: unknown; organizationSlug?: unknown } | undefined
-          if (body?.organizationId === null && body?.organizationSlug === undefined) return
+          if (body?.organizationId === null && body?.organizationSlug === undefined) {
+            const db = config.database as unknown as ProvisionDb
+            const cleared = await commitClearActiveSession(db, { token: session.session.token, userId: session.user.id })
+            if (cleared === null) {
+              throw apiError(401, { code: "UNAUTHORIZED", message: "Unauthorized" }, responseHeaders)
+            }
+            await setSessionCookie(ctx, {
+              session: { ...session.session, activeOrganizationId: null, updatedAt: new Date(cleared.updatedAt) },
+              user: session.user,
+            })
+            return null
+          }
           const hasIdField = body?.organizationId !== undefined
           const hasSlugField = body?.organizationSlug !== undefined
           const requestedId = nonEmptyString(body?.organizationId)
@@ -1327,28 +1457,41 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
           }
           const db = config.database as unknown as ProvisionDb
           const [tokenHash, queryHash] = await Promise.all([sha256Hex(approvalToken), sha256Hex(oauthQuery)])
-          // Consume the single-use consent approval atomically so it can never be replayed or swapped across sessions/workspaces.
-          const consumed = await dbFirst<{ value: string }>(
+          // Atomically claim the single-use approval token (preventing concurrent replay while
+          // keeping the claimed approval alive through consent + code commit for trigger verification).
+          const claimed = await dbFirst<{ id: string; value: string }>(
             db,
-            `delete from "verification" where "identifier" = ? and ${LIVE_SESSION_SQL} returning "value"`,
+            `update "verification"
+             set "identifier" = 'oauth-approval-claimed:' || "id"
+             where "identifier" = ?
+               and ${LIVE_SESSION_SQL}
+               and exists (select 1 from "session" s where s."id" = ? and s."token" = ? and s."userId" = ? and ${LIVE_SESSION_S_SQL})
+             returning "id", "value"`,
             `oauth-approval:${tokenHash}`,
+            session.session.id,
+            session.session.token,
+            session.user.id,
           )
-          if (consumed === null) {
+          if (claimed === null) {
             throw apiError(409, { code: "CONSENT_APPROVAL_EXPIRED", message: "This approval request expired or was already used. Start connecting again from your assistant." }, responseHeaders)
           }
-          let approval: { sessionToken?: unknown; userId?: unknown; organizationId?: unknown; memberId?: unknown; queryHash?: unknown }
+          const store = oauthScopeStore.getStore()
+          if (store !== undefined) store.claimedApprovalId = claimed.id
+          let approval: { sessionId?: unknown; sessionToken?: unknown; userId?: unknown; organizationId?: unknown; memberId?: unknown; grantRef?: unknown; queryHash?: unknown }
           try {
-            approval = JSON.parse(consumed.value) as typeof approval
+            approval = JSON.parse(claimed.value) as typeof approval
           } catch {
             throw apiError(409, { code: "CONSENT_APPROVAL_EXPIRED", message: "This approval request is no longer valid." }, responseHeaders)
           }
           if (
-            approval.sessionToken !== session.session.token
+            approval.sessionId !== session.session.id
+            || approval.sessionToken !== session.session.token
             || approval.userId !== session.user.id
             || approval.organizationId !== expectedOrg
             || approval.queryHash !== queryHash
             || typeof approval.memberId !== "string"
             || approval.memberId === ""
+            || approval.grantRef !== encodeGrantRef(expectedOrg, approval.memberId)
           ) {
             throw apiError(409, { code: "WORKSPACE_CHANGED", message: "Your session or active workspace changed. Reload this page and approve again for the workspace you intend." }, responseHeaders)
           }
@@ -1361,10 +1504,23 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
           if (expectedOrg !== member.organizationId || member.memberId !== approval.memberId) {
             throw apiError(409, { code: "WORKSPACE_CHANGED", message: "Your active workspace changed. Reload this page and approve again for the workspace you intend." }, responseHeaders)
           }
-          const store = oauthScopeStore.getStore()
+          const grantRef = encodeGrantRef(member.organizationId, member.memberId)
+          const clientId = new URLSearchParams(oauthQuery).get("client_id") ?? undefined
+          const existingConsent = clientId === undefined
+            ? null
+            : await dbFirst<{ id: string }>(
+              db,
+              `select "id" from "oauthConsent" where "clientId" = ? and "userId" = ? and "referenceId" = ?`,
+              clientId,
+              session.user.id,
+              grantRef,
+            )
           if (store !== undefined) {
-            store.referenceId = member.organizationId
+            store.referenceId = grantRef
             store.memberId = member.memberId
+            store.consentUserId = session.user.id
+            store.consentClientId = clientId
+            store.existedBeforeConsent = existingConsent !== null
           }
         }
       }),
@@ -1478,11 +1634,31 @@ export function createAuth(config: AuthConfig) {
   const self: Self = {}
   const auth = betterAuth(authOptions(config, self))
   self.auth = auth
+  const db = config.database as unknown as ProvisionDb
+  const cleanupApproval = async (store: OAuthConsentScope, rollbackConsent: boolean) => {
+    if (store.claimedApprovalId !== undefined) {
+      await dbRun(db, `delete from "verification" where "id" = ?`, store.claimedApprovalId).catch(() => undefined)
+    }
+    if (rollbackConsent && store.existedBeforeConsent === false && store.consentClientId !== undefined && store.consentUserId !== undefined && store.referenceId !== undefined) {
+      await dbRun(
+        db,
+        `delete from "oauthConsent" where "clientId" = ? and "userId" = ? and "referenceId" = ?`,
+        store.consentClientId,
+        store.consentUserId,
+        store.referenceId,
+      ).catch(() => undefined)
+    }
+  }
   const rawHandler = auth.handler
   auth.handler = async (request: Request) => {
+    const store: OAuthConsentScope = {}
+    let failed = false
     try {
-      return await oauthScopeStore.run({}, () => rawHandler(request))
+      const response = await oauthScopeStore.run(store, () => rawHandler(request))
+      if (response.status >= 400) failed = true
+      return response
     } catch (error) {
+      failed = true
       if (isOAuthMembershipAbort(error)) {
         return Response.json(
           { code: "NO_ACTIVE_WORKSPACE", message: "Select a ready workspace before authorizing an assistant." },
@@ -1490,6 +1666,8 @@ export function createAuth(config: AuthConfig) {
         )
       }
       throw error
+    } finally {
+      await cleanupApproval(store, failed)
     }
   }
   const rawApi = auth.api
@@ -1498,17 +1676,23 @@ export function createAuth(config: AuthConfig) {
       const value = Reflect.get(target, prop, receiver)
       if (typeof value !== "function") return value
       return (...args: unknown[]) => {
+        const outer = oauthScopeStore.getStore()
+        const store = outer ?? {}
         const invoke = async () => {
+          let failed = false
           try {
             return await (value as (...a: unknown[]) => unknown).apply(target, args)
           } catch (error) {
+            failed = true
             if (isOAuthMembershipAbort(error)) {
               throw new APIError("CONFLICT", { code: "NO_ACTIVE_WORKSPACE", message: "Select a ready workspace before authorizing an assistant." })
             }
             throw error
+          } finally {
+            if (outer === undefined) await cleanupApproval(store, failed)
           }
         }
-        return oauthScopeStore.getStore() === undefined ? oauthScopeStore.run({}, invoke) : invoke()
+        return outer === undefined ? oauthScopeStore.run(store, invoke) : invoke()
       }
     },
   })

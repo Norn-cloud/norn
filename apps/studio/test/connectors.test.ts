@@ -94,6 +94,13 @@ test("connector mutations carry pinned workspace scope headers even after displa
     expect(seen[1]?.headers.get("x-norn-expected-env")).toBe("env_a")
     // GET reads carry no expected-scope write headers.
     expect(seen[2]?.headers.get("x-norn-expected-org")).toBeNull()
+    // Recovery after an error captured under org_a keeps org_a even when displayed scope is org_b.
+    setDisplayedWorkspaceScope({ orgId: "org_c", environmentId: "env_c" })
+    const recoveryError = await api("/inventory", { scope: pinned }, async () => Response.json({ code: "connectors.not_linked", error: "Sign in.", action: { kind: "sign_in_gateway" } }, { status: 409 })).catch((e: unknown) => e)
+    expect((recoveryError as ConnectorError).scope).toEqual(pinned)
+    await startFix({ kind: "sign_in_gateway" }, (path, init) => api(path, init, wrapped), (recoveryError as ConnectorError).scope)
+    expect(seen[3]?.headers.get("x-norn-expected-org")).toBe("org_a")
+    expect(seen[3]?.headers.get("x-norn-expected-env")).toBe("env_a")
   } finally {
     setDisplayedWorkspaceScope(undefined)
     globalThis.fetch = original

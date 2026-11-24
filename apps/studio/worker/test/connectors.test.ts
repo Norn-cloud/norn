@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { EXPECTED_ENV_HEADER, EXPECTED_ORG_HEADER, resolveActor } from "../actor.ts"
 import { createAuth, gatewaySubject } from "../auth.ts"
 import { connectors, PENDING_CREATE_LEASE_MS, type ConnectorDeps } from "../connectors.ts"
-import { canonicalJson, connectorVersion, manifestDigest, readDraft, runInput, toolManifest } from "../bindings.ts"
+import { adoptCell, abandonSave, canonicalJson, connectorVersion, getBinding, manifestDigest, readDraft, runInput, toolManifest } from "../bindings.ts"
 import { Gateway } from "../gateway.ts"
 import { cellScope, scopeQuery } from "../scope.ts"
 import worker, { type Env } from "../index.ts"
@@ -44,6 +44,7 @@ function stage(gatewayClient = false) {
   db.exec(migration("0004_connector_binding_manifest.sql"))
   db.exec(migration("0005_connector_binding_definition.sql"))
   db.exec(migration("0006_connector_binding_state.sql"))
+  db.exec(migration("0014_connector_binding_attempt.sql"))
   const env: Env = {
     ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher,
     AUTH_DB: db as unknown as D1Database,
@@ -104,7 +105,7 @@ function stage(gatewayClient = false) {
     if (environment) db.query(`UPDATE organization SET metadata = json_set(coalesce(metadata, '{}'), '$.environmentId', 'analytics') WHERE id = (SELECT organizationId FROM member WHERE userId = (SELECT id FROM user WHERE email = ?)) AND json_extract(coalesce(metadata, '{}'), '$.environmentId') IS NULL`).run(email)
     return response.headers.getSetCookie().map((line) => line.split(";")[0]).join("; ")
   }
-  return { send, signUp, calls, cell, clock, answer: (next: (request: Request) => Response) => { answer = next } }
+  return { send, signUp, calls, cell, clock, db, d1Db: deps.db, answer: (next: (request: Request) => Response) => { answer = next } }
 }
 
 const body = (method: string, value: unknown) => ({ method, headers: { "content-type": "application/json" }, body: JSON.stringify(value) })
@@ -407,7 +408,7 @@ test("a tool with no gateway version gets sha256- and the first 12 hex of its di
 
 test("the whole link round trip: state cookie, basic client auth, resource, introspection, then a linked grant", async () => {
   const db = new Database(":memory:")
-  for (const file of ["0001_better_auth.sql", "0002_workspace_provisioning.sql", "0003_connector_binding.sql", "0004_connector_binding_manifest.sql", "0005_connector_binding_definition.sql", "0006_connector_binding_state.sql"]) db.exec(migration(file))
+  for (const file of ["0001_better_auth.sql", "0002_workspace_provisioning.sql", "0003_connector_binding.sql", "0004_connector_binding_manifest.sql", "0005_connector_binding_definition.sql", "0006_connector_binding_state.sql", "0014_connector_binding_attempt.sql"]) db.exec(migration(file))
   const env: Env = { ASSETS: { fetch: async () => new Response("studio") } as unknown as Fetcher, AUTH_DB: db as unknown as D1Database, BETTER_AUTH_SECRET: "t".repeat(40), BETTER_AUTH_URL: ORIGIN, STUDIO_CLIENT_IP_HEADER: "cf-connecting-ip", TOOL_GATEWAY_URL: GATEWAY, TOOL_GATEWAY_CLIENT_ID: "studio", TOOL_GATEWAY_CLIENT_SECRET: "s".repeat(32), NORN_HOST: standInHost(liveCell().host) }
   const jar = new Map<string, string>()
   const keep = (response: Response) => { for (const line of response.headers.getSetCookie()) { const [pair] = line.split(";"); const [name, ...rest] = (pair ?? "").split("="); if (name) jar.set(name, rest.join("=")) } return response }
@@ -694,4 +695,42 @@ test("connector mutations require x-norn-expected-org and x-norn-expected-env an
   const staleEnv = await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues" }), cookie: owner, headers: { "content-type": "application/json", [EXPECTED_ENV_HEADER]: "wrong_env" } })
   expect(staleEnv).toMatchObject({ status: 409, body: { code: "workspace.changed" } })
   expect(calls.length).toBe(before)
+})
+
+test("POST /bindings:reconcile requires connector.bind (admin/owner) and stale reconciliation snapshots never overwrite a newer save", async () => {
+  const { send, signUp, cell, db, d1Db } = stage()
+  const owner = await signUp("reconcile-owner@example.com")
+  const member = await signUp("reconcile-member@example.com", "member", "reconcile-owner@example.com")
+  const viewer = await signUp("reconcile-viewer@example.com", "viewer", "reconcile-owner@example.com")
+
+  // Non-admins cannot run reconciliation writes.
+  expect(await send("/bindings:reconcile", { method: "POST", cookie: member }, { host: cell.host })).toMatchObject({ status: 403, body: { code: "connectors.forbidden" } })
+  expect(await send("/bindings:reconcile", { method: "POST", cookie: viewer }, { host: cell.host })).toMatchObject({ status: 403, body: { code: "connectors.forbidden" } })
+
+  // Create a binding (v1), then simulate a failed local finishSave on edit so it is pending with attempt A1.
+  const created = (await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "Initial" }), cookie: owner }, { host: cell.host })).body.binding as { id: string }
+  failures.next = /^UPDATE connector_binding SET label/
+  expect((await send(`/bindings/${created.id}`, { ...body("PATCH", { label: "Edit v2" }), cookie: owner }, { host: cell.host })).status).toBe(500)
+
+  // Calling /run on a pending binding refuses immediately without triggering reconciliation.
+  const runPending = await send(`/bindings/${created.id}/run`, { ...body("POST", { input: {} }), cookie: owner }, { host: cell.host })
+  expect(runPending.body.code).toBe("connectors.binding_pending")
+  const orgId = (db.query("SELECT org_id FROM connector_binding WHERE id = ?").get(created.id) as { org_id: string }).org_id
+  const pendingRow = await getBinding(d1Db, orgId, created.id)
+  expect(pendingRow?.state).toBe("pending")
+  const staleAttempt = pendingRow?.pendingAttempt ?? null
+  expect(staleAttempt).toBeString()
+
+  // Admin reconciles it to v2 cleanly.
+  const reconciled = await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: cell.host })
+  expect(reconciled.status).toBe(200)
+  expect((reconciled.body.bindings as { label: string; state: string; definition: { version: number } }[])[0]).toMatchObject({ label: "Edit v2", state: "ready", definition: { version: 2 } })
+
+  // A stale reconciliation snapshot referencing the old attempt/version CANNOT overwrite or abandon the newer ready save.
+  const staleAdopt = await adoptCell(d1Db, orgId, created.id, `studio.binding.${created.id}`, 1, { label: "Stale v1" }, staleAttempt, 1)
+  expect(staleAdopt).toBe(false)
+  const staleAbandon = await abandonSave(d1Db, orgId, created.id, "edit", { id: `studio.binding.${created.id}`, version: 1 }, staleAttempt)
+  expect(staleAbandon).toBe("unchanged")
+  const current = await getBinding(d1Db, orgId, created.id)
+  expect(current).toMatchObject({ label: "Edit v2", state: "ready", definition: { version: 2 } })
 })

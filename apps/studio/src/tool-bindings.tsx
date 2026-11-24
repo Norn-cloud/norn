@@ -8,9 +8,9 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { ConnectorProblem } from "./connections.tsx"
 import { api, type Binding, type InputMapping, type Inventory, type RunRole, type Tool } from "./lib/connectors.ts"
-import type { WorkspaceScope } from "./lib/definitions.ts"
+import { workspaceScopeFromAccount, type WorkspaceScope } from "./lib/definitions.ts"
 import { buildInput, formFields, parseField, type FormField } from "./lib/schema-form.ts"
-import { usePinnedWorkspaceScope } from "./lib/session.ts"
+import { useAccount, usePinnedWorkspaceScope } from "./lib/session.ts"
 
 /**
  * Tool bindings (#772): the organization's record that a gateway tool may run from Norn, with
@@ -210,14 +210,21 @@ function AddBinding({ scope }: { readonly scope?: WorkspaceScope | null }) {
 
 export function ToolBindings() {
   const client = useQueryClient()
-  const bindings = useQuery({ queryKey: ["connectors", "bindings"], queryFn: () => api<{ bindings: readonly Binding[]; manage: boolean }>("/bindings") })
-  const pinnedScope = usePinnedWorkspaceScope(bindings.data !== undefined)
+  const account = useAccount()
+  const activeScope = account.data !== undefined ? workspaceScopeFromAccount(account.data) : undefined
+  const scopeKey = activeScope ? `${activeScope.orgId}:${activeScope.environmentId ?? ""}` : ""
+  const bindings = useQuery({ queryKey: ["connectors", "bindings", scopeKey], queryFn: () => api<{ bindings: readonly Binding[]; manage: boolean }>("/bindings", { scope: activeScope }) })
+  const fallbackPinnedScope = usePinnedWorkspaceScope(bindings.data !== undefined)
+  const pinnedScope = activeScope !== undefined ? activeScope : fallbackPinnedScope
   const hasPending = bindings.data?.bindings.some((binding) => binding.state === "pending") === true
+  const canManage = bindings.data?.manage === true
   useEffect(() => {
-    if (!hasPending || pinnedScope === undefined || pinnedScope === null) return
-    void api<{ bindings: readonly Binding[]; manage: boolean }>("/bindings:reconcile", { method: "POST", scope: pinnedScope })
-      .then((reconciled) => client.setQueryData(["connectors", "bindings"], reconciled), () => undefined)
-  }, [hasPending, pinnedScope, client])
+    if (!hasPending || !canManage || pinnedScope === undefined || pinnedScope === null) return
+    const targetScope = pinnedScope
+    const targetKey = `${targetScope.orgId}:${targetScope.environmentId ?? ""}`
+    void api<{ bindings: readonly Binding[]; manage: boolean }>("/bindings:reconcile", { method: "POST", scope: targetScope })
+      .then((reconciled) => client.setQueryData(["connectors", "bindings", targetKey], reconciled), () => undefined)
+  }, [hasPending, canManage, pinnedScope, client])
   return (
     <Panel icon={Link2} label="Tool bindings">
       <Well>

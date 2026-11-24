@@ -1,4 +1,4 @@
-import { defaultFetch, getDisplayedScope, readStudioScope, type StudioScope } from "./definitions.ts"
+import { defaultFetch, resolveWriteScope, type StudioScope } from "./definitions.ts"
 import { CellRefusal, NotServed, cellRead, type Fetch } from "./live-transport.ts"
 
 /**
@@ -59,11 +59,7 @@ export async function upload(
   boundScope?: StudioScope | null,
   cellFetcher: Fetch = defaultFetch,
 ): Promise<{ readonly uploadId: string; readonly completed: Completed; readonly scope: StudioScope | null }> {
-  const scope = boundScope !== undefined
-    ? boundScope
-    : getDisplayedScope() !== undefined
-      ? getDisplayedScope()!
-      : await readStudioScope(cellFetcher)
+  const scope = await resolveWriteScope(cellFetcher, boundScope)
   const begun = await step("cell", async (signal) => (await cellRead<Begun>("/v1/uploads:begin", "Uploads are", { method: "POST", body: JSON.stringify({ fileName: file.name, contentType: file.type || "text/csv", size: file.size }), signal }, cellFetcher, scope)).document)
   const sent = await step("storage", (signal) => put(begun.putUrl, { method: "PUT", headers: begun.putHeaders, body: file, signal }))
   if (!sent.ok) throw new Error(`The storage refused the file (${sent.status}); nothing was loaded.`)

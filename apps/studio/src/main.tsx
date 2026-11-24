@@ -3,6 +3,7 @@ import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-r
 import { Blend, ChartLine, Columns2, Database, Fingerprint, House, Inbox, LayoutDashboard, Network, Plug, Rows3, ShieldCheck, Workflow } from "lucide-react"
 import { StrictMode } from "react"
 import { Button } from "@/components/ui/button"
+import { scopeFromAccount } from "@/lib/definitions"
 import { endSession, useAccount } from "@/lib/session"
 import { LoginPage } from "./login.tsx"
 import { oauthPage } from "./oauth.tsx"
@@ -48,7 +49,18 @@ function Root() {
   const account = useAccount()
   // Sidekick is offered only where a bridge serves it (a private deployment); elsewhere the rail shows no entry for it.
   const sidekick = useSidekickServed()
-  if (account.data != null) return <Shell sections={SECTIONS} assistant={sidekick ? { title: "Sidekick", content: <Sidekick /> } : undefined} account={account.data} onSignOut={() => void signOut()} />
+  if (account.data != null) {
+    const sidekickScopeKey = `${account.data.user.id}:${account.data.organization?.id ?? ""}:${account.data.environmentId ?? ""}`
+    const sidekickScope = scopeFromAccount(account.data)
+    return (
+      <Shell
+        sections={SECTIONS}
+        assistant={sidekick ? { title: "Sidekick", content: <Sidekick key={sidekickScopeKey} scope={sidekickScope} scopeKey={sidekickScopeKey} /> } : undefined}
+        account={account.data}
+        onSignOut={() => void signOut()}
+      />
+    )
+  }
   if (account.isPending) return null
   if (account.isError) {
     return (

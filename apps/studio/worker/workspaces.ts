@@ -1,6 +1,6 @@
 import {
   activeMembership,
-  atomically,
+  atomicallyWithResults,
   commitAcceptInvitation,
   commitActivateSession,
   dbAll,
@@ -8,7 +8,6 @@ import {
   isProvisioningMetadata,
   isSessionLive,
   LIVE_SESSION_S_SQL,
-  LIVE_SESSION_SQL,
   publicMetadata,
   BILLING_PAYER,
   BILLED,
@@ -180,29 +179,31 @@ export async function createWorkspace(request: Request, context: WorkspaceContex
   const metadata = { ...publicMetadata(input?.metadata), ...context.billing === undefined ? {} : { [BILLING_PAYER]: session.user.id, [BILLED]: true } }
   const member = { id: crypto.randomUUID(), organizationId: id, userId: session.user.id, role: "owner", createdAt: at }
   const keepCurrent = input?.keepCurrentActiveOrganization === true
+  let batchResults: readonly (readonly Record<string, unknown>[])[]
   try {
     // Guard the initial organization insert on a live, unexpired caller session and chain the
-    // member insert via changes() = 1 so a concurrent sign-out commits zero workspace rows.
-    await atomically(db, [
+    // member insert + session activation via changes() = 1 with RETURNING so no second clock
+    // evaluation or post-batch read can diverge from the committed transaction.
+    batchResults = await atomicallyWithResults(db, [
       {
         sql: `insert into "organization" ("id", "name", "slug", "logo", "metadata", "createdAt")
           select ?, ?, ?, ?, ?, ?
-          where exists (select 1 from "session" s where s."token" = ? and s."userId" = ? and ${LIVE_SESSION_S_SQL})`,
+          where exists (select 1 from "session" s where s."token" = ? and s."userId" = ? and ${LIVE_SESSION_S_SQL})
+          returning "id"`,
         params: [id, name, slug, logo, JSON.stringify(metadata), at, session.session.token, session.user.id],
       },
       {
         sql: `insert into "member" ("id", "organizationId", "userId", "role", "createdAt")
-          select ?, ?, ?, ?, ? where changes() = 1`,
+          select ?, ?, ?, ?, ? where changes() = 1 returning "id"`,
         params: [member.id, id, member.userId, member.role, at],
       },
       ...keepCurrent
         ? []
         : [{
           sql: `update "session" set "activeOrganizationId" = ?, "updatedAt" = ?
-            where "token" = ? and "userId" = ? and ${LIVE_SESSION_SQL}
-              and exists (select 1 from "member" m join "organization" o on o."id" = m."organizationId"
-                          where m."id" = ? and m."organizationId" = ? and m."userId" = ? and ${READY_ORG_SQL})`,
-          params: [id, at, session.session.token, session.user.id, member.id, id, session.user.id],
+            where "token" = ? and "userId" = ? and changes() = 1
+            returning "activeOrganizationId", "updatedAt"`,
+          params: [id, at, session.session.token, session.user.id],
         }],
     ])
   } catch (error) {
@@ -210,18 +211,10 @@ export async function createWorkspace(request: Request, context: WorkspaceContex
     if (/UNIQUE constraint failed: organization\.slug/.test(error instanceof Error ? error.message : "")) return failure(400, "ORGANIZATION_ALREADY_EXISTS", "Organization already exists", sessionHeaders)
     throw error
   }
-  const createdMember = await dbFirst<{ id: string }>(db, `select "id" from "member" where "id" = ?`, member.id)
-  const activated = keepCurrent
-    ? true
-    : (await dbFirst<{ activeOrganizationId: string | null }>(
-      db,
-      `select "activeOrganizationId" from "session" where "token" = ? and "userId" = ? and "activeOrganizationId" = ? and "updatedAt" = ?`,
-      session.session.token,
-      session.user.id,
-      id,
-      at,
-    )) !== null
-  if (createdMember === null || !activated) {
+  const createdOrg = batchResults[0]?.[0]
+  const createdMember = batchResults[1]?.[0]
+  const activatedSession = keepCurrent ? { activeOrganizationId: session.session.activeOrganizationId } : batchResults[2]?.[0]
+  if (createdOrg === undefined || createdMember === undefined || activatedSession === undefined) {
     return failure(401, "UNAUTHORIZED", "Sign in first.", sessionHeaders)
   }
   return json({ id, name, slug, logo, metadata: publicMetadata(metadata), createdAt: at, members: [member] }, 200, sessionHeaders)

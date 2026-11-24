@@ -182,6 +182,18 @@ const isWriteMethod = (method?: string): boolean => {
 }
 
 /**
+ * Resolve the originating scope for a mutating host call. Browser callers (`defaultFetch` / `fetch`)
+ * fail closed if neither an explicit `boundScope` nor the tab's displayed scope is present, so a
+ * write can never silently re-read `/api/me` and adopt a workspace switched in another tab.
+ */
+export async function resolveWriteScope(fetcher: Fetch, boundScope?: StudioScope | null): Promise<StudioScope | null> {
+  if (boundScope !== undefined) return boundScope
+  if (currentDisplayedScope !== undefined) return currentDisplayedScope
+  if (isDefaultFetch(fetcher)) throw new StudioScopeError("Workspace scope must be loaded before submitting.")
+  return readStudioScope(fetcher)
+}
+
+/**
  * Every scoped host call carries `orgId` and `environmentId`. Writes also carry
  * `x-norn-expected-org` and `x-norn-expected-env` bound to the pinned or displayed scope so the
  * Worker refuses stale-tab submissions if the session's active workspace changed elsewhere.
@@ -191,8 +203,8 @@ export function scopedHostFetch(fetcher: Fetch, base = "/api/host", scope?: Scop
     const write = isWriteMethod(init?.method)
     const active = scope !== undefined
       ? await scope()
-      : write && currentDisplayedScope !== undefined
-        ? currentDisplayedScope
+      : write
+        ? await resolveWriteScope(fetcher)
         : await readStudioScope(fetcher)
     if (active === null) throw new StudioScopeError(NO_DATA_CELL)
     const [pathname, search] = path.split("?", 2)

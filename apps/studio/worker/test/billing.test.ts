@@ -440,7 +440,7 @@ test("a workspace over the plan's cell limit is refused with a typed refusal and
   expect(refused.status).toBe(403)
   const body = await refused.json() as { code: string; message: string; refusal: Record<string, unknown> }
   expect(body.code).toBe("PLAN_LIMIT")
-  expect(body.refusal).toEqual({ kind: "plan-limit", limit: "cells", plan: "free", allowed: 1, used: 1, upgradeUrl: `${ORIGIN}/api/billing/checkout?plan=pro`, upgradeBy: "you" })
+  expect(body.refusal).toEqual({ kind: "plan-limit", limit: "cells", plan: "free", allowed: 1, used: 1, upgradeUrl: `${ORIGIN}/api/billing/checkout?plan=pro`, upgradeMethod: "POST", upgradeBy: "you" })
   expect(sql(env).query("select count(*) as n from organization").get()).toEqual({ n: 1 })
   // Polar reports the subscription; the same request is now admitted.
   expect((await webhook(env, "subscription.active", subscription({ external_id: userId }))).status).toBe(200)
@@ -448,7 +448,7 @@ test("a workspace over the plan's cell limit is refused with a typed refusal and
   // And canceled again, the third is refused; a paying person's upgrade link was the portal, a free one's a checkout.
   expect((await post(env, CREATE, { name: "Third", slug: "third" }, { cookie })).status).toBe(200)
   const atLimit = await (await post(env, CREATE, { name: "Fourth", slug: "fourth" }, { cookie })).json() as { refusal: { upgradeUrl: string; plan: string } }
-  expect(atLimit.refusal).toMatchObject({ plan: "pro", upgradeUrl: `${ORIGIN}/api/billing/portal` })
+  expect(atLimit.refusal).toMatchObject({ plan: "pro", upgradeUrl: `${ORIGIN}/api/billing/portal`, upgradeMethod: "POST" })
 })
 
 test("invitations past the workspace owner's member limit are refused", async () => {
@@ -459,7 +459,7 @@ test("invitations past the workspace owner's member limit are refused", async ()
   for (const email of ["one@example.com", "two@example.com"]) expect((await post(env, "/api/auth/organization/invite-member", { email, role: "member", organizationId }, { cookie })).status).toBe(200)
   const refused = await post(env, "/api/auth/organization/invite-member", { email: "three@example.com", role: "member", organizationId }, { cookie })
   expect(refused.status).toBe(403)
-  expect(((await refused.json()) as { refusal: { limit: string } }).refusal).toMatchObject({ kind: "plan-limit", limit: "members", allowed: 3, used: 3, upgradeBy: "you", upgradeUrl: `${ORIGIN}/api/billing/checkout?plan=pro` })
+  expect(((await refused.json()) as { refusal: { limit: string } }).refusal).toMatchObject({ kind: "plan-limit", limit: "members", allowed: 3, used: 3, upgradeBy: "you", upgradeUrl: `${ORIGIN}/api/billing/checkout?plan=pro`, upgradeMethod: "POST" })
 })
 
 /** Put a second person into a workspace directly (accepting an invitation needs a verified address). */
@@ -706,7 +706,7 @@ test("a live subscription to a product without limits grants the free ones, but 
   expect(checkout.status).toBe(303)
   expect(checkout.headers.get("location")).toBe("https://sandbox.polar.sh/portal/cs_1")
   expect(polarCalls.map((entry) => `${entry.method} ${entry.path}`)).not.toContain("POST /v1/checkouts/")
-  expect(((await (await call(env, "/api/billing", { headers: { cookie } })).json()) as { actions: unknown }).actions).toEqual([{ kind: "portal", label: "Manage billing", href: `${ORIGIN}/api/billing/portal` }])
+  expect(((await (await call(env, "/api/billing", { headers: { cookie } })).json()) as { actions: unknown }).actions).toEqual([{ kind: "portal", label: "Manage billing", href: `${ORIGIN}/api/billing/portal`, method: "POST" }])
 })
 
 test("accepting a withdrawn invitation says what to do, not just that it is missing", async () => {
@@ -767,16 +767,25 @@ test("the billing document is the server's: entitlement, usage and the actions i
   const env = stage(true)
   const { cookie, userId } = await enroll(env, "ivy@example.com")
   expect((await call(env, "/api/billing")).status).toBe(401)
-  expect(await (await call(env, "/api/billing", { headers: { cookie } })).json() as unknown).toEqual({
+  const freeDoc = await (await call(env, "/api/billing", { headers: { cookie } })).json() as {
+    entitlement: unknown
+    usage: unknown
+    actions: { kind: string; label: string; href: string; method: string }[]
+  }
+  expect(freeDoc).toEqual({
     entitlement: { billing: "enabled", plan: "free", status: "none", limits: FREE },
     usage: { cells: 1 },
     actions: [
-      { kind: "checkout", label: "Upgrade to Pro", href: `${ORIGIN}/api/billing/checkout?plan=pro` },
-      { kind: "checkout", label: "Upgrade to Team", href: `${ORIGIN}/api/billing/checkout?plan=team` },
+      { kind: "checkout", label: "Upgrade to Pro", href: `${ORIGIN}/api/billing/checkout?plan=pro`, method: "POST" },
+      { kind: "checkout", label: "Upgrade to Team", href: `${ORIGIN}/api/billing/checkout?plan=team`, method: "POST" },
     ],
   })
+  const firstAction = freeDoc.actions[0]!
+  expect((await call(env, new URL(firstAction.href).pathname + new URL(firstAction.href).search, { method: firstAction.method, headers: { cookie, origin: ORIGIN } })).status).toBe(303)
   await webhook(env, "subscription.active", subscription({ external_id: userId }))
-  expect(((await (await call(env, "/api/billing", { headers: { cookie } })).json()) as { actions: unknown }).actions).toEqual([{ kind: "portal", label: "Manage billing", href: `${ORIGIN}/api/billing/portal` }])
+  const paidActions = ((await (await call(env, "/api/billing", { headers: { cookie } })).json()) as { actions: { kind: string; label: string; href: string; method: string }[] }).actions
+  expect(paidActions).toEqual([{ kind: "portal", label: "Manage billing", href: `${ORIGIN}/api/billing/portal`, method: "POST" }])
+  expect((await call(env, new URL(paidActions[0]!.href).pathname, { method: paidActions[0]!.method, headers: { cookie, origin: ORIGIN } })).status).toBe(303)
 })
 
 test("the plugin's own checkout and portal are refused from outside, whatever the caller sends", async () => {
@@ -903,7 +912,8 @@ test("acceptance keeps Better Auth's checks: the recipient only, a verified addr
   const [invited] = await invitees(env, organizationId, owner.userId, ["chk1"]) as [Invitee]
   const stranger = await enroll(env, "stranger@example.com")
   verify(env, stranger.userId)
-  expect(await (await post(env, ACCEPT, { invitationId: invited.invitationId }, { cookie: stranger.cookie })).json()).toMatchObject({ code: "YOU_ARE_NOT_THE_RECIPIENT_OF_THE_INVITATION" })
+  // A stranger targeting someone else's invitation gets the uniform INVITATION_NOT_FOUND refusal (no existence oracle).
+  expect(await (await post(env, ACCEPT, { invitationId: invited.invitationId }, { cookie: stranger.cookie })).json()).toMatchObject({ code: "INVITATION_NOT_FOUND" })
   sql(env).run("update user set emailVerified = 0 where id = ?", [invited.userId])
   expect(await (await post(env, ACCEPT, { invitationId: invited.invitationId }, { cookie: invited.cookie })).json()).toMatchObject({ code: "EMAIL_VERIFICATION_REQUIRED_BEFORE_ACCEPTING_OR_REJECTING_INVITATION" })
   verify(env, invited.userId)

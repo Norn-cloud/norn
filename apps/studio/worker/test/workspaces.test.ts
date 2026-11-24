@@ -3,7 +3,7 @@ import { expect, test } from "bun:test"
 import { readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 import { EXPECTED_ORG_HEADER, resolveActor } from "../actor.ts"
-import { commitAcceptInvitation, commitActivateSession, commitCreateApiKey, createAuth, DISABLED_ORG_PATHS, WORKSPACE_ACCESS_DENIED_MESSAGE, type ProvisionDb } from "../auth.ts"
+import { commitAcceptInvitation, commitActivateSession, commitClearActiveSession, commitCreateApiKey, createAuth, DISABLED_ORG_PATHS, WORKSPACE_ACCESS_DENIED_MESSAGE, type ProvisionDb } from "../auth.ts"
 import { billingModeStatement } from "../billing.ts"
 import worker, { type Env } from "../index.ts"
 import type { WorkspacesDocument } from "../workspaces.ts"
@@ -561,10 +561,18 @@ test("revoked or expired sessions commit zero workspace changes across activate,
       }
     },
     batch: async (stmts: unknown[]) => {
+      const results: { results: unknown[] }[] = []
       db.transaction(() => {
-        for (const s of stmts as { sql: string; params: (string | number | null)[] }[]) db.query(s.sql).run(...s.params)
+        for (const s of stmts as { sql: string; params: (string | number | null)[] }[]) {
+          if (/\breturning\b/i.test(s.sql)) {
+            results.push({ results: db.query(s.sql).all(...s.params) })
+          } else {
+            db.query(s.sql).run(...s.params)
+            results.push({ results: [] })
+          }
+        }
       })()
-      return []
+      return results
     },
   }
   const d1User = await enroll(env, "d1-user@example.com", "D1")
@@ -580,6 +588,76 @@ test("revoked or expired sessions commit zero workspace changes across activate,
   expect(d1Acc.kind).toBe("accepted")
   const d1Act = await commitActivateSession(d1Wrapper, { token: d1Session.token, userId: d1User.userId, organizationId: d1User.organizationId })
   expect(d1Act?.activeOrganizationId).toBe(d1User.organizationId)
+  // Clearing activeOrganizationId (organizationId: null) succeeds while session is live, and refuses once expired.
+  const d1Cleared = await commitClearActiveSession(d1Wrapper, { token: d1Session.token, userId: d1User.userId })
+  expect(d1Cleared).not.toBeNull()
+  expect(d1Cleared?.activeOrganizationId).toBeNull()
+  expect((db.query(`select "activeOrganizationId" from "session" where "token" = ?`).get(d1Session.token) as { activeOrganizationId: string | null }).activeOrganizationId).toBeNull()
   const d1Key = await commitCreateApiKey(d1Wrapper, { userId: d1User.userId, organizationId: "org_rev", sessionToken: d1Session.token, name: "d1-key" })
   expect(d1Key.kind).toBe("created")
+  db.run(`update "session" set "expiresAt" = ? where "token" = ?`, [new Date(Date.now() - 10_000).toISOString(), d1Session.token])
+  expect(await commitClearActiveSession(d1Wrapper, { token: d1Session.token, userId: d1User.userId })).toBeNull()
+})
+
+test("S4 null set-active refuses revoked sessions; S5 member/invitation mutations return uniform refusals without existence oracles", async () => {
+  const { db, env } = stage()
+  const alice = await enroll(env, "s5-alice@example.com", "Alice")
+  const bob = await enroll(env, "s5-bob@example.com", "Bob")
+  const carol = await enroll(env, "s5-carol@example.com", "Carol")
+
+  // 1. set-active with { organizationId: null } refuses a session revoked between pre-check and write (401).
+  const origPrepare = db.prepare.bind(db)
+  let revokedOnNull = false
+  db.prepare = ((sql: string, ...rest: unknown[]) => {
+    if (!revokedOnNull && sql.toLowerCase().includes(`set "activeorganizationid" = null`)) {
+      revokedOnNull = true
+      origPrepare(`delete from "session" where "userId" = ?`).run(carol.userId)
+    }
+    return (origPrepare as (...args: unknown[]) => ReturnType<typeof origPrepare>)(sql, ...rest)
+  }) as typeof db.prepare
+  const nullRes = await mutate(env, "POST", "/api/auth/organization/set-active", { organizationId: null }, { cookie: carol.cookie })
+  db.prepare = origPrepare
+  expect(revokedOnNull).toBe(true)
+  expect(nullRes.status).toBe(401)
+
+  // 2. Foreign member IDs vs missing member IDs return identical 400 MEMBER_NOT_FOUND on remove-member and update-member-role.
+  const bobMemberId = (db.query(`select "id" from "member" where "userId" = ? and "organizationId" = ?`).get(bob.userId, bob.organizationId) as { id: string }).id
+  for (const path of ["/api/auth/organization/remove-member", "/api/auth/organization/update-member-role"]) {
+    const missingBody = path.endsWith("remove-member")
+      ? { memberIdOrEmail: "mem_does_not_exist", organizationId: alice.organizationId }
+      : { memberId: "mem_does_not_exist", role: "member", organizationId: alice.organizationId }
+    const foreignBody = path.endsWith("remove-member")
+      ? { memberIdOrEmail: bobMemberId, organizationId: alice.organizationId }
+      : { memberId: bobMemberId, role: "member", organizationId: alice.organizationId }
+    const rMissing = await mutate(env, "POST", path, missingBody, { cookie: alice.cookie, [EXPECTED_ORG_HEADER]: alice.organizationId })
+    const rForeign = await mutate(env, "POST", path, foreignBody, { cookie: alice.cookie, [EXPECTED_ORG_HEADER]: alice.organizationId })
+    expect(rMissing.status).toBe(400)
+    expect(rForeign.status).toBe(400)
+    expect(await rForeign.json()).toEqual(await rMissing.json())
+  }
+  // Bob's membership is untouched.
+  expect(db.query(`select "role" from "member" where "id" = ?`).get(bobMemberId)).toEqual({ role: "owner" })
+
+  // 3. Foreign invitation IDs vs missing invitation IDs return identical 400 INVITATION_NOT_FOUND on cancel-invitation and reject-invitation.
+  const bobInv = (await (await mutate(
+    env,
+    "POST",
+    "/api/auth/organization/invite-member",
+    { email: "invitee-for-bob@example.com", role: "member", organizationId: bob.organizationId },
+    { cookie: bob.cookie, [EXPECTED_ORG_HEADER]: bob.organizationId },
+  )).json()) as { id: string }
+
+  const cancelMissing = await mutate(env, "POST", "/api/auth/organization/cancel-invitation", { invitationId: "inv_does_not_exist" }, { cookie: alice.cookie, [EXPECTED_ORG_HEADER]: alice.organizationId })
+  const cancelForeign = await mutate(env, "POST", "/api/auth/organization/cancel-invitation", { invitationId: bobInv.id }, { cookie: alice.cookie, [EXPECTED_ORG_HEADER]: alice.organizationId })
+  expect(cancelMissing.status).toBe(400)
+  expect(cancelForeign.status).toBe(400)
+  expect(await cancelForeign.json()).toEqual(await cancelMissing.json())
+
+  const rejectMissing = await mutate(env, "POST", "/api/auth/organization/reject-invitation", { invitationId: "inv_does_not_exist" }, { cookie: alice.cookie })
+  const rejectForeign = await mutate(env, "POST", "/api/auth/organization/reject-invitation", { invitationId: bobInv.id }, { cookie: alice.cookie })
+  expect(rejectMissing.status).toBe(400)
+  expect(rejectForeign.status).toBe(400)
+  expect(await rejectForeign.json()).toEqual(await rejectMissing.json())
+  // Bob's invitation is still pending.
+  expect(db.query(`select "status" from "invitation" where "id" = ?`).get(bobInv.id)).toEqual({ status: "pending" })
 })

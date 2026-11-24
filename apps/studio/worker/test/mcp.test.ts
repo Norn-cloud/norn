@@ -3,7 +3,7 @@ import { expect, test } from "bun:test"
 import { createHash, randomBytes } from "node:crypto"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { assistantCallback, cimdAllowed, CONSENT_APPROVAL_HEADER, createAuth, fetchClientMetadata, MEMBER_CLAIM, ORG_CLAIM } from "../auth.ts"
+import { assistantCallback, cimdAllowed, CONSENT_APPROVAL_HEADER, createAuth, encodeGrantRef, fetchClientMetadata, MEMBER_CLAIM, ORG_CLAIM } from "../auth.ts"
 import worker, { type Env } from "../index.ts"
 import { EXPECTED_ORG_HEADER, hostToken } from "../actor.ts"
 import { grantActor, retried } from "../mcp.ts"
@@ -502,8 +502,10 @@ test("consent approval requires single-use approval token, guards persistence at
   sqlite.prepare = origPrepare
   expect(injected).toBe(true)
   expect(approved.status).toBe(200)
+  const memberGen1 = (sqlite.query(`select "id" from "member" where "userId" = ? and "organizationId" = ?`).get(user, org) as { id: string }).id
+  const expectedRefGen1 = encodeGrantRef(org, memberGen1)
   const storedConsent = sqlite.query(`select "referenceId" from "oauthConsent" where "userId" = ?`).get(user) as { referenceId: string } | null
-  expect(storedConsent?.referenceId).toBe(org)
+  expect(storedConsent?.referenceId).toBe(expectedRefGen1)
   const callback = new URL(((await approved.json()) as { url: string }).url)
   const token = await call(env, "/api/auth/oauth2/token", {
     method: "POST",
@@ -514,11 +516,11 @@ test("consent approval requires single-use approval token, guards persistence at
   const tokenPayload = (await token.json()) as { access_token: string; refresh_token?: string }
   const claims = JSON.parse(Buffer.from(tokenPayload.access_token.split(".")[1] ?? "", "base64url").toString()) as Record<string, unknown>
   expect(claims[ORG_CLAIM]).toBe(org)
-  expect(claims[MEMBER_CLAIM]).toBeString()
+  expect(claims[MEMBER_CLAIM]).toBe(memberGen1)
 
   // 4. Revocation + rejoin into the same org NEVER resurrects pre-revocation access token, refresh token, or consent!
   sqlite.run(`delete from "member" where "userId" = ? and "organizationId" = ?`, [user, org])
-  expect(sqlite.query(`select count(*) as n from "oauthConsent" where "userId" = ? and "referenceId" = ?`).get(user, org)).toEqual({ n: 0 })
+  expect(sqlite.query(`select count(*) as n from "oauthConsent" where "userId" = ? and "referenceId" = ?`).get(user, expectedRefGen1)).toEqual({ n: 0 })
   sqlite.run(`insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values ('m_rejoined_gen2', ?, ?, 'owner', ?)`, [org, user, new Date().toISOString()])
   expect((await mcp(env, tokenPayload.access_token, INIT)).status).toBe(401)
   if (tokenPayload.refresh_token) {
@@ -555,5 +557,117 @@ test("consent approval requires single-use approval token, guards persistence at
   expect(revoked).toBe(true)
   expect(failed.status).toBe(409)
   expect(await failed.json()).toMatchObject({ code: "NO_ACTIVE_WORKSPACE" })
-  expect(sqlite.query(`select count(*) as n from "oauthConsent" where "userId" = ? and "referenceId" = ?`).get(user, org)).toEqual({ n: 0 })
+  expect(sqlite.query(`select count(*) as n from "oauthConsent" where "userId" = ? and "referenceId" like ?`).get(user, `${org}|%`)).toEqual({ n: 0 })
+})
+
+test("S3 generation isolation: unredeemed codes, legacy grants, prior consents, and session revocation between consent and code insert", async () => {
+  const env = stage()
+  const { cookie, user, org } = await person(env, "gen-isolation@example.com")
+  const sqlite = db(env)
+  const memberGen1 = (sqlite.query(`select "id" from "member" where "userId" = ? and "organizationId" = ?`).get(user, org) as { id: string }).id
+  const clientId = await register(env)
+
+  // 1. Mint an unredeemed authorization code under membership generation 1, then remove & rejoin as generation 2 while session stays live.
+  const pkce1 = pkce()
+  const auth1 = await call(env, authorizeUrl(clientId, pkce1.challenge), { headers: { cookie } })
+  expect(auth1.status).toBe(302)
+  const query1 = signedQueryOf(auth1.headers.get("location") ?? "")
+  const ctx1 = await consentContext(env, cookie, query1)
+  const consent1 = await postJson(
+    env,
+    "/api/auth/oauth2/consent",
+    { accept: true, oauth_query: query1 },
+    { cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: org, [CONSENT_APPROVAL_HEADER]: ctx1.approvalToken ?? "" },
+  )
+  expect(consent1.status).toBe(200)
+  const code1 = new URL(((await consent1.json()) as { url: string }).url).searchParams.get("code") ?? ""
+  expect(code1.length).toBeGreaterThan(0)
+
+  // Prior consent for the SAME membership generation allows silent re-authorization without prompting.
+  const pkceSame = pkce()
+  const authSame = await call(env, authorizeUrl(clientId, pkceSame.challenge), { headers: { cookie } })
+  expect(authSame.status).toBe(302)
+  const sameLoc = new URL(authSame.headers.get("location") ?? "")
+  expect(sameLoc.origin + sameLoc.pathname).toBe(CLAUDE)
+  expect(sameLoc.searchParams.get("code")).toBeString()
+
+  // Remove memberGen1 and rejoin as memberGen2 while session stays live.
+  sqlite.run(`delete from "member" where "id" = ?`, [memberGen1])
+  sqlite.run(`insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values ('m_gen2', ?, ?, 'owner', ?)`, [org, user, new Date().toISOString()])
+
+  // Unredeemed code1 MUST fail exchange (deleted by trigger on member removal, and never inherits m_gen2).
+  const exchange1 = await call(env, "/api/auth/oauth2/token", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+    body: new URLSearchParams({ grant_type: "authorization_code", code: code1, redirect_uri: CLAUDE, client_id: clientId, code_verifier: pkce1.verifier, resource: RESOURCE }),
+  })
+  expect(exchange1.status).toBeGreaterThanOrEqual(400)
+
+  // Prior consent MUST NOT survive rejoin: /oauth2/authorize redirects back to consent prompt, not directly to callback.
+  const authAfterRejoin = await call(env, authorizeUrl(clientId, pkce().challenge), { headers: { cookie } })
+  expect(authAfterRejoin.status).toBe(302)
+  expect(authAfterRejoin.headers.get("location") ?? "").toContain("/oauth/consent")
+
+  // 2. Legacy bare-org grants (missing `|<memberId>`) are rejected by SQLite triggers on consent, code, refresh, and access token tables.
+  expect(() => sqlite.run(
+    `insert into "oauthConsent" ("id", "clientId", "userId", "referenceId", "scopes", "createdAt", "updatedAt") values ('legacy_c', ?, ?, ?, '["openid"]', datetime('now'), datetime('now'))`,
+    [clientId, user, org],
+  )).toThrow("oauth.membership_invalid")
+  expect(() => sqlite.run(
+    `insert into "verification" ("id", "identifier", "value", "expiresAt", "createdAt", "updatedAt") values ('legacy_v', 'legacy_code', ?, datetime('now', '+5 minutes'), datetime('now'), datetime('now'))`,
+    [JSON.stringify({ type: "authorization_code", userId: user, referenceId: org, sessionId: "none" })],
+  )).toThrow("oauth.membership_invalid")
+
+  // 3. Session revoked right before oauthConsent insert -> SQLite trigger aborts (409), 0 consent rows written.
+  const clientId3 = await register(env)
+  const auth3 = await call(env, authorizeUrl(clientId3, pkce().challenge), { headers: { cookie } })
+  const query3 = signedQueryOf(auth3.headers.get("location") ?? "")
+  const ctx3 = await consentContext(env, cookie, query3)
+  const origPrepare = sqlite.prepare.bind(sqlite)
+  let revokedBeforeConsent = false
+  sqlite.prepare = ((sql: string, ...rest: unknown[]) => {
+    if (!revokedBeforeConsent && sql.toLowerCase().includes(`insert into "oauthconsent"`)) {
+      revokedBeforeConsent = true
+      origPrepare(`delete from "session" where "userId" = ?`).run(user)
+    }
+    return (origPrepare as (...args: unknown[]) => ReturnType<typeof origPrepare>)(sql, ...rest)
+  }) as typeof sqlite.prepare
+  const consentSessionRevoked = await postJson(
+    env,
+    "/api/auth/oauth2/consent",
+    { accept: true, oauth_query: query3 },
+    { cookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: org, [CONSENT_APPROVAL_HEADER]: ctx3.approvalToken ?? "" },
+  )
+  sqlite.prepare = origPrepare
+  expect(revokedBeforeConsent).toBe(true)
+  expect(consentSessionRevoked.status).toBe(409)
+  expect(sqlite.query(`select count(*) as n from "oauthConsent" where "clientId" = ?`).get(clientId3)).toEqual({ n: 0 })
+
+  // 4. Session revoked AFTER oauthConsent insert and BEFORE authorization_code insert ->
+  //    code trigger aborts (409) AND newly-inserted oauthConsent row is rolled back (0 consent rows left!).
+  const freshSignIn = await postJson(env, "/api/auth/sign-in/email", { email: "gen-isolation@example.com", password: "correct horse battery" }, { origin: ORIGIN })
+  const freshCookie = cookieOf(freshSignIn)
+  sqlite.run(`update "session" set "activeOrganizationId" = ? where "userId" = ?`, [org, user])
+  const clientId4 = await register(env)
+  const auth4 = await call(env, authorizeUrl(clientId4, pkce().challenge), { headers: { cookie: freshCookie } })
+  const query4 = signedQueryOf(auth4.headers.get("location") ?? "")
+  const ctx4 = await consentContext(env, freshCookie, query4)
+  let revokedBeforeCode = false
+  sqlite.prepare = ((sql: string, ...rest: unknown[]) => {
+    if (!revokedBeforeCode && sql.toLowerCase().includes(`insert into "verification"`)) {
+      revokedBeforeCode = true
+      origPrepare(`delete from "session" where "userId" = ?`).run(user)
+    }
+    return (origPrepare as (...args: unknown[]) => ReturnType<typeof origPrepare>)(sql, ...rest)
+  }) as typeof sqlite.prepare
+  const codeSessionRevoked = await postJson(
+    env,
+    "/api/auth/oauth2/consent",
+    { accept: true, oauth_query: query4 },
+    { cookie: freshCookie, origin: ORIGIN, [EXPECTED_ORG_HEADER]: org, [CONSENT_APPROVAL_HEADER]: ctx4.approvalToken ?? "" },
+  )
+  sqlite.prepare = origPrepare
+  expect(revokedBeforeCode).toBe(true)
+  expect(codeSessionRevoked.status).toBe(409)
+  expect(sqlite.query(`select count(*) as n from "oauthConsent" where "clientId" = ?`).get(clientId4)).toEqual({ n: 0 })
 })

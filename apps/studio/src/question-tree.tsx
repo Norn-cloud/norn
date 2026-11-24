@@ -100,9 +100,10 @@ const savedQuestion = z.object({
 }).strict()
 const stable = (value: unknown): string => JSON.stringify(value, (_key, v: unknown) => v !== null && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => a.localeCompare(b))) : v)
 
-export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommendations; readonly catalog: QuestionCatalog; readonly guard?: (dirty: boolean) => ReactNode }) {
+export function QuestionTree({ tree, catalog, originScope, guard }: { readonly tree: Recommendations; readonly catalog: QuestionCatalog; readonly originScope?: StudioScope | null; readonly guard?: (dirty: boolean) => ReactNode }) {
   const { view } = useView()
-  const pinnedScope = usePinnedScope(tree.basis)
+  const fallbackScope = usePinnedScope(tree.basis)
+  const pinnedScope = originScope !== undefined ? originScope : fallbackScope
   const pinnedScopeKey = pinnedScope ? `${pinnedScope.orgId}:${pinnedScope.environmentId}` : ""
   const definitions = useMemo(
     () => questionDefinitions(defaultFetch, pinnedScope !== undefined ? async () => pinnedScope : undefined),
@@ -124,8 +125,8 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
   const [pageCursor, setPageCursor] = useState<string>()
   const [customCondition, setCustomCondition] = useState(false)
   const scope = useStudioScope()
-  const cellAvailable = scope.isSuccess && scope.data !== null
-  const list = useQuery({ queryKey: ["saved-questions", scope.data?.orgId, scope.data?.environmentId, refresh, pageCursor], queryFn: () => definitions.list(pageCursor), enabled: cellAvailable, retry: false })
+  const cellAvailable = pinnedScope !== undefined ? pinnedScope !== null : (scope.isSuccess && scope.data !== null)
+  const list = useQuery({ queryKey: ["saved-questions", pinnedScope?.orgId ?? scope.data?.orgId, pinnedScope?.environmentId ?? scope.data?.environmentId, refresh, pageCursor], queryFn: () => definitions.list(pageCursor), enabled: cellAvailable, retry: false })
   const revision = useRef(editor.revision)
   revision.current = editor.revision
   const question = buildQuestion(draft, catalog)
@@ -363,20 +364,22 @@ export function QuestionTree({ tree, catalog, guard }: { readonly tree: Recommen
 }
 
 export function QuestionTreePage() {
-  const catalog = useQuery({ queryKey: ["question-catalog"], queryFn: readCatalog, retry: false, staleTime: Infinity })
-  const tree = useQuery({ queryKey: ["question-tree"], queryFn: readRecommendations, retry: false, staleTime: 60_000 })
+  const scope = useStudioScope()
+  const scopeKey = scope.data ? `${scope.data.orgId}:${scope.data.environmentId}` : ""
+  const catalog = useQuery({ queryKey: ["question-catalog", scope.data?.orgId, scope.data?.environmentId], queryFn: readCatalog, enabled: !scope.isPending, retry: false, staleTime: Infinity })
+  const tree = useQuery({ queryKey: ["question-tree", scope.data?.orgId, scope.data?.environmentId], queryFn: readRecommendations, enabled: !scope.isPending, retry: false, staleTime: 60_000 })
   return (
     <section className="space-y-6">
       <div className="space-y-2">
         <h1 className="text-title font-semibold tracking-tight">Explore a metric, step by step</h1>
         <p className="max-w-2xl text-muted-foreground">Choose left to right: what to measure, how to group it, which records count and over which dates. The server recommends a pick in each column from what the cell declares, checks every change and says the question back in plain words.</p>
       </div>
-      {(catalog.isPending || tree.isPending) && <p className="text-muted-foreground">Reading the catalogue…</p>}
+      {(scope.isPending || catalog.isPending || tree.isPending) && <p className="text-muted-foreground">Reading the catalogue…</p>}
       {catalog.isError && <EmptyState icon={ChartLine}>{catalog.error.message}</EmptyState>}
       {tree.isError && <EmptyState icon={ChartLine}>{tree.error.message}</EmptyState>}
       {catalog.data && tree.data && (tree.data.measures.length === 0
         ? <EmptyState icon={ChartLine} title="Nothing to measure yet">This world declares no measures.</EmptyState>
-        : <QuestionTree tree={tree.data} catalog={catalog.data} guard={(dirty) => <DirtyGuard dirty={dirty} />} />)}
+        : <QuestionTree key={scopeKey} tree={tree.data} catalog={catalog.data} originScope={scope.data} guard={(dirty) => <DirtyGuard dirty={dirty} />} />)}
     </section>
   )
 }
