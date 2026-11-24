@@ -256,7 +256,7 @@ export const RestSource = Norn.sourceSchema({
 export const RestMapping = Norn.mapping({
   id: "erpnext.rest.mapping",
   title: "ERPNext REST observations to the REA canon",
-  version: "0.1.0",
+  version: "0.2.0",
   source: {schemaId: "erpnext.rest.source", version: "0.1.0", sha256: "d01917bea1f8d31b864ec22a52234407fcc67e74598b3f378af751c76b464d6e"},
   sourceContract: {kind: "generic"},
   interfaces: [Catalog, Resource, Agent, AgentRole, Commitment],
