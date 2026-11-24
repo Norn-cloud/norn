@@ -183,24 +183,6 @@
           }
         },
         {
-          "constraints": {
-            "nullable": true
-          },
-          "id": "review_receipt_digest",
-          "type": {
-            "kind": "text"
-          }
-        },
-        {
-          "constraints": {
-            "nullable": true
-          },
-          "id": "reviewed_by_user_id",
-          "type": {
-            "kind": "text"
-          }
-        },
-        {
           "default": "staged",
           "id": "status",
           "type": {

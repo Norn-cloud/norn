@@ -42,8 +42,6 @@
       "observed_at": "2026-11-22T16:10:00Z",
       "effective_on": "2026-11-25",
       "dispute_state": "clean",
-      "review_receipt_digest": "sha256:1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-      "reviewed_by_user_id": "principal:hr_manager",
       "status": "staged"
     },
     {
@@ -58,8 +56,6 @@
       "observed_at": "2026-11-22T20:30:00Z",
       "effective_on": "2026-11-22",
       "dispute_state": "clean",
-      "review_receipt_digest": "sha256:fedcba0987654321fedcba0987654321fedcba0987654321fedcba0987654321",
-      "reviewed_by_user_id": "principal:hr_manager",
       "status": "staged"
     },
     {
@@ -74,8 +70,6 @@
       "observed_at": "2026-11-22T20:30:00Z",
       "effective_on": "2026-11-22",
       "dispute_state": "quarantined",
-      "review_receipt_digest": null,
-      "reviewed_by_user_id": null,
       "status": "quarantined"
     }
   ],

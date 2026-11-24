@@ -1855,8 +1855,7 @@ mod suite {
                     "source_record_key": "spreadsheet_csv/BRANCH-01/EMP-003/2026-11-22",
                     "payload_digest": "sha256:aaaa", "confidence_bp": 6200, "source_span": "row:4",
                     "extracted_at": "2026-11-23T08:05:00Z", "observed_at": "2026-11-22T20:30:00Z",
-                    "effective_on": "2026-11-22", "dispute_state": "disputed",
-                    "review_receipt_digest": null, "reviewed_by_user_id": null, "status": "staged"
+                    "effective_on": "2026-11-22", "dispute_state": "disputed", "status": "staged"
                 }),
             ),
             put_fact(
@@ -1867,8 +1866,7 @@ mod suite {
                     "source_record_key": "spreadsheet_csv/BRANCH-01/EMP-004/2026-11-22",
                     "payload_digest": "sha256:cccc", "confidence_bp": 9400, "source_span": "row:5",
                     "extracted_at": "2026-11-23T08:10:00Z", "observed_at": "2026-11-22T20:30:00Z",
-                    "effective_on": "2026-11-22", "dispute_state": "clean",
-                    "review_receipt_digest": null, "reviewed_by_user_id": null, "status": "staged"
+                    "effective_on": "2026-11-22", "dispute_state": "clean", "status": "staged"
                 }),
             ),
             put_fact(
@@ -1879,8 +1877,7 @@ mod suite {
                     "source_record_key": "spreadsheet_csv/BRANCH-01/EMP-003/2026-11-22",
                     "payload_digest": "sha256:bbbb", "confidence_bp": 9850, "source_span": "row:4-fix",
                     "extracted_at": "2026-11-23T09:00:00Z", "observed_at": "2026-11-22T21:00:00Z",
-                    "effective_on": "2026-11-22", "dispute_state": "clean",
-                    "review_receipt_digest": null, "reviewed_by_user_id": null, "status": "staged"
+                    "effective_on": "2026-11-22", "dispute_state": "clean", "status": "staged"
                 }),
             ),
         ]);
@@ -2002,6 +1999,41 @@ mod suite {
         );
     }
 
+    fn assert_reject_review_blocks_promotion(fixture: &HrVerticalFixture, cell: &mut Cell) {
+        // Record a `reject_candidate` ReviewDecision on clean staged `cand_clean` and prove
+        // `hr_import.candidate.promote` refuses promotion when only a reject decision exists.
+        fixture
+            .invoke(
+                cell,
+                "hr_import.review.record",
+                &json!({
+                    "id": "rev_clean_reject", "candidateId": "cand_clean",
+                    "decision": "reject_candidate",
+                    "reviewer_user_id": "principal:hr_reviewer",
+                    "receipt_digest": "sha256:rev_rej",
+                    "reason": "Initial review flagged discrepancy.",
+                    "decided_at": "2026-11-23T09:05:00Z"
+                }),
+                "principal:hr_reviewer",
+                "imp-rev-clean-reject",
+            )
+            .expect("authorized hr_reviewer records reject_candidate review");
+
+        assert_precondition_false(
+            fixture.invoke(
+                cell,
+                "hr_import.candidate.promote",
+                &json!({
+                    "candidateId": "cand_clean", "batchId": "batch_1",
+                    "evidenceId": "ev_clean", "reviewDecisionId": "rev_clean_reject"
+                }),
+                "principal:hr_manager",
+                "imp-promote-reject-review-refused",
+            ),
+            "clean staged candidate with only a reject_candidate ReviewDecision cannot promote",
+        );
+    }
+
     fn record_import_reviews_via_action(fixture: &HrVerticalFixture, cell: &mut Cell) {
         assert_review_record_access_denials(fixture, cell);
 
@@ -2068,8 +2100,10 @@ mod suite {
             "unreviewed cand_clean cannot borrow another candidate's ReviewDecision",
         );
 
-        // Now record `rev_clean` via `hr_import.review.record` so `cand_clean` (still with null
-        // redundant review fields) becomes promotable purely via linked ReviewDecision!
+        assert_reject_review_blocks_promotion(fixture, cell);
+
+        // Now record `rev_clean` (`approve_promotion`) via `hr_import.review.record` so
+        // `cand_clean` becomes promotable purely via its linked ReviewDecision!
         fixture
             .invoke(
                 cell,
