@@ -9,9 +9,9 @@ use norn_ir::{ActionRoot, ResourceLimitProfile, RuntimeValue};
 use crate::cell_host::JsonObject;
 
 use super::input::{
-    actor_derived_fields, check_action_identity_input, check_canonical_object_bound,
+    action_link_key, actor_derived_fields, check_canonical_object_bound, reserved_action_identity,
+    rfc6901_token,
 };
-use super::types::ActionRefusal;
 
 /// One defect reported by [`validate_automation_static_input`] when admitting
 /// an automation's `then.input` against its target action's closed input schema.
@@ -21,10 +21,6 @@ pub struct AutomationInputViolation {
     pub pointer: String,
     /// Human-readable reason the static input was refused.
     pub message: String,
-}
-
-fn rfc6901_token(segment: &str) -> String {
-    segment.replace('~', "~0").replace('/', "~1")
 }
 
 /// Converts a schema violation path anchored at `base_pointer` (where
@@ -89,7 +85,7 @@ pub fn validate_automation_static_input(
     let target_id_field = program.target().object_id_field;
     let empty = JsonObject::new();
     let supplied = static_input.unwrap_or(&empty);
-    check_bounds_and_identity(action, supplied)?;
+    check_bounds_and_identity(supplied)?;
 
     let raw_schema = norn_ir::JsonValue::Object(action.input_schema.clone());
     let parsed = Schema::parse_action(&raw_schema, "/then/input").map_err(|violation| {
@@ -134,10 +130,7 @@ pub fn validate_automation_static_input(
     }
 }
 
-fn check_bounds_and_identity(
-    action: &ActionRoot,
-    supplied: &JsonObject,
-) -> Result<(), Vec<AutomationInputViolation>> {
+fn check_bounds_and_identity(supplied: &JsonObject) -> Result<(), Vec<AutomationInputViolation>> {
     let profile = ResourceLimitProfile::norn_limits_v1();
     let max_input_bytes = usize::try_from(profile.slice.max_canonical_bytes).unwrap_or(usize::MAX);
     if let Err(error) =
@@ -148,19 +141,11 @@ fn check_bounds_and_identity(
             message: format!("static input exceeds canonical size bound: {error:?}"),
         }]);
     }
-    if let Err(error) = check_action_identity_input::<()>(action, supplied, None, max_input_bytes) {
-        let (pointer, message) = if let ActionRefusal::InvalidInput { field } = error {
-            (
-                format!("/then/input/{}", rfc6901_token(&field)),
-                format!("static input must not supply reserved field `{field}`"),
-            )
-        } else {
-            (
-                "/then/input".to_owned(),
-                format!("static input failed identity check: {error:?}"),
-            )
-        };
-        return Err(vec![AutomationInputViolation { pointer, message }]);
+    if let Some((field, path)) = reserved_action_identity(supplied) {
+        return Err(vec![AutomationInputViolation {
+            pointer: format!("/then/input{path}"),
+            message: format!("static input must not supply reserved field `{field}`"),
+        }]);
     }
     Ok(())
 }
@@ -265,6 +250,20 @@ fn check_supplied_values(
                 continue;
             }
         };
+        let link_endpoint = action.create_links.iter().any(|link| {
+            link.target_id_field == *name
+                || link
+                    .source
+                    .as_ref()
+                    .is_some_and(|source| source.id_field == *name)
+        });
+        if link_endpoint && action_link_key(&decoded).is_none() {
+            violations.push(AutomationInputViolation {
+                pointer: field_pointer,
+                message: format!("link endpoint field `{name}` must be a nonblank string"),
+            });
+            continue;
+        }
         let expr_val = match norn_expr::Value::try_from(&decoded) {
             Ok(value) => value,
             Err(error) => {
@@ -398,6 +397,56 @@ mod tests {
 
         let mut with_reserved_actor = valid;
         with_reserved_actor.insert("actor".to_owned(), RuntimeValue::String("spoofed".into()));
-        assert!(validate_automation_static_input(&action, Some(&with_reserved_actor)).is_err());
+        let root = validate_automation_static_input(&action, Some(&with_reserved_actor))
+            .expect_err("root actor is reserved");
+        assert_eq!(
+            root.first().map(|error| error.pointer.as_str()),
+            Some("/then/input/actor")
+        );
+
+        let nested = RuntimeValue::from_json_text(r#"{"meta":{"a/b~c":[{"actor":"spoofed"}]}}"#)
+            .expect("static input");
+        let errors = validate_automation_static_input(&action, nested.as_object())
+            .expect_err("nested actor is reserved");
+        assert_eq!(
+            errors.first().map(|error| error.pointer.as_str()),
+            Some("/then/input/meta/a~1b~0c/0/actor")
+        );
+    }
+    #[test]
+    fn static_link_endpoints_reject_whitespace_without_restricting_other_strings() {
+        let mut raw = serde_json::to_value(sample_action()).expect("action JSON");
+        for field in ["sourceId", "targetId"] {
+            raw["inputSchema"]["properties"][field] = serde_json::json!({ "type": "string" });
+        }
+        raw["createLinks"] = serde_json::json!([{
+            "source": { "objectType": "demo.Order", "idField": "sourceId" },
+            "link": "related",
+            "targetType": "demo.Order",
+            "targetIdField": "targetId",
+        }]);
+        let action: ActionRoot = serde_json::from_value(raw).expect("action with link");
+        let input = RuntimeValue::from_json_text(
+            r#"{"amount":"12.50","meta":{"reason":" "},"sourceId":"source","targetId":"target"}"#,
+        )
+        .expect("input");
+        let input = input.as_object().expect("object");
+        assert_eq!(
+            validate_automation_static_input(&action, Some(input)),
+            Ok(())
+        );
+        for (field, path) in [
+            ("sourceId", "/then/input/sourceId"),
+            ("targetId", "/then/input/targetId"),
+        ] {
+            let mut invalid = input.clone();
+            invalid.insert(field.to_owned(), RuntimeValue::String(" \t ".into()));
+            let errors = validate_automation_static_input(&action, Some(&invalid))
+                .expect_err("blank link endpoint");
+            assert_eq!(
+                errors.first().map(|error| error.pointer.as_str()),
+                Some(path)
+            );
+        }
     }
 }

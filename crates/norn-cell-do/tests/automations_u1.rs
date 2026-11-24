@@ -28,9 +28,9 @@ mod cases {
     use norn_ir::RuntimeValue;
     use serde_json::{Value, json};
 
-    use crate::action_steps::step_cell::{
+    use super::super::action_steps::step_cell::{
         APPROVER, Cell, FLOW_ID, MELT, MELT_ACTION, OPERATOR, SCOPE, call, call_with, cell,
-        cell_on, melt_body,
+        cell_on, cell_with_definition_blind_approver, melt_body,
     };
 
     type TestResult<T = ()> = Result<T, Box<dyn Error>>;
@@ -789,6 +789,10 @@ mod cases {
             &json!({ "expectedVersion": 1 }).to_string(),
         );
         assert_eq!(retired.status, 200, "{}", retired.body);
+        let retired_seq = serde_json::from_str::<Value>(&retired.body)?
+            .pointer("/receipt/commitSeq")
+            .and_then(Value::as_u64)
+            .ok_or("missing retirement commit sequence")?;
         let host = shared
             .tenant
             .serving_host()
@@ -807,10 +811,7 @@ mod cases {
         );
         let audited = checked(automation_triggers_for_commit(host, trigger_commit_seq))?;
         assert_eq!(audited.len(), 1, "{audited:?}");
-        assert!(
-            audited[0].voided_commit_seq.is_some(),
-            "voided candidate must record its retire commit_seq"
-        );
+        assert_eq!(audited[0].voided_commit_seq, Some(retired_seq));
 
         let second_write = shared.call(
             "POST",
@@ -1001,13 +1002,19 @@ mod cases {
     #[test]
     fn public_route_refuses_automation_namespace_idempotency_keys() -> TestResult {
         let cell = cell();
-        install_approval(&cell)?;
         install_automation(
             &cell,
             "ops.key_watch",
             &automation_payload("Key watch", &json!({ "kind": "event", "event": "created" })),
         )?;
 
+        assert_reserved_action_keys_refused(&cell)?;
+        install_approval(&cell)?;
+        assert_reserved_action_keys_refused(&cell)?;
+        Ok(())
+    }
+
+    fn assert_reserved_action_keys_refused(cell: &Cell) -> TestResult {
         let run_key = checked(automation_run_key("ops.key_watch", 1, 5, MELT, "melt-1", 1))?;
         let approved_key = checked(automation_approved_key("dec_1"))?;
         for reserved in [
@@ -1017,24 +1024,30 @@ mod cases {
             approved_key.as_str(),
         ] {
             let (status, refusal) = call(
-                &cell,
+                cell,
                 "POST",
                 &format!("/v1/actions/{MELT_ACTION}"),
                 OPERATOR,
                 &melt_body("melt-reserved", "12", "10", reserved),
             );
             assert_eq!(status, 400, "{reserved}: {refusal}");
-            assert_eq!(refusal["code"], json!("request.invalid"), "{refusal}");
             assert_eq!(
-                refusal["diagnostics"][0]["span"]["pointer"],
-                json!("/idempotencyKey"),
+                refusal.get("code").and_then(Value::as_str),
+                Some("request.invalid"),
+                "{refusal}"
+            );
+            assert_eq!(
+                refusal
+                    .pointer("/diagnostics/0/span/pointer")
+                    .and_then(Value::as_str),
+                Some("/idempotencyKey"),
                 "{refusal}"
             );
         }
 
         // Nothing committed, nothing parked, and zero candidates or continuations recorded.
         let (get_status, _) = call(
-            &cell,
+            cell,
             "GET",
             &format!("/v1/objects/{MELT}/melt-reserved"),
             OPERATOR,
@@ -1042,8 +1055,8 @@ mod cases {
         );
         assert_eq!(get_status, 404);
         let pending_query = format!("{SCOPE}&state=pending");
-        let (_, page) = call_with(&cell, "GET", "/v1/decisions", &pending_query, APPROVER, "");
-        assert_eq!(page["total"], json!(0), "{page}");
+        let (_, page) = call_with(cell, "GET", "/v1/decisions", &pending_query, APPROVER, "");
+        assert_eq!(page.get("total").and_then(Value::as_u64), Some(0), "{page}");
         assert_eq!(checked(pending_automation_trigger_count(&cell.host))?, 0);
         assert_eq!(
             checked(pending_automation_continuation_count(&cell.host))?,
@@ -1057,56 +1070,52 @@ mod cases {
     #[test]
     fn hidden_automations_are_never_disclosed_in_business_write_responses_or_refusals() -> TestResult
     {
-        let dir = tempfile::tempdir()?;
-        let mut cell = provisioned_tenant(
-            &dir.path().join("no-disclosure.sqlite"),
-            &["owner", "member"],
-        )?;
-        let def = json!({
-            "kind": "automation",
-            "id": "ops.hidden_watch",
-            "payload": automation_payload(
+        let cell = cell_with_definition_blind_approver();
+        let baseline = cell_with_definition_blind_approver();
+        let id = "ops.hidden_watch";
+        install_automation(
+            &cell,
+            id,
+            &automation_payload(
                 "Hidden watch",
                 &json!({ "kind": "event", "event": "created" }),
             ),
-        });
-        cell.install_as_owner(def)?;
+        )?;
 
-        // A member without definition visibility commits cleanly and sees no automation fields.
-        let ok = cell.call(
-            "POST",
-            &format!("/v1/actions/{MELT_ACTION}"),
-            Some(&user_token("member")),
-            &melt_body("melt-member-ok", "15", "12", "k-member-ok"),
-        );
-        assert_eq!(ok.status, 200, "{}", ok.body);
-        assert!(
-            !ok.body.to_ascii_lowercase().contains("automation"),
-            "ordinary write response must not reveal automations: {}",
-            ok.body
-        );
+        let (denied, _) = call(&cell, "GET", &format!("/v1/definitions/{id}"), APPROVER, "");
+        assert_eq!(denied, 403);
+        let path = format!("/v1/actions/{MELT_ACTION}");
+        let success_body = melt_body("melt-approver-ok", "15", "12", "k-approver-ok");
+        for host in [&cell, &baseline] {
+            let (status, response) = call(host, "POST", &path, APPROVER, &success_body);
+            assert_eq!(status, 200, "{response}");
+            assert!(
+                !response
+                    .to_string()
+                    .to_ascii_lowercase()
+                    .contains("automation")
+            );
+        }
 
-        // A failing write returns its ordinary business refusal with no automation code or detail,
-        // and leaves no extra candidates or continuation rows behind.
-        let bad = cell.call(
-            "POST",
-            &format!("/v1/actions/{MELT_ACTION}"),
-            Some(&user_token("member")),
-            &melt_body("melt-member-bad", "10", "15", "k-member-bad"),
-        );
-        assert_ne!(bad.status, 200, "{}", bad.body);
-        assert_ne!(bad.status, 429, "{}", bad.body);
+        let invalid_body = melt_body("melt-approver-bad", "10", "15", "k-approver-bad");
+        let (status, refused) = call(&cell, "POST", &path, APPROVER, &invalid_body);
+        let (baseline_status, baseline_refused) =
+            call(&baseline, "POST", &path, APPROVER, &invalid_body);
+        assert_ne!(baseline_status, 200, "{baseline_refused}");
+        assert_eq!(status, baseline_status);
+        assert!(baseline_refused["code"].is_string(), "{baseline_refused}");
+        assert_eq!(refused["code"], baseline_refused["code"]);
         assert!(
-            !bad.body.to_ascii_lowercase().contains("automation"),
-            "ordinary write refusal must not reveal automations: {}",
-            bad.body
+            !refused
+                .to_string()
+                .to_ascii_lowercase()
+                .contains("automation")
         );
-        let host = cell
-            .tenant
-            .serving_host()
-            .ok_or("tenant has no serving host")?;
-        assert_eq!(checked(pending_automation_trigger_count(host))?, 1);
-        assert_eq!(checked(pending_automation_continuation_count(host))?, 0);
+        assert_eq!(checked(pending_automation_trigger_count(&cell.host))?, 1);
+        assert_eq!(
+            checked(pending_automation_continuation_count(&cell.host))?,
+            0
+        );
         Ok(())
     }
 }

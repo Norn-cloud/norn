@@ -21,8 +21,11 @@
 //!   `after_values = Some(after)`. Replacing subtype A with sibling B in one
 //!   commit fires `event:created` with `before_values = None` for rules on B
 //!   and `event:updated` for rules on their common ancestor.
-//! - **Updated / lifecycle transition** (`event:updated`, `lifecycle_entered`):
-//!   `before_values = Some(before)`, `after_values = Some(after)`.
+//! - **Updated** (`event:updated`): `before_values = Some(before)`,
+//!   `after_values = Some(after)`.
+//! - **Lifecycle entry** (`lifecycle_entered`): the after-state matches and
+//!   the before-state did not. Creation into the state counts as entry, with
+//!   `before_values = None`.
 //! - **Action triggers** (`event:action`): driven from committed `norn.ActionCall`
 //!   records in the same transaction: deleted target -> `Some(before)` / `None`;
 //!   unchanged target -> `Some(before)` / `Some(after)` (`before == after`);
@@ -89,7 +92,7 @@ pub const MAX_RULE_SCANS_PER_COMMIT: usize = 4_096;
 
 /// The outbox, continuation, and trigger-projection DDL, applied with the
 /// other system tables (purely additive).
-pub(crate) const DDL: [&str; 9] = [
+pub(crate) const DDL: [&str; 10] = [
     r#"CREATE TABLE IF NOT EXISTS "_norn_automation_outbox" (
   "world" TEXT NOT NULL,
   "automation_id" TEXT NOT NULL,
@@ -108,6 +111,7 @@ pub(crate) const DDL: [&str; 9] = [
   PRIMARY KEY ("world", "automation_id", "revision", "trigger_commit_seq", "object_type", "object_id", "object_version")
 )"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_automation_outbox/pending" ON "_norn_automation_outbox" ("world", "trigger_commit_seq", "automation_id", "revision", "object_type", "object_id", "object_version") WHERE "consumed_commit_seq" IS NULL AND "voided_commit_seq" IS NULL"#,
+    r#"CREATE INDEX IF NOT EXISTS "_norn_automation_outbox/commit" ON "_norn_automation_outbox" ("world", "trigger_commit_seq", "automation_id", "revision", "object_type", "object_id", "object_version")"#,
     r#"CREATE INDEX IF NOT EXISTS "_norn_automation_outbox/automation" ON "_norn_automation_outbox" ("automation_id", "revision") WHERE "consumed_commit_seq" IS NULL AND "voided_commit_seq" IS NULL"#,
     r#"CREATE TABLE IF NOT EXISTS "_norn_automation_outbox_continuation" (
   "trigger_commit_seq" INTEGER NOT NULL,
@@ -254,27 +258,38 @@ fn action_calls_in_batch<E: SqlEngine>(
 ) -> BTreeMap<String, ActionCallMeta> {
     let mut calls = BTreeMap::new();
     for write in &batch.writes {
-        if let FactWriteRow::Put {
-            object_type,
-            key,
-            values,
-        } = write
-            && object_type == norn_kernel::ACTION_CALL_TYPE
-            && let Some(meta) = extract_action_call(reader, values)
-        {
-            calls.insert(key.clone(), meta);
+        let (object_type, key) = write.target();
+        if object_type != norn_kernel::ACTION_CALL_TYPE {
+            continue;
+        }
+        match write {
+            FactWriteRow::Put { values, .. } => {
+                if let Some(meta) = extract_action_call(reader, values) {
+                    calls.insert(key.to_owned(), meta);
+                } else {
+                    calls.remove(key);
+                }
+            }
+            FactWriteRow::Delete { .. } => {
+                calls.remove(key);
+            }
         }
     }
     for fact in &batch.facts {
-        if let FactChange::Create {
-            object_type,
-            key,
-            values,
-        } = fact
-            && object_type.as_str() == norn_kernel::ACTION_CALL_TYPE
-            && let Some(meta) = extract_action_call(reader, values)
-        {
-            calls.insert(key.clone(), meta);
+        let (object_type, key) = fact_change_target(fact);
+        if object_type != norn_kernel::ACTION_CALL_TYPE {
+            continue;
+        }
+        match fact {
+            FactChange::Create { values, .. } => {
+                if let Some(meta) = extract_action_call(reader, values) {
+                    calls.insert(key.to_owned(), meta);
+                }
+            }
+            FactChange::Delete { .. } => {
+                calls.remove(key);
+            }
+            FactChange::Set { .. } | FactChange::Transition { .. } => {}
         }
     }
     calls
@@ -607,6 +622,12 @@ fn record_row_triggers<E: SqlEngine>(
     budget: &mut MatchBudget,
 ) -> Result<Option<AutomationContinuationCursor>, CellError> {
     let model = reader.model();
+    let mut actions_by_target = BTreeMap::new();
+    for call in ctx.action_calls.values() {
+        actions_by_target
+            .entry((call.target_root.as_str(), call.target_key.as_str()))
+            .or_insert(call.action_id.as_str());
+    }
     let mut row_cache = Page1Cache::default();
     for (target_key, row) in ctx.final_rows {
         let (root, key) = target_key;
@@ -624,11 +645,9 @@ fn record_row_triggers<E: SqlEngine>(
         }
         let before_record = ctx.watch.before.get(target_key).and_then(Option::as_ref);
         let after_record = reader.object(&ctx.batch.world, root, key)?;
-        let primary_action = ctx
-            .action_calls
-            .values()
-            .find(|call| call.target_root == *root && call.target_key == *key)
-            .map(|call| call.action_id.as_str());
+        let primary_action = actions_by_target
+            .get(&(root.as_str(), key.as_str()))
+            .copied();
         let mut target = RowTargetCtx {
             root,
             key,
@@ -1245,6 +1264,142 @@ mod tests {
                 .and_then(|values| values.get("status")),
             Some(&Value::String("open".into()))
         );
+        Ok(())
+    }
+
+    #[test]
+    fn creating_a_row_in_the_watched_lifecycle_state_counts_as_entry() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let (mut store, model, canonical) =
+            open_with_ticket_automations(&dir.path().join("initial-lifecycle.sqlite"))?;
+        install_automation_for(
+            &mut store,
+            &model,
+            &canonical,
+            3,
+            "ops.on_open",
+            "demo.Ticket",
+            &json!({ "kind": "lifecycle_entered", "property": "status", "state": "open" }),
+        )?;
+        let outcome = store.commit(&ticket_batch("created-open", 100, "open"))?;
+        let triggers = store
+            .read()
+            .automation_triggers_for_commit(MAIN_WORLD, outcome.receipt().body.commit_seq)?;
+        let entered = triggers
+            .iter()
+            .find(|trigger| trigger.key.automation_id == "ops.on_open")
+            .ok_or("missing lifecycle entry")?;
+        assert_eq!(entered.trigger_kind, KIND_LIFECYCLE_ENTERED);
+        assert_eq!(entered.before_values, None);
+        assert!(entered.after_values.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn action_call_deleted_in_the_commit_produces_no_trigger() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let (mut store, model, canonical) =
+            open_with_ticket_automations(&dir.path().join("deleted-call.sqlite"))?;
+        install_automation_for(
+            &mut store,
+            &model,
+            &canonical,
+            3,
+            "ops.on_ping",
+            "demo.Ticket",
+            &json!({ "kind": "event", "event": "action", "actionId": "demo.ticket.ping" }),
+        )?;
+
+        let call_key = "demo.ticket.ping/transient";
+        let batch = CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: SCOPE.to_owned(),
+            logical_time: 100,
+            writes: vec![action_call_write(
+                "demo.ticket.ping",
+                "demo.Ticket",
+                "t-1",
+                "transient",
+            )],
+            facts: vec![FactChange::Delete {
+                object_type: ObjectTypeName(norn_kernel::ACTION_CALL_TYPE.to_owned()),
+                key: call_key.to_owned(),
+            }],
+            ..CommitBatch::default()
+        };
+        let outcome = store.commit(&batch)?;
+        let read = store.read();
+        assert!(
+            read.object(MAIN_WORLD, norn_kernel::ACTION_CALL_TYPE, call_key)?
+                .is_none()
+        );
+        assert_eq!(
+            read.automation_triggers_for_commit(MAIN_WORLD, outcome.receipt().body.commit_seq)?,
+            []
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_automation_revision_rolls_back_retained_state_and_trigger_index() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let (mut store, model, canonical) =
+            open_with_ticket_automations(&dir.path().join("invalid-automation.sqlite"))?;
+        let id = "ops.on_create";
+        let previous = store
+            .read()
+            .retained_definition(id, None)?
+            .ok_or("missing initial automation")?;
+        let head = store.verified_head()?;
+
+        for (payload, unknown_type) in [
+            ("{", false),
+            (
+                r#"{"enabled":true,"objectType":"demo.Ticket","when":{"kind":"event"}}"#,
+                false,
+            ),
+            (
+                r#"{"enabled":true,"objectType":"demo.Unknown","when":{"kind":"event","event":"created"}}"#,
+                true,
+            ),
+        ] {
+            let mut definition = previous.definition.clone();
+            definition.revision = 2;
+            definition.payload = payload.to_owned();
+            definition.payload_sha256 = payload_sha256(payload);
+            let result = store.install_retained_definition(
+                model.clone(),
+                &install_input(&canonical, 30),
+                Some(3),
+                SCOPE,
+                &RetainedDefinitionChange {
+                    definition,
+                    expected_revision: Some(1),
+                },
+            );
+            if unknown_type {
+                assert!(
+                    matches!(result, Err(CellError::UnknownObjectType(name)) if name == "demo.Unknown")
+                );
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(CellError::Json(_) | CellError::DefinitionReceiptInvalid(_))
+                ));
+            }
+            assert_eq!(store.verified_head()?, head);
+            assert_eq!(
+                store.read().retained_definition(id, None)?.as_ref(),
+                Some(&previous)
+            );
+            assert!(store.read().retained_definition(id, Some(2))?.is_none());
+            let page = query_row_rules_page(store.read().conn, "demo.Ticket", None, 10)?;
+            assert!(
+                page.rules
+                    .iter()
+                    .any(|rule| rule.automation_id == id && rule.revision == 1)
+            );
+        }
         Ok(())
     }
 

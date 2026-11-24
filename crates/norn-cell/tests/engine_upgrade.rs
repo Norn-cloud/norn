@@ -65,6 +65,12 @@ fn add_automation_schema_objects(image: &mut Value) {
         ),
         (
             "index",
+            "_norn_automation_outbox/commit",
+            "_norn_automation_outbox",
+            "CREATE INDEX \"_norn_automation_outbox/commit\" ON \"_norn_automation_outbox\" (\"world\", \"trigger_commit_seq\", \"automation_id\", \"revision\", \"object_type\", \"object_id\", \"object_version\")",
+        ),
+        (
+            "index",
             "_norn_automation_outbox/automation",
             "_norn_automation_outbox",
             "CREATE INDEX \"_norn_automation_outbox/automation\" ON \"_norn_automation_outbox\" (\"automation_id\", \"revision\") WHERE \"consumed_commit_seq\" IS NULL AND \"voided_commit_seq\" IS NULL",
@@ -1044,42 +1050,79 @@ fn a_storage_v5_cell_opens_on_this_engine_with_identical_receipts() {
     );
 
     // A reopen verifies from the checkpoint and writes nothing.
-    let store = open(&path).expect("reopen");
+    let mut store = open(&path).expect("reopen");
     assert_eq!(store.read().verify_ledger().expect("ledger"), head);
-    drop(store);
     let mut reopened = engine_fixture::image_of(&path);
     by_name(&mut reopened);
     assert_eq!(reopened, catalog, "a current open writes nothing");
+    assert_post_upgrade_commit(&mut store, "after-v5-upgrade");
 }
-/// A storage-v6 cell upgrades by adding the automation schema and preserving
-/// the checkpoint layout, committed ledger and receipts.
-#[test]
-fn a_storage_v6_cell_opens_on_this_engine_with_identical_receipts() {
-    let image: Value = serde_json::from_str(STORAGE_V6).expect("fixture");
-    assert_eq!(image["storage"], 6);
+
+/// V6's keyed checkpoint remains valid after the v7 migration. Every
+/// retained commit, including parking and approving a call, replays to its
+/// original receipt via the export journal.
+#[tokio::test]
+async fn a_storage_v6_cell_opens_on_this_engine_with_identical_receipts() {
     let dir = tempfile::tempdir().expect("directory");
     let path = dir.path().join("cell.sqlite");
-    engine_fixture::load(&image, &path);
-    assert_eq!(engine_fixture::image_of(&path), image);
+    let mut exporter = Exporter::local(&dir.path().join("export")).expect("exporter");
+    let receipts = {
+        let mut store = upgrade_v6_with_checkpoint(&path);
+        let receipts = store.read().receipts().expect("receipts");
+        export_all(&store, &mut exporter).await;
+        assert_post_upgrade_commit(&mut store, "after-v6-upgrade");
+        receipts
+    };
+    let manifest = exporter.verify().await.expect("verified export");
+    assert_eq!(manifest.head_commit_seq, engine_fixture::COMMITS);
+    let restored_path = dir.path().join("restored.sqlite");
+    CellStore::restore_from(
+        &mut exporter,
+        &restored_path,
+        engine_fixture::model(),
+        engine_fixture::SCOPE,
+        &manifest.bindings,
+        StoreOptions::default(),
+    )
+    .await
+    .expect("replay all v6 export records");
+    let restored = CellStore::open(
+        &restored_path,
+        engine_fixture::model(),
+        StoreOptions::default(),
+    )
+    .expect("open restored cell");
     assert_eq!(
-        engine_release::admission(&raw(&path)).expect("admission"),
+        restored.read().receipts().expect("restored receipts"),
+        receipts
+    );
+}
+
+fn upgrade_v6_with_checkpoint(path: &Path) -> CellStore<NativeEngine> {
+    let image: Value = serde_json::from_str(STORAGE_V6).expect("fixture");
+    assert_eq!(image["storage"], 6);
+    engine_fixture::load(&image, path);
+    assert_eq!(engine_fixture::image_of(path), image);
+    assert_eq!(
+        engine_release::admission(&raw(path)).expect("admission"),
         Admission::Upgrade { from: 6 }
     );
 
-    // Use the recorder's unkeyed options so the open leaves its checkpoint
-    // rows alone and the catalog comparison isolates the v7 migration.
-    let open_v6 = || CellStore::open(&path, engine_fixture::model(), StoreOptions::default());
-    let mut store = open_v6().expect("upgrade v6");
-    let head = store.read().verify_ledger().expect("ledger");
-    let receipts = store.read().receipts().expect("receipts");
+    let open_keyed = || {
+        CellStore::open(
+            path,
+            engine_fixture::model(),
+            engine_fixture::checkpoint_fixture_options(),
+        )
+        .expect("open v6 fixture with its checkpoint key")
+    };
+    let store = open_keyed();
+    assert_fixture_checkpoint_in_use(&store);
+    assert_eq!(store.scrub_to_end(), norn_cell::ScrubStatus::Idle);
+    let head = store.verified_head().expect("verified head");
     assert_eq!(head.commits, engine_fixture::COMMITS);
+    let receipts = store.read().receipts().expect("receipts");
     assert_eq!(u64::try_from(receipts.len()).expect("count"), head.commits);
-    for (batch, receipt) in engine_fixture::batches().iter().zip(&receipts) {
-        match store.commit(batch).expect("replay") {
-            CommitOutcome::Replayed(replayed) => assert_eq!(&replayed, receipt),
-            CommitOutcome::Committed(_) => panic!("a recorded commit was committed again"),
-        }
-    }
     drop(store);
 
     let mut expected = image;
@@ -1094,34 +1137,50 @@ fn a_storage_v6_cell_opens_on_this_engine_with_identical_receipts() {
     expected["storage"] = STORAGE_VERSION.into();
     add_automation_tables(&mut expected);
     by_name(&mut expected);
-    let mut actual = engine_fixture::image_of(&path);
+    let mut actual = engine_fixture::image_of(path);
     by_name(&mut actual);
     assert_eq!(
         actual, expected,
         "v7 only adds tables and restamps the cell"
     );
     assert_eq!(
-        engine_release::admission(&raw(&path)).expect("admission"),
+        engine_release::admission(&raw(path)).expect("admission"),
         Admission::Current
     );
 
-    let mut store = open_v6().expect("reopen upgraded cell");
+    let store = open_keyed();
+    assert_fixture_checkpoint_in_use(&store);
+    let mut reopened = engine_fixture::image_of(path);
+    by_name(&mut reopened);
+    assert_eq!(reopened, actual, "a current open writes nothing");
+    assert_eq!(store.scrub_to_end(), norn_cell::ScrubStatus::Idle);
     assert_eq!(store.read().verify_ledger().expect("reopened ledger"), head);
     assert_eq!(
         store.read().receipts().expect("reopened receipts"),
         receipts
     );
-    let mut reopened = engine_fixture::image_of(&path);
-    by_name(&mut reopened);
-    assert_eq!(reopened, actual, "a current open writes nothing");
+    store
+}
 
+fn assert_fixture_checkpoint_in_use(store: &CellStore<NativeEngine>) {
+    assert!(matches!(
+        store.scrub_status(),
+        norn_cell::ScrubStatus::Verifying {
+            target: engine_fixture::COMMITS,
+            history_ready: false,
+            ..
+        }
+    ));
+}
+
+fn assert_post_upgrade_commit(store: &mut CellStore<NativeEngine>, key: &str) {
     assert_eq!(store.scrub_to_end(), norn_cell::ScrubStatus::Idle);
     let mut next = engine_fixture::batches()[1].clone();
-    next.idempotency_key = Some("after-v6-upgrade".to_owned());
+    next.idempotency_key = Some(key.to_owned());
     next.logical_time = 6_000;
     let CommitOutcome::Committed(receipt) = store.commit(&next).expect("post-upgrade commit")
     else {
-        panic!("expected a new commit after v6 upgrade");
+        panic!("expected a new commit after storage upgrade");
     };
     assert_eq!(receipt.body.commit_seq, engine_fixture::COMMITS + 1);
     assert_eq!(

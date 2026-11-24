@@ -274,6 +274,14 @@ pub fn check_automation(
     (issues, target)
 }
 
+/// Return the trimmed title admitted by the automation metadata checker.
+#[must_use]
+pub fn validated_title(title: &str) -> Option<&str> {
+    let title = title.trim();
+    ((1..=MAX_TITLE_CHARS).contains(&title.chars().count()) && !title.chars().any(char::is_control))
+        .then_some(title)
+}
+
 fn check_top_metadata(object: &serde_json::Map<String, Value>, issues: &mut Vec<AutomationIssue>) {
     for key in object
         .keys()
@@ -288,11 +296,8 @@ fn check_top_metadata(object: &serde_json::Map<String, Value>, issues: &mut Vec<
     let title_ok = object
         .get("title")
         .and_then(Value::as_str)
-        .map(str::trim)
-        .is_some_and(|title| {
-            let chars = title.chars().count();
-            (1..=MAX_TITLE_CHARS).contains(&chars) && !title.chars().any(char::is_control)
-        });
+        .and_then(validated_title)
+        .is_some();
     if !title_ok {
         issues.push(issue(
             AutomationIssueKind::Invalid,

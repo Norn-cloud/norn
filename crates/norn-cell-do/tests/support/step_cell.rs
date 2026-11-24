@@ -86,6 +86,7 @@ pub(crate) fn key() -> ScopeKey {
 /// open, definitions are written by the operator, runs are started by any
 /// verified principal, and a decision by a holder of its declared roles.
 struct StepPolicy {
+    deny_approver_definition_reads: bool,
     pdp: Pdp,
     caller: Arc<CallerSlot>,
 }
@@ -139,6 +140,7 @@ impl StepPolicy {
             })
             .collect();
         Self {
+            deny_approver_definition_reads: false,
             pdp: Pdp::new(authz::compile(&schema, &access).unwrap(), &grants).unwrap(),
             caller,
         }
@@ -206,10 +208,10 @@ impl StepPolicy {
 impl Authorizer for StepPolicy {
     fn authorize(&self, request: &AccessRequest<'_>) -> Result<(), Refusal> {
         let granted = match (&request.operation, request.actor) {
-            (
-                Operation::ReadDefinitions | Operation::StartRun(_) | Operation::CallAction(_),
-                Some(_),
-            ) => true,
+            (Operation::ReadDefinitions, Some(actor)) => {
+                !self.deny_approver_definition_reads || actor != "approver@steps"
+            }
+            (Operation::StartRun(_) | Operation::CallAction(_), Some(_)) => true,
             (Operation::WriteDefinitions, Some(actor)) => actor == "operator@steps",
             (Operation::Decide { roles, .. }, Some(actor)) => self.holds(actor, roles),
             _ => false,
@@ -360,10 +362,13 @@ pub(crate) struct Cell<E: SqlEngine = NativeEngine> {
 }
 
 pub(crate) fn cell() -> Cell {
-    let cell = serve(melt_store(
-        DERIVES_LOSS,
-        norn_api::action_admission::prepare_action_model,
-    ));
+    let cell = serve(
+        melt_store(
+            DERIVES_LOSS,
+            norn_api::action_admission::prepare_action_model,
+        ),
+        false,
+    );
     install(&cell);
     cell
 }
@@ -371,20 +376,34 @@ pub(crate) fn cell() -> Cell {
 /// The melt cell on `engine`, the flow installed when `fresh`: a file
 /// reopened this way is the same cell after a restart.
 pub(crate) fn cell_on<E: SqlEngine>(engine: E, fresh: bool) -> Cell<E> {
-    let cell = serve(melt_store_on(
-        engine,
-        DERIVES_LOSS,
-        norn_api::action_admission::prepare_action_model,
-    ));
+    let cell = serve(
+        melt_store_on(
+            engine,
+            DERIVES_LOSS,
+            norn_api::action_admission::prepare_action_model,
+        ),
+        false,
+    );
     if fresh {
         install(&cell);
     }
     cell
 }
 
-fn serve<E: SqlEngine>(store: CellStore<E>) -> Cell<E> {
+pub(crate) fn cell_with_definition_blind_approver() -> Cell {
+    serve(
+        melt_store(
+            DERIVES_LOSS,
+            norn_api::action_admission::prepare_action_model,
+        ),
+        true,
+    )
+}
+
+fn serve<E: SqlEngine>(store: CellStore<E>, deny_approver_definition_reads: bool) -> Cell<E> {
     let caller = Arc::new(CallerSlot::default());
-    let policy = StepPolicy::compile(&store, Arc::clone(&caller));
+    let mut policy = StepPolicy::compile(&store, Arc::clone(&caller));
+    policy.deny_approver_definition_reads = deny_approver_definition_reads;
     let scope = CellScope {
         org_id: "org_demo".into(),
         environment_id: "dev".into(),

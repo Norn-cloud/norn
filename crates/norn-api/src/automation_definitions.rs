@@ -32,7 +32,9 @@ use http::StatusCode;
 use norn_cell::automation_outbox::AutomationTriggerCandidate;
 use norn_cell::engine::SqlEngine;
 use norn_cell::retained::{RetainedAuthority, RetainedDefinition};
-use norn_checker::automation::{AutomationCheckContext, AutomationIssueKind, check_automation};
+use norn_checker::automation::{
+    AutomationCheckContext, AutomationIssueKind, check_automation, validated_title,
+};
 use norn_ir::RuntimeValue;
 use serde_json::Value;
 
@@ -257,10 +259,7 @@ pub fn check(
     {
         match RuntimeValue::from_json_text(canonical) {
             Ok(exact) => {
-                let static_input = exact
-                    .get("then")
-                    .and_then(|then| then.get("input"))
-                    .and_then(RuntimeValue::as_object);
+                let static_input = exact_static_input(&exact).and_then(RuntimeValue::as_object);
                 if let Err(violations) =
                     norn_kernel::validate_automation_static_input(action, static_input)
                 {
@@ -290,6 +289,10 @@ pub fn check(
     (findings, checked)
 }
 
+fn exact_static_input(payload: &RuntimeValue) -> Option<&RuntimeValue> {
+    payload.get("then")?.get("input")
+}
+
 /// Deterministic plain-words restatement signed by the installing author (D59).
 ///
 /// # Errors
@@ -297,7 +300,9 @@ pub fn check(
 pub fn restate(canonical: &str) -> Result<String, String> {
     let value: Value = serde_json::from_str(canonical).map_err(|error| error.to_string())?;
     let text = |pointer: &str| value.pointer(pointer).and_then(Value::as_str);
-    let title = text("/title").ok_or("the automation has no title")?;
+    let title = text("/title")
+        .and_then(validated_title)
+        .ok_or("the automation has no valid title")?;
     let object_type = text("/objectType").ok_or("the automation names no objectType")?;
     let enabled = value
         .get("enabled")
@@ -365,8 +370,12 @@ pub fn restate(canonical: &str) -> Result<String, String> {
         }
         other => return Err(format!("unknown then.mode {other:?}")),
     }
-    if let Some(input) = value.pointer("/then/input") {
-        lines.push(format!("Static action input: {input}."));
+    if value.pointer("/then/input").is_some() {
+        let exact = RuntimeValue::from_json_text(canonical).map_err(|error| error.to_string())?;
+        let input = exact_static_input(&exact).ok_or("the automation has no exact static input")?;
+        let bytes = input.canonical_json().map_err(|error| error.to_string())?;
+        let json = String::from_utf8(bytes).map_err(|error| error.to_string())?;
+        lines.push(format!("Static action input: {json}."));
     }
     lines.push(format!(
         "Authority: bound at install to the author's attenuated, revocable grant for {action_id}, never borrowed from a triggering actor."
@@ -738,6 +747,23 @@ mod tests {
         let words = restate(&valid.to_string()).expect("restate");
         assert!(words.contains("attenuated, revocable grant for demo.order.adjust"));
         assert!(words.contains("never borrowed from a triggering actor"));
+    }
+
+    #[test]
+    fn restatement_uses_trimmed_title_and_exact_static_input() {
+        let words = restate(
+            r#"{"title":"  Adjust order \n ","enabled":true,"objectType":"demo.Order","when":{"kind":"event","event":"created"},"then":{"actionId":"demo.order.adjust","mode":"auto","input":{"amount":1234567890.123456789}}}"#,
+        )
+        .expect("restate");
+        assert_eq!(
+            words.lines().next(),
+            Some("Enabled automation \"Adjust order\": when a demo.Order record is created.")
+        );
+        assert!(
+            words
+                .lines()
+                .any(|line| line == "Static action input: {\"amount\":1234567890.123456789}.")
+        );
     }
 
     #[test]

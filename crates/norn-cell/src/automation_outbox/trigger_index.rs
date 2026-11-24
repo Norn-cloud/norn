@@ -95,14 +95,33 @@ impl Page1Cache {
     }
 }
 
-fn parse_watched_rule(automation_id: &str, revision: u64, payload: &str) -> Option<WatchedRule> {
-    let value: serde_json::Value = serde_json::from_str(payload).ok()?;
-    if value.get("enabled").and_then(serde_json::Value::as_bool) != Some(true) {
-        return None;
-    }
-    let object_type = value.get("objectType")?.as_str()?.to_owned();
-    let when = value.get("when")?.as_object()?;
-    let field = |k: &str| when.get(k).and_then(serde_json::Value::as_str);
+fn parse_watched_rule(
+    automation_id: &str,
+    revision: u64,
+    payload: &str,
+) -> Result<Option<WatchedRule>, CellError> {
+    let invalid = |field: &str| {
+        CellError::DefinitionReceiptInvalid(format!(
+            "automation {automation_id} has an invalid {field}"
+        ))
+    };
+    let value: serde_json::Value = serde_json::from_str(payload)?;
+    let enabled = value
+        .get("enabled")
+        .and_then(serde_json::Value::as_bool)
+        .ok_or_else(|| invalid("enabled flag"))?;
+    let object_type = value
+        .get("objectType")
+        .and_then(serde_json::Value::as_str)
+        .filter(|name| !name.trim().is_empty())
+        .ok_or_else(|| invalid("object type"))?;
+    let when = value.get("when").ok_or_else(|| invalid("trigger"))?;
+    let field = |key: &str| {
+        when.get(key)
+            .and_then(serde_json::Value::as_str)
+            .filter(|text| !text.trim().is_empty())
+            .ok_or_else(|| invalid(key))
+    };
     let matcher = match field("kind")? {
         "event" => match field("event")? {
             "created" => TriggerMatcher::Created,
@@ -110,21 +129,28 @@ fn parse_watched_rule(automation_id: &str, revision: u64, payload: &str) -> Opti
             "action" => TriggerMatcher::Action {
                 action_id: field("actionId")?.to_owned(),
             },
-            _ => return None,
+            _ => return Err(invalid("event trigger")),
         },
         "lifecycle_entered" => TriggerMatcher::LifecycleEntered {
             property: field("property")?.to_owned(),
             state: field("state")?.to_owned(),
         },
-        // `stale` triggers are timer-driven (U4), never enqueued on write commits.
-        _ => return None,
+        // Stale rules are timer-driven (U4), never enqueued on write commits.
+        "stale" => {
+            field("property")?;
+            when.get("durationMs")
+                .and_then(serde_json::Value::as_u64)
+                .ok_or_else(|| invalid("durationMs"))?;
+            return Ok(None);
+        }
+        _ => return Err(invalid("trigger kind")),
     };
-    Some(WatchedRule {
+    Ok(enabled.then(|| WatchedRule {
         automation_id: automation_id.to_owned(),
         revision,
-        object_type,
+        object_type: object_type.to_owned(),
         matcher,
-    })
+    }))
 }
 
 /// Maintain `_norn_retained_automation_trigger` transactionally on install,
@@ -144,17 +170,17 @@ pub(crate) fn sync_trigger_index<E: SqlEngine>(
             .authority
             .as_ref()
             .is_some_and(|a| a.revocable && !a.parent_grant_ids.is_empty());
-    let Some(rule) = authorized
-        .then(|| parse_watched_rule(&definition.id, definition.revision, &definition.payload))
-        .flatten()
+    if !authorized {
+        return Ok(());
+    }
+    let Some(rule) = parse_watched_rule(&definition.id, definition.revision, &definition.payload)?
     else {
         return Ok(());
     };
     let root_type = model
-        .chain(&rule.object_type)
-        .ok()
-        .and_then(|chain| chain.first().map(String::as_str))
-        .unwrap_or(&rule.object_type);
+        .chain(&rule.object_type)?
+        .first()
+        .ok_or_else(|| CellError::Engine(format!("missing root type for {}", rule.object_type)))?;
     let (action_id, lifecycle_property, lifecycle_state) = match &rule.matcher {
         TriggerMatcher::Created | TriggerMatcher::Updated => (None, None, None),
         TriggerMatcher::Action { action_id } => (Some(action_id.as_str()), None, None),
