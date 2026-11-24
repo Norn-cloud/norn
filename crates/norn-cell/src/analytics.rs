@@ -15,10 +15,13 @@ use transparency_sha2::{Digest as _, Sha256};
 
 mod assemble;
 pub mod backend;
+#[cfg(all(feature = "datafusion", not(target_arch = "wasm32")))]
+pub mod datafusion;
 #[cfg(all(feature = "duckdb", feature = "native"))]
 pub mod engine;
 mod lower;
 mod mirror;
+mod predicate;
 mod store_body;
 
 pub use assemble::{Prepared, bucket_value};
@@ -567,6 +570,10 @@ pub struct MembersRequest {
     pub after: Option<String>,
     /// Page size.
     pub limit: u32,
+    /// The model generation the answer was prepared at: a mirror read
+    /// refuses as stale under any other (D136 follow-up reads).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_pin: Option<String>,
 }
 
 /// One page of members. It names no snapshot or freshness: paging needs only
@@ -702,134 +709,6 @@ pub enum PredicateKind {
 /// evaluator's decimal cannot hold the value exactly.
 pub const MAX_PREDICATE_SCALE: u32 = 28;
 
-impl RowPredicate {
-    /// MANIFEST-LAWS-1: the kind of this node over `table`, when every node is
-    /// typed the way both the per-row evaluator and the engine compute it
-    /// exactly: numbers compare and compute only with numbers, text and
-    /// Booleans only compare for equality, `null` only appears as an
-    /// operand of `==` or `!=`, and no scale passes
-    /// [`MAX_PREDICATE_SCALE`]. `None` for anything else; such a check is
-    /// left to the per-row evaluator.
-    #[must_use]
-    pub fn kind(&self, table: &TableSchema) -> Option<PredicateKind> {
-        self.kind_in(table, false)
-    }
-
-    fn kind_in(&self, table: &TableSchema, null_allowed: bool) -> Option<PredicateKind> {
-        use PredicateKind as K;
-        let number = |a: &Self, b: &Self| match (a.kind_in(table, false)?, b.kind_in(table, false)?)
-        {
-            (K::Number(x), K::Number(y)) => Some((x, y)),
-            _ => None,
-        };
-        let kind = match self {
-            Self::Null => null_allowed.then_some(K::Null)?,
-            Self::Bool(_) => K::Bool,
-            Self::Number(text) => {
-                let exact = norn_ir::Decimal::parse(text).ok()?;
-                if exact.canonical() != *text {
-                    return None;
-                }
-                K::Number(u32::try_from(text.split_once('.').map_or(0, |(_, f)| f.len())).ok()?)
-            }
-            Self::Text(_) => K::Text,
-            Self::Column(id) => match table.columns.iter().find(|c| c.id == *id)?.kind {
-                ColumnKind::Integer => K::Number(0),
-                ColumnKind::Decimal { scale } => K::Number(scale),
-                ColumnKind::Text => K::Text,
-                ColumnKind::Boolean => K::Bool,
-                ColumnKind::Timestamp | ColumnKind::Date | ColumnKind::Opaque => return None,
-            },
-            Self::Not(inner) => (inner.kind_in(table, false)? == K::Bool).then_some(K::Bool)?,
-            Self::Negate(inner) => match inner.kind_in(table, false)? {
-                K::Number(scale) => K::Number(scale),
-                K::Null | K::Bool | K::Text => return None,
-            },
-            Self::Add(a, b) | Self::Subtract(a, b) => {
-                let (x, y) = number(a, b)?;
-                K::Number(x.max(y))
-            }
-            Self::Multiply(a, b) => {
-                let (x, y) = number(a, b)?;
-                K::Number(x.checked_add(y)?)
-            }
-            Self::Equal(a, b) | Self::NotEqual(a, b) => {
-                let (x, y) = (a.kind_in(table, true)?, b.kind_in(table, true)?);
-                let same = match (x, y) {
-                    (K::Number(_), K::Number(_)) | (K::Null, _) | (_, K::Null) => true,
-                    (x, y) => x == y,
-                };
-                same.then_some(K::Bool)?
-            }
-            Self::Less(a, b)
-            | Self::LessOrEqual(a, b)
-            | Self::Greater(a, b)
-            | Self::GreaterOrEqual(a, b) => {
-                number(a, b)?;
-                K::Bool
-            }
-            Self::And(a, b) | Self::Or(a, b) => (a.kind_in(table, false)? == K::Bool
-                && b.kind_in(table, false)? == K::Bool)
-                .then_some(K::Bool)?,
-            Self::Conditional(test, then, otherwise) => {
-                if test.kind_in(table, false)? != K::Bool {
-                    return None;
-                }
-                match (
-                    then.kind_in(table, false)?,
-                    otherwise.kind_in(table, false)?,
-                ) {
-                    (K::Number(left), K::Number(right)) => K::Number(left.max(right)),
-                    (left, right) if left == right => left,
-                    _ => return None,
-                }
-            }
-        };
-        match kind {
-            K::Number(scale) if scale > MAX_PREDICATE_SCALE => None,
-            kind @ (K::Null | K::Bool | K::Text | K::Number(_)) => Some(kind),
-        }
-    }
-
-    /// Every column the predicate reads, in order of first read.
-    #[must_use]
-    pub fn reads(&self) -> Vec<String> {
-        let mut out = Vec::new();
-        self.collect_reads(&mut out);
-        out
-    }
-
-    fn collect_reads(&self, out: &mut Vec<String>) {
-        match self {
-            Self::Null | Self::Bool(_) | Self::Number(_) | Self::Text(_) => {}
-            Self::Column(id) => {
-                if !out.contains(id) {
-                    out.push(id.clone());
-                }
-            }
-            Self::Not(inner) | Self::Negate(inner) => inner.collect_reads(out),
-            Self::Add(a, b)
-            | Self::Subtract(a, b)
-            | Self::Multiply(a, b)
-            | Self::Equal(a, b)
-            | Self::NotEqual(a, b)
-            | Self::Less(a, b)
-            | Self::LessOrEqual(a, b)
-            | Self::Greater(a, b)
-            | Self::GreaterOrEqual(a, b)
-            | Self::And(a, b)
-            | Self::Or(a, b) => {
-                a.collect_reads(out);
-                b.collect_reads(out);
-            }
-            Self::Conditional(c, a, b) => {
-                c.collect_reads(out);
-                a.collect_reads(out);
-                b.collect_reads(out);
-            }
-        }
-    }
-}
 
 /// MANIFEST-LAWS-1: one law or invariant, as the engine checks it over a
 /// landing. Where the condition holds, the predicate must equal `expect`;
@@ -1325,6 +1204,10 @@ pub struct PageRequest {
     pub offset: u64,
     /// Rows returned at most.
     pub limit: u32,
+    /// The model generation the answer was prepared at: a mirror read
+    /// refuses as stale under any other (D136 follow-up reads).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_pin: Option<String>,
 }
 
 /// One row of a records page.
@@ -1361,6 +1244,10 @@ pub struct ExportRequest {
     pub columns: Vec<String>,
     /// The format.
     pub format: ExportFormat,
+    /// The model generation the answer was prepared at: a mirror read
+    /// refuses as stale under any other (D136 follow-up reads).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_pin: Option<String>,
 }
 
 /// A typed refusal from the engine: one of the Core 03 compute codes.

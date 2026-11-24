@@ -70,6 +70,12 @@ impl EngineCapabilities {
         exact_bitemporal: true,
     };
 
+    /// `DataFusion`'s (D137): exact at a valid time and at a knowledge
+    /// cutoff, as both bitemporal suites verify on it.
+    pub const DATAFUSION: Self = Self {
+        exact_bitemporal: true,
+    };
+
     /// Whether this engine answers `query` over `source` exactly.
     #[must_use]
     pub const fn answers(self, query: &Lowered, source: &Source) -> bool {
