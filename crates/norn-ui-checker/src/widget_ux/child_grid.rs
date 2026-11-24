@@ -14,24 +14,40 @@ use norn_checker::entity_instance::EffectiveKind;
 use super::types::property_type;
 use super::{ActionSurface, UxChecker, has_initial_lifecycle_default};
 
+pub(super) struct ChildGridSpec<'a> {
+    pub(super) form_id: &'a str,
+    pub(super) label: &'a LocaleText,
+    pub(super) collection_id: &'a str,
+    pub(super) ordering_key: &'a str,
+    pub(super) data_binding_id: Option<&'a str>,
+    pub(super) row_ops_input_name: &'a str,
+    pub(super) max_rows: u64,
+    pub(super) field_ids: &'a [String],
+}
+
+struct ChildGridFieldContext<'a> {
+    form_id: &'a str,
+    collection_id: &'a str,
+    collection: &'a norn_ir::OwnedChildCollection,
+    child: &'a norn_checker::entity_instance::EffectiveObjectType,
+    derived_properties:
+        Option<&'a std::collections::BTreeMap<norn_ir::PropertyId, norn_ir::ZenExpression>>,
+}
+
 impl UxChecker<'_, '_, '_> {
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "one closed grid contract binds its form, owned link, bounded read, and row presentations"
-    )]
     pub(super) fn check_child_grid(
         &mut self,
-        form_id: &str,
-        label: &LocaleText,
-        collection_id: &str,
-        ordering_key: &str,
-        data_binding_id: Option<&str>,
-        row_ops_input_name: &str,
-        max_rows: u64,
-        field_ids: &[String],
+        spec: &ChildGridSpec<'_>,
         surface: &ActionSurface,
         path: &str,
     ) {
+        let &ChildGridSpec {
+            form_id,
+            label,
+            collection_id,
+            field_ids,
+            ..
+        } = spec;
         if label.0.is_empty() || label.0.values().any(|value| value.trim().is_empty()) {
             self.error(
                 &format!("{path}/component/label"),
@@ -84,11 +100,7 @@ impl UxChecker<'_, '_, '_> {
         let Some(collection) = self.resolve_child_grid_collection(
             form,
             &action,
-            form_id,
-            collection_id,
-            ordering_key,
-            row_ops_input_name,
-            max_rows,
+            spec,
             row_ops_field,
             collections,
             path,
@@ -97,11 +109,9 @@ impl UxChecker<'_, '_, '_> {
         };
         if !self.check_child_grid_binding_mode(
             form,
-            collection_id,
+            spec,
             &collection,
-            data_binding_id,
-            entity_artifact_id,
-            entity_artifact_version,
+            (entity_artifact_id, entity_artifact_version),
             path,
         ) {
             return;
@@ -118,34 +128,33 @@ impl UxChecker<'_, '_, '_> {
             .iter()
             .find(|declared| declared.id.as_str() == collection_id)
             .map(|declared| &declared.derive);
-        self.check_child_grid_fields(
+        let field_ctx = ChildGridFieldContext {
             form_id,
             collection_id,
-            &collection,
-            &child,
+            collection: &collection,
+            child: &child,
             derived_properties,
-            field_ids,
-            path,
-        );
+        };
+        self.check_child_grid_fields(&field_ctx, field_ids, path);
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "resolves the child grid's owned collection and checks its row-ops input and bounds"
-    )]
     fn resolve_child_grid_collection(
         &mut self,
         form: &norn_ir::WidgetForm,
         action: &super::ParsedAction,
-        form_id: &str,
-        collection_id: &str,
-        ordering_key: &str,
-        row_ops_input_name: &str,
-        max_rows: u64,
+        spec: &ChildGridSpec<'_>,
         row_ops_field: &str,
         collections: &[norn_ir::OwnedCollectionAction],
         path: &str,
     ) -> Option<norn_ir::OwnedChildCollection> {
+        let &ChildGridSpec {
+            form_id,
+            collection_id,
+            ordering_key,
+            row_ops_input_name,
+            max_rows,
+            ..
+        } = spec;
         if row_ops_input_name != row_ops_field
             || !form
                 .input_names
@@ -208,20 +217,17 @@ impl UxChecker<'_, '_, '_> {
         Some(collection)
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "binding mode validation checks the form mode against the owned collection and parent entity version"
-    )]
     fn check_child_grid_binding_mode(
         &mut self,
         form: &norn_ir::WidgetForm,
-        collection_id: &str,
+        spec: &ChildGridSpec<'_>,
         collection: &norn_ir::OwnedChildCollection,
-        data_binding_id: Option<&str>,
-        entity_artifact_id: &str,
-        entity_artifact_version: &str,
+        parent_entity: (&str, &str),
         path: &str,
     ) -> bool {
+        let collection_id = spec.collection_id;
+        let data_binding_id = spec.data_binding_id;
+        let (entity_artifact_id, entity_artifact_version) = parent_entity;
         match (form.mode, data_binding_id) {
             (WidgetFormMode::Edit, Some(binding_id)) => {
                 let parent_binding_id = form.data_binding_id.as_deref();
@@ -348,19 +354,9 @@ impl UxChecker<'_, '_, '_> {
         }
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "field validation checks each grid column against its form, owned collection, child type, and action derivations"
-    )]
     fn check_child_grid_fields(
         &mut self,
-        form_id: &str,
-        collection_id: &str,
-        collection: &norn_ir::OwnedChildCollection,
-        child: &norn_checker::entity_instance::EffectiveObjectType,
-        derived_properties: Option<
-            &std::collections::BTreeMap<norn_ir::PropertyId, norn_ir::ZenExpression>,
-        >,
+        ctx: &ChildGridFieldContext<'_>,
         field_ids: &[String],
         path: &str,
     ) {
@@ -372,25 +368,18 @@ impl UxChecker<'_, '_, '_> {
                 self.error(&field_path, "child grid field ids must be unique");
                 continue;
             }
-            self.check_child_grid_field(
-                form_id,
-                collection_id,
-                collection,
-                child,
-                derived_properties,
-                field_id,
-                &field_path,
-                &mut editable_child_properties,
-            );
+            self.check_child_grid_field(ctx, field_id, &field_path, &mut editable_child_properties);
         }
-        for property in child.properties.iter().filter(|property| {
+        for property in ctx.child.properties.iter().filter(|property| {
             !property.nullable
                 && !property.computed
                 && property.default.is_none()
-                && child.lifecycle(property.id.as_str()).is_none()
-                && property.id != collection.row_id_property
-                && property.id != collection.ordering_key
-                && !derived_properties.is_some_and(|derived| derived.contains_key(&property.id))
+                && ctx.child.lifecycle(property.id.as_str()).is_none()
+                && property.id != ctx.collection.row_id_property
+                && property.id != ctx.collection.ordering_key
+                && !ctx
+                    .derived_properties
+                    .is_some_and(|derived| derived.contains_key(&property.id))
         }) {
             if !editable_child_properties.contains(property.id.as_str()) {
                 self.error(
@@ -404,23 +393,20 @@ impl UxChecker<'_, '_, '_> {
         }
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "validates one grid column field against its form, collection, child schema, and editability set"
-    )]
     fn check_child_grid_field(
         &mut self,
-        form_id: &str,
-        collection_id: &str,
-        collection: &norn_ir::OwnedChildCollection,
-        child: &norn_checker::entity_instance::EffectiveObjectType,
-        derived_properties: Option<
-            &std::collections::BTreeMap<norn_ir::PropertyId, norn_ir::ZenExpression>,
-        >,
+        ctx: &ChildGridFieldContext<'_>,
         field_id: &str,
         field_path: &str,
         editable_child_properties: &mut BTreeSet<String>,
     ) {
+        let &ChildGridFieldContext {
+            form_id,
+            collection_id,
+            collection,
+            child,
+            derived_properties,
+        } = ctx;
         let Some(field) = self
             .ux
             .fields

@@ -79,23 +79,9 @@ pub fn validate_artifact(artifact: &ArtifactEnvelope) -> Result<(), Vec<Diagnost
     validate_artifact_inner(artifact, None)
 }
 
-/// Validate one artifact envelope and its kind payload, running `ui`'s
-/// strictly additive widget payload validator on `ArtifactPayload::Widget`
-/// before typed-root agreement.
-///
-/// # Errors
-///
-/// Returns every diagnostic found when the envelope is invalid.
-pub fn validate_artifact_with_ui(
+pub(crate) fn validate_artifact_inner(
     artifact: &ArtifactEnvelope,
-    ui: &dyn crate::UiValidator,
-) -> Result<(), Vec<Diagnostic>> {
-    validate_artifact_inner(artifact, Some(ui))
-}
-
-fn validate_artifact_inner(
-    artifact: &ArtifactEnvelope,
-    ui: Option<&dyn crate::UiValidator>,
+    ui: Option<&dyn crate::Ring1UiHook>,
 ) -> Result<(), Vec<Diagnostic>> {
     let (normalized, layout_findings) = match crate::layout::normalize_artifact(artifact) {
         Ok((normalized, _layout)) => (normalized, Vec::new()),
@@ -122,11 +108,12 @@ fn validate_artifact_inner(
 }
 
 /// Collect legacy envelope diagnostics for one normalized artifact, running
-/// optional strictly-additive Ring-1 widget validation before typed-root agreement.
+/// optional strictly-additive Ring-1 widget validation after Ring-0 envelope
+/// and typed-root checks complete independently.
 #[must_use]
 pub(crate) fn collect_artifact_diagnostics_inner(
     artifact: &ArtifactEnvelope,
-    ui: Option<&dyn crate::UiValidator>,
+    ui: Option<&dyn crate::Ring1UiHook>,
 ) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
@@ -237,10 +224,18 @@ fn required_field(path: &str) -> Diagnostic {
     }
 }
 
+const fn legacy_severity_rank(severity: &DiagnosticSeverity) -> u8 {
+    match severity {
+        DiagnosticSeverity::Info => 0,
+        DiagnosticSeverity::Warning => 1,
+        DiagnosticSeverity::Error => 2,
+    }
+}
+
 fn validate_kind_payload(
     artifact: &ArtifactEnvelope,
     diagnostics: &mut Vec<Diagnostic>,
-    ui: Option<&dyn crate::UiValidator>,
+    ui: Option<&dyn crate::Ring1UiHook>,
 ) {
     let artifact_id = Some(artifact.artifact_id.as_str());
     let before = diagnostics.len();
@@ -281,12 +276,11 @@ fn validate_kind_payload(
         }
         // Widget payload validation lives in Ring-1 `norn-ui-checker`. Ring-0
         // fails closed when no Ring-1 UI validator is supplied; when one is
-        // supplied, its returned diagnostics are strictly appended so Ring-0
-        // findings can never be mutated or suppressed.
+        // supplied, Ring-0 envelope and typed-root checks still run to
+        // completion independently first, and Ring-1 findings are strictly
+        // appended afterward.
         ArtifactPayload::Widget(_) => {
-            if let Some(validator) = ui {
-                diagnostics.extend(validator.validate_widget_payload(artifact, &payload));
-            } else {
+            if ui.is_none() {
                 diagnostics.push(invalid_diagnostic(
                     code,
                     "widget artifacts require Ring-1 norn-ui-checker validation and cannot be admitted by Ring-0 norn-checker alone",
@@ -319,11 +313,26 @@ fn validate_kind_payload(
                 }),
         );
     }
-    // Typed-root agreement: a payload the kind validator accepts must decode
-    // into its strict typed root. Run only on otherwise clean payloads so a
-    // malformed member is reported once, by the validator.
+    // Typed-root agreement: a payload Ring-0 accepts must decode into its
+    // strict typed root. Gated strictly on Ring-0's own findings so Ring-1
+    // output (such as a Warning) can never skip Ring-0 typed-root validation.
     if diagnostics.len() == before {
         crate::typed_roots::check_typed_root(&artifact.payload, diagnostics, artifact_id);
+    }
+    if matches!(artifact.payload, ArtifactPayload::Widget(_))
+        && let Some(validator) = ui
+    {
+        for finding in validator.validate_widget_payload(artifact, &payload) {
+            if !diagnostics.iter().any(|existing| {
+                existing.code == finding.code
+                    && existing.artifact_id == finding.artifact_id
+                    && existing.path == finding.path
+                    && legacy_severity_rank(&existing.severity)
+                        >= legacy_severity_rank(&finding.severity)
+            }) {
+                diagnostics.push(finding);
+            }
+        }
     }
 }
 

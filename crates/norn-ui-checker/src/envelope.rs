@@ -13,9 +13,10 @@ use norn_checker::envelope::helpers::{
     validate_string_array_field,
 };
 
-/// Strictly additive payload validator for [`norn_checker::UiValidator`]:
-/// validates `ArtifactPayload::Widget` envelopes before typed-root agreement
-/// and returns its findings without mutating Ring-0 diagnostics.
+/// Strictly additive widget payload validator for Ring-1 `norn-ui-checker`:
+/// validates `ArtifactPayload::Widget` envelopes after Ring-0 completes
+/// envelope and typed-root validation, returning its findings without
+/// mutating Ring-0 diagnostics.
 #[must_use]
 pub fn validate_widget_extra(artifact: &ArtifactEnvelope, payload: &JsonValue) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();

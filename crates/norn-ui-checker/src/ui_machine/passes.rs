@@ -21,6 +21,16 @@ use super::{
     matched_outcomes, outcome_name, outcome_of, page_net, possible_outcomes, show_outcome,
 };
 
+struct TransitionCheck<'m, 'a> {
+    index: usize,
+    transition: &'m WidgetMachineTransition,
+    from_state: &'m WidgetMachineState,
+    target_state: &'m WidgetMachineState,
+    event: &'m WidgetMachineEvent,
+    outcome: Option<OutcomeValue>,
+    pointer: &'a str,
+}
+
 impl<'m> MachineChecker<'m> {
     pub(super) fn run(mut self, page: Option<&WidgetPage>) -> Vec<Finding> {
         let machine = self.machine;
@@ -362,34 +372,29 @@ impl<'m> MachineChecker<'m> {
             | WidgetMachineEventSource::Outcome { .. }
             | WidgetMachineEventSource::Subscription { .. } => {}
         }
-        self.check_transition_outcome(
-            index, transition, from_state, event, outcome, &pointer, facts,
-        );
-        self.check_transition_pending_effects(
+        let check = TransitionCheck {
+            index,
             transition,
             from_state,
             target_state,
             event,
             outcome,
-            &pointer,
-            facts,
-        );
+            pointer: &pointer,
+        };
+        self.check_transition_outcome(&check, facts);
+        self.check_transition_pending_effects(&check, facts);
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "transition outcome validation takes the resolved source state, event, outcome, pointer, and accumulator"
-    )]
-    fn check_transition_outcome(
-        &mut self,
-        index: usize,
-        transition: &'m WidgetMachineTransition,
-        from_state: &'m WidgetMachineState,
-        event: &'m WidgetMachineEvent,
-        outcome: Option<OutcomeValue>,
-        pointer: &str,
-        facts: &mut Facts<'m>,
-    ) {
+    fn check_transition_outcome(&mut self, check: &TransitionCheck<'m, '_>, facts: &mut Facts<'m>) {
+        let &TransitionCheck {
+            index,
+            transition,
+            from_state,
+            event,
+            outcome,
+            pointer,
+            ..
+        } = check;
         let from = from_state.state_id.as_str();
         // Outcome events belong to pending states, and only to outcomes their call can have.
         if let Some((outcome, category)) = outcome {
@@ -437,20 +442,20 @@ impl<'m> MachineChecker<'m> {
         }
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "pending call lifecycle validation takes the transition, endpoints, event, outcome, pointer, and accumulator"
-    )]
     fn check_transition_pending_effects(
         &mut self,
-        transition: &'m WidgetMachineTransition,
-        from_state: &'m WidgetMachineState,
-        target_state: &'m WidgetMachineState,
-        event: &'m WidgetMachineEvent,
-        outcome: Option<OutcomeValue>,
-        pointer: &str,
+        check: &TransitionCheck<'m, '_>,
         facts: &mut Facts<'m>,
     ) {
+        let &TransitionCheck {
+            transition,
+            from_state,
+            target_state,
+            event,
+            outcome,
+            pointer,
+            ..
+        } = check;
         let from = from_state.state_id.as_str();
         let target = target_state.state_id.as_str();
         // A call in flight is left only by its outcome.

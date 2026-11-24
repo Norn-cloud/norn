@@ -40,6 +40,15 @@ fn is_binding_index_sort_type(property: &EffectiveProperty) -> bool {
     )
 }
 
+#[derive(Clone, Copy)]
+struct LinkTraversalSpec<'a> {
+    source_binding_id: &'a str,
+    link_id: &'a str,
+    max_depth: WholeNumber,
+    max_rows: WholeNumber,
+    page: &'a WidgetPageBounds,
+}
+
 impl UxChecker<'_, '_, '_> {
     pub(super) fn check_bindings(&mut self) {
         let bindings = self.ux.data_bindings.clone();
@@ -175,11 +184,13 @@ impl UxChecker<'_, '_, '_> {
                 binding,
                 object,
                 index,
-                source_binding_id,
-                link_id,
-                *max_depth,
-                *max_rows,
-                page,
+                LinkTraversalSpec {
+                    source_binding_id,
+                    link_id,
+                    max_depth: *max_depth,
+                    max_rows: *max_rows,
+                    page,
+                },
                 path,
             ),
         }
@@ -263,31 +274,24 @@ impl UxChecker<'_, '_, '_> {
         }
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "link traversal validation checks the unpacked query variant fields alongside its binding context"
-    )]
     fn check_link_traversal_query(
         &mut self,
         binding: &WidgetDataBinding,
         object: &EffectiveObjectType,
         index: usize,
-        source_binding_id: &str,
-        link_id: &str,
-        max_depth: WholeNumber,
-        max_rows: WholeNumber,
-        page: &WidgetPageBounds,
+        spec: LinkTraversalSpec<'_>,
         path: &str,
     ) {
-        self.check_page_bounds(page, &format!("{path}/query/page"));
-        if max_depth.0 == 0 || max_rows.0 == 0 || page.max_size > max_rows {
+        let link_id = spec.link_id;
+        self.check_page_bounds(spec.page, &format!("{path}/query/page"));
+        if spec.max_depth.0 == 0 || spec.max_rows.0 == 0 || spec.page.max_size > spec.max_rows {
             self.error(&format!("{path}/query"), "link traversal requires positive depth and row bounds, with page.maxSize no greater than maxRows");
         }
         let source_index = self
             .ux
             .data_bindings
             .iter()
-            .position(|candidate| candidate.binding_id == source_binding_id);
+            .position(|candidate| candidate.binding_id == spec.source_binding_id);
         let Some(source_index) = source_index else {
             self.error(
                 &format!("{path}/query/sourceBindingId"),
@@ -308,7 +312,7 @@ impl UxChecker<'_, '_, '_> {
             );
             return;
         };
-        if !self.record_source_available(source_binding_id, path) {
+        if !self.record_source_available(spec.source_binding_id, path) {
             self.error(
                 &format!("{path}/query/sourceBindingId"),
                 "link traversal source must be a detail record or a single-selection list",
@@ -359,14 +363,14 @@ impl UxChecker<'_, '_, '_> {
                 &source_binding.query,
                 WidgetDataQuery::ObjectDetail { .. } | WidgetDataQuery::ObjectRuntimeDetail { .. }
             )
-            && max_rows.0 > 1
+            && spec.max_rows.0 > 1
         {
             self.error(
                 &format!("{path}/query/maxRows"),
                 "a single-valued link cannot return more than one row per source object",
             );
         }
-        if max_depth.0 > 1
+        if spec.max_depth.0 > 1
             && (source_object.name != object.name
                 || link.target.as_str() != source_object.name.as_str())
         {

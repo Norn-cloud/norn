@@ -18,9 +18,9 @@ pub mod ui_machine;
 pub mod ui_view;
 pub mod widget_ux;
 
+use norn_checker::__ring1_ui_seam::{self, Ring1UiSeal, UiValidator};
 use norn_checker::{
     CheckedArtifactSet, Diagnostic, EntityArtifactSetContext, ReceiptError, ReceiptSources,
-    UiValidator,
 };
 use norn_ir::explain::{ExplainKind, ExplainReport};
 use norn_ir::{ArtifactEnvelope, FlowSourceMap, ResourceLimitProfile};
@@ -56,21 +56,21 @@ impl UiValidator for UiChecker {
 ///
 /// Returns every legacy diagnostic found when the envelope is invalid.
 pub fn validate_artifact(artifact: &ArtifactEnvelope) -> Result<(), Vec<norn_ir::Diagnostic>> {
-    norn_checker::validate_artifact_with_ui(artifact, &UiChecker)
+    __ring1_ui_seam::validate_artifact(Ring1UiSeal::new_internal(), artifact, &UiChecker)
 }
 
 /// Check one artifact envelope with both Ring-0 checks and Ring-1 widget
 /// payload/dependency validation.
 #[must_use]
 pub fn check_artifact(artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {
-    norn_checker::check_artifact_with_ui(artifact, &UiChecker)
+    __ring1_ui_seam::check_artifact(Ring1UiSeal::new_internal(), artifact, &UiChecker)
 }
 
 /// Decode an artifact envelope from wire JSON and check it with both Ring-0
 /// checks and Ring-1 widget payload/dependency validation.
 #[must_use]
 pub fn check_artifact_json(value: &serde_json::Value) -> Vec<Diagnostic> {
-    norn_checker::check_artifact_json_with_ui(value, &UiChecker)
+    __ring1_ui_seam::check_artifact_json(Ring1UiSeal::new_internal(), value, &UiChecker)
 }
 
 /// Resolve `artifacts` against `context.base` and run both Ring-0 set checks
@@ -81,7 +81,7 @@ pub fn check_artifact_set(
     artifacts: &[ArtifactEnvelope],
     context: &EntityArtifactSetContext<'_>,
 ) -> Vec<Diagnostic> {
-    norn_checker::check_artifact_set_with_ui(artifacts, context, &UiChecker)
+    __ring1_ui_seam::check_artifact_set(Ring1UiSeal::new_internal(), artifacts, context, &UiChecker)
 }
 
 /// Check `artifacts` against `context` (Ring-0 + Ring-1 UI checks) under
@@ -95,7 +95,13 @@ pub fn check_artifact_set_with_receipt(
     context: &EntityArtifactSetContext<'_>,
     limits: &ResourceLimitProfile,
 ) -> Result<CheckedArtifactSet, ReceiptError> {
-    norn_checker::check_artifact_set_with_receipt_ui(artifacts, context, limits, &UiChecker)
+    __ring1_ui_seam::check_artifact_set_with_receipt(
+        Ring1UiSeal::new_internal(),
+        artifacts,
+        context,
+        limits,
+        &UiChecker,
+    )
 }
 
 /// Check `artifacts` with an optional flow source map (Ring-0 + Ring-1 UI
@@ -110,7 +116,8 @@ pub fn check_artifact_set_with_flow_source_map(
     limits: &ResourceLimitProfile,
     flow_source_map: Option<&FlowSourceMap>,
 ) -> Result<CheckedArtifactSet, ReceiptError> {
-    norn_checker::check_artifact_set_with_flow_source_map_ui(
+    __ring1_ui_seam::check_artifact_set_with_flow_source_map(
+        Ring1UiSeal::new_internal(),
         artifacts,
         context,
         limits,
@@ -130,5 +137,12 @@ pub fn explain(
     kind: ExplainKind,
     id: &str,
 ) -> Result<ExplainReport, Vec<Diagnostic>> {
-    norn_checker::explain::explain_with_ui(artifacts, context, kind, id, &UiChecker)
+    __ring1_ui_seam::explain(
+        Ring1UiSeal::new_internal(),
+        artifacts,
+        context,
+        kind,
+        id,
+        &UiChecker,
+    )
 }

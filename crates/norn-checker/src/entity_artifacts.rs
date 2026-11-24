@@ -197,35 +197,53 @@ const STATE_FINDINGS: [&str; 2] = [
     crate::lifecycles::codes::DEAD_END_STATE,
 ];
 
-/// Keep the first of the findings identical in `(code, artifactId,
-/// pointer)`, preserving order. UI-law findings also include their message
-/// in the identity, because distinct effects and composed render paths may
-/// share the same real JSON pointer. So do a lifecycle's unreachable and
-/// dead-end states: each is its own finding, all at the lifecycle's pointer,
-/// and the message is what names the state.
+const fn severity_rank(severity: &DiagnosticSeverity) -> u8 {
+    match severity {
+        DiagnosticSeverity::Info => 0,
+        DiagnosticSeverity::Warning => 1,
+        DiagnosticSeverity::Error => 2,
+    }
+}
+
+/// Keep one diagnostic per `(code, artifactId, pointer)` identity, preserving
+/// first-seen order while always retaining the higher severity (`Error >
+/// Warning > Info`) so a lower-severity finding can never displace an error.
+/// UI-law findings also include their message in the identity, because distinct
+/// effects and composed render paths may share the same real JSON pointer. So
+/// do a lifecycle's unreachable and dead-end states: each is its own finding,
+/// all at the lifecycle's pointer, and the message is what names the state.
 pub(crate) fn dedupe_findings(findings: impl IntoIterator<Item = Diagnostic>) -> Vec<Diagnostic> {
-    let mut seen = BTreeSet::new();
-    findings
-        .into_iter()
-        .filter(|diagnostic| {
-            seen.insert((
-                diagnostic.artifact_id.clone(),
-                diagnostic.code.as_str().to_owned(),
-                diagnostic
-                    .span
-                    .as_ref()
-                    .map_or_default(|span| span.pointer.clone()),
-                ((diagnostic.code.as_str() == "widget.validation.invalid_payload"
-                    && diagnostic.message.starts_with("UI law:"))
-                    || diagnostic.code.as_str() == "consistency.normative.conflict"
-                    || STATE_FINDINGS.contains(&diagnostic.code.as_str())
-                    // A finding with its own run (one per stuck or violating pair) is distinct
-                    // from another at the same pointer.
-                    || diagnostic.witness.is_some())
-                .then(|| diagnostic.message.clone()),
-            ))
-        })
-        .collect()
+    let mut positions: std::collections::BTreeMap<_, usize> = std::collections::BTreeMap::new();
+    let mut out: Vec<Diagnostic> = Vec::new();
+    for diagnostic in findings {
+        let key = (
+            diagnostic.artifact_id.clone(),
+            diagnostic.code.as_str().to_owned(),
+            diagnostic
+                .span
+                .as_ref()
+                .map_or_default(|span| span.pointer.clone()),
+            ((diagnostic.code.as_str() == "widget.validation.invalid_payload"
+                && diagnostic.message.starts_with("UI law:"))
+                || diagnostic.code.as_str() == "consistency.normative.conflict"
+                || STATE_FINDINGS.contains(&diagnostic.code.as_str())
+                // A finding with its own run (one per stuck or violating pair) is distinct
+                // from another at the same pointer.
+                || diagnostic.witness.is_some())
+            .then(|| diagnostic.message.clone()),
+        );
+        if let Some(&index) = positions.get(&key) {
+            if let Some(existing) = out.get_mut(index)
+                && severity_rank(&diagnostic.severity) > severity_rank(&existing.severity)
+            {
+                *existing = diagnostic;
+            }
+        } else {
+            positions.insert(key, out.len());
+            out.push(diagnostic);
+        }
+    }
+    out
 }
 
 /// Findings of the property type catalog check on the layer's own

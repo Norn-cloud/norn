@@ -18,6 +18,18 @@ use super::types::{
 };
 use super::{ParsedAction, UxChecker};
 
+#[derive(Clone, Copy)]
+struct MappedExpression<'a> {
+    source: &'a norn_ir::ZenExpression,
+    schema: &'a Schema,
+    required: bool,
+    binding: &'a WidgetUxActionBinding,
+    action_field_name: &'a str,
+    action: &'a ParsedAction,
+    env: Option<&'a ZenTypeEnv>,
+    path: &'a str,
+}
+
 impl UxChecker<'_, '_, '_> {
     pub(super) fn check_actions(&mut self) {
         let bindings = self.ux.action_bindings.clone();
@@ -103,16 +115,16 @@ impl UxChecker<'_, '_, '_> {
     ) {
         for (name, (schema, required)) in &action.fields {
             if let Some(expression) = binding.input_mapping.get(name) {
-                self.check_mapped_expression(
-                    expression,
+                self.check_mapped_expression(MappedExpression {
+                    source: expression,
                     schema,
-                    *required,
+                    required: *required,
                     binding,
-                    name,
+                    action_field_name: name,
                     action,
-                    input_env,
-                    &format!("{path}/{name}"),
-                );
+                    env: input_env,
+                    path: &format!("{path}/{name}"),
+                });
             }
         }
         for name in binding.input_mapping.keys() {
@@ -125,21 +137,17 @@ impl UxChecker<'_, '_, '_> {
         }
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "mapping admission needs the exact action field, form binding, expected schema, expression environment, and diagnostic path"
-    )]
-    fn check_mapped_expression(
-        &mut self,
-        source: &norn_ir::ZenExpression,
-        schema: &Schema,
-        required: bool,
-        binding: &WidgetUxActionBinding,
-        action_field_name: &str,
-        action: &ParsedAction,
-        env: Option<&ZenTypeEnv>,
-        path: &str,
-    ) {
+    fn check_mapped_expression(&mut self, input: MappedExpression<'_>) {
+        let MappedExpression {
+            source,
+            schema,
+            required,
+            binding,
+            action_field_name,
+            action,
+            env,
+            path,
+        } = input;
         let Some(env) = env else {
             return;
         };
@@ -659,16 +667,16 @@ impl UxChecker<'_, '_, '_> {
                 continue;
             }
             if let Some((schema, required)) = action.fields.get(name) {
-                self.check_mapped_expression(
-                    expression,
+                self.check_mapped_expression(MappedExpression {
+                    source: expression,
                     schema,
-                    *required,
-                    &placement_binding,
-                    name,
-                    &action,
-                    input_env.as_ref(),
-                    &format!("{path}/selectionInputMapping/{name}"),
-                );
+                    required: *required,
+                    binding: &placement_binding,
+                    action_field_name: name,
+                    action: &action,
+                    env: input_env.as_ref(),
+                    path: &format!("{path}/selectionInputMapping/{name}"),
+                });
             } else {
                 self.error(
                     &format!("{path}/selectionInputMapping/{name}"),

@@ -12,7 +12,9 @@ use cargo_metadata::{Metadata, MetadataCommand};
 use norn_skeleton_guard::Violation;
 use norn_skeleton_guard::ring0_boundary::{
     NORN_IR_SCHEMA_WIDGET_MODULES, RING0_CORE_CRATES, RING0_UI_MIGRATION_ISSUE,
-    check_ring0_dependencies, check_ring0_ui_modules, is_ui_widget_segment, ring0_ui_modules,
+    RING1_UI_INTERNAL_FEATURE, check_ring0_dependencies, check_ring0_ui_modules,
+    check_ring1_ui_feature_seam, check_ring1_ui_source_seam, is_ui_widget_segment,
+    ring0_ui_modules,
 };
 use serde_json::{Value, json};
 
@@ -95,6 +97,21 @@ fn ring0_dependencies_and_ui_modules_match_boundary() {
         "Ring-0 UI/widget module drift:\n{}\n\nfound now:\n{}",
         render(&ui_violations),
         serde_json::to_string_pretty(&found).expect("json")
+    );
+
+    let feature_seam_violations = check_ring1_ui_feature_seam(&metadata);
+    assert!(
+        feature_seam_violations.is_empty(),
+        "Ring-1 UI internal feature seam leak:\n{}",
+        render(&feature_seam_violations)
+    );
+
+    let source_seam_violations =
+        check_ring1_ui_source_seam(&workspace_root()).expect("scan Ring-1 UI source seam");
+    assert!(
+        source_seam_violations.is_empty(),
+        "Ring-1 UI internal source seam leak:\n{}",
+        render(&source_seam_violations)
     );
 }
 
@@ -280,4 +297,110 @@ fn new_ui_or_widget_modules_in_ring0_are_rejected_and_removals_drain_baseline() 
     let v = check_ring0_ui_modules(&ring0_ui_modules(dir.path()).expect("scan"), &baseline)
         .expect("check");
     assert_eq!(rules_of(&v), ["stale-ring0-ui-baseline"], "{}", render(&v));
+}
+
+#[test]
+fn ring1_ui_internal_seam_is_restricted_to_norn_ui_checker() {
+    // 1. Metadata guard: enabling `ring1-ui-internal` on `norn-checker` from any
+    //    crate other than `norn-ui-checker` fails closed.
+    let base = resolved_metadata();
+    assert!(
+        check_ring1_ui_feature_seam(&base).is_empty(),
+        "live workspace should satisfy the Ring-1 UI feature seam"
+    );
+
+    let mut leaked_dep = serde_json::to_value(&base).expect("serialize metadata");
+    let api_pkg = leaked_dep["packages"]
+        .as_array_mut()
+        .expect("packages")
+        .iter_mut()
+        .find(|pkg| pkg["name"] == "norn-api")
+        .expect("norn-api package");
+    let checker_dep = api_pkg["dependencies"]
+        .as_array_mut()
+        .expect("dependencies")
+        .iter_mut()
+        .find(|dep| dep["name"] == "norn-checker")
+        .expect("norn-checker dep");
+    checker_dep["features"]
+        .as_array_mut()
+        .expect("features")
+        .push(json!(RING1_UI_INTERNAL_FEATURE));
+    let leaked_dep_meta: Metadata = serde_json::from_value(leaked_dep).expect("deserialize");
+    let v = check_ring1_ui_feature_seam(&leaked_dep_meta);
+    assert_eq!(
+        rules_of(&v),
+        ["ring1-ui-internal-feature-leak"],
+        "{}",
+        render(&v)
+    );
+    assert!(v[0].message.contains("norn-api"), "{}", render(&v));
+
+    // Forwarding `norn-checker/ring1-ui-internal` via `[features]` also fails closed.
+    let mut leaked_fwd = serde_json::to_value(&base).expect("serialize metadata");
+    let api_pkg = leaked_fwd["packages"]
+        .as_array_mut()
+        .expect("packages")
+        .iter_mut()
+        .find(|pkg| pkg["name"] == "norn-api")
+        .expect("norn-api package");
+    api_pkg["features"]
+        .as_object_mut()
+        .expect("features map")
+        .insert(
+            "bypass".to_owned(),
+            json!([format!("norn-checker/{RING1_UI_INTERNAL_FEATURE}")]),
+        );
+    let leaked_fwd_meta: Metadata = serde_json::from_value(leaked_fwd).expect("deserialize");
+    let v = check_ring1_ui_feature_seam(&leaked_fwd_meta);
+    assert_eq!(
+        rules_of(&v),
+        ["ring1-ui-internal-feature-leak"],
+        "{}",
+        render(&v)
+    );
+
+    // 2. Source guard: referencing `__ring1_ui`, `Ring1UiSeal`, or `UiValidator`
+    //    in any crate outside `norn-checker` / `norn-ui-checker` fails closed.
+    let dir = tempfile::tempdir().expect("tempdir");
+    write_file(
+        dir.path(),
+        "crates/norn-ui-checker/src/lib.rs",
+        "use norn_checker::__ring1_ui::{Ring1UiSeal, UiValidator};\n",
+    );
+    write_file(
+        dir.path(),
+        "crates/norn-checker/src/lib.rs",
+        "pub mod __ring1_ui { pub struct Ring1UiSeal; pub trait UiValidator {} }\n",
+    );
+    write_file(
+        dir.path(),
+        "crates/norn-api/src/lib.rs",
+        "// Comments mentioning __ring1_ui or UiValidator are ignored by token scan.\npub fn ok() {}\n",
+    );
+    assert_eq!(
+        check_ring1_ui_source_seam(dir.path()).expect("scan clean"),
+        Vec::<Violation>::new()
+    );
+
+    write_file(
+        dir.path(),
+        "crates/norn-api/src/bypass.rs",
+        "use norn_checker::__ring1_ui::Ring1UiSeal;\nstruct Fake; impl UiValidator for Fake {}\n",
+    );
+    let v = check_ring1_ui_source_seam(dir.path()).expect("scan leak");
+    assert_eq!(
+        rules_of(&v),
+        ["ring1-ui-internal-source-leak"],
+        "{}",
+        render(&v)
+    );
+    assert!(
+        v[0].message.contains("crates/norn-api/src/bypass.rs")
+            && v[0].message.contains("__ring1_ui")
+            && v[0].message.contains("Ring1UiSeal")
+            && v[0].message.contains("UiValidator"),
+        "{}",
+        render(&v)
+    );
 }

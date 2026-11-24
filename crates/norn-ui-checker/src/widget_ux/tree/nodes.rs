@@ -92,14 +92,16 @@ impl UxChecker<'_, '_, '_> {
                 max_rows,
                 field_ids,
             } => self.check_child_grid(
-                form_id,
-                label,
-                collection_id,
-                ordering_key,
-                data_binding_id.as_deref(),
-                row_ops_input_name,
-                max_rows.0,
-                field_ids,
+                &super::super::child_grid::ChildGridSpec {
+                    form_id,
+                    label,
+                    collection_id,
+                    ordering_key,
+                    data_binding_id: data_binding_id.as_deref(),
+                    row_ops_input_name,
+                    max_rows: max_rows.0,
+                    field_ids,
+                },
                 surface,
                 path,
             ),
@@ -264,9 +266,7 @@ impl UxChecker<'_, '_, '_> {
             } => self.check_parent_property_field_node(
                 node,
                 &field,
-                form_id,
-                input_name,
-                property_id,
+                (form_id, input_name, property_id),
                 surface,
                 path,
             ),
@@ -280,20 +280,15 @@ impl UxChecker<'_, '_, '_> {
         true
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "registers semantic metadata for one nested parent-property field node"
-    )]
     fn check_parent_property_field_node(
         &mut self,
         node: &WidgetNode,
         field: &WidgetFieldPresentation,
-        form_id: &str,
-        input_name: &str,
-        property_id: &str,
+        target: (&str, &str, &str),
         surface: &ActionSurface,
         path: &str,
     ) {
+        let (form_id, input_name, property_id) = target;
         if !matches!(surface, ActionSurface::Form(parent_form) if parent_form == form_id) {
             self.error(
                 &format!("{path}/component/fieldId"),

@@ -15,6 +15,24 @@ use super::actions::direct_draft_mapping;
 use super::types::{property_type, type_fits_schema};
 use super::{ParsedAction, UxChecker, has_initial_lifecycle_default};
 
+struct FormVersionConflict<'a> {
+    form: &'a WidgetForm,
+    version: &'a norn_ir::WidgetVersionConflictBinding,
+    form_binding: Option<&'a str>,
+    action: &'a ParsedAction,
+    input_mapping: &'a std::collections::BTreeMap<String, norn_ir::ZenExpression>,
+    record_binding_id: Option<&'a str>,
+    path: &'a str,
+}
+
+struct ParentRowsFields<'a> {
+    object_id_field: &'a str,
+    parent_version_field: &'a str,
+    parent_values_field: &'a str,
+    entity_artifact_id: &'a str,
+    entity_artifact_version: &'a str,
+}
+
 impl UxChecker<'_, '_, '_> {
     pub(super) fn action_for_form(&self, form: &WidgetForm) -> Option<&ParsedAction> {
         let binding = self.action_bindings.get(form.submit_binding_id.as_str())?;
@@ -110,15 +128,15 @@ impl UxChecker<'_, '_, '_> {
                 &path,
             );
             if let Some(version) = &form.version_conflict_binding {
-                self.check_form_version_conflict(
+                self.check_form_version_conflict(&FormVersionConflict {
                     form,
                     version,
                     form_binding,
-                    &action,
-                    &input_mapping,
-                    record_binding_id.as_deref(),
-                    &path,
-                );
+                    action: &action,
+                    input_mapping: &input_mapping,
+                    record_binding_id: record_binding_id.as_deref(),
+                    path: &path,
+                });
             }
         }
     }
@@ -218,20 +236,16 @@ impl UxChecker<'_, '_, '_> {
         }
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "version conflict validation connects the form, conflict binding, submit action, and input mappings"
-    )]
-    fn check_form_version_conflict(
-        &mut self,
-        form: &WidgetForm,
-        version: &norn_ir::WidgetVersionConflictBinding,
-        form_binding: Option<&str>,
-        action: &ParsedAction,
-        input_mapping: &std::collections::BTreeMap<String, norn_ir::ZenExpression>,
-        record_binding_id: Option<&str>,
-        path: &str,
-    ) {
+    fn check_form_version_conflict(&mut self, check: &FormVersionConflict<'_>) {
+        let &FormVersionConflict {
+            form,
+            version,
+            form_binding,
+            action,
+            input_mapping,
+            record_binding_id,
+            path,
+        } = check;
         if form.mode != WidgetFormMode::Edit {
             self.error(
                 &format!("{path}/versionConflictBinding"),
@@ -362,43 +376,38 @@ impl UxChecker<'_, '_, '_> {
             );
         }
 
+        let fields = ParentRowsFields {
+            object_id_field,
+            parent_version_field,
+            parent_values_field,
+            entity_artifact_id,
+            entity_artifact_version,
+        };
         match form.mode {
-            WidgetFormMode::Edit => self.check_parent_rows_edit_contract(
-                form,
-                binding,
-                object_id_field,
-                parent_version_field,
-                entity_artifact_id,
-                entity_artifact_version,
-                path,
-            ),
-            WidgetFormMode::Create => self.check_parent_rows_create_contract(
-                form,
-                binding,
-                action,
-                object_id_field,
-                parent_version_field,
-                parent_values_field,
-                path,
-            ),
+            WidgetFormMode::Edit => {
+                self.check_parent_rows_edit_contract(form, binding, &fields, path);
+            }
+            WidgetFormMode::Create => {
+                self.check_parent_rows_create_contract(form, binding, action, &fields, path);
+            }
             WidgetFormMode::ActionInput => {}
         }
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "edit contract validation checks the parent record snapshot and version mapping fields"
-    )]
     fn check_parent_rows_edit_contract(
         &self,
         form: &WidgetForm,
         binding: &WidgetUxActionBinding,
-        object_id_field: &str,
-        parent_version_field: &str,
-        entity_artifact_id: &str,
-        entity_artifact_version: &str,
+        fields: &ParentRowsFields<'_>,
         path: &str,
     ) {
+        let &ParentRowsFields {
+            object_id_field,
+            parent_version_field,
+            entity_artifact_id,
+            entity_artifact_version,
+            ..
+        } = fields;
         let binding_matches =
             form.data_binding_id.as_deref() == binding.inputs.record_binding_id.as_deref();
         if !binding_matches
@@ -437,20 +446,20 @@ impl UxChecker<'_, '_, '_> {
         }
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "create contract validation checks the parent id draft mapping, initial version zero, and property coverage"
-    )]
     fn check_parent_rows_create_contract(
         &mut self,
         form: &WidgetForm,
         binding: &WidgetUxActionBinding,
         action: &ParsedAction,
-        object_id_field: &str,
-        parent_version_field: &str,
-        parent_values_field: &str,
+        fields: &ParentRowsFields<'_>,
         path: &str,
     ) {
+        let &ParentRowsFields {
+            object_id_field,
+            parent_version_field,
+            parent_values_field,
+            ..
+        } = fields;
         let id_is_draft = binding
             .input_mapping
             .get(object_id_field)

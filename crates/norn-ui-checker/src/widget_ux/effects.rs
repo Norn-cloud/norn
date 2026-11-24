@@ -118,6 +118,15 @@ pub fn generated_transition_enabled_when(
     }))
 }
 
+#[derive(Clone, Copy)]
+struct EffectScope<'a> {
+    owner: &'a ArtifactEnvelope,
+    ux: &'a WidgetUx,
+    site: &'a EffectRenderSite,
+    overrides: &'a [(&'a ArtifactEnvelope, &'a WidgetUx)],
+    record: Option<&'a WidgetDataBinding>,
+}
+
 impl UxChecker<'_, '_, '_> {
     pub(super) fn check_effect_laws(&self) {
         if !self.enforce_effect_root {
@@ -140,12 +149,14 @@ impl UxChecker<'_, '_, '_> {
                 page.page_id.clone(),
             ));
             let mut invocations = self.effect_tree(
-                self.owner,
-                self.ux,
+                &EffectScope {
+                    owner: self.owner,
+                    ux: self.ux,
+                    site: &site,
+                    overrides: &[],
+                    record: None,
+                },
                 &page.root,
-                &site,
-                &[],
-                None,
                 &mut stack,
             );
             if let Some(shell) = &self.ux.shell_handlers {
@@ -170,34 +181,33 @@ impl UxChecker<'_, '_, '_> {
     }
 
     // Expansion retains the real host path; only its shell is applied at the root.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "explicit lexical scope and render provenance for composed trees"
-    )]
     fn effect_tree(
         &self,
-        owner: &ArtifactEnvelope,
-        ux: &WidgetUx,
+        scope: &EffectScope<'_>,
         node: &WidgetNode,
-        site: &EffectRenderSite,
-        overrides: &[(&ArtifactEnvelope, &WidgetUx)],
-        record: Option<&WidgetDataBinding>,
         stack: &mut BTreeSet<(String, String, String)>,
     ) -> Vec<EffectInvocation> {
+        let &EffectScope {
+            owner,
+            ux,
+            site,
+            overrides,
+            record,
+        } = scope;
         let path = &site.path;
         let record = Self::effect_tree_record(ux, node, record);
+        let scoped = EffectScope {
+            owner,
+            ux,
+            site,
+            overrides,
+            record,
+        };
         let mut invocations = Vec::new();
         match &node.component {
             WidgetComponent::Action { placement_id } => {
-                if let Some(invocation) = self.effect_tree_action_node(
-                    owner,
-                    ux,
-                    node,
-                    placement_id,
-                    site,
-                    overrides,
-                    record,
-                ) {
+                if let Some(invocation) = self.effect_tree_action_node(&scoped, node, placement_id)
+                {
                     invocations.push(invocation);
                 }
             }
@@ -209,9 +219,7 @@ impl UxChecker<'_, '_, '_> {
                 }
             }
             WidgetComponent::Composition { widget, page_id } => {
-                invocations.extend(self.effect_tree_composition(
-                    owner, ux, widget, page_id, site, overrides, record, stack,
-                ));
+                invocations.extend(self.effect_tree_composition(&scoped, widget, page_id, stack));
             }
             WidgetComponent::Section { .. }
             | WidgetComponent::List { .. }
@@ -224,13 +232,13 @@ impl UxChecker<'_, '_, '_> {
             | WidgetComponent::Catalog { .. } => {}
         }
         for (index, child) in node.children.iter().enumerate() {
+            let child_site = site.child(index);
             invocations.extend(self.effect_tree(
-                owner,
-                ux,
+                &EffectScope {
+                    site: &child_site,
+                    ..scoped
+                },
                 child,
-                &site.child(index),
-                overrides,
-                record,
                 stack,
             ));
         }
@@ -298,21 +306,20 @@ impl UxChecker<'_, '_, '_> {
         }
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "expands one composed widget page while preserving lexical override scope and cycle stack"
-    )]
     fn effect_tree_composition(
         &self,
-        owner: &ArtifactEnvelope,
-        ux: &WidgetUx,
+        scope: &EffectScope<'_>,
         widget: &norn_ir::WidgetArtifactRef,
         page_id: &str,
-        site: &EffectRenderSite,
-        overrides: &[(&ArtifactEnvelope, &WidgetUx)],
-        record: Option<&WidgetDataBinding>,
         stack: &mut BTreeSet<(String, String, String)>,
     ) -> Vec<EffectInvocation> {
+        let &EffectScope {
+            owner,
+            ux,
+            site,
+            overrides,
+            record,
+        } = scope;
         let Some(artifact) = self.find_exact(&widget.id, &widget.version, &ArtifactKind::Widget)
         else {
             return Vec::new();
@@ -340,33 +347,35 @@ impl UxChecker<'_, '_, '_> {
         }
         let mut scopes = overrides.to_vec();
         scopes.push((owner, ux));
+        let composed_site = site.composed(page_id);
         let invocations = self.effect_tree(
-            artifact,
-            &composed,
+            &EffectScope {
+                owner: artifact,
+                ux: &composed,
+                site: &composed_site,
+                overrides: &scopes,
+                record,
+            },
             &page.root,
-            &site.composed(page_id),
-            &scopes,
-            record,
             stack,
         );
         stack.remove(&identity);
         invocations
     }
 
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "resolves lexical override scope and transition conditions for one action node"
-    )]
     fn effect_tree_action_node(
         &self,
-        owner: &ArtifactEnvelope,
-        ux: &WidgetUx,
+        scope: &EffectScope<'_>,
         node: &WidgetNode,
         placement_id: &str,
-        site: &EffectRenderSite,
-        overrides: &[(&ArtifactEnvelope, &WidgetUx)],
-        record: Option<&WidgetDataBinding>,
     ) -> Option<EffectInvocation> {
+        let &EffectScope {
+            owner,
+            ux,
+            site,
+            overrides,
+            record,
+        } = scope;
         let replacement = node.semantic_id.as_ref().and_then(|id| {
             overrides.iter().find_map(|(scope_owner, scope_ux)| {
                 scope_ux.overrides.iter().find_map(|override_| {

@@ -56,27 +56,12 @@ pub fn explain(
     explain_inner(artifacts, context, kind, id, None)
 }
 
-/// EXPLAIN-CLOSURE-1 with strictly additive Ring-1 UI validation composed over
-/// Ring-0 admission.
-///
-/// # Errors
-/// As [`explain`].
-pub fn explain_with_ui(
+pub(crate) fn explain_inner(
     artifacts: &[ArtifactEnvelope],
     context: &EntityArtifactSetContext<'_>,
     kind: ExplainKind,
     id: &str,
-    ui: &dyn crate::UiValidator,
-) -> Result<ExplainReport, Vec<Diagnostic>> {
-    explain_inner(artifacts, context, kind, id, Some(ui))
-}
-
-fn explain_inner(
-    artifacts: &[ArtifactEnvelope],
-    context: &EntityArtifactSetContext<'_>,
-    kind: ExplainKind,
-    id: &str,
-    ui: Option<&dyn crate::UiValidator>,
+    ui: Option<&dyn crate::Ring1UiHook>,
 ) -> Result<ExplainReport, Vec<Diagnostic>> {
     if artifacts.len().saturating_add(context.base.len()) > 16_384 {
         return Err(closure_error(

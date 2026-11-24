@@ -502,7 +502,7 @@ pub(crate) struct ReceiptCheckRequest<'a> {
     pub(crate) identifier_profile: &'a str,
     pub(crate) flow_source_map: Option<&'a FlowSourceMap>,
     pub(crate) retained: bool,
-    pub(crate) ui: Option<&'a dyn crate::UiValidator>,
+    pub(crate) ui: Option<&'a dyn crate::Ring1UiHook>,
 }
 
 pub(crate) fn check_artifact_set_with_profile(
