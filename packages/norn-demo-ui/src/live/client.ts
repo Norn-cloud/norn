@@ -68,6 +68,7 @@ interface Entry {
 const OPEN = 1
 /** The cell closes a socket with 1009 on any client frame larger than 4096 bytes. */
 const MAX_MESSAGE = 4096
+const utf8 = new TextEncoder()
 
 export class LiveClient {
   readonly #options: LiveOptions
@@ -143,13 +144,16 @@ export class LiveClient {
   #sendSubscribe(entry: Entry) {
     if (entry.refused?.code === "live.not_subscribable") return
     const wire = JSON.stringify({ type: "subscribe", id: entry.id, path: entry.path })
-    if (wire.length > MAX_MESSAGE) {
+    if (utf8.encode(wire).byteLength > MAX_MESSAGE) {
       // Never send a frame larger than MAX_MESSAGE: the cell closes the shared socket with 1009.
       const refusal: LiveRefusal = { code: "live.not_subscribable", message: "subscription exceeds the live protocol frame limit" }
       entry.refused = refusal
+      const subscribers = [...entry.subscribers]
       queueMicrotask(() => {
         if (this.#byId.get(entry.id) !== entry) return
-        for (const subscriber of entry.subscribers) subscriber.onRefused?.(refusal)
+        for (const subscriber of subscribers) {
+          if (entry.subscribers.has(subscriber)) subscriber.onRefused?.(refusal)
+        }
         this.#options.onRefused?.({ ...refusal, id: entry.id, path: entry.path })
       })
       return

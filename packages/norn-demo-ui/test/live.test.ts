@@ -212,3 +212,52 @@ test("LiveClient guards against frames larger than 4096 bytes so an oversize sub
   expect(refused[0]?.code).toBe("live.not_subscribable")
   unsub()
 })
+
+test("a multibyte filter over the wire limit is refused without disrupting a healthy subscription", async () => {
+  const { client, sockets, flush } = harness()
+  const healthyPath = "/v1/objects/good"
+  const healthy: LiveSnapshot[] = []
+  const refused: LiveRefusal[] = []
+  const badPath = `/v1/objects/commerce.PurchaseOrder:facets?filter=${"é".repeat(2050)}`
+  const wire = JSON.stringify({ type: "subscribe", id: "s2", path: badPath })
+  expect(wire.length).toBeLessThan(4096)
+  expect(new TextEncoder().encode(wire).byteLength).toBeGreaterThan(4096)
+
+  const stopHealthy = client.subscribe(healthyPath, (snapshot) => healthy.push(snapshot))
+  await flush()
+  const socket = sockets[0]!
+  socket.emit("open")
+  socket.snapshot("s1", "before", {})
+  const stopBad = client.subscribe(badPath, () => {}, { onRefused: (refusal) => refused.push(refusal) })
+  await flush()
+  expect(socket.sent).toEqual([{ type: "subscribe", id: "s1", path: healthyPath }])
+  expect(refused).toEqual([{ code: "live.not_subscribable", message: "subscription exceeds the live protocol frame limit" }])
+  socket.snapshot("s1", "after", {})
+  expect(healthy.map((snapshot) => snapshot.digest)).toEqual(["before", "after"])
+
+  socket.emit("close", { code: 4401 })
+  await flush()
+  const reconnected = sockets[1]!
+  reconnected.emit("open")
+  expect(reconnected.sent).toEqual([{ type: "subscribe", id: "s1", path: healthyPath }])
+  stopBad()
+  stopHealthy()
+})
+
+test("same-tick subscribers to a locally refused path each receive the refusal once", async () => {
+  const { client, refusals, flush } = harness()
+  const path = `/v1/objects/bad?filter=${"a".repeat(4096)}`
+  const first: LiveRefusal[] = []
+  const second: LiveRefusal[] = []
+  const stopFirst = client.subscribe(path, () => {}, { onRefused: (refusal) => first.push(refusal) })
+  const stopSecond = client.subscribe(path, () => {}, { onRefused: (refusal) => second.push(refusal) })
+
+  expect(first).toHaveLength(0)
+  expect(second).toHaveLength(1)
+  await flush()
+  expect(first).toEqual(second)
+  expect(second).toHaveLength(1)
+  expect(refusals).toHaveLength(1)
+  stopFirst()
+  stopSecond()
+})

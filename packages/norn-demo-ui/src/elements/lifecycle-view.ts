@@ -406,9 +406,9 @@ export interface LifecycleReadController {
 
 /**
  * Drives the lifecycle view's admitted machine over `read` (GET) and `changes` (live socket).
- * Reconciles the first socket snapshot with the initial GET regardless of arrival order: if the
- * two answers differ (in either delivery order), one fresh GET runs after both observations so the
- * displayed counts always converge to the cell's newest snapshot. Also surfaces live subscription
+ * Reconciles the first socket snapshot, including after a refusal, with the latest GET. If the
+ * two answers differ, one fresh GET runs after both observations so the displayed counts converge
+ * to the cell's newest snapshot. Also surfaces live subscription
  * refusals (e.g. `live.not_subscribable` past the 512-byte path limit) so the view can offer manual
  * refresh instead of silently going stale.
  */
@@ -525,6 +525,8 @@ export function createLifecycleReadController(options: LifecycleReadControllerOp
     },
     (refusal) => {
       if (disposed) return
+      // A manual refresh during a refusal can move the displayed counts beyond the last digest.
+      seen = null
       setLiveRefusal(refusal)
     },
   )

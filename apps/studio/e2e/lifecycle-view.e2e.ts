@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs"
-import { expect, test, type Page, type Route } from "@playwright/test"
+import { expect, test, type Page, type Route, type WebSocketRoute } from "@playwright/test"
 import { session } from "./object-cell.ts"
 
 // The lifecycle view (UI-LIFECYCLE-2): both the contact-sheet specimens and the full Studio
@@ -136,13 +136,21 @@ interface FacetsState {
   body: unknown
 }
 
+interface FacetsSubscription {
+  readonly id: string
+  readonly path: string
+  readonly property: string
+  readonly socket: WebSocketRoute
+  readonly sendSnapshot: (digest?: string) => void
+}
+
 /** Stand-in live cell serving definitions, records, scoped facets (`object_facets.rs`), and WebSocket live refresh. */
 async function lifecycleCell(
   page: Page,
   initial: Record<string, FacetsState>,
   options: {
     readonly includeWidget?: boolean
-    readonly onSubscribe?: (sub: { readonly id: string; readonly path: string; readonly property: string; readonly sendSnapshot: () => void }) => void
+    readonly onSubscribe?: (sub: FacetsSubscription) => void
   } = {},
 ) {
   await session(page)
@@ -224,13 +232,13 @@ async function lifecycleCell(
         return
       }
       subs.set(msg.id, { ws, path: msg.path, seq: revision })
-      const sendSnapshot = () => {
+      const sendSnapshot = (digest = `rev-${revision}`) => {
         const current = snapshotFor(msg.path)
-        ws.send(JSON.stringify({ type: "snapshot", id: msg.id, status: current.status, digest: `rev-${revision}`, body: current.body }))
+        ws.send(JSON.stringify({ type: "snapshot", id: msg.id, status: current.status, digest, body: current.body }))
       }
       if (options.onSubscribe) {
         const parsed = new URL(msg.path, "https://cell")
-        options.onSubscribe({ id: msg.id, path: msg.path, property: parsed.searchParams.get("properties") ?? "status", sendSnapshot })
+        options.onSubscribe({ id: msg.id, path: msg.path, property: parsed.searchParams.get("properties") ?? "status", socket: ws, sendSnapshot })
       } else {
         sendSnapshot()
       }
@@ -614,6 +622,43 @@ test.describe("Records page Lifecycle view mode", () => {
     await statusView.getByRole("button", { name: "Refresh" }).click()
     await expect(card(statusView, "draft").locator("[data-count]")).toHaveText("9")
     await expect(card(statusView, "submitted").locator("[data-count]")).toHaveText("3")
+  })
+
+  test("records page: recovery from live subscription capacity refreshes counts when the digest repeats", async ({ page }) => {
+    const original = okFacets("status", { draft: 1 })
+    const statusSockets: WebSocketRoute[] = []
+    const cell = await lifecycleCell(page, { status: original }, {
+      includeWidget: false,
+      onSubscribe: ({ id, property, socket, sendSnapshot }) => {
+        if (property !== "status") return sendSnapshot()
+        statusSockets.push(socket)
+        if (statusSockets.length === 2) {
+          socket.send(JSON.stringify({ type: "refused", id, code: "live.too_many_subscriptions", message: "this socket's subscriptions are full" }))
+        } else {
+          sendSnapshot("original")
+        }
+      },
+    })
+
+    await page.goto("/objects/commerce.PurchaseOrder#lifecycle")
+    const view = page.locator('[data-testid="lifecycle-view"] norn-lifecycle-view').first()
+    const count = card(view, "draft").locator("[data-count]")
+    const banner = view.locator('[data-region="live-off"]')
+    await expect(count).toHaveText("1")
+    await expect.poll(() => statusSockets.length).toBe(1)
+    await statusSockets[0]!.close({ code: 4401 })
+    await expect(banner).toBeVisible()
+
+    cell.setFacets("status", okFacets("status", { draft: 2 }))
+    await view.getByRole("button", { name: "Refresh" }).click()
+    await expect(count).toHaveText("2")
+    await shoot(page, "records-live-capacity-refused")
+
+    cell.setFacets("status", original)
+    await statusSockets[1]!.close({ code: 4401 })
+    await expect(banner).toBeHidden()
+    await expect(count).toHaveText("1")
+    await shoot(page, "records-live-capacity-recovered")
   })
 
   test("unattributed findings render without a witness stepper and never highlight states", async ({ page }) => {

@@ -312,6 +312,48 @@ describe("first-snapshot and initial-GET reconciliation", () => {
     expect(draftCountOf(controller.lastAnswer())).toBe(9)
     controller.dispose()
   })
+
+  test("the first snapshot after a capacity refusal reconciles even when its digest repeats", async () => {
+    let count = 1
+    let readCalls = 0
+    let emitSnapshot!: (answer: LiveAnswer) => void
+    let emitRefused!: (refusal: LiveSubscriptionRefusal) => void
+    const controller = createLifecycleReadController({
+      machine: VIEW_MACHINE,
+      read: async () => {
+        readCalls += 1
+        return facetsAnswer(count)
+      },
+      changes: (listener, onRefused) => {
+        emitSnapshot = listener
+        emitRefused = onRefused!
+        return () => {}
+      },
+      onState: () => {},
+    })
+
+    await settle()
+    const original = facetsAnswer(1, "rev-1")
+    emitSnapshot(original)
+    expect(draftCountOf(controller.lastAnswer())).toBe(1)
+    expect(readCalls).toBe(1)
+
+    emitRefused({ code: "live.too_many_subscriptions", message: "this socket's subscriptions are full" })
+    expect(controller.liveRefusal()?.code).toBe("live.too_many_subscriptions")
+    count = 2
+    controller.refresh()
+    await settle()
+    expect(draftCountOf(controller.lastAnswer())).toBe(2)
+    expect(readCalls).toBe(2)
+
+    count = 1
+    emitSnapshot(original)
+    await settle()
+    expect(controller.liveRefusal()).toBeNull()
+    expect(draftCountOf(controller.lastAnswer())).toBe(1)
+    expect(readCalls).toBe(3)
+    controller.dispose()
+  })
 })
 
 // A property over generated lifecycles, in both directions: on the board's grid (11rem cards,
