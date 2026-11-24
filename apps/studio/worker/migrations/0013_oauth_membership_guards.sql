@@ -1,24 +1,30 @@
--- Commit-time OAuth membership-generation, session, and per-claim guards (S3):
+-- Commit-time OAuth membership-generation, session, and exact per-claim guards (S3):
 -- Every OAuth grant reference encodes `<organizationId>|<memberId>` (an immutable membership
 -- generation). Legacy bare-org grants without `|<memberId>` are refused by every trigger.
 -- 1. Claimed consent approvals live in the dedicated `oauth_consent_claim` table (outside
 --    Better Auth's `verification` expiry sweep) with a unique index on (userId, clientId,
 --    referenceId) so at most one claimed approval exists per grant until atomically consumed
 --    by authorization-code issuance or atomically rolled back and deleted.
--- 2. oauthConsent INSERT/UPDATE requires BOTH an exact ready membership generation AND an active
---    claimed consent approval in `oauth_consent_claim` for that exact (userId, clientId,
---    referenceId) bound to a live, unexpired caller session (with a narrow rollback path restoring
---    only the pre-request consent snapshot recorded on the claim).
+-- 2. oauthConsent carries `claimId` and its INSERT/UPDATE triggers require BOTH an exact ready
+--    membership generation AND that the exact live unexpired `oauth_consent_claim` row
+--    `cl."id" = new."claimId"` exists for (userId, clientId, referenceId) bound to a live
+--    unexpired caller session (with a narrow rollback path restoring only the pre-request
+--    consent snapshot recorded on `cl."id" = old."claimId"`).
 -- 3. authorization_code INSERT in verification requires an exact ready membership generation,
 --    a live unexpired session, a matching oauthConsent row whose committed `scopes`, `resources`,
---    and `requestedUserInfoClaims` cover every scope/resource/claim requested in the code, and—
---    whenever ANY claimed approval exists in `oauth_consent_claim` for that triple (provisional
---    consent)—MUST carry that exact unexpired claim's `claimId` and match its sessionId,
---    redirectUri, codeChallenge, and state; on commit, it consumes ONLY that exact `claimId`.
+--    and `requestedUserInfoClaims` cover every scope/resource/claim requested in the code, AND:
+--    - when `$.claimId` IS supplied (consent-accept flow), that EXACT live unexpired claim row
+--      MUST exist in `oauth_consent_claim`, match (userId, clientId, referenceId, sessionId,
+--      redirectUri, codeChallenge, state), AND match `c."claimId"`;
+--    - when `$.claimId` is NULL (silent re-authorize flow), NO claim row may exist for
+--      (userId, clientId, referenceId);
+--    on commit, it consumes ONLY that exact `claimId`.
 -- 4. oauthRefreshToken and user oauthAccessToken INSERT require an exact ready membership generation.
 -- 5. Deleting a membership immediately deletes matching consents, active claims, & unredeemed
 --    authorization codes and revokes matching refresh & access tokens so rejoin can never
 --    resurrect prior grants.
+
+alter table "oauthConsent" add column "claimId" text;
 
 create table "oauth_consent_claim" (
   "id" text not null primary key,
@@ -43,6 +49,7 @@ begin
   where new."userId" is null
      or new."clientId" is null
      or new."referenceId" is null
+     or new."claimId" is null
      or instr(new."referenceId", '|') <= 1
      or instr(substr(new."referenceId", instr(new."referenceId", '|') + 1), '|') > 0
      or length(substr(new."referenceId", instr(new."referenceId", '|') + 1)) = 0
@@ -60,7 +67,8 @@ begin
          and s."token" = cl."sessionToken"
          and s."userId" = new."userId"
          and (case when typeof(s."expiresAt") in ('integer', 'real') then s."expiresAt" > (julianday('now') - 2440587.5) * 86400000.0 else julianday(s."expiresAt") > julianday('now') end)
-       where cl."userId" = new."userId"
+       where cl."id" = new."claimId"
+         and cl."userId" = new."userId"
          and cl."clientId" = new."clientId"
          and cl."referenceId" = new."referenceId"
          and (case when typeof(cl."expiresAt") in ('integer', 'real') then cl."expiresAt" > (julianday('now') - 2440587.5) * 86400000.0 else julianday(cl."expiresAt") > julianday('now') end)
@@ -75,9 +83,11 @@ begin
     and new."clientId" = old."clientId"
     and new."userId" = old."userId"
     and new."referenceId" = old."referenceId"
+    and old."claimId" is not null
     and exists (
       select 1 from "oauth_consent_claim" cl
-      where cl."userId" = old."userId"
+      where cl."id" = old."claimId"
+        and cl."userId" = old."userId"
         and cl."clientId" = old."clientId"
         and cl."referenceId" = old."referenceId"
         and cl."prevConsent" is not null
@@ -92,12 +102,17 @@ begin
           (new."requestedUserInfoClaims" is null and json_extract(cl."prevConsent", '$.requestedUserInfoClaims') is null)
           or new."requestedUserInfoClaims" = json_extract(cl."prevConsent", '$.requestedUserInfoClaims')
         )
+        and (
+          (new."claimId" is null and json_extract(cl."prevConsent", '$.claimId') is null)
+          or new."claimId" = json_extract(cl."prevConsent", '$.claimId')
+        )
     )
   )
   and (
     new."userId" is null
     or new."clientId" is null
     or new."referenceId" is null
+    or new."claimId" is null
     or instr(new."referenceId", '|') <= 1
     or instr(substr(new."referenceId", instr(new."referenceId", '|') + 1), '|') > 0
     or length(substr(new."referenceId", instr(new."referenceId", '|') + 1)) = 0
@@ -115,7 +130,8 @@ begin
         and s."token" = cl."sessionToken"
         and s."userId" = new."userId"
         and (case when typeof(s."expiresAt") in ('integer', 'real') then s."expiresAt" > (julianday('now') - 2440587.5) * 86400000.0 else julianday(s."expiresAt") > julianday('now') end)
-      where cl."userId" = new."userId"
+      where cl."id" = new."claimId"
+        and cl."userId" = new."userId"
         and cl."clientId" = new."clientId"
         and cl."referenceId" = new."referenceId"
         and (case when typeof(cl."expiresAt") in ('integer', 'real') then cl."expiresAt" > (julianday('now') - 2440587.5) * 86400000.0 else julianday(cl."expiresAt") > julianday('now') end)
@@ -158,6 +174,10 @@ begin
        where c."userId" = json_extract(new."value", '$.userId')
          and c."clientId" = json_extract(new."value", '$.query.client_id')
          and c."referenceId" = json_extract(new."value", '$.referenceId')
+         and (
+           json_extract(new."value", '$.claimId') is null
+           or c."claimId" = json_extract(new."value", '$.claimId')
+         )
          and json_valid(c."scopes")
          and json_type(c."scopes") = 'array'
          and not exists (
@@ -229,20 +249,29 @@ begin
            )
          )
      )
-     or exists (
-       select 1 from "oauth_consent_claim" cl
-       where cl."userId" = json_extract(new."value", '$.userId')
-         and cl."clientId" = json_extract(new."value", '$.query.client_id')
-         and cl."referenceId" = json_extract(new."value", '$.referenceId')
-         and (
-           json_extract(new."value", '$.claimId') is null
-           or cl."id" != json_extract(new."value", '$.claimId')
-           or not (case when typeof(cl."expiresAt") in ('integer', 'real') then cl."expiresAt" > (julianday('now') - 2440587.5) * 86400000.0 else julianday(cl."expiresAt") > julianday('now') end)
-           or cl."sessionId" != json_extract(new."value", '$.sessionId')
-           or cl."redirectUri" != coalesce(json_extract(new."value", '$.query.redirect_uri'), '')
-           or coalesce(cl."codeChallenge", '') != coalesce(json_extract(new."value", '$.query.code_challenge'), '')
-           or coalesce(cl."state", '') != coalesce(json_extract(new."value", '$.query.state'), '')
-         )
+     or (
+       json_extract(new."value", '$.claimId') is not null
+       and not exists (
+         select 1 from "oauth_consent_claim" cl
+         where cl."id" = json_extract(new."value", '$.claimId')
+           and cl."userId" = json_extract(new."value", '$.userId')
+           and cl."clientId" = json_extract(new."value", '$.query.client_id')
+           and cl."referenceId" = json_extract(new."value", '$.referenceId')
+           and cl."sessionId" = json_extract(new."value", '$.sessionId')
+           and cl."redirectUri" = coalesce(json_extract(new."value", '$.query.redirect_uri'), '')
+           and coalesce(cl."codeChallenge", '') = coalesce(json_extract(new."value", '$.query.code_challenge'), '')
+           and coalesce(cl."state", '') = coalesce(json_extract(new."value", '$.query.state'), '')
+           and (case when typeof(cl."expiresAt") in ('integer', 'real') then cl."expiresAt" > (julianday('now') - 2440587.5) * 86400000.0 else julianday(cl."expiresAt") > julianday('now') end)
+       )
+     )
+     or (
+       json_extract(new."value", '$.claimId') is null
+       and exists (
+         select 1 from "oauth_consent_claim" cl
+         where cl."userId" = json_extract(new."value", '$.userId')
+           and cl."clientId" = json_extract(new."value", '$.query.client_id')
+           and cl."referenceId" = json_extract(new."value", '$.referenceId')
+       )
      );
 end;
 

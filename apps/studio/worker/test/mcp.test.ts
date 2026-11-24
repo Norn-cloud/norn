@@ -751,9 +751,14 @@ test("S3 generation isolation: unredeemed codes, legacy grants, prior consents, 
     [user, clientC, grantRefGen2, session6.id, session6.token, CLAUDE, pkceC.challenge],
   )
   sqlite.run(
-    `insert into "oauthConsent" ("id", "clientId", "userId", "referenceId", "scopes", "resources", "createdAt", "updatedAt") values ('prov_c', ?, ?, ?, '["openid","offline_access"]', ?, datetime('now'), datetime('now'))`,
+    `insert into "oauthConsent" ("id", "clientId", "userId", "referenceId", "scopes", "resources", "claimId", "createdAt", "updatedAt") values ('prov_c', ?, ?, ?, '["openid","offline_access"]', ?, 'claim_c', datetime('now'), datetime('now'))`,
     [clientC, user, grantRefGen2, JSON.stringify([RESOURCE])],
   )
+  // R6-1a: A stale request carrying an older/different claimId MUST abort on oauthConsent INSERT/UPDATE
+  // even while a live successor claim (`claim_c`) exists for the same (userId, clientId, referenceId)!
+  expect(() => sqlite.run(
+    `update "oauthConsent" set "scopes" = '["openid"]', "claimId" = 'expired_claim_id' where "id" = 'prov_c'`,
+  )).toThrow("oauth.membership_invalid")
   // Concurrent GET /oauth2/authorize is refused 409 CONSENT_IN_PROGRESS while a claim is active (never reads provisional consent).
   const concurrentAuth = await call(env, authorizeUrl(clientC, pkce().challenge), { headers: { cookie: cookie6 } })
   expect(concurrentAuth.status).toBe(409)
@@ -829,6 +834,20 @@ test("S3 generation isolation: unredeemed codes, legacy grants, prior consents, 
       referenceId: grantRefGen2,
       resource: ["https://other.example/mcp"],
       query: { client_id: clientA, redirect_uri: CLAUDE, scope: "openid", code_challenge: pkce().challenge, state: "st-race-res" },
+    })],
+  )).toThrow("oauth.membership_invalid")
+  // R6-1b: A supplied `claimId` on `authorization_code` MUST abort if that claim row no longer
+  // exists, even when committed `oauthConsent` covers every requested scope and resource!
+  expect(() => sqlite.run(
+    `insert into "verification" ("id", "identifier", "value", "expiresAt", "createdAt", "updatedAt") values ('gone_claim_code', 'gone_claim_1', ?, datetime('now', '+5 minutes'), datetime('now'), datetime('now'))`,
+    [JSON.stringify({
+      type: "authorization_code",
+      claimId: "deleted_claim_id",
+      userId: user,
+      sessionId: session6.id,
+      referenceId: grantRefGen2,
+      resource: [RESOURCE],
+      query: { client_id: clientA, redirect_uri: CLAUDE, scope: "openid", code_challenge: pkce().challenge, state: "st-gone-claim" },
     })],
   )).toThrow("oauth.membership_invalid")
 })

@@ -31,7 +31,7 @@ import { metricHeading, metricQuestion, readMetrics, recentWindow, timeLabel, wi
 import { figure, unitGroups, type UnitGroup } from "./lib/answer-anatomy.ts"
 import { evaluateQuestion } from "./lib/evaluate.ts"
 import { readDocument } from "./lib/exact.ts"
-import { ProfileTimedOut, readProfile } from "./lib/profile.ts"
+import { ProfileTimedOut, profileQueryKey, readProfile } from "./lib/profile.ts"
 import { useLiveRefresh } from "./lib/live-reads.ts"
 export { AnswerView, LiveRecords, RefusedNote, type FetchTrace } from "./answer-view.tsx"
 
@@ -55,24 +55,23 @@ function MetricCard({ metric, turn, onSettled, scope: boundScope }: {
   readonly turn: boolean
   /** Called once this question is settled (answered, refused, or nothing to ask). */
   readonly onSettled: () => void
-  readonly scope?: StudioScope | null
+  readonly scope: StudioScope | null
 }) {
   const { view } = useView()
   // A question asks the cell only once it is near view and the ones above it have their answers.
   const [ref, seen] = useSeen<HTMLElement>()
-  const scopeKey = boundScope ? `${boundScope.orgId}:${boundScope.environmentId}` : ""
   const active = seen && turn
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
   const [conditions, setConditions] = useState<readonly Condition[]>([])
   // The unit group whose weekly answer is open: chosen from the groups the cell returned, never by default.
   const [picked, setPicked] = useState<UnitGroup | null>(null)
-  const profile = useQuery({ queryKey: ["profile", scopeKey, metric.objectType], queryFn: () => readProfile(metric.objectType, undefined, boundScope), retry: false, enabled: active })
+  const profile = useQuery({ queryKey: profileQueryKey(metric.objectType, boundScope), queryFn: () => readProfile(metric.objectType, boundScope), retry: false, enabled: active })
   const typeNamed = (name: string) => catalog.data?.document.flatMap((artifact) => artifact.kind === "entity" && "objectType" in artifact.payload && artifact.payload.objectType.name === name ? [artifact.payload.objectType] : [])[0]
   // A time read through links (a posting's time is its event's) is profiled on the type the links reach, as the
   // cell declares them; the window then spans every date that type carries.
   const timeType = (metric.timeLinks ?? []).reduce<string | undefined>((type, link) => type === undefined ? undefined
     : (typeNamed(type) as { readonly links?: readonly { readonly id: string; readonly target: string }[] } | undefined)?.links?.find(({ id }) => id === link)?.target, metric.objectType)
-  const timeProfile = useQuery({ queryKey: ["profile", scopeKey, timeType], queryFn: () => readProfile(timeType!, undefined, boundScope), retry: false, enabled: active && timeType !== undefined && timeType !== metric.objectType })
+  const timeProfile = useQuery({ queryKey: profileQueryKey(timeType ?? "", boundScope), queryFn: () => readProfile(timeType!, boundScope), retry: false, enabled: active && timeType !== undefined && timeType !== metric.objectType })
   const timeDocument = timeType === metric.objectType ? profile.data?.document : timeProfile.data?.document
   const profiledWindow = timeDocument && metric.timeProperty !== null ? windowOf(timeDocument, metric.timeProperty) : undefined
   // The profile sent no range for the time property (a hosted cell may withhold it): ask the latest 52 weeks, and say so.
@@ -225,8 +224,10 @@ function Conditions({ fields, conditions, onChange }: { readonly fields: readonl
 /** The questions a connected cell can answer: the metrics it derives from its admitted types, grouped by type. */
 function LiveQuestionsBoard() {
   const scope = useStudioScope()
-  const scopeKey = scope.data ? `${scope.data.orgId}:${scope.data.environmentId}` : ""
-  const metrics = useQuery({ queryKey: ["metrics", scopeKey], queryFn: () => readMetrics(scope.data), enabled: !scope.isPending, retry: false })
+  const boundScope = scope.data ?? null
+  const scopeKey = boundScope ? `${boundScope.orgId}:${boundScope.environmentId}` : ""
+  const metrics = useQuery({ queryKey: ["metrics", scopeKey], queryFn: () => readMetrics(boundScope), enabled: scope.isSuccess, retry: false })
+  if (scope.isError) return <p role="alert" className="text-destructive">{scope.error.message}</p>
   if (scope.isPending || metrics.isPending) return <p className="text-muted-foreground">Reading what the cell can answer…</p>
   if (metrics.isError) return metrics.error instanceof NotServed
     ? <EmptyState icon={ChartLine} title="Not served">{metrics.error.message}</EmptyState>
@@ -234,17 +235,16 @@ function LiveQuestionsBoard() {
   const list = metrics.data.document.metrics
   if (list.length === 0) return <EmptyState icon={ChartLine}>No admitted type declares an additive measure yet, so there is nothing to add up.</EmptyState>
   const types = [...new Set(list.map(({ objectType }) => objectType))]
-  return <TypeSections types={types} list={list} scope={scope.data} />
+  return <TypeSections types={types} list={list} scope={boundScope} />
 }
 
 /**
  * The metrics by type. A type the cell holds no readable records for does not take a card per
  * metric: its metrics are listed together, compactly, after the types that have records.
  */
-function TypeSections({ types, list, scope: boundScope }: { readonly types: readonly string[]; readonly list: readonly MetricSummary[]; readonly scope?: StudioScope | null }) {
-  const scopeKey = boundScope ? `${boundScope.orgId}:${boundScope.environmentId}` : ""
+function TypeSections({ types, list, scope: boundScope }: { readonly types: readonly string[]; readonly list: readonly MetricSummary[]; readonly scope: StudioScope | null }) {
   // The profiles each card reads as it comes into view (one analytics read at a time): read here, never asked here.
-  const profiles = useQueries({ queries: types.map((type) => ({ queryKey: ["profile", scopeKey, type], queryFn: () => readProfile(type, undefined, boundScope), retry: false, enabled: false })) })
+  const profiles = useQueries({ queries: types.map((type) => ({ queryKey: profileQueryKey(type, boundScope), queryFn: () => readProfile(type, boundScope), retry: false, enabled: false })) })
   const empty = (index: number) => profiles[index]?.data?.document.rows === 0
   const held = types.filter((_, index) => !empty(index))
   const without = types.filter((_, index) => empty(index))

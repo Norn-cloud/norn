@@ -87,7 +87,14 @@ const objectPath = (objectType: string, id: string, leaf?: string) =>
 export const readFindings = (objectType: string, id: string): Promise<Read<ObjectFindings>> =>
   cellRead<ObjectFindings>(objectPath(objectType, id, "findings"), "Findings")
 
-export const readHistory = (objectType: string, id: string, boundScope?: StudioScope | null): Promise<Read<ObjectHistory>> =>
+/** Prefix shared with invalidators (`["history", objectType, id]`) for every workspace scope. */
+export const historyQueryPrefix = (objectType: string, id: string) => ["history", objectType, id] as const
+
+/** Workspace-scoped TanStack Query key for record history, sharing {@link historyQueryPrefix}. */
+export const historyQueryKey = (objectType: string, id: string, scope: StudioScope | null) =>
+  [...historyQueryPrefix(objectType, id), scope ? `${scope.orgId}:${scope.environmentId}` : ""] as const
+
+export const readHistory = (objectType: string, id: string, boundScope: StudioScope | null): Promise<Read<ObjectHistory>> =>
   cellRead<ObjectHistory>(objectPath(objectType, id, "history"), "History", {}, undefined, boundScope)
 
 /**

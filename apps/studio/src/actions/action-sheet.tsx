@@ -7,6 +7,7 @@ import { useView } from "@/lib/view"
 import { conceptTitle } from "../lib/catalog.ts"
 import { callAction, listActions, type ActionSummary, type CatalogRead, type Draft } from "../lib/actions.ts"
 import { scopeFromAccount, type StudioScope } from "../lib/definitions.ts"
+import { profileQueryPrefix } from "../lib/profile.ts"
 import { useAccount } from "../lib/session.ts"
 import { ActionForm } from "./action-form.tsx"
 import { keptDrafts, sessionKey } from "./kept-drafts.ts"
@@ -89,7 +90,7 @@ export function ActionSheet({ open, onClose, onView }: { readonly open: OpenActi
     void client.invalidateQueries({ queryKey: ["timeline-lane"] })
     void client.invalidateQueries({ queryKey: ["timeline-nearest"] })
     void client.invalidateQueries({ queryKey: ["inbox"] })
-    void client.invalidateQueries({ queryKey: ["profile", objectKind] })
+    void client.invalidateQueries({ queryKey: profileQueryPrefix(objectKind) })
     void client.invalidateQueries({ queryKey: ["quarantined", objectKind] })
   }
   const close = () => {

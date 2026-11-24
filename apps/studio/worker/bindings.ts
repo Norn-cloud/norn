@@ -264,6 +264,30 @@ export async function adoptCell(
   return results.length > 0
 }
 
+/**
+ * Sync a ready binding row forward when reconciliation discovers the cell already holds a newer
+ * version (e.g. a timed-out edit that committed in the cell after its lease expired).
+ */
+export async function adoptReadyCell(
+  db: D1Database,
+  orgId: string,
+  id: string,
+  definitionId: string,
+  version: number,
+  payload: Record<string, unknown>,
+  expectedPreviousVersion: number,
+): Promise<boolean> {
+  const label = typeof payload.label === "string" ? payload.label : null
+  const mapping = typeof payload.inputMapping === "object" && payload.inputMapping !== null ? JSON.stringify(payload.inputMapping) : null
+  const role = payload.runRole === "member" || payload.runRole === "admin" ? payload.runRole : null
+  const digest = typeof payload.manifestDigest === "string" ? payload.manifestDigest : null
+  const connector = typeof payload.connector === "object" && payload.connector !== null ? JSON.stringify(payload.connector) : null
+  const { results } = await db.prepare(
+    "UPDATE connector_binding SET label = COALESCE(?, label), input_mapping = COALESCE(?, input_mapping), run_role = COALESCE(?, run_role), manifest_digest = COALESCE(?, manifest_digest), connector = COALESCE(?, connector), definition_id = ?, definition_version = ? WHERE org_id = ? AND id = ? AND state = 'ready' AND definition_version = ? RETURNING id",
+  ).bind(label, mapping, role, digest, connector, definitionId, version, orgId, id, expectedPreviousVersion).all<{ id: string }>()
+  return results.length > 0
+}
+
 export async function removeBinding(db: D1Database, orgId: string, id: string): Promise<boolean> {
   const before = await getBinding(db, orgId, id)
   if (before === null) return false

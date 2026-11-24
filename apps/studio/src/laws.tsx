@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useMode } from "@/lib/live-transport"
 import { useStudioScope } from "@/lib/definitions"
-import { readProfile } from "@/lib/profile"
+import { profileQueryKey, readProfile } from "@/lib/profile"
 import { useView } from "@/lib/view"
 import { conceptTitle, lawHeadline, type Concept, type Law } from "./lib/catalog.ts"
 import { heldCountText, heldGroupKey, heldRuleTechnicalId, heldRuleTitle } from "./lib/guarantees.ts"
@@ -171,8 +171,8 @@ export function HeldRuleRow({ held, scanLimit }: { readonly held: Group; readonl
 /** A type's records the cell holds back, from the cell's own profile of what this reader may see. */
 function Quarantined({ objectType }: { readonly objectType: string }) {
   const scope = useStudioScope()
-  const scopeKey = scope.data ? `${scope.data.orgId}:${scope.data.environmentId}` : ""
-  const profile = useQuery({ queryKey: ["profile", scopeKey, objectType], queryFn: () => readProfile(objectType, undefined, scope.data), enabled: !scope.isPending, retry: false })
+  const boundScope = scope.data ?? null
+  const profile = useQuery({ queryKey: profileQueryKey(objectType, boundScope), queryFn: () => readProfile(objectType, boundScope), enabled: scope.isSuccess, retry: false })
   if (!profile.data) return null
   const { quarantinedRows, rows, approximate, scanLimit } = profile.data.document
   const bound = scanLimit > 0 ? ` of ${scanLimit.toLocaleString("en-US")} rows` : ""

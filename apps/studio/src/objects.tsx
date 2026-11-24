@@ -28,7 +28,7 @@ import { QuarantinedRecord } from "./quarantined-record.tsx"
 import { EvidenceList } from "./evidence/evidence-crop.tsx"
 import { Findings } from "./evidence/findings.tsx"
 import { History } from "./evidence/history.tsx"
-import { readFindings, readHistory, SOURCE_DOCUMENT, type Evidence, type EvidenceRef, type Finding } from "./evidence/review.ts"
+import { historyQueryKey, historyQueryPrefix, readFindings, readHistory, SOURCE_DOCUMENT, type Evidence, type EvidenceRef, type Finding } from "./evidence/review.ts"
 import { useEvidenceActions } from "./actions/evidence-actions.tsx"
 import { atScale, exactPretty, factDisplay, readProblem, recordName } from "./lib/objects.ts"
 import { compared, isList, roleOf } from "./lib/law-values.ts"
@@ -68,7 +68,7 @@ export function ObjectPage() {
   // The header names the version this read shows and, from the history, the commit that wrote it: a
   // read again reads both, so neither is left from an earlier read.
   const queries = useQueryClient()
-  const readAgain = () => { void reads.refetch(); void queries.invalidateQueries({ queryKey: ["history", name, id] }) }
+  const readAgain = () => { void reads.refetch(); void queries.invalidateQueries({ queryKey: historyQueryPrefix(name, id) }) }
   const live = useMode().data?.kind === "live"
   // Where each value was read, when a document scan carries it: the evidence the cell links to the record.
   const review = useQuery({ queryKey: ["findings", name, id], queryFn: () => readFindings(name, id), enabled: live, retry: false })
@@ -218,8 +218,8 @@ const TABS = [["overview", "Overview"], ["lineage", "Lineage"], ["rules", "Rules
  */
 function AsOf({ objectType, id, version, live }: { readonly objectType: string; readonly id: string; readonly version: number; readonly live: boolean }) {
   const scope = useStudioScope()
-  const scopeKey = scope.data ? `${scope.data.orgId}:${scope.data.environmentId}` : ""
-  const history = useQuery({ queryKey: ["history", scopeKey, objectType, id], queryFn: () => readHistory(objectType, id, scope.data), enabled: live && !scope.isPending, retry: false })
+  const boundScope = scope.data ?? null
+  const history = useQuery({ queryKey: historyQueryKey(objectType, id, boundScope), queryFn: () => readHistory(objectType, id, boundScope), enabled: live && scope.isSuccess, retry: false })
   const entry = history.data?.document.versions.find((candidate) => candidate.version === version)
   return (
     <span className="contents" title={entry ? "The commit that wrote this version, and its logical time" : undefined}>

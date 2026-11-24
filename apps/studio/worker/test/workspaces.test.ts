@@ -730,7 +730,13 @@ test("S4 null set-active refuses revoked sessions; S5 member/invitation mutation
     { email: "s5-unverified@example.com", role: "member", organizationId: alice.organizationId },
     { cookie: alice.cookie, [EXPECTED_ORG_HEADER]: alice.organizationId },
   )).json()) as { id: string }
-  // Unverified caller gets uniform 403 for both their own invitation and an absent invitation, and invitation stays pending.
+  // Unverified caller gets uniform 403 for both their own invitation and an absent invitation on
+  // BOTH accept-invitation and reject-invitation (no existence oracle), and invitation stays pending.
+  const unvAcceptOwn = await mutate(env, "POST", "/api/auth/organization/accept-invitation", { invitationId: invForUnverified.id }, { cookie: unverified.cookie })
+  const unvAcceptMissing = await mutate(env, "POST", "/api/auth/organization/accept-invitation", { invitationId: "inv_missing" }, { cookie: unverified.cookie })
+  expect(unvAcceptOwn.status).toBe(403)
+  expect(unvAcceptMissing.status).toBe(403)
+  expect(await unvAcceptOwn.json()).toEqual(await unvAcceptMissing.json())
   const unvOwn = await mutate(env, "POST", "/api/auth/organization/reject-invitation", { invitationId: invForUnverified.id }, { cookie: unverified.cookie })
   const unvMissing = await mutate(env, "POST", "/api/auth/organization/reject-invitation", { invitationId: "inv_missing" }, { cookie: unverified.cookie })
   expect(unvOwn.status).toBe(403)

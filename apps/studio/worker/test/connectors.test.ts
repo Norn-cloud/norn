@@ -819,12 +819,39 @@ test("R3-3/R3-4/R3-8: edit lease fencing, finishSave conflict detection, scoped 
   expect(await creating).toMatchObject({ status: 409, body: { code: "connectors.binding_conflict" } })
   expect(cell.held.has(`studio.binding.${lateCreateId}`)).toBe(false)
 
+  // R6-2: If a create commits in the cell and reconciliation ADOPTS it before the original response
+  // returns, finishSave sees the adopted row and returns 200 WITHOUT retiring the adopted definition!
+  let releaseAdoptedResponse: () => void = () => {}
+  const responseGate = new Promise<void>((resolve) => { releaseAdoptedResponse = resolve })
+  const slowResponseCreate = {
+    fetch: async (request: Request) => {
+      const response = await cell.host.fetch(request)
+      if (new URL(request.url).pathname === "/v1/definitions:install") await responseGate
+      return response
+    },
+  } as unknown as Fetcher
+  const creatingAdopted = send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "AdoptedCreate" }), cookie: owner }, { host: slowResponseCreate })
+  let adoptedId = ""
+  for (let i = 0; i < 100; i++) {
+    const row = db.query("SELECT id FROM connector_binding WHERE label = 'AdoptedCreate'").get() as { id: string } | null
+    if (row !== null && cell.held.has(`studio.binding.${row.id}`)) { adoptedId = row.id; break }
+    await Bun.sleep(10)
+  }
+  expect(adoptedId).not.toBe("")
+  clock.offset += PENDING_CREATE_LEASE_MS + 1
+  const adoptedList = await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: cell.host })
+  expect((adoptedList.body.bindings as { id: string; state: string; definition: { version: number } }[]).find((b) => b.id === adoptedId)).toMatchObject({ state: "ready", definition: { version: 1 } })
+  releaseAdoptedResponse()
+  expect(await creatingAdopted).toMatchObject({ status: 200, body: { binding: { id: adoptedId, state: "ready", definition: { version: 1 } } } })
+  expect(cell.held.has(`studio.binding.${adoptedId}`)).toBe(true)
+
   // R5-5b: Even if a hard isolate crash leaves D1 behind the cell's committed version, POST /bindings/:id/run
-  // fails closed with 409 connectors.binding_conflict instead of running stale fixed inputs.
+  // fails closed with 409 connectors.binding_conflict, and POST /bindings:reconcile heals D1 forward to v2!
   db.query("UPDATE connector_binding SET definition_version = 1 WHERE id = ?").run(created.id)
   const mismatchedRun = await send(`/bindings/${created.id}/run`, { ...body("POST", { input: {} }), cookie: owner }, { host: cell.host })
   expect(mismatchedRun).toMatchObject({ status: 409, body: { code: "connectors.binding_conflict" } })
-  db.query("UPDATE connector_binding SET definition_version = 2 WHERE id = ?").run(created.id)
+  const healed = await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: cell.host })
+  expect((healed.body.bindings as { id: string; definition: { version: number } }[]).find((b) => b.id === created.id)).toMatchObject({ definition: { version: 2 } })
 
   // 3. R3-8: GET /status and GET /inventory NEVER refresh or mutate an expired gateway token; POST /refresh does.
   const userId = (db.query("SELECT id FROM user WHERE email = 'r3-owner@example.com'").get() as { id: string }).id

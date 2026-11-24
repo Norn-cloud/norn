@@ -187,26 +187,28 @@ async function rollbackClaimedApproval(
   if (args.previousConsent === null) {
     statements.push({
       sql: `delete from "oauthConsent"
-            where "clientId" = ? and "userId" = ? and "referenceId" = ?
+            where "clientId" = ? and "userId" = ? and "referenceId" = ? and "claimId" = ?
               and exists (select 1 from "oauth_consent_claim" where "id" = ?)`,
-      params: [args.clientId, args.userId, args.referenceId, args.claimId],
+      params: [args.clientId, args.userId, args.referenceId, args.claimId, args.claimId],
     })
   } else if (args.previousConsent !== undefined) {
     const prev = args.previousConsent
     statements.push({
       sql: `update "oauthConsent"
-            set "scopes" = ?, "resources" = ?, "requestedUserInfoClaims" = ?, "updatedAt" = ?
-            where "id" = ? and "clientId" = ? and "userId" = ? and "referenceId" = ?
+            set "scopes" = ?, "resources" = ?, "requestedUserInfoClaims" = ?, "updatedAt" = ?, "claimId" = ?
+            where "id" = ? and "clientId" = ? and "userId" = ? and "referenceId" = ? and "claimId" = ?
               and exists (select 1 from "oauth_consent_claim" where "id" = ?)`,
       params: [
         prev.scopes,
         prev.resources,
         prev.requestedUserInfoClaims,
         prev.updatedAt,
+        prev.claimId ?? null,
         prev.id,
         args.clientId,
         args.userId,
         args.referenceId,
+        args.claimId,
         args.claimId,
       ],
     })
@@ -252,6 +254,7 @@ interface ConsentSnapshot {
   readonly resources: string | null
   readonly requestedUserInfoClaims: string | null
   readonly updatedAt: string | number
+  readonly claimId?: string | null
 }
 
 interface OAuthConsentScope {
@@ -704,6 +707,11 @@ export async function commitAcceptInvitation(
     readonly baseURL: string
   },
 ): Promise<AcceptInvitationOutcome> {
+  // Require a verified email BEFORE touching any invitation row so unverified accounts
+  // cannot probe whether an invitation exists for their address (S5).
+  if (!args.emailVerified) {
+    return { kind: "refused", status: 403, code: "EMAIL_VERIFICATION_REQUIRED_BEFORE_ACCEPTING_OR_REJECTING_INVITATION", message: "Email verification required before accepting or rejecting invitation" }
+  }
   // Scope target lookup strictly to the caller's email so absent and foreign-recipient invitations
   // produce one uniform 400 INVITATION_NOT_FOUND refusal without leaking invitation existence.
   const invitation = await dbFirst<{ id: string; organizationId: string; email: string; role: string | null; status: string; expiresAt: unknown }>(
@@ -714,9 +722,6 @@ export async function commitAcceptInvitation(
   )
   if (invitation === null || !(expiryOf(invitation.expiresAt) > Date.now()) || invitation.status !== "pending") {
     return { kind: "refused", status: 400, code: "INVITATION_NOT_FOUND", message: INVITATION_GONE }
-  }
-  if (!args.emailVerified) {
-    return { kind: "refused", status: 403, code: "EMAIL_VERIFICATION_REQUIRED_BEFORE_ACCEPTING_OR_REJECTING_INVITATION", message: "Email verification required before accepting or rejecting invitation" }
   }
   const org = await dbFirst<{ metadata: string | null }>(db, `select "metadata" from "organization" where "id" = ?`, invitation.organizationId)
   if (org === null) {
@@ -1750,7 +1755,8 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
                     'scopes', c."scopes",
                     'resources', c."resources",
                     'requestedUserInfoClaims', c."requestedUserInfoClaims",
-                    'updatedAt', c."updatedAt"
+                    'updatedAt', c."updatedAt",
+                    'claimId', c."claimId"
                   ) from "oauthConsent" c where c."clientId" = ? and c."userId" = ? and c."referenceId" = ? limit 1),
                  ?, ?
                where exists (select 1 from "session" s where s."id" = ? and s."token" = ? and s."userId" = ? and ${LIVE_SESSION_S_SQL})
@@ -1921,8 +1927,53 @@ const isOAuthMembershipAbort = (error: unknown): boolean =>
 
 export function createAuth(config: AuthConfig) {
   const self: Self = {}
-  const auth = betterAuth(authOptions(config, self))
+  const baseOptions = authOptions(config, self)
+  // Register `oauthConsent.claimId` at runtime (added by migration 0013) without altering the
+  // generated 0007_oauth_provider.sql schema contract in `authOptions`.
+  const options = {
+    ...baseOptions,
+    plugins: [
+      ...baseOptions.plugins,
+      ...config.mcp === true
+        ? [{ id: "norn-oauth-consent-claim", schema: { oauthConsent: { fields: { claimId: { type: "string" as const, required: false } } } } }]
+        : [],
+    ],
+  } satisfies BetterAuthOptions
+  const auth = betterAuth(options)
   self.auth = auth
+  // Stamp the active request's exact `claimedApprovalId` onto every `oauthConsent` create/update
+  // so SQLite triggers enforce exact-claim ownership (an expired request can never write under a
+  // successor's claim).
+  let claimAdapterReady: Promise<void> | null = null
+  const ensureClaimAdapterWrapped = (): Promise<void> => {
+    if (claimAdapterReady !== null) return claimAdapterReady
+    claimAdapterReady = auth.$context.then((ctx) => {
+      const adapter = ctx.adapter as unknown as {
+        create: (args: { model: string; data: Record<string, unknown>; [key: string]: unknown }) => Promise<unknown>
+        update: (args: { model: string; update: Record<string, unknown>; [key: string]: unknown }) => Promise<unknown>
+        __nornClaimWrapped?: boolean
+      }
+      if (adapter.__nornClaimWrapped) return
+      adapter.__nornClaimWrapped = true
+      const rawCreate = adapter.create.bind(adapter)
+      adapter.create = (args) => {
+        if (args.model === "oauthConsent") {
+          const claimId = oauthScopeStore.getStore()?.claimedApprovalId
+          if (claimId !== undefined) return rawCreate({ ...args, data: { ...args.data, claimId } })
+        }
+        return rawCreate(args)
+      }
+      const rawUpdate = adapter.update.bind(adapter)
+      adapter.update = (args) => {
+        if (args.model === "oauthConsent") {
+          const claimId = oauthScopeStore.getStore()?.claimedApprovalId
+          if (claimId !== undefined) return rawUpdate({ ...args, update: { ...args.update, claimId } })
+        }
+        return rawUpdate(args)
+      }
+    })
+    return claimAdapterReady
+  }
   const db = config.database as unknown as ProvisionDb
   const consentResponseFailed = async (response: Response, store: OAuthConsentScope): Promise<boolean> => {
     if (response.status >= 400) return true
@@ -1977,6 +2028,7 @@ export function createAuth(config: AuthConfig) {
   }
   const rawHandler = auth.handler
   auth.handler = async (request: Request) => {
+    await ensureClaimAdapterWrapped()
     const store: OAuthConsentScope = {}
     let failed = false
     try {
@@ -2005,6 +2057,7 @@ export function createAuth(config: AuthConfig) {
         const outer = oauthScopeStore.getStore()
         const store = outer ?? {}
         const invoke = async () => {
+          await ensureClaimAdapterWrapped()
           let failed = false
           try {
             const result = await (value as (...a: unknown[]) => unknown).apply(target, args)

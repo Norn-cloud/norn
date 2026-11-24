@@ -10,7 +10,7 @@ import { CellRefusal, NotServed } from "../lib/live-transport.ts"
 import { useStudioScope } from "../lib/definitions.ts"
 import { atScale } from "../lib/objects.ts"
 import { transport, type Artifact } from "@/lib/transport"
-import { readEvidence, readHistory, readScan, type Evidence, type EvidenceRef } from "./review.ts"
+import { historyQueryKey, readEvidence, readHistory, readScan, type Evidence, type EvidenceRef } from "./review.ts"
 
 /** A fraction of the page as a CSS percentage. */
 const percent = (fraction: string) => `${Number(fraction) * 100}%`
@@ -40,8 +40,8 @@ function scaleOf(artifacts: readonly Artifact[], objectType: string, property: s
  */
 function Correction({ evidence, subject }: { readonly evidence: Evidence; readonly subject: EvidenceRef }) {
   const scope = useStudioScope()
-  const scopeKey = scope.data ? `${scope.data.orgId}:${scope.data.environmentId}` : ""
-  const history = useQuery({ queryKey: ["history", scopeKey, subject.objectType, subject.id], queryFn: () => readHistory(subject.objectType, subject.id, scope.data), enabled: !scope.isPending, retry: false })
+  const boundScope = scope.data ?? null
+  const history = useQuery({ queryKey: historyQueryKey(subject.objectType, subject.id, boundScope), queryFn: () => readHistory(subject.objectType, subject.id, boundScope), enabled: scope.isSuccess, retry: false })
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
   const versions = [...history.data?.document.versions ?? []].sort((a, b) => b.version - a.version)
   const property = evidence.subjectProperty

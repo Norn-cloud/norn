@@ -39,8 +39,15 @@ export class ProfileTimedOut extends Error {
   constructor() { super(`The cell's profile didn't arrive within ${PROFILE_BUDGET_MS / 1000} seconds.`) }
 }
 
+/** Prefix shared with invalidators (`["profile", objectType]`) for every workspace scope. */
+export const profileQueryPrefix = (objectType: string) => ["profile", objectType] as const
+
+/** Workspace-scoped TanStack Query key for object profiles, sharing {@link profileQueryPrefix}. */
+export const profileQueryKey = (objectType: string, scope: StudioScope | null) =>
+  [...profileQueryPrefix(objectType), scope ? `${scope.orgId}:${scope.environmentId}` : ""] as const
+
 /** A profile is computed by the analytics engine: it waits its turn, a "pending" refusal is asked again, and each ask has a budget. */
-export const readProfile = (objectType: string, budgetMs: number = PROFILE_BUDGET_MS, boundScope?: StudioScope | null): Promise<Read<ObjectProfile>> =>
+export const readProfile = (objectType: string, boundScope: StudioScope | null, budgetMs: number = PROFILE_BUDGET_MS): Promise<Read<ObjectProfile>> =>
   inAnalyticsLane(async () => {
     const ask = () => cellRead<ObjectProfile>(`/v1/objects/${encodeURIComponent(objectType)}:profile`, "Profiles are", { signal: AbortSignal.timeout(budgetMs) }, undefined, boundScope).then((read) => ({ read }), (error: unknown) => ({
       error: error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError") ? new ProfileTimedOut() : error,

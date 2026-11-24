@@ -4,7 +4,7 @@ import { originAllowed, resolveActor, verifyWriteScope } from "./actor.ts"
 import type { Auth } from "./auth.ts"
 import { BindingDefinitions, bindingDefinitionId, CellUnavailable, type Install } from "./binding-definitions.ts"
 import { cellScope } from "./scope.ts"
-import { abandonSave, adoptCell, adoptCommittedEdit, beginCreate, beginEdit, connectorString, connectorVersion, finishSave, getBinding, listBindings, manifestDigest, readDraft, removeBinding, runInput, toolManifest, type Binding } from "./bindings.ts"
+import { abandonSave, adoptCell, adoptCommittedEdit, adoptReadyCell, beginCreate, beginEdit, connectorString, connectorVersion, finishSave, getBinding, listBindings, manifestDigest, readDraft, removeBinding, runInput, toolManifest, type Binding } from "./bindings.ts"
 import { Gateway, GatewayError } from "./gateway.ts"
 
 /**
@@ -213,8 +213,27 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
    * completed save can never be overwritten. Both creates and edits are fenced against premature
    * abandon while their lease is still active (cell already holding a newer version is safe to adopt).
    */
-  const reconcile = async (binding: Binding): Promise<Binding | null> => {
-    if (binding.state !== "pending" || binding.pendingDefinition === null) return binding
+  const reconcile = async (binding: Binding, checkReady = false): Promise<Binding | null> => {
+    if (binding.state !== "pending") {
+      // On explicit POST /bindings:reconcile, also heal ready bindings if the cell already holds a
+      // newer committed version (e.g. a timed-out edit that committed after its intent was abandoned).
+      if (!checkReady || binding.definition === null || deps.host === undefined) return binding
+      const cell = cellFor(environmentId)
+      if (cell === null) return binding
+      let held: Awaited<ReturnType<BindingDefinitions["get"]>>
+      try {
+        held = await cell.get(binding.definition.id)
+      } catch (error) {
+        if (error instanceof CellUnavailable) return binding
+        throw error
+      }
+      if (held.kind === "found" && held.version > binding.definition.version) {
+        await adoptReadyCell(db, actor.orgId, binding.id, binding.definition.id, held.version, held.payload, binding.definition.version)
+        return await getBinding(db, actor.orgId, binding.id)
+      }
+      return binding
+    }
+    if (binding.pendingDefinition === null) return binding
     const now = (deps.now ?? Date.now)()
     // Fence BOTH creates and edits during their active lease so reconciliation never adopts or
     // abandons an in-flight save before its own finishSave commits.
@@ -245,7 +264,7 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
   }
   if (route === "POST /bindings:reconcile") {
     if (!manage) return denied("reconcile tool bindings")
-    const rows = await Promise.all((await listBindings(db, actor.orgId)).map(reconcile))
+    const rows = await Promise.all((await listBindings(db, actor.orgId)).map((binding) => reconcile(binding, true)))
     return ok({ bindings: rows.filter((b): b is Binding => b !== null).map(shown), manage })
   }
   if (request.method === "DELETE" && bindingRoute !== null) {
@@ -410,13 +429,18 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
       const savedAt = (deps.now ?? Date.now)()
       const saved = await finishSave(db, actor.orgId, actor.subjectId, id, draft, { manifestDigest: digest, connector, definition }, attemptId, expectedPreviousVersion, savedAt)
       if (saved === null) {
-        // The pending attempt was abandoned or superseded after lease expiry while `cell.install`
-        // was still in flight. Compensate immediately so the cell never retains an orphaned
-        // definition and D1 never disagrees with the cell's committed definition version.
+        // The pending attempt was either ADOPTED by reconciliation or ABANDONED/SUPERSEDED after
+        // lease expiry while `cell.install` was in flight. Distinguish the two before compensating
+        // so we NEVER retire a definition that D1 already adopted, while still retiring orphaned
+        // abandoned creates and syncing abandoned edits to the cell's committed version.
         if (outcome.kind === "installed") {
-          if (existing === undefined) {
+          const current = await getBinding(db, actor.orgId, id)
+          if (current !== null && current.state === "ready" && current.definition?.id === outcome.id && current.definition.version === outcome.version) {
+            return ok({ binding: shown(current) })
+          }
+          if (current === null) {
             await cell.retire(outcome.id, outcome.version).catch(() => undefined)
-          } else {
+          } else if (existing !== undefined) {
             const synced = await adoptCommittedEdit(db, actor.orgId, actor.subjectId, id, draft, { manifestDigest: digest, connector, definition }, expectedPreviousVersion, savedAt)
             if (synced === null && (await getBinding(db, actor.orgId, id)) === null) {
               await cell.retire(outcome.id, outcome.version).catch(() => undefined)

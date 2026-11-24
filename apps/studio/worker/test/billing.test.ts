@@ -716,6 +716,7 @@ test("accepting a withdrawn invitation says what to do, not just that it is miss
   const { id } = (await (await post(env, "/api/auth/organization/invite-member", { email: "late@example.com", role: "member", organizationId }, { cookie })).json()) as { id: string }
   sql(env).run("delete from invitation where id = ?", [id])
   const late = await enroll(env, "late@example.com")
+  sql(env).run("update user set emailVerified = 1 where id = ?", [late.userId])
   const accept = await post(env, ACCEPT, { invitationId: id }, { cookie: late.cookie })
   expect(accept.status).toBe(400)
   const body = (await accept.json()) as { code: string; message: string }
