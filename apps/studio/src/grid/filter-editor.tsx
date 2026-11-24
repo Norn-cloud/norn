@@ -56,9 +56,11 @@ export const settled = (draft: readonly DraftClause[], fields: readonly Field[])
 
 const select = "h-8 rounded-md border bg-background px-2 text-sm"
 
-function ValueInput({ field, clause, onChange, label, problem }: { readonly field: Field; readonly clause: DraftClause; readonly onChange: (next: DraftClause) => void; readonly label: string; readonly problem: string | undefined }) {
+type ProblemProps = { readonly "aria-invalid"?: true; readonly "aria-describedby"?: string }
+
+function ValueInput({ field, clause, onChange, label, problemAt }: { readonly field: Field; readonly clause: DraftClause; readonly onChange: (next: DraftClause) => void; readonly label: string; readonly problemAt: (part: string) => ProblemProps }) {
   const kind = field.scalar.kind
-  const invalid = problem === undefined ? {} : { "aria-invalid": true, "aria-describedby": problem }
+  const invalid = problemAt("value")
   if (clause.op === "empty" || clause.op === "present") return null
   if (clause.op === "in") {
     if (field.scalar.kind === "enum") {
@@ -84,17 +86,24 @@ function ValueInput({ field, clause, onChange, label, problem }: { readonly fiel
   }
   if (kind === "boolean") {
     return (
-      <select aria-label={label} className={select} value={clause.value} onChange={(event) => onChange({ ...clause, value: event.target.value })}>
+      <select {...invalid} aria-label={label} className={select} value={clause.value} onChange={(event) => onChange({ ...clause, value: event.target.value })}>
         <option value="true">Yes</option><option value="false">No</option>
       </select>
     )
   }
   const typed = kind === "date" ? { type: "date" } : kind === "decimal" || kind === "integer" ? { inputMode: "decimal" as const } : {}
   const placeholder = kind === "timestamp" ? "2026-11-06T09:00:00Z" : kind === "duration" ? "P1D" : kind === "decimal" ? "Exact number" : undefined
-  const one = (key: "value" | "high", aria: string) => (
-    <Input {...typed} {...invalid} aria-label={aria} placeholder={placeholder} className="h-8 w-40" value={clause[key]} onChange={(event) => onChange({ ...clause, [key]: event.target.value })} />
+  const one = (key: "value" | "high", aria: string, problem: ProblemProps) => (
+    <Input {...typed} {...problem} aria-label={aria} placeholder={placeholder} className="h-8 w-40" value={clause[key]} onChange={(event) => onChange({ ...clause, [key]: event.target.value })} />
   )
-  return clause.op === "between" ? <span className="flex items-center gap-1">{one("value", `${label}, from`)}<span className="text-meta text-muted-foreground">and</span>{one("high", `${label}, to`)}</span> : one("value", label)
+  if (clause.op !== "between") return one("value", label, invalid)
+  return (
+    <span role="group" aria-label={label} {...invalid} className="flex items-center gap-1">
+      {one("value", `${label}, from`, problemAt("value/0"))}
+      <span className="text-meta text-muted-foreground">and</span>
+      {one("high", `${label}, to`, problemAt("value/1"))}
+    </span>
+  )
 }
 
 /** Writes the filter; the server applies it. Every refusal shows under the condition it points at. */
@@ -122,21 +131,30 @@ export function FilterEditor({ fields, draft, onDraft, onApply, onClear, applied
           const field = options.find(({ id: fid }) => fid === clause.property) ?? options[0]
           if (field === undefined) return null
           const label = `Condition ${index + 1}`
-          const problems = diagnosticsAt(diagnostics, `/filter/all/${index}`)
+          const pointer = `/filter/all/${index}`
+          const problems = diagnosticsAt(diagnostics, pointer).map((problem, i) => ({ ...problem, id: `${id}-${index}-${i}` }))
+          const problemAt = (part: string): ProblemProps => {
+            const control = `${pointer}/${part}`
+            const isList = clause.op === "in" && part === "value"
+            const descriptions = problems
+              .filter(({ pointer }) => pointer === control || (isList && pointer?.startsWith(`${control}/`)))
+              .map(({ id }) => id)
+            return descriptions.length === 0 ? {} : { "aria-invalid": true, "aria-describedby": descriptions.join(" ") }
+          }
           return (
             <li key={index} className="grid gap-1">
               <div className="flex flex-wrap items-start gap-2">
-                <select aria-label={`${label} property`} className={select} value={clause.property}
+                <select {...problemAt("property")} aria-label={`${label} property`} className={select} value={clause.property}
                   onChange={(event) => { const next = options.find(({ id: fid }) => fid === event.target.value); if (next) set(index, blankClause(next)) }}>
                   {options.map((option) => <option key={option.id} value={option.id}>{option.id.replaceAll("_", " ")}</option>)}
                 </select>
-                <select aria-label={`${label} test`} className={select} value={clause.op} onChange={(event) => { const op = event.target.value as Op; set(index, { ...clause, op, value: (op === "in") === (clause.op === "in") ? clause.value : "" }) }}>
+                <select {...problemAt("op")} aria-label={`${label} test`} className={select} value={clause.op} onChange={(event) => { const op = event.target.value as Op; set(index, { ...clause, op, value: (op === "in") === (clause.op === "in") ? clause.value : "" }) }}>
                   {opsFor(field.scalar).map((op) => <option key={op} value={op}>{OP_LABEL[op]}</option>)}
                 </select>
-                <ValueInput field={field} clause={clause} label={`${label} value`} problem={problems.length > 0 ? `${id}-${index}` : undefined} onChange={(next) => set(index, next)} />
+                <ValueInput field={field} clause={clause} label={`${label} value`} problemAt={problemAt} onChange={(next) => set(index, next)} />
                 <Button type="button" variant="ghost" size="icon" aria-label={`Remove condition ${index + 1}`} onClick={() => onDraft(draft.filter((_, i) => i !== index))}><X /></Button>
               </div>
-              {problems.length > 0 && <div id={`${id}-${index}`} role="alert" className="grid text-meta text-destructive">{problems.map((problem) => <span key={`${problem.pointer}:${problem.code}`}>{problem.message}</span>)}</div>}
+              {problems.length > 0 && <div role="alert" className="grid text-meta text-destructive">{problems.map((problem) => <span key={problem.id} id={problem.id}>{problem.message}</span>)}</div>}
             </li>
           )
         })}
