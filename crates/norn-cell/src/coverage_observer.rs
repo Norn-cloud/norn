@@ -243,10 +243,10 @@ struct WrittenObjectSnapshot {
     values: BTreeMap<String, RuntimeValue>,
 }
 
-/// Written objects and link endpoints touched by a commit.
+/// Written objects and exact link keys touched by a commit.
 struct CommitTargets {
     written: Vec<WrittenObjectSnapshot>,
-    link_endpoints: Vec<FactKey>,
+    touched_links: Vec<LinkKey>,
 }
 
 /// Test-mode wrapper around [`SqliteCell`] that records domain-model coverage
@@ -312,14 +312,10 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
                 FactMutation::Delete => None,
             })
             .collect();
-        let mut link_endpoints = Vec::with_capacity(commit.links.len().saturating_mul(2));
-        for lw in &commit.links {
-            link_endpoints.push(lw.key.source.clone());
-            link_endpoints.push(lw.key.target.clone());
-        }
+        let touched_links = commit.links.iter().map(|lw| lw.key.clone()).collect();
         CommitTargets {
             written,
-            link_endpoints,
+            touched_links,
         }
     }
 
@@ -534,36 +530,56 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
             finding_violated,
         };
         let mut direct_keys = BTreeSet::new();
-        let mut linked_only_keys = BTreeSet::new();
+        let mut linked_triggers: BTreeMap<FactKey, BTreeSet<(bool, String)>> = BTreeMap::new();
 
         for item in &targets.written {
             direct_keys.insert(item.key.clone());
-            self.record_subject_law_holds(&ctx, &item.key, Some(&item.values), false);
-            // A write to an object referenced by a link can re-evaluate
-            // linked governing laws on the connected neighbor.
+            self.record_subject_law_holds(&ctx, &item.key, Some(&item.values), None);
+            // A write to an object referenced by a link re-evaluates only laws
+            // on the connected neighbor that actually read that specific edge.
             if let Ok(edges) =
                 reader.links_touching(MAIN_WORLD, item.key.object_type.as_str(), &item.key.key)
             {
+                let item_ty = item.key.object_type.as_str();
                 for edge in edges {
-                    let src = FactKey::new(edge.source_type, edge.source);
-                    let dst = FactKey::new(edge.target_type, edge.target);
-                    if src != item.key {
-                        linked_only_keys.insert(src);
+                    if edge.target == item.key.key && model.is_a(item_ty, &edge.target_type) {
+                        let src = FactKey::new(edge.source_type.clone(), edge.source.clone());
+                        if src != item.key {
+                            linked_triggers
+                                .entry(src)
+                                .or_default()
+                                .insert((true, edge.link.clone()));
+                        }
                     }
-                    if dst != item.key {
-                        linked_only_keys.insert(dst);
+                    if edge.source == item.key.key && model.is_a(item_ty, &edge.source_type) {
+                        let dst = FactKey::new(edge.target_type, edge.target);
+                        if dst != item.key {
+                            linked_triggers
+                                .entry(dst)
+                                .or_default()
+                                .insert((false, edge.link));
+                        }
                     }
                 }
             }
         }
-        for key in &targets.link_endpoints {
-            if !direct_keys.contains(key) {
-                linked_only_keys.insert(key.clone());
+        for lw in &targets.touched_links {
+            if !direct_keys.contains(&lw.source) {
+                linked_triggers
+                    .entry(lw.source.clone())
+                    .or_default()
+                    .insert((true, lw.link.clone()));
+            }
+            if !direct_keys.contains(&lw.target) {
+                linked_triggers
+                    .entry(lw.target.clone())
+                    .or_default()
+                    .insert((false, lw.link.clone()));
             }
         }
-        for key in linked_only_keys {
+        for (key, triggers) in linked_triggers {
             if !direct_keys.contains(&key) {
-                self.record_subject_law_holds(&ctx, &key, None, true);
+                self.record_subject_law_holds(&ctx, &key, None, Some(&triggers));
             }
         }
     }
@@ -573,7 +589,7 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
         ctx: &SubjectHoldCtx<'_, S>,
         key: &FactKey,
         fallback_values: Option<&BTreeMap<String, RuntimeValue>>,
-        linked_laws_only: bool,
+        touched_link_triggers: Option<&BTreeSet<(bool, String)>>,
     ) {
         let ty_name = key.object_type.as_str();
         let Ok(artifacts) = ctx.model.governing_laws(ty_name) else {
@@ -599,12 +615,18 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
             if !law.exceptions.is_empty() {
                 continue;
             }
-            if linked_laws_only {
+            if let Some(triggers) = touched_link_triggers {
                 let single = [artifact.clone()];
                 let single_catalog = ctx.model.type_catalog().with_governing_laws(&single);
-                if !norn_kernel::governing_laws::reads_links(&single_catalog, &key.object_type)
-                    .unwrap_or(false)
-                {
+                let Ok(index) = norn_kernel::governing_laws::link_law_index(&single_catalog) else {
+                    continue;
+                };
+                let reads_touched_edge = index.forward.iter().any(|(subj, link, _)| {
+                    *subj == key.object_type && triggers.contains(&(true, link.clone()))
+                }) || index.inverse.iter().any(|(subj, _, link)| {
+                    *subj == key.object_type && triggers.contains(&(false, link.clone()))
+                });
+                if !reads_touched_edge {
                     continue;
                 }
             }
@@ -658,7 +680,7 @@ fn evaluate_single_law_hold<S: SqlEngine>(
                 world: MAIN_WORLD,
                 subject: key.clone(),
             };
-            let mut remaining = 10_000_u64;
+            let mut remaining = 1_000_000_u64;
             norn_kernel::governing_laws::evaluate_linked(
                 &catalog,
                 key,
@@ -679,7 +701,7 @@ fn evaluate_single_law_hold<S: SqlEngine>(
                 world: MAIN_WORLD,
                 subject: key.clone(),
             };
-            let mut remaining = 10_000_u64;
+            let mut remaining = 1_000_000_u64;
             norn_kernel::governing_laws::evaluate_linked(
                 &catalog,
                 key,
@@ -729,7 +751,7 @@ fn linked_law_condition_active<S: SqlEngine>(
         world: MAIN_WORLD,
         subject: key.clone(),
     };
-    let mut remaining = 10_000_u64;
+    let mut remaining = 1_000_000_u64;
     // The probe law emits `NotSatisfied` on its `false` predicate iff its activation condition is true.
     norn_kernel::governing_laws::evaluate_linked(
         &catalog,

@@ -444,6 +444,9 @@ fn entity_invariants_violated(pack: &AdmittedPack, ty_name: &str, proposed: &Jso
     false
 }
 
+/// Kernel commit-wide law evaluation fuel budget (`norn-cell` `LAW_FUEL`).
+const KERNEL_LAW_FUEL: u64 = 1_000_000;
+
 /// Predicts whether committing `touched_keys` into `graph` will be refused by
 /// any direct/inherited entity invariant or any direct/inherited/linked
 /// governing law (on either a written subject or a linked neighbor).
@@ -452,6 +455,7 @@ pub(crate) fn predict_oracle_law_violation(
     touched_keys: &[FactKey],
 ) -> bool {
     let mut linked_neighbors = BTreeSet::new();
+    let mut remaining = KERNEL_LAW_FUEL;
     for key in touched_keys {
         let Some((proposed, _)) = graph.facts.get(key) else {
             continue;
@@ -465,7 +469,6 @@ pub(crate) fn predict_oracle_law_violation(
             links: graph.links,
             subject: key.clone(),
         };
-        let mut remaining = 10_000_u64;
         match evaluate_linked(graph.catalog, key, proposed, &mut links, &mut remaining) {
             Ok(failures) if !failures.is_empty() => return true,
             Err(_) => return true,
@@ -495,7 +498,6 @@ pub(crate) fn predict_oracle_law_violation(
             links: graph.links,
             subject: neighbor.clone(),
         };
-        let mut remaining = 10_000_u64;
         match evaluate_linked(graph.catalog, &neighbor, values, &mut links, &mut remaining) {
             Ok(failures) if !failures.is_empty() => return true,
             Err(_) => return true,

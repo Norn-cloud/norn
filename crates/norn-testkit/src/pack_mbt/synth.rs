@@ -172,16 +172,34 @@ fn effective_required_links(
     object_type: &ObjectTypeDef,
 ) -> Vec<(String, String, Vec<Property>)> {
     let mut by_id: BTreeMap<String, (String, bool, Vec<Property>)> = BTreeMap::new();
+    let mut concrete_chain = Vec::new();
     let mut visited_types = BTreeSet::new();
     let mut walk_ty = Some(object_type);
     while let Some(def) = walk_ty {
         if !visited_types.insert(def.name.as_str().to_owned()) {
             break;
         }
+        concrete_chain.push(def);
+        walk_ty = def.extends.as_ref().and_then(|parent| {
+            pack.object_types
+                .iter()
+                .find(|ty| ty.name.as_str() == parent.as_str())
+        });
+    }
+    // Pass 1: concrete `extends` chain (subtype -> ancestor) takes precedence
+    // for narrowed link targets and merges inherited link properties.
+    for def in &concrete_chain {
         for link in &def.links {
             by_id
                 .entry(link.id.as_str().to_owned())
-                .and_modify(|entry| entry.1 |= link.cardinality.required)
+                .and_modify(|entry| {
+                    entry.1 |= link.cardinality.required;
+                    for prop in &link.properties {
+                        if !entry.2.iter().any(|existing| existing.id == prop.id) {
+                            entry.2.push(prop.clone());
+                        }
+                    }
+                })
                 .or_insert_with(|| {
                     (
                         link.target.as_str().to_owned(),
@@ -190,6 +208,10 @@ fn effective_required_links(
                     )
                 });
         }
+    }
+    // Pass 2: interface contracts add interface-only links and tighten
+    // `required`, never overriding a narrower concrete declaration.
+    for def in &concrete_chain {
         for iface_name in &def.implements {
             if let Some(iface) = pack
                 .interfaces
@@ -214,11 +236,6 @@ fn effective_required_links(
                 }
             }
         }
-        walk_ty = def.extends.as_ref().and_then(|parent| {
-            pack.object_types
-                .iter()
-                .find(|ty| ty.name.as_str() == parent.as_str())
-        });
     }
     by_id
         .into_iter()

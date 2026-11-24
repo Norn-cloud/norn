@@ -655,6 +655,23 @@ impl<H: PackHost> DstCaseState<'_, H> {
             };
         };
 
+        // Kernel enforces object-level immutability before transition source or guards.
+        if super::coverage::is_effectively_immutable(self.pack, target.object_type) {
+            return match res {
+                Err(DecisionRefusal::InvalidOutput { reason })
+                    if reason.ends_with(" is immutable") =>
+                {
+                    ensure_unchanged(self.host, before, "immutable object transition refusal")?;
+                    self.coverage
+                        .hit_immutable_refusal(ty_name, "<object>", "<immutable_object>");
+                    Ok(())
+                }
+                other => Err(format!(
+                    "expected immutable object refusal on transition for {ty_name}: {other:?}"
+                )),
+            };
+        }
+
         let allowed_from = transition.from.iter().any(|src| src == &entry.state);
         if !allowed_from {
             return match res {
@@ -707,36 +724,23 @@ impl<H: PackHost> DstCaseState<'_, H> {
             before,
         } = check;
         let guard_eval = evaluate_guards(&transition.guards, &entry.values);
-        let obj_immutable = self
-            .targets
-            .get(id_pair.0)
-            .is_some_and(|t| super::coverage::is_effectively_immutable(self.pack, t.object_type));
         let mut proposed_values = entry.values.clone();
         proposed_values.insert(prop.to_owned(), JsonValue::String(transition.to.clone()));
         let expected_law_violation = self.predict_law_violation(key, &proposed_values);
 
-        match (guard_eval, obj_immutable, expected_law_violation, res) {
-            (GuardEval::False, _, _, Err(DecisionRefusal::GuardFalse { .. })) => {
+        match (guard_eval, expected_law_violation, res) {
+            (GuardEval::False, _, Err(DecisionRefusal::GuardFalse { .. })) => {
                 ensure_unchanged(self.host, before, "guard false refusal")
             }
-            (GuardEval::Error(_), _, _, Err(DecisionRefusal::GuardError { .. })) => {
+            (GuardEval::Error(_), _, Err(DecisionRefusal::GuardError { .. })) => {
                 ensure_unchanged(self.host, before, "guard error refusal")
-            }
-            (GuardEval::True, true, _, Err(DecisionRefusal::InvalidOutput { reason }))
-                if reason.ends_with(" is immutable") =>
-            {
-                ensure_unchanged(self.host, before, "immutable object transition refusal")?;
-                self.coverage
-                    .hit_immutable_refusal(ty_name, "<object>", "<immutable_object>");
-                Ok(())
             }
             (
                 GuardEval::True,
-                false,
                 true,
                 Err(DecisionRefusal::Law { .. } | DecisionRefusal::InvariantViolation { .. }),
             ) => ensure_unchanged(self.host, before, "post-transition law refusal"),
-            (GuardEval::True, false, false, Ok(())) => {
+            (GuardEval::True, false, Ok(())) => {
                 if self.host.ledger_len() != before.saturating_add(1) {
                     return Err("valid transition did not append 1 ledger entry".to_owned());
                 }
@@ -761,8 +765,8 @@ impl<H: PackHost> DstCaseState<'_, H> {
                 });
                 Ok(())
             }
-            (guard, imm, law_viol, other) => Err(format!(
-                "transition oracle mismatch for {ty_name} '{}' from '{}' (guard={guard:?}, obj_immutable={imm}, law_violated={law_viol}): {other:?}",
+            (guard, law_viol, other) => Err(format!(
+                "transition oracle mismatch for {ty_name} '{}' from '{}' (guard={guard:?}, law_violated={law_viol}): {other:?}",
                 transition.id.as_str(),
                 entry.state
             )),
@@ -806,10 +810,19 @@ impl<H: PackHost> DstCaseState<'_, H> {
         proposed_values.insert(mut_prop.clone(), mut_val.clone());
         let expected_law_violation = self.predict_law_violation(&key, &proposed_values);
 
-        match (imm_lc, obj_immutable, expected_law_violation, res) {
+        // Kernel enforces object-level immutability before lifecycle-state immutability or laws.
+        match (obj_immutable, imm_lc, expected_law_violation, res) {
+            (true, _, _, Err(DecisionRefusal::InvalidOutput { reason }))
+                if reason.ends_with(" is immutable") =>
+            {
+                ensure_unchanged(self.host, before, "immutable object mutation refusal")?;
+                self.coverage
+                    .hit_immutable_refusal(ty_name, "<object>", "<immutable_object>");
+                Ok(())
+            }
             (
+                false,
                 Some((imm_prop, imm_state)),
-                _,
                 _,
                 Err(refusal @ DecisionRefusal::ImmutableStateWrite { .. }),
             ) => {
@@ -819,21 +832,13 @@ impl<H: PackHost> DstCaseState<'_, H> {
                     .hit_immutable_refusal(ty_name, imm_prop, imm_state);
                 Ok(())
             }
-            (None, true, _, Err(DecisionRefusal::InvalidOutput { reason }))
-                if reason.ends_with(" is immutable") =>
-            {
-                ensure_unchanged(self.host, before, "immutable object mutation refusal")?;
-                self.coverage
-                    .hit_immutable_refusal(ty_name, "<object>", "<immutable_object>");
-                Ok(())
-            }
             (
-                None,
                 false,
+                None,
                 true,
                 Err(DecisionRefusal::Law { .. } | DecisionRefusal::InvariantViolation { .. }),
             ) => ensure_unchanged(self.host, before, "law/invariant violation on mutate"),
-            (None, false, false, Ok(())) => {
+            (false, None, false, Ok(())) => {
                 if self.host.ledger_len() != before.saturating_add(1) {
                     return Err("valid mutation did not append 1 ledger entry".to_owned());
                 }
@@ -859,8 +864,8 @@ impl<H: PackHost> DstCaseState<'_, H> {
                 }
                 Ok(())
             }
-            (imm_state, imm_obj, law_viol, other) => Err(format!(
-                "mutation oracle mismatch for {ty_name}.{mut_prop} (immutable_state={imm_state:?}, obj_immutable={imm_obj}, law_violated={law_viol}): {other:?}"
+            (imm_obj, imm_state, law_viol, other) => Err(format!(
+                "mutation oracle mismatch for {ty_name}.{mut_prop} (obj_immutable={imm_obj}, immutable_state={imm_state:?}, law_violated={law_viol}): {other:?}"
             )),
         }
     }

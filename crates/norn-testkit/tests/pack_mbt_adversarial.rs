@@ -1411,11 +1411,18 @@ fn link_only_recheck_pack() -> Result<AdmittedPack, String> {
                         {"id": "charge_id", "type": {"kind": "text"}},
                         {"id": "total", "type": {"kind": "decimal", "scale": 2}}
                     ],
-                    "links": [{
-                        "id": "account",
-                        "target": "lo.Account",
-                        "cardinality": {"from": "many", "to": "one", "required": false}
-                    }],
+                    "links": [
+                        {
+                            "id": "account",
+                            "target": "lo.Account",
+                            "cardinality": {"from": "many", "to": "one", "required": false}
+                        },
+                        {
+                            "id": "memo_ref",
+                            "target": "lo.Account",
+                            "cardinality": {"from": "many", "to": "one", "required": false}
+                        }
+                    ],
                     "invariants": [
                         {"id": "positive_total", "expression": "self.total > 0", "message": "total must be positive"}
                     ]
@@ -1525,7 +1532,28 @@ fn observed_sqlite_cell_records_hold_on_link_only_commit() -> Result<(), String>
         Some(&1)
     );
 
-    // Link-only commit (zero fact writes): activates & satisfies lo.Charge.active_account.
+    // Unrelated link-only commit (`memo_ref`) must NOT credit `lo.Charge.active_account`.
+    cell.commit(CellCommit {
+        links: vec![LinkWrite {
+            key: LinkKey::new(charge_key.clone(), "memo_ref", account_key.clone()),
+            expected: FactVersion::ABSENT,
+            mutation: LinkMutation::Add {
+                values: JsonObject::new(),
+            },
+        }],
+        ..CellCommit::empty()
+    })
+    .map_err(|e| format!("unrelated link commit: {e}"))?;
+    assert_eq!(
+        recorder
+            .snapshot()
+            .law_holds
+            .get("lo.Charge.active_account"),
+        None,
+        "unrelated edge must not credit a law reading only `account`"
+    );
+
+    // Link-only commit (`account`, zero fact writes): activates & satisfies lo.Charge.active_account.
     cell.commit(CellCommit {
         links: vec![LinkWrite {
             key: LinkKey::new(charge_key, "account", account_key),
@@ -1703,5 +1731,145 @@ fn inherited_required_links_laws_and_immutability_pass_mbt_dst_and_gaps() -> Res
         )),
         "inherited parent-type law reading audit_note must report OrphanField on subtype:\n{gaps}"
     );
+    Ok(())
+}
+
+fn shadow_link_dst_entities() -> Vec<serde_json::Value> {
+    vec![
+        json!({
+            "irVersion": "0.1", "artifactId": "shd.Account.entity", "version": "1.0.0",
+            "kind": "entity", "namespace": "shd", "name": "Account", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "entityVersion": "2.0",
+                "objectType": {
+                    "name": "shd.Account",
+                    "properties": [
+                        {"id": "account_id", "type": {"kind": "text"}},
+                        {"id": "tier", "type": {"kind": "text"}}
+                    ]
+                }
+            }
+        }),
+        json!({
+            "irVersion": "0.1", "artifactId": "shd.Order.entity", "version": "1.0.0",
+            "kind": "entity", "namespace": "shd", "name": "Order", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "entityVersion": "2.0",
+                "objectType": {
+                    "name": "shd.Order",
+                    "properties": [
+                        {"id": "order_id", "type": {"kind": "text"}},
+                        {"id": "note", "type": {"kind": "text"}},
+                        {"id": "status", "default": "open", "type": {"kind": "enum", "values": [{"value": "open"}, {"value": "done"}]}}
+                    ],
+                    "links": [{
+                        "id": "account",
+                        "target": "shd.Account",
+                        "cardinality": {"from": "many", "to": "one", "required": true}
+                    }],
+                    "lifecycles": [{
+                        "property": "status",
+                        "initial": ["open"],
+                        "terminal": ["done"],
+                        "transitions": [{"id": "complete", "from": ["open"], "to": "done"}]
+                    }]
+                }
+            }
+        }),
+        json!({
+            "irVersion": "0.1", "artifactId": "shd.Locked.entity", "version": "1.0.0",
+            "kind": "entity", "namespace": "shd", "name": "Locked", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "entityVersion": "2.0",
+                "objectType": {
+                    "name": "shd.Locked",
+                    "immutable": true,
+                    "properties": [
+                        {"id": "locked_id", "type": {"kind": "text"}},
+                        {"id": "ready", "type": {"kind": "boolean"}},
+                        {"id": "memo", "type": {"kind": "text"}},
+                        {"id": "status", "default": "open", "type": {"kind": "enum", "values": [{"value": "open"}, {"value": "closed"}]}}
+                    ],
+                    "lifecycles": [{
+                        "property": "status",
+                        "initial": ["open"],
+                        "terminal": ["closed"],
+                        "immutable": ["open", "closed"],
+                        "transitions": [
+                            {"id": "close", "from": ["open"], "to": "closed", "guards": ["self.ready"]},
+                            {"id": "reopen", "from": ["closed"], "to": "open"}
+                        ]
+                    }]
+                }
+            }
+        }),
+    ]
+}
+
+fn shadow_link_dst_pack() -> Result<AdmittedPack, String> {
+    let mut raw = shadow_link_dst_entities();
+    raw.extend(vec![
+        json!({
+            "irVersion": "0.1", "artifactId": "shd.Order.has_account_id.law", "version": "1.0.0",
+            "kind": "law", "namespace": "shd", "name": "Open order has linked account id", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "lawVersion": "0.1",
+                "id": "shd.Order.has_account_id",
+                "owner": "shd",
+                "severity": "error",
+                "rationale": "Open orders must link to an account with a non-empty account_id.",
+                "provenance": {"source": "authoring_sdk"},
+                "scope": {"root": {"kind": "entity", "id": "shd.Order"}, "objectTypes": ["shd.Order"]},
+                "subject": "shd.Order",
+                "condition": "self.status == 'open'",
+                "modality": {"kind": "always"},
+                "response": {"kind": "predicate", "expression": "self.account.account_id != ''"}
+            }
+        }),
+        json!({
+            "irVersion": "0.1", "artifactId": "shd.Order.enterprise_done.law", "version": "1.0.0",
+            "kind": "law", "namespace": "shd", "name": "Done order requires enterprise tier", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "lawVersion": "0.1",
+                "id": "shd.Order.enterprise_done",
+                "owner": "shd",
+                "severity": "error",
+                "rationale": "Completed orders require an enterprise-tier linked account.",
+                "provenance": {"source": "authoring_sdk"},
+                "scope": {"root": {"kind": "entity", "id": "shd.Order"}, "objectTypes": ["shd.Order"]},
+                "subject": "shd.Order",
+                "condition": "self.status == 'done'",
+                "modality": {"kind": "always"},
+                "response": {"kind": "predicate", "expression": "self.account.tier == 'enterprise'"}
+            }
+        }),
+    ]);
+    let envelopes: Vec<ArtifactEnvelope> = raw
+        .into_iter()
+        .map(|val| serde_json::from_value(val).map_err(|e| format!("{e}")))
+        .collect::<Result<Vec<_>, _>>()?;
+    AdmittedPack::from_envelopes("shadow_link_dst", &envelopes)
+}
+
+#[test]
+fn dst_exercises_shadow_link_resolution_and_object_immutability_precedence() -> Result<(), String> {
+    let pack = shadow_link_dst_pack()?;
+    let dst = run_pack_dst(
+        &pack,
+        PackDstConfig {
+            seed: [0x44; 32],
+            cases: 20,
+            max_steps: 14,
+            entities_per_type: 1,
+        },
+        |_| BareHost::open(&pack, true, false),
+    )?;
+    assert_eq!(dst.cases_run, 20);
+    assert!(dst.steps_run >= 20);
     Ok(())
 }

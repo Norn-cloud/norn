@@ -604,12 +604,22 @@ fn effective_properties<'a>(
 ) -> Vec<EffectiveProp<'a>> {
     let mut seen_props = BTreeSet::new();
     let mut effective_props = Vec::new();
-    let mut walk_ty = Some(object_type);
+    let mut concrete_chain = Vec::new();
     let mut visited_ty = BTreeSet::new();
+    let mut walk_ty = Some(object_type);
     while let Some(def) = walk_ty {
         if !visited_ty.insert(def.name.as_str().to_owned()) {
             break;
         }
+        concrete_chain.push(def);
+        walk_ty = def.extends.as_ref().and_then(|parent| {
+            pack.object_types
+                .iter()
+                .find(|ty| ty.name.as_str() == parent.as_str())
+        });
+    }
+    // Pass 1: concrete `extends` chain preserves parent default / read-only metadata.
+    for def in &concrete_chain {
         for prop in &def.properties {
             if seen_props.insert(prop.id.as_str().to_owned()) {
                 effective_props.push(EffectiveProp {
@@ -619,6 +629,9 @@ fn effective_properties<'a>(
                 });
             }
         }
+    }
+    // Pass 2: interface contracts add interface-only properties without shadowing concrete ones.
+    for def in &concrete_chain {
         for iface_name in &def.implements {
             if let Some(iface) = pack
                 .interfaces
@@ -640,11 +653,6 @@ fn effective_properties<'a>(
                 }
             }
         }
-        walk_ty = def.extends.as_ref().and_then(|parent| {
-            pack.object_types
-                .iter()
-                .find(|ty| ty.name.as_str() == parent.as_str())
-        });
     }
     effective_props
 }
