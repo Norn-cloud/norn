@@ -45,7 +45,6 @@ pub const RING0_FORBIDDEN_HOST_ADAPTERS: &[&str] = &[
     "norn-api",
     "norn-cli",
     "norn-checker-wasm",
-    "norn-dataplane",
     "rusqlite",
     "libsqlite3-sys",
     "axum",

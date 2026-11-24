@@ -13,7 +13,6 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-import jsonschema
 import yaml
 
 
@@ -60,38 +59,8 @@ REQUIRED_CORE_PHYSICS_OBLIGATION_IDS = frozenset([
     "INV-CORE-QUANTITY-CONSERVATION",
     "INV-CORE-VALUE-CONSERVATION",
 ])
-KERNEL_OBLIGATIONS = ROOT / "verification/archive/kernel-v1/obligations.json"
-KERNEL_OBLIGATIONS_SCHEMA = (
-    ROOT / "verification/archive/kernel-v1/schemas/obligations.schema.json"
-)
 REQUIRED_CENTRAL_OBLIGATION_IDS = frozenset(['INV-ART-AUTHORITY-PROMOTION', 'INV-ART-DIRECT-WRITE-PREDICATE', 'INV-AUTH-ATOMIC-COMMIT', 'INV-AUTH-CAPABILITY-NOW', 'INV-AUTH-CLOSED-CUSTOM-EFFECT', 'INV-AUTH-DOMAIN-ADMISSION-PREDICATE', 'INV-AUTH-HARD-INVARIANT-OWNERSHIP', 'INV-AUTH-IDEMPOTENT-RESULT', 'INV-AUTH-SCOPE-CLOSED', 'INV-AUTH-STALE-REJECT', 'INV-ONT-MAPPING-PROVENANCE', 'INV-ONT-OPEN-CLOSED-SEPARATION', 'INV-ONT-RELATION-AUTHORITY', 'INV-QL-APPEND-REVERSAL', 'INV-QL-AUTHORITY-BRIDGE-ATOMIC', 'INV-QL-BATCH-ATOMIC', 'INV-QL-CERTIFICATE-POSTING-BINDING', 'INV-QL-CONSERVATION', 'INV-QL-EXACT-ARITHMETIC', 'INV-QL-PENDING-RESOLUTION', 'INV-QL-REFERENCE-BALANCE-ALGEBRA', 'INV-QL-UNIT-DIMENSION', 'INV-RULE-CLOSED-DETERMINISTIC-EVALUATION', 'INV-RULE-HIT-POLICY-ADMISSION-PREDICATE', 'INV-RULE-HIT-POLICY-SAFETY', 'INV-VER-DIFFERENTIAL-REFINEMENT', 'INV-VER-NO-PROOF-HOLES'])
 
-REQUIRED_KERNEL_OBLIGATIONS = {
-    "KERNEL-V1-T1": "The committed state and receipt trace are a pure function of the durable history; replaying that history reconstructs the committed state and `trace_sha256`.",
-    "KERNEL-V1-T2": "An exact retry of a committed transition returns the recorded outcome and mutates nothing; a changed-input retry under the same idempotency key is rejected.",
-    "KERNEL-V1-T3": "A transition commits only if the owner version it read is the owner version at commit; concurrent writers cannot both commit against the same version.",
-    "KERNEL-V1-T4": "A crash at any point between durable writes leaves the run in a state from which the recover step reaches a committed or requeued outcome; no run, task, timer, or signal is stranded.",
-    "KERNEL-V1-T5": "A closed action's external effect is recorded at most once per commit; replay/retry does not re-emit it.",
-    "KERNEL-V1-T6": "Every committed transition records the exact policy/artifact versions it evaluated, and those were active at evaluation time.",
-    "KERNEL-V1-T7": "Absent scope is never widened to a wildcard; a capability or scope mismatch denies; Allow requires an exact identity-tuple match.",
-}
-REQUIRED_KERNEL_OBLIGATION_IDS = frozenset(REQUIRED_KERNEL_OBLIGATIONS)
-REQUIRED_KERNEL_MODEL_OBLIGATION_IDS = frozenset(
-    obligation_id
-    for obligation_id in REQUIRED_KERNEL_OBLIGATION_IDS
-    if obligation_id != "KERNEL-V1-T7"
-)
-REQUIRED_KERNEL_INVARIANTS = frozenset(
-    {
-        "typeOk",
-        "replayDeterministic",
-        "idempotentAtMostOnce",
-        "casSafe",
-        "noStrandedAfterRecover",
-        "effectAtMostOnce",
-        "committedPolicyWasPinned",
-    }
-)
 MANDATORY = {
     "assurance-certificates",
     "transition-authority",
@@ -274,123 +243,16 @@ def obligation_ids(document: dict[str, Any]) -> set[str]:
     return values
 
 
-def p0_obligation_ids(document: dict[str, Any], *, default_priority: str | None = None) -> set[str]:
+def p0_obligation_ids(document: dict[str, Any]) -> set[str]:
     values: set[str] = set()
     for item in document.get("obligations", []):
         require(isinstance(item, dict), "obligation registry entries must be objects")
         value = item.get("id", item.get("obligationId"))
         require(isinstance(value, str) and value, "obligation registry entry has no id")
-        priority = item.get("priority", default_priority)
+        priority = item.get("priority")
         if priority == "P0":
             values.add(value)
     return values
-
-
-def validate_kernel_obligation_registry(kernel_registry: dict[str, Any]) -> None:
-    """Keep the V1 lifecycle registry closed over its checked model and plan IDs."""
-
-    schema = load(KERNEL_OBLIGATIONS_SCHEMA)
-    try:
-        jsonschema.Draft202012Validator(schema).validate(kernel_registry)
-    except jsonschema.ValidationError as error:
-        location = "/".join(str(part) for part in error.absolute_path) or "<root>"
-        raise InvalidCoverage(
-            f"kernel obligation registry violates its schema at {location}: {error.message}"
-        ) from error
-
-    obligations = kernel_registry.get("obligations")
-    require(
-        isinstance(obligations, list),
-        "kernel obligation registry obligations must be an array",
-    )
-    kernel_ids = obligation_ids(kernel_registry)
-    require(
-        len(obligations) == len(REQUIRED_KERNEL_OBLIGATION_IDS)
-        and kernel_ids == REQUIRED_KERNEL_OBLIGATION_IDS,
-        "kernel obligation registry must contain exactly the immutable T1-T7 closure; "
-        f"missing={sorted(REQUIRED_KERNEL_OBLIGATION_IDS - kernel_ids)}, "
-        f"unexpected={sorted(kernel_ids - REQUIRED_KERNEL_OBLIGATION_IDS)}",
-    )
-    by_id = {item["id"]: item for item in obligations}
-    require(
-        len(by_id) == len(obligations),
-        "kernel obligation registry must not contain duplicate obligation IDs",
-    )
-    for obligation_id, statement in REQUIRED_KERNEL_OBLIGATIONS.items():
-        obligation = by_id[obligation_id]
-        require(
-            obligation["statement"] == statement,
-            f"kernel obligation statement drifted from PLAN.md §1: {obligation_id}",
-        )
-        evidence = obligation["evidence"]
-        if obligation["referenceStatus"] == "none":
-            require(
-                not evidence,
-                f"{obligation_id}: referenceStatus none must not cite evidence",
-            )
-        else:
-            require(
-                evidence,
-                f"{obligation_id}: a specified/executed reference status needs evidence",
-            )
-        if obligation["modelStatus"] == "none":
-            require(
-                not obligation["modelEvidence"],
-                f"{obligation_id}: modelStatus none must not cite a model",
-            )
-        else:
-            require(
-                obligation["modelEvidence"],
-                f"{obligation_id}: model status needs model evidence",
-            )
-
-    models = kernel_registry.get("models")
-    require(isinstance(models, list), "kernel obligation registry models must be an array")
-    model_ids = [model["modelId"] for model in models]
-    require(
-        model_ids == ["KERNEL-MODEL-LIFECYCLE-V1"],
-        "kernel obligation registry must name exactly the lifecycle model",
-    )
-    model = models[0]
-    require(
-        set(model["invariants"]) == REQUIRED_KERNEL_INVARIANTS,
-        "kernel lifecycle model must declare exactly the promoted T1-T6 invariants",
-    )
-    require(
-        set(model["obligationIds"]) == REQUIRED_KERNEL_MODEL_OBLIGATION_IDS,
-        "kernel lifecycle model must cover exactly the T1-T6 obligations; T7 belongs to authz-v1",
-    )
-    model_path = KERNEL_OBLIGATIONS.parent / model["path"]
-    require(model_path.is_file(), f"kernel lifecycle model is missing: {model['path']}")
-    for obligation in obligations:
-        if obligation["modelStatus"] != "none":
-            require(
-                obligation["modelEvidence"] == model_ids,
-                f"{obligation['id']}: model evidence must name the lifecycle model",
-            )
-    scope_obligation = by_id["KERNEL-V1-T7"]
-    require(
-        scope_obligation["modelStatus"] == "none"
-        and not scope_obligation["modelEvidence"],
-        "KERNEL-V1-T7 must not claim kernel-lifecycle model evidence",
-    )
-    require(
-        "authorization-aeneas-extraction" in scope_obligation["evidence"]
-        and scope_obligation["referenceStatus"] == "executed"
-        and "PR #2451" in scope_obligation["residual"],
-        "KERNEL-V1-T7 must bind the executed Aeneas authorization proof from PR #2451",
-    )
-
-
-def validate_kernel_evidence_gate_ids(
-    kernel_registry: dict[str, Any], gate_ids: set[str]
-) -> None:
-    for obligation in kernel_registry["obligations"]:
-        unknown = set(obligation["evidence"]) - gate_ids
-        require(
-            not unknown,
-            f"{obligation['id']}: evidence names unknown promoted gate IDs: {sorted(unknown)}",
-        )
 
 
 def workflow_path_blocks(source: str) -> list[set[str]]:
@@ -1294,7 +1156,6 @@ def validate(
         require((ROOT / root).exists(), f"missing evidence root {root}")
     validate_workflow_integrity(evidence_roots, formal_path=formal_workflow_path, trusted_path=trusted_workflow_path)
     central_registry = load(central_obligations_path)
-    kernel_registry = {"obligations": []}
     import runpy
     runpy.run_path(str(ROOT / "verification/kernel-v2/validate.py"))["validate"]()
     central_obligations = central_registry.get("obligations")
@@ -1348,7 +1209,6 @@ def validate(
     p0_obligations = (
         p0_obligation_ids(central_registry)
         | p0_obligation_ids(certificate_registry)
-        | p0_obligation_ids(kernel_registry, default_priority="P0")
         | p0_obligation_ids(core_physics_registry)
     )
 
