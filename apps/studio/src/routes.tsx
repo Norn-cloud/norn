@@ -12,7 +12,11 @@ import { RecordsPage } from "./grid/records-page.tsx"
 import { DecisionsPage } from "./decisions/inbox.tsx"
 import { ImportTriagePage } from "./imports/import-triage-page.tsx"
 import { RunPage } from "./runs/run-page.tsx"
+import { CasesPage } from "./learning/cases-page.tsx"
 import { EpisodePage } from "./learning/episode-page.tsx"
+import { EpisodesPage } from "./learning/episodes-page.tsx"
+import { MisfitPage } from "./learning/misfit-page.tsx"
+import { ProposalDetailPage, ProposalsPage } from "./learning/proposals-page.tsx"
 import { SourcesItemPage } from "./objects.tsx"
 import { QuestionPage, QuestionsPage } from "./questions.tsx"
 import { ObjectTypePage, SourcesPage } from "./sources.tsx"
@@ -35,7 +39,12 @@ export const COMPONENTS: { readonly [P in PagePath]: RouteComponent } = {
   "/decisions": DecisionsPage,
   "/imports": ImportTriagePage,
   "/runs/$id": RunPage,
+  "/learning/episodes": EpisodesPage,
   "/episodes/$id": EpisodePage,
+  "/learning/cases": CasesPage,
+  "/learning/misfit": MisfitPage,
+  "/learning/proposals": ProposalsPage,
+  "/learning/proposals/$id": ProposalDetailPage,
   "/metrics": QuestionsPage,
   "/metrics/new": QuestionBuilderPage,
   "/metrics/build": QuestionTreePage,
