@@ -200,13 +200,16 @@ fn enum_states_for(object_type: &ObjectTypeDef, property: &str) -> Vec<String> {
             PropertyType::Enum { values } => {
                 Some(values.iter().map(|item| item.value.clone()).collect())
             }
-            PropertyType::Text {}
-            | PropertyType::Integer {}
+            PropertyType::Text { .. }
+            | PropertyType::Integer { .. }
             | PropertyType::Decimal { .. }
+            | PropertyType::DecimalBinding { .. }
             | PropertyType::Boolean {}
             | PropertyType::Date {}
-            | PropertyType::Timestamp {}
-            | PropertyType::JsonExt {}
+            | PropertyType::Duration {}
+            | PropertyType::Timestamp { .. }
+            | PropertyType::Record { .. }
+            | PropertyType::JsonExt { .. }
             | PropertyType::Ref { .. } => None,
         })
         .unwrap_or_default()

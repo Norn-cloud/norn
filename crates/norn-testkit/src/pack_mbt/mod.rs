@@ -26,6 +26,7 @@
 //!    (`#176`), random crash/reopen recovery, and `verify_ledger()` integrity
 //!    checks (generalizing `#181`).
 
+pub(crate) mod cedar;
 pub mod coverage;
 pub mod driver;
 pub mod dst;
@@ -143,17 +144,17 @@ impl AdmittedPack {
                         .map_err(|err| format!("{}: {err}", envelope.artifact_id))?;
                     match root {
                         EntityRoot::V2(v2) => {
-                            if let Some(object_type) = v2.object_type {
-                                pack.object_types.push(object_type);
-                            }
-                            if let Some(interface) = v2.interface {
-                                pack.interfaces.push(interface);
-                            }
-                            if let Some(property_types) = v2.property_types {
-                                pack.property_types.extend(property_types);
-                            }
+                            pack.object_types.push(v2.object_type);
                         }
-                        EntityRoot::V1(_) => {}
+                        EntityRoot::V2Interface(iface) => {
+                            pack.interfaces.push(iface.interface);
+                        }
+                        EntityRoot::V2PropertyTypes(pt) => {
+                            pack.property_types.extend(pt.property_types);
+                        }
+                        EntityRoot::V2Extension(_)
+                        | EntityRoot::V2Markings(_)
+                        | EntityRoot::V1(_) => {}
                     }
                 }
                 ArtifactPayload::Action(action) => {
@@ -191,20 +192,12 @@ impl AdmittedPack {
                 | ArtifactPayload::Customization(_)
                 | ArtifactPayload::Setting(_)
                 | ArtifactPayload::BusinessPack(_)
+                | ArtifactPayload::Derived(_)
                 | ArtifactPayload::SourceSchema(_)
                 | ArtifactPayload::Mapping(_)
-                | ArtifactPayload::View(_)
-                | ArtifactPayload::Metric(_)
-                | ArtifactPayload::Function(_)
-                | ArtifactPayload::Deontic(_)
-                | ArtifactPayload::StructuredRequirement(_)
-                | ArtifactPayload::Dataset(_)
-                | ArtifactPayload::Source(_)
-                | ArtifactPayload::Question(_)
-                | ArtifactPayload::Transform(_)
-                | ArtifactPayload::Flow(_)
-                | ArtifactPayload::Plan(_)
-                | ArtifactPayload::Workflow(_) => {}
+                | ArtifactPayload::DefinedConcept(_)
+                | ArtifactPayload::Labels(_)
+                | ArtifactPayload::Model(_) => {}
             }
         }
         Ok(pack)
@@ -281,7 +274,7 @@ pub fn action_call_object_type() -> ObjectTypeDef {
         protected: false,
         id: norn_kernel::norn_ir::PropertyId(id.to_owned()),
         description: None,
-        property_type: norn_kernel::norn_ir::PropertyType::Text {},
+        property_type: norn_kernel::norn_ir::PropertyType::Text { format: None },
         constraints: norn_kernel::norn_ir::PropertyConstraints {
             nullable,
             ..norn_kernel::norn_ir::PropertyConstraints::default()
@@ -294,7 +287,7 @@ pub fn action_call_object_type() -> ObjectTypeDef {
         protected: false,
         id: norn_kernel::norn_ir::PropertyId(id.to_owned()),
         description: None,
-        property_type: norn_kernel::norn_ir::PropertyType::JsonExt {},
+        property_type: norn_kernel::norn_ir::PropertyType::JsonExt { schema: None },
         constraints: norn_kernel::norn_ir::PropertyConstraints {
             nullable: true,
             ..norn_kernel::norn_ir::PropertyConstraints::default()
@@ -332,7 +325,7 @@ pub fn action_call_object_type() -> ObjectTypeDef {
         name: norn_kernel::norn_ir::ObjectTypeName(norn_kernel::ACTION_CALL_TYPE.to_owned()),
         role: None,
         description: None,
-        status: norn_kernel::norn_ir::ResourceStatus::Active,
+        status: norn_kernel::norn_ir::ResourceStatus::Active {},
         extends: None,
         implements: Vec::new(),
         properties,

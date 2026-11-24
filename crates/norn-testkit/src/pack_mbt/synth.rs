@@ -148,7 +148,7 @@ pub fn synthesize_guard_violating(
                 let flipped = !matches!(base.get(id), Some(JsonValue::Bool(true)));
                 candidate.insert(id.to_owned(), JsonValue::Bool(flipped));
             }
-            PropertyType::Integer {} => {
+            PropertyType::Integer { .. } => {
                 candidate.insert(id.to_owned(), JsonValue::from(0_i64));
             }
             PropertyType::Decimal { .. } => {
@@ -156,13 +156,16 @@ pub fn synthesize_guard_violating(
                     candidate.insert(id.to_owned(), JsonValue::Number(zero));
                 }
             }
-            PropertyType::Text {} => {
+            PropertyType::Text { .. } => {
                 candidate.insert(id.to_owned(), JsonValue::String(format!("mismatch-{id}")));
             }
             PropertyType::Enum { .. }
             | PropertyType::Date {}
-            | PropertyType::Timestamp {}
-            | PropertyType::JsonExt {}
+            | PropertyType::Duration {}
+            | PropertyType::Timestamp { .. }
+            | PropertyType::DecimalBinding { .. }
+            | PropertyType::Record { .. }
+            | PropertyType::JsonExt { .. }
             | PropertyType::Ref { .. } => continue,
         }
         if !guards_hold(guards, &candidate) {
@@ -262,7 +265,7 @@ fn apply_guard_positive_heuristics(
             PropertyType::Boolean {} => {
                 values.insert(id.to_owned(), JsonValue::Bool(true));
             }
-            PropertyType::Integer {} => {
+            PropertyType::Integer { .. } => {
                 values.insert(id.to_owned(), JsonValue::from(100_i64));
             }
             PropertyType::Decimal { .. } => {
@@ -270,11 +273,14 @@ fn apply_guard_positive_heuristics(
                     values.insert(id.to_owned(), JsonValue::Number(val));
                 }
             }
-            PropertyType::Text {}
+            PropertyType::Text { .. }
             | PropertyType::Enum { .. }
             | PropertyType::Date {}
-            | PropertyType::Timestamp {}
-            | PropertyType::JsonExt {}
+            | PropertyType::Duration {}
+            | PropertyType::Timestamp { .. }
+            | PropertyType::DecimalBinding { .. }
+            | PropertyType::Record { .. }
+            | PropertyType::JsonExt { .. }
             | PropertyType::Ref { .. } => {}
         }
     }
@@ -333,14 +339,17 @@ fn resolve_property_type<'a>(
         PropertyType::Ref { name, .. } => shared
             .get(name.as_str())
             .map_or(ty, |def| &def.property_type),
-        PropertyType::Text {}
-        | PropertyType::Integer {}
+        PropertyType::Text { .. }
+        | PropertyType::Integer { .. }
         | PropertyType::Decimal { .. }
+        | PropertyType::DecimalBinding { .. }
         | PropertyType::Boolean {}
         | PropertyType::Enum { .. }
         | PropertyType::Date {}
-        | PropertyType::Timestamp {}
-        | PropertyType::JsonExt {} => ty,
+        | PropertyType::Duration {}
+        | PropertyType::Timestamp { .. }
+        | PropertyType::Record { .. }
+        | PropertyType::JsonExt { .. } => ty,
     }
 }
 
@@ -352,7 +361,7 @@ fn json_default_to_runtime(
     let resolved = resolve_property_type(&prop.property_type, shared);
     match (resolved, raw) {
         (
-            PropertyType::Integer {} | PropertyType::Decimal { .. },
+            PropertyType::Integer { .. } | PropertyType::Decimal { .. },
             norn_kernel::norn_ir::JsonValue::String(text),
         ) => Decimal::parse_wire(text).ok().map(JsonValue::Number),
         (_, norn_kernel::norn_ir::JsonValue::Bool(b)) => Some(JsonValue::Bool(*b)),
@@ -378,7 +387,7 @@ fn synthesize_property_value(
     let id = prop.id.as_str();
     let resolved = resolve_property_type(&prop.property_type, shared);
     match resolved {
-        PropertyType::Text {} | PropertyType::Ref { .. } => {
+        PropertyType::Text { .. } | PropertyType::Ref { .. } => {
             if id.contains("currency") {
                 JsonValue::String("USD".to_owned())
             } else if id.contains("date") || id.contains("valid_from") {
@@ -399,11 +408,11 @@ fn synthesize_property_value(
                 JsonValue::String(format!("{id}-{key}-{seed}"))
             }
         }
-        PropertyType::Integer {} => {
+        PropertyType::Integer { .. } => {
             let n = i64::try_from(seed % 100).unwrap_or(0).saturating_add(10);
             JsonValue::from(n)
         }
-        PropertyType::Decimal { .. } => {
+        PropertyType::Decimal { .. } | PropertyType::DecimalBinding { .. } => {
             let text = format!("{}.50", (seed % 100).saturating_add(10));
             Decimal::parse_wire(&text)
                 .map(JsonValue::Number)
@@ -422,8 +431,11 @@ fn synthesize_property_value(
                 JsonValue::String("2026-01-15".to_owned())
             }
         }
-        PropertyType::Timestamp {} => JsonValue::String("2026-01-15T12:00:00Z".to_owned()),
-        PropertyType::JsonExt {} => JsonValue::Object(JsonObject::new()),
+        PropertyType::Duration {} => JsonValue::String("PT1H".to_owned()),
+        PropertyType::Timestamp { .. } => JsonValue::String("2026-01-15T12:00:00Z".to_owned()),
+        PropertyType::Record { .. } | PropertyType::JsonExt { .. } => {
+            JsonValue::Object(JsonObject::new())
+        }
     }
 }
 
@@ -434,16 +446,16 @@ fn alternate_value(
     nonce: u64,
 ) -> Option<JsonValue> {
     match ty {
-        PropertyType::Text {} | PropertyType::Ref { .. } => {
+        PropertyType::Text { .. } | PropertyType::Ref { .. } => {
             Some(JsonValue::String(format!("mut-{prop_id}-{nonce}")))
         }
-        PropertyType::Integer {} => {
+        PropertyType::Integer { .. } => {
             let next = i64::try_from(nonce % 10_000)
                 .unwrap_or(0)
                 .saturating_add(101);
             Some(JsonValue::from(next))
         }
-        PropertyType::Decimal { .. } => {
+        PropertyType::Decimal { .. } | PropertyType::DecimalBinding { .. } => {
             let text = format!("{}.25", (nonce % 10_000).saturating_add(101));
             Decimal::parse_wire(&text).ok().map(JsonValue::Number)
         }
@@ -456,8 +468,11 @@ fn alternate_value(
             .find(|v| current.and_then(JsonValue::as_str) != Some(v.value.as_str()))
             .map(|v| JsonValue::String(v.value.clone())),
         PropertyType::Date {} => Some(JsonValue::String("2026-06-20".to_owned())),
-        PropertyType::Timestamp {} => Some(JsonValue::String("2026-06-20T15:30:00Z".to_owned())),
-        PropertyType::JsonExt {} => {
+        PropertyType::Duration {} => Some(JsonValue::String("PT2H".to_owned())),
+        PropertyType::Timestamp { .. } => {
+            Some(JsonValue::String("2026-06-20T15:30:00Z".to_owned()))
+        }
+        PropertyType::Record { .. } | PropertyType::JsonExt { .. } => {
             let mut obj = JsonObject::new();
             obj.insert(
                 "nonce".to_owned(),

@@ -141,11 +141,9 @@ where
         .object_types
         .iter()
         .filter_map(|ty| {
-            let lifecycles = catalog
-                .effective_lifecycles(&ty.name)
-                .unwrap_or_else(|_| ty.lifecycles.clone());
-            lifecycles
-                .into_iter()
+            catalog
+                .lifecycles(&ty.name)
+                .into_values()
                 .next()
                 .filter(|lc| !lc.initial.is_empty() && !lc.transitions.is_empty())
                 .map(|lifecycle| TargetSpec {
@@ -327,7 +325,6 @@ impl<H: PackHost> DstCaseState<'_, H> {
             }],
             commands: Vec::new(),
             timers: Vec::new(),
-            links: Vec::new(),
         };
         let turn = DecisionTurn {
             id: format!("dst-create-{nonce}"),
@@ -389,7 +386,6 @@ impl<H: PackHost> DstCaseState<'_, H> {
             }],
             commands: Vec::new(),
             timers: Vec::new(),
-            links: Vec::new(),
         };
         let turn = DecisionTurn {
             id: format!("dst-tr-{nonce}"),
@@ -485,7 +481,6 @@ impl<H: PackHost> DstCaseState<'_, H> {
             }],
             commands: Vec::new(),
             timers: Vec::new(),
-            links: Vec::new(),
         };
         let turn = DecisionTurn {
             id: format!("dst-set-{nonce}"),

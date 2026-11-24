@@ -286,37 +286,48 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
             }
             Err(CommitError::Law { reason, .. }) => {
                 if let norn_kernel::governing_laws::LawEvaluationError::Violated(failure) = reason {
-                    self.recorder
-                        .record_law_violation(failure.rule_ref.rule_id.clone());
+                    let rule_id = match &failure.rule_ref {
+                        norn_ir::DataQualityRuleRef::Law { law_id, .. } => law_id.clone(),
+                        norn_ir::DataQualityRuleRef::Invariant { invariant_id, .. } => {
+                            invariant_id.as_str().to_owned()
+                        }
+                        norn_ir::DataQualityRuleRef::Builtin { id, .. } => id.clone(),
+                    };
+                    self.recorder.record_law_violation(rule_id);
                 }
             }
-            Err(CommitError::InvariantViolation { invariant_id, .. }) => {
-                self.recorder.record_law_violation(invariant_id.as_str());
+            Err(CommitError::InvariantViolation { id, .. }) => {
+                self.recorder.record_law_violation(id.as_str());
             }
             Err(
-                CommitError::InvalidShape { .. }
-                | CommitError::IdentifierTooLong { .. }
-                | CommitError::InvalidLinkDeclaration { .. }
-                | CommitError::EffectiveValues { .. }
-                | CommitError::LinkValues { .. }
+                CommitError::IdentityReuse
+                | CommitError::IdentityCollision { .. }
+                | CommitError::AtomicBoundary { .. }
+                | CommitError::AtomicDeliveryBoundary { .. }
+                | CommitError::OwnedRowsProtected { .. }
+                | CommitError::DuplicateKey { .. }
                 | CommitError::NotPending { .. }
                 | CommitError::Conflict { .. }
+                | CommitError::DuplicateLink { .. }
+                | CommitError::IdentifierTooLong { .. }
                 | CommitError::LinkConflict { .. }
-                | CommitError::LinkReadStale { .. }
-                | CommitError::PredicateReadStale { .. }
-                | CommitError::ConcreteTypeMismatch { .. }
-                | CommitError::IdentityReuse
-                | CommitError::IdentityCollision { .. }
-                | CommitError::UndeclaredLink { .. }
-                | CommitError::LinkEndpointMissing { .. }
-                | CommitError::LinkEndpointType { .. }
-                | CommitError::LinkCardinality { .. }
-                | CommitError::RequiredLinkMissing { .. }
-                | CommitError::LinkCycle { .. }
+                | CommitError::LinkReadConflict { .. }
+                | CommitError::UnsupportedLinkRead { .. }
+                | CommitError::DuplicateLinkRead { .. }
+                | CommitError::LinkReadTooLarge { .. }
+                | CommitError::InvalidLinkRead { .. }
+                | CommitError::PredicateReadConflict { .. }
+                | CommitError::UnsupportedPredicateRead { .. }
+                | CommitError::InvalidPredicateRead { .. }
                 | CommitError::DanglingLink { .. }
+                | CommitError::LinkTarget { .. }
+                | CommitError::LinkCardinality { .. }
+                | CommitError::LinkRequired { .. }
+                | CommitError::TypeMismatch { .. }
+                | CommitError::EffectiveValues { .. }
+                | CommitError::TraversalLimitExceeded { .. }
                 | CommitError::AccountingPosting { .. }
                 | CommitError::InvariantBudgetExceeded { .. }
-                | CommitError::TraversalLimitExceeded { .. }
                 | CommitError::InvariantModel { .. }
                 | CommitError::ObservationAuthorization
                 | CommitError::EventLimitExceeded { .. }
@@ -333,14 +344,10 @@ fn lifecycle_properties_for(
 ) -> Vec<String> {
     let catalog = model.type_catalog();
     catalog
-        .effective_lifecycles(object_type)
-        .map(|lifecycles| {
-            lifecycles
-                .into_iter()
-                .map(|lc| lc.property.as_str().to_owned())
-                .collect()
-        })
-        .unwrap_or_default()
+        .lifecycles(object_type)
+        .into_keys()
+        .map(|prop| prop.as_str().to_owned())
+        .collect()
 }
 
 fn extract_states(
