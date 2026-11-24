@@ -456,6 +456,17 @@ export async function retryMode(client: QueryClient): Promise<void> {
   await Promise.all(cancellations)
   if (retryScope) {
     await client.refetchQueries(scopeFilter, { cancelRefetch: false })
+    const nextScope = client.getQueryState<StudioScope | null>(["studio-scope"])
+    const nextModeKey =
+      nextScope?.status === "success"
+        ? studioScopeKey(nextScope.data)
+        : nextScope?.status === "error"
+          ? "outage"
+          : null
+    if (nextModeKey !== null) {
+      await client.refetchQueries({ queryKey: ["studio-mode", nextModeKey], exact: true, type: "active" }, { cancelRefetch: false })
+    }
+    return
   }
   await client.refetchQueries(modeFilter, { cancelRefetch: false })
 }

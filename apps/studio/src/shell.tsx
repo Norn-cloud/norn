@@ -676,7 +676,12 @@ function ConnectionBanner() {
   const { view } = useView()
   const retry = () => {
     void retryMode(queryClient)
-    void queryClient.invalidateQueries({ predicate: (query) => query.state.status === "error" })
+    void queryClient.invalidateQueries({
+      predicate: (query) => {
+        const head = query.queryKey[0]
+        return query.state.status === "error" && head !== "studio-scope" && head !== "studio-mode"
+      },
+    })
   }
   if (mode.data !== undefined) return null
   if (mode.failureCount === 0 && !mode.isError) {

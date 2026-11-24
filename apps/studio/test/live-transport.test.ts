@@ -80,6 +80,52 @@ test("Retry during a stalled /api/me scope discovery cancels the stalled request
   }
 })
 
+test("Retry after a scope outage does not refetch the stale outage mode query or clobber the recovered scope", async () => {
+  const client = new QueryClient()
+  const scopeObs = new QueryObserver(client, studioScopeQuery())
+  const outageObs = new QueryObserver(client, modeQuery(undefined, true, client))
+  let meCalls = 0
+  let failMe = true
+  const fetchProbe = async (...[input]: Parameters<typeof globalThis.fetch>) => {
+    if (input === "/api/me") {
+      meCalls += 1
+      if (failMe) return new Response("unavailable", { status: 503 })
+      return Response.json({
+        user: { id: "user:b", name: "B", email: "" },
+        organization: { id: "org_b", name: "Workspace B", role: "admin" },
+        environmentId: "prod",
+      })
+    }
+    return new Response("not found", { status: 404 })
+  }
+  const fetch = spyOn(globalThis, "fetch").mockImplementation(
+    Object.assign(fetchProbe, { preconnect: globalThis.fetch.preconnect }),
+  )
+  refreshMode()
+  let unsubScope: (() => void) | undefined
+  let unsubOutage: (() => void) | undefined
+  try {
+    unsubScope = scopeObs.subscribe(() => {})
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    expect(client.getQueryState(["studio-scope"])?.status).toBe("error")
+
+    unsubOutage = outageObs.subscribe(() => {})
+    meCalls = 0
+    failMe = false
+
+    await retryMode(client)
+
+    expect(meCalls).toBe(1)
+    expect<unknown>(client.getQueryData(["studio-scope"])).toEqual({ orgId: "org_b", environmentId: "prod" })
+  } finally {
+    unsubOutage?.()
+    unsubScope?.()
+    client.clear()
+    refreshMode()
+    fetch.mockRestore()
+  }
+})
+
 test("Retry cancels the transport's shared probe before starting its replacement", async () => {
   const client = new QueryClient()
   const query = modeQuery({ orgId: ME.organization.id, environmentId: ME.environmentId })
