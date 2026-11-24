@@ -151,8 +151,7 @@ test("map on a phone: the skeleton reserves the four stacked key-number tiles, s
   const served = new Promise<void>((resolve) => { serve = resolve })
   await cell(page, cleanInbox, served)
   await page.goto("/map")
-  const host = page.locator('[data-slot="bone-skeleton"][data-bone="semantic-map"]')
-  const overlay = host.locator('[data-boneyard-overlay="true"]')
+  const overlay = page.locator('[data-slot="bone-skeleton"][data-bone="semantic-map"] [data-boneyard-overlay="true"]')
   await expect(overlay).toBeVisible()
   await page.screenshot({ path: info.outputPath("map-phone-skeleton.png") })
   const skeleton = await overlay.evaluate((el) => {
@@ -163,10 +162,11 @@ test("map on a phone: the skeleton reserves the four stacked key-number tiles, s
   serve()
   const first = page.locator('[data-slot="semantic-island"]').first()
   await expect(first).toBeVisible()
-  const loaded = await host.evaluate((el) => {
-    const top = el.getBoundingClientRect().top
-    const tiles = [...el.querySelectorAll<HTMLElement>('[data-slot="kpi"]')].map((tile) => Math.round(tile.getBoundingClientRect().top - top))
-    const card = el.querySelector<HTMLElement>('[data-slot="semantic-island"]')!.getBoundingClientRect()
+  // Loaded, the content takes the skeleton's place: measure from the top of its first block, the key-number strip.
+  const loaded = await page.locator('[data-slot="stat-strip"]').evaluate((strip) => {
+    const top = strip.getBoundingClientRect().top
+    const tiles = [...strip.querySelectorAll<HTMLElement>('[data-slot="kpi"]')].map((tile) => Math.round(tile.getBoundingClientRect().top - top))
+    const card = document.querySelector<HTMLElement>('[data-slot="semantic-island"]')!.getBoundingClientRect()
     return { tiles, islandTop: Math.round(card.top - top), islandBottom: Math.round(card.bottom - top) }
   })
   await page.screenshot({ path: info.outputPath("map-phone-loaded.png") })

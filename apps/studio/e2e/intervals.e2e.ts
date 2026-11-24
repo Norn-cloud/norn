@@ -146,6 +146,7 @@ test("picker: the search field and its list are named; arrows and Enter pick by 
   await expect(list.getByRole("option").first()).toBeVisible()
   await search.fill("fork")
   await expect(list.getByRole("option")).toHaveText([/Forklift\s*equipment\/2/, /Use the id/])
+  await shoot(page, "picker-named")
   await page.keyboard.press("Enter")
   await expect(list).toBeHidden()
   await expect(equipment).toContainText("Forklift")
