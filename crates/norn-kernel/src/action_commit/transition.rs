@@ -181,6 +181,9 @@ where
     )
 }
 
+/// A writer's admitted fact changes and link changes.
+pub(super) type WriterChanges = (Vec<FactChange>, Vec<norn_ir::LinkChange>);
+
 /// How the writer may touch the action's primary target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum WriterTarget {
@@ -211,7 +214,7 @@ pub(super) fn writer_output<H>(
     target: &FactKey,
     mode: WriterTarget,
     limits: &EnvelopeLimits,
-) -> Result<(Vec<FactChange>, Vec<norn_ir::LinkChange>), ActionRefusal<H::Error>>
+) -> Result<WriterChanges, ActionRefusal<H::Error>>
 where
     H: CellHost + ?Sized,
 {

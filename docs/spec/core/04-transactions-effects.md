@@ -500,8 +500,10 @@ precondition is must-not-exist: an existing id refuses with
 `action.write_mode_failed` (no silent upsert). The kernel creates the target
 from the action's business input, applying declared defaults and the
 lifecycle's initial state; the writer then computes the record's remaining
-fields with `set`/`patch` changes on the created target and may create or
-modify other declared objects. The writer never creates, transitions or deletes
+fields with `set`/`patch` changes on the created target, which the kernel folds
+into the create so the commit records one `created` event with the final values
+(the store proves each event against the object's one committed snapshot), and
+may create or modify other declared objects. The writer never creates, transitions or deletes
 the primary target, and every other change follows the closed writer contract
 below; a writer may fire an unguarded transition on a secondary object, never
 one guarded by `independentOf` (ACTOR-INDEPENDENT-1, Core 05). The created target is authorized as its complete proposed state; laws

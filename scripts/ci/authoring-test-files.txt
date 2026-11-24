@@ -23,6 +23,7 @@ test/expansion-budget.test.ts
 test/explain.test.ts
 test/flow-builder.test.ts
 test/fmt.test.ts
+test/governed-create.test.ts
 test/init.test.ts
 test/interface-inheritance.test.ts
 test/interface-links.test.ts
