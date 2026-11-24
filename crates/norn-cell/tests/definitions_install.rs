@@ -4052,8 +4052,8 @@ fn hierarchy_sql_host_bounds_outgoing_reads_before_materializing_high_fan_in() {
     .expect("bounded outgoing traversal ignores incoming fan-in");
     assert_eq!(
         counter.outgoing_reads.get(),
-        2,
-        "only middle and ancestor adjacency was read"
+        3,
+        "only leaf to:one check and middle/ancestor acyclicity adjacency were read"
     );
 }
 
@@ -7867,4 +7867,269 @@ fn an_install_whose_pointer_cascades_into_the_receipts_is_refused_and_writes_not
         )
         .expect("the cell as left");
     assert_eq!((active, receipt_rows), (1, 1));
+}
+
+/// Blocker 3(a): an unauthorized disputed row matching `SliceKey::Predicate`
+/// must refuse as `ActionRefusal::TargetNotFound` BEFORE surfacing
+/// `CellError::SourceIdentityDisputed`, while an authorized actor still gets
+/// `SourceIdentityDisputed` (fail closed).
+struct R2DisputeAuthorizer {
+    allow_read: bool,
+}
+
+impl norn_kernel::ActionAuthorizer for R2DisputeAuthorizer {
+    fn authorize(
+        &self,
+        _: &norn_kernel::ActionAuthzRequest<'_>,
+    ) -> Result<(), norn_kernel::ActionDenial> {
+        Ok(())
+    }
+    fn authorize_read(
+        &self,
+        request: &norn_kernel::ActionReadAuthzRequest<'_>,
+    ) -> Result<(), norn_kernel::ActionDenial> {
+        if !self.allow_read && request.target.key == "MEAS-1" {
+            return Err(norn_kernel::ActionDenial::Invisible);
+        }
+        Ok(())
+    }
+    fn authorize_read_type(
+        &self,
+        _: &norn_kernel::ActionReadTypeAuthzRequest<'_>,
+    ) -> Result<(), norn_kernel::ActionDenial> {
+        Ok(())
+    }
+}
+
+fn r2_disputed_measurement_cell(
+    path: &std::path::Path,
+) -> (
+    Model,
+    norn_cell::SqliteCell<
+        norn_kernel::FactEvent,
+        norn_kernel::cell_host::JsonObject,
+        norn_kernel::cell_host::JsonObject,
+    >,
+) {
+    let mut store = mapping_bundle_store(path);
+    let input = bundle_input();
+    let mut canonical = bundle_raw("MEAS-1", "0.90");
+    canonical
+        .input
+        .as_object_mut()
+        .expect("raw")
+        .insert("source_id".into(), Value::from("é"));
+    let mut decomposed = canonical.clone();
+    decomposed
+        .input
+        .as_object_mut()
+        .expect("raw")
+        .insert("source_id".into(), Value::from("e\u{301}"));
+
+    let model = store.model().clone();
+    let (id, _) = store
+        .inject_mapping_bundle(&canonical, &input)
+        .expect("accept canonical");
+    let mut map_cell = norn_cell::SqliteCell::new(store, "org_demo/dev", |_| BTreeMap::new())
+        .expect("mapping cell");
+    map_cell
+        .process_mapping_bundle(&id)
+        .expect("apply canonical");
+    let (guard_id, _) = map_cell
+        .store_mut()
+        .inject_mapping_bundle(&decomposed, &input)
+        .expect("capture decomposed spelling");
+    assert!(matches!(
+        map_cell.process_mapping_bundle(&guard_id),
+        Err(CellError::UnsupportedMappingProfile)
+    ));
+    drop(map_cell);
+
+    let store = CellStore::open(path, model.clone(), StoreOptions::default()).expect("reopen");
+    let mut cell: norn_cell::SqliteCell<
+        norn_kernel::FactEvent,
+        norn_kernel::cell_host::JsonObject,
+        norn_kernel::cell_host::JsonObject,
+    > = norn_cell::SqliteCell::new(
+        store,
+        "org_demo/dev",
+        |cmd: &norn_kernel::Command<norn_kernel::cell_host::JsonObject>| cmd.payload.clone(),
+    )
+    .expect("cell");
+    let mut seed = norn_kernel::CellCommit::empty();
+    seed.writes.push(norn_kernel::FactWrite {
+        key: norn_kernel::FactKey::new("quality.Measurement", "MEAS-2"),
+        expected: norn_kernel::FactVersion(0),
+        mutation: norn_kernel::FactMutation::Put {
+            values: serde_json::from_value(json!({"purity": "0.95"})).expect("values"),
+        },
+    });
+    norn_kernel::CellHost::commit(&mut cell, seed).expect("seed target");
+    (model, cell)
+}
+
+struct R2ActionHost {
+    cell: norn_cell::SqliteCell<
+        norn_kernel::FactEvent,
+        norn_kernel::cell_host::JsonObject,
+        norn_kernel::cell_host::JsonObject,
+    >,
+}
+
+impl norn_kernel::CellHost for R2ActionHost {
+    type Event = norn_kernel::FactEvent;
+    type Command = norn_kernel::cell_host::JsonObject;
+    type Input = norn_kernel::cell_host::JsonObject;
+    type Error = CellError;
+
+    fn load(&self, key: &norn_kernel::FactKey) -> Result<norn_kernel::FactState, Self::Error> {
+        if key.object_type.as_str() == norn_kernel::ACTION_CALL_TYPE {
+            return Ok(norn_kernel::FactState {
+                version: norn_kernel::FactVersion(0),
+                values: None,
+            });
+        }
+        self.cell.load(key)
+    }
+    fn load_bounded(
+        &self,
+        key: &norn_kernel::FactKey,
+        max_bytes: u64,
+    ) -> Result<Option<norn_kernel::BoundedFact>, Self::Error> {
+        if key.object_type.as_str() == norn_kernel::ACTION_CALL_TYPE {
+            return Ok(Some(norn_kernel::BoundedFact {
+                state: norn_kernel::FactState {
+                    version: norn_kernel::FactVersion(0),
+                    values: None,
+                },
+                concrete_type: None,
+            }));
+        }
+        self.cell.load_bounded(key, max_bytes)
+    }
+    fn load_link(&self, key: &norn_kernel::LinkKey) -> Result<norn_kernel::LinkState, Self::Error> {
+        self.cell.load_link(key)
+    }
+    fn read_predicate(
+        &self,
+        predicate: &norn_kernel::PredicateQuery,
+        max_members: usize,
+        max_bytes: u64,
+    ) -> Result<Option<Vec<norn_kernel::PredicateObject>>, Self::Error> {
+        self.cell.read_predicate(predicate, max_members, max_bytes)
+    }
+    fn read_predicate_for_action(
+        &self,
+        predicate: &norn_kernel::PredicateQuery,
+        max_members: usize,
+        max_bytes: u64,
+        authorize: &mut dyn FnMut(&norn_kernel::PredicateObject) -> bool,
+    ) -> Result<norn_kernel::PredicateActionRead, Self::Error> {
+        self.cell
+            .read_predicate_for_action(predicate, max_members, max_bytes, authorize)
+    }
+    fn commit(
+        &mut self,
+        commit: norn_kernel::CellCommit<Self::Event, Self::Command, Self::Input>,
+    ) -> Result<norn_kernel::CommitReceipt, norn_kernel::CommitError<Self::Error>> {
+        self.cell.commit(commit)
+    }
+    fn perform(&mut self) -> Result<Option<norn_kernel::Performed<Self::Input>>, Self::Error> {
+        self.cell.perform()
+    }
+    fn observe(&mut self) -> Result<Option<norn_kernel::Observed<Self::Input>>, Self::Error> {
+        self.cell.observe()
+    }
+    fn clock(&mut self) -> Result<Option<norn_kernel::DueTimer<Self::Input>>, Self::Error> {
+        self.cell.clock()
+    }
+    fn publish(&mut self, receipt: &norn_kernel::CommitReceipt) -> Result<(), Self::Error> {
+        self.cell.publish(receipt)
+    }
+}
+
+#[test]
+fn r2_blocker3a_hidden_disputed_row_in_predicate_slice_refuses_as_target_not_found() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("dispute-predicate-authz.sqlite");
+    let (model, inner_cell) = r2_disputed_measurement_cell(&path);
+    let mut cell = R2ActionHost { cell: inner_cell };
+
+    let action: norn_ir::ActionRoot = serde_json::from_value(json!({
+        "actionId": "quality.measurement.check",
+        "scopeRequired": ["orgId", "environmentId"],
+        "idempotent": true,
+        "ledgered": true,
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {"target_id": {"type": "string"}, "purity": {"type": "string"}},
+            "required": ["target_id", "purity"]
+        },
+        "outputSchema": {"type": "object", "additionalProperties": false, "properties": {}},
+        "slice": [{"name": "all_measurements", "objectType": "quality.Measurement", "key": {"predicate": {"maxItems": 10}}}],
+        "preconditions": ["len(slice.all_measurements) >= 0"],
+        "writes": [{"entityKind": "quality.Measurement", "change": "modified"}],
+        "effectProgram": {
+            "kind": "upsert_input_object",
+            "objectIdField": "target_id",
+            "objectKind": "quality.Measurement",
+            "entityArtifactId": "quality.Measurement.entity",
+            "entityArtifactVersion": "1.0.0"
+        }
+    }))
+    .expect("action");
+    let catalog = model.type_catalog();
+    let request = norn_kernel::ActionCall {
+        action: &action,
+        action_artifact_id: "quality.measurement.check.action",
+        action_version: "1.0.0",
+        scope: BTreeMap::from([
+            ("orgId".to_owned(), "org_demo".to_owned()),
+            ("environmentId".to_owned(), "dev".to_owned()),
+        ]),
+        actor: "auditor".to_owned(),
+        input: serde_json::from_value(json!({"target_id": "MEAS-2", "purity": "0.96"}))
+            .expect("input"),
+        idempotency_key: "dispute-pred-1".to_owned(),
+        object_type: None,
+        turn: norn_kernel::DecisionTurn {
+            id: "turn-dispute-pred".to_owned(),
+            now: norn_kernel::LogicalTime::from_millis(2_000),
+            world: norn_kernel::World::Main,
+            consumes: None,
+        },
+        trace: None,
+    };
+
+    // 1. Unauthorized actor CANNOT learn MEAS-1 is disputed -> TargetNotFound.
+    let hidden_refusal = norn_kernel::commit_action(
+        &mut cell,
+        &catalog,
+        &request,
+        &R2DisputeAuthorizer { allow_read: false },
+    )
+    .expect_err("hidden disputed row must conceal as TargetNotFound");
+    assert!(
+        matches!(hidden_refusal, norn_kernel::ActionRefusal::TargetNotFound),
+        "expected TargetNotFound for hidden disputed row, got {hidden_refusal:?}"
+    );
+
+    // 2. Authorized actor gets SourceIdentityDisputed (fail closed).
+    let authorized_refusal = norn_kernel::commit_action(
+        &mut cell,
+        &catalog,
+        &request,
+        &R2DisputeAuthorizer { allow_read: true },
+    )
+    .expect_err("authorized disputed row must refuse as SourceIdentityDisputed");
+    assert!(
+        matches!(
+            authorized_refusal,
+            norn_kernel::ActionRefusal::Decision(norn_kernel::DecisionRefusal::Host(
+                CellError::SourceIdentityDisputed
+            ))
+        ),
+        "expected SourceIdentityDisputed for authorized actor, got {authorized_refusal:?}"
+    );
 }
