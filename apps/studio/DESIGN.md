@@ -112,7 +112,7 @@ on, including the well, and must pass section 16.
 | `--line` | #e8e8e8 | #2a2a2e | #e5e5ea | #26262b | Dividers, SourceTag ring, sheet footer rule. |
 | `--input` | #e4e4e4 | #2c2c30 | #dcdce2 | #323238 | Control borders, pill outline. |
 | `--foreground` | #1b1b1d | #ececee | #18181b | #fafafa | Primary text. |
-| `--muted-foreground` | #6e6e73 | #9b9ba3 | #5c5c66 | #9d9da6 | Secondary text, counts, status labels, metrics. |
+| `--muted-foreground` | #6a6a6f | #9b9ba3 | #5c5c66 | #9d9da6 | Secondary text, counts, status labels, metrics. |
 | `--subtle-foreground` | #85858b | #6a6a72 | #85858b | #686870 | **Decorative only:** separators (`×`, `·`), info glyphs, chevrons. Never the only carrier of information. |
 
 ### 4.2 Action
@@ -314,13 +314,13 @@ compose these; they do not restyle them with ad-hoc classes.
 | **PageHead** | `min-h-12 pt-6 pb-5`; `h1` (step 4, 500); a status (`Live`: pulsing dot + step 2 text in the status's text token); end side: page controls, at most one primary action, overflow menu. | One line of purpose under the title only when the page is not obvious. | Breadcrumbs in the page; two primary buttons; a status as a filled pill. |
 | **ShellCard** | `card` rim, `--radius-panel`, `--panel-inset` padding, `--panel-shadow`. Header `h-11 ps-3.5 pe-3`: icon (muted, 1.6 stroke), title (step 2, 400), count (muted), end: control or "See all ›" (muted, chevron `rtl:rotate-180`). Body: one well, `flex-1`. Optional footnote in the well (step 1, muted). | Use for every grouped list, table, chart or prose block. | A card inside a well; a well without a card; a bordered box inside a well. |
 | **StatWell** | ShellCard shape; label row `h-9 px-3.5` (step 2, 400, optional info glyph with a tooltip); well `px-4 pt-3.5 pb-3`, value (step 5, 400) with unit prefix at 0.54em muted, sub at the end (step 1, muted). | 2–4 in a band at the top of a page; numbers from the server only. | Coloured values; trend arrows in saturated colour; a value the cell did not return shown as `0`. |
-| **ListRow** | Button, `h-12`, `--radius-row`, `px-3`, `gap-3`. Lead: 6px dot, 28px Initials disc or 28px TypeDisc. Title (step 2, 400), mono code (step 1, muted), SourceTag, end: muted metric or StatusDot. Hover `--well-hover`; selected `--card` + 1px `--panel-border` ring. | Open the DetailSheet on activate; keep the row's own accessible name = its title. | Filled status pills; zebra stripes; more than one end slot. |
+| **ListRow** | Button, `h-12` (`min-h-[44px]` below 640px), `--radius-row`, `px-3`, `gap-3`. Lead: 6px dot, 28px Initials disc or 28px TypeDisc. Title (step 2, 400), mono code (step 1, muted), SourceTag, end: muted metric or StatusDot. Hover `--well-hover`; selected `--card` + 1px `--panel-border` ring. | Open the DetailSheet on activate; keep the row's own accessible name = its title. | Filled status pills; zebra stripes; more than one end slot. |
 | **DataTable** | Inside a ShellCard well: header row step 1 muted 400, hairline row dividers, `--density-cell` rows, tabular numbers, hover wash. | Only for genuinely dense, column-compared data (TanStack Table + Virtual). | As the default layout when a list → sheet fits. |
 | **StatusDot** | 6px dot (`--dot-*`) + step 1–2 text in `--muted-foreground`. | Every record status, lifecycle state, freshness. | Colour-only status; coloured label text; icon + dot + pill together. |
 | **SourceTag** | Mono, step 1, `h-[1.2rem]`, `--radius-chip`, `ring-1 --line`, no fill, muted text. | Source systems, rails, kinds, short codes. | A tinted or filled background; more than two per row. |
 | **Initials / TypeDisc** | 28px (rows), 36px (top bar), 24px (menus); Initials uses the avatar tokens; TypeDisc is `card` + `ring-1 --line` + muted 15px icon. | Hash by id. | Photos without consent; hard-coded hex. |
-| **Pill / PillButton** | `rounded-full`, `h-9`, `ring-1 --input` or `--well` fill for passive info pills, step 2. | Secondary actions, filters, top-bar controls. | Bold; coloured fills. |
-| **PrimaryButton** | `rounded-full`, `h-9 px-4.5`, `--action` fill, `--action-foreground`, step 2 at 500, inset top highlight. | Exactly one per view or sheet. | A second solid button next to it; icon-only primary. |
+| **Pill / PillButton** | `rounded-full`, `h-9` (`min-h-[44px]` below 640px when interactive), `ring-1 --input` or `--well` fill for passive info pills, step 2. | Secondary actions, filters, top-bar controls. | Bold; coloured fills. |
+| **PrimaryButton** | `rounded-full`, `h-9 px-4.5` (`min-h-[44px]` below 640px), `--action` fill, `--action-foreground`, step 2 at 500, inset top highlight. | Exactly one per view or sheet. | A second solid button next to it; icon-only primary. |
 | **SegmentedControl** | UI SDK; `rounded-full` track in `--well`, active segment `--card` + 500. | Branch/lens/period switches of ≤ 6 options. | Tabs styled as pills elsewhere. |
 | **Search** | `--radius-search`, `h-12`, `card` + `--panel-border`, leading icon, `/` key hint chip. | One per page, top of content. | A search inside every card. |
 | **Props** | A well, `p-1.5`; rows `min-h-10 gap-4 px-2.5 py-2.5`; key column `w-32` muted, value foreground, step 2. | Key/value facts in a sheet or refusal. | Bold keys; a table for two columns of facts. |
@@ -500,9 +500,11 @@ the principal may take it.
    the new tokens): across every skin × scheme, text ≥ 4.5:1 on its real surface (card **and**
    well, resting, hover, selected); figures at step 5 ≥ 3:1; focus rings and graph edges ≥ 3:1;
    `--action-foreground` on `--action` ≥ 4.5:1; avatar pairs ≥ 4.5:1. Dots are exempt only
-   because they are always paired with a label; the gate checks that pairing.
+   because they are always paired with a label; a gate check for that pairing is TARGET (see
+   section 18).
    `--subtle-foreground` may not carry information.
-4. **Touch:** interactive targets ≥ 44 × 44 CSS px below 640px; ≥ 32px elsewhere.
+4. **Touch:** interactive targets ≥ 44 × 44 CSS px below 640px (dock, ListRow, pills, buttons,
+   sheet close), written in px; ≥ 32px elsewhere.
 5. **Focus:** every control shows `focus-visible` outline 2px in `--ring` (dock: `--dock-ring`).
 6. **Type lock (TARGET lint):** no arbitrary `text-[…]` sizes and no `font-semibold`/`font-bold` in
    first-party screens; `font-medium` only on the allowed elements.
@@ -547,7 +549,7 @@ Same token, different values. "Pick" is what this spec adopts.
 | open L | `--radius-panel` / `--radius-well` | 1.25rem / 0.9375rem (18 / 13.5px at 90%) | 20px / 15px | 20px / 15px | Non-negotiable 1; px so geometry does not scale with the root. |
 | open L | `--action`, `--primary`, `--ring` | #2e60e0 | #3a6df0 | #2e60e0 | White on #3a6df0 is 4.54:1 (knife-edge) and #3a6df0 as text on the well is 4.16:1 (fails); #2e60e0 is 5.43:1. Accessibility is stricter. #3a6df0 stays as `--chart-1`. |
 | open L | `--action-hover` | #2451c7 | #2d5de0 | #2451c7 | Follows the action pick. |
-| open L | `--muted-foreground` | #5c5c63 | #6e6e73 | #6e6e73 | Wedge's calmer grey still passes (5.07:1 card, 4.65:1 well). |
+| open L | `--muted-foreground` | #5c5c63 | #6e6e73 | #6a6a6f | The wedge's grey, one step darker: #6e6e73 is 4.37:1 on `--well-hover` #eeeeee (fails); #6a6a6f is 5.38 / 4.93 / 4.64:1 on card, well and hover. |
 | open L | `--subtle-foreground` | — | #a0a0a6 | #85858b, decorative only | #a0a0a6 is 2.39:1 on the well; wedge used it for counts. Counts move to muted; subtle keeps ≥ 3:1 for glyphs. |
 | open L | `--success` | #1f7a4d | #1f9d61 | text #1f7a4d, dot #1f9d61 | Wedge green is 3.47:1 as text (fails). Split into text and dot tokens. |
 | open L | `--warning` | #8a5600 | #e09a2b | text #8a5600, dot #e09a2b | Wedge amber is 2.38:1 as text. |
@@ -667,6 +669,8 @@ Measured on `origin/main` at `ff0f95bd5e`. **Not fixed here**; the restyle lane 
 
 **Gates**
 
-- [ ] Contrast gate does not yet cover the new tokens (subtle, dot pairing, avatars,
-  action-foreground on action in dark).
+- [ ] Contrast gate does not yet cover the new tokens (subtle, avatars, action-foreground on
+  action in dark, muted on `--well-hover`), and nothing checks that every dot is paired with a
+  text label.
+- [ ] No 44px mobile minimum on rows, pills or buttons (`h-9` is 32.4px at the 90% root).
 - [ ] No lint for arbitrary type sizes, banned weights or physical spacing.
