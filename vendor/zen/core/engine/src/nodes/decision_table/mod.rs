@@ -297,7 +297,7 @@ impl DecisionTableNodeHandler {
 
     /// Norn (#1711): a row's explanation is built only from selector values observed
     /// while the row was matched (the isolate's reference cache). A selector whose cell
-    /// is blank was skipped by matching, so it is listed as unevaluated and never run
+    /// is blank or absent was skipped by matching, so it is listed as unevaluated and never run
     /// here: building a trace does no work outside the meter and cannot fail.
     fn row_explanation(
         ctx: &DecisionTableContext,
@@ -321,19 +321,12 @@ impl DecisionTableNodeHandler {
         }
 
         for input in ctx.node.inputs.iter() {
-            let Some(rule_value) = rule.get(input.id.deref()) else {
-                continue;
-            };
             let Some(input_field) = &input.field else {
                 continue;
             };
-
-            let observed = if rule_value.is_empty() {
-                None
-            } else {
-                isolate.get_reference(input_field.deref())
-            };
-            match observed {
+            // Matching skips an absent cell and a blank one alike: neither is observed.
+            let cell = rule.get(input.id.deref()).filter(|value| !value.is_empty());
+            match cell.and_then(|_| isolate.get_reference(input_field.deref())) {
                 Some(reference) => {
                     explanation
                         .reference_map
@@ -342,6 +335,9 @@ impl DecisionTableNodeHandler {
                 None => explanation.unevaluated.push(Rc::from(input_field.deref())),
             }
 
+            let Some(rule_value) = rule.get(input.id.deref()) else {
+                continue;
+            };
             let input_identifier = format!("{input_field}[{}]", input.id);
             explanation.rule.insert(
                 Rc::from(input_identifier.as_str()),
@@ -422,7 +418,7 @@ pub struct DecisionTableRowTrace {
     index: usize,
     reference_map: HashMap<Rc<str>, Variable>,
     rule: HashMap<Rc<str>, Rc<str>>,
-    /// Norn (#1711): input selectors the row skipped (blank cells); never evaluated
+    /// Norn (#1711): input selectors the row skipped (blank or absent cells); never evaluated
     /// for the trace.
     unevaluated: Vec<Rc<str>>,
 }

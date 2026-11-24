@@ -32,54 +32,50 @@ impl DynamicVariable for VmInterval {
     }
 }
 
-/// Norn (#1711): the most elements an interval may enumerate: a `Vec<Variable>` of
-/// this length is the largest the allocator can be asked for.
-const MAX_INTERVAL_ELEMENTS: usize = isize::MAX.unsigned_abs() / std::mem::size_of::<Variable>();
+/// Norn (#1711): the most elements an interval may materialize, on every target.
+/// `Begin` charges the full logical count first, so a metered run that cannot pay for
+/// it is `BudgetExhausted` identically natively and on wasm32; a run that can (or an
+/// unmetered one) past this ceiling is `IntervalTooLarge`, before any allocation.
+const MAX_INTERVAL_ELEMENTS: u64 = 1_000_000;
 
-/// Norn (#1711): the integers an interval enumerates, computed once with checked
-/// arithmetic. The same approved `len` is charged as fuel and then allocated.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct IntervalRange {
-    start: i128,
-    len: usize,
-}
-
-impl IntervalRange {
-    /// Norn `metering`: the units charged before the range is materialized.
-    pub fn fuel(&self) -> u64 {
-        u64::try_from(self.len).unwrap_or(u64::MAX)
+impl VmInterval {
+    /// Norn (#1711): the number of integers the interval enumerates, independent of
+    /// the target's `usize` and saturating at `u64::MAX`; `None` if the interval does
+    /// not enumerate integers (a date interval, a bound beyond `i64`). This is the
+    /// count `Begin` is charged.
+    pub fn element_count(&self) -> Option<u64> {
+        self.range().map(|(_, count)| count)
     }
 
-    /// Materializes exactly the approved `len` elements, reserving them up front.
-    pub fn to_array(&self, interval: &VmInterval) -> VMResult<Vec<Variable>> {
+    /// Norn (#1711): the integers of the interval, materialized at exactly
+    /// [`Self::element_count`] elements, or `IntervalTooLarge` past
+    /// `MAX_INTERVAL_ELEMENTS` or when the allocation fails.
+    pub fn to_array(&self) -> Option<VMResult<Vec<Variable>>> {
+        let (start, count) = self.range()?;
+        Some(self.materialize(start, count))
+    }
+
+    fn materialize(&self, start: i128, count: u64) -> VMResult<Vec<Variable>> {
+        let len = usize::try_from(count)
+            .ok()
+            .filter(|_| count <= MAX_INTERVAL_ELEMENTS)
+            .ok_or_else(|| self.too_large())?;
         let mut list = Vec::new();
-        list.try_reserve_exact(self.len)
-            .map_err(|_| interval.too_large())?;
-        for n in (self.start..).take(self.len) {
-            let n = i64::try_from(n).map_err(|_| interval.too_large())?;
+        list.try_reserve_exact(len).map_err(|_| self.too_large())?;
+        for n in (start..).take(len) {
+            let n = i64::try_from(n).map_err(|_| self.too_large())?;
             list.push(Variable::Number(Decimal::from(n)));
         }
 
         Ok(list)
     }
-}
 
-impl VmInterval {
-    /// Norn (#1711): the checked integer range of a number interval; `None` if the
-    /// interval does not enumerate integers (a date interval, a bound beyond `i64`),
-    /// a typed error if its element count overflows or cannot be allocated.
-    pub fn range(&self) -> Option<VMResult<IntervalRange>> {
+    /// The first integer and the element count, computed once from the widened
+    /// bounds (an empty interval counts zero).
+    fn range(&self) -> Option<(i128, u64)> {
         let (start, end) = self.bounds()?;
-        let len = end
-            .checked_sub(start)
-            .and_then(|span| span.checked_add(1))
-            .map(|len| len.max(0))
-            .and_then(|len| usize::try_from(len).ok())
-            .filter(|len| *len <= MAX_INTERVAL_ELEMENTS);
-        Some(
-            len.map(|len| IntervalRange { start, len })
-                .ok_or_else(|| self.too_large()),
-        )
+        let span = end.saturating_sub(start).saturating_add(1).max(0);
+        Some((start, u64::try_from(span).unwrap_or(u64::MAX)))
     }
 
     fn too_large(&self) -> VMError {

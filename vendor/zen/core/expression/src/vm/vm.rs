@@ -26,15 +26,15 @@ pub struct LoopScope {
 
 impl LoopScope {
     /// The loop over an array, or over the integers of an interval. Norn (#1711): an
-    /// interval is materialized at exactly its checked length (the length `Begin` was
-    /// charged for), or refused with `VMError::IntervalTooLarge`.
+    /// interval is materialized at exactly the count `Begin` was charged for, or refused
+    /// with `VMError::IntervalTooLarge`.
     fn begin(var: Variable) -> VMResult<Option<Self>> {
         let array = if matches!(var, Array(_)) {
             var
         } else {
-            match var.dynamic::<VmInterval>().map(|i| (i, i.range())) {
-                Some((interval, Some(range))) => Variable::from_array(range?.to_array(interval)?),
-                _ => return Ok(None),
+            match var.dynamic::<VmInterval>().and_then(|i| i.to_array()) {
+                Some(array) => Variable::from_array(array?),
+                None => return Ok(None),
             }
         };
         let len = match &array {
@@ -1593,8 +1593,8 @@ impl VMInner<'_, '_> {
                 Some(Array(a)) => a.borrow().len() as u64,
                 Some(var) => var
                     .dynamic::<VmInterval>()
-                    .and_then(|i| i.range()?.ok())
-                    .map_or(0, |range| range.fuel()),
+                    .and_then(|i| i.element_count())
+                    .unwrap_or(0),
                 None => 0,
             },
             Opcode::CallFunction { kind, arg_count } => {

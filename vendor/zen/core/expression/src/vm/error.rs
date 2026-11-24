@@ -21,8 +21,8 @@ pub enum VMError {
     #[error("{0}")]
     BudgetExhausted(crate::meter::BudgetExhausted),
 
-    /// Norn (#1711): an integer interval whose element count overflows or cannot be
-    /// allocated is refused before it is charged or materialized.
+    /// Norn (#1711): an integer interval with more elements than the VM materializes
+    /// (or whose allocation fails) is refused before any element is allocated.
     #[error("Interval {interval} has too many elements to enumerate")]
     IntervalTooLarge { interval: String },
 }
