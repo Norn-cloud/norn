@@ -199,6 +199,23 @@ fn check_reserved_and_required(
             });
         }
     }
+    for link in &action.create_links {
+        let fields = [
+            Some(link.target_id_field.as_str()),
+            link.source.as_ref().map(|source| source.id_field.as_str()),
+        ];
+        for field in fields.into_iter().flatten() {
+            if !server_supplied.contains(field)
+                && !supplied.contains_key(field)
+                && reported_missing.insert(field.to_owned())
+            {
+                violations.push(AutomationInputViolation {
+                    pointer: format!("/then/input/{}", rfc6901_token(field)),
+                    message: format!("required input field `{field}` is missing"),
+                });
+            }
+        }
+    }
     for field in required {
         if !server_supplied.contains(field)
             && !supplied.contains_key(field)
@@ -425,7 +442,7 @@ mod tests {
             "targetType": "demo.Order",
             "targetIdField": "targetId",
         }]);
-        let action: ActionRoot = serde_json::from_value(raw).expect("action with link");
+        let action: ActionRoot = serde_json::from_value(raw.clone()).expect("action with link");
         let input = RuntimeValue::from_json_text(
             r#"{"amount":"12.50","meta":{"reason":" "},"sourceId":"source","targetId":"target"}"#,
         )
@@ -447,6 +464,31 @@ mod tests {
                 errors.first().map(|error| error.pointer.as_str()),
                 Some(path)
             );
+
+            let mut missing = input.clone();
+            missing.remove(field);
+            let errors = validate_automation_static_input(&action, Some(&missing))
+                .expect_err("omitted link endpoint");
+            assert_eq!(
+                errors.first().map(|error| error.pointer.as_str()),
+                Some(path)
+            );
         }
+
+        // A link endpoint matching the server-injected target id field stays exempt.
+        raw["createLinks"] = serde_json::json!([{
+            "source": { "objectType": "demo.Order", "idField": "orderId" },
+            "link": "related",
+            "targetType": "demo.Order",
+            "targetIdField": "targetId",
+        }]);
+        let injected_source_action: ActionRoot =
+            serde_json::from_value(raw).expect("action with injected source link");
+        let mut without_source = input.clone();
+        without_source.remove("sourceId");
+        assert_eq!(
+            validate_automation_static_input(&injected_source_action, Some(&without_source)),
+            Ok(())
+        );
     }
 }

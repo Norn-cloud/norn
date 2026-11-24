@@ -69,7 +69,7 @@ pub use continuation::{
 };
 use trigger_index::{
     Page1Cache, RulePage, TriggerMatcher, WatchedRule, has_action_rules, has_row_rules_for_root,
-    query_action_rules_page, query_row_rules_page,
+    has_row_rules_for_type, query_action_rules_page, query_row_rules_page,
 };
 pub(crate) use trigger_index::{sync_trigger_index, void_retired};
 
@@ -360,9 +360,18 @@ pub(crate) fn capture_before<E: SqlEngine>(
         return Ok(AutomationWatch::default());
     }
     let mut before = BTreeMap::new();
+    let mut type_has_row_rules: HashMap<&str, bool> = HashMap::new();
+    let mut target_matches_row_rules: HashMap<&str, bool> = HashMap::new();
     for (ty, key) in touched {
         let root = reader.root_type(ty)?;
-        if watched_row_roots.contains(root) {
+        if watched_row_roots.contains(root)
+            && target_type_may_match_row_rules(
+                reader,
+                ty,
+                &mut type_has_row_rules,
+                &mut target_matches_row_rules,
+            )?
+        {
             capture_root_snapshot(reader, &batch.world, root, key, &mut before)?;
         }
     }
@@ -382,6 +391,43 @@ pub(crate) fn capture_before<E: SqlEngine>(
         watched_actions,
         before,
     })
+}
+
+fn target_type_may_match_row_rules<'a, E: SqlEngine>(
+    reader: &'a StoreReader<'_, E>,
+    target_type: &'a str,
+    type_has_row_rules: &mut HashMap<&'a str, bool>,
+    target_matches_row_rules: &mut HashMap<&'a str, bool>,
+) -> Result<bool, CellError> {
+    if let Some(&cached) = target_matches_row_rules.get(target_type) {
+        return Ok(cached);
+    }
+    let model = reader.model();
+    let mut matched = false;
+    // Check ancestors (including `target_type`) so sibling replacements still
+    // capture preimages for common-ancestor rules, and descendants so a
+    // supertype write (e.g. `FactChange::Set`) still captures subtype preimages.
+    let candidates = model.chain(target_type)?.iter().map(String::as_str).chain(
+        model.object_types().filter_map(|def| {
+            let name = def.name.as_str();
+            (name != target_type && model.is_a(name, target_type)).then_some(name)
+        }),
+    );
+    for candidate in candidates {
+        let has_rule = if let Some(&cached) = type_has_row_rules.get(candidate) {
+            cached
+        } else {
+            let found = has_row_rules_for_type(reader.conn, candidate)?;
+            type_has_row_rules.insert(candidate, found);
+            found
+        };
+        if has_rule {
+            matched = true;
+            break;
+        }
+    }
+    target_matches_row_rules.insert(target_type, matched);
+    Ok(matched)
 }
 
 fn capture_root_snapshot<E: SqlEngine>(
@@ -2326,6 +2372,104 @@ mod tests {
                 .as_ref()
                 .and_then(|values| values.get("b_tag")),
             Some(&Value::String("from-b".into()))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn capture_before_skips_unrelated_sibling_when_only_other_sibling_is_watched() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("sibling-preimage.sqlite");
+        let (model, canonical) = sample_model()?;
+        let mut store = CellStore::open(&path, model.clone(), StoreOptions::default())?;
+        store.bind("scope", SCOPE)?;
+        store.install_definitions(model.clone(), install_input(&canonical, 10), Some(0), SCOPE)?;
+        install_automation_for(
+            &mut store,
+            &model,
+            &canonical,
+            1,
+            "ops.b_created",
+            "demo.TicketB",
+            &json!({ "kind": "event", "event": "created" }),
+        )?;
+        seed_ticket_a(&mut store)?;
+
+        let update_a = CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: SCOPE.to_owned(),
+            logical_time: 150,
+            writes: vec![FactWriteRow::Put {
+                object_type: "demo.TicketA".to_owned(),
+                key: "s-1".to_owned(),
+                values: BTreeMap::from([
+                    ("status".to_owned(), Value::String("open".into())),
+                    ("score".to_owned(), Value::from(20_i64)),
+                    ("a_tag".to_owned(), Value::String("updated-a".into())),
+                ]),
+            }],
+            ..CommitBatch::default()
+        };
+        let watch_a = capture_before(&store.read(), &update_a)?;
+        assert!(
+            watch_a.before.is_empty(),
+            "unrelated sibling write must skip preimage reads"
+        );
+
+        let supertype_set = CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: SCOPE.to_owned(),
+            logical_time: 151,
+            facts: vec![FactChange::Set {
+                object_type: norn_ir::ObjectTypeName("demo.Ticket".to_owned()),
+                key: "s-1".to_owned(),
+                property: norn_ir::PropertyId("score".to_owned()),
+                value: Value::from(30_i64),
+            }],
+            ..CommitBatch::default()
+        };
+        let watch_super = capture_before(&store.read(), &supertype_set)?;
+        assert!(
+            watch_super
+                .before
+                .contains_key(&("demo.Ticket".to_owned(), "s-1".to_owned())),
+            "supertype write must still capture preimage when a subtype rule exists"
+        );
+
+        let base_path = dir.path().join("sibling-preimage-base.sqlite");
+        let mut base_store = CellStore::open(&base_path, model.clone(), StoreOptions::default())?;
+        base_store.bind("scope", SCOPE)?;
+        base_store.install_definitions(
+            model.clone(),
+            install_input(&canonical, 10),
+            Some(0),
+            SCOPE,
+        )?;
+        install_automation_for(
+            &mut base_store,
+            &model,
+            &canonical,
+            1,
+            "ops.b_created",
+            "demo.TicketB",
+            &json!({ "kind": "event", "event": "created" }),
+        )?;
+        install_automation_for(
+            &mut base_store,
+            &model,
+            &canonical,
+            2,
+            "ops.base_updated",
+            "demo.Ticket",
+            &json!({ "kind": "event", "event": "updated" }),
+        )?;
+        seed_ticket_a(&mut base_store)?;
+        let watch_with_base = capture_before(&base_store.read(), &update_a)?;
+        assert!(
+            watch_with_base
+                .before
+                .contains_key(&("demo.Ticket".to_owned(), "s-1".to_owned())),
+            "common-ancestor rule must still capture preimage for sibling write"
         );
         Ok(())
     }

@@ -415,6 +415,7 @@ mod cases {
         );
         assert_eq!(status, 200, "{replayed}");
         assert_eq!(replayed["outcome"], json!("replayed"), "{replayed}");
+        assert_eq!(replayed["receipt"], committed["receipt"], "{replayed}");
         assert_eq!(
             checked(pending_automation_trigger_count(&cell.host))?,
             2,

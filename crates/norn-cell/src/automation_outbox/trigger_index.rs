@@ -308,6 +308,21 @@ pub(super) fn has_row_rules_for_root<E: SqlEngine>(
     Ok(found.is_some())
 }
 
+pub(super) fn has_row_rules_for_type<E: SqlEngine>(
+    conn: &E,
+    object_type: &str,
+) -> Result<bool, CellError> {
+    let found: Option<i64> = conn.query_optional(
+        &format!(
+            "SELECT 1 FROM \"{AUTOMATION_TRIGGER_INDEX}\" \
+             WHERE \"object_type\" = ?1 AND \"trigger_kind\" != '{KIND_ACTION}' LIMIT 1"
+        ),
+        params![object_type],
+        |row| row.get(0),
+    )?;
+    Ok(found.is_some())
+}
+
 pub(super) fn has_action_rules<E: SqlEngine>(conn: &E, action_id: &str) -> Result<bool, CellError> {
     let found: Option<i64> = conn.query_optional(
         &format!(

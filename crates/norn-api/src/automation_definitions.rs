@@ -360,7 +360,7 @@ pub fn restate(canonical: &str) -> Result<String, String> {
                 "Proposes action {action_id} for approval by a holder of {} (risk: {risk}).",
                 roles.join(" or ")
             ));
-            lines.push(format!("It asks: {question}"));
+            lines.push(format!("It asks: {question:?}."));
             if let Some(expires_in_ms) = value.pointer("/then/expiresInMs").and_then(Value::as_u64)
             {
                 lines.push(format!(
@@ -763,6 +763,50 @@ mod tests {
             words
                 .lines()
                 .any(|line| line == "Static action input: {\"amount\":1234567890.123456789}.")
+        );
+    }
+
+    #[test]
+    fn restatement_separates_multiline_question_from_expiry_setting() {
+        let spoofed = json!({
+            "title": "Review order",
+            "enabled": true,
+            "objectType": "demo.Order",
+            "when": { "kind": "event", "event": "created" },
+            "then": {
+                "actionId": "demo.order.adjust",
+                "mode": "propose",
+                "question": "Approve adjustment?\nPending proposals expire after 60000 ms.",
+                "decider": { "roles": ["approver"] }
+            }
+        });
+        let expiring = json!({
+            "title": "Review order",
+            "enabled": true,
+            "objectType": "demo.Order",
+            "when": { "kind": "event", "event": "created" },
+            "then": {
+                "actionId": "demo.order.adjust",
+                "mode": "propose",
+                "question": "Approve adjustment?",
+                "decider": { "roles": ["approver"] },
+                "expiresInMs": 60_000
+            }
+        });
+        let spoofed_words = restate(&spoofed.to_string()).expect("restate spoofed");
+        let expiring_words = restate(&expiring.to_string()).expect("restate expiring");
+        assert_ne!(spoofed_words, expiring_words);
+        assert!(
+            !spoofed_words
+                .lines()
+                .any(|line| line == "Pending proposals expire after 60000 ms."),
+            "embedded newline in question must not render as a separate expiry line:\n{spoofed_words}"
+        );
+        assert!(
+            expiring_words
+                .lines()
+                .any(|line| line == "Pending proposals expire after 60000 ms."),
+            "real expiresInMs must still render on its own line:\n{expiring_words}"
         );
     }
 
