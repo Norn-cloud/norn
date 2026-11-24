@@ -28,7 +28,7 @@ export type CellResult<T> =
   | { readonly kind: "unavailable" }
   | { readonly kind: "no-cell" }
 
-function refusalOf(status: number, text: string): Refusal | null {
+export function refusalOf(status: number, text: string): Refusal | null {
   let body: unknown
   try { body = JSON.parse(text) } catch { return null }
   if (body === null || typeof body !== "object") return null
