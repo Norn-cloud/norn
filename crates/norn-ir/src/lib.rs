@@ -54,11 +54,14 @@ pub use model::{
 };
 pub mod trust;
 pub use trust::TrustLevel;
+mod decimal_sum;
 pub mod decision_question;
 pub mod deontic;
 pub mod entitlement;
 pub mod entity;
 pub mod entity_v2;
+pub mod exact_sum;
+pub use exact_sum::{Amount, ExactSum};
 pub mod explain;
 pub mod fact_change;
 pub mod facts;

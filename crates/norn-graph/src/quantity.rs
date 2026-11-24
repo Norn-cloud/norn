@@ -15,6 +15,18 @@ pub enum ArithmeticError {
 /// than round, saturate, wrap, panic or perform IO. Methods must take bounded
 /// work independent of graph size. Units and currency are the caller's contract.
 pub trait Quantity: Clone + Ord {
+    /// Accumulator for unordered sibling sums.
+    type Sum: Default;
+    /// Include one term in an unordered sum.
+    ///
+    /// # Errors
+    /// Returns an error when the accumulator capacity is exhausted.
+    fn accumulate(sum: &mut Self::Sum, term: &Self) -> Result<(), ArithmeticError>;
+    /// Convert a completed sum to its output representation.
+    ///
+    /// # Errors
+    /// Returns an error when the result cannot be represented exactly.
+    fn finish(sum: Self::Sum) -> Result<Self, ArithmeticError>;
     /// Additive identity.
     fn zero() -> Self;
     /// Exact checked addition.
@@ -61,6 +73,16 @@ fn aligned(value: Decimal, scale: u32) -> Result<i128, ArithmeticError> {
 }
 
 impl Quantity for Decimal {
+    type Sum = crate::decimal_sum::DecimalSum;
+
+    fn accumulate(sum: &mut Self::Sum, term: &Self) -> Result<(), ArithmeticError> {
+        sum.push(*term).ok_or(ArithmeticError::Overflow)
+    }
+
+    fn finish(sum: Self::Sum) -> Result<Self, ArithmeticError> {
+        sum.total().ok_or(ArithmeticError::Overflow)
+    }
+
     fn zero() -> Self {
         Self::ZERO
     }

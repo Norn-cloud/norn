@@ -11,6 +11,12 @@
 )]
 
 mod algorithms;
+// Both Ring-0 libraries compile the same allocation-free arithmetic sources.
+// Graph stays independent of IR serialization and schema dependencies.
+#[path = "../../norn-ir/src/decimal_sum.rs"]
+mod decimal_sum;
+#[path = "../../norn-ir/src/exact_sum.rs"]
+pub mod exact_sum;
 mod graph;
 mod quantity;
 

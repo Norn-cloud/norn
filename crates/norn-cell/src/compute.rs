@@ -260,7 +260,11 @@ pub(crate) struct FindingEvidence<'a> {
 
 pub(crate) type QuestionPopulation = (QueryContext, BTreeMap<String, String>);
 
-type Bucket = (RuntimeValue, Vec<i128>, BTreeMap<String, Member>);
+type Bucket = (
+    RuntimeValue,
+    Vec<norn_ir::ExactSum>,
+    BTreeMap<String, Member>,
+);
 
 /// Each root identity's versioned contributions: one for an ordinary sum, one
 /// per bucket for a snapshot sum (METRIC-SNAPSHOT-ASOF-1).
@@ -673,7 +677,10 @@ struct Snapshot {
 
 /// Exact sums per bucket, and per operand the count of null measured values skipped.
 #[derive(Clone, Default)]
-pub(crate) struct Totals(BTreeMap<String, Vec<i128>>, BTreeMap<String, Vec<u64>>);
+pub(crate) struct Totals(
+    BTreeMap<String, Vec<norn_ir::ExactSum>>,
+    BTreeMap<String, Vec<u64>>,
+);
 impl Totals {
     /// COMPUTE-DETERMINISTIC-1: apply one signed identity contribution with checked exact arithmetic.
     pub(crate) fn adjust(&mut self, value: &Contribution, retract: bool) -> Result<(), CellError> {
@@ -695,18 +702,15 @@ impl Totals {
         let totals = self
             .0
             .entry(key)
-            .or_insert_with(|| vec![0; value.amounts.len()]);
+            .or_insert_with(|| vec![norn_ir::ExactSum::ZERO; value.amounts.len()]);
         for (total, amount) in totals.iter_mut().zip(&value.amounts) {
             let amount = amount.unwrap_or(0);
-            let delta = if retract {
-                amount
-                    .checked_neg()
-                    .ok_or_else(|| refused(UNSUPPORTED_ENGINE))?
+            *total = if retract {
+                total.retract(i128::from(amount)).ok_or(math::BoundExceeded)
             } else {
-                amount
-            };
-            *total =
-                math::add(*total, delta).ok_or_else(|| refused("core.compute.bound_exceeded"))?;
+                math::add(*total, amount)
+            }
+            .map_err(|_| refused("core.compute.bound_exceeded"))?;
         }
         Ok(())
     }
@@ -863,6 +867,11 @@ pub(crate) fn finish(
     let rows = grouped
         .into_iter()
         .map(|(key, (bucket, totals, members))| {
+            let totals = totals
+                .into_iter()
+                .map(math::decide)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| refused("core.compute.bound_exceeded"))?;
             let value = match totals.as_slice() {
                 [sum] => Some(decimal(*sum)?),
                 [_, 0] => None,
@@ -970,7 +979,7 @@ mod tests {
             for value in values.iter().rev() {
                 totals.adjust(&Contribution { bucket: RuntimeValue::Null, amounts: vec![value.map(i64::from)], nulls: vec![false] }, true).expect("bounded retract");
             }
-            proptest::prop_assert!(totals.0.values().all(|sums| sums.iter().all(|sum| *sum == 0)));
+            proptest::prop_assert!(totals.0.values().all(|sums| sums.iter().all(|sum| *sum == norn_ir::ExactSum::ZERO)));
         }
     }
 }

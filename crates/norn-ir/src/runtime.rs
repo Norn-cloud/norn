@@ -125,6 +125,23 @@ impl From<CanonicalJsonError> for RuntimeValueError {
     }
 }
 
+/// Exact unordered aggregation of runtime decimal values.
+#[derive(Default)]
+pub struct DecimalSum(crate::decimal_sum::DecimalSum);
+
+impl DecimalSum {
+    /// Include an exact decimal within the term-count bound.
+    pub fn push(&mut self, value: Decimal) -> Option<()> {
+        self.0.push(value.0)
+    }
+
+    /// The normalized sum, when representable.
+    #[must_use]
+    pub fn total(&self) -> Option<Decimal> {
+        self.0.total().map(Decimal)
+    }
+}
+
 impl Decimal {
     /// Zero.
     pub const ZERO: Self = Self(rust_decimal::Decimal::ZERO);

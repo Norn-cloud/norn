@@ -754,3 +754,19 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn signed_rollup_keeps_cancellation_across_decimal_scales() {
+    let graph = Graph {
+        nodes: vec![0, 1, 2],
+        edges: vec![(0, 1), (0, 2)],
+    };
+    for unit in [Decimal::ONE, Decimal::new(1, 28)] {
+        for term in [unit, -unit] {
+            let values = BTreeMap::from([(0, Decimal::MAX), (1, term), (2, -term)]);
+            let result =
+                hierarchical_rollup(&graph, &0, &values, Aggregation::Sum, BUDGET).unwrap();
+            assert_eq!(result[&0], Decimal::MAX);
+        }
+    }
+}

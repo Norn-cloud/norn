@@ -312,14 +312,24 @@ pub fn hierarchical_rollup<N: Ord + Clone, Q: Quantity>(
     for node in order.iter().rev() {
         meter.step()?;
         let mut aggregate = value(values, node)?.clone();
+        let mut sum = Q::Sum::default();
+        if aggregation == Aggregation::Sum {
+            Q::accumulate(&mut sum, &aggregate)?;
+        }
         for child in &graph.links(node)?.out {
             meter.step()?;
             let child_value = result.get(child).ok_or(Error::Invariant)?;
             aggregate = match aggregation {
-                Aggregation::Sum => aggregate.add(child_value)?,
+                Aggregation::Sum => {
+                    Q::accumulate(&mut sum, child_value)?;
+                    continue;
+                }
                 Aggregation::Min => aggregate.min(child_value.clone()),
                 Aggregation::Max => aggregate.max(child_value.clone()),
             };
+        }
+        if aggregation == Aggregation::Sum {
+            aggregate = Q::finish(sum)?;
         }
         result.insert(node.clone(), aggregate);
     }

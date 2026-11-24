@@ -1,0 +1,251 @@
+//! Fixed-width sums of reversible signed coefficients. Only the final
+//! difference needs to fit in an i128. Neither subtotal depends on input order.
+
+#[cfg(verus_keep_ghost)]
+use vstd::prelude::*;
+
+/// An unsigned 160-bit integer, ordered most significant limb first.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub struct U160 {
+    hi: u32,
+    lo: u128,
+}
+
+impl U160 {
+    /// Embed a single unsigned limb.
+    #[must_use]
+    pub const fn from_u128(lo: u128) -> Self {
+        Self { hi: 0, lo }
+    }
+
+    #[cfg_attr(verus_keep_ghost, verus_spec(r =>
+        requires self.value() + rhs.value() < radix() * 0x1_0000_0000,
+        ensures r.value() == self.value() + rhs.value()
+    ))]
+    const fn plus(self, rhs: Self) -> Self {
+        let (lo, carry): (u128, bool) = self.lo.overflowing_add(rhs.lo);
+        let hi: u32 = self
+            .hi
+            .wrapping_add(rhs.hi)
+            .wrapping_add(if carry { 1 } else { 0 });
+        Self { lo, hi }
+    }
+
+    #[cfg_attr(verus_keep_ghost, verus_spec(r =>
+        ensures r.is_some() == (self.value() >= rhs.value()),
+            r.is_some() ==> r.unwrap().value() == self.value() - rhs.value()
+    ))]
+    const fn minus(self, rhs: Self) -> Option<Self> {
+        let (lo, borrow): (u128, bool) = self.lo.overflowing_sub(rhs.lo);
+        if self.hi < rhs.hi || (self.hi == rhs.hi && borrow) {
+            return None;
+        }
+        let hi: u32 = self
+            .hi
+            .wrapping_sub(rhs.hi)
+            .wrapping_sub(if borrow { 1 } else { 0 });
+        Some(Self { hi, lo })
+    }
+}
+
+/// An amount whose additive inverse fits in the same signed representation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Amount(i128);
+
+impl Amount {
+    /// Check reversibility.
+    #[must_use]
+    pub const fn new(term: i128) -> Option<Self> {
+        if term == i128::MIN {
+            None
+        } else {
+            Some(Self(term))
+        }
+    }
+
+    /// The signed coefficient.
+    #[must_use]
+    pub const fn get(self) -> i128 {
+        self.0
+    }
+}
+
+/// The positive and negative subtotals of at most u32::MAX terms.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ExactSum {
+    pos: U160,
+    neg: U160,
+    terms: u32,
+}
+
+impl ExactSum {
+    /// The empty sum.
+    pub const ZERO: Self = Self {
+        pos: U160 { hi: 0, lo: 0 },
+        neg: U160 { hi: 0, lo: 0 },
+        terms: 0,
+    };
+
+    /// Append a reversible coefficient within the term-count bound.
+    #[must_use]
+    #[allow(
+        clippy::should_implement_trait,
+        reason = "addition explicitly reports capacity"
+    )]
+    #[cfg_attr(verus_keep_ghost, verus_spec(r =>
+        requires self.bounded(),
+        ensures r.is_none() == (term == i128::MIN || self.terms == u32::MAX),
+            r.is_some() ==> r.unwrap().terms == self.terms + 1,
+            r.is_some() ==> r.unwrap().pos.value() == self.pos.value() + positive(term as int),
+            r.is_some() ==> r.unwrap().neg.value() == self.neg.value() + positive(-(term as int))
+    ))]
+    pub const fn add(mut self, term: i128) -> Option<Self> {
+        if term == i128::MIN || self.terms == u32::MAX {
+            return None;
+        }
+        let limb = U160 {
+            hi: 0,
+            lo: term.unsigned_abs(),
+        };
+        if term < 0 {
+            self.neg = self.neg.plus(limb);
+        } else {
+            self.pos = self.pos.plus(limb);
+        }
+        self.terms = self.terms.wrapping_add(1);
+        Some(self)
+    }
+
+    /// Remove a previously added coefficient. The caller owns membership.
+    /// Reject underflow and retractions that exceed the remaining capacity.
+    #[must_use]
+    pub const fn retract(mut self, term: i128) -> Option<Self> {
+        if term == i128::MIN || self.terms == 0 {
+            return None;
+        }
+        let limb = U160::from_u128(term.unsigned_abs());
+        let subtotal = if term < 0 {
+            &mut self.neg
+        } else {
+            &mut self.pos
+        };
+        let Some(rest) = subtotal.minus(limb) else {
+            return None;
+        };
+        *subtotal = rest;
+        self.terms = self.terms.wrapping_sub(1);
+        if self.magnitude().hi > self.terms >> 1 {
+            return None;
+        }
+        Some(self)
+    }
+
+    /// The exact reversible signed result, when representable.
+    #[must_use]
+    #[allow(
+        clippy::as_conversions,
+        clippy::cast_possible_wrap,
+        reason = "range checked below"
+    )]
+    #[cfg_attr(verus_keep_ghost, verus_spec(r =>
+        ensures r.is_some() == (-0x80000000000000000000000000000000 < self.net() <= i128::MAX),
+            r.is_some() ==> r.unwrap() as int == self.net()
+    ))]
+    pub const fn total(self) -> Option<i128> {
+        let (difference, negative) = match self.pos.minus(self.neg) {
+            Some(d) => (d, false),
+            None => match self.neg.minus(self.pos) {
+                Some(d) => (d, true),
+                None => return None,
+            },
+        };
+        if difference.hi != 0 || difference.lo > i128::MAX.unsigned_abs() {
+            return None;
+        }
+        let value: i128 = difference.lo as i128;
+        Some(if negative {
+            value.wrapping_neg()
+        } else {
+            value
+        })
+    }
+
+    /// Sum of absolute values, including contributions that cancel.
+    #[must_use]
+    #[cfg_attr(verus_keep_ghost, verus_spec(r =>
+        requires self.pos.value() + self.neg.value() < radix() * 0x1_0000_0000,
+        ensures r.value() == self.pos.value() + self.neg.value()
+    ))]
+    pub const fn magnitude(self) -> U160 {
+        self.pos.plus(self.neg)
+    }
+
+    /// Whether both subtotals are equal, regardless of their width.
+    #[must_use]
+    #[cfg_attr(verus_keep_ghost, verus_spec(r => ensures r == (self.net() == 0)))]
+    pub const fn is_zero(self) -> bool {
+        self.pos.hi == self.neg.hi && self.pos.lo == self.neg.lo
+    }
+}
+
+#[cfg(verus_keep_ghost)]
+verus! {
+    spec fn radix() -> int { 0x100000000000000000000000000000000 }
+    spec fn positive(x: int) -> int { if x > 0 { x } else { 0 } }
+    impl U160 {
+        spec fn value(self) -> int { self.hi as int * radix() + self.lo as int }
+    }
+    impl ExactSum {
+        spec fn bounded(self) -> bool {
+            self.pos.value() + self.neg.value() <= self.terms as int * (radix() / 2)
+        }
+        spec fn net(self) -> int { self.pos.value() - self.neg.value() }
+        spec fn represents(self, xs: Seq<int>) -> bool {
+            self.terms == xs.len() && self.pos.value() == subtotal(xs, true)
+                && self.neg.value() == subtotal(xs, false)
+        }
+    }
+    spec fn subtotal(xs: Seq<int>, pos: bool) -> int {
+        xs.fold_left(0int, |s: int, x: int| s + positive(if pos { x } else { -x }))
+    }
+    spec fn sum(xs: Seq<int>) -> int { subtotal(xs, true) - subtotal(xs, false) }
+    spec fn mag(xs: Seq<int>) -> int { subtotal(xs, true) + subtotal(xs, false) }
+
+    proof fn append(xs: Seq<int>, t: int, pos: bool)
+        ensures subtotal(xs.push(t), pos) == subtotal(xs, pos) + positive(if pos { t } else { -t }),
+    {
+        assert(xs.push(t).drop_last() =~= xs);
+    }
+
+    proof fn permutation(a: Seq<int>, b: Seq<int>)
+        requires a.to_multiset() == b.to_multiset(),
+        ensures sum(a) == sum(b), mag(a) == mag(b),
+    {
+        vstd::seq_lib::lemma_fold_left_permutation(a, b, |s: int, x: int| s + positive(x), 0int);
+        vstd::seq_lib::lemma_fold_left_permutation(a, b, |s: int, x: int| s + positive(-x), 0int);
+    }
+
+    proof fn no_internal_overflow(xs: Seq<int>)
+        requires xs.len() <= u32::MAX,
+            forall|i: int| 0 <= i < xs.len() ==> -(radix()/2) < #[trigger] xs[i] < radix()/2,
+        ensures 0 <= subtotal(xs, true) < radix() * 0x1_0000_0000,
+            0 <= subtotal(xs, false) < radix() * 0x1_0000_0000,
+            mag(xs) <= xs.len() * (radix()/2),
+        decreases xs.len(),
+    {
+        if xs.len() > 0 {
+            let pre = xs.drop_last();
+            assert forall|i: int| 0 <= i < pre.len() implies
+                -(radix()/2) < #[trigger] pre[i] < radix()/2 by { assert(pre[i] == xs[i]); }
+            no_internal_overflow(pre);
+            assert(xs.last() == xs[xs.len() - 1]);
+            assert(pre.push(xs.last()) =~= xs);
+            append(pre, xs.last(), true);
+            append(pre, xs.last(), false);
+        }
+    }
+}
+
+#[cfg(kani)]
+#[path = "../../../verification/exact-arith-v1/exact_sum_kani.rs"]
+mod kani_proofs;
