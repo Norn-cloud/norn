@@ -1157,7 +1157,7 @@ impl TimeMaterializeFixture {
             "friday",
             "22:00",
             "06:00",
-            Some(1),
+            Some(json!(1)),
         );
         push_working_window(
             &mut seed,
@@ -1165,7 +1165,7 @@ impl TimeMaterializeFixture {
             "sunday",
             "22:00",
             "06:00",
-            Some(1),
+            Some(json!(1)),
         );
         push_working_window(
             &mut seed,
@@ -1173,8 +1173,15 @@ impl TimeMaterializeFixture {
             "saturday",
             "08:00",
             "08:00",
-            Some(1),
+            Some(json!(1)),
         );
+        for (id, weekday, end_local) in [
+            ("ww-wed-night", "wednesday", "06:00"),
+            ("ww-thu-night", "thursday", "06:00"),
+            ("ww-sat-fold", "saturday", "01:30"),
+        ] {
+            push_working_window(&mut seed, id, weekday, "22:00", end_local, Some(json!(1)));
+        }
         host.commit(seed)
             .expect("seed calendar and working windows");
         host
@@ -1247,7 +1254,7 @@ fn push_working_window(
     weekday: &str,
     start_local: &str,
     end_local: &str,
-    end_day_offset: Option<i64>,
+    end_day_offset: Option<serde_json::Value>,
 ) {
     let mut values = json!({
         "id": id,
@@ -1256,7 +1263,7 @@ fn push_working_window(
         "end_local": end_local
     });
     if let Some(offset) = end_day_offset {
-        values["end_day_offset"] = json!(offset);
+        values["end_day_offset"] = offset;
     }
     seed.writes.push(FactWrite {
         key: FactKey::new("time.WorkingWindow", id),
@@ -1342,7 +1349,7 @@ fn materialize(
     catalog: &TypeCatalog<'_>,
     call: &ActionCall<'_>,
     working_window: &str,
-) -> Option<String> {
+) -> Option<&'static str> {
     let id = call
         .idempotency_key
         .strip_prefix("materialize-")
@@ -1391,7 +1398,7 @@ fn time_window_materialize_interval_crosses_local_midnight_with_end_day_offset()
         ["2026-06-13T02:00:00Z", "2026-06-12T10:00:00Z"],
     );
     assert_eq!(
-        materialize(&mut host, &catalog, &same_date_end, "ww-fri-night").as_deref(),
+        materialize(&mut host, &catalog, &same_date_end, "ww-fri-night"),
         Some("action.precondition_failed")
     );
     let two_days_later = fixture.call(
@@ -1402,7 +1409,7 @@ fn time_window_materialize_interval_crosses_local_midnight_with_end_day_offset()
         ["2026-06-13T02:00:00Z", "2026-06-14T10:00:00Z"],
     );
     assert_eq!(
-        materialize(&mut host, &catalog, &two_days_later, "ww-fri-night").as_deref(),
+        materialize(&mut host, &catalog, &two_days_later, "ww-fri-night"),
         Some("action.precondition_failed")
     );
 
@@ -1415,7 +1422,7 @@ fn time_window_materialize_interval_crosses_local_midnight_with_end_day_offset()
         ["2026-06-15T13:00:00Z", "2026-06-16T21:00:00Z"],
     );
     assert_eq!(
-        materialize(&mut host, &catalog, &stretched, "ww-mon").as_deref(),
+        materialize(&mut host, &catalog, &stretched, "ww-mon"),
         Some("action.precondition_failed")
     );
 }
@@ -1448,7 +1455,7 @@ fn time_window_materialize_interval_anchors_weekday_to_start_date_across_week_ro
         ["2026-06-16T02:00:00Z", "2026-06-16T10:00:00Z"],
     );
     assert_eq!(
-        materialize(&mut host, &catalog, &monday_anchor, "ww-sun-night").as_deref(),
+        materialize(&mut host, &catalog, &monday_anchor, "ww-sun-night"),
         Some("action.precondition_failed")
     );
 }
@@ -1481,7 +1488,7 @@ fn time_window_materialize_interval_full_civil_day_spans_23_or_25_hours_across_d
         ["2026-03-07T13:00:00Z", "2026-03-08T13:00:00Z"],
     );
     assert_eq!(
-        materialize(&mut host, &catalog, &spring_24h, "ww-sat-day").as_deref(),
+        materialize(&mut host, &catalog, &spring_24h, "ww-sat-day"),
         Some("action.precondition_failed")
     );
 
@@ -1502,7 +1509,7 @@ fn time_window_materialize_interval_full_civil_day_spans_23_or_25_hours_across_d
         ["2026-10-31T12:00:00Z", "2026-11-01T12:00:00Z"],
     );
     assert_eq!(
-        materialize(&mut host, &catalog, &fall_24h, "ww-sat-day").as_deref(),
+        materialize(&mut host, &catalog, &fall_24h, "ww-sat-day"),
         Some("action.precondition_failed")
     );
 }
@@ -1511,7 +1518,7 @@ fn time_window_materialize_interval_full_civil_day_spans_23_or_25_hours_across_d
 fn time_working_window_law_refuses_empty_or_out_of_range_end_day_offset() {
     let fixture = TimeMaterializeFixture::load();
     let mut host = fixture.seeded_host();
-    let refused = |host: &mut Cell, id: &str, start: &str, end: &str, offset: i64| {
+    let refused = |host: &mut Cell, id: &str, start: &str, end: &str, offset: serde_json::Value| {
         let mut seed = CellCommit::empty();
         push_working_window(&mut seed, id, "tuesday", start, end, Some(offset));
         let error = host
@@ -1520,10 +1527,18 @@ fn time_working_window_law_refuses_empty_or_out_of_range_end_day_offset() {
         assert_eq!(error.code(), "core.laws.violated", "{id}: {error}");
     };
     // Equal endpoints on the same civil day are empty.
-    refused(&mut host, "ww-empty", "08:00", "08:00", 0);
+    refused(&mut host, "ww-empty", "08:00", "08:00", json!(0));
     // Only the start day (0) or the next civil day (1) may hold the end.
-    refused(&mut host, "ww-prev-day", "09:00", "17:00", -1);
-    refused(&mut host, "ww-two-days", "22:00", "06:00", 2);
+    refused(&mut host, "ww-prev-day", "09:00", "17:00", json!(-1));
+    refused(&mut host, "ww-two-days", "22:00", "06:00", json!(2));
+    // A submitted null is kept, not replaced by the default, and the law refuses it.
+    refused(
+        &mut host,
+        "ww-null",
+        "22:00",
+        "06:00",
+        serde_json::Value::Null,
+    );
 
     let mut seed = CellCommit::empty();
     push_working_window(
@@ -1532,8 +1547,102 @@ fn time_working_window_law_refuses_empty_or_out_of_range_end_day_offset() {
         "tuesday",
         "08:00",
         "08:00",
-        Some(1),
+        Some(json!(1)),
     );
     host.commit(seed)
         .expect("equal endpoints with offset 1 cover one civil day");
+}
+
+#[test]
+fn time_window_materialize_interval_end_date_rolls_over_month_year_and_leap_day() {
+    let fixture = TimeMaterializeFixture::load();
+    let catalog = fixture.catalog();
+    let mut host = fixture.seeded_host();
+
+    // Thursday 2026-12-31 22:00 EST -> Friday 2027-01-01 06:00 EST crosses the year.
+    let new_year = fixture.call(
+        "mw-new-year",
+        "ww-thu-night",
+        "2026-12-31",
+        ["2026-12-31T22:00:00", "2027-01-01T06:00:00"],
+        ["2027-01-01T03:00:00Z", "2027-01-01T11:00:00Z"],
+    );
+    assert_eq!(
+        materialize(&mut host, &catalog, &new_year, "ww-thu-night"),
+        None
+    );
+
+    // Wednesday 2024-02-28 -> leap day 2024-02-29; skipping the leap day to 03-01 is two days.
+    let leap_day = fixture.call(
+        "mw-leap-day",
+        "ww-wed-night",
+        "2024-02-28",
+        ["2024-02-28T22:00:00", "2024-02-29T06:00:00"],
+        ["2024-02-29T03:00:00Z", "2024-02-29T11:00:00Z"],
+    );
+    assert_eq!(
+        materialize(&mut host, &catalog, &leap_day, "ww-wed-night"),
+        None
+    );
+    let skips_leap_day = fixture.call(
+        "mw-skips-leap-day",
+        "ww-wed-night",
+        "2024-02-28",
+        ["2024-02-28T22:00:00", "2024-03-01T06:00:00"],
+        ["2024-02-29T03:00:00Z", "2024-03-01T11:00:00Z"],
+    );
+    assert_eq!(
+        materialize(&mut host, &catalog, &skips_leap_day, "ww-wed-night"),
+        Some("action.precondition_failed")
+    );
+
+    // Saturday 2026-02-28 -> Sunday 2026-03-01 in a common year; 2026-02-29 is no date.
+    let common_year = fixture.call(
+        "mw-common-year",
+        "ww-sat-day",
+        "2026-02-28",
+        ["2026-02-28T08:00:00", "2026-03-01T08:00:00"],
+        ["2026-02-28T13:00:00Z", "2026-03-01T13:00:00Z"],
+    );
+    assert_eq!(
+        materialize(&mut host, &catalog, &common_year, "ww-sat-day"),
+        None
+    );
+    let no_such_date = fixture.call(
+        "mw-no-such-date",
+        "ww-sat-day",
+        "2026-02-28",
+        ["2026-02-28T08:00:00", "2026-02-29T08:00:00"],
+        ["2026-02-28T13:00:00Z", "2026-03-01T13:00:00Z"],
+    );
+    assert_eq!(
+        materialize(&mut host, &catalog, &no_such_date, "ww-sat-day"),
+        Some("action.precondition_failed")
+    );
+}
+
+#[test]
+fn time_window_materialize_interval_refuses_overnight_end_in_dst_fold_under_reject() {
+    let fixture = TimeMaterializeFixture::load();
+    let catalog = fixture.catalog();
+    let mut host = fixture.seeded_host();
+
+    // 2026-11-01T01:30 occurs twice in America/New_York; the calendar's `reject`
+    // policy refuses the ambiguous overnight end, whichever instant is claimed.
+    for (id, ends_at) in [
+        ("mw-fold-edt", "2026-11-01T05:30:00Z"),
+        ("mw-fold-est", "2026-11-01T06:30:00Z"),
+    ] {
+        let fold = fixture.call(
+            id,
+            "ww-sat-fold",
+            "2026-10-31",
+            ["2026-10-31T22:00:00", "2026-11-01T01:30:00"],
+            ["2026-11-01T02:00:00Z", ends_at],
+        );
+        assert_eq!(
+            materialize(&mut host, &catalog, &fold, "ww-sat-fold"),
+            Some("action.precondition_failed")
+        );
+    }
 }

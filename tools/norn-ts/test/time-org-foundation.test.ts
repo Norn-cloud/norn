@@ -337,6 +337,32 @@ describe("time & org foundation packs", () => {
     expect(window("08:00", "08:00", 1)).toEqual({ ok: true, verdict: "holds" })
     expect(window("00:00", "23:59:59", 1)).toEqual({ ok: true, verdict: "holds" })
     for (const offset of [-1, 2]) expect(window("09:00", "17:00", offset)).toEqual({ ok: true, verdict: "violated" })
+    // A submitted null is kept (defaults fill only absent properties) and refused.
+    expect(
+      checker!.evaluateLaw!(windowLaw, { id: "ww", weekday: "sunday", start_local: "22:00", end_local: "06:00", end_day_offset: null }),
+    ).toEqual({ ok: true, verdict: "violated" })
+
+    // An overnight end inside the fall-back fold (2026-11-01T01:30 occurs twice): `reject` refuses,
+    // `earlier` resolves to EDT (05:30Z) and `later` to EST (06:30Z); the other instant is violated.
+    const overnightFold = (dst_policy: string, ends_at: string) =>
+      checker!.evaluateLaw!(matLaw, {
+        id: "mw-overnight-fold",
+        calendar_date: "2026-10-31",
+        start_local_at: "2026-10-31T22:00:00",
+        end_local_at: "2026-11-01T01:30:00",
+        starts_at: "2026-11-01T02:00:00Z",
+        ends_at,
+        timezone: "America/New_York",
+        dst_policy,
+        tzdb_version: "2025b",
+      })
+    const foldRejected = overnightFold("reject", "2026-11-01T05:30:00Z")
+    expect(foldRejected.ok).toBe(false)
+    if (!foldRejected.ok) expect(foldRejected.error.toLowerCase()).toContain("ambiguous")
+    expect(overnightFold("earlier", "2026-11-01T05:30:00Z")).toEqual({ ok: true, verdict: "holds" })
+    expect(overnightFold("earlier", "2026-11-01T06:30:00Z")).toEqual({ ok: true, verdict: "violated" })
+    expect(overnightFold("later", "2026-11-01T06:30:00Z")).toEqual({ ok: true, verdict: "holds" })
+    expect(overnightFold("later", "2026-11-01T05:30:00Z")).toEqual({ ok: true, verdict: "violated" })
 
     // An overnight end that lands in the spring-forward gap refuses under every policy.
     for (const dstPolicy of ["reject", "earlier", "later"] as const) {
