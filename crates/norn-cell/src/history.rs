@@ -301,6 +301,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(model)
     }
 
+    fn root_type_or_self<'a>(&'a self, object_type: &'a str) -> Result<&'a str, CellError> {
+        self.check_live()?;
+        match self.root_type(object_type) {
+            Ok(root) => Ok(root),
+            Err(CellError::UnknownObjectType(_)) => Ok(object_type),
+            Err(error) => Err(error),
+        }
+    }
+
     fn proven_snapshot(
         &self,
         world: &str,
@@ -308,7 +317,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         key: &str,
         version: u64,
     ) -> Result<FactSnapshot, CellError> {
-        let root = self.root_type(object_type).unwrap_or(object_type);
+        let root = self.root_type_or_self(object_type)?;
         let row: Option<(String, String, i64, String)> = self.conn.query_optional(
             &format!("SELECT \"snapshot\", \"hash\", \"commit_seq\", \"root_type\" FROM \"{FACT_VALUES}\" WHERE \"world\" = ?1 AND (\"root_type\" = ?2 OR \"object_type\" = ?2) AND \"id\" = ?3 AND \"version\" = ?4"),
             params![world, root, key, to_i64(version, "fact version")?],
@@ -493,7 +502,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         key: &str,
         version: u64,
     ) -> Result<FactVersionEvidence, CellError> {
-        let root = self.root_type(object_type).unwrap_or(object_type);
+        let root = self.root_type_or_self(object_type)?;
         self.fact_version_evidence_at_root(world, root, object_type, key, version)
     }
 
@@ -563,7 +572,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         version: u64,
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<Option<FactVersionEvidence>, CellError> {
-        let root = self.root_type(object_type).unwrap_or(object_type);
+        self.check_live()?;
+        let root = self.root_type_or_self(object_type)?;
         self.fact_version_evidence_at_root_with_budget(
             world,
             root,
@@ -831,8 +841,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         version: u64,
         budget: &mut crate::reactive::DecodeBudget,
     ) -> Result<crate::reactive::BudgetedRead, CellError> {
-        self.check_live()?;
-        let root = self.root_type(object_type).unwrap_or(object_type);
+        let root = self.root_type_or_self(object_type)?;
         let length: Option<i64> = self.conn.query_optional(&format!("SELECT octet_length(f.snapshot)+octet_length(f.hash)+octet_length(r.receipt)+octet_length(r.receipt_hash)+COALESCE(octet_length(r.world),0)+COALESCE(octet_length(r.idempotency_key),0)+COALESCE(octet_length(r.request_hash),0)+128 FROM \"{FACT_VALUES}\" f JOIN \"{RECEIPT}\" r ON r.commit_seq=f.commit_seq WHERE f.world=?1 AND (f.root_type=?2 OR f.object_type=?2) AND f.id=?3 AND f.version=?4"), params![world, root, key, to_i64(version, "fact version")?], |row| row.get(0))?;
         let length = length.ok_or_else(unproven_event)?;
         if !budget.charge_rows(2) || !budget.charge(to_u64(length, "historical snapshot bytes")?) {
@@ -863,7 +872,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         // S7 (#1551 round 4): a version list (history, as-of metrics) is
         // complete only once the scrub has proven the covered history.
         self.check_history("version history")?;
-        let root = self.root_type(object_type).unwrap_or(object_type);
+        let root = self.root_type_or_self(object_type)?;
         // At a knowledge cutoff only versions committed by its frontier exist.
         let through = through.map_or(Ok(crate::engine::MAX_SAFE_INTEGER), |commit| {
             to_i64(commit, "commit frontier")

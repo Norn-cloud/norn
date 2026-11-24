@@ -545,6 +545,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         max_rows: usize,
         budget: &mut DecodeBudget,
     ) -> Result<BudgetedLinksRead, CellError> {
+        self.check_live()?;
         let query_bytes = query
             .query_bytes
             .saturating_add(u64::try_from(lookup_value.len()).unwrap_or(u64::MAX));
@@ -556,15 +557,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .min(budget.rows)
             .min(usize::try_from(budget.remaining_bytes() / LINK_ROW_BYTES).unwrap_or(usize::MAX));
         if cap == 0 {
-            // An empty result cannot prove that a complete endpoint set fits
-            // when no candidate can be admitted; refuse before inspecting it.
             return Ok(BudgetedLinksRead::Exhausted);
         }
         let fetch = i64::try_from(cap.saturating_add(1)).unwrap_or(MAX_SAFE_INTEGER);
-        // The inverse lookup must use the existing target index. Sorting by
-        // source lets SQLite choose the source-first primary key and scan all
-        // links in a world before LIMIT. Both reads use the same target-index
-        // traversal while the cell lock holds the committed view.
+        // Inverse lookup forces the target index so SQLite does not scan the source PK.
         let (table_sql, order_sql) = if query.lookup_column == TARGET_COLUMN {
             let index = format!("{}/target", query.table);
             (
@@ -628,12 +624,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         Ok(BudgetedLinksRead::Complete(ids))
     }
 
-    /// Read only live target ids of `link` from `source`, without decoding
-    /// link properties. The indexed row count and stored target lengths are
-    /// checked before owned target ids are fetched.
+    /// Read live target ids of `link` from `source`, preflighting counts and lengths.
     ///
     /// # Errors
-    /// Unknown type/link or SQL/decode errors.
+    /// Unknown type/link, fenced cell, or SQL/decode errors.
     pub fn link_targets_with_budget(
         &self,
         world: &str,
@@ -642,6 +636,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         source: &str,
         budget: &mut DecodeBudget,
     ) -> Result<BudgetedLinksRead, CellError> {
+        self.check_live()?;
         budget.depend(Dependency::Links {
             object_type: object_type.to_owned(),
             key: source.to_owned(),
@@ -667,12 +662,10 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         )
     }
 
-    /// Read source ids of live rows of `link` that point at `target`. The
-    /// lookup uses the target index and preflights each source id before the
-    /// second query allocates it. At most `max_rows` identities are returned.
+    /// Read at most `max_rows` live source ids of `link` pointing at `target`.
     ///
     /// # Errors
-    /// Unknown type/link or SQL/decode errors.
+    /// Unknown type/link, fenced cell, or SQL/decode errors.
     pub fn link_sources_to_with_budget(
         &self,
         world: &str,
@@ -682,6 +675,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         max_rows: usize,
         budget: &mut DecodeBudget,
     ) -> Result<BudgetedLinksRead, CellError> {
+        self.check_live()?;
         budget.depend(Dependency::IncomingLinks {
             source_type: object_type.to_owned(),
             target: target.to_owned(),

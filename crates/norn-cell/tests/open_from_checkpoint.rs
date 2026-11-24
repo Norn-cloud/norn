@@ -20,11 +20,11 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use norn_cell::engine::{NativeEngine, ReadIsolation, SqlEngine, SqlValue};
-use norn_cell::reactive::{DecodeBudget, ReactiveLimits};
+use norn_cell::reactive::{BudgetedLinksRead, DecodeBudget, ReactiveLimits};
 use norn_cell::test_door::TestCommit as _;
 use norn_cell::{
-    CellError, CellStore, CheckpointKey, CommitBatch, FactWriteRow, KnowledgeCutoff, MAIN_WORLD,
-    ScrubStatus, StoreOptions,
+    CellError, CellStore, CheckpointKey, CommitBatch, FactWriteRow, KnowledgeCutoff, LinkChange,
+    MAIN_WORLD, Model, ScrubStatus, StoreOptions,
 };
 use norn_ir::quantity_ledger::QuantityRequest;
 use norn_ir::{RuntimeValue, runtime_object};
@@ -2362,8 +2362,13 @@ fn existing_store_reader_refuses_when_sibling_fences_after_acquire() {
     let sibling = open(&path).expect("sibling open");
     // Acquire the reader BEFORE the sibling fences durably.
     let reader = sibling.read();
+    let limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
     assert!(reader.flow_run(MAIN_WORLD, "run-1").is_ok());
-    assert!(reader.object(MAIN_WORLD, "fixture.Item", "c0").is_ok());
+    let c0_ver = reader
+        .object(MAIN_WORLD, "fixture.Item", "c0")
+        .expect("c0")
+        .expect("present")
+        .version;
     assert!(reader.head_commit_seq().is_ok());
     assert!(reader.database_revision().is_ok());
     assert!(
@@ -2371,68 +2376,256 @@ fn existing_store_reader_refuses_when_sibling_fences_after_acquire() {
             .source_event_mapping_bundles("conn", "p0", "src", "s1", "e1")
             .is_ok()
     );
+    assert!(
+        reader
+            .fact_version_evidence_with_budget(
+                MAIN_WORLD,
+                "fixture.Item",
+                "c0",
+                c0_ver,
+                &mut DecodeBudget::new(&limits),
+            )
+            .expect("evidence before fence")
+            .is_some()
+    );
 
     assert!(matches!(first.scrub_to_end(), ScrubStatus::Fenced { .. }));
 
     // The already-acquired reader must fail closed via `PRAGMA data_version`.
-    assert!(
-        matches!(
-            reader.flow_run(MAIN_WORLD, "run-1"),
-            Err(CellError::Fenced(_))
-        ),
-        "existing StoreReader must refuse flow_run after sibling durable fence"
-    );
-    assert!(
-        matches!(
-            reader.object(MAIN_WORLD, "fixture.Item", "c0"),
-            Err(CellError::Fenced(_))
-        ),
-        "existing StoreReader must refuse object after sibling durable fence"
-    );
-    assert!(
-        matches!(reader.head_commit_seq(), Err(CellError::Fenced(_))),
-        "existing StoreReader must refuse head_commit_seq after sibling durable fence"
-    );
-    assert!(
-        matches!(reader.database_revision(), Err(CellError::Fenced(_))),
-        "existing StoreReader must refuse database_revision after sibling durable fence"
-    );
-    assert!(
-        matches!(
-            reader.source_event_mapping_bundles("conn", "p0", "src", "s1", "e1"),
-            Err(CellError::Fenced(_))
-        ),
-        "existing StoreReader must refuse source_event_mapping_bundles after sibling durable fence"
-    );
-    assert!(
-        matches!(
-            sibling
-                .read()
-                .source_event_mapping_bundles("conn", "p0", "src", "s1", "e1"),
-            Err(CellError::Fenced(_))
-        ),
-        "fresh StoreReader must refuse source_event_mapping_bundles on a fenced cell"
-    );
+    assert!(matches!(
+        reader.flow_run(MAIN_WORLD, "run-1"),
+        Err(CellError::Fenced(_))
+    ));
+    assert!(matches!(
+        reader.object(MAIN_WORLD, "fixture.Item", "c0"),
+        Err(CellError::Fenced(_))
+    ));
+    assert!(matches!(
+        reader.head_commit_seq(),
+        Err(CellError::Fenced(_))
+    ));
+    assert!(matches!(
+        reader.database_revision(),
+        Err(CellError::Fenced(_))
+    ));
+    assert!(matches!(
+        reader.source_event_mapping_bundles("conn", "p0", "src", "s1", "e1"),
+        Err(CellError::Fenced(_))
+    ));
+    assert_budgeted_fact_evidence_fenced(&reader, c0_ver, &limits);
+    assert!(matches!(
+        sibling
+            .read()
+            .source_event_mapping_bundles("conn", "p0", "src", "s1", "e1"),
+        Err(CellError::Fenced(_))
+    ));
     let model = engine_fixture::model();
     let candidate = install_input(&model, "0.2.0");
+    assert!(matches!(
+        sibling.check_definitions(&model, &candidate, None),
+        Err(CellError::Fenced(_))
+    ));
+    assert!(matches!(sibling.cell_id(), Err(CellError::Fenced(_))));
+    assert!(matches!(
+        sibling.perform_fence_generation("cmd-1"),
+        Err(CellError::Fenced(_))
+    ));
+    assert_budgeted_links_fenced(&limits);
+}
+
+const ZERO_LIMITS: ReactiveLimits = ReactiveLimits {
+    max_records: 0,
+    max_canonical_bytes: 0,
+    max_fanout_per_commit: 0,
+    max_scan: 0,
+    max_candidate_bytes_per_commit: 0,
+};
+
+fn assert_budgeted_fact_evidence_fenced(
+    reader: &norn_cell::StoreReader<'_, NativeEngine>,
+    version: u64,
+    limits: &ReactiveLimits,
+) {
     assert!(
         matches!(
-            sibling.check_definitions(&model, &candidate, None),
+            reader.fact_version_evidence(MAIN_WORLD, "fixture.Item", "c0", version),
             Err(CellError::Fenced(_))
         ),
-        "check_definitions must refuse on a fenced cell"
+        "fact_version_evidence must refuse after sibling durable fence"
     );
-    assert!(
-        matches!(sibling.cell_id(), Err(CellError::Fenced(_))),
-        "cell_id must refuse on a fenced cell"
+    for active in [limits, &ZERO_LIMITS] {
+        assert!(
+            matches!(
+                reader.fact_version_evidence_with_budget(
+                    MAIN_WORLD,
+                    "fixture.Item",
+                    "c0",
+                    version,
+                    &mut DecodeBudget::new(active),
+                ),
+                Err(CellError::Fenced(_))
+            ),
+            "fact_version_evidence_with_budget must refuse (never Ok(None)) after sibling fence"
+        );
+        assert!(
+            matches!(
+                reader.receipt_for_fact_version_with_budget(
+                    MAIN_WORLD,
+                    "fixture.Item",
+                    "c0",
+                    version,
+                    &mut DecodeBudget::new(active),
+                ),
+                Err(CellError::Fenced(_))
+            ),
+            "receipt_for_fact_version_with_budget must refuse after sibling fence"
+        );
+        assert!(
+            matches!(
+                reader.object_at_version_with_budget(
+                    MAIN_WORLD,
+                    "fixture.Item",
+                    "c0",
+                    version,
+                    &mut DecodeBudget::new(active),
+                ),
+                Err(CellError::Fenced(_))
+            ),
+            "object_at_version_with_budget must refuse after sibling fence"
+        );
+    }
+}
+
+fn linked_model() -> Model {
+    let def: norn_ir::ObjectTypeDef = serde_json::from_value(serde_json::json!({
+        "name": "fixture.Item",
+        "properties": [
+            {"id": "qty", "type": {"kind": "integer"}},
+            {"id": "label", "type": {"kind": "text"}, "default": "item"}
+        ],
+        "links": [{
+            "id": "next",
+            "target": "fixture.Item",
+            "cardinality": {"to": "many", "from": "many"}
+        }]
+    }))
+    .expect("linked item def");
+    Model::from_definitions(&[def], &[]).expect("linked model")
+}
+
+fn seed_linked_cell(path: &Path, model: &Model) {
+    let mut store = CellStore::open(path, model.clone(), keyed()).expect("open linked");
+    store.bind("scope", engine_fixture::SCOPE).expect("bind");
+    store
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: engine_fixture::SCOPE.to_owned(),
+            logical_time: 1_000,
+            idempotency_key: Some("seed-nodes".to_owned()),
+            writes: vec![
+                FactWriteRow::Put {
+                    object_type: "fixture.Item".to_owned(),
+                    key: "c0".to_owned(),
+                    values: BTreeMap::from([("qty".to_owned(), RuntimeValue::from(1_i64))]),
+                },
+                FactWriteRow::Put {
+                    object_type: "fixture.Item".to_owned(),
+                    key: "c1".to_owned(),
+                    values: BTreeMap::from([("qty".to_owned(), RuntimeValue::from(2_i64))]),
+                },
+            ],
+            ..CommitBatch::default()
+        })
+        .expect("seed nodes");
+    store
+        .commit(&CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: engine_fixture::SCOPE.to_owned(),
+            logical_time: 1_001,
+            idempotency_key: Some("seed-link".to_owned()),
+            links: vec![LinkChange::Add {
+                object_type: "fixture.Item".to_owned(),
+                link: "next".to_owned(),
+                source: "c0".to_owned(),
+                target: "c1".to_owned(),
+                values: BTreeMap::new(),
+                target_type: None,
+            }],
+            ..CommitBatch::default()
+        })
+        .expect("seed link");
+    for n in 2..EVERY.saturating_add(5) {
+        store.commit(&put(n)).expect("put");
+    }
+}
+
+fn assert_budgeted_links_fenced(limits: &ReactiveLimits) {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("linked.sqlite");
+    let model = linked_model();
+    seed_linked_cell(&path, &model);
+    execute(&path, "DELETE FROM _norn_fact_values WHERE commit_seq = 10");
+
+    let first = CellStore::open(&path, model.clone(), keyed()).expect("first linked");
+    let sibling = CellStore::open(&path, model, keyed()).expect("sibling linked");
+    let reader = sibling.read();
+    assert_eq!(
+        reader
+            .link_targets_with_budget(
+                MAIN_WORLD,
+                "fixture.Item",
+                "next",
+                "c0",
+                &mut DecodeBudget::new(limits),
+            )
+            .expect("targets before fence"),
+        BudgetedLinksRead::Complete(vec!["c1".to_owned()])
     );
-    assert!(
-        matches!(
-            sibling.perform_fence_generation("cmd-1"),
-            Err(CellError::Fenced(_))
-        ),
-        "perform_fence_generation must refuse on a fenced cell"
+    assert_eq!(
+        reader
+            .link_sources_to_with_budget(
+                MAIN_WORLD,
+                "fixture.Item",
+                "next",
+                "c1",
+                8,
+                &mut DecodeBudget::new(limits),
+            )
+            .expect("sources before fence"),
+        BudgetedLinksRead::Complete(vec!["c0".to_owned()])
     );
+
+    assert!(matches!(first.scrub_to_end(), ScrubStatus::Fenced { .. }));
+
+    for active in [limits, &ZERO_LIMITS] {
+        assert!(
+            matches!(
+                reader.link_targets_with_budget(
+                    MAIN_WORLD,
+                    "fixture.Item",
+                    "next",
+                    "c0",
+                    &mut DecodeBudget::new(active),
+                ),
+                Err(CellError::Fenced(_))
+            ),
+            "link_targets_with_budget must refuse after sibling durable fence"
+        );
+        assert!(
+            matches!(
+                reader.link_sources_to_with_budget(
+                    MAIN_WORLD,
+                    "fixture.Item",
+                    "next",
+                    "c1",
+                    8,
+                    &mut DecodeBudget::new(active),
+                ),
+                Err(CellError::Fenced(_))
+            ),
+            "link_sources_to_with_budget must refuse after sibling durable fence"
+        );
+    }
 }
 
 /// S10 (#1551 round 7): a quantity commit landing during scrub whose
@@ -2485,7 +2678,8 @@ fn restart_scrub_detects_corrupt_suffix_quantity_history_and_fences() {
 struct RowBoundedEngine {
     inner: NativeEngine,
     armed: std::rc::Rc<Cell<bool>>,
-    max_rows: std::rc::Rc<Cell<usize>>,
+    wake_rows: std::rc::Rc<Cell<usize>>,
+    max_wake_rows: std::rc::Rc<Cell<usize>>,
 }
 
 impl SqlEngine for RowBoundedEngine {
@@ -2509,8 +2703,12 @@ impl SqlEngine for RowBoundedEngine {
     }
     fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
         let rows = self.inner.query(sql, params)?;
-        if self.armed.get() && rows.len() > self.max_rows.get() {
-            self.max_rows.set(rows.len());
+        if self.armed.get() {
+            let total = self.wake_rows.get().saturating_add(rows.len());
+            self.wake_rows.set(total);
+            if total > self.max_wake_rows.get() {
+                self.max_wake_rows.set(total);
+            }
         }
         Ok(rows)
     }
@@ -2522,9 +2720,23 @@ impl SqlEngine for RowBoundedEngine {
     }
 }
 
-/// S10 (#1551 round 7): restarting scrub after a sibling adds > 512 commits
-/// keeps every scrub step query within the 512-row per-wake bound and seeds
-/// the checkpoint at the new head.
+fn scrub_measuring_total_wake_rows(
+    store: &CellStore<RowBoundedEngine>,
+    armed: &Cell<bool>,
+    wake_rows: &Cell<usize>,
+) -> ScrubStatus {
+    armed.set(true);
+    loop {
+        wake_rows.set(0);
+        let status = store.scrub_step();
+        if !matches!(status, ScrubStatus::Verifying { .. }) {
+            return status;
+        }
+    }
+}
+
+/// S10 (#1551 round 7/10): restarting scrub after a sibling adds > 512 commits
+/// keeps the TOTAL SQL rows summed across all queries in each wake <= 512.
 #[test]
 fn restart_scrub_after_large_sibling_suffix_stays_within_512_row_bound() {
     let dir = tempfile::tempdir().expect("directory");
@@ -2533,12 +2745,14 @@ fn restart_scrub_after_large_sibling_suffix_stays_within_512_row_bound() {
     cell(&path, initial);
 
     let armed = std::rc::Rc::new(Cell::new(false));
-    let max_rows = std::rc::Rc::new(Cell::new(0));
+    let wake_rows = std::rc::Rc::new(Cell::new(0));
+    let max_wake_rows = std::rc::Rc::new(Cell::new(0));
     let store = CellStore::from_engine(
         RowBoundedEngine {
             inner: NativeEngine::open(&path, keyed()).expect("native engine"),
             armed: std::rc::Rc::clone(&armed),
-            max_rows: std::rc::Rc::clone(&max_rows),
+            wake_rows: std::rc::Rc::clone(&wake_rows),
+            max_wake_rows: std::rc::Rc::clone(&max_wake_rows),
         },
         engine_fixture::model(),
     )
@@ -2554,13 +2768,12 @@ fn restart_scrub_after_large_sibling_suffix_stays_within_512_row_bound() {
     }
     drop(sibling);
 
-    armed.set(true);
-    let status = store.scrub_to_end();
+    let status = scrub_measuring_total_wake_rows(&store, &armed, &wake_rows);
     assert_eq!(status, ScrubStatus::Idle);
     assert!(
-        max_rows.get() <= 512,
-        "scrub restart exceeded 512-row per-wake bound: saw {} rows in one query",
-        max_rows.get()
+        max_wake_rows.get() <= 512,
+        "scrub restart exceeded 512-row total per-wake bound: saw {} total rows in one wake",
+        max_wake_rows.get()
     );
     assert!(history_ready(&store));
     drop(store);
@@ -2568,6 +2781,182 @@ fn restart_scrub_after_large_sibling_suffix_stays_within_512_row_bound() {
         checkpoint(&path).map(|(commits, ..)| commits),
         Some(final_commits),
         "checkpoint advanced to the sibling-extended head"
+    );
+}
+
+/// S10 (#1551 round 10): a > 256-commit quantity sibling suffix stays strictly
+/// within 512 TOTAL SQL rows summed across all queries in every scrub wake.
+#[test]
+fn quantity_scrub_after_large_sibling_suffix_stays_within_512_total_rows_per_wake() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    quantity_cell(&path);
+
+    let armed = std::rc::Rc::new(Cell::new(false));
+    let wake_rows = std::rc::Rc::new(Cell::new(0));
+    let max_wake_rows = std::rc::Rc::new(Cell::new(0));
+    let store = CellStore::from_engine(
+        RowBoundedEngine {
+            inner: NativeEngine::open(&path, keyed()).expect("native engine"),
+            armed: std::rc::Rc::clone(&armed),
+            wake_rows: std::rc::Rc::clone(&wake_rows),
+            max_wake_rows: std::rc::Rc::clone(&max_wake_rows),
+        },
+        engine_fixture::model(),
+    )
+    .expect("checkpointed open");
+    assert!(matches!(store.scrub_step(), ScrubStatus::Verifying { .. }));
+
+    // 270 quantity commits (> 256) would exceed 512 total rows if selector + receipts
+    // both used LIMIT 512 in a single wake.
+    let added = 270_u64;
+    let final_commits = EVERY.saturating_add(added);
+    let mut sibling = open(&path).expect("sibling open");
+    for n in EVERY..final_commits {
+        commit_quantity(&mut sibling, n, &post(0, &format!("sib-{n}"), "fund", 1));
+    }
+    drop(sibling);
+
+    let status = scrub_measuring_total_wake_rows(&store, &armed, &wake_rows);
+    assert_eq!(status, ScrubStatus::Idle);
+    assert!(
+        max_wake_rows.get() <= 512,
+        "quantity scrub exceeded 512-row total per-wake bound: saw {} total rows in one wake",
+        max_wake_rows.get()
+    );
+    assert!(history_ready(&store));
+    drop(store);
+    assert_eq!(
+        checkpoint(&path).map(|(commits, ..)| commits),
+        Some(final_commits),
+        "checkpoint advanced to the quantity sibling-extended head"
+    );
+}
+
+struct SharedEngine(std::rc::Rc<NativeEngine>);
+
+impl SqlEngine for SharedEngine {
+    fn read_isolation(&self) -> ReadIsolation {
+        self.0.read_isolation()
+    }
+    fn checkpoint_key(&self) -> Option<CheckpointKey> {
+        self.0.checkpoint_key()
+    }
+    fn external_data_version(&self) -> Result<Option<u64>, CellError> {
+        self.0.external_data_version()
+    }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.0.definition_writes(f)
+    }
+    fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
+        self.0.execute(sql, params)
+    }
+    fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+        self.0.query(sql, params)
+    }
+    fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
+        self.0.execute_batch(sql)
+    }
+    fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X> {
+        self.0.transaction(f)
+    }
+}
+
+fn step_into_quantity_live<E: SqlEngine>(store: &CellStore<E>, tail_wakes: usize) {
+    loop {
+        let status = store.scrub_step();
+        if matches!(
+            status,
+            ScrubStatus::Verifying {
+                phase: "history",
+                verified,
+                target,
+                ..
+            } if verified == target
+        ) {
+            break;
+        }
+        assert!(matches!(status, ScrubStatus::Verifying { .. }));
+    }
+    for _ in 0..tail_wakes {
+        let status = store.scrub_step();
+        assert!(
+            matches!(status, ScrubStatus::Verifying { .. }),
+            "expected QuantityTail live stage to keep verifying, got {status:?}"
+        );
+    }
+}
+
+fn insert_rogue_quantity_history(engine: &NativeEngine, commit_seq: u64) {
+    let seq = i64::try_from(commit_seq).expect("commit_seq");
+    engine
+        .execute(
+            r#"INSERT INTO "_norn_quantity_history"
+               ("world","ledger","account","unit","layer","posted","held","version","commit_seq")
+               VALUES ('main','rogue','acct','USD','settled','1','0',1,?1)"#,
+            &[seq.into()],
+        )
+        .expect("insert rogue quantity history");
+}
+
+/// S10 (#1551 round 10): ordinary-only commits arriving during `Live` stage
+/// re-enter suffix verification so rogue append rows at that ordinary commit
+/// fence the cell, and the final live stage repeats beyond-tail probes.
+#[test]
+fn ordinary_commit_during_quantity_live_stage_verifies_append_and_beyond_tail() {
+    // 1. Clean ordinary commit arriving mid-Live completes cleanly.
+    let dir = tempfile::tempdir().expect("directory");
+    let clean = dir.path().join("clean.sqlite");
+    quantity_cell(&clean);
+    let mut clean_store = open(&clean).expect("open clean");
+    // Wake 1 enters Live::Timers; wake 2 verifies Timers -> now at Live::Ledgers.
+    step_into_quantity_live(&clean_store, 2);
+    clean_store
+        .commit(&put(EVERY.saturating_add(1)))
+        .expect("ordinary commit during Live");
+    assert_eq!(clean_store.scrub_to_end(), ScrubStatus::Idle);
+    assert!(history_ready(&clean_store));
+
+    // 2. Ordinary commit arriving mid-Live with a rogue `_norn_quantity_history`
+    //    row on the SAME SQLite connection (no `data_version` restart) must fence.
+    let rogue_ordinary = dir.path().join("rogue-ordinary.sqlite");
+    quantity_cell(&rogue_ordinary);
+    let conn = std::rc::Rc::new(NativeEngine::open(&rogue_ordinary, keyed()).expect("open"));
+    let mut store = CellStore::from_engine(
+        SharedEngine(std::rc::Rc::clone(&conn)),
+        engine_fixture::model(),
+    )
+    .expect("from_engine");
+    step_into_quantity_live(&store, 2);
+    let ordinary_seq = EVERY.saturating_add(1);
+    store
+        .commit(&put(ordinary_seq))
+        .expect("ordinary commit during Live");
+    insert_rogue_quantity_history(&conn, ordinary_seq);
+    assert!(
+        matches!(store.scrub_to_end(), ScrubStatus::Fenced { .. }),
+        "rogue quantity history row at ordinary commit arriving during Live stage must fence"
+    );
+
+    // 3. Beyond-tail rogue row injected right before final `Reservations` live
+    //    stage on the SAME SQLite connection must be caught by the final probe.
+    let rogue_beyond = dir.path().join("rogue-beyond.sqlite");
+    quantity_cell(&rogue_beyond);
+    let conn2 = std::rc::Rc::new(NativeEngine::open(&rogue_beyond, keyed()).expect("open"));
+    let store2 = CellStore::from_engine(
+        SharedEngine(std::rc::Rc::clone(&conn2)),
+        engine_fixture::model(),
+    )
+    .expect("from_engine");
+    // Wakes 1..=4: finish_suffix -> Timers -> Ledgers -> Balances -> sitting at Reservations.
+    step_into_quantity_live(&store2, 4);
+    insert_rogue_quantity_history(&conn2, EVERY.saturating_add(5));
+    assert!(
+        matches!(store2.scrub_to_end(), ScrubStatus::Fenced { .. }),
+        "beyond-tail rogue quantity history row before final Live stage must fence"
     );
 }
 
