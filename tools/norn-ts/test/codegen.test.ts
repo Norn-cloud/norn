@@ -201,6 +201,7 @@ test("CODEGEN-TS-6: the caller's input excludes actor-derived fields and makes d
   for (const expression of [
     "actor.subjectId", "$root.actor.subjectId", "$.actor", "sum(map(input.lines, #))", "count(input.lines, # > 0)",
     "filter(input.tags, true)", "flatMap(input.lines, [1])", "x = actor; x", "a = 1; a", 'input.label ?? "actor"',
+    "input.weight in [0..actor.max_weight]", "input.n in [0..count(input.lines, true)]",
   ]) expect([expression, labelWith(expression)]).toEqual([expression, "dropped"])
   for (const expression of ["factor(input.id)", "input.actor", "input.label ?? input.parcel_id", "input.weight >= 1", "input.a == input.b", "input.a != 2", "input.a <= 3"]) {
     expect([expression, labelWith(expression)]).toEqual([expression, "optional"])

@@ -157,16 +157,18 @@ function objectType(schema: Node, at: string, depth: number, mode: Mode, omit: R
  * (`inputRequired: false`) that may read the verified actor. The kernel decides on the parsed
  * expression (`norn_expr::expression_read_paths`): a literal `actor…` path reads it, and so may
  * the root (`$`, `$root`), a closure (`#`, and the builtins that take one), a `;` sequence or an
- * assignment, as may an expression that does not parse. Codegen has no parser, so it fails closed
- * lexically on every one of those tokens. A token inside a string literal over-drops, which is safe:
- * a dropped field is never offered, while an offered actor field is one the kernel refuses.
- * `input.actor` (a member) and `factor(...)` (another identifier) are not reads.
+ * assignment. Codegen has no parser, so it fails closed lexically on every one of those tokens,
+ * including after a range's `..` (`[0..actor.limit]`). It does not judge parseability: an admitted
+ * set never carries an expression that does not parse, and a compiled set given to codegen should
+ * be an admitted one. A token inside a string literal over-drops, which is safe: a dropped field is
+ * never offered, while an offered actor field is one the kernel refuses. `input.actor` (a member)
+ * and `factor(...)` (another identifier) are not reads.
  */
 const MAY_READ_ACTOR: readonly RegExp[] = [
-  /(^|[^A-Za-z0-9_$.])actor\b/,
+  /(^|[^A-Za-z0-9_$.]|\.\.)actor\b/,
   /[$#;]/,
   /(^|[^=!<>])=($|[^=])/,
-  /(^|[^A-Za-z0-9_$.])(map|filter|some|all|none|one|count|flatMap)\s*\(/,
+  /(^|[^A-Za-z0-9_$.]|\.\.)(map|filter|some|all|none|one|count|flatMap)\s*\(/,
 ]
 const mayReadActor = (expression: string): boolean => MAY_READ_ACTOR.some((pattern) => pattern.test(expression))
 
