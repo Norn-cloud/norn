@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link, useNavigate, useParams } from "@tanstack/react-router"
-import { ArrowDown, ArrowUp, Bookmark, Copy, Eye, Pencil, Plus, Shapes, Trash2, Undo2, Zap } from "lucide-react"
+import { ArrowDown, ArrowUp, Bookmark, Copy, Eye, Pencil, Plus, Shapes, Trash2, Undo2 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
 import { DirtyGuard, EditorToolbar, ValidationPanel, useEditor } from "@/components/editor"
 import { EmptyState, PageHeader, Panel } from "@/components/panel"
@@ -327,9 +327,6 @@ export function ViewDetailPage() {
         </div>
         {active && (
           <div className="flex flex-wrap items-center gap-1">
-            <Button asChild variant="outline" size="sm">
-              <Link to="/automations/new" search={{ objectType: active.view.objectType } as never}><Zap />Automate</Link>
-            </Button>
             <Button asChild size="sm"><Link to="/views/$id/edit" params={{ id: active.id }}><Pencil />Edit</Link></Button>
             <RenamePopover current={active.view.title} onRename={(title) => rename(active, title)} />
             <Button variant="ghost" size="sm" disabled={duplicate.isPending} onClick={() => duplicate.mutate(active)}><Copy />Duplicate</Button>

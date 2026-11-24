@@ -94,7 +94,6 @@ export function DecisionsPage() {
               <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-meta text-muted-foreground">
                 <RiskChip risk={d.risk} />
                 <span>{flowTitle(d)} · {stepTitle(d)}</span>
-                {d.context.subjects.length > 0 && <><span aria-hidden>·</span><span className="font-mono">{d.context.subjects[0]!.id}</span></>}
                 <span aria-hidden>·</span><span>{d.options.length} options</span>
                 {d.agentPick !== null && <><span aria-hidden>·</span><span className="inline-flex items-center gap-1"><Sparkles className="size-3" aria-hidden />Suggested: {d.options.find((o) => o.id === d.agentPick)?.label ?? d.agentPick}</span></>}
               </span>

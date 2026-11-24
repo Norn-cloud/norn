@@ -1,12 +1,13 @@
 import { useQueryClient } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { CheckCircle2, CircleAlert, Clock, HelpCircle, Play, RotateCcw } from "lucide-react"
-import { useEffect, useMemo, useState, type FormEvent } from "react"
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
-import { callAction, fieldsOf, newIdempotencyKey, risky, type ActionSummary, type FormField } from "../lib/actions.ts"
+import { callAction, fieldsOf, newIdempotencyKey, risky, type ActionSummary, type CallResult, type FormField } from "../lib/actions.ts"
+import { readStudioScope, type StudioScope } from "../lib/definitions.ts"
 
 export interface BulkTarget {
   readonly id: string
@@ -18,13 +19,58 @@ export interface OpenBulkAction {
   readonly targets: readonly BulkTarget[]
 }
 
-interface BulkOutcome {
+export interface BulkOutcome {
   readonly target: BulkTarget
   readonly status: "committed" | "pending" | "refused" | "unknown"
   readonly detail: string
   readonly decisionId?: string
   readonly idempotencyKey: string
   readonly payloadJson: string
+  readonly scope: StudioScope
+}
+
+export interface BulkRecoveryState {
+  readonly key: string
+  readonly action: ActionSummary
+  readonly targets: readonly BulkTarget[]
+  readonly scope: StudioScope
+  readonly outcomes: readonly BulkOutcome[]
+}
+
+export type BulkDispatch = (
+  actionId: string,
+  payloadJson: string,
+  idempotencyKey: string,
+  scope: StudioScope,
+) => Promise<CallResult>
+
+const SCOPE_CHANGED_MESSAGE =
+  "The active workspace scope changed. Dispatch stopped so no record runs in another environment."
+
+export function sameScope(a: StudioScope | null, b: StudioScope | null): boolean {
+  return a !== null && b !== null && a.orgId === b.orgId && a.environmentId === b.environmentId
+}
+
+export function bulkRecoveryKey(
+  scope: StudioScope | null,
+  actionId: string,
+  targets: readonly BulkTarget[],
+): string {
+  const scopePart = scope === null ? "" : `${scope.orgId}/${scope.environmentId}`
+  const ids = [...targets.map((target) => target.id)].sort().join("\0")
+  return `${scopePart}\0${actionId}\0${ids}`
+}
+
+export function matchesBulkRecovery(
+  recovery: BulkRecoveryState | null | undefined,
+  open: OpenBulkAction | null,
+): recovery is BulkRecoveryState {
+  if (!recovery || open === null) return false
+  return recovery.key === bulkRecoveryKey(recovery.scope, open.action.actionId, open.targets)
+}
+
+export function unknownRecoveryBanner(unknownCount: number): string {
+  return `${unknownCount} ${unknownCount === 1 ? "result" : "results"} unknown — retry with the same keys`
 }
 
 /** Validate and encode all shared non-target inputs before submitting any bulk call. */
@@ -74,13 +120,169 @@ export function encodeBulkSharedInputs(
   return { ok: true, shared }
 }
 
+async function sendBulkTarget(
+  actionId: string,
+  target: BulkTarget,
+  payloadJson: string,
+  idempotencyKey: string,
+  scope: StudioScope,
+  dispatch: BulkDispatch,
+): Promise<BulkOutcome> {
+  try {
+    const res = await dispatch(actionId, payloadJson, idempotencyKey, scope)
+    if (res.kind === "receipt") {
+      return {
+        target,
+        status: "committed",
+        detail: res.receipt.outcome === "replayed"
+          ? `Already committed (replayed commit #${res.receipt.receipt.commitSeq})`
+          : `Committed (commit #${res.receipt.receipt.commitSeq})`,
+        idempotencyKey,
+        payloadJson,
+        scope,
+      }
+    }
+    if (res.kind === "pending") {
+      return {
+        target,
+        status: "pending",
+        detail: "Sent to Inbox for approval",
+        decisionId: res.decision.id,
+        idempotencyKey,
+        payloadJson,
+        scope,
+      }
+    }
+    if (res.kind === "refused") {
+      return { target, status: "refused", detail: res.message, idempotencyKey, payloadJson, scope }
+    }
+    return {
+      target,
+      status: "unknown",
+      detail: "The cell did not return a confirmed answer. Retry safely with the same idempotency key.",
+      idempotencyKey,
+      payloadJson,
+      scope,
+    }
+  } catch {
+    return {
+      target,
+      status: "unknown",
+      detail: "Connection lost before the cell answered — outcome unknown. Retry uses the same idempotency key so this record will not run twice.",
+      idempotencyKey,
+      payloadJson,
+      scope,
+    }
+  }
+}
+
+/**
+ * Run one bulk action sequentially under a single pinned workspace scope. Before each target,
+ * verifies the active session scope still matches; if it moved, stops immediately without sending
+ * further targets.
+ */
+export async function runBulkTargets(options: {
+  readonly actionId: string
+  readonly objectIdField: string
+  readonly targets: readonly BulkTarget[]
+  readonly shared: Readonly<Record<string, unknown>>
+  readonly scope: StudioScope
+  readonly readScope?: () => Promise<StudioScope | null>
+  readonly dispatch?: BulkDispatch
+  readonly newKey?: () => string
+  readonly onProgress?: (outcomes: readonly BulkOutcome[]) => void
+}): Promise<{ readonly outcomes: readonly BulkOutcome[]; readonly scopeChanged: boolean }> {
+  const readScope = options.readScope ?? (() => readStudioScope())
+  const dispatch: BulkDispatch = options.dispatch
+    ?? ((actionId, payloadJson, idempotencyKey, scope) => callAction(actionId, payloadJson, idempotencyKey, undefined, scope))
+  const newKey = options.newKey ?? newIdempotencyKey
+  const results: BulkOutcome[] = []
+  for (const target of options.targets) {
+    let active: StudioScope | null
+    try {
+      active = await readScope()
+    } catch {
+      const payloadJson = JSON.stringify({ ...options.shared, [options.objectIdField]: target.id })
+      results.push({
+        target,
+        status: "unknown",
+        detail: "Could not confirm the active workspace scope — outcome unknown. Retry uses the same idempotency key.",
+        idempotencyKey: newKey(),
+        payloadJson,
+        scope: options.scope,
+      })
+      options.onProgress?.([...results])
+      continue
+    }
+    if (!sameScope(active, options.scope)) {
+      return { outcomes: results, scopeChanged: true }
+    }
+    const payloadJson = JSON.stringify({ ...options.shared, [options.objectIdField]: target.id })
+    const idempotencyKey = newKey()
+    const outcome = await sendBulkTarget(
+      options.actionId,
+      target,
+      payloadJson,
+      idempotencyKey,
+      options.scope,
+      dispatch,
+    )
+    results.push(outcome)
+    options.onProgress?.([...results])
+  }
+  return { outcomes: results, scopeChanged: false }
+}
+
+/**
+ * Retry one unknown outcome under its exact original payload bytes, idempotency key and pinned
+ * scope. Refuses to send if the active workspace scope no longer matches.
+ */
+export async function retryBulkTarget(options: {
+  readonly actionId: string
+  readonly outcome: BulkOutcome
+  readonly readScope?: () => Promise<StudioScope | null>
+  readonly dispatch?: BulkDispatch
+}): Promise<{ readonly outcome: BulkOutcome; readonly scopeChanged: boolean }> {
+  const readScope = options.readScope ?? (() => readStudioScope())
+  const dispatch: BulkDispatch = options.dispatch
+    ?? ((actionId, payloadJson, idempotencyKey, scope) => callAction(actionId, payloadJson, idempotencyKey, undefined, scope))
+  let active: StudioScope | null
+  try {
+    active = await readScope()
+  } catch {
+    return {
+      outcome: {
+        ...options.outcome,
+        status: "unknown",
+        detail: "Could not confirm the active workspace scope — retry again once connected.",
+      },
+      scopeChanged: false,
+    }
+  }
+  if (!sameScope(active, options.outcome.scope)) {
+    return { outcome: options.outcome, scopeChanged: true }
+  }
+  const next = await sendBulkTarget(
+    options.actionId,
+    options.outcome.target,
+    options.outcome.payloadJson,
+    options.outcome.idempotencyKey,
+    options.outcome.scope,
+    dispatch,
+  )
+  return { outcome: next, scopeChanged: false }
+}
+
 /**
  * Run one server-offered action across several selected records. Each record is sent as its own
- * governed action call with a fresh idempotency key; laws, permissions and approvals apply to each
- * record independently on the cell.
+ * governed action call under one pinned scope with a fresh idempotency key; laws, permissions and
+ * approvals apply to each record independently on the cell. Unknown outcomes keep their exact
+ * payloads, idempotency keys and scope across close and reopen so operators can retry safely.
  */
-export function BulkActionSheet({ open, onClose, onDone }: {
+export function BulkActionSheet({ open, recovery, onRecoveryChange, onClose, onDone }: {
   readonly open: OpenBulkAction | null
+  readonly recovery?: BulkRecoveryState | null
+  readonly onRecoveryChange?: (next: BulkRecoveryState | null) => void
   readonly onClose: () => void
   readonly onDone?: () => void
 }) {
@@ -91,17 +293,32 @@ export function BulkActionSheet({ open, onClose, onDone }: {
   }, [open])
   const [values, setValues] = useState<Record<string, string>>({})
   const [validationError, setValidationError] = useState<string | null>(null)
+  const [scopeError, setScopeError] = useState<string | null>(null)
   const [confirming, setConfirming] = useState(false)
   const [running, setRunning] = useState(false)
   const [outcomes, setOutcomes] = useState<readonly BulkOutcome[]>([])
+  const [runScope, setRunScope] = useState<StudioScope | null>(null)
+  const recoveryRef = useRef(recovery)
+  recoveryRef.current = recovery
 
   useEffect(() => {
     if (open === null) {
       setValues({})
       setValidationError(null)
+      setScopeError(null)
       setConfirming(false)
       setRunning(false)
       setOutcomes([])
+      setRunScope(null)
+      return
+    }
+    const saved = recoveryRef.current
+    if (matchesBulkRecovery(saved, open)) {
+      setOutcomes(saved.outcomes)
+      setRunScope(saved.scope)
+      setValidationError(null)
+      setScopeError(null)
+      setConfirming(false)
       return
     }
     const init: Record<string, string> = {}
@@ -112,62 +329,34 @@ export function BulkActionSheet({ open, onClose, onDone }: {
     }
     setValues(init)
     setValidationError(null)
+    setScopeError(null)
     setConfirming(false)
     setOutcomes([])
+    setRunScope(null)
   }, [open, extraFields])
-
-  const sendOne = async (
-    actionId: string,
-    target: BulkTarget,
-    payloadJson: string,
-    idempotencyKey: string,
-  ): Promise<BulkOutcome> => {
-    try {
-      const res = await callAction(actionId, payloadJson, idempotencyKey)
-      if (res.kind === "receipt") {
-        return {
-          target,
-          status: "committed",
-          detail: `Committed (commit #${res.receipt.receipt.commitSeq})`,
-          idempotencyKey,
-          payloadJson,
-        }
-      }
-      if (res.kind === "pending") {
-        return {
-          target,
-          status: "pending",
-          detail: "Sent to Inbox for approval",
-          decisionId: res.decision.id,
-          idempotencyKey,
-          payloadJson,
-        }
-      }
-      if (res.kind === "refused") {
-        return { target, status: "refused", detail: res.message, idempotencyKey, payloadJson }
-      }
-      return {
-        target,
-        status: "unknown",
-        detail: "The cell did not return a confirmed answer. Retry safely with the same idempotency key.",
-        idempotencyKey,
-        payloadJson,
-      }
-    } catch {
-      return {
-        target,
-        status: "unknown",
-        detail: "Connection lost before the cell answered — outcome unknown. Retry uses the same idempotency key so this record will not run twice.",
-        idempotencyKey,
-        payloadJson,
-      }
-    }
-  }
 
   const refreshQueries = (objectKind: string) => {
     void client.invalidateQueries({ queryKey: ["records", objectKind] })
     void client.invalidateQueries({ queryKey: ["actions", objectKind] })
     void client.invalidateQueries({ queryKey: ["decisions"] })
+  }
+
+  const syncRecovery = (action: ActionSummary, targets: readonly BulkTarget[], scope: StudioScope, next: readonly BulkOutcome[]) => {
+    const hasUnknown = next.some((item) => item.status === "unknown")
+    if (hasUnknown) {
+      onRecoveryChange?.({
+        key: bulkRecoveryKey(scope, action.actionId, targets),
+        action,
+        targets,
+        scope,
+        outcomes: next,
+      })
+    } else {
+      if (recovery && recovery.key === bulkRecoveryKey(scope, action.actionId, targets)) {
+        onRecoveryChange?.(null)
+      }
+      onDone?.()
+    }
   }
 
   const runAll = async (event: FormEvent) => {
@@ -179,46 +368,83 @@ export function BulkActionSheet({ open, onClose, onDone }: {
       return
     }
     setValidationError(null)
+    setScopeError(null)
     if (risky(open.action) && !confirming) {
       setConfirming(true)
       return
     }
     setRunning(true)
     setConfirming(false)
-    const results: BulkOutcome[] = []
-    let attempted = 0
+    let capturedScope: StudioScope | null = null
     try {
-      for (const target of open.targets) {
-        const payload: Record<string, unknown> = { ...encoded.shared, [open.action.objectIdField]: target.id }
-        const payloadJson = JSON.stringify(payload)
-        const idempotencyKey = newIdempotencyKey()
-        attempted += 1
-        const outcome = await sendOne(open.action.actionId, target, payloadJson, idempotencyKey)
-        results.push(outcome)
-        setOutcomes([...results])
-      }
+      capturedScope = await readStudioScope()
+    } catch {
+      setRunning(false)
+      setValidationError("Could not verify the active workspace scope. Nothing was sent.")
+      return
+    }
+    if (capturedScope === null) {
+      setRunning(false)
+      setValidationError("This workspace has no data cell yet. Nothing was sent.")
+      return
+    }
+    setRunScope(capturedScope)
+    let finalOutcomes: readonly BulkOutcome[] = []
+    try {
+      const result = await runBulkTargets({
+        actionId: open.action.actionId,
+        objectIdField: open.action.objectIdField,
+        targets: open.targets,
+        shared: encoded.shared,
+        scope: capturedScope,
+        onProgress: (progress) => {
+          finalOutcomes = progress
+          setOutcomes(progress)
+          if (progress.some((item) => item.status === "unknown")) {
+            onRecoveryChange?.({
+              key: bulkRecoveryKey(capturedScope!, open.action.actionId, open.targets),
+              action: open.action,
+              targets: open.targets,
+              scope: capturedScope!,
+              outcomes: progress,
+            })
+          }
+        },
+      })
+      finalOutcomes = result.outcomes
+      setOutcomes(result.outcomes)
+      if (result.scopeChanged) setScopeError(SCOPE_CHANGED_MESSAGE)
     } finally {
       setRunning(false)
-      if (attempted > 0) {
+      if (finalOutcomes.length > 0) {
         refreshQueries(open.action.objectKind)
-        onDone?.()
+        syncRecovery(open.action, open.targets, capturedScope, finalOutcomes)
       }
     }
   }
 
-  const retryUnknown = async (targetId: string) => {
+  const retryTargets = async (targetIds: readonly string[]) => {
     if (open === null || running) return
-    const current = outcomes.find((item) => item.target.id === targetId && item.status === "unknown")
-    if (!current) return
+    const toRetry = outcomes.filter((item) => item.status === "unknown" && targetIds.includes(item.target.id))
+    if (toRetry.length === 0) return
     setRunning(true)
+    setScopeError(null)
+    let latest = outcomes
+    const pinned = runScope ?? toRetry[0]!.scope
     try {
-      // Reuse the original idempotency key so an earlier unseen commit replays instead of running twice.
-      const next = await sendOne(open.action.actionId, current.target, current.payloadJson, current.idempotencyKey)
-      setOutcomes((list) => list.map((item) => item.target.id === targetId ? next : item))
+      for (const current of toRetry) {
+        const res = await retryBulkTarget({ actionId: open.action.actionId, outcome: current })
+        if (res.scopeChanged) {
+          setScopeError(SCOPE_CHANGED_MESSAGE)
+          break
+        }
+        latest = latest.map((item) => item.target.id === current.target.id ? res.outcome : item)
+        setOutcomes(latest)
+      }
     } finally {
       setRunning(false)
       refreshQueries(open.action.objectKind)
-      onDone?.()
+      syncRecovery(open.action, open.targets, pinned, latest)
     }
   }
 
@@ -226,7 +452,8 @@ export function BulkActionSheet({ open, onClose, onDone }: {
   const committed = outcomes.filter((o) => o.status === "committed").length
   const pending = outcomes.filter((o) => o.status === "pending").length
   const refused = outcomes.filter((o) => o.status === "refused").length
-  const unknown = outcomes.filter((o) => o.status === "unknown").length
+  const unknownItems = outcomes.filter((o) => o.status === "unknown")
+  const unknown = unknownItems.length
 
   return (
     <Sheet open={open !== null} onOpenChange={(next) => { if (!next && !running) onClose() }}>
@@ -297,6 +524,11 @@ export function BulkActionSheet({ open, onClose, onDone }: {
                       {validationError}
                     </p>
                   )}
+                  {scopeError && (
+                    <p role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                      {scopeError}
+                    </p>
+                  )}
 
                   {confirming && (
                     <p role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm">
@@ -319,6 +551,28 @@ export function BulkActionSheet({ open, onClose, onDone }: {
                     {refused > 0 && <Badge variant="destructive">{refused} refused</Badge>}
                     {unknown > 0 && <Badge variant="outline">{unknown} outcome unknown</Badge>}
                   </div>
+                  {unknown > 0 && (
+                    <div role="alert" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">
+                      <div className="space-y-0.5">
+                        <p className="font-medium">{unknownRecoveryBanner(unknown)}</p>
+                        <p className="text-meta text-muted-foreground">Closing keeps these idempotency keys and payloads so you can reopen and retry safely.</p>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={running}
+                        onClick={() => void retryTargets(unknownItems.map((item) => item.target.id))}
+                      >
+                        <RotateCcw />Retry all unknown
+                      </Button>
+                    </div>
+                  )}
+                  {scopeError && (
+                    <p role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                      {scopeError}
+                    </p>
+                  )}
                   <ol className="divide-y rounded-lg border bg-card text-sm" aria-label="Bulk action results">
                     {outcomes.map((item) => (
                       <li key={item.target.id} className="flex items-start gap-2.5 px-3 py-2">
@@ -344,7 +598,7 @@ export function BulkActionSheet({ open, onClose, onDone }: {
                               variant="outline"
                               className="mt-1.5 h-7"
                               disabled={running}
-                              onClick={() => void retryUnknown(item.target.id)}
+                              onClick={() => void retryTargets([item.target.id])}
                             >
                               <RotateCcw />Retry {item.target.name}
                             </Button>
@@ -354,7 +608,9 @@ export function BulkActionSheet({ open, onClose, onDone }: {
                     ))}
                   </ol>
                   <div className="flex justify-end">
-                    <Button type="button" onClick={onClose} disabled={!finished}>Done</Button>
+                    <Button type="button" variant={unknown > 0 ? "outline" : "default"} onClick={onClose} disabled={!finished}>
+                      {unknown > 0 ? "Close (keep recovery)" : "Done"}
+                    </Button>
                   </div>
                 </div>
               )}

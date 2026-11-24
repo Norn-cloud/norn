@@ -15,14 +15,8 @@ pub mod approval_definitions;
 pub mod approvals;
 /// Default-deny server authorization for host operations and kernel action requests.
 pub mod authz;
-/// The `automation` retained-definition kind (AUTOMATION-1).
-pub mod automation_definitions;
-mod automation_exec;
-/// AUTOMATION-1: server-driven When/If/Then automation preview, execution, and run history.
-pub mod automations;
 pub mod clock;
 pub mod contracts;
-mod decision_types;
 pub mod decisions;
 pub mod olap_credential;
 pub mod openapi;

@@ -1,7 +1,14 @@
 //! HOST-ACTION-1 (#805): one governed action service shared by every transport.
-//! Bounds and decodes the body, authorizes through the host's server policy,
-//! admits scope, resolves the action from retained definitions and commits
-//! through the kernel's `commit_action` (D53 receipt disclosure).
+//!
+//! A transport hands over the raw request body, the explicit query scope, the
+//! action identity from its path and the actor its trusted principal seam
+//! verified; nothing else. The service bounds and decodes the body exactly,
+//! authorizes the call through the host's server policy, admits the scope
+//! against the physical cell, resolves the action from the verified retained
+//! definitions and dispatches to the kernel's `commit_action`, which decides
+//! current- and proposed-state authorization, laws, preconditions and
+//! idempotency. The receipt it returns follows D53: the raw receipt hash only
+//! for a reader with whole-world Values, otherwise its keyed handle.
 use crate::{
     authz::{AccessRequest, KernelAuthorizer, Operation, RefusalDetailRequest},
     host::DevHost,
@@ -252,11 +259,20 @@ pub enum ActionAnswer {
     Pending(crate::approvals::PendingAction),
 }
 
-/// Call one admitted action as the verified caller: commits, replays an
-/// identical earlier call, or parks behind an approval gate (APPROVAL-1, 202).
+/// Call one admitted action as the verified caller: it commits, or an
+/// identical earlier call replays with its original receipt. While an
+/// approval gates the action (APPROVAL-1), a call that would commit parks
+/// instead, as one open decision, and answers 202 with it; a call that would
+/// be refused is refused exactly as it would be ungated, and parks nothing.
 /// # Errors
-/// 403 opaque denial for unauthorized/unknown calls, 409 `defs.stale` or
-/// `approval.rejected`, 410 `approval.expired`, or typed kernel refusal.
+/// One opaque 403, decided before any storage read, for a missing or
+/// unverified caller, a denied policy, a foreign scope or an unknown action;
+/// the same opaque 403 for every visibility or permission refusal the kernel
+/// decides (an invisible or absent target, a denied policy decision);
+/// 409 `defs.stale` for a stale definitions pin; otherwise the kernel's typed
+/// refusal, its detail disclosed only under an explicit diagnostic grant;
+/// for a gated call whose decision was resolved, 409 `approval.rejected` or
+/// 410 `approval.expired`. A refusal commits nothing.
 #[utoipa::path(post, path = "/v1/actions/{actionId}", params(ActionQuery, ("actionId" = String, Path, description = "The admitted action identity.")), request_body = ActionRequest, responses((status = 200, description = "The call committed, or replayed an identical earlier call.", body = ActionReceipt), (status = 202, description = "An approval gates the action: the call waits for a person's decision, and nothing was committed.", body = crate::approvals::PendingAction), (status = 400, description = "The request was refused as invalid.", body = Refusal), (status = 403, description = "The request was refused: scope or authority denied.", body = Refusal), (status = 409, description = "The request was refused: a stale pin, a conflicting retry, or a rejected approval.", body = Refusal), (status = 410, description = "The approval the call waited on expired.", body = Refusal), (status = 413, description = "The request was refused: the body exceeds the host bound.", body = Refusal), (status = 422, description = "The request was refused: a law or precondition does not hold.", body = Refusal), (status = 429, description = "The request was refused: a declared limit was exceeded.", body = Refusal), (status = 500, description = "The request was refused: host failure.", body = Refusal), (status = 503, description = "The request was refused (`action.receipts_unconfigured`, retryable): the host keys no receipt handles, so no call can commit. Told only to a verified member calling an action the scope's policy governs; anyone else gets the 403.", body = Refusal)))]
 pub fn call_action<E: SqlEngine>(
     host: &DevHost<E>,
@@ -267,12 +283,17 @@ pub fn call_action<E: SqlEngine>(
     disclosure: &dyn QuestionRuntime<E>,
     now: LogicalTime,
 ) -> Result<ActionAnswer, Refusal> {
-    // S5a: step call keys belong to the flow dispatch; S2: bind principal.
+    // S5a: a flow step's call key is the host's own identity for that step
+    // attempt's call. A direct call never takes it, so it can neither park,
+    // consume an approval nor commit a record a step would take as its
+    // outcome.
     if crate::flow_driver::is_step_call_key(&request.idempotency_key) {
         return Err(step_key_reserved());
     }
+    // The transport's own verified principal for this request: the only one
+    // that may consume an approval of its call (S2).
     let principal = actor.and_then(|actor| host.authorizer.verified_principal(actor));
-    let answer = call_action_bound(
+    call_action_bound(
         host,
         &ActionCall {
             query,
@@ -285,20 +306,7 @@ pub fn call_action<E: SqlEngine>(
         },
         disclosure,
         None,
-    )?;
-    if let (Some(actor), ActionAnswer::Receipt(r)) = (actor, &answer)
-        && r.outcome == ActionCallOutcome::Committed
-    {
-        crate::automations::on_action_committed(
-            host,
-            actor,
-            action_id,
-            (&r.object_type, &r.object_id, r.version),
-            disclosure,
-            now,
-        );
-    }
-    Ok(answer)
+    )
 }
 
 /// S5a: a step's call key is reserved for the flow step attempt's own

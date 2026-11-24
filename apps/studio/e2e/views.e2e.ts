@@ -108,6 +108,160 @@ test("views: create 'Applications needing help' in Operations Space, run row & b
   await expect(page.getByRole("heading", { name: "Stalled funnel triage (copy)" })).toBeVisible()
 })
 
+test("views: bulk action handles mixed outcomes (committed + law refused) independently", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const cell = await workspaceCell(page)
+  cell.defs.set("studio.view.funnel_application.all_stalled", {
+    kind: "view",
+    version: 1,
+    retired: false,
+    updatedAtMs: Date.now(),
+    payload: {
+      title: "All stalled applications",
+      space: "Operations",
+      objectType: "funnel.Application",
+      filter: { all: [{ property: "stage", op: "eq", value: "stalled" }] },
+      columns: ["applicant_name", "stage", "score"],
+      rowActions: ["funnel.application.offer_assistance"],
+      bulkActions: ["funnel.application.offer_assistance"],
+    },
+  })
+
+  await page.goto("/views/studio.view.funnel_application.all_stalled")
+  const grid = page.getByRole("grid", { name: "Application records" })
+  await expect(grid).toContainText("Ada Reyes")
+  await expect(grid).toContainText("Cid Patel")
+
+  // Select app-1 (score 42, eligible) and app-3 (score 88, refused by law.violated).
+  await page.getByLabel("Select app-1").check()
+  await page.getByLabel("Select app-3").check()
+  await page.getByRole("toolbar", { name: "Bulk actions" }).getByRole("button", { name: /Offer assistance \(2\)/ }).click()
+
+  const bulkDialog = page.getByRole("dialog", { name: "Offer assistance" })
+  await expect(bulkDialog).toBeVisible()
+  await bulkDialog.getByRole("button", { name: /Run on 2 records/ }).click()
+
+  await expect(bulkDialog.getByText("1 committed")).toBeVisible()
+  await expect(bulkDialog.getByText("1 refused")).toBeVisible()
+  await expect(bulkDialog).toContainText("High-scoring applications (>= 80) do not qualify for assisted triage.")
+  await bulkDialog.getByRole("button", { name: "Done" }).click()
+
+  // app-1 transitioned out of stalled; app-3 remained stalled.
+  await expect(grid).not.toContainText("Ada Reyes")
+  await expect(grid).toContainText("Cid Patel")
+})
+
+test("views: bulk action preserves recovery across close and reopen on a lost reply and replays with the same key", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const cell = await workspaceCell(page)
+  cell.defs.set("studio.view.funnel_application.needing_help", {
+    kind: "view",
+    version: 1,
+    retired: false,
+    updatedAtMs: Date.now(),
+    payload: {
+      title: "Applications needing help",
+      space: "Operations",
+      objectType: "funnel.Application",
+      filter: {
+        all: [
+          { property: "stage", op: "eq", value: "stalled" },
+          { property: "score", op: "lt", value: "60" },
+        ],
+      },
+      columns: ["applicant_name", "stage", "score"],
+      rowActions: ["funnel.application.offer_assistance"],
+      bulkActions: ["funnel.application.offer_assistance"],
+    },
+  })
+
+  await page.goto("/views/studio.view.funnel_application.needing_help")
+  await expect(page.getByRole("grid", { name: "Application records" })).toContainText("Ada Reyes")
+  await expect(page.getByRole("grid", { name: "Application records" })).toContainText("Ben Park")
+
+  // Drop the HTTP reply for app-2 after the cell commits it.
+  cell.dropReplyOnce("app-2")
+
+  await page.getByLabel("Select app-1").check()
+  await page.getByLabel("Select app-2").check()
+  await page.getByRole("toolbar", { name: "Bulk actions" }).getByRole("button", { name: /Offer assistance \(2\)/ }).click()
+
+  const bulkDialog = page.getByRole("dialog", { name: "Offer assistance" })
+  await bulkDialog.getByLabel("Outreach note").fill("Concierge follow-up")
+  await bulkDialog.getByRole("button", { name: /Run on 2 records/ }).click()
+
+  await expect(bulkDialog.getByText("1 committed")).toBeVisible()
+  await expect(bulkDialog.getByText("1 outcome unknown")).toBeVisible()
+  await expect(bulkDialog).toContainText("1 result unknown — retry with the same keys")
+
+  // Close the sheet while outcome is unknown: recovery MUST stay available on the page.
+  await bulkDialog.getByRole("button", { name: "Close (keep recovery)" }).click()
+  await expect(bulkDialog).toHaveCount(0)
+  await expect(page.getByRole("alert")).toContainText("1 result unknown — retry with the same keys")
+
+  // Reopen recovery and retry app-2; must reuse the exact original idempotency key and payload without re-sending app-1.
+  await page.getByRole("button", { name: "Resume retry" }).click()
+  const reopened = page.getByRole("dialog", { name: "Offer assistance" })
+  await expect(reopened).toContainText("1 result unknown — retry with the same keys")
+  await reopened.getByRole("button", { name: "Retry app-2" }).click()
+
+  await expect(reopened.getByText("2 committed")).toBeVisible()
+  await expect(reopened).toContainText("Already committed (replayed commit #")
+  await expect(reopened.getByText("outcome unknown")).toHaveCount(0)
+  await reopened.getByRole("button", { name: "Done" }).click()
+  await expect(page.getByRole("button", { name: "Resume retry" })).toHaveCount(0)
+
+  const app1Calls = cell.actionCalls.filter((c) => c.input.id === "app-1")
+  const app2Calls = cell.actionCalls.filter((c) => c.input.id === "app-2")
+  expect(app1Calls).toHaveLength(1)
+  expect(app2Calls).toHaveLength(2)
+  expect(app2Calls[1]!.idempotencyKey).toBe(app2Calls[0]!.idempotencyKey)
+  expect(app2Calls[1]!.input).toEqual(app2Calls[0]!.input)
+})
+
+test("views: rows without server offers fail closed for inline row actions and bulk eligibility", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const cell = await workspaceCell(page, { omitOffersFor: ["app-1"] })
+  cell.defs.set("studio.view.funnel_application.no_offers", {
+    kind: "view",
+    version: 1,
+    retired: false,
+    updatedAtMs: Date.now(),
+    payload: {
+      title: "Fail-closed offers view",
+      space: "Operations",
+      objectType: "funnel.Application",
+      filter: {
+        all: [
+          { property: "stage", op: "eq", value: "stalled" },
+          { property: "score", op: "lt", value: "60" },
+        ],
+      },
+      columns: ["applicant_name", "stage", "score"],
+      rowActions: ["funnel.application.offer_assistance"],
+      bulkActions: ["funnel.application.offer_assistance"],
+    },
+  })
+
+  await page.goto("/views/studio.view.funnel_application.no_offers")
+  const grid = page.getByRole("grid", { name: "Application records" })
+  const app1Row = grid.locator('[role="row"]').filter({ hasText: "Ada Reyes" })
+  const app2Row = grid.locator('[role="row"]').filter({ hasText: "Ben Park" })
+  await expect(app1Row).toBeVisible()
+  await expect(app2Row).toBeVisible()
+
+  // app-1 has no `offers` array: must NOT fall back to the full type catalog.
+  await expect(app1Row.getByRole("button", { name: "Offer assistance" })).toHaveCount(0)
+  // app-2 carries explicit `offers`: still renders its inline button.
+  await expect(app2Row.getByRole("button", { name: "Offer assistance" })).toHaveCount(1)
+
+  // Selecting only app-1 must leave bulk Offer assistance at (0) and disabled.
+  await page.getByLabel("Select app-1").check()
+  const bulkBtn = page.getByRole("toolbar", { name: "Bulk actions" }).getByRole("button", { name: /Offer assistance \(0\)/ })
+  await expect(bulkBtn).toBeVisible()
+  await expect(bulkBtn).toBeDisabled()
+})
+
 test("views (second domain): create and open an Equipment Fleet Tickets view in a custom Space", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await workspaceCell(page)

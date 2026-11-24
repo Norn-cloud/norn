@@ -74,8 +74,6 @@ pub struct DueWork {
     /// Approved action steps whose recorded outcome was delivered to their
     /// runs (APPROVAL-RECOVERY-1); no action was called.
     pub steps: u32,
-    /// Staleness automations whose Inbox proposals were parked (AUTOMATION-1).
-    pub automations: u32,
     /// Why each item that was due could not be handled, for the operator's
     /// log; such an item stays due and is retried after its backoff.
     pub failed: Vec<String>,
@@ -90,11 +88,7 @@ impl DueWork {
     /// Whether anything was committed.
     #[must_use]
     pub const fn committed(&self) -> bool {
-        self.expired_reservations > 0
-            || self.timers > 0
-            || self.decisions > 0
-            || self.steps > 0
-            || self.automations > 0
+        self.expired_reservations > 0 || self.timers > 0 || self.decisions > 0 || self.steps > 0
     }
 }
 
@@ -209,11 +203,6 @@ pub fn run_due<E: SqlEngine>(host: &DevHost<E>, now: LogicalTime) -> Result<DueW
             }
         }
     }
-    drop(cell);
-    if let Ok(fired) = crate::automations::run_due_stale(host, now) {
-        work.automations = fired;
-    }
-    let cell = host.cell()?;
     work.next = if more { Some(at) } else { next_wake(&cell)? };
     Ok(work)
 }
@@ -331,8 +320,7 @@ fn next_wake<E: SqlEngine>(cell: &ActionCell<E>) -> Result<Option<u64>, Refusal>
             step.approved_at_ms.max(eligible)
         })
         .min();
-    let stale = crate::automations::next_stale_wake(cell)?;
-    Ok(min(min(min(timer, decision), step), stale))
+    Ok(min(min(timer, decision), step))
 }
 
 /// What an item's refusal says for the operator: its host cause, else its code.

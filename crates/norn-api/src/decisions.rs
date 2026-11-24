@@ -75,11 +75,186 @@ pub mod decision_codes {
     pub const IDEMPOTENCY_CONFLICT: &str = "decision.idempotency_conflict";
 }
 
-pub use crate::decision_types::{
-    DecisionCall, DecisionContext, DecisionDocument, DecisionFlow, DecisionOptionDocument,
-    DecisionOptionEffect, DecisionRisk, DecisionRun, DecisionStep, DecisionSubject, DecisionsPage,
-    DecisionsQuery,
-};
+/// How much is at stake.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DecisionRisk {
+    /// Low.
+    Low,
+    /// Medium.
+    Medium,
+    /// High.
+    High,
+}
+
+/// What choosing an option does: exactly one of an action or a binding.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionOptionEffect {
+    /// The action the option starts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+    /// The binding the option sets.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub binding: Option<String>,
+}
+
+/// One option a decider may choose.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionOptionDocument {
+    /// The option id `choice` names.
+    pub id: String,
+    /// What the decider reads.
+    pub label: String,
+    /// How far it reaches, in the decider's words.
+    pub scope: String,
+    /// What it does.
+    pub effect: DecisionOptionEffect,
+}
+
+/// The run a decision belongs to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionRun {
+    /// The run id.
+    pub id: String,
+    /// Its generation.
+    pub generation: u64,
+    /// Its lifecycle state.
+    pub state: Option<String>,
+}
+
+/// The flow a decision belongs to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionFlow {
+    /// The flow's `decide` rule artifact id.
+    pub rule_id: String,
+    /// The rule version the run is pinned to.
+    pub version: String,
+    /// The flow's display title.
+    pub title: Option<String>,
+}
+
+/// The step that asks.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionStep {
+    /// The step id.
+    pub id: String,
+    /// Its display label.
+    pub label: Option<String>,
+}
+
+/// What the decision is about. Empty in this version.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionContext {
+    /// The objects the decision concerns.
+    pub subjects: Vec<DecisionSubject>,
+}
+
+/// One object a decision concerns.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionSubject {
+    /// Its object type.
+    pub object_type: String,
+    /// Its id.
+    pub id: String,
+}
+
+/// One open decision.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionDocument {
+    /// The opaque decision id.
+    pub id: String,
+    /// The run waiting on it.
+    pub run: DecisionRun,
+    /// The run's flow.
+    pub flow: DecisionFlow,
+    /// The step that asks.
+    pub step: DecisionStep,
+    /// The question.
+    pub question: String,
+    /// How much is at stake.
+    pub risk: DecisionRisk,
+    /// The options.
+    pub options: Vec<DecisionOptionDocument>,
+    /// An agent's recommended option id; a recommendation, never a decision.
+    pub agent_pick: Option<String>,
+    /// When the run asked (logical milliseconds).
+    pub requested_at_ms: u64,
+    /// When the decision expires (logical milliseconds), at most seven days
+    /// after it was asked.
+    pub expires_at_ms: u64,
+    /// What it is about.
+    pub context: DecisionContext,
+    /// Reserved; always `null` in this version.
+    #[schema(value_type = Option<std::collections::BTreeMap<String, serde_json::Value>>)]
+    pub input_schema: Option<serde_json::Value>,
+    /// For the approval of a parked action call (APPROVAL-1), the call
+    /// waiting on it; absent for a flow's ask.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call: Option<DecisionCall>,
+}
+
+/// The parked action call an approval decides (APPROVAL-1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionCall {
+    /// The action called.
+    pub action: String,
+    /// The approval definition that gates it.
+    pub definition: String,
+    /// The call's admitted input, as its requester sent it.
+    #[schema(value_type = BTreeMap<String, serde_json::Value>)]
+    pub input: RuntimeValue,
+    /// Optional provenance trace context carried by the parked call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(nullable = false)]
+    pub trace: Option<crate::actions::TraceContext>,
+}
+
+/// One page of open decisions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionsPage {
+    /// The decisions, soonest deadline first, ties to the oldest request.
+    pub items: Vec<DecisionDocument>,
+    /// How many open decisions the caller may decide.
+    pub total: u64,
+    /// `total` is a lower bound: more were not examined.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub total_capped: bool,
+    /// Pass as `cursor` for the next page; `null` on the last page.
+    pub next_cursor: Option<String>,
+    /// The cell's clock when the page was read (logical milliseconds).
+    pub server_now_ms: u64,
+}
+
+/// `GET /v1/decisions` query.
+#[derive(Debug, Clone, Default, Deserialize, IntoParams)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[into_params(parameter_in = Query, rename_all = "camelCase")]
+pub struct DecisionsQuery {
+    /// Organization (required).
+    #[param(required = true, nullable = false)]
+    pub org_id: Option<String>,
+    /// Environment (required).
+    #[param(required = true, nullable = false)]
+    pub environment_id: Option<String>,
+    /// `pending` (required): only open decisions are listed.
+    pub state: Option<String>,
+    /// Only decisions of runs of this flow (its definition id).
+    pub flow: Option<String>,
+    /// The previous page's `nextCursor`.
+    pub cursor: Option<String>,
+    /// Page size, 0 to 200 (default 50); 0 returns only the count.
+    pub limit: Option<u32>,
+}
 
 /// `POST /v1/decisions/{id}:decide` body.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, ToSchema)]
@@ -270,9 +445,6 @@ pub(crate) struct OpenDecision {
     /// The parked call of an approval-gated action this decision approves
     /// (APPROVAL-1), when it is one.
     pub(crate) call: Option<HeldCall>,
-    /// The automation-proposed action this decision asks a human to approve
-    /// (AUTOMATION-1), when it is one.
-    pub(crate) proposal: Option<crate::automations::HeldProposal>,
 }
 
 /// The one refusal for an absent decision, and for a caller who may not
@@ -373,13 +545,6 @@ fn parked_decision<E: SqlEngine>(
             None => return Ok(None),
         },
     };
-    let proposal = match payload.get("automation") {
-        None => None,
-        Some(automation) => match crate::automations::held_proposal(automation) {
-            Some(proposal) => Some(proposal),
-            None => return Ok(None),
-        },
-    };
     let requested_at_ms = store
         .read()
         .receipt_at(pending.commit_seq)
@@ -401,7 +566,6 @@ fn parked_decision<E: SqlEngine>(
         requested_at_ms,
         expires_at_ms: requested_at_ms.saturating_add(wait),
         call,
-        proposal,
     }))
 }
 
@@ -602,11 +766,6 @@ fn document<E: SqlEngine>(
 ) -> Result<Option<DecisionDocument>, Refusal> {
     if let Some(call) = &decision.call {
         return call_document(store, decision, call).map(Some);
-    }
-    if let Some(proposal) = &decision.proposal {
-        return Ok(Some(crate::automations::proposal_document(
-            decision, proposal,
-        )));
     }
     let Some(run) = store
         .read()
@@ -1133,36 +1292,24 @@ pub fn decide<E: SqlEngine>(
     disclosure: &dyn QuestionRuntime<E>,
     as_requester: AsStarter<'_>,
 ) -> Result<Decided, Box<DecideRefusal>> {
-    let (mut decided, approved, approved_proposal) =
-        decide_held(host, request, access, disclosure)?;
+    let (mut decided, approved) = decide_held(host, request, access, disclosure)?;
     // The cell and the definitions epoch are released: an approved call
     // still to run goes through the ordinary dispatch as its requester.
     if let Some(decision_id) = approved {
         decided.call = run_approved(host, &decision_id, disclosure, request.now, as_requester)
             .map_err(Box::from)?;
-    } else if let Some((decision_id, decider)) = approved_proposal {
-        decided.call = crate::automations::run_approved_proposal(
-            host,
-            &decision_id,
-            &decider,
-            disclosure,
-            request.now,
-        )
-        .map_err(Box::from)?;
     }
     Ok(decided)
 }
 
-type HeldOutcome = (Decided, Option<String>, Option<(String, String)>);
-
 /// [`decide`] under the cell: the decision, and the decision whose approved
-/// call or automation proposal to run once the cell is released.
+/// call to answer once the cell is released.
 fn decide_held<E: SqlEngine>(
     host: &DevHost<E>,
     request: &DecideCall<'_>,
     access: ReadAccess<'_>,
     disclosure: &dyn QuestionRuntime<E>,
-) -> Result<HeldOutcome, Box<DecideRefusal>> {
+) -> Result<(Decided, Option<String>), Box<DecideRefusal>> {
     let DecideCall {
         scope,
         actor,
@@ -1205,10 +1352,9 @@ fn decide_held<E: SqlEngine>(
         )));
     }
     check_answer(&decision, body)?;
-    let recorded = match (&decision.call, &decision.proposal) {
-        (None, None) => record(&mut cell, &decision, body, actor, now)?,
-        (Some(held), _) => record_call(&mut cell, &decision, held, body, actor)?,
-        (None, Some(_)) => record_proposal(&mut cell, &decision, body, actor)?,
+    let recorded = match &decision.call {
+        None => record(&mut cell, &decision, body, actor, now)?,
+        Some(held) => record_call(&mut cell, &decision, held, body, actor)?,
     };
     if !recorded {
         return resolved_answer(&reader, &cell, id, body);
@@ -1216,10 +1362,7 @@ fn decide_held<E: SqlEngine>(
     let decided = answer(&reader, &cell, id, body, DecideOutcome::Decided)?;
     let approved = (decision.call.is_some() && body.choice == crate::approvals::APPROVE)
         .then(|| decision.id.clone());
-    let approved_proposal = (decision.proposal.is_some()
-        && body.choice == crate::approvals::APPROVE)
-        .then(|| (decision.id.clone(), actor.to_owned()));
-    Ok((decided, approved, approved_proposal))
+    Ok((decided, approved))
 }
 
 /// APPROVAL-RECOVERY-1: the approved call of `decision_id` as it stands, and
@@ -1494,36 +1637,6 @@ fn record_call<E: SqlEngine>(
     resolve_call(cell, decision, output, &resolved)
 }
 
-/// Record `actor`'s answer to an automation proposal (AUTOMATION-1).
-fn record_proposal<E: SqlEngine>(
-    cell: &mut ActionCell<E>,
-    decision: &OpenDecision,
-    body: &DecideRequest,
-    actor: &str,
-) -> Result<bool, Refusal> {
-    let mut output: RuntimeObject = BTreeMap::from([(
-        "choice".to_owned(),
-        RuntimeValue::String(body.choice.clone()),
-    )]);
-    if let Some(note) = &body.note {
-        output.insert("note".to_owned(), RuntimeValue::String(note.clone()));
-    }
-    let resolved = DecisionResolved {
-        decision_id: decision.id.clone(),
-        command_id: decision.command.0.clone(),
-        generation: decision.generation.0,
-        run_id: decision.run_id.clone(),
-        step: decision.step.clone(),
-        resolution: Resolution::Decided,
-        choice: Some(body.choice.clone()),
-        note: body.note.clone(),
-        decided_by: Some(actor.to_owned()),
-        idempotency_key: Some(body.idempotency_key.clone()),
-        request_hash: Some(request_hash(body)?),
-    };
-    resolve_call(cell, decision, output, &resolved)
-}
-
 /// Record `output` as an approval's parked result and commit `resolved`
 /// consuming it. `false` when another call recorded a result first.
 fn resolve_call<E: SqlEngine>(
@@ -1581,23 +1694,6 @@ pub(crate) fn expire<E: SqlEngine>(
             request_hash: None,
         };
         resolve_call(cell, decision, failure, &resolved)?;
-        return Ok(());
-    }
-    if decision.proposal.is_some() {
-        let resolved = DecisionResolved {
-            decision_id: decision.id.clone(),
-            command_id: decision.command.0.clone(),
-            generation: decision.generation.0,
-            run_id: decision.run_id.clone(),
-            step: decision.step.clone(),
-            resolution: Resolution::Expired,
-            choice: None,
-            note: None,
-            decided_by: None,
-            idempotency_key: None,
-            request_hash: None,
-        };
-        resolve_call(cell, decision, expired_failure(), &resolved)?;
         return Ok(());
     }
     let Some(row) = cell
@@ -1703,7 +1799,7 @@ fn resolved_answer<E: SqlEngine>(
     cell: &ActionCell<E>,
     id: &str,
     body: &DecideRequest,
-) -> Result<HeldOutcome, Box<DecideRefusal>> {
+) -> Result<(Decided, Option<String>), Box<DecideRefusal>> {
     let Some(row) = cell
         .store()
         .read()
@@ -1717,23 +1813,15 @@ fn resolved_answer<E: SqlEngine>(
         return if row.resolved.request_hash.as_deref() == Some(request_hash(body)?.as_str()) {
             // APPROVAL-REVISION-1: a replayed approval of a parked call is
             // fenced again before anything it approved runs.
-            let is_approve = row.resolved.choice.as_deref() == Some(crate::approvals::APPROVE);
-            let approved = (is_approve
+            let approved = (row.resolved.choice.as_deref() == Some(crate::approvals::APPROVE)
                 && row
                     .resolved
                     .command_id
                     .starts_with(crate::approvals::COMMAND_PREFIX))
             .then(|| row.resolved.decision_id.clone());
-            let approved_proposal = (is_approve
-                && row
-                    .resolved
-                    .command_id
-                    .starts_with(crate::automations::COMMAND_PREFIX))
-            .then(|| (row.resolved.decision_id.clone(), reader.actor.to_owned()));
             Ok((
                 answer(reader, cell, id, body, DecideOutcome::Replayed)?,
                 approved,
-                approved_proposal,
             ))
         } else {
             Err(Box::from(Refusal::new(
@@ -1754,17 +1842,6 @@ fn resolved_answer<E: SqlEngine>(
         "the decision was already resolved",
         "someone resolved it first",
     );
-    let decided_call = match crate::approvals::approved_call(cell, id)? {
-        Some((_held, state)) => Some(DecidedCall::of(&state, None)),
-        None if row
-            .resolved
-            .command_id
-            .starts_with(crate::automations::COMMAND_PREFIX) =>
-        {
-            crate::automations::approved_proposal_call(cell, id)?
-        }
-        None => None,
-    };
     let resolution = DecisionResolution {
         resolution: row.resolved.resolution.as_str().to_owned(),
         by: by(&row, reader.actor),
@@ -1774,7 +1851,8 @@ fn resolved_answer<E: SqlEngine>(
         } else {
             None
         },
-        call: decided_call,
+        call: crate::approvals::approved_call(cell, id)?
+            .map(|(_held, state)| DecidedCall::of(&state, None)),
     };
     Err(Box::new(DecideRefusal {
         refusal,

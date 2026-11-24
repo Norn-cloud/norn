@@ -1,13 +1,10 @@
 import type { Page, Route } from "@playwright/test"
 import type { ActionSummary } from "../src/lib/actions.ts"
-import type { AutomationDefinition, AutomationPreviewMatch, AutomationRunRecord } from "../src/lib/automations.ts"
-import type { Decision } from "../src/lib/decisions.ts"
 import type { Clause, Predicate } from "../src/lib/records-query.ts"
 
 /**
- * Deterministic two-domain stand-in for CELL-DO's view, object, action, automation and inbox
- * routes so Playwright exercises Studio's complete Workspace Views and Builder Automations flows
- * across two unrelated domains:
+ * Deterministic two-domain stand-in for CELL-DO's view, object, and action routes so Playwright
+ * exercises Studio's complete Workspace Views and Bulk Action flows across two unrelated domains:
  *   1. Application Funnel (`funnel.Application`) — issue #1424's exact scenario
  *   2. Equipment Fleet Tickets (`fleet.Ticket`) — unrelated second domain proving genericity
  */
@@ -20,11 +17,25 @@ export interface DemoRecord {
 }
 
 interface StoredDef {
-  readonly kind: "view" | "automation"
+  readonly kind: "view"
   version: number
   payload: Record<string, unknown>
   retired: boolean
   updatedAtMs: number
+}
+
+interface ActionReceiptDocument {
+  readonly outcome: "committed" | "replayed"
+  readonly objectType: string
+  readonly objectId: string
+  readonly version: number
+  readonly receipt: { readonly receiptHash: string; readonly commitSeq: number; readonly recordedAtMs: number }
+}
+
+export interface RecordedActionCall {
+  readonly actionId: string
+  readonly idempotencyKey: string
+  readonly input: Record<string, unknown>
 }
 
 const SCOPE = { orgId: "org_demo", environmentId: "prod" }
@@ -231,72 +242,38 @@ function matchClause(record: DemoRecord, clause: Clause): boolean {
   }
 }
 
-function evalGuardExpr(expr: string | undefined, record: DemoRecord): { ok: true; matched: boolean } | { ok: false; message: string } {
-  const text = expr?.trim() ?? ""
-  if (text === "") return { ok: true, matched: true }
-  const segments = text.split(/\s+and\s+/)
-  for (const segment of segments) {
-    const m = /^self\.([A-Za-z_][A-Za-z0-9_]*)\s*(==|!=|<=|>=|<|>)\s*(.+)$/.exec(segment.trim())
-    if (!m) return { ok: false, message: `guard expression "${text}" must return a boolean` }
-    const prop = m[1]!
-    const op = m[2]!
-    const rhsRaw = m[3]!.trim()
-    const lhs = record.values[prop]
-    if (lhs === undefined) return { ok: true, matched: false }
-    const rhs = rhsRaw.startsWith("'") && rhsRaw.endsWith("'")
-      ? rhsRaw.slice(1, -1)
-      : rhsRaw === "true"
-        ? true
-        : rhsRaw === "false"
-          ? false
-          : Number(rhsRaw)
-    const cmp = typeof lhs === "number" && typeof rhs === "number" ? lhs - rhs : String(lhs).localeCompare(String(rhs))
-    const pass = op === "==" ? cmp === 0 : op === "!=" ? cmp !== 0 : op === "<" ? cmp < 0 : op === "<=" ? cmp <= 0 : op === ">" ? cmp > 0 : cmp >= 0
-    if (!pass) return { ok: true, matched: false }
-  }
-  return { ok: true, matched: true }
-}
-
-function validateGuardSyntax(expr: string | undefined): string | null {
-  const text = expr?.trim() ?? ""
-  if (text === "") return null
-  for (const segment of text.split(/\s+and\s+/)) {
-    if (!/^self\.([A-Za-z_][A-Za-z0-9_]*)\s*(==|!=|<=|>=|<|>)\s*('[^']*'|-?\d+(\.\d+)?|true|false)$/.test(segment.trim())) {
-      return `guard expression must be a boolean comparison (got "${text}")`
-    }
-  }
-  return null
-}
-
-function matchesAutomationWhen(def: AutomationDefinition, record: DemoRecord): string | null {
-  if (def.when.kind === "lifecycle_entered") {
-    return String(record.values[def.when.property] ?? "") === def.when.state
-      ? `${def.when.property} is ${def.when.state}`
-      : null
-  }
-  if (def.when.kind === "stale") {
-    if (def.when.property && def.when.state && String(record.values[def.when.property] ?? "") !== def.when.state) return null
-    return `unchanged past threshold (${Math.round(def.when.afterMs / 60_000)}m)`
-  }
-  return `record matches ${def.when.event} trigger`
+export interface WorkspaceCellOptions {
+  /** Record IDs whose list entries omit `offers` (to verify fail-closed grid rendering). */
+  readonly omitOffersFor?: readonly string[]
 }
 
 export interface WorkspaceCell {
   readonly records: DemoRecord[]
   readonly defs: Map<string, StoredDef>
-  readonly decisions: Map<string, { decision: Decision; automationId: string; objectType: string; objectId: string; objectVersion: number; actionId: string; resolved: boolean }>
-  readonly runs: AutomationRunRecord[]
+  readonly actionCalls: RecordedActionCall[]
+  /** Commit the next action call targeting `recordId`, then drop the HTTP reply to simulate a lost response. */
+  dropReplyOnce(recordId: string): void
 }
 
-export async function workspaceCell(page: Page): Promise<WorkspaceCell> {
+export async function workspaceCell(page: Page, options: WorkspaceCellOptions = {}): Promise<WorkspaceCell> {
   const records = initialRecords()
   const defs = new Map<string, StoredDef>()
-  const decisions = new Map<string, { decision: Decision; automationId: string; objectType: string; objectId: string; objectVersion: number; actionId: string; resolved: boolean }>()
-  const runs: AutomationRunRecord[] = []
+  const actionCalls: RecordedActionCall[] = []
+  const receiptsByKey = new Map<string, { readonly inputJson: string; readonly receipt: ActionReceiptDocument }>()
+  const dropOnce = new Set<string>()
+  const omitOffers = new Set(options.omitOffersFor ?? [])
   let commitSeq = 10
-  let seqId = 1
 
-  const runActionOnRecord = (actionId: string, input: Record<string, unknown>) => {
+  const runActionOnRecord = (actionId: string, input: Record<string, unknown>, idempotencyKey: string) => {
+    const inputJson = JSON.stringify(input)
+    const keySlot = `${actionId}:${idempotencyKey}`
+    const prior = receiptsByKey.get(keySlot)
+    if (prior) {
+      if (prior.inputJson !== inputJson) {
+        return { ok: false as const, status: 409, code: "action.idempotency_conflict", message: "Idempotency key reused with different input." }
+      }
+      return { ok: true as const, receipt: { ...prior.receipt, outcome: "replayed" as const } }
+    }
     const id = String(input.id ?? "")
     const action = ACTIONS.find((a) => a.actionId === actionId)
     const rec = records.find((r) => r.objectType === action?.objectKind && r.id === id)
@@ -317,16 +294,15 @@ export async function workspaceCell(page: Page): Promise<WorkspaceCell> {
     else if (actionId === "fleet.ticket.escalate") rec.values.status = "escalated"
     rec.version += 1
     commitSeq += 1
-    return {
-      ok: true as const,
-      receipt: {
-        outcome: "committed",
-        objectType: rec.objectType,
-        objectId: rec.id,
-        version: rec.version,
-        receipt: { receiptHash: `h_${commitSeq}`, commitSeq, recordedAtMs: BASE_NOW + commitSeq * 1000 },
-      },
+    const receipt: ActionReceiptDocument = {
+      outcome: "committed",
+      objectType: rec.objectType,
+      objectId: rec.id,
+      version: rec.version,
+      receipt: { receiptHash: `h_${commitSeq}`, commitSeq, recordedAtMs: BASE_NOW + commitSeq * 1000 },
     }
+    receiptsByKey.set(keySlot, { inputJson, receipt })
+    return { ok: true as const, receipt }
   }
 
   await page.route("**/api/me", (route) => route.fulfill({
@@ -353,45 +329,28 @@ export async function workspaceCell(page: Page): Promise<WorkspaceCell> {
     }
 
     if (tail === ":admit") {
-      const kind = String(body?.kind ?? "")
       const payload = (body?.payload ?? {}) as Record<string, unknown>
       const diagnostics: { code: string; message: string; span: { pointer: string } }[] = []
       if (!String(payload.title ?? "").trim()) {
         diagnostics.push({ code: "definition.title_invalid", message: "Title is required.", span: { pointer: "/title" } })
       }
-      if (kind === "automation") {
-        const guardErr = validateGuardSyntax((payload.if as { expression?: string } | undefined)?.expression)
-        if (guardErr) diagnostics.push({ code: "definition.guard_invalid", message: guardErr, span: { pointer: "/if/expression" } })
-      }
       if (diagnostics.length > 0) {
         return route.fulfill({ json: { admitted: false, diagnostics, restatement: null, restatementSha256: null } })
       }
-      const restatement = kind === "view"
-        ? `Saved view “${String(payload.title)}” over ${String(payload.objectType)}${payload.space ? ` in Space ${String(payload.space)}` : ""}.`
-        : `Automation “${String(payload.title)}” on ${String(payload.objectType)}.`
+      const restatement = `Saved view “${String(payload.title)}” over ${String(payload.objectType)}${payload.space ? ` in Space ${String(payload.space)}` : ""}.`
       return route.fulfill({ json: { admitted: true, diagnostics: [], restatement, restatementSha256: "a".repeat(64) } })
     }
 
     if (tail === ":install") {
-      const kind = String(body?.kind ?? "") as "view" | "automation"
       const id = String(body?.id ?? "")
       const payload = (body?.payload ?? {}) as Record<string, unknown>
       const expected = typeof body?.expectedVersion === "number" ? body.expectedVersion : undefined
-      if (kind === "automation") {
-        const guardErr = validateGuardSyntax((payload.if as { expression?: string } | undefined)?.expression)
-        if (guardErr) {
-          return route.fulfill({
-            status: 422,
-            json: { code: "definition.refused", diagnostics: [{ code: "definition.guard_invalid", message: guardErr, span: { pointer: "/if/expression" } }] },
-          })
-        }
-      }
       const existing = defs.get(id)
       if (expected !== undefined && existing?.version !== expected) {
         return route.fulfill({ status: 409, json: { code: "definition.version_conflict", message: "Version conflict." } })
       }
       const version = (existing?.version ?? 0) + 1
-      defs.set(id, { kind, version, payload, retired: false, updatedAtMs: Date.now() })
+      defs.set(id, { kind: "view", version, payload, retired: false, updatedAtMs: Date.now() })
       commitSeq += 1
       return route.fulfill({ json: { installed: true, id, version, receipt: { receiptHash: `def_${commitSeq}`, commitSeq, recordedAtMs: Date.now() } } })
     }
@@ -427,7 +386,8 @@ export async function workspaceCell(page: Page): Promise<WorkspaceCell> {
     if (parts.length === 2) {
       const rec = records.find((r) => r.objectType === objectType && r.id === decodeURIComponent(parts[1]!))
       if (!rec) return route.fulfill({ status: 404, json: { code: "object.not_found" } })
-      return route.fulfill({ json: { objectType: rec.objectType, id: rec.id, scope: `${SCOPE.orgId}/${SCOPE.environmentId}`, version: rec.version, withheld: false, withheldProperties: [], values: rec.values, offers: offersForRecord(rec) } })
+      // Single-record GET preserves its retained wire shape without `offers`.
+      return route.fulfill({ json: { objectType: rec.objectType, id: rec.id, scope: `${SCOPE.orgId}/${SCOPE.environmentId}`, version: rec.version, withheld: false, withheldProperties: [], values: rec.values } })
     }
     if (parts.length === 3 && parts[2] === "links") {
       return route.fulfill({ json: { objectType, id: decodeURIComponent(parts[1]!), items: [] } })
@@ -460,7 +420,7 @@ export async function workspaceCell(page: Page): Promise<WorkspaceCell> {
           withheld: false,
           withheldProperties: [],
           values: r.values,
-          offers: offersForRecord(r),
+          ...(omitOffers.has(r.id) ? {} : { offers: offersForRecord(r) }),
         })),
         quarantineCount: 0,
         scannedThrough: null,
@@ -485,157 +445,15 @@ export async function workspaceCell(page: Page): Promise<WorkspaceCell> {
       return route.fulfill({ json: { items } })
     }
     const actionId = decodeURIComponent(url.pathname.split("/v1/actions/")[1] ?? "")
-    const body = route.request().postDataJSON() as { input: Record<string, unknown> }
-    const res = runActionOnRecord(actionId, body.input)
+    const body = route.request().postDataJSON() as { input: Record<string, unknown>; idempotencyKey: string }
+    const targetId = String(body.input.id ?? "")
+    actionCalls.push({ actionId, idempotencyKey: body.idempotencyKey, input: body.input })
+    const res = runActionOnRecord(actionId, body.input, body.idempotencyKey)
+    if (dropOnce.delete(targetId)) {
+      return route.abort("failed")
+    }
     if (!res.ok) return route.fulfill({ status: res.status, json: { code: res.code, category: "law", message: res.message, explanation: res.message } })
     return route.fulfill({ json: res.receipt })
-  })
-
-  await page.route("**/api/host/v1/automations**", async (route: Route) => {
-    const url = new URL(route.request().url())
-    const tail = url.pathname.split("/v1/automations")[1] ?? ""
-
-    if (tail === ":preview") {
-      const body = route.request().postDataJSON() as { id?: string; payload?: AutomationDefinition }
-      const def = body.id ? (defs.get(body.id)?.payload as unknown as AutomationDefinition | undefined) : body.payload
-      if (!def) return route.fulfill({ status: 404, json: { code: "definition.not_found", message: "Automation not found." } })
-      const guardErr = validateGuardSyntax(def.if?.expression)
-      if (guardErr) return route.fulfill({ status: 422, json: { code: "definition.refused", diagnostics: [{ code: "definition.guard_invalid", message: guardErr, span: { pointer: "/if/expression" } }] } })
-      const scoped = records.filter((r) => r.objectType === def.objectType)
-      const matches: AutomationPreviewMatch[] = []
-      for (const rec of scoped) {
-        const reason = matchesAutomationWhen(def, rec)
-        if (!reason) continue
-        const g = evalGuardExpr(def.if?.expression, rec)
-        if (!g.ok || !g.matched) continue
-        matches.push({
-          objectType: rec.objectType,
-          id: rec.id,
-          version: rec.version,
-          values: rec.values,
-          reason: def.if?.expression ? `${reason}; guard ${def.if.expression} holds` : reason,
-          proposedAction: { actionId: def.then.actionId, input: { ...(def.then.input ?? {}), id: rec.id } },
-        })
-      }
-      return route.fulfill({
-        json: {
-          objectType: def.objectType,
-          scannedCount: scoped.length,
-          matchedCount: matches.length,
-          approximate: false,
-          restatement: `When ${def.when.kind} on ${def.objectType}${def.if?.expression ? `, if ${def.if.expression}` : ""}, then ${def.then.kind} ${def.then.actionId}.`,
-          matches,
-        },
-      })
-    }
-
-    const runMatch = /^\/(.+):run$/.exec(tail)
-    if (runMatch) {
-      const id = decodeURIComponent(runMatch[1]!)
-      const stored = defs.get(id)
-      if (!stored || stored.retired) return route.fulfill({ status: 404, json: { code: "definition.not_found" } })
-      const def = stored.payload as unknown as AutomationDefinition
-      const scoped = records.filter((r) => r.objectType === def.objectType)
-      if (!def.enabled) {
-        return route.fulfill({ json: { id, version: stored.version, enabled: false, scannedCount: scoped.length, matchedCount: 0, proposed: 0, committed: 0, refused: 0, skipped: 0, runs: [] } })
-      }
-      const created: AutomationRunRecord[] = []
-      let proposed = 0, committed = 0, refused = 0, skipped = 0
-      for (const rec of scoped) {
-        if (!matchesAutomationWhen(def, rec)) continue
-        const g = evalGuardExpr(def.if?.expression, rec)
-        if (!g.ok || !g.matched) continue
-        const dedupeKey = `${id}:${stored.version}:${rec.id}:${rec.version}`
-        if (runs.some((r) => r.dedupeKey === dedupeKey && r.outcome !== "skipped")) {
-          skipped += 1
-          continue
-        }
-        if (def.then.kind === "propose") {
-          const decId = `dec_auto_${seqId++}`
-          const actionTitle = ACTIONS.find((a) => a.actionId === def.then.actionId)?.title ?? def.then.actionId
-          const decision: Decision = {
-            id: decId,
-            run: { id: `norn.automation/${decId}`, generation: 1, state: null },
-            flow: { ruleId: id, version: stored.version, title: def.title },
-            step: { id: "propose", label: "Automation proposal" },
-            question: def.then.question.replaceAll("{id}", rec.id),
-            risk: def.then.risk,
-            options: [
-              { id: "approve", label: `Run ${actionTitle}`, scope: `${rec.objectType} ${rec.id}`, effect: { action: def.then.actionId } },
-              { id: "reject", label: "Dismiss", scope: `${rec.objectType} ${rec.id}`, effect: { binding: "automation.dismiss" } },
-            ],
-            agentPick: null,
-            requestedAtMs: Date.now(),
-            expiresAtMs: Date.now() + (def.then.expiresInMs ?? 86_400_000),
-            context: { subjects: [{ objectType: rec.objectType, id: rec.id }] },
-            inputSchema: null,
-          }
-          decisions.set(decId, { decision, automationId: id, objectType: rec.objectType, objectId: rec.id, objectVersion: rec.version, actionId: def.then.actionId, resolved: false })
-          const entry: AutomationRunRecord = {
-            id: `run_${seqId++}`,
-            automationId: id,
-            automationRevision: stored.version,
-            dedupeKey,
-            trigger: "manual_run",
-            objectType: rec.objectType,
-            objectId: rec.id,
-            objectVersion: rec.version,
-            actionId: def.then.actionId,
-            outcome: "proposed",
-            decisionId: decId,
-            recordedAtMs: Date.now(),
-          }
-          runs.unshift(entry)
-          created.push(entry)
-          proposed += 1
-        } else {
-          const res = runActionOnRecord(def.then.actionId, { ...(def.then.input ?? {}), id: rec.id })
-          const entry: AutomationRunRecord = res.ok
-            ? {
-                id: `run_${seqId++}`,
-                automationId: id,
-                automationRevision: stored.version,
-                dedupeKey,
-                trigger: "manual_run",
-                objectType: rec.objectType,
-                objectId: rec.id,
-                objectVersion: rec.version,
-                actionId: def.then.actionId,
-                outcome: "committed",
-                commitSeq: res.receipt.receipt.commitSeq,
-                recordedAtMs: Date.now(),
-              }
-            : {
-                id: `run_${seqId++}`,
-                automationId: id,
-                automationRevision: stored.version,
-                dedupeKey,
-                trigger: "manual_run",
-                objectType: rec.objectType,
-                objectId: rec.id,
-                objectVersion: rec.version,
-                actionId: def.then.actionId,
-                outcome: "refused",
-                refusalCode: res.code,
-                refusalMessage: res.message,
-                recordedAtMs: Date.now(),
-              }
-          runs.unshift(entry)
-          created.push(entry)
-          if (res.ok) committed += 1
-          else refused += 1
-        }
-      }
-      return route.fulfill({ json: { id, version: stored.version, enabled: true, scannedCount: scoped.length, matchedCount: created.length + skipped, proposed, committed, refused, skipped, runs: created } })
-    }
-
-    const runsMatch = /^\/(.+)\/runs$/.exec(tail)
-    if (runsMatch) {
-      const id = decodeURIComponent(runsMatch[1]!)
-      return route.fulfill({ json: { id, items: runs.filter((r) => r.automationId === id) } })
-    }
-
-    return route.fulfill({ status: 404, json: { code: "route.not_found" } })
   })
 
   await page.route("**/api/host/v1/decisions**", async (route: Route) => {
@@ -643,55 +461,13 @@ export async function workspaceCell(page: Page): Promise<WorkspaceCell> {
     if (url.pathname.endsWith(":requested")) {
       return route.fulfill({ json: { items: [], serverNowMs: Date.now() } })
     }
-    const decideMatch = /\/v1\/decisions\/([^/:]+):decide$/.exec(url.pathname)
-    if (decideMatch) {
-      const decId = decodeURIComponent(decideMatch[1]!)
-      const held = decisions.get(decId)
-      if (!held) return route.fulfill({ status: 404, json: { code: "decision.not_found", message: "Not found." } })
-      const body = route.request().postDataJSON() as { choice: string; note?: string }
-      held.resolved = true
-      commitSeq += 1
-      let call: { committed: boolean; state: "committed" | "refused"; code?: string } | undefined
-      if (body.choice === "approve") {
-        const res = runActionOnRecord(held.actionId, { id: held.objectId })
-        call = res.ok ? { committed: true, state: "committed" } : { committed: false, state: "refused", code: res.code }
-        runs.unshift({
-          id: `run_${seqId++}`,
-          automationId: held.automationId,
-          automationRevision: defs.get(held.automationId)?.version ?? 1,
-          dedupeKey: `decided:${decId}`,
-          trigger: "decision_approved",
-          objectType: held.objectType,
-          objectId: held.objectId,
-          objectVersion: held.objectVersion,
-          actionId: held.actionId,
-          outcome: res.ok ? "committed" : "refused",
-          decisionId: decId,
-          ...(res.ok ? { commitSeq: res.receipt.receipt.commitSeq } : { refusalCode: res.code, refusalMessage: res.message }),
-          recordedAtMs: Date.now(),
-        })
-      }
-      return route.fulfill({
-        json: {
-          outcome: "decided",
-          decision: { id: decId, choice: body.choice, note: body.note ?? null, decidedBy: "Operator Admin", decidedAtMs: Date.now() },
-          receipt: { receiptHash: `dec_${commitSeq}`, commitSeq, recordedAtMs: Date.now() },
-          run: { id: held.decision.run.id, state: null },
-          ...(call ? { call } : {}),
-        },
-      })
-    }
-    const open = [...decisions.values()].filter((d) => !d.resolved).map((d) => d.decision)
-    const limit = Number(url.searchParams.get("limit") ?? "50")
-    return route.fulfill({
-      json: {
-        items: limit === 0 ? [] : open.slice(0, limit),
-        total: open.length,
-        nextCursor: null,
-        serverNowMs: Date.now(),
-      },
-    })
+    return route.fulfill({ json: { items: [], total: 0, nextCursor: null, serverNowMs: Date.now() } })
   })
 
-  return { records, defs, decisions, runs }
+  return {
+    records,
+    defs,
+    actionCalls,
+    dropReplyOnce: (recordId: string) => { dropOnce.add(recordId) },
+  }
 }

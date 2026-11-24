@@ -21,8 +21,8 @@ import { diagnosticsAt, readRecords, type RecordsRead } from "../lib/records-sou
 import { transport } from "../lib/transport.ts"
 import { ACTIONS_UNAVAILABLE, writesWhole, type ActionSummary } from "../lib/actions.ts"
 import { ActionSheet, useActions, type OpenAction } from "../actions/action-sheet.tsx"
-import { BulkActionSheet, type BulkTarget, type OpenBulkAction } from "../actions/bulk-action-sheet.tsx"
-import { offeredFor, recordCatalog } from "../lib/screen/call.ts"
+import { BulkActionSheet, unknownRecoveryBanner, type BulkRecoveryState, type BulkTarget, type OpenBulkAction } from "../actions/bulk-action-sheet.tsx"
+import { hasRecordOffers, offeredFor, recordCatalog } from "../lib/screen/call.ts"
 import { alignRight, isWithheld, TracedCell, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow, RecordName } from "./cells.tsx"
 import { blankClause, FilterEditor, filterable, fromPredicate, toPredicate, type DraftClause } from "./filter-editor.tsx"
 import { FacetsRail, FilterChips } from "./facets-rail.tsx"
@@ -96,9 +96,16 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
   const [limit, setLimit] = useState<number>(LIMITS.pageSize)
   const [cursors, setCursors] = useState<readonly (string | undefined)[]>([undefined])
   const [pageIndex, setPageIndex] = useState(0)
-  const [shown, setShown] = useState<ReadonlySet<string>>(() => new Set(initial?.columns?.filter((id) => fields.some((field) => field.id === id)) ?? fields.slice(0, DEFAULT_COLUMNS).map(({ id }) => id)))
-  // The columns in the definition's order, as a view keeps them.
-  const shownList = fields.filter(({ id }) => shown.has(id)).map(({ id }) => id)
+  const [shownOrder, setShownOrder] = useState<readonly string[]>(() => {
+    const valid = new Set(fields.map(({ id }) => id))
+    const saved = initial?.columns?.filter((id, idx, arr) => valid.has(id) && arr.indexOf(id) === idx)
+    return saved && saved.length > 0 ? saved : fields.slice(0, DEFAULT_COLUMNS).map(({ id }) => id)
+  })
+  const shown = useMemo(() => new Set(shownOrder), [shownOrder])
+  const fieldById = useMemo(() => new Map(fields.map((field) => [field.id, field])), [fields])
+  // Preserve saved column order when configured; fall back to catalog order for default columns.
+  const columns = useMemo(() => shownOrder.flatMap((id) => { const f = fieldById.get(id); return f ? [f] : [] }), [shownOrder, fieldById])
+  const shownList = useMemo(() => columns.map(({ id }) => id), [columns])
   const reported = JSON.stringify({ filter, sort, shownList })
   useEffect(() => { onQuery?.({ filter, sort, columns: shownList }) }, [reported])
   const [active, setActive] = useState(0)
@@ -106,6 +113,7 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
   const [notice, setNotice] = useState<string | null>(null)
   const [acting, setActing] = useState<OpenAction | null>(null)
   const [bulkActing, setBulkActing] = useState<OpenBulkAction | null>(null)
+  const [bulkRecovery, setBulkRecovery] = useState<BulkRecoveryState | null>(null)
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(() => new Set())
   const [viewing, setViewing] = useState<{ readonly id: string; readonly since: number } | null>(null)
   const navigate = useNavigate()
@@ -179,7 +187,6 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
   })
   const toggleAllSelected = () => setSelectedIds(allSelected ? new Set() : new Set(selectableRows.map((r) => r.record.id)))
   useEffect(() => { setSelectedIds(new Set()) }, [pageIndex, reported])
-  const columns = fields.filter(({ id }) => shown.has(id))
   const showActionsColumn = hasRowActions && page?.origin !== "recorded"
   // Columns never squeeze below a readable width; past the card's width the grid scrolls sideways.
   // Wide enough for a money amount with its currency ("7,800.00 USD") and a lifecycle state.
@@ -302,7 +309,7 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
                 {fields.map((field) => (
                   <DropdownMenuCheckboxItem key={field.id} checked={shown.has(field.id)} disabled={shown.has(field.id) && shown.size === 1}
                     onSelect={(event) => event.preventDefault()}
-                    onCheckedChange={(checked) => setShown((current) => { const next = new Set(current); if (checked) next.add(field.id); else next.delete(field.id); return next })}>
+                    onCheckedChange={(checked) => setShownOrder((current) => checked ? (current.includes(field.id) ? current : [...current, field.id]) : current.filter((id) => id !== field.id))}>
                     {field.id.replaceAll("_", " ")}
                   </DropdownMenuCheckboxItem>
                 ))}
@@ -343,6 +350,22 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
               onOpenFilter={() => setFilterOpen(true)} onClearFilter={clearFilter} onSwitchToTable={() => { setLayout("table"); restart(); setNotice(null) }}
               onOpen={(row) => setOpened(row)} />
           )
+        })()}
+        {bulkRecovery !== null && bulkActing === null && (() => {
+          const unknownCount = bulkRecovery.outcomes.filter((item) => item.status === "unknown").length
+          return unknownCount > 0 ? (
+            <div role="alert" className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm">
+              <span className="font-medium">{bulkRecovery.action.title}: {unknownRecoveryBanner(unknownCount)}</span>
+              <span className="flex-1" />
+              <Button type="button" size="sm" variant="outline" className="h-7 bg-background"
+                onClick={() => setBulkActing({ action: bulkRecovery.action, targets: bulkRecovery.targets })}>
+                Resume retry
+              </Button>
+              <Button type="button" size="sm" variant="ghost" className="h-7" onClick={() => setBulkRecovery(null)}>
+                Dismiss
+              </Button>
+            </div>
+          ) : null
         })()}
         {hasBulk && selectedRows.length > 0 && (
           <div role="toolbar" aria-label="Bulk actions" className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
@@ -463,7 +486,13 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
       <RecordDrawer concept={concept} fields={fields} row={opened} origin={page?.origin} actions={actions} actionsOff={actionsOff} onClose={() => setOpened(null)}
         onAction={(action, id) => { setOpened(null); setActing({ action, prefill: { [action.objectIdField]: id } }) }} />
       <ActionSheet open={acting} onClose={() => setActing(null)} onView={(id) => setViewing({ id, since: Date.now() })} />
-      <BulkActionSheet open={bulkActing} onClose={() => setBulkActing(null)} onDone={() => setSelectedIds(new Set())} />
+      <BulkActionSheet
+        open={bulkActing}
+        recovery={bulkRecovery}
+        onRecoveryChange={setBulkRecovery}
+        onClose={() => setBulkActing(null)}
+        onDone={() => setSelectedIds(new Set())}
+      />
     </Shell>
   )
 }
@@ -497,6 +526,9 @@ function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClo
   // What can act on this record now: the cell narrows the type's catalog to the record's state.
   const narrowed = useActions(record?.objectType ?? "", record?.id, record !== undefined && origin === "live")
   const offered = recordCatalog(origin === "live", narrowed, actions)
+  const drawerActions = offered.kind === "catalog"
+    ? (hasRecordOffers(record) ? offeredFor(offered.items, record) : offered.items)
+    : []
   const object = useQuery({
     queryKey: ["object", record?.objectType, record?.id],
     queryFn: () => record ? transport.object(record.objectType, record.id) : null,
@@ -537,9 +569,9 @@ function RecordDrawer({ concept, fields, row, origin, actions, actionsOff, onClo
                 ? <p className="text-meta text-muted-foreground">{actionsOff}</p>
                 : offered.kind === "reading" ? <Skeleton className="h-8" aria-label="Reading the actions on this record" />
                 : offered.kind === "unreadable" ? <p className="text-meta text-muted-foreground">The cell's actions on this record could not be read.</p>
-                : offeredFor(offered.items, record).length === 0
+                : drawerActions.length === 0
                   ? <p className="text-meta text-muted-foreground">The cell offers you no actions on {concept.title.toLowerCase()} records.</p>
-                  : <div className="flex flex-wrap gap-2">{offeredFor(offered.items, record).map((action) => (
+                  : <div className="flex flex-wrap gap-2">{drawerActions.map((action) => (
                     <Button key={action.actionId} variant="outline" size="sm" className="border-node-border shadow-node" onClick={() => onAction(action, record.id)}>
                       <Play /> {writesWhole(action) ? `${action.title} (edit)` : action.title}
                     </Button>

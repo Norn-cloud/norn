@@ -234,18 +234,11 @@ pub fn checker_restatement(
         "flow" => crate::flow_definitions::restate(canonical),
         "approval" => crate::approval_definitions::restate(canonical),
         "view" => crate::view_definitions::restate(canonical),
-        "automation" => crate::automation_definitions::restate(canonical),
         other => Err(format!("{other} has no restatement")),
     }
 }
 
 impl DefinitionKinds {
-    /// The roles registered on this host's grant table.
-    #[must_use]
-    pub fn roles(&self) -> Vec<&str> {
-        self.roles.iter().map(String::as_str).collect()
-    }
-
     /// Declare the roles a binding's `runRole` may name: the cell's own role
     /// table, never the request. Without any, every binding is refused.
     #[must_use]
@@ -680,10 +673,6 @@ fn validate<E: SqlEngine>(
         }
         "dashboard" => dashboard(host, scope, actor, questions, &value, &mut findings)?,
         "view" => crate::view_definitions::check(host, &value, &mut findings)?,
-        "automation" => {
-            let roles: Vec<&str> = kinds.roles.iter().map(String::as_str).collect();
-            crate::automation_definitions::check(host, &value, &roles, &mut findings)?;
-        }
         // A saved question: a bare QuestionIR, admitted as a tile's is.
         "question" => {
             question_findings(

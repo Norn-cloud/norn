@@ -30,10 +30,8 @@
 //! - `olapd` (native, `duckdb`): `norn-olapd`, the tenant analytics engine
 //!   the cell host reaches for analytical questions and loads (D102).
 
-mod access_route;
 pub mod actions;
 pub mod analytics;
-mod automations;
 pub mod base;
 pub mod connect;
 #[cfg(not(target_arch = "wasm32"))]

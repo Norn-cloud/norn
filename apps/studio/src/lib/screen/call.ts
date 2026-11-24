@@ -216,14 +216,17 @@ export function recordCatalog(live: boolean, narrowed: NarrowedRead, typeLevel: 
   return narrowed.data.kind === "catalog" ? { kind: "catalog", items: narrowed.data.items } : { kind: "unreadable" }
 }
 
+/** Whether a record document carries an explicit server `offers` list. */
+export const hasRecordOffers = (record: unknown): boolean => isRecord(record) && Array.isArray(record.offers)
+
 /**
- * The actions to show on one record: the ids the record's own `offers` lists (what this actor may run
- * on it in its current state), in the catalog's order, when the cell serves that list; otherwise the
- * whole catalog for the type, and the cell decides at call time. Studio never narrows it on its own.
+ * The actions the cell explicitly offered on one record: the ids in `record.offers`, in the
+ * catalog's order. Fails closed when `offers` is omitted or malformed — never falls back to the
+ * full type catalog.
  */
 export function offeredFor(catalog: readonly ActionSummary[], record: unknown): readonly ActionSummary[] {
   const offers = isRecord(record) ? record.offers : undefined
-  if (!Array.isArray(offers)) return catalog
+  if (!Array.isArray(offers)) return []
   const ids = new Set(offers.filter((id): id is string => typeof id === "string"))
   return catalog.filter((action) => ids.has(action.actionId))
 }

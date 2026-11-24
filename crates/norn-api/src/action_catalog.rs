@@ -410,11 +410,13 @@ pub fn list_actions_on<E: SqlEngine>(
 }
 
 /// ACTION-CATALOG-STATE-1: compute the callable action ids offered for each
-/// readable record in `records` in its current lifecycle state, in one
-/// `callable_actions` check per page. Returns `None` when the cell serves no
-/// callable actions for `actor` (or has no actions installed for `object_type`),
-/// so callers without actions omit `offers`. A withheld record receives `None`
-/// so lifecycle state is never disclosed (D67).
+/// readable record in `rows` in its current lifecycle state, checking both
+/// lifecycle transitions and per-row action authorization
+/// (`Authorizer::action`) against the record's committed values. Returns `None`
+/// when the cell serves no callable actions for `actor` (or has no actions
+/// installed for `object_type`), so callers without actions omit `offers`. A
+/// withheld record receives `None` so lifecycle state and policy decisions are
+/// never disclosed (D67).
 pub(crate) fn offers_for_records<E: SqlEngine>(
     host: &DevHost<E>,
     epoch: &std::sync::RwLockReadGuard<'_, ()>,
@@ -469,32 +471,69 @@ pub(crate) fn offers_for_records<E: SqlEngine>(
             })
             .collect()
     };
-    let mut result = Vec::with_capacity(rows.len());
-    for (readable, record) in rows {
-        if !readable {
-            result.push(None);
-            continue;
-        }
-        let states: Vec<LifecycleState> = lifecycles
-            .iter()
-            .map(|(property, transitions)| {
-                let state = record
-                    .values
-                    .get(property)
-                    .and_then(norn_ir::RuntimeValue::as_str)
-                    .map(str::to_owned);
-                (property.clone(), transitions.clone(), state)
-            })
-            .collect();
-        let mut offered: Vec<String> = targeting
-            .iter()
-            .filter(|action| fires_from(action, &states))
-            .map(|action| action.action_id.clone())
-            .collect();
-        offered.sort();
-        result.push(Some(offered));
-    }
+    let scope_map = std::collections::BTreeMap::from([
+        ("orgId".to_owned(), host.scope().org_id.clone()),
+        (
+            "environmentId".to_owned(),
+            host.scope().environment_id.clone(),
+        ),
+    ]);
+    let result = rows
+        .iter()
+        .map(|(readable, record)| {
+            readable.then(|| row_offers(host, actor, &scope_map, &targeting, &lifecycles, record))
+        })
+        .collect();
     Ok(Some(result))
+}
+
+/// Per-row offered actions: lifecycle eligibility AND current-state PDP
+/// authorization (`Authorizer::action`) against `record.values`.
+fn row_offers<E: SqlEngine>(
+    host: &DevHost<E>,
+    actor: &str,
+    scope: &std::collections::BTreeMap<String, String>,
+    targeting: &[&ActionRoot],
+    lifecycles: &[(String, Vec<norn_ir::entity_v2::lifecycle::Transition>)],
+    record: &norn_cell::ObjectRecord,
+) -> Vec<String> {
+    let states: Vec<LifecycleState> = lifecycles
+        .iter()
+        .map(|(property, transitions)| {
+            let state = record
+                .values
+                .get(property)
+                .and_then(norn_ir::RuntimeValue::as_str)
+                .map(str::to_owned);
+            (property.clone(), transitions.clone(), state)
+        })
+        .collect();
+    let target = norn_kernel::FactKey {
+        object_type: norn_ir::ObjectTypeName(record.object_type.clone()),
+        key: record.id.clone(),
+    };
+    let empty_input = norn_ir::RuntimeObject::new();
+    let mut offered: Vec<String> = targeting
+        .iter()
+        .copied()
+        .filter(|action| {
+            fires_from(action, &states)
+                && host
+                    .authorizer
+                    .action(&norn_kernel::ActionAuthzRequest {
+                        action,
+                        scope,
+                        actor,
+                        input: &empty_input,
+                        target: &target,
+                        target_values: Some(&record.values),
+                    })
+                    .is_ok()
+        })
+        .map(|action| action.action_id.clone())
+        .collect();
+    offered.sort();
+    offered
 }
 
 /// One lifecycle of an object: its property, its declared transitions and

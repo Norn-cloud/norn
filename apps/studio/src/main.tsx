@@ -1,13 +1,12 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-router"
-import { Blend, Bookmark, ChartLine, Columns2, Database, Fingerprint, House, Inbox, LayoutDashboard, Network, Plug, Rows3, ShieldCheck, Workflow, Zap } from "lucide-react"
+import { Blend, Bookmark, ChartLine, Columns2, Database, Fingerprint, House, Inbox, LayoutDashboard, Network, Plug, Rows3, ShieldCheck, Workflow } from "lucide-react"
 import { StrictMode } from "react"
 import { Button } from "@/components/ui/button"
 import { endSession, useAccount } from "@/lib/session"
 import { LoginPage } from "./login.tsx"
 import { oauthPage } from "./oauth.tsx"
 import { createRoot } from "react-dom/client"
-import { useAutomationsMenu } from "./automations-builder.tsx"
 import { useDecisionBadge } from "./decisions/inbox.tsx"
 import { useRulesMenu } from "./guarantees.tsx"
 import { useImportTriageBadge } from "./imports/import-triage-page.tsx"
@@ -38,7 +37,6 @@ const SECTIONS: readonly Section[] = [
   { path: "/sources", label: "Sources", icon: Database, perspective: "builder", group: "Model", kind: "source", useMenu: useSourcesMenu, paths: ["/objects"] },
   { path: "/transforms", label: "Transforms", icon: Blend, perspective: "builder", group: "Model", kind: "transform" },
   { path: "/canvas", label: "Canvas", icon: Network, perspective: "builder", group: "Logic" },
-  { path: "/automations", label: "Automations", icon: Zap, perspective: "builder", group: "Logic", useMenu: useAutomationsMenu },
   { path: "/rules", label: "Rules", icon: ShieldCheck, perspective: "builder", group: "Logic", kind: "guarantee", useMenu: useRulesMenu },
   { path: "/markings", label: "Markings", icon: Fingerprint, perspective: "builder", group: "Logic" },
   { path: "/connections", label: "Connections", icon: Plug, perspective: "builder", group: "Settings" },

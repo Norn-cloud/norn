@@ -445,9 +445,6 @@ export const CELL_ROUTES = [
   "/v1/transforms/{transform}/rows/{row}/lineage",
   "/v1/transforms/{transform}/plan",
   "/v1/inbox",
-  "/v1/automations:preview",
-  "/v1/automations/{id}:run",
-  "/v1/automations/{id}/runs",
   "/v1/subscribe",
 ];
 

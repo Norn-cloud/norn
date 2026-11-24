@@ -1,13 +1,12 @@
-//! SAVED VIEWS & AUTOMATION-1 (#1424): end-to-end integration tests over real
-//! provisioned tenant cells (`Tenant<NativeEngine>`) on two unrelated domains:
+//! SAVED VIEWS (#1424): end-to-end integration tests over real provisioned
+//! tenant cells (`Tenant<NativeEngine>`) on two unrelated domains:
 //!
 //! 1. **Application Funnel (`funnel.Application`)**: issue #1424's exact
-//!    scenario ("Applications needing help" view + "When stalled and score <
-//!    threshold -> propose Offer assistance" automation, Inbox approval, law
-//!    refusal in run history, staleness wake via `run_due`, disable, retire &
-//!    undo).
+//!    scenario ("Applications needing help" view, server-admitted Space and
+//!    offered actions, per-row `offers` filtered by lifecycle state AND the
+//!    tenant PDP, single-record GET wire preservation, retire & undo).
 //! 2. **Equipment Fleet Tickets (`fleet.Ticket`)**: an unrelated domain proving
-//!    zero domain coupling in saved views, per-row `offers`, and automations.
+//!    zero domain coupling in saved views and per-row `offers`.
 
 use std::error::Error;
 use std::path::Path;
@@ -176,7 +175,7 @@ fn scope_json() -> Value {
 }
 
 fn provenance() -> Value {
-    json!({ "source": "authoring_sdk", "sourcePath": "tests/views_and_automations.rs" })
+    json!({ "source": "authoring_sdk", "sourcePath": "tests/views.rs" })
 }
 
 fn policy_artifact(id: &str, namespace: &str, resource: &str, actions: &[&str]) -> Value {
@@ -506,6 +505,53 @@ fn assert_retire_and_undo(
     Ok(())
 }
 
+fn assert_assisted_row_drops_offer(cell: &mut Cell, id: &str) -> TestResult {
+    let (status, single) = cell.get(&format!("/v1/objects/funnel.Application/{id}"), "", "admin");
+    assert_eq!(status, 200, "{single}");
+    assert_eq!(ptr_str(&single, "/values/stage")?, "assisted");
+    assert!(
+        single.get("offers").is_none(),
+        "single-record GET preserves its base wire shape without offers: {single}"
+    );
+    let (status, actions_after) = cell.get(
+        "/v1/actions",
+        &format!("objectKind=funnel.Application&objectId={id}"),
+        "admin",
+    );
+    assert_eq!(status, 200, "{actions_after}");
+    assert!(
+        !ptr_array(&actions_after, "/items")?.iter().any(|a| {
+            a.get("actionId").and_then(Value::as_str) == Some("funnel.application.offer_assistance")
+        }),
+        "assisted row should no longer be offered offer_assistance: {actions_after}"
+    );
+    let (status, page_after) = cell.get("/v1/objects/funnel.Application", "", "admin");
+    assert_eq!(status, 200, "{page_after}");
+    let row = ptr_array(&page_after, "/records")?
+        .iter()
+        .find(|row| row.get("id").and_then(Value::as_str) == Some(id))
+        .ok_or("missing record in list after assist")?;
+    assert!(
+        !ptr_array(row, "/offers")?
+            .iter()
+            .any(|a| a == "funnel.application.offer_assistance"),
+        "assisted row should no longer have offer_assistance in list offers: {row}"
+    );
+    Ok(())
+}
+
+fn assert_viewer_rows_omit_offers(cell: &mut Cell) -> TestResult {
+    let (status, viewer_page) = cell.get("/v1/objects/funnel.Application", "", "viewer");
+    assert_eq!(status, 200, "{viewer_page}");
+    for row in ptr_array(&viewer_page, "/records")? {
+        assert!(
+            row.get("offers").is_none(),
+            "withheld rows must omit offers: {row}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn saved_view_admits_space_and_actions_and_objects_return_per_row_offers() -> TestResult {
     let dir = tempfile::tempdir()?;
@@ -588,6 +634,8 @@ fn saved_view_admits_space_and_actions_and_objects_return_per_row_offers() -> Te
         "expected offer_assistance in per-row offers: {page}"
     );
 
+    assert_viewer_rows_omit_offers(&mut cell)?;
+
     let (status, assisted) = cell.action(
         "funnel.application.offer_assistance",
         "admin",
@@ -599,313 +647,89 @@ fn saved_view_admits_space_and_actions_and_objects_return_per_row_offers() -> Te
     assert_retire_and_undo(&mut cell, "view", view_id, &view_payload, v1)
 }
 
-fn assert_assisted_row_drops_offer(cell: &mut Cell, id: &str) -> TestResult {
-    let (status, single) = cell.get(&format!("/v1/objects/funnel.Application/{id}"), "", "admin");
-    assert_eq!(status, 200, "{single}");
-    assert_eq!(ptr_str(&single, "/values/stage")?, "assisted");
-    let (status, actions_after) = cell.get(
-        "/v1/actions",
-        &format!("objectKind=funnel.Application&objectId={id}"),
-        "admin",
-    );
-    assert_eq!(status, 200, "{actions_after}");
-    assert!(
-        !ptr_array(&actions_after, "/items")?.iter().any(|a| {
-            a.get("actionId").and_then(Value::as_str) == Some("funnel.application.offer_assistance")
-        }),
-        "assisted row should no longer be offered offer_assistance: {actions_after}"
-    );
-    let (status, page_after) = cell.get("/v1/objects/funnel.Application", "", "admin");
-    assert_eq!(status, 200, "{page_after}");
-    let row = ptr_array(&page_after, "/records")?
-        .iter()
-        .find(|row| row.get("id").and_then(Value::as_str) == Some(id))
-        .ok_or("missing record in list after assist")?;
-    assert!(
-        !ptr_array(row, "/offers")?
-            .iter()
-            .any(|a| a == "funnel.application.offer_assistance"),
-        "assisted row should no longer have offer_assistance in list offers: {row}"
-    );
-    Ok(())
-}
-
-fn verify_refusal_and_stale(cell: &mut Cell) -> TestResult {
-    let auto_run_id = "studio.automation.funnel_auto_run";
-    let auto_run_payload = json!({
-        "title": "Auto-assist all stalled applications",
-        "enabled": true,
-        "objectType": "funnel.Application",
-        "when": { "kind": "lifecycle_entered", "property": "stage", "state": "stalled" },
-        "if": { "expression": "self.score >= 80" },
-        "then": { "kind": "run", "actionId": "funnel.application.offer_assistance" }
-    });
-    let (status, inst) = cell.post(
-        "/v1/definitions:install",
-        "admin",
-        &json!({ "kind": "automation", "id": auto_run_id, "payload": auto_run_payload }),
-    );
-    assert_eq!(status, 200, "{inst}");
-    let (status, run_resp) = cell.post(
-        &format!("/v1/automations/{auto_run_id}:run"),
-        "admin",
-        &json!({}),
-    );
-    assert_eq!(status, 200, "{run_resp}");
-    assert_eq!(ptr_u64(&run_resp, "/refused")?, 1, "{run_resp}");
-    let (status, ref_runs) = cell.get(&format!("/v1/automations/{auto_run_id}/runs"), "", "admin");
-    assert_eq!(status, 200, "{ref_runs}");
-    assert_eq!(ptr_str(&ref_runs, "/items/0/outcome")?, "refused");
-    assert!(ptr(&ref_runs, "/items/0/refusalCode")?.as_str().is_some());
-
-    let stale_id = "studio.automation.funnel_stale";
-    let stale_payload = json!({
-        "title": "Stale stalled reminder",
-        "enabled": true,
-        "objectType": "funnel.Application",
-        "when": { "kind": "stale", "afterMs": 60_000, "property": "stage", "state": "stalled" },
-        "then": {
-            "kind": "propose",
-            "actionId": "funnel.application.offer_assistance",
-            "question": "Stale application {id}: offer assistance?",
-            "risk": "low",
-            "decider": { "roles": ["admin"] }
-        }
-    });
-    let (status, inst) = cell.post(
-        "/v1/definitions:install",
-        "admin",
-        &json!({ "kind": "automation", "id": stale_id, "payload": stale_payload }),
-    );
-    assert_eq!(status, 200, "{inst}");
-
-    let (status, bad_stale_run) = cell.post("/v1/definitions:admit", "admin", &json!({
-        "kind": "automation", "id": "studio.automation.bad_stale_run",
-        "payload": {
-            "title": "Bad stale run", "enabled": true, "objectType": "funnel.Application",
-            "when": { "kind": "stale", "afterMs": 60_000 },
-            "then": { "kind": "run", "actionId": "funnel.application.create", "input": { "score": "not-int" } }
-        }
-    }));
-    assert_eq!(status, 200, "{bad_stale_run}");
-    assert_eq!(ptr(&bad_stale_run, "/admitted")?, &json!(false));
-    let diags = ptr_array(&bad_stale_run, "/diagnostics")?;
-    assert!(
-        diags
-            .iter()
-            .any(|d| d.pointer("/span/pointer") == Some(&json!("/then/kind"))),
-        "{bad_stale_run}"
-    );
-    assert!(
-        diags
-            .iter()
-            .any(|d| d.pointer("/span/pointer") == Some(&json!("/then/input/score"))),
-        "{bad_stale_run}"
-    );
-
-    let base_ms = NOW.saturating_mul(1000);
-    assert_eq!(
-        cell.tenant.next_due().map_err(|r| format!("{r:?}"))?,
-        Some(base_ms.saturating_add(60_000))
-    );
-    assert_eq!(
-        cell.tenant
-            .run_due(base_ms.saturating_add(30_000))
-            .map_err(|r| format!("{r:?}"))?
-            .automations,
-        0
-    );
-    let due_fired = cell
-        .tenant
-        .run_due(base_ms.saturating_add(120_000))
-        .map_err(|r| format!("{r:?}"))?;
-    assert_eq!(due_fired.automations, 1);
-    assert!(
-        due_fired.next.is_some(),
-        "newly parked proposal expiry must be scheduled in work.next"
-    );
-    assert_eq!(
-        cell.tenant
-            .run_due(base_ms.saturating_add(180_000))
-            .map_err(|r| format!("{r:?}"))?
-            .automations,
-        0
-    );
-    Ok(())
-}
-
-fn verify_disable_and_undo(
-    cell: &mut Cell,
-    auto_id: &str,
-    auto_payload: &Value,
-    rev1: u64,
-) -> TestResult {
-    let mut disabled_payload = auto_payload.clone();
-    if let Some(obj) = disabled_payload.as_object_mut() {
-        obj.insert("enabled".to_owned(), json!(false));
-    }
-    let (status, upd) = cell.post(
-        "/v1/definitions:install",
-        "admin",
-        &json!({ "kind": "automation", "id": auto_id, "payload": disabled_payload, "expectedVersion": rev1 }),
-    );
-    assert_eq!(status, 200, "{upd}");
-    let rev2 = ptr_u64(&upd, "/version")?;
-
-    seed_funnel_applications(
-        cell,
-        &[("app-disabled", "Disabled Test", 15)],
-        &["app-disabled"],
-    );
-    let (_, runs_after_disable) = cell.get(&format!("/v1/automations/{auto_id}/runs"), "", "admin");
-    assert!(
-        !ptr_array(&runs_after_disable, "/items")?
-            .iter()
-            .any(|r| r.get("objectId") == Some(&json!("app-disabled"))),
-        "disabled automation must not fire: {runs_after_disable}"
-    );
-    assert_retire_and_undo(cell, "automation", auto_id, auto_payload, rev2)
-}
-
-fn verify_inbox_approval(cell: &mut Cell, auto_id: &str) -> TestResult {
-    let (status, decisions) = cell.get("/v1/decisions", "state=pending", "admin");
-    assert_eq!(status, 200, "{decisions}");
-    assert_eq!(ptr_array(&decisions, "/items")?.len(), 1, "{decisions}");
-    let decision_id = ptr_str(&decisions, "/items/0/id")?.to_owned();
-    assert_eq!(
-        ptr_str(&decisions, "/items/0/question")?,
-        "Offer assistance to stalled application app-low?"
-    );
-    assert_eq!(
-        ptr_str(&decisions, "/items/0/context/subjects/0/id")?,
-        "app-low"
-    );
-
-    let (status, inbox) = cell.get("/v1/inbox", "", "admin");
-    assert_eq!(status, 200, "{inbox}");
-    assert_eq!(ptr_array(&inbox, "/items")?.len(), 1, "{inbox}");
-
-    let (status, decided) = cell.post(
-        &format!("/v1/decisions/{decision_id}:decide"),
-        "admin",
-        &json!({ "choice": "approve", "note": "Reaching out now", "idempotencyKey": "decide-1" }),
-    );
-    assert_eq!(status, 200, "{decided}");
-    assert_eq!(ptr(&decided, "/call/committed")?, &json!(true));
-    let (status, replayed) = cell.post(
-        &format!("/v1/decisions/{decision_id}:decide"),
-        "admin",
-        &json!({ "choice": "approve", "note": "Reaching out now", "idempotencyKey": "decide-1" }),
-    );
-    assert_eq!(status, 200, "{replayed}");
-    assert_eq!(ptr_str(&replayed, "/outcome")?, "replayed");
-    assert_eq!(ptr(&replayed, "/call/committed")?, &json!(true));
-
-    let (status, obj) = cell.get("/v1/objects/funnel.Application/app-low", "", "admin");
-    assert_eq!(status, 200, "{obj}");
-    assert_eq!(ptr_str(&obj, "/values/stage")?, "assisted");
-
-    let (status, runs) = cell.get(&format!("/v1/automations/{auto_id}/runs"), "", "admin");
-    assert_eq!(status, 200, "{runs}");
-    let run_items = ptr_array(&runs, "/items")?;
-    assert!(run_items.iter().any(|r| {
-        r.get("outcome") == Some(&json!("proposed"))
-            && r.get("decisionId") == Some(&json!(decision_id))
-    }));
-    assert!(run_items.iter().any(|r| {
-        r.get("outcome") == Some(&json!("committed"))
-            && r.get("commitSeq").is_some_and(Value::is_u64)
-    }));
-    Ok(())
-}
-
 #[test]
-fn funnel_automation_preview_commit_inbox_approve_refusal_stale_and_disable() -> TestResult {
+fn per_row_offers_enforce_pdp_role_and_resource_conditions() -> TestResult {
     let dir = tempfile::tempdir()?;
-    let mut cell = provisioned(&dir.path().join("auto.sqlite"), &funnel_artifacts())?;
-
-    let bad_guard = json!({
-        "kind": "automation",
-        "id": "studio.automation.bad",
+    let mut artifacts = funnel_artifacts();
+    // Replace the policy so:
+    // - `admin` may create/stall anything, and may `offer_assistance` ONLY on `app-1`
+    // - `member` has Values read via DEMO_GRANTS, but NO action grant at all.
+    artifacts.retain(|a| a.get("kind").and_then(Value::as_str) != Some("policy"));
+    artifacts.push(json!({
+        "artifactId": "funnel.application.access.policy",
+        "dependencies": [], "irVersion": "0.1", "kind": "policy",
+        "lifecycle": "active", "name": "funnel scoped access", "namespace": "funnel",
         "payload": {
-            "title": "Broken guard",
-            "enabled": true,
-            "objectType": "funnel.Application",
-            "when": { "kind": "lifecycle_entered", "property": "stage", "state": "stalled" },
-            "if": { "expression": "self.score + 1" },
-            "then": {
-                "kind": "propose",
-                "actionId": "funnel.application.offer_assistance",
-                "question": "Assist {id}?",
-                "risk": "low",
-                "decider": { "roles": ["admin"] }
-            }
-        }
-    });
-    let (status, admitted) = cell.post("/v1/definitions:admit", "admin", &bad_guard);
-    assert_eq!(status, 200, "{admitted}");
-    assert_eq!(ptr(&admitted, "/admitted")?, &json!(false));
-    assert_eq!(
-        ptr_str(&admitted, "/diagnostics/0/span/pointer")?,
-        "/if/expression"
-    );
-
+            "accessVersion": "0.1", "policyId": "funnel.application.access",
+            "rules": [
+                {
+                    "ruleId": "admin_manage",
+                    "actions": ["funnel.application.create", "funnel.application.mark_stalled", "norn.read"],
+                    "resourceType": "funnel.Application",
+                    "scope": { "dimensions": ["org", "environment"] },
+                    "allOf": [{ "role": { "anyOf": ["admin"] } }]
+                },
+                {
+                    "ruleId": "admin_assist_app1_only",
+                    "actions": ["funnel.application.offer_assistance"],
+                    "resourceType": "funnel.Application",
+                    "scope": { "dimensions": ["org", "environment"] },
+                    "allOf": [
+                        { "role": { "anyOf": ["admin"] } },
+                        { "resource": { "name": "id", "op": "eq", "value": "app-1" } }
+                    ]
+                }
+            ]
+        },
+        "provenance": provenance(), "scope": scope_json(), "version": "1.0.0"
+    }));
+    let mut cell = provisioned(&dir.path().join("pdp.sqlite"), &artifacts)?;
     seed_funnel_applications(
         &mut cell,
-        &[("app-low", "Low Score", 42), ("app-high", "High Score", 85)],
-        &[],
+        &[("app-1", "Ada", 42), ("app-2", "Ben", 35)],
+        &["app-1", "app-2"],
     );
 
-    let auto_id = "studio.automation.funnel_assist";
-    let auto_payload = json!({
-        "title": "Assist stalled low-score applications",
-        "description": "Propose assistance when an application stalls below threshold.",
-        "enabled": true,
-        "objectType": "funnel.Application",
-        "when": { "kind": "lifecycle_entered", "property": "stage", "state": "stalled" },
-        "if": { "expression": "self.score < 60" },
-        "then": {
-            "kind": "propose",
-            "actionId": "funnel.application.offer_assistance",
-            "question": "Offer assistance to stalled application {id}?",
-            "risk": "medium",
-            "decider": { "roles": ["admin"] }
-        }
-    });
-    let (status, installed) = cell.post(
-        "/v1/definitions:install",
-        "admin",
-        &json!({ "kind": "automation", "id": auto_id, "payload": auto_payload }),
+    // Admin sees `offer_assistance` ONLY on `app-1`, NOT on `app-2` (denied by resource PDP rule).
+    let (status, admin_page) = cell.get("/v1/objects/funnel.Application", "", "admin");
+    assert_eq!(status, 200, "{admin_page}");
+    let find_offers = |page: &Value, id: &str| -> TestResult<Vec<String>> {
+        let row = ptr_array(page, "/records")?
+            .iter()
+            .find(|r| r.get("id").and_then(Value::as_str) == Some(id))
+            .ok_or_else(|| format!("missing {id} in {page}"))?;
+        Ok(ptr_array(row, "/offers")?
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect())
+    };
+    let app1_admin = find_offers(&admin_page, "app-1")?;
+    let app2_admin = find_offers(&admin_page, "app-2")?;
+    assert!(
+        app1_admin
+            .iter()
+            .any(|id| id == "funnel.application.offer_assistance"),
+        "expected offer_assistance for admin on app-1: {app1_admin:?}"
     );
-    assert_eq!(status, 200, "{installed}");
-    let rev1 = ptr_u64(&installed, "/version")?;
-
-    let (status, preview0) = cell.post(
-        "/v1/automations:preview",
-        "admin",
-        &json!({ "id": auto_id }),
+    assert!(
+        !app2_admin
+            .iter()
+            .any(|id| id == "funnel.application.offer_assistance"),
+        "PDP-denied row app-2 must not be offered offer_assistance: {app2_admin:?}"
     );
-    assert_eq!(status, 200, "{preview0}");
-    assert_eq!(ptr_u64(&preview0, "/matchedCount")?, 0);
 
-    seed_funnel_applications(&mut cell, &[], &["app-low", "app-high"]);
-
-    let (status, preview1) = cell.post(
-        "/v1/automations:preview",
-        "admin",
-        &json!({ "payload": auto_payload }),
-    );
-    assert_eq!(status, 200, "{preview1}");
-    assert_eq!(ptr_u64(&preview1, "/matchedCount")?, 1);
-    assert_eq!(ptr_str(&preview1, "/matches/0/id")?, "app-low");
-
-    verify_inbox_approval(&mut cell, auto_id)?;
-    verify_refusal_and_stale(&mut cell)?;
-    verify_disable_and_undo(&mut cell, auto_id, &auto_payload, rev1)
+    // Member can read record values (non-withheld) but has no PDP action grant:
+    // every row must report empty offers (never the full callable action list).
+    let (status, member_page) = cell.get("/v1/objects/funnel.Application", "", "member");
+    assert_eq!(status, 200, "{member_page}");
+    assert_eq!(find_offers(&member_page, "app-1")?, Vec::<String>::new());
+    assert_eq!(find_offers(&member_page, "app-2")?, Vec::<String>::new());
+    Ok(())
 }
 
 #[test]
-fn unrelated_fleet_domain_views_and_automations_work_identically() -> TestResult {
+fn unrelated_fleet_domain_views_and_offers_work_identically() -> TestResult {
     let dir = tempfile::tempdir()?;
     let mut cell = provisioned(&dir.path().join("fleet.sqlite"), &fleet_artifacts())?;
 
@@ -929,27 +753,6 @@ fn unrelated_fleet_domain_views_and_automations_work_identically() -> TestResult
     );
     assert_eq!(st, 200, "{inst}");
 
-    let auto_payload = json!({
-        "title": "Escalate overdue parts tickets",
-        "enabled": true,
-        "objectType": "fleet.Ticket",
-        "when": { "kind": "lifecycle_entered", "property": "status", "state": "waiting_parts" },
-        "if": { "expression": "self.downtime_hours > 24" },
-        "then": {
-            "kind": "propose",
-            "actionId": "fleet.ticket.escalate",
-            "question": "Escalate fleet ticket {id}?",
-            "risk": "high",
-            "decider": { "roles": ["admin"] }
-        }
-    });
-    let (st, inst) = cell.post(
-        "/v1/definitions:install",
-        "admin",
-        &json!({ "kind": "automation", "id": "studio.automation.fleet_escalate", "payload": auto_payload }),
-    );
-    assert_eq!(st, 200, "{inst}");
-
     for (id, asset, hours) in [("tkt-1", "CRANE-07", 36), ("tkt-2", "PUMP-12", 8)] {
         let (st, r) = cell.action(
             "fleet.ticket.create",
@@ -967,15 +770,6 @@ fn unrelated_fleet_domain_views_and_automations_work_identically() -> TestResult
         assert_eq!(st, 200, "{r}");
     }
 
-    let (st, prev) = cell.post(
-        "/v1/automations:preview",
-        "admin",
-        &json!({ "id": "studio.automation.fleet_escalate" }),
-    );
-    assert_eq!(st, 200, "{prev}");
-    assert_eq!(ptr_u64(&prev, "/matchedCount")?, 1);
-    assert_eq!(ptr_str(&prev, "/matches/0/id")?, "tkt-1");
-
     let (st, page) = cell.get(
         "/v1/objects/fleet.Ticket",
         "sort=downtime_hours:desc",
@@ -989,25 +783,17 @@ fn unrelated_fleet_domain_views_and_automations_work_identically() -> TestResult
         "{page}"
     );
 
-    let (st, pending) = cell.get("/v1/decisions", "state=pending", "admin");
-    assert_eq!(st, 200, "{pending}");
-    assert_eq!(ptr_array(&pending, "/items")?.len(), 1, "{pending}");
-    assert_eq!(
-        ptr_str(&pending, "/items/0/question")?,
-        "Escalate fleet ticket tkt-1?"
-    );
-    let dec_id = ptr_str(&pending, "/items/0/id")?;
-
-    let (st, decided) = cell.post(
-        &format!("/v1/decisions/{dec_id}:decide"),
+    let (st, escalated) = cell.action(
+        "fleet.ticket.escalate",
         "admin",
-        &json!({ "choice": "approve", "idempotencyKey": "approve-fleet-1" }),
+        &json!({ "id": "tkt-1" }),
+        "escalate-tkt-1",
     );
-    assert_eq!(st, 200, "{decided}");
-    assert_eq!(ptr(&decided, "/call/committed")?, &json!(true));
+    assert_eq!(st, 200, "{escalated}");
 
     let (st, obj) = cell.get("/v1/objects/fleet.Ticket/tkt-1", "", "admin");
     assert_eq!(st, 200, "{obj}");
     assert_eq!(ptr_str(&obj, "/values/status")?, "escalated");
+    assert!(obj.get("offers").is_none(), "{obj}");
     Ok(())
 }

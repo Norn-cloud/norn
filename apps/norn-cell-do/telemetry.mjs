@@ -88,10 +88,8 @@ const REFUSAL_CODES = new Set(Object.entries({
     "refused stale version_not_found",
   definition:
     "already_retired approval_action_unknown approval_duplicate approval_invalid " +
-    "approval_role_unknown automation_action_unknown automation_guard_invalid " +
-    "automation_invalid automation_role_unknown binding_connector_invalid " +
-    "binding_digest_mismatch binding_invalid_payload binding_label_invalid " +
-    "binding_mapping_invalid binding_mapping_unknown_field binding_not_nfc " +
+    "approval_role_unknown binding_connector_invalid binding_digest_mismatch binding_invalid_payload " +
+    "binding_label_invalid binding_mapping_invalid binding_mapping_unknown_field binding_not_nfc " +
     "binding_role_unknown binding_version_mismatch cursor_invalid flow_action_declared " +
     "flow_artifact_conflict flow_artifact_foreign flow_command_unverifiable flow_function_unknown " +
     "flow_id_mismatch flow_label_invalid flow_runs_live flow_scope_conflict flow_shape_invalid " +

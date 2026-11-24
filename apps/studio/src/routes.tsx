@@ -1,5 +1,4 @@
 import { createRoute, redirect, type AnyRootRoute, type RouteComponent } from "@tanstack/react-router"
-import { AutomationDetailPage, AutomationEditorPage, AutomationsPage } from "./automations-builder.tsx"
 import { QuestionBuilderPage } from "./builder.tsx"
 import { HomePage } from "./home.tsx"
 import { CanvasPage } from "./canvas.tsx"
@@ -49,10 +48,6 @@ export const COMPONENTS: { readonly [P in PagePath]: RouteComponent } = {
   "/views/new": ViewEditorPage,
   "/views/$id": ViewDetailPage,
   "/views/$id/edit": ViewEditorPage,
-  "/automations": AutomationsPage,
-  "/automations/new": AutomationEditorPage,
-  "/automations/$id": AutomationDetailPage,
-  "/automations/$id/edit": AutomationEditorPage,
   "/workflows": WorkflowsPage,
   "/canvas": CanvasPage,
   "/rules": RulesPage,
