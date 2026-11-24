@@ -880,4 +880,137 @@ mod trace_tests {
         assert!(truncated);
         Ok(())
     }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    struct AllowAll;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    impl crate::authz::Authorizer for AllowAll {
+        fn authorize(&self, _: &crate::authz::AccessRequest<'_>) -> Result<(), Refusal> {
+            Ok(())
+        }
+        fn read(&self, _: &crate::authz::ReadRequest<'_>) -> Result<(), Refusal> {
+            Ok(())
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    struct TestAccess;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    impl ObjectAccess for TestAccess {
+        fn access(
+            &self,
+            scope: &crate::scope::CellScope,
+            actor: &str,
+            capability: crate::authz::ReadCapability,
+            object_type: &str,
+            row: Option<&ObjectRecord>,
+        ) -> Result<norn_kernel::authz::AccessRequest, Refusal> {
+            let key = norn_kernel::authz::ScopeKey {
+                org: scope.org_id.clone(),
+                environment: Some(scope.environment_id.clone()),
+                tenant: None,
+                workspace: None,
+                business_unit: None,
+            };
+            Ok(norn_kernel::authz::AccessRequest {
+                principal: norn_kernel::authz::PrincipalInput {
+                    subject_id: actor.into(),
+                    actor_kind: norn_kernel::authz::ActorKind::User,
+                    agent_session_id: None,
+                    roles: vec![],
+                    attributes: BTreeMap::new(),
+                },
+                scope: Some(key.clone()),
+                capability: format!("test.{capability:?}"),
+                action_id: "norn.read".into(),
+                resource: norn_kernel::authz::ResourceInput {
+                    object_type: row.map_or(object_type, |r| r.object_type.as_str()).into(),
+                    id: row.map_or(object_type, |r| r.id.as_str()).into(),
+                    scope: key,
+                    attributes: BTreeMap::new(),
+                },
+                context: BTreeMap::new(),
+                binding: None,
+                delegation: norn_kernel::authz::Delegation::Direct,
+            })
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn version_entry_serves_readable_tombstone_without_source_provenance_error()
+    -> Result<(), String> {
+        use crate::scope::CellScope;
+        use norn_cell::engine::NativeEngine;
+        use norn_cell::{CellStore, Model, SqliteCell, StoreOptions};
+        use norn_kernel::{
+            CellCommit, CellHost as _, FactKey, FactMutation, FactVersion, FactWrite, LogicalTime,
+        };
+
+        let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
+        let path = dir.path().join("cell.sqlite");
+        let item: norn_ir::ObjectTypeDef = serde_json::from_value(serde_json::json!({
+            "name": "shop.Item",
+            "properties": [{"id": "name", "type": {"kind": "text"}}]
+        }))
+        .map_err(|e| e.to_string())?;
+        let model = Model::from_definitions(&[item], &[]).map_err(|e| e.to_string())?;
+        let scope = CellScope {
+            org_id: "org_a".into(),
+            environment_id: "dev".into(),
+        };
+        let store =
+            CellStore::open(&path, model, StoreOptions::default()).map_err(|e| e.to_string())?;
+        let mut cell: SqliteCell<
+            RuntimeValue,
+            norn_kernel::cell_host::JsonObject,
+            norn_kernel::cell_host::JsonObject,
+            NativeEngine,
+        > = SqliteCell::new(store, scope.key(), |command| command.payload.clone())
+            .map_err(|e| format!("{e:?}"))?;
+        cell.advance_to(LogicalTime::from_millis(2));
+        cell.commit(CellCommit {
+            writes: vec![FactWrite {
+                key: FactKey::new("shop.Item", "i1"),
+                expected: FactVersion::ABSENT,
+                mutation: FactMutation::Put {
+                    values: BTreeMap::from([("name".to_owned(), RuntimeValue::from("Lathe"))]),
+                },
+            }],
+            ..CellCommit::empty()
+        })
+        .map_err(|e| format!("{e:?}"))?;
+        cell.advance_to(LogicalTime::from_millis(3));
+        cell.commit(CellCommit {
+            writes: vec![FactWrite {
+                key: FactKey::new("shop.Item", "i1"),
+                expected: FactVersion(1),
+                mutation: FactMutation::Delete,
+            }],
+            ..CellCommit::empty()
+        })
+        .map_err(|e| format!("{e:?}"))?;
+        let store = cell.into_store();
+        let host = DevHost::from_store(store, scope.clone(), |command| command.payload.clone())
+            .map_err(|e| format!("{e:?}"))?
+            .with_authorizer(AllowAll);
+        let row = ObjectRecord {
+            object_type: "shop.Item".into(),
+            id: "i1".into(),
+            scope: scope.key(),
+            version: 2,
+            values: BTreeMap::new(),
+        };
+        let cell_ref = host.cell().map_err(|e| format!("{e:?}"))?;
+        let reader = cell_ref.store().read();
+        let (entry, _sig) = version_entry((&host, &TestAccess, "viewer"), &reader, &row, 2)
+            .map_err(|e| format!("{e:?}"))?
+            .ok_or_else(|| String::from("tombstone version must be readable"))?;
+        assert_eq!(entry.version, 2);
+        assert!(entry.values.is_none());
+        assert!(matches!(entry.writer, NornVersionWriter::Other));
+        Ok(())
+    }
 }

@@ -256,7 +256,7 @@ fn answer_plan<E: SqlEngine>(
         host,
         cell.store(),
         plan,
-        CheckedSnapshot {
+        &CheckedSnapshot {
             world: &world_name,
             checked_version,
             evaluated_frontier,
@@ -520,7 +520,7 @@ fn verify_checked_snapshot<E: SqlEngine>(
     host: &DevHost<E>,
     store: &CellStore<E>,
     plan: &QuestionPlan,
-    snapshot: CheckedSnapshot<'_>,
+    snapshot: &CheckedSnapshot<'_>,
 ) -> Result<(), Refusal> {
     let reader = store.read();
     let after_version = crate::object_routes::version_of(&reader)?;
@@ -609,7 +609,7 @@ fn trace_plan<E: SqlEngine>(
         host,
         cell.store(),
         plan,
-        CheckedSnapshot {
+        &CheckedSnapshot {
             world: &world_name,
             checked_version,
             evaluated_frontier: outcome.as_ref().ok().map(|t| t.result.known_as_of),
