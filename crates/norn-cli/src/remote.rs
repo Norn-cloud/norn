@@ -114,7 +114,9 @@ pub(super) fn execute(args: &RemoteArgs) -> Result<(String, bool), String> {
         }
     }
     let body = request(&args.command, &input)?;
-    if args.token_env.is_some() && !args.url.starts_with("https://") {
+    if args.token_env.is_some()
+        && !super::cell::Endpoint::parse(&args.url).is_ok_and(|endpoint| endpoint.is_https())
+    {
         return Err("bearer authentication requires an HTTPS endpoint".into());
     }
     let agent: ureq::Agent = ureq::Agent::config_builder()

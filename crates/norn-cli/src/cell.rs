@@ -6,11 +6,13 @@
 use clap::{Args, Subcommand};
 use serde_json::{Value, json};
 use std::io::Read as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// The largest pack this client sends, as the cell bounds it.
 const MAX_BODY: usize = 1 << 20;
+/// [`MAX_BODY`] as a read limit: no one artifact file may exceed it.
+const MAX_FILE: u64 = 1 << 20;
 
 #[derive(Debug, Args)]
 pub(super) struct CellArgs {
@@ -63,7 +65,8 @@ enum CellCommand {
     },
 }
 
-/// The pack's artifacts, each file's exact JSON text, in path order.
+/// The pack's artifacts, each file's exact JSON text, in path order. Read
+/// once per command: `apply` plans and applies this one snapshot.
 fn artifacts(paths: &[PathBuf]) -> Result<Vec<Box<serde_json::value::RawValue>>, String> {
     let mut files = Vec::new();
     for path in paths {
@@ -86,12 +89,127 @@ fn artifacts(paths: &[PathBuf]) -> Result<Vec<Box<serde_json::value::RawValue>>,
     files
         .iter()
         .map(|file: &PathBuf| {
-            let text =
-                std::fs::read_to_string(file).map_err(|e| format!("{}: {e}", file.display()))?;
+            let text = read_artifact(file)?;
             serde_json::value::RawValue::from_string(text)
                 .map_err(|e| format!("{}: not JSON: {e}", file.display()))
         })
         .collect()
+}
+
+/// One artifact file's text: a regular file, never a link or anything else,
+/// read to at most the cell's bound so a huge file is refused unread.
+fn read_artifact(file: &Path) -> Result<String, String> {
+    let shown = file.display();
+    let linked = std::fs::symlink_metadata(file).map_err(|e| format!("{shown}: {e}"))?;
+    if !linked.file_type().is_file() {
+        return Err(format!("{shown}: not a regular file (links are refused)"));
+    }
+    let handle = std::fs::File::open(file).map_err(|e| format!("{shown}: {e}"))?;
+    let opened = handle.metadata().map_err(|e| format!("{shown}: {e}"))?;
+    if !opened.is_file() || !same_file(&linked, &opened) {
+        return Err(format!(
+            "{shown}: changed while being opened (links are refused)"
+        ));
+    }
+    let mut text = String::new();
+    handle
+        .take(MAX_FILE.saturating_add(1))
+        .read_to_string(&mut text)
+        .map_err(|e| format!("{shown}: {e}"))?;
+    if text.len() > MAX_BODY {
+        return Err(format!("{shown}: exceeds the cell's 1 MiB bound"));
+    }
+    Ok(text)
+}
+
+/// Whether the opened handle is the file `symlink_metadata` saw: a link
+/// swapped in between the check and the open names another inode.
+#[cfg(unix)]
+fn same_file(linked: &std::fs::Metadata, opened: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt as _;
+    linked.dev() == opened.dev() && linked.ino() == opened.ino()
+}
+
+/// Whether the opened handle is the file `symlink_metadata` saw (without
+/// inode numbers, the regular-file checks are what this platform offers).
+#[cfg(not(unix))]
+fn same_file(linked: &std::fs::Metadata, opened: &std::fs::Metadata) -> bool {
+    linked.is_file() && opened.is_file()
+}
+
+/// A URL parsed once: scheme, host and origin all come from this one parse,
+/// and it carries no userinfo, so `http://127.0.0.1@evil.example` names the
+/// host it actually reaches (`evil.example`) and is refused outright.
+pub(super) struct Endpoint {
+    uri: ureq::http::Uri,
+}
+
+impl Endpoint {
+    /// Parse `url`: absolute, HTTP or HTTPS, with a host and no userinfo.
+    /// Errors never echo the URL, which may hold a secret.
+    pub(super) fn parse(url: &str) -> Result<Self, String> {
+        let uri: ureq::http::Uri = url.parse().map_err(|_e| "URL is not valid")?;
+        let authority = uri.authority().ok_or("URL must be absolute")?;
+        if authority.as_str().contains('@') {
+            return Err("URL must not contain credentials".into());
+        }
+        if uri.host().is_none_or(str::is_empty) {
+            return Err("URL names no host".into());
+        }
+        let endpoint = Self { uri };
+        if !endpoint.is_https() && !endpoint.is_http() {
+            return Err("URL must use http or https".into());
+        }
+        Ok(endpoint)
+    }
+
+    pub(super) fn is_https(&self) -> bool {
+        self.uri.scheme_str() == Some("https")
+    }
+
+    fn is_http(&self) -> bool {
+        self.uri.scheme_str() == Some("http")
+    }
+
+    /// The host, without an IPv6 literal's brackets.
+    fn host(&self) -> &str {
+        let host = self.uri.host().unwrap_or_default();
+        host.strip_prefix('[')
+            .and_then(|inner| inner.strip_suffix(']'))
+            .unwrap_or(host)
+    }
+
+    /// Plain HTTP to exactly `host`.
+    pub(super) fn is_http_to(&self, host: &str) -> bool {
+        self.is_http() && self.host() == host
+    }
+
+    pub(super) fn has_query(&self) -> bool {
+        self.uri.query().is_some()
+    }
+
+    /// Whether this endpoint may carry credentials: HTTPS, or plain HTTP to
+    /// a loopback address or `localhost`.
+    fn carries_credentials(&self) -> bool {
+        let host = self.host();
+        self.is_https()
+            || (self.is_http()
+                && (host.eq_ignore_ascii_case("localhost")
+                    || host
+                        .parse::<std::net::IpAddr>()
+                        .is_ok_and(|ip| ip.is_loopback())))
+    }
+
+    /// `scheme://host[:port]`, where Studio's sign-in lives.
+    fn origin(&self) -> String {
+        format!(
+            "{}://{}",
+            self.uri.scheme_str().unwrap_or_default(),
+            self.uri
+                .authority()
+                .map_or("", ureq::http::uri::Authority::as_str)
+        )
+    }
 }
 
 struct Client {
@@ -104,28 +222,6 @@ struct Client {
     origin: String,
 }
 
-fn origin_of(url: &str) -> Result<String, String> {
-    let (scheme, rest) = url
-        .split_once("://")
-        .ok_or_else(|| format!("{url} is not an absolute URL"))?;
-    let host = rest.split('/').next().unwrap_or_default();
-    if host.is_empty() {
-        return Err(format!("{url} names no host"));
-    }
-    Ok(format!("{scheme}://{host}"))
-}
-
-/// Whether `url` may carry credentials: HTTPS, or plain HTTP to loopback.
-fn credentials_allowed(url: &str) -> bool {
-    url.starts_with("https://")
-        || ["http://127.0.0.1", "http://localhost", "http://[::1]"]
-            .iter()
-            .any(|prefix| {
-                url.strip_prefix(prefix)
-                    .is_some_and(|rest| rest.is_empty() || rest.starts_with([':', '/']))
-            })
-}
-
 impl Client {
     fn new(target: &Target) -> Result<Self, String> {
         let agent: ureq::Agent = ureq::Agent::config_builder()
@@ -135,8 +231,9 @@ impl Client {
             .build()
             .into();
         let base = target.url.trim_end_matches('/').to_owned();
-        let origin = origin_of(&base)?;
-        if (target.token_env.is_some() || target.email.is_some()) && !credentials_allowed(&base) {
+        let endpoint = Endpoint::parse(&base)?;
+        if (target.token_env.is_some() || target.email.is_some()) && !endpoint.carries_credentials()
+        {
             return Err("credentials are sent only over HTTPS (or HTTP to loopback)".into());
         }
         let authorization = match &target.token_env {
@@ -154,7 +251,7 @@ impl Client {
             env: target.env.clone(),
             authorization,
             cookie: None,
-            origin,
+            origin: endpoint.origin(),
         };
         if let (Some(email), Some(variable)) = (&target.email, &target.password_env) {
             let password = std::env::var(variable)
@@ -373,8 +470,10 @@ fn answer(
     (shown, accepted)
 }
 
-fn body(paths: &[PathBuf], expected_version: Option<u64>) -> Result<String, String> {
-    let artifacts = artifacts(paths)?;
+fn body(
+    artifacts: &[Box<serde_json::value::RawValue>],
+    expected_version: Option<u64>,
+) -> Result<String, String> {
     let body = match expected_version {
         Some(version) => json!({ "artifacts": artifacts, "expectedVersion": version }),
         None => json!({ "artifacts": artifacts }),
@@ -389,26 +488,25 @@ fn body(paths: &[PathBuf], expected_version: Option<u64>) -> Result<String, Stri
 pub(super) fn execute(args: &CellArgs) -> Result<(String, bool), String> {
     match &args.command {
         CellCommand::Plan(target) => {
+            let pack = artifacts(&target.paths)?;
             let client = Client::new(target)?;
-            let (status, plan) = client.post(
-                norn_api::cell_definitions::PLAN_PATH,
-                &body(&target.paths, None)?,
-            )?;
+            let (status, plan) =
+                client.post(norn_api::cell_definitions::PLAN_PATH, &body(&pack, None)?)?;
             Ok(answer(target.json, status, &plan, plan_summary))
         }
         CellCommand::Apply {
             target,
             expected_version,
         } => {
+            // One snapshot: the plan shown is exactly the pack applied.
+            let pack = artifacts(&target.paths)?;
             let client = Client::new(target)?;
             let mut shown = String::new();
             let expected = if let Some(version) = expected_version {
                 *version
             } else {
-                let (status, plan) = client.post(
-                    norn_api::cell_definitions::PLAN_PATH,
-                    &body(&target.paths, None)?,
-                )?;
+                let (status, plan) =
+                    client.post(norn_api::cell_definitions::PLAN_PATH, &body(&pack, None)?)?;
                 let (text, accepted) = answer(target.json, status, &plan, plan_summary);
                 if !accepted {
                     return Ok((text, false));
@@ -421,7 +519,7 @@ pub(super) fn execute(args: &CellArgs) -> Result<(String, bool), String> {
             };
             let (status, applied) = client.post(
                 norn_api::cell_definitions::APPLY_PATH,
-                &body(&target.paths, Some(expected))?,
+                &body(&pack, Some(expected))?,
             )?;
             let (text, accepted) = answer(target.json, status, &applied, |applied| {
                 format!(
@@ -450,16 +548,6 @@ mod tests {
     use std::path::Path;
 
     #[test]
-    fn credentials_go_only_over_https_or_loopback() {
-        assert!(credentials_allowed("https://studio.example/api/host"));
-        assert!(credentials_allowed("http://127.0.0.1:8787"));
-        assert!(credentials_allowed("http://localhost/api/host"));
-        assert!(!credentials_allowed("http://studio.example/api/host"));
-        assert!(!credentials_allowed("http://localhost.example"));
-        assert!(!credentials_allowed("http://127.0.0.1.example"));
-    }
-
-    #[test]
     fn a_pack_directory_is_read_in_name_order_and_kept_exact() {
         let pack =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/packs/batches/artifacts");
@@ -477,5 +565,141 @@ mod tests {
                 "lab.batch.record.action"
             ]
         );
+    }
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    /// A fresh directory under the system temp dir, unique to this test.
+    fn scratch(name: &str) -> Result<PathBuf, std::io::Error> {
+        let dir = std::env::temp_dir().join(format!("norn-cli-cell-{}-{name}", std::process::id()));
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir)?;
+        }
+        std::fs::create_dir_all(&dir)?;
+        Ok(dir)
+    }
+
+    fn admits(url: &str) -> bool {
+        Endpoint::parse(url).is_ok_and(|endpoint| endpoint.carries_credentials())
+    }
+
+    /// Hosts that spoof loopback through userinfo, or are remote over HTTP.
+    const REFUSED: [&str; 4] = [
+        "http://127.0.0.1@evil.example",
+        "http://localhost@evil.example",
+        "http://user:pass@127.0.0.1:8787",
+        "http://example.com",
+    ];
+
+    #[test]
+    fn credentials_go_only_over_https_or_loopback() {
+        for url in [
+            "http://127.0.0.1:8787",
+            "http://[::1]:8787",
+            "http://localhost:8787",
+            "https://alpha.norn.cloud",
+            "https://studio.example/api/host",
+            "http://localhost/api/host",
+        ] {
+            assert!(admits(url), "{url} should carry credentials");
+        }
+        for url in REFUSED.into_iter().chain([
+            "http://studio.example/api/host",
+            "http://localhost.example",
+            "http://127.0.0.1.example",
+            "ftp://127.0.0.1",
+        ]) {
+            assert!(!admits(url), "{url} must not carry credentials");
+        }
+    }
+
+    #[test]
+    fn the_sign_in_origin_comes_from_the_parsed_url() -> TestResult {
+        assert_eq!(
+            Endpoint::parse("http://[::1]:8787/api/host")?.origin(),
+            "http://[::1]:8787"
+        );
+        assert_eq!(
+            Endpoint::parse("https://alpha.norn.cloud/api/host")?.origin(),
+            "https://alpha.norn.cloud"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_client_sends_no_token_and_signs_in_nowhere_off_loopback() -> TestResult {
+        for url in REFUSED {
+            for email in [None, Some("owner@example.test")] {
+                let target = Target {
+                    url: url.to_owned(),
+                    org: "org".to_owned(),
+                    env: "env".to_owned(),
+                    token_env: email.is_none().then(|| "NORN_TEST_UNSET_TOKEN".to_owned()),
+                    email: email.map(str::to_owned),
+                    password_env: email.map(|_email| "NORN_TEST_UNSET_PASSWORD".to_owned()),
+                    json: false,
+                    paths: Vec::new(),
+                };
+                let Err(refused) = Client::new(&target) else {
+                    return Err(format!("{url} was admitted").into());
+                };
+                // Refused on the URL, before any secret is read or sent.
+                assert!(
+                    !refused.contains("environment variable"),
+                    "{url}: {refused}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_artifact_is_refused_not_followed() -> TestResult {
+        let root = scratch("link")?;
+        let pack = root.join("pack");
+        std::fs::create_dir(&pack)?;
+        let outside = root.join("outside.json");
+        std::fs::write(&outside, r#"{"secret":true}"#)?;
+        std::fs::write(pack.join("a.json"), "{}")?;
+        std::os::unix::fs::symlink(&outside, pack.join("b.json"))?;
+        let Err(refused) = artifacts(std::slice::from_ref(&pack)) else {
+            return Err("a linked artifact was read".into());
+        };
+        assert!(refused.contains("b.json"), "{refused}");
+        assert!(artifacts(&[pack.join("b.json")]).is_err());
+        std::fs::remove_dir_all(&root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn an_oversized_artifact_is_refused_while_reading() -> TestResult {
+        let pack = scratch("oversized")?;
+        std::fs::write(
+            pack.join("big.json"),
+            format!("{}{{}}", " ".repeat(MAX_BODY)),
+        )?;
+        let Err(refused) = artifacts(std::slice::from_ref(&pack)) else {
+            return Err("an oversized artifact was read".into());
+        };
+        assert!(refused.contains("exceeds"), "{refused}");
+        std::fs::remove_dir_all(&pack)?;
+        Ok(())
+    }
+
+    #[test]
+    fn plan_and_apply_send_one_snapshot() -> TestResult {
+        let pack = scratch("snapshot")?;
+        std::fs::write(pack.join("a.json"), r#"{"artifactId":"a","v":1}"#)?;
+        let snapshot = artifacts(std::slice::from_ref(&pack))?;
+        // A build replacing the artifact after the read changes nothing sent.
+        std::fs::write(pack.join("a.json"), r#"{"artifactId":"a","v":2}"#)?;
+        let plan: Value = serde_json::from_str(&body(&snapshot, None)?)?;
+        let apply: Value = serde_json::from_str(&body(&snapshot, Some(7))?)?;
+        assert_eq!(plan.get("artifacts"), apply.get("artifacts"));
+        assert_eq!(apply.pointer("/artifacts/0/v"), Some(&json!(1)));
+        assert_eq!(apply.get("expectedVersion"), Some(&json!(7)));
+        std::fs::remove_dir_all(&pack)?;
+        Ok(())
     }
 }

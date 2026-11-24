@@ -252,14 +252,11 @@ fn checked_url(base: &str, path: &str) -> Result<String, String> {
         return Err("connector endpoint must be a path beginning with '/'".into());
     }
     let url = format!("{}{path}", base.trim_end_matches('/'));
-    let uri: ureq::http::Uri = url.parse().map_err(|_error| "invalid source URL")?;
-    let authority = uri.authority().ok_or("source URL lacks an authority")?;
-    if authority.as_str().contains('@') || uri.query().is_some() {
-        return Err("source URL must not contain credentials or a query".into());
+    let endpoint = super::cell::Endpoint::parse(&url).map_err(|e| format!("source {e}"))?;
+    if endpoint.has_query() {
+        return Err("source URL must not contain a query".into());
     }
-    if uri.scheme_str() == Some("https")
-        || (uri.scheme_str() == Some("http") && uri.host() == Some("127.0.0.1"))
-    {
+    if endpoint.is_https() || endpoint.is_http_to("127.0.0.1") {
         return Ok(url);
     }
     Err("source URL must be HTTPS or loopback".into())
