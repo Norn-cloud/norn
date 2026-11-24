@@ -1262,6 +1262,16 @@ mod tests {
             "test",
             Some(super::BOAT_RUNNER)
         ));
+        assert!(!super::runner_is_admitted(
+            ".github/workflows/trusted-policy.yml",
+            "trusted-policy",
+            Some(super::BOAT_RUNNER)
+        ));
+        assert!(super::runner_is_admitted(
+            ".github/workflows/trusted-policy.yml",
+            "trusted-policy",
+            Some("ubuntu-24.04")
+        ));
     }
 
     #[test]
@@ -1342,6 +1352,7 @@ mod tests {
             "ci-policy.yml",
             "codeql.yml",
             "cla.yml",
+            "trusted-policy.yml",
             "trusted-merge-group.yml",
         ] {
             let source = workflow(name);
