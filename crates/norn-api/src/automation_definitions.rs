@@ -649,8 +649,11 @@ mod tests {
         }))
         .unwrap();
         let action: ActionRoot = serde_json::from_value(json!({
-            "actionVersion": "0.1",
             "actionId": "demo.order.adjust",
+            "scopeRequired": [],
+            "idempotent": true,
+            "ledgered": false,
+            "outputSchema": { "type": "object", "additionalProperties": false, "properties": {} },
             "inputSchema": {
                 "type": "object",
                 "additionalProperties": false,
