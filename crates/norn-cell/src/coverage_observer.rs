@@ -9,7 +9,7 @@
 //! - typed immutable refusals (`CommitError::ImmutableObject` and
 //!   `DecisionRefusal::ImmutableStateWrite`),
 //! - evaluated governing-law holds (evaluated independently per law artifact
-//!   against the committed object and live [`crate::link_laws::CurrentLinks`]
+//!   against the committed object and live `CurrentLinks`
 //!   via [`norn_kernel::governing_laws::evaluate_linked`], only when the law's
 //!   activation condition holds and no observed finding violated the law) and
 //!   exact `DataQualityOutcome::NotSatisfied` law/invariant violations (both

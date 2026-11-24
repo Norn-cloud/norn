@@ -1,7 +1,7 @@
 //! Deterministic IR-driven value, object, and required-link graph synthesizer (#1656).
 //!
 //! Synthesizes well-typed [`JsonObject`] values directly from effective
-//! [`ObjectTypeDef`], [`InterfaceDef`], and shared [`PropertyTypeDef`]
+//! [`ObjectTypeDef`], `InterfaceDef`, and shared [`PropertyTypeDef`]
 //! contracts, respecting property types, defaults, enum sets, exact decimal
 //! scales (including scale 0), recursive record members, cycle-safe required
 //! link graphs, and transition guard predicates.
