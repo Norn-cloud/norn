@@ -397,10 +397,12 @@ for (const theme of ["light", "dark"] as const) {
       expect(triggerClass).toContain("focus-visible:outline-ring")
       expect(triggerClass).not.toContain("focus-visible:outline-none")
       expect(triggerClass).not.toMatch(/\bfocus-visible:ring-/)
-      // Selected tab text contrast on its active fill (line stays on background; default lifts onto active pill).
+      // Resolve the group variant that matches the rendered TabsList.
       const hostHex = tokenHex(theme, "background")
-      const effectiveClass = variant === "line" ? triggerClass.replace(/\bdata-active:bg-\S+/g, "") : triggerClass
+      expect(html).toContain(`data-variant="${variant}"`)
+      const effectiveClass = triggerClass.replaceAll(`group-data-[variant=${variant}]/tabs-list:`, "")
       const active = resolveClasses(effectiveClass, theme, "selected", hostHex)
+      expect(active.bg).toBe(variant === "default" && theme === "dark" ? tokenHex(theme, "accent") : hostHex)
       expect(active.ratio, `${theme} TabsTrigger[${variant}] selected`).toBeGreaterThanOrEqual(4.5)
     }
     expect(tabsSource).toContain("group-data-[variant=line]/tabs-list:focus-visible:-outline-offset-2")

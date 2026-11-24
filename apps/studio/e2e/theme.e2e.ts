@@ -310,7 +310,10 @@ for (const scheme of ["light", "dark"] as const) {
     await page.getByRole("button", { name: "Read again" }).focus()
     await moveFocusWithKey(page, overview, "Tab", 25)
     await expectVisibleFocusOutline(overview)
-    await shot(page, `focus-line-tab-${scheme}`, page.locator("section").first())
+    await expect(overview).toHaveCSS("background-color", "rgba(0, 0, 0, 0)")
+    const selectedTab = await measureRenderedContrast(overview)
+    expect(selectedTab.ratio, `${scheme} selected line tab`).toBeGreaterThanOrEqual(4.5)
+    await shot(page, `line-tab-selected-${scheme}`, tablist)
 
     await page.keyboard.press("ArrowRight")
     await expect(lineage).toHaveAttribute("aria-selected", "true")
@@ -396,10 +399,11 @@ for (const scheme of ["light", "dark"] as const) {
 
     const discardRest = await measureRenderedContrast(discardBtn)
     expect(discardRest.ratio, `${scheme} Discard button rest`).toBeGreaterThanOrEqual(4.5)
+    await expect(discardBtn).toHaveCSS("transition-property", "border-color, box-shadow, transform")
     await discardBtn.hover()
     const discardHover = await measureRenderedContrast(discardBtn)
     expect(discardHover.ratio, `${scheme} Discard button hover`).toBeGreaterThanOrEqual(4.5)
-    await shot(page, `fixed-discard-hover-${scheme}`, discardDialog)
+    await shot(page, `discard-hover-${scheme}`, discardDialog)
 
     await discardDialog.getByRole("button", { name: "Keep draft" }).focus()
     await moveFocusWithKey(page, discardBtn, "Tab", 5)
@@ -449,6 +453,29 @@ for (const scheme of ["light", "dark"] as const) {
 
     // 1. ChoiceColumn (/metrics/build): enabled unselected option with Recommended stays opaque (>= 4.5:1), selected keeps focus outline, disabled Save button stays flat.
     await page.goto("/metrics/build")
+    const questionTree = page.getByTestId("question-tree")
+    const firstMeasure = questionTree.getByRole("list", { name: "Measure", exact: true }).getByRole("button").first()
+    await expect(firstMeasure).toBeVisible()
+    await page.getByRole("button", { name: "Search" }).focus()
+    await moveFocusWithKey(page, firstMeasure, "Tab")
+    const focus = await expectVisibleFocusOutline(firstMeasure)
+    const outlineClearance = await firstMeasure.evaluate((button, extent) => {
+      const scrollport = button.closest('[data-testid="question-tree"]')
+      if (!scrollport) throw new Error("missing question tree scrollport")
+      const choice = button.getBoundingClientRect()
+      const port = scrollport.getBoundingClientRect()
+      const left = port.left + scrollport.clientLeft
+      const top = port.top + scrollport.clientTop
+      return Math.min(
+        choice.left - left - extent,
+        left + scrollport.clientWidth - choice.right - extent,
+        choice.top - top - extent,
+        top + scrollport.clientHeight - choice.bottom - extent,
+      )
+    }, focus.outlineWidth + focus.outlineOffset)
+    expect(outlineClearance, "first Measure choice outline fits inside the scrollport").toBeGreaterThanOrEqual(0)
+    await shot(page, `measure-focus-${scheme}`, questionTree)
+
     const everyBtn = page.getByRole("button", { name: /Every record/ })
     const goldBtn = page.getByRole("button", { name: /metal is gold/ })
     await expect(everyBtn).toBeVisible()
