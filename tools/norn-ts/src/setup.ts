@@ -34,6 +34,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
@@ -54,7 +55,7 @@ export const MAX_ARCHIVE_ENTRIES = 4096
 export const GENERATION_CLEANUP_GRACE_MS = 60_000
 export const KEEP_RECENT_GENERATIONS = 2
 export const PUBLISH_LOCK_TIMEOUT_MS = 15_000
-export const PUBLISH_LOCK_STALE_MS = 60_000
+export const PUBLISH_LOCK_CORRUPT_GRACE_MS = 5_000
 const MAX_SUMS_BYTES = 1024 * 1024
 const MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 const MAX_PAX_HEADER_BYTES = 1024 * 1024
@@ -108,6 +109,8 @@ export const detectReleasePlatform = detectPlatform
 /**
  * Strip/redact URL userinfo (`username` and `password`) before formatting a
  * URL into any error message or diagnostic so credentials never leak to stderr.
+ * Fails closed on malformed URLs by returning `"[malformed URL redacted]"`
+ * without echoing any part of `rawUrl`.
  */
 export function sanitizeUrlForDiagnostic(rawUrl: string): string {
   try {
@@ -123,7 +126,7 @@ export function sanitizeUrlForDiagnostic(rawUrl: string): string {
     }
     return parsed.toString()
   } catch {
-    return rawUrl.replace(/((?:[a-zA-Z][a-zA-Z0-9+.-]*:)?\/\/)([^/@\s]+)@/g, "$1***@")
+    return "[malformed URL redacted]"
   }
 }
 
@@ -988,6 +991,13 @@ function assertRegularFile(path: string, label: string): void {
   if (!lstatSync(path).isFile()) throw new Error(`${label} is not a regular file`)
 }
 
+type PublishLockState =
+  | { readonly kind: "missing" }
+  | { readonly kind: "live"; readonly pid: number; readonly token: string }
+  | { readonly kind: "dead"; readonly pid: number; readonly token: string }
+  | { readonly kind: "corrupt"; readonly raw: string }
+  | { readonly kind: "pending" }
+
 function isProcessDead(pid: number): boolean {
   if (!Number.isInteger(pid) || pid <= 0) return false
   if (pid === process.pid) return false
@@ -999,51 +1009,139 @@ function isProcessDead(pid: number): boolean {
   }
 }
 
-function isPublishLockStale(lockPath: string, staleMs: number): boolean {
+function inspectPublishLock(lockPath: string, corruptGraceMs: number): PublishLockState {
   let stat: ReturnType<typeof lstatSync>
   try {
     stat = lstatSync(lockPath)
-  } catch {
-    return false
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
+      return { kind: "missing" }
+    }
+    return { kind: "pending" }
   }
-  const now = Date.now()
-  if (now - stat.mtimeMs > staleMs) return true
   let raw: string
   try {
-    raw = readFileSync(lockPath, "utf8").trim()
-  } catch {
-    return false
+    raw = readFileSync(lockPath, "utf8")
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
+      return { kind: "missing" }
+    }
+    return { kind: "pending" }
   }
-  if (!raw) return false
+  const trimmed = raw.trim()
+  if (trimmed.length > 0) {
+    try {
+      const parsed = JSON.parse(trimmed) as { readonly pid?: unknown; readonly token?: unknown }
+      if (
+        typeof parsed.pid === "number"
+        && Number.isInteger(parsed.pid)
+        && parsed.pid > 0
+        && typeof parsed.token === "string"
+        && parsed.token.length > 0
+      ) {
+        // Never evict a live holder PID by age alone.
+        if (isProcessDead(parsed.pid)) {
+          return { kind: "dead", pid: parsed.pid, token: parsed.token }
+        }
+        return { kind: "live", pid: parsed.pid, token: parsed.token }
+      }
+    } catch {
+      // Unparseable JSON: fall through to grace-period check below.
+    }
+  }
+  if (Date.now() - stat.mtimeMs > corruptGraceMs) {
+    return { kind: "corrupt", raw }
+  }
+  return { kind: "pending" }
+}
+
+/**
+ * Race-free stale-lock reclaim using an exclusive secondary lock
+ * (`${lockPath}.reclaim`): re-reads and re-verifies the exact `{ pid, token }`
+ * (or corrupt payload) while holding `.reclaim` before unlinking `lockPath`,
+ * preventing TOCTOU double-unlink of a newly acquired lock.
+ */
+function tryReclaimStalePublishLock(
+  lockPath: string,
+  observed: Extract<PublishLockState, { readonly kind: "dead" | "corrupt" }>,
+  corruptGraceMs: number,
+): boolean {
+  const reclaimPath = `${lockPath}.reclaim`
+  const reclaimToken = randomBytes(8).toString("hex")
+  let acquiredReclaim = false
   try {
-    const parsed = JSON.parse(raw) as { readonly pid?: unknown; readonly createdAt?: unknown }
-    if (typeof parsed.createdAt === "number" && Number.isFinite(parsed.createdAt) && now - parsed.createdAt > staleMs) {
-      return true
+    const fd = openSync(reclaimPath, "wx", 0o600)
+    try {
+      writeFileSync(
+        fd,
+        `${JSON.stringify({ pid: process.pid, createdAt: Date.now(), token: reclaimToken })}\n`,
+      )
+    } finally {
+      closeSync(fd)
     }
-    if (typeof parsed.pid === "number" && isProcessDead(parsed.pid)) {
-      return true
+    acquiredReclaim = true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | undefined)?.code === "EEXIST") {
+      // Clean up a dead/corrupt `.reclaim` lock left by a crashed reclaimer.
+      const reclaimState = inspectPublishLock(reclaimPath, corruptGraceMs)
+      if (reclaimState.kind === "dead" || reclaimState.kind === "corrupt") {
+        try {
+          unlinkSync(reclaimPath)
+        } catch {
+          // Another contender won the reclaim race.
+        }
+      }
     }
-  } catch {
-    // Only treat corrupt/partially-written lock content as stale after the grace period above.
     return false
   }
-  return false
+
+  try {
+    const current = inspectPublishLock(lockPath, corruptGraceMs)
+    const stillSameDead = observed.kind === "dead"
+      && current.kind === "dead"
+      && current.pid === observed.pid
+      && current.token === observed.token
+    const stillSameCorrupt = observed.kind === "corrupt"
+      && current.kind === "corrupt"
+      && current.raw === observed.raw
+    if (!stillSameDead && !stillSameCorrupt) {
+      return false
+    }
+    try {
+      unlinkSync(lockPath)
+      return true
+    } catch {
+      return false
+    }
+  } finally {
+    if (acquiredReclaim) {
+      try {
+        const parsed = JSON.parse(readFileSync(reclaimPath, "utf8").trim()) as { readonly token?: unknown }
+        if (parsed.token === reclaimToken) {
+          unlinkSync(reclaimPath)
+        }
+      } catch {
+        // Ignore if already removed.
+      }
+    }
+  }
 }
 
 /**
  * Acquire an exclusive filesystem lock (`<runtimeDir>/.publish.lock`) via
- * `openSync(..., "wx")` with bounded retry/backoff and stale-lock reclaim
- * (dead holder PID or expired lock age), serializing generation promotion,
- * atomic `current` pointer swap, and old-generation pruning.
+ * `openSync(..., "wx")` with bounded retry/backoff and race-free stale-lock
+ * reclaim (dead holder PID or corrupt lock older than `corruptGraceMs` — never
+ * evicting a live PID by age alone), serializing generation promotion, atomic
+ * `current` pointer swap, and old-generation pruning.
  */
 export async function withPublishLock<T>(
   runtimeDir: string,
   fn: () => Promise<T> | T,
-  options: { readonly timeoutMs?: number; readonly staleMs?: number } = {},
+  options: { readonly timeoutMs?: number; readonly corruptGraceMs?: number } = {},
 ): Promise<T> {
   const lockPath = join(runtimeDir, ".publish.lock")
   const timeoutMs = options.timeoutMs ?? PUBLISH_LOCK_TIMEOUT_MS
-  const staleMs = options.staleMs ?? PUBLISH_LOCK_STALE_MS
+  const corruptGraceMs = options.corruptGraceMs ?? PUBLISH_LOCK_CORRUPT_GRACE_MS
   const token = randomBytes(8).toString("hex")
   const deadline = Date.now() + timeoutMs
   let backoffMs = 10
@@ -1063,13 +1161,14 @@ export async function withPublishLock<T>(
     } catch (error) {
       const code = (error as NodeJS.ErrnoException | undefined)?.code
       if (code !== "EEXIST") throw error
-      if (isPublishLockStale(lockPath, staleMs)) {
-        try {
-          rmSync(lockPath, { force: true })
-        } catch {
-          // Another contender may have reclaimed or released the lock first.
-        }
+      const state = inspectPublishLock(lockPath, corruptGraceMs)
+      if (state.kind === "missing") {
         continue
+      }
+      if (state.kind === "dead" || state.kind === "corrupt") {
+        if (tryReclaimStalePublishLock(lockPath, state, corruptGraceMs)) {
+          continue
+        }
       }
       if (Date.now() >= deadline) {
         throw new Error(`timed out waiting for runtime publish lock ${lockPath}`)
@@ -1083,9 +1182,9 @@ export async function withPublishLock<T>(
     return await fn()
   } finally {
     try {
-      const current = readFileSync(lockPath, "utf8")
-      if (current.includes(token)) {
-        rmSync(lockPath, { force: true })
+      const parsed = JSON.parse(readFileSync(lockPath, "utf8").trim()) as { readonly token?: unknown }
+      if (parsed.token === token) {
+        unlinkSync(lockPath)
       }
     } catch {
       // Lock file already gone or inaccessible; do not mask caller errors.

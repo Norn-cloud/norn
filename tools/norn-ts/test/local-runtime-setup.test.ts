@@ -425,15 +425,17 @@ test("redirects reject userinfo, reject HTTPS->HTTP downgrades (even loopback), 
 
   try {
     const base = `http://127.0.0.1:${server.port}`
-    // 1. Initial URL with userinfo is refused AND credentials are redacted from diagnostics.
+    // 1. Initial URL with userinfo or malformed credentials is refused AND credentials are redacted fail-closed.
     expect(sanitizeUrlForDiagnostic("https://alice:supersecret@example.com/releases/SHA256SUMS"))
       .toBe("https://***@example.com/releases/SHA256SUMS")
-    expect(sanitizeUrlForDiagnostic("https://alice:supersecret@bad host:nope/releases"))
-      .toBe("https://***@bad host:nope/releases")
+    expect(sanitizeUrlForDiagnostic("https://alice:pa ss@word@example.com:notaport/path"))
+      .toBe("[malformed URL redacted]")
 
     for (const badInitial of [
       `http://alice:supersecret@127.0.0.1:${server.port}/payload`,
       "https://alice:supersecret@example.com/releases/a.tar.gz",
+      "https://alice:pa ss@word@example.com/path",
+      "https://alice:pa ss@word@example.com:notaport/path",
     ]) {
       let errMsg = ""
       try {
@@ -444,17 +446,27 @@ test("redirects reject userinfo, reject HTTPS->HTTP downgrades (even loopback), 
       expect(errMsg).toContain("refusing")
       expect(errMsg).not.toContain("alice")
       expect(errMsg).not.toContain("supersecret")
+      expect(errMsg).not.toContain("pa ss")
+      expect(errMsg).not.toContain("word")
     }
 
-    let baseUrlErr = ""
-    try {
-      resolveReleaseBaseUrl({ baseUrl: "https://alice:supersecret@example.com/releases" })
-    } catch (error) {
-      baseUrlErr = error instanceof Error ? error.message : String(error)
+    for (const badBase of [
+      "https://alice:supersecret@example.com/releases",
+      "https://alice:pa ss@word@example.com/path",
+      "https://alice:pa ss@word@example.com:notaport/path",
+    ]) {
+      let baseUrlErr = ""
+      try {
+        resolveReleaseBaseUrl({ baseUrl: badBase })
+      } catch (error) {
+        baseUrlErr = error instanceof Error ? error.message : String(error)
+      }
+      expect(baseUrlErr).toContain("refusing")
+      expect(baseUrlErr).not.toContain("alice")
+      expect(baseUrlErr).not.toContain("supersecret")
+      expect(baseUrlErr).not.toContain("pa ss")
+      expect(baseUrlErr).not.toContain("word")
     }
-    expect(baseUrlErr).toContain("refusing")
-    expect(baseUrlErr).not.toContain("alice")
-    expect(baseUrlErr).not.toContain("supersecret")
 
     // 2. Redirect to remote plaintext HTTP or URL with userinfo is refused fail-closed (and credentials redacted).
     await expect(fetchBounded(`${base}/downgrade`, 1024, 5_000)).rejects.toThrow("refusing redirect")
@@ -499,14 +511,16 @@ test("redirects reject userinfo, reject HTTPS->HTTP downgrades (even loopback), 
       "https://objects.githubusercontent.com/release/a.tar.gz",
     ])
 
-    // 6. Mock fetch: HTTPS -> remote HTTP AND HTTPS -> loopback HTTP AND HTTPS -> userinfo HTTPS are ALL refused before issuing the hop,
-    //    and rejected redirect credentials are never leaked in diagnostics.
+    // 6. Mock fetch: HTTPS -> remote HTTP, HTTPS -> loopback HTTP, HTTPS -> userinfo, and malformed credential Location
+    //    are ALL refused before issuing the hop, and rejected credentials never leak in diagnostics.
     for (const badLocation of [
       "http://objects.githubusercontent.com/insecure/a.tar.gz",
       "http://127.0.0.1:8080/ssrf-downgrade.tar.gz",
       "http://localhost:8080/ssrf-downgrade.tar.gz",
       "http://[::1]:8080/ssrf-downgrade.tar.gz",
       "https://alice:supersecret@example.com/release/a.tar.gz",
+      "https://alice:pa ss@word@example.com/path",
+      "https://alice:pa ss@word@example.com:notaport/path",
     ]) {
       const seen: string[] = []
       let errMsg = ""
@@ -523,9 +537,11 @@ test("redirects reject userinfo, reject HTTPS->HTTP downgrades (even loopback), 
       } catch (error) {
         errMsg = error instanceof Error ? error.message : String(error)
       }
-      expect(errMsg).toContain("refusing redirect")
+      expect(errMsg.includes("refusing redirect") || errMsg.includes("invalid redirect Location")).toBe(true)
       expect(errMsg).not.toContain("alice")
       expect(errMsg).not.toContain("supersecret")
+      expect(errMsg).not.toContain("pa ss")
+      expect(errMsg).not.toContain("word")
       expect(seen).toEqual(["https://github.com/Norn-cloud/norn/releases/download/drop-1/a.tar.gz"])
     }
   } finally {
@@ -875,33 +891,54 @@ test("publish lock serializes concurrent publishers/pruners and recovers stale l
     expect(events).toEqual(["first:enter", "first:exit", "second:enter", "second:exit"])
     expect(existsSync(lockPath)).toBe(false)
 
-    // 2. Stale lock recovery when holder PID is dead (ESRCH).
-    writeFileSync(lockPath, JSON.stringify({ pid: 999_999_999, createdAt: Date.now(), token: "dead-holder" }))
-    let ranAfterDeadPid = false
-    await withPublishLock(runtimeDir, () => {
-      ranAfterDeadPid = true
-    })
-    expect(ranAfterDeadPid).toBe(true)
+    // 2. Two concurrent contenders racing to reclaim the same dead-PID lock serialize cleanly via `.reclaim`
+    //    without TOCTOU double-unlink or overlapping critical sections.
+    writeFileSync(lockPath, JSON.stringify({ pid: 999_999_999, createdAt: Date.now(), token: "dead-race" }))
+    const raceEvents: string[] = []
+    await Promise.all([
+      withPublishLock(runtimeDir, async () => {
+        raceEvents.push("c1:enter")
+        await new Promise((wake) => setTimeout(wake, 40))
+        raceEvents.push("c1:exit")
+      }),
+      withPublishLock(runtimeDir, async () => {
+        raceEvents.push("c2:enter")
+        await new Promise((wake) => setTimeout(wake, 40))
+        raceEvents.push("c2:exit")
+      }),
+    ])
+    expect(
+      JSON.stringify(raceEvents) === JSON.stringify(["c1:enter", "c1:exit", "c2:enter", "c2:exit"])
+      || JSON.stringify(raceEvents) === JSON.stringify(["c2:enter", "c2:exit", "c1:enter", "c1:exit"]),
+    ).toBe(true)
     expect(existsSync(lockPath)).toBe(false)
+    expect(existsSync(`${lockPath}.reclaim`)).toBe(false)
 
-    // 3. Stale lock recovery when lock age exceeds staleMs (even if PID is alive).
-    writeFileSync(lockPath, JSON.stringify({ pid: process.pid, createdAt: Date.now() - 120_000, token: "aged-holder" }))
-    const oldTime = new Date(Date.now() - 120_000)
-    utimesSync(lockPath, oldTime, oldTime)
-    let ranAfterAged = false
-    await withPublishLock(runtimeDir, () => {
-      ranAfterAged = true
-    }, { staleMs: 5_000 })
-    expect(ranAfterAged).toBe(true)
-    expect(existsSync(lockPath)).toBe(false)
-
-    // 4. Live lock held past timeout fails closed without removing the live lock.
-    writeFileSync(lockPath, JSON.stringify({ pid: process.pid, createdAt: Date.now(), token: "live-holder" }))
+    // 3. A LIVE holder PID aged far past any timeout MUST NEVER be evicted by age alone.
+    const agedLivePayload = JSON.stringify({ pid: process.pid, createdAt: Date.now() - 600_000, token: "aged-live-holder" })
+    writeFileSync(lockPath, agedLivePayload)
+    const tenMinAgo = new Date(Date.now() - 600_000)
+    utimesSync(lockPath, tenMinAgo, tenMinAgo)
     await expect(
-      withPublishLock(runtimeDir, () => {}, { timeoutMs: 40, staleMs: 60_000 }),
+      withPublishLock(runtimeDir, () => {}, { timeoutMs: 40, corruptGraceMs: 10 }),
+    ).rejects.toThrow("timed out waiting for runtime publish lock")
+    expect(readFileSync(lockPath, "utf8")).toBe(agedLivePayload)
+    rmSync(lockPath, { force: true })
+
+    // 4. Corrupt/unparseable lock: freshly created (within grace) is NOT evicted, while aged corrupt lock IS reclaimed.
+    writeFileSync(lockPath, "{truncated")
+    await expect(
+      withPublishLock(runtimeDir, () => {}, { timeoutMs: 30, corruptGraceMs: 60_000 }),
     ).rejects.toThrow("timed out waiting for runtime publish lock")
     expect(existsSync(lockPath)).toBe(true)
-    rmSync(lockPath, { force: true })
+    utimesSync(lockPath, tenMinAgo, tenMinAgo)
+    let reclaimedCorrupt = false
+    await withPublishLock(runtimeDir, () => {
+      reclaimedCorrupt = true
+    }, { corruptGraceMs: 5_000 })
+    expect(reclaimedCorrupt).toBe(true)
+    expect(existsSync(lockPath)).toBe(false)
+    expect(existsSync(`${lockPath}.reclaim`)).toBe(false)
 
     // 5. Two concurrent `setupLocalRuntime` runs serialize cleanly via `.publish.lock`
     //    and leave `current` pointing to an intact, discoverable generation.
