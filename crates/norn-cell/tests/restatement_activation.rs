@@ -1119,3 +1119,99 @@ fn approved_candidate_refuses_an_alternate_kernel_writer_before_activation() {
         true
     ));
 }
+
+/// S2c (#1559): `prepare_restatement` refuses any historical slice whose
+/// grouped or filtered field carries a marking in current or deleted history,
+/// and stages no candidate. Two worlds differing only in the deleted labelled
+/// value refuse identically (`question.marked_history`).
+#[test]
+fn prepare_restatement_refuses_slice_over_deleted_labelled_field() {
+    let run_world = |secret_metal: &str| {
+        let directory = tempfile::tempdir().expect("directory");
+        let path = directory.path().join("cell.sqlite");
+        let (mut store, plan, mut context, _model) = setup(&path);
+        let labelled = store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: SCOPE.into(),
+                logical_time: CLOCK + 500,
+                writes: vec![put(
+                    "SYN-LABELLED-1",
+                    50_000,
+                    48_000,
+                    "2026-10-23T12:00:00Z",
+                    secret_metal,
+                )],
+                events: vec![
+                    norn_ir::RuntimeValue::from_json(json!({
+                        "type": "observation.recorded",
+                        "mapped": [{
+                            "objectType": TYPE,
+                            "key": "SYN-LABELLED-1",
+                            "propertyProvenance": {"metal": {"markings": ["pii.contact"]}}
+                        }]
+                    }))
+                    .expect("event"),
+                ],
+                ..CommitBatch::default()
+            })
+            .expect("commit labelled row")
+            .receipt()
+            .clone();
+        // Delete the labelled row so no live row holds any marking.
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: SCOPE.into(),
+                logical_time: CLOCK + 1000,
+                writes: vec![norn_cell::FactWriteRow::Delete {
+                    object_type: TYPE.into(),
+                    key: "SYN-LABELLED-1".into(),
+                }],
+                ..CommitBatch::default()
+            })
+            .expect("delete labelled row");
+        progress(&mut context, CLOCK + 1000, labelled.body.commit_seq);
+        let point = KnowledgeCutoff {
+            recorded_at: LogicalTime::from_millis(labelled.body.logical_time),
+            frontier: labelled.body.commit_seq,
+        };
+        let version = store
+            .read()
+            .version(MAIN_WORLD, RESTATEMENT_TYPE, ID)
+            .expect("slot version");
+        let build = store
+            .begin_restatement(
+                ID,
+                context.clone(),
+                version,
+                "rebuild over deleted marked history",
+                &BTreeSet::from(["week".into(), "loss".into()]),
+            )
+            .expect("private rebuild");
+        let error = store
+            .prepare_restatement(build, requests(&plan, &context, point), |_| Ok(true))
+            .expect_err("restatement over deleted marked field must refuse");
+        assert!(
+            matches!(
+                error,
+                norn_cell::CellError::ComputeRefused("question.marked_history")
+            ),
+            "expected question.marked_history, got {error:?}"
+        );
+        // No candidate was staged.
+        let slot = store
+            .read()
+            .object(MAIN_WORLD, RESTATEMENT_TYPE, ID)
+            .expect("slot");
+        assert!(
+            slot.as_ref()
+                .and_then(|row| row.values.get("candidate"))
+                .is_none_or(|val| matches!(val, norn_ir::RuntimeValue::Null)),
+            "refused restatement must stage no candidate: {slot:?}"
+        );
+        format!("{error:?}")
+    };
+
+    assert_eq!(run_world("secret-alpha"), run_world("secret-beta"));
+}

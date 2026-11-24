@@ -235,13 +235,8 @@ fn answer_plan<E: SqlEngine>(
         return Err(read_denied());
     }
     let historical = snapshot.cutoff.is_some() || plan.as_of();
-    refuse_labeled_paths(
-        host,
-        cell.store(),
-        plan,
-        &snapshot.context.world,
-        historical,
-    )?;
+    let world_name = snapshot.context.world.clone();
+    let checked_version = check_snapshot(host, cell.store(), plan, &world_name, historical)?;
     let permits = |row: &ObjectRecord, grant| allowed(host, runtime, actor, question, row, grant);
     let mut withheld = BTreeSet::new();
     let mut visible = |row: &ObjectRecord| visible_recording(row, &permits, &mut withheld);
@@ -254,6 +249,22 @@ fn answer_plan<E: SqlEngine>(
             .map(QuestionAnswer::Live),
     }
     .map_err(Refusal::from_compute)?;
+    let evaluated_frontier = match &answer {
+        QuestionAnswer::Live(result) => result.known_as_of,
+        QuestionAnswer::Historical(historical) => historical.result.known_as_of,
+    };
+    verify_checked_snapshot(
+        host,
+        cell.store(),
+        plan,
+        CheckedSnapshot {
+            world: &world_name,
+            checked_version,
+            evaluated_frontier,
+            historical,
+            live_read: snapshot.cutoff.is_none(),
+        },
+    )?;
     let world = withheld.is_empty() && world_values(host, runtime, cell.store(), actor);
     let result = match &mut answer {
         QuestionAnswer::Live(result) => result,
@@ -437,120 +448,97 @@ pub fn get_numeric_trace<E: SqlEngine>(
     )
 }
 
-/// PRIVACY-4 at answer time. Admission refuses a group-by or filter on a
-/// property with a DECLARED marking; a value can also carry a label no
-/// declaration names (a runtime-classified source field, or a computed value
-/// that inherits one). So before any answer or trace, every grouped or
-/// filtered property must have no label on any live row of the answer's
-/// world. A summary the store
-/// cannot prove complete refuses too (fail closed). A cell that declares no
-/// marking has none to find.
-///
-/// A `historical` question (at a knowledge cutoff, over a property's versions,
-/// or traced as answered at an earlier frontier) also reads retained values
-/// of deleted and relabelled rows, which the live summary does not see. It is
-/// refused with `question.marked_history` when any version, current or past,
-/// of a grouped or filtered property holds a label (S2, #1547): fail closed
-/// rather than prove which versions it reads are unmarked. "Filtered" covers
-/// every lowered sum's filters, its metric's default filters included (S2a).
-fn refuse_labeled_paths<E: SqlEngine>(
+/// PRIVACY-4 / S2 (#1547, #1559): refuse any grouped or filtered path
+/// (including lowered sum default filters) whose live or, when `historical`,
+/// retained versions hold a marking label, or whose summary cannot be proved
+/// complete.
+fn refuse_labeled_paths_on<E: SqlEngine>(
+    host: &DevHost<E>,
+    reader: &norn_cell::StoreReader<'_, E>,
+    plan: &QuestionPlan,
+    world: &str,
+    historical: bool,
+) -> Result<(), Refusal> {
+    let has_catalog = !host.marking_catalog(reader)?.is_empty();
+    let Some(marked) = reader
+        .check_question_markings(plan, world, historical, has_catalog)
+        .map_err(Refusal::host)?
+    else {
+        return Ok(());
+    };
+    let (code, msg, detail, diag_code, diag_msg, pointer) = match marked {
+        norn_cell::MarkedQuestionPath::History { pointer } => (
+            MARKED_HISTORY,
+            "the question reads history that holds marked values",
+            "ask the current answer, or group and filter by a field none of whose versions is marked",
+            MARKED_HISTORY,
+            "this question groups or filters by a field whose earlier or deleted versions are marked",
+            pointer,
+        ),
+        norn_cell::MarkedQuestionPath::Live { pointer } => (
+            "question.refused",
+            "the question is not admissible",
+            "each diagnostic names the rule and where in the question it applies",
+            norn_checker::metric::codes::MARKED_FIELD,
+            "this question groups or filters by a field whose values are marked",
+            pointer,
+        ),
+    };
+    let mut refusal = Refusal::new(http::StatusCode::UNPROCESSABLE_ENTITY, code, msg, detail);
+    refusal.diagnostics = vec![crate::refusal::RefusalDiagnostic::error(
+        diag_code, diag_msg, pointer,
+    )];
+    Err(refusal)
+}
+
+fn check_snapshot<E: SqlEngine>(
     host: &DevHost<E>,
     store: &CellStore<E>,
     plan: &QuestionPlan,
     world: &str,
     historical: bool,
-) -> Result<(), Refusal> {
-    let question = plan.question();
-    // A lowered sum's filters (its metric's defaults, S2a #1547) are
-    // predicates on row values too: a total can reveal whether a marked
-    // value matched, so they are checked like the question's own.
-    if question.dimensions.is_empty()
-        && question.filters.is_empty()
-        && plan.sums().iter().all(|sum| sum.filters.is_empty())
-    {
-        return Ok(());
-    }
+) -> Result<(u64, Option<(u64, u64)>), Refusal> {
     let reader = store.read();
-    if host.marking_catalog(&reader)?.is_empty() {
-        return Ok(());
-    }
-    let paths = question
-        .dimensions
-        .iter()
-        .enumerate()
-        .map(|(index, dimension)| (format!("/question/groupBy/{index}"), &dimension.path))
-        .chain(
-            question
-                .filters
-                .iter()
-                .enumerate()
-                .map(|(index, filter)| (format!("/question/filter/{index}"), &filter.path)),
-        )
-        .chain(plan.sums().iter().flat_map(|sum| {
-            sum.filters.iter().enumerate().map(move |(index, filter)| {
-                (
-                    format!("/metric/{}/norn/defaultFilters/{index}", sum.name),
-                    &filter.path,
-                )
-            })
-        }));
-    for (pointer, path) in paths {
-        let property = path.property.as_str();
-        // An own path is read on the grain; a linked one (admitted only for a
-        // linked time) on every type declaring the property: more to check,
-        // never less.
-        let types: Vec<String> = if path.links.is_empty() {
-            vec![plan.grain().as_str().to_owned()]
-        } else {
-            reader
-                .model()
-                .object_types()
-                .map(|definition| definition.name.as_str().to_owned())
-                .filter(|name| {
-                    reader
-                        .model()
-                        .effective_property_types(name)
-                        .is_ok_and(|properties| properties.iter().any(|(id, _)| id == property))
-                })
-                .collect()
-        };
-        for object_type in types {
-            if historical
-                && reader
-                    .property_history_marked(world, &object_type, property)
-                    .map_err(Refusal::host)?
-            {
-                let mut refusal = Refusal::new(
-                    http::StatusCode::UNPROCESSABLE_ENTITY,
-                    MARKED_HISTORY,
-                    "the question reads history that holds marked values",
-                    "ask the current answer, or group and filter by a field none of whose versions is marked",
-                );
-                refusal.diagnostics = vec![crate::refusal::RefusalDiagnostic::error(
-                    MARKED_HISTORY,
-                    "this question groups or filters by a field whose earlier or deleted versions are marked",
-                    pointer,
-                )];
-                return Err(refusal);
-            }
-            let labels = reader
-                .property_marking_summary(world, &object_type, property)
-                .map_err(Refusal::host)?;
-            if !labels.is_some_and(|labels| labels.is_empty()) {
-                let mut refusal = Refusal::new(
-                    http::StatusCode::UNPROCESSABLE_ENTITY,
-                    "question.refused",
-                    "the question is not admissible",
-                    "each diagnostic names the rule and where in the question it applies",
-                );
-                refusal.diagnostics = vec![crate::refusal::RefusalDiagnostic::error(
-                    norn_checker::metric::codes::MARKED_FIELD,
-                    "this question groups or filters by a field whose values are marked",
-                    pointer,
-                )];
-                return Err(refusal);
-            }
-        }
+    let version = crate::object_routes::version_of(&reader)?;
+    refuse_labeled_paths_on(host, &reader, plan, world, historical)?;
+    Ok(version)
+}
+
+struct CheckedSnapshot<'a> {
+    world: &'a str,
+    checked_version: (u64, Option<(u64, u64)>),
+    evaluated_frontier: u64,
+    historical: bool,
+    live_read: bool,
+}
+
+/// S2b (#1559): confirm the store did not move between the pre-evaluation
+/// marking check and evaluation, and that the evaluated frontier never ran
+/// ahead of (or, for a live read, diverged from) the checked snapshot.
+/// Discards the answer/trace if it moved, surfacing any newly introduced
+/// marking refusal first.
+fn verify_checked_snapshot<E: SqlEngine>(
+    host: &DevHost<E>,
+    store: &CellStore<E>,
+    plan: &QuestionPlan,
+    snapshot: CheckedSnapshot<'_>,
+) -> Result<(), Refusal> {
+    let reader = store.read();
+    let after_version = crate::object_routes::version_of(&reader)?;
+    let frontier_mismatch =
+        snapshot.live_read && snapshot.evaluated_frontier != snapshot.checked_version.0;
+    let beyond_checked = snapshot.evaluated_frontier > snapshot.checked_version.0;
+    if after_version != snapshot.checked_version || frontier_mismatch || beyond_checked {
+        refuse_labeled_paths_on(
+            host,
+            &reader,
+            plan,
+            snapshot.world,
+            snapshot.historical || snapshot.evaluated_frontier < snapshot.checked_version.0,
+        )?;
+        return Err(Refusal::from_compute(CellError::ComputeRefused(
+            "core.projection.answer_moved",
+        )));
     }
     Ok(())
 }
@@ -575,13 +563,8 @@ fn trace_plan<E: SqlEngine>(
         return Err(read_denied());
     }
     let historical = snapshot.cutoff.is_some() || answered.is_some() || plan.as_of();
-    refuse_labeled_paths(
-        host,
-        cell.store(),
-        plan,
-        &snapshot.context.world,
-        historical,
-    )?;
+    let world_name = snapshot.context.world.clone();
+    let checked_version = check_snapshot(host, cell.store(), plan, &world_name, historical)?;
     if snapshot.cutoff.is_some() {
         return Err(Refusal::from_compute(CellError::ComputeRefused(
             "core.compute.unsupported_engine",
@@ -618,6 +601,18 @@ fn trace_plan<E: SqlEngine>(
         ),
     }
     .map_err(Refusal::from_compute)?;
+    verify_checked_snapshot(
+        host,
+        cell.store(),
+        plan,
+        CheckedSnapshot {
+            world: &world_name,
+            checked_version,
+            evaluated_frontier: trace.result.known_as_of,
+            historical,
+            live_read: answered.is_none(),
+        },
+    )?;
     let world = withheld.is_empty() && world_values(host, runtime, cell.store(), actor);
     withhold_ledger_head(&mut trace.result, key, world);
     withhold_exclusions(&mut trace.result, key, world);

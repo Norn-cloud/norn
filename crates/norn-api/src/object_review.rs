@@ -49,6 +49,9 @@ use crate::scope::ScopeQuery;
 
 /// Most versions one history lists, newest first.
 pub const MAX_HISTORY_VERSIONS: u64 = 64;
+/// Most raw versions scanned backward to establish visible changes and skip
+/// hidden-only writes before declaring the history truncated (#1534 S7).
+const MAX_HISTORY_SCAN: u64 = 1_024;
 /// Most evidence links one findings read lists.
 pub const MAX_EVIDENCE: usize = 200;
 /// The core interface of evidence objects (`registry/core/src/evidence.ts`).
@@ -471,15 +474,25 @@ fn version_read<E: SqlEngine>(
     Ok(readable.then(|| (stored, permitted(host, access, actor, &decided_on, Sources))))
 }
 
-/// One version with its receipt and writer, or `None` when the caller may not
-/// read it ([`version_read`]); its source lineage only under that version's
-/// Sources.
+/// Disclosure-relevant state of one readable version (#1534 S6): two
+/// consecutive readable versions collapse only when their projected values,
+/// visible writer, and marking projection are all identical.
+#[derive(PartialEq)]
+struct VisibleSignature {
+    values: Option<BTreeMap<String, RuntimeValue>>,
+    writer_json: String,
+    projected: crate::privacy::Projected,
+}
+
+/// One version with its receipt, writer, and disclosure-relevant signature, or
+/// `None` when the caller may not read it ([`version_read`]); its source
+/// lineage only under that version's Sources.
 fn version_entry<E: SqlEngine>(
     (host, access, actor): (&DevHost<E>, &dyn ObjectAccess, &str),
     reader: &StoreReader<'_, E>,
     row: &ObjectRecord,
     version: u64,
-) -> Result<Option<NornObjectVersion>, Refusal> {
+) -> Result<Option<(NornObjectVersion, VisibleSignature)>, Refusal> {
     let Some((stored, sources)) = version_read((host, access, actor), reader, row, version)? else {
         return Ok(None);
     };
@@ -490,13 +503,15 @@ fn version_entry<E: SqlEngine>(
     // PRIVACY-1: each version's values are projected under that version's
     // own markings; a marked version names no writer input or source row.
     let mut marked = false;
+    let mut projected = crate::privacy::Projected::default();
     let values = match stored {
         Some(mut record) => {
             let markings = crate::privacy::version_markings(reader, &catalog, &record)?;
             marked = markings
                 .as_ref()
                 .is_none_or(|markings| markings.values().any(|ids| !ids.is_empty()));
-            crate::privacy::project(host, actor, &catalog, markings.as_ref(), &mut record);
+            projected =
+                crate::privacy::project(host, actor, &catalog, markings.as_ref(), &mut record);
             Some(record.values.into_iter().collect())
         }
         None => None,
@@ -515,13 +530,22 @@ fn version_entry<E: SqlEngine>(
         None => action_writer((host, access, actor), reader, &receipt)?
             .unwrap_or(NornVersionWriter::Other),
     };
-    Ok(Some(NornObjectVersion {
-        version,
-        commit: receipt.body.commit_seq,
-        logical_time: receipt.body.logical_time,
-        values,
-        writer,
-    }))
+    let writer_json = serde_json::to_string(&writer).map_err(Refusal::host)?;
+    let signature = VisibleSignature {
+        values: values.clone(),
+        writer_json,
+        projected,
+    };
+    Ok(Some((
+        NornObjectVersion {
+            version,
+            commit: receipt.body.commit_seq,
+            logical_time: receipt.body.logical_time,
+            values,
+            writer,
+        },
+        signature,
+    )))
 }
 
 /// HOST-READ-6: an object's proven versions, newest first, with what wrote each.
@@ -545,35 +569,73 @@ pub fn get_object_history<E: SqlEngine>(
     // current row to read it at all, then each version's own decision.
     let row = raw_row(host, access, (object_type, id), &mut start)?;
     let row = readable(host, access, &actor, row)?;
-    let oldest = row
-        .version
-        .saturating_sub(MAX_HISTORY_VERSIONS)
-        .saturating_add(1)
-        .max(1);
+    let max_versions = usize::try_from(MAX_HISTORY_VERSIONS).unwrap_or(usize::MAX);
     locked(host, access, &mut start, |reader| {
-        // Oldest first, so each version is compared with the last one listed.
+        // Walk backward from the head so hidden-only writes collapse onto the
+        // earliest version that introduced their visible signature, and a
+        // boundary entry whose predecessor could not be checked is suppressed
+        // rather than emitted as a false visible change (#1534 S6, S7).
         let mut versions: Vec<NornObjectVersion> = Vec::new();
-        for version in oldest..=row.version {
-            let Some(entry) = version_entry((host, access, &actor), reader, &row, version)? else {
-                continue;
-            };
-            // A write that changed nothing the caller may see (only a withheld
-            // field, or nothing) is not listed: its version, commit and time
-            // would tell that a hidden value changed then.
-            if versions
-                .last()
-                .is_some_and(|last| last.values == entry.values)
-            {
-                continue;
+        let mut current_run: Option<(NornObjectVersion, VisibleSignature)> = None;
+        let mut truncated = false;
+        let mut scanned = 0_u64;
+        let mut version = row.version;
+        while version >= 1 {
+            if scanned >= MAX_HISTORY_SCAN {
+                // We stopped before version 1 without establishing whether
+                // `current_run` changed anything relative to `version`; fail
+                // closed by suppressing the unverified boundary run.
+                current_run = None;
+                truncated = true;
+                break;
             }
-            versions.push(entry);
+            scanned = scanned.saturating_add(1);
+            if let Some((entry, signature)) =
+                version_entry((host, access, &actor), reader, &row, version)?
+            {
+                match &mut current_run {
+                    Some((earliest, run_sig)) if *run_sig == signature => {
+                        *earliest = entry;
+                    }
+                    Some(_) => {
+                        if let Some((earliest, _)) = current_run.replace((entry, signature)) {
+                            versions.push(earliest);
+                        }
+                        if versions.len() >= max_versions {
+                            current_run = None;
+                            truncated = true;
+                            break;
+                        }
+                    }
+                    None => {
+                        current_run = Some((entry, signature));
+                    }
+                }
+            }
+            if version == 1 {
+                break;
+            }
+            version = version.saturating_sub(1);
         }
-        versions.reverse();
+        if let Some((earliest, _)) = current_run {
+            if versions.len() < max_versions {
+                versions.push(earliest);
+            } else {
+                truncated = true;
+            }
+        }
+        // #1534: renumber listed versions with compact 1-based visible
+        // ordinals (oldest = 1, newest = len) so gaps between raw version
+        // numbers never disclose how many hidden or unreadable writes occurred.
+        let total = versions.len();
+        for (index, entry) in versions.iter_mut().enumerate() {
+            entry.version = u64::try_from(total.saturating_sub(index)).unwrap_or(1);
+        }
         Ok(NornObjectHistory {
             object_type: row.object_type.clone(),
             id: row.id.clone(),
             versions,
-            truncated: oldest > 1,
+            truncated,
         })
     })
 }

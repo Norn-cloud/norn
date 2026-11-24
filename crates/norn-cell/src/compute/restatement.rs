@@ -20,6 +20,25 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+/// S2c (#1559): refuse any restatement slice whose grouped or filtered fields
+/// carry a marking in current or retained history.
+fn check_restatement_markings<E: SqlEngine>(
+    reader: &StoreReader<'_, E>,
+    slices: &[RestatementSlice<'_>],
+) -> Result<(), CellError> {
+    for slice in slices {
+        if let Some(marked) =
+            reader.check_question_markings(&slice.plan, &slice.context.world, true, false)?
+        {
+            return Err(match marked {
+                crate::MarkedQuestionPath::History { .. } => refused("question.marked_history"),
+                crate::MarkedQuestionPath::Live { .. } => refused("question.refused"),
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Native concept whose declared actions own restatement approval and activation.
 pub const RESTATEMENT_TYPE: &str = "core.analytics.Restatement";
 const INVALID: &str = "core.world.invalid_restatement";
@@ -353,13 +372,19 @@ impl<E: SqlEngine> CellStore<E> {
         }) {
             return Err(refused(INVALID));
         }
+        let before = {
+            let reader = self.read();
+            let version = (reader.head_commit_seq()?, reader.database_revision()?);
+            check_restatement_markings(&reader, &slices)?;
+            version
+        };
         let mut generation = Generation {
             previous: previous.as_ref().map(|_| previous_digest.into()),
             reason: text(&build.values, "reason")?.into(),
             outputs: BTreeMap::new(),
             deltas: BTreeMap::new(),
         };
-        for slice in slices {
+        for slice in &slices {
             let answer = self.evaluate_question_known_at(
                 &slice.plan,
                 slice.context.clone(),
@@ -371,7 +396,7 @@ impl<E: SqlEngine> CellStore<E> {
             }
             let old = previous.as_ref().and_then(|g| g.outputs.get(slice.id));
             if let Some(old) = old {
-                self.check_restatement_delta(old, &slice, &answer.result, &mut visible)?;
+                self.check_restatement_delta(old, slice, &answer.result, &mut visible)?;
             }
             generation.deltas.insert(
                 slice.id.into(),
@@ -386,6 +411,15 @@ impl<E: SqlEngine> CellStore<E> {
                 },
             );
             generation.outputs.insert(slice.id.into(), answer);
+        }
+        // S2c (#1559): confirm the store did not move between the marking
+        // check and slice evaluation; discard the staged generation if it did.
+        {
+            let reader = self.read();
+            if (reader.head_commit_seq()?, reader.database_revision()?) != before {
+                check_restatement_markings(&reader, &slices)?;
+                return Err(refused("core.projection.answer_moved"));
+            }
         }
         let digest = crate::codec::hash_json(&generation)?;
         let encoded = serde_json::to_string(&generation)?;

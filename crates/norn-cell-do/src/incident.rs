@@ -16,16 +16,12 @@ use crate::server::Response;
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
-/// A fresh incident id: in the Worker, the host's clock in milliseconds
-/// (natively, a random number) and a per-process sequence, so ids are unique
-/// within an isolate and ordered in its log.
+/// A fresh opaque 128-bit random incident id (`inc-<32 lowercase hex>`).
+/// It carries no per-isolate counter or clock value, so two callers sharing
+/// an isolate cannot correlate each other's error rate (#1486).
 #[must_use]
 pub fn id() -> String {
-    format!(
-        "inc-{:x}-{:x}",
-        now_ms(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    )
+    format!("inc-{:032x}", random_u128())
 }
 
 /// The response for `refused`. An internal refusal is logged with its cause
@@ -34,13 +30,14 @@ pub fn id() -> String {
 pub fn respond(mut refused: Refusal) -> Response {
     if refused.is_internal() {
         let incident = id();
+        let seq = NEXT.fetch_add(1, Ordering::Relaxed);
         let internal = refused.extra.get_or_insert_with(Box::default);
         let cause = internal
             .cause
             .clone()
             .unwrap_or_else(|| String::from("no cause was recorded for this refusal"));
         log(&format!(
-            "norn incident {incident}: {} ({}): {cause}",
+            "norn incident {incident} (seq {seq}): {} ({}): {cause}",
             refused.code, refused.status
         ));
         if let Some(internal) = refused.extra.as_mut() {
@@ -74,22 +71,18 @@ mod sink {
     extern "C" {
         #[wasm_bindgen(js_namespace = console, js_name = error)]
         fn console_error(line: &str);
-        #[wasm_bindgen(js_namespace = Date, js_name = now)]
-        fn date_now() -> f64;
+        #[wasm_bindgen(js_namespace = crypto, js_name = getRandomValues)]
+        fn get_random_values(buf: &mut [u8]);
     }
 
     pub(super) fn log(line: &str) {
         console_error(line);
     }
 
-    #[allow(
-        clippy::as_conversions,
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "Date.now() is a non-negative whole number of milliseconds"
-    )]
-    pub(super) fn now_ms() -> u64 {
-        date_now() as u64
+    pub(super) fn random_u128() -> u128 {
+        let mut bytes = [0_u8; 16];
+        get_random_values(&mut bytes);
+        u128::from_be_bytes(bytes)
     }
 }
 
@@ -108,9 +101,11 @@ mod sink {
         RECENT.with(|recent| recent.borrow_mut().push(line.to_owned()));
     }
 
-    /// A random per-id prefix (natively there is no ambient clock to read).
-    pub(super) fn now_ms() -> u64 {
-        getrandom::u64().unwrap_or_default()
+    /// 128 bits of OS entropy for an opaque incident identifier.
+    pub(super) fn random_u128() -> u128 {
+        let mut bytes = [0_u8; 16];
+        let _ignored = getrandom::fill(&mut bytes);
+        u128::from_be_bytes(bytes)
     }
 
     /// The lines logged on this thread so far (native builds; for tests).
@@ -123,8 +118,8 @@ fn log(line: &str) {
     sink::log(line);
 }
 
-fn now_ms() -> u64 {
-    sink::now_ms()
+fn random_u128() -> u128 {
+    sink::random_u128()
 }
 
 /// The incident lines logged on this thread so far (native builds only).

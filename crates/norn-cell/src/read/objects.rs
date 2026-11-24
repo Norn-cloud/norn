@@ -21,6 +21,24 @@ use crate::system::{
 
 const MAX_MARKING_SUMMARY_VARIANTS: usize = 4_096;
 
+/// One grouped or filtered question path that holds (or cannot be proved free
+/// of) a marking label in the evaluated world (PRIVACY-4, S2 #1547/#1559).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MarkedQuestionPath {
+    /// A historical question reads retained versions where at least one
+    /// current, past or deleted version of this path's property holds a label.
+    History {
+        /// JSON pointer into the question or metric definition.
+        pointer: String,
+    },
+    /// A live row of this path's property holds a label, or its marking
+    /// summary could not be proved complete (fail closed).
+    Live {
+        /// JSON pointer into the question or metric definition.
+        pointer: String,
+    },
+}
+
 /// One object as stored.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -675,5 +693,91 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             }
         }
         Ok(false)
+    }
+
+    /// Whether any object type in the active model declares a property marking.
+    fn model_declares_markings(&self) -> bool {
+        self.model.object_types().any(|definition| {
+            self.model
+                .effective_property_markings(definition.name.as_str())
+                .is_ok_and(|markings| markings.values().any(|labels| !labels.is_empty()))
+        })
+    }
+
+    /// PRIVACY-4 / S2 (#1547, #1559): verify that no grouped or filtered path
+    /// of `plan` (including every lowered sum's metric default filters) reads
+    /// marked values in `world`. When `historical` is true, any current, past
+    /// or deleted marked version of a referenced property is refused.
+    ///
+    /// Pass `has_marking_catalog = true` when the caller's definition catalog
+    /// declares markings beyond the store's model; when `false`, the check
+    /// still runs whenever the model declares markings or the store holds any
+    /// marking label (`Self::stores_markings`).
+    ///
+    /// # Errors
+    /// Unknown type or a SQL-engine error.
+    pub fn check_question_markings(
+        &self,
+        plan: &norn_checker::metric::compute::QuestionPlan,
+        world: &str,
+        historical: bool,
+        has_marking_catalog: bool,
+    ) -> Result<Option<MarkedQuestionPath>, CellError> {
+        let question = plan.question();
+        if question.dimensions.is_empty()
+            && question.filters.is_empty()
+            && plan.sums().iter().all(|sum| sum.filters.is_empty())
+        {
+            return Ok(None);
+        }
+        if !has_marking_catalog && !self.model_declares_markings() && !self.stores_markings()? {
+            return Ok(None);
+        }
+        let paths = question
+            .dimensions
+            .iter()
+            .enumerate()
+            .map(|(index, dimension)| (format!("/question/groupBy/{index}"), &dimension.path))
+            .chain(
+                question
+                    .filters
+                    .iter()
+                    .enumerate()
+                    .map(|(index, filter)| (format!("/question/filter/{index}"), &filter.path)),
+            )
+            .chain(plan.sums().iter().flat_map(|sum| {
+                sum.filters.iter().enumerate().map(move |(index, filter)| {
+                    (
+                        format!("/metric/{}/norn/defaultFilters/{index}", sum.name),
+                        &filter.path,
+                    )
+                })
+            }));
+        for (pointer, path) in paths {
+            let property = path.property.as_str();
+            let types: Vec<String> = if path.links.is_empty() {
+                vec![plan.grain().as_str().to_owned()]
+            } else {
+                self.model
+                    .object_types()
+                    .map(|definition| definition.name.as_str().to_owned())
+                    .filter(|name| {
+                        self.model
+                            .effective_property_types(name)
+                            .is_ok_and(|properties| properties.iter().any(|(id, _)| id == property))
+                    })
+                    .collect()
+            };
+            for object_type in types {
+                if historical && self.property_history_marked(world, &object_type, property)? {
+                    return Ok(Some(MarkedQuestionPath::History { pointer }));
+                }
+                let labels = self.property_marking_summary(world, &object_type, property)?;
+                if !labels.is_some_and(|labels| labels.is_empty()) {
+                    return Ok(Some(MarkedQuestionPath::Live { pointer }));
+                }
+            }
+        }
+        Ok(None)
     }
 }

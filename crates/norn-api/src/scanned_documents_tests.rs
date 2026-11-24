@@ -933,7 +933,9 @@ fn granted_later(
         .iter()
         .map(|version| version.version)
         .collect();
-    assert_eq!(versions, [history.versions[0].version], "{later:#?}");
+    // #1534: compact visible ordinal (`1`, not raw `2`) so the earlier
+    // unreadable version is not inferable from the numbering.
+    assert_eq!(versions, [1], "{later:#?}");
     let imported = history
         .versions
         .iter()

@@ -1486,3 +1486,301 @@ fn an_export_never_carries_a_row_committed_after_its_marking_decision() {
     assert_eq!(refused.status, 403, "{refused:?}");
     assert_eq!(calls.len(), 0, "the engine was asked: {calls:?}");
 }
+
+/// #1534 + S7 (Two-World Non-Interference): hidden-only writes — even more
+/// than `MAX_HISTORY_VERSIONS` (64) of them — never appear in history, never
+/// leak through raw version gaps, and never flip `truncated` to `true`.
+#[test]
+fn two_world_history_non_interference_hides_withheld_writes_and_counts() {
+    // Pure trailing hidden writes (> 64): World 1 has 70 email-only writes
+    // after v1; World 2 has v1 alone. Their full history JSON is bit-exact.
+    let hidden_burst: Vec<Vec<FactWriteRow>> = (1..=70)
+        .map(|step| vec![customer("c1", "Ada", &format!("hidden-{step}@example.com"))])
+        .collect();
+    let (world_one, _dir_one) = host_with(
+        "org_a",
+        &json!({"kind": "refuse"}),
+        Some(&SECRET),
+        &hidden_burst,
+    );
+    let (world_two, _dir_two) = host_with("org_a", &json!({"kind": "refuse"}), Some(&SECRET), &[]);
+
+    let hist_one = get_object_history(
+        &world_one,
+        &scope("org_a"),
+        Some("viewer"),
+        TYPE,
+        "c1",
+        &Mapping,
+    )
+    .unwrap();
+    let hist_two = get_object_history(
+        &world_two,
+        &scope("org_a"),
+        Some("viewer"),
+        TYPE,
+        "c1",
+        &Mapping,
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_string(&hist_one).unwrap(),
+        serde_json::to_string(&hist_two).unwrap(),
+        "70 hidden-only writes crossing the 64-version boundary must be bit-exact indistinguishable"
+    );
+    assert!(!hist_one.truncated);
+    assert_eq!(hist_one.versions.len(), 1);
+    assert_eq!(hist_one.versions[0].version, 1);
+
+    // Mid-history + trailing hidden writes: World A has v1 ("Ada"), 70
+    // email-only writes, a visible rename ("Ada B."), and 10 more email-only
+    // writes; World B has only v1 ("Ada") and v2 ("Ada B."). Compact ordinals
+    // (`[2, 1]`), projected values, writers, and `truncated: false` match
+    // exactly, and no hidden write's commit/time or email appears in World A.
+    let mut with_hidden = hidden_burst;
+    with_hidden.push(vec![customer("c1", "Ada B.", "hidden-70@example.com")]);
+    for step in 71..=80 {
+        with_hidden.push(vec![customer(
+            "c1",
+            "Ada B.",
+            &format!("hidden-{step}@example.com"),
+        )]);
+    }
+    let (host_a, _dir_a) = host_with(
+        "org_a",
+        &json!({"kind": "refuse"}),
+        Some(&SECRET),
+        &with_hidden,
+    );
+    let (host_b, _dir_b) = host_with(
+        "org_a",
+        &json!({"kind": "refuse"}),
+        Some(&SECRET),
+        &[vec![customer("c1", "Ada B.", "clean@example.com")]],
+    );
+    let hist_a = get_object_history(
+        &host_a,
+        &scope("org_a"),
+        Some("viewer"),
+        TYPE,
+        "c1",
+        &Mapping,
+    )
+    .unwrap();
+    let hist_b = get_object_history(
+        &host_b,
+        &scope("org_a"),
+        Some("viewer"),
+        TYPE,
+        "c1",
+        &Mapping,
+    )
+    .unwrap();
+    let shape = |history: &norn_api::object_review::NornObjectHistory| {
+        let versions: Vec<Json> = history
+            .versions
+            .iter()
+            .map(|entry| {
+                json!({
+                    "version": entry.version,
+                    "values": entry.values,
+                    "writer": entry.writer,
+                })
+            })
+            .collect();
+        json!({
+            "objectType": history.object_type,
+            "id": history.id,
+            "truncated": history.truncated,
+            "versions": versions,
+        })
+    };
+    assert_eq!(shape(&hist_a), shape(&hist_b));
+    assert_eq!(
+        hist_a
+            .versions
+            .iter()
+            .map(|entry| entry.version)
+            .collect::<Vec<_>>(),
+        vec![2, 1]
+    );
+    assert!(!hist_a.truncated);
+    let doc_a = serde_json::to_string(&hist_a).unwrap();
+    assert!(!doc_a.contains("hidden-"), "hidden email leaked: {doc_a}");
+}
+
+/// #1534 S6: consecutive readable versions with identical projected values are
+/// NOT collapsed when their marking projection metadata changes.
+#[test]
+fn history_keeps_equal_value_versions_when_marking_changes() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let object: norn_ir::ObjectTypeDef = serde_json::from_value(json!({
+        "name": TYPE,
+        "properties": [
+            {"id": "name", "type": {"kind": "text"}},
+            {"id": "email", "type": {"kind": "text"}, "markings": ["pii.contact"]}
+        ]
+    }))
+    .unwrap();
+    let model = norn_cell::Model::from_definitions(std::slice::from_ref(&object), &[]).unwrap();
+    let artifacts = json!([
+        {"irVersion":"0.1","artifactId":"shop.Customer.entity","kind":"entity","namespace":"shop","name":"Customer","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_a","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","objectType":object}},
+        {"irVersion":"0.1","artifactId":"shop.markings.entity","kind":"entity","namespace":"shop","name":"Markings","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_a","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","markings":[
+            {"id":"pii.contact","label":"Contact","severity":"high","category":"pii.contact","mask":{"kind":"redacted"}},
+            {"id":"pii.secondary","label":"Secondary","severity":"high","category":"pii.secondary","mask":{"kind":"redacted"}}
+        ]}}
+    ]);
+    let key = physical("org_a").key();
+    {
+        let mut store =
+            CellStore::open(&path, model.clone(), norn_cell::StoreOptions::default()).unwrap();
+        store
+            .install_definitions(
+                model.clone(),
+                norn_cell::InstalledDefinitionInput {
+                    canonical_set: serde_json::to_string(&artifacts).unwrap(),
+                    registry: vec![],
+                    receipt_sha256: "privacy-s6".into(),
+                    admission_receipt: None,
+                    readmission: None,
+                    diff: json!({}),
+                    installed_at: 1,
+                    layout: None,
+                },
+                Some(0),
+                &key,
+            )
+            .unwrap();
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: key.clone(),
+                logical_time: 2,
+                writes: vec![customer("c1", "Ada", "ada@example.com")],
+                ..CommitBatch::default()
+            })
+            .unwrap();
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: key,
+                logical_time: 3,
+                writes: vec![customer("c1", "Ada", "ada@example.com")],
+                events: vec![
+                    V::from_json(json!({
+                        "type": "observation.recorded",
+                        "mapped": [{
+                            "objectType": TYPE,
+                            "key": "c1",
+                            "propertyProvenance": {
+                                "email": {"markings": ["pii.contact", "pii.secondary"]}
+                            }
+                        }]
+                    }))
+                    .unwrap(),
+                ],
+                ..CommitBatch::default()
+            })
+            .unwrap();
+    }
+    let store = CellStore::open(&path, model, norn_cell::StoreOptions::default()).unwrap();
+    let host = DevHost::from_store(store, physical("org_a"), |command| command.payload.clone())
+        .unwrap()
+        .with_authorizer(Policy)
+        .with_pseudonym_secret(Some(&SECRET));
+    let history =
+        get_object_history(&host, &scope("org_a"), Some("viewer"), TYPE, "c1", &Mapping).unwrap();
+    assert_eq!(
+        history
+            .versions
+            .iter()
+            .map(|entry| entry.version)
+            .collect::<Vec<_>>(),
+        vec![2, 1],
+        "marking metadata change must not be over-merged: {history:#?}"
+    );
+}
+
+/// #1534 S6: consecutive readable versions with identical unmarked values are
+/// NOT collapsed when their visible writer changes (`Other` -> `Action`).
+#[test]
+fn history_keeps_equal_value_versions_when_visible_writer_changes() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let item: norn_ir::ObjectTypeDef = serde_json::from_value(json!({
+        "name": ITEM,
+        "properties": [{"id": "name", "type": {"kind": "text"}}]
+    }))
+    .unwrap();
+    let call: norn_ir::ObjectTypeDef = serde_json::from_value(json!({
+        "name": norn_kernel::ACTION_CALL_TYPE,
+        "properties": [
+            {"id": "actionId", "type": {"kind": "text"}},
+            {"id": "actor", "type": {"kind": "text"}}
+        ]
+    }))
+    .unwrap();
+    let model = norn_cell::Model::from_definitions(&[item, call], &[]).unwrap();
+    let key = physical("org_a").key();
+    {
+        let mut store =
+            CellStore::open(&path, model.clone(), norn_cell::StoreOptions::default()).unwrap();
+        let put_item = || FactWriteRow::Put {
+            object_type: ITEM.into(),
+            key: "i1".into(),
+            values: BTreeMap::from([("name".to_owned(), V::from("Lathe"))]),
+        };
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: key.clone(),
+                logical_time: 2,
+                writes: vec![put_item()],
+                ..CommitBatch::default()
+            })
+            .unwrap();
+        store
+            .commit(&CommitBatch {
+                world: MAIN_WORLD.into(),
+                scope: key,
+                logical_time: 3,
+                writes: vec![
+                    put_item(),
+                    FactWriteRow::Put {
+                        object_type: norn_kernel::ACTION_CALL_TYPE.into(),
+                        key: "call-1".into(),
+                        values: BTreeMap::from([
+                            ("actionId".to_owned(), V::from("shop.item.confirm")),
+                            ("actor".to_owned(), V::from("steward")),
+                        ]),
+                    },
+                ],
+                ..CommitBatch::default()
+            })
+            .unwrap();
+    }
+    let store = CellStore::open(&path, model, norn_cell::StoreOptions::default()).unwrap();
+    let host = DevHost::from_store(store, physical("org_a"), |command| command.payload.clone())
+        .unwrap()
+        .with_authorizer(Policy);
+    let history =
+        get_object_history(&host, &scope("org_a"), Some("viewer"), ITEM, "i1", &Mapping).unwrap();
+    assert_eq!(
+        history
+            .versions
+            .iter()
+            .map(|entry| entry.version)
+            .collect::<Vec<_>>(),
+        vec![2, 1],
+        "visible writer change must not be over-merged: {history:#?}"
+    );
+    assert_eq!(
+        serde_json::to_value(&history.versions[0].writer).unwrap()["kind"],
+        json!("action")
+    );
+    assert_eq!(
+        serde_json::to_value(&history.versions[1].writer).unwrap()["kind"],
+        json!("other")
+    );
+}
