@@ -504,6 +504,11 @@ fn mixed_kinds_and_implicit_string_or_number_coercion_are_rejected() {
             (date, "null"),
             (timestamp, "false"),
         ] {
+            // Norn (#1711): `==`/`!=` against `null` is decided by null equality; see
+            // `optional_temporal_null_equality_is_decided_before_the_kind_guard`.
+            if right == "null" && matches!(operator, "==" | "!=") {
+                continue;
+            }
             rejected(&format!("{left} {operator} {right}"));
         }
     }

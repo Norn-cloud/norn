@@ -1197,7 +1197,13 @@ fn rand_is_not_a_built_in() {
         );
     }
     let unary = isolate.run_unary("rand(1)").err();
-    assert!(format!("{unary:?}").contains("rand"), "{unary:?}");
+    assert!(
+        matches!(
+            unary,
+            Some(zen_expression::IsolateError::ParserError { .. })
+        ),
+        "{unary:?}"
+    );
 }
 
 /// Norn (#1711): a dotted assignment to an assigned record copies on write, so the
