@@ -1,5 +1,5 @@
 import { cellCall, defaultFetch, humanize, type CellResult, type Diagnostic, type Fetch } from "./cell-read.ts"
-import type { ActionSummary } from "./actions.ts"
+import type { ActionSummary } from "../../../../packages/norn-sdk/src/index.ts"
 import type { ParkedCall } from "./screen/call.ts"
 
 /**

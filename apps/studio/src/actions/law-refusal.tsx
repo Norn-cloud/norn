@@ -5,7 +5,7 @@ import { Chip, FactChip } from "@/components/chip"
 import { liveAccess } from "@/lib/live"
 import { Button } from "@/components/ui/button"
 import { transport, type Artifact } from "@/lib/transport"
-import type { RefusalReason } from "../lib/actions.ts"
+import type { RefusalReason } from "../../../../packages/norn-sdk/src/index.ts"
 import { compared, isList, roleOf } from "../lib/law-values.ts"
 
 /** The law the cell pinned, from the catalog: its own sentence, as declared. */

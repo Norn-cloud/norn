@@ -5,7 +5,7 @@ import type { ObjectCell } from "./object-cell.ts"
 
 /**
  * A stand-in for CELL-DO's action routes (`GET /v1/actions`, `POST /v1/actions/{id}`) that
- * implements the served contract (apps/studio/src/lib/actions.ts, norn_api::actions) over the
+ * implements the served contract (packages/norn-sdk/src/client.ts, norn_api::actions) over the
  * object stand-in's canon.Holding population: closed-schema validation, exact decimals only as
  * their text (VAL-EXACT-1, docs/spec/core/01-values-identity.md), idempotent replay, and commits that
  * move the read snapshot. Every refusal it serves on `POST` is the served route's own document and

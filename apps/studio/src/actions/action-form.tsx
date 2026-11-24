@@ -10,10 +10,8 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
-import {
-  ACTIONS_UNAVAILABLE, callAction, decimalExample, escapePointer, instantText, isDiagnosticPlaced, offsetSuffix, pickerDateTime, rebaseFields, resolveDateTime, selectedAlternative, sentMembers, inputPointer, itemNoun, newIdempotencyKey, receiptVerb, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
-  type ActionReceipt, type ActionSummary, type Diagnostic, type Draft, type FormField, type Section, type Spec,
-} from "../lib/actions.ts"
+import { ACTIONS_UNAVAILABLE, callAction, decimalExample, escapePointer, instantText, isDiagnosticPlaced, offsetSuffix, pickerDateTime, rebaseFields, resolveDateTime, selectedAlternative, sentMembers, inputPointer, itemNoun, receiptVerb, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft, type FormField, type Section, type Spec } from "../lib/actions.ts"
+import { createIntentKey, type ActionReceipt, type ActionSummary, type Diagnostic } from "../../../../packages/norn-sdk/src/index.ts"
 import { parkedOf, type ParkedCall, type Phase } from "../lib/screen/call.ts"
 import { listRequested, requestedOne, requestedPath, requestedWords, runnable, type RequestedDecision } from "../lib/decisions.ts"
 import { useLiveRefresh } from "../lib/live-reads.ts"
@@ -21,7 +19,7 @@ import { useCall, type Call } from "../lib/screen/use-call.ts"
 import { LawRefusal, RedactedLawRefusal, type InputField, type RefusalRequest } from "./law-refusal.tsx"
 import { RecordPicker, control, type Aria } from "./record-picker.tsx"
 
-const newKey = newIdempotencyKey
+const newKey = createIntentKey
 
 /** The form's input fields that name a record, by pointer → object type (the cell's `inputLinks`). */
 const Links = createContext<ReadonlyMap<string, string>>(new Map())

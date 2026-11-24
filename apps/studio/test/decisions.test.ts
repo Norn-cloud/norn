@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { badgeText, cellNow, countDecisions, decide, flowTitle, listDecisions, listRequested, needsConfirm, parkedFrom, remaining, requestedAction, requestedWords, runnable, stepTitle, urgent, type RequestedDecision } from "../src/lib/decisions.ts"
-import type { ActionSummary } from "../src/lib/actions.ts"
+import type { ActionSummary } from "../../../packages/norn-sdk/src/index.ts"
 import { getRun, newRunId, phaseOf, refreshEvery, runTitle, startRun, type RunStep } from "../src/lib/runs.ts"
 
 const ME = { user: { id: "u" }, organization: { id: "org_demo", name: "Demo", role: "member" }, environmentId: "analytics" }

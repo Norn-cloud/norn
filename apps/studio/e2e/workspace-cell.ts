@@ -1,5 +1,5 @@
 import type { Page, Route } from "@playwright/test"
-import type { ActionSummary } from "../src/lib/actions.ts"
+import type { ActionSummary } from "../../../packages/norn-sdk/src/index.ts"
 import type { Clause, Predicate } from "../src/lib/records-query.ts"
 
 /**

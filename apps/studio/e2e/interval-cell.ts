@@ -9,7 +9,7 @@ import { INTERVAL_ACTIONS, INTERVAL_ARTIFACTS, intervalRecords, type IntervalRec
  *
  * `pointed` serves input refusals with a diagnostic per field at `/input/<field>` (nested pointers
  * included), the refusal shape requested of the backend lane; the served route sends one
- * `action.invalid_input` without pointers today (src/lib/actions.ts).
+ * `action.invalid_input` without pointers today (packages/norn-sdk/src/client.ts).
  */
 
 interface Clause { property: string; op: string; value?: unknown }

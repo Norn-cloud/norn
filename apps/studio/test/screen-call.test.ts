@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { QueryClient, QueryObserver } from "@tanstack/react-query"
-import type { ActionReceipt, ActionSummary, CallResult, CatalogRead } from "../src/lib/actions.ts"
+import type { CallAnswer, CatalogRead } from "../src/lib/actions.ts"
+import type { ActionReceipt, ActionSummary } from "../../../packages/norn-sdk/src/index.ts"
 import { inFlight, init, offeredFor, parkedOf, recordCatalog, resume, undoOf, update, type Cmd, type Msg, type State } from "../src/lib/screen/call.ts"
 
 // Properties of the renderer core over seeded random message sequences (D79: properties, not cases).
@@ -28,7 +29,7 @@ function session(seed: number, length = 60): { readonly risky: boolean; readonly
   let state = init({ actionId: "learning.triage_episode", risky }, `k${keys++}`)
   const steps: Step[] = []
   for (let i = 0; i < length; i++) {
-    const result = (): CallResult => pick(r, [
+    const result = (): CallAnswer => pick(r, [
       () => ({ kind: "receipt", receipt: receipt(++seq, r() < 0.5 ? { actionId: "learning.retract_triage", input: { episodeId: `ep_${seq}` } } : undefined) }) as const,
       () => ({ kind: "refused", status: 422, code: "action.precondition_failed", message: "no", diagnostics: [] }) as const,
       () => ({ kind: "unavailable" }) as const,
