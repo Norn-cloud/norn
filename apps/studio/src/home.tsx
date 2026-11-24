@@ -70,7 +70,7 @@ export function HomePage() {
       {mode.isError
         ? <WorkspaceUnavailable error={mode.error} isFetching={mode.isFetching} onRetry={retry} />
         : mode.isPending
-          ? <LoadState status="pending" skeleton="cards" loadingLabel="Connecting to workspace" onRetry={retry}>{() => null}</LoadState>
+          ? <LoadState status="pending" bone="home-key-numbers" skeleton="cards" loadingLabel="Connecting to workspace" onRetry={retry}>{() => null}</LoadState>
           : empty
             ? <EmptyWorkspaceChecklist />
             : <>
@@ -153,6 +153,7 @@ function KeyNumbers() {
         error={metrics.error}
         isFetching={metrics.isFetching}
         onRetry={() => void metrics.refetch()}
+        bone="home-key-numbers"
         skeleton="cards"
         loadingLabel="Reading key numbers"
         isEmpty={() => picked.length === 0}

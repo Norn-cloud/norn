@@ -80,5 +80,6 @@ pub use convert::{value_from_canonical, value_from_runtime, value_to_canonical, 
 pub use error::{AdmissionError, DecisionError, StrictSite};
 pub use evaluate::{
     Evaluated, MatchedRow, TypedEvent, ValidatedSlice, evaluate, evaluate_explained,
-    evaluate_explained_with_fact_check, lower_fact_record,
+    evaluate_explained_in, evaluate_explained_with_fact_check,
+    evaluate_explained_with_fact_check_in, evaluate_in, lower_fact_record,
 };

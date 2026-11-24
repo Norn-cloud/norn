@@ -32,6 +32,18 @@ pub struct BoundAssignment {
 /// # Errors
 /// Refuses unsupported exact graphs, erased numeric types and dimension mismatches.
 pub fn bind(root: &RuleRoot) -> Result<Vec<BoundAssignment>, String> {
+    bind_in(root, crate::temporal::TzdbBundle::default_bundle())
+}
+
+/// [`bind`] against an explicit versioned
+/// [`TzdbBundle`](crate::temporal::TzdbBundle).
+///
+/// # Errors
+/// Refuses unsupported exact graphs, erased numeric types and dimension mismatches.
+pub fn bind_in(
+    root: &RuleRoot,
+    tzdb: &crate::temporal::TzdbBundle,
+) -> Result<Vec<BoundAssignment>, String> {
     if !crate::schema::contains_exact_annotation(&JsonValue::Object(root.input_schema.clone()))
         && !crate::schema::contains_exact_annotation(&JsonValue::Object(root.output_schema.clone()))
     {
@@ -114,13 +126,10 @@ pub fn bind(root: &RuleRoot) -> Result<Vec<BoundAssignment>, String> {
             .ok_or("exact assignment must name a declared output field")?
             .ty;
         let compiled = Expression::compile(expression.value.as_str()).map_err(|e| e.to_string())?;
-        let (checked, fuel) = crate::check::certify_expression(
-            &compiled,
-            &env,
-            expected,
-            &norn_ir::ResourceLimitProfile::norn_limits_v1(),
-        )
-        .map_err(|reason| format!("node {id} assignment {}: {reason}", expression.key))?;
+        let limits = norn_ir::ResourceLimitProfile::norn_limits_v1();
+        let (checked, fuel) =
+            crate::check::certify_expression_in(&compiled, &env, expected, &limits, tzdb)
+                .map_err(|reason| format!("node {id} assignment {}: {reason}", expression.key))?;
         result.push(BoundAssignment {
             fuel,
             node: id.clone(),
