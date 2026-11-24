@@ -7,7 +7,8 @@ import { Well } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
-import { dashboardField, type Dashboard, type Tile } from "@/lib/definitions"
+import { dashboardField, getDisplayedScope, scopeHeaders, type Dashboard, type StudioScope, type Tile } from "@/lib/definitions"
+import { usePinnedScope } from "@/lib/session"
 import { plainMetricLabel } from "@/lib/plain-words"
 import { useView } from "@/lib/view"
 import { SafePrompt, type GuardDocument } from "@/components/safe-prompt"
@@ -38,10 +39,20 @@ export interface Proposal {
 interface Listing { readonly proposals: readonly Proposal[]; readonly spentMicroUsd: number; readonly capMicroUsd: number; readonly model: string | null }
 
 const BASE = "/api/agent/dashboards"
-async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${BASE}${path}`, { ...init, headers: { accept: "application/json", ...init?.body ? { "content-type": "application/json" } : {} } })
-  const body = await response.json().catch(() => null) as (T & { error?: string }) | null
-  if (!response.ok || body === null) throw new Error(body?.error ?? (response.status === 401 ? "Sign in again." : response.status === 404 ? "The assistant isn't served here." : `The server did not answer (${response.status}).`))
+async function call<T>(path: string, init?: RequestInit, boundScope?: StudioScope | null): Promise<T> {
+  const method = (init?.method ?? "GET").toUpperCase()
+  const write = method !== "GET" && method !== "HEAD" && method !== "OPTIONS"
+  const scope = !write ? undefined : boundScope !== undefined ? boundScope : getDisplayedScope()
+  const response = await fetch(`${BASE}${path}`, {
+    ...init,
+    headers: {
+      accept: "application/json",
+      ...init?.body ? { "content-type": "application/json" } : {},
+      ...scopeHeaders(scope),
+    },
+  })
+  const body = await response.json().catch(() => null) as (T & { error?: string; message?: string }) | null
+  if (!response.ok || body === null) throw new Error(body?.error ?? body?.message ?? (response.status === 401 ? "Sign in again." : response.status === 404 ? "The assistant isn't served here." : `The server did not answer (${response.status}).`))
   return body
 }
 
@@ -131,15 +142,16 @@ function Verdict({ proposal, catalog }: { readonly proposal: Proposal; readonly 
 export function ProposalCard({ proposal, catalog, preview }: { readonly proposal: Proposal; readonly catalog?: QuestionCatalog; readonly preview: (dashboard: Dashboard) => React.ReactNode }) {
   const client = useQueryClient()
   const navigate = useNavigate()
+  const pinnedScope = usePinnedScope(proposal.id)
   const refresh = () => client.invalidateQueries({ queryKey: ["dashboard-proposals"] })
   const accept = useMutation({
-    mutationFn: () => call<Proposal>(`/${proposal.id}/accept`, { method: "POST", body: "{}" }),
+    mutationFn: () => call<Proposal>(`/${proposal.id}/accept`, { method: "POST", body: "{}" }, pinnedScope),
     onSuccess: (decided) => {
       void refresh(); void client.invalidateQueries({ queryKey: ["dashboards"] })
       if (decided.installed) void navigate({ to: "/dashboards/$id", params: { id: decided.installed.id } })
     },
   })
-  const decline = useMutation({ mutationFn: () => call<Proposal>(`/${proposal.id}/decline`, { method: "POST", body: "{}" }), onSuccess: () => void refresh() })
+  const decline = useMutation({ mutationFn: () => call<Proposal>(`/${proposal.id}/decline`, { method: "POST", body: "{}" }, pinnedScope), onSuccess: () => void refresh() })
   const state = STATES[proposal.state]
   return (
     <article className="space-y-3 rounded-xl border bg-card p-4 shadow-elevation" data-proposal={proposal.id} data-state={proposal.state}>
@@ -181,9 +193,10 @@ export function ProposalCard({ proposal, catalog, preview }: { readonly proposal
 export function DashboardAssistant({ catalog, dashboardId, preview }: { readonly catalog: QuestionCatalog; readonly dashboardId?: string; readonly preview: (dashboard: Dashboard) => React.ReactNode }) {
   const client = useQueryClient()
   const [request, setRequest] = useState("")
+  const pinnedScope = usePinnedScope(dashboardId ?? "new")
   const listing = useQuery({ queryKey: ["dashboard-proposals"], queryFn: () => call<Listing>(""), retry: false })
   const ask = useMutation({
-    mutationFn: (text: string) => call<Proposal>("", { method: "POST", body: JSON.stringify({ request: text, ...dashboardId ? { dashboardId } : {} }) }),
+    mutationFn: (text: string) => call<Proposal>("", { method: "POST", body: JSON.stringify({ request: text, ...dashboardId ? { dashboardId } : {} }) }, pinnedScope),
     onSuccess: () => { setRequest(""); void client.invalidateQueries({ queryKey: ["dashboard-proposals"] }) },
   })
   // New dashboards here; on a board, only the changes proposed to it.

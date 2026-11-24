@@ -1,13 +1,15 @@
 import { afterEach, expect, test } from "bun:test"
+import { setDisplayedScope } from "../src/lib/definitions.ts"
 import { columnId, define, kindOf, loadDataset, upload, uploadFailure } from "../src/lib/uploads.ts"
 
 const original = globalThis.fetch
-afterEach(() => { globalThis.fetch = original })
+afterEach(() => { globalThis.fetch = original; setDisplayedScope(undefined) })
 
 const ME = { user: { id: "u", name: "U", email: "" }, organization: { id: "org", name: "Org", role: "admin" }, environmentId: "dev" }
 
 /** A cell answering /api/me and one route; every host call is recorded with its body. */
 function cell(status: number, body: unknown) {
+  setDisplayedScope({ orgId: "org", environmentId: "dev" })
   const calls: { url: string; body: unknown }[] = []
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input)
@@ -64,4 +66,53 @@ test("a storage the browser cannot reach fails the upload with that reason, befo
   const unreachable = async () => { throw new TypeError("Failed to fetch") }
   await expect(upload(new File(["a,b\n1,2\n"], "x.csv", { type: "text/csv" }), unreachable)).rejects.toThrow("could not reach the storage")
   expect(calls.map(({ url }) => new URL(url, "http://studio").pathname)).toEqual(["/api/host/v1/uploads:begin"])
+})
+
+test("upload -> define -> loadDataset keeps the pinned scope across every step even when displayed scope changes", async () => {
+  const seen: { url: string; headers: Headers }[] = []
+  let meCalls = 0
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input)
+    if (url === "/api/me") { meCalls += 1; return Response.json(ME) }
+    seen.push({ url, headers: new Headers(init?.headers) })
+    if (url.includes(":begin")) return Response.json({ uploadId: "up_pinned", putUrl: "https://storage.example/up_pinned", putHeaders: { "content-type": "text/csv" }, expiresAt: "2026-11-13T00:00:00Z" })
+    if (url.includes(":complete")) return Response.json({ uri: "s3://x", sha256: "ab".repeat(32), size: 8, rows: 1, columns: [] })
+    if (url.includes(":define")) return Response.json({ objectType: "upload.Sale", definitionsVersion: 1 })
+    return Response.json({ objectType: "upload.Sale", rows: 1, rejected: 0, reasons: {}, bytes: 8, millis: 10 })
+  }) as typeof fetch
+  try {
+    const pinned = { orgId: "org_a", environmentId: "env_a" }
+    setDisplayedScope(pinned)
+    const { uploadId, scope } = await upload(
+      new File(["a,b\n1,2\n"], "x.csv", { type: "text/csv" }),
+      async () => {
+        // Simulate a workspace switch mid-upload.
+        setDisplayedScope({ orgId: "org_b", environmentId: "env_b" })
+        return new Response(null, { status: 200 })
+      },
+      pinned,
+    )
+    expect(scope).toEqual(pinned)
+    await define(uploadId, "Sale", ["a"], [{ id: "a", type: "text", include: true, measure: false }], "ab".repeat(32), scope)
+    await loadDataset(uploadId, "upload.Sale", scope)
+    expect(meCalls).toBe(0)
+    expect(seen).toHaveLength(4)
+    for (const call of seen) {
+      expect(call.url).toContain("orgId=org_a&environmentId=env_a")
+      expect(call.headers.get("x-norn-expected-org")).toBe("org_a")
+      expect(call.headers.get("x-norn-expected-env")).toBe("env_a")
+    }
+  } finally {
+    setDisplayedScope(undefined)
+  }
+})
+
+test("browser upload writes fail closed without reading /api/me when no displayed or bound scope is loaded", async () => {
+  let calls = 0
+  globalThis.fetch = (async () => { calls += 1; return Response.json(ME) }) as unknown as typeof fetch
+  setDisplayedScope(undefined)
+  await expect(define("up_1", "Sale", ["a"], [{ id: "a", type: "text", include: true, measure: false }], "ab".repeat(32))).rejects.toThrow("Workspace scope must be loaded before submitting.")
+  await expect(loadDataset("up_1", "upload.Sale")).rejects.toThrow("Workspace scope must be loaded before submitting.")
+  await expect(upload(new File(["a,b\n1,2\n"], "x.csv", { type: "text/csv" }))).rejects.toThrow("Workspace scope must be loaded before submitting.")
+  expect(calls).toBe(0)
 })

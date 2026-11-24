@@ -137,10 +137,10 @@ export function useLearningCapabilities(): LearningCapabilities & { readonly ref
   const capabilities = useMemo(
     () => learningCapabilitiesOf(mode.data, {
       isPending: scope.isPending || mode.isPending,
-      isError: mode.isError,
+      isError: scope.isError || mode.isError,
       ...(expectedScope === undefined ? {} : { expectedScope }),
     }),
-    [mode.data, mode.isPending, mode.isError, scope.isPending, expectedScope],
+    [mode.data, mode.isPending, mode.isError, scope.isPending, scope.isError, expectedScope],
   )
   return { ...capabilities, refetch: () => { void mode.refetch() } }
 }

@@ -1,3 +1,4 @@
+import type { StudioScope } from "./definitions.ts"
 import { cellRead } from "./live-transport.ts"
 import { plainMetricLabel } from "./plain-words.ts"
 import type { ObjectProfile } from "./profile.ts"
@@ -77,8 +78,12 @@ export function metricHeading(metric: Pick<MetricSummary, "additivity" | "label"
 }
 
 /** The metrics this reader may ask about; a cell without the route says so. */
-export const readMetrics = (context?: { readonly signal?: AbortSignal }) =>
-  cellRead<{ readonly metrics: readonly MetricSummary[] }>("/v1/questions:metrics", "Questions are", context?.signal ? { signal: context.signal } : {})
+export const readMetrics = (context?: { readonly signal?: AbortSignal; readonly scope?: StudioScope | null } | StudioScope | null) => {
+  const isScope = context === null || (context !== undefined && "orgId" in context && "environmentId" in context)
+  const signal = isScope ? undefined : context?.signal
+  const boundScope = isScope ? context : context?.scope
+  return cellRead<{ readonly metrics: readonly MetricSummary[] }>("/v1/questions:metrics", "Questions are", signal ? { signal } : {}, undefined, boundScope)
+}
 
 export interface Window { readonly start: string; readonly end: string; readonly grain: "day" | "week" }
 
