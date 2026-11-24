@@ -4,7 +4,7 @@
   "irVersion": "0.1",
   "kind": "action",
   "lifecycle": "active",
-  "name": "Record immutable payment",
+  "name": "Record immutable payment evidence",
   "namespace": "accounting",
   "payload": {
     "access": {
@@ -34,7 +34,7 @@
         "targetType": "accounting.Invoice"
       }
     ],
-    "description": "Record a create-only immutable monetary payment settling an open invoice claim without overpayment or currency mismatch.",
+    "description": "Record create-only immutable payment-event evidence linked to an open invoice claim. Captures payment evidence only and does not mutate Invoice.amount_paid/status or MonetaryAccount.quantity (atomic multi-object settlement requires engine #1586).",
     "effectProgram": {
       "entityArtifactId": "accounting.Payment.entity",
       "entityArtifactVersion": "0.1.0",
@@ -191,7 +191,7 @@
         "objectType": "accounting.Invoice"
       }
     ],
-    "title": "Record immutable payment",
+    "title": "Record immutable payment evidence",
     "writes": [
       {
         "change": "created",

@@ -1,8 +1,11 @@
 /**
- * Governed Accounting Domain Pack — Receivables/Payables Claims & Settlement Events.
+ * Governed Accounting Domain Pack — Receivables/Payables Claims & Payment Evidence Events.
  *
- * Jurisdiction-agnostic invoicing and create-only payment settlement built on
- * `core.Claim` and `core.EconomicEvent`.
+ * Jurisdiction-agnostic invoicing (`core.Claim`) and create-only immutable payment
+ * evidence capture (`core.EconomicEvent`). `accounting.payment.record` records
+ * immutable payment evidence linked to an open invoice without mutating
+ * `Invoice.amount_paid`/`status` or `MonetaryAccount.quantity`; atomic multi-object
+ * settlement balance updates belong to the multi-object settlement layer (#1586).
  */
 import { Schema } from "effect"
 import { Norn } from "@norn/authoring"
@@ -293,9 +296,9 @@ const RecordPaymentContext = Schema.Struct({
 
 export const RecordPayment = Norn.action({
   id: "accounting.payment.record",
-  title: "Record immutable payment",
+  title: "Record immutable payment evidence",
   version: "0.1.0",
-  description: "Record a create-only immutable monetary payment settling an open invoice claim without overpayment or currency mismatch.",
+  description: "Record create-only immutable payment-event evidence linked to an open invoice claim. Captures payment evidence only and does not mutate Invoice.amount_paid/status or MonetaryAccount.quantity (atomic multi-object settlement requires engine #1586).",
   scopeRequired: ["orgId", "environmentId"],
   idempotent: true,
   ledgered: true,

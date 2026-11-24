@@ -432,8 +432,12 @@ const PostJournalSlice = Schema.Struct({
       total_credit: Norn.decimal(6),
     }),
     period: Schema.Struct({
+      id: Schema.String,
       status: FiscalPeriodStatus,
     }),
+    entry_period: Schema.Array(Schema.Struct({
+      id: Schema.String,
+    })),
   }),
 })
 
@@ -441,7 +445,7 @@ export const PostJournalEntry = Norn.action({
   id: "accounting.journal.post",
   title: "Post journal entry",
   version: "0.1.0",
-  description: "Post a balanced draft journal entry into an open fiscal period.",
+  description: "Post a balanced draft journal entry into its linked open fiscal period.",
   scopeRequired: ["orgId", "environmentId"],
   idempotent: true,
   ledgered: true,
@@ -457,6 +461,7 @@ export const PostJournalEntry = Norn.action({
   slice: [
     { name: "entry", type: JournalEntry, key: { property: { from: "input", property: "entryId" } } },
     { name: "period", type: FiscalPeriod, key: { property: { from: "input", property: "periodId" } } },
+    { name: "entry_period", type: FiscalPeriod, key: { link: { from: "entry", link: "period" } } },
   ],
   preconditions: [
     Norn.expression(
@@ -465,6 +470,11 @@ export const PostJournalEntry = Norn.action({
         && ctx.slice.entry.status === "draft"
         && ctx.slice.entry.total_debit === ctx.slice.entry.total_credit
         && ctx.slice.entry.total_debit > 0,
+      { root: "context" },
+    ),
+    Norn.expression(
+      PostJournalSlice,
+      (ctx) => ctx.slice.entry_period.map((p) => p.id).includes(ctx.slice.period.id),
       { root: "context" },
     ),
   ],

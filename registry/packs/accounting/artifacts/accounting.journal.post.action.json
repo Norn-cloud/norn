@@ -12,7 +12,7 @@
       "version": "0.1.0"
     },
     "actionId": "accounting.journal.post",
-    "description": "Post a balanced draft journal entry into an open fiscal period.",
+    "description": "Post a balanced draft journal entry into its linked open fiscal period.",
     "effectProgram": {
       "entityArtifactId": "accounting.JournalEntry.entity",
       "entityArtifactVersion": "0.1.0",
@@ -57,7 +57,8 @@
       "type": "object"
     },
     "preconditions": [
-      "(((slice.period.status == 'open') and (slice.entry.status == 'draft')) and (slice.entry.total_debit == slice.entry.total_credit)) and (slice.entry.total_debit > 0)"
+      "(((slice.period.status == 'open') and (slice.entry.status == 'draft')) and (slice.entry.total_debit == slice.entry.total_credit)) and (slice.entry.total_debit > 0)",
+      "slice.period.id in map(slice.entry_period as p, p.id)"
     ],
     "scopeRequired": [
       "orgId",
@@ -82,6 +83,16 @@
           }
         },
         "name": "period",
+        "objectType": "accounting.FiscalPeriod"
+      },
+      {
+        "key": {
+          "link": {
+            "from": "entry",
+            "link": "period"
+          }
+        },
+        "name": "entry_period",
         "objectType": "accounting.FiscalPeriod"
       }
     ],

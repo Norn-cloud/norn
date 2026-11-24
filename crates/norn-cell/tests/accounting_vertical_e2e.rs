@@ -774,6 +774,18 @@ fn seed_base_ledger(cell: &mut Cell) {
             }),
         ),
         put_fact(
+            "accounting.FiscalPeriod",
+            "fp_2026_12",
+            &json!({
+                "id": "fp_2026_12",
+                "period_code": "2026-12",
+                "starts_at": "2026-12-01T00:00:00Z",
+                "ends_at": "2027-01-01T00:00:00Z",
+                "timezone": "UTC",
+                "status": "open"
+            }),
+        ),
+        put_fact(
             "accounting.MonetaryAccount",
             "ma_operating_usd",
             &json!({
@@ -833,6 +845,13 @@ fn seed_base_ledger(cell: &mut Cell) {
         add_link(
             "accounting.FiscalPeriod",
             "fp_2026_11",
+            "book",
+            "accounting.Book",
+            "book_main",
+        ),
+        add_link(
+            "accounting.FiscalPeriod",
+            "fp_2026_12",
             "book",
             "accounting.Book",
             "book_main",
@@ -1473,6 +1492,25 @@ fn accounting_ledger_laws_periods_and_separation_of_duties_enforce_in_real_cell(
         "draft"
     );
 
+    // Mismatched-period bypass refusal: je_second_balanced is linked to closed fp_2026_11,
+    // so supplying a different open period (fp_2026_12) must be refused by the link slice check.
+    let post_mismatched_period = fixture
+        .invoke(
+            &mut cell,
+            "accounting.journal.post",
+            &json!({"entryId": "je_second_balanced", "periodId": "fp_2026_12"}),
+            "principal:controller",
+            "je-post-mismatched-open-period-refused",
+        )
+        .expect_err(
+            "posting an entry linked to a closed period with another open periodId must be refused",
+        );
+    assert_eq!(post_mismatched_period.code(), "action.precondition_failed");
+    assert_eq!(
+        status_of(&cell, "accounting.JournalEntry", "je_second_balanced"),
+        "draft"
+    );
+
     let lock_denied = fixture
         .invoke(
             &mut cell,
@@ -1758,8 +1796,12 @@ fn accounting_invoice_conservation_and_create_only_payment_enforce_in_real_cell(
         "voided"
     );
 
-    // 3. Payment settlement guards: zero quantity, non-monetary unit, draft/voided invoice,
-    //    currency mismatch, and fractional overpayment are all refused.
+    // 3. Create-only payment-evidence capture (`accounting.payment.record`) guards:
+    //    records immutable EconomicEvent evidence linked to an open invoice without
+    //    mutating Invoice.amount_paid/status or MonetaryAccount.quantity (atomic
+    //    multi-object settlement requires engine #1586). Zero quantity, non-monetary
+    //    unit, draft/voided invoice, currency mismatch, and single-event overpayment
+    //    above current remaining invoice balance are refused.
     for (payment_id, invoice_id, quantity, unit, currency, idem_key) in [
         ("pay_zero", "inv_valid", "0", None, Some("USD"), "pay-zero"),
         (
