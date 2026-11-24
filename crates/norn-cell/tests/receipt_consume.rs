@@ -23,7 +23,7 @@ use norn_ir::function::{
     CacheOrigin, Digest, ExecutionProvenance, FunctionOutcome, FunctionReceipt, ResourceUse,
     RunRef, SuccessOutcome,
 };
-use norn_ir::{ActionRoot, ObjectTypeDef, RuntimeValue};
+use norn_ir::{ActionRoot, ObjectTypeDef, PropertyId, RuntimeValue, TransitionId};
 use norn_kernel::cell_host::{JsonObject, JsonValue};
 use norn_kernel::receipt_binding::{
     AcceptedReceiptStore, ReceiptBinding, ReceiptBindingError, ReceiptReference, ReceiptResolution,
@@ -260,22 +260,34 @@ fn open(path: &Path, issued: BTreeMap<String, Issued>) -> DurableReceiptCell {
 }
 
 /// A run waiting on its performed `ask` command (its result delivery pending).
+/// It is created in its initial state and fires `ask` in the same commit, so
+/// the recorded transition admits its first, non-initial state (GRAPH-STATE-1).
 fn waiting_run(cell: &mut DurableReceiptCell, run: &str) {
+    let key = FactKey::new(RUN, run);
+    let run_id = ("run_id".to_owned(), JsonValue::String(run.to_owned()));
+    let status = |state: &str| ("status".to_owned(), JsonValue::String(state.to_owned()));
     cell.cell
         .commit(CellCommit {
             writes: vec![FactWrite {
-                key: FactKey::new(RUN, run),
+                key: key.clone(),
                 expected: FactVersion::ABSENT,
                 mutation: FactMutation::Put {
-                    values: JsonObject::from([
-                        ("run_id".to_owned(), JsonValue::String(run.to_owned())),
-                        (
-                            "status".to_owned(),
-                            JsonValue::String("awaiting_perform_ask".to_owned()),
-                        ),
-                    ]),
+                    values: JsonObject::from([run_id.clone(), status("awaiting_perform_ask")]),
                 },
             }],
+            events: vec![
+                FactEvent::Created {
+                    key: key.clone(),
+                    values: JsonObject::from([run_id, status("started")]),
+                },
+                FactEvent::Transitioned {
+                    key,
+                    lifecycle: PropertyId("status".into()),
+                    transition: TransitionId("ask".into()),
+                    from: "started".into(),
+                    to: "awaiting_perform_ask".into(),
+                },
+            ],
             effects: vec![Effect::Perform(Command {
                 id: CommandId(format!("{run}/ask")),
                 generation: Generation(1),
