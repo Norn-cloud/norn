@@ -629,13 +629,7 @@ pub fn handle_all<E: SqlEngine>(
         );
     }
     respond_at(
-        route(
-            Some(host),
-            questions,
-            kinds,
-            actor.as_deref(),
-            request,
-        ),
+        route(Some(host), questions, kinds, actor.as_deref(), request),
         request.now,
     )
 }
@@ -660,7 +654,10 @@ pub fn outside_with<E: SqlEngine>(
     kinds: &DefinitionKinds,
     request: &Request<'_>,
 ) -> Response {
-    respond_at(route::<E>(None, questions, kinds, None, request), request.now)
+    respond_at(
+        route::<E>(None, questions, kinds, None, request),
+        request.now,
+    )
 }
 
 pub(crate) fn respond_at(result: Result<String, Refusal>, now: u64) -> Response {
@@ -1754,13 +1751,7 @@ pub fn analytics<E: SqlEngine>(
         let _request = RequestScope::new(principals);
         let actor = principals.resolve(request.authorization, request.now);
         return Some(respond_at(
-            engine_records(
-                host,
-                actor.as_deref(),
-                transport,
-                kind,
-                request.query,
-            ),
+            engine_records(host, actor.as_deref(), transport, kind, request.query),
             request.now,
         ));
     }
@@ -2171,14 +2162,7 @@ pub fn access_outside<E: SqlEngine>(
     request: &Request<'_>,
 ) -> Response {
     respond_at(
-        access_document::<E>(
-            None,
-            principals,
-            &CallerSlot::default(),
-            &[],
-            None,
-            request,
-        ),
+        access_document::<E>(None, principals, &CallerSlot::default(), &[], None, request),
         request.now,
     )
 }

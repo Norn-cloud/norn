@@ -201,6 +201,8 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
     else if ((event.key === "Enter" || event.key === " ") && rows[active]) { event.preventDefault(); setOpened(rows[active] ?? null) }
   }
 
+  const gridWait = useBoundedWait(result.isPending)
+
   if (data?.kind === "no-cell") return <Shell><EmptyState icon={Rows3} title="No data cell">{NO_DATA_CELL}</EmptyState></Shell>
   if (data?.kind === "none") return <Shell><EmptyState icon={Rows3}>Records for this object type are not served by this cell.</EmptyState></Shell>
 
@@ -211,7 +213,6 @@ export function RecordsGrid({ concept, read = readRecords, initial, onQuery, tim
   const off = canQuery ? undefined : SERVER_QUERY_UNAVAILABLE
   const pill = "h-8 rounded-lg px-2.5 text-sm"
 
-  const gridWait = useBoundedWait(result.isPending)
   const facets = page?.origin === "live" && <FacetsRail objectType={name} fields={fields} filter={filter} onFilter={(next) => { setDraft(fromPredicate(next)); changeQuery({ filter: next }) }} />
   return (
     <Shell>

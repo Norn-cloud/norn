@@ -214,7 +214,7 @@ test("validate: a disclosed decision law refusal renders the 3-step Request / Ch
   const result = panel.getByRole("region", { name: "The result" })
   await expect(result).toContainText("Decided at")
   await expect(result.locator('time[datetime="2027-01-15T08:00:00Z"]')).toBeVisible()
-  await expect(result).toContainText("Nothing was written.")
+  await expect(result).toContainText("Nothing was decided.")
   await shoot(page, "refused-disclosed")
 })
 

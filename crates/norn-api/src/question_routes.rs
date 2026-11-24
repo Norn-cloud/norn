@@ -1013,13 +1013,10 @@ pub struct NornMetricSummary {
     /// The aggregated expression (a property), for a simple metric.
     #[schema(required = true, nullable = true)]
     pub expression: Option<String>,
-    /// The time property its buckets use, for a simple metric: a property of
-    /// the measured object, or of the object [`Self::time_links`] reach.
+    /// The time property its buckets use, for a simple metric.
     #[schema(required = true, nullable = true)]
     pub time_property: Option<String>,
-    /// The to-one links from the measured object to the object holding
-    /// [`Self::time_property`] (METRIC-GRAIN-LINK-1: a posting's time is its
-    /// event's); empty when the time is the object's own.
+    /// To-one links to the object holding [`Self::time_property`] (METRIC-GRAIN-LINK-1); empty when local.
     pub time_links: Vec<String>,
     /// The numerator metric, for a ratio.
     #[schema(required = true, nullable = true)]
@@ -1027,15 +1024,9 @@ pub struct NornMetricSummary {
     /// The denominator metric, for a ratio.
     #[schema(required = true, nullable = true)]
     pub denominator: Option<String>,
-    /// Properties a question over this metric must group by or fix with an
-    /// `eq` filter (`eq null` included): its unit sources, such as `unit` and
-    /// `currency`. Empty when its values share one unit.
+    /// Unit-source properties a question over this metric must partition or fix (`eq`).
     pub unit_partition: Vec<String>,
-    /// How its values aggregate: `additive` sums over every axis, time
-    /// included; `semi_additive` sums across the others and takes its
-    /// `aggregate` (`first`, `last`, `min` or `max`) along `over` (`time`), as a
-    /// stock's end-of-period value does; `non_additive` is recomputed for each
-    /// bucket.
+    /// Declared additivity (`additive`, `semi_additive` with `over`/`aggregate`, or `non_additive`).
     #[schema(schema_with = metric_additivity_schema)]
     pub additivity: norn_ir::metric::MetricAdditivity,
 }

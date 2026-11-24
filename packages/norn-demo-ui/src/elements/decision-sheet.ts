@@ -303,7 +303,7 @@ function problems(body: unknown): readonly Problem[] {
 const UNPROVEN_DETAIL = "diagnostic detail is unavailable under the caller's disclosure authority"
 const GENERIC_LAW_MESSAGE = new Set(["a declared precondition does not hold", "the decider law is not satisfied"])
 
-function refusalPanelMarkup(
+export function refusalPanelMarkup(
   body: unknown,
   context: {
     readonly decision: SheetDecision

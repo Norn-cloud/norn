@@ -1,4 +1,4 @@
-import { AlertCircle, Clock, CloudOff, RefreshCw, type LucideIcon } from "lucide-react"
+import { AlertCircle, Clock, CloudOff, Inbox, RefreshCw, type LucideIcon } from "lucide-react"
 import { useEffect, useState, type ReactNode } from "react"
 import { CopyId } from "@/components/copy-id"
 import { EmptyState } from "@/components/panel"
@@ -36,7 +36,7 @@ export function formatLastReachable(atMs: number | null, now = Date.now()): stri
  * Bounded wait state for any pending surface: transitions from normal skeleton → slow notice →
  * timed-out state with Retry so no loading surface ever spins indefinitely.
  */
-export function useBoundedWait(pending: boolean, slowAfterMs = SLOW_WAIT_MS, timeoutMs = BOUNDED_WAIT_MS): "normal" | "slow" | "timed-out" {
+export function useBoundedWait(pending: boolean, slowAfterMs = SLOW_WAIT_MS, timeoutMs = BOUNDED_WAIT_MS, attempt = 0): "normal" | "slow" | "timed-out" {
   const [stage, setStage] = useState<"normal" | "slow" | "timed-out">("normal")
   useEffect(() => {
     if (!pending) { setStage("normal"); return }
@@ -44,7 +44,7 @@ export function useBoundedWait(pending: boolean, slowAfterMs = SLOW_WAIT_MS, tim
     const slowTimer = setTimeout(() => setStage((current) => current === "normal" ? "slow" : current), slowAfterMs)
     const timeoutTimer = setTimeout(() => setStage("timed-out"), Math.max(timeoutMs, slowAfterMs))
     return () => { clearTimeout(slowTimer); clearTimeout(timeoutTimer) }
-  }, [pending, slowAfterMs, timeoutMs])
+  }, [pending, slowAfterMs, timeoutMs, attempt])
   return pending ? stage : "normal"
 }
 
@@ -245,7 +245,9 @@ export function LoadState<T>({
   notServed,
   children,
 }: LoadStateProps<T>) {
-  const wait = useBoundedWait(status === "pending", slowAfterMs, timeoutMs)
+  const [retryAttempt, setRetryAttempt] = useState(0)
+  const wait = useBoundedWait(status === "pending", slowAfterMs, timeoutMs, retryAttempt)
+  const handleRetry = onRetry ? () => { setRetryAttempt((n) => n + 1); onRetry() } : undefined
 
   if (status === "pending") {
     if (wait === "timed-out") {
@@ -268,8 +270,8 @@ export function LoadState<T>({
                 </p>
               )}
             </div>
-            {onRetry && (
-              <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+            {handleRetry && (
+              <Button type="button" variant="outline" size="sm" onClick={handleRetry}>
                 <RefreshCw />Retry
               </Button>
             )}
@@ -286,7 +288,7 @@ export function LoadState<T>({
           <div role="status" className="flex flex-wrap items-center gap-2 px-1 text-meta text-muted-foreground">
             <Clock aria-hidden className="size-3.5 shrink-0" />
             <span>Taking longer than usual to reach the workspace…</span>
-            {onRetry && <Button type="button" variant="ghost" size="xs" onClick={onRetry}><RefreshCw />Retry</Button>}
+            {handleRetry && <Button type="button" variant="ghost" size="xs" onClick={handleRetry}><RefreshCw />Retry</Button>}
           </div>
         )}
       </div>
@@ -297,7 +299,7 @@ export function LoadState<T>({
     if (error instanceof NotServed) {
       return (
         <div className="rounded-xl border" data-load-state="not-served">
-          <EmptyState icon={notServed?.icon} title={notServed?.title ?? "Not served yet"}>
+          <EmptyState icon={notServed?.icon ?? AlertCircle} title={notServed?.title ?? "Not served yet"}>
             {notServed?.description ?? error.message}
           </EmptyState>
         </div>
@@ -313,7 +315,7 @@ export function LoadState<T>({
   if (isEmpty?.(data) && empty) {
     return (
       <div className="rounded-xl border" data-load-state="empty">
-        <EmptyState icon={empty.icon} title={empty.title} next={empty.next}>
+        <EmptyState icon={empty.icon ?? Inbox} title={empty.title} next={empty.next}>
           {empty.description}
         </EmptyState>
       </div>

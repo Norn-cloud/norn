@@ -107,12 +107,13 @@ export function catalogOf(value: unknown): QuestionCatalog | undefined {
 const UNAVAILABLE = "The question catalogue is not available on this deployment."
 
 export async function readCatalog(): Promise<QuestionCatalog> {
-  const response = await fetchWithTimeout("/api/questions/catalog", { headers: { accept: "application/json" } })
+  const response = await fetchWithTimeout((input, init) => fetch(input, init), "/api/questions/catalog", { headers: { accept: "application/json" } })
   if (!response.ok) {
     if (response.status === 401) throw new Error("Sign in to build questions.")
     if (response.status >= 500) {
-      const detail = parseUnavailableDetail(await response.text())
-      throw new CellUnavailable(response.status, detail.message, detail)
+      const body = await response.json().catch(() => null)
+      const message = typeof (body as { message?: unknown } | null)?.message === "string" ? (body as { message: string }).message : undefined
+      throw new CellUnavailable(response.status, message, parseUnavailableDetail(body))
     }
     throw new Error(UNAVAILABLE)
   }

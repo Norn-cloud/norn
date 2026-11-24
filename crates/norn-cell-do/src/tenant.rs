@@ -909,19 +909,17 @@ impl<E: SqlEngine> Tenant<E> {
         caller: &crate::policy::Caller,
     ) -> Response {
         const MAX_CHECKS: usize = 32;
+        let respond = |res| server::respond_at(res, request.now);
         if request.method != "POST" {
-            return server::respond_at(
-                Err(Refusal::new(
-                    StatusCode::METHOD_NOT_ALLOWED,
-                    "route.method_not_allowed",
-                    "the route does not accept this method",
-                    "permission checks are asked with POST",
-                )),
-                request.now,
-            );
+            return respond(Err(Refusal::new(
+                StatusCode::METHOD_NOT_ALLOWED,
+                "route.method_not_allowed",
+                "the route does not accept this method",
+                "permission checks are asked with POST",
+            )));
         }
         if !self.names_this_scope(request.query) {
-            return server::respond_at(Err(norn_api::authz::read_denied()), request.now);
+            return respond(Err(norn_api::authz::read_denied()));
         }
         let checks = match serde_json::from_str::<serde_json::Value>(request.body) {
             Ok(body) => body
@@ -931,20 +929,14 @@ impl<E: SqlEngine> Tenant<E> {
             Err(_) => None,
         };
         let Some(checks) = checks.filter(|checks| checks.len() <= MAX_CHECKS) else {
-            return server::respond_at(
-                Err(Refusal::invalid(format!(
-                    "a permission check is {{\"checks\": [{{\"action\", \"resource\": {{\"type\", \"id\"}}}}]}}, at most {MAX_CHECKS}"
-                ))),
-                request.now,
-            );
+            return respond(Err(Refusal::invalid(format!(
+                "a permission check is {{\"checks\": [{{\"action\", \"resource\": {{\"type\", \"id\"}}}}]}}, at most {MAX_CHECKS}"
+            ))));
         };
         let mut decisions = Vec::with_capacity(checks.len());
         for check in &checks {
-            let text = |value: Option<&serde_json::Value>| {
-                value
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned()
+            let text = |v: Option<&serde_json::Value>| {
+                v.and_then(|x| x.as_str()).unwrap_or_default().to_owned()
             };
             let action = text(check.get("action"));
             let kind = text(check.get("resource").and_then(|r| r.get("type")));
@@ -967,7 +959,7 @@ impl<E: SqlEngine> Tenant<E> {
                                 .and_then(serde_json::Value::as_str)
                                 .map(str::to_owned)
                         }),
-                    Err(refusal) => return server::respond_at(Err(refusal), request.now),
+                    Err(refusal) => return respond(Err(refusal)),
                 }
             } else {
                 None
@@ -982,10 +974,7 @@ impl<E: SqlEngine> Tenant<E> {
                 "rule": rule,
             }));
         }
-        server::respond_at(
-            Ok(serde_json::json!({ "decisions": decisions }).to_string()),
-            request.now,
-        )
+        respond(Ok(serde_json::json!({ "decisions": decisions }).to_string()))
     }
 
     /// The request's verified principal, when the declared table grants it

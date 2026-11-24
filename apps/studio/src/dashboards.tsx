@@ -285,7 +285,7 @@ export function DashboardEditorPage() {
       {scope.isSuccess && scope.data === null && <p role="status" className="text-muted-foreground">{NO_DATA_CELL}</p>}
       {scope.isError && <WorkspaceUnavailable error={scope.error} isFetching={scope.isFetching} onRetry={() => void scope.refetch()} />}
       {(scope.isPending || (cellAvailable && (catalog.isPending || (!fresh && stored.isPending)))) && (
-        <LoadState status="pending" skeleton="detail" loadingLabel="Reading dashboard" onRetry={() => { void scope.refetch(); void catalog.refetch(); if (!fresh) void stored.refetch() }}>{() => null}</LoadState>
+        <LoadState status="pending" skeleton="detail" loadingLabel="Reading the dashboard" onRetry={() => { void scope.refetch(); void catalog.refetch(); if (!fresh) void stored.refetch() }}>{() => null}</LoadState>
       )}
       {catalog.isError && <LoadState status="error" error={catalog.error} isFetching={catalog.isFetching} onRetry={() => void catalog.refetch()}>{() => null}</LoadState>}
       {stored.isError && <LoadState status="error" error={stored.error} isFetching={stored.isFetching} onRetry={() => void stored.refetch()}>{() => null}</LoadState>}
@@ -368,7 +368,7 @@ export function DashboardBoardPage() {
       {duplicate.isError && <p role="alert" className="text-destructive">Not duplicated. {failure(duplicate.error)}</p>}
       {remove.isError && <p role="alert" className="text-destructive">Not deleted. {failure(remove.error)}</p>}
       {(scope.isPending || (cellAvailable && (catalog.isPending || stored.isPending))) && (
-        <LoadState status="pending" skeleton="detail" loadingLabel="Reading dashboard" onRetry={() => { void scope.refetch(); void catalog.refetch(); void stored.refetch() }}>{() => null}</LoadState>
+        <LoadState status="pending" skeleton="detail" loadingLabel="Reading the dashboard" onRetry={() => { void scope.refetch(); void catalog.refetch(); void stored.refetch() }}>{() => null}</LoadState>
       )}
       {catalog.isError && <LoadState status="error" error={catalog.error} isFetching={catalog.isFetching} onRetry={() => void catalog.refetch()}>{() => null}</LoadState>}
       {stored.isError && <LoadState status="error" error={stored.error} isFetching={stored.isFetching} onRetry={() => void stored.refetch()}>{() => null}</LoadState>}

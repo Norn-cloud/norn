@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query"
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router"
 import { Command, CommandEmpty, CommandGroup, CommandGroupLabel, CommandInput, CommandItem, CommandItemIcon, CommandList } from "@ui-sdk/react/command"
 import { Dialog, DialogBackdrop, DialogContent, DialogTitle, DialogTrigger } from "@ui-sdk/react/dialog"
@@ -581,12 +582,17 @@ function CommandMenu({ sections, navigation, onPerspective }: { readonly section
  *   when it was last reachable, and an explicit Retry button.
  */
 function ConnectionBanner() {
+  const queryClient = useQueryClient()
   const mode = useMode()
   const { locale } = useLocale()
   const { view } = useView()
   if (mode.data !== undefined || (mode.failureCount === 0 && !mode.isError)) return null
   const retrying = !mode.isError && isRetryableModeError(mode.failureReason)
-  const retry = () => { refreshMode(); void mode.refetch() }
+  const retry = () => {
+    refreshMode()
+    void mode.refetch()
+    void queryClient.invalidateQueries({ predicate: (query) => query.state.status === "error" })
+  }
   if (retrying) {
     return (
       <div role="status" data-connection="retrying" className="flex flex-wrap items-center gap-2 border-b border-tone-amber/30 bg-tone-amber/10 px-4 py-2 text-sm text-tone-amber md:px-8">

@@ -152,7 +152,7 @@ export function resetCellReachable(): void {
 }
 
 /** Default per-request deadline (ms) so a hung host never spins a surface forever. */
-export const CELL_FETCH_TIMEOUT_MS = 15_000
+export const CELL_FETCH_TIMEOUT_MS = 12_000
 
 /** Bound one fetch call with a timeout, preserving any caller-supplied AbortSignal. */
 export async function fetchWithTimeout(fetcher: Fetch, input: string, init?: RequestInit, timeoutMs = CELL_FETCH_TIMEOUT_MS): Promise<Response> {

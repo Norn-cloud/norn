@@ -88,7 +88,7 @@ test("fetchWithTimeout aborts stalled requests cleanly as a timed-out CellUnavai
   })
   let caught: unknown
   try {
-    await fetchWithTimeout("/api/host/v1/definitions", {}, stalled, 25)
+    await fetchWithTimeout(stalled, "/api/host/v1/definitions", {}, 25)
   } catch (error) {
     caught = error
   }

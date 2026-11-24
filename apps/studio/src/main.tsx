@@ -3,6 +3,8 @@ import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-r
 import { Blend, ChartLine, Columns2, Database, Fingerprint, House, Inbox, LayoutDashboard, Network, Plug, Rows3, ShieldCheck, Workflow } from "lucide-react"
 import { StrictMode } from "react"
 import { Button } from "@/components/ui/button"
+import { CellUnavailable } from "@/lib/definitions"
+import { CellRefusal, NotServed } from "@/lib/live-transport"
 import { endSession, useAccount } from "@/lib/session"
 import { LoginPage } from "./login.tsx"
 import { oauthPage } from "./oauth.tsx"
@@ -70,7 +72,18 @@ async function signOut() {
   }
 }
 
-const queryClient = new QueryClient()
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: (failureCount, error) => {
+        if (error instanceof NotServed) return false
+        if (error instanceof CellUnavailable && error.retryable === false) return false
+        if (error instanceof CellRefusal && error.retryable === false) return false
+        return failureCount < 3
+      },
+    },
+  },
+})
 const root = createRootRoute({ component: Root })
 const router = createRouter({ routeTree: routeTree(root) })
 

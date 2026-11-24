@@ -77,7 +77,8 @@ export function metricHeading(metric: Pick<MetricSummary, "additivity" | "label"
 }
 
 /** The metrics this reader may ask about; a cell without the route says so. */
-export const readMetrics = () => cellRead<{ readonly metrics: readonly MetricSummary[] }>("/v1/questions:metrics", "Questions are")
+export const readMetrics = (context?: { readonly signal?: AbortSignal }) =>
+  cellRead<{ readonly metrics: readonly MetricSummary[] }>("/v1/questions:metrics", "Questions are", context?.signal ? { signal: context.signal } : {})
 
 export interface Window { readonly start: string; readonly end: string; readonly grain: "day" | "week" }
 

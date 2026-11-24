@@ -24,8 +24,7 @@ use std::collections::BTreeMap;
 
 use http::StatusCode;
 use norn_cell::decision_ledger::{
-    DecisionRequest, DecisionResolved, DecisionRow, MAX_EXPIRES_IN_MS, MAX_TEXT_CHARS,
-    OptionEffect, Resolution,
+    DecisionRequest, DecisionResolved, DecisionRow, MAX_EXPIRES_IN_MS, OptionEffect, Resolution,
 };
 use norn_cell::engine::SqlEngine;
 use norn_cell::flow_run::RunStarter;
@@ -38,14 +37,14 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 
 use crate::approvals::{CallState, HeldCall};
-use crate::authz::{
-    AccessRequest, Operation, ReadCapability, ReadRequest, RefusalDetailRequest,
-};
+use crate::authz::{AccessRequest, Operation, ReadCapability, ReadRequest};
+pub use crate::decision_refusal::DECISION_REFUSAL_ACTION;
+use crate::decision_refusal::{check_answer, disclose_decision_refusal};
 use crate::flow_definitions::DECISION_FUNCTION;
 use crate::flow_driver::{AsStarter, Delivery, result_turn};
 use crate::host::{ActionCell, DevHost};
 use crate::question_routes::{QuestionRuntime, handle_key, world_values};
-use crate::refusal::{Refusal, RefusalDiagnostic, RefusalSpan, codes};
+use crate::refusal::Refusal;
 use crate::run_routes::{FlowView, InstalledFlow, ReadAccess, installed_flow};
 use crate::scope::ScopeQuery;
 
@@ -58,11 +57,6 @@ pub const MAX_DECISION_PAGE: u32 = 200;
 
 /// The longest idempotency key, in bytes.
 pub const MAX_IDEMPOTENCY_KEY_BYTES: usize = 128;
-
-/// Governed action id passed to the refusal-detail PDP when a decision refusal
-/// has no callable governed action of its own (a binding choice or a decider
-/// law).
-pub const DECISION_REFUSAL_ACTION: &str = "norn.decision.decide";
 
 /// Stable `decision.*` refusal codes.
 pub mod decision_codes {
@@ -464,25 +458,6 @@ pub fn not_found() -> Refusal {
         "no such decision",
         "no open decision with this id is waiting on the caller",
     )
-}
-
-fn at(code: &str, pointer: &str, message: &str) -> Refusal {
-    let mut refusal = Refusal::new(
-        StatusCode::UNPROCESSABLE_ENTITY,
-        code,
-        message,
-        "correct the field and decide again",
-    );
-    refusal.diagnostics = vec![RefusalDiagnostic {
-        code: code.to_owned(),
-        severity: "error".to_owned(),
-        message: message.to_owned(),
-        span: Some(RefusalSpan {
-            pointer: pointer.to_owned(),
-        }),
-        law: None,
-    }];
-    refusal
 }
 
 /// The decision id of a parked command at a generation: opaque, and bound to
@@ -1474,120 +1449,6 @@ pub struct DecideCall<'a> {
     pub body: &'a DecideRequest,
     /// The host's clock.
     pub now: LogicalTime,
-}
-
-/// Whether `actor` holds explicit refusal-detail disclosure authority for this
-/// decision (DIAG-DISCLOSE-1): asks the host authorizer for the chosen
-/// option's governed action (or the parked call's action), falling back to
-/// [`DECISION_REFUSAL_ACTION`] when the choice names no callable action.
-fn disclose_decision_refusal<E: SqlEngine>(
-    host: &DevHost<E>,
-    actor: &str,
-    decision: &OpenDecision,
-    body: &DecideRequest,
-) -> bool {
-    let check = |action_id: &str| {
-        host.authorizer
-            .disclose_refusal_detail(&RefusalDetailRequest {
-                scope: host.scope(),
-                actor,
-                action_id,
-            })
-    };
-    let option_action = decision
-        .request
-        .options
-        .iter()
-        .find(|option| option.id == body.choice)
-        .and_then(|option| option.effect.action.as_deref());
-    let held_action = decision
-        .call
-        .as_ref()
-        .map(|held| held.call.action.as_str());
-    option_action.is_some_and(check)
-        || held_action.is_some_and(check)
-        || check(DECISION_REFUSAL_ACTION)
-}
-
-/// Pin `law_id` to its installed law artifact when present in the cell's model.
-fn law_pin<E: SqlEngine>(cell: &ActionCell<E>, law_id: &str) -> Option<norn_ir::DataQualityRuleRef> {
-    cell.store()
-        .model()
-        .law_artifacts()
-        .iter()
-        .find_map(|artifact| {
-            let norn_ir::ArtifactPayload::Law(law) = &artifact.payload else {
-                return None;
-            };
-            (law.id == law_id).then(|| norn_ir::DataQualityRuleRef::Law {
-                artifact_id: artifact.artifact_id.clone(),
-                law_id: law.id.clone(),
-                version: artifact.version.clone(),
-            })
-        })
-}
-
-/// The answer's own refusals, in the contract's order: an unevaluable
-/// decider law, an unknown choice, a long note, a bad idempotency key.
-fn check_answer<E: SqlEngine>(
-    cell: &ActionCell<E>,
-    decision: &OpenDecision,
-    body: &DecideRequest,
-    revealable: bool,
-) -> Result<(), Refusal> {
-    if let Some(law_id) = &decision.request.decider.law {
-        // No decider law is evaluated on this host yet: fail closed, carrying
-        // the law reason under the caller's disclosure authority (DIAG-DISCLOSE-1).
-        let mut refusal = Refusal::new(
-            StatusCode::FORBIDDEN,
-            decision_codes::LAW_NOT_SATISFIED,
-            "the decider law is not satisfied",
-            "this decision names a law the cell cannot evaluate for the caller",
-        );
-        refusal.reason = Some(Box::new(norn_ir::RefusalReason {
-            law: law_id.clone(),
-            subject: format!("decision/{}", decision.id),
-            values: BTreeMap::from([(
-                "choice".to_owned(),
-                RuntimeValue::String(body.choice.clone()),
-            )]),
-            pin: law_pin(cell, law_id),
-        }));
-        return Err(refusal.project_detail(revealable));
-    }
-    if !decision
-        .request
-        .options
-        .iter()
-        .any(|option| option.id == body.choice)
-    {
-        return Err(at(
-            decision_codes::UNKNOWN_CHOICE,
-            "/choice",
-            "choice names no option of this decision",
-        ));
-    }
-    if body
-        .note
-        .as_deref()
-        .is_some_and(|note| note.chars().count() > MAX_TEXT_CHARS)
-    {
-        return Err(at(
-            decision_codes::NOTE_TOO_LONG,
-            "/note",
-            "the note is longer than 500 characters",
-        ));
-    }
-    if body.idempotency_key.trim().is_empty()
-        || body.idempotency_key.len() > MAX_IDEMPOTENCY_KEY_BYTES
-    {
-        return Err(at(
-            codes::INVALID_REQUEST,
-            "/idempotencyKey",
-            "idempotencyKey must be 1-128 bytes",
-        ));
-    }
-    Ok(())
 }
 
 /// Record `actor`'s answer and move the run: the flow's result turn is

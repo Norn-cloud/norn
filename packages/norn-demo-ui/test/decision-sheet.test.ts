@@ -8,7 +8,7 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 import { parseFragment } from "parse5"
 
-import { type SheetDecision, type SheetDocument, decideRequest, directCall, needsConfirm, sheetMarkup } from "../src/elements/decision-sheet.ts"
+import { type SheetDecision, type SheetDocument, decideRequest, directCall, needsConfirm, refusalPanelMarkup, sheetMarkup } from "../src/elements/decision-sheet.ts"
 import { type Evaluate, type Snapshot, enabled, init, update, walks, wasmEvaluate } from "../src/machine/index.ts"
 import { sheetPayloads } from "./support/sheet-payloads.ts"
 
@@ -69,6 +69,43 @@ describe("sheetMarkup", () => {
     expect(JSON.parse(String(request.init.body))).toEqual({ choice: "approve", idempotencyKey: "k1" })
     expect(needsConfirm(decision, "approve")).toBe(true)
     expect(needsConfirm(decision, "reject")).toBe(false)
+  })
+  test("refusalPanelMarkup renders disclosed Request/Check/Result with Decided at and redacted with Received at", () => {
+    const receivedAt = new Date("2027-01-15T09:30:00Z")
+    const laws = {
+      "canon.refund.limit.law": { id: "canon.refund.limit", name: "Refund authority limit", rationale: "Refunds over 1,000 EUR need finance approval." },
+    }
+    const disclosed = refusalPanelMarkup(
+      {
+        code: "decision.law_not_satisfied",
+        message: "the decider law is not satisfied",
+        decidedAt: "2027-01-15T08:00:00Z",
+        reason: {
+          law: "canon.refund.limit",
+          pin: { artifactId: "canon.refund.limit.law", version: "sha256:1" },
+          subject: "decision/dec_1",
+          values: { choice: "approve", amount: "1240.00" },
+        },
+      },
+      { decision, choiceLabel: "Approve", note: "Customer asked", locale: "en", technical: false, caller: "user:sara", laws, receivedAt },
+    )
+    expect(disclosed.variant).toBe("disclosed")
+    expect(disclosed.html).toContain("Refunds over 1,000 EUR need finance approval.")
+    expect(disclosed.html).toContain('data-verdict="fails"')
+    expect(disclosed.html).toContain('data-checked="amount"')
+    expect(disclosed.html).toContain("Decided at")
+    expect(disclosed.html).toContain('datetime="2027-01-15T08:00:00Z"')
+    expect(disclosed.html).toContain("user:sara")
+
+    const redacted = refusalPanelMarkup(
+      { code: "decision.law_not_satisfied", message: "the decider law is not satisfied", reason: null },
+      { decision, choiceLabel: "Approve", note: "", locale: "en", technical: false, caller: "user:member", laws, receivedAt },
+    )
+    expect(redacted.variant).toBe("redacted")
+    expect(redacted.html).toContain("Received at")
+    expect(redacted.html).not.toContain("Decided at")
+    expect(redacted.html).not.toContain("Refund authority limit")
+    expect(redacted.html).not.toContain("data-checked=")
   })
 })
 

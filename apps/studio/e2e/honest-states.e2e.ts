@@ -31,7 +31,7 @@ test.beforeEach(async ({ page }) => { await page.setViewportSize({ width: 1280, 
 
 test("slow response: shows skeleton, then slow notice, then bounded timeout with Retry that recovers", async ({ page }) => {
   await session(page)
-  let release: (() => void) | null = null
+  let release: () => void = () => {}
   let attempt = 0
   await page.route("**/api/host/v1/**", async (route) => {
     const path = new URL(route.request().url()).pathname
@@ -47,31 +47,35 @@ test("slow response: shows skeleton, then slow notice, then bounded timeout with
     return route.fulfill({ status: 404, json: { code: "route.not_found", message: "not served" } })
   })
 
-  await page.clock.install()
-  await page.goto("/metrics")
+  try {
+    await page.clock.install()
+    await page.goto("/metrics")
 
-  // Skeleton renders immediately while request is pending.
-  await expect(page.locator('[data-load-state="loading"]')).toBeVisible()
-  await expect(page.getByRole("status", { name: "Reading metrics" })).toBeVisible()
+    // Skeleton renders immediately while request is pending.
+    await expect(page.locator('[data-load-state="loading"]')).toBeVisible()
+    await expect(page.getByRole("status", { name: "Reading metrics" })).toBeVisible()
 
-  // Past SLOW_WAIT_MS (4 s): quiet slow hint appears beneath the skeleton.
-  await page.clock.runFor(4_500)
-  await expect(page.locator('[data-load-state="slow"]')).toBeVisible()
-  await expect(page.getByText("Taking longer than usual to reach the workspace…")).toBeVisible()
+    // Past SLOW_WAIT_MS (4 s): quiet slow hint appears beneath the skeleton.
+    await page.clock.runFor(4_500)
+    await expect(page.locator('[data-load-state="slow"]')).toBeVisible()
+    await expect(page.getByText("Taking longer than usual to reach the workspace…")).toBeVisible()
 
-  // Past BOUNDED_WAIT_MS (12 s): transitions out of skeleton into an honest timed-out state with Retry.
-  await page.clock.runFor(8_000)
-  const timedOut = page.locator('[data-load-state="timed-out"]')
-  await expect(timedOut).toBeVisible()
-  await expect(timedOut).toContainText("Taking too long to respond")
-  await expect(timedOut).toContainText("Last reachable")
-  await shoot(page, "slow-timeout")
+    // Past BOUNDED_WAIT_MS / CELL_FETCH_TIMEOUT_MS (12 s): stalled fetch aborts cleanly into an honest timed-out state with Retry.
+    await page.clock.runFor(8_000)
+    const timedOut = page.locator("[data-workspace-unavailable]")
+    await expect(timedOut).toBeVisible()
+    await expect(timedOut).toContainText("The workspace took too long to respond")
+    await expect(timedOut).toContainText("Last reachable")
+    await shoot(page, "slow-timeout")
 
-  // Retry unblocks the stalled request and resolves to the honest empty state.
-  release?.()
-  await timedOut.getByRole("button", { name: "Retry" }).click()
-  await expect(page.locator('[data-load-state="empty"]')).toBeVisible()
-  await expect(page.getByText("No metrics yet")).toBeVisible()
+    // Resume the clock and click Retry: sends a fresh request that resolves immediately into the honest empty state.
+    await page.clock.resume()
+    await timedOut.getByRole("button", { name: "Retry" }).click()
+    await expect(page.locator('[data-load-state="empty"]')).toBeVisible()
+    await expect(page.getByText("No metrics yet")).toBeVisible()
+  } finally {
+    release()
+  }
 })
 
 test("server error: shows plain reason and server explanation (never hidden), tucks raw worker noise under Technical, and Retry recovers", async ({ page }) => {
@@ -101,7 +105,7 @@ test("server error: shows plain reason and server explanation (never hidden), tu
   })
 
   await page.goto("/metrics")
-  const alert = page.locator("[data-workspace-unavailable]")
+  const alert = page.locator('[data-load-state="error"]')
   await expect(alert).toBeVisible()
   // Plain Business headline + server explanation visible + incident id present.
   await expect(alert).toContainText("The workspace hit an internal problem and couldn't finish this request.")
@@ -161,9 +165,10 @@ test("unreachable cell: 503 cell.unopenable (retryable: false) never shows Retry
   await page.getByRole("link", { name: "Sources" }).click()
   await page.reload()
 
-  // Must NEVER render a persistent "Retrying…" banner; shows honest Workspace unavailable immediately.
+  // Must NEVER render a persistent "Retrying…" banner; shows honest Workspace unavailable immediately on both banner and page.
   const banner = page.locator('[data-connection="unavailable"]')
   await expect(banner).toBeVisible()
+  await expect(page.locator("[data-workspace-unavailable]")).toBeVisible()
   await expect(banner).toContainText("Workspace unavailable")
   await expect(banner).toContainText("Storage migration is paused for this environment.")
   await expect(banner).toContainText("inc-cell-909")
@@ -179,10 +184,11 @@ test("unreachable cell: 503 cell.unopenable (retryable: false) never shows Retry
   expect(definitionHits).toBe(hitsAfterFail)
   expect(hitsAfterFail).toBeGreaterThan(hitsBefore)
 
-  // Clicking Retry once the cell recovers restores the live workspace.
+  // Clicking Retry once the cell recovers restores both the live workspace and the Sources page.
   unopenable = false
   await banner.getByRole("button", { name: "Retry" }).click()
   await expect(banner).toHaveCount(0)
+  await expect(page.locator("[data-workspace-unavailable]")).toHaveCount(0)
 })
 
 test("empty states: Metrics, Dashboards and Inbox each show an honest empty state with a next step", async ({ page }) => {

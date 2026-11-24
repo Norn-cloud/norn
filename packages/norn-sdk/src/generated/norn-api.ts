@@ -12006,6 +12006,8 @@ export interface components {
             additivity: components["schemas"]["NornIrMetricAdditivity"];
             /** @description The denominator metric, for a ratio. */
             denominator: string | null;
+            /** @description Plain-word display name for business views, when declared or derived. */
+            display?: string;
             /** @description The aggregated expression (a property), for a simple metric. */
             expression: string | null;
             /** @description `simple`, `ratio`, `cumulative`, `derived` or `conversion`. */
@@ -12018,22 +12020,11 @@ export interface components {
             numerator: string | null;
             /** @description The concept it aggregates, for a simple metric. */
             objectType: string | null;
-            /**
-             * @description The to-one links from the measured object to the object holding
-             *     [`Self::time_property`] (METRIC-GRAIN-LINK-1: a posting's time is its
-             *     event's); empty when the time is the object's own.
-             */
+            /** @description To-one links to the object holding [`Self::time_property`] (METRIC-GRAIN-LINK-1); empty when local. */
             timeLinks: string[];
-            /**
-             * @description The time property its buckets use, for a simple metric: a property of
-             *     the measured object, or of the object [`Self::time_links`] reach.
-             */
+            /** @description The time property its buckets use, for a simple metric. */
             timeProperty: string | null;
-            /**
-             * @description Properties a question over this metric must group by or fix with an
-             *     `eq` filter (`eq null` included): its unit sources, such as `unit` and
-             *     `currency`. Empty when its values share one unit.
-             */
+            /** @description Unit-source properties a question over this metric must partition or fix (`eq`). */
             unitPartition: string[];
         };
         /** @description One original numeric member; enrichment does not enter this list. */
@@ -13109,6 +13100,11 @@ export interface components {
         };
         /** @description A refused request. */
         Refusal: ({
+            /**
+             * @description The host clock instant (RFC 3339 UTC) at which the cell decided this
+             *     refusal, when the boundary supplied a clock.
+             */
+            decidedAt?: string;
             /**
              * @description INCIDENT-1: the id under which the host logged this internal
              *     refusal's cause. The caller quotes it; the cause is never served.
