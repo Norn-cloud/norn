@@ -130,9 +130,14 @@ def _validate_headers(profile: SheetProfile, headers: list[str]) -> None:
     missing = sorted(_REQUIRED_COLUMNS[profile] - header_set)
     if missing:
         raise SheetSchemaError(f"Missing required {profile} columns: {', '.join(missing)}")
-    unknown = sorted(header_set - _ALLOWED_COLUMNS[profile])
-    if unknown:
-        raise SheetSchemaError(f"Unknown columns refused for {profile} sheet: {', '.join(unknown)}")
+    unknown_indices = [
+        idx for idx, header in enumerate(headers) if header not in _ALLOWED_COLUMNS[profile]
+    ]
+    if unknown_indices:
+        raise SheetSchemaError(
+            f"Unknown columns refused for {profile} sheet "
+            f"(count={len(unknown_indices)}, indices={unknown_indices})"
+        )
     if profile == "attendance":
         has_in = bool(header_set & {"clock_in", "clock_in_eet", "clock_in_local"})
         has_out = bool(header_set & {"clock_out", "clock_out_eet", "clock_out_local"})

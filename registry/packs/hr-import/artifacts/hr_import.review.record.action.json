@@ -1,0 +1,122 @@
+{
+  "artifactId": "hr_import.review.record.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record authenticated import review decision",
+  "namespace": "hr_import",
+  "payload": {
+    "access": {
+      "artifactId": "hr_import.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "hr_import.review.record",
+    "createLinks": [
+      {
+        "link": "candidate",
+        "targetIdField": "candidateId",
+        "targetType": "hr_import.ExtractedCandidate"
+      }
+    ],
+    "description": "Create an immutable ReviewDecision linked to an ExtractedCandidate under an authenticated human reviewer whose principal identity matches reviewer_user_id.",
+    "effectProgram": {
+      "entityArtifactId": "hr_import.ReviewDecision.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "id",
+      "objectKind": "hr_import.ReviewDecision",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "candidateId": {
+          "type": "string"
+        },
+        "decided_at": {
+          "type": "string"
+        },
+        "decision": {
+          "enum": [
+            "approve_promotion",
+            "reject_candidate",
+            "supersede_candidate",
+            "resolve_finding"
+          ],
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "receipt_digest": {
+          "type": "string"
+        },
+        "reviewer_user_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "candidateId",
+        "decision",
+        "reviewer_user_id",
+        "receipt_digest",
+        "reason",
+        "decided_at"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(((input.reviewer_user_id != '') and (input.receipt_digest != '')) and (input.reason != '')) and ((slice.candidate.status == 'staged') or (slice.candidate.status == 'quarantined'))"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "candidateId"
+          }
+        },
+        "name": "candidate",
+        "objectType": "hr_import.ExtractedCandidate"
+      }
+    ],
+    "title": "Record authenticated import review decision",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "hr_import.ReviewDecision"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/hr-import/artifacts/hr_import.review.record.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

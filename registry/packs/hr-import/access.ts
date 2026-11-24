@@ -11,9 +11,11 @@ import {
   ExtractedCandidate,
   PromoteCandidate,
   QuarantineCandidate,
+  RecordReviewDecision,
   RejectCandidate,
   RejectFinding,
   ResolveFinding,
+  ReviewDecision,
   SupersedeCandidate,
   SupersedeFinding,
 } from "./hr_import.ts"
@@ -58,6 +60,26 @@ export const HrImportAccess = Norn.access({
         {
           role: {
             anyOf: ["hr_manager", "hr_admin", "owner"],
+          },
+        },
+      ],
+    },
+    {
+      ruleId: "record_review_decision",
+      actions: [RecordReviewDecision],
+      resourceType: ReviewDecision,
+      scope: { dimensions: ["org", "environment"] },
+      allOf: [
+        {
+          role: {
+            anyOf: ["hr_reviewer", "hr_admin"],
+          },
+        },
+        {
+          resource: {
+            name: "reviewer_user_id",
+            op: "eq",
+            value: { principalAttribute: "id" },
           },
         },
       ],

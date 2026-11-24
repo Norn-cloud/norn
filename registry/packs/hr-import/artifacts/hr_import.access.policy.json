@@ -86,6 +86,38 @@
             "environment"
           ]
         }
+      },
+      {
+        "actions": [
+          "hr_import.review.record"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "hr_reviewer",
+                "hr_admin"
+              ]
+            }
+          },
+          {
+            "resource": {
+              "name": "reviewer_user_id",
+              "op": "eq",
+              "value": {
+                "principalAttribute": "id"
+              }
+            }
+          }
+        ],
+        "resourceType": "hr_import.ReviewDecision",
+        "ruleId": "record_review_decision",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
       }
     ]
   },

@@ -283,7 +283,7 @@ def extract_from_ocr(
     candidates: list[ExtractedCandidateProposal] = []
     evidence_records: list[FieldEvidenceRecord] = []
     findings: list[DataQualityFindingRecord] = []
-    seen_keys: dict[str, tuple[int, str, str | None, str]] = {}
+    seen_keys: dict[str, tuple[int, str, str | None, str, bool]] = {}
     deduplicated_count = 0
 
     for rec_idx, record in enumerate(raw_response.records, start=1):
@@ -608,13 +608,22 @@ def extract_from_ocr(
                 proposal[f_obs.field_name] = val
 
         source_record_key = record.record_key or f"schedule_photo/record:{rec_idx}"
-        payload_digest = sha256_prefixed(proposal)
+        payload_digest = sha256_prefixed(
+            {
+                "effective_on": effective_on,
+                "proposal": proposal,
+                "target_kind": target_kind,
+            }
+        )
         key_digest = sha256_prefixed(source_record_key)[7:19]
         agg_confidence = min(confidences) if confidences else 0
+        incoming_clean = not rec_findings
 
         if source_record_key in seen_keys:
-            prev_idx, prev_cand_id, prev_ev_id, prev_digest = seen_keys[source_record_key]
-            if prev_digest == payload_digest:
+            prev_idx, prev_cand_id, prev_ev_id, prev_digest, prev_clean = seen_keys[
+                source_record_key
+            ]
+            if prev_clean and incoming_clean and prev_digest == payload_digest:
                 deduplicated_count += 1
                 continue
             # Core 07 FEED-CONFLICT: mark BOTH prior and incoming candidates disputed,
@@ -625,6 +634,13 @@ def extract_from_ocr(
                     dispute_state="disputed",
                     status="quarantined",
                 )
+            seen_keys[source_record_key] = (
+                prev_idx,
+                prev_cand_id,
+                prev_ev_id,
+                prev_digest,
+                False,
+            )
             conflict_id = f"{cand_id}_conflict"
             rebound_evidence = [
                 replace(ev, candidate_id=conflict_id, subject_key=conflict_id)
@@ -695,6 +711,7 @@ def extract_from_ocr(
             cand_id,
             rec_evidence[0].id if rec_evidence else None,
             payload_digest,
+            incoming_clean,
         )
         is_quarantined = bool(rec_findings)
         dispute_state: DisputeState = (

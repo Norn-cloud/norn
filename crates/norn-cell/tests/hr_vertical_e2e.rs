@@ -94,6 +94,7 @@ mod suite {
         "principal:employee_other",
         "principal:branch_manager",
         "principal:hr_manager",
+        "principal:hr_reviewer",
         "principal:payroll_officer",
         "principal:hr_admin",
         "principal:hr_solver_worker",
@@ -104,6 +105,7 @@ mod suite {
         "requester_user_id",
         "prepared_by_user_id",
         "applicant_user_id",
+        "reviewer_user_id",
     ];
 
     fn repo_root() -> PathBuf {
@@ -210,6 +212,7 @@ mod suite {
             "principal:employee" | "principal:employee_other" => vec!["employee".to_owned()],
             "principal:branch_manager" => vec!["branch_manager".to_owned()],
             "principal:hr_manager" => vec!["hr_manager".to_owned()],
+            "principal:hr_reviewer" => vec!["hr_reviewer".to_owned()],
             "principal:payroll_officer" => vec!["payroll_officer".to_owned()],
             "principal:hr_admin" => vec!["hr_admin".to_owned()],
             "principal:hr_solver_worker" => vec!["hr_solver_worker".to_owned()],
@@ -1854,7 +1857,7 @@ mod suite {
                     "extracted_at": "2026-11-23T08:05:00Z", "observed_at": "2026-11-22T20:30:00Z",
                     "effective_on": "2026-11-22", "dispute_state": "disputed",
                     "review_receipt_digest": "sha256:rev_disp",
-                    "reviewed_by_user_id": "principal:hr_manager", "status": "staged"
+                    "reviewed_by_user_id": "principal:hr_reviewer", "status": "staged"
                 }),
             ),
             put_fact(
@@ -1867,7 +1870,7 @@ mod suite {
                     "extracted_at": "2026-11-23T08:10:00Z", "observed_at": "2026-11-22T20:30:00Z",
                     "effective_on": "2026-11-22", "dispute_state": "clean",
                     "review_receipt_digest": "sha256:rev_open",
-                    "reviewed_by_user_id": "principal:hr_manager", "status": "staged"
+                    "reviewed_by_user_id": "principal:hr_reviewer", "status": "staged"
                 }),
             ),
             put_fact(
@@ -1880,7 +1883,7 @@ mod suite {
                     "extracted_at": "2026-11-23T09:00:00Z", "observed_at": "2026-11-22T21:00:00Z",
                     "effective_on": "2026-11-22", "dispute_state": "clean",
                     "review_receipt_digest": "sha256:rev_001",
-                    "reviewed_by_user_id": "principal:hr_manager", "status": "staged"
+                    "reviewed_by_user_id": "principal:hr_reviewer", "status": "staged"
                 }),
             ),
         ]);
@@ -1924,22 +1927,12 @@ mod suite {
         cell.commit(seed).expect("seed import batch and candidates");
     }
 
-    fn seed_import_evidence_and_reviews(cell: &mut Cell, digest: &str) {
+    fn seed_import_evidence(cell: &mut Cell, digest: &str) {
         let mut seed = CellCommit::empty();
-        for (ev_id, rev_id, cand_id, receipt) in [
-            (
-                "ev_disputed",
-                "rev_disputed",
-                "cand_disputed",
-                "sha256:rev_disp",
-            ),
-            (
-                "ev_open_finding",
-                "rev_open_finding",
-                "cand_open_finding",
-                "sha256:rev_open",
-            ),
-            ("ev_clean", "rev_clean", "cand_clean", "sha256:rev_001"),
+        for (ev_id, cand_id) in [
+            ("ev_disputed", "cand_disputed"),
+            ("ev_open_finding", "cand_open_finding"),
+            ("ev_clean", "cand_clean"),
         ] {
             seed.writes.push(put_fact(
                 "hr_import.FieldEvidence",
@@ -1952,16 +1945,6 @@ mod suite {
                     "bbox_w": 1, "bbox_h": 0.1, "text": "row:4-fix 14:05-22:00",
                     "extractor": "norn-hr-import-worker", "extractor_version": "0.1.0",
                     "confidence_bp": 9850, "source_anchor": "row:4#bbbb", "record_digest": "sha256:ev01"
-                }),
-            ));
-            seed.writes.push(put_fact(
-                "hr_import.ReviewDecision",
-                rev_id,
-                &json!({
-                    "id": rev_id, "decision": "approve_promotion",
-                    "reviewer_user_id": "principal:hr_manager", "receipt_digest": receipt,
-                    "reason": "Verified against source batch evidence.",
-                    "decided_at": "2026-11-23T09:10:00Z", "status": "recorded"
                 }),
             ));
             seed.links.extend([
@@ -1979,17 +1962,81 @@ mod suite {
                     "hr_import.ExtractedCandidate",
                     cand_id,
                 ),
-                add_link(
-                    "hr_import.ReviewDecision",
-                    rev_id,
-                    "candidate",
-                    "hr_import.ExtractedCandidate",
-                    cand_id,
-                ),
             ]);
         }
-        cell.commit(seed)
-            .expect("seed import evidence and review decisions");
+        cell.commit(seed).expect("seed import evidence");
+    }
+
+    fn record_import_reviews_via_action(fixture: &HrVerticalFixture, cell: &mut Cell) {
+        // Untrusted import worker cannot record a human review decision.
+        assert_permission_denied(
+            fixture.invoke(
+                cell,
+                "hr_import.review.record",
+                &json!({
+                    "id": "rev_denied_worker", "candidateId": "cand_clean",
+                    "decision": "approve_promotion",
+                    "reviewer_user_id": "principal:hr_import_worker",
+                    "receipt_digest": "sha256:rev_001",
+                    "reason": "Worker attempt", "decided_at": "2026-11-23T09:10:00Z"
+                }),
+                "principal:hr_import_worker",
+                "imp-review-worker-denied",
+            ),
+            "hr_import_worker must be denied hr_import.review.record",
+        );
+
+        // Reviewer cannot forge another principal's reviewer_user_id.
+        assert_permission_denied(
+            fixture.invoke(
+                cell,
+                "hr_import.review.record",
+                &json!({
+                    "id": "rev_denied_impersonation", "candidateId": "cand_clean",
+                    "decision": "approve_promotion",
+                    "reviewer_user_id": "principal:hr_admin",
+                    "receipt_digest": "sha256:rev_001",
+                    "reason": "Impersonation attempt", "decided_at": "2026-11-23T09:10:00Z"
+                }),
+                "principal:hr_reviewer",
+                "imp-review-mismatch-denied",
+            ),
+            "mismatched reviewer_user_id must be denied by AccessIR",
+        );
+
+        // Authenticated hr_reviewer records governed ReviewDecision facts through commit_action.
+        for (rev_id, cand_id, receipt, key) in [
+            (
+                "rev_disputed",
+                "cand_disputed",
+                "sha256:rev_disp",
+                "imp-rev-disp",
+            ),
+            (
+                "rev_open_finding",
+                "cand_open_finding",
+                "sha256:rev_open",
+                "imp-rev-open",
+            ),
+            ("rev_clean", "cand_clean", "sha256:rev_001", "imp-rev-clean"),
+        ] {
+            fixture
+                .invoke(
+                    cell,
+                    "hr_import.review.record",
+                    &json!({
+                        "id": rev_id, "candidateId": cand_id,
+                        "decision": "approve_promotion",
+                        "reviewer_user_id": "principal:hr_reviewer",
+                        "receipt_digest": receipt,
+                        "reason": "Verified against source batch evidence.",
+                        "decided_at": "2026-11-23T09:10:00Z"
+                    }),
+                    "principal:hr_reviewer",
+                    key,
+                )
+                .unwrap_or_else(|e| panic!("authorized hr_reviewer records {rev_id}: {e:?}"));
+        }
     }
 
     fn seed_import_findings(cell: &mut Cell) {
@@ -2163,7 +2210,8 @@ mod suite {
         let digest = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
         seed_common_org_and_people(&mut cell);
         seed_import_batch_and_candidates(&mut cell, digest);
-        seed_import_evidence_and_reviews(&mut cell, digest);
+        seed_import_evidence(&mut cell, digest);
+        record_import_reviews_via_action(&fixture, &mut cell);
         seed_import_findings(&mut cell);
         assert_import_quarantine_and_guards(&fixture, &mut cell);
 

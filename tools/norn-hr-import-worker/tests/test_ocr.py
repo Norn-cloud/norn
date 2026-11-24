@@ -402,3 +402,120 @@ def test_cli_refuses_oversized_symlink_and_directory_without_traceback(
         ]
     )
     assert rc_dir == 2
+
+    # Hard ceiling: --max-input-bytes > MAX_INPUT_BYTES (4 MiB) or <= 0 is refused.
+    rc_over_cap = cli_main(
+        [
+            "--channel",
+            "whatsapp",
+            "--input",
+            str(target),
+            "--batch-id",
+            "b4",
+            "--document-uri",
+            "evidence://cap",
+            "--captured-at",
+            "2026-11-22T12:00:00Z",
+            "--extracted-at",
+            "2026-11-22T12:05:00Z",
+            "--max-input-bytes",
+            str((4 * 1024 * 1024) + 1),
+        ]
+    )
+    assert rc_over_cap == 2
+
+    rc_zero_cap = cli_main(
+        [
+            "--channel",
+            "whatsapp",
+            "--input",
+            str(target),
+            "--batch-id",
+            "b5",
+            "--document-uri",
+            "evidence://zero",
+            "--captured-at",
+            "2026-11-22T12:00:00Z",
+            "--extracted-at",
+            "2026-11-22T12:05:00Z",
+            "--max-input-bytes",
+            "0",
+        ]
+    )
+    assert rc_zero_cap == 2
+
+
+def test_ocr_never_dedups_second_record_with_changed_missing_effective_on_or_repeated_field() -> (
+    None
+):
+    field_cashier = {
+        "field_name": "role_code",
+        "value": "cashier",
+        "text_span": "cashier",
+        "page": 1,
+        "bbox_x": "0.10",
+        "bbox_y": "0.10",
+        "bbox_w": "0.20",
+        "bbox_h": "0.05",
+        "confidence_bp": 9600,
+    }
+    cases: list[tuple[str, dict[str, object], str]] = [
+        (
+            "changed_effective_on",
+            {
+                "record_key": "k/changed",
+                "target_kind": "shift_commitment",
+                "effective_on": "2026-11-29",
+                "fields": [field_cashier],
+            },
+            "feed_conflict",
+        ),
+        (
+            "missing_effective_on",
+            {
+                "record_key": "k/missing",
+                "target_kind": "shift_commitment",
+                "effective_on": None,
+                "fields": [field_cashier],
+            },
+            "missing_required_field",
+        ),
+        (
+            "repeated_field",
+            {
+                "record_key": "k/repeat",
+                "target_kind": "shift_commitment",
+                "effective_on": "2026-11-28",
+                "fields": [field_cashier, field_cashier],
+            },
+            "feed_conflict",
+        ),
+    ]
+    for label, second_rec, expected_code in cases:
+        first_rec = {
+            "record_key": second_rec["record_key"],
+            "target_kind": "shift_commitment",
+            "effective_on": "2026-11-28",
+            "fields": [field_cashier],
+        }
+        raw = json.dumps({"records": [first_rec, second_rec]}).encode("utf-8")
+        bundle = extract_from_ocr(
+            raw_bytes=raw,
+            document_uri=f"evidence://ocr/{label}.json",
+            media_type="application/json",
+            batch_id=f"batch_{label}",
+            captured_at="2026-11-22T12:00:00Z",
+            extracted_at="2026-11-22T12:05:00Z",
+            adapter=DeterministicFixtureOcrAdapter(),
+        )
+        assert bundle.deduplicated_count == 0, label
+        assert len(bundle.candidates) == 2, label
+        c0, c1 = bundle.candidates
+        assert c0.dispute_state == "disputed" and c0.status == "quarantined", label
+        assert c1.dispute_state == "disputed" and c1.status == "quarantined", label
+        codes = {f.code for f in bundle.findings}
+        assert "feed_conflict" in codes and expected_code in codes, label
+        assert {f.candidate_id for f in bundle.findings if f.finding_kind == "feed_conflict"} == {
+            c0.id,
+            c1.id,
+        }, label

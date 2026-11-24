@@ -1618,3 +1618,64 @@ export const RejectFinding = Norn.action({
     transition: "reject",
   },
 })
+
+const RecordReviewInput = Schema.Struct({
+  id: Schema.String,
+  candidateId: Schema.String,
+  decision: ReviewDecisionKind,
+  reviewer_user_id: Schema.String,
+  receipt_digest: Schema.String,
+  reason: Schema.String,
+  decided_at: Schema.String,
+})
+
+const RecordReviewContext = Schema.Struct({
+  input: Schema.Struct({
+    reviewer_user_id: Schema.String,
+    receipt_digest: Schema.String,
+    reason: Schema.String,
+  }),
+  slice: Schema.Struct({
+    candidate: Schema.Struct({
+      id: Schema.String,
+      status: CandidateStatus,
+    }),
+  }),
+})
+
+export const RecordReviewDecision = Norn.action({
+  id: "hr_import.review.record",
+  title: "Record authenticated import review decision",
+  version: "0.1.0",
+  description: "Create an immutable ReviewDecision linked to an ExtractedCandidate under an authenticated human reviewer whose principal identity matches reviewer_user_id.",
+  scopeRequired: ["orgId", "environmentId"],
+  idempotent: true,
+  ledgered: true,
+  access: { artifactId: "hr_import.access.policy", version: "0.1.0" },
+  input: RecordReviewInput,
+  output: Schema.Struct({ id: Schema.String }),
+  slice: [
+    { name: "candidate", type: ExtractedCandidate, key: { property: { from: "input", property: "candidateId" } } },
+  ],
+  preconditions: [
+    Norn.expression(
+      RecordReviewContext,
+      (ctx) =>
+        ctx.input.reviewer_user_id !== "" &&
+        ctx.input.receipt_digest !== "" &&
+        ctx.input.reason !== "" &&
+        (ctx.slice.candidate.status === "staged" || ctx.slice.candidate.status === "quarantined"),
+      { root: "context" },
+    ),
+  ],
+  createLinks: [
+    { link: "candidate", targetType: ExtractedCandidate, targetIdField: "candidateId" },
+  ],
+  writes: [{ type: ReviewDecision, change: "created" }],
+  effect: {
+    kind: "upsert_input_object",
+    type: ReviewDecision,
+    objectIdField: "id",
+    writeMode: { kind: "create_only" },
+  },
+})

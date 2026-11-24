@@ -24,8 +24,10 @@ class InputRefusalError(ValueError):
 
 def read_bounded_input(path: Path, *, max_bytes: int = MAX_INPUT_BYTES) -> bytes:
     """Refuse symlinks, non-regular files, and files exceeding `max_bytes` before loading."""
-    if max_bytes <= 0:
-        raise InputRefusalError("max_bytes must be positive")
+    if max_bytes <= 0 or max_bytes > MAX_INPUT_BYTES:
+        raise InputRefusalError(
+            f"max_input_bytes must be within 1..{MAX_INPUT_BYTES} bytes"
+        )
     try:
         link_stat = os.lstat(path)
     except OSError as exc:

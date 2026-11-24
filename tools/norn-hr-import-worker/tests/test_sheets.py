@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from norn_hr_import_worker.cli import main as cli_main
 from norn_hr_import_worker.models import sha256_bytes
 from norn_hr_import_worker.sheets import SheetSchemaError, extract_sheet
 
@@ -160,3 +161,51 @@ def test_sheet_validates_intervals_even_when_hours_present_and_sanitizes_finding
     )
     assert bundle_emp.candidates[0].dispute_state == "quarantined"
     assert all("SECRET_SALARY_99999" not in f.message for f in bundle_emp.findings)
+
+
+def test_sheet_unknown_header_error_redacts_raw_pii_in_library_and_cli(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pii_canary = "PII_HEADERLESS_ROW1_SECRET_98765"
+    bad_csv = (
+        f"employee_code,leave_kind,starts_on,ends_on,days,{pii_canary}\n"
+        "E1,annual,2026-12-01,2026-12-02,2,val\n"
+    ).encode()
+    with pytest.raises(SheetSchemaError) as exc_info:
+        extract_sheet(
+            raw_bytes=bad_csv,
+            document_uri="evidence://sheets/headerless.csv",
+            batch_id="b_hdr",
+            profile="leave",
+            captured_at="2026-11-22T10:00:00Z",
+            extracted_at="2026-11-22T11:00:00Z",
+        )
+    err_msg = str(exc_info.value)
+    assert pii_canary not in err_msg
+    assert "count=1" in err_msg and "indices=[5]" in err_msg
+
+    csv_file = tmp_path / "headerless.csv"
+    csv_file.write_bytes(bad_csv)
+    rc = cli_main(
+        [
+            "--channel",
+            "sheet",
+            "--profile",
+            "leave",
+            "--input",
+            str(csv_file),
+            "--batch-id",
+            "b_hdr_cli",
+            "--document-uri",
+            "evidence://sheets/headerless.csv",
+            "--captured-at",
+            "2026-11-22T10:00:00Z",
+            "--extracted-at",
+            "2026-11-22T11:00:00Z",
+        ]
+    )
+    assert rc == 2
+    captured = capsys.readouterr()
+    assert pii_canary not in captured.err
+    assert pii_canary not in captured.out
+    assert "indices=[5]" in captured.err
