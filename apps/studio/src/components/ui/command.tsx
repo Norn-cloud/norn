@@ -89,8 +89,22 @@ function Command({
     [controlledValue, onValueChange],
   )
 
-  const syncVisible = React.useCallback(() => {
+  const orderedItems = React.useCallback(() => {
     const items = itemsRef.current
+    if (items.length <= 1) return items
+    return [...items].sort((a, b) => {
+      const elA = a.element()
+      const elB = b.element()
+      if (!elA || !elB || elA === elB) return 0
+      const pos = elA.compareDocumentPosition(elB)
+      if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1
+      if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1
+      return 0
+    })
+  }, [])
+
+  const syncVisible = React.useCallback(() => {
+    const items = orderedItems()
     setVisibleCount(items.length)
     setUncontrolledActive((current) => {
       if (controlledValue !== undefined) return current
@@ -99,7 +113,7 @@ function Command({
       if (current !== null && enabled.some((item) => item.value === current)) return current
       return enabled[0]!.value
     })
-  }, [controlledValue])
+  }, [controlledValue, orderedItems])
 
   const registerItem = React.useCallback(
     (item: RegisteredItem) => {
@@ -120,7 +134,7 @@ function Command({
 
   const move = React.useCallback(
     (delta: number | "first" | "last") => {
-      const enabled = itemsRef.current.filter((item) => !item.disabled)
+      const enabled = orderedItems().filter((item) => !item.disabled)
       if (enabled.length === 0) {
         setActiveValue(null)
         return
@@ -145,14 +159,14 @@ function Command({
       setActiveValue(target.value)
       target.element()?.scrollIntoView({ block: "nearest" })
     },
-    [activeValue, loop, setActiveValue],
+    [activeValue, loop, orderedItems, setActiveValue],
   )
 
   const selectActive = React.useCallback(() => {
-    const active = itemsRef.current.find((item) => !item.disabled && item.value === activeValue)
-      ?? itemsRef.current.find((item) => !item.disabled)
+    const enabled = orderedItems().filter((item) => !item.disabled)
+    const active = enabled.find((item) => item.value === activeValue) ?? enabled[0]
     if (active) active.onSelect?.(active.value)
-  }, [activeValue])
+  }, [activeValue, orderedItems])
 
   const itemIdOf = React.useCallback(
     (value: string) => itemsRef.current.find((item) => item.value === value)?.id,
@@ -161,7 +175,7 @@ function Command({
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     onKeyDown?.(event)
-    if (event.defaultPrevented) return
+    if (event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229) return
     if (event.key === "ArrowDown") {
       event.preventDefault()
       move(1)
@@ -421,7 +435,7 @@ function CommandItem({
       aria-disabled={disabled || undefined}
       data-slot="command-item"
       data-value={resolvedValue}
-      data-selected={selected ? "true" : "false"}
+      data-selected={selected ? "true" : undefined}
       data-disabled={disabled ? "true" : undefined}
       onPointerMove={(event) => {
         if (!disabled && ctx.activeValue !== resolvedValue) ctx.setActiveValue(resolvedValue)

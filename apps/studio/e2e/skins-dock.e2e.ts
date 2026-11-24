@@ -243,7 +243,6 @@ test("single-select ToggleGroup preserves radiogroup/radio ARIA semantics and ar
   await graph.focus()
   await page.keyboard.press("ArrowRight")
   await expect(list).toBeFocused()
-  await page.keyboard.press("Enter")
   await expect(list).toHaveAttribute("aria-checked", "true")
   await expect(graph).toHaveAttribute("aria-checked", "false")
 })

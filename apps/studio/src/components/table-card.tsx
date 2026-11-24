@@ -14,7 +14,7 @@ export function TableCard({ children, className }: { children: ReactNode; classN
         "overflow-hidden rounded-(--radius-panel) border border-(--table-border) bg-card p-1 text-meta tabular-nums shadow-(--panel-shadow)",
         // Directly in a panel the table is the panel's inner well: flush, zero outer padding or shadow.
         "[[data-slot=panel]>&]:rounded-(--radius-well) [[data-slot=panel]>&]:border-(--well-border) [[data-slot=panel]>&]:bg-(--well) [[data-slot=panel]>&]:p-0 [[data-slot=panel]>&]:shadow-none",
-        "[&>[data-slot=table-container]]:overflow-hidden [&>[data-slot=table-container]]:rounded-(--radius-well) [&>[data-slot=table-container]]:border [&>[data-slot=table-container]]:border-(--well-border) [&>[data-slot=table-container]]:bg-(--well)",
+        "[&>[data-slot=table-container]]:overflow-x-auto [&>[data-slot=table-container]]:rounded-(--radius-well) [&>[data-slot=table-container]]:border [&>[data-slot=table-container]]:border-(--well-border) [&>[data-slot=table-container]]:bg-(--well)",
         "[[data-slot=panel]>&>[data-slot=table-container]]:rounded-none [[data-slot=panel]>&>[data-slot=table-container]]:border-0 [[data-slot=panel]>&>[data-slot=table-container]]:bg-transparent",
         "[&_thead_tr]:bg-surface-subtle/80 [&_th]:h-9 [&_th]:border-b [&_th]:border-(--table-border) [&_th]:text-xs [&_th]:font-normal [&_th]:text-muted-foreground [&_td]:h-cell [&_td]:py-1.5",
         className,

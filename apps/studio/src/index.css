@@ -96,6 +96,8 @@
   --dock-foreground: #ffffff;
   --dock-muted: #a5a5ad;
   --dock-active: #34343a;
+  --dock-ring: #93b4ff;
+  --dock-indicator: #6b98ff;
   --dock-shadow: 0 10px 30px -8px rgb(0 0 0 / 0.35), 0 2px 6px rgb(0 0 0 / 0.12);
   /* Layered shadow tokens: whisper contact + soft diffused ambient shadow, never harsh blobs. */
   --elevation-shell: 0 1px 2px rgb(0 0 0 / 0.025), 0 8px 24px -16px rgb(0 0 0 / 0.07);
@@ -200,6 +202,8 @@
   --dock-foreground: #ffffff;
   --dock-muted: #a5a5ad;
   --dock-active: #3a3a41;
+  --dock-ring: #93b4ff;
+  --dock-indicator: #6b98ff;
   --dock-shadow: 0 10px 30px -8px rgb(0 0 0 / 0.7);
   --elevation-shell: inset 0 1px 0 rgb(255 255 255 / 0.04), 0 1px 2px rgb(0 0 0 / 0.45), 0 16px 40px -16px rgb(0 0 0 / 0.72);
   --elevation-1: inset 0 1px 0 rgb(255 255 255 / 0.03), 0 1px 2px rgb(0 0 0 / 0.4);
@@ -281,6 +285,8 @@
   --panel-shadow: none;
   --table-border: #e5e5ea;
   --chart-1: #18181b;
+  --dock-ring: #e4e4e7;
+  --dock-indicator: #f4f4f5;
   --elevation-action: 0 1px 2px rgb(0 0 0 / 0.14);
 }
 

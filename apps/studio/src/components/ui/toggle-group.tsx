@@ -13,6 +13,8 @@ const ToggleGroupContext = React.createContext<
     orientation?: "horizontal" | "vertical"
     single?: boolean
     selected?: readonly string[]
+    consumeArrowSelect?: () => boolean
+    selectRadio?: (value: string) => void
   }
 >({
   size: "default",
@@ -104,6 +106,24 @@ function ToggleGroup(props: ToggleGroupProps) {
     () => normalizedDefaultValue ?? []
   )
   const selected = normalizedValue ?? uncontrolled
+  const pendingArrowSelect = React.useRef(false)
+  const { onKeyDownCapture, ...groupRest } = rest
+
+  const consumeArrowSelect = React.useCallback(() => {
+    const active = pendingArrowSelect.current
+    pendingArrowSelect.current = false
+    return active
+  }, [])
+
+  const selectRadio = React.useCallback(
+    (nextValue: string) => {
+      if (!isSingle) return
+      if (selected[0] === nextValue) return
+      if (normalizedValue === undefined) setUncontrolled([nextValue])
+      ;(onValueChange as ((value: string) => void) | undefined)?.(nextValue)
+    },
+    [isSingle, normalizedValue, onValueChange, selected],
+  )
 
   return (
     <ToggleGroupPrimitive
@@ -115,8 +135,19 @@ function ToggleGroup(props: ToggleGroupProps) {
       role={role ?? (isSingle ? "radiogroup" : "group")}
       orientation={orientation}
       multiple={isSingle ? false : (multiple ?? true)}
-      value={normalizedValue}
-      defaultValue={normalizedDefaultValue}
+      value={selected}
+      onKeyDownCapture={(event) => {
+        if (
+          isSingle &&
+          (event.key === "ArrowLeft" ||
+            event.key === "ArrowRight" ||
+            event.key === "ArrowUp" ||
+            event.key === "ArrowDown")
+        ) {
+          pendingArrowSelect.current = true
+        }
+        onKeyDownCapture?.(event)
+      }}
       onValueChange={(next) => {
         if (normalizedValue === undefined) setUncontrolled(next)
         if (!onValueChange) return
@@ -131,10 +162,19 @@ function ToggleGroup(props: ToggleGroupProps) {
         "group/toggle-group flex w-fit flex-row items-center gap-[--spacing(var(--gap))] data-[spacing=0]:data-[variant=outline]:rounded-3xl data-vertical:flex-col data-vertical:items-stretch",
         className
       )}
-      {...rest}
+      {...groupRest}
     >
       <ToggleGroupContext.Provider
-        value={{ variant, size, spacing, orientation, single: isSingle, selected }}
+        value={{
+          variant,
+          size,
+          spacing,
+          orientation,
+          single: isSingle,
+          selected,
+          consumeArrowSelect,
+          selectRadio,
+        }}
       >
         {children}
       </ToggleGroupContext.Provider>
@@ -148,6 +188,7 @@ function ToggleGroupItem({
   variant = "default",
   size = "default",
   value,
+  onFocus,
   ...props
 }: React.ComponentProps<typeof TogglePrimitive> &
   VariantProps<typeof toggleVariants>) {
@@ -162,6 +203,12 @@ function ToggleGroupItem({
       data-size={context.size || size}
       data-spacing={context.spacing}
       value={value}
+      onFocus={(event) => {
+        if (isRadio && value !== undefined && context.consumeArrowSelect?.()) {
+          context.selectRadio?.(value)
+        }
+        onFocus?.(event)
+      }}
       render={
         isRadio
           ? (toggleProps) => {

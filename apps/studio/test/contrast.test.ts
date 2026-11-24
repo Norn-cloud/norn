@@ -509,6 +509,12 @@ for (const { skin, theme } of SKIN_SELECTORS) {
       const bgHex = resolveSurfaceColor(resolveVar(surface), shellHex)
       expect(ratio(ringHex, bgHex), `${skin}/${theme} focus ring on ${surface} (${ringHex} on ${bgHex})`).toBeGreaterThanOrEqual(3)
     }
+
+    const dockSurfaceHex = resolveSurfaceColor(resolveVar("dock-surface"), shellHex)
+    const dockRingHex = resolveSurfaceColor(resolveVar("dock-ring"), dockSurfaceHex)
+    const dockIndicatorHex = resolveSurfaceColor(resolveVar("dock-indicator"), dockSurfaceHex)
+    expect(ratio(dockRingHex, dockSurfaceHex), `${skin}/${theme} dock focus ring (${dockRingHex} on ${dockSurfaceHex})`).toBeGreaterThanOrEqual(3)
+    expect(ratio(dockIndicatorHex, dockSurfaceHex), `${skin}/${theme} dock unread indicator (${dockIndicatorHex} on ${dockSurfaceHex})`).toBeGreaterThanOrEqual(3)
   })
 }
 

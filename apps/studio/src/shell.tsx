@@ -825,7 +825,7 @@ function FloatingDock({ sections, perspective, navigation, current, assistant }:
     .filter((entry): entry is { readonly section: Section; readonly to: string; readonly count: string | undefined } => entry.to !== undefined)
   const primary = resolvedOwn.slice(0, 5)
   const overflow = resolvedOwn.slice(5)
-  const dockBtn = "relative grid size-10 place-items-center rounded-full text-(--dock-muted) outline-none transition-colors hover:text-(--dock-foreground) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring data-[active=true]:bg-(--dock-well) data-[active=true]:text-(--dock-foreground) data-open:bg-(--dock-well) data-open:text-(--dock-foreground)"
+  const dockBtn = "relative grid size-10 place-items-center rounded-full text-(--dock-muted) outline-none transition-colors hover:text-(--dock-foreground) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-(--dock-ring) data-[active=true]:bg-(--dock-well) data-[active=true]:text-(--dock-foreground) data-open:bg-(--dock-well) data-open:text-(--dock-foreground)"
 
   return (
     <nav
@@ -852,7 +852,7 @@ function FloatingDock({ sections, perspective, navigation, current, assistant }:
                 className={dockBtn}
               >
                 <Icon aria-hidden className="size-[18px]" strokeWidth={1.7} />
-                {count && <span aria-hidden className="absolute top-[7px] right-[7px] size-[6px] rounded-full bg-action ring-2 ring-(--dock-surface)" />}
+                {count && <span aria-hidden className="absolute top-[7px] right-[7px] size-[6px] rounded-full bg-(--dock-indicator) ring-2 ring-(--dock-surface)" />}
               </ToolbarLink>
             </Hint>
           )
@@ -871,7 +871,7 @@ function FloatingDock({ sections, perspective, navigation, current, assistant }:
                 className={dockBtn}
               >
                 <Icon aria-hidden className="size-[18px]" strokeWidth={1.7} />
-                {count && <span aria-hidden className="absolute top-[7px] right-[7px] size-[6px] rounded-full bg-action ring-2 ring-(--dock-surface)" />}
+                {count && <span aria-hidden className="absolute top-[7px] right-[7px] size-[6px] rounded-full bg-(--dock-indicator) ring-2 ring-(--dock-surface)" />}
               </ToolbarLink>
             </Hint>
           )
@@ -903,11 +903,12 @@ function FloatingDock({ sections, perspective, navigation, current, assistant }:
                 <KitMenuLabel>More destinations</KitMenuLabel>
                 {overflow.map(({ section, to, count }) => {
                   const Icon = section.icon
+                  const overflowLabel = count ? `${section.label}, ${count} open` : section.label
                   return (
-                    <KitMenuItem key={section.path} value={section.path} label={section.label} render={<Link to={to} />}>
+                    <KitMenuItem key={section.path} value={section.path} label={section.label} aria-label={overflowLabel} render={<Link to={to} aria-label={overflowLabel} />}>
                       <Icon aria-hidden />
                       <span className="truncate">{section.label}</span>
-                      {count && <span className="ms-auto rounded-full bg-destructive px-1.5 text-[0.625rem] leading-4 font-semibold text-destructive-foreground tabular-nums">{count}</span>}
+                      {count && <span aria-hidden className="ms-auto rounded-full bg-destructive px-1.5 text-[0.625rem] leading-4 font-semibold text-destructive-foreground tabular-nums">{count}</span>}
                     </KitMenuItem>
                   )
                 })}
