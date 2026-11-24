@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { list, modKey, sameValue, type Issue } from "@/lib/editor"
 import { questionVerdictOf, type QuestionVerdict } from "./agent/question.tsx"
-import { getDisplayedScope, scopeHeaders, type StudioScope } from "./lib/definitions.ts"
+import { getDisplayedScope, scopeHeaders, useStudioScope, type StudioScope } from "./lib/definitions.ts"
 import { usePinnedScope } from "./lib/session.ts"
 import { readDocument } from "./lib/exact.ts"
 import { readMetrics, recentWindow } from "./lib/metrics.ts"
@@ -214,7 +214,7 @@ function useCheckerServed(): boolean | undefined {
   return served
 }
 
-export function QuestionBuilder({ catalog, guard, initial, onUse, unsupported, checkerServed }: {
+export function QuestionBuilder({ catalog, guard, initial, onUse, unsupported, checkerServed, originScope }: {
   readonly catalog: QuestionCatalog
   readonly guard?: (dirty: boolean) => ReactNode
   /** The draft to open; a new question otherwise. */
@@ -225,10 +225,13 @@ export function QuestionBuilder({ catalog, guard, initial, onUse, unsupported, c
   readonly unsupported?: string
   /** Overrides the probe (tests, or a caller that already knows). */
   readonly checkerServed?: boolean
+  /** Originating workspace scope so checking, evaluation, and trace stay pinned to this workspace. */
+  readonly originScope?: StudioScope | null
 }) {
   const probed = useCheckerServed()
   const served = checkerServed ?? probed
-  const pinnedScope = usePinnedScope(catalog.objectSet)
+  const fallbackPinnedScope = usePinnedScope(catalog.objectSet)
+  const pinnedScope = originScope !== undefined ? originScope : fallbackPinnedScope
   const check = useMutation({ mutationFn: (draft: Draft) => checkQuestion(buildQuestion(draft, catalog), pinnedScope) })
   // The editor revision each check ran at: a check shows only while the editor is still at that revision.
   const [ranAt, setRanAt] = useState<object>()
@@ -299,7 +302,7 @@ export function QuestionBuilder({ catalog, guard, initial, onUse, unsupported, c
         {checked.data && !checked.data.admitted && <ValidationPanel issues={issues} title="The checker refused this question" details={<div className="space-y-1 font-mono break-all">{checked.data.findings.map(({ code }, index) => <div key={`${code}:${index}`}>{code}</div>)}</div>} />}
         {checked.data?.admitted && <Checked verdict={checked.data} />}
         {/* The question exactly as the checker admitted it, answered at once, while the form still shows it. */}
-        {checked.data?.admitted && check.variables && <BuiltAnswer key={JSON.stringify(check.variables)} question={buildQuestion(check.variables, catalog)} catalog={catalog} title={titleOf(check.variables)} />}
+        {checked.data?.admitted && check.variables && <BuiltAnswer key={JSON.stringify(check.variables)} question={buildQuestion(check.variables, catalog)} catalog={catalog} title={titleOf(check.variables)} scope={pinnedScope} />}
         {onUse && checked.data?.admitted && check.variables && <Button type="button" disabled={unsupported !== undefined} onClick={() => onUse(buildQuestion(check.variables as Draft, catalog), (check.variables as Draft).title)}>Use this question</Button>}
         {onUse && check.data?.admitted && !checked.data && <p className="text-sm text-muted-foreground">Changed since it ran: Run again to use it.</p>}
       </div>
@@ -322,21 +325,24 @@ function Checked({ verdict }: { readonly verdict: QuestionVerdict }) {
  * them in the metric's unitPartition) is read one unit group at a time, as the Metrics board
  * reads it, so a chart never mixes grams with pieces; any other question is answered as asked.
  */
-function BuiltAnswer({ question, catalog, title }: { readonly question: QuestionIR; readonly catalog: QuestionCatalog; readonly title: string }) {
-  const metrics = useQuery({ queryKey: ["metrics"], queryFn: readMetrics, retry: false, staleTime: 60_000 })
+function BuiltAnswer({ question, catalog, title, scope }: { readonly question: QuestionIR; readonly catalog: QuestionCatalog; readonly title: string; readonly scope?: StudioScope | null }) {
+  const scopeKey = scope ? `${scope.orgId}:${scope.environmentId}` : ""
+  const metrics = useQuery({ queryKey: ["metrics", scopeKey], queryFn: readMetrics, retry: false, staleTime: 60_000 })
   const [picked, setPicked] = useState<UnitGroup | null>(null)
   if (metrics.isPending) return <p className="text-sm text-muted-foreground">Asking the cell…</p>
   const partitions = question.aggregate.map(({ metric }) => metrics.data?.document.metrics.find(({ name }) => name === metric)?.unitPartition ?? [])
   const sources = partitions[0] ?? []
   const shared = partitions.every((partition) => partition.length === sources.length && partition.every((property, index) => property === sources[index]))
-  if (sources.length === 0 || !shared) return <RunQuestion question={question} catalog={catalog} title={title} auto />
+  if (sources.length === 0 || !shared) return <RunQuestion question={question} catalog={catalog} title={title} scope={scope} auto />
   const declared = { metrics: readDocument(JSON.stringify(catalog.declarations.metrics), "live"), objectType: readDocument(JSON.stringify(catalog.declarations.objectType), "live") } as Parameters<typeof UnitGroups>[0]["declared"]
   return <UnitGroups asked={question as unknown as Question} grain={question.groupBy[0]?.grain ?? "group"} sources={sources} title={title} declared={declared} picked={picked} onPick={setPicked} onSettled={settled} />
 }
 const settled = () => {}
 
 export function QuestionBuilderPage() {
-  const catalog = useQuery({ queryKey: ["question-catalog"], queryFn: readCatalog, retry: false, staleTime: Infinity })
+  const scope = useStudioScope()
+  const scopeKey = scope.data ? `${scope.data.orgId}:${scope.data.environmentId}` : ""
+  const catalog = useQuery({ queryKey: ["question-catalog", scope.data?.orgId, scope.data?.environmentId], queryFn: readCatalog, enabled: !scope.isPending, retry: false, staleTime: Infinity })
   return (
     <section className="space-y-6">
       <div className="space-y-2">
@@ -345,7 +351,7 @@ export function QuestionBuilderPage() {
       </div>
       {catalog.isPending && <p className="text-muted-foreground">Reading the catalogue…</p>}
       {catalog.isError && <EmptyState icon={ChartLine}>{catalog.error.message}</EmptyState>}
-      {catalog.data && <QuestionBuilder catalog={catalog.data} guard={(dirty) => <DirtyGuard dirty={dirty} />} />}
+      {catalog.data && <QuestionBuilder key={scopeKey} catalog={catalog.data} originScope={scope.data} guard={(dirty) => <DirtyGuard dirty={dirty} />} />}
     </section>
   )
 }

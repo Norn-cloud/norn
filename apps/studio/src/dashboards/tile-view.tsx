@@ -13,7 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { buckets, declarations, fraction, shown, type Bucket } from "@/lib/answer"
 import { chartEmpty, chartFrame, pieSlices, type ChartFrame } from "@/lib/chart"
-import type { Tile } from "@/lib/definitions"
+import type { StudioScope, Tile } from "@/lib/definitions"
 import { evaluateQuestion, traceQuestion, type Evaluation } from "@/lib/evaluate"
 import { FRESHNESS } from "@/lib/format"
 import { AnswerProvenance } from "@/components/provenance"
@@ -180,9 +180,10 @@ function NoAnswer({ result }: { readonly result: Exclude<Evaluation, { kind: "an
  * same evaluate route and read gates as a published question), drawn as its
  * view. Details opens the full answer: every bucket and its records.
  */
-export function TileAnswer({ tile, catalog }: { readonly tile: Pick<Tile, "title" | "question" | "view">; readonly catalog: QuestionCatalog }) {
+export function TileAnswer({ tile, catalog, scope }: { readonly tile: Pick<Tile, "title" | "question" | "view">; readonly catalog: QuestionCatalog; readonly scope?: StudioScope | null }) {
   const { question } = tile
-  const run = useQuery({ queryKey: ["tile-answer", JSON.stringify(question)], queryFn: () => evaluateQuestion(question), retry: false, staleTime: 30_000 })
+  const scopeKey = scope ? `${scope.orgId}:${scope.environmentId}` : ""
+  const run = useQuery({ queryKey: ["tile-answer", scopeKey, JSON.stringify(question)], queryFn: () => evaluateQuestion(question, undefined, scope), retry: false, staleTime: 30_000 })
   const [details, setDetails] = useState(false)
   // The bucket whose records open with the details: a number asked for its trace.
   const [tracing, setTracing] = useState<string>()
@@ -211,7 +212,7 @@ export function TileAnswer({ tile, catalog }: { readonly tile: Pick<Tile, "title
             <SheetTitle>{tile.title}</SheetTitle>
             <SheetDescription>Every bucket the cell answered, and the records behind each one.</SheetDescription>
           </SheetHeader>
-          <div className="p-4">{details && <AnswerView read={read} title={tile.title} heading="h3" openBucket={tracing} fetchTrace={(lineageRef, bucket) => traceQuestion(question, lineageRef, bucket)} />}</div>
+          <div className="p-4">{details && <AnswerView read={read} title={tile.title} heading="h3" openBucket={tracing} fetchTrace={(lineageRef, bucket) => traceQuestion(question, lineageRef, bucket, undefined, undefined, scope)} />}</div>
         </SheetContent>
       </Sheet>
     </div>

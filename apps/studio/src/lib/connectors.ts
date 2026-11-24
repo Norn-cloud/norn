@@ -49,17 +49,30 @@ export async function api<T>(
   const method = (init?.method ?? "GET").toUpperCase()
   const write = method !== "GET" && method !== "HEAD" && method !== "OPTIONS"
   const originScope = init?.scope !== undefined ? init.scope : getDisplayedWorkspaceScope()
-  const activeScope = write ? originScope : undefined
-  const response = await fetcher(`/api/connectors${path}`, {
+  const send = () => fetcher(`/api/connectors${path}`, {
     method: init?.method ?? "GET",
     credentials: "same-origin",
     headers: {
       ...init?.body === undefined ? {} : { "content-type": "application/json" },
-      ...scopeHeaders(activeScope),
+      ...scopeHeaders(originScope),
     },
     ...init?.body === undefined ? {} : { body: JSON.stringify(init.body) },
   })
-  const body = (await response.json().catch(() => null)) as Record<string, unknown> | null
+  let response = await send()
+  let body = (await response.json().catch(() => null)) as Record<string, unknown> | null
+  // Connector GETs are strictly read-only on the server: when an expired gateway token can be
+  // refreshed, trigger the explicit origin-checked POST /refresh once and retry the GET.
+  if (!write && response.status === 401 && body?.code === "connectors.refresh_required") {
+    const refreshed = await fetcher("/api/connectors/refresh", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: scopeHeaders(originScope),
+    })
+    if (refreshed.ok) {
+      response = await send()
+      body = (await response.json().catch(() => null)) as Record<string, unknown> | null
+    }
+  }
   if (!response.ok) {
     const error = typeof body?.error === "string" ? body.error : `The server answered ${response.status}.`
     throw new ConnectorError(response.status, typeof body?.code === "string" ? body.code : "connectors.unreadable", error, fixAction(body?.action), typeof body?.field === "string" ? body.field : null, originScope)
@@ -109,7 +122,7 @@ export interface Tool {
   readonly bindings: readonly string[]
 }
 
-type Call = <T>(path: string, init?: { readonly method: string; readonly body?: unknown; readonly scope?: WorkspaceScope | null }) => Promise<T>
+type Call = <T>(path: string, init?: { readonly method?: string; readonly body?: unknown; readonly scope?: WorkspaceScope | null }) => Promise<T>
 const enc = encodeURIComponent
 
 /** Kinds whose fix the page performs itself; `ask_admin` is advice, shown without a button. */
@@ -127,9 +140,9 @@ export async function startFix(action: FixAction, call: Call = api, scope?: Work
     case "sign_in_gateway": return (await call<{ url: string }>("/link", { method: "POST", ...scopeOpt })).url
     case "connect_account": return (await call<{ url: string }>(`/apps/${enc(action.app)}/accounts/${enc(action.requirement)}/connect`, { method: "POST", body: {}, ...scopeOpt })).url
     case "reconnect_account": {
-      const apps = action.app !== null ? [action.app] : (await call<{ apps: readonly string[] }>(`/accounts/${enc(action.account)}`)).apps
+      const apps = action.app !== null ? [action.app] : (await call<{ apps: readonly string[] }>(`/accounts/${enc(action.account)}`, scope === undefined ? undefined : scopeOpt)).apps
       for (const app of apps) {
-        const { requirements } = await call<{ requirements: readonly Requirement[] }>(`/apps/${enc(app)}/accounts`)
+        const { requirements } = await call<{ requirements: readonly Requirement[] }>(`/apps/${enc(app)}/accounts`, scope === undefined ? undefined : scopeOpt)
         const requirement = requirements.find((entry) => entry.account === action.account)?.requirement
         if (requirement !== undefined) return (await call<{ url: string }>(`/apps/${enc(app)}/accounts/${enc(requirement)}/connect`, { method: "POST", body: { account: action.account }, ...scopeOpt })).url
       }

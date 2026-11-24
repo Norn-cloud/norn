@@ -350,7 +350,7 @@ export function QuestionTree({ tree, catalog, originScope, guard }: { readonly t
         {!signed && <p id="question-save-reason" className="text-meta text-muted-foreground">Sign off on the plain words first.</p>}
         {saveError && <p role="alert" className="text-destructive">{saveError}</p>}
       </div>
-      {signed ? <RunQuestion key={restated?.sha256} question={question} catalog={catalog} /> : <p className="text-meta text-muted-foreground">Run opens once you have signed off on the question in plain words.</p>}
+      {signed ? <RunQuestion key={restated?.sha256} question={question} catalog={catalog} scope={pinnedScope} /> : <p className="text-meta text-muted-foreground">Run opens once you have signed off on the question in plain words.</p>}
       <Panel icon={ChartLine} label="Saved questions">
         {cellAvailable && list.isPending && <p>Loading saved questions…</p>}
         {list.isError && <p role="alert" className="text-destructive">{list.error.message}</p>}

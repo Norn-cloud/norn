@@ -162,13 +162,22 @@ export function parseGrantRef(referenceId: unknown): { readonly organizationId: 
   return { organizationId, memberId }
 }
 
+interface ConsentSnapshot {
+  readonly id: string
+  readonly scopes: string
+  readonly resources: string | null
+  readonly requestedUserInfoClaims: string | null
+  readonly updatedAt: string | number
+}
+
 interface OAuthConsentScope {
   referenceId?: string
   memberId?: string
   claimedApprovalId?: string
   consentUserId?: string
   consentClientId?: string
-  existedBeforeConsent?: boolean
+  isConsentAccept?: boolean
+  previousConsent?: ConsentSnapshot | null
 }
 const oauthScopeStore = new AsyncLocalStorage<OAuthConsentScope>()
 
@@ -179,7 +188,7 @@ async function sha256Hex(value: string): Promise<string> {
 
 /**
  * Mint a short-lived, single-use consent approval token bound to the caller's live session,
- * user, active ready workspace, membership generation, and exact signed `oauth_query`.
+ * user, client, active ready workspace, membership generation, and exact signed `oauth_query`.
  * Persisted conditionally so a revoked/expired session or revoked membership writes nothing.
  */
 export async function issueConsentApproval(
@@ -193,6 +202,12 @@ export async function issueConsentApproval(
     readonly oauthQuery: string
   },
 ): Promise<string | null> {
+  const params = new URLSearchParams(args.oauthQuery)
+  const clientId = nonEmptyString(params.get("client_id"))
+  const redirectUri = nonEmptyString(params.get("redirect_uri"))
+  if (clientId === null || redirectUri === null) return null
+  const codeChallenge = nonEmptyString(params.get("code_challenge"))
+  const state = nonEmptyString(params.get("state"))
   const token = generateRandomString(43, "a-z", "A-Z", "0-9")
   const [tokenHash, queryHash] = await Promise.all([sha256Hex(token), sha256Hex(args.oauthQuery)])
   const now = new Date()
@@ -206,6 +221,10 @@ export async function issueConsentApproval(
     sessionId: args.sessionId,
     sessionToken: args.sessionToken,
     userId: args.userId,
+    clientId,
+    redirectUri,
+    codeChallenge,
+    state,
     organizationId: args.organizationId,
     memberId: args.memberId,
     grantRef,
@@ -1163,13 +1182,17 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
           } else if (headerOrg !== null && headerOrg !== targetOrgId) {
             throw apiError(409, { code: "WORKSPACE_CHANGED", message: "Your active workspace changed. Reload the page before submitting." }, responseHeaders)
           }
-          // Scope target-member lookups to the authorized workspace before Better Auth inspects
-          // global member IDs or roles, preventing foreign-org member/owner existence oracles (S5).
+          // Authorize caller permission BEFORE resolving target membership/invitation rows so
+          // unauthorized callers cannot distinguish same-workspace IDs from absent or foreign IDs (S5).
           const db = config.database as unknown as ProvisionDb
           if (path === "/organization/remove-member") {
-            const caller = await dbFirst<{ id: string }>(db, `select "id" from "member" where "organizationId" = ? and "userId" = ?`, targetOrgId, session.user.id)
-            if (caller === null) throw apiError(400, { code: "MEMBER_NOT_FOUND", message: "Member not found" }, responseHeaders)
+            const caller = await dbFirst<{ id: string; role: string }>(db, `select "id", "role" from "member" where "organizationId" = ? and "userId" = ?`, targetOrgId, session.user.id)
+            if (caller === null) throw apiError(403, { code: "FORBIDDEN", message: "You do not have permission to remove members from this workspace." }, responseHeaders)
             const targetKey = nonEmptyString(body.memberIdOrEmail)
+            const isSelf = targetKey !== null && (targetKey === caller.id || targetKey.toLowerCase() === session.user.email.toLowerCase())
+            if (!hasOrgRole(caller.role, ["owner", "admin"]) && !isSelf) {
+              throw apiError(403, { code: "FORBIDDEN", message: "You do not have permission to remove members from this workspace." }, responseHeaders)
+            }
             if (targetKey !== null) {
               const target = targetKey.includes("@")
                 ? await dbFirst<{ id: string }>(db, `select m."id" from "member" m join "user" u on u."id" = m."userId" where m."organizationId" = ? and lower(u."email") = lower(?)`, targetOrgId, targetKey)
@@ -1177,8 +1200,10 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
               if (target === null) throw apiError(400, { code: "MEMBER_NOT_FOUND", message: "Member not found" }, responseHeaders)
             }
           } else if (path === "/organization/update-member-role") {
-            const caller = await dbFirst<{ id: string }>(db, `select "id" from "member" where "organizationId" = ? and "userId" = ?`, targetOrgId, session.user.id)
-            if (caller === null) throw apiError(400, { code: "MEMBER_NOT_FOUND", message: "Member not found" }, responseHeaders)
+            const caller = await dbFirst<{ id: string; role: string }>(db, `select "id", "role" from "member" where "organizationId" = ? and "userId" = ?`, targetOrgId, session.user.id)
+            if (caller === null || !hasOrgRole(caller.role, ["owner", "admin"])) {
+              throw apiError(403, { code: "FORBIDDEN", message: "You do not have permission to update members in this workspace." }, responseHeaders)
+            }
             const targetId = nonEmptyString(body.memberId)
             if (targetId !== null) {
               const target = await dbFirst<{ id: string }>(db, `select "id" from "member" where "organizationId" = ? and "id" = ?`, targetOrgId, targetId)
@@ -1197,14 +1222,24 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
           const invitationId = nonEmptyString((ctx.body as { invitationId?: unknown } | undefined)?.invitationId)
           if (invitationId === null) return
           const db = config.database as unknown as ProvisionDb
-          // Scope invitation lookup to workspaces the caller belongs to so foreign IDs match absent IDs.
-          const scoped = await dbFirst<{ id: string }>(
+          // Authorize caller permission BEFORE resolving target invitation IDs: callers without
+          // admin/owner rights anywhere get a uniform 403; admins see only invitations in
+          // workspaces they administer (400 INVITATION_NOT_FOUND for absent, foreign, or unprivileged orgs).
+          const adminMemberships = await dbAll<{ organizationId: string; role: string }>(
             db,
-            `select i."id" from "invitation" i join "member" m on m."organizationId" = i."organizationId" where i."id" = ? and m."userId" = ?`,
-            invitationId,
+            `select "organizationId", "role" from "member" where "userId" = ?`,
             session.user.id,
           )
-          if (scoped === null) {
+          const adminOrgIds = new Set(adminMemberships.filter((m) => hasOrgRole(m.role, ["owner", "admin"])).map((m) => m.organizationId))
+          if (adminOrgIds.size === 0) {
+            throw apiError(403, { code: "FORBIDDEN", message: "You do not have permission to cancel invitations." }, responseHeaders)
+          }
+          const scoped = await dbFirst<{ id: string; organizationId: string }>(
+            db,
+            `select i."id", i."organizationId" from "invitation" i where i."id" = ?`,
+            invitationId,
+          )
+          if (scoped === null || !adminOrgIds.has(scoped.organizationId)) {
             throw apiError(400, { code: "INVITATION_NOT_FOUND", message: INVITATION_GONE }, responseHeaders)
           }
           return
@@ -1455,29 +1490,60 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
           if (oauthQuery === null) {
             throw apiError(400, { code: "INVALID_OAUTH_QUERY", message: "Missing OAuth authorization request." }, responseHeaders)
           }
+          const queryParams = new URLSearchParams(oauthQuery)
+          const clientId = nonEmptyString(queryParams.get("client_id"))
+          const redirectUri = nonEmptyString(queryParams.get("redirect_uri"))
+          if (clientId === null || redirectUri === null) {
+            throw apiError(400, { code: "INVALID_OAUTH_QUERY", message: "Invalid OAuth authorization request." }, responseHeaders)
+          }
+          const codeChallenge = nonEmptyString(queryParams.get("code_challenge"))
+          const state = nonEmptyString(queryParams.get("state"))
           const db = config.database as unknown as ProvisionDb
           const [tokenHash, queryHash] = await Promise.all([sha256Hex(approvalToken), sha256Hex(oauthQuery)])
-          // Atomically claim the single-use approval token (preventing concurrent replay while
-          // keeping the claimed approval alive through consent + code commit for trigger verification).
-          const claimed = await dbFirst<{ id: string; value: string }>(
-            db,
-            `update "verification"
-             set "identifier" = 'oauth-approval-claimed:' || "id"
-             where "identifier" = ?
-               and ${LIVE_SESSION_SQL}
-               and exists (select 1 from "session" s where s."id" = ? and s."token" = ? and s."userId" = ? and ${LIVE_SESSION_S_SQL})
-             returning "id", "value"`,
-            `oauth-approval:${tokenHash}`,
-            session.session.id,
-            session.session.token,
-            session.user.id,
-          )
+          // Atomically claim the single-use approval token, serialized per (userId, clientId, grantRef)
+          // so no concurrent consent request for the same triple can interleave with consent or rollback.
+          let claimed: { id: string; value: string } | null
+          try {
+            claimed = await dbFirst<{ id: string; value: string }>(
+              db,
+              `update "verification"
+               set "identifier" = 'oauth-approval-claimed:' || "id"
+               where "identifier" = ?
+                 and ${LIVE_SESSION_SQL}
+                 and exists (select 1 from "session" s where s."id" = ? and s."token" = ? and s."userId" = ? and ${LIVE_SESSION_S_SQL})
+               returning "id", "value"`,
+              `oauth-approval:${tokenHash}`,
+              session.session.id,
+              session.session.token,
+              session.user.id,
+            )
+          } catch (error) {
+            if (error instanceof Error && error.message.includes("oauth.approval_conflict")) {
+              throw apiError(409, { code: "CONSENT_IN_PROGRESS", message: "Another approval for this assistant is already in progress. Try again in a moment." }, responseHeaders)
+            }
+            throw error
+          }
           if (claimed === null) {
             throw apiError(409, { code: "CONSENT_APPROVAL_EXPIRED", message: "This approval request expired or was already used. Start connecting again from your assistant." }, responseHeaders)
           }
           const store = oauthScopeStore.getStore()
-          if (store !== undefined) store.claimedApprovalId = claimed.id
-          let approval: { sessionId?: unknown; sessionToken?: unknown; userId?: unknown; organizationId?: unknown; memberId?: unknown; grantRef?: unknown; queryHash?: unknown }
+          if (store !== undefined) {
+            store.claimedApprovalId = claimed.id
+            store.isConsentAccept = true
+          }
+          let approval: {
+            sessionId?: unknown
+            sessionToken?: unknown
+            userId?: unknown
+            clientId?: unknown
+            redirectUri?: unknown
+            codeChallenge?: unknown
+            state?: unknown
+            organizationId?: unknown
+            memberId?: unknown
+            grantRef?: unknown
+            queryHash?: unknown
+          }
           try {
             approval = JSON.parse(claimed.value) as typeof approval
           } catch {
@@ -1487,6 +1553,10 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
             approval.sessionId !== session.session.id
             || approval.sessionToken !== session.session.token
             || approval.userId !== session.user.id
+            || approval.clientId !== clientId
+            || approval.redirectUri !== redirectUri
+            || (approval.codeChallenge ?? null) !== codeChallenge
+            || (approval.state ?? null) !== state
             || approval.organizationId !== expectedOrg
             || approval.queryHash !== queryHash
             || typeof approval.memberId !== "string"
@@ -1505,22 +1575,34 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
             throw apiError(409, { code: "WORKSPACE_CHANGED", message: "Your active workspace changed. Reload this page and approve again for the workspace you intend." }, responseHeaders)
           }
           const grantRef = encodeGrantRef(member.organizationId, member.memberId)
-          const clientId = new URLSearchParams(oauthQuery).get("client_id") ?? undefined
-          const existingConsent = clientId === undefined
-            ? null
-            : await dbFirst<{ id: string }>(
+          // Snapshot any existing consent while holding the exclusive per-(user,client,grant) claim
+          // and persist that snapshot on the claimed approval so rollback can restore exact prior
+          // scopes even if the session is revoked mid-request.
+          const existingConsent = await dbFirst<ConsentSnapshot>(
+            db,
+            `select "id", "scopes", "resources", "requestedUserInfoClaims", "updatedAt"
+             from "oauthConsent"
+             where "clientId" = ? and "userId" = ? and "referenceId" = ?`,
+            clientId,
+            session.user.id,
+            grantRef,
+          )
+          if (existingConsent !== null) {
+            await dbRun(
               db,
-              `select "id" from "oauthConsent" where "clientId" = ? and "userId" = ? and "referenceId" = ?`,
-              clientId,
-              session.user.id,
-              grantRef,
+              `update "verification"
+               set "value" = json_set("value", '$.prevConsent', json(?))
+               where "id" = ? and "identifier" = 'oauth-approval-claimed:' || "id"`,
+              JSON.stringify(existingConsent),
+              claimed.id,
             )
+          }
           if (store !== undefined) {
             store.referenceId = grantRef
             store.memberId = member.memberId
             store.consentUserId = session.user.id
             store.consentClientId = clientId
-            store.existedBeforeConsent = existingConsent !== null
+            store.previousConsent = existingConsent
           }
         }
       }),
@@ -1635,19 +1717,74 @@ export function createAuth(config: AuthConfig) {
   const auth = betterAuth(authOptions(config, self))
   self.auth = auth
   const db = config.database as unknown as ProvisionDb
+  const consentResponseFailed = async (response: Response, store: OAuthConsentScope): Promise<boolean> => {
+    if (response.status >= 400) return true
+    if (!store.isConsentAccept) return false
+    const location = response.headers.get("location")
+    if (location !== null) {
+      try {
+        const parsed = new URL(location, config.baseURL)
+        if (parsed.searchParams.has("error") || !parsed.searchParams.has("code")) return true
+      } catch {
+        return true
+      }
+      return false
+    }
+    const contentType = response.headers.get("content-type") ?? ""
+    if (contentType.includes("application/json")) {
+      const parsed = await response.clone().json().catch(() => null) as { url?: unknown; redirect?: unknown; error?: unknown } | null
+      if (parsed === null || typeof parsed.error === "string") return true
+      if (typeof parsed.url === "string") {
+        try {
+          const target = new URL(parsed.url, config.baseURL)
+          if (target.searchParams.has("error") || !target.searchParams.has("code")) return true
+        } catch {
+          return true
+        }
+        return false
+      }
+      return true
+    }
+    return true
+  }
   const cleanupApproval = async (store: OAuthConsentScope, rollbackConsent: boolean) => {
-    if (store.claimedApprovalId !== undefined) {
-      await dbRun(db, `delete from "verification" where "id" = ?`, store.claimedApprovalId).catch(() => undefined)
+    const claimId = store.claimedApprovalId
+    if (claimId === undefined) return
+    // Roll back any staged consent insert or update BEFORE releasing the exclusive claimed approval
+    // row, guarded on the claimed approval still existing (proving code issuance did not commit).
+    if (rollbackConsent && store.consentClientId !== undefined && store.consentUserId !== undefined && store.referenceId !== undefined) {
+      if (store.previousConsent === null) {
+        await dbRun(
+          db,
+          `delete from "oauthConsent"
+           where "clientId" = ? and "userId" = ? and "referenceId" = ?
+             and exists (select 1 from "verification" where "id" = ? and "identifier" = 'oauth-approval-claimed:' || "id")`,
+          store.consentClientId,
+          store.consentUserId,
+          store.referenceId,
+          claimId,
+        ).catch(() => undefined)
+      } else if (store.previousConsent !== undefined) {
+        const prev = store.previousConsent
+        await dbRun(
+          db,
+          `update "oauthConsent"
+           set "scopes" = ?, "resources" = ?, "requestedUserInfoClaims" = ?, "updatedAt" = ?
+           where "id" = ? and "clientId" = ? and "userId" = ? and "referenceId" = ?
+             and exists (select 1 from "verification" where "id" = ? and "identifier" = 'oauth-approval-claimed:' || "id")`,
+          prev.scopes,
+          prev.resources,
+          prev.requestedUserInfoClaims,
+          prev.updatedAt,
+          prev.id,
+          store.consentClientId,
+          store.consentUserId,
+          store.referenceId,
+          claimId,
+        ).catch(() => undefined)
+      }
     }
-    if (rollbackConsent && store.existedBeforeConsent === false && store.consentClientId !== undefined && store.consentUserId !== undefined && store.referenceId !== undefined) {
-      await dbRun(
-        db,
-        `delete from "oauthConsent" where "clientId" = ? and "userId" = ? and "referenceId" = ?`,
-        store.consentClientId,
-        store.consentUserId,
-        store.referenceId,
-      ).catch(() => undefined)
-    }
+    await dbRun(db, `delete from "verification" where "id" = ?`, claimId).catch(() => undefined)
   }
   const rawHandler = auth.handler
   auth.handler = async (request: Request) => {
@@ -1655,7 +1792,7 @@ export function createAuth(config: AuthConfig) {
     let failed = false
     try {
       const response = await oauthScopeStore.run(store, () => rawHandler(request))
-      if (response.status >= 400) failed = true
+      failed = await consentResponseFailed(response, store)
       return response
     } catch (error) {
       failed = true
@@ -1681,7 +1818,25 @@ export function createAuth(config: AuthConfig) {
         const invoke = async () => {
           let failed = false
           try {
-            return await (value as (...a: unknown[]) => unknown).apply(target, args)
+            const result = await (value as (...a: unknown[]) => unknown).apply(target, args)
+            if (store.isConsentAccept) {
+              if (result instanceof Response) {
+                failed = await consentResponseFailed(result, store)
+              } else {
+                const url = (result as { url?: unknown } | null)?.url
+                if (typeof url !== "string") {
+                  failed = true
+                } else {
+                  try {
+                    const parsed = new URL(url, config.baseURL)
+                    if (parsed.searchParams.has("error") || !parsed.searchParams.has("code")) failed = true
+                  } catch {
+                    failed = true
+                  }
+                }
+              }
+            }
+            return result
           } catch (error) {
             failed = true
             if (isOAuthMembershipAbort(error)) {

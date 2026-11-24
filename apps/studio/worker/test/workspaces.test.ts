@@ -660,4 +660,47 @@ test("S4 null set-active refuses revoked sessions; S5 member/invitation mutation
   expect(await rejectForeign.json()).toEqual(await rejectMissing.json())
   // Bob's invitation is still pending.
   expect(db.query(`select "status" from "invitation" where "id" = ?`).get(bobInv.id)).toEqual({ status: "pending" })
+
+  // 4. R3-7: Non-admin callers cannot distinguish same-workspace member/invitation IDs from absent IDs.
+  const lowPriv = await enroll(env, "s5-member@example.com", "LowPriv")
+  // Remove lowPriv's own owner workspace so they hold NO admin/owner role anywhere, and join Alice's workspace as a plain member.
+  db.run(`delete from "member" where "userId" = ?`, [lowPriv.userId])
+  db.run(`insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values ('m_lowpriv', ?, ?, 'member', ?)`, [alice.organizationId, lowPriv.userId, new Date().toISOString()])
+  db.run(`update "session" set "activeOrganizationId" = ? where "userId" = ?`, [alice.organizationId, lowPriv.userId])
+  const aliceMemberId = (db.query(`select "id" from "member" where "userId" = ? and "organizationId" = ?`).get(alice.userId, alice.organizationId) as { id: string }).id
+  const aliceInv = (await (await mutate(
+    env,
+    "POST",
+    "/api/auth/organization/invite-member",
+    { email: "invitee-for-alice@example.com", role: "member", organizationId: alice.organizationId },
+    { cookie: alice.cookie, [EXPECTED_ORG_HEADER]: alice.organizationId },
+  )).json()) as { id: string }
+
+  // update-member-role & remove-member: same-workspace real member ID vs absent ID return identical 403 FORBIDDEN.
+  for (const path of ["/api/auth/organization/remove-member", "/api/auth/organization/update-member-role"]) {
+    const bodyAbsent = path.endsWith("remove-member")
+      ? { memberIdOrEmail: "mem_absent", organizationId: alice.organizationId }
+      : { memberId: "mem_absent", role: "admin", organizationId: alice.organizationId }
+    const bodyReal = path.endsWith("remove-member")
+      ? { memberIdOrEmail: aliceMemberId, organizationId: alice.organizationId }
+      : { memberId: aliceMemberId, role: "admin", organizationId: alice.organizationId }
+    const rAbsent = await mutate(env, "POST", path, bodyAbsent, { cookie: lowPriv.cookie, [EXPECTED_ORG_HEADER]: alice.organizationId })
+    const rReal = await mutate(env, "POST", path, bodyReal, { cookie: lowPriv.cookie, [EXPECTED_ORG_HEADER]: alice.organizationId })
+    expect(rAbsent.status).toBe(403)
+    expect(rReal.status).toBe(403)
+    expect(await rReal.json()).toEqual(await rAbsent.json())
+  }
+  // cancel-invitation: non-admin gets identical 403 FORBIDDEN for real same-workspace invitation vs absent invitation.
+  const lowCancelAbsent = await mutate(env, "POST", "/api/auth/organization/cancel-invitation", { invitationId: "inv_absent" }, { cookie: lowPriv.cookie, [EXPECTED_ORG_HEADER]: alice.organizationId })
+  const lowCancelReal = await mutate(env, "POST", "/api/auth/organization/cancel-invitation", { invitationId: aliceInv.id }, { cookie: lowPriv.cookie, [EXPECTED_ORG_HEADER]: alice.organizationId })
+  expect(lowCancelAbsent.status).toBe(403)
+  expect(lowCancelReal.status).toBe(403)
+  expect(await lowCancelReal.json()).toEqual(await lowCancelAbsent.json())
+  // A user who IS an admin in Bob's workspace but only a plain member in Alice's workspace gets uniform 400 INVITATION_NOT_FOUND for Alice's real invitation vs an absent one.
+  db.run(`insert into "member" ("id", "organizationId", "userId", "role", "createdAt") values ('m_bob_in_alice', ?, ?, 'member', ?)`, [alice.organizationId, bob.userId, new Date().toISOString()])
+  const bobCancelAbsent = await mutate(env, "POST", "/api/auth/organization/cancel-invitation", { invitationId: "inv_absent" }, { cookie: bob.cookie, [EXPECTED_ORG_HEADER]: bob.organizationId })
+  const bobCancelUnpriv = await mutate(env, "POST", "/api/auth/organization/cancel-invitation", { invitationId: aliceInv.id }, { cookie: bob.cookie, [EXPECTED_ORG_HEADER]: bob.organizationId })
+  expect(bobCancelAbsent.status).toBe(400)
+  expect(bobCancelUnpriv.status).toBe(400)
+  expect(await bobCancelUnpriv.json()).toEqual(await bobCancelAbsent.json())
 })

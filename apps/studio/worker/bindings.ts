@@ -58,6 +58,8 @@ export interface Binding {
   readonly pendingAttempt: string | null
   /** Cell environment the pending save targeted, so reconciliation reads the same environment. */
   readonly pendingEnvironmentId: string | null
+  /** Epoch ms when the pending create or edit began, fencing active saves against premature abandon. */
+  readonly pendingStartedAt: number | null
 }
 
 export interface BindingDraft {
@@ -68,7 +70,7 @@ export interface BindingDraft {
   readonly runRole: RunRole
 }
 
-interface Row { id: string; app: string; tool: string; label: string; input_mapping: string; run_role: RunRole; updated_by: string; updated_at: number; manifest_digest: string; connector: string; definition_id: string | null; definition_version: number | null; state: "ready" | "creating" | "editing"; pending_attempt: string | null; pending_environment_id: string | null }
+interface Row { id: string; app: string; tool: string; label: string; input_mapping: string; run_role: RunRole; updated_by: string; updated_at: number; manifest_digest: string; connector: string; definition_id: string | null; definition_version: number | null; state: "ready" | "creating" | "editing"; pending_attempt: string | null; pending_environment_id: string | null; pending_started_at: number | null }
 const fromRow = (row: Row): Binding => ({
   id: row.id, app: row.app, tool: row.tool, label: row.label, inputMapping: JSON.parse(row.input_mapping) as InputMapping,
   runRole: row.run_role, updatedBy: row.updated_by, updatedAt: row.updated_at,
@@ -79,8 +81,9 @@ const fromRow = (row: Row): Binding => ({
   pendingDefinition: row.state === "ready" ? null : row.definition_id,
   pendingAttempt: row.state === "ready" ? null : row.pending_attempt,
   pendingEnvironmentId: row.state === "ready" ? null : row.pending_environment_id,
+  pendingStartedAt: row.state === "ready" ? null : row.pending_started_at ?? row.updated_at,
 })
-const COLUMNS = "id, app, tool, label, input_mapping, run_role, updated_by, updated_at, manifest_digest, connector, definition_id, definition_version, state, pending_attempt, pending_environment_id"
+const COLUMNS = "id, app, tool, label, input_mapping, run_role, updated_by, updated_at, manifest_digest, connector, definition_id, definition_version, state, pending_attempt, pending_environment_id, pending_started_at"
 
 export async function listBindings(db: D1Database, orgId: string): Promise<readonly Binding[]> {
   const { results } = await db.prepare(`SELECT ${COLUMNS} FROM connector_binding WHERE org_id = ? ORDER BY app, tool, label`).bind(orgId).all<Row>()
@@ -142,11 +145,11 @@ export async function beginCreate(
   definitionId: string,
   attemptId: string,
   environmentId: string | null,
+  now = Date.now(),
 ): Promise<void> {
-  const now = Date.now()
   await db.prepare(
-    "INSERT INTO connector_binding (id, org_id, app, tool, label, input_mapping, run_role, created_by, created_at, updated_by, updated_at, manifest_digest, connector, definition_id, definition_version, state, pending_attempt, pending_environment_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'creating', ?, ?)",
-  ).bind(id, orgId, draft.app, draft.tool, draft.label, JSON.stringify(draft.inputMapping), draft.runRole, actor, now, actor, now, pin.manifestDigest, JSON.stringify(pin.connector), definitionId, attemptId, environmentId).run()
+    "INSERT INTO connector_binding (id, org_id, app, tool, label, input_mapping, run_role, created_by, created_at, updated_by, updated_at, manifest_digest, connector, definition_id, definition_version, state, pending_attempt, pending_environment_id, pending_started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'creating', ?, ?, ?)",
+  ).bind(id, orgId, draft.app, draft.tool, draft.label, JSON.stringify(draft.inputMapping), draft.runRole, actor, now, actor, now, pin.manifestDigest, JSON.stringify(pin.connector), definitionId, attemptId, environmentId, now).run()
 }
 
 /** Mark an existing ready binding as being saved; returns false if another save already claimed it. */
@@ -158,13 +161,19 @@ export async function beginEdit(
   attemptId: string,
   environmentId: string | null,
   expectedVersion: number | null,
+  now = Date.now(),
 ): Promise<boolean> {
   const { results } = await db.prepare(
-    "UPDATE connector_binding SET state = 'editing', definition_id = ?, pending_attempt = ?, pending_environment_id = ? WHERE org_id = ? AND id = ? AND state = 'ready' AND definition_version IS ? RETURNING id",
-  ).bind(definitionId, attemptId, environmentId, orgId, id, expectedVersion).all<{ id: string }>()
+    "UPDATE connector_binding SET state = 'editing', definition_id = ?, pending_attempt = ?, pending_environment_id = ?, pending_started_at = ? WHERE org_id = ? AND id = ? AND state = 'ready' AND definition_version IS ? RETURNING id",
+  ).bind(definitionId, attemptId, environmentId, now, orgId, id, expectedVersion).all<{ id: string }>()
   return results.length > 0
 }
 
+/**
+ * Commit a binding save only when the row still carries this exact pending attempt and prior
+ * version. Returns `null` if the attempt was abandoned or superseded so callers never report
+ * stale state as a completed save.
+ */
 export async function finishSave(
   db: D1Database,
   orgId: string,
@@ -174,14 +183,13 @@ export async function finishSave(
   pin: Pin,
   attemptId: string,
   expectedPreviousVersion: number | null,
-): Promise<Binding> {
-  const now = Date.now()
-  await db.prepare(
-    "UPDATE connector_binding SET label = ?, input_mapping = ?, run_role = ?, updated_by = ?, updated_at = ?, manifest_digest = ?, connector = ?, definition_id = ?, definition_version = ?, state = 'ready', pending_attempt = NULL, pending_environment_id = NULL WHERE org_id = ? AND id = ? AND pending_attempt = ? AND state IN ('creating', 'editing') AND definition_version IS ?",
-  ).bind(draft.label, JSON.stringify(draft.inputMapping), draft.runRole, actor, now, pin.manifestDigest, JSON.stringify(pin.connector), pin.definition?.id ?? null, pin.definition?.version ?? null, orgId, id, attemptId, expectedPreviousVersion).run()
-  const saved = await getBinding(db, orgId, id)
-  if (saved === null) throw new Error(`binding ${id} vanished while saving`)
-  return saved
+  now = Date.now(),
+): Promise<Binding | null> {
+  const { results } = await db.prepare(
+    `UPDATE connector_binding SET label = ?, input_mapping = ?, run_role = ?, updated_by = ?, updated_at = ?, manifest_digest = ?, connector = ?, definition_id = ?, definition_version = ?, state = 'ready', pending_attempt = NULL, pending_environment_id = NULL, pending_started_at = NULL WHERE org_id = ? AND id = ? AND pending_attempt = ? AND state IN ('creating', 'editing') AND definition_version IS ? RETURNING ${COLUMNS}`,
+  ).bind(draft.label, JSON.stringify(draft.inputMapping), draft.runRole, actor, now, pin.manifestDigest, JSON.stringify(pin.connector), pin.definition?.id ?? null, pin.definition?.version ?? null, orgId, id, attemptId, expectedPreviousVersion).all<Row>()
+  const row = results[0]
+  return row === undefined ? null : fromRow(row)
 }
 
 /**
@@ -203,7 +211,7 @@ export async function abandonSave(
     return results.length > 0 ? "deleted" : "unchanged"
   }
   const { results } = await db.prepare(
-    "UPDATE connector_binding SET state = 'ready', definition_id = ?, pending_attempt = NULL, pending_environment_id = NULL WHERE org_id = ? AND id = ? AND state = 'editing' AND pending_attempt IS ? AND definition_version IS ? RETURNING id",
+    "UPDATE connector_binding SET state = 'ready', definition_id = ?, pending_attempt = NULL, pending_environment_id = NULL, pending_started_at = NULL WHERE org_id = ? AND id = ? AND state = 'editing' AND pending_attempt IS ? AND definition_version IS ? RETURNING id",
   ).bind(previous?.id ?? null, orgId, id, attemptId, previous?.version ?? null).all<{ id: string }>()
   return results.length > 0 ? "restored" : "unchanged"
 }
@@ -228,7 +236,7 @@ export async function adoptCell(
   const digest = typeof payload.manifestDigest === "string" ? payload.manifestDigest : null
   const connector = typeof payload.connector === "object" && payload.connector !== null ? JSON.stringify(payload.connector) : null
   const { results } = await db.prepare(
-    "UPDATE connector_binding SET label = COALESCE(?, label), input_mapping = COALESCE(?, input_mapping), run_role = COALESCE(?, run_role), manifest_digest = COALESCE(?, manifest_digest), connector = COALESCE(?, connector), definition_id = ?, definition_version = ?, state = 'ready', pending_attempt = NULL, pending_environment_id = NULL WHERE org_id = ? AND id = ? AND pending_attempt IS ? AND state IN ('creating', 'editing') AND definition_version IS ? RETURNING id",
+    "UPDATE connector_binding SET label = COALESCE(?, label), input_mapping = COALESCE(?, input_mapping), run_role = COALESCE(?, run_role), manifest_digest = COALESCE(?, manifest_digest), connector = COALESCE(?, connector), definition_id = ?, definition_version = ?, state = 'ready', pending_attempt = NULL, pending_environment_id = NULL, pending_started_at = NULL WHERE org_id = ? AND id = ? AND pending_attempt IS ? AND state IN ('creating', 'editing') AND definition_version IS ? RETURNING id",
   ).bind(label, mapping, role, digest, connector, definitionId, version, orgId, id, attemptId, expectedPreviousVersion).all<{ id: string }>()
   return results.length > 0
 }

@@ -106,7 +106,7 @@ export async function verifyWriteScope(
   options: { readonly checkHostQuery?: boolean; readonly requireEnv?: boolean } = {},
 ): Promise<WriteScopeCheck> {
   const upgrade = request.headers.get("upgrade")?.toLowerCase() === "websocket"
-  if (SAFE_METHODS.has(request.method) && !upgrade) return { ok: true }
+  const safeRead = SAFE_METHODS.has(request.method) && !upgrade
   const mismatch = () => ({
     ok: false as const,
     response: Response.json(
@@ -129,7 +129,40 @@ export async function verifyWriteScope(
     ),
   })
 
+  const headerOrg = nonEmpty(request.headers.get(EXPECTED_ORG_HEADER))
+  const headerEnv = nonEmpty(request.headers.get(EXPECTED_ENV_HEADER))
+
+  // On safe reads outside `/api/host/*`, still validate any explicit expected-scope headers sent
+  // by a tab (e.g. connector GETs) so a stale tab never caches another workspace's data.
+  if (safeRead && !options.checkHostQuery) {
+    if (headerOrg === null && headerEnv === null) return { ok: true }
+    if (headerOrg !== null && headerOrg !== actor.orgId) return mismatch()
+    if (headerEnv !== null) {
+      const scope = await cellScope(auth, actor.orgId)
+      if (scope.environmentId !== headerEnv) return mismatch()
+      return { ok: true, scope: { orgId: actor.orgId, environmentId: scope.environmentId } }
+    }
+    return { ok: true }
+  }
+
   const url = options.checkHostQuery || upgrade ? new URL(request.url) : null
+
+  // For `/api/host/*` (reads, writes, WebSocket upgrades, users and service keys), ALWAYS resolve
+  // and validate the canonical organization + environment before forwarding to the host (S6).
+  if (safeRead && options.checkHostQuery) {
+    const scope = await cellScope(auth, actor.orgId)
+    if (options.requireEnv && scope.environmentId === null) return noCell()
+    if (headerOrg !== null && headerOrg !== actor.orgId) return mismatch()
+    if (headerEnv !== null && scope.environmentId !== headerEnv) return mismatch()
+    if (url !== null) {
+      const queryOrgs = url.searchParams.getAll("orgId")
+      if (queryOrgs.some((org) => org !== actor.orgId)) return mismatch()
+      const queryEnvs = url.searchParams.getAll("environmentId")
+      if (queryEnvs.some((env) => env !== scope.environmentId)) return mismatch()
+    }
+    return { ok: true, scope: { orgId: actor.orgId, environmentId: scope.environmentId } }
+  }
+
   if (upgrade) {
     // Browser WebSocket upgrades cannot send custom headers, so query scope is validated directly
     // against the canonical server session workspace/environment and rewritten before forwarding.
@@ -147,33 +180,32 @@ export async function verifyWriteScope(
       if (actor.actorKind === "user" && options.requireEnv) {
         if (queryEnvs.length === 0) return required()
         if (queryEnvs.some((env) => env !== scope.environmentId)) return mismatch()
-      } else if (scope.environmentId !== null && queryEnvs.some((env) => env !== scope.environmentId)) {
+      } else if (queryEnvs.some((env) => env !== scope.environmentId)) {
         return mismatch()
       }
     }
     return { ok: true, scope: { orgId: actor.orgId, environmentId: scope.environmentId } }
   }
   if (actor.actorKind !== "user") {
-    // Service API keys are bound to a single organization (not a multi-tab session), but if the
-    // organization has a server-provisioned environment, never allow query smuggling to another env.
+    // Service API keys are bound to a single organization and its canonical cell environment:
+    // never forward a caller-chosen environmentId when the org has no cell or a different cell.
+    const scope = options.requireEnv || options.checkHostQuery || headerEnv !== null
+      ? await cellScope(auth, actor.orgId)
+      : { orgId: actor.orgId, environmentId: null }
+    if (options.requireEnv && scope.environmentId === null) return noCell()
+    if (headerOrg !== null && headerOrg !== actor.orgId) return mismatch()
+    if (headerEnv !== null && scope.environmentId !== headerEnv) return mismatch()
     if (url !== null) {
       const queryOrgs = url.searchParams.getAll("orgId")
       if (queryOrgs.some((org) => org !== actor.orgId)) return mismatch()
       const queryEnvs = url.searchParams.getAll("environmentId")
-      if (queryEnvs.length > 0) {
-        const scope = await cellScope(auth, actor.orgId)
-        if (scope.environmentId !== null && queryEnvs.some((env) => env !== scope.environmentId)) return mismatch()
-        if (scope.environmentId !== null) return { ok: true, scope: { orgId: actor.orgId, environmentId: scope.environmentId } }
-      }
+      if (queryEnvs.some((env) => env !== scope.environmentId)) return mismatch()
     }
-    return { ok: true }
+    return { ok: true, scope: { orgId: actor.orgId, environmentId: scope.environmentId } }
   }
 
-  const headerOrg = nonEmpty(request.headers.get(EXPECTED_ORG_HEADER))
   if (headerOrg === null) return required()
   if (headerOrg !== actor.orgId) return mismatch()
-
-  const headerEnv = nonEmpty(request.headers.get(EXPECTED_ENV_HEADER))
 
   let environmentId: string | null = null
   if (options.requireEnv || headerEnv !== null || options.checkHostQuery) {

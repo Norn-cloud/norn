@@ -670,4 +670,58 @@ test("S3 generation isolation: unredeemed codes, legacy grants, prior consents, 
   expect(revokedBeforeCode).toBe(true)
   expect(codeSessionRevoked.status).toBe(409)
   expect(sqlite.query(`select count(*) as n from "oauthConsent" where "clientId" = ?`).get(clientId4)).toEqual({ n: 0 })
+
+  // 5. R3-1 & R3-2: Per-client approval isolation AND exact rollback of consent UPDATE when code issuance fails.
+  const signIn5 = await postJson(env, "/api/auth/sign-in/email", { email: "gen-isolation@example.com", password: "correct horse battery" }, { origin: ORIGIN })
+  const cookie5 = cookieOf(signIn5)
+  sqlite.run(`update "session" set "activeOrganizationId" = ? where "userId" = ?`, [org, user])
+  const clientA = await register(env)
+  const clientB = await register(env)
+  const memberGen2 = "m_gen2"
+  const grantRefGen2 = encodeGrantRef(org, memberGen2)
+
+  // First grant Client A an initial consent (`openid`).
+  const authA1Url = `/api/auth/oauth2/authorize?${new URLSearchParams({ response_type: "code", client_id: clientA, redirect_uri: CLAUDE, scope: "openid", state: "st-a1", code_challenge: pkce().challenge, code_challenge_method: "S256", resource: RESOURCE })}`
+  const authA1 = await call(env, authA1Url, { headers: { cookie: cookie5 } })
+  expect(authA1.status).toBe(302)
+  const queryA1 = signedQueryOf(authA1.headers.get("location") ?? "")
+  const ctxA1 = await consentContext(env, cookie5, queryA1)
+  const okA1 = await postJson(env, "/api/auth/oauth2/consent", { accept: true, oauth_query: queryA1 }, { cookie: cookie5, origin: ORIGIN, [EXPECTED_ORG_HEADER]: org, [CONSENT_APPROVAL_HEADER]: ctxA1.approvalToken ?? "" })
+  expect(okA1.status).toBe(200)
+  const initialConsent = sqlite.query(`select "id", "scopes" from "oauthConsent" where "clientId" = ? and "userId" = ? and "referenceId" = ?`).get(clientA, user, grantRefGen2) as { id: string; scopes: string }
+  expect(initialConsent).not.toBeNull()
+
+  // While a claimed approval exists ONLY for Client B, inserting/updating Client A's consent directly MUST abort in SQLite!
+  const authB = await call(env, authorizeUrl(clientB, pkce().challenge), { headers: { cookie: cookie5 } })
+  const queryB = signedQueryOf(authB.headers.get("location") ?? "")
+  const ctxB = await consentContext(env, cookie5, queryB)
+  // Claim Client B's approval directly to simulate an in-flight Client B consent.
+  sqlite.run(`update "verification" set "identifier" = 'oauth-approval-claimed:' || "id" where "identifier" glob 'oauth-approval:*'`)
+  expect(() => sqlite.run(`update "oauthConsent" set "scopes" = '["openid","offline_access"]' where "id" = ?`, [initialConsent.id])).toThrow("oauth.membership_invalid")
+  // Clean up simulated claim for Client B before testing Client A update rollback.
+  expect(ctxB.approvalToken).toBeString()
+  sqlite.run(`delete from "verification" where "identifier" glob 'oauth-approval-claimed:*'`)
+
+  // Re-consent Client A with broader scopes (`prompt=consent`, `openid offline_access`) and revoke session right before code insert:
+  // the UPDATE to oauthConsent MUST roll back to `initialConsent.scopes` even though the session was revoked!
+  const authA2Url = `/api/auth/oauth2/authorize?${new URLSearchParams({ response_type: "code", client_id: clientA, redirect_uri: CLAUDE, scope: "openid offline_access", prompt: "consent", state: "st-a2", code_challenge: pkce().challenge, code_challenge_method: "S256", resource: RESOURCE })}`
+  const authA2 = await call(env, authA2Url, { headers: { cookie: cookie5 } })
+  expect(authA2.status).toBe(302)
+  const queryA2 = signedQueryOf(authA2.headers.get("location") ?? "")
+  const ctxA2 = await consentContext(env, cookie5, queryA2)
+  let revokedOnUpdate = false
+  sqlite.prepare = ((sql: string, ...rest: unknown[]) => {
+    if (!revokedOnUpdate && sql.toLowerCase().includes(`insert into "verification"`)) {
+      revokedOnUpdate = true
+      origPrepare(`delete from "session" where "userId" = ?`).run(user)
+    }
+    return (origPrepare as (...args: unknown[]) => ReturnType<typeof origPrepare>)(sql, ...rest)
+  }) as typeof sqlite.prepare
+  const failedUpdate = await postJson(env, "/api/auth/oauth2/consent", { accept: true, oauth_query: queryA2 }, { cookie: cookie5, origin: ORIGIN, [EXPECTED_ORG_HEADER]: org, [CONSENT_APPROVAL_HEADER]: ctxA2.approvalToken ?? "" })
+  sqlite.prepare = origPrepare
+  expect(revokedOnUpdate).toBe(true)
+  expect(failedUpdate.status).toBe(409)
+  const restored = sqlite.query(`select "scopes" from "oauthConsent" where "id" = ?`).get(initialConsent.id) as { scopes: string }
+  expect(restored.scopes).toBe(initialConsent.scopes)
+  expect(sqlite.query(`select count(*) as n from "verification" where "identifier" glob 'oauth-approval-claimed:*'`).get()).toEqual({ n: 0 })
 })

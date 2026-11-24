@@ -25,7 +25,10 @@ function d1(db: Database): D1Database {
   const statement = (sql: string, args: unknown[] = []) => ({
     sql, args,
     bind: (...next: unknown[]) => statement(sql, next),
-    all: async () => ({ results: db.query(sql).all(...(args as never[])) }),
+    all: async () => {
+      if (failures.next?.test(sql)) { failures.next = null; throw new Error("D1_ERROR: injected failure") }
+      return { results: db.query(sql).all(...(args as never[])) }
+    },
     run: async () => {
       if (failures.next?.test(sql)) { failures.next = null; throw new Error("D1_ERROR: injected failure") }
       db.query(sql).run(...(args as never[])); return { success: true }
@@ -561,11 +564,13 @@ test("a save never ends half-done: each failure point is settled via scoped POST
   clock.offset += PENDING_CREATE_LEASE_MS + 1
   expect((await list()).map((b) => b.label)).toEqual(["One, edited"])
 
-  // 4. Edit while the cell is down, which never received it: once the cell answers, the edit is
-  //    undone and the binding is back as it was (version 2, its label).
+  // 4. Edit while the cell is down, which never received it: fenced during its lease (never
+  //    abandoned prematurely while an install may still be in flight), then undone once the lease expires.
   cell.state.down = true
   await send(`/bindings/${one?.id}`, { ...body("PATCH", { label: "Lost edit" }), cookie: owner }, { host: cell.host })
   cell.state.down = false
+  expect((await list())[0]).toMatchObject({ label: "One, edited", state: "pending", definition: { version: 2 } })
+  clock.offset += PENDING_CREATE_LEASE_MS + 1
   expect((await list())[0]).toMatchObject({ label: "One, edited", state: "ready", definition: { version: 2 } })
 
   // 5. Create refused by the cell: the intent is undone at once, nothing is left.
@@ -733,4 +738,69 @@ test("POST /bindings:reconcile requires connector.bind (admin/owner) and stale r
   expect(staleAbandon).toBe("unchanged")
   const current = await getBinding(d1Db, orgId, created.id)
   expect(current).toMatchObject({ label: "Edit v2", state: "ready", definition: { version: 2 } })
+})
+
+test("R3-3/R3-4/R3-8: edit lease fencing, finishSave conflict detection, scoped connector GETs, and read-only GET token handling", async () => {
+  const { send, signUp, cell, clock, db } = stage(true)
+  const owner = await signUp("r3-owner@example.com")
+
+  // 1. R3-4: Connector GETs carrying a stale expected-org or expected-env header refuse 409 workspace.changed.
+  expect(await send("/bindings", { cookie: owner, headers: { [EXPECTED_ORG_HEADER]: "org_wrong", [EXPECTED_ENV_HEADER]: "analytics" } })).toMatchObject({ status: 409, body: { code: "workspace.changed" } })
+  expect(await send("/inventory", { cookie: owner, headers: { [EXPECTED_ENV_HEADER]: "wrong_env" } })).toMatchObject({ status: 409, body: { code: "workspace.changed" } })
+
+  // 2. R3-3: An in-flight edit is fenced against premature abandon during its lease, and if an edit's
+  //    attempt was abandoned after lease expiry before finishSave runs, PATCH returns 409 binding_conflict (never stale 200).
+  const created = (await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "Original", inputMapping: { repo: { fixed: "safe" } } }), cookie: owner }, { host: cell.host })).body.binding as { id: string }
+  let releaseEdit: () => void = () => {}
+  const editGate = new Promise<void>((resolve) => { releaseEdit = resolve })
+  const slowEdit = { fetch: async (request: Request) => { if (new URL(request.url).pathname === "/v1/definitions:install") await editGate; return cell.host.fetch(request) } } as unknown as Fetcher
+  const editing = send(`/bindings/${created.id}`, { ...body("PATCH", { label: "Updated", inputMapping: { repo: { fixed: "new-safe" } } }), cookie: owner }, { host: slowEdit })
+  // Wait for beginEdit to mark the row pending.
+  for (let i = 0; i < 100; i++) {
+    const row = db.query("SELECT state FROM connector_binding WHERE id = ?").get(created.id) as { state: string } | null
+    if (row?.state === "editing") break
+    await Bun.sleep(10)
+  }
+  // Reconcile while lease is active MUST keep the edit pending (fenced).
+  const midReconcile = await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: cell.host })
+  expect((midReconcile.body.bindings as { state: string }[])[0]?.state).toBe("pending")
+  // Expire the lease and reconcile -> abandons the pending edit back to ready v1.
+  clock.offset += PENDING_CREATE_LEASE_MS + 1
+  const expiredReconcile = await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: cell.host })
+  expect((expiredReconcile.body.bindings as { state: string; label: string }[])[0]).toMatchObject({ state: "ready", label: "Original" })
+  // Now the slow cell install finishes and finishSave runs: it MUST fail 409 binding_conflict instead of returning stale 200!
+  releaseEdit()
+  const stalePatch = await editing
+  expect(stalePatch).toMatchObject({ status: 409, body: { code: "connectors.binding_conflict" } })
+
+  // 3. R3-8: GET /status and GET /inventory NEVER refresh or mutate an expired gateway token; POST /refresh does.
+  const userId = (db.query("SELECT id FROM user WHERE email = 'r3-owner@example.com'").get() as { id: string }).id
+  const nowIso = new Date().toISOString()
+  const expiredIso = new Date(Date.now() - 60_000).toISOString()
+  db.query(`INSERT INTO account (id, accountId, providerId, userId, accessToken, refreshToken, accessTokenExpiresAt, createdAt, updatedAt) VALUES ('acc_exp', 'gw_sub_1', 'executor', ?, 'expired_tok', 'refresh_tok', ?, ?, ?)`).run(userId, expiredIso, nowIso, nowIso)
+  const realFetch = globalThis.fetch
+  let refreshCalls = 0
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = new URL(input instanceof Request ? input.url : String(input))
+    if (url.origin === new URL(GATEWAY).origin && url.pathname === "/api/auth/oauth2/token") {
+      refreshCalls += 1
+      return Response.json({ access_token: "fresh_gateway_tok", refresh_token: "fresh_refresh_tok", token_type: "Bearer", expires_in: 3600 })
+    }
+    return realFetch(input, init)
+  }) as typeof fetch
+  try {
+    const statusRes = await send("/status", { cookie: owner }, { grant: undefined })
+    expect(statusRes).toMatchObject({ status: 200, body: { gateway: GATEWAY, linked: true, refreshRequired: true } })
+    const invRes = await send("/inventory", { cookie: owner }, { grant: undefined })
+    expect(invRes).toMatchObject({ status: 401, body: { code: "connectors.refresh_required" } })
+    expect(refreshCalls).toBe(0)
+    expect((db.query("SELECT accessToken FROM account WHERE id = 'acc_exp'").get() as { accessToken: string }).accessToken).toBe("expired_tok")
+    // POST /refresh (origin + scope checked) performs the refresh; GET /status no longer reports refreshRequired.
+    const refreshRes = await send("/refresh", { method: "POST", cookie: owner }, { grant: undefined })
+    expect(refreshRes).toMatchObject({ status: 200, body: { gateway: GATEWAY, linked: true } })
+    expect(refreshCalls).toBe(1)
+    expect((await send("/status", { cookie: owner }, { grant: undefined })).body).toEqual({ gateway: GATEWAY, linked: true })
+  } finally {
+    globalThis.fetch = realFetch
+  }
 })

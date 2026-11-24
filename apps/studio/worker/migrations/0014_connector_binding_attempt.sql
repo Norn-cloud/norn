@@ -1,5 +1,6 @@
--- Pending save attempt isolation for connector bindings (S2):
--- Persist the unique save attempt id and target cell environment on pending rows so reconciliation,
--- finish, and abandon writes match only the exact pending attempt and can never overwrite a newer save.
-ALTER TABLE "connector_binding" ADD COLUMN "pending_attempt" text;
-ALTER TABLE "connector_binding" ADD COLUMN "pending_environment_id" text;
+-- Track unique attempt id, target environment, and lease start time for pending connector
+-- binding saves so reconciliation, finish, and abandon writes match only their originating
+-- save attempt, fence active creates and edits during their lease, and never overwrite a newer save.
+alter table connector_binding add column pending_attempt text;
+alter table connector_binding add column pending_environment_id text;
+alter table connector_binding add column pending_started_at integer;

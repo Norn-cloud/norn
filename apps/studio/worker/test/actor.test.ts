@@ -73,12 +73,15 @@ test("an organization API key acts as a service, never with an approving role", 
 })
 
 test("Norn calls go to the host with the host token only, never the client's cookie or key", async () => {
-  const { env, seen } = stage(() => Response.json({ ok: true }))
+  const { env, db, seen, auth } = stage(() => Response.json({ ok: true }))
   const cookie = await signUp(env, "di@example.com")
-  const response = await call(env, "/api/host/v1/defs?orgId=o", { headers: { cookie, authorization: "Bearer forged", accept: "application/json" } })
+  const actor = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
+  if (!actor) throw new Error("no actor")
+  db.run(`update "organization" set "metadata" = ? where "id" = ?`, [JSON.stringify({ environmentId: "analytics" }), actor.orgId])
+  const response = await call(env, `/api/host/v1/defs?orgId=${actor.orgId}&environmentId=analytics`, { headers: { cookie, authorization: "Bearer forged", accept: "application/json" } })
   expect(response.status).toBe(200)
   const forwarded = seen[0]
-  expect(forwarded?.url).toBe("https://norn-host/v1/defs?orgId=o")
+  expect(forwarded?.url).toBe(`https://norn-host/v1/defs?orgId=${actor.orgId}&environmentId=analytics`)
   expect(forwarded?.headers.get("cookie")).toBeNull()
   expect(forwarded?.headers.get("authorization")).not.toBe("Bearer forged")
   expect(claims(forwarded?.headers.get("authorization")?.slice("Bearer ".length) ?? "").aud).toBe("norn-host")
@@ -86,8 +89,11 @@ test("Norn calls go to the host with the host token only, never the client's coo
 
 test("without a session or a connected host, Norn calls refuse", async () => {
   expect((await call(stage(() => new Response()).env, "/api/host/v1/defs")).status).toBe(401)
-  const { env } = stage()
+  const { env, db, auth } = stage()
   const cookie = await signUp(env, "ed@example.com")
+  const actor = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
+  if (!actor) throw new Error("no actor")
+  db.run(`update "organization" set "metadata" = ? where "id" = ?`, [JSON.stringify({ environmentId: "analytics" }), actor.orgId])
   expect((await call(env, "/api/host/v1/defs", { headers: { cookie } })).status).toBe(503)
 })
 
@@ -159,14 +165,31 @@ test("a live socket (UI-LIVE-1) opens only from the Studio origin with canonical
   for (const name of ["upgrade", "sec-websocket-key", "sec-websocket-version", "sec-websocket-protocol"]) expect(forwarded.headers.get(name)).toBe(handshake[name as keyof typeof handshake])
 })
 
-test("an API-key write needs no Origin", async () => {
-  const { env, seen, auth } = stage(() => new Response(null, { status: 202 }))
+test("an API-key write needs no Origin and stays bound to its organization's canonical environment", async () => {
+  const { env, db, seen, auth } = stage(() => new Response(null, { status: 202 }))
   const cookie = await signUp(env, "ha@example.com")
   const owner = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
-  const key = await auth.api.createApiKey({ body: { name: "svc", organizationId: owner?.orgId }, headers: new Headers({ cookie }) })
+  if (!owner) throw new Error("no owner")
+  const key = await auth.api.createApiKey({ body: { name: "svc", organizationId: owner.orgId }, headers: new Headers({ cookie }) })
+  // Without a canonical cell environment on the org, service-key and user calls refuse 409 workspace.no_cell.
+  expect((await call(env, "/api/host/v1/actions?environmentId=other", { method: "POST", headers: { "x-api-key": key.key, "content-type": "application/json" }, body: "{}" })).status).toBe(409)
+  expect((await call(env, "/api/host/v1/defs?environmentId=other", { headers: { "x-api-key": key.key } })).status).toBe(409)
+  expect((await call(env, "/api/host/v1/defs?environmentId=other", { headers: { cookie } })).status).toBe(409)
+  expect(seen).toHaveLength(0)
+
+  db.run(`update "organization" set "metadata" = ? where "id" = ?`, [JSON.stringify({ environmentId: "analytics" }), owner.orgId])
+  // Foreign environmentId or orgId on GET or service-key POST is refused 409 workspace.changed before reaching the host.
+  expect((await call(env, `/api/host/v1/defs?orgId=${owner.orgId}&environmentId=other`, { headers: { cookie } })).status).toBe(409)
+  expect((await call(env, `/api/host/v1/defs?orgId=org_other&environmentId=analytics`, { headers: { cookie } })).status).toBe(409)
+  expect((await call(env, `/api/host/v1/actions?orgId=${owner.orgId}&environmentId=other`, { method: "POST", headers: { "x-api-key": key.key, "content-type": "application/json" }, body: "{}" })).status).toBe(409)
+  expect(seen).toHaveLength(0)
+
   const response = await call(env, "/api/host/v1/actions", { method: "POST", headers: { "x-api-key": key.key, "content-type": "application/json" }, body: "{}" })
   expect(response.status).toBe(202)
   expect(seen).toHaveLength(1)
+  const forwardedUrl = new URL(seen[0]!.url)
+  expect(forwardedUrl.searchParams.get("orgId")).toBe(owner.orgId)
+  expect(forwardedUrl.searchParams.get("environmentId")).toBe("analytics")
 })
 
 test("a member removed from the organization, or switched to one they left, reaches nothing there", async () => {
@@ -194,7 +217,8 @@ test("an authorized definition read resolves its signer inside the active organi
   const cookie = await signUp(env, "reader@example.com")
   const reader = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
   if (!reader) throw new Error("no reader")
-  const read = () => call(env, "/api/host/v1/definitions/studio.question?orgId=x&environmentId=y", { headers: { cookie } })
+  db.run(`update "organization" set "metadata" = ? where "id" = ?`, [JSON.stringify({ environmentId: "analytics" }), reader.orgId])
+  const read = () => call(env, `/api/host/v1/definitions/studio.question?orgId=${reader.orgId}&environmentId=analytics`, { headers: { cookie } })
   signer = `user:${reader.subjectId}`
   expect((await (await read()).json() as { signoff: { displayName: string } }).signoff.displayName).toBe("you")
   await signUp(env, "signer@example.com")
@@ -222,11 +246,12 @@ function streamed(document: unknown, status = 200): Response {
 
 test("a streamed definition read is served without cloning, signed or not", async () => {
   let document: Record<string, unknown> = {}
-  const { env, auth } = stage(() => streamed(document))
+  const { env, db, auth } = stage(() => streamed(document))
   const cookie = await signUp(env, "streamed@example.com")
   const reader = await resolveActor(new Request(ORIGIN, { headers: { cookie } }), auth)
   if (!reader) throw new Error("no reader")
-  const read = () => call(env, "/api/host/v1/definitions/ops.approve_refund?orgId=x&environmentId=y", { headers: { cookie } })
+  db.run(`update "organization" set "metadata" = ? where "id" = ?`, [JSON.stringify({ environmentId: "analytics" }), reader.orgId])
+  const read = () => call(env, `/api/host/v1/definitions/ops.approve_refund?orgId=${reader.orgId}&environmentId=analytics`, { headers: { cookie } })
   document = { id: "ops.approve_refund", kind: "flow", signoff: { signer: `user:${reader.subjectId}`, signedAtMs: 1, restatementSha256: "a".repeat(64) } }
   const signed = await read()
   expect(signed.status).toBe(200)

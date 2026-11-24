@@ -1,3 +1,4 @@
+import { decryptOAuthToken } from "better-auth/oauth2"
 import { AccessUnavailable, decide, toolBinding, workspace } from "./access.ts"
 import { originAllowed, resolveActor, verifyWriteScope } from "./actor.ts"
 import type { Auth } from "./auth.ts"
@@ -61,7 +62,42 @@ async function gatewayAccount(auth: Auth, request: Request): Promise<string | nu
   return accounts.find((account) => account.providerId === GATEWAY_PROVIDER)?.id ?? null
 }
 
-/** The person's gateway grant, refreshed by Better Auth when it has expired; null when not linked. */
+/**
+ * The person's gateway grant, read-only (for GET routes): decrypts a currently valid stored access
+ * token without ever refreshing or persisting to D1. Expired refreshable grants report
+ * `expired_refreshable` so callers refresh explicitly via an origin-checked POST `/refresh`.
+ */
+type ReadOnlyGrant =
+  | { readonly kind: "token"; readonly token: string }
+  | { readonly kind: "expired_refreshable" }
+  | { readonly kind: "none" }
+
+async function readOnlyGrant(auth: Auth, userId: string, now: number): Promise<ReadOnlyGrant> {
+  const ctx = await auth.$context
+  const account = await ctx.adapter.findOne<{
+    id: string
+    accessToken?: string | null
+    refreshToken?: string | null
+    accessTokenExpiresAt?: string | number | Date | null
+  }>({
+    model: "account",
+    where: [{ field: "userId", value: userId }, { field: "providerId", value: GATEWAY_PROVIDER }],
+  })
+  if (account === null) return { kind: "none" }
+  const expiresAt = account.accessTokenExpiresAt == null ? null : new Date(account.accessTokenExpiresAt).getTime()
+  const expired = expiresAt !== null && Number.isFinite(expiresAt) && expiresAt - now < 5_000
+  if (expired || !account.accessToken) {
+    return account.refreshToken ? { kind: "expired_refreshable" } : { kind: "none" }
+  }
+  try {
+    const token = await decryptOAuthToken(account.accessToken, ctx as unknown as Parameters<typeof decryptOAuthToken>[1])
+    return token ? { kind: "token", token } : account.refreshToken ? { kind: "expired_refreshable" } : { kind: "none" }
+  } catch {
+    return { kind: "none" }
+  }
+}
+
+/** The person's gateway grant, refreshed by Better Auth when expired (for origin-checked mutations only). */
 async function grant(auth: Auth, request: Request): Promise<string | null> {
   const accountId = await gatewayAccount(auth, request)
   if (accountId === null) return null
@@ -174,11 +210,12 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
   /**
    * Settle a binding a save left pending, from what the cell holds in the exact environment that
    * started the pending save, guarded by its unique attempt id and previous version so a newer
-   * completed save can never be overwritten.
+   * completed save can never be overwritten. Both creates and edits are fenced against premature
+   * abandon while their lease is still active (cell already holding a newer version is safe to adopt).
    */
   const reconcile = async (binding: Binding): Promise<Binding | null> => {
     if (binding.state !== "pending" || binding.pendingDefinition === null) return binding
-    if (binding.pendingSave === "create" && (deps.now ?? Date.now)() - binding.updatedAt < PENDING_CREATE_LEASE_MS) return binding
+    const now = (deps.now ?? Date.now)()
     const targetEnv = binding.pendingEnvironmentId ?? environmentId
     if (binding.pendingEnvironmentId !== null && environmentId !== null && binding.pendingEnvironmentId !== environmentId) return binding
     const cell = cellFor(targetEnv)
@@ -191,9 +228,15 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
       throw error
     }
     if (held.kind === "found" && (binding.definition === null || held.version > binding.definition.version)) {
+      // Only adopt a committed create after its lease, or any edit whose newer version is already committed.
+      if (binding.pendingSave === "create" && binding.pendingStartedAt !== null && now - binding.pendingStartedAt < PENDING_CREATE_LEASE_MS) return binding
       await adoptCell(db, actor.orgId, binding.id, binding.pendingDefinition, held.version, held.payload, binding.pendingAttempt, binding.definition?.version ?? null)
-    } else if (await abandonSave(db, actor.orgId, binding.id, binding.pendingSave ?? "edit", binding.definition, binding.pendingAttempt) === "deleted") {
-      return null
+    } else {
+      // Never abandon an in-flight create or edit while its lease is active: the cell install may still commit.
+      if (binding.pendingStartedAt !== null && now - binding.pendingStartedAt < PENDING_CREATE_LEASE_MS) return binding
+      if (await abandonSave(db, actor.orgId, binding.id, binding.pendingSave ?? "edit", binding.definition, binding.pendingAttempt) === "deleted") {
+        return null
+      }
     }
     return await getBinding(db, actor.orgId, binding.id)
   }
@@ -244,8 +287,29 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
     if (accountId !== null) await auth.api.unlinkAccount({ body: { accountId }, headers: request.headers })
     return ok({ linked: false })
   }
-  const token = await (deps.grant ?? grant)(auth, request)
-  if (route === "GET /status") return ok({ gateway: gatewayOrigin, linked: token !== null })
+  if (route === "POST /refresh") {
+    const refreshed = await (deps.grant ?? grant)(auth, request)
+    if (refreshed === null) return refusal(409, "connectors.not_linked", "Sign in to the tool gateway first.", { kind: "sign_in_gateway" })
+    return ok({ gateway: gatewayOrigin, linked: true })
+  }
+  let token: string | null
+  if (request.method === "GET" && deps.grant === undefined) {
+    const stored = await readOnlyGrant(auth, actor.subjectId, (deps.now ?? Date.now)())
+    if (route === "GET /status") {
+      return ok({
+        gateway: gatewayOrigin,
+        linked: stored.kind !== "none",
+        ...stored.kind === "expired_refreshable" ? { refreshRequired: true } : {},
+      })
+    }
+    if (stored.kind === "expired_refreshable") {
+      return refusal(401, "connectors.refresh_required", "Your gateway session needs refresh before continuing.", { kind: "sign_in_gateway" })
+    }
+    token = stored.kind === "token" ? stored.token : null
+  } else {
+    token = await (deps.grant ?? grant)(auth, request)
+    if (route === "GET /status") return ok({ gateway: gatewayOrigin, linked: token !== null })
+  }
   if (token === null) return refusal(409, "connectors.not_linked", "Sign in to the tool gateway first.", { kind: "sign_in_gateway" })
   const gateway = new Gateway(gatewayOrigin, token, deps.fetch ?? fetch)
   let app: string | null = null
@@ -314,10 +378,11 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
       // finish, and abandon writes match only this attempt and never overwrite a newer save.
       const attemptId = crypto.randomUUID()
       const expectedPreviousVersion = existing?.definition?.version ?? null
+      const now = (deps.now ?? Date.now)()
       if (existing === undefined) {
-        await beginCreate(db, actor.orgId, actor.subjectId, draft, { manifestDigest: digest, connector }, id, definitionId, attemptId, environmentId)
+        await beginCreate(db, actor.orgId, actor.subjectId, draft, { manifestDigest: digest, connector }, id, definitionId, attemptId, environmentId, now)
       } else {
-        const claimed = await beginEdit(db, actor.orgId, id, definitionId, attemptId, environmentId, expectedPreviousVersion)
+        const claimed = await beginEdit(db, actor.orgId, id, definitionId, attemptId, environmentId, expectedPreviousVersion, now)
         if (!claimed) return refusal(409, "connectors.binding_conflict", "Someone changed this binding since it was opened. Reload it and try again.")
       }
       let outcome: Install
@@ -335,7 +400,9 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
         return refused
       }
       const definition = outcome.kind === "installed" ? { id: outcome.id, version: outcome.version } : null
-      return ok({ binding: shown(await finishSave(db, actor.orgId, actor.subjectId, id, draft, { manifestDigest: digest, connector, definition }, attemptId, expectedPreviousVersion)) })
+      const saved = await finishSave(db, actor.orgId, actor.subjectId, id, draft, { manifestDigest: digest, connector, definition }, attemptId, expectedPreviousVersion, (deps.now ?? Date.now)())
+      if (saved === null) return refusal(409, "connectors.binding_conflict", "This binding save was superseded before it finished. Reload and try again.")
+      return ok({ binding: shown(saved) })
     }
 
     const runRoute = /^\/bindings\/([^/]+)\/run$/.exec(path)

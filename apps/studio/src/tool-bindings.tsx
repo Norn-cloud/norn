@@ -130,12 +130,15 @@ function TestRun({ binding, tool, scope }: { readonly binding: Binding; readonly
   )
 }
 
-const useTools = (app: string | null) => useQuery({ queryKey: ["connectors", "tools", app], queryFn: () => api<{ tools: readonly Tool[] }>(`/apps/${encode(app ?? "")}/tools`), enabled: app !== null })
+const useTools = (app: string | null, scope?: WorkspaceScope | null) => {
+  const scopeKey = scope ? `${scope.orgId}:${scope.environmentId ?? ""}` : ""
+  return useQuery({ queryKey: ["connectors", "tools", app, scopeKey], queryFn: () => api<{ tools: readonly Tool[] }>(`/apps/${encode(app ?? "")}/tools`, { scope }), enabled: app !== null })
+}
 
 function BindingRow({ binding, manage, scope }: { readonly binding: Binding; readonly manage: boolean; readonly scope?: WorkspaceScope | null }) {
   const client = useQueryClient()
   const [mode, setMode] = useState<"view" | "edit" | "run" | null>(null)
-  const tools = useTools(mode === null ? null : binding.app)
+  const tools = useTools(mode === null ? null : binding.app, scope)
   const tool = tools.data?.tools.find((entry) => entry.name === binding.tool)
   const remove = useMutation({ mutationFn: () => api(`/bindings/${encode(binding.id)}`, { method: "DELETE", scope }), onSuccess: () => client.invalidateQueries({ queryKey: ["connectors"] }) })
   const toggle = (next: "view" | "edit" | "run") => setMode(mode === next ? null : next)
@@ -179,10 +182,11 @@ function BindingRow({ binding, manage, scope }: { readonly binding: Binding; rea
 
 /** Add: pick an app, then a tool, then bind it. */
 function AddBinding({ scope }: { readonly scope?: WorkspaceScope | null }) {
-  const inventory = useQuery({ queryKey: ["connectors", "inventory"], queryFn: () => api<Inventory>("/inventory"), retry: false })
+  const scopeKey = scope ? `${scope.orgId}:${scope.environmentId ?? ""}` : ""
+  const inventory = useQuery({ queryKey: ["connectors", "inventory", scopeKey], queryFn: () => api<Inventory>("/inventory", { scope }), retry: false })
   const [app, setApp] = useState<string | null>(null)
   const [binding, setBinding] = useState<string | null>(null)
-  const tools = useTools(app)
+  const tools = useTools(app, scope)
   if (inventory.isError) return <ConnectorProblem error={inventory.error} scope={scope} />
   return (
     <div className="space-y-2 border-t px-4 py-3">
