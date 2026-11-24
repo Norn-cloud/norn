@@ -400,16 +400,14 @@ pub(crate) fn validate_for_host<E: SqlEngine>(
         let object_types: Vec<norn_ir::ObjectTypeDef> = model.object_types().cloned().collect();
         let interfaces: Vec<norn_ir::InterfaceDef> = model.interfaces().cloned().collect();
         let property_types: Vec<norn_ir::PropertyTypeDef> = model.property_types().to_vec();
-        let actions: Vec<norn_ir::ActionRoot> = host
-            .retained(&reader)?
-            .map(|(_, retained)| {
+        let actions: Vec<norn_ir::ActionRoot> =
+            host.retained(&reader)?.map_or_default(|(_, retained)| {
                 retained
                     .actions
                     .iter()
                     .map(|(_, action)| action.clone())
                     .collect()
-            })
-            .unwrap_or_default();
+            });
         (object_types, interfaces, property_types, actions)
     };
     let context = AutomationCheckContext {
