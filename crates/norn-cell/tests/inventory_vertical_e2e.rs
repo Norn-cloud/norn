@@ -1,7 +1,7 @@
 #![cfg(feature = "native")]
 //! End-to-end `norn-cell` execution suite for the Governed Inventory &
 //! Warehouse Domain Pack (`registry/packs/inventory/`): static admission
-//! against the Core REA + TimeInterval base, real SQLite cell definition
+//! against the Core REA + `TimeInterval` base, real SQLite cell definition
 //! install with checker receipt, law and `core.TimeInterval` refusals,
 //! operational movement/reservation guards (active caller warehouses plus
 //! balance owner/custodian warehouses, `(action, movement_kind)` consistency,
