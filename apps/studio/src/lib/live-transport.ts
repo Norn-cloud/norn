@@ -4,7 +4,7 @@
  * apart from transport.ts, which finds recordings with Vite's import.meta.glob.
  */
 import { useQuery } from "@tanstack/react-query"
-import { CellUnavailable, StudioScopeError, parseUnavailableDetail, readStudioScope, recordCellReachable, scopedHostFetch, type ScopedRequestInit, type StudioScope, type UnavailableDetail } from "./definitions.ts"
+import { CellUnavailable, StudioScopeError, isReadMethod, parseUnavailableDetail, readStudioScope, recordCellReachable, scopedHostFetch, type ScopedRequestInit, type StudioScope, type UnavailableDetail } from "./definitions.ts"
 import { readDocument, type Read } from "./exact.ts"
 import { readsOf } from "./objects.ts"
 import type { Artifact, Envelope, LinkPage, ObjectPage, ObjectRecord, SourceLineage, Transport } from "./transport.ts"
@@ -172,11 +172,9 @@ export class CellRefusal extends Error {
 }
 
 /**
- * One scoped read of a cell route, with every number's exact text. A route this cell does not
- * serve (a 404 `route.not_found`, or a deployment with no host configured) is {@link NotServed}
- * under `what`; a cell-level 503 refusal (such as `cell.unopenable`) preserves its code,
- * explanation, `retryable`, and `incidentId` as {@link CellUnavailable}; any other Norn refusal is
- * {@link CellRefusal}.
+ * One scoped call to a cell route, with every number's exact text. A cell-level 503 on a read
+ * preserves its refusal details as {@link CellUnavailable}. Writes retain their existing 503
+ * handling as {@link NotServed}, including the dataset fallback to governed records.
  */
 export async function cellRead<T>(path: string, what: string, init: ScopedRequestInit = {}, fetcher: Fetch = browserFetch): Promise<Read<T>> {
   const call = scopedHostFetch(fetcher, "/api/host", () => readStudioScope(fetcher))
@@ -185,9 +183,10 @@ export async function cellRead<T>(path: string, what: string, init: ScopedReques
   if (response.ok) return readDocument<T>(text, "live")
   let refusal: { code?: unknown; message?: unknown; error?: unknown } | null = null
   try { refusal = JSON.parse(text) as { code?: unknown; message?: unknown; error?: unknown } } catch { /* not a refusal document */ }
-  const detail = parseUnavailableDetail(refusal)
+  const read = isReadMethod(init.method)
   if (response.status === 404 && (refusal?.code === "route.not_found" || refusal?.code === undefined)) throw new NotServed(what)
-  if (response.status === 503 && refusal?.error === NO_HOST) throw new NotServed(what)
+  if (response.status === 503 && (!read || refusal?.error === NO_HOST)) throw new NotServed(what)
+  const detail = read ? parseUnavailableDetail(refusal) : undefined
   if (response.status === 503) {
     const message = typeof refusal?.message === "string" && refusal.message !== "" ? refusal.message : undefined
     throw new CellUnavailable(response.status, message, detail)
@@ -195,7 +194,7 @@ export async function cellRead<T>(path: string, what: string, init: ScopedReques
   if (typeof refusal?.code === "string") {
     throw new CellRefusal(response.status, refusal.code, typeof refusal.message === "string" ? refusal.message : refusal.code, detail)
   }
-  throw new CellUnavailable(response.status, typeof refusal?.message === "string" ? refusal.message : undefined, detail)
+  throw new CellUnavailable(response.status, read && typeof refusal?.message === "string" ? refusal.message : undefined, detail)
 }
 
 /**

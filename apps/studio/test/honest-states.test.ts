@@ -1,10 +1,21 @@
 import { expect, test } from "bun:test"
 import { CellUnavailable, fetchWithTimeout, isReadMethod, lastReachableAt, resetCellReachable, scopedHostFetch } from "../src/lib/definitions.ts"
-import { CellRefusal, isRetryableModeError, readMode } from "../src/lib/live-transport.ts"
+import { CellRefusal, NotServed, cellRead, isRetryableModeError, readMode } from "../src/lib/live-transport.ts"
 import { explainError, plainMetricLabel, plainWords } from "../src/lib/plain-words.ts"
 import { formatLastReachable, isWorkspaceUnavailableError } from "../src/components/load-state.tsx"
 
 const ME = { user: { id: "u" }, organization: { id: "org_1", name: "Org", role: "admin" }, environmentId: "env_1" }
+
+test("a scoped 503 keeps refusal details on reads and the existing NotServed outcome on writes", async () => {
+  const fetcher = async (input: string) => input === "/api/me"
+    ? Response.json(ME)
+    : Response.json({ code: "cell.unopenable", retryable: false }, { status: 503 })
+
+  await expect(cellRead("/v1/definitions", "Definitions are", {}, fetcher)).rejects.toMatchObject({
+    status: 503, code: "cell.unopenable", retryable: false,
+  })
+  await expect(cellRead("/v1/datasets:load", "Analysis datasets are", { method: "POST" }, fetcher)).rejects.toBeInstanceOf(NotServed)
+})
 
 test("a non-retryable cell failure (503 cell.unopenable) is never auto-retried and preserves incident metadata", async () => {
   const fetcher = async (input: string) => {
@@ -185,10 +196,11 @@ test("fetchWithTimeout aborts stalled headers AND headers-first stalled body rea
   expect(callerCancelled).toBe(true)
 })
 
-test("scopedHostFetch applies the default read deadline to GET/HEAD only and never wraps mutating POST/PUT/PATCH/DELETE", async () => {
+test("scopedHostFetch applies the default deadline to GET, HEAD, and OPTIONS and leaves writes unwrapped", async () => {
   expect(isReadMethod(undefined)).toBe(true)
   expect(isReadMethod("GET")).toBe(true)
   expect(isReadMethod("head")).toBe(true)
+  expect(isReadMethod("OPTIONS")).toBe(true)
   expect(isReadMethod("POST")).toBe(false)
   expect(isReadMethod("PUT")).toBe(false)
   expect(isReadMethod("PATCH")).toBe(false)

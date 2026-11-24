@@ -1,4 +1,3 @@
-import { CellUnavailable } from "./definitions.ts"
 import { CellRefusal, NotServed, cellRead } from "./live-transport.ts"
 
 /**
@@ -26,67 +25,13 @@ export interface DatasetLoaded {
   readonly bytes: number
   readonly millis: number
 }
-/** L-connect's row-by-row load: includes landed and quarantined row counts when served. */
-export interface RecordsLoaded {
-  readonly connectionId: string
-  readonly objectType: string
-  readonly definitionsVersion: number
-  readonly rowsRead?: number
-  readonly rowsLanded?: number
-  readonly rowsQuarantined?: number
-  readonly quarantineReasons?: Readonly<Record<string, number>>
-}
+/** L-connect's row-by-row load. */
+export interface RecordsLoaded { readonly connectionId: string; readonly objectType: string; readonly definitionsVersion: number }
 
 type Put = (url: string, init: RequestInit) => Promise<Response>
 
-/** How long one file-staging step (`:begin`, storage `PUT`, `:complete`) may take before Studio says it did not answer. */
+/** How long one step of an upload may take before Studio says the cell or the storage did not answer. */
 export const UPLOAD_STEP_MS = 90_000
-
-const AMBIGUOUS_LOAD_STATUSES = new Set([502, 503, 504])
-
-/** Copy shown when a CSV load fails without a clear server refusal (network error or 502/503/504). */
-export const AMBIGUOUS_LOAD_MESSAGE =
-  "The load may or may not have finished. Check this source's latest load in Sources before trying again."
-
-/**
- * Whether a CSV load error leaves the write's outcome ambiguous (network drop or HTTP 502/503/504),
- * so Studio must warn honestly without offering one-click retry. Clear refusals (e.g. 4xx with a
- * reason) and unconfigured routes (`NotServed`) return `false`.
- */
-export function isAmbiguousLoadError(error: unknown): boolean {
-  if (error instanceof NotServed) return false
-  if (error instanceof CellUnavailable) {
-    return error.status === 0 || error.timedOut === true || AMBIGUOUS_LOAD_STATUSES.has(error.status)
-  }
-  if (error instanceof CellRefusal) {
-    return AMBIGUOUS_LOAD_STATUSES.has(error.status)
-  }
-  if (error instanceof TypeError) return true
-  const name = error instanceof Error || error instanceof DOMException ? error.name : ""
-  return name === "TimeoutError" || name === "AbortError" || name === "NetworkError"
-}
-
-/** The connection anchor id in Sources for an upload of `typeNameOrObjectType`. */
-export const uploadSourceId = (typeNameOrObjectType: string): string => {
-  const stripped = typeNameOrObjectType.trim().replace(/^upload\./i, "")
-  return `upload.${stripped.toLowerCase()}`
-}
-
-/**
- * Single-flight guard for CSV load submissions: blocks duplicate submissions while a request is in
- * flight, including same-tick double-clicks before React disables the button.
- */
-export function createSingleFlight() {
-  let active = false
-  return {
-    get inFlight(): boolean { return active },
-    run<T>(work: () => Promise<T>): Promise<T> | null {
-      if (active) return null
-      active = true
-      return work().finally(() => { active = false })
-    },
-  }
-}
 
 /** A step that gave up or could not reach its server, in words the reader can act on; anything else as it came. */
 export function uploadFailure(step: "storage" | "cell", error: unknown): Error {
@@ -124,9 +69,8 @@ export const define = async (uploadId: string, typeName: string, key: readonly s
 
 /**
  * Load the upload's rows into the admitted type: into the analytical engine when the cell has one
- * (`/v1/datasets:load`), or, when it says it has none (`NotServed`, or 501 unconfigured), not at
- * all: the caller then offers the row-by-row load, never silently. No client timeout is applied to
- * CSV writes; ambiguous network/gateway failures are handled honestly in the UI.
+ * (`/v1/datasets:load`), or, when it says it has none (`NotServed`, or 501 unconfigured), not at all:
+ * the caller then offers the row-by-row load, never silently.
  */
 export async function loadDataset(uploadId: string, objectType: string): Promise<DatasetLoaded | "no-engine"> {
   try {
