@@ -13,6 +13,12 @@ pub use norn_authz::{
     DenyReason, DeterminingPolicy, EntityRef, Pdp, PdpDecision, PdpExplanation, PrincipalInput,
     ResourceInput, ScopeKey, compile, compile_all_projected, infer_principal_attributes,
 };
+// PRINCIPAL-INPUT-1 (#1091): the shared catalog and the trusted resolver.
+pub use norn_authz::{
+    HOLDS_ROLE_ACTION, HoldsRoleKey, HoldsRolePdp, HoldsRolePolicy, PrincipalContext,
+    PrincipalInputUnavailable, holds_role_keys, principal_attribute_catalog,
+    resolve_principal_inputs, scope_dimensions,
+};
 
 /// A denied authorization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, thiserror::Error)]

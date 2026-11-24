@@ -1,0 +1,7 @@
+{
+  "code": "artifact_set.policy.principal_catalog_conflict",
+  "message": "{detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T3"
+}

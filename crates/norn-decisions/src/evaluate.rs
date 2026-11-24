@@ -141,6 +141,9 @@ pub struct TypedEvent {
     pub(crate) rule_id: String,
     pub(crate) schema: Arc<Schema>,
     pub(crate) value: Value,
+    /// PRINCIPAL-INPUT-1: the host-resolved principal inputs, once bound
+    /// ([`AdmittedDecision::bind_principal`]).
+    pub(crate) principal: Option<Value>,
 }
 
 impl TypedEvent {
@@ -326,10 +329,20 @@ fn evaluate_with(
             evaluated: tzdb.sha256().to_owned(),
         });
     }
-    let input = to_variable(&Value::object([
+    // PRINCIPAL-INPUT-1: declared inputs are bound or nothing evaluates.
+    if decision.principal_contract().is_some() != event.principal.is_some() {
+        return Err(DecisionError::PrincipalInputUnavailable {
+            decision: decision.rule_id().to_owned(),
+        });
+    }
+    let mut members = vec![
         ("event", event.value.clone()),
         ("slice", slice.value.clone()),
-    ]))?;
+    ];
+    if let Some(principal) = &event.principal {
+        members.push((norn_ir::rule::DECIDE_PRINCIPAL_MEMBER, principal.clone()));
+    }
+    let input = to_variable(&Value::object(members))?;
     let meter = Meter::new(budget.units());
     let options = EvaluationOptions {
         trace,

@@ -229,6 +229,7 @@ impl RefusalDisclosers {
                 })],
             }],
             generic_rules: vec![],
+            principal_catalog: vec![],
             extensions: None,
         }
     }
@@ -330,13 +331,7 @@ impl ConnectorGrants {
                 ],
             });
         }
-        AccessIr {
-            access_version: IrVersion01::V0_1,
-            policy_id: self.version.into(),
-            rules,
-            generic_rules: vec![],
-            extensions: None,
-        }
+        AccessIr::with_rules(self.version, rules)
     }
 
     /// The compiled policy for the cell of `scope`, with no grant.
@@ -565,6 +560,7 @@ impl ReadRules {
                 })
                 .collect(),
             generic_rules: vec![],
+            principal_catalog: vec![],
             extensions: None,
         };
         let compiled =
@@ -991,6 +987,14 @@ impl Authorizer for ReadPolicy {
         } else {
             Err(ActionDenial::Invisible)
         }
+    }
+
+    fn principal_inputs(
+        &self,
+        request: &norn_kernel::PrincipalInputsRequest<'_>,
+    ) -> Result<norn_kernel::ActionPrincipalInputs, norn_kernel::UnresolvedPrincipalInput> {
+        let (caller, policy) = (self.member(request.actor), self.action_policy());
+        crate::principal_inputs::resolve(caller.as_ref(), policy.as_deref(), self.table, request)
     }
 
     fn verified_principal(&self, actor: &str) -> Option<norn_cell::flow_run::RunStarter> {

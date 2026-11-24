@@ -1992,6 +1992,7 @@ pub fn validate_rule_ir_v2_payload(
     crate::jdm_profile::validate_rule_contract(payload, diagnostics, artifact_id);
     crate::rule_bindings::validate_rule_bindings(payload, diagnostics, artifact_id);
     crate::source_commands::validate(payload, diagnostics, artifact_id);
+    crate::principal_inputs::validate(payload, diagnostics, artifact_id);
     if let Some(graph) = payload.get("graph") {
         crate::jdm_profile::validate_jdm_graph(graph, dependencies, diagnostics, artifact_id);
     }
@@ -2020,7 +2021,7 @@ pub(crate) fn reject_rule_ir_v2_members_in_v1(
             artifact_id,
         ));
     }
-    for member in ["triggers", "slice", "sourceCommands"] {
+    for member in ["triggers", "slice", "sourceCommands", "principalInputs"] {
         if payload.contains_key(member) {
             diagnostics.push(invalid_diagnostic(
                 RULE_CODE,
@@ -2914,6 +2915,7 @@ fn check_policy_root(
             arrays {
                 "rules" => norn_ir::access::AccessRule,
                 "genericRules" => norn_ir::access::GenericAccessRule,
+                "principalCatalog" => norn_ir::access::PrincipalCatalogEntry,
             }
         );
     } else if is_modern_policy_payload(object) {

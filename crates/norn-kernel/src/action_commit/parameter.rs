@@ -10,8 +10,56 @@ use norn_ir::{
 
 use crate::cell_host::{FactKey, FactVersion, JsonObject};
 use crate::decision_commit::FactSlice;
+use serde::{Deserialize, Serialize};
 
-use super::types::{ActionCall, ActionParameterPin, ActionRefusal};
+use super::types::{ActionCall, ActionRefusal};
+
+/// One effective-dated parameter resolved and pinned during an action commit
+/// (D07, PARAM-EXACT-1, PARAM-BOUND-1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ActionParameterPin {
+    /// The declared parameter slice entry name.
+    pub entry: String,
+    /// The stable parameter key.
+    pub setting_key: String,
+    /// The declared effective timestamp evaluated for this selection.
+    pub effective_at: String,
+    /// The selected setting fact's concrete object type and key.
+    pub setting: FactKey,
+    /// The committed fact version of the selected setting at commit time.
+    pub version: u64,
+    /// Canonical Norn1 SHA-256 digest (`sha256:...`) of the selected setting's
+    /// exact values at commit time.
+    pub digest: String,
+}
+
+impl ActionParameterPin {
+    pub(super) fn to_runtime_value(&self) -> RuntimeValue {
+        let string = |value: &str| RuntimeValue::String(value.to_owned());
+        RuntimeValue::Object(JsonObject::from([
+            ("entry".to_owned(), string(&self.entry)),
+            ("settingKey".to_owned(), string(&self.setting_key)),
+            ("effectiveAt".to_owned(), string(&self.effective_at)),
+            (
+                "setting".to_owned(),
+                RuntimeValue::Object(JsonObject::from([
+                    (
+                        "objectType".to_owned(),
+                        string(self.setting.object_type.as_str()),
+                    ),
+                    ("key".to_owned(), string(&self.setting.key)),
+                ])),
+            ),
+            (
+                "version".to_owned(),
+                RuntimeValue::Number(norn_ir::Decimal::from(self.version)),
+            ),
+            ("digest".to_owned(), string(&self.digest)),
+        ]))
+    }
+}
 
 struct ProjectedSetting<'a> {
     key: FactKey,

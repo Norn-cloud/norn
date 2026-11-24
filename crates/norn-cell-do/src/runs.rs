@@ -247,6 +247,7 @@ fn decisions<E: SqlEngine>(
             let id = percent_encoding::percent_decode_str(id)
                 .decode_utf8()
                 .map_err(|_invalid| norn_api::decisions::not_found())?;
+            norn_api::principal_member::refuse_principal_member(request.body, None)?;
             let body: DecideRequest = serde_json::from_str(request.body).map_err(|error| {
                 Refusal::invalid(format!("the request body is not a decision: {error}"))
             })?;

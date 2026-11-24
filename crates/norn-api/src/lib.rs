@@ -23,6 +23,7 @@ pub(crate) mod decision_refusal;
 pub mod decisions;
 pub mod olap_credential;
 pub mod openapi;
+pub mod principal_member;
 /// Stable host refusal wire contract.
 pub mod refusal;
 /// Explicit cell and request scope perimeter.

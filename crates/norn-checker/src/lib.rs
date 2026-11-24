@@ -90,6 +90,7 @@ pub mod parameter;
 mod parameter_window;
 mod predicate_property;
 mod predicate_slice;
+mod principal_inputs;
 pub mod property_codec;
 pub mod property_types;
 pub mod quantity_ledger;

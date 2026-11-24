@@ -1287,6 +1287,7 @@ define_payload_root!(RulePayload {
         triggers => "triggers" as Vec<RuleTrigger>,
         slice => "slice" as Vec<SliceDeclaration>,
         source_commands => "sourceCommands" as Vec<RuleSourceCommand>,
+        principal_inputs => "principalInputs" as Vec<rule::PrincipalInputDeclaration>,
         defaults => "defaults" as JsonObject,
         applies_to => "appliesTo" as String,
         expression => "expression" as String,
@@ -1419,7 +1420,8 @@ define_payload_root!(
             approval_roles => "approvalRoles" as Vec<String>,
             access_version => "accessVersion" as IrVersion01,
             rules => "rules" as Vec<access::AccessRule>,
-            generic_rules => "genericRules" as Vec<access::GenericAccessRule>
+            generic_rules => "genericRules" as Vec<access::GenericAccessRule>,
+            principal_catalog => "principalCatalog" as Vec<access::PrincipalCatalogEntry>
         }
     }
 );

@@ -1562,9 +1562,12 @@ class DefinitionCompiler {
   }
 
   private access(call: ts.CallExpression): P.AccessDef {
-    const members = this.meta(call, ["id", "title", "version", "rules"])
+    const members = this.meta(call, ["id", "title", "version", "rules", "principalCatalog"])
     const need = (key: string): ts.Expression => this.member(members, key, call)
+    const principalCatalog = members.get("principalCatalog")
     return P.access({
+      // The closed grammar (types, sources) is the Rust checker's.
+      ...(principalCatalog ? { principalCatalog: this.list(principalCatalog).map((entry) => this.json(entry) as unknown as P.PrincipalCatalogEntry) } : {}),
       id: this.string(need("id")),
       title: this.string(need("title")),
       version: this.string(need("version")),
@@ -1586,7 +1589,7 @@ class DefinitionCompiler {
   }
 
   private decision(call: ts.CallExpression): R.DecisionDef {
-    const members = this.meta(call, ["id", "artifactId", "title", "version", "contract", "dependencies", "triggers", "slice", "input", "output", "scopeRequired", "graph", "hit", ...LABEL_MEMBERS])
+    const members = this.meta(call, ["id", "artifactId", "title", "version", "contract", "dependencies", "triggers", "slice", "principalInputs", "input", "output", "scopeRequired", "graph", "hit", ...LABEL_MEMBERS])
     const hitNode = members.get("hit")
     const hitText = hitNode ? this.string(hitNode) : "first"
     if (hitText !== "first" && hitText !== "unique") throw new CompileError("NORN-FLOW-LITERAL", "a decision's hit policy is \"first\" or \"unique\"", hitNode!)
@@ -1728,6 +1731,8 @@ class DefinitionCompiler {
       dependencies: [...(dependencies ? this.list(dependencies).map((dependency) => this.decisionDependency(dependency)) : []), ...calledDependencies],
       triggers: triggers ? this.list(triggers).map((t) => this.trigger(t)) : [],
       slice: slice ? this.list(slice).map((x) => this.sliceEntry(x)) : [],
+      // PRINCIPAL-INPUT-1: the closed grammar (kinds, catalog names, column types) is the Rust checker's.
+      principalInputs: members.has("principalInputs") ? this.list(need("principalInputs")).map((entry) => this.json(entry) as unknown as R.PrincipalInputDecl) : [],
       input: inputSchema,
       output: schema("output"),
       scopeRequired: this.strings(need("scopeRequired")),

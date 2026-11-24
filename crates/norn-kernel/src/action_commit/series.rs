@@ -157,6 +157,7 @@ where
             from: String::new(),
             to: String::new(),
             trace: call.trace.clone(),
+            principal_inputs: None,
         };
         check_action_record_size::<H::Error>(call.action, &record, limits)?;
         let changes = vec![FactChange::Create {

@@ -45,6 +45,7 @@ pub mod olap;
 pub mod olapd;
 pub mod policy;
 pub mod principal;
+pub mod principal_inputs;
 pub mod questions;
 pub mod recorded;
 pub mod reveal;

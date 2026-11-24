@@ -116,12 +116,18 @@ where
         .precondition_outcomes
         .clone_from(&preparation.precondition_outcomes);
     record.parameter_pins.clone_from(&slice.parameter_pins);
+    // PRINCIPAL-INPUT-1: resolved once, after the replay check, and recorded.
+    if let Some(rule) = rule {
+        record.principal_inputs =
+            crate::principal_inputs::resolve::<H::Error>(rule, call, authorizer, &target)?;
+    }
     check_action_record_size::<H::Error>(call.action, &record, limits)?;
     let (mut changes, decision_links) = if let Some(rule) = rule {
         let output = rule.evaluate(
             call,
             &preparation.effective_input,
             &slice.values,
+            record.principal_inputs.as_ref(),
             &mut preparation.remaining_fuel,
         )?;
         check_action_envelope::<H::Error>(

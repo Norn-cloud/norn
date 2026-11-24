@@ -605,6 +605,11 @@ declare module "@norn/authoring" {
       readonly title: string
       readonly version: string
       readonly rules: ReadonlyArray<AccessRuleSpec>
+      /**
+       * The principal attribute catalog (#1091): the roles (`bool`), role profiles (`stringSet`)
+       * and scoped attributes a decision may declare as typed principal inputs.
+       */
+      readonly principalCatalog?: ReadonlyArray<import("../src/builder/access.ts").PrincipalCatalogEntry>
     }): AccessDefinition
 
     /** One type's labels in a standalone catalog. */
@@ -876,6 +881,12 @@ declare module "@norn/authoring" {
       readonly dependencies?: ReadonlyArray<DecisionDefinition | import("../src/builder/envelope.ts").DependencyPin>
       readonly triggers?: ReadonlyArray<RuleTriggerSpec>
       readonly slice?: ReadonlyArray<SliceSpec>
+      /**
+       * PRINCIPAL-INPUT-1 (#1091): the acting principal's attributes a `decide` rule reads. Each
+       * is the column `input.principal.<name>` (declare it in `input`); the host resolves it from
+       * the verified principal and the PDP, and a request never supplies it.
+       */
+      readonly principalInputs?: ReadonlyArray<import("../src/builder/rule.ts").PrincipalInputDecl>
       /** The decision's input and output contracts: Effect Schema structs, lowered to closed schemas. */
       readonly input: I
       readonly output: O

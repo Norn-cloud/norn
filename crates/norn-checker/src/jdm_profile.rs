@@ -1220,7 +1220,7 @@ pub(crate) fn validate_rule_contract(
             payload.get("inputSchema"),
             "payload.inputSchema",
             &DECIDE_INPUT_MEMBERS,
-            &[],
+            &norn_ir::rule::DECIDE_OPTIONAL_INPUT_MEMBERS,
             false,
             sink.diagnostics,
             artifact_id,

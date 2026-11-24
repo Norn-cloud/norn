@@ -35,6 +35,7 @@ pub fn prepare_action_model(model: &norn_cell::Model) -> Result<norn_cell::Model
                 "derivedValues",
                 "preconditionOutcomes",
                 "parameterPins",
+                "principalInputs",
                 "rowOperations",
                 "trace",
             ][..],
