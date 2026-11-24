@@ -1744,7 +1744,14 @@ fn no_listed_metric_names_an_internal_encoding_in_any_pack() {
         }
         if !summary.time_links.is_empty() {
             linked += 1;
-            assert_eq!(summary.time_property.as_deref(), Some("occurred_at"));
+            let expected_time = if summary.object_type.as_deref() == Some("accounting.JournalLine")
+                && summary.time_links.as_slice() == ["entry"]
+            {
+                Some("posting_date")
+            } else {
+                Some("occurred_at")
+            };
+            assert_eq!(summary.time_property.as_deref(), expected_time);
         }
     }
     // The posting and settlement sums of the three systems take their event's time.
