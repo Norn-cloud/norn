@@ -4,10 +4,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use norn_ir::ObjectTypeName;
 use norn_kernel::{
     CellCommit, CommitError, FactExpectation, FactKey, FactVersion, LinkKey, LinkMutation,
-    LinkState, ObjectTypeName, PredicateActionRead, PredicateObject, PredicateQuery,
-    PredicateReadExpectation,
+    LinkState, PredicateActionRead, PredicateObject, PredicateQuery, PredicateReadExpectation,
 };
 use norn_projections::ValueEncoding;
 use norn_projections::sqlite_ddl::{

@@ -1467,7 +1467,7 @@ pub struct CommitBatch {
     /// Predicate filter and window property dependencies evaluated by this turn
     /// (covers schema and per-row candidate markings even on empty results).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub marking_predicate_reads: Vec<(norn_kernel::ObjectTypeName, Vec<String>)>,
+    pub marking_predicate_reads: Vec<(norn_ir::ObjectTypeName, Vec<String>)>,
     /// Immutable Function input lineage, independent of freshness/CAS.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub marking_historical_reads: Vec<norn_kernel::FactExpectation>,
