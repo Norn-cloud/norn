@@ -133,10 +133,21 @@ if (command === "compile") {
   let checker: Awaited<ReturnType<typeof loadChecker>>
   try {
     checker = await loadChecker()
-    if (!checker) throw new Error("NORN_CHECKER_WASM_PKG is required")
+    if (!checker) throw new Error("NORN_CHECKER_WASM_PKG is not set")
   } catch (error) {
-    process.stderr.write(`NORN-CHECKER-WASM-SETUP: ${String(error)}\nExpected norn-checker-abi/1 built from this checkout or cached by \`norn setup\`.\nTo fetch prebuilt runtime artifacts (no Rust build needed), run:\n  norn setup   # or: scripts/dev/fetch-local-runtime.sh\nOr build from source from the repository root:\n  bash crates/norn-checker-wasm/scripts/build-pkg.sh "$PWD/target/norn-checker-wasm/pkg"\n  export NORN_CHECKER_WASM_PKG="$PWD/target/norn-checker-wasm/pkg"\nThen rerun this check.\n`)
-    process.exit(2)
+    const { cliDiagnostic, formatCliDiagnostic, registeredCodes } = await import("./cli-diagnostic.ts")
+    const { ProjectError } = await import("./project.ts")
+    const detail = (error instanceof Error ? error.message : String(error))
+      .split(/\r\n|\r|\n|\u0085|\u2028|\u2029/)
+      .map((line) => line.replace(/[\u0000-\u001f\u007f-\u009f]+/g, " ").trim())
+      .filter((line) => line.length > 0 && !/^at\s/.test(line))
+      .join(" ")
+      .replace(/\s+/g, " ")
+    const base = registeredCodes().get("cli.setup.checker_unavailable")?.message ?? ""
+    const message = base ? (detail ? `${base} (${detail})` : base) : detail
+    const refusal = new ProjectError("cli.setup.checker_unavailable", message, 2)
+    process.stderr.write(`${formatCliDiagnostic(cliDiagnostic(refusal))}\n`)
+    process.exit(refusal.exitCode)
   }
   const { report } = admit(checker, pack)
   // LAW-EXAMPLE-1: every authored example runs with the checker's law semantics.

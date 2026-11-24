@@ -183,6 +183,7 @@ pub(crate) fn record<E: SqlEngine>(
     consumed_input: Option<Value>,
     definition_install: Option<DefinitionInstallRecord>,
     storage_version: Option<u32>,
+    automation_continuation: Option<crate::automation_outbox::AutomationOutboxContinuation>,
     entries: Vec<LedgerEntry>,
 ) -> Result<(), CellError> {
     let commit_seq = receipt.body.commit_seq;
@@ -260,6 +261,7 @@ pub(crate) fn record<E: SqlEngine>(
             .then(|| model.definitions_snapshot()),
         definition_install,
         storage_version,
+        automation_continuation,
     };
     // The record's hash and its packed encoding both start from its canonical
     // text; canonicalize it once.

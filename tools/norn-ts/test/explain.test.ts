@@ -111,7 +111,7 @@ test.skipIf(!process.env[CHECKER_PKG_ENV])("explain_project_roundtrip: explain, 
     expect(compiler.end.line > compiler.start.line || compiler.end.column >= compiler.start.column).toBe(true)
     expect(uncompiled[0]!.message).toContain(`: ${compiler.code}: `)
     // A source error is reported as one with or without the checker package.
-    expect(refusedJson(dir, ["explain", "action", "shop.product.add"], 1, { ...process.env, [CHECKER_PKG_ENV]: "" })[0]).toMatchObject({ code: "cli.compile.source_refused" })
+    expect(refusedJson(dir, ["explain", "action", "shop.product.add"], 1, { ...process.env, [CHECKER_PKG_ENV]: "", NORN_CACHE_DIR: join(root, "no-cache") })[0]).toMatchObject({ code: "cli.compile.source_refused" })
     expect(uncompiled[0]!.message).toStartWith("The project's sources did not compile: ")
     const frame = norn(dir, ["explain", "action", "shop.product.add"])
     expect(frame.status).toBe(1)
@@ -174,7 +174,7 @@ test("explain refuses with an actionable code outside a project, on bad usage an
     expect(refusedJson(root, ["explain", "widget", "x"], 2)[0]).toMatchObject({ code: "cli.explain.usage" })
     expect(refusedJson(root, ["explain", "law", "x", "--locale", "ar"], 2)[0]).toMatchObject({ code: "cli.explain.usage" })
     expect(norn(root, ["init", join(root, "p"), "--no-install"]).status).toBe(0)
-    const missing = refusedJson(join(root, "p"), ["explain", "action", "p.product.add"], 3, { ...process.env, [CHECKER_PKG_ENV]: "" })
+    const missing = refusedJson(join(root, "p"), ["explain", "action", "p.product.add"], 3, { ...process.env, [CHECKER_PKG_ENV]: "", NORN_CACHE_DIR: join(root, "no-cache") })
     expect(missing[0]).toMatchObject({ code: "cli.setup.checker_unavailable", fix: expect.stringContaining(CHECKER_PKG_ENV) })
     expect(missing[0]!.message).toStartWith("The checker WASM package is unavailable; build it and set NORN_CHECKER_WASM_PKG.")
     // A package that is there but cannot load says why, instead of "unavailable" alone.

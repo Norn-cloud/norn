@@ -242,6 +242,7 @@ fn a_retained_save_keeps_earlier_cutoffs_evaluable() {
             payload_sha256: payload_sha256(&payload),
             payload,
             signoff: None,
+            authority: None,
         },
         expected_revision: None,
     };

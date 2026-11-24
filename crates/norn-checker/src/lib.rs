@@ -24,6 +24,8 @@
 pub mod action_set;
 pub mod agent;
 pub mod artifact_set;
+/// Pure admission checks for the `automation` retained-definition kind (`AUTOMATION-1`).
+pub mod automation;
 pub mod classification;
 pub mod codes;
 mod concept_roles;
@@ -52,6 +54,8 @@ pub mod flow_performs;
 pub mod flow_source_map;
 pub mod function;
 pub mod graph;
+/// Record-level ZEN guard expression admission and evaluation (`AUTOMATION-1`).
+pub mod guard_expr;
 /// Closure-keyed structural admission evidence reuse.
 pub mod incremental;
 mod inheritance;

@@ -88,31 +88,33 @@ async fn refuse_semantic_change(changed: Model, transition: bool) {
         });
     }
     // Identical DDL and input still commit to distinct semantic snapshots.
-    let mut altered = CellStore::open_in_memory(changed.clone()).expect("changed store");
-    for input in &inputs {
-        let expected = store.commit(input).expect("original commit");
-        let actual = altered.commit(input).expect("changed commit");
-        assert_eq!(
-            actual.receipt().body.request_hash,
-            expected.receipt().body.request_hash
-        );
-        assert_ne!(
-            actual.receipt().body.written,
-            expected.receipt().body.written
-        );
-        assert_ne!(actual.receipt().hash, expected.receipt().hash);
-    }
-    let original_object = store
-        .read()
-        .object("main", "restore.Item", "a")
-        .expect("read");
-    assert_ne!(
-        original_object,
-        altered
+    {
+        let mut altered = CellStore::open_in_memory(changed.clone()).expect("changed store");
+        for input in &inputs {
+            let expected = store.commit(input).expect("original commit");
+            let actual = altered.commit(input).expect("changed commit");
+            assert_eq!(
+                actual.receipt().body.request_hash,
+                expected.receipt().body.request_hash
+            );
+            assert_ne!(
+                actual.receipt().body.written,
+                expected.receipt().body.written
+            );
+            assert_ne!(actual.receipt().hash, expected.receipt().hash);
+        }
+        let original_object = store
             .read()
             .object("main", "restore.Item", "a")
-            .expect("read")
-    );
+            .expect("read");
+        assert_ne!(
+            original_object,
+            altered
+                .read()
+                .object("main", "restore.Item", "a")
+                .expect("read")
+        );
+    }
     let mut exporter = Exporter::local(&dir.path().join("export")).expect("exporter");
     export_all(&store, &mut exporter).await;
     let manifest = exporter.verify().await.expect("verified export");
