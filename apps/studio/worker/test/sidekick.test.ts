@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
+import { EXPECTED_ENV_HEADER, EXPECTED_ORG_HEADER } from "../actor.ts"
 import worker, { type Env } from "../index.ts"
 import { GRANTS_PER_WINDOW, GRANT_SECONDS, GRANT_WINDOW_MS, SIDEKICK_CLIENT, grantAllowed } from "../sidekick.ts"
 
@@ -17,7 +18,7 @@ const migration = (name: string) => readFileSync(join(import.meta.dir, "../migra
 
 function stage(mcp = true): Env & { forwarded: { url: string; authorization: string | null }[] } {
   const db = new Database(":memory:")
-  for (const name of ["0001_better_auth.sql", "0002_workspace_provisioning.sql", "0007_oauth_provider.sql"]) db.exec(migration(name))
+  for (const name of ["0001_better_auth.sql", "0002_workspace_provisioning.sql", "0007_oauth_provider.sql", "0013_oauth_membership_guards.sql"]) db.exec(migration(name))
   const forwarded: { url: string; authorization: string | null }[] = []
   const host = {
     fetch: async (request: Request) => {
@@ -62,8 +63,29 @@ async function workspace(env: Env) {
   return { owner, analyst, org }
 }
 
-const mint = (env: Env, cookie: string, origin: string | null = ORIGIN) =>
-  call(env, "/api/sidekick/grant", { method: "POST", headers: { cookie, ...origin === null ? {} : { origin } } })
+const mint = async (
+  env: Env,
+  cookie: string,
+  origin: string | null = ORIGIN,
+  scope?: { orgId?: string | null; environmentId?: string | null } | null,
+) => {
+  const headers: Record<string, string> = { cookie, ...origin === null ? {} : { origin } }
+  if (scope !== null && cookie !== "") {
+    let orgId = scope?.orgId
+    let environmentId = scope?.environmentId
+    if (scope === undefined) {
+      const me = await call(env, "/api/me", { headers: { cookie } })
+      if (me.ok) {
+        const body = (await me.json()) as { organization?: { id?: string } | null; environmentId?: string | null }
+        orgId = body.organization?.id ?? null
+        environmentId = body.environmentId ?? null
+      }
+    }
+    if (typeof orgId === "string" && orgId !== "") headers[EXPECTED_ORG_HEADER] = orgId
+    if (typeof environmentId === "string" && environmentId !== "") headers[EXPECTED_ENV_HEADER] = environmentId
+  }
+  return call(env, "/api/sidekick/grant", { method: "POST", headers })
+}
 const mcp = (env: Env, token: string) =>
   call(env, "/mcp", { method: "POST", body: JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/list", params: {} }), headers: { "content-type": "application/json", authorization: `Bearer ${token}` } })
 
@@ -75,7 +97,8 @@ test("a signed-in person's grant is their own /mcp access in their workspace, sh
   expect(response.headers.get("cache-control")).toBe("no-store")
   const { token, expiresAt } = (await response.json()) as { token: string; expiresAt: number }
   const claims = claimsOf(token)
-  expect(claims).toMatchObject({ iss: ORIGIN, aud: `${ORIGIN}/mcp`, sub: owner.user, azp: SIDEKICK_CLIENT, "https://norn.cloud/org": org })
+  expect(claims).toMatchObject({ iss: ORIGIN, aud: `${ORIGIN}/mcp`, sub: owner.user, azp: SIDEKICK_CLIENT, "https://norn.cloud/org": org, "https://norn.cloud/env": "analytics" })
+  expect(claims["https://norn.cloud/member"]).toBeString()
   expect((claims.exp as number) - (claims.iat as number)).toBe(GRANT_SECONDS)
   expect(expiresAt).toBe((claims.exp as number) * 1000)
 
@@ -85,6 +108,10 @@ test("a signed-in person's grant is their own /mcp access in their workspace, sh
   // The cell never sees the grant, only a host token for the person.
   expect(sent?.authorization).not.toContain(token)
   expect(claimsOf((sent?.authorization ?? "").replace(/^Bearer /, ""))).toMatchObject({ sub: owner.user, aud: "norn-host", norn: { kind: "user", org, role: "owner", amr: "oauth" } })
+
+  // If the workspace's cell environment changes, the existing Sidekick grant is rejected 401.
+  db(env).run(`update "organization" set "metadata" = '{"environmentId":"staging"}' where "id" = ?`, [org])
+  expect((await mcp(env, token)).status).toBe(401)
 })
 
 test("an analyst's Sidekick reaches the cell as a member, so the cell masks what they read, and the grant opens no other route", async () => {
@@ -118,10 +145,14 @@ test("no session, another origin, another method, or a stage without /mcp mints 
   expect((await mint(off, someone.cookie)).status).toBe(404)
 })
 
-test("a workspace without a cell gets no grant", async () => {
+test("a workspace without a cell gets no grant, and missing or mismatched scope headers are refused", async () => {
   const env = stage()
   const { cookie } = await signUp(env, "new@example.com")
   expect((await mint(env, cookie)).status).toBe(409)
+  const { owner, org } = await workspace(env)
+  expect((await mint(env, owner.cookie, ORIGIN, null)).status).toBe(400)
+  expect((await mint(env, owner.cookie, ORIGIN, { orgId: org })).status).toBe(400)
+  expect((await mint(env, owner.cookie, ORIGIN, { orgId: org, environmentId: "other" })).status).toBe(409)
 })
 
 test("a person mints a bounded number of grants per window, then gets 429 until it passes", async () => {

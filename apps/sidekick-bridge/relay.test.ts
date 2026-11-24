@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose"
-import { BUILT_IN_TOOLS, MCP_SERVER_NAME, configFromEnv, forwardedUpdate, SIDEKICK_CLIENT, permissionAnswer, rewriteInitialize, rewriteNewSession, rewritePrompt, scrub, verifyGrant, viewOf } from "./relay.ts"
+import { BUILT_IN_TOOLS, ENV_CLAIM, MCP_SERVER_NAME, MEMBER_CLAIM, ORG_CLAIM, configFromEnv, forwardedUpdate, SIDEKICK_CLIENT, permissionAnswer, rewriteInitialize, rewriteNewSession, rewritePrompt, sameGrantIdentity, scrub, verifyGrant, viewOf } from "./relay.ts"
 
 const STUDIO = "https://studio.norn.test"
 
@@ -12,12 +12,31 @@ async function keys() {
   return { set: createLocalJWKSet({ keys: [jwk] }), sign }
 }
 
-const GRANT = { iss: STUDIO, aud: `${STUDIO}/mcp`, sub: "user-1", azp: SIDEKICK_CLIENT }
+const GRANT = { iss: STUDIO, aud: `${STUDIO}/mcp`, sub: "user-1", azp: SIDEKICK_CLIENT, [ORG_CLAIM]: "org-1", [ENV_CLAIM]: "env-1", [MEMBER_CLAIM]: "mem-1" }
 
-test("only a Sidekick grant from Studio's own keys, for its /mcp, unexpired, is accepted", async () => {
+test("only a Sidekick grant from Studio's own keys, for its /mcp, unexpired, with full scope identity, is accepted", async () => {
   const { set, sign } = await keys()
   const good = await verifyGrant(await sign(GRANT), set, STUDIO)
-  expect(good?.subject).toBe("user-1")
+  expect(good).toMatchObject({ subject: "user-1", org: "org-1", env: "env-1", member: "mem-1" })
+  // Renewal accepts identical (subject, org, env, member) and rejects any workspace/env/membership/subject change.
+  const renewed = await verifyGrant(await sign(GRANT, Math.floor(Date.now() / 1000) + 1200), set, STUDIO)
+  expect(good && renewed && sameGrantIdentity(good, renewed)).toBe(true)
+  for (const changed of [
+    { ...GRANT, [ORG_CLAIM]: "org-2" },
+    { ...GRANT, [ENV_CLAIM]: "env-2" },
+    { ...GRANT, [MEMBER_CLAIM]: "mem-2" },
+    { ...GRANT, sub: "user-2" },
+  ]) {
+    const next = await verifyGrant(await sign(changed), set, STUDIO)
+    expect(next).not.toBeNull()
+    expect(good && next && sameGrantIdentity(good, next)).toBe(false)
+  }
+  // Missing workspace, environment, or membership generation claims are refused.
+  for (const omit of [ORG_CLAIM, ENV_CLAIM, MEMBER_CLAIM]) {
+    const incomplete = { ...GRANT } as Record<string, unknown>
+    delete incomplete[omit]
+    expect(await verifyGrant(await sign(incomplete), set, STUDIO)).toBeNull()
+  }
   // An assistant's OAuth token (another client), a host token, another issuer, an expired grant, a foreign key: refused.
   expect(await verifyGrant(await sign({ ...GRANT, azp: "claude-connector" }), set, STUDIO)).toBeNull()
   expect(await verifyGrant(await sign({ ...GRANT, aud: "norn-host" }), set, STUDIO)).toBeNull()
