@@ -160,8 +160,17 @@ test("the cell's own receipt and refusal documents read as Studio's receipt and 
   const ok = cell(() => Response.json(served.committed))
   expect(await callAction("constitution.melt.convert", '{"id":"melt-1","input_fine_g":12,"output_fine_g":10}', "k", ok.fetcher)).toEqual({ kind: "receipt", receipt: served.committed as never })
   const conflict = await callAction("constitution.melt.convert", "{}", "k", cell(() => Response.json(served.conflict, { status: 409 })).fetcher)
-  // The cell's explanation travels with the refusal, as it sent it.
-  expect(conflict).toEqual({ kind: "refused", status: 409, code: "action.idempotency_conflict", message: "the request conflicts with current state", diagnostics: [], explanation: (served.conflict as { explanation: string }).explanation })
+  // The cell's explanation and host-clock timestamp travel with the refusal, as it sent them.
+  const conflictDoc = served.conflict as { explanation: string; decidedAt?: string }
+  expect(conflict).toEqual({
+    kind: "refused",
+    status: 409,
+    code: "action.idempotency_conflict",
+    message: "the request conflicts with current state",
+    diagnostics: [],
+    explanation: conflictDoc.explanation,
+    ...conflictDoc.decidedAt ? { decidedAt: conflictDoc.decidedAt } : {},
+  })
   const invalid = await callAction("constitution.melt.convert", "{}", "", cell(() => Response.json(served.invalidKey, { status: 400 })).fetcher)
   expect(invalid.kind === "refused" && invalid.diagnostics).toEqual([{ code: "request.invalid", message: "idempotencyKey must be 1 to 128 printable characters and at most 256 bytes", pointer: "/idempotencyKey" }])
   // The key is not an input field: its finding reads at the top of the form.

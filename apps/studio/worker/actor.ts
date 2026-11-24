@@ -106,9 +106,10 @@ export async function forwardToHost(request: Request, host: Fetcher, auth: Auth,
     const value = request.headers.get(name)
     if (value !== null) headers.set(name, value)
   }
-  // Streamed, never buffered in the Worker.
+  // Streamed, never buffered in the Worker; forward read cancellation to the host.
   const body = request.method === "GET" || request.method === "HEAD" ? null : request.body
-  const response = await host.fetch(new Request(`https://norn-host${path}${url.search}`, { method: request.method, headers, body }))
+  const signal = SAFE_METHODS.has(request.method) ? request.signal : undefined
+  const response = await host.fetch(new Request(`https://norn-host${path}${url.search}`, { method: request.method, headers, body, signal }))
   // The cell has already authorized this definition read. Add a display-only name
   // without changing its recorded signer or exposing users from other organizations.
   if (request.method !== "GET" || !/^\/v1\/definitions\/[^/:]+$/.test(path) || !response.ok) return response

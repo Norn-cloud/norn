@@ -7,12 +7,12 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
+import { LoadState } from "@/components/load-state"
 import { EmptyState, Panel, Well } from "@/components/panel"
 import { TableCard } from "@/components/table-card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { member, type Read } from "@/lib/exact"
-import { NotServed } from "@/lib/live-transport"
 import { groupDigits } from "@/lib/format"
 import { checkQuery, columnTitle, describeStep, exactValue, grainsOf, nodeDeclaration, nodeDefinition, periodOf, scaleOf, transformsOf, useTransformLineage, useTransformPlan, useTransformRows, type TransformColumn, type TransformNode, type TransformPage } from "@/lib/transforms"
 import { cn } from "@/lib/utils"
@@ -20,10 +20,12 @@ import { useView, type View } from "@/lib/view"
 import { useCatalog } from "./sources.tsx"
 
 /** A refusal or an unserved read, said plainly. */
-function ReadError({ error }: { readonly error: Error }) {
-  return error instanceof NotServed
-    ? <EmptyState icon={Blend} title="Not served">{error.message}</EmptyState>
-    : <p role="alert" className="text-destructive">{error.message}</p>
+function ReadError({ error, onRetry, isFetching }: { readonly error: Error; readonly onRetry?: () => void; readonly isFetching?: boolean }) {
+  return (
+    <LoadState status="error" error={error} isFetching={isFetching} onRetry={onRetry} notServed={{ icon: Blend, title: "Not served" }}>
+      {() => null}
+    </LoadState>
+  )
 }
 
 /** `/transforms`: every installed transform, with the types it reads. */
@@ -36,8 +38,8 @@ export function TransformsPage() {
         <h1 className="text-title font-semibold tracking-tight">Transforms</h1>
         <p className="text-muted-foreground">Derived datasets the cell's checker admits: every column typed, every join declared, every row traced to the records it comes from.</p>
       </header>
-      {read.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
-      {read.isError && <ReadError error={read.error} />}
+      {read.isPending && <LoadState status="pending" skeleton="table" loadingLabel="Reading transforms" onRetry={() => void read.refetch()}>{() => null}</LoadState>}
+      {read.isError && <ReadError error={read.error} isFetching={read.isFetching} onRetry={() => void read.refetch()} />}
       {read.data && transforms.length === 0 && <EmptyState icon={Blend} title="No transforms yet">A transform turns loaded records into a checked dataset (a join, a total per week). Load records first, then define one in code with <code className="font-mono">norn.transform</code>.</EmptyState>}
       {transforms.length > 0 && (
         <TableCard>
@@ -215,8 +217,8 @@ function RowsTab({ id, onTrace }: { readonly id: string; readonly onTrace: (rowI
   const rows = useTransformRows(id, after)
   const { read: catalog } = useCatalog()
   const grains = useMemo(() => catalog.data ? grainsOf(catalog.data.document, id) : new Map<string, string>(), [catalog.data, id])
-  if (rows.isPending) return <p className="text-muted-foreground">Reading rows…</p>
-  if (rows.isError) return <ReadError error={rows.error} />
+  if (rows.isPending) return <LoadState status="pending" skeleton="table" loadingLabel="Reading transform rows" onRetry={() => void rows.refetch()}>{() => null}</LoadState>
+  if (rows.isError) return <ReadError error={rows.error} isFetching={rows.isFetching} onRetry={() => void rows.refetch()} />
   const page = rows.data.document
   const withheld = Object.entries(page.withheld)
   return (
@@ -248,8 +250,8 @@ function LineageTab({ id, rowId }: { readonly id: string; readonly rowId: string
     return column === undefined ? undefined : scaleOf(column.type)
   }
   if (rowId === undefined) return <EmptyState icon={ListTree} title="Pick a row">Choose a row's records on the Rows tab to see where it comes from.</EmptyState>
-  if (lineage.isPending) return <p className="text-muted-foreground">Reading lineage…</p>
-  if (lineage.isError) return <ReadError error={lineage.error} />
+  if (lineage.isPending) return <LoadState status="pending" skeleton="table" loadingLabel="Reading lineage" onRetry={() => void lineage.refetch()}>{() => null}</LoadState>
+  if (lineage.isError) return <ReadError error={lineage.error} isFetching={lineage.isFetching} onRetry={() => void lineage.refetch()} />
   const document = lineage.data.document
   return (
     <div className="space-y-3">
@@ -386,8 +388,8 @@ function PlanTab({ id }: { readonly id: string }) {
     return { nodes, edges, height, width }
   }, [document, volumes, lens, selected])
   const edge = useRightEdge("[data-slot=plan-scroller]", [graph.width])
-  if (plan.isPending) return <p className="text-muted-foreground">Reading the plan…</p>
-  if (plan.isError) return <ReadError error={plan.error} />
+  if (plan.isPending) return <LoadState status="pending" skeleton="panel" loadingLabel="Reading transform plan" onRetry={() => void plan.refetch()}>{() => null}</LoadState>
+  if (plan.isError) return <ReadError error={plan.error} isFetching={plan.isFetching} onRetry={() => void plan.refetch()} />
   const shown = plan.data.document
   const focus = shown.nodes.find((node) => node.id === selected)
   const definition = read.data ? nodeDefinition(read.data.document, id, selected) : undefined
@@ -472,8 +474,8 @@ export function TransformPage() {
   const [traced, setTraced] = useState<string | undefined>(undefined)
   return (
     <div className="space-y-4">
-      {read.isPending && <p className="text-muted-foreground">Reading definitions…</p>}
-      {read.isError && <ReadError error={read.error} />}
+      {read.isPending && <LoadState status="pending" skeleton="detail" loadingLabel="Reading transform" onRetry={() => void read.refetch()}>{() => null}</LoadState>}
+      {read.isError && <ReadError error={read.error} isFetching={read.isFetching} onRetry={() => void read.refetch()} />}
       {read.data && entry === undefined && <EmptyState icon={Blend}>No transform named {id} is installed.</EmptyState>}
       {entry && <>
         <header className="flex flex-wrap items-baseline gap-3">

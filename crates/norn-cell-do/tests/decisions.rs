@@ -123,6 +123,7 @@ fn install(cell: &Cell, lowered: &str) {
             "steps": [{ "id": "ask_review", "label": "Review the refund" }] },
         "artifacts": artifacts } });
     let (_, admitted) = post(cell, "/v1/definitions:admit", ADMIN, &body);
+    assert_eq!(admitted["admitted"], json!(true), "{admitted}");
     body["signoff"] = json!({ "restatementSha256": admitted["restatementSha256"] });
     let (status, installed) = post(cell, "/v1/definitions:install", ADMIN, &body);
     assert_eq!(status, 200, "{installed}");
@@ -339,6 +340,179 @@ fn an_expired_decision_is_gone() {
         later,
     );
     assert_eq!(listed["total"], json!(0));
+    assert_eq!(expired["decidedAt"], json!("2027-01-17T08:00:00Z"));
+}
+
+/// #1520: a decision refused by a decider law carries its structured `reason`
+/// for a role with refusal-detail disclosure (`admin`) and redacts it for a
+/// role without (`member`), while stamping `decidedAt` from the host clock.
+#[test]
+fn decision_law_refusal_discloses_reason_by_policy_and_stamps_decided_at() {
+    // Patch the flow so both `admin` and `member` are admitted deciders and a
+    // decider law guards the decision, letting us verify DIAG-DISCLOSE-1 across roles.
+    let patched = LOWERED.replace(
+        "decider: {roles: ['admin', 'owner']}",
+        "decider: {roles: ['admin', 'member', 'owner'], law: 'ops.refund.finance_limit'}",
+    );
+    assert_ne!(patched, LOWERED, "fixture did not match decider roles");
+    let cell = cell_with(&patched);
+
+    start(&cell, "refund-law-1");
+    let (_, page) = get(&cell, "/v1/decisions", "&state=pending", ADMIN);
+    let id = page["items"][0]["id"].as_str().unwrap().to_owned();
+
+    let answer = json!({ "choice": "approve", "idempotencyKey": "k-law-1" });
+    // Admin holds refusal-detail disclosure: gets structured `reason` (with empty
+    // evaluated values, since the decider law could not be evaluated) and `decidedAt`.
+    let (status, admin_refusal) = decide(&cell, &id, ADMIN, &answer, NOW);
+    assert_eq!(status, 403, "{admin_refusal}");
+    assert_eq!(admin_refusal["code"], json!("decision.law_not_satisfied"));
+    assert_eq!(admin_refusal["decidedAt"], json!("2027-01-15T08:00:00Z"));
+    assert_eq!(
+        admin_refusal["reason"]["law"],
+        json!("ops.refund.finance_limit")
+    );
+    assert_eq!(
+        admin_refusal["reason"]["subject"],
+        json!(format!("decision/{id}"))
+    );
+    assert_eq!(admin_refusal["reason"]["values"], json!({}));
+
+    // Member lacks refusal-detail disclosure: `reason` is redacted (`null`),
+    // explanation is replaced with the unproven-detail message, `decidedAt` stays.
+    let (status, member_refusal) = decide(&cell, &id, MEMBER, &answer, NOW);
+    assert_eq!(status, 403, "{member_refusal}");
+    assert_eq!(member_refusal["code"], json!("decision.law_not_satisfied"));
+    assert_eq!(member_refusal["decidedAt"], json!("2027-01-15T08:00:00Z"));
+    assert_eq!(member_refusal["reason"], Value::Null);
+    assert_eq!(
+        member_refusal["explanation"],
+        json!(norn_api::refusal::Refusal::UNPROVEN_DETAIL)
+    );
+}
+
+/// Authorizer wrapper that overrides `disclose_refusal_detail` to grant ONLY
+/// one named action id, delegating every other check to `ReadPolicy`.
+struct OnlyDiscloseAction {
+    inner: ReadPolicy,
+    allowed_action: &'static str,
+}
+
+impl norn_api::authz::Authorizer for OnlyDiscloseAction {
+    fn authorize(
+        &self,
+        request: &norn_api::authz::AccessRequest<'_>,
+    ) -> Result<(), norn_api::refusal::Refusal> {
+        self.inner.authorize(request)
+    }
+    fn read(
+        &self,
+        request: &norn_api::authz::ReadRequest<'_>,
+    ) -> Result<(), norn_api::refusal::Refusal> {
+        self.inner.read(request)
+    }
+    fn verified_principal(&self, actor: &str) -> Option<norn_cell::flow_run::RunStarter> {
+        self.inner.verified_principal(actor)
+    }
+    fn action(
+        &self,
+        request: &norn_kernel::ActionAuthzRequest<'_>,
+    ) -> Result<(), norn_kernel::ActionDenial> {
+        self.inner.action(request)
+    }
+    fn action_read(
+        &self,
+        request: &norn_kernel::ActionReadAuthzRequest<'_>,
+    ) -> Result<(), norn_kernel::ActionDenial> {
+        self.inner.action_read(request)
+    }
+    fn action_read_type(
+        &self,
+        request: &norn_kernel::ActionReadTypeAuthzRequest<'_>,
+    ) -> Result<(), norn_kernel::ActionDenial> {
+        self.inner.action_read_type(request)
+    }
+    fn admits_model(
+        &self,
+        object_types: &[norn_ir::ObjectTypeDef],
+    ) -> Result<(), norn_api::refusal::Refusal> {
+        self.inner.admits_model(object_types)
+    }
+    fn disclose_refusal_detail(&self, request: &norn_api::authz::RefusalDetailRequest<'_>) -> bool {
+        request.action_id == self.allowed_action
+    }
+}
+
+/// DIAG-DISCLOSE-1: a flow decision's `decision.law_not_satisfied` refusal binds
+/// solely to `norn.decision.decide`, never to the chosen option's `effect.action`.
+#[test]
+fn flow_decision_refusal_disclosure_binds_solely_to_decision_action() {
+    let scope = analytics::analytics_scope();
+    let opened = analytics::provision(NativeEngine::open_in_memory().unwrap(), &scope).unwrap();
+    let policy =
+        ReadPolicy::compile(opened.store.model().object_types(), &scope, &DEMO_GRANTS).unwrap();
+    let principals = FixturePrincipals::new(FIXTURES, policy.caller());
+    // Grant disclosure on the option's `effect.action`, NOT on `norn.decision.decide`.
+    let host = DevHost::from_store(opened.store, scope.clone(), |command| {
+        command.payload.clone()
+    })
+    .unwrap()
+    .with_authorizer(OnlyDiscloseAction {
+        inner: policy,
+        allowed_action: "ops.refund.approve",
+    });
+    let questions = DemoQuestions::new(opened.plan, scope)
+        .with_handle_key(&[5; 32])
+        .with_metrics(opened.definitions, opened.catalog);
+    let cell = Cell {
+        host,
+        questions,
+        principals,
+        kinds: DefinitionKinds::default()
+            .with_roles(ROLES)
+            .with_restater(norn_api::definition_routes::checker_restatement)
+            .with_builtins(norn_cell::builtin_registered),
+    };
+    let patched = LOWERED.replace(
+        "decider: {roles: ['admin', 'owner']}",
+        "decider: {roles: ['admin', 'owner'], law: 'ops.refund.finance_limit'}",
+    );
+    install(&cell, &patched);
+
+    start(&cell, "refund-law-2");
+    let (_, page) = get(&cell, "/v1/decisions", "&state=pending", ADMIN);
+    let id = page["items"][0]["id"].as_str().unwrap().to_owned();
+    let answer = json!({ "choice": "approve", "idempotencyKey": "k-law-2" });
+    let (status, refused) = decide(&cell, &id, ADMIN, &answer, NOW);
+    assert_eq!(status, 403, "{refused}");
+    assert_eq!(refused["code"], json!("decision.law_not_satisfied"));
+    assert_eq!(refused["reason"], Value::Null);
+    assert_eq!(
+        refused["explanation"],
+        json!(norn_api::refusal::Refusal::UNPROVEN_DETAIL)
+    );
+}
+
+/// Flow result-turn kernel refusals (such as exceeding `EnvelopeLimits::V1`)
+/// preserve the route's HTTP 422 `invalid` contract (never changing to 429
+/// `limit`) and disclose no flow run operands even when the decider holds
+/// refusal-detail disclosure authority.
+#[test]
+fn flow_result_turn_refusal_preserves_422_and_discloses_no_operands() {
+    let excess_facts = "map([1..40], {op: 'set', objectType: 'ops.ApproveRefundRun', key: slice.run.run_id, property: 'slots', value: {result: {outcome: 'approved'}}})";
+    let target = "[{op: 'set', objectType: 'ops.ApproveRefundRun', key: slice.run.run_id, property: 'slots', value: {result: {outcome: 'approved'}}}, {op: 'transition', objectType: 'ops.ApproveRefundRun', key: slice.run.run_id, lifecycle: 'status', transition: 'to_completed'}]";
+    let patched = LOWERED.replace(target, excess_facts);
+    assert_ne!(patched, LOWERED, "fixture did not match result turn facts");
+    let cell = cell_with(&patched);
+
+    start(&cell, "refund-limit-1");
+    let (_, page) = get(&cell, "/v1/decisions", "&state=pending", ADMIN);
+    let id = page["items"][0]["id"].as_str().unwrap().to_owned();
+    let answer = json!({ "choice": "approve", "idempotencyKey": "k-limit-1" });
+    let (status, refused) = decide(&cell, &id, ADMIN, &answer, NOW);
+    assert_eq!(status, 422, "{refused}");
+    assert_eq!(refused["category"], json!("invalid"));
+    assert_eq!(refused["reason"], Value::Null);
 }
 
 /// Pin the documents and HTTP statuses used by Studio's browser stand-in.
@@ -436,9 +610,14 @@ fn studio_decision_and_run_documents_match_the_served_routes() {
         "runStartDenied": envelope(call(&cell, "POST", "/v1/runs", foreign, MEMBER, &start_body.to_string(), NOW)),
         "runMissing": envelope(get(&cell, "/v1/runs/absent", "", ADMIN)),
     });
-    let pinned: Value = serde_json::from_str(include_str!(
-        "../../../apps/studio/test/fixtures/decision-run.json"
-    ))
-    .unwrap();
+    let fixture_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../apps/studio/test/fixtures/decision-run.json");
+    if std::env::var_os("NORN_BLESS").is_some() {
+        let mut rendered = serde_json::to_string_pretty(&actual).unwrap();
+        rendered.push('\n');
+        std::fs::write(&fixture_path, rendered).unwrap();
+    }
+    let pinned: Value =
+        serde_json::from_str(&std::fs::read_to_string(&fixture_path).unwrap()).unwrap();
     assert_eq!(actual, pinned);
 }

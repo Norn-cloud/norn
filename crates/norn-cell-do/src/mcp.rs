@@ -129,7 +129,7 @@ pub fn serve<E: SqlEngine>(
             status: StatusCode::ACCEPTED.as_u16(),
             body: String::new(),
         },
-        Err(refused) => crate::incident::respond(refused),
+        Err(refused) => crate::incident::respond_at(refused, request.now),
     }
 }
 

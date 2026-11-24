@@ -1,6 +1,6 @@
 import { queryOptions } from "@tanstack/react-query"
 import { defaultFetch, type Fetch } from "./cell-read.ts"
-import { readStudioScope, type StudioScope } from "./definitions.ts"
+import { CellUnavailable, readStudioScope, type StudioScope } from "./definitions.ts"
 import { cellRead } from "./live-transport.ts"
 import type { Read } from "./exact.ts"
 import type { Clause, Predicate } from "./records-query.ts"
@@ -49,10 +49,16 @@ async function readFacets(objectType: string, filter: Predicate | null, properti
   let read: Read<Facets>
   try {
     const path = facetsPath(objectType, filter, properties)
-    const ask = () => cellRead<Facets>(path, "Facets are", { signal: AbortSignal.timeout(FACETS_DEADLINE_MS) }, fetcher, scope)
+    const ask = () => cellRead<Facets>(path, "Facets are", { signal: AbortSignal.timeout(FACETS_DEADLINE_MS), timeoutMs: FACETS_DEADLINE_MS }, fetcher, scope)
     read = scope === undefined ? await ask() : await readViewAtScope(scope, () => readStudioScope(fetcher), ask)
   } catch (error) {
-    if (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError")) throw new FacetsTimedOut()
+    if (
+      (error instanceof CellUnavailable && error.timedOut === true)
+      || (error instanceof DOMException && (error.name === "TimeoutError" || error.name === "AbortError"))
+      || (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError"))
+    ) {
+      throw new FacetsTimedOut()
+    }
     throw error
   }
   // An answer that is not a facets document is not counted from: it reads as not served.

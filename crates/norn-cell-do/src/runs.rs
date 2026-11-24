@@ -69,7 +69,7 @@ pub(crate) fn dispatch<E: SqlEngine>(
             status: status.as_u16(),
             body,
         },
-        Err(refused) => crate::incident::respond(refused),
+        Err(refused) => crate::incident::respond_at(refused, request.now),
     })
 }
 
@@ -290,12 +290,15 @@ fn decisions<E: SqlEngine>(
                     Ok((StatusCode::OK, document_json(&decided)?))
                 }
                 // A refusal carries who resolved the decision first, when
-                // someone did.
-                Err(refused) => Ok((
-                    StatusCode::from_u16(refused.refusal.status)
-                        .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-                    document_json(&*refused)?,
-                )),
+                // someone did, plus the boundary timestamp and incident id.
+                Err(mut refused) => {
+                    crate::incident::prepare(&mut refused.refusal, Some(request.now));
+                    Ok((
+                        StatusCode::from_u16(refused.refusal.status)
+                            .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+                        document_json(&*refused)?,
+                    ))
+                }
             }
         }
         (DecisionsRoute::Collection, _) => Err(not_allowed("decisions are listed with GET")),
