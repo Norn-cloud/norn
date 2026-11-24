@@ -1,4 +1,4 @@
-import { atomically, publicMetadata, BILLING_PAYER, BILLED, type Auth, type ProvisionDb } from "./auth.ts"
+import { activeMembership, atomically, publicMetadata, BILLING_PAYER, BILLED, type Auth, type ProvisionDb } from "./auth.ts"
 import { admitCell, admitMember, limitRaised, refusalMessage, type Admission, type BillingDb, type BillingSettings } from "./billing.ts"
 
 /**
@@ -7,6 +7,7 @@ import { admitCell, admitMember, limitRaised, refusalMessage, type Admission, ty
  * statements, so an interruption or a plan-limit refusal between them leaves half a change: a workspace
  * without its owner holding a payer's cell, or an accepted invitation without its member that can never
  * be retried. With billing on, the Worker refuses those routes (index.ts) and serves these instead.
+ * Also serves the read-only `GET /api/workspaces` document for Studio's workspace switcher.
  *
  * Authorization is Better Auth's, unchanged: its session, and for an invitation the same checks its
  * accept route makes (pending and unexpired, addressed to the session's email, verified address,
@@ -23,6 +24,19 @@ export interface WorkspaceContext {
   readonly baseURL: string
 }
 
+export interface WorkspaceItem {
+  readonly id: string
+  readonly name: string
+  readonly slug: string
+  readonly role: string
+  readonly active: boolean
+  readonly hasCell: boolean
+}
+
+export interface WorkspacesDocument {
+  readonly workspaces: readonly WorkspaceItem[]
+}
+
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "cache-control": "no-store" } })
 /** Better Auth's error shape, so a client reads these as it reads Better Auth's. */
 const failure = (status: number, code: string, message: string) => json({ code, message }, status)
@@ -35,22 +49,69 @@ function planLimit(admission: Admission | undefined, fallback: string): Response
 const INVITATION_GONE = "This invitation is no longer open: it expired or was withdrawn. Ask the workspace's admins for a new one."
 /** Better Auth's default membership limit (its accept route refuses at 100 members). */
 const MEMBERSHIP_LIMIT = 100
+const ENVIRONMENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
+
+function environmentOf(metadata: unknown): string | null {
+  let value = metadata
+  if (typeof value === "string") {
+    try { value = JSON.parse(value) } catch { return null }
+  }
+  const envId = (value as { environmentId?: unknown } | null)?.environmentId
+  return typeof envId === "string" && ENVIRONMENT.test(envId) ? envId : null
+}
 
 async function body(request: Request): Promise<Record<string, unknown> | null> {
   const value = await request.json().catch(() => null)
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null
 }
 
+type SqlResult = { first<T>(): Promise<T | null>; all<T>(): Promise<{ results: T[] }> }
+type QueryableStatement = { bind?: (...params: string[]) => SqlResult; get?: (...params: string[]) => unknown; all?: (...params: string[]) => unknown[] }
+type QueryableDb = { prepare(sql: string): QueryableStatement }
+
 async function first<T>(db: D1Database | ProvisionDb, sql: string, ...params: string[]): Promise<T | null> {
-  const statement = (db as ProvisionDb).prepare(sql)
+  const statement = (db as unknown as QueryableDb).prepare(sql)
   if (statement.bind) return statement.bind(...params).first<T>()
   return (statement.get?.(...params) as T | undefined) ?? null
+}
+
+async function all<T>(db: D1Database | ProvisionDb, sql: string, ...params: string[]): Promise<T[]> {
+  const statement = (db as unknown as QueryableDb).prepare(sql)
+  if (statement.bind) return (await statement.bind(...params).all<T>()).results
+  return (statement.all?.(...params) ?? []) as T[]
 }
 
 /** Make the new workspace the session's active one, as Better Auth's routes do. */
 async function activate(auth: Auth, token: string, organizationId: string): Promise<void> {
   const context = await auth.$context
   await context.internalAdapter.updateSession(token, { activeOrganizationId: organizationId })
+}
+
+/** GET /api/workspaces: read-only listing of the signed-in user's workspaces. */
+export async function listWorkspaces(request: Request, context: Pick<WorkspaceContext, "auth" | "db">): Promise<Response> {
+  const session = await context.auth.api.getSession({ headers: request.headers })
+  if (session === null) return failure(401, "UNAUTHORIZED", "Sign in first.")
+  const active = await activeMembership(context.auth, session.user.id, session.session.activeOrganizationId)
+  type OrgRow = { id: string; name: string; slug: string; metadata: string | null; role: string }
+  const rows = await all<OrgRow>(context.db,
+    `select o."id", o."name", o."slug", o."metadata", m."role"
+     from "member" m
+     join "organization" o on o."id" = m."organizationId"
+     where m."userId" = ?
+     order by m."createdAt" asc, o."id" asc`,
+    session.user.id)
+
+  const workspaces: WorkspaceItem[] = rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    slug: row.slug,
+    role: row.role,
+    active: active?.organizationId === row.id,
+    hasCell: environmentOf(row.metadata) !== null,
+  }))
+
+  const document: WorkspacesDocument = { workspaces }
+  return json(document)
 }
 
 /** POST /api/workspaces { name, slug, logo?, metadata?, keepCurrentActiveOrganization? }: the workspace and its owner in one transaction. */

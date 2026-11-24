@@ -11,7 +11,16 @@ export interface Account {
   readonly environmentId?: string | null
 }
 
+/** Public auth capabilities the server advertises (/api/auth/config). Display only; the server still enforces everything. */
+export interface AuthConfig {
+  readonly magicLink: boolean
+  readonly inviteOnly: boolean
+}
+
+export const DEFAULT_AUTH_CONFIG: AuthConfig = { magicLink: false, inviteOnly: false }
+
 const SESSION = ["session"] as const
+const AUTH_CONFIG = ["auth-config"] as const
 
 /** A refusal the auth server explained, shown to the user as is. */
 export class AuthRefusal extends Error {}
@@ -25,13 +34,35 @@ async function readAccount(fetcher: Fetch): Promise<Account | null> {
   return (await response.json()) as Account
 }
 
+/** Read which sign-in methods this deployment actually supports; throws on transient failures so queries can retry. */
+export async function readAuthConfig(fetcher: Fetch = (input, init) => fetch(input, init)): Promise<AuthConfig> {
+  const response = await fetcher("/api/auth/config", { headers: { accept: "application/json" } })
+  if (!response.ok) throw new Error(`Auth config check failed (${response.status}).`)
+  const body = (await response.json().catch(() => null)) as { magicLink?: unknown; inviteOnly?: unknown } | null
+  if (body === null || typeof body !== "object") throw new Error("Auth config response was invalid.")
+  return { magicLink: body.magicLink === true, inviteOnly: body.inviteOnly === true }
+}
+
+/** Server-reported auth capabilities for the login screen; hides unsupported methods until confirmed. */
+export function useAuthConfig() {
+  return useQuery({ queryKey: AUTH_CONFIG, queryFn: () => readAuthConfig(), staleTime: 60_000, retry: 1 })
+}
+
+const isReadQuery = (query: { readonly queryKey: readonly unknown[] }) =>
+  query.queryKey[0] !== SESSION[0] && query.queryKey[0] !== AUTH_CONFIG[0]
+
 /** Forget every read made as the reader who made it (records, picker choices, the inbox): all but the session itself. */
-function forgetReads(client: QueryClient): void {
-  // Drop the cached live/recorded mode so the next scoped cell's catalog and capabilities are read fresh.
+export function forgetReads(client: QueryClient, options: { readonly refetchActive?: boolean; readonly deferActiveRefetch?: boolean } = {}): void {
   refreshMode()
-  const isOther = (query: { readonly queryKey: readonly unknown[] }) => query.queryKey[0] !== SESSION[0]
-  void client.cancelQueries({ predicate: isOther })
-  client.removeQueries({ predicate: isOther })
+  void client.cancelQueries({ predicate: isReadQuery })
+  if (options.refetchActive) {
+    client.removeQueries({ predicate: isReadQuery, type: "inactive" })
+    const resetActive = () => { void client.resetQueries({ predicate: isReadQuery, type: "active" }) }
+    if (options.deferActiveRefetch) queueMicrotask(resetActive)
+    else resetActive()
+    return
+  }
+  client.removeQueries({ predicate: isReadQuery })
 }
 
 function accountScopeOf(account: Account | null): StudioScope | null | undefined {
@@ -67,7 +98,8 @@ export function accountQuery(client: QueryClient, fetcher: Fetch = (input, init)
         // If only the environment changed and `useStudioScope` / `syncStudioScopeChange` already
         // switched `["studio-scope"]` and purged old caches, keep the new scope's in-flight mode read.
         if (!(sameReader && nextScope !== undefined && cachedScope !== undefined && sameStudioScope(cachedScope, nextScope))) {
-          forgetReads(client)
+          // Defer active query resets until the new session is published.
+          forgetReads(client, { refetchActive: account !== null, deferActiveRefetch: true })
         }
       }
       return account
@@ -86,8 +118,8 @@ export function useAccount() {
 async function call(path: string, body: Record<string, string>): Promise<void> {
   const response = await fetch(`/api/auth${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
   if (response.ok) return
-  const reason = await response.json().catch(() => null) as { message?: string } | null
-  throw new AuthRefusal(response.status === 429 ? "Too many attempts. Wait a few minutes and try again." : reason?.message ?? `Sign-in failed (${response.status}).`)
+  const reason = await response.json().catch(() => null) as { message?: string; error?: string } | null
+  throw new AuthRefusal(response.status === 429 ? "Too many attempts. Wait a few minutes and try again." : reason?.message ?? reason?.error ?? `Sign-in failed (${response.status}).`)
 }
 
 export const authApi = {

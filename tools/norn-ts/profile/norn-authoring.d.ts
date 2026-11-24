@@ -367,6 +367,22 @@ declare module "@norn/authoring" {
       readonly inverse?: string
     }
 
+    /** A parent-owned ordered child collection (`OwnedChildCollection`). */
+    interface OwnedChildCollectionSpec {
+      /** The parent-to-child link id that owns the collection. */
+      readonly id: string
+      /** Exact child object type accepted by the owning link. */
+      readonly childType: TypeDefinition<unknown> | string
+      /** Stable child property equal to the child fact key. */
+      readonly rowIdProperty: string
+      /** Stored integer property holding dense 1-based row order. */
+      readonly orderingKey: string
+      /** Whether parent deletion cascades through these rows. */
+      readonly cascadeOnParentDelete: boolean
+      /** Maximum live rows (whole integer, bounded by 100). */
+      readonly maxRows: number
+    }
+
     interface TypeMeta<
       S extends Schema.Top,
       E extends TypeDefinition<unknown> | string | undefined = undefined,
@@ -378,6 +394,7 @@ declare module "@norn/authoring" {
       readonly implements?: I
       readonly pathEquations?: ReadonlyArray<import("../src/builder/entity.ts").PathEquation>
       readonly links?: L
+      readonly ownedCollections?: ReadonlyArray<OwnedChildCollectionSpec>
       readonly identity?: ReadonlyArray<KeySpec<EffectiveProperties<E, I, S["Type"]>>>
       /** Literal defaults; numbers are exact decimal literals. */
       readonly defaults?: { readonly [P in keyof S["Type"]]?: S["Type"][P] }
@@ -432,6 +449,41 @@ declare module "@norn/authoring" {
             | { readonly kind: "create_only" }
             | { readonly kind: "draft_only"; readonly lifecycle: string; readonly state: string }
         }
+      | {
+          readonly kind: "mutate_parent_with_rows"
+          readonly type: TypeDefinition<unknown>
+          readonly objectIdField: keyof I & string
+          readonly parentValuesField: keyof I & string
+          readonly rowOpsField: keyof I & string
+          readonly parentVersionField: keyof I & string
+          readonly parentDeleteField?: keyof I & string
+          readonly collections?: ReadonlyArray<{
+            readonly id: string
+            readonly preconditions?: ReadonlyArray<Expression<boolean>>
+            readonly derive?: { readonly [property: string]: Expression<unknown> }
+          }>
+        }
+
+    /** Date or timestamp window for predicate slices and action aggregates. */
+    interface PredicateWindowSpec {
+      readonly property: string
+      readonly start: string
+      readonly end: string
+      readonly startInclusive: boolean
+      readonly endInclusive: boolean
+    }
+
+    /** Bounded fenced aggregate input evaluated over stored objects (`ActionAggregateInput`). */
+    interface ActionAggregateSpec {
+      readonly name: string
+      readonly type: TypeDefinition<unknown> | string
+      readonly filter?: Readonly<Record<string, string>>
+      readonly window?: PredicateWindowSpec
+      readonly aggregate:
+        | { readonly kind: "sum"; readonly property: string }
+        | { readonly kind: "count" }
+      readonly maxItems: number
+    }
 
     interface ActionMeta<I extends Schema.Top, O extends Schema.Top> extends Localized {
       readonly dependencies?: ReadonlyArray<import("../src/builder/envelope.ts").DependencyPin>
@@ -460,6 +512,8 @@ declare module "@norn/authoring" {
       readonly inputGroups?: ReadonlyArray<{ readonly id: string; readonly title: string; readonly fields: ReadonlyArray<string> }>
       /** Ordered bounded reads, with property keys rooted at `from: "input"`. */
       readonly slice?: ReadonlyArray<SliceSpec>
+      /** Bounded fenced aggregate inputs over stored objects. */
+      readonly aggregates?: ReadonlyArray<ActionAggregateSpec>
       /** Ordered deterministic ZEN transformations before validation and preconditions. */
       readonly derive?: ReadonlyArray<{
         readonly field: keyof I["Type"] & string
@@ -794,6 +848,7 @@ declare module "@norn/authoring" {
         | { readonly property: { readonly from: string; readonly property: string } }
         | { readonly link: { readonly from: string; readonly link: string } }
         | { readonly parameter: { readonly from: string; readonly settingKey: string; readonly effectiveAt: string; readonly precedence: ReadonlyArray<Readonly<Partial<Record<`${ScopeDimension}Id`, string>>>>; readonly defaultFrom?: string } }
+        | { readonly predicate: { readonly filter?: Readonly<Record<string, string>>; readonly window?: PredicateWindowSpec; readonly maxItems?: number } }
       readonly optional?: boolean
     }
 
