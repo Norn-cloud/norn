@@ -47,11 +47,11 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use norn_api::clock::Clock;
 use norn_api::olap_credential::{Denied, Keyring, body_digest};
-use norn_cell::analytics::engine::{Engine, Outcome, Settings, StoreBody};
+use norn_cell::analytics::engine::{Engine, Settings};
 use norn_cell::analytics::{
-    EngineRefusal, EvaluateRequest, ExportRequest, FrontierRequest, LandRequest, LandResponse,
-    LineageRequest, MembersRequest, PageRequest, ProfileRequest, SettleRequest, SyncRequest,
-    TenantId,
+    AnalyticalEngine, EngineOutcome, EngineRefusal, EvaluateRequest, ExportRequest,
+    FrontierRequest, LandRequest, LandResponse, LineageRequest, MembersRequest, PageRequest,
+    ProfileRequest, SettleRequest, StoreBody, SyncRequest, TenantId,
 };
 use norn_kernel::LogicalTime;
 use serde::Serialize;
@@ -253,9 +253,23 @@ pub fn serve_with(
     clock: Arc<dyn Clock>,
     seam: Arc<dyn Seam>,
 ) -> std::io::Result<()> {
-    let engine = Arc::new(Engine::new(config.settings)?);
+    let engine: Arc<dyn AnalyticalEngine> = Arc::new(Engine::new(config.settings)?);
+    serve_engine(listener, config.keys_file, &engine, clock, seam)
+}
+
+/// Serve `listener` backed by any [`AnalyticalEngine`] implementation.
+///
+/// # Errors
+/// Returns an I/O error if the listener cannot be served.
+pub fn serve_engine(
+    listener: &TcpListener,
+    keys_file: PathBuf,
+    engine: &Arc<dyn AnalyticalEngine>,
+    clock: Arc<dyn Clock>,
+    seam: Arc<dyn Seam>,
+) -> std::io::Result<()> {
     let gate = Arc::new(Gate {
-        keys_file: config.keys_file,
+        keys_file,
         clock,
         seam,
     });
@@ -271,10 +285,10 @@ pub fn serve_with(
             );
             continue;
         }
-        let (engine, gate, active) = (Arc::clone(&engine), Arc::clone(&gate), Arc::clone(&active));
+        let (engine, gate, active) = (Arc::clone(engine), Arc::clone(&gate), Arc::clone(&active));
         std::thread::spawn(move || {
             // A broken connection affects only itself.
-            let _ignored = connection(&stream, &engine, &gate);
+            let _ignored = connection(&stream, engine.as_ref(), &gate);
             active.fetch_sub(1, Ordering::SeqCst);
         });
     }
@@ -434,7 +448,11 @@ const fn reason(status: u16) -> &'static str {
     }
 }
 
-fn connection(stream: &TcpStream, engine: &Engine, gate: &Gate) -> std::io::Result<()> {
+fn connection(
+    stream: &TcpStream,
+    engine: &dyn AnalyticalEngine,
+    gate: &Gate,
+) -> std::io::Result<()> {
     stream.set_read_timeout(Some(Duration::from_secs(30)))?;
     let request = match read_request(stream) {
         Ok(request) => request,
@@ -460,13 +478,13 @@ fn connection(stream: &TcpStream, engine: &Engine, gate: &Gate) -> std::io::Resu
         tenant: &tenant,
     };
     match request.path.as_str() {
-        "/v1/frontier" => call.answer(|r: FrontierRequest| engine.frontier(&r)),
-        "/v1/sync" => call.answer(|r: SyncRequest| engine.sync(&r)),
-        "/v1/evaluate" => call.answer(|r: EvaluateRequest| engine.evaluate(&r)),
-        "/v1/members" => call.answer(|r: MembersRequest| engine.members(&r)),
-        "/v1/profile" => call.answer(|r: ProfileRequest| engine.profile(&r)),
-        "/v1/page" => call.answer(|r: PageRequest| engine.page(&r)),
-        "/v1/lineage" => call.answer(|r: LineageRequest| engine.lineage(&r)),
+        "/v1/frontier" => call.answer(|r: FrontierRequest| engine.mirror_frontier(&r)),
+        "/v1/sync" => call.answer(|r: SyncRequest| engine.mirror_sync(&r)),
+        "/v1/evaluate" => call.answer(|r: EvaluateRequest| engine.evaluate_question(&r)),
+        "/v1/members" => call.answer(|r: MembersRequest| engine.query_members(&r)),
+        "/v1/profile" => call.answer(|r: ProfileRequest| engine.profile_objects(&r)),
+        "/v1/page" => call.answer(|r: PageRequest| engine.query_page(&r)),
+        "/v1/lineage" => call.answer(|r: LineageRequest| engine.query_lineage(&r)),
         "/v1/land" => call.answer(|r: LandRequest| land(engine, &r)),
         "/v1/settle" => call.answer(|r: SettleRequest| settle(engine, &r)),
         "/v1/store" => call.answer(|r: StoreBody| {
@@ -525,7 +543,7 @@ impl Call<'_> {
 
     fn answer<T: DeserializeOwned + Scoped, R: Serialize>(
         &self,
-        operation: impl FnOnce(T) -> Outcome<R>,
+        operation: impl FnOnce(T) -> EngineOutcome<R>,
     ) -> std::io::Result<()> {
         let parsed = match self.parse::<T>() {
             Ok(parsed) => parsed,
@@ -581,7 +599,7 @@ fn agent() -> ureq::Agent {
 /// MANIFEST-02: download the presigned object into `file`, the attempt's
 /// own source file (created exclusively by the engine), at most
 /// [`MAX_FILE_BYTES`].
-fn download(agent: &ureq::Agent, url: &str, mut file: std::fs::File) -> Outcome<()> {
+fn download(agent: &ureq::Agent, url: &str, mut file: std::fs::File) -> EngineOutcome<()> {
     let unreadable = |detail: String| refusal("bulk.unreadable", &detail);
     let mut response = agent
         .get(url)
@@ -626,7 +644,12 @@ impl<R: std::io::Read> std::io::Read for Hashing<R> {
 /// MANIFEST-02: send `path` to the presigned PUT `url`, hashing the bytes as
 /// they are sent: the object is accepted only if what was sent is `sha256`,
 /// the digest the landing answered and the manifest will name.
-fn upload(agent: &ureq::Agent, url: &str, path: &std::path::Path, sha256: &str) -> Outcome<()> {
+fn upload(
+    agent: &ureq::Agent,
+    url: &str,
+    path: &std::path::Path,
+    sha256: &str,
+) -> EngineOutcome<()> {
     use sha2::Digest as _;
     let unwritable = |detail: String| refusal("bulk.unwritable", &detail);
     let file = std::fs::File::open(path)
@@ -677,8 +700,8 @@ fn upload(agent: &ureq::Agent, url: &str, path: &std::path::Path, sha256: &str) 
 /// MANIFEST-LAND-1: land the presigned source in a fresh attempt the engine
 /// mints, downloading it into the attempt's own source file. The engine
 /// holds the attempt throughout; a failed landing removes it.
-fn land(engine: &Engine, request: &LandRequest) -> Outcome<LandResponse> {
-    engine.land(request, |file| {
+fn land(engine: &dyn AnalyticalEngine, request: &LandRequest) -> EngineOutcome<LandResponse> {
+    engine.land_dataset(request, &mut |file| {
         download(&agent(), &request.load.file.url, file)
     })
 }
@@ -686,15 +709,18 @@ fn land(engine: &Engine, request: &LandRequest) -> Outcome<LandResponse> {
 /// MANIFEST-LAWS-1: settle an attempt's residue rows. The engine's settle
 /// takes the attempt by its token and owns its cleanup: a refused settle
 /// removes the attempt it took, and nothing else.
-fn settle(engine: &Engine, request: &SettleRequest) -> Outcome<LandResponse> {
-    engine.settle(request)
+fn settle(engine: &dyn AnalyticalEngine, request: &SettleRequest) -> EngineOutcome<LandResponse> {
+    engine.settle_dataset(request)
 }
 
 /// MANIFEST-LAND-1: send an attempt's landed files to their content-addressed
 /// objects, each only if the bytes sent are its answered digest, then keep
 /// them for the dataset's cache identity. The engine's store owns the
 /// attempt's cleanup; nothing here removes anything.
-fn store(engine: &Engine, body: &StoreBody) -> Outcome<Box<serde_json::value::RawValue>> {
+fn store(
+    engine: &dyn AnalyticalEngine,
+    body: &StoreBody,
+) -> EngineOutcome<Box<serde_json::value::RawValue>> {
     let request = body.request();
     // The engine sends only files whose answer names both digests.
     let sha256 = |file: Option<&norn_cell::analytics::LandedFile>| {
@@ -704,7 +730,7 @@ fn store(engine: &Engine, body: &StoreBody) -> Outcome<Box<serde_json::value::Ra
         sha256(request.landed.data.as_ref()),
         sha256(request.landed.held.as_ref()),
     );
-    engine.store_json(body, |data, held| {
+    engine.store_dataset_json(body, &mut |data, held| {
         let agent = agent();
         upload(&agent, &request.data.url, data, &data_sha256)?;
         upload(&agent, &request.held.url, held, &held_sha256)
@@ -712,7 +738,7 @@ fn store(engine: &Engine, body: &StoreBody) -> Outcome<Box<serde_json::value::Ra
 }
 
 /// Export into a scratch file, stream it as the body, then delete it.
-fn export(call: &Call<'_>, engine: &Engine) -> std::io::Result<()> {
+fn export(call: &Call<'_>, engine: &dyn AnalyticalEngine) -> std::io::Result<()> {
     let stream = call.stream;
     let parsed: ExportRequest = match serde_json::from_slice(&call.request.body) {
         Ok(parsed) => parsed,
@@ -731,7 +757,7 @@ fn export(call: &Call<'_>, engine: &Engine) -> std::io::Result<()> {
         norn_cell::analytics::ExportFormat::Parquet => "application/vnd.apache.parquet",
         norn_cell::analytics::ExportFormat::Jsonl => "application/x-ndjson",
     };
-    let path = match engine.export(&parsed) {
+    let path = match engine.export_dataset(&parsed) {
         Ok(path) => path,
         Err(refused) => return refuse(stream, status_of(&refused), &refused),
     };

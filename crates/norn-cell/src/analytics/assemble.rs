@@ -13,11 +13,12 @@ use norn_ir::{Decimal, RuntimeValue};
 
 use norn_ir::metric::TimeGrain;
 
+use super::backend::AnalyticalRefusal;
 use super::{
     BucketTotals, EvaluateRequest, EvaluateResponse, Grain, GroupKey, MemberRow, MembershipDigest,
     Source, TenantId, lower::lower,
 };
-use crate::compute::{Engine, Member, QueryContext, QueryResult, QueryRow, decimal, refused};
+use crate::compute::{Member, QueryContext, QueryResult, QueryRow, decimal, refused};
 use crate::engine::{SqlEngine, SqlRow, params};
 use crate::read::LedgerHead;
 use crate::system::LEDGER;
@@ -70,6 +71,7 @@ pub struct Prepared {
     revision: LedgerHead,
     query_pin: String,
     definition_pin: String,
+    model_pin: String,
     /// At a knowledge cutoff: the cutoff and the receipt it is pinned to.
     known_at: Option<(crate::KnowledgeCutoff, Option<String>)>,
 }
@@ -218,6 +220,7 @@ impl<E: SqlEngine> CellStore<E> {
             revision,
             query_pin,
             definition_pin,
+            model_pin: self.model().model_hash().to_owned(),
             known_at: cutoff.map(|cutoff| (cutoff, receipt)),
         })
     }
@@ -330,27 +333,79 @@ impl<E: SqlEngine> CellStore<E> {
     }
 
     /// QUERY-ENGINE-1: verify the engine's answer to `prepared` into the
-    /// exact envelope. The answer must be for the prepared frontier; totals,
-    /// ratios and lineage are recomputed here with the exact arithmetic.
+    /// exact envelope. The answer must be for the prepared tenant, world,
+    /// model pin, and commit frontier or dataset load; totals, ratios and
+    /// lineage are recomputed here with the exact arithmetic.
     ///
     /// # Errors
-    /// A moved head (`core.compute.stale_input`), a malformed or inconsistent
-    /// response, or a sum outside the bounded profile.
+    /// A moved head or mismatched provenance (`core.compute.stale_input`), a
+    /// malformed or inconsistent response, or a sum outside the bounded profile.
     pub fn analytics_answer(
         &self,
         prepared: Prepared,
         response: EvaluateResponse,
+    ) -> Result<QueryResult, CellError> {
+        self.assemble_answer(prepared, response, false)
+    }
+
+    /// QUERY-FRESH-1 / strict law read: verify the engine's answer into the
+    /// exact envelope and fail closed unless the read is an exact, complete
+    /// governed mirror snapshot (never stale, incomplete, or a loaded dataset).
+    ///
+    /// # Errors
+    /// As [`Self::analytics_answer`], or a typed insufficient-protection refusal.
+    pub fn analytics_answer_strict(
+        &self,
+        prepared: Prepared,
+        response: EvaluateResponse,
+    ) -> Result<QueryResult, CellError> {
+        self.assemble_answer(prepared, response, true)
+    }
+
+    fn assemble_answer(
+        &self,
+        prepared: Prepared,
+        response: EvaluateResponse,
+        strict_law_read: bool,
     ) -> Result<QueryResult, CellError> {
         if prepared.known_at.is_some() || prepared.plan.as_of() {
             self.read().check_history("historical analytics")?;
         } else {
             self.read().check_live()?;
         }
+        // Verify model pin and snapshot-actually-read provenance before assembling.
+        if self.model().model_hash() != prepared.model_pin {
+            return Err(AnalyticalRefusal::StaleRead {
+                detail: "cell model pin changed since preparation".to_owned(),
+            }
+            .into());
+        }
         // A cutoff's history is immutable; a current answer is exact only at
-        // the head it was prepared at.
+        // the head (and dataset load) it was prepared at.
         if prepared.known_at.is_none() && self.verified_head()? != prepared.revision {
             return Err(refused("core.compute.stale_input"));
         }
+        if prepared.known_at.is_none()
+            && let Source::Dataset { table, load } = &prepared.request.source
+        {
+            let current = self.dataset_manifest(crate::MAIN_WORLD, table)?;
+            if current.is_none_or(|manifest| manifest.manifest.load != *load) {
+                return Err(AnalyticalRefusal::StaleRead {
+                    detail: "dataset manifest load moved since preparation".to_owned(),
+                }
+                .into());
+            }
+        }
+        let provenance =
+            response
+                .provenance
+                .as_ref()
+                .ok_or_else(|| AnalyticalRefusal::StaleRead {
+                    detail: "analytical response omitted snapshot provenance".to_owned(),
+                })?;
+        provenance.verify_against(&prepared.request.tenant, &prepared.request.source)?;
+        let engine_id = provenance.engine;
+        let provenance_copy = provenance.clone();
         let Prepared {
             request,
             plan,
@@ -382,9 +437,21 @@ impl<E: SqlEngine> CellStore<E> {
             definition_pin,
             &BTreeMap::new(),
         )?;
+        if let Some(reported_freshness) = provenance_copy.freshness
+            && reported_freshness != result.freshness
+        {
+            return Err(AnalyticalRefusal::StaleRead {
+                detail: "analytical response freshness disagreed with cell freshness policy"
+                    .to_owned(),
+            }
+            .into());
+        }
+        if strict_law_read {
+            provenance_copy.verify_strict_law_read(result.freshness, result.complete)?;
+        }
         result.rows = rows;
         result.unlinked = response.unlinked;
-        result.engine = Engine::Duckdb;
+        result.engine = engine_id.into_compute_engine();
         let evidence = crate::compute::FindingEvidence {
             context: &result.context,
             exclusions: &result.exclusions,

@@ -1,20 +1,11 @@
-//! D102: the tenant analytics engine's typed contract.
+//! D102/D136: the tenant analytics engine's typed contract.
 //!
 //! The cell decides who may read what, lowers an admitted plan and verifies
-//! every answer; the engine (`DuckDB` in a native sidecar, the `engine` module) only
-//! executes these typed operations over one tenant's own database. No
-//! operation carries SQL, a table path or a column expression (#733): the
-//! engine builds its statements from admitted names and binds every value.
-//!
-//! - ANALYTICS-TENANT-1: a tenant's database is named by the SHA-256 of the
-//!   cell scope key the cell verified ([`TenantId`]); the engine never reads
-//!   claims and never opens another tenant's file for a request.
-//! - ANALYTICS-FRONTIER-1: the governed-fact mirror keeps every object
-//!   version with its commit interval, so an answer at frontier `F` reads
-//!   exactly the versions current at `F`, whatever was synced after it.
-//! - MEMBERSHIP-DIGEST-1: a bucket's membership digest is
-//!   [`MembershipDigest`] over its members in identity order; recomputing it
-//!   over the paged members gives the same digest.
+//! every answer; the engine executes only typed operations over one tenant's
+//! database with no caller-supplied SQL, table paths, or expressions (#733).
+//! - ANALYTICS-TENANT-1: database named by SHA-256 of verified cell scope ([`TenantId`]).
+//! - ANALYTICS-FRONTIER-1: governed-fact mirror keeps every version with its commit interval.
+//! - MEMBERSHIP-DIGEST-1: [`MembershipDigest`] over members in identity order.
 
 use std::collections::BTreeMap;
 
@@ -23,12 +14,18 @@ use serde::{Deserialize, Serialize};
 use transparency_sha2::{Digest as _, Sha256};
 
 mod assemble;
+pub mod backend;
 #[cfg(all(feature = "duckdb", feature = "native"))]
 pub mod engine;
 mod lower;
 mod mirror;
 
 pub use assemble::{Prepared, bucket_value};
+pub use backend::{
+    AdmittedTransform, AnalyticalEngine, AnalyticalEngineId, AnalyticalRefusal, Capability,
+    EngineCapabilities, EngineOutcome, ProtectionReason, ReadSnapshot, SnapshotProvenance,
+    StoreBody, verify_profile_provenance,
+};
 pub use lower::{lower, table_schema};
 pub use mirror::MirrorBatch;
 
@@ -537,10 +534,12 @@ pub struct EvaluateResponse {
     pub excluded: Vec<String>,
     /// Buckets in group order.
     pub buckets: Vec<BucketTotals>,
-    /// METRIC-GRAIN-LINK-1: rows that would count but have no linked
-    /// object, so no time: skipped and counted.
+    /// METRIC-GRAIN-LINK-1: rows skipped because their linked object is absent.
     #[serde(default)]
     pub unlinked: u64,
+    /// D136: engine identity and snapshot-actually-read provenance envelope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<SnapshotProvenance>,
 }
 
 /// Page one bucket's members in identity order.
@@ -1219,6 +1218,9 @@ pub struct ProfileResponse {
     pub quarantined: u64,
     /// Per requested column.
     pub columns: Vec<ColumnProfile>,
+    /// D136: engine identity and snapshot-actually-read provenance envelope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<SnapshotProvenance>,
 }
 
 /// An export's format.
@@ -1370,11 +1372,8 @@ pub struct EngineRefusal {
     pub detail: String,
 }
 
-/// MEMBERSHIP-DIGEST-1: SHA-256 over each member in identity (byte) order,
-/// each written as `<identity bytes>:<identity>,<version>` then
-/// `,<coefficient>` per operand (empty when absent), then `;`. The length
-/// prefix makes the encoding unambiguous whatever an identity contains, and
-/// the engine computes the same bytes in SQL.
+/// MEMBERSHIP-DIGEST-1: SHA-256 over each member in identity (byte) order as
+/// `<len>:<id>,<version>[,<coeff>...];`. Length-prefixed and SQL-reproducible.
 #[derive(Clone, Default)]
 pub struct MembershipDigest(Sha256);
 

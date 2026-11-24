@@ -56,13 +56,18 @@ fn retained_answer_documents_validate_against_their_projected_schemas() {
 }
 
 /// Every engine the cell can answer with is one the contract names: an
-/// answer from `DuckDB` validates as a `NornQueryResult`, so an enum-checking
-/// client (the generated Python and TypeScript SDKs) accepts it. A new runtime
-/// engine joins this list with its contract entry.
+/// answer from `DuckDB` or `DataFusion` validates as a `NornQueryResult`, so an
+/// enum-checking client (the generated Python and TypeScript SDKs) accepts it.
+/// A new runtime engine joins this list with its contract entry.
 #[test]
 fn every_runtime_engine_validates_against_the_contract() {
     use norn_cell::compute::Engine;
-    let engines = [Engine::Ivm, Engine::Cell, Engine::Duckdb];
+    let engines = [
+        (Engine::Ivm, "ivm"),
+        (Engine::Cell, "cell"),
+        (Engine::Duckdb, "duckdb"),
+        (Engine::DataFusion, "datafusion"),
+    ];
     let contract: Value =
         serde_json::from_str(&norn_api::openapi::openapi_json().expect("contract"))
             .expect("contract JSON");
@@ -78,13 +83,18 @@ fn every_runtime_engine_validates_against_the_contract() {
             .expect("retained answer"),
     )
     .expect("answer JSON");
-    for engine in engines {
+    for (engine, wire) in engines {
+        let encoded = serde_json::to_value(engine).expect("engine");
+        assert_eq!(encoded, json!(wire), "{engine:?} wire name");
+        let decoded: Engine = serde_json::from_value(encoded.clone()).expect("round-trip engine");
+        assert_eq!(decoded, engine);
         let mut document = answer.clone();
-        document["engine"] = serde_json::to_value(engine).expect("engine");
+        document["engine"] = encoded;
         let errors: Vec<String> = validator
             .iter_errors(&document)
             .map(|error| error.to_string())
             .collect();
         assert_eq!(errors.len(), 0, "{engine:?}: {errors:#?}");
     }
+    assert!(serde_json::from_str::<Engine>("\"data_fusion\"").is_err());
 }

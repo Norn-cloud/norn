@@ -6,9 +6,9 @@ use std::sync::{Mutex, PoisonError};
 
 use norn_api::analytics_routes::{EngineAnswer, EngineCall, Transport};
 use norn_api::olap_credential::{Issuer, body_digest};
-#[cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
-use norn_cell::analytics::EngineRefusal;
 use norn_cell::analytics::TenantId;
+#[cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
+use norn_cell::analytics::{AnalyticalEngine, AnalyticalEngineId, EngineOutcome, EngineRefusal};
 #[cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
 use serde::Serialize;
 
@@ -76,15 +76,16 @@ impl Transport for Exchange {
     }
 }
 
-/// The engine linked into a native host: each call runs in place.
+/// The engine linked into a native host: each call runs in place through
+/// [`AnalyticalEngine`].
 #[cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
-pub struct InProcess(pub norn_cell::analytics::engine::Engine);
+pub struct InProcess<A: AnalyticalEngine = norn_cell::analytics::engine::Engine>(pub A);
 
 #[cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
-impl InProcess {
+impl<A: AnalyticalEngine> InProcess<A> {
     fn run<T: serde::de::DeserializeOwned, R: Serialize>(
         body: &str,
-        operation: impl FnOnce(&T) -> norn_cell::analytics::engine::Outcome<R>,
+        operation: impl FnOnce(&T) -> EngineOutcome<R>,
     ) -> (u16, String) {
         let outcome = serde_json::from_str::<T>(body)
             .map_err(|e| EngineRefusal {
@@ -103,20 +104,23 @@ impl InProcess {
 }
 
 #[cfg(all(feature = "duckdb", not(target_arch = "wasm32")))]
-impl Transport for InProcess {
+impl<A: AnalyticalEngine> Transport for InProcess<A> {
+    fn engine_id(&self) -> AnalyticalEngineId {
+        self.0.engine_id()
+    }
     fn resumed(&self) -> Option<EngineAnswer> {
         None
     }
     fn call(&self, call: &EngineCall) -> Option<EngineAnswer> {
-        let engine = &self.0;
+        let engine: &dyn AnalyticalEngine = &self.0;
         let (status, body) = match call.op.as_str() {
-            "frontier" => Self::run(&call.body, |r| engine.frontier(r)),
-            "sync" => Self::run(&call.body, |r| engine.sync(r)),
-            "evaluate" => Self::run(&call.body, |r| engine.evaluate(r)),
-            "members" => Self::run(&call.body, |r| engine.members(r)),
-            "profile" => Self::run(&call.body, |r| engine.profile(r)),
-            "page" => Self::run(&call.body, |r| engine.page(r)),
-            "lineage" => Self::run(&call.body, |r| engine.lineage(r)),
+            "frontier" => Self::run(&call.body, |r| engine.mirror_frontier(r)),
+            "sync" => Self::run(&call.body, |r| engine.mirror_sync(r)),
+            "evaluate" => Self::run(&call.body, |r| engine.evaluate_question(r)),
+            "members" => Self::run(&call.body, |r| engine.query_members(r)),
+            "profile" => Self::run(&call.body, |r| engine.profile_objects(r)),
+            "page" => Self::run(&call.body, |r| engine.query_page(r)),
+            "lineage" => Self::run(&call.body, |r| engine.query_lineage(r)),
             _ => (404, String::new()),
         };
         Some(EngineAnswer {

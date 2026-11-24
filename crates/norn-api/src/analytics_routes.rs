@@ -1,20 +1,10 @@
-//! D102: the routes of a host whose analytics run on the tenant's engine.
+//! D102/D136: routes of a host whose analytics run on the tenant's engine.
 //!
-//! Questions on such a host are answered by the engine, never by an
-//! analytics scan of the cell's own store; the cell keeps admission,
-//! authorization, the row gates and the answer's lineage, and verifies every
-//! engine answer. Datasets load into the engine from the object store at bulk
-//! speed, and an authorized reader exports a type's rows from it. No route
-//! here accepts SQL, a table or a column expression (#733): the engine's
-//! operations are typed, and the cell builds every one.
-//!
-//! An engine answer is a short exchange of operations: the mirror's frontier,
-//! sync batches of committed versions until the mirror reaches the verified
-//! head, then the question, export or load. The exchange is stateless: each
-//! step is decided from the last answer alone, so a host that cannot block on
-//! I/O (a Durable Object) ends the request with the call, performs it, and
-//! re-enters with the answer; the request is then decided again from the
-//! start, authorization included.
+//! Questions run on the engine rather than scanning the cell's store; the cell
+//! keeps admission, authorization, row gates, lineage and answer verification.
+//! Operations are typed with no caller-supplied SQL or expressions (#733).
+//! The exchange (frontier -> sync -> op) is stateless so Durable Objects can
+//! yield and re-enter with full re-authorization on every step.
 
 use std::collections::BTreeMap;
 
@@ -101,6 +91,10 @@ impl EngineCall {
 
 /// How the cell reaches its engine.
 pub trait Transport: Send + Sync {
+    /// The analytical engine backend this transport reaches.
+    fn engine_id(&self) -> norn_cell::analytics::AnalyticalEngineId {
+        norn_cell::analytics::AnalyticalEngineId::DuckDb
+    }
     /// The answer the host re-entered the cell with, once.
     fn resumed(&self) -> Option<EngineAnswer>;
     /// Perform `call` now, or `None` when the host must perform it and re-enter.
@@ -335,11 +329,18 @@ impl<E: SqlEngine> EngineQuestions<'_, E> {
         if admitted {
             evaluate_on(store, self.transport, &self.tenant, &prepared.request)
         } else {
+            let snap = norn_cell::analytics::ReadSnapshot::from_source(&prepared.request.source);
+            let prov = norn_cell::analytics::SnapshotProvenance::new(
+                self.transport.engine_id(),
+                prepared.request.tenant.clone(),
+                snap,
+            );
             Ok(EvaluateResponse {
                 population: 0,
                 excluded: Vec::new(),
                 buckets: Vec::new(),
                 unlinked: 0,
+                provenance: Some(prov),
             })
         }
     }
@@ -1701,17 +1702,12 @@ pub fn serves_records<E: SqlEngine>(host: &DevHost<E>, object_type: &str) -> Res
             .is_some())
 }
 
-/// HOST-READ-3 over a loaded dataset (D102): the grid query of
-/// `GET /v1/objects/{type}` answered by the tenant's engine, with the native
-/// grid's grammar, order and visibility: every clause holds (a withheld row
-/// matches none), absent values sort last either way, then identity. The
-/// dataset is immutable per load, so a cursor is an offset bound to the load,
-/// the query, the scope and the caller, and a sort or filter reads every row.
+/// HOST-READ-3 over a loaded dataset (D102): grid query answered by the
+/// tenant's engine with native grammar, order, visibility and load-bound cursor.
 ///
 /// # Errors
-/// A denied gate (one opaque 403), an invalid query or cursor (400), a
-/// comparison the engine cannot evaluate (422), a reload since the cursor
-/// (409 `object.snapshot_moved`), or an unreachable engine.
+/// Denied gate (403), invalid query/cursor (400), unsupported comparison (422),
+/// reload since cursor (409 `object.snapshot_moved`), or unreachable engine.
 pub fn page_objects<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -2222,16 +2218,13 @@ fn decide_profile<E: SqlEngine>(
     }
 }
 
-/// HOST-READ-5 on the engine (D102): the profile of every row of
-/// `object_type` the caller may read, in the exact profile's shape and
-/// semantics (nearest-rank quantiles, equal-population bins, calendar labels,
-/// Tukey far-out values), computed by the tenant's engine over the same
-/// snapshot an export reads. A caller without Values on the type sees the
-/// rows counted as withheld and no value statistic.
+/// HOST-READ-5 on the engine (D102/D136): column profile over the caller's
+/// authorized snapshot, computed by the tenant analytics engine. A caller
+/// without Values sees withheld counts and no value statistics.
 ///
 /// # Errors
-/// A denied gate (one opaque 403), a marked dataset column (`privacy.marked_column`, 403),
-/// an unknown type (404), or an unreachable engine.
+/// Denied gate (403), marked dataset column (403), unknown type (404), stale
+/// provenance (409), or unreachable engine.
 pub fn profile_objects<E: SqlEngine>(
     host: &DevHost<E>,
     scope: &ScopeQuery,
@@ -2303,6 +2296,9 @@ pub fn profile_objects<E: SqlEngine>(
         return Err(engine_failure(refused(&answer.body)));
     }
     let profile: ProfileResponse = decode(&answer.body).map_err(engine_failure)?;
+    let provenance = norn_cell::analytics::verify_profile_provenance(&profile, &tenant, &source)
+        .map_err(|refusal| engine_failure(refusal.into()))?;
+    let engine = provenance.engine.as_str().to_owned();
     let properties = declared
         .iter()
         .map(|(property, declared_type)| {
@@ -2322,7 +2318,7 @@ pub fn profile_objects<E: SqlEngine>(
         quarantined_rows: profile.quarantined,
         approximate: false,
         scan_limit: profile.rows,
-        engine: "duckdb".into(),
+        engine,
         properties,
     })
 }
