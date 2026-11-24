@@ -2348,3 +2348,178 @@ fn bind_refuses_when_sibling_fences_before_bind_transaction() {
         .expect("query meta");
     assert!(rows.is_empty(), "fenced bind must not persist a binding");
 }
+
+/// S12 (#1551 round 7): an already-acquired `StoreReader` observes a sibling
+/// durable fence written after `store.read()` was called.
+#[test]
+fn existing_store_reader_refuses_when_sibling_fences_after_acquire() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    cell(&path, EVERY.saturating_add(10));
+    execute(&path, "DELETE FROM _norn_fact_values WHERE commit_seq = 10");
+
+    let first = open(&path).expect("first open");
+    let sibling = open(&path).expect("sibling open");
+    // Acquire the reader BEFORE the sibling fences durably.
+    let reader = sibling.read();
+    assert!(reader.flow_run(MAIN_WORLD, "run-1").is_ok());
+    assert!(reader.object(MAIN_WORLD, "fixture.Item", "c0").is_ok());
+
+    assert!(matches!(first.scrub_to_end(), ScrubStatus::Fenced { .. }));
+
+    // The already-acquired reader must fail closed via `PRAGMA data_version`.
+    assert!(
+        matches!(
+            reader.flow_run(MAIN_WORLD, "run-1"),
+            Err(CellError::Fenced(_))
+        ),
+        "existing StoreReader must refuse flow_run after sibling durable fence"
+    );
+    assert!(
+        matches!(
+            reader.object(MAIN_WORLD, "fixture.Item", "c0"),
+            Err(CellError::Fenced(_))
+        ),
+        "existing StoreReader must refuse object after sibling durable fence"
+    );
+}
+
+/// S10 (#1551 round 7): a quantity commit landing during scrub whose
+/// `_norn_quantity_history` row is corrupted externally must be caught after
+/// restart and fence the cell durably.
+#[test]
+fn restart_scrub_detects_corrupt_suffix_quantity_history_and_fences() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    quantity_cell(&path);
+
+    let mut store = open(&path).expect("checkpointed open");
+    assert!(!history_ready(&store));
+    loop {
+        let status = store.scrub_step();
+        if matches!(
+            status,
+            ScrubStatus::Verifying {
+                phase: "history",
+                verified,
+                ..
+            } if verified >= 64
+        ) {
+            break;
+        }
+        assert!(matches!(status, ScrubStatus::Verifying { .. }));
+    }
+
+    // Commit a suffix quantity transition mid-scrub, then corrupt its history row externally.
+    let suffix_commit = EVERY.saturating_add(1);
+    commit_quantity(
+        &mut store,
+        suffix_commit,
+        &post(0, "mid-scrub", "mid-scrub", 5),
+    );
+    execute(
+        &path,
+        &format!(
+            "UPDATE _norn_quantity_history SET posted = '999999' WHERE commit_seq = {suffix_commit}"
+        ),
+    );
+
+    let final_status = store.scrub_to_end();
+    assert!(
+        matches!(final_status, ScrubStatus::Fenced { .. }),
+        "restart must verify suffix _norn_quantity_history and fence, got {final_status:?}"
+    );
+    assert!(!history_ready(&store));
+    drop(store);
+    assert_eq!(checkpoint(&path), None, "fence dropped checkpoint");
+    assert!(matches!(open(&path), Err(CellError::Fenced(_))));
+}
+
+struct RowBoundedEngine {
+    inner: NativeEngine,
+    armed: std::rc::Rc<Cell<bool>>,
+    max_rows: std::rc::Rc<Cell<usize>>,
+}
+
+impl SqlEngine for RowBoundedEngine {
+    fn read_isolation(&self) -> ReadIsolation {
+        self.inner.read_isolation()
+    }
+    fn checkpoint_key(&self) -> Option<CheckpointKey> {
+        self.inner.checkpoint_key()
+    }
+    fn external_data_version(&self) -> Result<Option<u64>, CellError> {
+        self.inner.external_data_version()
+    }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.inner.definition_writes(f)
+    }
+    fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
+        self.inner.execute(sql, params)
+    }
+    fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+        let rows = self.inner.query(sql, params)?;
+        if self.armed.get() && rows.len() > self.max_rows.get() {
+            self.max_rows.set(rows.len());
+        }
+        Ok(rows)
+    }
+    fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
+        self.inner.execute_batch(sql)
+    }
+    fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X> {
+        self.inner.transaction(f)
+    }
+}
+
+/// S10 (#1551 round 7): restarting scrub after a sibling adds > 512 commits
+/// keeps every scrub step query within the 512-row per-wake bound and seeds
+/// the checkpoint at the new head.
+#[test]
+fn restart_scrub_after_large_sibling_suffix_stays_within_512_row_bound() {
+    let dir = tempfile::tempdir().expect("directory");
+    let path = dir.path().join("cell.sqlite");
+    let initial = EVERY.saturating_add(10);
+    cell(&path, initial);
+
+    let armed = std::rc::Rc::new(Cell::new(false));
+    let max_rows = std::rc::Rc::new(Cell::new(0));
+    let store = CellStore::from_engine(
+        RowBoundedEngine {
+            inner: NativeEngine::open(&path, keyed()).expect("native engine"),
+            armed: std::rc::Rc::clone(&armed),
+            max_rows: std::rc::Rc::clone(&max_rows),
+        },
+        engine_fixture::model(),
+    )
+    .expect("checkpointed open");
+    assert!(!history_ready(&store));
+    assert!(matches!(store.scrub_step(), ScrubStatus::Verifying { .. }));
+
+    // Sibling adds 600 commits (> RECEIPT_STEP = 512) before the next wake.
+    let final_commits = initial.saturating_add(600);
+    let mut sibling = open(&path).expect("sibling open");
+    for n in initial..final_commits {
+        sibling.commit(&put(n)).expect("sibling commit");
+    }
+    drop(sibling);
+
+    armed.set(true);
+    let status = store.scrub_to_end();
+    assert_eq!(status, ScrubStatus::Idle);
+    assert!(
+        max_rows.get() <= 512,
+        "scrub restart exceeded 512-row per-wake bound: saw {} rows in one query",
+        max_rows.get()
+    );
+    assert!(history_ready(&store));
+    drop(store);
+    assert_eq!(
+        checkpoint(&path).map(|(commits, ..)| commits),
+        Some(final_commits),
+        "checkpoint advanced to the sibling-extended head"
+    );
+}

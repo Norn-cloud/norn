@@ -550,29 +550,25 @@ pub(crate) fn read_fence(engine: &impl SqlEngine) -> Result<Option<String>, Cell
     }))
 }
 
-/// Refuse with [`CellError::Fenced`] if an already-open cell carries a durable
-/// fence in `_norn_meta`, in one primary-key lookup (S12).
+/// Read any durable fence in `_norn_meta` on an already-open cell, in one
+/// primary-key lookup (S12).
 ///
 /// # Errors
-/// [`CellError::Fenced`] or SQL failures.
-pub(crate) fn check_fence_open(engine: &impl SqlEngine) -> Result<(), CellError> {
+/// SQL failures.
+pub(crate) fn read_fence_open(engine: &impl SqlEngine) -> Result<Option<String>, CellError> {
     let value = engine.query_optional(
         &format!("SELECT \"value\" FROM \"{META}\" WHERE \"key\" = ?1"),
         params![FENCE_KEY],
         |row| row.get_ref(0).cloned(),
     )?;
-    if let Some(val) = value {
-        let finding = match val {
-            SqlValue::Text(finding) if !finding.is_empty() => finding,
-            SqlValue::Null
-            | SqlValue::Integer(_)
-            | SqlValue::Real(_)
-            | SqlValue::Text(_)
-            | SqlValue::Blob(_) => "corrupt durable history-scrub fence marker".to_owned(),
-        };
-        return Err(CellError::Fenced(finding));
-    }
-    Ok(())
+    Ok(value.map(|val| match val {
+        SqlValue::Text(finding) if !finding.is_empty() => finding,
+        SqlValue::Null
+        | SqlValue::Integer(_)
+        | SqlValue::Real(_)
+        | SqlValue::Text(_)
+        | SqlValue::Blob(_) => "corrupt durable history-scrub fence marker".to_owned(),
+    }))
 }
 
 /// Refuse with [`CellError::Fenced`] if the cell carries a durable fence (S12).

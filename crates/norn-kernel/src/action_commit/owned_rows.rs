@@ -20,6 +20,7 @@ use crate::limits::{EnvelopeLimits, SliceMeter};
 use crate::naming_series::type_series;
 
 use super::input::{build_action_commands, check_action_record_size, expression_value_to_runtime};
+use super::receipt::{committed_target_version, ensure_target_read};
 use super::slice::{
     ActionSliceContext, check_action_preconditions, load_action_slice,
     reconcile_action_target_snapshot,
@@ -1734,8 +1735,8 @@ where
     }
     let mut writes = prepared.writes;
     writes.extend(manifest_writes);
-    let target_before = parent_state.version;
-    super::receipt::ensure_target_read(&target, target_before, &writes, &mut prepared.reads);
+    let before = parent_state.version;
+    ensure_target_read(catalog, &target, before, &writes, &mut prepared.reads);
     writes.push(FactWrite {
         key: record_key.clone(),
         expected: recorded.version,
@@ -1770,8 +1771,7 @@ where
             if let Some(meter) = meter {
                 meter.charge(counts);
             }
-            let target_version =
-                super::receipt::committed_target_version(&receipt, &target, target_before);
+            let target_version = committed_target_version(catalog, &receipt, &target, before);
             Ok(ActionOutcome::Committed {
                 receipt,
                 record,

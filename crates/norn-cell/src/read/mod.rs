@@ -366,6 +366,9 @@ pub struct StoreReader<'a, E: SqlEngine = DefaultEngine> {
     /// OPEN-CHECKPOINT-1 (#1551 round 4): which history reads wait for the
     /// cell's scrub. Open on every reader but the store's served one.
     pub(crate) history_gate: crate::scrub::Gate,
+    /// S12 (#1551 round 7): live scrub reference so even an already-acquired
+    /// served reader observes local and sibling durable fences via `data_version`.
+    pub(crate) live_scrub: Option<&'a std::cell::RefCell<crate::scrub::Scrub>>,
 }
 
 impl<'a, E: SqlEngine> StoreReader<'a, E> {
@@ -381,6 +384,7 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
             verified_receipts: None,
             verified_receipts_transaction: false,
             history_gate: crate::scrub::Gate::OPEN,
+            live_scrub: None,
         }
     }
 
@@ -391,13 +395,43 @@ impl<'a, E: SqlEngine> StoreReader<'a, E> {
         self
     }
 
-    /// S12 (#1551 round 5): fail closed on a local or sibling durable fence.
+    /// Attach the store's live scrub state for dynamic fence checks (S12).
+    #[must_use]
+    pub(crate) const fn with_live_scrub(
+        mut self,
+        scrub: &'a std::cell::RefCell<crate::scrub::Scrub>,
+    ) -> Self {
+        self.live_scrub = Some(scrub);
+        self
+    }
+
+    /// S12 (#1551 round 7): fail closed on a local or sibling durable fence,
+    /// checking `_norn_meta` whenever `PRAGMA data_version` changed since the
+    /// last clean check (zero extra SQL queries on the hot path).
     pub(crate) fn check_live(&self) -> Result<(), CellError> {
         self.history_gate.refuse_fenced()?;
-        if self.history_gate.needs_durable_fence_check()
-            && self.conn.read_isolation() != crate::engine::ReadIsolation::ExclusiveSynchronous
-        {
-            crate::open_checkpoint::check_fence_open(self.conn)?;
+        let Some(scrub) = self.live_scrub else {
+            return Ok(());
+        };
+        scrub.borrow().refuse_fenced()?;
+        if self.conn.read_isolation() != crate::engine::ReadIsolation::ExclusiveSynchronous {
+            match self.conn.external_data_version() {
+                Ok(Some(dv)) => {
+                    if scrub.borrow().fence_checked_dv() != Some(dv) {
+                        if let Some(finding) = crate::open_checkpoint::read_fence_open(self.conn)? {
+                            scrub.borrow_mut().record_durable_fence(finding.clone());
+                            return Err(CellError::Fenced(finding));
+                        }
+                        scrub.borrow_mut().set_fence_checked_dv(dv);
+                    }
+                }
+                Ok(None) | Err(_) => {
+                    if let Some(finding) = crate::open_checkpoint::read_fence_open(self.conn)? {
+                        scrub.borrow_mut().record_durable_fence(finding.clone());
+                        return Err(CellError::Fenced(finding));
+                    }
+                }
+            }
         }
         Ok(())
     }

@@ -308,7 +308,7 @@ impl<E: SqlEngine> CellStore<E> {
     /// SQL engine errors.
     pub fn image(&self) -> Result<StoreImage, CellError> {
         self.persist_pending_fence();
-        self.served_gate().history("store image")?;
+        self.read().check_history("store image")?;
         let platform = self.conn.platform_table_globs();
         let filter = " AND name NOT GLOB ?".repeat(platform.len());
         let globs: Vec<SqlValue> = platform.iter().map(|glob| SqlValue::from(*glob)).collect();

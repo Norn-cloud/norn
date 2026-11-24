@@ -130,39 +130,19 @@ impl<E: SqlEngine> CellStore<E> {
         })
     }
 
-    /// Return the scrub gate after retrying any pending fence persistence and
-    /// checking sibling durable fences whenever `PRAGMA data_version` changed.
+    /// Return the scrub gate after retrying any pending fence persistence.
     pub(crate) fn served_gate(&self) -> crate::scrub::Gate {
         if self.scrub.borrow().needs_fence_persist() {
             self.persist_pending_fence();
         }
-        let check_durable_fence = if self.scrub.borrow().refuse_fenced().is_err()
-            || self.conn.read_isolation() == crate::engine::ReadIsolation::ExclusiveSynchronous
-        {
-            false
-        } else {
-            match self.conn.external_data_version() {
-                Ok(Some(dv)) => {
-                    if self.scrub.borrow().fence_checked_dv() == Some(dv) {
-                        false
-                    } else {
-                        match open_checkpoint::read_fence(&self.conn) {
-                            Ok(Some(finding)) => {
-                                self.scrub.borrow_mut().record_durable_fence(finding);
-                                false
-                            }
-                            Ok(None) => {
-                                self.scrub.borrow_mut().set_fence_checked_dv(dv);
-                                false
-                            }
-                            Err(_) => true,
-                        }
-                    }
-                }
-                Ok(None) | Err(_) => true,
-            }
-        };
-        self.scrub.borrow().gate(check_durable_fence)
+        self.scrub.borrow().gate()
+    }
+
+    /// Served reader carrying the history gate and live fence tracking (S12).
+    pub(crate) fn served_reader(&self) -> StoreReader<'_, E> {
+        self.verifier()
+            .with_history_gate(self.served_gate())
+            .with_live_scrub(&self.scrub)
     }
 
     /// Complete open/provisioning-replay checkpoint recording and scrub setup.
@@ -717,14 +697,14 @@ impl<E: SqlEngine> CellStore<E> {
         Ok(())
     }
 
-    /// S10 (#1551 round 6): snapshot the live database head, quantity boundary,
-    /// and any receipt hashes beyond `loaded_len` inside a scrub restart
-    /// transaction so restarting on an external `data_version` change verifies
-    /// the entire history including any suffix written during the scrub.
+    /// S10 (#1551 round 7): snapshot only the scalar live database head and
+    /// quantity boundary in O(1) inside a scrub restart transaction; suffix
+    /// receipt hashes beyond `loaded_len` are verified and appended in bounded
+    /// `RECEIPT_STEP` pages by Phase 1 (`scrub_receipts`).
     pub(crate) fn restart_scrub_target(
         &self,
         loaded_len: u64,
-    ) -> Result<(LedgerHead, Option<FormatBoundary>, Vec<String>), CellError> {
+    ) -> Result<(LedgerHead, Option<FormatBoundary>), CellError> {
         let reader = self.verifier();
         let commits = reader.next_commit_seq()?.saturating_sub(1);
         if commits < loaded_len {
@@ -737,42 +717,29 @@ impl<E: SqlEngine> CellStore<E> {
         let target = LedgerHead { seq, hash, commits };
         let boundary =
             crate::quantity::format_boundary(&self.conn)?.filter(|boundary| boundary.seq <= seq);
-        let extra = if commits > loaded_len {
-            let rows = self.conn.query(
-                &format!(
-                    "SELECT \"commit_seq\", \"receipt_hash\" FROM \"{RECEIPT}\" \
-                     WHERE \"commit_seq\" > ?1 AND \"commit_seq\" <= ?2 \
-                     ORDER BY \"commit_seq\""
-                ),
-                params![
-                    to_i64(loaded_len, "receipt log length")?,
-                    to_i64(commits, "restart target commits")?
-                ],
-            )?;
-            let mut hashes = Vec::with_capacity(rows.len());
-            let mut expected = loaded_len.saturating_add(1);
-            for values in rows {
-                let row = SqlRow(values);
-                let commit_seq = to_u64(row.get(0)?, "receipt commit")?;
-                if commit_seq != expected {
-                    return Err(open_checkpoint::corrupt(
-                        expected,
-                        "a receipt is missing from the suffix during scrub restart",
-                    ));
-                }
-                hashes.push(row.get::<String>(1)?);
-                expected = expected.saturating_add(1);
-            }
-            if expected != commits.saturating_add(1) {
-                return Err(open_checkpoint::corrupt(
-                    expected,
-                    "the receipt log is shorter than the ledger tail during scrub restart",
-                ));
-            }
-            hashes
-        } else {
-            Vec::new()
-        };
-        Ok((target, boundary, extra))
+        Ok((target, boundary))
+    }
+
+    /// Record `checkpoint` inside the scrub seed transaction unless a sibling
+    /// already recorded an authentic checkpoint at or past `checkpoint.head.commits`
+    /// that does not exceed the live receipt tail (S10).
+    pub(crate) fn record_scrub_checkpoint(
+        &self,
+        checkpoint: OpenCheckpoint,
+    ) -> Result<Option<OpenCheckpoint>, CellError> {
+        let db_commits: i64 = self.conn.query_row(
+            &format!("SELECT COALESCE(MAX(\"commit_seq\"), 0) FROM \"{RECEIPT}\""),
+            &[],
+            |row| row.get(0),
+        )?;
+        let db_commits = to_u64(db_commits, "receipt head")?;
+        if let Loaded::Authentic(existing) = open_checkpoint::load(&self.conn)?
+            && existing.head.commits <= db_commits
+            && existing.head.commits >= checkpoint.head.commits
+        {
+            return Ok(Some(existing));
+        }
+        let recorded = open_checkpoint::record(&self.conn, &checkpoint)?;
+        Ok(recorded.then_some(checkpoint))
     }
 }

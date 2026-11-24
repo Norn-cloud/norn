@@ -50,8 +50,8 @@ use norn_ir::{ActionEffectProgram, FactChange, ObjectTypeName};
 
 use crate::action::{ActionCommandRejection, ActionCommandShape, check_action_command};
 use crate::cell_host::{
-    CellCommit, CellHost, CommitError, FactKey, FactMutation, FactState, FactVersion, FactWrite,
-    JsonObject, JsonValue, LinkKey, LinkMutation, LinkWrite,
+    CellCommit, CellHost, CommitError, FactKey, FactMutation, FactState, FactWrite, JsonObject,
+    JsonValue, LinkKey, LinkMutation, LinkWrite,
 };
 use crate::decision_commit::{
     DecisionRefusal, FactEvent, TypeCatalog, prepare_decision_with_limits, widen_effect,
@@ -529,10 +529,8 @@ where
         writes.push(candidate.counter_write);
         reads.extend(candidate.skipped_reads);
     }
-    let target_before = slice
-        .get(&target)
-        .map_or(FactVersion::ABSENT, |state| state.version);
-    receipt::ensure_target_read(&target, target_before, &writes, &mut reads);
+    let target_before = receipt::target_before_version(catalog, &slice, &target);
+    receipt::ensure_target_read(catalog, &target, target_before, &writes, &mut reads);
     writes.push(FactWrite {
         key: record_key.clone(),
         expected: recorded.version,
@@ -588,7 +586,7 @@ where
                 meter.charge(counts);
             }
             let target_version =
-                receipt::committed_target_version(&receipt, &target, target_before);
+                receipt::committed_target_version(catalog, &receipt, &target, target_before);
             Ok(ActionOutcome::Committed {
                 receipt,
                 record,

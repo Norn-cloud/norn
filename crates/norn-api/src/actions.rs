@@ -948,7 +948,7 @@ fn caller_receipt<E: SqlEngine>(
         }
         ActionOutcome::Replayed { record } => {
             let receipt = original_receipt(store, action_id, &request.idempotency_key)?;
-            let version = target_version(store, &receipt, &record)?;
+            let version = crate::action_admission::target_version(store, &receipt, &record)?;
             (ActionCallOutcome::Replayed, record, receipt, version)
         }
     };
@@ -995,7 +995,7 @@ pub(crate) fn recorded_target<E: SqlEngine>(
     idempotency_key: &str,
 ) -> Result<(String, String, u64), Refusal> {
     let receipt = original_receipt(store, &record.action_id, idempotency_key)?;
-    let version = target_version(store, &receipt, record)?;
+    let version = crate::action_admission::target_version(store, &receipt, record)?;
     Ok((
         record.object.object_type.as_str().to_owned(),
         record.object.key.clone(),
@@ -1015,27 +1015,6 @@ fn original_receipt<E: SqlEngine>(
         .map_err(Refusal::host)?;
     read.receipt_for_fact_version(MAIN_WORLD, ACTION_CALL_TYPE, &record_key, version)
         .map_err(Refusal::host)
-}
-
-/// Target version as of `receipt` (written row version, else `version_as_of`, S5b).
-fn target_version<E: SqlEngine>(
-    store: &norn_cell::CellStore<E>,
-    receipt: &Receipt,
-    record: &ActionCallRecord,
-) -> Result<u64, Refusal> {
-    let ty = record.object.object_type.as_str();
-    match receipt
-        .body
-        .written
-        .iter()
-        .find(|r| r.object_type == ty && r.key == record.object.key)
-    {
-        Some(row) => Ok(row.version),
-        None => store
-            .read()
-            .version_as_of(MAIN_WORLD, ty, &record.object.key, receipt.body.commit_seq)
-            .map_err(Refusal::host),
-    }
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]

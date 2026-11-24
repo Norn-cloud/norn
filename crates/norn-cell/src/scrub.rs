@@ -13,7 +13,7 @@
 
 use crate::engine::SqlEngine;
 use crate::open_checkpoint::verify::DefinitionWalk;
-use crate::open_checkpoint::{self, ExportPin, Loaded, OpenCheckpoint};
+use crate::open_checkpoint::{self, ExportPin, OpenCheckpoint};
 use crate::quantity::FormatBoundary;
 use crate::{CellError, CellStore, LedgerHead};
 
@@ -42,8 +42,6 @@ pub(crate) struct Gate {
     covered_seq: Option<u64>,
     idempotency_unproven: bool,
     fenced: bool,
-    /// Check `_norn_meta` on live reads when `external_data_version` is unavailable (S12).
-    check_durable_fence: bool,
 }
 
 impl Gate {
@@ -52,13 +50,7 @@ impl Gate {
         covered_seq: None,
         idempotency_unproven: false,
         fenced: false,
-        check_durable_fence: false,
     };
-
-    /// Whether live reads must query `_norn_meta` for a sibling durable fence.
-    pub(crate) const fn needs_durable_fence_check(self) -> bool {
-        self.check_durable_fence
-    }
 
     /// Refuse if the cell has been fenced by the history scrub (S12).
     ///
@@ -83,11 +75,9 @@ impl Gate {
         Ok(())
     }
 
-    /// A ledger page of the entries after `after` (S8).
-    ///
+    /// A ledger page after `after` (S8).
     /// # Errors
-    /// [`CellError::Verifying`] when the page reaches an entry the checkpoint
-    /// covers and the scrub has not verified; [`CellError::Fenced`].
+    /// [`CellError::Verifying`] or [`CellError::Fenced`].
     pub(crate) fn ledger(self, after: u64) -> Result<(), CellError> {
         self.refuse_fenced()?;
         if self.covered_seq.is_some_and(|seq| after < seq) {
@@ -98,12 +88,9 @@ impl Gate {
         Ok(())
     }
 
-    /// An idempotency lookup missed: refuse until receipt scrub proves every
-    /// covered receipt's lookup columns (S4).
-    ///
+    /// An idempotency lookup missed before receipt scrub completed (S4).
     /// # Errors
-    /// [`CellError::Verifying`] while receipt scrub is incomplete;
-    /// [`CellError::Fenced`] on a fenced cell.
+    /// [`CellError::Verifying`] or [`CellError::Fenced`].
     pub(crate) fn receipt_miss(self) -> Result<(), CellError> {
         self.refuse_fenced()?;
         if self.idempotency_unproven {
@@ -192,15 +179,8 @@ struct VerifiedPins {
     definitions: String,
 }
 
-/// One scrub run: verify from `start` (genesis with none) to `target`, then
-/// seed the checkpoint at `target`.
-///
-/// S10 (#1551 round 5): across stepped transactions, `data_version` tracks
-/// [`SqlEngine::external_data_version`] (`PRAGMA data_version` on native
-/// SQLite, constant `Some(0)` on exclusive single-connection DO/Rivet
-/// engines). If another connection commits between scrub steps, the run
-/// restarts from genesis instead of stamping a checkpoint over cached earlier
-/// chunks that may have been mutated externally.
+/// One scrub run: verify from `start` (genesis with none) to `target`, then seed.
+/// S10: `data_version` tracks `SqlEngine::external_data_version`; external writes restart from genesis.
 struct Run {
     start: Option<OpenCheckpoint>,
     /// A checkpoint whose root the rebuilt tree must match at its commits.
@@ -217,6 +197,7 @@ struct Run {
     ledger: LedgerHead,
     boundary: Option<FormatBoundary>,
     walk: Option<DefinitionWalk>,
+    quantity_replay: crate::quantity::QuantityReplay,
     verified_pins: Option<VerifiedPins>,
     data_version: Option<u64>,
     restarts: u32,
@@ -258,6 +239,7 @@ impl Run {
             phase: Phase::Receipts,
             tree: crate::transparency::ReceiptLog::new(),
             walk: None,
+            quantity_replay: crate::quantity::QuantityReplay::default(),
             verified_pins: None,
             data_version,
             restarts: 0,
@@ -283,6 +265,7 @@ impl Run {
         self.ledger = LedgerHead::genesis();
         self.boundary = None;
         self.walk = None;
+        self.quantity_replay = crate::quantity::QuantityReplay::default();
         self.verified_pins = None;
         self.data_version = data_version;
         self.restarts = self.restarts.saturating_add(1);
@@ -335,11 +318,11 @@ enum StepOutcome {
         data_version: Option<u64>,
         target: LedgerHead,
         boundary: Option<FormatBoundary>,
-        extra_receipts: Vec<String>,
     },
     TreeBatch(Vec<String>),
     ReceiptsBatch {
         leaves: Vec<String>,
+        log_append: Vec<(u64, String)>,
         receipts_at: u64,
         quantity: String,
         done: bool,
@@ -348,6 +331,7 @@ enum StepOutcome {
         head: LedgerHead,
         boundary: Option<FormatBoundary>,
         walk: DefinitionWalk,
+        quantity_replay: Option<crate::quantity::QuantityReplay>,
         verified_pins: Option<VerifiedPins>,
         done: bool,
     },
@@ -436,12 +420,11 @@ impl Scrub {
     }
 
     /// The gate the served reader carries.
-    pub(crate) fn gate(&self, check_durable_fence: bool) -> Gate {
+    pub(crate) fn gate(&self) -> Gate {
         Gate {
             covered_seq: self.covered.as_ref().map(|head| head.seq),
             idempotency_unproven: self.idempotency_unproven,
             fenced: self.finding.is_some(),
-            check_durable_fence,
         }
     }
 
@@ -695,13 +678,12 @@ impl<E: SqlEngine> CellStore<E> {
                 "history scrub: external write detected; restarting from genesis to live tail"
             );
             let loaded_len = self.transparency.borrow().len();
-            let (target, boundary, extra_receipts) = self.restart_scrub_target(loaded_len)?;
+            let (target, boundary) = self.restart_scrub_target(loaded_len)?;
             return Ok((
                 StepOutcome::Restart {
                     data_version: dv,
                     target,
                     boundary,
-                    extra_receipts,
                 },
                 dv,
             ));
@@ -714,8 +696,7 @@ impl<E: SqlEngine> CellStore<E> {
         Ok((outcome, dv))
     }
 
-    /// Phase 3: verify the tail anchor and verified pins inside the seed
-    /// transaction before recording the checkpoint (S10).
+    /// Phase 3: verify tail anchor and pins inside the seed tx before recording (S10).
     fn scrub_seed(&self, run: &Run) -> Result<StepOutcome, CellError> {
         let expected_hash = run
             .target
@@ -743,26 +724,9 @@ impl<E: SqlEngine> CellStore<E> {
                 "export or definition pins changed before checkpoint seed",
             ));
         }
-        // S10: never regress a newer authentic checkpoint written by another
-        // handle while this scrub ran, while still replacing a stale
-        // checkpoint past the database's end (as after a trimmed restore).
-        let db_commits: i64 = self.conn.query_row(
-            &format!(
-                "SELECT COALESCE(MAX(\"commit_seq\"), 0) FROM \"{}\"",
-                crate::system::RECEIPT
-            ),
-            &[],
-            |row| row.get(0),
-        )?;
-        let db_commits = crate::read::to_u64(db_commits, "receipt head")?;
-        if let Loaded::Authentic(existing) = open_checkpoint::load(&self.conn)?
-            && existing.head.commits <= db_commits
-            && existing.head.commits >= checkpoint.head.commits
-        {
-            return Ok(StepOutcome::Seeded(Some(existing)));
-        }
-        let recorded = open_checkpoint::record(&self.conn, &checkpoint)?;
-        Ok(StepOutcome::Seeded(recorded.then_some(checkpoint)))
+        Ok(StepOutcome::Seeded(
+            self.record_scrub_checkpoint(checkpoint)?,
+        ))
     }
 
     /// Phase 1: the receipts after `run.receipts_at`, a page at a time; for
@@ -795,8 +759,10 @@ impl<E: SqlEngine> CellStore<E> {
             .verifier()
             .receipts_after(run.receipts_at, RECEIPT_STEP)?;
         let read = page.len();
+        let loaded_len = log.len();
         let mut receipts_at = run.receipts_at;
         let mut leaves = Vec::with_capacity(read);
+        let mut log_append = Vec::new();
         for receipt in page {
             let commit = receipt.body.commit_seq;
             if commit > run.target.commits {
@@ -808,14 +774,18 @@ impl<E: SqlEngine> CellStore<E> {
             if commit != expected {
                 return Err(defect(expected, "a receipt is missing from the history"));
             }
-            let loaded = usize::try_from(commit.saturating_sub(1))
-                .ok()
-                .and_then(|index| log.get(index));
-            if loaded != Some(&receipt.hash) {
-                return Err(defect(
-                    commit,
-                    "a stored receipt digest is not the one the open loaded",
-                ));
+            if commit <= loaded_len {
+                let loaded = usize::try_from(commit.saturating_sub(1))
+                    .ok()
+                    .and_then(|index| log.get(index));
+                if loaded != Some(&receipt.hash) {
+                    return Err(defect(
+                        commit,
+                        "a stored receipt digest is not the one the open loaded",
+                    ));
+                }
+            } else {
+                log_append.push((commit, receipt.hash.clone()));
             }
             if receipt.body.quantity.is_some() {
                 quantity = open_checkpoint::quantity_extend(&quantity, commit, &receipt.hash)?;
@@ -832,6 +802,7 @@ impl<E: SqlEngine> CellStore<E> {
         }
         Ok(StepOutcome::ReceiptsBatch {
             leaves,
+            log_append,
             receipts_at,
             quantity,
             done,
@@ -865,15 +836,34 @@ impl<E: SqlEngine> CellStore<E> {
             ));
         }
         crate::cell_identity::verify_records_between(&self.conn, after, through)?;
+        let mut chunk_receipts = Vec::new();
         for receipt in reader.receipt_stream_from(after) {
             let receipt = receipt?;
             if receipt.body.commit_seq > through {
                 break;
             }
             self.definition_walk_step(&reader, &versions, &mut walk, &receipt)?;
+            chunk_receipts.push(receipt);
         }
         reader.verify_value_history_range(after, through)?;
         let done = through == run.target.commits;
+        let quantity_replay = if run.start.is_none() {
+            let mut replay = run.quantity_replay.clone();
+            replay.verify_chunk(&self.conn, &chunk_receipts, after, through)?;
+            if done && !replay.verify_tail(&self.conn, &reader, through, boundary)? {
+                let (target, boundary) =
+                    self.restart_scrub_target(self.transparency.borrow().len())?;
+                return Ok(StepOutcome::Restart {
+                    data_version: run.data_version,
+                    target,
+                    boundary,
+                });
+            }
+            Some(replay)
+        } else {
+            crate::quantity::verify_catch_up_chunk(&self.conn, &chunk_receipts)?;
+            None
+        };
         let verified_pins = if done {
             if head != run.target || boundary != run.target_boundary {
                 return Err(defect(
@@ -902,6 +892,7 @@ impl<E: SqlEngine> CellStore<E> {
             head,
             boundary,
             walk,
+            quantity_replay,
             verified_pins,
             done,
         })
@@ -923,15 +914,8 @@ fn apply_step(
         data_version: dv,
         target,
         boundary,
-        extra_receipts,
     } = step
     {
-        if !extra_receipts.is_empty() {
-            let mut log = transparency.borrow_mut();
-            for hash in extra_receipts {
-                log.push(hash);
-            }
-        }
         run.reset_from_genesis(dv, target, boundary);
         return Ok(StepProgress::Continue);
     }
@@ -946,10 +930,19 @@ fn apply_step(
         }
         StepOutcome::ReceiptsBatch {
             leaves,
+            log_append,
             receipts_at,
             quantity,
             done,
         } => {
+            if !log_append.is_empty() {
+                let mut log = transparency.borrow_mut();
+                for (commit, hash) in log_append {
+                    if log.len().checked_add(1) == Some(commit) {
+                        log.push(hash);
+                    }
+                }
+            }
             run.push_leaves(leaves)?;
             run.receipts_at = receipts_at;
             run.quantity = Some(quantity);
@@ -966,12 +959,16 @@ fn apply_step(
             head,
             boundary,
             walk,
+            quantity_replay,
             verified_pins,
             done,
         } => {
             run.ledger = head;
             run.boundary = boundary;
             run.walk = Some(walk);
+            if let Some(replay) = quantity_replay {
+                run.quantity_replay = replay;
+            }
             if done {
                 run.verified_pins = verified_pins;
                 run.phase = Phase::Seed;

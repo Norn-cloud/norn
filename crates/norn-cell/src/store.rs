@@ -2779,7 +2779,7 @@ impl<E: SqlEngine> CellStore<E> {
     /// Committed-state reads.
     #[must_use]
     pub fn read(&self) -> StoreReader<'_, E> {
-        self.verifier().with_history_gate(self.served_gate())
+        self.served_reader()
     }
 
     /// [`Self::read`] without the scrub's history gate: for the
