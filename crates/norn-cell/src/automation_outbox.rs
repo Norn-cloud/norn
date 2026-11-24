@@ -828,8 +828,7 @@ pub(crate) fn record<E: SqlEngine>(
                 let same_partition = match &export.automation_inline {
                     Some(evidence) => inline.as_ref() == Some(evidence),
                     None => {
-                        row.matcher_version == 1
-                            && !commit_has_nfc_ambiguous_target(batch, written)
+                        row.matcher_version == 1 && !commit_has_nfc_ambiguous_target(batch, written)
                     }
                 };
                 if paused != Some(&row.cursor) || !same_partition {

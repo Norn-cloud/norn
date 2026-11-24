@@ -687,7 +687,8 @@ mod tests {
         );
         // Astra's case: exactly at the bound with a one-byte id, one byte
         // over it with every legal id.
-        let never_runs = input_with_tag("a".repeat(max_bytes.saturating_sub(base).saturating_add(1)));
+        let never_runs =
+            input_with_tag("a".repeat(max_bytes.saturating_sub(base).saturating_add(1)));
         assert_eq!(call_bytes(&never_runs, SHORTEST_TARGET_ID), max_bytes);
         assert_eq!(call_bytes(&never_runs, "AB"), max_bytes.saturating_add(1));
         let errors = validate_automation_static_input(&action, Some(&never_runs))
