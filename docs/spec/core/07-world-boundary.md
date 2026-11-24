@@ -452,7 +452,8 @@ through an action or `Acceptance::commit`. Inside that commit's transaction the
 host rechecks the dispatch's scope, its deadline and the command authority at
 the commit's effective clock, even when the commit itself writes nothing. A
 host commit consuming the pending result of a Function command, or a result
-delivery not pending at its exact generation, takes its time from the durable
+delivery not pending at its exact generation (including a generation no
+stored delivery can carry), takes its time from the durable
 clock floor inside its transaction, so a losing or stale consumer refuses
 `action.receipt_not_pending`, never a clock regression. A failed recheck
 refuses `action.receipt_not_accepted` (`CommitError::ReceiptNotAccepted`) with

@@ -468,8 +468,14 @@ pub(crate) fn follows_floor<E: SqlEngine>(
     else {
         return Ok(false);
     };
-    let generation =
-        i64::try_from(*generation).map_err(|_overflow| CellError::OutOfRange("generation"))?;
+    // No stored delivery has a generation outside the exact SQL integer
+    // range, so such a delivery is not pending and the delivery check refuses.
+    let Some(generation) = i64::try_from(*generation)
+        .ok()
+        .filter(|generation| *generation <= crate::engine::MAX_SAFE_INTEGER)
+    else {
+        return Ok(true);
+    };
     let function = conn.query_optional(
         &format!(
             "SELECT json_type(\"command\", '$.payload.type') = 'text' AND json_extract(\"command\", '$.payload.type') = ?3 FROM \"{OUTBOX}\" WHERE \"command_id\" = ?1 AND \"generation\" = ?2 AND \"consumed_commit_seq\" IS NULL AND \"result\" IS NOT NULL LIMIT 1"

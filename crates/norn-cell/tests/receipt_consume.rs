@@ -1635,6 +1635,19 @@ fn an_embedded_acceptance_rechecks_authority_and_only_a_bare_refusal_record_skip
     assert_eq!(status(&cell, "run-1"), waiting());
     assert_eq!(cell.commits().unwrap().len(), base);
     assert_eq!(cell.pending_commands().unwrap().len(), 1);
+    // Bookkeeping events the host attaches join the final batch, so the
+    // refusal entry point refuses them too.
+    let attached = cell
+        .attributed(
+            vec![norn_ir::runtime_object! { "type" => "test.bookkeeping" }],
+            |cell| cell.commit_result_refusal(acceptance.consumed.clone()),
+        )
+        .unwrap_err();
+    assert!(
+        matches!(attached, CommitError::ReceiptNotAccepted { .. }),
+        "{attached}"
+    );
+    assert_eq!(cell.pending_commands().unwrap().len(), 1);
     // The refusal record consumes the delivery without the recheck and
     // applies nothing.
     cell.commit_result_refusal(acceptance.consumed)
@@ -1716,17 +1729,23 @@ fn the_floor_classifier_meets_stale_generations_and_non_text_types() {
     assert!(cell.perform().unwrap().is_some());
     // Another handle's clock passes this one's.
     advance_sibling(&path, &answer, WITHIN_DEADLINE);
-    // A stale generation meets the delivery check, not a clock regression.
-    let stale = cell
-        .commit(CellCommit {
-            consumes: Some(Consumed::Result {
-                command: plain.clone(),
-                generation: Generation(9),
-            }),
-            ..CellCommit::empty()
-        })
-        .unwrap_err();
-    assert!(matches!(stale, CommitError::NotPending { .. }), "{stale}");
+    // A stale generation, including one no SQL integer can store, meets the
+    // delivery check, not a clock regression or a range error.
+    for generation in [9, 9_007_199_254_740_993, u64::MAX] {
+        let stale = cell
+            .commit(CellCommit {
+                consumes: Some(Consumed::Result {
+                    command: plain.clone(),
+                    generation: Generation(generation),
+                }),
+                ..CellCommit::empty()
+            })
+            .unwrap_err();
+        assert!(
+            matches!(stale, CommitError::NotPending { .. }),
+            "{generation}: {stale}"
+        );
+    }
     // A non-text `payload.type` is an ordinary delivery, consumed normally.
     cell.advance_to(LogicalTime::from_millis(WITHIN_DEADLINE));
     cell.commit(CellCommit {
