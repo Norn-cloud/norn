@@ -191,7 +191,7 @@ test("collapsing one space records only that branch, leaving untouched destinati
   expect(next).toEqual({ "space:Operations": false, "dest:/metrics": true })
 })
 
-test("#1414: the workspace switcher shows the workspace name and plan/role, never raw org or environment ids", async () => {
+test("#1414: the workspace switcher shows the workspace name and role, never raw org or environment ids", async () => {
   const rawAccount: Account = {
     user: { id: "u1", name: "Ada Lovelace", email: "ada@example.com" },
     organization: { id: "MPu3nAkCMSqDEjamX5eb9IB6or836fCS", name: "Analytical", role: "owner" },
@@ -202,7 +202,6 @@ test("#1414: the workspace switcher shows the workspace name and plan/role, neve
   client.setQueryData(["studio-mode"], { kind: "live", catalog: { document: [], numbers: new Map(), origin: "live" }, counts: {} })
   const doc: WorkspacesDocument = {
     workspaces: [{ id: "MPu3nAkCMSqDEjamX5eb9IB6or836fCS", name: "Analytical", slug: "analytical", role: "owner", active: true, hasCell: true }],
-    planLabel: "Free plan",
   }
   client.setQueryData(WORKSPACES_QUERY_KEY, doc)
   const router = createRouter({
@@ -212,7 +211,7 @@ test("#1414: the workspace switcher shows the workspace name and plan/role, neve
   await router.load()
   const html = renderToStaticMarkup(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>)
   expect(html).toContain("Analytical")
-  expect(html).toContain("Live · Free plan")
+  expect(html).toContain("Live · Owner")
   expect(html).not.toContain("MPu3nAkCMSqDEjamX5eb9IB6or836fCS")
   expect(html).not.toContain("rehearsal2")
   expect(html).not.toContain("New workspace")

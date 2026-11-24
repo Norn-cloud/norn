@@ -55,7 +55,7 @@ async function enroll(env: Env, email: string, name = email.split("@")[0] ?? "Us
   return { cookie: cookieOf(signedIn), userId, organizationId }
 }
 
-test("GET /api/workspaces requires a session and lists only the caller's workspaces with plan label and cell state", async () => {
+test("GET /api/workspaces requires a session and lists only the caller's workspaces with cell state", async () => {
   const { db, env } = stage({ defaultEnvironmentId: "prod", billing: true })
   const unauth = await call(env, "/api/workspaces")
   expect(unauth.status).toBe(401)
@@ -73,28 +73,18 @@ test("GET /api/workspaces requires a session and lists only the caller's workspa
   expect(res.status).toBe(200)
   expect(res.headers.get("cache-control")).toBe("no-store")
   const doc = (await res.json()) as WorkspacesDocument
-  expect(doc.planLabel).toBe("Free plan")
+  expect(Object.keys(doc)).toEqual(["workspaces"])
   expect(doc.workspaces).toHaveLength(3)
   expect(doc.workspaces[0]).toMatchObject({ id: alice.organizationId, name: "Alice's workspace", role: "owner", active: true, hasCell: true })
   expect(doc.workspaces[1]).toMatchObject({ id: bob.organizationId, name: "Bob's workspace", role: "viewer", active: false, hasCell: true })
   expect(doc.workspaces[2]).toMatchObject({ id: "org_nocell", name: "Sandbox", slug: "sandbox", role: "member", active: false, hasCell: false })
   expect(doc.workspaces.some((w) => w.id === carol.organizationId)).toBe(false)
-
-  // Switching through Better Auth's existing set-active route updates which workspace GET /api/workspaces marks active.
-  expect((await post(env, "/api/auth/organization/set-active", { organizationId: bob.organizationId }, { cookie: alice.cookie })).status).toBe(200)
-  const after = (await (await call(env, "/api/workspaces", { headers: { cookie: alice.cookie } })).json()) as WorkspacesDocument
-  expect(after.workspaces.find((w) => w.id === alice.organizationId)?.active).toBe(false)
-  expect(after.workspaces.find((w) => w.id === bob.organizationId)?.active).toBe(true)
-
-  // Non-members cannot switch into Carol's workspace.
-  expect((await post(env, "/api/auth/organization/set-active", { organizationId: carol.organizationId }, { cookie: alice.cookie })).status).toBe(403)
 })
 
-test("GET /api/workspaces omits planLabel when billing is off and enforces allowed HTTP methods", async () => {
+test("GET /api/workspaces works with billing off and enforces allowed HTTP methods", async () => {
   const { env } = stage({ defaultEnvironmentId: "prod", billing: false })
   const alice = await enroll(env, "nobill@example.com", "Alice")
   const doc = (await (await call(env, "/api/workspaces", { headers: { cookie: alice.cookie } })).json()) as WorkspacesDocument
-  expect(doc.planLabel).toBeNull()
   expect(doc.workspaces).toHaveLength(1)
   expect(doc.workspaces[0]).toMatchObject({ id: alice.organizationId, name: "Alice's workspace", role: "owner", active: true, hasCell: true })
 

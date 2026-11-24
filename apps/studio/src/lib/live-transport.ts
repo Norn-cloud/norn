@@ -3,7 +3,7 @@
  * the recording when no cell is connected) and the live reads themselves. Kept
  * apart from transport.ts, which finds recordings with Vite's import.meta.glob.
  */
-import { useQuery } from "@tanstack/react-query"
+import { queryOptions, useQuery, type QueryClient } from "@tanstack/react-query"
 import { CellUnavailable, StudioScopeError, readStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
 import { readDocument, type Read } from "./exact.ts"
 import { readsOf } from "./objects.ts"
@@ -124,15 +124,26 @@ export function liveTransport(catalog: Read<readonly Artifact[]>, fetcher: Fetch
   }
 }
 
-let mode: Promise<Mode> | undefined
+let mode: { controller: AbortController; result: Promise<Mode> } | undefined
 const browserFetch: Fetch = (input, init) => fetch(input, init)
-const fetchWithSignal = (signal?: AbortSignal): Fetch =>
-  signal === undefined ? browserFetch : (input, init) => fetch(input, { ...init, signal })
 
-/** The mode this page load reads in; a failed decision is tried again on the next read. */
-export function currentMode(fetcher: Fetch = browserFetch): Promise<Mode> {
-  mode ??= readMode(fetcher).catch((error: unknown) => { mode = undefined; throw error })
-  return mode
+/** The shared mode probe, cancellable by the mode query even when a transport read started it. */
+export function currentMode(signal?: AbortSignal): Promise<Mode> {
+  if (mode === undefined || mode.controller.signal.aborted) {
+    const controller = new AbortController()
+    const result = readMode((input, init) => browserFetch(input, { ...init, signal: controller.signal }))
+      .catch((error: unknown) => {
+        if (mode?.result === result) refreshMode()
+        throw error
+      })
+    mode = { controller, result }
+  }
+  const probe = mode
+  if (signal === undefined) return probe.result
+  const abort = () => probe.controller.abort()
+  if (signal.aborted) abort()
+  else signal.addEventListener("abort", abort, { once: true })
+  return probe.result.finally(() => signal.removeEventListener("abort", abort))
 }
 
 /** A refusal the cell sent for a read: its code and message, shown as they are. */
@@ -157,15 +168,26 @@ export async function cellRead<T>(path: string, what: string, init: RequestInit 
   throw new CellUnavailable(response.status)
 }
 
-/** Where this page load reads from, for a page that shows something only a connected cell has. */
 /** The mode, retried while the session server or the cell does not answer (backing off to 8 s); its error is shown, never replaced by the recording. */
-export const useMode = () => useQuery({
+export const modeQuery = queryOptions({
   queryKey: ["studio-mode"],
-  queryFn: ({ signal }) => currentMode(fetchWithSignal(signal)),
+  queryFn: ({ signal }) => currentMode(signal),
   retry: 6,
   retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
   staleTime: Infinity,
 })
+
+export const useMode = () => useQuery(modeQuery)
+
+/** Stop the previous probe before retrying, including a probe started directly by the transport. */
+export async function retryMode(client: QueryClient): Promise<void> {
+  const probe = mode
+  const filter = { queryKey: modeQuery.queryKey, exact: true }
+  await client.cancelQueries(filter)
+  probe?.controller.abort()
+  if (mode === probe) refreshMode()
+  await client.refetchQueries(filter, { cancelRefetch: false })
+}
 
 /** Forget the decided mode, so the next read takes the cell's current catalog (after a load installs a new type). */
 export function refreshMode(): void { mode = undefined }

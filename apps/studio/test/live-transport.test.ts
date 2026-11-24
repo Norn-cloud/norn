@@ -1,5 +1,6 @@
-import { expect, test } from "bun:test"
-import { NotServed, liveTransport, readMode } from "../src/lib/live-transport.ts"
+import { expect, spyOn, test } from "bun:test"
+import { QueryClient, QueryObserver } from "@tanstack/react-query"
+import { NotServed, currentMode, liveTransport, modeQuery, readMode, refreshMode, retryMode } from "../src/lib/live-transport.ts"
 
 const ME = { user: { id: "user:dev", name: "user:dev", email: "" }, organization: { id: "local", name: "shop", role: "local developer" }, environmentId: "dev" }
 const DEFINITIONS = '{"admitted":true,"version":3,"artifacts":[{"artifactId":"shop.Product.entity","version":"0.1.0","payload":{"scale":2.50}}]}'
@@ -25,6 +26,55 @@ test("a cell that answers its definitions is live, with the artifacts and their 
   expect(mode.catalog.document.map((artifact) => artifact.artifactId)).toEqual(["shop.Product.entity"])
   expect(mode.catalog.numbers.get("/0/payload/scale")).toBe("2.50")
   expect(calls).toEqual(["/api/host/v1/definitions?orgId=local&environmentId=dev"])
+})
+
+test("Retry cancels the transport's shared probe before starting its replacement", async () => {
+  const client = new QueryClient()
+  const observer = new QueryObserver(client, modeQuery)
+  const probes: string[] = []
+  let markFirstStarted = () => {}
+  const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve })
+  const fetchProbe = async (...[input, init]: Parameters<typeof globalThis.fetch>) => {
+    if (input === "/api/me") return Response.json(ME)
+    if (probes.length > 0) {
+      probes.push("replacement")
+      return new Response(DEFINITIONS)
+    }
+    probes.push("first")
+    return new Promise<Response>((_, reject) => {
+      init?.signal?.addEventListener("abort", () => {
+        probes.push("aborted")
+        reject(init.signal?.reason)
+      }, { once: true })
+      markFirstStarted()
+    })
+  }
+  const fetch = spyOn(globalThis, "fetch").mockImplementation(
+    Object.assign(fetchProbe, { preconnect: globalThis.fetch.preconnect }),
+  )
+
+  refreshMode()
+  let unsubscribe: (() => void) | undefined
+  try {
+    const transportResult = currentMode().catch((error: unknown) => error)
+    await firstStarted
+    unsubscribe = observer.subscribe(() => {})
+    expect(observer.getCurrentResult().fetchStatus).toBe("fetching")
+    expect(probes).toEqual(["first"])
+
+    await retryMode(client)
+
+    expect(probes).toEqual(["first", "aborted", "replacement"])
+    expect(await transportResult).toBeInstanceOf(DOMException)
+    const replacement = client.getQueryData(modeQuery.queryKey)
+    if (replacement?.kind !== "live") throw new Error("expected a live replacement")
+    expect(await currentMode()).toBe(replacement)
+  } finally {
+    unsubscribe?.()
+    client.clear()
+    refreshMode()
+    fetch.mockRestore()
+  }
 })
 
 test("the catalog's per-type counts are the cell's, kept only when well formed; none when it sends none", async () => {

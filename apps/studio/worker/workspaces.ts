@@ -1,5 +1,5 @@
 import { activeMembership, atomically, publicMetadata, BILLING_PAYER, BILLED, type Auth, type ProvisionDb } from "./auth.ts"
-import { admitCell, admitMember, entitlementOf, limitRaised, refusalMessage, type Admission, type BillingDb, type BillingSettings } from "./billing.ts"
+import { admitCell, admitMember, limitRaised, refusalMessage, type Admission, type BillingDb, type BillingSettings } from "./billing.ts"
 
 /**
  * Creating a workspace and accepting an invitation, each as one database transaction. Better Auth's
@@ -35,7 +35,6 @@ export interface WorkspaceItem {
 
 export interface WorkspacesDocument {
   readonly workspaces: readonly WorkspaceItem[]
-  readonly planLabel: string | null
 }
 
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: { "cache-control": "no-store" } })
@@ -59,11 +58,6 @@ function environmentOf(metadata: unknown): string | null {
   }
   const envId = (value as { environmentId?: unknown } | null)?.environmentId
   return typeof envId === "string" && ENVIRONMENT.test(envId) ? envId : null
-}
-
-function formatPlanLabel(plan: string): string {
-  if (plan === "free") return "Free plan"
-  return `${plan[0]?.toUpperCase() ?? ""}${plan.slice(1)} plan`
 }
 
 async function body(request: Request): Promise<Record<string, unknown> | null> {
@@ -93,8 +87,8 @@ async function activate(auth: Auth, token: string, organizationId: string): Prom
   await context.internalAdapter.updateSession(token, { activeOrganizationId: organizationId })
 }
 
-/** GET /api/workspaces: read-only listing of the signed-in user's workspaces and current plan label. */
-export async function listWorkspaces(request: Request, context: WorkspaceContext): Promise<Response> {
+/** GET /api/workspaces: read-only listing of the signed-in user's workspaces. */
+export async function listWorkspaces(request: Request, context: Pick<WorkspaceContext, "auth" | "db">): Promise<Response> {
   const session = await context.auth.api.getSession({ headers: request.headers })
   if (session === null) return failure(401, "UNAUTHORIZED", "Sign in first.")
   const active = await activeMembership(context.auth, session.user.id, session.session.activeOrganizationId)
@@ -116,13 +110,7 @@ export async function listWorkspaces(request: Request, context: WorkspaceContext
     hasCell: environmentOf(row.metadata) !== null,
   }))
 
-  let planLabel: string | null = null
-  if (context.billing !== undefined) {
-    const entitlement = await entitlementOf(context.db as unknown as BillingDb, context.billing, session.user.id)
-    planLabel = formatPlanLabel(entitlement.plan)
-  }
-
-  const document: WorkspacesDocument = { workspaces, planLabel }
+  const document: WorkspacesDocument = { workspaces }
   return json(document)
 }
 

@@ -154,9 +154,8 @@ const routePath = (pathname: string) => pathname.toLowerCase().replace(/\/+$/, "
 async function workspaceRoute(request: Request, env: Env, pathname: string): Promise<Response> {
   const clean = routePath(pathname)
   if (clean === "/api/workspaces" && request.method === "GET") {
-    const context = { auth: auth(env), db: env.AUTH_DB, billing: await billingSettings(env), baseURL: env.BETTER_AUTH_URL }
     try {
-      return await listWorkspaces(request, context)
+      return await listWorkspaces(request, { auth: auth(env), db: env.AUTH_DB })
     } catch (error) {
       console.error(error)
       return new Response(null, { status: 500, statusText: "Internal Server Error" })

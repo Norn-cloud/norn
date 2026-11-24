@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs"
-import { expect, test, type Page } from "@playwright/test"
-import type { WorkspaceItem, WorkspacesDocument } from "../src/lib/workspaces-api.ts"
+import { expect, test, type Page, type Request } from "@playwright/test"
+import type { WorkspacesDocument } from "../src/lib/workspaces-api.ts"
 
 const INVITE_ONLY_MESSAGE = "This alpha is invite-only; ask your admin for an invitation."
 const SIGNED_UP_MESSAGE = "If this address can sign up, you can now sign in with your email and password."
@@ -97,77 +97,46 @@ test("#1412: Email link tab appears when the server reports magicLink enabled", 
   await expect(page.getByRole("status")).toContainText("sign-in link is on its way")
 })
 
-interface MockWorkspaceState {
-  workspaces: WorkspaceItem[]
-  cells: Map<string, unknown[]>
-}
+const RAW_ORG_ID = "MPu3nAkCMSqDEjamX5eb9IB6or836fCS"
 
-async function mountWorkspaceServer(page: Page, initial?: Partial<MockWorkspaceState>) {
-  const RAW_ORG_ID = "MPu3nAkCMSqDEjamX5eb9IB6or836fCS"
-  const state: MockWorkspaceState = {
-    workspaces: initial?.workspaces ?? [
-      { id: RAW_ORG_ID, name: "Core Analytics", slug: "core-analytics", role: "owner", active: true, hasCell: true },
+async function mountWorkspaceServer(page: Page, cell: "populated" | "empty" | "absent" = "populated") {
+  const current = {
+    id: RAW_ORG_ID, name: cell === "empty" ? "Fresh Workspace" : "Core Analytics",
+    slug: "core-analytics", role: "owner", active: true, hasCell: cell !== "absent",
+  }
+  const doc: WorkspacesDocument = {
+    workspaces: [
+      current,
       { id: "org_secondary_9876", name: "Shared Workspace", slug: "shared-workspace", role: "viewer", active: false, hasCell: true },
-      { id: "org_empty_4321", name: "Fresh Workspace", slug: "fresh-workspace", role: "owner", active: false, hasCell: true },
     ],
-    cells: initial?.cells ?? new Map<string, unknown[]>([
-      [RAW_ORG_ID, POPULATED_DEFS],
-      ["org_secondary_9876", POPULATED_DEFS],
-      ["org_empty_4321", EMPTY_BASE_DEFS],
-    ]),
   }
 
-  const active = () => state.workspaces.find((w) => w.active) ?? null
-
-  await page.route("**/api/me", (route) => {
-    const cur = active()
-    return route.fulfill({
-      json: {
-        user: { id: "u_e2e", name: "Ada Lovelace", email: "ada@example.com" },
-        organization: cur ? { id: cur.id, name: cur.name, role: cur.role } : null,
-        environmentId: cur?.hasCell ? "rehearsal2" : null,
-      },
-    })
-  })
-
-  await page.route("**/api/workspaces", async (route) => {
-    if (route.request().method() === "GET") {
-      const doc: WorkspacesDocument = { workspaces: state.workspaces, planLabel: "Pro plan" }
-      return route.fulfill({ json: doc })
-    }
-    return route.fulfill({ status: 405, json: { code: "METHOD_NOT_ALLOWED", message: "GET only" } })
-  })
-
-  await page.route("**/api/auth/organization/set-active", async (route) => {
-    if (route.request().method() !== "POST") return route.fulfill({ status: 405 })
-    const body = JSON.parse(route.request().postData() ?? "{}") as { organizationId?: string }
-    const target = state.workspaces.find((w) => w.id === body.organizationId)
-    if (!target) return route.fulfill({ status: 403, json: { code: "USER_IS_NOT_A_MEMBER_OF_THE_ORGANIZATION", message: "User is not a member of this organization" } })
-    state.workspaces = state.workspaces.map((w) => ({ ...w, active: w.id === target.id }))
-    return route.fulfill({ json: { id: target.id, name: target.name, slug: target.slug } })
-  })
-
+  await page.route("**/api/me", (route) => route.fulfill({
+    json: {
+      user: { id: "u_e2e", name: "Ada Lovelace", email: "ada@example.com" },
+      organization: { id: current.id, name: current.name, role: current.role },
+      environmentId: current.hasCell ? "rehearsal2" : null,
+    },
+  }))
+  await page.route("**/api/workspaces", (route) => route.fulfill({ json: doc }))
   await page.route("**/api/host/v1/**", (route) => {
-    const url = new URL(route.request().url())
-    const orgId = url.searchParams.get("orgId") ?? ""
-    if (url.pathname.endsWith("/v1/definitions")) return route.fulfill({ json: { artifacts: state.cells.get(orgId) ?? [] } })
-    if (url.pathname.endsWith("/v1/inbox")) return route.fulfill({ json: { scanLimit: 10000, sections: [], items: [] } })
+    const { pathname } = new URL(route.request().url())
+    if (pathname.endsWith("/v1/definitions")) return route.fulfill({ json: { artifacts: cell === "empty" ? EMPTY_BASE_DEFS : POPULATED_DEFS } })
+    if (pathname.endsWith("/v1/inbox")) return route.fulfill({ json: { scanLimit: 10000, sections: [], items: [] } })
     return route.fulfill({ status: 404, json: { code: "route.not_found", message: "not served" } })
   })
-
-  return { state, RAW_ORG_ID }
 }
 
-test("#1414: honest switcher separates real workspaces from Examples, hides lifecycle actions, never renders raw ids, and switches cleanly", async ({ page }) => {
+test("#1414: honest switcher separates real workspaces from Examples, hides lifecycle actions, never renders raw ids, and marks the current workspace", async ({ page }) => {
   const pageErrors: string[] = []
   page.on("pageerror", (error) => pageErrors.push(error.message))
   await page.setViewportSize({ width: 1440, height: 900 })
-  const { RAW_ORG_ID } = await mountWorkspaceServer(page)
+  await mountWorkspaceServer(page)
   await page.goto("/")
 
   const trigger = page.locator("[data-scope]")
   await expect(trigger).toContainText("Core Analytics")
-  await expect(trigger).toContainText("Live · Pro plan")
+  await expect(trigger).toContainText("Live · Owner")
   // Switcher must never expose raw org id or environment id.
   await expect(trigger).not.toContainText(RAW_ORG_ID)
   await expect(trigger).not.toContainText("rehearsal2")
@@ -177,9 +146,13 @@ test("#1414: honest switcher separates real workspaces from Examples, hides life
   const menu = page.getByRole("menu")
   await expect(menu.getByText("Your workspaces")).toBeVisible()
   await expect(menu.getByText("Examples")).toBeVisible()
-  await expect(menu.getByRole("menuitemradio", { name: /Core Analytics/ })).toBeVisible()
-  await expect(menu.getByRole("menuitemradio", { name: /Shared Workspace/ })).toBeVisible()
-  await expect(menu.getByRole("menuitemradio", { name: /Fresh Workspace/ })).toBeVisible()
+  const current = menu.getByRole("menuitemradio", { name: /Core Analytics/ })
+  await expect(current).toHaveAttribute("aria-checked", "true")
+  const shared = menu.getByRole("menuitemradio", { name: /Shared Workspace/ })
+  await expect(shared).toHaveAttribute("aria-checked", "false")
+  await expect(shared).toBeDisabled()
+  await expect(menu.getByText("Switching workspaces is coming soon.")).toBeVisible()
+  await expect(menu.getByRole("menuitem", { name: /Olist e-commerce/ })).toHaveAttribute("href", "https://github.com/Norn-cloud/norn/issues/531")
   await expect(menu).not.toContainText(RAW_ORG_ID)
   await expect(menu).not.toContainText("rehearsal2")
   // Lifecycle actions (create, rename, archive, delete, request) are not offered in this PR.
@@ -188,15 +161,33 @@ test("#1414: honest switcher separates real workspaces from Examples, hides life
   }
   await shoot(page, "switcher")
 
-  // Switching to Shared Workspace updates the active workspace cleanly.
-  await menu.getByRole("menuitemradio", { name: /Shared Workspace/ }).click()
-  await expect(trigger).toContainText("Shared Workspace")
+  expect(pageErrors).toEqual([])
+})
 
-  // Switching to an empty workspace lands on Home with the 4-step Get started checklist.
+test("#1414: a workspace without a cell stays current while Studio shows recorded demo data", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await mountWorkspaceServer(page, "absent")
+  await page.goto("/")
+
+  const trigger = page.locator("[data-scope]")
+  await expect(trigger).toContainText("Core Analytics")
+  await expect(trigger).toContainText("Recorded demo data")
   await trigger.click()
-  await page.getByRole("menuitemradio", { name: /Fresh Workspace/ }).click()
-  await expect(trigger).toContainText("Fresh Workspace")
-  await expect(page).toHaveURL(/\/$/)
+
+  const menu = page.getByRole("menu")
+  const current = menu.getByRole("menuitemradio", { name: /Core Analytics/ })
+  await expect(current).toHaveAttribute("aria-checked", "true")
+  await expect(current).toContainText("No cell yet")
+  await expect(menu.getByRole("menuitemradio", { name: "Recorded demo" })).toBeVisible()
+  await expect(menu.getByRole("menuitemradio", { name: "Recorded demo" })).toHaveAttribute("aria-checked", "false")
+  await shoot(page, "switcher-no-cell")
+})
+
+test("#1414: an empty workspace shows the Get started checklist on Home", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await mountWorkspaceServer(page, "empty")
+  await page.goto("/")
+  await expect(page.locator("[data-scope]")).toContainText("Fresh Workspace")
   const main = page.locator("main")
   await expect(main.getByRole("heading", { name: "Get started" })).toBeVisible()
   await expect(main.getByRole("link", { name: /Add a source/ })).toHaveAttribute("href", "/sources")
@@ -204,8 +195,6 @@ test("#1414: honest switcher separates real workspaces from Examples, hides life
   await expect(main.getByRole("link", { name: /Rules/ })).toHaveAttribute("href", "/rules")
   await expect(main.getByRole("link", { name: /Dashboard/ })).toHaveAttribute("href", "/dashboards")
   await shoot(page, "empty-home")
-
-  expect(pageErrors).toEqual([])
 })
 
 test("#1414: a slow connecting cell explains what it is waiting for and supports Retry now", async ({ page }) => {
@@ -215,18 +204,18 @@ test("#1414: a slow connecting cell explains what it is waiting for and supports
   await page.route("**/api/workspaces", (route) => route.fulfill({
     json: {
       workspaces: [{ id: "org_slow", name: "Cold Workspace", slug: "cold", role: "owner", active: true, hasCell: true }],
-      planLabel: null,
     },
   }))
-  let attempts = 0
+  let firstRequest: Request | undefined
   let releaseFirst: (() => void) | undefined
   await page.route("**/api/host/v1/**", async (route) => {
     const url = new URL(route.request().url())
     if (url.pathname.endsWith("/v1/definitions")) {
-      attempts += 1
-      if (attempts === 1) {
+      if (firstRequest === undefined) {
+        firstRequest = route.request()
         await new Promise<void>((resolve) => { releaseFirst = resolve })
-        return route.abort()
+        // Retry must cancel this request while the mock still holds its response.
+        if (firstRequest.failure() !== null) return
       }
       return route.fulfill({ json: { artifacts: EMPTY_BASE_DEFS } })
     }
@@ -239,10 +228,11 @@ test("#1414: a slow connecting cell explains what it is waiting for and supports
     const banner = page.locator('[data-connection="connecting"]')
     await expect(banner).toBeVisible({ timeout: 8_000 })
     await expect(banner).toContainText("Connecting to your workspace cell…")
-    await banner.getByRole("button", { name: "Retry now" }).click()
-    // Prove Retry now actually dispatched a replacement probe before releasing the stalled first request.
-    await expect.poll(() => attempts, { timeout: 5_000 }).toBeGreaterThanOrEqual(2)
-    releaseFirst?.()
+    const [cancelled] = await Promise.all([
+      page.waitForEvent("requestfailed", { predicate: (request) => request === firstRequest, timeout: 5_000 }),
+      banner.getByRole("button", { name: "Retry now" }).click(),
+    ])
+    expect(cancelled.failure()?.errorText).toMatch(/abort|cancel/i)
     await expect(page.locator("[data-scope]")).toContainText("Live · Owner")
     await expect(page.getByRole("heading", { name: "Get started" })).toBeVisible()
   } finally {

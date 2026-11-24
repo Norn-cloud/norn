@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router"
 import { Command, CommandEmpty, CommandGroup, CommandGroupLabel, CommandInput, CommandItem, CommandItemIcon, CommandList } from "@ui-sdk/react/command"
 import { Dialog, DialogBackdrop, DialogContent, DialogTitle, DialogTrigger } from "@ui-sdk/react/dialog"
-import { MenuGroup, MenuRadioGroup, MenuTrigger } from "@ui-sdk/react/menu"
+import { MenuRadioGroup, MenuTrigger } from "@ui-sdk/react/menu"
 import { PopoverTitle, PopoverTrigger } from "@ui-sdk/react/popover"
 import { Toolbar, ToolbarButton, ToolbarLink } from "@ui-sdk/react/toolbar"
 import { Tree, TreeGroup, TreeItem, TreeItemIndicator, TreeItemLabel } from "@ui-sdk/react/tree"
@@ -21,9 +21,9 @@ import { cn } from "@/lib/utils"
 import { ViewProvider, useView } from "@/lib/view"
 import { LOCALES, LocaleProvider, directionOf, isLocale, useLocale } from "@/lib/locale"
 import { WORKSPACES } from "@/lib/workspaces"
-import { refreshMode, useMode } from "@/lib/live-transport"
+import { retryMode, useMode } from "@/lib/live-transport"
 import { useAccount, type Account } from "@/lib/session"
-import { WorkspaceError, switchWorkspaceCaches, useWorkspaces, workspaceApi, type WorkspacesDocument } from "@/lib/workspaces-api"
+import { WorkspaceError, useWorkspaces, type WorkspacesDocument } from "@/lib/workspaces-api"
 import nornMark from "@/assets/norn-mark.webp"
 import { Keys } from "@/components/keys"
 
@@ -113,10 +113,10 @@ const roleLabel = (role: string) => role === "" ? "" : `${role[0]!.toUpperCase()
 
 /** Delays showing the "connecting slowly" hint so fast local/warm loads stay quiet. */
 const CONNECTING_HINT_MS = 3_000
+const recordedWorkspace = WORKSPACES.find(({ recorded }) => recorded)
 
 /** True once the initial mode probe has been waiting longer than `CONNECTING_HINT_MS`. */
-function useSlowConnecting(): boolean {
-  const mode = useMode()
+function useSlowConnecting(mode: ReturnType<typeof useMode>): boolean {
   const [slow, setSlow] = useState(false)
   const waiting = mode.data === undefined && mode.isPending && !mode.isError
   useEffect(() => {
@@ -131,19 +131,20 @@ function useSlowConnecting(): boolean {
 function useOpenWorkspace(doc: WorkspacesDocument | null | undefined) {
   const mode = useMode()
   const account = useAccount()
-  const slow = useSlowConnecting()
+  const slow = useSlowConnecting(mode)
   const live = mode.data?.kind === "live"
-  const recorded = WORKSPACES.find(({ recorded }) => recorded)
+  const recorded = mode.data?.kind === "recorded"
   const active = doc?.workspaces.find((workspace) => workspace.active)
-  const name = active?.name ?? account.data?.organization?.name
-  const role = active?.role ?? account.data?.organization?.role
-  const subtitle = doc?.planLabel ?? (role ? roleLabel(role) : null)
+  const organization = active ?? account.data?.organization
   const open = live
-    ? { id: active?.id ?? "live", name: name ?? "Connected workspace", detail: subtitle ? `Live · ${subtitle}` : "Live workspace" }
-    : mode.data?.kind !== "recorded"
-      ? { id: "pending", name: name ?? "Workspace", detail: mode.isError || mode.failureCount > 0 ? "Can't reach the cell · retrying" : slow ? "Connecting to cell…" : "Connecting…" }
-      : recorded && { id: recorded.id, name: recorded.name, detail: recorded.detail }
-  return { live, open, active }
+    ? { name: organization?.name ?? "Connected workspace", detail: organization?.role ? `Live · ${roleLabel(organization.role)}` : "Live workspace" }
+    : recorded
+      ? organization
+        ? { name: organization.name, detail: "Recorded demo data" }
+        : recordedWorkspace
+      : { name: organization?.name ?? "Workspace", detail: mode.isError || mode.failureCount > 0 ? "Can't reach the cell · retrying" : slow ? "Connecting to cell…" : "Connecting…" }
+  const workspaceOpen = organization != null || live
+  return { live, open, active, workspaceOpen, recordedSelection: recorded && !workspaceOpen ? recordedWorkspace?.id : undefined }
 }
 
 /** An example dataset entry that opens here: published benchmark results, or the recording while no cell is connected. */
@@ -153,56 +154,10 @@ const real = (workspace: (typeof WORKSPACES)[number], live: boolean) => workspac
 function ScopeSwitcher() {
   const workspaces = useWorkspaces()
   const doc = workspaces.data
-  const { live, open, active } = useOpenWorkspace(doc)
-  const [switchError, setSwitchError] = useState<string | null>(null)
-  const [switching, setSwitching] = useState(false)
-  const [pendingRefresh, setPendingRefresh] = useState(false)
-  const switchingRef = useRef(false)
-  const client = useQueryClient()
-  const navigate = useNavigate()
-
+  const { live, open, active, workspaceOpen, recordedSelection } = useOpenWorkspace(doc)
   const realWorkspaces = doc?.workspaces ?? []
   const examples = WORKSPACES.filter((workspace) => real(workspace, live))
-
-  async function retrySessionRefresh() {
-    if (switchingRef.current) return
-    switchingRef.current = true
-    setSwitching(true)
-    setSwitchError(null)
-    try {
-      await switchWorkspaceCaches(client)
-      setPendingRefresh(false)
-      await navigate({ to: "/" })
-    } catch (error) {
-      setSwitchError(error instanceof WorkspaceError ? error.message : "Could not refresh your session. Try again.")
-    } finally {
-      switchingRef.current = false
-      setSwitching(false)
-    }
-  }
-
-  async function selectWorkspace(id: string) {
-    if (switchingRef.current || id === active?.id) return
-    switchingRef.current = true
-    setSwitching(true)
-    setSwitchError(null)
-    let activated = false
-    try {
-      await workspaceApi.activate(id)
-      activated = true
-      await switchWorkspaceCaches(client)
-      setPendingRefresh(false)
-      await navigate({ to: "/" })
-    } catch (error) {
-      if (activated) setPendingRefresh(true)
-      setSwitchError(error instanceof WorkspaceError ? error.message : "Could not switch workspaces. Try again.")
-    } finally {
-      switchingRef.current = false
-      setSwitching(false)
-    }
-  }
-
-  const showWorkspaceSection = realWorkspaces.length > 0 || (live && open !== undefined)
+  const showWorkspaceSection = realWorkspaces.length > 0 || workspaceOpen
 
   return (
     <Menu>
@@ -217,34 +172,23 @@ function ScopeSwitcher() {
       <KitMenuContent align="start" className="w-72">
         {showWorkspaceSection && (
           <>
-            <MenuRadioGroup
-              value={realWorkspaces.length > 0 ? (active ? `ws:${active.id}` : "") : live ? "live" : ""}
-              onValueChange={(next) => { if (next.startsWith("ws:")) void selectWorkspace(next.slice(3)) }}
-            >
+            <MenuRadioGroup value={active ? `ws:${active.id}` : workspaceOpen ? "current" : ""}>
               <KitMenuLabel>Your workspaces</KitMenuLabel>
-              {realWorkspaces.length > 0
-                ? realWorkspaces.map((workspace) => (
-                    <KitMenuRadioItem key={workspace.id} value={`ws:${workspace.id}`} label={workspace.name} disabled={switching} closeOnSelect className="flex-col items-start gap-0">
-                      <span className="truncate">{workspace.name}</span>
-                      <span className="text-xs text-muted-foreground">{workspace.hasCell ? roleLabel(workspace.role) : `${roleLabel(workspace.role)} · No cell yet`}</span>
-                    </KitMenuRadioItem>
-                  ))
-                : live && open && (
-                    <KitMenuRadioItem value="live" label={open.name} closeOnSelect className="flex-col items-start gap-0">
-                      <span className="truncate">{open.name}</span>
-                      <span className="text-xs text-muted-foreground">{open.detail}</span>
-                    </KitMenuRadioItem>
-                  )}
+              {workspaceOpen && active === undefined && open && (
+                <KitMenuRadioItem value="current" label={open.name} closeOnSelect className="flex-col items-start gap-0">
+                  <span className="truncate">{open.name}</span>
+                  <span className="text-xs text-muted-foreground">{open.detail}</span>
+                </KitMenuRadioItem>
+              )}
+              {realWorkspaces.map((workspace) => (
+                <KitMenuRadioItem key={workspace.id} value={`ws:${workspace.id}`} label={workspace.name} disabled={!workspace.active} closeOnSelect className="flex-col items-start gap-0">
+                  <span className="truncate">{workspace.name}</span>
+                  <span className="text-xs text-muted-foreground">{workspace.hasCell ? roleLabel(workspace.role) : `${roleLabel(workspace.role)} · No cell yet`}</span>
+                </KitMenuRadioItem>
+              ))}
             </MenuRadioGroup>
-            {switchError && (
-              <div role="alert" className="flex items-center justify-between gap-2 px-2 py-1 text-xs text-destructive">
-                <span>{switchError}</span>
-                {pendingRefresh && (
-                  <button type="button" disabled={switching} className="shrink-0 underline underline-offset-2" onClick={() => void retrySessionRefresh()}>
-                    Retry refresh
-                  </button>
-                )}
-              </div>
+            {realWorkspaces.some((workspace) => !workspace.active) && (
+              <p className="px-2 py-1.5 text-xs text-muted-foreground">Switching workspaces is coming soon.</p>
             )}
           </>
         )}
@@ -257,31 +201,20 @@ function ScopeSwitcher() {
         {examples.length > 0 && (
           <>
             {showWorkspaceSection && <KitMenuSeparator />}
-            {live ? (
-              <MenuGroup>
-                <KitMenuLabel>Examples</KitMenuLabel>
-                {examples.map((workspace) => (
+            <MenuRadioGroup value={recordedSelection ?? ""}>
+              <KitMenuLabel>Examples</KitMenuLabel>
+              {examples.map((workspace) => workspace.results !== undefined
+                ? (
                   <KitMenuItem key={workspace.id} value={`example:${workspace.id}`} label={workspace.name} render={<a href={workspace.results} target="_blank" rel="noreferrer" />} className="flex-col items-start gap-0">
                     <span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail} · results ↗</span>
                   </KitMenuItem>
+                )
+                : (
+                  <KitMenuRadioItem key={workspace.id} value={workspace.id} label={workspace.name} className="flex-col items-start gap-0">
+                    <span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail}</span>
+                  </KitMenuRadioItem>
                 ))}
-              </MenuGroup>
-            ) : (
-              <MenuRadioGroup value={open?.id ?? ""}>
-                <KitMenuLabel>Examples</KitMenuLabel>
-                {examples.map((workspace) => workspace.results !== undefined
-                  ? (
-                    <KitMenuItem key={workspace.id} value={`example:${workspace.id}`} label={workspace.name} render={<a href={workspace.results} target="_blank" rel="noreferrer" />} className="flex-col items-start gap-0">
-                      <span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail} · results ↗</span>
-                    </KitMenuItem>
-                  )
-                  : (
-                    <KitMenuRadioItem key={workspace.id} value={workspace.id} label={workspace.name} disabled={!workspace.recorded} className="flex-col items-start gap-0">
-                      <span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail}</span>
-                    </KitMenuRadioItem>
-                  ))}
-              </MenuRadioGroup>
-            )}
+            </MenuRadioGroup>
           </>
         )}
       </KitMenuContent>
@@ -690,14 +623,9 @@ function CommandMenu({ sections, navigation, onPerspective }: { readonly section
  */
 function ConnectionBanner() {
   const mode = useMode()
-  const slow = useSlowConnecting()
+  const slow = useSlowConnecting(mode)
   const client = useQueryClient()
-  const retryNow = async () => {
-    refreshMode()
-    await client.cancelQueries({ queryKey: ["studio-mode"] })
-    refreshMode()
-    void mode.refetch({ cancelRefetch: true })
-  }
+  const retryNow = () => retryMode(client)
   if (mode.data !== undefined) return null
   if (mode.failureCount === 0 && !mode.isError) {
     if (!slow) return null
