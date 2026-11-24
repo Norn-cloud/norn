@@ -31,6 +31,7 @@ import {
   type ViewSaved,
 } from "../src/lib/views.ts"
 import { WITHHELD_ROW } from "../src/grid/cells.tsx"
+import { sessionKey } from "../src/actions/kept-drafts.ts"
 import type { ViewsBarNotice } from "../src/grid/views-bar.tsx"
 
 mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
@@ -701,6 +702,9 @@ test("ViewDetailPage scopes deleted-view banner to the deleted view's id so navi
   expect(scopedDeletedView(removedA, "studio.view.b", SCOPE_A)).toBeUndefined()
   expect(scopedDeletedView(removedA, "studio.view.a", SCOPE_B)).toBeUndefined()
 
+  // The receipt is kept above the route, as the reader who deleted it (no session cached here).
+  deletionReceipts.clear()
+  deletionReceipts.add({ ...removedA, reader: sessionKey(undefined) })
   const renderAt = async (routeId: string) => {
     const client = new QueryClient()
     client.setQueryData(["studio-scope"], SCOPE_A)
@@ -711,7 +715,7 @@ test("ViewDetailPage scopes deleted-view banner to the deleted view's id so navi
       routeTree: root.addChildren([createRoute({
         getParentRoute: () => root,
         path: "/views/$id",
-        component: () => createElement(ViewDetail, { initialRemoved: removedA }),
+        component: () => createElement(ViewDetail),
       })]),
       history: createMemoryHistory({ initialEntries: [`/views/${routeId}`] }),
     })
@@ -728,6 +732,7 @@ test("ViewDetailPage scopes deleted-view banner to the deleted view's id so navi
   const htmlA = await renderAt("studio.view.a")
   expect(htmlA).toContain("Deleted “Deleted View A”")
   expect(htmlA).toContain("Undo")
+  deletionReceipts.clear()
 })
 
 test("ViewsBar keeps Undo available when restoration fails and clears it only after restoration succeeds", async () => {
