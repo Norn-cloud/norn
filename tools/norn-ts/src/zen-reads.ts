@@ -11,7 +11,7 @@
  * template string (`${…}`) handling, and its refusals (an unmatched symbol or an unterminated string).
  */
 
-export type ZenTokenKind = "identifier" | "literal" | "number" | "string" | "boolean" | "operator" | "bracket" | "template"
+export type ZenTokenKind = "identifier" | "literal" | "number" | "string" | "boolean" | "operator" | "bracket" | "template" | "text"
 export interface ZenToken { readonly kind: ZenTokenKind; readonly value: string }
 
 export class ZenLexError extends Error {
@@ -82,22 +82,26 @@ export function zenTokens(source: string): ZenToken[] {
     push("number", chars.slice(start, at).join(""))
   }
 
+  /** A template string, with its text segments as `lexer.rs` pushes them (`str_start` and all). */
   function template(): void {
     at++
     push("template", "`")
     let inExpression = false
+    let textStart = at
+    const text = (end: number) => push("text", chars.slice(textStart, end).join(""))
     while (at < chars.length) {
       const c = chars[at]!
-      if (c === "`") { at++; push("template", "`"); return }
+      if (c === "`") { if (textStart < at) text(at); at++; push("template", "`"); return }
       if (!inExpression) {
-        if (c === "$" && chars[at + 1] === "{") { at += 2; inExpression = true; push("template", "${"); continue }
+        if (c === "$" && chars[at + 1] === "{") { text(at); at += 2; inExpression = true; push("template", "${"); continue }
         at++
         continue
       }
-      if (c === "}") { at++; inExpression = false; push("template", "}"); continue }
+      if (c === "}") { push("template", "}"); at++; textStart = at; inExpression = false; continue }
       item()
     }
     // An unterminated template string is closed at the end, as the lexer closes it.
+    if (!inExpression && textStart < chars.length) text(chars.length)
     push("template", "`")
   }
 
@@ -149,18 +153,27 @@ const UNARY: ReadonlyMap<string, number> = new Map([["not", 50], ["!", 50], ["+"
 /** The AST, as far as `collect_paths` distinguishes it. */
 type ZenNode =
   | { readonly k: "leaf" }
+  | { readonly k: "number"; readonly text: string }
+  | { readonly k: "call"; readonly name: string; readonly args: readonly ZenNode[] }
   | { readonly k: "identifier"; readonly name: string }
   | { readonly k: "string"; readonly value: string }
   | { readonly k: "root" | "pointer" | "closure" | "assignments" }
   | { readonly k: "parenthesized" | "unary"; readonly inner: ZenNode }
   | { readonly k: "member"; readonly node: ZenNode; readonly property: ZenNode }
-  | { readonly k: "list"; readonly parts: readonly ZenNode[] }
+  /** Any node with ordered children; `literal` marks a list or record literal (its size is bounded). */
+  | { readonly k: "list"; readonly parts: readonly ZenNode[]; readonly literal?: "array" | "object" }
 
 class ZenParseError extends Error {}
 
 class Parser {
   #at = 0
   #depth = 0
+  /**
+   * `memoized_expression` (`parser.rs`): a top-level expression parsed once per (position, closure
+   * depth), its end position (or its failure) reused, so the interval parser's speculation stays
+   * linear on nested brackets.
+   */
+  readonly #memo = new Map<string, { readonly node: ZenNode; readonly end: number } | { readonly error: ZenParseError }>()
   readonly #hasRange: boolean
   constructor(readonly tokens: readonly ZenToken[]) {
     this.#hasRange = tokens.some((t) => t.kind === "operator" && t.value === "..")
@@ -184,6 +197,25 @@ class Parser {
   }
 
   #binary(precedence: number): ZenNode {
+    if (precedence !== 0) return this.#binaryAt(precedence)
+    const key = `${this.#at}:${this.#depth}`
+    const known = this.#memo.get(key)
+    if (known !== undefined) {
+      if ("error" in known) throw known.error
+      this.#at = known.end
+      return known.node
+    }
+    try {
+      const node = this.#binaryAt(0)
+      this.#memo.set(key, { node, end: this.#at })
+      return node
+    } catch (error) {
+      if (error instanceof ZenParseError) this.#memo.set(key, { error })
+      throw error
+    }
+  }
+
+  #binaryAt(precedence: number): ZenNode {
     let left = this.#unary()
     for (;;) {
       const t = this.#current
@@ -255,7 +287,8 @@ class Parser {
         if (t.value === "null") { this.#at++; return { k: "leaf" } }
         return this.#identifier()
       case "literal": return this.#identifier()
-      case "boolean": case "number": this.#at++; return { k: "leaf" }
+      case "boolean": this.#at++; return { k: "leaf" }
+      case "number": this.#at++; return { k: "number", text: t.value }
       case "string": this.#at++; return { k: "string", value: t.value }
       case "template": if (t.value === "`") return this.#template(); throw new ZenParseError("template token")
       case "bracket":
@@ -300,7 +333,7 @@ class Parser {
     } else {
       parts.push(...this.#arguments())
     }
-    return this.#postfix({ k: "list", parts })
+    return this.#postfix({ k: "call", name, args: parts })
   }
 
   /** Call arguments up to and including `)`. */
@@ -366,14 +399,14 @@ class Parser {
       parts.push(this.#binary(0))
     }
     this.#expect("bracket", "]")
-    return this.#postfix({ k: "list", parts })
+    return this.#postfix({ k: "list", parts, literal: "array" })
   }
 
   /** `object`: unquoted keys are strings (`{actor: 1}` names no variable); no postfix follows. */
   #object(): ZenNode {
     this.#expect("bracket", "{")
     const parts: ZenNode[] = []
-    if (this.#is("bracket", "}")) { this.#at++; return { k: "list", parts } }
+    if (this.#is("bracket", "}")) { this.#at++; return { k: "list", parts, literal: "object" } }
     for (;;) {
       parts.push(this.#objectKey())
       this.#expect("operator", ":")
@@ -385,7 +418,7 @@ class Parser {
       throw new ZenParseError("invalid object syntax")
     }
     this.#expect("bracket", "}")
-    return { k: "list", parts }
+    return { k: "list", parts, literal: "object" }
   }
 
   #objectKey(): ZenNode {
@@ -410,7 +443,11 @@ class Parser {
     this.#expect("template", "`")
     const parts: ZenNode[] = []
     while (!this.#is("template", "`")) {
-      if (!this.#is("template", "${")) throw new ZenParseError("template token")
+      const t = this.#current
+      if (t === undefined) throw new ZenParseError("unterminated template")
+      if (t.kind === "text") { this.#at++; parts.push({ k: "string", value: t.value }); continue }
+      if (t.kind === "template" && t.value === "}") { this.#at++; continue }
+      if (!(t.kind === "template" && t.value === "${")) throw new ZenParseError("template token")
       this.#at++
       parts.push(this.#binary(0))
       this.#expect("template", "}")
@@ -439,26 +476,117 @@ function readsActor(node: ZenNode): boolean {
   const path = literalPath(node)
   if (path !== null) return path[0] === "actor"
   switch (node.k) {
-    case "leaf": case "string": case "identifier": return false
+    case "leaf": case "number": case "string": case "identifier": return false
     case "root": case "pointer": case "closure": case "assignments": return true
     case "parenthesized": case "unary": return readsActor(node.inner)
     case "member": return readsActor(node.node) || readsActor(node.property)
     case "list": return node.parts.some(readsActor)
+    case "call": return node.args.some(readsActor)
+  }
+}
+
+/** `StructuralLimits::NORN_EXPR_4` (`norn_expr::check::bounds`). */
+const LIMITS = { sourceBytes: 16_384, nodes: 4096, depth: 128, parseNesting: 512, stringBytes: 4096, literalItems: 1024 }
+const utf8 = new TextEncoder()
+const isWordByte = (b: number) => (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b === 95
+const OPENING = new Set([..."+-*/%^!<>=&|?:"].map((c) => c.charCodeAt(0)))
+
+/**
+ * `bounds::lexical`, on the raw UTF-8 source with no string tracking, as the kernel scans it: the
+ * source size, bracket nesting, and the count of characters and keywords that open a parser level.
+ */
+function lexicalBounds(source: string): boolean {
+  const bytes = utf8.encode(source)
+  if (bytes.length > LIMITS.sourceBytes) return false
+  let brackets = 0, levels = 0, word = ""
+  const digitAt = (i: number) => i >= 0 && i < bytes.length && bytes[i]! >= 48 && bytes[i]! <= 57
+  for (let i = 0; i <= bytes.length; i++) {
+    const b = i < bytes.length ? bytes[i]! : 32
+    if (isWordByte(b)) { word += String.fromCharCode(b); continue }
+    const keyword = word === "and" || word === "or" || word === "not" || word === "in"
+    word = ""
+    let opens = false
+    if (b === 40 || b === 91 || b === 123) {
+      brackets++
+      if (brackets > LIMITS.depth) return false
+      opens = true
+    } else if (b === 41 || b === 93 || b === 125) {
+      brackets = Math.max(0, brackets - 1)
+      opens = true
+    } else if (b === 46) opens = !(digitAt(i - 1) && digitAt(i + 1))
+    else opens = OPENING.has(b)
+    levels += (opens ? 1 : 0) + (keyword ? 1 : 0)
+    if (levels > LIMITS.parseNesting) return false
+  }
+  return true
+}
+
+/** `Number::from_str`: a JSON decimal without exponent that the engine's decimal holds exactly. */
+function exactNumber(text: string): boolean {
+  const match = /^-?(0|[1-9][0-9]*)(?:\.([0-9]+))?$/.exec(text)
+  if (match === null) return false
+  const fraction = (match[2] ?? "").replace(/0+$/, "")
+  if (fraction.length > 28) return false
+  return BigInt(`${match[1]}${fraction}`) < 2n ** 96n
+}
+
+const children = (node: ZenNode): readonly ZenNode[] => {
+  switch (node.k) {
+    case "parenthesized": case "unary": return [node.inner]
+    case "member": return [node.node, node.property]
+    case "list": return node.parts
+    case "call": return node.args
+    default: return []
+  }
+}
+
+/** `bounded_string_call`: `tokens`, `take` and `join` with their literal bounds. */
+function boundedCall(node: Extract<ZenNode, { k: "call" }>): boolean {
+  const literal = (arg: ZenNode | undefined, max: number) => arg?.k === "number" && /^\d+$/.test(arg.text) && Number(arg.text) <= max
+  switch (node.name) {
+    case "tokens": return node.args.length === 4 && node.args[1]?.k === "string" && node.args[1].value === "alnum" && literal(node.args[2], 256) && literal(node.args[3], 256)
+    case "take": return node.args.length === 2 && literal(node.args[1], 16_384)
+    case "join": return node.args.length === 2 && node.args[1]?.k === "string" && utf8.encode(node.args[1].value).length <= 256
+    default: return true
   }
 }
 
 /**
- * Whether `norn_expr::expression_read_paths(source, "actor")` is non-empty, or the expression does
- * not parse: a literal `actor…` path, or a root (`$root`), closure pointer, closure or assignment
- * anywhere. A bare `$` or a top-level `#` is an identifier, an unquoted object key a string, and a
- * name inside a string literal no name at all. The kernel also refuses source over its size bounds
- * (`validate_evaluation_source`); an admitted set never carries such an expression.
+ * `bounds::structure`, on the AST: node count, nesting depth, literal sizes, exact plain-decimal
+ * number literals, and the bounded string builtins. (Closure depth needs no check: any closure is
+ * already a read.)
+ */
+function structuralBounds(root: ZenNode): boolean {
+  let nodes = 0
+  const stack: Array<readonly [ZenNode, number]> = [[root, 1]]
+  while (stack.length > 0) {
+    const [node, depth] = stack.pop()!
+    if (++nodes > LIMITS.nodes || depth > LIMITS.depth) return false
+    if (node.k === "number" && !exactNumber(node.text)) return false
+    if (node.k === "string" && utf8.encode(node.value).length > LIMITS.stringBytes) return false
+    if (node.k === "list" && node.literal !== undefined && (node.literal === "array" ? node.parts.length : node.parts.length / 2) > LIMITS.literalItems) return false
+    if (node.k === "call" && !boundedCall(node)) return false
+    for (const child of children(node)) stack.push([child, depth + 1])
+  }
+  return true
+}
+
+/**
+ * Whether `norn_kernel::actor_derived_fields` counts the expression as reading the verified actor:
+ * `norn_expr::expression_read_paths(source, "actor")` is non-empty, or the source fails the checks
+ * that run first (`validate_evaluation_source`: the lexical and structural bounds, exact number
+ * literals) or does not lex or parse. A read is a literal `actor…` path, a root (`$root`), a closure
+ * or its pointer, or an assignment, anywhere. A bare `$` or a top-level `#` is an identifier, an
+ * unquoted object key a string, and a name inside a string literal no name at all.
  */
 export function mayReadActor(source: string): boolean {
+  if (!lexicalBounds(source)) return true
+  let root: ZenNode
   try {
-    return readsActor(new Parser(zenTokens(source)).parse())
+    root = new Parser(zenTokens(source)).parse()
   } catch (error) {
     if (error instanceof ZenLexError || error instanceof ZenParseError) return true
     throw error
   }
+  return !structuralBounds(root) || readsActor(root)
 }

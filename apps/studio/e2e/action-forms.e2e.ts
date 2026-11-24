@@ -282,7 +282,7 @@ test("refused by a law with no detail (a hosted cell's reason: null): says so pl
   await open(page)
   // The hosted refusal: 422 core.laws.violated, no reason, the generic message, for every role (#1353).
   await page.route("**/api/host/v1/actions/canon.holding.adjust**", (route) => route.request().method() === "POST"
-    ? route.fulfill({ status: 422, json: { format: "norn/refusal@2", code: "core.laws.violated", category: "precondition", retryable: false, message: "a declared precondition does not hold", explanation: "a declared law does not hold for this input", reason: null, diagnostics: [] } })
+    ? route.fulfill({ status: 422, json: { format: "norn/refusal@2", code: "core.laws.violated", category: "precondition", retryable: false, message: "a declared precondition does not hold", explanation: "a declared precondition does not hold", reason: null, diagnostics: [] } })
     : route.fallback())
   // The record already carries an open law finding the reader can see on its page.
   await page.route("**/findings?**", (route) => route.fulfill({ json: {

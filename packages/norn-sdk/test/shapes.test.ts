@@ -24,30 +24,17 @@ function contract(node: Json, name = ""): string {
     const ref = node["$ref"].replace("#/components/schemas/", "")
     return ref in SHAPES ? `shape:${ref}` : contract(schemas[ref]!, ref)
   }
-  for (const union of ["oneOf", "anyOf"] as const) {
+  // Unions and intersections are described as they are written, member for member.
+  for (const union of ["oneOf", "anyOf", "allOf"] as const) {
     const members = node[union] as Json[] | undefined
-    if (members === undefined) continue
-    const others = members.filter((m) => m["type"] !== "null")
-    if (others.length === 1 && members.length === 2) return `nullable(${contract(others[0]!)})`
-    return `oneOf[${sorted(members.map((m) => contract(m)))}]`
-  }
-  if (Array.isArray(node["allOf"])) {
-    // Refusal@2: an optional-details part (`oneOf` an object or null) and the required envelope.
-    const required: Record<string, string> = {}, optional: Record<string, string> = {}
-    for (const part of node["allOf"] as Json[]) {
-      const object = (part["oneOf"] as Json[] | undefined)?.find((m) => m["type"] === "object") ?? part
-      const mandatory = new Set((part["required"] as string[] | undefined) ?? [])
-      for (const [member, child] of Object.entries((object["properties"] ?? {}) as Readonly<Record<string, Json>>)) {
-        (mandatory.has(member) ? required : optional)[member] = contract(child)
-      }
-    }
-    return objectText(required, optional, false)
+    if (members !== undefined) return `${union}[${sorted(members.map((m) => contract(m)))}]`
   }
   const type = node["type"]
   if (Array.isArray(type)) {
     const inner = type.filter((t) => t !== "null")
     if (type.includes("null") && inner.length === 1) return `nullable(${contract({ ...node, type: inner[0] })})`
   }
+  if (type === "null") return "null"
   if (Array.isArray(node["enum"])) return `enum:${name}:${sorted(node["enum"] as string[])}`
   if (type === "string") return stringText(node)
   if (type === "boolean") return "boolean"
@@ -70,7 +57,7 @@ function described(check: Check): string {
     case "enum": return `enum:${check.name}:${sorted(check.values)}`
     case "nullable": return `nullable(${described(check.of)})`
     case "array": return `array(${described(check.of)})`
-    case "oneOf": return `oneOf[${sorted(check.of.map(described))}]`
+    case "oneOf": case "anyOf": case "allOf": return `${check.kind}[${sorted(check.of.map(described))}]`
     case "shape": return `shape:${check.name}`
     case "object": {
       const render = (members: Readonly<Record<string, Check>>) => Object.fromEntries(Object.entries(members).map(([m, c]) => [m, described(c)]))
@@ -115,6 +102,14 @@ test("SDK-SHAPES-2: a document is admitted only whole", () => {
     ["ActionReceipt", { ...receipt, trace: { traceId: "t", intentRef: "" } }],
     // A closed object refuses a member it does not declare.
     ["ActionReceipt", { ...receipt, trace: { traceId: "t", extra: 1 } }],
+    // Prototype names are members like any other: a closed object refuses them too.
+    ["TraceContext", { traceId: "t", constructor: "extra" }],
+    ["TraceContext", { traceId: "t", toString: "extra" }],
+    ["TraceContext", { traceId: "t", valueOf: "extra" }],
+    ["TraceContext", JSON.parse('{ "traceId": "t", "__proto__": "extra" }')],
+    ["NornIrRefusalReason", { law: "l", subject: "s", values: {}, hasOwnProperty: 1 }],
+    // A required member is the document's own, never one inherited from Object.prototype.
+    ["RefusalSpan", Object.create({ pointer: "/input/a" })],
     ["ActionReceipt", { ...receipt, trace: null }],
     ["ActionReceipt", { ...receipt, receipt: { ...commit, commitSeq: "2" } }],
     ["ActionReceipt", { ...receipt, outcome: "maybe" }],

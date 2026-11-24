@@ -23,6 +23,7 @@
  * submissions stay two calls. There is no mock mode; `norn dev` serves the real routes locally.
  */
 import type { components } from "./generated/norn-api.ts"
+import { parseExactJson, type ExactJson } from "./exact-json.ts"
 import { conforms } from "./shapes.ts"
 
 type Wire = components["schemas"]
@@ -70,8 +71,11 @@ export type ActionReceipt = Immutable<Wire["ActionReceipt"]>
 export type PendingDecision = Immutable<Wire["PendingDecision"]>
 export type TraceContext = Immutable<Wire["TraceContext"]>
 export type RefusalCategory = Wire["RefusalCategory"]
-/** DIAG-REASON-1: what refused a call, disclosed with the caller's authority. */
-export type RefusalReason = Immutable<Wire["NornIrRefusalReason"]>
+/**
+ * DIAG-REASON-1: what refused a call, disclosed with the caller's authority. `values` are exact:
+ * every number in them is its JSON source text (a string), never a rounded binary64 `number`.
+ */
+export type RefusalReason = Immutable<Omit<Wire["NornIrRefusalReason"], "values"> & { readonly values: { readonly [path: string]: ExactJson } }>
 
 /** One finding of a refusal, at its pointer into the request body (`/input/lines/0/quantity`), if any. */
 export interface Diagnostic {
@@ -171,7 +175,9 @@ const isRecord = (value: unknown): value is Record<string, unknown> => typeof va
  * not the cell's answer and the request behind it may have been applied.
  */
 export function readRefusal(status: number, text: string): Refusal | null {
-  const body = parsed(text)
+  // Exact: a disclosed reason's values keep every number as its source text (`"9007199254740993"`,
+  // `"12.500"`), as the cell's runtime values are exact decimals.
+  const body = parseExactJson(text)
   if (!conforms("Refusal", body)) return null
   const refusal = body as Wire["Refusal"]
   const diagnostics = (refusal.diagnostics ?? []).map((d) => ({ code: d.code, message: d.message, pointer: d.span?.pointer ?? null }))
@@ -251,19 +257,19 @@ export function createNornClient<M extends ActionMapShape<M> = UntypedActions>(o
   const pin = options.definitionsVersion
 
   /**
-   * One request. `write`: a POST that may change the cell. A signal aborted before the request is
-   * sent throws its abort as is (nothing was sent). Once it is sent, a write that gets no readable
-   * answer (the network failed, the body broke off, or the caller aborted) may have been applied:
-   * `NornUnavailable` with outcome `unknown`, the original error as its `cause`. A read's abort
-   * passes through as is; a read's lost answer is `NornUnavailable` too.
+   * One request. A signal aborted before the request is sent throws its abort as is: nothing was
+   * sent. Once `fetch` is called, a write (`write`, a POST that may change the cell) that gets no
+   * readable answer may have been applied, whatever went wrong (the network, the body stream, the
+   * caller's abort, the host's own fetch): `NornUnavailable` with outcome `unknown`, the original
+   * error as its `cause`. A read's lost answer (`TypeError`) is `NornUnavailable` too; a read's
+   * abort or host error passes through as is.
    */
   async function request(path: string, query: Record<string, string>, init: RequestInit, write: boolean): Promise<{ status: number; text: string; ok: boolean }> {
     const search = new URLSearchParams({ orgId: options.scope.orgId, environmentId: options.scope.environmentId, ...query })
     const extra = options.headers === undefined ? {} : await options.headers()
     init.signal?.throwIfAborted()
     const lost = (error: unknown): never => {
-      const aborted = init.signal?.aborted === true
-      if ((error instanceof TypeError && !aborted) || (aborted && write)) throw new NornUnavailable(0, undefined, { cause: error })
+      if (write || (error instanceof TypeError && init.signal?.aborted !== true)) throw new NornUnavailable(0, undefined, { cause: error })
       throw error
     }
     let response: Response

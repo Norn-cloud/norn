@@ -317,7 +317,7 @@ async function mountCell(page: Page, options: MountOptions = {}) {
             retryable: false,
             reason: null,
             message: "Only episodes with a recorded outcome can be curated.",
-            explanation: "a declared precondition does not hold",
+            explanation: "",
             diagnostics: [{ code: "learning.episode_unmeasured", severity: "error", message: "Episode outcome is not recorded yet.", span: { pointer: "/episodeId" } }],
           },
         })

@@ -111,7 +111,7 @@ export async function intervalCell(page: Page, options: { readonly pointed?: boo
   await page.route("**/api/host/v1/actions**", async (route: Route) => {
     const request = route.request()
     const url = new URL(request.url())
-    if (!scoped(url)) return route.fulfill({ status: 403, json: { format: "norn/refusal@2", code: "authz.denied", category: "permission", retryable: false, reason: null, message: "the action request is not authorized", explanation: "access to the requested action is denied" } })
+    if (!scoped(url)) return route.fulfill({ status: 403, json: { format: "norn/refusal@2", code: "authz.denied", category: "permission", retryable: false, reason: null, message: "the action request is not authorized", explanation: "" } })
     if (request.method() === "GET") {
       const kind = url.searchParams.get("objectKind")
       return route.fulfill({ json: { definitionsVersion: 1, items: INTERVAL_ACTIONS.filter((a) => kind === null || a.objectKind === kind) } })
@@ -120,7 +120,7 @@ export async function intervalCell(page: Page, options: { readonly pointed?: boo
     const body = request.postData() ?? ""
     calls.push({ actionId, body })
     const action = INTERVAL_ACTIONS.find((a) => a.actionId === actionId)
-    if (action === undefined) return route.fulfill({ status: 403, json: { format: "norn/refusal@2", code: "authz.denied", category: "permission", retryable: false, reason: null, message: "the action request is not authorized", explanation: "access to the requested action is denied" } })
+    if (action === undefined) return route.fulfill({ status: 403, json: { format: "norn/refusal@2", code: "authz.denied", category: "permission", retryable: false, reason: null, message: "the action request is not authorized", explanation: "" } })
     const { input } = JSON.parse(body) as { input: Record<string, unknown> }
     const problems: { code: string; message: string; span: { pointer: string } }[] = []
     const schema = action.inputSchema as { required: readonly string[]; properties: Record<string, { format?: string; title?: string }> }

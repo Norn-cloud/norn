@@ -11,6 +11,10 @@ export type {
   PendingDecision, Refusal, RefusalCategory, RefusalReason, Scope, TraceContext, UiEffects, UntypedActions,
 } from "./client.ts"
 
+/** Exact JSON: numbers kept as their source text. */
+export { parseExactJson } from "./exact-json.ts"
+export type { ExactJson } from "./exact-json.ts"
+
 /** The live-read client (`norn.live.v1`). */
 export { LIVE_PROTOCOL, LiveClient } from "./live.ts"
 export type {

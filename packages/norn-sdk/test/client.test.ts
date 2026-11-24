@@ -136,9 +136,23 @@ test("SDK-CALL-3: no answer, or an abort once a write was sent, is NornUnavailab
   const truncated = await failure(createNornClient({ scope, fetch: async () => broken }).call("any.action", {}, { idempotencyKey: "k" })) as NornUnavailable
   expect(truncated).toBeInstanceOf(NornUnavailable)
   expect([truncated.status, (truncated.cause as Error).message]).toEqual([0, "terminated"])
+  // Whatever a host's fetch throws once a write is sent, the write's outcome is unknown; a read's
+  // host error passes through as is.
   class HostError extends Error {}
-  const host = createNornClient({ scope, fetch: async () => { throw new HostError("scope moved") } })
-  expect(await failure(host.call("any.action", {}, { idempotencyKey: "k" }))).toBeInstanceOf(HostError)
+  const hostError = new HostError("scope moved")
+  const host = createNornClient({ scope, fetch: async () => { throw hostError } })
+  const hostWrite = await failure(host.call("any.action", {}, { idempotencyKey: "k" })) as NornUnavailable
+  expect([hostWrite instanceof NornUnavailable, hostWrite.outcome, hostWrite.cause]).toEqual([true, "unknown", hostError])
+  expect(await failure(host.listActions())).toBe(hostError)
+  // A real Response whose body stream aborts on its own, with no caller signal at all.
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('{"outcome":"committed",'))
+      controller.error(new DOMException("The body stream was aborted.", "AbortError"))
+    },
+  })
+  const streamed = await failure(createNornClient({ scope, fetch: async () => new Response(stream, { status: 200 }) }).call("any.action", {}, { idempotencyKey: "k" })) as NornUnavailable
+  expect([streamed instanceof NornUnavailable, streamed.outcome, streamed.status, (streamed.cause as DOMException).name]).toEqual([true, "unknown", 0, "AbortError"])
 })
 
 test("SDK-INTENT-1: one key per user intent, reused on retry and never derived from the payload", async () => {
@@ -224,6 +238,14 @@ test("SDK-REFUSAL-1: only a whole Refusal@2 envelope is a refusal; anything less
   const client = createNornClient({ scope, fetch: cell(() => Response.json(findings, { status: 400 })).fetch })
   const result = await client.call("any.action", {}, { idempotencyKey: "k" })
   expect(result.kind === "refused" && result.diagnostics).toEqual([{ code: "x", message: "m", pointer: null }, { code: "y", message: "n", pointer: "/input/a" }])
+  // A disclosed reason's values keep every number exact, as its source text: top level, in a
+  // list, in a record; binary64 would read 9007199254740993 as ...992, and 12.500 as 12.5.
+  const wire = `{"format":"norn/refusal@2","retryable":false,"code":"core.laws.violated","category":"precondition","message":"m","explanation":"e","reason":{"law":"fixture.total_ok","subject":"fixture.Record/r-1","values":{"total":9007199254740993,"lines.amount":[9007199254740993,12.500,-0.10],"nested":{"n":1e400,"ok":true,"none":null,"text":"9007199254740993"}}}}`
+  const exact = createNornClient({ scope, fetch: cell(() => new Response(wire, { status: 422 })).fetch })
+  const read = await exact.call("any.action", {}, { idempotencyKey: "k" })
+  expect(read.kind === "refused" && read.reason?.values).toEqual({
+    total: "9007199254740993", "lines.amount": ["9007199254740993", "12.500", "-0.10"], nested: { n: "1e400", ok: true, none: null, text: "9007199254740993" },
+  })
   // A disclosed reason is validated too, and kept.
   const reason = { law: "fixture.total_ok", subject: "fixture.Record/r-1", values: { total: "3" }, pin: { kind: "law", artifactId: "fixture.total_ok.law", lawId: "total_ok", version: "1.0.0" } }
   const disclosed = createNornClient({ scope, fetch: cell(() => Response.json({ ...served.precondition, reason }, { status: 422 })).fetch })

@@ -165,10 +165,16 @@ function entityDecimal(type: Node, at: string): void {
   if (scale > max) refuse(`a decimal's scale is not an integer in 0..=${max}${exactProfile ? " (a rate or a rounding decimal)" : ""}`)
   const { unit, currencySource, perUnit, unitSource } = type
   if (perUnit !== undefined && (currencySource === undefined || unit !== undefined || !unitCode(perUnit))) refuse("a per-unit rate needs a currency source, no unit and a code")
-  if (Array.isArray(unitSource) && unitSource.length > 0 && (unit !== undefined || currencySource !== undefined || perUnit !== undefined)) {
-    refuse("a decimal with a static unit, a currency source or a rate declares no unit source")
+  if (unit !== undefined && !unitCode(unit)) refuse("a unit code must be non-blank without whitespace")
+  if (Array.isArray(unitSource) && unitSource.length > 0) {
+    if (unit !== undefined || currencySource !== undefined || perUnit !== undefined) refuse("a decimal with a static unit, a currency source or a rate declares no unit source")
+    const ids = unitSource as string[]
+    if (new Set(ids).size !== ids.length || ids.some((id) => !MEMBER_ID.test(id))) refuse("a unit source names distinct member ids matching [a-z][a-z0-9_]*")
   }
 }
+
+/** `norn_ir` member ids (`MEMBER_ID_PATTERN`). */
+const MEMBER_ID = /^[a-z][a-z0-9_]*$/
 
 /** A closed action schema node as a TypeScript type. */
 function schemaType(schema: unknown, at: string, depth: number, mode: Mode, root = false): string {

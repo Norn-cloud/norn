@@ -117,7 +117,7 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
       values: (members ?? []).filter(({ name }) => name !== action.objectIdField).map(({ name, text }) => ({ label: labelOf(name), value: text })),
     }
   }, [sentInput, action, fields])
-  const guard = phase.kind === "refused" ? refusedGuardWords(phase.explanation ?? phase.message) ?? refusedGuardWords(phase.message) : null
+  const guard = phase.kind === "refused" ? refusedGuardWords(phase.explanation || phase.message) ?? refusedGuardWords(phase.message) : null
   // A commit leaves nothing unsent; a refusal in a wizard opens the first step it names (one on no field stays on the review).
   useEffect(() => {
     if (phase.kind === "done") { onDirty?.(false); onCommitted?.() }
@@ -543,9 +543,9 @@ function RefusalPanel({ phase, action, technical, request, at, guard, top, atFie
   readonly onUse: ((path: string, text: string) => void) | undefined
 }) {
   if (phase.code === "core.laws.violated" && phase.reason !== undefined) {
-    return <LawRefusal code={phase.code} reason={phase.reason} explanation={phase.explanation ?? phase.message} fields={(action.inputSchema as { properties?: Readonly<Record<string, InputField>> } | null)?.properties ?? {}} technical={technical} onUse={onUse} request={request} at={at} decidedAt={phase.decidedAt} />
+    return <LawRefusal code={phase.code} reason={phase.reason} explanation={phase.explanation || phase.message} fields={(action.inputSchema as { properties?: Readonly<Record<string, InputField>> } | null)?.properties ?? {}} technical={technical} onUse={onUse} request={request} at={at} decidedAt={phase.decidedAt} />
   }
-  if (phase.code === "core.laws.violated") return <RedactedLawRefusal code={phase.code} message={phase.explanation ?? phase.message} technical={technical} request={request} at={at} decidedAt={phase.decidedAt} />
+  if (phase.code === "core.laws.violated") return <RedactedLawRefusal code={phase.code} message={phase.explanation || phase.message} technical={technical} request={request} at={at} decidedAt={phase.decidedAt} />
   const shown = atFields ? top : phase.diagnostics
   return (
     <div role="alert" className="grid gap-1.5 rounded-xl border border-border bg-card px-3 py-2.5 text-sm">

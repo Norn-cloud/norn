@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import ts from "typescript"
 import { CodegenError, generateTypes, readArtifactSet } from "../src/codegen.ts"
+import { mayReadActor } from "../src/zen-reads.ts"
 import { admit, compilePack } from "../src/pack.ts"
 import { CHECKER_PKG_ENV, checker } from "./checker.ts"
 
@@ -139,6 +140,10 @@ test("CODEGEN-TS-3: a shape outside the closed dialect, or two definitions of on
   expect(generateTypes(entityDecimal({ scale: 28, rounding: "refuse" }), { base: catalogs() })).toContain('readonly "learning_rate": string')
   refused(entityDecimal({ scale: 29 }), "a decimal's scale is not an integer in 0..=28")
   refused(entityDecimal({ scale: 2, unit: { code: "kg" } }), "a decimal is not well-formed: unit names no unit system")
+  refused(entityDecimal({ scale: 2, unit: { system: "ucum", code: "" } }), "a unit code must be non-blank without whitespace")
+  refused(entityDecimal({ scale: 2, unit: { system: "ucum", code: "k g" } }), "a unit code must be non-blank without whitespace")
+  refused(entityDecimal({ scale: 2, unitSource: ["model", "model"] }), "a unit source names distinct member ids")
+  refused(entityDecimal({ scale: 2, unitSource: ["Model"] }), "a unit source names distinct member ids")
   refused(entityDecimal({ scale: 2, unitSource: ["model"], unit: { system: "ucum", code: "kg" } }), "declares no unit source")
   refused(entityDecimal({ scale: 2, perUnit: { system: "ucum", code: "kg" } }), "a per-unit rate needs a currency source, no unit and a code")
   refused(entityDecimal({ scale: 19, rounding: "half_even" }), "a decimal's scale is not an integer in 0..=18 (a rate or a rounding decimal)")
@@ -267,6 +272,9 @@ test("CODEGEN-TS-6: the caller's input excludes actor-derived fields and makes d
     "input.weight in [0..actor.max_weight]", "input.n in [0..count(input.lines, true)]", "`${actor.subjectId}`", "{[actor.k]: 1}",
     'input.label ?? "a\\"actor"', 'input.label ?? "unterminated', "input.label ?? @", "input.label +", "(input.label", "[1, 2",
     "factor(input.id)", "input?.actor", "0..10", "{ a: input.x }.a", "input.d.notAMethod()",
+    // validate_evaluation_source runs first: exact plain-decimal numbers only, and its bounds.
+    "1e2", "input.weight * 1e2", "1_000", "99999999999999999999999999999999", "take(input.tags, 99999)", "join(input.tags, input.sep)",
+    `input.label ?? "${"x".repeat(4097)}"`, `${"(".repeat(129)}1${")".repeat(129)}`,
   ]) expect([expression, labelWith(expression)]).toEqual([expression, "dropped"])
   // Keeps: names inside strings, unquoted object keys (strings to ZEN), members named `actor`, a bare
   // `$` or top-level `#` (identifiers, not the root or a closure pointer), builtins, date methods,
@@ -277,10 +285,20 @@ test("CODEGEN-TS-6: the caller's input excludes actor-derived fields and makes d
     "input.label ?? input.parcel_id", "input.tags.map", "upper(input.label)", "input.d.isBefore(input.e)", "input.weight in [0..10]",
     "[1, 2][0]", "input.list[1:2]", "(input.a + 1) * 2", "not input.flag", "!input.flag", "input.a ? input.b : input.c",
     "input.weight >= 1", "input.a == input.b", "input.a != 2", "input.a <= 3", "input.label ?? null", "input.x in ['a', 'b']",
-    "input.label == 'x' and input.y > 2 or not input.z",
+    "input.label == 'x' and input.y > 2 or not input.z", "input.weight * 100", "1.50", "take(input.tags, 3)", "join(input.tags, ', ')",
+    "`a ${input.parcel_id} b`", `${"(".repeat(100)}input.parcel_id${")".repeat(100)}`,
   ]) {
     expect([expression, labelWith(expression)]).toEqual([expression, "optional"])
   }
+})
+
+test("CODEGEN-TS-7: speculative interval parses are memoized, as the ZEN parser memoizes them", () => {
+  // Every bracket is an interval candidate once the source holds `..`; without the parser's
+  // memo the speculation is exponential in the nesting.
+  const nested = `input.weight in ${"(".repeat(120)}[0..1]${")".repeat(120)}`
+  const start = performance.now()
+  expect(mayReadActor(nested)).toBe(false)
+  expect(performance.now() - start).toBeLessThan(1000)
 })
 
 test("CODEGEN-TS-4: generated maps type the client: unknown actions, wrong fields and JS numbers for decimals do not compile", () => {
