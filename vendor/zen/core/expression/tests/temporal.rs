@@ -2,13 +2,74 @@
 //! under wasm-bindgen-test on wasm32-unknown-unknown.
 
 use serde_json::json;
+use std::sync::Arc;
+use zen_expression::temporal::TzdbLookup;
 use zen_expression::{Isolate, Variable};
 
 #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
 use wasm_bindgen_test::wasm_bindgen_test as test;
 
+#[derive(Debug)]
+struct TestBundle {
+    zones: Vec<(String, usize, usize)>,
+    payload: Vec<u8>,
+}
+
+impl TestBundle {
+    fn from_bytes(bytes: &[u8]) -> Arc<Self> {
+        assert_eq!(&bytes[..8], b"NTZDB01\0");
+        let release_len = usize::from(u16::from_le_bytes(bytes[8..10].try_into().unwrap()));
+        let zone_count = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
+        let names_len = u32::from_le_bytes(bytes[16..20].try_into().unwrap()) as usize;
+        let index_start = 24 + release_len;
+        let names_start = index_start + zone_count * 16;
+        let payload_start = names_start + names_len;
+        let names = &bytes[names_start..payload_start];
+        let mut zones = Vec::with_capacity(zone_count);
+        for i in 0..zone_count {
+            let e = &bytes[index_start + i * 16..index_start + (i + 1) * 16];
+            let name_off = u32::from_le_bytes(e[0..4].try_into().unwrap()) as usize;
+            let name_len = u32::from_le_bytes(e[4..8].try_into().unwrap()) as usize;
+            let tzif_off = u32::from_le_bytes(e[8..12].try_into().unwrap()) as usize;
+            let tzif_len = u32::from_le_bytes(e[12..16].try_into().unwrap()) as usize;
+            let name = std::str::from_utf8(&names[name_off..name_off + name_len])
+                .unwrap()
+                .to_owned();
+            zones.push((name, tzif_off, tzif_len));
+        }
+        Arc::new(Self {
+            zones,
+            payload: bytes[payload_start..].to_vec(),
+        })
+    }
+}
+
+impl TzdbLookup for TestBundle {
+    fn tzif(&self, name: &str) -> Option<&[u8]> {
+        let idx = self
+            .zones
+            .binary_search_by(|(z, _, _)| z.as_str().cmp(name))
+            .ok()?;
+        let (_, off, len) = &self.zones[idx];
+        self.payload.get(*off..*off + *len)
+    }
+}
+
+fn tzdb_2025b() -> Arc<dyn TzdbLookup> {
+    TestBundle::from_bytes(include_bytes!(
+        "../../../../../crates/norn-expr/data/tzdb/2025b.tzdb"
+    ))
+}
+
+fn tzdb_2026c() -> Arc<dyn TzdbLookup> {
+    TestBundle::from_bytes(include_bytes!(
+        "../../../../../crates/norn-expr/data/tzdb/2026c.tzdb"
+    ))
+}
+
 fn evaluate(expression: &str) -> Variable {
     Isolate::new()
+        .with_tzdb(Some(tzdb_2025b()))
         .run_standard(expression)
         .unwrap_or_else(|error| panic!("{expression}: {error:?}"))
 }
@@ -43,7 +104,10 @@ fn text(expression: &str, expected: &str) {
 
 fn rejected(expression: &str) {
     assert!(
-        Isolate::new().run_standard(expression).is_err(),
+        Isolate::new()
+            .with_tzdb(Some(tzdb_2025b()))
+            .run_standard(expression)
+            .is_err(),
         "must reject {expression}"
     );
 }
@@ -540,13 +604,16 @@ mod metering {
             let meter = Meter::new(u64::MAX);
             Isolate::new()
                 .with_meter(Some(meter.clone()))
+                .with_tzdb(Some(tzdb_2025b()))
                 .run_standard(expression)
                 .unwrap();
             assert_eq!(meter.used(), expected, "{expression}");
             assert_eq!(meter.exhausted(), None);
 
             let tight = Meter::new(expected - 1);
-            let mut isolate = Isolate::new().with_meter(Some(tight.clone()));
+            let mut isolate = Isolate::new()
+                .with_meter(Some(tight.clone()))
+                .with_tzdb(Some(tzdb_2025b()));
             let want = BudgetExhausted {
                 limit: expected - 1,
                 used: expected,
@@ -692,5 +759,27 @@ fn zen7_resolve_local_timestamp_handles_dst_and_refuses_invalid_inputs() {
         "resolve_local_timestamp('0000-01-01T00:00:00', 'UTC', 'reject')",
     ] {
         rejected(expr);
+    }
+}
+
+#[test]
+fn resolve_local_timestamp_uses_explicit_isolate_tzdb_and_fails_closed_when_absent() {
+    let expr =
+        "string(resolve_local_timestamp('2026-12-31T23:30:00', 'America/Edmonton', 'reject'))";
+    // Without an injected tzdb, resolution fails closed.
+    assert!(Isolate::new().run_standard(expr).is_err());
+
+    // Interleaved evaluations on two isolates with 2025b vs 2026c stay isolated.
+    let mut iso_25 = Isolate::new().with_tzdb(Some(tzdb_2025b()));
+    let mut iso_26 = Isolate::new().with_tzdb(Some(tzdb_2026c()));
+    for _ in 0..3 {
+        assert_eq!(
+            iso_25.run_standard(expr).unwrap().as_str(),
+            Some("2027-01-01T06:30:00Z")
+        );
+        assert_eq!(
+            iso_26.run_standard(expr).unwrap().as_str(),
+            Some("2027-01-01T05:30:00Z")
+        );
     }
 }

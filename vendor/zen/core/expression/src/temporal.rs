@@ -22,9 +22,20 @@ use std::fmt::{Display, Formatter};
 use std::rc::Rc;
 use thiserror::Error;
 
-/// The one zone name `jiff-tzdb` 0.1.4 carries that `chrono-tz` 0.10.4 did not.
+/// The one zone name upstream tzdb carries that Norn never admits.
 /// Refusing it keeps the accepted IANA identifiers identical to Norn's pinned 597-zone set.
 const NOT_A_PINNED_IANA_ZONE: &str = "Factory";
+
+/// Explicit, immutable lookup interface for a versioned offline IANA timezone
+/// database bundle injected into a [`crate::vm::VM`] or [`crate::Isolate`] (#1440).
+///
+/// Lookup must be exact and case-sensitive; no host zoneinfo or global mutable
+/// state may be consulted.
+pub trait TzdbLookup: Send + Sync + std::fmt::Debug {
+    /// Returns raw TZif bytes for exact case-sensitive IANA zone `name`, or
+    /// `None` if absent.
+    fn tzif(&self, name: &str) -> Option<&[u8]>;
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum TemporalError {
@@ -46,6 +57,8 @@ pub enum TemporalError {
     InvalidLocalTimestamp,
     #[error("unknown IANA timezone; expected a canonical zone in the pinned database")]
     InvalidTimezone,
+    #[error("no IANA timezone database configured for expression evaluation")]
+    TzdbNotConfigured,
     #[error("invalid DST policy; expected 'reject', 'earlier', or 'later'")]
     InvalidDstPolicy,
     #[error("local wall time does not exist in this timezone (DST spring-forward gap)")]
@@ -199,9 +212,10 @@ impl Temporal {
         local_wall_time: &str,
         iana_tz: &str,
         dst_policy: &str,
+        tzdb: &dyn TzdbLookup,
     ) -> Result<Self, TemporalError> {
         let local = Self::parse_local_datetime(local_wall_time)?;
-        let tz = pinned_timezone(iana_tz)?;
+        let tz = pinned_timezone(iana_tz, tzdb)?;
         if !matches!(dst_policy, "reject" | "earlier" | "later") {
             return Err(TemporalError::InvalidDstPolicy);
         }
@@ -239,13 +253,27 @@ fn in_range(year: i16) -> bool {
     (1..=9999).contains(&year)
 }
 
-fn pinned_timezone(name: &str) -> Result<TimeZone, TemporalError> {
-    match jiff_tzdb::get(name) {
-        Some((canonical, data)) if canonical == name && name != NOT_A_PINNED_IANA_ZONE => {
-            TimeZone::tzif(name, data).map_err(|_| TemporalError::InvalidTimezone)
-        }
-        Some(_) | None => Err(TemporalError::InvalidTimezone),
+fn pinned_timezone(name: &str, tzdb: &dyn TzdbLookup) -> Result<TimeZone, TemporalError> {
+    if name == NOT_A_PINNED_IANA_ZONE {
+        return Err(TemporalError::InvalidTimezone);
     }
+    match tzdb.tzif(name) {
+        Some(data) => TimeZone::tzif(name, data).map_err(|_| TemporalError::InvalidTimezone),
+        None => Err(TemporalError::InvalidTimezone),
+    }
+}
+
+/// Evaluates `resolve_local_timestamp` using the VM's explicit [`TzdbLookup`].
+pub(crate) fn call_resolve_local_timestamp(
+    args: Arguments<'_>,
+    tzdb: Option<&dyn TzdbLookup>,
+) -> anyhow::Result<Variable> {
+    anyhow::ensure!(args.len() == 3, "expected 3 temporal arguments");
+    let tzdb = tzdb.ok_or(TemporalError::TzdbNotConfigured)?;
+    Ok(
+        Temporal::resolve_local_timestamp(args.str(0)?, args.str(1)?, args.str(2)?, tzdb)?
+            .into_variable(),
+    )
 }
 
 fn diff_seconds(a: &DateTime, b: &DateTime) -> Decimal {
@@ -473,12 +501,11 @@ pub(crate) fn definition(kind: InternalFunction) -> Rc<dyn FunctionDefinition> {
                     };
                     Ok(Variable::Number(overlap))
                 }
-                F::ResolveLocalTimestamp => Ok(Temporal::resolve_local_timestamp(
-                    args.str(0)?,
-                    args.str(1)?,
-                    args.str(2)?,
-                )?
-                .into_variable()),
+                F::ResolveLocalTimestamp => {
+                    // VM dispatches ResolveLocalTimestamp directly with its explicit TzdbLookup.
+                    // Any direct call outside the VM fails closed rather than reading ambient state.
+                    Err(TemporalError::TzdbNotConfigured.into())
+                }
                 _ => unreachable!("not a deterministic temporal builtin"),
             }
         }),

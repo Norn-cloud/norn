@@ -13,6 +13,7 @@ use rust_decimal::prelude::{FromPrimitive, ToPrimitive};
 use rust_decimal::{Decimal, MathematicalOps};
 use std::rc::Rc;
 use std::string::String as StdString;
+use std::sync::Arc;
 use zen_types::symbol::Symbol;
 
 #[derive(Debug)]
@@ -28,6 +29,7 @@ pub struct VM {
     scopes: Vec<LoopScope>,
     stack: Vec<Variable>,
     meter: Option<crate::meter::Meter>,
+    tzdb: Option<Arc<dyn crate::temporal::TzdbLookup>>,
 }
 
 impl Default for VM {
@@ -42,6 +44,7 @@ impl VM {
             scopes: Default::default(),
             stack: Default::default(),
             meter: None,
+            tzdb: None,
         }
     }
 
@@ -52,6 +55,20 @@ impl VM {
 
     pub fn take_meter(&mut self) -> Option<crate::meter::Meter> {
         self.meter.take()
+    }
+
+    /// Norn (#1440): attach an explicit versioned offline IANA tzdb lookup to this VM.
+    pub fn set_tzdb(&mut self, tzdb: Option<Arc<dyn crate::temporal::TzdbLookup>>) {
+        self.tzdb = tzdb;
+    }
+
+    pub fn take_tzdb(&mut self) -> Option<Arc<dyn crate::temporal::TzdbLookup>> {
+        self.tzdb.take()
+    }
+
+    pub fn with_tzdb(mut self, tzdb: Option<Arc<dyn crate::temporal::TzdbLookup>>) -> Self {
+        self.set_tzdb(tzdb);
+        self
     }
 
     pub fn run(&mut self, bytecode: &[Opcode], scope: &Scope) -> VMResult<Variable> {
@@ -73,6 +90,7 @@ impl VM {
         let mut inner = VMInner::new(bytecode, &mut self.stack, &mut self.scopes);
         {
             inner.meter = self.meter.as_ref();
+            inner.tzdb = self.tzdb.as_deref();
         }
 
         let output = inner.run(scope)?;
@@ -127,6 +145,7 @@ struct VMInner<'parent_ref, 'bytecode_ref> {
     ip: u32,
     exact_sites: Vec<Option<crate::scaled::ScaledArithmetic>>,
     meter: Option<&'parent_ref crate::meter::Meter>,
+    tzdb: Option<&'parent_ref dyn crate::temporal::TzdbLookup>,
 }
 
 impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
@@ -142,6 +161,7 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
             stack,
             bytecode,
             meter: None,
+            tzdb: None,
         }
     }
 
@@ -1288,19 +1308,35 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
                     self.scopes.pop();
                 }
                 Opcode::CallFunction { kind, arg_count } => {
-                    let function =
-                        FunctionRegistry::get_definition(kind).ok_or_else(|| OpcodeErr {
-                            opcode: "CallFunction".into(),
-                            message: format!("Function `{kind}` not found"),
-                        })?;
-
                     let params_start = self.stack.len().saturating_sub(*arg_count as usize);
-                    let result = function
-                        .call(Arguments(&self.stack[params_start..]))
+                    let result = if matches!(
+                        kind,
+                        crate::functions::FunctionKind::Internal(
+                            crate::functions::InternalFunction::ResolveLocalTimestamp
+                        )
+                    ) {
+                        crate::temporal::call_resolve_local_timestamp(
+                            Arguments(&self.stack[params_start..]),
+                            self.tzdb,
+                        )
                         .map_err(|err| OpcodeErr {
                             opcode: "CallFunction".into(),
                             message: format!("Function `{kind}` failed: {err}"),
-                        })?;
+                        })?
+                    } else {
+                        let function =
+                            FunctionRegistry::get_definition(kind).ok_or_else(|| OpcodeErr {
+                                opcode: "CallFunction".into(),
+                                message: format!("Function `{kind}` not found"),
+                            })?;
+
+                        function
+                            .call(Arguments(&self.stack[params_start..]))
+                            .map_err(|err| OpcodeErr {
+                                opcode: "CallFunction".into(),
+                                message: format!("Function `{kind}` failed: {err}"),
+                            })?
+                    };
 
                     self.stack.drain(params_start..);
                     self.push(result);

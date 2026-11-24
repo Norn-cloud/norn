@@ -1,17 +1,34 @@
 //! Compiled expressions and budgeted evaluation.
 
 use std::fmt;
+use std::sync::Arc;
 
 use norn_ir::ResourceLimitProfile;
 
 use zen_expression::expression::{Standard, Unary};
 use zen_expression::meter::Meter;
-use zen_expression::temporal::Temporal;
+use zen_expression::temporal::{Temporal, TzdbLookup};
 use zen_expression::vm::{VM, VMError};
 use zen_expression::{IsolateError, Scope, Variable, compile_expression, compile_unary_expression};
 
 use crate::convert::{from_variable, to_variable};
+use crate::temporal::TzdbBundle;
 use crate::{ExprError, Value};
+
+/// Private bridge from Norn's [`TzdbBundle`] to `zen-expression`'s [`TzdbLookup`],
+/// keeping all `zen-*` traits out of `norn-expr`'s public API boundary.
+#[derive(Debug)]
+struct ZenTzdbAdapter(TzdbBundle);
+
+impl TzdbLookup for ZenTzdbAdapter {
+    fn tzif(&self, name: &str) -> Option<&[u8]> {
+        self.0.tzif(name)
+    }
+}
+
+fn zen_tzdb(bundle: &TzdbBundle) -> Arc<dyn TzdbLookup> {
+    Arc::new(ZenTzdbAdapter(bundle.clone()))
+}
 
 /// A compiled ZEN standard expression, ready to evaluate repeatedly.
 ///
@@ -65,7 +82,22 @@ impl Expression {
         context: &Value,
         budget: EvaluationBudget,
     ) -> Result<Evaluation, ExprError> {
-        self.evaluate_metered(context, budget).result
+        self.evaluate_in(context, budget, TzdbBundle::default_bundle())
+    }
+
+    /// Evaluates the expression with an explicit versioned [`TzdbBundle`],
+    /// charging every operation to a fresh meter limited by `budget`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::evaluate`].
+    pub fn evaluate_in(
+        &self,
+        context: &Value,
+        budget: EvaluationBudget,
+        tzdb: &TzdbBundle,
+    ) -> Result<Evaluation, ExprError> {
+        self.evaluate_metered_in(context, budget, tzdb).result
     }
 
     /// Evaluates the expression and returns meter usage even when evaluation
@@ -78,7 +110,19 @@ impl Expression {
     /// remaining units are spent.
     #[must_use]
     pub fn evaluate_metered(&self, context: &Value, budget: EvaluationBudget) -> EvaluationAttempt {
-        self.evaluate_with_meter(context, &Meter::new(budget.units()))
+        self.evaluate_metered_in(context, budget, TzdbBundle::default_bundle())
+    }
+
+    /// Evaluates the expression with an explicit versioned [`TzdbBundle`] and
+    /// returns meter usage even when evaluation fails.
+    #[must_use]
+    pub fn evaluate_metered_in(
+        &self,
+        context: &Value,
+        budget: EvaluationBudget,
+        tzdb: &TzdbBundle,
+    ) -> EvaluationAttempt {
+        self.evaluate_with_meter(context, &Meter::new(budget.units()), tzdb)
     }
 
     /// VAL-ROUND: check the shared type grammar and the declared exact-site profile.
@@ -90,7 +134,20 @@ impl Expression {
         env: &crate::ZenTypeEnv,
         expected: &crate::Type,
     ) -> Result<crate::CheckedExpression, Vec<crate::Diagnostic>> {
-        crate::check::check_typed_expression(self, env, expected)
+        self.check_typed_in(env, expected, TzdbBundle::default_bundle())
+    }
+
+    /// VAL-ROUND: [`Self::check_typed`] against an explicit versioned [`TzdbBundle`].
+    ///
+    /// # Errors
+    /// Returns structural/type findings or refusals from the exact arithmetic profile.
+    pub fn check_typed_in(
+        &self,
+        env: &crate::ZenTypeEnv,
+        expected: &crate::Type,
+        tzdb: &TzdbBundle,
+    ) -> Result<crate::CheckedExpression, Vec<crate::Diagnostic>> {
+        crate::check::check_typed_expression_in(self, env, expected, tzdb)
     }
 
     /// VAL-EXACT-1: the compile [`Self::evaluate_admitted_metered`] runs before
@@ -104,8 +161,21 @@ impl Expression {
         env: &crate::ZenTypeEnv,
         expected: &crate::Type,
     ) -> Result<(), Vec<crate::Diagnostic>> {
+        self.check_admitted_in(env, expected, TzdbBundle::default_bundle())
+    }
+
+    /// VAL-EXACT-1: [`Self::check_admitted`] against an explicit versioned [`TzdbBundle`].
+    ///
+    /// # Errors
+    /// The exact profile's findings, when the expression needs that profile.
+    pub fn check_admitted_in(
+        &self,
+        env: &crate::ZenTypeEnv,
+        expected: &crate::Type,
+        tzdb: &TzdbBundle,
+    ) -> Result<(), Vec<crate::Diagnostic>> {
         if crate::check::requires_exact_profile(self, env, expected) {
-            self.check_typed(env, expected).map(|_| ())
+            self.check_typed_in(env, expected, tzdb).map(|_| ())
         } else {
             Ok(())
         }
@@ -122,12 +192,32 @@ impl Expression {
         env: &crate::ZenTypeEnv,
         expected: &crate::Type,
     ) -> EvaluationAttempt {
-        self.run_prepared(
-            &self.admission_kind(env, expected),
+        self.evaluate_admitted_metered_in(
             context,
             budget,
             env,
             expected,
+            TzdbBundle::default_bundle(),
+        )
+    }
+
+    /// VAL-EXACT-1: [`Self::evaluate_admitted_metered`] with an explicit versioned [`TzdbBundle`].
+    #[must_use]
+    pub fn evaluate_admitted_metered_in(
+        &self,
+        context: &Value,
+        budget: EvaluationBudget,
+        env: &crate::ZenTypeEnv,
+        expected: &crate::Type,
+        tzdb: &TzdbBundle,
+    ) -> EvaluationAttempt {
+        self.run_prepared(
+            &self.admission_kind(env, expected, tzdb),
+            context,
+            budget,
+            env,
+            expected,
+            tzdb,
         )
     }
 
@@ -140,15 +230,31 @@ impl Expression {
         env: &crate::ZenTypeEnv,
         expected: &crate::Type,
     ) -> PreparedAdmission {
+        self.prepare_admitted_in(env, expected, TzdbBundle::default_bundle())
+    }
+
+    /// [`Self::prepare_admitted`] against an explicit versioned [`TzdbBundle`].
+    #[must_use]
+    pub fn prepare_admitted_in(
+        &self,
+        env: &crate::ZenTypeEnv,
+        expected: &crate::Type,
+        tzdb: &TzdbBundle,
+    ) -> PreparedAdmission {
         PreparedAdmission {
             source: self.source.clone(),
-            kind: self.admission_kind(env, expected),
+            kind: self.admission_kind(env, expected, tzdb),
         }
     }
 
-    fn admission_kind(&self, env: &crate::ZenTypeEnv, expected: &crate::Type) -> Prepared {
+    fn admission_kind(
+        &self,
+        env: &crate::ZenTypeEnv,
+        expected: &crate::Type,
+        tzdb: &TzdbBundle,
+    ) -> Prepared {
         if crate::check::requires_exact_profile(self, env, expected) {
-            self.prepare_typed(env, expected)
+            self.prepare_typed(env, expected, tzdb)
         } else {
             Prepared::Plain
         }
@@ -166,6 +272,27 @@ impl Expression {
         env: &crate::ZenTypeEnv,
         expected: &crate::Type,
     ) -> EvaluationAttempt {
+        self.evaluate_prepared_in(
+            prepared,
+            context,
+            budget,
+            env,
+            expected,
+            TzdbBundle::default_bundle(),
+        )
+    }
+
+    /// [`Self::evaluate_prepared`] with an explicit versioned [`TzdbBundle`].
+    #[must_use]
+    pub fn evaluate_prepared_in(
+        &self,
+        prepared: &PreparedAdmission,
+        context: &Value,
+        budget: EvaluationBudget,
+        env: &crate::ZenTypeEnv,
+        expected: &crate::Type,
+        tzdb: &TzdbBundle,
+    ) -> EvaluationAttempt {
         if prepared.source != self.source {
             return EvaluationAttempt {
                 result: Err(ExprError::Compile {
@@ -177,7 +304,7 @@ impl Expression {
                 units_used: 0,
             };
         }
-        self.run_prepared(&prepared.kind, context, budget, env, expected)
+        self.run_prepared(&prepared.kind, context, budget, env, expected, tzdb)
     }
 
     fn run_prepared(
@@ -187,15 +314,16 @@ impl Expression {
         budget: EvaluationBudget,
         env: &crate::ZenTypeEnv,
         expected: &crate::Type,
+        tzdb: &TzdbBundle,
     ) -> EvaluationAttempt {
         match kind {
-            Prepared::Plain => self.evaluate_metered(context, budget),
+            Prepared::Plain => self.evaluate_metered_in(context, budget, tzdb),
             Prepared::Refused(error) => EvaluationAttempt {
                 result: Err(error.clone()),
                 units_used: 0,
             },
             Prepared::Exact(lowered) => {
-                let mut attempt = lowered.evaluate_exact_site(context, budget, None, false);
+                let mut attempt = lowered.evaluate_exact_site(context, budget, None, false, tzdb);
                 if let Ok(evaluation) = &mut attempt.result
                     && let Err(error) = materialize(expected, env, &mut evaluation.value)
                 {
@@ -206,8 +334,13 @@ impl Expression {
         }
     }
 
-    fn prepare_typed(&self, env: &crate::ZenTypeEnv, expected: &crate::Type) -> Prepared {
-        let checked = match self.check_typed(env, expected) {
+    fn prepare_typed(
+        &self,
+        env: &crate::ZenTypeEnv,
+        expected: &crate::Type,
+        tzdb: &TzdbBundle,
+    ) -> Prepared {
+        let checked = match self.check_typed_in(env, expected, tzdb) {
             Ok(checked) => checked,
             Err(found) => {
                 return Prepared::Refused(ExprError::Compile {
@@ -239,12 +372,27 @@ impl Expression {
         env: &crate::ZenTypeEnv,
         expected: &crate::Type,
     ) -> EvaluationAttempt {
+        self.evaluate_typed_metered_in(context, budget, env, expected, TzdbBundle::default_bundle())
+    }
+
+    /// VAL-EXACT-1 / VAL-ROUND: [`Self::evaluate_typed_metered`] with an
+    /// explicit versioned [`TzdbBundle`].
+    #[must_use]
+    pub fn evaluate_typed_metered_in(
+        &self,
+        context: &Value,
+        budget: EvaluationBudget,
+        env: &crate::ZenTypeEnv,
+        expected: &crate::Type,
+        tzdb: &TzdbBundle,
+    ) -> EvaluationAttempt {
         self.run_prepared(
-            &self.prepare_typed(env, expected),
+            &self.prepare_typed(env, expected, tzdb),
             context,
             budget,
             env,
             expected,
+            tzdb,
         )
     }
 
@@ -257,7 +405,20 @@ impl Expression {
         budget: EvaluationBudget,
         site: Option<&norn_ir::PropertyType>,
     ) -> EvaluationAttempt {
-        self.evaluate_exact_site(context, budget, site, false)
+        self.evaluate_exact_metered_in(context, budget, site, TzdbBundle::default_bundle())
+    }
+
+    /// VAL-EXACT-1 / VAL-ROUND: [`Self::evaluate_exact_metered`] with an
+    /// explicit versioned [`TzdbBundle`].
+    #[must_use]
+    pub fn evaluate_exact_metered_in(
+        &self,
+        context: &Value,
+        budget: EvaluationBudget,
+        site: Option<&norn_ir::PropertyType>,
+        tzdb: &TzdbBundle,
+    ) -> EvaluationAttempt {
+        self.evaluate_exact_site(context, budget, site, false, tzdb)
     }
 
     fn evaluate_exact_site(
@@ -266,6 +427,7 @@ impl Expression {
         budget: EvaluationBudget,
         site: Option<&norn_ir::PropertyType>,
         nullable: bool,
+        tzdb: &TzdbBundle,
     ) -> EvaluationAttempt {
         let meter = Meter::new(budget.units());
         let result = (|| {
@@ -284,7 +446,7 @@ impl Expression {
                 }
             };
             let evaluated =
-                self.evaluate_with_meter(context, &meter.with_exact_arithmetic(profile));
+                self.evaluate_with_meter(context, &meter.with_exact_arithmetic(profile), tzdb);
             let mut evaluated = evaluated.result?;
             if nullable && evaluated.value == Value::Null {
                 return Ok(evaluated);
@@ -305,9 +467,15 @@ impl Expression {
         }
     }
 
-    fn evaluate_with_meter(&self, context: &Value, meter: &Meter) -> EvaluationAttempt {
+    fn evaluate_with_meter(
+        &self,
+        context: &Value,
+        meter: &Meter,
+        tzdb: &TzdbBundle,
+    ) -> EvaluationAttempt {
         let mut vm = VM::new();
         vm.set_meter(Some(meter.clone()));
+        vm.set_tzdb(Some(zen_tzdb(tzdb)));
         let result = (|| {
             let context = to_variable(context)?;
             let result = self.compiled.evaluate_with(context, &mut vm);
@@ -435,6 +603,21 @@ impl UnaryTest {
         subject: &Value,
         budget: EvaluationBudget,
     ) -> Result<bool, ExprError> {
+        self.evaluate_in(context, subject, budget, TzdbBundle::default_bundle())
+    }
+
+    /// Evaluates the unary test against an explicit versioned [`TzdbBundle`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::evaluate`].
+    pub fn evaluate_in(
+        &self,
+        context: &Value,
+        subject: &Value,
+        budget: EvaluationBudget,
+        tzdb: &TzdbBundle,
+    ) -> Result<bool, ExprError> {
         let Some(compiled) = &self.compiled else {
             return Ok(true);
         };
@@ -443,6 +626,7 @@ impl UnaryTest {
         let meter = Meter::new(budget.units());
         let mut vm = VM::new();
         vm.set_meter(Some(meter.clone()));
+        vm.set_tzdb(Some(zen_tzdb(tzdb)));
         let result = compiled.evaluate_with_scope(&scope, &mut vm);
         if let Some(exhausted) = meter.exhausted() {
             return Err(ExprError::BudgetExhausted {

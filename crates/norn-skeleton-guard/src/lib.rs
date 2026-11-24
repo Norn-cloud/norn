@@ -61,6 +61,7 @@ pub mod lint_pin;
 pub mod loc_cap;
 pub mod ratchet;
 pub mod ring0_boundary;
+pub mod tzdb_pin;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -152,11 +153,7 @@ pub const CRATES: &[CrateRule] = &[
         &["norn-canonical"],
         &["serde", "schemars", "rust_decimal", "serde_json"],
     ),
-    r0(
-        "norn-expr",
-        &["norn-ir"],
-        &["zen-expression", "jiff", "jiff-tzdb"],
-    ),
+    r0("norn-expr", &["norn-ir"], &["zen-expression", "jiff"]),
     // Bounded inheritance classification: Ascent (vendored, clock-free profile)
     // at runtime; norn-datalog and quote only at build time.
     r0(
@@ -1068,16 +1065,15 @@ fn check_calendar_dependencies(name: &str, dep: &Dependency, out: &mut Vec<Viola
             ));
         }
     }
-    // The naming-series timezone data: IANA tzdb 2025b, recorded in events as
-    // `NAMING_SERIES_TZDB_VERSION`. A new release is a versioned change (#1440).
-    if name == "norn-expr"
+    // Runtime `jiff-tzdb` is forbidden (#1440): `norn-expr` and `zen-expression`
+    // must use versioned offline tzdb bundles (`tzdb_pin::check_tzdb_bundles`).
+    if (name == "norn-expr" || name == "zen-expression")
         && dep_name == "jiff-tzdb"
         && dep.kind != DependencyKind::Development
-        && (dep.req.to_string() != "=0.1.4" || !dep.features.is_empty())
     {
         out.push(violation(
             "norn-expr-timezone-features",
-            "`norn-expr` must pin jiff-tzdb = 0.1.4 (tzdb 2025b) with no features".to_owned(),
+            format!("`{name}` must not depend on runtime `jiff-tzdb`; use versioned offline tzdb bundles"),
         ));
     }
 }

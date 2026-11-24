@@ -7,12 +7,26 @@ use std::pin::pin;
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
+use norn_expr::temporal::TzdbBundle;
 use norn_expr::{EvaluationBudget, Value};
 use zen_engine::meter::Meter;
 use zen_engine::{
     DecisionGraphTrace, EvaluationError, EvaluationOptions, EvaluationTrace, StrictErrorSite,
-    StrictEvaluationError, Variable,
+    StrictEvaluationError, TzdbLookup, Variable,
 };
+
+#[derive(Debug)]
+struct DecisionTzdb(TzdbBundle);
+
+impl TzdbLookup for DecisionTzdb {
+    fn tzif(&self, name: &str) -> Option<&[u8]> {
+        self.0.tzif(name)
+    }
+}
+
+fn engine_tzdb(bundle: &TzdbBundle) -> Arc<dyn TzdbLookup> {
+    Arc::new(DecisionTzdb(bundle.clone()))
+}
 
 use crate::admit::ENGINE_MAX_DEPTH;
 use norn_ir::{DecisionOutput, FactChange, RuntimeObject, RuntimeValue};
@@ -174,11 +188,12 @@ fn evaluate_with(
         trace,
         max_depth: ENGINE_MAX_DEPTH,
     };
-    let outcome = poll_once(
-        decision
-            .decision()
-            .evaluate_metered(input, options, meter.clone()),
-    )?;
+    let outcome = poll_once(decision.decision().evaluate_metered_with_tzdb(
+        input,
+        options,
+        meter.clone(),
+        Some(engine_tzdb(TzdbBundle::default_bundle())),
+    ))?;
     // Exhaustion wins over whatever the engine made of it.
     if let Some(exhausted) = meter.exhausted() {
         return Err(DecisionError::BudgetExhausted {

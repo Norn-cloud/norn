@@ -174,3 +174,187 @@ fn zen7_temporal_intervals_dst_resolution_and_no_epoch_builtins() {
         refused(forbidden, &Type::Json, OUTSIDE);
     }
 }
+
+#[test]
+fn versioned_tzdb_2025b_and_2026c_edmonton_regression_and_isolation() {
+    use norn_expr::temporal::{
+        DstPolicy, NamingSeriesDate, TzdbBundle, naming_series_date_at_in,
+        resolve_local_timestamp_in,
+    };
+    use norn_expr::{UnaryTest, check_expression_with_in};
+
+    let b25 = TzdbBundle::v2025b();
+    let b26 = TzdbBundle::v2026c();
+    let env = probe_env();
+    let limits = roomy_limits();
+
+    // 2027-01-01T06:30:00Z in America/Edmonton:
+    // - 2025b: MST (UTC-7) -> 2026-12-31 23:30 (naming-series year 2026)
+    // - 2026c: permanent MDT/CST (UTC-6) -> 2027-01-01 00:30 (naming-series year 2027)
+    let epoch_ms = 1_798_785_000_000_i64;
+    assert_eq!(
+        naming_series_date_at_in(epoch_ms, "America/Edmonton", b25),
+        Ok(NamingSeriesDate {
+            year: 2026,
+            month: 12,
+            day: 31,
+        })
+    );
+    assert_eq!(
+        naming_series_date_at_in(epoch_ms, "America/Edmonton", b26),
+        Ok(NamingSeriesDate {
+            year: 2027,
+            month: 1,
+            day: 1,
+        })
+    );
+    assert_eq!(
+        resolve_local_timestamp_in(
+            "2026-12-31T23:30:00",
+            "America/Edmonton",
+            DstPolicy::Reject,
+            b25
+        ),
+        Ok("2027-01-01T06:30:00Z".to_owned())
+    );
+    assert_eq!(
+        resolve_local_timestamp_in(
+            "2027-01-01T00:30:00",
+            "America/Edmonton",
+            DstPolicy::Reject,
+            b26
+        ),
+        Ok("2027-01-01T06:30:00Z".to_owned())
+    );
+
+    // Same expression checked and evaluated under explicit 2025b vs 2026c bundles.
+    let source = "resolve_local_timestamp('2026-12-31T23:30:00', 'America/Edmonton', 'reject')";
+    let expr = Expression::compile(source).expect("compile");
+    let checked_25 = check_expression_with_in(
+        &expr,
+        &env,
+        &Type::Timestamp {
+            timezone: TimezonePolicy::Utc,
+        },
+        &limits,
+        b25,
+    )
+    .expect("check 2025b");
+    let checked_26 = check_expression_with_in(
+        &expr,
+        &env,
+        &Type::Timestamp {
+            timezone: TimezonePolicy::Utc,
+        },
+        &limits,
+        b26,
+    )
+    .expect("check 2026c");
+    let root = Value::object([("input", Value::object(std::iter::empty::<(&str, Value)>()))]);
+
+    // Interleaved same-thread evaluations prove zero thread-local/global leakage.
+    for _ in 0..4 {
+        let out_25 = expr
+            .evaluate_in(&root, EvaluationBudget::new(checked_25.cost().units()), b25)
+            .expect("eval 2025b");
+        let out_26 = expr
+            .evaluate_in(&root, EvaluationBudget::new(checked_26.cost().units()), b26)
+            .expect("eval 2026c");
+        assert_eq!(out_25.value(), &Value::from("2027-01-01T06:30:00Z"));
+        assert_eq!(out_26.value(), &Value::from("2027-01-01T05:30:00Z"));
+    }
+
+    // UnaryTest::evaluate_in honors explicit bundle selection too.
+    let unary = UnaryTest::compile(
+        "timestamp($) == resolve_local_timestamp('2026-12-31T23:30:00', 'America/Edmonton', 'reject')",
+    )
+    .expect("unary compile");
+    let subject = Value::from("2027-01-01T06:30:00Z");
+    assert!(
+        unary
+            .evaluate_in(&root, &subject, EvaluationBudget::default(), b25)
+            .expect("unary 2025b")
+    );
+    assert!(
+        !unary
+            .evaluate_in(&root, &subject, EvaluationBudget::default(), b26)
+            .expect("unary 2026c")
+    );
+
+    // Concurrent multi-thread evaluations with 2025b and 2026c produce exact independent results.
+    let handles: Vec<_> = (0..8)
+        .map(|worker| {
+            let expr = expr.clone();
+            let root = root.clone();
+            std::thread::spawn(move || {
+                let use_26 = worker % 2 == 1;
+                let bundle = if use_26 {
+                    TzdbBundle::v2026c()
+                } else {
+                    TzdbBundle::v2025b()
+                };
+                let expected = if use_26 {
+                    Value::from("2027-01-01T05:30:00Z")
+                } else {
+                    Value::from("2027-01-01T06:30:00Z")
+                };
+                for _ in 0..25 {
+                    let result = expr
+                        .evaluate_in(&root, EvaluationBudget::default(), bundle)
+                        .expect("thread eval");
+                    assert_eq!(result.value(), &expected);
+                }
+            })
+        })
+        .collect();
+    for handle in handles {
+        handle.join().expect("worker joined");
+    }
+
+    // Literal admission honors the explicit bundle (custom subset bundle with only UTC rejects America/Edmonton).
+    let utc_tzif = b25.tzif("UTC").expect("UTC tzif");
+    let mut only_utc = Vec::new();
+    only_utc.extend_from_slice(norn_expr::temporal::TZDB_BUNDLE_MAGIC);
+    only_utc.extend_from_slice(&5_u16.to_le_bytes()); // "2099u"
+    only_utc.extend_from_slice(&0_u16.to_le_bytes());
+    only_utc.extend_from_slice(&1_u32.to_le_bytes());
+    only_utc.extend_from_slice(&3_u32.to_le_bytes());
+    only_utc.extend_from_slice(&u32::try_from(utc_tzif.len()).unwrap().to_le_bytes());
+    only_utc.extend_from_slice(b"2099u");
+    only_utc.extend_from_slice(&0_u32.to_le_bytes());
+    only_utc.extend_from_slice(&3_u32.to_le_bytes());
+    only_utc.extend_from_slice(&0_u32.to_le_bytes());
+    only_utc.extend_from_slice(&u32::try_from(utc_tzif.len()).unwrap().to_le_bytes());
+    only_utc.extend_from_slice(b"UTC");
+    only_utc.extend_from_slice(utc_tzif);
+    let utc_bundle = TzdbBundle::from_bytes(&only_utc).expect("synthetic utc-only bundle");
+
+    assert!(
+        check_expression_with_in(
+            &expr,
+            &env,
+            &Type::Timestamp {
+                timezone: TimezonePolicy::Utc,
+            },
+            &limits,
+            &utc_bundle,
+        )
+        .is_err(),
+        "America/Edmonton must be rejected by literal admission under a UTC-only bundle"
+    );
+    let utc_expr =
+        Expression::compile("resolve_local_timestamp('2026-12-31T23:30:00', 'UTC', 'reject')")
+            .expect("utc expr");
+    assert!(
+        check_expression_with_in(
+            &utc_expr,
+            &env,
+            &Type::Timestamp {
+                timezone: TimezonePolicy::Utc,
+            },
+            &limits,
+            &utc_bundle,
+        )
+        .is_ok()
+    );
+}

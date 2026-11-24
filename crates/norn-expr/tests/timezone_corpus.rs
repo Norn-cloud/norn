@@ -26,7 +26,9 @@ use std::fmt::Write as _;
 
 use jiff::Timestamp;
 use jiff::tz::{Offset, TimeZone};
-use norn_expr::temporal::{canonical_timestamp, naming_series_date_at, timestamp_ordering_key};
+use norn_expr::temporal::{
+    TzdbBundle, canonical_timestamp, naming_series_date_at, timestamp_ordering_key,
+};
 
 /// `(category, cases, FNV-1a)` recorded by running this test on the chrono
 /// build (merge-base `3f787c06c4`, with `jiff`/`jiff-tzdb` added as
@@ -191,7 +193,7 @@ impl Fingerprint {
 
 /// The pre-2100 transitions of `zone`, with the offsets before and after.
 fn transitions(zone: &str) -> Vec<(Timestamp, Offset, Offset)> {
-    let (_, data) = jiff_tzdb::get(zone).expect("zone in jiff-tzdb");
+    let data = TzdbBundle::v2025b().tzif(zone).expect("zone in tzdb 2025b");
     let tz = TimeZone::tzif(zone, data).expect("TZif parses");
     let from = Timestamp::from_second(FROM_SECOND).expect("1800");
     let until = Timestamp::from_second(UNTIL_SECOND).expect("2100");

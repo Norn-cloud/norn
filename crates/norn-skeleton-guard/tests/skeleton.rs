@@ -494,15 +494,121 @@ fn guard_requires_pinned_std_only_timezone_reader() {
     });
     assert!(rules_of(&check_dependencies(&floating_pin)).contains(&"norn-expr-timezone-features"));
 
-    for req in ["^0.1.4", "=0.1.8", "0.1"] {
-        let moved_data = edit_dependency(&base, "norn-expr", "jiff-tzdb", |dependency| {
-            dependency["req"] = json!(req);
-        });
+    // Runtime `jiff-tzdb` must not re-enter `norn-expr` or `zen-expression` (#1440).
+    for consumer in ["norn-expr", "zen-expression"] {
+        let reintroduced = with_dep(consumer, "jiff-tzdb");
+        let violations = check_dependencies(&reintroduced);
         assert!(
-            rules_of(&check_dependencies(&moved_data)).contains(&"norn-expr-timezone-features"),
-            "{req}"
+            rules_of(&violations).contains(&"norn-expr-timezone-features"),
+            "{consumer}: {}",
+            render(&violations)
         );
     }
+}
+
+#[test]
+fn pinned_offline_tzdb_bundles_match_headers_digests_and_sources() {
+    let violations = norn_skeleton_guard::tzdb_pin::check_tzdb_bundles(&workspace_root());
+    assert_eq!(
+        violations,
+        [],
+        "tzdb bundle pin violations:\n{}",
+        render(&violations)
+    );
+}
+
+#[test]
+fn guard_detects_corrupted_or_unpinned_tzdb_bundles() {
+    use norn_skeleton_guard::tzdb_pin::{
+        PINNED_TZDB_BUNDLES, check_tzdb_bundles_against, validate_bundle_structure,
+    };
+
+    let root = workspace_root();
+    let pin = PINNED_TZDB_BUNDLES[0];
+    let good_bytes = std::fs::read(root.join(pin.path)).expect("2025b bundle");
+    assert_eq!(
+        validate_bundle_structure(&good_bytes, pin.release, pin.zone_count),
+        Ok(())
+    );
+
+    // 1. Bad magic header rejected.
+    let mut bad_magic = good_bytes.clone();
+    bad_magic[0] = b'X';
+    assert!(
+        validate_bundle_structure(&bad_magic, pin.release, pin.zone_count)
+            .is_err_and(|e| e.contains("magic"))
+    );
+
+    // 2. Wrong embedded release rejected.
+    assert!(
+        validate_bundle_structure(&good_bytes, "2099z", pin.zone_count)
+            .is_err_and(|e| e.contains("embedded release"))
+    );
+
+    // 3. Wrong zone count rejected.
+    assert!(
+        validate_bundle_structure(&good_bytes, pin.release, 598)
+            .is_err_and(|e| e.contains("expected 598 zones"))
+    );
+
+    // 4. Synthetic bundle containing `Factory` rejected.
+    let mut factory_bundle = Vec::new();
+    let tzif_stub = [b'T', b'Z', b'i', b'f', b'2', 0];
+    let mut tzif_44 = vec![0_u8; 44];
+    tzif_44[..tzif_stub.len()].copy_from_slice(&tzif_stub);
+    factory_bundle.extend_from_slice(b"NTZDB01\0");
+    factory_bundle.extend_from_slice(&5_u16.to_le_bytes());
+    factory_bundle.extend_from_slice(&0_u16.to_le_bytes());
+    factory_bundle.extend_from_slice(&1_u32.to_le_bytes());
+    factory_bundle.extend_from_slice(&7_u32.to_le_bytes());
+    factory_bundle.extend_from_slice(&44_u32.to_le_bytes());
+    factory_bundle.extend_from_slice(b"2025b");
+    factory_bundle.extend_from_slice(&0_u32.to_le_bytes());
+    factory_bundle.extend_from_slice(&7_u32.to_le_bytes());
+    factory_bundle.extend_from_slice(&0_u32.to_le_bytes());
+    factory_bundle.extend_from_slice(&44_u32.to_le_bytes());
+    factory_bundle.extend_from_slice(b"Factory");
+    factory_bundle.extend_from_slice(&tzif_44);
+    assert!(
+        validate_bundle_structure(&factory_bundle, "2025b", 1)
+            .is_err_and(|e| e.contains("Factory"))
+    );
+
+    // 5. Digest drift & source-pin drift detected on a synthetic tempdir workspace.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let bundle_dest = dir.path().join(pin.path);
+    std::fs::create_dir_all(bundle_dest.parent().expect("parent")).expect("mkdir");
+    let mut tampered = good_bytes;
+    let last = tampered.len().checked_sub(1).expect("non-empty");
+    tampered[last] ^= 0xff;
+    std::fs::write(&bundle_dest, &tampered).expect("write tampered");
+
+    let source_dest = dir.path().join(pin.source_json);
+    std::fs::create_dir_all(source_dest.parent().expect("parent")).expect("mkdir");
+    std::fs::write(
+        &source_dest,
+        r#"{"releaseId":"2025b","crateVersion":"0.1.9","crateSha256":"bad","files":[]}"#,
+    )
+    .expect("write bad source");
+
+    let rust_dest = dir.path().join("crates/norn-expr/src/tzdb.rs");
+    std::fs::create_dir_all(rust_dest.parent().expect("parent")).expect("mkdir");
+    std::fs::write(&rust_dest, "// missing pinned hash\n").expect("write rust");
+
+    let single = [pin];
+    let violations = check_tzdb_bundles_against(dir.path(), &single);
+    let rules = rules_of(&violations);
+    assert!(
+        rules.contains(&"tzdb-bundle-digest"),
+        "{}",
+        render(&violations)
+    );
+    assert!(
+        rules.contains(&"tzdb-source-pin"),
+        "{}",
+        render(&violations)
+    );
+    assert!(rules.contains(&"tzdb-rust-pin"), "{}", render(&violations));
 }
 
 #[test]

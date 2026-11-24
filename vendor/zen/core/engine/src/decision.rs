@@ -78,8 +78,21 @@ impl Decision {
         options: EvaluationOptions,
         meter: zen_expression::meter::Meter,
     ) -> Result<DecisionGraphResponse, Box<EvaluationError>> {
+        self.evaluate_metered_with_tzdb(context, options, meter, None)
+            .await
+    }
+
+    /// Norn (#1440): metered evaluation with an explicit offline IANA tzdb lookup.
+    pub async fn evaluate_metered_with_tzdb(
+        &self,
+        context: Variable,
+        options: EvaluationOptions,
+        meter: zen_expression::meter::Meter,
+        tzdb: Option<Arc<dyn zen_expression::temporal::TzdbLookup>>,
+    ) -> Result<DecisionGraphResponse, Box<EvaluationError>> {
         let mut config = self.graph_config(options);
         config.extensions.meter = Some(meter);
+        config.extensions.tzdb = tzdb;
         let mut decision_graph = DecisionGraph::try_new(config)?;
 
         let response = decision_graph.evaluate(context).await?;
