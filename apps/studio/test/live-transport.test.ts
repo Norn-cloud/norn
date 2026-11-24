@@ -1,7 +1,12 @@
-import { expect, spyOn, test } from "bun:test"
+import { afterEach, expect, mock, spyOn, test } from "bun:test"
 import { QueryClient, QueryObserver, queryOptions } from "@tanstack/react-query"
 import { NotServed, ScopeSupersededError, currentMode, liveTransport, modeQuery, readMode, refreshMode, retryMode } from "../src/lib/live-transport.ts"
-import { recordedTransport, transport } from "../src/lib/transport.ts"
+
+const realFetch = globalThis.fetch
+afterEach(() => {
+  globalThis.fetch = realFetch
+  refreshMode()
+})
 
 const ME = { user: { id: "user:dev", name: "user:dev", email: "" }, organization: { id: "local", name: "shop", role: "local developer" }, environmentId: "dev" }
 const DEFINITIONS = '{"admitted":true,"version":3,"artifacts":[{"artifactId":"shop.Product.entity","version":"0.1.0","payload":{"scale":2.50}}]}'
@@ -84,7 +89,17 @@ test("Retry during the session body read leaves the catalog and mode caches live
   const client = new QueryClient()
   const query = modeQuery(undefined)
   const observer = new QueryObserver(client, query)
-  const catalogQuery = queryOptions({ queryKey: ["catalog"], queryFn: transport.catalog })
+  const recorded = mock(async () => ({ document: [], numbers: new Map<string, string>(), origin: "recorded" as const }))
+  // Mirrors transport.catalog() without importing ../src/lib/transport.ts, which other test files mock.module().
+  const catalogQuery = queryOptions({
+    queryKey: ["catalog"],
+    queryFn: async () => {
+      const active = await currentMode()
+      return active.kind === "live"
+        ? liveTransport(active.catalog, (input, init) => fetch(input, init), active.counts, active.scope).catalog()
+        : recorded()
+    },
+  })
   let markBodyReading = () => {}
   const bodyReading = new Promise<void>((resolve) => { markBodyReading = resolve })
   let finishCatalog = () => {}
@@ -110,7 +125,6 @@ test("Retry during the session body read leaves the catalog and mode caches live
   const fetch = spyOn(globalThis, "fetch").mockImplementation(
     Object.assign(fetchProbe, { preconnect: globalThis.fetch.preconnect }),
   )
-  const recorded = spyOn(recordedTransport, "catalog").mockResolvedValue({ document: [], numbers: new Map(), origin: "recorded" })
   refreshMode()
   let unsubscribe: (() => void) | undefined
   try {
@@ -138,7 +152,6 @@ test("Retry during the session body read leaves the catalog and mode caches live
     unsubscribe?.()
     client.clear()
     refreshMode()
-    recorded.mockRestore()
     fetch.mockRestore()
   }
 })
