@@ -201,30 +201,56 @@ impl DecisionContracts for StepContracts {
 
 /// Fuel for carrying `value` across a helper boundary, charged before it is
 /// converted: one unit for every visited value (an empty string included),
-/// plus the UTF-8 bytes of every string and every object key. The walk stops
-/// once past `cap`; any result above `cap` exhausts the meter the same way.
+/// plus the UTF-8 bytes of every string and every object key. A value's own
+/// unit is paid when it is queued, so the walk stops (at `cap + 1`, which
+/// exhausts the meter like any larger charge) before it queues or scans
+/// anything past `cap`.
 fn boundary_units(value: &Variable, cap: u64) -> u64 {
+    boundary_walk(value, cap, &mut 0)
+}
+
+/// [`boundary_units`], counting in `queued` every value it queued.
+fn boundary_walk(value: &Variable, cap: u64, queued: &mut u64) -> u64 {
+    let over = cap.saturating_add(1);
     let bytes = |len: usize| u64::try_from(len).unwrap_or(u64::MAX);
-    let mut units: u64 = 0;
+    let mut units: u64 = 1;
     let mut pending = vec![value.clone()];
+    *queued = 1;
+    // Pays a child's unit and key bytes, then queues it; `false` once past `cap`.
+    let mut enqueue =
+        |units: &mut u64, key: usize, child: &Variable, pending: &mut Vec<Variable>| {
+            *units = units.saturating_add(1).saturating_add(bytes(key));
+            if *units > cap {
+                return false;
+            }
+            *queued = queued.saturating_add(1);
+            pending.push(child.clone());
+            true
+        };
     while let Some(current) = pending.pop() {
         if units > cap {
-            break;
+            return over;
         }
-        units = units.saturating_add(1);
         match &current {
             Variable::String(text) => units = units.saturating_add(bytes(text.len())),
-            Variable::Array(items) => pending.extend(items.borrow().iter().cloned()),
+            Variable::Array(items) => {
+                for item in items.borrow().iter() {
+                    if !enqueue(&mut units, 0, item, &mut pending) {
+                        return over;
+                    }
+                }
+            }
             Variable::Object(members) => {
                 for (key, item) in members.borrow().iter() {
-                    units = units.saturating_add(bytes(key.len()));
-                    pending.push(item.clone());
+                    if !enqueue(&mut units, key.len(), item, &mut pending) {
+                        return over;
+                    }
                 }
             }
             Variable::Null | Variable::Bool(_) | Variable::Number(_) | Variable::Dynamic(_) => {}
         }
     }
-    units.min(cap.saturating_add(1))
+    units.min(over)
 }
 
 /// Validates a fold's profile, bounds and order keys, returning its derived
@@ -401,6 +427,29 @@ mod tests {
         contracts().check("step", &value, true, Some(&meter))?;
         assert_eq!(meter.used(), boundary_units(&value, u64::MAX));
         assert_eq!(boundary_units(&value, 1), 2);
+        Ok(())
+    }
+
+    /// #1708: past the budget the walk neither scans nor queues the rest of a
+    /// large array or object.
+    #[test]
+    fn boundary_fuel_stops_queueing_once_the_budget_is_spent() -> Checked {
+        let strings = Value::Array(vec![Value::from(""); 10_000]);
+        let members = Value::Object(
+            (0..10_000)
+                .map(|n| (format!("k{n}"), Value::Null))
+                .collect(),
+        );
+        for value in [&strings, &members] {
+            let variable = to_variable(value)?;
+            let mut queued = 0;
+            assert_eq!(boundary_walk(&variable, 1, &mut queued), 2);
+            assert_eq!(queued, 1);
+            let mut all = 0;
+            let units = boundary_walk(&variable, u64::MAX, &mut all);
+            assert_eq!(all, 10_001);
+            assert_eq!(boundary_units(&variable, units), units);
+        }
         Ok(())
     }
 }

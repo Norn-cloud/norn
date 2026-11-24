@@ -1062,6 +1062,38 @@ fn folded(
     Ok(result.output.commands[0]["state"].clone())
 }
 
+/// #1708: a fold carries its accumulator in the exact spelling its schema
+/// checked: a decomposed string survives the initial value (an empty fold
+/// returns it) and every step (a nonempty fold appends to it).
+#[test]
+fn folds_keep_a_decomposed_accumulator_string_as_spelled() -> Built<()> {
+    let decomposed = "e\u{301}";
+    let mut rules = fold_rules(
+        &closed(&json!({ "id": { "type": "string" } })),
+        &closed(&json!({ "label": { "type": "string" } })),
+        &[vec![("label", "accumulator.label + 'e\u{301}'")]],
+    );
+    let Some(norn_ir::JdmNode::DecisionNode { content, .. }) = rules
+        .0
+        .graph
+        .as_mut()
+        .and_then(|graph| graph.nodes.get_mut(1))
+    else {
+        return Err("the fold node".into());
+    };
+    content.ordered_fold.as_mut().ok_or("the fold")?.initial =
+        norn_ir::ZenExpression("{label: 'e\u{301}'}".into());
+    for (items, label) in [
+        (json!([]), decomposed.to_owned()),
+        (json!([{ "id": "a" }, { "id": "b" }]), decomposed.repeat(3)),
+    ] {
+        let state = folded(&rules, json!({ "label": "unused" }), items)?;
+        let expected = BTreeMap::from([("label".to_owned(), norn_ir::RuntimeValue::String(label))]);
+        assert_eq!(state, norn_ir::RuntimeValue::Object(expected));
+    }
+    Ok(())
+}
+
 fn capacity_fold() -> (norn_ir::RuleRoot, BTreeMap<String, norn_ir::RuleRoot>) {
     let item = closed(&json!({"id":{"type":"string"},"capacity":{"type":"integer"}}));
     let state = closed(

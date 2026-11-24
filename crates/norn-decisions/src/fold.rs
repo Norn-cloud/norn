@@ -69,7 +69,7 @@ impl FoldPlan {
             &meter,
             profile,
         )?;
-        state = crate::convert::to_variable(&from_variable(&state)?)?;
+        state = crate::convert::to_variable_exact(&from_variable(&state)?)?;
         for (index, (_, item)) in ordered.into_iter().enumerate() {
             meter.charge(1)?;
             let step = Variable::from_object(
@@ -97,7 +97,7 @@ impl FoldPlan {
                 &meter,
                 profile,
             )?;
-            state = crate::convert::to_variable(&from_variable(&state)?)?;
+            state = crate::convert::to_variable_exact(&from_variable(&state)?)?;
         }
         Ok(state)
     }
