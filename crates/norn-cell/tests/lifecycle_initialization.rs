@@ -149,9 +149,25 @@ fn hierarchy_types() -> [serde_json::Value; 4] {
     ]
 }
 
-/// Guards over a temporal comparison and over a rules-only property.
-fn replay_types() -> [serde_json::Value; 2] {
+/// A rules-only lifecycle, and guards over a temporal comparison and over a
+/// rules-only property.
+fn replay_types() -> [serde_json::Value; 3] {
     [
+        json!({
+            "name": "test.Grant",
+            "properties": [
+                { "id": "state", "protected": true, "default": "open",
+                  "type": { "kind": "enum", "values": [
+                    { "value": "open" }, { "value": "closed" }
+                ] } }
+            ],
+            "lifecycles": [{
+                "property": "state",
+                "initial": ["open"],
+                "terminal": ["closed"],
+                "transitions": [{ "id": "close", "from": ["open"], "to": "closed" }]
+            }]
+        }),
         json!({
             "name": "test.Window",
             "properties": [
@@ -175,7 +191,7 @@ fn replay_types() -> [serde_json::Value; 2] {
                 { "id": "status", "default": "draft", "type": { "kind": "enum", "values": [
                     { "value": "draft" }, { "value": "granted" }
                 ] } },
-                { "id": "verified", "protected": true, "default": "false",
+                { "id": "verified", "protected": true, "default": false,
                   "type": { "kind": "boolean" } }
             ],
             "lifecycles": [{
@@ -225,6 +241,12 @@ fn snapshot<E: serde::Serialize + 'static>(
     let state = cell.load(key).expect("loads");
     assert!(state.values.is_none(), "{key} must not exist");
     (format!("{head:?}"), format!("{dump:?}"), state.version)
+}
+
+/// Whether `refusal` is an unrecorded change whose reason contains `reason`,
+/// so a test cannot pass on an earlier, unrelated refusal.
+fn unrecorded_because(refusal: &LifecycleInitRefusal, reason: &str) -> bool {
+    matches!(refusal, LifecycleInitRefusal::UnrecordedChange { reason: actual } if actual.contains(reason))
 }
 
 fn refusal(error: CommitError<norn_cell::CellError>) -> (FactKey, LifecycleInitRefusal) {
@@ -479,10 +501,13 @@ fn stripped_or_skipped_transitions_are_refused_with_no_effects() {
         .events
         .retain(|event| !matches!(event, FactEvent::Transitioned { .. }));
     let (_, stripped) = refusal(cell.commit(stripped).expect_err("no recorded path"));
-    assert!(matches!(
-        stripped,
-        LifecycleInitRefusal::UnrecordedChange { .. }
-    ));
+    assert!(
+        unrecorded_because(
+            &stripped,
+            "the written values differ from the values its recorded changes produce"
+        ),
+        "{stripped:?}"
+    );
 
     // A skipped step: publish straight from draft is undeclared.
     let mut skipped = legal;
@@ -542,10 +567,13 @@ fn forged_creations_and_unrecorded_writes_are_refused_with_no_effects() {
         values.insert("pages".into(), int(9));
     }
     let (_, unrecorded) = refusal(cell.commit(diverged).expect_err("pages were never set"));
-    assert!(matches!(
-        unrecorded,
-        LifecycleInitRefusal::UnrecordedChange { .. }
-    ));
+    assert!(
+        unrecorded_because(
+            &unrecorded,
+            "the written values differ from the values its recorded changes produce"
+        ),
+        "{unrecorded:?}"
+    );
 
     // A direct lifecycle set recorded as an ordinary property write, after a
     // recorded transition so the replay (not the final-row check) refuses it.
@@ -569,7 +597,10 @@ fn forged_creations_and_unrecorded_writes_are_refused_with_no_effects() {
         },
     ];
     let (_, set) = refusal(cell.commit(direct_set).expect_err("lifecycle set"));
-    assert!(matches!(set, LifecycleInitRefusal::UnrecordedChange { .. }));
+    assert!(
+        unrecorded_because(&set, "status is a lifecycle property"),
+        "{set:?}"
+    );
     assert_eq!(snapshot(&cell, &key), before);
 }
 
@@ -824,10 +855,10 @@ fn a_replayed_set_cannot_write_a_rules_only_guard_input() {
         ],
     );
     let (_, rules) = refusal(cell.commit(commit).expect_err("rules-only write"));
-    assert!(matches!(
-        rules,
-        LifecycleInitRefusal::UnrecordedChange { .. }
-    ));
+    assert!(
+        unrecorded_because(&rules, "verified is writable only by rules"),
+        "{rules:?}"
+    );
     assert_eq!(snapshot(&cell, &key), before);
 }
 
@@ -848,10 +879,13 @@ fn a_sibling_subtypes_evidence_cannot_justify_another_subtype() {
     );
     let (refused, spoofed) = refusal(cell.commit(commit).expect_err("sibling evidence"));
     assert_eq!(refused, written);
-    assert!(matches!(
-        spoofed,
-        LifecycleInitRefusal::UnrecordedChange { .. }
-    ));
+    assert!(
+        unrecorded_because(
+            &spoofed,
+            "the recorded evidence names another type than the written object"
+        ),
+        "{spoofed:?}"
+    );
     assert_eq!(snapshot(&cell, &written), before);
     // The same evidence under the written type is a legal sequence.
     cell.commit(evidence(
@@ -897,10 +931,13 @@ fn contradictory_evidence_is_refused_even_when_the_row_ends_initial() {
         ))
         .expect_err("direct lifecycle sets"),
     );
-    assert!(matches!(
-        direct,
-        LifecycleInitRefusal::UnrecordedChange { .. }
-    ));
+    assert!(
+        unrecorded_because(
+            &direct,
+            "status is a lifecycle property and changes only through a declared transition"
+        ),
+        "{direct:?}"
+    );
     assert_eq!(snapshot(&cell, &key), before);
     // Consistent evidence ending in the initial state is admitted.
     cell.commit(evidence(
@@ -909,4 +946,29 @@ fn contradictory_evidence_is_refused_even_when_the_row_ends_initial() {
         vec![created(&key, json!({ "pages": 1 }))],
     ))
     .expect("a recorded creation in its initial state");
+}
+
+#[test]
+fn a_replayed_transition_of_a_rules_only_lifecycle_is_refused() {
+    let mut cell = cell();
+    let key = FactKey::new("test.Grant", "G-1");
+    let before = snapshot(&cell, &key);
+    let commit = evidence(
+        &key,
+        json!({ "state": "closed" }),
+        vec![
+            created(&key, json!({})),
+            fired(&key, "state", "close", "open", "closed"),
+        ],
+    );
+    let (_, rules) = refusal(cell.commit(commit).expect_err("rules-only lifecycle"));
+    assert!(
+        matches!(
+            &rules,
+            LifecycleInitRefusal::IllegalTransition { transition, reason, .. }
+                if transition == "close" && reason == "the lifecycle is writable only by rules"
+        ),
+        "{rules:?}"
+    );
+    assert_eq!(snapshot(&cell, &key), before);
 }
