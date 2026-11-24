@@ -309,6 +309,12 @@ fn millis_coordinates(millis: u64) -> Option<(i64, u32)> {
 pub(crate) fn refused(code: &'static str) -> CellError {
     CellError::ComputeRefused(code)
 }
+impl From<math::BoundExceeded> for CellError {
+    fn from(_: math::BoundExceeded) -> Self {
+        refused("core.compute.bound_exceeded")
+    }
+}
+
 pub(crate) fn decimal(n: i128) -> Result<Decimal, CellError> {
     Decimal::parse(&format!("{n}e-6")).map_err(CellError::Value)
 }
@@ -709,8 +715,7 @@ impl Totals {
                 total.retract(i128::from(amount)).ok_or(math::BoundExceeded)
             } else {
                 math::add(*total, amount)
-            }
-            .map_err(|_| refused("core.compute.bound_exceeded"))?;
+            }?;
         }
         Ok(())
     }
@@ -870,8 +875,7 @@ pub(crate) fn finish(
             let totals = totals
                 .into_iter()
                 .map(math::decide)
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|_| refused("core.compute.bound_exceeded"))?;
+                .collect::<Result<Vec<_>, _>>()?;
             let value = match totals.as_slice() {
                 [sum] => Some(decimal(*sum)?),
                 [_, 0] => None,

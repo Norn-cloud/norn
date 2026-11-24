@@ -461,7 +461,7 @@ fn publish_reported(total: &str, magnitude: &str) -> Result<i128, CellError> {
         .add(pos)
         .and_then(|s| s.add(neg.wrapping_neg()))
         .ok_or_else(|| refused("core.compute.bound_exceeded"))?;
-    math::decide(sum).map_err(|_| refused("core.compute.bound_exceeded"))
+    math::decide(sum).map_err(CellError::from)
 }
 
 /// One bucket's row: magnitude-bounded totals, the ratio, and either the members or
@@ -548,8 +548,7 @@ fn check_members(members: &[MemberRow], bucket: &BucketTotals) -> Result<(), Cel
             return Err(CellError::Engine("member operand arity".into()));
         }
         for (sum, amount) in sums.iter_mut().zip(&member.amounts) {
-            *sum = math::add(*sum, amount.unwrap_or(0))
-                .map_err(|_| refused("core.compute.bound_exceeded"))?;
+            *sum = math::add(*sum, amount.unwrap_or(0))?;
         }
     }
     let totals = bucket
@@ -570,8 +569,7 @@ fn check_members(members: &[MemberRow], bucket: &BucketTotals) -> Result<(), Cel
         || sums
             .into_iter()
             .map(math::decide)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| refused("core.compute.bound_exceeded"))?
+            .collect::<Result<Vec<_>, _>>()?
             != totals
     {
         return Err(CellError::Engine(

@@ -81,6 +81,12 @@ No complete `verify-promoted-subsystems.sh full` pass is recorded. The records a
 | `verify-promoted-subsystems.sh full` | **failed** at `artifact-governance-rust-extraction` (the sccache compiler probe sent C input to the hax Rust driver, exit 101), identically on base `2f9bd4507` and the head; the Quint and Lean gates before it passed | head `24487efd4b` | #372, merged as `7388b7a09b` |
 | `cell-protocol-v1` Quint models (Apalache bounded checks, 200k simulated traces each) and TLC liveness | no counterexample at the stated depths; TLC finished for one harness of three | 2026-11-11 | #1240, merged as `c746a98b4c`; `cell-protocol-v1/results.json` |
 
+## Exact sum
+
+From the repository root, run `verus --crate-type lib --edition=2024 crates/norn-ir/src/exact_sum.rs` with Verus 0.2026.11.22.1ce6a59. The postconditions describe the production methods. A ghost relation connects the two unsigned subtotals to every sequence they can represent.
+
+With Kani 0.67.0, run `kani verification/query-compute-v1/arithmetic_kani.rs --harness full_width_operations` for the symbolic accumulator step, and repeat with `--harness sum_never_wraps --unwind 6` for the four-term query decision.
+
 ## The Verus spike
 
 `kernel-l1/version_verus.rs` is a copy of the body of `checked_next_version` from `crates/norn-kernel/src/version_check.rs`, with a Verus `ensures` clause added. It is a model beside the code, not a proof of the shipped module: Verus checks the copy, not the compiled kernel.
