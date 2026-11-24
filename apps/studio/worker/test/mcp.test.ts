@@ -850,4 +850,43 @@ test("S3 generation isolation: unredeemed codes, legacy grants, prior consents, 
       query: { client_id: clientA, redirect_uri: CLAUDE, scope: "openid", code_challenge: pkce().challenge, state: "st-gone-claim" },
     })],
   )).toThrow("oauth.membership_invalid")
+
+  // R7-2: Unsupported optional UserInfo claims in `query.claims` (filtered out by Better Auth before
+  // storing `oauthConsent.requestedUserInfoClaims`) do not break approval, while an unconsented
+  // supported standard claim (`name`) still aborts in SQLite!
+  const clientD = await register(env)
+  const claimsQuery = `/api/auth/oauth2/authorize?${new URLSearchParams({
+    response_type: "code",
+    client_id: clientD,
+    redirect_uri: CLAUDE,
+    scope: "openid",
+    state: "st-claims",
+    code_challenge: pkce().challenge,
+    code_challenge_method: "S256",
+    resource: RESOURCE,
+    claims: JSON.stringify({ userinfo: { email: null, custom_unsupported_opt: null } }),
+  })}`
+  const authD = await call(env, claimsQuery, { headers: { cookie: cookie6 } })
+  expect(authD.status).toBe(302)
+  const queryD = signedQueryOf(authD.headers.get("location") ?? "")
+  const ctxD = await consentContext(env, cookie6, queryD)
+  const consentD = await postJson(
+    env,
+    "/api/auth/oauth2/consent",
+    { accept: true, oauth_query: queryD },
+    { cookie: cookie6, origin: ORIGIN, [EXPECTED_ORG_HEADER]: org, [CONSENT_APPROVAL_HEADER]: ctxD.approvalToken ?? "" },
+  )
+  expect(consentD.status).toBe(200)
+  // Unconsented supported claim (`name`) still aborts at code insert!
+  expect(() => sqlite.run(
+    `insert into "verification" ("id", "identifier", "value", "expiresAt", "createdAt", "updatedAt") values ('unconsented_claim_code', 'uc_1', ?, datetime('now', '+5 minutes'), datetime('now'), datetime('now'))`,
+    [JSON.stringify({
+      type: "authorization_code",
+      userId: user,
+      sessionId: session6.id,
+      referenceId: grantRefGen2,
+      resource: [RESOURCE],
+      query: { client_id: clientD, redirect_uri: CLAUDE, scope: "openid", claims: { userinfo: { email: null, name: null } }, code_challenge: pkce().challenge, state: "st-uc" },
+    })],
+  )).toThrow("oauth.membership_invalid")
 })

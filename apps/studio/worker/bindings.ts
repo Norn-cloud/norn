@@ -295,6 +295,63 @@ export async function removeBinding(db: D1Database, orgId: string, id: string): 
   return true
 }
 
+/** Durable tombstone for an abandoned create whose cell install outcome was unknown. */
+export interface OrphanTombstone {
+  readonly orgId: string
+  readonly bindingId: string
+  readonly definitionId: string
+  readonly environmentId: string | null
+  readonly abandonedAt: number
+}
+
+interface OrphanRow {
+  org_id: string
+  binding_id: string
+  definition_id: string
+  environment_id: string | null
+  abandoned_at: number
+}
+
+/**
+ * Atomically abandon an expired `creating` binding AND record a durable orphan tombstone in one
+ * D1 batch so reconciliation can still detect and retire a late cell commit even if the original
+ * Worker response was lost.
+ */
+export async function abandonCreateWithTombstone(
+  db: D1Database,
+  orgId: string,
+  id: string,
+  attemptId: string | null,
+  now = Date.now(),
+): Promise<"deleted" | "unchanged"> {
+  await db.batch([
+    db.prepare(
+      "INSERT OR REPLACE INTO connector_binding_orphan (org_id, binding_id, definition_id, environment_id, abandoned_at) SELECT org_id, id, definition_id, pending_environment_id, ? FROM connector_binding WHERE org_id = ? AND id = ? AND state = 'creating' AND pending_attempt IS ? AND definition_id IS NOT NULL",
+    ).bind(now, orgId, id, attemptId),
+    db.prepare(
+      "DELETE FROM connector_binding WHERE org_id = ? AND id = ? AND state = 'creating' AND pending_attempt IS ?",
+    ).bind(orgId, id, attemptId),
+  ])
+  return (await getBinding(db, orgId, id)) === null ? "deleted" : "unchanged"
+}
+
+export async function listOrphans(db: D1Database, orgId: string): Promise<readonly OrphanTombstone[]> {
+  const { results } = await db.prepare(
+    "SELECT org_id, binding_id, definition_id, environment_id, abandoned_at FROM connector_binding_orphan WHERE org_id = ?",
+  ).bind(orgId).all<OrphanRow>()
+  return results.map((row) => ({
+    orgId: row.org_id,
+    bindingId: row.binding_id,
+    definitionId: row.definition_id,
+    environmentId: row.environment_id,
+    abandonedAt: row.abandoned_at,
+  }))
+}
+
+export async function clearOrphan(db: D1Database, orgId: string, bindingId: string): Promise<void> {
+  await db.prepare("DELETE FROM connector_binding_orphan WHERE org_id = ? AND binding_id = ?").bind(orgId, bindingId).run()
+}
+
 const NAME = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/
 
 /** A refusal naming the field it is about, for `connectors.binding_invalid`. */

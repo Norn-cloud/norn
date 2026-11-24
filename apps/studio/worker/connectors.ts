@@ -4,7 +4,7 @@ import { originAllowed, resolveActor, verifyWriteScope } from "./actor.ts"
 import type { Auth } from "./auth.ts"
 import { BindingDefinitions, bindingDefinitionId, CellUnavailable, type Install } from "./binding-definitions.ts"
 import { cellScope } from "./scope.ts"
-import { abandonSave, adoptCell, adoptCommittedEdit, adoptReadyCell, beginCreate, beginEdit, connectorString, connectorVersion, finishSave, getBinding, listBindings, manifestDigest, readDraft, removeBinding, runInput, toolManifest, type Binding } from "./bindings.ts"
+import { abandonCreateWithTombstone, abandonSave, adoptCell, adoptCommittedEdit, adoptReadyCell, beginCreate, beginEdit, clearOrphan, connectorString, connectorVersion, finishSave, getBinding, listBindings, listOrphans, manifestDigest, readDraft, removeBinding, runInput, toolManifest, type Binding } from "./bindings.ts"
 import { Gateway, GatewayError } from "./gateway.ts"
 
 /**
@@ -42,6 +42,12 @@ export interface ConnectorDeps {
  * install is about to complete. Several times the cell call's time limit.
  */
 export const PENDING_CREATE_LEASE_MS = 2 * 60 * 1000
+
+/**
+ * How long an abandoned create's tombstone stays watched for a late cell commit before being
+ * garbage-collected when the cell still reports the definition absent.
+ */
+export const ORPHAN_RETENTION_MS = 24 * 60 * 60 * 1000
 
 /** How the person fixes a refusal; the page renders one button per kind. */
 export type FixAction =
@@ -251,10 +257,43 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
     }
     if (held.kind === "found" && (binding.definition === null || held.version > binding.definition.version)) {
       await adoptCell(db, actor.orgId, binding.id, binding.pendingDefinition, held.version, held.payload, binding.pendingAttempt, binding.definition?.version ?? null)
+    } else if (binding.pendingSave === "create") {
+      // Record a durable orphan tombstone atomically with deleting the expired create row so any
+      // late cell commit after a lost response/timeout is still discovered and retired on reconcile.
+      if (await abandonCreateWithTombstone(db, actor.orgId, binding.id, binding.pendingAttempt, now) === "deleted") return null
     } else if (await abandonSave(db, actor.orgId, binding.id, binding.pendingSave ?? "edit", binding.definition, binding.pendingAttempt) === "deleted") {
       return null
     }
     return await getBinding(db, actor.orgId, binding.id)
+  }
+  /** Sweep abandoned create tombstones: retire any definition that committed late in the cell. */
+  const sweepOrphans = async (): Promise<void> => {
+    if (deps.host === undefined) return
+    const now = (deps.now ?? Date.now)()
+    const orphans = await listOrphans(db, actor.orgId)
+    for (const orphan of orphans) {
+      if (orphan.environmentId !== null && environmentId !== null && orphan.environmentId !== environmentId) continue
+      const cell = cellFor(orphan.environmentId ?? environmentId)
+      if (cell === null) continue
+      let held: Awaited<ReturnType<BindingDefinitions["get"]>>
+      try {
+        held = await cell.get(orphan.definitionId)
+      } catch (error) {
+        if (error instanceof CellUnavailable) continue
+        throw error
+      }
+      if (held.kind === "found") {
+        const retired = await cell.retire(orphan.definitionId, held.version).catch((error: unknown) => {
+          if (error instanceof CellUnavailable) return null
+          throw error
+        })
+        if (retired !== null && (retired.kind === "installed" || retired.kind === "local")) {
+          await clearOrphan(db, actor.orgId, orphan.bindingId)
+        }
+      } else if (held.kind === "local" || now - orphan.abandonedAt >= ORPHAN_RETENTION_MS) {
+        await clearOrphan(db, actor.orgId, orphan.bindingId)
+      }
+    }
   }
   const settled = async (id: string) => { const binding = await getBinding(db, actor.orgId, id); return binding === null ? null : await reconcile(binding) }
   const stillPending = () => refusal(409, "connectors.binding_pending", "This binding is still being saved. Try again in a moment.")
@@ -265,6 +304,7 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
   if (route === "POST /bindings:reconcile") {
     if (!manage) return denied("reconcile tool bindings")
     const rows = await Promise.all((await listBindings(db, actor.orgId)).map((binding) => reconcile(binding, true)))
+    await sweepOrphans()
     return ok({ bindings: rows.filter((b): b is Binding => b !== null).map(shown), manage })
   }
   if (request.method === "DELETE" && bindingRoute !== null) {
@@ -439,7 +479,10 @@ async function route(request: Request, env: ConnectorEnv, auth: Auth, path: stri
             return ok({ binding: shown(current) })
           }
           if (current === null) {
-            await cell.retire(outcome.id, outcome.version).catch(() => undefined)
+            const retired = await cell.retire(outcome.id, outcome.version).catch(() => null)
+            if (retired !== null && (retired.kind === "installed" || retired.kind === "local")) {
+              await clearOrphan(db, actor.orgId, id).catch(() => undefined)
+            }
           } else if (existing !== undefined) {
             const synced = await adoptCommittedEdit(db, actor.orgId, actor.subjectId, id, draft, { manifestDigest: digest, connector, definition }, expectedPreviousVersion, savedAt)
             if (synced === null && (await getBinding(db, actor.orgId, id)) === null) {

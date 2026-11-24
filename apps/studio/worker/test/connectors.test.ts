@@ -845,6 +845,25 @@ test("R3-3/R3-4/R3-8: edit lease fencing, finishSave conflict detection, scoped 
   expect(await creatingAdopted).toMatchObject({ status: 200, body: { binding: { id: adoptedId, state: "ready", definition: { version: 1 } } } })
   expect(cell.held.has(`studio.binding.${adoptedId}`)).toBe(true)
 
+  // R7-1: Lost-response create (Worker gets timeout/503, reconcile abandons row after lease while
+  // recording a durable tombstone, THEN cell commits v1 late with no Worker response handler alive):
+  // subsequent POST /bindings:reconcile discovers the tombstone, retires the late cell commit, and clears it!
+  cell.state.down = true
+  const lostCreate = await send("/bindings", { ...body("POST", { app: "github", tool: "list_issues", label: "LostResponseCreate" }), cookie: owner }, { host: cell.host })
+  expect(lostCreate).toMatchObject({ status: 503, body: { code: "connectors.cell_unavailable" } })
+  const lostRow = db.query("SELECT id FROM connector_binding WHERE label = 'LostResponseCreate'").get() as { id: string }
+  const lostDefId = `studio.binding.${lostRow.id}`
+  cell.state.down = false
+  clock.offset += PENDING_CREATE_LEASE_MS + 1
+  await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: cell.host })
+  expect(db.query("SELECT id FROM connector_binding WHERE id = ?").get(lostRow.id)).toBeNull()
+  expect(db.query("SELECT definition_id FROM connector_binding_orphan WHERE binding_id = ?").get(lostRow.id)).toEqual({ definition_id: lostDefId })
+  // Simulate the cell committing the lost-response install AFTER reconcile already deleted the binding row.
+  cell.held.set(lostDefId, { version: 1, payload: { label: "LostResponseCreate", runRole: "member" } })
+  await send("/bindings:reconcile", { method: "POST", cookie: owner }, { host: cell.host })
+  expect(cell.held.has(lostDefId)).toBe(false)
+  expect(db.query("SELECT definition_id FROM connector_binding_orphan WHERE binding_id = ?").get(lostRow.id)).toBeNull()
+
   // R5-5b: Even if a hard isolate crash leaves D1 behind the cell's committed version, POST /bindings/:id/run
   // fails closed with 409 connectors.binding_conflict, and POST /bindings:reconcile heals D1 forward to v2!
   db.query("UPDATE connector_binding SET definition_version = 1 WHERE id = ?").run(created.id)

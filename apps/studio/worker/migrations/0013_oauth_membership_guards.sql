@@ -236,7 +236,8 @@ begin
                    else json_extract(json_extract(new."value", '$.query.claims'), '$.userinfo')
                  end
                ) req_claim
-               where not (
+               where req_claim."key" in ('name', 'picture', 'given_name', 'family_name', 'email', 'email_verified')
+                 and not (
                  c."requestedUserInfoClaims" is not null
                  and json_valid(c."requestedUserInfoClaims")
                  and json_type(c."requestedUserInfoClaims") = 'array'
