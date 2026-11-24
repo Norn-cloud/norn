@@ -61,7 +61,7 @@ function mark(state) {
 /** Spin the runtime thread: forever, or for `ms` of wall time where the clock moves. */
 function spin(ms) {
   const started = Date.now();
-  // A clock frozen inside a synchronous call (workerd, celld) never ends a timed spin, so a timed
+  // A clock frozen inside a synchronous call (workerd) never ends a timed spin, so a timed
   // spin is also bounded by work: about a million loop iterations per millisecond.
   const bound = ms === undefined ? Infinity : ms * 1e6;
   for (let i = 0; i < bound && (ms === undefined || Date.now() - started < ms); i++);
@@ -395,7 +395,7 @@ export class Probe {
       }
     };
     return {
-      // celld and Cloudflare refuse sqlite_version(); the refusal is the answer there.
+      // Cloudflare refuses sqlite_version(); the refusal is the answer there.
       version: fn("SELECT sqlite_version()"),
       affinity,
       variables100: variables(100),
