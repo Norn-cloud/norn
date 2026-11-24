@@ -493,7 +493,7 @@ text = path.read_text(encoding="utf-8")
 commands = [cmd for cmd in re.findall(r"`([^`]+)`", text) if re.match(r"^cargo\s+test(?:\s|$)", cmd)]
 if not commands:
     sys.exit(f"integration-authoring: no runnable-docs release tests found in {path}")
-pattern = re.compile(r"^cargo test --locked -p ([a-z0-9-]+) (?:(--lib)|--test ([a-z0-9_]+)) (?!-)\S+(?: -- .+)?$")
+pattern = re.compile(r"^cargo test --locked -p ([a-z0-9-]+) (?:(--lib)|--test ([a-z0-9_]+)) [a-z_:]+ -- --exact$")
 pkgs, targets = set(), set()
 for cmd in commands:
     match = pattern.fullmatch(cmd)
