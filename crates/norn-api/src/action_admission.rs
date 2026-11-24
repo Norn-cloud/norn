@@ -288,6 +288,80 @@ fn helper_closure(
     Ok(helpers)
 }
 
+/// APPROVAL-REVISION-1: the digest an approval or automation authority binds
+/// to: the action's retained definition (its payload, its pinned writer and
+/// the writer's helpers) and its effective write contract over `model`: the
+/// declaration of every object type it may write (with the types they extend,
+/// so a changed default that changes the written facts changes the digest),
+/// the interfaces and property types those declarations draw on, and the
+/// governing laws of each written type. An action whose writes are not
+/// statically known (a synchronous writer) binds every object type.
+///
+/// # Errors
+/// A host failure: a retained action without a digest, an unreadable law.
+pub(crate) fn effective_digest(
+    admitted: &RetainedActions,
+    action: &ActionRoot,
+    model: &norn_cell::Model,
+    catalog: &norn_kernel::TypeCatalog<'_>,
+) -> Result<String, Refusal> {
+    let definition = admitted
+        .digest(&action.action_id)
+        .ok_or_else(|| Refusal::host("a retained action has no digest"))?;
+    let every = action.synchronous_rule.is_some()
+        || (action.writes.is_empty() && action.effect_program.is_some());
+    let mut written: BTreeSet<String> = action
+        .writes
+        .iter()
+        .map(|write| write.entity_kind.clone())
+        .chain(action.create_links.iter().flat_map(|link| {
+            std::iter::once(link.target_type.clone()).chain(
+                link.source
+                    .as_ref()
+                    .map(|source| source.object_type.clone()),
+            )
+        }))
+        .collect();
+    if every {
+        written.extend(model.object_types().map(|t| t.name.as_str().to_owned()));
+    }
+    let mut pending: Vec<String> = written.iter().cloned().collect();
+    while let Some(name) = pending.pop() {
+        if let Some(parent) = model
+            .object_types()
+            .find(|t| t.name.as_str() == name)
+            .and_then(|t| t.extends.as_ref())
+            && written.insert(parent.as_str().to_owned())
+        {
+            pending.push(parent.as_str().to_owned());
+        }
+    }
+    let mut declarations = Vec::new();
+    let mut laws = Vec::new();
+    for name in &written {
+        let declaration = model.object_types().find(|t| t.name.as_str() == name);
+        declarations.push((name, declaration));
+        if declaration.is_some() {
+            let governing = catalog
+                .governing_laws(&norn_ir::ObjectTypeName(name.clone()))
+                .map_err(|error| Refusal::host(format!("{error:?}")))?;
+            laws.push((name, governing));
+        }
+    }
+    let interfaces: Vec<_> = model.interfaces().collect();
+    norn_ir::canonical::domain_hash_hex(
+        b"norn.approval.action/2\0",
+        &(
+            definition,
+            declarations,
+            interfaces,
+            model.property_types(),
+            laws,
+        ),
+    )
+    .map_err(Refusal::host)
+}
+
 /// Target version as of `receipt` (written row by type lineage, else `version_as_of`, S5b).
 pub(crate) fn target_version<E: norn_cell::engine::SqlEngine>(
     store: &norn_cell::CellStore<E>,

@@ -70,6 +70,7 @@ fn change(
             payload_sha256: payload_sha256(&payload),
             payload,
             signoff: None,
+            authority: None,
         },
         expected_revision: expected,
     }
