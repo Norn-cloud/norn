@@ -120,6 +120,67 @@ fn check_scaled_value(
     Ok(())
 }
 
+fn is_scaled_allowed_function(
+    kind: &crate::functions::FunctionKind,
+    exact_expression: bool,
+) -> bool {
+    use crate::functions::{FunctionKind, InternalFunction as F};
+    match kind {
+        FunctionKind::Internal(F::Len | F::Flatten) => true,
+        FunctionKind::Internal(
+            F::CalendarDate
+            | F::Timestamp
+            | F::DaysBetween
+            | F::AddDays
+            | F::SecondsBetween
+            | F::AddSeconds
+            | F::IntervalsOverlap
+            | F::IntervalGapSeconds
+            | F::IntervalIntersectionSeconds
+            | F::ResolveLocalTimestamp
+            | F::Lower
+            | F::Upper
+            | F::Trim
+            | F::StartsWith
+            | F::EndsWith
+            | F::Split
+            | F::Tokens
+            | F::Take
+            | F::Join,
+        ) => exact_expression,
+        FunctionKind::Internal(
+            F::Contains
+            | F::Merge
+            | F::MergeDeep
+            | F::Matches
+            | F::Extract
+            | F::FuzzyMatch
+            | F::Abs
+            | F::Sum
+            | F::Avg
+            | F::Min
+            | F::Max
+            | F::Rand
+            | F::Median
+            | F::Mode
+            | F::Floor
+            | F::Ceil
+            | F::Round
+            | F::Trunc
+            | F::IsNumeric
+            | F::String
+            | F::Number
+            | F::Bool
+            | F::Type
+            | F::Keys
+            | F::Values
+            | F::Date,
+        )
+        | FunctionKind::Closure(_)
+        | FunctionKind::Deprecated(_) => false,
+    }
+}
+
 struct VMInner<'parent_ref, 'bytecode_ref> {
     scopes: &'parent_ref mut Vec<LoopScope>,
     stack: &'parent_ref mut Vec<Variable>,
@@ -155,6 +216,20 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
         })
     }
 
+    /// Follow unconditional forward jumps (for example from a ternary true arm)
+    /// with a bounded hop count to locate the next effective opcode.
+    fn next_effective_ip(&self, mut ip: usize) -> Option<usize> {
+        for _ in 0..=128 {
+            if let Some(Opcode::Jump(Jump::Forward, offset)) = self.bytecode.get(ip) {
+                let step = usize::try_from(*offset).ok()?.checked_add(1)?;
+                ip = ip.checked_add(step)?;
+            } else {
+                return Some(ip);
+            }
+        }
+        None
+    }
+
     pub fn run(&mut self, root_scope: &Scope) -> VMResult<Variable> {
         let mut env = root_scope.clone();
         let mut assigned_objects: Vec<Variable> = Vec::new();
@@ -181,21 +256,33 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
             }) {
                 let exact = meter.exact_arithmetic()
                     || self.exact_sites.last().is_some_and(Option::is_some);
+                let exact_expression = meter.exact_arithmetic()
+                    || (meter.arithmetic().is_none()
+                        && self.exact_sites.last().is_some_and(Option::is_some));
                 let arithmetic = self
                     .exact_sites
                     .last()
                     .copied()
                     .flatten()
                     .or_else(|| meter.arithmetic());
-                let next = self.bytecode.get(self.ip as usize);
+                let next_ip = usize::try_from(self.ip)
+                    .ok()
+                    .and_then(|ip| self.next_effective_ip(ip));
+                let next = next_ip.and_then(|ip| self.bytecode.get(ip));
                 let at_rescale = arithmetic.is_some()
+                    && next_ip.is_some()
                     && (next.is_none()
                         || matches!(next, Some(Opcode::Rescale { .. }))
                         || (matches!(next, Some(Opcode::Negate))
-                            && matches!(
-                                self.bytecode.get(self.ip as usize + 1),
-                                None | Some(Opcode::Rescale { .. })
-                            )));
+                            && next_ip
+                                .and_then(|ip| ip.checked_add(1))
+                                .and_then(|ip| self.next_effective_ip(ip))
+                                .is_some_and(|ip| {
+                                    matches!(
+                                        self.bytecode.get(ip),
+                                        None | Some(Opcode::Rescale { .. })
+                                    )
+                                })));
                 let failure = |message: &str| OpcodeErr {
                     opcode: "ScaledArithmetic".into(),
                     message: message.into(),
@@ -233,12 +320,14 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
                                 })?;
                             if exact {
                                 // VAL-ROUND: only a final result may use destination rounding.
-                                if usize::try_from(self.ip).ok() != Some(self.bytecode.len())
-                                    && !matches!(
-                                        self.bytecode.get(self.ip as usize),
-                                        Some(Opcode::Rescale { .. })
-                                    )
-                                {
+                                let at_division_site = next_ip.is_some_and(|ip| {
+                                    ip == self.bytecode.len()
+                                        || matches!(
+                                            self.bytecode.get(ip),
+                                            Some(Opcode::Rescale { .. })
+                                        )
+                                });
+                                if !at_division_site {
                                     profile.rounding = crate::scaled::Rounding::Refuse;
                                 }
                                 profile.divide(a, b)
@@ -294,14 +383,19 @@ impl<'parent_ref, 'bytecode_ref> VMInner<'parent_ref, 'bytecode_ref> {
                             ),
                         ..
                     } if matches!(self.peek(0), Some(String(_))) => {}
-                    Opcode::CallFunction { kind, .. }
-                        if !matches!(
-                            kind,
+                    Opcode::CallFunction {
+                        kind:
                             crate::functions::FunctionKind::Internal(
-                                crate::functions::InternalFunction::Len
-                                    | crate::functions::InternalFunction::Flatten
-                            )
-                        ) =>
+                                crate::functions::InternalFunction::Contains,
+                            ),
+                        arg_count: 2,
+                    } if exact_expression
+                        && matches!(
+                            (self.peek(1), self.peek(0)),
+                            (Some(String(_)), Some(String(_)))
+                        ) => {}
+                    Opcode::CallFunction { kind, .. }
+                        if !is_scaled_allowed_function(kind, exact_expression) =>
                     {
                         return Err(failure("function outside the scaled arithmetic profile"));
                     }

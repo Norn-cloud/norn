@@ -2061,3 +2061,600 @@ fn a_prepared_admission_runs_only_the_expression_that_prepared_it() {
     );
     assert_eq!(refused.units_used, 0);
 }
+
+#[test]
+fn val_exact_admits_and_evaluates_temporal_and_string_builtins_with_decimals()
+-> Result<(), Box<dyn std::error::Error>> {
+    let shift_def: ObjectTypeDef = serde_json::from_value(serde_json::json!({
+        "name": "time.Shift",
+        "properties": [
+            {"id": "count", "type": {"kind": "integer"}},
+            {"id": "hours", "type": {"kind": "decimal", "scale": 2}},
+            {"id": "start_date", "type": {"kind": "date"}},
+            {"id": "end_date", "type": {"kind": "date"}},
+            {"id": "start_ts", "type": {"kind": "timestamp", "timezone": "utc"}},
+            {"id": "end_ts", "type": {"kind": "timestamp", "timezone": "utc"}},
+            {"id": "other_start_ts", "type": {"kind": "timestamp", "timezone": "utc"}},
+            {"id": "other_end_ts", "type": {"kind": "timestamp", "timezone": "utc"}},
+            {"id": "local_wall", "type": {"kind": "text"}},
+            {"id": "code", "type": {"kind": "text"}}
+        ]
+    }))?;
+    let object_types = [shift_def];
+    let defs = norn_expr::EntityDefinitions {
+        property_types: &[],
+        interfaces: &[],
+        object_types: &object_types,
+        extensions: &[],
+    };
+    let env = ZenTypeEnv::from_artifact_set(&defs, EnvOptions::default())
+        .map_err(|errors| format!("env: {errors:?}"))?
+        .bind_self(&name("time.Shift"))
+        .map_err(|error| format!("bind_self: {error:?}"))?;
+
+    let make_context = |count: i64,
+                        hours: &str,
+                        start_date: &str,
+                        end_date: &str|
+     -> Result<Value, Box<dyn std::error::Error>> {
+        Ok(Value::object([(
+            "self",
+            Value::object([
+                ("count", Value::from(count)),
+                ("hours", Value::Number(hours.parse::<Number>()?)),
+                ("start_date", Value::from(start_date)),
+                ("end_date", Value::from(end_date)),
+                ("start_ts", Value::from("2026-03-09T14:00:00Z")),
+                ("end_ts", Value::from("2026-03-09T18:00:00Z")),
+                ("other_start_ts", Value::from("2026-03-09T16:30:00Z")),
+                ("other_end_ts", Value::from("2026-03-09T20:00:00Z")),
+                ("local_wall", Value::from("2025-11-02T01:30:00")),
+                ("code", Value::from("  Shift-Alpha-01  ")),
+            ]),
+        )]))
+    };
+
+    // Exact issue #1651 reproducer: check_typed, check_admitted, prepare_admitted,
+    // and runtime evaluation across true/false/runtime-error cases.
+    let reproducer = "((self.count >= 0) and ((self.hours >= 0.00) and (self.hours <= 24.00))) and (date(self.start_date) < date(self.end_date))";
+    let expr = Expression::compile(reproducer)?;
+    let checked = expr
+        .check_typed(&env, &Type::Bool)
+        .map_err(|errors| format!("reproducer check_typed failed: {errors:?}"))?;
+    assert!(checked.uses_exact_arithmetic());
+    expr.check_admitted(&env, &Type::Bool)
+        .map_err(|errors| format!("reproducer check_admitted failed: {errors:?}"))?;
+    let prepared = expr.prepare_admitted(&env, &Type::Bool);
+
+    for (count, hours, start_date, end_date, expected_bool) in [
+        (1, "8.50", "2026-01-01", "2026-01-02", true),
+        (0, "0.00", "2026-01-01", "2026-12-31", true),
+        (1, "24.00", "2026-01-02", "2026-01-02", false),
+        (1, "8.50", "2026-01-05", "2026-01-02", false),
+        (1, "24.01", "2026-01-01", "2026-01-02", false),
+        (-1, "8.50", "2026-01-01", "2026-01-02", false),
+    ] {
+        let context = make_context(count, hours, start_date, end_date)?;
+        let typed_val = expr
+            .evaluate_typed_metered(&context, EvaluationBudget::default(), &env, &Type::Bool)
+            .result?
+            .into_value();
+        let admitted_val = expr
+            .evaluate_admitted_metered(&context, EvaluationBudget::default(), &env, &Type::Bool)
+            .result?
+            .into_value();
+        let prepared_val = expr
+            .evaluate_prepared(
+                &prepared,
+                &context,
+                EvaluationBudget::default(),
+                &env,
+                &Type::Bool,
+            )
+            .result?
+            .into_value();
+        assert_eq!(typed_val, Value::Bool(expected_bool));
+        assert_eq!(admitted_val, Value::Bool(expected_bool));
+        assert_eq!(prepared_val, Value::Bool(expected_bool));
+    }
+
+    // Invalid dynamic date text still fails closed as a typed evaluation error.
+    let bad_date_ctx = make_context(1, "8.50", "2026-02-30", "2026-03-01")?;
+    let bad_attempt = expr.evaluate_prepared(
+        &prepared,
+        &bad_date_ctx,
+        EvaluationBudget::default(),
+        &env,
+        &Type::Bool,
+    );
+    assert!(matches!(
+        bad_attempt.result,
+        Err(norn_expr::ExprError::Evaluation { .. })
+    ));
+
+    // All exact temporal and pure string builtins combined with Decimal comparisons.
+    let valid_ctx = make_context(2, "8.50", "2026-01-01", "2026-01-05")?;
+    for (source, expected_val) in [
+        (
+            "(self.hours > 0.00) and (timestamp(self.start_ts) < timestamp(self.end_ts))",
+            true,
+        ),
+        (
+            "(self.hours > 0.00) and (days_between(date(self.start_date), date(self.end_date)) == 4)",
+            true,
+        ),
+        (
+            "(self.hours > 0.00) and (add_days(date(self.start_date), self.count) == date('2026-01-03'))",
+            true,
+        ),
+        (
+            "(self.hours * 3600 > 0) and (seconds_between(timestamp(self.start_ts), timestamp(self.end_ts)) == 14400)",
+            true,
+        ),
+        (
+            "(self.hours > 0.00) and (add_seconds(timestamp(self.start_ts), 14400) == timestamp(self.end_ts))",
+            true,
+        ),
+        (
+            "(self.hours > 0.00) and intervals_overlap(timestamp(self.start_ts), timestamp(self.end_ts), timestamp(self.other_start_ts), timestamp(self.other_end_ts))",
+            true,
+        ),
+        (
+            "(self.hours > 0.00) and (interval_gap_seconds(timestamp(self.start_ts), timestamp(self.end_ts), timestamp(self.other_start_ts), timestamp(self.other_end_ts)) == 0)",
+            true,
+        ),
+        (
+            "(self.hours > 0.00) and (interval_intersection_seconds(timestamp(self.start_ts), timestamp(self.end_ts), timestamp(self.other_start_ts), timestamp(self.other_end_ts)) == 5400)",
+            true,
+        ),
+        (
+            "(self.hours > 0.00) and (resolve_local_timestamp(self.local_wall, 'America/New_York', 'earlier') < resolve_local_timestamp(self.local_wall, 'America/New_York', 'later'))",
+            true,
+        ),
+        (
+            "(self.hours > 0.00) and startsWith(self.code, '  Shift-')",
+            true,
+        ),
+        ("(self.hours > 0.00) and endsWith(self.code, '-01  ')", true),
+        ("(self.hours > 0.00) and contains(self.code, 'Alpha')", true),
+        (
+            "(self.hours > 0.00) and (trim(self.code) == 'Shift-Alpha-01')",
+            true,
+        ),
+        (
+            "(self.hours > 0.00) and (lower(self.code) == '  shift-alpha-01  ')",
+            true,
+        ),
+        (
+            "(self.hours > 0.00) and (upper(take(self.code, 7)) == '  SHIFT')",
+            true,
+        ),
+        (
+            "(self.hours > 0.00) and (join(tokens(self.code, 'alnum', 4, 8), '/') == 'Shift/Alpha/01')",
+            true,
+        ),
+        (
+            "(self.hours > 0.00) and (len(split(self.code, '')) - 2 == 18)",
+            true,
+        ),
+        (
+            "(self.hours > 0.00) and (round(seconds_between(timestamp(self.start_ts), timestamp(self.other_start_ts)) / 3600, 2, 'half_even') == 2.50)",
+            true,
+        ),
+    ] {
+        let compiled = Expression::compile(source)?;
+        let checked = compiled
+            .check_typed(&env, &Type::Bool)
+            .map_err(|errors| format!("`{source}` check_typed failed: {errors:?}"))?;
+        assert!(checked.uses_exact_arithmetic(), "{source}");
+        let eval_val = compiled
+            .evaluate_admitted_metered(&valid_ctx, EvaluationBudget::default(), &env, &Type::Bool)
+            .result?
+            .into_value();
+        assert_eq!(eval_val, Value::Bool(expected_val), "{source}");
+    }
+
+    // Temporal numeric result divided into an explicit Decimal destination.
+    let hours_dest = Type::Decimal {
+        scale: 2,
+        unit: None,
+        rounding: norn_ir::Rounding::HalfEven,
+        currency_source: None,
+        per_unit: None,
+    };
+    let div_expr = Expression::compile(
+        "seconds_between(timestamp(self.start_ts), timestamp(self.other_start_ts)) / 3600",
+    )?;
+    div_expr
+        .check_typed(&env, &hours_dest)
+        .map_err(|errors| format!("decimal destination temporal division failed: {errors:?}"))?;
+    let div_val = div_expr
+        .evaluate_typed_metered(&valid_ctx, EvaluationBudget::default(), &env, &hours_dest)
+        .result?
+        .into_value();
+    assert_eq!(div_val, Value::Number("2.5".parse::<Number>()?));
+
+    // Negative controls: inexact / unsupported numeric functions, bare division,
+    // membership, and over-scale literals STILL fail closed with `core.values.inexact`.
+    for refused_source in [
+        "abs(self.hours) >= 0.00",
+        "floor(self.hours) >= 0",
+        "ceil(self.hours) >= 0",
+        "trunc(self.hours, 1) >= 0",
+        "round(self.hours, 1) >= 0",
+        "round(self.hours) >= 0",
+        "self.hours / 2 >= 0",
+        "(self.hours >= 0.00) and (seconds_between(timestamp(self.start_ts), timestamp(self.end_ts)) / 3600 >= 1)",
+        "round(days_between(date(self.start_date), add_days(date(self.start_date), 1 / 3)), 2, 'half_even') >= 0",
+        "self.hours in [0.00, 8.50]",
+        "self.hours not in [0.00, 8.50]",
+        "self.hours >= 0.0000000000000000001",
+        "sum([self.hours]) >= 0",
+    ] {
+        let compiled = Expression::compile(refused_source)?;
+        let Err(errors) = compiled.check_typed(&env, &Type::Bool) else {
+            return Err(format!("`{refused_source}` must refuse with core.values.inexact").into());
+        };
+        assert!(
+            errors.iter().any(|d| d.code == "core.values.inexact"),
+            "`{refused_source}` expected core.values.inexact, got {errors:?}"
+        );
+    }
+
+    // Over-scale explicit round (> 18) refuses at compile time for 3-arg round and
+    // with `core.values.inexact` for 2-arg round inside a Decimal destination.
+    assert!(Expression::compile("round(self.hours, 19, 'half_even') >= 0").is_err());
+    let oversized_round = Expression::compile("round(self.hours, 19)")?;
+    let Err(oversized_errors) = oversized_round.check_typed(&env, &hours_dest) else {
+        return Err("round(self.hours, 19) at Decimal destination must refuse".into());
+    };
+    assert!(
+        oversized_errors
+            .iter()
+            .any(|d| d.code == "core.values.inexact"),
+        "expected core.values.inexact for round scale > 18, got {oversized_errors:?}"
+    );
+
+    // `avg` stays refused outside the profile.
+    let avg_expr = Expression::compile("avg([self.hours]) >= 0")?;
+    assert!(avg_expr.check_typed(&env, &Type::Bool).is_err());
+
+    // Runtime exact-VM negative controls: array `contains` and numeric functions remain refused.
+    for vm_refused in [
+        "contains([1, 2], 1)",
+        "abs(1.5)",
+        "floor(1.5)",
+        "ceil(1.5)",
+        "sum([1.5])",
+    ] {
+        let attempt = Expression::compile(vm_refused)?.evaluate_exact_metered(
+            &Value::Null,
+            EvaluationBudget::default(),
+            None,
+        );
+        assert!(
+            attempt.result.is_err(),
+            "exact VM must refuse `{vm_refused}` at runtime"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn val_exact_ternary_arms_nanoseconds_and_temporal_amounts()
+-> Result<(), Box<dyn std::error::Error>> {
+    let shift_def: ObjectTypeDef = serde_json::from_value(serde_json::json!({
+        "name": "time.PrecisionShift",
+        "properties": [
+            {"id": "flag", "type": {"kind": "boolean"}},
+            {"id": "other_flag", "type": {"kind": "boolean"}},
+            {"id": "count", "type": {"kind": "integer"}},
+            {"id": "hours", "type": {"kind": "decimal", "scale": 2}},
+            {"id": "start_date", "type": {"kind": "date"}},
+            {"id": "start_ts", "type": {"kind": "timestamp", "timezone": "utc"}},
+            {"id": "one_sec_ts", "type": {"kind": "timestamp", "timezone": "utc"}},
+            {"id": "nano_start", "type": {"kind": "timestamp", "timezone": "utc"}},
+            {"id": "nano_end", "type": {"kind": "timestamp", "timezone": "utc"}},
+            {"id": "nano_other_start", "type": {"kind": "timestamp", "timezone": "utc"}},
+            {"id": "nano_other_end", "type": {"kind": "timestamp", "timezone": "utc"}},
+            {"id": "nano_gap_start", "type": {"kind": "timestamp", "timezone": "utc"}},
+            {"id": "nano_gap_end", "type": {"kind": "timestamp", "timezone": "utc"}}
+        ]
+    }))?;
+    let object_types = [shift_def];
+    let defs = norn_expr::EntityDefinitions {
+        property_types: &[],
+        interfaces: &[],
+        object_types: &object_types,
+        extensions: &[],
+    };
+    let env = ZenTypeEnv::from_artifact_set(&defs, EnvOptions::default())
+        .map_err(|errors| format!("env: {errors:?}"))?
+        .bind_self(&name("time.PrecisionShift"))
+        .map_err(|error| format!("bind_self: {error:?}"))?;
+
+    let make_ctx =
+        |flag: bool, other_flag: bool, hours: &str| -> Result<Value, Box<dyn std::error::Error>> {
+            Ok(Value::object([(
+                "self",
+                Value::object([
+                    ("flag", Value::Bool(flag)),
+                    ("other_flag", Value::Bool(other_flag)),
+                    ("count", Value::from(1_i64)),
+                    ("hours", Value::Number(hours.parse::<Number>()?)),
+                    ("start_date", Value::from("2026-01-01")),
+                    ("start_ts", Value::from("2026-03-09T14:00:00Z")),
+                    ("one_sec_ts", Value::from("2026-03-09T14:00:01Z")),
+                    ("nano_start", Value::from("2026-03-09T14:00:00.000000125Z")),
+                    ("nano_end", Value::from("2026-03-09T14:00:01.000000625Z")),
+                    (
+                        "nano_other_start",
+                        Value::from("2026-03-09T14:00:00.500000125Z"),
+                    ),
+                    (
+                        "nano_other_end",
+                        Value::from("2026-03-09T14:00:02.000000625Z"),
+                    ),
+                    (
+                        "nano_gap_start",
+                        Value::from("2026-03-09T14:00:01.250000625Z"),
+                    ),
+                    (
+                        "nano_gap_end",
+                        Value::from("2026-03-09T14:00:02.250000625Z"),
+                    ),
+                ]),
+            )]))
+        };
+
+    // 1. Ternary division in true arm, false arm, and nested ternary under explicit round(...).
+    let true_arm = Expression::compile(
+        "round(self.flag ? seconds_between(timestamp(self.start_ts), timestamp(self.one_sec_ts)) / 3 : 0, 2, 'half_even')",
+    )?;
+    true_arm
+        .check_typed(&env, &Type::Number)
+        .map_err(|errors| format!("true_arm check_typed: {errors:?}"))?;
+    assert_eq!(
+        true_arm
+            .evaluate_typed_metered(
+                &make_ctx(true, false, "8.50")?,
+                EvaluationBudget::default(),
+                &env,
+                &Type::Number,
+            )
+            .result?
+            .into_value(),
+        Value::Number("0.33".parse::<Number>()?)
+    );
+    assert_eq!(
+        true_arm
+            .evaluate_typed_metered(
+                &make_ctx(false, false, "8.50")?,
+                EvaluationBudget::default(),
+                &env,
+                &Type::Number,
+            )
+            .result?
+            .into_value(),
+        Value::Number("0".parse::<Number>()?)
+    );
+
+    let false_arm = Expression::compile(
+        "round(self.flag ? 0 : seconds_between(timestamp(self.start_ts), timestamp(self.one_sec_ts)) / 3, 2, 'half_even')",
+    )?;
+    false_arm
+        .check_typed(&env, &Type::Number)
+        .map_err(|errors| format!("false_arm check_typed: {errors:?}"))?;
+    assert_eq!(
+        false_arm
+            .evaluate_typed_metered(
+                &make_ctx(false, false, "8.50")?,
+                EvaluationBudget::default(),
+                &env,
+                &Type::Number,
+            )
+            .result?
+            .into_value(),
+        Value::Number("0.33".parse::<Number>()?)
+    );
+    assert_eq!(
+        false_arm
+            .evaluate_typed_metered(
+                &make_ctx(true, false, "8.50")?,
+                EvaluationBudget::default(),
+                &env,
+                &Type::Number,
+            )
+            .result?
+            .into_value(),
+        Value::Number("0".parse::<Number>()?)
+    );
+
+    let nested = Expression::compile(
+        "round(self.flag ? (self.other_flag ? seconds_between(timestamp(self.start_ts), timestamp(self.one_sec_ts)) / 3 : 2 / 3) : 5 / 3, 2, 'half_even')",
+    )?;
+    nested
+        .check_typed(&env, &Type::Number)
+        .map_err(|errors| format!("nested check_typed: {errors:?}"))?;
+    for (flag, other_flag, expected_num) in [
+        (true, true, "0.33"),
+        (true, false, "0.67"),
+        (false, true, "1.67"),
+    ] {
+        assert_eq!(
+            nested
+                .evaluate_typed_metered(
+                    &make_ctx(flag, other_flag, "8.50")?,
+                    EvaluationBudget::default(),
+                    &env,
+                    &Type::Number,
+                )
+                .result?
+                .into_value(),
+            Value::Number(expected_num.parse::<Number>()?)
+        );
+    }
+
+    // Ternary division under a declared Decimal destination (both arms).
+    let half_even_dest = Type::Decimal {
+        scale: 2,
+        unit: None,
+        rounding: norn_ir::Rounding::HalfEven,
+        currency_source: None,
+        per_unit: None,
+    };
+    let dest_ternary = Expression::compile(
+        "self.flag ? seconds_between(timestamp(self.start_ts), timestamp(self.one_sec_ts)) / 3 : 2 / 3",
+    )?;
+    dest_ternary
+        .check_typed(&env, &half_even_dest)
+        .map_err(|errors| format!("dest_ternary check_typed: {errors:?}"))?;
+    assert_eq!(
+        dest_ternary
+            .evaluate_typed_metered(
+                &make_ctx(true, false, "8.50")?,
+                EvaluationBudget::default(),
+                &env,
+                &half_even_dest,
+            )
+            .result?
+            .into_value(),
+        Value::Number("0.33".parse::<Number>()?)
+    );
+    assert_eq!(
+        dest_ternary
+            .evaluate_typed_metered(
+                &make_ctx(false, false, "8.50")?,
+                EvaluationBudget::default(),
+                &env,
+                &half_even_dest,
+            )
+            .result?
+            .into_value(),
+        Value::Number("0.67".parse::<Number>()?)
+    );
+
+    // Negative controls: bare division in ternary condition MUST refuse statically AND at runtime.
+    let ctx_true = make_ctx(true, false, "8.50")?;
+    for bad_cond in [
+        "round((1 / 3 > 0) ? 1 : 2, 2, 'half_even')",
+        "round((seconds_between(timestamp(self.start_ts), timestamp(self.one_sec_ts)) / 3 > 0) ? 1 : 2, 2, 'half_even')",
+        "round((0.0000000000000000001 > 0) ? 1 : 2, 2, 'half_even')",
+    ] {
+        let compiled = Expression::compile(bad_cond)?;
+        let Err(errors) = compiled.check_typed(&env, &Type::Number) else {
+            return Err(format!("`{bad_cond}` must refuse with core.values.inexact").into());
+        };
+        assert!(
+            errors.iter().any(|d| d.code == "core.values.inexact"),
+            "`{bad_cond}` expected core.values.inexact, got {errors:?}"
+        );
+        assert!(
+            compiled
+                .evaluate_exact_metered(&ctx_true, EvaluationBudget::default(), None)
+                .result
+                .is_err(),
+            "exact VM must refuse `{bad_cond}` at runtime too"
+        );
+    }
+
+    // Non-final division inside the true arm still refuses at runtime.
+    let non_final_true_arm =
+        Expression::compile("round(self.flag ? (1 / 3) * 3 : 0, 2, 'half_even')")?;
+    assert!(
+        non_final_true_arm
+            .evaluate_typed_metered(&ctx_true, EvaluationBudget::default(), &env, &Type::Number)
+            .result
+            .is_err()
+    );
+
+    // 2. Nanosecond duration arithmetic & comparison against Decimal and integer operands
+    // inside the exact VM (`self.hours` activates exact arithmetic on every case).
+    for source in [
+        "(self.hours > 0.00) and (seconds_between(timestamp(self.nano_start), timestamp(self.nano_end)) == 1.0000005) and (seconds_between(timestamp(self.nano_start), timestamp(self.nano_end)) > self.count)",
+        "seconds_between(timestamp(self.nano_start), timestamp(self.nano_end)) + self.hours == 9.5000005",
+        "(self.hours > 0.00) and (seconds_between(timestamp(self.nano_start), timestamp(self.nano_end)) * 2 == 2.000001)",
+        "(self.hours > 0.00) and (interval_intersection_seconds(timestamp(self.nano_start), timestamp(self.nano_end), timestamp(self.nano_other_start), timestamp(self.nano_other_end)) == 0.5000005) and (interval_intersection_seconds(timestamp(self.nano_start), timestamp(self.nano_end), timestamp(self.nano_other_start), timestamp(self.nano_other_end)) < self.count)",
+        "(interval_gap_seconds(timestamp(self.nano_start), timestamp(self.nano_end), timestamp(self.nano_gap_start), timestamp(self.nano_gap_end)) == 0.25) and (interval_gap_seconds(timestamp(self.nano_start), timestamp(self.nano_end), timestamp(self.nano_gap_start), timestamp(self.nano_gap_end)) + self.hours == 8.75)",
+    ] {
+        let compiled = Expression::compile(source)?;
+        let checked = compiled
+            .check_typed(&env, &Type::Bool)
+            .map_err(|errors| format!("nanosecond `{source}` check_typed: {errors:?}"))?;
+        assert!(checked.uses_exact_arithmetic(), "{source}");
+        let val = compiled
+            .evaluate_admitted_metered(&ctx_true, EvaluationBudget::default(), &env, &Type::Bool)
+            .result?
+            .into_value();
+        assert_eq!(val, Value::Bool(true), "{source}");
+    }
+
+    // 3. Fractional `add_days` and `add_seconds` refuse statically (literals) and at runtime (dynamic decimals/sub-second durations).
+    for static_frac in [
+        "(self.hours > 0.00) and (add_days(date(self.start_date), 1.5) == date('2026-01-02'))",
+        "(self.hours > 0.00) and (add_seconds(timestamp(self.start_ts), 0.25) == timestamp(self.one_sec_ts))",
+    ] {
+        assert!(
+            Expression::compile(static_frac)?
+                .check_typed(&env, &Type::Bool)
+                .is_err(),
+            "static fractional amount must refuse: {static_frac}"
+        );
+    }
+
+    let frac_ctx = make_ctx(true, false, "1.50")?;
+    for runtime_frac in [
+        "(self.hours > 0.00) and (add_days(date(self.start_date), self.hours) == date('2026-01-02'))",
+        "(self.hours > 0.00) and (add_seconds(timestamp(self.start_ts), self.hours) == timestamp(self.one_sec_ts))",
+        "(self.hours > 0.00) and (add_seconds(timestamp(self.start_ts), seconds_between(timestamp(self.nano_start), timestamp(self.nano_end))) == timestamp(self.one_sec_ts))",
+    ] {
+        let compiled = Expression::compile(runtime_frac)?;
+        compiled
+            .check_typed(&env, &Type::Bool)
+            .map_err(|errors| format!("dynamic frac `{runtime_frac}` check_typed: {errors:?}"))?;
+        let attempt = compiled.evaluate_admitted_metered(
+            &frac_ctx,
+            EvaluationBudget::default(),
+            &env,
+            &Type::Bool,
+        );
+        assert!(
+            matches!(attempt.result, Err(norn_expr::ExprError::Evaluation { .. })),
+            "runtime fractional temporal amount must fail closed: `{runtime_frac}`, got {:?}",
+            attempt.result
+        );
+    }
+
+    // 4. Explicit `round(..., 0, 'half_even')` inside temporal amounts succeeds, while bare division refuses statically.
+    for rounded_amount in [
+        "(self.hours > 0.00) and (add_days(date(self.start_date), round(self.hours / 2, 0, 'half_even')) == date('2026-01-05'))",
+        "(self.hours > 0.00) and (add_seconds(timestamp(self.start_ts), round(seconds_between(timestamp(self.nano_start), timestamp(self.nano_end)), 0, 'half_even')) == timestamp(self.one_sec_ts))",
+    ] {
+        let compiled = Expression::compile(rounded_amount)?;
+        compiled.check_typed(&env, &Type::Bool).map_err(|errors| {
+            format!("rounded amount `{rounded_amount}` check_typed: {errors:?}")
+        })?;
+        let val = compiled
+            .evaluate_admitted_metered(&ctx_true, EvaluationBudget::default(), &env, &Type::Bool)
+            .result?
+            .into_value();
+        assert_eq!(val, Value::Bool(true), "{rounded_amount}");
+    }
+
+    for bare_div_amount in [
+        "(self.hours > 0.00) and (add_days(date(self.start_date), self.hours / 2) == date('2026-01-05'))",
+        "(self.hours > 0.00) and (add_seconds(timestamp(self.start_ts), self.hours / 2) == timestamp(self.one_sec_ts))",
+    ] {
+        let Err(errors) = Expression::compile(bare_div_amount)?.check_typed(&env, &Type::Bool)
+        else {
+            return Err(format!("`{bare_div_amount}` must refuse bare division").into());
+        };
+        assert!(
+            errors.iter().any(|d| d.code == "core.values.inexact"),
+            "`{bare_div_amount}` expected core.values.inexact, got {errors:?}"
+        );
+    }
+
+    Ok(())
+}
