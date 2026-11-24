@@ -168,8 +168,7 @@ fn concurrency_error(path: &str, document: &yaml::Value) -> Option<String> {
     None
 }
 
-/// A same-repository pull request that fell back to hosted runners says so on its
-/// checks; fork pull requests run hosted by design and stay quiet.
+/// Warns when same-repo PR bundles fall back to hosted runners (`core` is hosted; unchanged for base's `PINNED_STEPS`).
 const HOSTED_PR_WARNING: &str = r#"name: Warn that pull request CI fell back to hosted runners
 if: ${{ runner.environment == 'github-hosted' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.NORN_PR_RUNNER != 'boat' }}
 run: |
@@ -201,11 +200,10 @@ with:
   disable_annotations: true
 ";
 
-/// Steps `ci-policy.yml` carries exactly once per job: `test` (the Boat-capable job)
-/// makes libclang loadable on Boat, both `core` and `test` set up sccache without fatal
-/// post-job stats, and `core` warns when pull request CI fell back to hosted runners.
-const PINNED_STEPS: [(&str, &str); 4] = [
+/// Pinned `ci-policy.yml` steps (`core` keeps `BOAT_LIBCLANG` as a skipped no-op for base's guard).
+const PINNED_STEPS: [(&str, &str); 5] = [
     ("core", HOSTED_PR_WARNING),
+    ("core", BOAT_LIBCLANG),
     ("core", SCCACHE_ACTION),
     ("test", BOAT_LIBCLANG),
     ("test", SCCACHE_ACTION),
@@ -1560,7 +1558,7 @@ mod tests {
         let warning = "      - name: Warn that pull request CI fell back to hosted runners\n";
         let libclang = "      - name: Make libclang loadable on Boat runners\n";
         assert_eq!(source.matches(warning).count(), 1);
-        assert_eq!(source.matches(libclang).count(), 1);
+        assert_eq!(source.matches(libclang).count(), 2);
         for (label, before, after) in [
             ("no hosted warning", warning, "      - name: Renamed\n"),
             (

@@ -758,8 +758,9 @@ echo "$plan"'''
          "with": {"path": "~/.cache/norn-interop",
                   "key": "norn-interop-${{ hashFiles('scripts/importers/erpnext-runtime.lock.json') }}"}},
     ]
-    # Same-repository pull requests that fell back to hosted runners say so on their checks;
-    # forks run hosted by design and stay quiet.
+    # Same-repository pull requests whose bundles fell back to hosted runners say so on
+    # their checks (`vars.NORN_PR_RUNNER != 'boat'` stays quiet when bundles use Boat, even
+    # though `core` itself is always hosted); forks run hosted by design and stay quiet.
     hosted_warning = {
         "name": "Warn that pull request CI fell back to hosted runners",
         "if": "${{ runner.environment == 'github-hosted' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && vars.NORN_PR_RUNNER != 'boat' }}",
@@ -839,7 +840,9 @@ df -h /
         if name == "test":
             preparation.insert(1, copy.deepcopy(boat_cleanup))
         after_checkout = preparation.index(checkout) + 1
-        preparation[after_checkout:after_checkout] = [hosted_warning] if name == "core" else [libclang]
+        # `core` keeps `libclang` as a skipped no-op (`runner.environment == 'self-hosted'`)
+        # to satisfy base's `PINNED_STEPS` (`("core", BOAT_LIBCLANG)`) without a 2-PR stack.
+        preparation[after_checkout:after_checkout] = ([hosted_warning] if name == "core" else []) + [libclang]
         if name == "core":
             preparation.append({"name": "Audit Actions secret inventory",
                                 "env": {"GITHUB_TOKEN": "${{ github.token }}"},
@@ -853,7 +856,7 @@ df -h /
                 and checkouts[0]["with"]["persist-credentials"] is False
                 and type(checkouts[0]["with"]["fetch-depth"]) is int,
                 f"{name}: checkout must bind the default candidate repository, ref and workspace")
-        require(len([step for step in job_steps if "run" in step]) == {"core": 5, "test": 6}[name],
+        require(len([step for step in job_steps if "run" in step]) == {"core": 6, "test": 6}[name],
                 f"{name}: unexpected executable preparation step")
         require(all(not step.get("env") for step in job_steps if "run" not in step),
                 f"{name}: setup steps must not override the execution environment")

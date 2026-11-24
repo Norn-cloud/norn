@@ -1696,13 +1696,15 @@ def workflow_context_canaries(source: str) -> None:
         document = copy.deepcopy(workflow)
         document["jobs"]["test"]["steps"][0]["run"] = workflow["jobs"]["core"]["steps"][0]["run"]
         rejected("threshold-only hosted bundle cleanup", document)
-        # Boat's base image needs libclang made loadable before any bindgen build (test bundles).
-        document = copy.deepcopy(workflow)
-        document["jobs"]["test"]["steps"] = [step for step in document["jobs"]["test"]["steps"]
-                                             if step.get("name") != "Make libclang loadable on Boat runners"]
-        if len(document["jobs"]["test"]["steps"]) != len(workflow["jobs"]["test"]["steps"]) - 1:
-            raise AssertionError("test: libclang canary target drifted")
-        rejected("test without the Boat libclang step", document)
+        # Boat's base image needs libclang made loadable before any bindgen build (`test`
+        # bundles; `core` keeps the same step as a skipped no-op for base's PINNED_STEPS).
+        for name in ("core", "test"):
+            document = copy.deepcopy(workflow)
+            document["jobs"][name]["steps"] = [step for step in document["jobs"][name]["steps"]
+                                               if step.get("name") != "Make libclang loadable on Boat runners"]
+            if len(document["jobs"][name]["steps"]) != len(workflow["jobs"][name]["steps"]) - 1:
+                raise AssertionError(f"{name}: libclang canary target drifted")
+            rejected(f"{name} without the Boat libclang step", document)
         # A same-repository PR that fell back to hosted runners must say so on its checks.
         document = copy.deepcopy(workflow)
         document["jobs"]["core"]["steps"] = [step for step in document["jobs"]["core"]["steps"]
