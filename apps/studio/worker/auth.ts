@@ -2,7 +2,7 @@ import { apiKey } from "@better-auth/api-key"
 import { cimd } from "@better-auth/cimd"
 import { mcp } from "@better-auth/mcp"
 import { betterAuth, getCurrentAdapter, type BetterAuthOptions } from "better-auth"
-import { APIError } from "better-auth/api"
+import { APIError, createAuthMiddleware } from "better-auth/api"
 import { createAccessControl } from "better-auth/plugins/access"
 import { genericOAuth } from "better-auth/plugins/generic-oauth"
 import { jwt } from "better-auth/plugins/jwt"
@@ -308,6 +308,13 @@ async function workspaceIdentity(secret: string, userId: string) {
   return { id, metadata: JSON.stringify({ "norn.provisioningProof": await sign(`owner:${userId}:${id}`) }) }
 }
 
+/** Shown when a non-allowlisted address attempts sign-up on an invite-only deployment. */
+export const INVITE_ONLY_MESSAGE = "This alpha is invite-only; ask your admin for an invitation."
+
+/** Whether an email address may create an account under the deployment's allowlist (undefined = open). */
+export const signUpAllowed = (allowlist: readonly string[] | undefined, email: string): boolean =>
+  allowlist === undefined || allowlist.includes(email.trim().toLowerCase())
+
 /** The workspace's payer, set at creation while billing is on (workspaces.ts) and read by migration 0011's triggers. */
 export const BILLING_PAYER = "norn.billingPayer"
 /** Set on workspaces created while billing is on: only those are limited (migration 0011). */
@@ -446,13 +453,26 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
       ...config.mcp === true ? assistantAuthorization(config.baseURL) : [],
       ...config.billing === undefined ? [] : [polarPlugin(config.billing, config.baseURL)],
     ],
+    hooks: {
+      // Runs after Better Auth's origin check and rate limit, before sign-up execution:
+      // refuses non-allowlisted sign-up on invite-only deployments with 403 INVITE_ONLY and zero DB writes.
+      before: createAuthMiddleware(async (ctx) => {
+        const path = ctx.path.replace(/\/+$/, "").toLowerCase()
+        if (path === "/sign-up/email" && config.signUpEmails !== undefined) {
+          const body = ctx.body as { email?: unknown } | undefined
+          if (typeof body?.email === "string" && body.email.trim() !== "" && !signUpAllowed(config.signUpEmails, body.email)) {
+            throw new APIError("FORBIDDEN", { code: "INVITE_ONLY", message: INVITE_ONLY_MESSAGE })
+          }
+        }
+      }),
+    },
     databaseHooks: {
       user: {
         create: {
-          // Invite-only deployments refuse an uninvited address before any row is written.
+          // Defense in depth: refuse an uninvited address before any row is written, by any path.
           before: async (user) => {
-            if (config.signUpEmails !== undefined && !config.signUpEmails.includes(String(user.email).trim().toLowerCase())) {
-              throw new APIError("FORBIDDEN", { message: "Sign-up on this deployment is by invitation only." })
+            if (!signUpAllowed(config.signUpEmails, String(user.email))) {
+              throw new APIError("FORBIDDEN", { code: "INVITE_ONLY", message: INVITE_ONLY_MESSAGE })
             }
           },
           // The user-insert trigger commits the pending marker with the user; session creation retries incomplete provisioning.
