@@ -58,7 +58,10 @@ import {
   inspectZipArchive,
   isFetchableUrl,
   parseSha256Sums,
+  resolveReleaseBaseUrl,
+  sanitizeUrlForDiagnostic,
   setupLocalRuntime,
+  withPublishLock,
 } from "../src/setup.ts"
 
 const scratch = () => mkdtempSync(join(tmpdir(), "norn-local-runtime-"))
@@ -401,7 +404,7 @@ test("redirects reject userinfo, reject HTTPS->HTTP downgrades (even loopback), 
         return new Response(null, { status: 302, headers: { location: "http://example.invalid/plaintext.tar.gz" } })
       }
       if (path === "/userinfo-redirect") {
-        return new Response(null, { status: 302, headers: { location: `http://user:pass@127.0.0.1:${url.port}/payload` } })
+        return new Response(null, { status: 302, headers: { location: `http://alice:supersecret@127.0.0.1:${url.port}/payload` } })
       }
       if (path === "/relative-hop") {
         return new Response(null, { status: 302, headers: { location: "/absolute-hop" } })
@@ -422,13 +425,48 @@ test("redirects reject userinfo, reject HTTPS->HTTP downgrades (even loopback), 
 
   try {
     const base = `http://127.0.0.1:${server.port}`
-    // 1. Initial URL with userinfo is refused.
-    await expect(fetchBounded(`http://user:pass@127.0.0.1:${server.port}/payload`, 1024, 5_000)).rejects.toThrow("refusing")
-    await expect(fetchBounded("https://user:pass@github.com/a.tar.gz", 1024, 5_000)).rejects.toThrow("refusing")
+    // 1. Initial URL with userinfo is refused AND credentials are redacted from diagnostics.
+    expect(sanitizeUrlForDiagnostic("https://alice:supersecret@example.com/releases/SHA256SUMS"))
+      .toBe("https://***@example.com/releases/SHA256SUMS")
+    expect(sanitizeUrlForDiagnostic("https://alice:supersecret@bad host:nope/releases"))
+      .toBe("https://***@bad host:nope/releases")
 
-    // 2. Redirect to remote plaintext HTTP or URL with userinfo is refused fail-closed.
+    for (const badInitial of [
+      `http://alice:supersecret@127.0.0.1:${server.port}/payload`,
+      "https://alice:supersecret@example.com/releases/a.tar.gz",
+    ]) {
+      let errMsg = ""
+      try {
+        await fetchBounded(badInitial, 1024, 5_000)
+      } catch (error) {
+        errMsg = error instanceof Error ? error.message : String(error)
+      }
+      expect(errMsg).toContain("refusing")
+      expect(errMsg).not.toContain("alice")
+      expect(errMsg).not.toContain("supersecret")
+    }
+
+    let baseUrlErr = ""
+    try {
+      resolveReleaseBaseUrl({ baseUrl: "https://alice:supersecret@example.com/releases" })
+    } catch (error) {
+      baseUrlErr = error instanceof Error ? error.message : String(error)
+    }
+    expect(baseUrlErr).toContain("refusing")
+    expect(baseUrlErr).not.toContain("alice")
+    expect(baseUrlErr).not.toContain("supersecret")
+
+    // 2. Redirect to remote plaintext HTTP or URL with userinfo is refused fail-closed (and credentials redacted).
     await expect(fetchBounded(`${base}/downgrade`, 1024, 5_000)).rejects.toThrow("refusing redirect")
-    await expect(fetchBounded(`${base}/userinfo-redirect`, 1024, 5_000)).rejects.toThrow("refusing redirect")
+    let localUserinfoRedirectErr = ""
+    try {
+      await fetchBounded(`${base}/userinfo-redirect`, 1024, 5_000)
+    } catch (error) {
+      localUserinfoRedirectErr = error instanceof Error ? error.message : String(error)
+    }
+    expect(localUserinfoRedirectErr).toContain("refusing redirect")
+    expect(localUserinfoRedirectErr).not.toContain("alice")
+    expect(localUserinfoRedirectErr).not.toContain("supersecret")
 
     // 3. Allowed relative + loopback redirects succeed.
     const payload = await fetchBounded(`${base}/relative-hop`, 1024, 5_000)
@@ -461,17 +499,19 @@ test("redirects reject userinfo, reject HTTPS->HTTP downgrades (even loopback), 
       "https://objects.githubusercontent.com/release/a.tar.gz",
     ])
 
-    // 6. Mock fetch: HTTPS -> remote HTTP AND HTTPS -> loopback HTTP AND HTTPS -> userinfo HTTPS are ALL refused before issuing the hop.
+    // 6. Mock fetch: HTTPS -> remote HTTP AND HTTPS -> loopback HTTP AND HTTPS -> userinfo HTTPS are ALL refused before issuing the hop,
+    //    and rejected redirect credentials are never leaked in diagnostics.
     for (const badLocation of [
       "http://objects.githubusercontent.com/insecure/a.tar.gz",
       "http://127.0.0.1:8080/ssrf-downgrade.tar.gz",
       "http://localhost:8080/ssrf-downgrade.tar.gz",
       "http://[::1]:8080/ssrf-downgrade.tar.gz",
-      "https://user:pass@objects.githubusercontent.com/release/a.tar.gz",
+      "https://alice:supersecret@example.com/release/a.tar.gz",
     ]) {
       const seen: string[] = []
-      await expect(
-        fetchBounded(
+      let errMsg = ""
+      try {
+        await fetchBounded(
           "https://github.com/Norn-cloud/norn/releases/download/drop-1/a.tar.gz",
           1024,
           5_000,
@@ -479,8 +519,13 @@ test("redirects reject userinfo, reject HTTPS->HTTP downgrades (even loopback), 
             seen.push(url)
             return new Response(null, { status: 302, headers: { location: badLocation } })
           },
-        ),
-      ).rejects.toThrow("refusing redirect")
+        )
+      } catch (error) {
+        errMsg = error instanceof Error ? error.message : String(error)
+      }
+      expect(errMsg).toContain("refusing redirect")
+      expect(errMsg).not.toContain("alice")
+      expect(errMsg).not.toContain("supersecret")
       expect(seen).toEqual(["https://github.com/Norn-cloud/norn/releases/download/drop-1/a.tar.gz"])
     }
   } finally {
@@ -799,6 +844,79 @@ test("atomic generation replacement preserves active generation on failure and p
     releaseV1.close()
     releaseV2BadArchive.close()
     releaseV2Good.close()
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test("publish lock serializes concurrent publishers/pruners and recovers stale locks", async () => {
+  const root = scratch()
+  const platform = detectPlatform()
+  const releaseA = startReleaseServer(platform, { fixtureTag: "concurrent-a" })
+  const releaseB = startReleaseServer(platform, { fixtureTag: "concurrent-b" })
+  const cacheDir = join(root, "lock-cache")
+  const runtimeDir = join(cacheDir, "runtime")
+  const lockPath = join(runtimeDir, ".publish.lock")
+  try {
+    mkdirSync(runtimeDir, { recursive: true })
+
+    // 1. Strict mutual exclusion: second contender must wait until first finishes.
+    const events: string[] = []
+    const firstHold = withPublishLock(runtimeDir, async () => {
+      events.push("first:enter")
+      await new Promise((wake) => setTimeout(wake, 60))
+      events.push("first:exit")
+    })
+    await new Promise((wake) => setTimeout(wake, 15))
+    const secondHold = withPublishLock(runtimeDir, async () => {
+      events.push("second:enter")
+      events.push("second:exit")
+    })
+    await Promise.all([firstHold, secondHold])
+    expect(events).toEqual(["first:enter", "first:exit", "second:enter", "second:exit"])
+    expect(existsSync(lockPath)).toBe(false)
+
+    // 2. Stale lock recovery when holder PID is dead (ESRCH).
+    writeFileSync(lockPath, JSON.stringify({ pid: 999_999_999, createdAt: Date.now(), token: "dead-holder" }))
+    let ranAfterDeadPid = false
+    await withPublishLock(runtimeDir, () => {
+      ranAfterDeadPid = true
+    })
+    expect(ranAfterDeadPid).toBe(true)
+    expect(existsSync(lockPath)).toBe(false)
+
+    // 3. Stale lock recovery when lock age exceeds staleMs (even if PID is alive).
+    writeFileSync(lockPath, JSON.stringify({ pid: process.pid, createdAt: Date.now() - 120_000, token: "aged-holder" }))
+    const oldTime = new Date(Date.now() - 120_000)
+    utimesSync(lockPath, oldTime, oldTime)
+    let ranAfterAged = false
+    await withPublishLock(runtimeDir, () => {
+      ranAfterAged = true
+    }, { staleMs: 5_000 })
+    expect(ranAfterAged).toBe(true)
+    expect(existsSync(lockPath)).toBe(false)
+
+    // 4. Live lock held past timeout fails closed without removing the live lock.
+    writeFileSync(lockPath, JSON.stringify({ pid: process.pid, createdAt: Date.now(), token: "live-holder" }))
+    await expect(
+      withPublishLock(runtimeDir, () => {}, { timeoutMs: 40, staleMs: 60_000 }),
+    ).rejects.toThrow("timed out waiting for runtime publish lock")
+    expect(existsSync(lockPath)).toBe(true)
+    rmSync(lockPath, { force: true })
+
+    // 5. Two concurrent `setupLocalRuntime` runs serialize cleanly via `.publish.lock`
+    //    and leave `current` pointing to an intact, discoverable generation.
+    const [resA, resB] = await Promise.all([
+      setupLocalRuntime({ baseUrl: releaseA.baseUrl, cacheDir, platform, version: "drop-a" }),
+      setupLocalRuntime({ baseUrl: releaseB.baseUrl, cacheDir, platform, version: "drop-b" }),
+    ])
+    const activeGen = readActiveGenerationId(cacheDir)
+    expect(activeGen).toBeDefined()
+    expect([resA.generationId, resB.generationId]).toContain(activeGen!)
+    expect(existsSync(cachedDevHostPath(cacheDir))).toBe(true)
+    expect(existsSync(lockPath)).toBe(false)
+  } finally {
+    releaseA.close()
+    releaseB.close()
     rmSync(root, { recursive: true, force: true })
   }
 })

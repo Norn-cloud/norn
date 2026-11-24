@@ -23,11 +23,13 @@ import { spawnSync } from "node:child_process"
 import { createHash, randomBytes } from "node:crypto"
 import {
   chmodSync,
+  closeSync,
   cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readdirSync,
   readFileSync,
   renameSync,
@@ -51,6 +53,8 @@ export const MAX_EXTRACTED_BYTES = 256 * 1024 * 1024
 export const MAX_ARCHIVE_ENTRIES = 4096
 export const GENERATION_CLEANUP_GRACE_MS = 60_000
 export const KEEP_RECENT_GENERATIONS = 2
+export const PUBLISH_LOCK_TIMEOUT_MS = 15_000
+export const PUBLISH_LOCK_STALE_MS = 60_000
 const MAX_SUMS_BYTES = 1024 * 1024
 const MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 const MAX_PAX_HEADER_BYTES = 1024 * 1024
@@ -102,6 +106,28 @@ const VALID_PLATFORMS = new Set(["linux-x64", "linux-arm64", "macos-arm64", "mac
 export const detectReleasePlatform = detectPlatform
 
 /**
+ * Strip/redact URL userinfo (`username` and `password`) before formatting a
+ * URL into any error message or diagnostic so credentials never leak to stderr.
+ */
+export function sanitizeUrlForDiagnostic(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl)
+    if (parsed.username !== "" || parsed.password !== "") {
+      parsed.username = ""
+      parsed.password = ""
+      const stripped = parsed.toString()
+      const sepIdx = stripped.indexOf("://")
+      return sepIdx >= 0
+        ? `${stripped.slice(0, sepIdx + 3)}***@${stripped.slice(sepIdx + 3)}`
+        : stripped
+    }
+    return parsed.toString()
+  } catch {
+    return rawUrl.replace(/((?:[a-zA-Z][a-zA-Z0-9+.-]*:)?\/\/)([^/@\s]+)@/g, "$1***@")
+  }
+}
+
+/**
  * Reject URL userinfo and remote plaintext HTTP; allow https or local loopback
  * mirrors for offline/tests.
  */
@@ -141,7 +167,9 @@ export function resolveReleaseBaseUrl(options: {
       ? `https://github.com/${repo}/releases/latest/download`
       : `https://github.com/${repo}/releases/download/${encodeURIComponent(version)}`
   if (!isFetchableUrl(baseUrl)) {
-    throw new Error(`refusing unsafe or non-https release URL ${baseUrl} (userinfo is forbidden; plain http is allowed only on loopback)`)
+    throw new Error(
+      `refusing unsafe or non-https release URL ${sanitizeUrlForDiagnostic(baseUrl)} (userinfo is forbidden; plain http is allowed only on loopback)`,
+    )
   }
   return { version, baseUrl }
 }
@@ -185,7 +213,9 @@ export async function fetchBounded(
   fetchImpl: FetchLike = fetch,
 ): Promise<Uint8Array> {
   if (!isFetchableUrl(url)) {
-    throw new Error(`refusing unsafe or non-https URL ${url} (userinfo is forbidden; plain http is allowed only on loopback)`)
+    throw new Error(
+      `refusing unsafe or non-https URL ${sanitizeUrlForDiagnostic(url)} (userinfo is forbidden; plain http is allowed only on loopback)`,
+    )
   }
   const deadline = Date.now() + timeoutMs
   let currentUrl = url
@@ -195,7 +225,7 @@ export async function fetchBounded(
   for (;;) {
     const remaining = deadline - Date.now()
     if (remaining <= 0) {
-      throw new Error(`timed out fetching ${currentUrl}`)
+      throw new Error(`timed out fetching ${sanitizeUrlForDiagnostic(currentUrl)}`)
     }
     response = await fetchImpl(currentUrl, {
       redirect: "manual",
@@ -205,26 +235,32 @@ export async function fetchBounded(
 
     await response.body?.cancel()
     if (redirects >= MAX_REDIRECTS) {
-      throw new Error(`too many redirects (>${MAX_REDIRECTS}) fetching ${url}`)
+      throw new Error(`too many redirects (>${MAX_REDIRECTS}) fetching ${sanitizeUrlForDiagnostic(url)}`)
     }
     const location = response.headers.get("location")
     if (!location) {
-      throw new Error(`HTTP ${response.status} redirect without Location header fetching ${currentUrl}`)
+      throw new Error(
+        `HTTP ${response.status} redirect without Location header fetching ${sanitizeUrlForDiagnostic(currentUrl)}`,
+      )
     }
     const prevParsed = new URL(currentUrl)
     let nextParsed: URL
     try {
       nextParsed = new URL(location, currentUrl)
     } catch {
-      throw new Error(`invalid redirect Location '${location}' from ${currentUrl}`)
+      throw new Error(
+        `invalid redirect Location '${sanitizeUrlForDiagnostic(location)}' from ${sanitizeUrlForDiagnostic(currentUrl)}`,
+      )
     }
     const nextUrl = nextParsed.toString()
     if (prevParsed.protocol === "https:" && nextParsed.protocol === "http:") {
-      throw new Error(`refusing redirect downgrade from https (${currentUrl}) to http (${nextUrl})`)
+      throw new Error(
+        `refusing redirect downgrade from https (${sanitizeUrlForDiagnostic(currentUrl)}) to http (${sanitizeUrlForDiagnostic(nextUrl)})`,
+      )
     }
     if (!isFetchableUrl(nextUrl)) {
       throw new Error(
-        `refusing redirect from ${currentUrl} to unsafe or non-https URL ${nextUrl} (userinfo is forbidden; plain http is allowed only on loopback)`,
+        `refusing redirect from ${sanitizeUrlForDiagnostic(currentUrl)} to unsafe or non-https URL ${sanitizeUrlForDiagnostic(nextUrl)} (userinfo is forbidden; plain http is allowed only on loopback)`,
       )
     }
     currentUrl = nextUrl
@@ -232,12 +268,12 @@ export async function fetchBounded(
   }
 
   if (!response.ok || !response.body) {
-    throw new Error(`HTTP ${response.status} fetching ${currentUrl}`)
+    throw new Error(`HTTP ${response.status} fetching ${sanitizeUrlForDiagnostic(currentUrl)}`)
   }
   const declared = Number(response.headers.get("content-length") ?? "NaN")
   if (Number.isFinite(declared) && declared > limit) {
     await response.body.cancel()
-    throw new Error(`${currentUrl} exceeds size limit (${declared} > ${limit} bytes)`)
+    throw new Error(`${sanitizeUrlForDiagnostic(currentUrl)} exceeds size limit (${declared} > ${limit} bytes)`)
   }
   const chunks: Uint8Array[] = []
   let size = 0
@@ -248,7 +284,7 @@ export async function fetchBounded(
     size += value.byteLength
     if (size > limit) {
       await reader.cancel()
-      throw new Error(`${currentUrl} exceeded size limit (${limit} bytes)`)
+      throw new Error(`${sanitizeUrlForDiagnostic(currentUrl)} exceeded size limit (${limit} bytes)`)
     }
     chunks.push(value)
   }
@@ -952,13 +988,119 @@ function assertRegularFile(path: string, label: string): void {
   if (!lstatSync(path).isFile()) throw new Error(`${label} is not a regular file`)
 }
 
+function isProcessDead(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false
+  if (pid === process.pid) return false
+  try {
+    process.kill(pid, 0)
+    return false
+  } catch (error) {
+    return (error as NodeJS.ErrnoException | undefined)?.code === "ESRCH"
+  }
+}
+
+function isPublishLockStale(lockPath: string, staleMs: number): boolean {
+  let stat: ReturnType<typeof lstatSync>
+  try {
+    stat = lstatSync(lockPath)
+  } catch {
+    return false
+  }
+  const now = Date.now()
+  if (now - stat.mtimeMs > staleMs) return true
+  let raw: string
+  try {
+    raw = readFileSync(lockPath, "utf8").trim()
+  } catch {
+    return false
+  }
+  if (!raw) return false
+  try {
+    const parsed = JSON.parse(raw) as { readonly pid?: unknown; readonly createdAt?: unknown }
+    if (typeof parsed.createdAt === "number" && Number.isFinite(parsed.createdAt) && now - parsed.createdAt > staleMs) {
+      return true
+    }
+    if (typeof parsed.pid === "number" && isProcessDead(parsed.pid)) {
+      return true
+    }
+  } catch {
+    // Only treat corrupt/partially-written lock content as stale after the grace period above.
+    return false
+  }
+  return false
+}
+
+/**
+ * Acquire an exclusive filesystem lock (`<runtimeDir>/.publish.lock`) via
+ * `openSync(..., "wx")` with bounded retry/backoff and stale-lock reclaim
+ * (dead holder PID or expired lock age), serializing generation promotion,
+ * atomic `current` pointer swap, and old-generation pruning.
+ */
+export async function withPublishLock<T>(
+  runtimeDir: string,
+  fn: () => Promise<T> | T,
+  options: { readonly timeoutMs?: number; readonly staleMs?: number } = {},
+): Promise<T> {
+  const lockPath = join(runtimeDir, ".publish.lock")
+  const timeoutMs = options.timeoutMs ?? PUBLISH_LOCK_TIMEOUT_MS
+  const staleMs = options.staleMs ?? PUBLISH_LOCK_STALE_MS
+  const token = randomBytes(8).toString("hex")
+  const deadline = Date.now() + timeoutMs
+  let backoffMs = 10
+
+  for (;;) {
+    try {
+      const fd = openSync(lockPath, "wx", 0o600)
+      try {
+        writeFileSync(
+          fd,
+          `${JSON.stringify({ pid: process.pid, createdAt: Date.now(), token })}\n`,
+        )
+      } finally {
+        closeSync(fd)
+      }
+      break
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException | undefined)?.code
+      if (code !== "EEXIST") throw error
+      if (isPublishLockStale(lockPath, staleMs)) {
+        try {
+          rmSync(lockPath, { force: true })
+        } catch {
+          // Another contender may have reclaimed or released the lock first.
+        }
+        continue
+      }
+      if (Date.now() >= deadline) {
+        throw new Error(`timed out waiting for runtime publish lock ${lockPath}`)
+      }
+      await new Promise((wake) => setTimeout(wake, backoffMs))
+      backoffMs = Math.min(backoffMs * 2, 100)
+    }
+  }
+
+  try {
+    return await fn()
+  } finally {
+    try {
+      const current = readFileSync(lockPath, "utf8")
+      if (current.includes(token)) {
+        rmSync(lockPath, { force: true })
+      }
+    } catch {
+      // Lock file already gone or inaccessible; do not mask caller errors.
+    }
+  }
+}
+
 /**
  * Prune superseded generations safely after a pointer swap:
- * - re-reads `runtime/current` so any concurrent installer's newer active
- *   generation is preserved alongside `generationId`;
+ * - called inside the exclusive `.publish.lock` critical section;
+ * - re-reads `runtime/current` so any live active generation is preserved
+ *   alongside `generationId`;
  * - keeps the `KEEP_RECENT_GENERATIONS` most recent generations;
  * - skips any generation whose mtime is newer than `graceMs` (default 60s) so
- *   in-flight readers or concurrent installers never lose their files.
+ *   in-flight readers never lose their files.
  */
 function pruneOldGenerations(
   cacheRoot: string,
@@ -978,7 +1120,7 @@ function pruneOldGenerations(
       const stat = lstatSync(join(generationsDir, name))
       completed.push({ name, mtimeMs: stat.mtimeMs })
     } catch {
-      // Another cleaner may have already removed this entry.
+      // Entry disappeared concurrently.
     }
   }
   completed.sort((a, b) => (b.mtimeMs - a.mtimeMs) || b.name.localeCompare(a.name))
@@ -1119,26 +1261,32 @@ export async function setupLocalRuntime(options: SetupOptions = {}): Promise<Set
         )}\n`,
       )
 
-      // Move completed staging tree into its immutable generation directory,
-      // then atomically switch the single `current` pointer file.
-      renameSync(stagingDir, generationDir)
-      writeFileSync(pointerTmp, `${generationId}\n`)
-      renameSync(pointerTmp, pointerPath)
-      committed = true
+      // Serialize promotion, `current` pointer swap, and old-generation pruning
+      // under an exclusive filesystem lock so no concurrent publisher/pruner can
+      // interleave between promoting `generationDir` and switching `current`.
+      await withPublishLock(runtimeDir, () => {
+        renameSync(stagingDir, generationDir)
+        if (!existsSync(generationDir)) {
+          throw new Error(`staged runtime generation ${generationDir} vanished before pointer swap`)
+        }
+        writeFileSync(pointerTmp, `${generationId}\n`)
+        renameSync(pointerTmp, pointerPath)
+        committed = true
+
+        // Phase 4: Prune superseded generations & legacy direct layout inside the lock.
+        pruneOldGenerations(cacheRoot, generationsDir, generationId)
+        for (const legacy of ["checker-wasm", "bin", "manifest.json"]) {
+          const legacyPath = join(runtimeDir, legacy)
+          if (existsSync(legacyPath)) {
+            rmSync(legacyPath, { recursive: true, force: true })
+          }
+        }
+      })
     } catch (error) {
       rmSync(pointerTmp, { force: true })
       rmSync(stagingDir, { recursive: true, force: true })
       if (!committed) rmSync(generationDir, { recursive: true, force: true })
       throw error
-    }
-
-    // Phase 4: Concurrent-safe cleanup ONLY after the pointer swap succeeded.
-    pruneOldGenerations(cacheRoot, generationsDir, generationId)
-    for (const legacy of ["checker-wasm", "bin", "manifest.json"]) {
-      const legacyPath = join(runtimeDir, legacy)
-      if (existsSync(legacyPath)) {
-        rmSync(legacyPath, { recursive: true, force: true })
-      }
     }
 
     return {
