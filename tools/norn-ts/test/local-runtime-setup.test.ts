@@ -36,6 +36,7 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { pathToFileURL } from "node:url"
 import { deflateRawSync, gzipSync } from "node:zlib"
 import type { BuildInfo } from "../src/build-info.ts"
 import { CHECKER_PKG_ENV, checkerPackageDir, loadChecker } from "../src/checker-abi.ts"
@@ -864,7 +865,7 @@ test("atomic generation replacement preserves active generation on failure and p
   }
 })
 
-test("publish lock serializes concurrent publishers/pruners and recovers stale locks", async () => {
+test("kernel flock publish lock serializes across real OS processes, releases on SIGKILL, and never unlinks lockfile", async () => {
   const root = scratch()
   const platform = detectPlatform()
   const releaseA = startReleaseServer(platform, { fixtureTag: "concurrent-a" })
@@ -872,10 +873,11 @@ test("publish lock serializes concurrent publishers/pruners and recovers stale l
   const cacheDir = join(root, "lock-cache")
   const runtimeDir = join(cacheDir, "runtime")
   const lockPath = join(runtimeDir, ".publish.lock")
+  const setupModuleUrl = pathToFileURL(join(TOOL_ROOT, "src/setup.ts")).href
   try {
     mkdirSync(runtimeDir, { recursive: true })
 
-    // 1. Strict mutual exclusion: second contender must wait until first finishes.
+    // 1. Intra-process mutual exclusion across separate open file descriptions.
     const events: string[] = []
     const firstHold = withPublishLock(runtimeDir, async () => {
       events.push("first:enter")
@@ -889,58 +891,85 @@ test("publish lock serializes concurrent publishers/pruners and recovers stale l
     })
     await Promise.all([firstHold, secondHold])
     expect(events).toEqual(["first:enter", "first:exit", "second:enter", "second:exit"])
-    expect(existsSync(lockPath)).toBe(false)
-
-    // 2. Two concurrent contenders racing to reclaim the same dead-PID lock serialize cleanly via `.reclaim`
-    //    without TOCTOU double-unlink or overlapping critical sections.
-    writeFileSync(lockPath, JSON.stringify({ pid: 999_999_999, createdAt: Date.now(), token: "dead-race" }))
-    const raceEvents: string[] = []
-    await Promise.all([
-      withPublishLock(runtimeDir, async () => {
-        raceEvents.push("c1:enter")
-        await new Promise((wake) => setTimeout(wake, 40))
-        raceEvents.push("c1:exit")
-      }),
-      withPublishLock(runtimeDir, async () => {
-        raceEvents.push("c2:enter")
-        await new Promise((wake) => setTimeout(wake, 40))
-        raceEvents.push("c2:exit")
-      }),
-    ])
-    expect(
-      JSON.stringify(raceEvents) === JSON.stringify(["c1:enter", "c1:exit", "c2:enter", "c2:exit"])
-      || JSON.stringify(raceEvents) === JSON.stringify(["c2:enter", "c2:exit", "c1:enter", "c1:exit"]),
-    ).toBe(true)
-    expect(existsSync(lockPath)).toBe(false)
-    expect(existsSync(`${lockPath}.reclaim`)).toBe(false)
-
-    // 3. A LIVE holder PID aged far past any timeout MUST NEVER be evicted by age alone.
-    const agedLivePayload = JSON.stringify({ pid: process.pid, createdAt: Date.now() - 600_000, token: "aged-live-holder" })
-    writeFileSync(lockPath, agedLivePayload)
-    const tenMinAgo = new Date(Date.now() - 600_000)
-    utimesSync(lockPath, tenMinAgo, tenMinAgo)
-    await expect(
-      withPublishLock(runtimeDir, () => {}, { timeoutMs: 40, corruptGraceMs: 10 }),
-    ).rejects.toThrow("timed out waiting for runtime publish lock")
-    expect(readFileSync(lockPath, "utf8")).toBe(agedLivePayload)
-    rmSync(lockPath, { force: true })
-
-    // 4. Corrupt/unparseable lock: freshly created (within grace) is NOT evicted, while aged corrupt lock IS reclaimed.
-    writeFileSync(lockPath, "{truncated")
-    await expect(
-      withPublishLock(runtimeDir, () => {}, { timeoutMs: 30, corruptGraceMs: 60_000 }),
-    ).rejects.toThrow("timed out waiting for runtime publish lock")
+    // Lockfile is never unlinked (kernel owns lock lifetime).
     expect(existsSync(lockPath)).toBe(true)
-    utimesSync(lockPath, tenMinAgo, tenMinAgo)
-    let reclaimedCorrupt = false
-    await withPublishLock(runtimeDir, () => {
-      reclaimedCorrupt = true
-    }, { corruptGraceMs: 5_000 })
-    expect(reclaimedCorrupt).toBe(true)
-    expect(existsSync(lockPath)).toBe(false)
-    expect(existsSync(`${lockPath}.reclaim`)).toBe(false)
 
-    // 5. Two concurrent `setupLocalRuntime` runs serialize cleanly via `.publish.lock`
+    // 2. Real multi-process mutual exclusion: 3 separate Bun child processes contend on the same lockfile.
+    const tracePath = join(root, "multiprocess-trace.log")
+    const workerScript = [
+      'import { appendFileSync } from "node:fs";',
+      'const [modUrl, dir, trace, id] = process.argv.slice(1);',
+      'const { withPublishLock } = await import(modUrl);',
+      'await withPublishLock(dir, async () => {',
+      '  appendFileSync(trace, `enter:${id}\\n`);',
+      '  await new Promise((r) => setTimeout(r, 50));',
+      '  appendFileSync(trace, `exit:${id}\\n`);',
+      '});',
+    ].join("\n")
+
+    const workers = ["p1", "p2", "p3"].map((id) =>
+      runAsync([process.execPath, "-e", workerScript, setupModuleUrl, runtimeDir, tracePath, id]),
+    )
+    const results = await Promise.all(workers)
+    for (const r of results) {
+      expect({ status: r.status, stderr: r.stderr }).toEqual({ status: 0, stderr: "" })
+    }
+    const lines = readFileSync(tracePath, "utf8").trim().split("\n")
+    expect(lines).toHaveLength(6)
+    const seenIds: string[] = []
+    for (let i = 0; i < lines.length; i += 2) {
+      const enter = lines[i]!
+      const exit = lines[i + 1]!
+      expect(enter.startsWith("enter:")).toBe(true)
+      const id = enter.slice("enter:".length)
+      expect(exit).toBe(`exit:${id}`)
+      seenIds.push(id)
+    }
+    expect(seenIds.sort()).toEqual(["p1", "p2", "p3"])
+
+    // 3. SIGKILL crash recovery: child acquires kernel flock, parent times out while child is alive,
+    //    then parent immediately acquires the lock after SIGKILL with zero stale-lock unlink race.
+    const holderScript = [
+      'const [modUrl, dir] = process.argv.slice(1);',
+      'const { withPublishLock } = await import(modUrl);',
+      'await withPublishLock(dir, async () => {',
+      '  process.stdout.write("LOCKED\\n");',
+      '  await new Promise(() => {});',
+      '});',
+    ].join("\n")
+    const holder = Bun.spawn([process.execPath, "-e", holderScript, setupModuleUrl, runtimeDir], {
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    try {
+      const reader = holder.stdout.getReader()
+      const decoder = new TextDecoder()
+      let seen = ""
+      while (!seen.includes("LOCKED\n")) {
+        const { done, value } = await reader.read()
+        if (done) throw new Error(`holder exited early: ${await new Response(holder.stderr).text()}`)
+        seen += decoder.decode(value)
+      }
+      reader.releaseLock()
+
+      // While live child holds flock, parent MUST time out fail-closed.
+      await expect(
+        withPublishLock(runtimeDir, () => {}, { timeoutMs: 60 }),
+      ).rejects.toThrow("timed out waiting for runtime publish lock")
+
+      // Hard-kill child with SIGKILL -> OS kernel atomically releases the flock.
+      holder.kill("SIGKILL")
+      await holder.exited
+
+      const recovered = await withPublishLock(runtimeDir, () => "recovered-after-sigkill", { timeoutMs: 1_000 })
+      expect(recovered).toBe("recovered-after-sigkill")
+      expect(existsSync(lockPath)).toBe(true)
+    } finally {
+      holder.kill("SIGKILL")
+      await holder.exited
+    }
+
+    // 4. Two concurrent `setupLocalRuntime` runs serialize cleanly via kernel flock
     //    and leave `current` pointing to an intact, discoverable generation.
     const [resA, resB] = await Promise.all([
       setupLocalRuntime({ baseUrl: releaseA.baseUrl, cacheDir, platform, version: "drop-a" }),
@@ -950,7 +979,7 @@ test("publish lock serializes concurrent publishers/pruners and recovers stale l
     expect(activeGen).toBeDefined()
     expect([resA.generationId, resB.generationId]).toContain(activeGen!)
     expect(existsSync(cachedDevHostPath(cacheDir))).toBe(true)
-    expect(existsSync(lockPath)).toBe(false)
+    expect(existsSync(lockPath)).toBe(true)
   } finally {
     releaseA.close()
     releaseB.close()

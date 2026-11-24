@@ -34,7 +34,6 @@ import {
   readFileSync,
   renameSync,
   rmSync,
-  unlinkSync,
   writeFileSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
@@ -55,7 +54,6 @@ export const MAX_ARCHIVE_ENTRIES = 4096
 export const GENERATION_CLEANUP_GRACE_MS = 60_000
 export const KEEP_RECENT_GENERATIONS = 2
 export const PUBLISH_LOCK_TIMEOUT_MS = 15_000
-export const PUBLISH_LOCK_CORRUPT_GRACE_MS = 5_000
 const MAX_SUMS_BYTES = 1024 * 1024
 const MAX_ARCHIVE_BYTES = 256 * 1024 * 1024
 const MAX_PAX_HEADER_BYTES = 1024 * 1024
@@ -991,204 +989,113 @@ function assertRegularFile(path: string, label: string): void {
   if (!lstatSync(path).isFile()) throw new Error(`${label} is not a regular file`)
 }
 
-type PublishLockState =
-  | { readonly kind: "missing" }
-  | { readonly kind: "live"; readonly pid: number; readonly token: string }
-  | { readonly kind: "dead"; readonly pid: number; readonly token: string }
-  | { readonly kind: "corrupt"; readonly raw: string }
-  | { readonly kind: "pending" }
+const FLOCK_LOCK_EX = 2
+const FLOCK_LOCK_NB = 4
+const FLOCK_LOCK_UN = 8
+const POSIX_EINTR = 4
 
-function isProcessDead(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false
-  if (pid === process.pid) return false
-  try {
-    process.kill(pid, 0)
-    return false
-  } catch (error) {
-    return (error as NodeJS.ErrnoException | undefined)?.code === "ESRCH"
-  }
+interface FlockBinding {
+  readonly flock: (fd: number, operation: number) => number
+  readonly errno: () => number
+  readonly ewouldblock: number
 }
 
-function inspectPublishLock(lockPath: string, corruptGraceMs: number): PublishLockState {
-  let stat: ReturnType<typeof lstatSync>
-  try {
-    stat = lstatSync(lockPath)
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
-      return { kind: "missing" }
-    }
-    return { kind: "pending" }
+let cachedFlockBinding: FlockBinding | undefined
+
+async function loadFlockBinding(): Promise<FlockBinding> {
+  if (cachedFlockBinding) return cachedFlockBinding
+  const isDarwin = process.platform === "darwin"
+  const isLinux = process.platform === "linux"
+  if (!isLinux && !isDarwin) {
+    throw new Error(`kernel flock(2) publish lock is unsupported on ${process.platform} (Linux and macOS only)`)
   }
-  let raw: string
-  try {
-    raw = readFileSync(lockPath, "utf8")
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") {
-      return { kind: "missing" }
-    }
-    return { kind: "pending" }
-  }
-  const trimmed = raw.trim()
-  if (trimmed.length > 0) {
+  const { dlopen, FFIType, read } = await import("bun:ffi")
+  const candidates = isDarwin
+    ? [{ lib: "libSystem.B.dylib", errnoSym: "__error" as const }]
+    : [
+        { lib: "libc.so.6", errnoSym: "__errno_location" as const },
+        { lib: "libc.so", errnoSym: "__errno_location" as const },
+      ]
+
+  let lastError: unknown
+  for (const candidate of candidates) {
     try {
-      const parsed = JSON.parse(trimmed) as { readonly pid?: unknown; readonly token?: unknown }
-      if (
-        typeof parsed.pid === "number"
-        && Number.isInteger(parsed.pid)
-        && parsed.pid > 0
-        && typeof parsed.token === "string"
-        && parsed.token.length > 0
-      ) {
-        // Never evict a live holder PID by age alone.
-        if (isProcessDead(parsed.pid)) {
-          return { kind: "dead", pid: parsed.pid, token: parsed.token }
-        }
-        return { kind: "live", pid: parsed.pid, token: parsed.token }
+      const opened = dlopen(candidate.lib, {
+        flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+        [candidate.errnoSym]: { args: [], returns: FFIType.ptr },
+      })
+      const flockFn = opened.symbols.flock as (fd: number, op: number) => number
+      const errnoPtrFn = opened.symbols[candidate.errnoSym] as () => ReturnType<typeof opened.symbols.flock> | null
+      cachedFlockBinding = {
+        flock: flockFn,
+        errno: () => {
+          const p = errnoPtrFn()
+          return p ? read.i32(p as Parameters<typeof read.i32>[0], 0) : 0
+        },
+        ewouldblock: isDarwin ? 35 : 11,
       }
-    } catch {
-      // Unparseable JSON: fall through to grace-period check below.
+      return cachedFlockBinding
+    } catch (error) {
+      lastError = error
     }
   }
-  if (Date.now() - stat.mtimeMs > corruptGraceMs) {
-    return { kind: "corrupt", raw }
-  }
-  return { kind: "pending" }
+  throw new Error(
+    `failed to load libc flock(2) binding: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+  )
 }
 
 /**
- * Race-free stale-lock reclaim using an exclusive secondary lock
- * (`${lockPath}.reclaim`): re-reads and re-verifies the exact `{ pid, token }`
- * (or corrupt payload) while holding `.reclaim` before unlinking `lockPath`,
- * preventing TOCTOU double-unlink of a newly acquired lock.
- */
-function tryReclaimStalePublishLock(
-  lockPath: string,
-  observed: Extract<PublishLockState, { readonly kind: "dead" | "corrupt" }>,
-  corruptGraceMs: number,
-): boolean {
-  const reclaimPath = `${lockPath}.reclaim`
-  const reclaimToken = randomBytes(8).toString("hex")
-  let acquiredReclaim = false
-  try {
-    const fd = openSync(reclaimPath, "wx", 0o600)
-    try {
-      writeFileSync(
-        fd,
-        `${JSON.stringify({ pid: process.pid, createdAt: Date.now(), token: reclaimToken })}\n`,
-      )
-    } finally {
-      closeSync(fd)
-    }
-    acquiredReclaim = true
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException | undefined)?.code === "EEXIST") {
-      // Clean up a dead/corrupt `.reclaim` lock left by a crashed reclaimer.
-      const reclaimState = inspectPublishLock(reclaimPath, corruptGraceMs)
-      if (reclaimState.kind === "dead" || reclaimState.kind === "corrupt") {
-        try {
-          unlinkSync(reclaimPath)
-        } catch {
-          // Another contender won the reclaim race.
-        }
-      }
-    }
-    return false
-  }
-
-  try {
-    const current = inspectPublishLock(lockPath, corruptGraceMs)
-    const stillSameDead = observed.kind === "dead"
-      && current.kind === "dead"
-      && current.pid === observed.pid
-      && current.token === observed.token
-    const stillSameCorrupt = observed.kind === "corrupt"
-      && current.kind === "corrupt"
-      && current.raw === observed.raw
-    if (!stillSameDead && !stillSameCorrupt) {
-      return false
-    }
-    try {
-      unlinkSync(lockPath)
-      return true
-    } catch {
-      return false
-    }
-  } finally {
-    if (acquiredReclaim) {
-      try {
-        const parsed = JSON.parse(readFileSync(reclaimPath, "utf8").trim()) as { readonly token?: unknown }
-        if (parsed.token === reclaimToken) {
-          unlinkSync(reclaimPath)
-        }
-      } catch {
-        // Ignore if already removed.
-      }
-    }
-  }
-}
-
-/**
- * Acquire an exclusive filesystem lock (`<runtimeDir>/.publish.lock`) via
- * `openSync(..., "wx")` with bounded retry/backoff and race-free stale-lock
- * reclaim (dead holder PID or corrupt lock older than `corruptGraceMs` — never
- * evicting a live PID by age alone), serializing generation promotion, atomic
- * `current` pointer swap, and old-generation pruning.
+ * Acquire an OS kernel advisory lock (`flock(2)` `LOCK_EX | LOCK_NB`) on a
+ * never-unlinked lockfile (`<runtimeDir>/.publish.lock`) with bounded retry
+ * and backoff.
+ *
+ * Because the OS kernel owns the lock on the open file descriptor and the
+ * lockfile is never unlinked, crashed or `SIGKILL`ed processes release the
+ * lock atomically in the kernel with zero stale-lock inspection and zero
+ * unlink TOCTOU race.
  */
 export async function withPublishLock<T>(
   runtimeDir: string,
   fn: () => Promise<T> | T,
-  options: { readonly timeoutMs?: number; readonly corruptGraceMs?: number } = {},
+  options: { readonly timeoutMs?: number } = {},
 ): Promise<T> {
+  const binding = await loadFlockBinding()
   const lockPath = join(runtimeDir, ".publish.lock")
   const timeoutMs = options.timeoutMs ?? PUBLISH_LOCK_TIMEOUT_MS
-  const corruptGraceMs = options.corruptGraceMs ?? PUBLISH_LOCK_CORRUPT_GRACE_MS
-  const token = randomBytes(8).toString("hex")
   const deadline = Date.now() + timeoutMs
   let backoffMs = 10
 
-  for (;;) {
-    try {
-      const fd = openSync(lockPath, "wx", 0o600)
-      try {
-        writeFileSync(
-          fd,
-          `${JSON.stringify({ pid: process.pid, createdAt: Date.now(), token })}\n`,
-        )
-      } finally {
-        closeSync(fd)
+  const fd = openSync(lockPath, "a", 0o600)
+  let locked = false
+  try {
+    for (;;) {
+      const rc = binding.flock(fd, FLOCK_LOCK_EX | FLOCK_LOCK_NB)
+      if (rc === 0) {
+        locked = true
+        break
       }
-      break
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException | undefined)?.code
-      if (code !== "EEXIST") throw error
-      const state = inspectPublishLock(lockPath, corruptGraceMs)
-      if (state.kind === "missing") {
+      const err = binding.errno()
+      if (err === POSIX_EINTR) continue
+      if (err === binding.ewouldblock) {
+        if (Date.now() >= deadline) {
+          throw new Error(`timed out waiting for runtime publish lock ${lockPath}`)
+        }
+        await new Promise((wake) => setTimeout(wake, backoffMs))
+        backoffMs = Math.min(backoffMs * 2, 100)
         continue
       }
-      if (state.kind === "dead" || state.kind === "corrupt") {
-        if (tryReclaimStalePublishLock(lockPath, state, corruptGraceMs)) {
-          continue
-        }
-      }
-      if (Date.now() >= deadline) {
-        throw new Error(`timed out waiting for runtime publish lock ${lockPath}`)
-      }
-      await new Promise((wake) => setTimeout(wake, backoffMs))
-      backoffMs = Math.min(backoffMs * 2, 100)
+      throw new Error(`flock(2) failed on ${lockPath} (errno ${err})`)
     }
-  }
-
-  try {
     return await fn()
   } finally {
-    try {
-      const parsed = JSON.parse(readFileSync(lockPath, "utf8").trim()) as { readonly token?: unknown }
-      if (parsed.token === token) {
-        unlinkSync(lockPath)
+    if (locked) {
+      try {
+        binding.flock(fd, FLOCK_LOCK_UN)
+      } catch {
+        // Closing the fd below also releases the kernel flock.
       }
-    } catch {
-      // Lock file already gone or inaccessible; do not mask caller errors.
     }
+    closeSync(fd)
   }
 }
 
