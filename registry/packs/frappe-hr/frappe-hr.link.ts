@@ -20,7 +20,7 @@ export const Pack = Norn.packLink({
   toPack: { packId: "norn.ontology-pack.workforce", version: "0.1.0" },
   correspondences: [
     // =========================================================================
-    // Classes — Mapped onto norn.ontology-pack.workforce (12)
+    // Classes — Mapped onto norn.ontology-pack.workforce (9)
     // =========================================================================
     {
       correspondenceId: "corr.frappe-hr.employee",
@@ -41,17 +41,6 @@ export const Pack = Norn.packLink({
       justification: "A Frappe HR Department is a hierarchical organizational unit (org.OrgUnit).",
       evidenceRefs: ["source.frappe-hr", "https://docs.frappe.io/hr/department"],
       confidenceBasisPoints: 9000,
-      reviewedBy: "hr-vertical (agent, proposed)",
-      reviewedAt: "2026-11-23T00:00:00Z",
-    },
-    {
-      correspondenceId: "corr.frappe-hr.designation",
-      fromTermId: "norn.frappe-hr.designation",
-      relation: "subsumed_by",
-      toTermIds: ["norn.org.post"],
-      justification: "A Frappe HR Designation maps onto a budgeted role/position (org.Post).",
-      evidenceRefs: ["source.frappe-hr", "https://docs.frappe.io/hr/designation"],
-      confidenceBasisPoints: 8000,
       reviewedBy: "hr-vertical (agent, proposed)",
       reviewedAt: "2026-11-23T00:00:00Z",
     },
@@ -100,17 +89,6 @@ export const Pack = Norn.packLink({
       reviewedAt: "2026-11-23T00:00:00Z",
     },
     {
-      correspondenceId: "corr.frappe-hr.leave.allocation",
-      fromTermId: "norn.frappe-hr.leave.allocation",
-      relation: "subsumed_by",
-      toTermIds: ["norn.hr.leave.balance"],
-      justification: "A Leave Allocation grants days into a conserved employee leave balance.",
-      evidenceRefs: ["source.frappe-hr", "https://docs.frappe.io/hr/leave-allocation"],
-      confidenceBasisPoints: 8500,
-      reviewedBy: "hr-vertical (agent, proposed)",
-      reviewedAt: "2026-11-23T00:00:00Z",
-    },
-    {
       correspondenceId: "corr.frappe-hr.leave.application",
       fromTermId: "norn.frappe-hr.leave.application",
       relation: "equivalent",
@@ -139,17 +117,6 @@ export const Pack = Norn.packLink({
       toTermIds: ["norn.hr.shift.commitment"],
       justification: "A Shift Assignment is a promised labor commitment assigned to an employee.",
       evidenceRefs: ["source.frappe-hr", "https://docs.frappe.io/hr/shift-assignment"],
-      confidenceBasisPoints: 9000,
-      reviewedBy: "hr-vertical (agent, proposed)",
-      reviewedAt: "2026-11-23T00:00:00Z",
-    },
-    {
-      correspondenceId: "corr.frappe-hr.attendance",
-      fromTermId: "norn.frappe-hr.attendance",
-      relation: "subsumed_by",
-      toTermIds: ["norn.hr.attendance.event"],
-      justification: "Posted Attendance records actual work fulfilling a shift commitment.",
-      evidenceRefs: ["source.frappe-hr", "https://docs.frappe.io/hr/attendance"],
       confidenceBasisPoints: 9000,
       reviewedBy: "hr-vertical (agent, proposed)",
       reviewedAt: "2026-11-23T00:00:00Z",
@@ -204,22 +171,7 @@ export const Pack = Norn.packLink({
     },
 
     // =========================================================================
-    // Actions — Mapped onto norn.ontology-pack.workforce (1)
-    // =========================================================================
-    {
-      correspondenceId: "corr.frappe-hr.leave.application.submit",
-      fromTermId: "norn.frappe-hr.leave.application.submit",
-      relation: "subsumed_by",
-      toTermIds: ["norn.hr.leave.request.approve"],
-      justification: "Submitting an approved Leave Application debits the leave ledger; Norn enforces independent-approver authority.",
-      evidenceRefs: ["source.frappe-hr", "https://docs.frappe.io/hr/leave-application"],
-      confidenceBasisPoints: 8000,
-      reviewedBy: "hr-vertical (agent, proposed)",
-      reviewedAt: "2026-11-23T00:00:00Z",
-    },
-
-    // =========================================================================
-    // Guards / Predicates — Mapped onto norn.ontology-pack.workforce (5)
+    // Guards / Predicates — Mapped onto norn.ontology-pack.workforce (4)
     // =========================================================================
     {
       correspondenceId: "corr.frappe-hr.guard.leave.insufficient.balance",
@@ -248,7 +200,7 @@ export const Pack = Norn.packLink({
       fromTermId: "norn.frappe-hr.guard.leave.self.approval",
       relation: "subsumed_by",
       toTermIds: ["norn.hr.guard.self.approval"],
-      justification: "Refusing self-approval on Leave Applications is a specialization of Norn's independent-approver law across leave, roster, and financial actions.",
+      justification: "Refusing self-approval on Leave Applications is a specialization of Norn's workforce self-approval guard covering leave and roster exceptions.",
       evidenceRefs: ["source.frappe-hr", "https://docs.frappe.io/hr/leave-application"],
       confidenceBasisPoints: 8500,
       reviewedBy: "hr-vertical (agent, proposed)",
@@ -265,22 +217,12 @@ export const Pack = Norn.packLink({
       reviewedBy: "hr-vertical (agent, proposed)",
       reviewedAt: "2026-11-23T00:00:00Z",
     },
-    {
-      correspondenceId: "corr.frappe-hr.guard.expense.self.approval",
-      fromTermId: "norn.frappe-hr.guard.expense.self.approval",
-      relation: "subsumed_by",
-      toTermIds: ["norn.hr.guard.self.approval"],
-      justification: "Refusing self-approval on Expense Claims is a specialization of Norn's independent-approver law (#618).",
-      evidenceRefs: ["source.frappe-hr", "https://docs.frappe.io/hr/expense-claim"],
-      confidenceBasisPoints: 8500,
-      reviewedBy: "hr-vertical (agent, proposed)",
-      reviewedAt: "2026-11-23T00:00:00Z",
-    },
   ],
   residuals: [
     // =========================================================================
     // 1. Core HR & Org — Residuals
     // =========================================================================
+    { termId: "norn.frappe-hr.designation", reason: "canon_gap", note: "A Frappe HR Designation is a job title taxonomy rather than a budgeted organizational position (org.Post); job title catalogs belong in the HR domain pack (#1593) distinct from org.Post." },
     { termId: "norn.frappe-hr.employment.type", reason: "canon_gap", note: "Employment contract taxonomy (full-time, part-time, contractor) belongs in the HR domain pack (#1593) and statutory localization overlays (loc-*)." },
     { termId: "norn.frappe-hr.employee.grade", reason: "canon_gap", note: "Seniority and compensation grade bands belong in the HR domain pack (#1593) rather than the minimal workforce canon." },
     { termId: "norn.frappe-hr.employee.document.type", reason: "canon_gap", note: "Employee compliance/identity document taxonomy (Frappe HR v16 Employee Document Type) belongs in the HR domain pack (#1593) with V2Markings and statutory loc-* requirements." },
@@ -288,9 +230,8 @@ export const Pack = Norn.packLink({
     { termId: "norn.frappe-hr.employee.transfer", reason: "canon_gap", note: "Unit or entity transfer is modeled as closing one org.Membership and opening a successor membership in the HR domain pack (#1593)." },
     { termId: "norn.frappe-hr.employee.grievance", reason: "canon_gap", note: "Employee relations and grievance case workflows belong in the HR domain pack (#1593) with V2Markings confidentiality." },
     { termId: "norn.frappe-hr.employee.department", reason: "system_specific", note: "Projected through org.Membership.unit rather than a single mutable column on Employee." },
-    { termId: "norn.frappe-hr.employee.designation", reason: "system_specific", note: "Projected through org.Membership.post rather than a single mutable column on Employee." },
+    { termId: "norn.frappe-hr.employee.designation", reason: "system_specific", note: "Projected through hr.Employment job-title/role metadata (distinct from budgeted org.Post) rather than a single mutable column on Employee." },
     { termId: "norn.frappe-hr.employee.branch", reason: "system_specific", note: "Projected through org.Membership.unit (site OrgUnit) rather than a single mutable column on Employee." },
-    { termId: "norn.frappe-hr.employee.holiday.list", reason: "system_specific", note: "Projected via an explicit link from hr.Employment or org.OrgUnit to a pinned time.Calendar." },
     { termId: "norn.frappe-hr.employee.date.of.joining", reason: "canon_gap", note: "Effective-dated employment start lives on hr.Employment.effective_from in the HR domain pack (#1593)." },
     { termId: "norn.frappe-hr.employee.employment.type", reason: "canon_gap", note: "Contract classification lives on hr.Employment in the HR domain pack (#1593)." },
     { termId: "norn.frappe-hr.employee.assigned.grade", reason: "canon_gap", note: "Compensation grade binding lives on hr.Employment in the HR domain pack (#1593)." },
@@ -311,14 +252,16 @@ export const Pack = Norn.packLink({
     // =========================================================================
     // 2. Leave Management — Residuals
     // =========================================================================
-    { termId: "norn.frappe-hr.leave.type", reason: "canon_gap", note: "Leave type catalog and statutory minimums belong in the HR domain pack (#1593) parameterized by loc-* overlays (e.g. loc-eg Labor Law 12/2003)." },
+    { termId: "norn.frappe-hr.leave.type", reason: "canon_gap", note: "Leave type catalog and statutory minimums belong in the HR domain pack (#1593) parameterized by loc-* overlays (e.g. loc-eg Egypt Labor Law 14/2025)." },
     { termId: "norn.frappe-hr.leave.policy", reason: "canon_gap", note: "Accrual policy templates belong in the HR domain pack (#1593) and statutory loc-* overlays." },
     { termId: "norn.frappe-hr.leave.policy.assignment", reason: "canon_gap", note: "Effective-dated leave policy bindings belong in the HR domain pack (#1593)." },
     { termId: "norn.frappe-hr.leave.period", reason: "canon_gap", note: "Annual leave grant and carry-forward expiry periods belong in the HR domain pack (#1593)." },
+    { termId: "norn.frappe-hr.leave.allocation", reason: "canon_gap", note: "A Leave Allocation grants entitlement days into a balance rather than being the conserved balance stock itself; handled by hr.LeaveAllocation in the HR domain pack (#1593)." },
     { termId: "norn.frappe-hr.leave.ledger.entry", reason: "canon_gap", note: "Conserved leave movements map to immutable core.LedgerEffect / hr.LeaveLedgerEntry events in the HR domain pack (#1593)." },
     { termId: "norn.frappe-hr.compensatory.leave.request", reason: "canon_gap", note: "Holiday-work compensatory credit requests require verified AttendanceEvent evidence in the HR domain pack (#1593)." },
     { termId: "norn.frappe-hr.leave.encashment", reason: "canon_gap", note: "Leave encashment spans the HR domain pack (#1593), accounting REA claims (norn.ontology-pack.canon), and statutory loc-* payout caps." },
     { termId: "norn.frappe-hr.leave.block.list", reason: "canon_gap", note: "Leave blackout calendars with override allow-lists compose time.CalendarException with HR approval policy in the HR domain pack (#1593)." },
+    { termId: "norn.frappe-hr.holiday.list.assignment", reason: "canon_gap", note: "Effective-dated calendar assignment (Frappe HR v16 Holiday List Assignment binding an Employee or Company to a Holiday List) belongs in the HR domain pack (#1593) referencing time.Calendar." },
     { termId: "norn.frappe-hr.leave.type.max.leaves.allowed", reason: "canon_gap", note: "Annual entitlement caps are governed HR parameters / loc-* statutory floors in the HR domain pack (#1593)." },
     { termId: "norn.frappe-hr.leave.type.is.carry.forward", reason: "canon_gap", note: "Carry-forward eligibility and expiry rules belong in the HR domain pack (#1593) and loc-* statutory overlays." },
     { termId: "norn.frappe-hr.leave.type.is.lwp", reason: "canon_gap", note: "Unpaid leave classification linking leave to payroll payment-day deduction belongs in the HR domain pack (#1593)." },
@@ -339,11 +282,15 @@ export const Pack = Norn.packLink({
     { termId: "norn.frappe-hr.compensatory.leave.request.work.from.date", reason: "canon_gap", note: "Holiday-work reference date belongs on compensatory leave evidence links in the HR domain pack (#1593)." },
     { termId: "norn.frappe-hr.leave.encashment.encashment.amount", reason: "canon_gap", note: "Cash encashment valuation belongs in the HR payroll domain pack (#1593) and accounting REA canon (norn.ontology-pack.canon)." },
     { termId: "norn.frappe-hr.holiday.list.holiday.weekly.off", reason: "system_specific", note: "Frappe HR flattens recurring weekly-off days into Holiday table rows; Norn separates recurring time.WorkingWindow schedules from time.CalendarException holidays." },
+    { termId: "norn.frappe-hr.holiday.list.assignment.from.date", reason: "canon_gap", note: "Effective start date of calendar assignment lives on hr.CalendarAssignment in the HR domain pack (#1593)." },
+    { termId: "norn.frappe-hr.holiday.list.assignment.holiday.list", reason: "canon_gap", note: "Target calendar link of an effective-dated Holiday List Assignment lives on hr.CalendarAssignment referencing time.Calendar in the HR domain pack (#1593)." },
     { termId: "norn.frappe-hr.leave.policy.assignment.grant", reason: "canon_gap", note: "Policy-driven pro-rata leave grant actions belong in the HR domain pack (#1593)." },
     { termId: "norn.frappe-hr.leave.allocation.submit", reason: "canon_gap", note: "Leave allocation posting action belongs in the HR domain pack (#1593)." },
+    { termId: "norn.frappe-hr.leave.application.submit", reason: "canon_gap", note: "Submitting a Frappe HR v16 Leave Application finalizes both Approved and Rejected applications rather than solely approving leave; Norn separates hr.leave.request.approve from rejection/disposition transitions in the HR domain pack (#1593)." },
     { termId: "norn.frappe-hr.leave.application.cancel", reason: "canon_gap", note: "Reversing an approved leave posts an explicit adjustment event rather than cancelling a posted record." },
     { termId: "norn.frappe-hr.compensatory.leave.request.submit", reason: "canon_gap", note: "Evidence-backed compensatory leave crediting belongs in the HR domain pack (#1593)." },
     { termId: "norn.frappe-hr.leave.encashment.submit", reason: "canon_gap", note: "Atomic leave debit plus payroll payable claim creation spans the HR domain pack (#1593) and accounting REA canon." },
+    { termId: "norn.frappe-hr.holiday.list.assignment.submit", reason: "canon_gap", note: "Effective-dated holiday calendar assignment activation belongs in the HR domain pack (#1593)." },
     { termId: "norn.frappe-hr.guard.leave.block.list", reason: "canon_gap", note: "Blackout-date leave refusal belongs in the HR domain pack (#1593)." },
     { termId: "norn.frappe-hr.guard.leave.allocation.overlap", reason: "canon_gap", note: "Non-overlapping leave allocation guard belongs in the HR domain pack (#1593)." },
     { termId: "norn.frappe-hr.guard.leave.encashment.ineligible", reason: "canon_gap", note: "Encashment eligibility guard belongs in the HR domain pack (#1593) and loc-* statutory overlays." },
@@ -353,6 +300,7 @@ export const Pack = Norn.packLink({
     // =========================================================================
     { termId: "norn.frappe-hr.shift.request", reason: "canon_gap", note: "Self-service shift change request workflow belongs in the HR domain pack (#1593)." },
     { termId: "norn.frappe-hr.employee.checkin", reason: "canon_gap", note: "Raw biometric/mobile time punches are ingested as immutable norn.SourceEvidence / punch observations in the HR domain pack (#1593) before deriving hr.AttendanceEvent." },
+    { termId: "norn.frappe-hr.attendance", reason: "canon_gap", note: "Frappe HR Attendance represents both work performed (Present, Half Day, Work From Home) and non-work status markers (Absent, On Leave), so it only partially overlaps norn.hr.attendance.event; daily status projection belongs in the HR domain pack (#1593) with only work-performed rows projecting to hr.AttendanceEvent." },
     { termId: "norn.frappe-hr.attendance.request", reason: "canon_gap", note: "Self-service attendance regularization workflow is owned by the HR domain pack (#1593) rather than the minimal canon." },
     { termId: "norn.frappe-hr.shift.type.start.time", reason: "canon_gap", note: "Local wall-clock start time lives on time.WorkingWindow.start_local in registry/packs/time/calendars.ts, not yet as a property term in norn.ontology-pack.workforce." },
     { termId: "norn.frappe-hr.shift.type.end.time", reason: "canon_gap", note: "Local wall-clock end time lives on time.WorkingWindow.end_local in registry/packs/time/calendars.ts, not yet as a property term in norn.ontology-pack.workforce." },
@@ -374,7 +322,7 @@ export const Pack = Norn.packLink({
     {
       termId: "norn.frappe-hr.attendance.cancel.amend",
       reason: "non_conforming",
-      note: "Cancelling and amending a posted Attendance document replaces history in place; Norn requires immutable AttendanceEvent records corrected only by a linked reversing event (HR-AT-01).",
+      note: "Frappe cancels the original Attendance document and creates a separate replacement document linked by amended_from; Norn's REA ledger preserves posted AttendanceEvent records immutably and records linked reversing economic events (reverses) (HR-AT-01).",
     },
     { termId: "norn.frappe-hr.guard.attendance.duplicate.date", reason: "canon_gap", note: "Single posted attendance per employee/shift invariant belongs in the HR domain pack (#1593)." },
     { termId: "norn.frappe-hr.guard.attendance.leave.conflict", reason: "canon_gap", note: "Cross-check refusing working Attendance on an approved full-day LeaveRequest belongs in the HR domain pack (#1593)." },
@@ -393,7 +341,7 @@ export const Pack = Norn.packLink({
     { termId: "norn.frappe-hr.employee.tax.exemption.declaration", reason: "canon_gap", note: "Statutory employee tax relief declarations belong in jurisdiction-specific loc-* overlays composed with the HR payroll pack." },
     { termId: "norn.frappe-hr.employee.tax.exemption.proof.submission", reason: "canon_gap", note: "Documentary tax-relief verification evidence belongs in loc-* statutory overlays with immutable evidence receipts." },
     { termId: "norn.frappe-hr.employee.benefit.application", reason: "canon_gap", note: "Flexible benefit elections belong in the HR payroll domain pack (#1593) and loc-* tax-treatment overlays." },
-    { termId: "norn.frappe-hr.gratuity", reason: "canon_gap", note: "End-of-service gratuity/severance obligations belong in the HR payroll pack (#1593) parameterized by statutory loc-* overlays (e.g. loc-eg Labor Law 12/2003) and accounting REA claims." },
+    { termId: "norn.frappe-hr.gratuity", reason: "canon_gap", note: "End-of-service gratuity/severance obligations belong in the HR payroll pack (#1593) parameterized by statutory loc-* overlays (e.g. loc-eg Egypt Labor Law 14/2025) and accounting REA claims." },
     { termId: "norn.frappe-hr.full.and.final.statement", reason: "canon_gap", note: "Exit settlement reconciliation spans the HR domain pack (#1593), accounting REA claims (norn.ontology-pack.canon), and loc-* statutory termination rules." },
     { termId: "norn.frappe-hr.salary.component.type", reason: "canon_gap", note: "Earning vs deduction sign classification belongs in the HR payroll domain pack (#1593)." },
     {
@@ -424,7 +372,7 @@ export const Pack = Norn.packLink({
     {
       termId: "norn.frappe-hr.salary.slip.cancel.amend",
       reason: "non_conforming",
-      note: "Cancelling and amending a posted Salary Slip rewrites payroll history in place; Norn requires immutable payslip events corrected only via linked retro-adjustment/reversing events (HR-PR-05).",
+      note: "Frappe cancels the original Salary Slip and creates a separate replacement document linked by amended_from; Norn's REA ledger preserves posted payslip events immutably and records linked reversing/retro-adjustment economic events (reverses) (HR-PR-05).",
     },
     { termId: "norn.frappe-hr.gratuity.submit", reason: "canon_gap", note: "Gratuity liability posting spans the HR payroll pack (#1593), loc-* overlays, and accounting REA canon." },
     { termId: "norn.frappe-hr.full.and.final.statement.submit", reason: "canon_gap", note: "Atomic final exit settlement spans the HR domain pack (#1593) and accounting REA canon." },
@@ -454,6 +402,7 @@ export const Pack = Norn.packLink({
     { termId: "norn.frappe-hr.employee.advance.return", reason: "canon_gap", note: "Unspent advance cash return maps to an inbound settlement payment in the accounting REA canon (norn.finance.payment)." },
     { termId: "norn.frappe-hr.travel.request.submit", reason: "canon_gap", note: "Travel approval workflow action belongs in the HR domain pack (#1593)." },
     { termId: "norn.frappe-hr.guard.expense.sanctioned.exceeds.claimed", reason: "canon_gap", note: "Sanctioned-vs-claimed upper-bound invariant belongs in the HR/accounting domain packs (HR-EX-01)." },
+    { termId: "norn.frappe-hr.guard.expense.self.approval", reason: "canon_gap", note: "Expense Claim separation-of-duties (preventing self-approval) is handled by hr.access.policy / AccessIR (#618) in the HR and accounting domain packs; norn.hr.guard.self.approval in norn.ontology-pack.workforce is scoped to leave and roster exceptions." },
     { termId: "norn.frappe-hr.guard.advance.over.allocation", reason: "canon_gap", note: "Advance balance conservation guard mirrors norn.finance.guard.allocation.exceeds.outstanding in the accounting REA canon (HR-EX-03)." },
 
     // =========================================================================

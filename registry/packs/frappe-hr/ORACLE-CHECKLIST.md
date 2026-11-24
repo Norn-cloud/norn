@@ -16,8 +16,10 @@ This checklist explicitly separates:
   6 Frappe HR modules).
 - **Part B — Country-Specific Statutory Localization (`loc-*`)** (jurisdictional labor
   law, social insurance, holiday calendars, and tax tables — exemplified by Egypt `loc-eg`
-  under Labor Law 12/2003, Income Tax Law 91/2005, and NOSI Law 148/2019 — which MUST live
-  in localization overlays rather than core HR definitions).
+  under **Egypt Labor Law No. 14 of 2025** effective `2025-09-01`, Income Tax Law 91/2005,
+  and NOSI Law 148/2019 — which MUST live in localization overlays rather than core HR
+  definitions; repealed Law No. 12 of 2003 is strictly historical for pre-`2025-09-01`
+  effective dates).
 
 ---
 
@@ -38,7 +40,7 @@ This checklist explicitly separates:
 | ID | Domain | Scenario | Required Norn Behavior | Notes / Intentional Divergence |
 |---|---|---|---|---|
 | `HR-LV-01` | Leave | Pro-rata annual accrual mid-year | Exact `Decimal(2, "d")` allocation under declared rounding; never binary float | Norn refuses float rounding drift (`VAL-EXACT-1`) |
-| `HR-LV-02` | Leave | Leave request spans a public holiday (`time.CalendarException`) | Holiday excluded from consumed leave days when calendar marks it non-working | Calendar exceptions supplied by pinned `time.Calendar` (country holidays live in `loc-*`) |
+| `HR-LV-02` | Leave | Leave request spans a public holiday (`time.CalendarException`) | Holiday excluded from consumed leave days when calendar marks it non-working | Calendar resolved via effective-dated `Holiday List Assignment` in Frappe HR v16 and pinned `time.Calendar` in Norn (country holidays live in `loc-*`) |
 | `HR-LV-03` | Leave | Overlapping leave requests for the same employee | Second request refused atomically with zero partial hold/write | Enforced via `norn-zen/7` `intervals_overlap` + read fencing |
 | `HR-LV-04` | Leave | Concurrent leave requests exceeding remaining balance (`balance = 3d`, two `2d` requests) | At most one `LeaveHold` commits; loser refuses cleanly | Reuses REA `core.Hold` conservation & CAS |
 | `HR-LV-05` | Leave | Manager attempts to approve own `LeaveRequest` | Hard refusal under `AccessIR` / `#618` independent-approver law | Never weakened by UI |
@@ -63,7 +65,7 @@ This checklist explicitly separates:
 
 | ID | Domain | Scenario | Required Norn Behavior | Notes / Intentional Divergence |
 |---|---|---|---|---|
-| `HR-AT-01` | Attendance | Retroactive attendance correction | New reversing `AttendanceEvent` linked via `reverses`; original event stays immutable | Intentional divergence (`non_conforming`): Frappe HR cancels and amends posted Attendance in place; Norn never edits posted history |
+| `HR-AT-01` | Attendance | Retroactive attendance correction | New reversing `AttendanceEvent` linked via `reverses`; original event stays immutable | Intentional divergence (`non_conforming`): Frappe HR cancels the original Attendance document and creates a separate replacement document linked by `amended_from`; Norn's REA ledger preserves posted events immutably and appends linked reversing economic events |
 | `HR-AT-02` | Attendance | Attempt to post two active `AttendanceEvent`s for the same employee and shift/date | Second commit refused atomically | Enforced by uniqueness/overlap invariant |
 | `HR-AT-03` | Attendance | Auto-attendance derived from raw `Employee Checkin` IN/OUT punches | Deterministic pairing from immutable `SourceEvidence` punches; exact UCUM hour computation; late-entry/early-exit flags preserve punch lineage | Reprocessing identical punch feed is replay-idempotent |
 | `HR-AT-04` | Attendance | Approved `Attendance Request` regularizes a previously posted `Absent` or `Half Day` day | Appends linked reversing + replacement `AttendanceEvent` rather than mutating the original attendance row | Preserves full audit trail for payroll reconciliation |
@@ -77,7 +79,7 @@ This checklist explicitly separates:
 | `HR-PR-02` | Payroll | Component calculation using Frappe `Salary Component.formula` Python string | Refused in normal Norn profile; formulas must compile to typed declarative `RuleIR` / `ExpressionIR` (`Norn.expression` / `Norn.decision`) | Intentional divergence (`non_conforming`): zero runtime `eval` or host callbacks |
 | `HR-PR-03` | Payroll | Attempt to submit two overlapping `Salary Slip`s for one employee in the same pay period | Hard refusal at commit with zero duplicate payroll accruals | Enforced by pay-period interval exclusivity |
 | `HR-PR-04` | Payroll | Total deductions exceed gross earnings (`net_pay < 0`) | Hard refusal unless governed deferred-recovery / carry-forward deduction schedule is declared | Prevents unmodeled negative cash disbursements |
-| `HR-PR-05` | Payroll | Retroactive payroll correction after slips and accrual journals have posted | Appends immutable retro-adjustment or reversing payroll events; prior posted payslip and ledger entries stay untouched | Intentional divergence (`non_conforming`): Frappe HR cancels and amends posted Salary Slips |
+| `HR-PR-05` | Payroll | Retroactive payroll correction after slips and accrual journals have posted | Appends immutable retro-adjustment or reversing payroll economic events (`reverses`); prior posted payslip and ledger entries stay untouched | Intentional divergence (`non_conforming`): Frappe HR cancels the original Salary Slip and creates a separate replacement document linked by `amended_from`; Norn's REA ledger preserves posted events immutably |
 | `HR-PR-06` | Payroll | `Payroll Entry` submits slips and executes bank disbursement | Accrual transaction balances per currency (`Dr Payroll Expense / Cr Payroll Payable`); bank disbursement settles payable claim exactly once | Two-sided REA duality (`core.EconomicEvent` + `core.Claim`); never nets unlike currencies |
 | `HR-PR-07` | Payroll | Effective-dated `Salary Structure Assignment` changes mid-period | Payroll evaluates effective-dated assignment splits at valid time without altering prior periods; missing active assignment refuses slip generation | Follows bitemporal setting/assignment rules (`D07`) |
 | `HR-PR-08` | Payroll | `Full and Final Statement` submitted on employee separation | Atomically reconciles unpaid salary, leave encashment, gratuity, unrecovered advances/loans, and asset clearances into one balanced final claim | Prevents paying out separation settlement while open employee advances remain unoffset |
@@ -96,7 +98,7 @@ This checklist explicitly separates:
 
 | ID | Domain | Scenario | Required Norn Behavior | Notes / Intentional Divergence |
 |---|---|---|---|---|
-| `HR-LC-01` | Lifecycle | Initiate `Employee Onboarding` or issue an `Appointment Letter` from a revamped v16 `Job Offer` in `Awaiting Response` or `Rejected` state | Hard refusal; onboarding and formal appointment issuance require an accepted, unexpired `Job Offer` | Enforces recruitment-to-employment state transition order |
+| `HR-LC-01` | Lifecycle | Initiate `Employee Onboarding` or issue an `Appointment Letter` from a revamped v16 `Job Offer` in `Draft`, `Ready to Send`, `Awaiting Response`, `Rejected`, or `Cancelled` state | **Norn governance policy:** hard refusal unless the `Job Offer` is `Accepted` and unexpired | Intentional divergence: Frappe HR v16's Appointment Letter picker accepts same-company submitted offers without an acceptance filter; Norn enforces offer-acceptance precondition before onboarding or formal appointment |
 | `HR-LC-02` | Lifecycle | Re-hire a previously separated candidate via a new `Job Applicant` and `Job Offer` | Links a new `hr.Employment` / `org.Membership` to the existing `org.Person` identity without duplicating the person or overwriting prior employment tenure | Separates `org.Person` identity from `hr.Employment` intervals |
 | `HR-LC-03` | Lifecycle | Complete `Employee Separation` while open advances, unreturned assets, or unsettled `Full and Final Statement` exist | Hard refusal (or explicit governed waiver receipt) until clearance obligations resolve | Prevents abandoned exit liabilities |
 | `HR-LC-04` | Performance | Submit a second active `Appraisal` for the same employee in one `Appraisal Cycle` | Hard refusal at commit | Uniqueness invariant on `(employee, appraisal_cycle)` |
@@ -120,13 +122,16 @@ packs**. They compose as conjunctive, effective-dated localization overlays (`lo
 pinned by organization/jurisdiction scope (`D07`, `D09`).
 
 The table below isolates Egypt statutory rules (`loc-eg`) as the primary reference
-localization boundary against Frappe HR's generic configuration tables:
+localization boundary against Frappe HR's generic configuration tables. **Egypt Labor
+Law No. 14 of 2025** repealed **Law No. 12 of 2003** effective **2025-09-01**; Law No. 12
+of 2003 is strictly historical and applies only to bitemporal effective dates prior to
+`2025-09-01` so obsolete parameters are never qualified as current law.
 
 | ID | Overlay | Statutory Basis | Required `loc-eg` Overlay Behavior | Separation from Core HR |
 |---|---|---|---|---|
-| `HR-LOC-EG-01` | `loc-eg` | Egypt Labor Law 12/2003 (and effective-dated successor statutory parameters) | Enforces statutory annual leave floors (`21d` standard after qualifying tenure; `30d` after 10 years insured service or age 50+), casual leave sub-cap, and statutory sick/maternity leave rules | Core HR owns generic conserved leave balances (`HR-LV-*`); `loc-eg` supplies statutory minimums and accrual parameters |
-| `HR-LOC-EG-02` | `loc-eg` | Egypt Labor Law 12/2003 working-hours & rest provisions | Pins statutory daily/weekly rest floors, maximum ordinary working hours, overtime multipliers, and Ramadan/night-shift overlays | Core HR enforces generic rest-gap law (`HR-SH-03`); `loc-eg` supplies statutory numeric thresholds |
-| `HR-LOC-EG-03` | `loc-eg` | Egypt official public holiday calendar & IANA `Africa/Cairo` tzdb | Pins `time.Calendar` with `iana_timezone: "Africa/Cairo"`, explicit `tzdb_version` & `dst_policy`, Friday/Saturday (or configured) weekly rest, and official national/religious `CalendarException` dates | Core HR owns `time.Calendar` resolution (`HR-LV-02`, `HR-SH-05`); `loc-eg` supplies Egypt calendar data |
+| `HR-LOC-EG-01` | `loc-eg` | Egypt Labor Law No. 14 of 2025, Art. 124 (effective `2025-09-01`; Law No. 12 of 2003 repealed `2025-09-01`, historical only for pre-`2025-09-01` dates) | Enforces statutory annual leave schedule: **15 days** first year (after 6 months), **21 days** from year 2 onward, **30 days** at 10+ cumulative years or age 50+, **45 days** for persons with disabilities or short stature, and **+7 days** for hazardous/remote work; plus statutory casual/sick/maternity leave rules | Core HR owns generic conserved leave balances (`HR-LV-*`); `loc-eg` supplies effective-dated statutory tiers and never evaluates repealed Law 12/2003 tiers on post-`2025-09-01` dates |
+| `HR-LOC-EG-02` | `loc-eg` | Egypt Labor Law No. 14 of 2025, Arts. 117–123 (effective `2025-09-01`; Law No. 12 of 2003 repealed `2025-09-01`, historical only) | Enforces max **8h/day** or **48h/week** regular working hours, max **10h** workplace presence span (**12h** intermittent), **>= 1h** break (max **5h** continuous work), and **>= 24h** uninterrupted weekly rest (max **6** consecutive working days), plus statutory overtime multipliers | Core HR enforces generic rest/working-hour guards (`HR-SH-03`); `loc-eg` supplies effective-dated statutory numeric ceilings and floors |
+| `HR-LOC-EG-03` | `loc-eg` | Egypt official public holiday calendar & IANA `Africa/Cairo` tzdb | Pins `time.Calendar` with `iana_timezone: "Africa/Cairo"`, explicit `tzdb_version` & `dst_policy`, Friday/Saturday (or configured) weekly rest, and official national/religious `CalendarException` dates resolved via effective-dated calendar assignments | Core HR owns `time.Calendar` resolution (`HR-LV-02`, `HR-SH-05`); `loc-eg` supplies Egypt calendar data |
 | `HR-LOC-EG-04` | `loc-eg` | Egyptian Tax Authority (ETA) — Income Tax Law 91/2005 & effective-dated amendments | Evaluates progressive personal income tax brackets, personal exemption allowance, and tax-tier phase-outs via effective-dated `DecisionIR` / `SettingIR` tables (mapping Frappe HR `Income Tax Slab` + exemption proofs) | Core HR owns generic payslip deduction structure (`HR-PR-01`); `loc-eg` owns ETA tax law and filing outputs |
 | `HR-LOC-EG-05` | `loc-eg` | Egypt NOSI — Social Insurance Law 148/2019 | Enforces effective-dated minimum/maximum insurable wage caps and employee/employer contribution rates with separate employer liability accruals | Frappe HR has no native NOSI engine (typically approximated via custom `Salary Component` formulas); `loc-eg` makes statutory caps declarative and versioned |
-| `HR-LOC-EG-06` | `loc-eg` | Egypt Labor Law 12/2003 end-of-service gratuity & severance provisions | Computes statutory post-60 / termination indemnity schedules from verified tenure and effective-dated statutory rates before feeding `Full and Final Statement` | Core HR owns generic exit settlement reconciliation (`HR-PR-08`); `loc-eg` owns statutory indemnity formulas |
+| `HR-LOC-EG-06` | `loc-eg` | Egypt Labor Law No. 14 of 2025 end-of-service gratuity & severance provisions (effective `2025-09-01`; Law No. 12 of 2003 historical only for pre-`2025-09-01` separations) | Computes statutory post-60 / termination indemnity schedules from verified tenure and effective-dated statutory rates before feeding `Full and Final Statement` | Core HR owns generic exit settlement reconciliation (`HR-PR-08`); `loc-eg` owns effective-dated statutory indemnity formulas |

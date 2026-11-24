@@ -8,7 +8,7 @@ Evidence level: declared (reviewed correspondences over pinned schemas and docs)
 | Link | Terms | Mapped | Residual | Canon gaps | Non-conforming |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | `norn.link.erpnext.canon` | 59 | 40 | 8 | 11 | 0 |
-| `norn.link.frappe-hr.canon` | 198 | 22 | 10 | 162 | 4 |
+| `norn.link.frappe-hr.canon` | 201 | 17 | 9 | 171 | 4 |
 | `norn.link.odoo.canon` | 42 | 27 | 3 | 11 | 1 |
 | `norn.link.shopify.canon` | 35 | 14 | 5 | 16 | 0 |
 
@@ -94,24 +94,19 @@ None.
 
 ### Maps
 
-- `norn.frappe-hr.attendance` subsumed_by `norn.hr.attendance.event`
 - `norn.frappe-hr.branch` subsumed_by `norn.org.unit`
 - `norn.frappe-hr.department` subsumed_by `norn.org.unit`
-- `norn.frappe-hr.designation` subsumed_by `norn.org.post`
 - `norn.frappe-hr.employee` subsumed_by `norn.org.person`
 - `norn.frappe-hr.employee.group` subsumed_by `norn.org.unit`
-- `norn.frappe-hr.guard.expense.self.approval` subsumed_by `norn.hr.guard.self.approval`
 - `norn.frappe-hr.guard.leave.insufficient.balance` subsumed_by `norn.hr.guard.leave.insufficient.balance`
 - `norn.frappe-hr.guard.leave.overlap` equivalent `norn.hr.guard.leave.overlap`
 - `norn.frappe-hr.guard.leave.self.approval` subsumed_by `norn.hr.guard.self.approval`
 - `norn.frappe-hr.guard.shift.overlap` equivalent `norn.hr.guard.shift.overlap`
 - `norn.frappe-hr.holiday.list` subsumed_by `norn.time.calendar`
 - `norn.frappe-hr.holiday.list.holiday` subsumed_by `norn.time.calendar.exception`
-- `norn.frappe-hr.leave.allocation` subsumed_by `norn.hr.leave.balance`
 - `norn.frappe-hr.leave.allocation.new.leaves.allocated` subsumed_by `norn.hr.leave.quantity`
 - `norn.frappe-hr.leave.allocation.total.leaves.allocated` subsumed_by `norn.hr.leave.quantity`
 - `norn.frappe-hr.leave.application` equivalent `norn.hr.leave.request`
-- `norn.frappe-hr.leave.application.submit` subsumed_by `norn.hr.leave.request.approve`
 - `norn.frappe-hr.leave.encashment.encashment.days` subsumed_by `norn.hr.leave.quantity`
 - `norn.frappe-hr.leave.ledger.entry.leaves` subsumed_by `norn.hr.leave.quantity`
 - `norn.frappe-hr.shift.assignment` subsumed_by `norn.hr.shift.commitment`
@@ -123,7 +118,6 @@ None.
 - `norn.frappe-hr.employee.branch`
 - `norn.frappe-hr.employee.department`
 - `norn.frappe-hr.employee.designation`
-- `norn.frappe-hr.employee.holiday.list`
 - `norn.frappe-hr.expense.claim.type.default.account`
 - `norn.frappe-hr.holiday.list.holiday.weekly.off`
 - `norn.frappe-hr.leave.application.half.day`
@@ -143,6 +137,7 @@ None.
 - `norn.frappe-hr.appraisal.cycle.start.date`
 - `norn.frappe-hr.appraisal.final.score`
 - `norn.frappe-hr.appraisal.submit`
+- `norn.frappe-hr.attendance`
 - `norn.frappe-hr.attendance.early.exit`
 - `norn.frappe-hr.attendance.late.entry`
 - `norn.frappe-hr.attendance.request`
@@ -152,6 +147,7 @@ None.
 - `norn.frappe-hr.compensatory.leave.request.submit`
 - `norn.frappe-hr.compensatory.leave.request.work.from.date`
 - `norn.frappe-hr.department.parent.department`
+- `norn.frappe-hr.designation`
 - `norn.frappe-hr.employee.advance`
 - `norn.frappe-hr.employee.advance.advance.amount`
 - `norn.frappe-hr.employee.advance.claimed.amount`
@@ -210,6 +206,7 @@ None.
 - `norn.frappe-hr.guard.employee.inactive.mutation`
 - `norn.frappe-hr.guard.employee.reports.to.self`
 - `norn.frappe-hr.guard.expense.sanctioned.exceeds.claimed`
+- `norn.frappe-hr.guard.expense.self.approval`
 - `norn.frappe-hr.guard.goal.weightage.overflow`
 - `norn.frappe-hr.guard.job.offer.unaccepted.onboarding`
 - `norn.frappe-hr.guard.leave.allocation.overlap`
@@ -221,6 +218,10 @@ None.
 - `norn.frappe-hr.guard.salary.structure.missing`
 - `norn.frappe-hr.guard.separation.pending.settlement`
 - `norn.frappe-hr.guard.tax.exemption.cap`
+- `norn.frappe-hr.holiday.list.assignment`
+- `norn.frappe-hr.holiday.list.assignment.from.date`
+- `norn.frappe-hr.holiday.list.assignment.holiday.list`
+- `norn.frappe-hr.holiday.list.assignment.submit`
 - `norn.frappe-hr.income.tax.slab`
 - `norn.frappe-hr.income.tax.slab.effective.from`
 - `norn.frappe-hr.job.applicant`
@@ -231,9 +232,11 @@ None.
 - `norn.frappe-hr.job.opening`
 - `norn.frappe-hr.job.opening.designation`
 - `norn.frappe-hr.job.opening.status`
+- `norn.frappe-hr.leave.allocation`
 - `norn.frappe-hr.leave.allocation.submit`
 - `norn.frappe-hr.leave.application.cancel`
 - `norn.frappe-hr.leave.application.from.date`
+- `norn.frappe-hr.leave.application.submit`
 - `norn.frappe-hr.leave.application.to.date`
 - `norn.frappe-hr.leave.application.total.leave.days`
 - `norn.frappe-hr.leave.block.list`

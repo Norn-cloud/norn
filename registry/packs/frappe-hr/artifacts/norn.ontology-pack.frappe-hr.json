@@ -149,14 +149,14 @@
         "termId": "norn.frappe-hr.employee.transfer"
       },
       {
-        "confidenceBasisPoints": 9000,
+        "confidenceBasisPoints": 8500,
         "evidenceRefs": [
-          "https://docs.frappe.io/hr/employee-grievance"
+          "https://github.com/frappe/hrms/tree/1b2d7e034e0de8e30a9e513541d7741710587ad5"
         ],
-        "externalIri": "https://docs.frappe.io/hr/employee-grievance",
-        "justification": "Public Frappe HR Employee Grievance concept.",
+        "externalIri": "https://github.com/frappe/hrms/tree/1b2d7e034e0de8e30a9e513541d7741710587ad5",
+        "justification": "Public Frappe HR v16 Employee Grievance concept pinned to the immutable v16.60.0 release tree.",
         "mappingId": "map.frappe-hr.employee.grievance",
-        "relation": "close_match",
+        "relation": "related_match",
         "reviewedAt": "2026-11-23T00:00:00Z",
         "reviewedBy": "hr-vertical (agent, proposed)",
         "sourceId": "source.frappe-hr",
@@ -329,6 +329,21 @@
         "reviewedBy": "hr-vertical (agent, proposed)",
         "sourceId": "source.frappe-hr",
         "termId": "norn.frappe-hr.holiday.list.holiday"
+      },
+      {
+        "confidenceBasisPoints": 8500,
+        "evidenceRefs": [
+          "https://docs.frappe.io/hr/holiday-list",
+          "https://github.com/frappe/hrms/tree/1b2d7e034e0de8e30a9e513541d7741710587ad5"
+        ],
+        "externalIri": "https://docs.frappe.io/hr/holiday-list",
+        "justification": "Public Frappe HR v16 Holiday List Assignment concept governing effective-dated holiday calendar binding.",
+        "mappingId": "map.frappe-hr.holiday.list.assignment",
+        "relation": "related_match",
+        "reviewedAt": "2026-11-23T00:00:00Z",
+        "reviewedBy": "hr-vertical (agent, proposed)",
+        "sourceId": "source.frappe-hr",
+        "termId": "norn.frappe-hr.holiday.list.assignment"
       },
       {
         "confidenceBasisPoints": 9000,
@@ -611,14 +626,14 @@
         "termId": "norn.frappe-hr.expense.claim"
       },
       {
-        "confidenceBasisPoints": 9000,
+        "confidenceBasisPoints": 8500,
         "evidenceRefs": [
-          "https://docs.frappe.io/hr/expense-claim-type"
+          "https://docs.frappe.io/hr/expense-claim"
         ],
-        "externalIri": "https://docs.frappe.io/hr/expense-claim-type",
-        "justification": "Public Frappe HR Expense Claim Type concept.",
+        "externalIri": "https://docs.frappe.io/hr/expense-claim",
+        "justification": "Public Frappe HR Expense Claim Type category documented within the Expense Claim guide.",
         "mappingId": "map.frappe-hr.expense.claim.type",
-        "relation": "close_match",
+        "relation": "related_match",
         "reviewedAt": "2026-11-23T00:00:00Z",
         "reviewedBy": "hr-vertical (agent, proposed)",
         "sourceId": "source.frappe-hr",
@@ -1120,6 +1135,19 @@
             "valueType": "string"
           }
         ],
+        "shapeId": "shape.frappe-hr.holiday.list.assignment",
+        "termId": "norn.frappe-hr.holiday.list.assignment"
+      },
+      {
+        "closed": true,
+        "fields": [
+          {
+            "fieldId": "name",
+            "maxCount": 1,
+            "minCount": 1,
+            "valueType": "string"
+          }
+        ],
         "shapeId": "shape.frappe-hr.shift.type",
         "termId": "norn.frappe-hr.shift.type"
       },
@@ -1560,7 +1588,7 @@
         "license": "GPL-3.0-only",
         "redistribution": "reference_only",
         "releaseId": "v16.60.0@1b2d7e034e0de8e30a9e513541d7741710587ad5",
-        "releasedAt": "2026-11-23",
+        "releasedAt": "2026-11-17",
         "retrievedAt": "2026-11-23",
         "sourceId": "source.frappe-hr"
       }
@@ -1748,6 +1776,14 @@
         "semanticAuthority": "semantic_only",
         "status": "active",
         "termId": "norn.frappe-hr.holiday.list.holiday",
+        "termKind": "class"
+      },
+      {
+        "definition": "Frappe HR v16 effective-dated document assigning a Holiday List calendar to an Employee or Company from a given date (superseding the legacy Employee holiday_list field).",
+        "label": "Holiday List Assignment",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.holiday.list.assignment",
         "termKind": "class"
       },
       {
@@ -2104,15 +2140,6 @@
         "termKind": "property"
       },
       {
-        "definition": "Default Holiday List calendar assigned to an Employee.",
-        "domainTermId": "norn.frappe-hr.employee",
-        "label": "holiday list (employee)",
-        "semanticAuthority": "semantic_only",
-        "status": "active",
-        "termId": "norn.frappe-hr.employee.holiday.list",
-        "termKind": "property"
-      },
-      {
         "definition": "Parent organizational node in the Department hierarchy.",
         "domainTermId": "norn.frappe-hr.department",
         "label": "parent department (department)",
@@ -2326,6 +2353,24 @@
         "semanticAuthority": "semantic_only",
         "status": "active",
         "termId": "norn.frappe-hr.holiday.list.holiday.weekly.off",
+        "termKind": "property"
+      },
+      {
+        "definition": "Effective start date from which a Holiday List Assignment governs holiday calendar resolution.",
+        "domainTermId": "norn.frappe-hr.holiday.list.assignment",
+        "label": "from date (holiday.list.assignment)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.holiday.list.assignment.from.date",
+        "termKind": "property"
+      },
+      {
+        "definition": "Holiday List calendar bound to an Employee or Company by an effective-dated Holiday List Assignment.",
+        "domainTermId": "norn.frappe-hr.holiday.list.assignment",
+        "label": "holiday list (holiday.list.assignment)",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.holiday.list.assignment.holiday.list",
         "termKind": "property"
       },
       {
@@ -2707,7 +2752,7 @@
         "termKind": "property"
       },
       {
-        "definition": "Candidate acceptance state of a Job Offer (Awaiting Response, Accepted, Rejected).",
+        "definition": "Lifecycle and candidate acceptance state of a Frappe HR v16 Job Offer (Draft, Ready to Send, Awaiting Response, Accepted, Rejected, Cancelled).",
         "domainTermId": "norn.frappe-hr.job.offer",
         "label": "status (job.offer)",
         "semanticAuthority": "semantic_only",
@@ -2842,7 +2887,7 @@
         "termKind": "action"
       },
       {
-        "definition": "Submit and approve a Leave Application, posting a leave ledger debit.",
+        "definition": "Submit a Leave Application in Approved or Rejected status, posting a leave ledger debit when approved.",
         "domainTermId": "norn.frappe-hr.leave.application",
         "label": "Submit Leave Application",
         "semanticAuthority": "semantic_only",
@@ -2875,6 +2920,15 @@
         "semanticAuthority": "semantic_only",
         "status": "active",
         "termId": "norn.frappe-hr.leave.encashment.submit",
+        "termKind": "action"
+      },
+      {
+        "definition": "Submit an effective-dated Holiday List Assignment binding an Employee or Company to a Holiday List calendar.",
+        "domainTermId": "norn.frappe-hr.holiday.list.assignment",
+        "label": "Submit Holiday List Assignment",
+        "semanticAuthority": "semantic_only",
+        "status": "active",
+        "termId": "norn.frappe-hr.holiday.list.assignment.submit",
         "termKind": "action"
       },
       {
@@ -2914,7 +2968,7 @@
         "termKind": "action"
       },
       {
-        "definition": "Cancel a submitted Attendance document and amend a replacement copy in place of an immutable reversing event.",
+        "definition": "Cancel a submitted Attendance document and create a separate replacement document linked via amended_from in place of an immutable reversing economic event.",
         "domainTermId": "norn.frappe-hr.attendance",
         "label": "Cancel and amend Attendance",
         "semanticAuthority": "semantic_only",
@@ -2959,7 +3013,7 @@
         "termKind": "action"
       },
       {
-        "definition": "Cancel a submitted Salary Slip and amend a replacement copy in place of an immutable reversing/retro-adjustment event.",
+        "definition": "Cancel a submitted Salary Slip and create a separate replacement document linked via amended_from in place of an immutable reversing/retro-adjustment economic event.",
         "domainTermId": "norn.frappe-hr.salary.slip",
         "label": "Cancel and amend Salary Slip",
         "semanticAuthority": "semantic_only",
