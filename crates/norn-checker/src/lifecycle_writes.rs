@@ -145,13 +145,15 @@ const ITEMS_POINTER: &str = "/payload/outputSchema/properties/facts/items";
 
 /// The `facts` item schema of a decide graph's output schema: its
 /// `properties` and `required` members, when it is a list of records.
-pub(crate) struct FactSchema<'s> {
+pub struct FactSchema<'s> {
     properties: &'s BTreeMap<String, JsonValue>,
     required: Vec<&'s str>,
 }
 
 impl<'s> FactSchema<'s> {
-    pub(crate) fn of(output_schema: &'s JsonValue) -> Option<Self> {
+    /// Parse the `facts` item schema from a decide graph's `outputSchema`.
+    #[must_use]
+    pub fn of(output_schema: &'s JsonValue) -> Option<Self> {
         let facts = member(Some(output_schema), "properties")
             .and_then(|properties| member(Some(properties), "facts"))?;
         if type_of(Some(facts)) != Some("array") {
@@ -177,7 +179,8 @@ impl<'s> FactSchema<'s> {
     }
 
     /// The string `enum` of member `name`.
-    pub(crate) fn values(&self, name: &str) -> Option<Vec<&'s str>> {
+    #[must_use]
+    pub fn values(&self, name: &str) -> Option<Vec<&'s str>> {
         string_enum(self.get(name))
     }
 
@@ -452,7 +455,8 @@ pub fn check_lifecycle_write_set(
 
 /// Every decide graph of `artifacts` whose output schema declares a `facts`
 /// list of records, with that output schema.
-pub(crate) fn fact_decisions<'a>(
+#[must_use]
+pub fn fact_decisions<'a>(
     artifacts: impl IntoIterator<Item = &'a ArtifactEnvelope>,
 ) -> Vec<(&'a ArtifactEnvelope, JsonValue)> {
     artifacts

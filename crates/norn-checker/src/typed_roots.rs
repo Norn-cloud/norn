@@ -4354,13 +4354,30 @@ mod tests {
     fn remaining_typed_root_fixtures_are_valid() {
         for source in [
             CONNECTOR_FIXTURE,
-            WIDGET_FIXTURE,
             POLICY_FIXTURE,
             CUSTOMIZATION_FIXTURE,
             DERIVED_FIXTURE,
         ] {
             assert_eq!(findings(fixture(source)), []);
         }
+        // Widget typed-root decoding itself stays valid, while Ring-0 envelope
+        // validation fails closed unless Ring-1 `norn-ui-checker` validates it.
+        let widget_envelope: ArtifactEnvelope =
+            serde_json::from_value(fixture(WIDGET_FIXTURE)).expect("widget fixture decodes");
+        let mut typed_root_diagnostics = Vec::new();
+        super::check_typed_root(
+            &widget_envelope.payload,
+            &mut typed_root_diagnostics,
+            Some(widget_envelope.artifact_id.as_str()),
+        );
+        assert_eq!(typed_root_diagnostics, []);
+        assert_eq!(
+            findings(fixture(WIDGET_FIXTURE)),
+            [(
+                crate::codes::WIDGET_RING1_REQUIRED.to_string(),
+                "payload".to_string()
+            )]
+        );
         // The pre-versioned approval form of the Access root.
         let mut policy = fixture(POLICY_FIXTURE);
         policy["payload"] = json!({
@@ -4414,7 +4431,6 @@ mod tests {
     #[test]
     fn null_members_are_reported_once() {
         for (source, member) in [
-            (WIDGET_FIXTURE, "projectionHints"),
             (CONNECTOR_FIXTURE, "cursor"),
             (DERIVED_FIXTURE, "temporalScope"),
         ] {
@@ -4426,7 +4442,6 @@ mod tests {
         }
         // Omitting them is valid.
         for (source, member) in [
-            (WIDGET_FIXTURE, "projectionHints"),
             (CONNECTOR_FIXTURE, "cursor"),
             (DERIVED_FIXTURE, "temporalScope"),
         ] {

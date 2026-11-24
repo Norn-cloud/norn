@@ -2,47 +2,15 @@
 //! an action may write, checked over a resolved artifact set.
 //!
 //! [`check_action_set`] runs inside [`crate::check_artifact_set`] after
-//! resolution. It reads every candidate `action` artifact that decodes into
-//! its typed root ([`norn_ir::ActionRoot`]; one that does not has per-artifact
-//! findings and is skipped) against the **effective model**: every object
-//! type defined by an `entity` artifact of the candidates or the installed
-//! base, `EntityIR` v2 as decoded and v1 lowered through
-//! [`crate::entity_object_type`], with the effective (inherited, extended)
-//! properties of v2 types from [`crate::EffectiveCatalog`].
+//! resolution against the effective model of candidate and base entity types
+//! ([`crate::entity_object_type`], [`crate::EffectiveCatalog`]).
 //!
-//! # Identities
+//! # Identities & Effect targets
 //!
-//! Artifact identities (`(artifactId, version)`, conflicting versions,
-//! shadowing the base) are the resolver's ([`crate::artifact_set::codes`]),
-//! and `EntityIR` v2 type names are the whole-model check's
-//! (`object_type.validation.duplicate_name`). Two identities neither covers
-//! are checked here:
-//!
-//! - an object type name defined twice where one definition is `EntityIR` v1
-//!   ([`codes::DUPLICATE_OBJECT_TYPE`]): the v2 model does not see v1
-//!   artifacts, and an object kind must name one type;
-//! - an `actionId` used by two actions of the set or the base
-//!   ([`codes::DUPLICATE_ACTION_ID`]): it is the action's command and MCP tool
-//!   name.
-//!
-//! # Effect targets
-//!
-//! The closed effect program ([`norn_ir::ActionEffectProgram`]) has two
-//! operations, `upsert_input_object` and `fire_transition` (T3-LIFE-3,
-//! #2867). Each pins an `entity` artifact by exact id and version and names
-//! the object kind it writes ([`norn_ir::ActionEffectProgram::target`]). Its
-//! target must:
-//!
-//! - resolve to an `entity` artifact of the set or the base
-//!   ([`codes::UNRESOLVED_EFFECT_ENTITY`]) the action's scope can see
-//!   ([`crate::artifact_set::codes::INCOMPATIBLE_SCOPE`]);
-//! - be the object type that artifact defines ([`codes::EFFECT_KIND_MISMATCH`]);
-//! - be writable by a generic action ([`codes::TARGET_NOT_WRITABLE`]): the
-//!   type's mutation authority is `generic_action` (a `domain_engine` type is
-//!   mutated only by its domain engine's commands, the rule of
-//!   [`norn_ir::entity_mutation_authority_admits`]), and, for an upsert, no
-//!   property of the input schema, from which the upsert derives the object,
-//!   is a computed (read-only) property of the effective type.
+//! Checks duplicate v1/v2 object types ([`codes::DUPLICATE_OBJECT_TYPE`]),
+//! duplicate `actionId`s ([`codes::DUPLICATE_ACTION_ID`]), and closed effect
+//! programs ([`norn_ir::ActionEffectProgram`]: resolution, scope visibility,
+//! kind match, and `generic_action` writability without computed inputs).
 //!
 //! # The declared write set
 //!
@@ -2365,15 +2333,16 @@ fn action_model_environment(
     ZenTypeEnv::from_artifact_set_for_checking(&definitions, registry, EnvOptions::default())
 }
 
-/// The object types of the set and the base, by name, in definition order
-/// (base first).
-pub(crate) struct Model<'a> {
+/// The object types of the set and the base, by name, in definition order (base first).
+pub struct Model<'a> {
     by_name: BTreeMap<String, Vec<Defined<'a>>>,
     expression_environment: Result<ZenTypeEnv, Vec<norn_expr::EnvError>>,
 }
 
 impl<'a> Model<'a> {
-    pub(crate) fn new(
+    /// Build the effective object-type model over candidate `artifacts` and installed `base`.
+    #[must_use]
+    pub fn new(
         artifacts: &'a [ArtifactEnvelope],
         base: &'a [ArtifactEnvelope],
         registry: &BTreeSet<PropertyTypeName>,
@@ -2474,6 +2443,15 @@ impl<'a> Model<'a> {
     /// The (first) definition of `name`.
     pub(crate) fn object_type(&self, name: &str) -> Option<&Defined<'a>> {
         self.by_name.get(name).and_then(|defined| defined.first())
+    }
+
+    /// The effective lifecycles declared on object type `name`, if present.
+    #[must_use]
+    pub fn object_type_lifecycles(
+        &self,
+        name: &str,
+    ) -> Option<&Result<Vec<EffectiveLifecycle>, String>> {
+        self.object_type(name).map(|defined| &defined.lifecycles)
     }
 
     fn effective_object_type_named(&self, name: &str) -> Option<&EffectiveObjectType> {

@@ -13,7 +13,8 @@ use std::collections::{BTreeMap, BTreeSet};
 /// to the vertices that must come before it. Returns the vertices in order —
 /// among the ready vertices, the smallest `key` first — and the vertices left
 /// over, which are on or behind a cycle.
-pub(crate) fn topological_order<K: Ord>(
+#[must_use]
+pub fn topological_order<K: Ord>(
     requires: &BTreeMap<usize, BTreeSet<usize>>,
     key: impl Fn(usize) -> K,
 ) -> (Vec<usize>, BTreeSet<usize>) {
@@ -50,7 +51,8 @@ pub(crate) fn topological_order<K: Ord>(
 /// edge to itself, found by mutual reachability within `blocked`. Groups are
 /// returned in the order of their smallest vertex; vertices that are only
 /// behind a cycle belong to no group.
-pub(crate) fn cycle_groups(
+#[must_use]
+pub fn cycle_groups(
     edges: &BTreeMap<usize, BTreeSet<usize>>,
     blocked: &BTreeSet<usize>,
 ) -> Vec<BTreeSet<usize>> {

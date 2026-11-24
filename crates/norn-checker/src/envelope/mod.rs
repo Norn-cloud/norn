@@ -8,13 +8,13 @@ mod customization;
 mod derived_view;
 mod entity;
 mod graph_load;
-mod helpers;
+/// Shared JSON-shape, field, and diagnostic helpers for envelope validators.
+pub mod helpers;
 mod pack;
 mod policy;
 mod relation;
 mod rule;
 mod setting;
-mod widget;
 
 use norn_ir::identifier_limits::MAX_ACTION_ID_BYTES;
 use norn_ir::{
@@ -45,10 +45,13 @@ use policy::validate_policy_payload;
 use relation::validate_relation_payload;
 use rule::validate_rule_payload;
 use setting::validate_setting_payload;
-use widget::{validate_widget_binding_dependencies, validate_widget_payload};
 
 /// Stable diagnostic for identifier lengths at new admission boundaries.
 pub const IDENTIFIER_TOO_LONG: &str = "identifier.validation.too_long";
+
+/// Stable Ring-0 fail-closed diagnostic emitted when a `Widget` artifact is
+/// checked by Ring-0 `norn-checker` alone without Ring-1 `norn-ui-checker`.
+pub const WIDGET_RING1_REQUIRED: &str = "widget.validation.ring1_required";
 
 /// Method-call sugar for [`validate_artifact`], so `artifact.validate()` keeps
 /// working for callers after the validator moved out of `norn-ir`.
@@ -69,7 +72,9 @@ impl ArtifactValidation for ArtifactEnvelope {
 /// Validate one artifact envelope and its kind payload.
 ///
 /// Moved verbatim from `norn_ir::ArtifactEnvelope::validate` (T1-CHK-1); the
-/// diagnostics (codes, messages, paths) are unchanged.
+/// diagnostics (codes, messages, paths) are unchanged for Ring-0 kinds.
+/// `ArtifactPayload::Widget` fails closed here because widget validation lives
+/// in Ring-1 `norn-ui-checker`.
 ///
 /// # Errors
 ///
@@ -99,6 +104,8 @@ pub fn validate_artifact(artifact: &ArtifactEnvelope) -> Result<(), Vec<Diagnost
     }
 }
 
+/// Collect legacy Ring-0 envelope and typed-root diagnostics for one normalized artifact.
+#[must_use]
 pub(crate) fn collect_artifact_diagnostics(artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
 
@@ -247,14 +254,13 @@ fn validate_kind_payload(artifact: &ArtifactEnvelope, diagnostics: &mut Vec<Diag
         ArtifactPayload::BusinessPack(_) => {
             validate_business_pack_payload(&payload, diagnostics, artifact_id);
         }
-        ArtifactPayload::Widget(_) => {
-            validate_widget_payload(&payload, diagnostics, artifact_id);
-            validate_widget_binding_dependencies(artifact, diagnostics);
-        }
-        // Both roots are strict serde types: the typed-root check below
-        // decodes them, and their semantic checks are `crate::source_schema`
-        // and `crate::mapping` (run per document and over the artifact set).
-        ArtifactPayload::SourceSchema(_)
+        // Widget payload validation lives in Ring-1 `norn-ui-checker`. Ring-0
+        // completes root-shape and typed-root validation first, then emits
+        // `WIDGET_RING1_REQUIRED` after `check_typed_root` so Ring-0 alone
+        // always fails closed on widget artifacts.
+        ArtifactPayload::Widget(_)
+        // The remaining strict-serde roots are checked by their dedicated modules.
+        | ArtifactPayload::SourceSchema(_)
         | ArtifactPayload::Mapping(_)
         | ArtifactPayload::Law(_)
         | ArtifactPayload::DefinedConcept(_)
@@ -277,17 +283,27 @@ fn validate_kind_payload(artifact: &ArtifactEnvelope, diagnostics: &mut Vec<Diag
                 }),
         );
     }
-    // Typed-root agreement: a payload the kind validator accepts must decode
-    // into its strict typed root. Run only on otherwise clean payloads so a
-    // malformed member is reported once, by the validator.
-    if diagnostics.len() == before {
+    // Typed-root agreement: a payload Ring-0 accepts must decode into its
+    // strict typed root. For `Widget`, run typed-root checks even when
+    // `validate_root_shape` reported unknown fields so Ring-0 surfaces every
+    // structural widget error before emitting `WIDGET_RING1_REQUIRED`.
+    if diagnostics.len() == before || matches!(artifact.payload, ArtifactPayload::Widget(_)) {
         crate::typed_roots::check_typed_root(&artifact.payload, diagnostics, artifact_id);
+    }
+    if matches!(artifact.payload, ArtifactPayload::Widget(_)) {
+        diagnostics.push(invalid_diagnostic(
+            WIDGET_RING1_REQUIRED,
+            "widget artifacts require Ring-1 norn-ui-checker validation and cannot be admitted by Ring-0 norn-checker alone",
+            "payload",
+            artifact_id,
+        ));
     }
 }
 
 /// The payload object the kind validators walk: the bare payload without the
 /// reserved `extensions` slots (moved from the `norn-ir` payload roots).
-fn validation_json_value(payload: &ArtifactPayload) -> JsonValue {
+#[must_use]
+pub fn validation_json_value(payload: &ArtifactPayload) -> JsonValue {
     let mut value = payload.to_json_value();
     if let JsonValue::Object(object) = &mut value {
         object.remove("extensions");

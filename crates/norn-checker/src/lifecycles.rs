@@ -88,13 +88,14 @@ pub mod codes {
 /// declared (or inherited) lifecycle restricted to the property's effective
 /// enum values.
 #[derive(Debug, Clone)]
-pub(crate) struct Machine<'a> {
+pub struct Machine<'a> {
     /// The property's enum values, in presentation order.
-    pub(crate) states: Vec<&'a str>,
+    pub states: Vec<&'a str>,
     pub(crate) initial: BTreeSet<&'a str>,
     pub(crate) terminal: BTreeSet<&'a str>,
     pub(crate) immutable: BTreeSet<&'a str>,
-    pub(crate) transitions: Vec<Edge<'a>>,
+    /// Declared transitions of this machine.
+    pub transitions: Vec<Edge<'a>>,
     pub(crate) path_properties: Vec<&'a norn_ir::LifecyclePathProperty>,
     /// Declared endings and their outcomes (LIFE-SOUND-1), in declaration order.
     pub(crate) endings: Vec<(&'a str, LifecycleOutcome)>,
@@ -111,8 +112,9 @@ pub(crate) struct MachineEvent<'a> {
 
 /// One transition of a [`Machine`].
 #[derive(Debug, Clone)]
-pub(crate) struct Edge<'a> {
-    pub(crate) id: &'a TransitionId,
+pub struct Edge<'a> {
+    /// Stable transition identifier.
+    pub id: &'a TransitionId,
     pub(crate) from: BTreeSet<&'a str>,
     pub(crate) to: &'a str,
     /// Every guard that applies (their conjunction), inherited ones first.
@@ -132,7 +134,8 @@ pub(crate) type Machines<'a> = BTreeMap<&'a PropertyId, Machine<'a>>;
 impl<'a> Machine<'a> {
     /// The machine a declaration describes over `states`, keeping only names
     /// that are states.
-    pub(crate) fn declared(lifecycle: &'a Lifecycle, states: Vec<&'a str>) -> Self {
+    #[must_use]
+    pub fn declared(lifecycle: &'a Lifecycle, states: Vec<&'a str>) -> Self {
         let machine = Self {
             path_properties: lifecycle.path_properties.iter().collect(),
             initial: lifecycle.initial.iter().map(String::as_str).collect(),

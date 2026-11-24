@@ -1,0 +1,29 @@
+[package]
+name = "norn-ui-checker"
+version = "0.2.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Ring-1 UI and Widget UX admission diagnostics composed over Ring-0 norn-checker (see AGENTS.md, #1613)"
+# Every integration test is a module of tests/suites.rs, one binary
+# (scripts/codemods/fold_integration_tests.py).
+autotests = false
+
+[lib]
+path = "src/lib.rs"
+
+[[test]]
+name = "suites"
+path = "tests/suites.rs"
+
+[dependencies]
+norn-checker = { path = "../norn-checker" }
+norn-expr = { path = "../norn-expr" }
+norn-ir = { path = "../norn-ir" }
+serde_json = "1.0.150"
+
+[dev-dependencies]
+proptest = "1.11.0"
+
+[lints]
+workspace = true
