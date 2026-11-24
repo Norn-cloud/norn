@@ -10,7 +10,7 @@
 //! Evidence level: [`EvidenceLevel::Sampled`].
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use norn_kernel::cell_host::{
     FactKey, FactMutation, FactVersion, FactWrite, JsonObject, JsonValue, LinkKey,
@@ -136,6 +136,8 @@ struct DstCaseState<'a, H: PackHost> {
     entities_per_type: u8,
     host: &'a mut H,
     model: BTreeMap<(usize, u8), RefEntity>,
+    extra_facts: BTreeMap<FactKey, (JsonObject, FactVersion)>,
+    extra_links: BTreeSet<LinkKey>,
     coverage: DomainCoverage,
     reopens: usize,
 }
@@ -238,6 +240,8 @@ where
             entities_per_type: config.entities_per_type,
             host: &mut host,
             model: BTreeMap::new(),
+            extra_facts: BTreeMap::new(),
+            extra_links: BTreeSet::new(),
             coverage: DomainCoverage::default(),
             reopens: 0,
         };
@@ -394,6 +398,7 @@ impl<H: PackHost> DstCaseState<'_, H> {
                     key: id,
                     values: values.clone(),
                 }],
+                links: Vec::new(),
                 commands: Vec::new(),
                 timers: Vec::new(),
             };
@@ -472,14 +477,23 @@ impl<H: PackHost> DstCaseState<'_, H> {
             };
         }
 
+        let predicted_subject = self
+            .catalog
+            .effective_object_values(&key.object_type, &values)
+            .map_err(|err| format!("predict effective values for {key}: {err}"))?;
+        let predicted_setup = self.predict_setup_writes(&graph.setup_writes)?;
         let direct_link_keys: Vec<LinkKey> =
             graph.direct_links.iter().map(|lw| lw.key.clone()).collect();
+        let all_link_keys: Vec<LinkKey> = graph
+            .setup_links
+            .iter()
+            .chain(graph.direct_links.iter())
+            .map(|lw| lw.key.clone())
+            .collect();
         graph.setup_writes.push(FactWrite {
             key: key.clone(),
             expected: FactVersion::ABSENT,
-            mutation: FactMutation::Put {
-                values: values.clone(),
-            },
+            mutation: FactMutation::Put { values },
         });
         graph.setup_links.extend(graph.direct_links);
         let res = self.host.commit(CellCommit {
@@ -492,13 +506,19 @@ impl<H: PackHost> DstCaseState<'_, H> {
                 if self.host.ledger_len() != before.saturating_add(1) {
                     return Err("linked create did not append 1 ledger entry".to_owned());
                 }
-                let persisted = self.host.load(key).map_err(|e| format!("load: {e}"))?;
+                for (setup_key, effective) in predicted_setup {
+                    self.extra_facts
+                        .insert(setup_key, (effective, FactVersion(1)));
+                }
+                for link_key in all_link_keys {
+                    self.extra_links.insert(link_key);
+                }
                 self.model.insert(
                     id_pair,
                     RefEntity {
                         state: init_state.to_owned(),
-                        values: persisted.values.unwrap_or(values),
-                        version: persisted.version,
+                        values: predicted_subject,
+                        version: FactVersion(1),
                         required_links: direct_link_keys,
                     },
                 );
@@ -506,6 +526,23 @@ impl<H: PackHost> DstCaseState<'_, H> {
             }
             Err(err) => Err(format!("linked create for {ty_name} failed: {err}")),
         }
+    }
+
+    fn predict_setup_writes(
+        &self,
+        writes: &[FactWrite],
+    ) -> Result<Vec<(FactKey, JsonObject)>, String> {
+        let mut out = Vec::with_capacity(writes.len());
+        for write in writes {
+            if let FactMutation::Put { values } = &write.mutation {
+                let effective = self
+                    .catalog
+                    .effective_object_values(&write.key.object_type, values)
+                    .map_err(|err| format!("predict effective values for {}: {err}", write.key))?;
+                out.push((write.key.clone(), effective));
+            }
+        }
+        Ok(out)
     }
 
     fn finish_create_step(
@@ -528,24 +565,16 @@ impl<H: PackHost> DstCaseState<'_, H> {
                 if self.host.ledger_len() != before.saturating_add(1) {
                     return Err("create did not append 1 ledger entry".to_owned());
                 }
-                let persisted = self.host.load(key).map_err(|e| format!("load: {e}"))?;
-                let persisted_values = persisted
-                    .values
-                    .ok_or_else(|| format!("created object {key} missing immediately after Ok"))?;
-                for (k, v) in &values {
-                    if persisted_values.get(k) != Some(v) {
-                        return Err(format!(
-                            "created {key}.{k} mismatch: expected {v:?}, got {:?}",
-                            persisted_values.get(k)
-                        ));
-                    }
-                }
+                let expected_values = self
+                    .catalog
+                    .effective_object_values(&key.object_type, &values)
+                    .map_err(|err| format!("predict effective values for {key}: {err}"))?;
                 self.model.insert(
                     id_pair,
                     RefEntity {
                         state: init_state.to_owned(),
-                        values: persisted_values,
-                        version: persisted.version,
+                        values: expected_values,
+                        version: FactVersion(1),
                         required_links,
                     },
                 );
@@ -589,6 +618,7 @@ impl<H: PackHost> DstCaseState<'_, H> {
                 lifecycle: PropertyId(prop.to_owned()),
                 transition: TransitionId(transition.id.as_str().to_owned()),
             }],
+            links: Vec::new(),
             commands: Vec::new(),
             timers: Vec::new(),
         };
@@ -738,6 +768,7 @@ impl<H: PackHost> DstCaseState<'_, H> {
                 property: PropertyId(mut_prop.clone()),
                 value: mut_val.clone(),
             }],
+            links: Vec::new(),
             commands: Vec::new(),
             timers: Vec::new(),
         };
@@ -841,12 +872,20 @@ impl<H: PackHost> DstCaseState<'_, H> {
                     .find(|ty| ty.name.as_str() == parent.as_str())
             });
         }
-        for law in &self.pack.laws {
-            if law.subject == ty_name
-                && law.exceptions.is_empty()
-                && matches!(evaluate_law_example(law, &obj_val), Ok(Verdict::Violated))
-            {
-                return true;
+        let ty_name_obj = ObjectTypeName(ty_name.to_owned());
+        if let Ok(envelopes) = self.catalog.governing_laws(&ty_name_obj) {
+            for env in envelopes {
+                if let Some(pos) = self
+                    .pack
+                    .law_envelopes
+                    .iter()
+                    .position(|e| e.artifact_id == env.artifact_id)
+                    && let Some(law) = self.pack.laws.get(pos)
+                    && law.exceptions.is_empty()
+                    && matches!(evaluate_law_example(law, &obj_val), Ok(Verdict::Violated))
+                {
+                    return true;
+                }
             }
         }
         false
@@ -901,6 +940,42 @@ impl<H: PackHost> DstCaseState<'_, H> {
                         }
                     }
                 }
+            }
+        }
+        self.assert_extra_graph_matches()
+    }
+
+    fn assert_extra_graph_matches(&self) -> Result<(), String> {
+        for (key, (expected_values, expected_version)) in &self.extra_facts {
+            let loaded = self
+                .host
+                .load(key)
+                .map_err(|err| format!("load setup {key}: {err}"))?;
+            if !loaded.exists() {
+                return Err(format!("oracle divergence: setup object {key} missing"));
+            }
+            if loaded.version != *expected_version {
+                return Err(format!(
+                    "oracle divergence on setup {key} version: expected {expected_version:?}, got {:?}",
+                    loaded.version
+                ));
+            }
+            if loaded.values.as_ref() != Some(expected_values) {
+                return Err(format!(
+                    "oracle divergence on setup {key} values: expected {expected_values:?}, got {:?}",
+                    loaded.values
+                ));
+            }
+        }
+        for link_key in &self.extra_links {
+            let link_state = self
+                .host
+                .load_link(link_key)
+                .map_err(|err| format!("load_link {link_key}: {err}"))?;
+            if !link_state.exists() {
+                return Err(format!(
+                    "oracle divergence: transitive link {link_key} missing from host"
+                ));
             }
         }
         Ok(())

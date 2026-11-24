@@ -278,6 +278,13 @@ pub trait PackHost: CellHost<Event = FactEvent, Command = JsonObject, Input = Js
     fn read_observed_coverage(&self) -> Option<coverage::DomainCoverage> {
         None
     }
+
+    /// Returns whether this host's own runtime model attaches governing law
+    /// artifact `artifact_id` to `object_type` (fail-closed default: `false`).
+    fn has_governing_law(&self, object_type: &str, artifact_id: &str) -> bool {
+        let _ = (object_type, artifact_id);
+        false
+    }
 }
 
 /// Builds the platform's synthetic `norn.ActionCall` object type required by

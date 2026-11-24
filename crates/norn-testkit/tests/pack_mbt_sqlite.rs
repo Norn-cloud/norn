@@ -272,6 +272,16 @@ impl PackHost for SqlitePackHost {
     fn read_observed_coverage(&self) -> Option<DomainCoverage> {
         Some(snapshot_to_domain_coverage(&self.recorder.snapshot()))
     }
+
+    fn has_governing_law(&self, object_type: &str, artifact_id: &str) -> bool {
+        self.cell.as_ref().is_some_and(|cell| {
+            cell.inner()
+                .store()
+                .model()
+                .governing_laws(object_type)
+                .is_ok_and(|laws| laws.iter().any(|env| env.artifact_id == artifact_id))
+        })
+    }
 }
 
 fn snapshot_to_domain_coverage(snap: &DomainCoverageSnapshot) -> DomainCoverage {

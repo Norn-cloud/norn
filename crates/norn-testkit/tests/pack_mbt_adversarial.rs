@@ -25,7 +25,7 @@ use norn_ir::{
     ObjectTypeName, PropertyId, RuntimeObject, RuntimeValue, SourceRecordRef, TransitionId,
     UtcTimestamp,
 };
-use norn_kernel::cell_host::{FactKey, FactState, JsonObject};
+use norn_kernel::cell_host::{FactKey, FactMutation, FactState, JsonObject};
 use norn_kernel::pack_mbt_support::LawExampleVerdict as Verdict;
 use norn_kernel::snapshot_observe::{ObservedSnapshot, commit_observed_snapshot};
 use norn_kernel::{
@@ -36,7 +36,9 @@ use norn_kernel::{
 use norn_testkit::pack_mbt::driver::run_pack_mbt;
 use norn_testkit::pack_mbt::dst::{PackDstConfig, run_pack_dst};
 use norn_testkit::pack_mbt::static_gaps::{GapSeverity, StructuralGap, analyze_static_gaps};
-use norn_testkit::pack_mbt::{AdmittedPack, LawExampleCase, PackHost, action_call_object_type};
+use norn_testkit::pack_mbt::{
+    AdmittedPack, EvidenceLevel, LawExampleCase, PackHost, action_call_object_type,
+};
 use serde_json::json;
 use tempfile::TempDir;
 
@@ -147,6 +149,7 @@ fn seed_two_open_tickets(
                 ]),
             },
         ],
+        links: Vec::new(),
         commands: Vec::new(),
         timers: Vec::new(),
     };
@@ -183,6 +186,7 @@ fn commit_self_loop_and_close(
                 transition: TransitionId("close".to_owned()),
             },
         ],
+        links: Vec::new(),
         commands: Vec::new(),
         timers: Vec::new(),
     };
@@ -266,6 +270,7 @@ fn observed_sqlite_cell_handles_multi_object_self_loop_and_immutable_refusal() -
             property: PropertyId("amount".to_owned()),
             value: dec("99.00")?,
         }],
+        links: Vec::new(),
         commands: Vec::new(),
         timers: Vec::new(),
     };
@@ -371,6 +376,7 @@ struct BareHost {
     cell: Option<ObservedSqliteCell<FactEvent, JsonObject, JsonObject>>,
     recorder: Arc<DomainCoverageRecorder>,
     drop_set_mutations: bool,
+    corrupt_linked_create: bool,
 }
 
 impl BareHost {
@@ -411,7 +417,13 @@ impl BareHost {
             cell: Some(inner.into_observed(Arc::clone(&recorder))),
             recorder,
             drop_set_mutations,
+            corrupt_linked_create: false,
         })
+    }
+
+    fn with_corrupt_linked_create(mut self) -> Self {
+        self.corrupt_linked_create = true;
+        self
     }
 
     fn cell_ref(
@@ -460,6 +472,18 @@ impl CellHost for BareHost {
             commit
                 .events
                 .retain(|ev| !matches!(ev, FactEvent::Modified { .. }));
+        }
+        if self.corrupt_linked_create && !commit.links.is_empty() {
+            for write in &mut commit.writes {
+                if write.key.object_type.as_str() == "lnk.Child"
+                    && let FactMutation::Put { values } = &mut write.mutation
+                {
+                    values.insert(
+                        "note".to_owned(),
+                        RuntimeValue::String("CORRUPTED".to_owned()),
+                    );
+                }
+            }
         }
         self.cell_mut().map_err(CommitError::Host)?.commit(commit)
     }
@@ -524,6 +548,15 @@ impl PackHost for BareHost {
             .map_err(|e| format!("{e}"))?;
         self.cell = Some(reopened.into_observed(Arc::clone(&self.recorder)));
         Ok(())
+    }
+    fn has_governing_law(&self, object_type: &str, artifact_id: &str) -> bool {
+        self.cell.as_ref().is_some_and(|cell| {
+            cell.inner()
+                .store()
+                .model()
+                .governing_laws(object_type)
+                .is_ok_and(|laws| laws.iter().any(|env| env.artifact_id == artifact_id))
+        })
     }
 }
 
@@ -606,6 +639,7 @@ fn virtual_clock_delivers_due_timer_across_clean_reopen() -> Result<(), String> 
                 ("status", RuntimeValue::String("open".to_owned())),
             ]),
         }],
+        links: Vec::new(),
         commands: Vec::new(),
         timers: vec![runtime_obj(&[
             ("timerId", RuntimeValue::String("escalate-1".to_owned())),
@@ -829,5 +863,300 @@ fn static_gap_detector_catches_every_structural_gap_class() -> Result<(), String
         g,
         StructuralGap::TransitionWithoutAction { transition_id, .. } if transition_id == "close"
     )));
+    Ok(())
+}
+
+#[test]
+fn law_example_parity_positive_case_fails_when_law_missing_from_host() -> Result<(), String> {
+    let envelopes = vec![
+        self_loop_entity_envelope()?,
+        positive_amount_law_envelope()?,
+    ];
+    let pack =
+        AdmittedPack::from_envelopes("positive_missing_law", &envelopes)?.with_law_examples(vec![
+            LawExampleCase {
+                name: "positive holds must fail when host lacks law".to_owned(),
+                law_id: "obs.Ticket.positive_amount".to_owned(),
+                subject: runtime_obj(&[
+                    ("ticket_id", RuntimeValue::String("T-OK".to_owned())),
+                    ("amount", dec("25.00")?),
+                    ("status", RuntimeValue::String("open".to_owned())),
+                ]),
+                expected: Verdict::Holds,
+            },
+        ]);
+    let err = run_pack_mbt(&pack, |_| BareHost::open(&pack, false, false));
+    let msg = err
+        .err()
+        .ok_or_else(|| "expected positive-case parity failure when host lacks law".to_owned())?;
+    assert!(
+        msg.contains("does not attach law"),
+        "expected host missing-law diagnostic, got: {msg}"
+    );
+    Ok(())
+}
+
+fn invariant_order_pack() -> Result<AdmittedPack, String> {
+    let raw = vec![
+        json!({
+            "irVersion": "0.1", "artifactId": "obs.Order.entity", "version": "1.0.0",
+            "kind": "entity", "namespace": "obs", "name": "Order", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "entityVersion": "2.0",
+                "objectType": {
+                    "name": "obs.Order",
+                    "properties": [
+                        {"id": "order_id", "type": {"kind": "text"}},
+                        {"id": "total", "type": {"kind": "decimal", "scale": 2}},
+                        {"id": "status", "default": "open", "type": {"kind": "enum", "values": [{"value": "open"}, {"value": "closed"}]}}
+                    ],
+                    "invariants": [
+                        {"id": "positive_total", "expression": "self.total > 0", "message": "total must be positive"}
+                    ]
+                }
+            }
+        }),
+        json!({
+            "irVersion": "0.1", "artifactId": "obs.Order.positive_total_law.law", "version": "1.0.0",
+            "kind": "law", "namespace": "obs", "name": "Invariant-backed law", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "lawVersion": "0.1",
+                "id": "obs.Order.positive_total_law",
+                "owner": "obs",
+                "severity": "error",
+                "rationale": "All orders satisfy positive_total.",
+                "provenance": {"source": "authoring_sdk"},
+                "scope": {"root": {"kind": "entity", "id": "obs.Order"}, "objectTypes": ["obs.Order"]},
+                "subject": "obs.Order",
+                "modality": {"kind": "always"},
+                "response": {"kind": "invariant", "objectType": "obs.Order", "invariantId": "positive_total"}
+            }
+        }),
+    ];
+    let envelopes: Vec<ArtifactEnvelope> = raw
+        .into_iter()
+        .map(|val| serde_json::from_value(val).map_err(|e| format!("{e}")))
+        .collect::<Result<Vec<_>, _>>()?;
+    AdmittedPack::from_envelopes("inv_law", &envelopes)
+}
+
+#[test]
+fn observed_sqlite_cell_credits_invariant_backed_law_holds() -> Result<(), String> {
+    let pack = invariant_order_pack()?;
+    let extra = [action_call_object_type()];
+    let catalog = pack.type_catalog(&extra);
+    let model = Model::from_definitions_with_interfaces(
+        &pack.object_types,
+        &pack.property_types,
+        &pack.interfaces,
+    )
+    .map_err(|e| format!("model: {e}"))?
+    .with_governing_laws(&pack.law_envelopes)
+    .map_err(|e| format!("laws: {e}"))?;
+    let recorder = Arc::new(DomainCoverageRecorder::new());
+    let mut cell = FactSqliteCell::open_in_memory(model, "org/dev", |cmd| cmd.payload.clone())
+        .map_err(|e| format!("open: {e}"))?
+        .into_observed(Arc::clone(&recorder));
+
+    let k_open = FactKey::new("obs.Order", "o-1");
+    let slice1 = load_slice(&cell, [k_open]).map_err(|e| format!("{e}"))?;
+    let out1 = DecisionOutput {
+        facts: vec![FactChange::Create {
+            object_type: ObjectTypeName("obs.Order".to_owned()),
+            key: "o-1".to_owned(),
+            values: runtime_obj(&[
+                ("order_id", RuntimeValue::String("o-1".to_owned())),
+                ("total", dec("10.00")?),
+                ("status", RuntimeValue::String("open".to_owned())),
+            ]),
+        }],
+        links: Vec::new(),
+        commands: Vec::new(),
+        timers: Vec::new(),
+    };
+    let turn1 = DecisionTurn {
+        id: "inv-1".to_owned(),
+        now: LogicalTime::EPOCH,
+        world: World::Main,
+        consumes: None,
+    };
+    commit_decision(&mut cell, &catalog, &slice1, &turn1, &out1).map_err(|e| format!("{e}"))?;
+    assert_eq!(
+        recorder
+            .snapshot()
+            .law_holds
+            .get("obs.Order.positive_total_law"),
+        Some(&1),
+        "active satisfied invariant-backed law must credit law_holds"
+    );
+
+    let k_bad = FactKey::new("obs.Order", "o-2");
+    let slice2 = load_slice(&cell, [k_bad]).map_err(|e| format!("{e}"))?;
+    let out2 = DecisionOutput {
+        facts: vec![FactChange::Create {
+            object_type: ObjectTypeName("obs.Order".to_owned()),
+            key: "o-2".to_owned(),
+            values: runtime_obj(&[
+                ("order_id", RuntimeValue::String("o-2".to_owned())),
+                ("total", dec("0.00")?),
+                ("status", RuntimeValue::String("open".to_owned())),
+            ]),
+        }],
+        links: Vec::new(),
+        commands: Vec::new(),
+        timers: Vec::new(),
+    };
+    let turn2 = DecisionTurn {
+        id: "inv-2".to_owned(),
+        now: LogicalTime::EPOCH,
+        world: World::Main,
+        consumes: None,
+    };
+    let bad_res = commit_decision(&mut cell, &catalog, &slice2, &turn2, &out2);
+    assert!(bad_res.is_err(), "violating invariant-backed law must fail");
+    assert_eq!(
+        recorder
+            .snapshot()
+            .law_holds
+            .get("obs.Order.positive_total_law"),
+        Some(&1),
+        "violated invariant-backed law must not increment law_holds"
+    );
+    Ok(())
+}
+
+#[test]
+fn guard_fallback_succeeds_after_law_blocked_prefix_walk() -> Result<(), String> {
+    let raw = vec![
+        json!({
+            "irVersion": "0.1", "artifactId": "fb.Job.entity", "version": "1.0.0",
+            "kind": "entity", "namespace": "fb", "name": "Job", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "entityVersion": "2.0",
+                "objectType": {
+                    "name": "fb.Job",
+                    "properties": [
+                        {"id": "job_id", "type": {"kind": "text"}},
+                        {"id": "ready", "type": {"kind": "boolean"}},
+                        {"id": "status", "default": "draft", "type": {"kind": "enum", "values": [
+                            {"value": "draft"}, {"value": "mid"}, {"value": "staged"}, {"value": "done"}
+                        ]}}
+                    ],
+                    "lifecycles": [{
+                        "property": "status",
+                        "initial": ["draft"],
+                        "terminal": ["done"],
+                        "transitions": [
+                            {"id": "to_mid", "from": ["draft"], "to": "mid"},
+                            {"id": "to_staged", "from": ["mid"], "to": "staged"},
+                            {"id": "finish", "from": ["staged"], "to": "done", "guards": ["self.ready"]}
+                        ]
+                    }]
+                }
+            }
+        }),
+        json!({
+            "irVersion": "0.1", "artifactId": "fb.Job.mid_ready.law", "version": "1.0.0",
+            "kind": "law", "namespace": "fb", "name": "Mid requires ready", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "lawVersion": "0.1",
+                "id": "fb.Job.mid_ready",
+                "owner": "fb",
+                "severity": "error",
+                "rationale": "mid requires ready=true (so direct walk with ready=false fails on to_mid after seeding draft).",
+                "provenance": {"source": "authoring_sdk"},
+                "scope": {"root": {"kind": "entity", "id": "fb.Job"}, "objectTypes": ["fb.Job"]},
+                "subject": "fb.Job",
+                "condition": "self.status == 'mid'",
+                "modality": {"kind": "always"},
+                "response": {"kind": "predicate", "expression": "self.ready"}
+            }
+        }),
+    ];
+    let envelopes: Vec<ArtifactEnvelope> = raw
+        .into_iter()
+        .map(|val| serde_json::from_value(val).map_err(|e| format!("{e}")))
+        .collect::<Result<Vec<_>, _>>()?;
+    let pack = AdmittedPack::from_envelopes("guard_fallback", &envelopes)?;
+    let report = run_pack_mbt(&pack, |_| BareHost::open(&pack, true, false))?;
+    assert_eq!(report.uncovered_guard_refusals, Vec::<String>::new());
+    assert!(report.evidence.contains(&(
+        "lifecycle_walks_and_refusals",
+        EvidenceLevel::ExhaustiveFinite
+    )));
+    Ok(())
+}
+
+#[test]
+fn dst_oracle_catches_fault_injected_corrupted_linked_create() -> Result<(), String> {
+    let raw = vec![
+        json!({
+            "irVersion": "0.1", "artifactId": "lnk.Parent.entity", "version": "1.0.0",
+            "kind": "entity", "namespace": "lnk", "name": "Parent", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "entityVersion": "2.0",
+                "objectType": {
+                    "name": "lnk.Parent",
+                    "properties": [{"id": "parent_id", "type": {"kind": "text"}}]
+                }
+            }
+        }),
+        json!({
+            "irVersion": "0.1", "artifactId": "lnk.Child.entity", "version": "1.0.0",
+            "kind": "entity", "namespace": "lnk", "name": "Child", "lifecycle": "active",
+            "scope": {}, "dependencies": [], "provenance": {"source": "system"},
+            "payload": {
+                "entityVersion": "2.0",
+                "objectType": {
+                    "name": "lnk.Child",
+                    "properties": [
+                        {"id": "child_id", "type": {"kind": "text"}},
+                        {"id": "note", "type": {"kind": "text"}},
+                        {"id": "status", "default": "open", "type": {"kind": "enum", "values": [{"value": "open"}, {"value": "closed"}]}}
+                    ],
+                    "links": [{
+                        "id": "parent",
+                        "target": "lnk.Parent",
+                        "cardinality": {"from": "many", "to": "one", "required": true}
+                    }],
+                    "lifecycles": [{
+                        "property": "status",
+                        "initial": ["open"],
+                        "terminal": ["closed"],
+                        "transitions": [{"id": "close", "from": ["open"], "to": "closed"}]
+                    }]
+                }
+            }
+        }),
+    ];
+    let envelopes: Vec<ArtifactEnvelope> = raw
+        .into_iter()
+        .map(|val| serde_json::from_value(val).map_err(|e| format!("{e}")))
+        .collect::<Result<Vec<_>, _>>()?;
+    let pack = AdmittedPack::from_envelopes("linked_fault_dst", &envelopes)?;
+    let err = run_pack_dst(
+        &pack,
+        PackDstConfig {
+            seed: [0x22; 32],
+            cases: 16,
+            max_steps: 8,
+            entities_per_type: 1,
+        },
+        |_| Ok(BareHost::open(&pack, false, false)?.with_corrupt_linked_create()),
+    );
+    let msg = err
+        .err()
+        .ok_or_else(|| "expected DST to catch corrupted linked create".to_owned())?;
+    assert!(
+        msg.contains("oracle divergence")
+            && msg.contains("CORRUPTED")
+            && msg.contains("minimal sequence"),
+        "expected minimized linked-create corruption diagnostic, got: {msg}"
+    );
     Ok(())
 }

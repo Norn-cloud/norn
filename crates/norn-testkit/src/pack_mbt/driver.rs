@@ -194,7 +194,7 @@ where
     let mut totals = LifecycleStats::default();
     let mut seq = 0u64;
     for object_type in &pack.object_types {
-        if object_type.immutable {
+        if super::coverage::is_effectively_immutable(pack, object_type) {
             seq = seq.saturating_add(1);
             verify_immutable_entity(pack, object_type, make_host, coverage, seq)?;
             totals.immutable = totals.immutable.saturating_add(1);
@@ -421,26 +421,31 @@ where
         return Ok(());
     };
 
-    let mut neg_host = make_host(&format!("lc-guard-{ty_name}-{}", spec.seq))?;
-    if spec.prefix.is_empty() {
+    let mut neg_host = if spec.prefix.is_empty() {
+        let mut host = make_host(&format!("lc-guard-{ty_name}-{}", spec.seq))?;
         bad_values.insert(
             prop.to_owned(),
             JsonValue::String(spec.init_state.to_owned()),
         );
-        if !seed_and_walk_law_aware(&mut neg_host, ctx, spec.id, bad_values, &[])? {
+        if !seed_and_walk_law_aware(&mut host, ctx, spec.id, bad_values, &[])? {
             totals.uncovered_guard_refusals.push(label);
             return Ok(());
         }
-    } else if !reach_guard_violating_source_state(
-        &mut neg_host,
-        ctx,
-        spec,
-        &bad_values,
-        single_mutation.as_ref(),
-    )? {
-        totals.uncovered_guard_refusals.push(label);
-        return Ok(());
-    }
+        host
+    } else {
+        let Some(host) = reach_guard_violating_source_state(
+            make_host,
+            ctx,
+            spec,
+            &bad_values,
+            single_mutation.as_ref(),
+        )?
+        else {
+            totals.uncovered_guard_refusals.push(label);
+            return Ok(());
+        };
+        host
+    };
 
     let before = neg_host.ledger_len();
     let res = fire_transition_decision(
@@ -467,13 +472,17 @@ where
     }
 }
 
-fn reach_guard_violating_source_state<H: PackHost>(
-    host: &mut H,
+fn reach_guard_violating_source_state<H, F>(
+    make_host: &mut F,
     ctx: &LifecycleCtx<'_>,
     spec: &GuardCheckSpec<'_>,
     bad_values: &JsonObject,
     single_mutation: Option<&(String, JsonValue)>,
-) -> Result<bool, String> {
+) -> Result<Option<H>, String>
+where
+    H: PackHost,
+    F: FnMut(&str) -> Result<H, String>,
+{
     let ty_name = ctx.object_type.name.as_str();
     let prop = ctx.lifecycle.property.as_str();
     let is_immutable_source = ctx
@@ -488,17 +497,19 @@ fn reach_guard_violating_source_state<H: PackHost>(
         prop.to_owned(),
         JsonValue::String(spec.init_state.to_owned()),
     );
-    if (prefix_guards.is_empty() || super::synth::guards_hold(&prefix_guards, &seed_bad))
-        && seed_and_walk_law_aware(host, ctx, spec.id, seed_bad, spec.prefix)?
-    {
-        return Ok(true);
+    if prefix_guards.is_empty() || super::synth::guards_hold(&prefix_guards, &seed_bad) {
+        let mut direct_host = make_host(&format!("lc-guard-direct-{ty_name}-{}", spec.seq))?;
+        if seed_and_walk_law_aware(&mut direct_host, ctx, spec.id, seed_bad, spec.prefix)? {
+            return Ok(Some(direct_host));
+        }
     }
     if is_immutable_source {
-        return Ok(false);
+        return Ok(None);
     }
     let Some((mut_prop, mut_val)) = single_mutation else {
-        return Ok(false);
+        return Ok(None);
     };
+    let mut fallback_host = make_host(&format!("lc-guard-fallback-{ty_name}-{}", spec.seq))?;
     let mut good_init = synthesize_guard_satisfying(
         ctx.pack,
         ctx.object_type,
@@ -511,9 +522,9 @@ fn reach_guard_violating_source_state<H: PackHost>(
         prop.to_owned(),
         JsonValue::String(spec.init_state.to_owned()),
     );
-    seed_and_walk(host, ctx, spec.id, good_init, spec.prefix)?;
+    seed_and_walk(&mut fallback_host, ctx, spec.id, good_init, spec.prefix)?;
     match set_property_decision(
-        host,
+        &mut fallback_host,
         ctx.catalog,
         ty_name,
         spec.id,
@@ -521,8 +532,8 @@ fn reach_guard_violating_source_state<H: PackHost>(
         mut_val.clone(),
         spec.seq.saturating_add(1500),
     ) {
-        Ok(()) => Ok(true),
-        Err(DecisionRefusal::Law { .. } | DecisionRefusal::InvariantViolation { .. }) => Ok(false),
+        Ok(()) => Ok(Some(fallback_host)),
+        Err(DecisionRefusal::Law { .. } | DecisionRefusal::InvariantViolation { .. }) => Ok(None),
         Err(err) => Err(format!(
             "failed setting guard-violating property {ty_name}.{mut_prop}: {err}"
         )),
@@ -737,6 +748,36 @@ pub(crate) fn seed_and_walk_object<H: PackHost>(
     host: &mut H,
     spec: SeedWalkSpec<'_>,
 ) -> Result<(), String> {
+    seed_and_walk_inner(host, spec, false).map(|_| ())
+}
+
+fn seed_and_walk_law_aware<H: PackHost>(
+    host: &mut H,
+    ctx: &LifecycleCtx<'_>,
+    id: &str,
+    values: JsonObject,
+    path: &[String],
+) -> Result<bool, String> {
+    seed_and_walk_inner(
+        host,
+        SeedWalkSpec {
+            pack: ctx.pack,
+            catalog: ctx.catalog,
+            object_type: ctx.object_type,
+            prop: ctx.lifecycle.property.as_str(),
+            id,
+            values,
+            path,
+        },
+        true,
+    )
+}
+
+fn seed_and_walk_inner<H: PackHost>(
+    host: &mut H,
+    spec: SeedWalkSpec<'_>,
+    allow_law_refusal: bool,
+) -> Result<bool, String> {
     let SeedWalkSpec {
         pack,
         catalog,
@@ -757,6 +798,7 @@ pub(crate) fn seed_and_walk_object<H: PackHost>(
                 key: id.to_owned(),
                 values,
             }],
+            links: Vec::new(),
             commands: Vec::new(),
             timers: Vec::new(),
         };
@@ -766,65 +808,11 @@ pub(crate) fn seed_and_walk_object<H: PackHost>(
             world: World::Main,
             consumes: None,
         };
-        commit_decision(host, catalog, &slice, &turn, &create)
-            .map_err(|err| format!("seed {ty_name}/{id}: {err}"))?;
-    } else {
-        graph.setup_writes.push(FactWrite {
-            key,
-            expected: FactVersion::ABSENT,
-            mutation: FactMutation::Put { values },
-        });
-        graph.setup_links.extend(graph.direct_links);
-        host.commit(CellCommit {
-            writes: graph.setup_writes,
-            links: graph.setup_links,
-            ..CellCommit::empty()
-        })
-        .map_err(|err| format!("seed {ty_name}/{id} with required links: {err}"))?;
-    }
-    for (step_idx, transition_id) in path.iter().enumerate() {
-        let turn_nonce = u64::try_from(step_idx).unwrap_or(0).saturating_add(1);
-        fire_transition_decision(host, catalog, ty_name, prop, id, transition_id, turn_nonce)
-            .map_err(|err| format!("walk {ty_name}/{id} via {transition_id}: {err}"))?;
-    }
-    Ok(())
-}
-
-/// Seeds and walks a guard-violating witness, returning `Ok(false)` when a
-/// governing law or entity invariant legitimately forbids entering the witness
-/// state (reported in `uncovered_guard_refusals`), while failing hard on every
-/// other error.
-fn seed_and_walk_law_aware<H: PackHost>(
-    host: &mut H,
-    ctx: &LifecycleCtx<'_>,
-    id: &str,
-    values: JsonObject,
-    path: &[String],
-) -> Result<bool, String> {
-    let ty_name = ctx.object_type.name.as_str();
-    let prop = ctx.lifecycle.property.as_str();
-    let key = FactKey::new(ty_name, id);
-    let mut graph = collect_required_link_graph(ctx.pack, ctx.object_type, &key, 1)?;
-    if graph.direct_links.is_empty() {
-        let slice = load_slice(host, [key]).map_err(|err| format!("load_slice: {err}"))?;
-        let create = DecisionOutput {
-            facts: vec![FactChange::Create {
-                object_type: ctx.object_type.name.clone(),
-                key: id.to_owned(),
-                values,
-            }],
-            commands: Vec::new(),
-            timers: Vec::new(),
-        };
-        let turn = DecisionTurn {
-            id: format!("seed-neg-{id}"),
-            now: host.logical_now(),
-            world: World::Main,
-            consumes: None,
-        };
-        match commit_decision(host, ctx.catalog, &slice, &turn, &create) {
+        match commit_decision(host, catalog, &slice, &turn, &create) {
             Ok(_) => {}
-            Err(DecisionRefusal::Law { .. } | DecisionRefusal::InvariantViolation { .. }) => {
+            Err(DecisionRefusal::Law { .. } | DecisionRefusal::InvariantViolation { .. })
+                if allow_law_refusal =>
+            {
                 return Ok(false);
             }
             Err(err) => return Err(format!("seed {ty_name}/{id}: {err}")),
@@ -842,7 +830,9 @@ fn seed_and_walk_law_aware<H: PackHost>(
             ..CellCommit::empty()
         }) {
             Ok(_) => {}
-            Err(CommitError::Law { .. } | CommitError::InvariantViolation { .. }) => {
+            Err(CommitError::Law { .. } | CommitError::InvariantViolation { .. })
+                if allow_law_refusal =>
+            {
                 return Ok(false);
             }
             Err(err) => return Err(format!("seed {ty_name}/{id} with required links: {err}")),
@@ -850,17 +840,12 @@ fn seed_and_walk_law_aware<H: PackHost>(
     }
     for (step_idx, transition_id) in path.iter().enumerate() {
         let turn_nonce = u64::try_from(step_idx).unwrap_or(0).saturating_add(1);
-        match fire_transition_decision(
-            host,
-            ctx.catalog,
-            ty_name,
-            prop,
-            id,
-            transition_id,
-            turn_nonce,
-        ) {
+        match fire_transition_decision(host, catalog, ty_name, prop, id, transition_id, turn_nonce)
+        {
             Ok(()) => {}
-            Err(DecisionRefusal::Law { .. } | DecisionRefusal::InvariantViolation { .. }) => {
+            Err(DecisionRefusal::Law { .. } | DecisionRefusal::InvariantViolation { .. })
+                if allow_law_refusal =>
+            {
                 return Ok(false);
             }
             Err(err) => {
@@ -931,6 +916,7 @@ fn fire_transition_decision<H: PackHost>(
             lifecycle: PropertyId(prop.to_owned()),
             transition: TransitionId(transition_id.to_owned()),
         }],
+        links: Vec::new(),
         commands: Vec::new(),
         timers: Vec::new(),
     };
@@ -961,6 +947,7 @@ fn set_property_decision<H: PackHost>(
             property: PropertyId(prop.to_owned()),
             value,
         }],
+        links: Vec::new(),
         commands: Vec::new(),
         timers: Vec::new(),
     };

@@ -11,8 +11,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use norn_kernel::authz::{AccessRequest, Pdp, PdpDecision};
-use norn_kernel::pack_mbt_support::LawResponse;
+use norn_kernel::authz::{AccessRequest, DenyReason, Pdp, PdpDecision};
+use norn_kernel::pack_mbt_support::{LawResponse, ObjectTypeDef, PdpExplanation};
 use norn_kernel::{ActionAuthorizer, ActionAuthzRequest, ActionDenial};
 
 use super::{AdmittedPack, action_call_object_type};
@@ -78,7 +78,7 @@ impl DomainCoveragePlan {
         let catalog = pack.type_catalog(&extra);
         for object_type in &pack.object_types {
             let ty = object_type.name.as_str();
-            if object_type.immutable {
+            if is_effectively_immutable(pack, object_type) {
                 plan.immutable_targets.insert(ImmutableTarget {
                     object_type: ty.to_owned(),
                     lifecycle: "<object>".to_owned(),
@@ -424,13 +424,37 @@ impl fmt::Display for DomainCoverageReport {
     }
 }
 
+/// Returns whether `object_type` is immutable directly or via an `extends`
+/// ancestor in `pack`.
+#[must_use]
+pub(crate) fn is_effectively_immutable(pack: &AdmittedPack, object_type: &ObjectTypeDef) -> bool {
+    let mut visited = BTreeSet::new();
+    let mut current = Some(object_type);
+    while let Some(def) = current {
+        if !visited.insert(def.name.as_str()) {
+            break;
+        }
+        if def.immutable {
+            return true;
+        }
+        current = def.extends.as_ref().and_then(|parent| {
+            pack.object_types
+                .iter()
+                .find(|ty| ty.name.as_str() == parent.as_str())
+        });
+    }
+    false
+}
+
 /// [`ActionAuthorizer`] backed by a real Cedar [`Pdp`] via [`Pdp::explain`]
-/// that records every `allow` and `deny` decision into a shared [`DomainCoverage`].
+/// that records every `allow` and policy `Access` `deny` decision into a
+/// shared [`DomainCoverage`] and retains the last [`PdpExplanation`].
 pub struct ObservedPdpAuthorizer<F> {
     pdp: Arc<Pdp>,
     build_request: F,
     coverage: Arc<Mutex<DomainCoverage>>,
     deny_rule_hint: Option<PolicyRuleTarget>,
+    last_explanation: Mutex<Option<PdpExplanation>>,
 }
 
 impl<F> ObservedPdpAuthorizer<F>
@@ -450,7 +474,18 @@ where
             build_request,
             coverage,
             deny_rule_hint,
+            last_explanation: Mutex::new(None),
         }
+    }
+
+    /// Returns the most recent [`PdpExplanation`] produced by [`Self::authorize`].
+    #[must_use]
+    pub fn last_explanation(&self) -> Option<PdpExplanation> {
+        let guard = match self.last_explanation.lock() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        guard.clone()
     }
 }
 
@@ -461,6 +496,13 @@ where
     fn authorize(&self, request: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
         let access_request = (self.build_request)(request)?;
         let explanation = self.pdp.explain(&access_request);
+        {
+            let mut last = match self.last_explanation.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            *last = Some(explanation.clone());
+        }
         let mut cov = match self.coverage.lock() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
@@ -477,10 +519,12 @@ where
                 Ok(())
             }
             PdpDecision::Deny(reason) => {
-                if let Some(hint) = &self.deny_rule_hint {
-                    cov.hit_cedar_deny(hint.policy_id.clone(), hint.rule_id.clone());
-                } else {
-                    cov.hit_cedar_deny(request.action.action_id.clone(), reason.code());
+                if reason == DenyReason::Access {
+                    if let Some(hint) = &self.deny_rule_hint {
+                        cov.hit_cedar_deny(hint.policy_id.clone(), hint.rule_id.clone());
+                    } else {
+                        cov.hit_cedar_deny(request.action.action_id.clone(), reason.code());
+                    }
                 }
                 Err(ActionDenial::Forbidden {
                     reason: reason.code().to_owned(),

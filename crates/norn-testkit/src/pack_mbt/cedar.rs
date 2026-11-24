@@ -12,8 +12,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
 use norn_kernel::authz::{
-    AccessRequest, ActorKind, AttrValue, AuthzSchema, CapabilityGrant, Delegation, Pdp,
-    PrincipalInput, ResourceInput, ScopeKey, compile_all_projected, infer_principal_attributes,
+    AccessRequest, ActorKind, AttrValue, AuthzSchema, CapabilityGrant, Delegation, DenyReason, Pdp,
+    PdpDecision, PrincipalInput, ResourceInput, ScopeKey, compile_all_projected,
+    infer_principal_attributes,
 };
 use norn_kernel::cell_host::{
     FactKey, FactMutation, FactVersion, FactWrite, JsonObject, JsonValue,
@@ -24,8 +25,8 @@ use norn_kernel::pack_mbt_support::cedar_projection::{
 };
 use norn_kernel::pack_mbt_support::{
     AccessCondition, AccessIr, AccessLiteral, AccessRule, ActionEffectProgram, IrJsonValue,
-    ObjectTypeDef, PropertyId, ResourceCompareOp, ResourceCondition, ResourceOperand,
-    ScopeDimension, SliceKey, TransitionId, ValidatedPolicySet, ZenExpression,
+    ObjectTypeDef, PdpExplanation, PropertyId, ResourceCompareOp, ResourceCondition,
+    ResourceOperand, ScopeDimension, SliceKey, TransitionId, ValidatedPolicySet, ZenExpression,
 };
 use norn_kernel::{
     ActionCall, ActionRefusal, CellCommit, DecisionTurn, TypeCatalog, World, commit_action,
@@ -34,7 +35,7 @@ use norn_kernel::{
 use super::coverage::{DomainCoverage, ObservedPdpAuthorizer, PolicyRuleTarget};
 use super::driver::{
     SeedWalkSpec, assert_zero_ledger_writes, bfs_paths_to_states, collect_prefix_guards,
-    seed_and_walk_object, with_cov,
+    seed_and_walk_object,
 };
 use super::synth::{collect_required_link_graph, synthesize_guard_satisfying, synthesize_object};
 use super::{AdmittedAction, AdmittedPack, PackHost};
@@ -246,7 +247,7 @@ where
     }];
     if !rc.allowed_roles.is_empty() {
         attempts.push(ActionAttempt {
-            actor: "actor-unauth",
+            actor: "actor-allowed",
             roles: &unauth_roles,
             caller_scope: rc.scope,
             resource_scope: rc.scope,
@@ -272,8 +273,9 @@ where
             expect_allow: false,
         });
     }
+    let fixture_seq = seq.saturating_add(1);
     for attempt in &attempts {
-        run_action_attempt(rc, &target, attempt, make_host, seq)?;
+        run_action_attempt(rc, &target, attempt, fixture_seq, make_host, seq)?;
     }
     Ok(attempts.len())
 }
@@ -282,6 +284,7 @@ fn run_action_attempt<H, F>(
     rc: &RuleActionCtx<'_>,
     target: &ActionTarget<'_>,
     attempt: &ActionAttempt<'_>,
+    fixture_seq: u64,
     make_host: &mut F,
     seq: &mut u64,
 ) -> Result<(), String>
@@ -292,8 +295,8 @@ where
     *seq = seq.saturating_add(1);
     let action_id = target.admitted.root.action_id.as_str();
     let mut host = make_host(&format!("cedar-{action_id}-{}", *seq))?;
-    let obj_id = format!("cedar-obj-{}", *seq);
-    let input = prepare_action_fixture(rc, target, &mut host, &obj_id, *seq)?;
+    let obj_id = format!("cedar-obj-{fixture_seq}");
+    let input = prepare_action_fixture(rc, target, &mut host, &obj_id, fixture_seq)?;
 
     let ledger_before = host.ledger_len();
     let scope_map = scope_key_to_map(attempt.caller_scope);
@@ -360,7 +363,16 @@ where
     };
 
     let outcome = commit_action(&mut host, rc.cedar.catalog, &call, &authorizer);
-    check_action_attempt_outcome(rc, &host, action_id, attempt, ledger_before, outcome)
+    let explanation = authorizer.last_explanation();
+    check_action_attempt_outcome(
+        rc,
+        &host,
+        action_id,
+        attempt,
+        ledger_before,
+        explanation.as_ref(),
+        outcome,
+    )
 }
 
 fn check_action_attempt_outcome<H: PackHost>(
@@ -369,6 +381,7 @@ fn check_action_attempt_outcome<H: PackHost>(
     action_id: &str,
     attempt: &ActionAttempt<'_>,
     ledger_before: usize,
+    explanation: Option<&PdpExplanation>,
     outcome: Result<norn_kernel::ActionOutcome, ActionRefusal<H::Error>>,
 ) -> Result<(), String> {
     if attempt.expect_allow {
@@ -380,9 +393,19 @@ fn check_action_attempt_outcome<H: PackHost>(
                         attempt.label
                     ));
                 }
-                with_cov(rc.cedar.coverage, |cov| {
-                    cov.hit_cedar_allow(rc.hint.policy_id.clone(), rc.hint.rule_id.clone());
+                let determined_by_rule = explanation.is_some_and(|exp| {
+                    exp.decision == PdpDecision::Allow
+                        && exp.determining_policies.iter().any(|p| {
+                            p.policy_id.as_deref() == Some(rc.hint.policy_id.as_str())
+                                && p.rule_id.as_deref() == Some(rc.hint.rule_id.as_str())
+                        })
                 });
+                if !determined_by_rule {
+                    return Err(format!(
+                        "Cedar matrix ({}): authorized control for '{action_id}' was not determined by {}/{}: explanation={explanation:?}",
+                        attempt.label, rc.hint.policy_id, rc.hint.rule_id
+                    ));
+                }
                 host.verify_ledger()
             }
             Err(err) => Err(format!(
@@ -393,6 +416,14 @@ fn check_action_attempt_outcome<H: PackHost>(
     } else {
         match outcome {
             Err(ActionRefusal::PermissionDenied { .. }) => {
+                let denied_by_access_policy = explanation
+                    .is_some_and(|exp| exp.decision == PdpDecision::Deny(DenyReason::Access));
+                if !denied_by_access_policy {
+                    return Err(format!(
+                        "Cedar matrix ({}): expected DenyReason::Access for {}/{} action '{action_id}', got explanation={explanation:?}",
+                        attempt.label, rc.hint.policy_id, rc.hint.rule_id
+                    ));
+                }
                 assert_zero_ledger_writes(host, ledger_before, action_id, attempt.label)?;
                 host.verify_ledger()
             }
@@ -644,7 +675,8 @@ fn slice_input_key_field(key_spec: &SliceKey) -> Option<&str> {
         | SliceKey::TriggerBefore
         | SliceKey::TriggerAfter
         | SliceKey::TriggerChanges
-        | SliceKey::Link { .. } => None,
+        | SliceKey::Link { .. }
+        | SliceKey::Predicate { .. } => None,
     }
 }
 
@@ -887,7 +919,6 @@ fn build_rule_pdp(
     };
     let grants = vec![
         grant("actor-allowed", scope),
-        grant("actor-unauth", scope),
         grant("actor-requester", scope),
         grant("actor-allowed", foreign_scope),
     ];

@@ -18,7 +18,8 @@ use std::sync::{Arc, Mutex};
 
 use norn_checker::law_examples::{Verdict, evaluate_runtime};
 use norn_ir::{
-    DataQualityFinding, DataQualityOutcome, DataQualityRuleRef, LawIR, ObjectTypeName, RuntimeValue,
+    DataQualityFinding, DataQualityOutcome, DataQualityRuleRef, LawIR, LawModality, LawResponse,
+    ObjectTypeName, RuntimeValue,
 };
 use norn_kernel::cell_host::{FactKey, FactMutation, FactState};
 use norn_kernel::{
@@ -511,6 +512,9 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
         finding_violated: &BTreeSet<(String, String, String)>,
     ) {
         let model = self.inner.store().model();
+        let catalog = model
+            .type_catalog()
+            .with_governing_laws(model.law_artifacts());
         let reader = self.inner.store().read();
         for item in written {
             let ty_name = item.key.object_type.as_str();
@@ -523,7 +527,21 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
                 .ok()
                 .flatten()
                 .map_or_else(|| item.values.clone(), |record| record.values);
-            let subject_val = RuntimeValue::Object(effective_values);
+            let subject_val = RuntimeValue::Object(effective_values.clone());
+            let mut remaining = 10_000_u64;
+            let evaluated_failed: Option<BTreeSet<String>> = norn_kernel::governing_laws::evaluate(
+                &catalog,
+                &item.key,
+                &effective_values,
+                &mut remaining,
+            )
+            .ok()
+            .map(|failures| {
+                failures
+                    .iter()
+                    .map(|failure| rule_ref_id(&failure.rule_ref))
+                    .collect()
+            });
             for law in laws {
                 if !law.exceptions.is_empty() {
                     continue;
@@ -537,7 +555,22 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
                 {
                     continue;
                 }
-                if matches!(evaluate_runtime(&law, &subject_val), Ok(Verdict::Holds)) {
+                let held = match &law.response {
+                    LawResponse::Predicate { .. } => {
+                        matches!(evaluate_runtime(&law, &subject_val), Ok(Verdict::Holds))
+                    }
+                    LawResponse::Invariant { .. } => {
+                        matches!(law.modality, LawModality::Always {})
+                            && law.condition.is_none()
+                            && evaluated_failed
+                                .as_ref()
+                                .is_some_and(|failed| !failed.contains(&law.id))
+                    }
+                    LawResponse::Action { .. }
+                    | LawResponse::Transition { .. }
+                    | LawResponse::TranslationPreserves { .. } => false,
+                };
+                if held {
                     self.recorder.record_law_hold(law.id);
                 }
             }

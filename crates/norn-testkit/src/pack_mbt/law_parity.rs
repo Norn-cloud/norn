@@ -7,10 +7,10 @@
 
 use std::sync::{Arc, Mutex};
 
-use norn_kernel::cell_host::{FactKey, FactMutation, FactVersion, FactWrite, JsonValue, LinkWrite};
+use norn_kernel::cell_host::{FactKey, FactMutation, FactVersion, FactWrite, JsonValue};
 use norn_kernel::governing_laws::LawEvaluationError;
 use norn_kernel::pack_mbt_support::{
-    DataQualityOutcome, DataQualityRuleRef, LawExampleVerdict as Verdict, LawIR, ObjectTypeName,
+    DataQualityOutcome, DataQualityRuleRef, LawExampleVerdict as Verdict, LawIR,
     evaluate_law_example_runtime as evaluate_law_example,
 };
 use norn_kernel::{CellCommit, CommitError, CommitReceipt, TypeCatalog};
@@ -22,7 +22,7 @@ use super::{AdmittedPack, LawExampleCase, PackHost};
 
 pub(crate) fn run_law_example_parity_phase<H, F>(
     pack: &AdmittedPack,
-    catalog: &TypeCatalog<'_>,
+    _catalog: &TypeCatalog<'_>,
     make_host: &mut F,
     coverage: &Arc<Mutex<DomainCoverage>>,
 ) -> Result<usize, String>
@@ -32,42 +32,54 @@ where
 {
     let mut checked = 0usize;
     for (idx, example) in pack.law_examples.iter().enumerate() {
-        verify_single_law_example(pack, catalog, example, idx, make_host, coverage)?;
+        verify_single_law_example(pack, example, idx, make_host, coverage)?;
         checked = checked.saturating_add(1);
     }
     Ok(checked)
 }
 
-fn setup_required_link_targets<H: PackHost>(
-    host: &mut H,
+fn build_atomic_subject_commit(
     pack: &AdmittedPack,
     subject_type: &str,
     key: &FactKey,
+    subject_values: norn_kernel::cell_host::JsonObject,
     seed: u64,
-    context: &str,
-) -> Result<Vec<LinkWrite>, String> {
-    let Some(subject_ty) = pack
+) -> Result<
+    CellCommit<
+        norn_kernel::FactEvent,
+        norn_kernel::cell_host::JsonObject,
+        norn_kernel::cell_host::JsonObject,
+    >,
+    String,
+> {
+    let mut writes = Vec::new();
+    let mut links = Vec::new();
+    if let Some(subject_ty) = pack
         .object_types
         .iter()
         .find(|ty| ty.name.as_str() == subject_type)
-    else {
-        return Ok(Vec::new());
-    };
-    let graph = collect_required_link_graph(pack, subject_ty, key, seed)?;
-    if !graph.setup_writes.is_empty() {
-        host.commit(CellCommit {
-            writes: graph.setup_writes,
-            links: graph.setup_links,
-            ..CellCommit::empty()
-        })
-        .map_err(|err| format!("{context}: required link target setup failed: {err}"))?;
+    {
+        let graph = collect_required_link_graph(pack, subject_ty, key, seed)?;
+        writes.extend(graph.setup_writes);
+        links.extend(graph.setup_links);
+        links.extend(graph.direct_links);
     }
-    Ok(graph.direct_links)
+    writes.push(FactWrite {
+        key: key.clone(),
+        expected: FactVersion::ABSENT,
+        mutation: FactMutation::Put {
+            values: subject_values,
+        },
+    });
+    Ok(CellCommit {
+        writes,
+        links,
+        ..CellCommit::empty()
+    })
 }
 
 fn verify_single_law_example<H, F>(
     pack: &AdmittedPack,
-    catalog: &TypeCatalog<'_>,
     example: &LawExampleCase,
     idx: usize,
     make_host: &mut F,
@@ -109,30 +121,18 @@ where
 
     let mut host = make_host(&format!("law-example-{idx}"))?;
     let key = FactKey::new(law.subject.as_str(), format!("law-ex-{idx}"));
-    let direct_links = setup_required_link_targets(
-        &mut host,
+    let seed = u64::try_from(idx).unwrap_or(0).saturating_add(1);
+    let commit = build_atomic_subject_commit(
         pack,
         law.subject.as_str(),
         &key,
-        u64::try_from(idx).unwrap_or(0).saturating_add(1),
-        &format!("LAW-EXAMPLE-1 '{}'", example.name),
+        example.subject.clone(),
+        seed,
     )?;
     let ledger_before = host.ledger_len();
-    let commit = CellCommit {
-        writes: vec![FactWrite {
-            key: key.clone(),
-            expected: FactVersion::ABSENT,
-            mutation: FactMutation::Put {
-                values: example.subject.clone(),
-            },
-        }],
-        links: direct_links,
-        ..CellCommit::empty()
-    };
     let runtime_result = host.commit(commit);
     check_law_runtime_outcome(
         LawOutcomeCtx {
-            catalog,
             law,
             expected_artifact_id,
             example,
@@ -148,7 +148,6 @@ where
 
 #[derive(Clone, Copy)]
 struct LawOutcomeCtx<'a> {
-    catalog: &'a TypeCatalog<'a>,
     law: &'a LawIR,
     expected_artifact_id: &'a str,
     example: &'a LawExampleCase,
@@ -164,7 +163,6 @@ fn check_law_runtime_outcome<H: PackHost>(
     runtime_result: Result<CommitReceipt, CommitError<H::Error>>,
 ) -> Result<(), String> {
     let LawOutcomeCtx {
-        catalog,
         law,
         expected_artifact_id,
         example,
@@ -174,16 +172,9 @@ fn check_law_runtime_outcome<H: PackHost>(
     } = ctx;
     match (checker_verdict, runtime_result) {
         (Verdict::Holds, Ok(_)) => {
-            let law_attached = catalog
-                .governing_laws(&ObjectTypeName(law.subject.clone()))
-                .is_ok_and(|attached| {
-                    attached
-                        .iter()
-                        .any(|env| env.artifact_id == expected_artifact_id)
-                });
-            if !law_attached {
+            if !host.has_governing_law(law.subject.as_str(), expected_artifact_id) {
                 return Err(format!(
-                    "LAW-EXAMPLE-1 '{}': law '{}' ({expected_artifact_id}) is not attached to subject '{}'",
+                    "LAW-EXAMPLE-1 '{}': host runtime model does not attach law '{}' ({expected_artifact_id}) to subject '{}'",
                     example.name, law.id, law.subject
                 ));
             }
@@ -197,6 +188,12 @@ fn check_law_runtime_outcome<H: PackHost>(
             host.verify_ledger()
         }
         (Verdict::NotApplicable, Ok(_)) => {
+            if !host.has_governing_law(law.subject.as_str(), expected_artifact_id) {
+                return Err(format!(
+                    "LAW-EXAMPLE-1 '{}': host runtime model does not attach law '{}' ({expected_artifact_id}) to subject '{}'",
+                    example.name, law.id, law.subject
+                ));
+            }
             if host.ledger_len() != ledger_before.saturating_add(1) {
                 return Err(format!(
                     "LAW-EXAMPLE-1 '{}': NotApplicable commit did not advance ledger",

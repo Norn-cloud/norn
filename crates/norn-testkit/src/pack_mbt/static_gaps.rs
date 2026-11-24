@@ -191,7 +191,7 @@ pub fn analyze_static_gaps(pack: &AdmittedPack) -> StaticGapReport {
     let transition_actions = collect_transition_actions(pack);
 
     for object_type in &pack.object_types {
-        detect_lifecycle_gaps(&catalog, object_type, &transition_actions, &mut gaps);
+        detect_lifecycle_gaps(pack, &catalog, object_type, &transition_actions, &mut gaps);
         detect_orphan_fields(pack, &catalog, object_type, &written_fields, &mut gaps);
         detect_immutable_financial_reversal_gap(pack, &catalog, object_type, &mut gaps);
     }
@@ -203,12 +203,31 @@ pub fn analyze_static_gaps(pack: &AdmittedPack) -> StaticGapReport {
     }
 }
 
-fn enum_states_for(object_type: &ObjectTypeDef, property: &str) -> Vec<String> {
-    object_type
-        .properties
-        .iter()
-        .find(|prop| prop.id.as_str() == property)
-        .and_then(|prop| match &prop.property_type {
+fn enum_states_for(
+    pack: &AdmittedPack,
+    object_type: &ObjectTypeDef,
+    property: &str,
+) -> Vec<String> {
+    let resolve_enum = |ty: &PropertyType| -> Option<Vec<String>> {
+        let resolved = match ty {
+            PropertyType::Ref { name, .. } => pack
+                .property_types
+                .iter()
+                .find(|def| def.name.as_str() == name.as_str())
+                .map_or(ty, |def| &def.property_type),
+            PropertyType::Text { .. }
+            | PropertyType::Integer { .. }
+            | PropertyType::Decimal { .. }
+            | PropertyType::DecimalBinding { .. }
+            | PropertyType::Boolean {}
+            | PropertyType::Enum { .. }
+            | PropertyType::Date {}
+            | PropertyType::Duration {}
+            | PropertyType::Timestamp { .. }
+            | PropertyType::Record { .. }
+            | PropertyType::JsonExt { .. } => ty,
+        };
+        match resolved {
             PropertyType::Enum { values } => {
                 Some(values.iter().map(|item| item.value.clone()).collect())
             }
@@ -223,8 +242,37 @@ fn enum_states_for(object_type: &ObjectTypeDef, property: &str) -> Vec<String> {
             | PropertyType::Record { .. }
             | PropertyType::JsonExt { .. }
             | PropertyType::Ref { .. } => None,
-        })
-        .unwrap_or_default()
+        }
+    };
+    let mut visited = BTreeSet::new();
+    let mut current = Some(object_type);
+    while let Some(def) = current {
+        if !visited.insert(def.name.as_str()) {
+            break;
+        }
+        if let Some(prop) = def.properties.iter().find(|p| p.id.as_str() == property)
+            && let Some(states) = resolve_enum(&prop.property_type)
+        {
+            return states;
+        }
+        for iface_name in &def.implements {
+            if let Some(iface) = pack
+                .interfaces
+                .iter()
+                .find(|i| i.name.as_str() == iface_name.as_str())
+                && let Some(prop) = iface.properties.iter().find(|p| p.id.as_str() == property)
+                && let Some(states) = resolve_enum(&prop.property_type)
+            {
+                return states;
+            }
+        }
+        current = def.extends.as_ref().and_then(|parent| {
+            pack.object_types
+                .iter()
+                .find(|ty| ty.name.as_str() == parent.as_str())
+        });
+    }
+    Vec::new()
 }
 
 fn reachable_states(lifecycle: &Lifecycle) -> BTreeSet<String> {
@@ -248,6 +296,7 @@ fn reachable_states(lifecycle: &Lifecycle) -> BTreeSet<String> {
 }
 
 fn detect_lifecycle_gaps(
+    pack: &AdmittedPack,
     catalog: &TypeCatalog<'_>,
     object_type: &ObjectTypeDef,
     transition_actions: &BTreeSet<(String, String, String)>,
@@ -256,7 +305,7 @@ fn detect_lifecycle_gaps(
     let type_name = object_type.name.as_str();
     for lifecycle in catalog.lifecycles(&object_type.name).into_values() {
         let prop = lifecycle.property.as_str();
-        let all_states = enum_states_for(object_type, prop);
+        let all_states = enum_states_for(pack, object_type, prop);
         let reachable = reachable_states(&lifecycle);
         let terminal: BTreeSet<&str> = lifecycle.terminal.iter().map(String::as_str).collect();
 

@@ -97,8 +97,8 @@ pub use commit_check::{
 };
 #[doc(hidden)]
 pub mod pack_mbt_support {
-    pub use norn_authz::ValidatedPolicySet;
     pub use norn_authz::cedar_projection;
+    pub use norn_authz::{PdpExplanation, ValidatedPolicySet};
     pub use norn_checker::law_examples::{
         Verdict as LawExampleVerdict, evaluate_runtime as evaluate_law_example_runtime,
     };
