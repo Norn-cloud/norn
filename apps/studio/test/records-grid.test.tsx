@@ -15,7 +15,7 @@ const { RecordsTimeline } = await import("../src/grid/records-timeline.tsx")
 const { LocaleProvider } = await import("../src/lib/locale.tsx")
 const { cellText } = await import("../src/grid/cells.tsx")
 const { EMPTY_QUERY, recordsQueryParams, SERVER_QUERY_UNAVAILABLE } = await import("../src/lib/records-query.ts")
-const { blankClause, fromPredicate, sameDraft, settled, toPredicate } = await import("../src/grid/filter-editor.tsx")
+const { FilterEditor, blankClause, fromPredicate, sameDraft, settled, toPredicate } = await import("../src/grid/filter-editor.tsx")
 
 const explorer = (name: string) => readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer", name), "utf8")
 const catalog = catalogOf(readDocument<readonly Artifact[]>(explorer("three-systems.definitions.json"), "recorded").document)
@@ -119,6 +119,22 @@ test("'is one of' on a free-form field keeps what was typed, and applying leaves
   // A leftover from an earlier test (extra `values`, untrimmed text) settles the same way.
   const leftover = [{ ...blankClause(name), op: "eq" as const, value: " Gold ", values: ["x"] }]
   expect(settled(leftover, concept.fields)).toEqual([{ property: name.id, op: "eq", value: "Gold", high: "", values: [] }])
+})
+
+test("the filter editor associates an invalid list item with the list control", () => {
+  const field = { id: "quantity", type: "decimal", optional: false, decimal: undefined, scalar: { kind: "decimal" } } satisfies Parameters<typeof blankClause>[0]
+  const message = "a decimal value is exact decimal text"
+  const noop = () => {}
+  const html = renderToStaticMarkup(
+    <FilterEditor fields={[field]} draft={[{ ...blankClause(field), op: "in", value: "1\n12,5" }]}
+      applied={[]} onDraft={noop} onApply={noop} onClear={noop}
+      diagnostics={[{ code: "query.filter_invalid", message, pointer: "/filter/all/0/value/1" }]} />,
+  )
+  const list = html.match(/<textarea[^>]*aria-label="Condition 1 value"[^>]*>/)?.[0] ?? ""
+  expect(list).toContain('aria-invalid="true"')
+  const descriptionId = list.match(/aria-describedby="([^"]+)"/)?.[1]
+  expect(descriptionId).toBeDefined()
+  expect(html).toContain(`<span id="${descriptionId}">${message}</span>`)
 })
 
 test("RecordsTimeline hides stale bars while pending, alerts on filter overflow, and formats headings in Studio's active locale", () => {
