@@ -444,8 +444,7 @@ mod tests {
                     finding
                         .span
                         .as_ref()
-                        .map(|span| span.pointer.clone())
-                        .unwrap_or_default(),
+                        .map_or_default(|span| span.pointer.clone()),
                 )
             })
             .collect()
@@ -483,7 +482,7 @@ mod tests {
         caller_written.derive.clear();
         assert_eq!(
             codes_at(&actor_binding_findings(&artifact, &caller_written, &model)),
-            [creator.clone()]
+            std::slice::from_ref(&creator)
         );
 
         let mut laundered = admitted.clone();
@@ -494,7 +493,7 @@ mod tests {
         });
         assert_eq!(
             codes_at(&actor_binding_findings(&artifact, &laundered, &model)),
-            [creator.clone()]
+            std::slice::from_ref(&creator)
         );
 
         for mode in [
@@ -513,7 +512,7 @@ mod tests {
             *write_mode = mode;
             assert_eq!(
                 codes_at(&actor_binding_findings(&artifact, &overwrite, &model)),
-                [creator.clone()]
+                std::slice::from_ref(&creator)
             );
         }
     }
