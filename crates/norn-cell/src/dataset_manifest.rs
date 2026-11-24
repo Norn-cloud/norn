@@ -391,6 +391,7 @@ impl<E: SqlEngine> CellStore<E> {
         world: &str,
         key: &str,
     ) -> Result<Option<(CommittedManifest, DatasetRequest, Receipt)>, CellError> {
+        self.read().check_history("dataset requests")?;
         let probe = DatasetRequest {
             key: key.to_owned(),
             fingerprint: String::new(),
@@ -469,6 +470,9 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         world: &str,
         object_type: &str,
     ) -> Result<Option<CommittedManifest>, CellError> {
+        // S8 (#1551 round 5): scanning `_norn_ledger` for dataset manifests
+        // requires verified history so tampered covered events cannot strip markings.
+        self.check_history("dataset manifests")?;
         let found = self.conn.query_optional(
             &format!(
                 "SELECT \"event\", \"commit_seq\" FROM \"{LEDGER}\" \

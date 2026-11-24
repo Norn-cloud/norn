@@ -192,6 +192,9 @@ impl SqlEngine for MeasuredEngine {
     fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
         self.native.read_isolation()
     }
+    fn external_data_version(&self) -> Result<Option<u64>, CellError> {
+        self.native.external_data_version()
+    }
     fn definition_writes<T>(
         &self,
         f: impl FnOnce() -> Result<T, CellError>,

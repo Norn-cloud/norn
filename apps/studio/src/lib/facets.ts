@@ -35,15 +35,20 @@ export class FacetsTimedOut extends Error {
   constructor() { super(`The cell didn't send the counts within ${FACETS_DEADLINE_MS / 1000} seconds.`) }
 }
 
-/** The cell's facets for `filter`, of every categorical property or of `properties` only. */
-async function readFacets(objectType: string, filter: Predicate | null, properties: readonly string[] | undefined, scope: StudioScope | undefined, fetcher: Fetch) {
+/** The facets route path for `objectType`, optionally narrowed by `filter` and `properties`. */
+export function facetsPath(objectType: string, filter: Predicate | null, properties?: readonly string[]): string {
   const query = new URLSearchParams()
   if (filter !== null && filter.all.length > 0) query.set("filter", JSON.stringify(filter))
   if (properties !== undefined) query.set("properties", properties.join(","))
   const search = query.toString()
+  return `/v1/objects/${encodeURIComponent(objectType)}:facets${search === "" ? "" : `?${search}`}`
+}
+
+/** The cell's facets for `filter`, of every categorical property or of `properties` only. */
+async function readFacets(objectType: string, filter: Predicate | null, properties: readonly string[] | undefined, scope: StudioScope | undefined, fetcher: Fetch) {
   let read: Read<Facets>
   try {
-    const path = `/v1/objects/${encodeURIComponent(objectType)}:facets${search === "" ? "" : `?${search}`}`
+    const path = facetsPath(objectType, filter, properties)
     const ask = () => cellRead<Facets>(path, "Facets are", { signal: AbortSignal.timeout(FACETS_DEADLINE_MS) }, fetcher, scope)
     read = scope === undefined ? await ask() : await readViewAtScope(scope, () => readStudioScope(fetcher), ask)
   } catch (error) {

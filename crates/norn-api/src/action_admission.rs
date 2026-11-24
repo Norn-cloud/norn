@@ -287,3 +287,30 @@ fn helper_closure(
     }
     Ok(helpers)
 }
+
+/// Target version as of `receipt` (written row by type lineage, else `version_as_of`, S5b).
+pub(crate) fn target_version<E: norn_cell::engine::SqlEngine>(
+    store: &norn_cell::CellStore<E>,
+    receipt: &norn_cell::Receipt,
+    record: &norn_kernel::ActionCallRecord,
+) -> Result<u64, Refusal> {
+    let ty = record.object.object_type.as_str();
+    let model = store.model();
+    if let Some(row) = receipt.body.written.iter().find(|r| {
+        r.key == record.object.key
+            && (r.object_type == ty
+                || model.is_a(&r.object_type, ty)
+                || model.is_a(ty, &r.object_type))
+    }) {
+        return Ok(row.version);
+    }
+    store
+        .read()
+        .version_as_of(
+            norn_cell::MAIN_WORLD,
+            ty,
+            &record.object.key,
+            receipt.body.commit_seq,
+        )
+        .map_err(Refusal::host)
+}

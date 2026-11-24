@@ -106,3 +106,61 @@ pub(super) fn consume_receipt<X>(
     }
     Ok(acceptance.consumed.clone())
 }
+
+/// Target's pre-commit version from `slice`, matched by canonical identity.
+pub(super) fn target_before_version(
+    catalog: &crate::decision_commit::TypeCatalog<'_>,
+    slice: &crate::decision_commit::FactSlice,
+    target: &FactKey,
+) -> crate::cell_host::FactVersion {
+    let model = crate::CommitModel::new(catalog);
+    let canonical = model.canonical(target);
+    slice
+        .iter()
+        .find(|(key, _)| model.canonical(key) == canonical)
+        .map_or(crate::cell_host::FactVersion::ABSENT, |(_, state)| {
+            state.version
+        })
+}
+
+/// Ensure an untouched action target is CAS-verified inside the commit transaction,
+/// matching existing writes and reads by canonical identity.
+pub(super) fn ensure_target_read(
+    catalog: &crate::decision_commit::TypeCatalog<'_>,
+    target: &FactKey,
+    before: crate::cell_host::FactVersion,
+    writes: &[FactWrite],
+    reads: &mut Vec<FactExpectation>,
+) {
+    let model = crate::CommitModel::new(catalog);
+    let canonical = model.canonical(target);
+    if !writes
+        .iter()
+        .any(|write| model.canonical(&write.key) == canonical)
+        && !reads
+            .iter()
+            .any(|read| model.canonical(&read.key) == canonical)
+    {
+        reads.push(FactExpectation {
+            key: target.clone(),
+            expected: before,
+        });
+    }
+}
+
+/// Exact target version at `receipt.seq`: written version (matched by canonical
+/// identity) or CAS-verified pre-commit version.
+pub(super) fn committed_target_version(
+    catalog: &crate::decision_commit::TypeCatalog<'_>,
+    receipt: &crate::cell_host::CommitReceipt,
+    target: &FactKey,
+    before: crate::cell_host::FactVersion,
+) -> crate::cell_host::FactVersion {
+    let model = crate::CommitModel::new(catalog);
+    let canonical = model.canonical(target);
+    receipt
+        .written
+        .iter()
+        .find(|written| model.canonical(&written.key) == canonical)
+        .map_or(before, |written| written.version)
+}

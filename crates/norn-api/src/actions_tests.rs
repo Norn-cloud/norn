@@ -93,13 +93,13 @@ impl Authorizer for Policy {
 
 /// The cell's disclosure runtime: a handle key and collection-grant mapping only.
 struct Disclosure;
-impl QuestionRuntime<NativeEngine> for Disclosure {
+impl<E: norn_cell::engine::SqlEngine> QuestionRuntime<E> for Disclosure {
     fn plan(&self, _question: &str) -> Result<QuestionPlan, Refusal> {
         Err(read_denied())
     }
     fn snapshot(
         &self,
-        _store: &CellStore<NativeEngine>,
+        _store: &CellStore<E>,
         _plan: &QuestionPlan,
         _actor: &str,
     ) -> Result<QuestionSnapshot, Refusal> {
@@ -580,7 +580,7 @@ fn action_artifact(
 }
 
 /// `test.order.edit` patches a `test.Order` and its owned `lines` rows.
-fn rows_host() -> DevHost<NativeEngine> {
+fn rows_documents() -> Vec<Value> {
     let order = entity(
         "test.Order.entity",
         &json!({
@@ -647,8 +647,12 @@ fn rows_host() -> DevHost<NativeEngine> {
         }),
         &["test.Order.entity", "test.OrderLine.entity"],
     );
+    vec![order, line, edit]
+}
+
+fn rows_host() -> DevHost<NativeEngine> {
     host_of(admitted_store(
-        &[order, line, edit],
+        &rows_documents(),
         crate::action_admission::prepare_action_model,
     ))
 }
@@ -1617,4 +1621,733 @@ fn parameter_slice_executes_end_to_end_through_api_and_cell_store() {
         (hidden.status, hidden.code.as_str()),
         (403, codes::AUTHZ_DENIED)
     );
+}
+
+/// OPEN-CHECKPOINT-1 (#1551 round 5, Blockers 3, 6, 10):
+/// - An unchanged-target non-quantity action committing during an active
+///   history scrub succeeds cleanly with the target's live version instead of
+///   committing and then returning retryable `cell.verifying` (Blocker 3).
+/// - Kernel commit paths and `CommitError::Host` preserve typed `503
+///   cell.verifying` (retryable) and `503 cell.fenced` (fail-closed) instead
+///   of downgrading to `500 commit.host` / `500 host.error` (Blocker 10).
+/// - `timers::run_due` + `timers::next_due` on a fenced cell return terminal
+///   failure and `Ok(None)` without throwing `cell.fenced` (Blocker 6).
+fn order_edit_body(id: &str, values: &str, version: u64, key: &str) -> String {
+    format!(
+        r#"{{"input":{{"parentId":"{id}","parentValues":{values},"parentVersion":"{version}","rowOps":[]}},"idempotencyKey":"{key}"}}"#
+    )
+}
+
+fn seed_checkpointed_rows_cell() -> (
+    tempfile::TempDir,
+    std::path::PathBuf,
+    norn_cell::Model,
+    norn_cell::StoreOptions,
+    ActionReceipt,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("rows.sqlite");
+    let options = norn_cell::StoreOptions {
+        checkpoint_key: Some(norn_cell::CheckpointKey::from_bytes([0x5a; 32])),
+        ..norn_cell::StoreOptions::default()
+    };
+    let docs = rows_documents();
+    let engine = NativeEngine::open(&path, options).unwrap();
+    let store = action_cell::admitted_store_on(
+        engine,
+        &docs,
+        crate::action_admission::prepare_action_model,
+    );
+    let model = store.model().clone();
+    let host = host_of(store);
+    let query = scoped("org_demo");
+    let created = call(
+        &host,
+        &query,
+        Some(OPERATOR),
+        ORDER_EDIT,
+        &order_edit_body("order-1", r#"{"title":"first"}"#, 0, "create-order-1"),
+    )
+    .unwrap();
+    for n in 0..130_u64 {
+        let id = format!("filler-{n}");
+        call(
+            &host,
+            &query,
+            Some(OPERATOR),
+            ORDER_EDIT,
+            &order_edit_body(&id, r#"{"title":"fill"}"#, 0, &format!("fill-{n}")),
+        )
+        .unwrap();
+    }
+    drop(host);
+    (dir, path, model, options, created)
+}
+
+#[test]
+fn open_checkpoint_refusal_mappings_preserve_verifying_and_fenced() {
+    use norn_cell::CellError;
+    use norn_kernel::{ActionRefusal, CommitError, DecisionRefusal};
+
+    let verifying_action = Refusal::from_action_host_error(&ActionRefusal::Decision(
+        DecisionRefusal::Host(CellError::Verifying("idempotency")),
+    ))
+    .expect("verifying action refusal");
+    assert_eq!(
+        (
+            verifying_action.status,
+            verifying_action.code.as_str(),
+            verifying_action.retryable
+        ),
+        (503, codes::CELL_VERIFYING, true)
+    );
+    let fenced_action = Refusal::from_action_host_error(&ActionRefusal::Decision(
+        DecisionRefusal::Host(CellError::Fenced("tampered".to_owned())),
+    ))
+    .expect("fenced action refusal");
+    assert_eq!(
+        (
+            fenced_action.status,
+            fenced_action.code.as_str(),
+            fenced_action.retryable
+        ),
+        (503, codes::CELL_FENCED, false)
+    );
+    let verifying_commit =
+        Refusal::from_commit_host_error(&CommitError::Host(CellError::Verifying("idempotency")));
+    assert_eq!(
+        (
+            verifying_commit.status,
+            verifying_commit.code.as_str(),
+            verifying_commit.retryable
+        ),
+        (503, codes::CELL_VERIFYING, true)
+    );
+    let fenced_commit = Refusal::from_commit_host_error(&CommitError::Host(CellError::Fenced(
+        "tampered".to_owned(),
+    )));
+    assert_eq!(
+        (
+            fenced_commit.status,
+            fenced_commit.code.as_str(),
+            fenced_commit.retryable
+        ),
+        (503, codes::CELL_FENCED, false)
+    );
+}
+
+#[test]
+fn open_checkpoint_scrub_actions_refusals_and_fenced_timers() {
+    use norn_cell::ScrubStatus;
+
+    let (_dir, path, model, options, created) = seed_checkpointed_rows_cell();
+    let query = scoped("org_demo");
+    let operator = Some(OPERATOR);
+
+    // Reopen from checkpoint: starts in Receipts phase (idempotency unproven).
+    let reopened_store = CellStore::open(&path, model, options).unwrap();
+    assert!(matches!(
+        reopened_store.scrub_status(),
+        ScrubStatus::Verifying {
+            phase: "receipts",
+            history_ready: false,
+            ..
+        }
+    ));
+    let host = host_of(reopened_store);
+
+    // Blocker 10 end-to-end: during Receipts phase, an idempotency-keyed kernel
+    // commit hits CommitError::Host(CellError::Verifying) -> 503 cell.verifying.
+    {
+        let mut cell = host.cell().unwrap();
+        let err = norn_kernel::CellHost::commit_action_quantity(
+            &mut *cell,
+            norn_kernel::CellCommit::empty(),
+            &[],
+            "unproven-receipt-key",
+        )
+        .unwrap_err();
+        let mapped = Refusal::from_commit_host_error(&err);
+        assert_eq!(
+            (mapped.status, mapped.code.as_str(), mapped.retryable),
+            (503, codes::CELL_VERIFYING, true)
+        );
+    }
+
+    // Advance scrub past Receipts phase into History phase.
+    {
+        let cell = host.cell().unwrap();
+        loop {
+            let status = cell.store().scrub_step();
+            if matches!(
+                status,
+                ScrubStatus::Verifying {
+                    phase: "history",
+                    history_ready: false,
+                    ..
+                }
+            ) {
+                break;
+            }
+            assert!(
+                matches!(
+                    status,
+                    ScrubStatus::Verifying {
+                        phase: "receipts",
+                        ..
+                    }
+                ),
+                "expected history phase, got {status:?}"
+            );
+        }
+    }
+
+    // Blocker 3: unchanged-target non-quantity action commits during History scrub.
+    let noop_body = order_edit_body("order-1", "{}", created.version, "noop-during-history");
+    let noop = call(&host, &query, operator, ORDER_EDIT, &noop_body)
+        .expect("unchanged-target action must not commit and return cell.verifying");
+    assert_eq!(noop.outcome, ActionCallOutcome::Committed);
+    assert_eq!(
+        (noop.object_id.as_str(), noop.version),
+        ("order-1", created.version)
+    );
+
+    // Replay during History scrub preserves S5b and refuses 503 cell.verifying.
+    let replay_err = call(&host, &query, operator, ORDER_EDIT, &noop_body).unwrap_err();
+    assert_eq!(
+        (
+            replay_err.status,
+            replay_err.code.as_str(),
+            replay_err.retryable
+        ),
+        (503, codes::CELL_VERIFYING, true)
+    );
+    assert_eq!(
+        host.cell().unwrap().store().scrub_to_end(),
+        ScrubStatus::Idle
+    );
+    let replayed = call(&host, &query, operator, ORDER_EDIT, &noop_body).unwrap();
+    assert_eq!(replayed.outcome, ActionCallOutcome::Replayed);
+    assert_eq!(
+        (replayed.object_id.as_str(), replayed.version),
+        ("order-1", created.version)
+    );
+}
+
+#[test]
+fn open_checkpoint_fenced_timers_and_action_refusal() {
+    use norn_cell::StoreOptions;
+
+    let (_dir, path, model, options, created) = seed_checkpointed_rows_cell();
+    let query = scoped("org_demo");
+    let operator = Some(OPERATOR);
+
+    // Blocker 6 + Blocker 10 (fenced): tamper covered fact -> fenced alarm cleanup.
+    {
+        use norn_cell::engine::SqlEngine as _;
+        let raw = NativeEngine::open(&path, StoreOptions::default()).unwrap();
+        raw.execute("DELETE FROM _norn_fact_values WHERE commit_seq = 5", &[])
+            .unwrap();
+    }
+    let fenced_host = host_of(CellStore::open(&path, model, options).unwrap());
+    let now = LogicalTime::from_millis(1_800_000_000_000);
+    let fenced_work = loop {
+        let work = crate::timers::run_due(&fenced_host, now).expect("run_due must not throw");
+        if work.failed.iter().any(|msg| msg.contains("fenced")) {
+            break work;
+        }
+        assert!(work.next.is_some());
+    };
+    assert_eq!(fenced_work.next, None);
+    let second = crate::timers::run_due(&fenced_host, now).expect("repeat run_due must not throw");
+    assert_eq!(second.next, None);
+    assert!(second.failed.iter().any(|msg| msg.contains("fenced")));
+    assert_eq!(
+        crate::timers::next_due(&fenced_host).expect("next_due on fenced cell must not throw"),
+        None
+    );
+    let fenced_call = call(
+        &fenced_host,
+        &query,
+        operator,
+        ORDER_EDIT,
+        &order_edit_body("order-1", "{}", created.version, "call-when-fenced"),
+    )
+    .unwrap_err();
+    assert_eq!(
+        (
+            fenced_call.status,
+            fenced_call.code.as_str(),
+            fenced_call.retryable
+        ),
+        (503, codes::CELL_FENCED, false)
+    );
+}
+
+struct FenceCommitFaultEngine {
+    inner: NativeEngine,
+    armed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    fired: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl norn_cell::engine::SqlEngine for FenceCommitFaultEngine {
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.inner.read_isolation()
+    }
+    fn checkpoint_key(&self) -> Option<norn_cell::CheckpointKey> {
+        self.inner.checkpoint_key()
+    }
+    fn external_data_version(&self) -> Result<Option<u64>, norn_cell::CellError> {
+        self.inner.external_data_version()
+    }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, norn_cell::CellError>,
+    ) -> Result<T, norn_cell::CellError> {
+        self.inner.definition_writes(f)
+    }
+    fn execute(
+        &self,
+        sql: &str,
+        params: &[norn_cell::engine::SqlValue],
+    ) -> Result<(), norn_cell::CellError> {
+        let is_fence_write = params.iter().any(|value| {
+            matches!(value, norn_cell::engine::SqlValue::Text(text) if text == "open_checkpoint:fenced")
+        });
+        if self.armed.load(std::sync::atomic::Ordering::Acquire) && is_fence_write {
+            self.armed
+                .store(false, std::sync::atomic::Ordering::Release);
+            self.fired.store(true, std::sync::atomic::Ordering::Release);
+            return Err(norn_cell::CellError::Engine(
+                "transient fence persistence fault".to_owned(),
+            ));
+        }
+        self.inner.execute(sql, params)
+    }
+    fn query(
+        &self,
+        sql: &str,
+        params: &[norn_cell::engine::SqlValue],
+    ) -> Result<Vec<Vec<norn_cell::engine::SqlValue>>, norn_cell::CellError> {
+        self.inner.query(sql, params)
+    }
+    fn execute_batch(&self, sql: &str) -> Result<(), norn_cell::CellError> {
+        self.inner.execute_batch(sql)
+    }
+    fn transaction<T, X: From<norn_cell::CellError>>(
+        &self,
+        f: impl FnOnce() -> Result<T, X>,
+    ) -> Result<T, X> {
+        self.inner.transaction(f)
+    }
+}
+
+/// Blocker 1 (S12, #1551 round 6): when durable fence persistence fails
+/// transiently during `run_due`, `run_due` and `next_due` MUST keep the alarm
+/// armed and retry persistence on the next wake until durable, only then
+/// returning `None`.
+#[test]
+fn open_checkpoint_failed_fence_write_keeps_alarm_armed_until_persisted() {
+    use norn_cell::engine::SqlEngine as _;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let (_dir, path, model, options, _created) = seed_checkpointed_rows_cell();
+    {
+        let raw = NativeEngine::open(&path, norn_cell::StoreOptions::default()).unwrap();
+        raw.execute("DELETE FROM _norn_fact_values WHERE commit_seq = 5", &[])
+            .unwrap();
+    }
+
+    let armed = Arc::new(AtomicBool::new(true));
+    let fired = Arc::new(AtomicBool::new(false));
+    let store = CellStore::from_engine(
+        FenceCommitFaultEngine {
+            inner: NativeEngine::open(&path, options).unwrap(),
+            armed: Arc::clone(&armed),
+            fired: Arc::clone(&fired),
+        },
+        model.clone(),
+    )
+    .unwrap();
+    let scope = CellScope {
+        org_id: "org_demo".into(),
+        environment_id: "dev".into(),
+    };
+    let host = DevHost::from_store(store, scope, |cmd| cmd.payload.clone())
+        .unwrap()
+        .with_authorizer(Policy);
+
+    let now = LogicalTime::from_millis(1_800_000_000_000);
+    let pending_work = loop {
+        let work = crate::timers::run_due(&host, now).expect("run_due must not throw");
+        if work.failed.iter().any(|msg| msg.contains("fenced")) {
+            break work;
+        }
+        assert!(work.next.is_some());
+    };
+    assert!(fired.load(Ordering::Acquire), "fence write fault must fire");
+    assert!(
+        crate::timers::is_fence_persist_pending(&host),
+        "fence must still await durable persistence"
+    );
+    assert!(
+        pending_work.next.is_some(),
+        "failed fence write must keep run_due.next armed for alarm retry"
+    );
+    assert!(
+        crate::timers::next_due(&host)
+            .expect("next_due must not throw")
+            .is_some(),
+        "failed fence write must keep next_due armed (not None)"
+    );
+
+    // Next alarm wake retries durable persistence and succeeds -> alarm clears!
+    let persisted_work = crate::timers::run_due(&host, now).expect("retry run_due must not throw");
+    assert!(!crate::timers::is_fence_persist_pending(&host));
+    assert_eq!(
+        persisted_work.next, None,
+        "persisted fence clears run_due.next"
+    );
+    assert_eq!(
+        crate::timers::next_due(&host).expect("next_due after durable fence"),
+        None,
+        "persisted fence clears next_due alarm"
+    );
+    drop(host);
+    assert!(
+        matches!(
+            CellStore::open(&path, model, options),
+            Err(norn_cell::CellError::Fenced(_))
+        ),
+        "reopen fails closed once alarm retry persisted the durable fence"
+    );
+}
+
+struct SiblingUpdateAfterCommitEngine {
+    inner: NativeEngine,
+    path: std::path::PathBuf,
+    model: norn_cell::Model,
+    options: norn_cell::StoreOptions,
+    armed: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    raced: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl norn_cell::engine::SqlEngine for SiblingUpdateAfterCommitEngine {
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.inner.read_isolation()
+    }
+    fn checkpoint_key(&self) -> Option<norn_cell::CheckpointKey> {
+        self.inner.checkpoint_key()
+    }
+    fn external_data_version(&self) -> Result<Option<u64>, norn_cell::CellError> {
+        self.inner.external_data_version()
+    }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, norn_cell::CellError>,
+    ) -> Result<T, norn_cell::CellError> {
+        self.inner.definition_writes(f)
+    }
+    fn execute(
+        &self,
+        sql: &str,
+        params: &[norn_cell::engine::SqlValue],
+    ) -> Result<(), norn_cell::CellError> {
+        self.inner.execute(sql, params)
+    }
+    fn query(
+        &self,
+        sql: &str,
+        params: &[norn_cell::engine::SqlValue],
+    ) -> Result<Vec<Vec<norn_cell::engine::SqlValue>>, norn_cell::CellError> {
+        self.inner.query(sql, params)
+    }
+    fn execute_batch(&self, sql: &str) -> Result<(), norn_cell::CellError> {
+        self.inner.execute_batch(sql)
+    }
+    fn transaction<T, X: From<norn_cell::CellError>>(
+        &self,
+        f: impl FnOnce() -> Result<T, X>,
+    ) -> Result<T, X> {
+        let out = self.inner.transaction(f)?;
+        if self.armed.swap(false, std::sync::atomic::Ordering::AcqRel) {
+            let sibling_store = CellStore::open(&self.path, self.model.clone(), self.options)?;
+            let sibling_host = host_of(sibling_store);
+            let query = scoped("org_demo");
+            call(
+                &sibling_host,
+                &query,
+                Some(OPERATOR),
+                ORDER_EDIT,
+                &order_edit_body(
+                    "order-1",
+                    r#"{"title":"sibling-updated"}"#,
+                    1,
+                    "sibling-upd",
+                ),
+            )
+            .map_err(|err| norn_cell::CellError::Engine(format!("{err:?}")))?;
+            self.raced.store(true, std::sync::atomic::Ordering::Release);
+        }
+        Ok(out)
+    }
+}
+
+/// Blocker 5 (S7/S5b, #1551 round 6): fresh and replayed responses for an
+/// untouched-target action MUST report the exact same target version at
+/// `commit_seq` even if a sibling updates the target immediately after commit.
+#[test]
+fn unchanged_target_fresh_and_replayed_receipts_agree_across_sibling_update() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let (_dir, path, model, options, created) = seed_checkpointed_rows_cell();
+    let armed = Arc::new(AtomicBool::new(false));
+    let raced = Arc::new(AtomicBool::new(false));
+    let store = CellStore::from_engine(
+        SiblingUpdateAfterCommitEngine {
+            inner: NativeEngine::open(&path, options).unwrap(),
+            path,
+            model: model.clone(),
+            options,
+            armed: Arc::clone(&armed),
+            raced: Arc::clone(&raced),
+        },
+        model,
+    )
+    .unwrap();
+    let scope = CellScope {
+        org_id: "org_demo".into(),
+        environment_id: "dev".into(),
+    };
+    let host = DevHost::from_store(store, scope, |cmd| cmd.payload.clone())
+        .unwrap()
+        .with_authorizer(Policy);
+    // Complete scrub first so replay `version_as_of` succeeds immediately after.
+    assert_eq!(
+        host.cell().unwrap().store().scrub_to_end(),
+        norn_cell::ScrubStatus::Idle
+    );
+
+    let query = scoped("org_demo");
+    let now = LogicalTime::from_millis(1_700_000_000_000);
+    let noop_req = decode_action_request(&order_edit_body(
+        "order-1",
+        "{}",
+        created.version,
+        "noop-sibling",
+    ))
+    .unwrap();
+    armed.store(true, Ordering::Release);
+    let fresh = match call_action(
+        &host,
+        &query,
+        Some(OPERATOR),
+        ORDER_EDIT,
+        &noop_req,
+        &Disclosure,
+        now,
+    )
+    .unwrap()
+    {
+        ActionAnswer::Receipt(receipt) => receipt,
+        ActionAnswer::Pending(pending) => panic!("unexpected pending: {pending:?}"),
+    };
+    assert!(
+        raced.load(Ordering::Acquire),
+        "sibling update must race after commit"
+    );
+    let live_version = host
+        .cell()
+        .unwrap()
+        .store()
+        .read()
+        .version(norn_cell::MAIN_WORLD, "test.Order", "order-1")
+        .unwrap();
+    assert_eq!(live_version, created.version.saturating_add(1));
+
+    let replayed = match call_action(
+        &host,
+        &query,
+        Some(OPERATOR),
+        ORDER_EDIT,
+        &noop_req,
+        &Disclosure,
+        now,
+    )
+    .unwrap()
+    {
+        ActionAnswer::Receipt(receipt) => receipt,
+        ActionAnswer::Pending(pending) => panic!("unexpected pending: {pending:?}"),
+    };
+    assert_eq!(fresh.outcome, ActionCallOutcome::Committed);
+    assert_eq!(replayed.outcome, ActionCallOutcome::Replayed);
+    assert_eq!(
+        fresh.version, created.version,
+        "fresh receipt must report exact CAS-verified version at commit_seq, not sibling's newer live version"
+    );
+    assert_eq!(
+        fresh.version, replayed.version,
+        "fresh and replayed responses must agree on untouched target version"
+    );
+}
+
+fn subtype_noop_documents() -> Vec<Value> {
+    let base_order = entity(
+        "test.BaseOrder.entity",
+        &json!({
+            "name": "test.BaseOrder",
+            "properties": [
+                { "id": "order_id", "type": { "kind": "text" } },
+                { "id": "title", "type": { "kind": "text" } }
+            ]
+        }),
+        &[],
+    );
+    let special_order = entity(
+        "test.SpecialOrder.entity",
+        &json!({
+            "name": "test.SpecialOrder",
+            "extends": "test.BaseOrder",
+            "properties": [
+                { "id": "reviewer", "type": { "kind": "text" }, "constraints": { "nullable": true } }
+            ]
+        }),
+        &["test.BaseOrder.entity"],
+    );
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "order_id": { "type": "string" },
+            "title": { "type": "string" }
+        },
+        "required": ["order_id", "title"],
+        "additionalProperties": false
+    });
+    let upsert_special = action_artifact(
+        "test.SpecialOrder.upsert.action",
+        "test.special_order.upsert",
+        &schema,
+        &json!([
+            { "entityKind": "test.SpecialOrder", "change": "created" },
+            { "entityKind": "test.SpecialOrder", "change": "modified" }
+        ]),
+        &json!({
+            "kind": "upsert_input_object",
+            "objectIdField": "order_id",
+            "objectKind": "test.SpecialOrder",
+            "entityArtifactId": "test.SpecialOrder.entity",
+            "entityArtifactVersion": "1.0.0",
+            "writeMode": { "kind": "upsert" }
+        }),
+        &["test.SpecialOrder.entity"],
+    );
+    let noop_ancestor = envelope(
+        "test.BaseOrder.noop_ancestor.action",
+        "action",
+        &json!({
+            "actionId": "test.base_order.noop_ancestor",
+            "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": true,
+            "ledgered": true,
+            "inputSchema": schema,
+            "outputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+            "slice": [{
+                "name": "special",
+                "objectType": "test.SpecialOrder",
+                "key": { "property": { "from": "input", "property": "order_id" } }
+            }],
+            "preconditions": ["slice.special.title == \"ready\""],
+            "writes": [
+                { "entityKind": "test.BaseOrder", "change": "created" },
+                { "entityKind": "test.BaseOrder", "change": "modified" }
+            ],
+            "effectProgram": {
+                "kind": "upsert_input_object",
+                "objectIdField": "order_id",
+                "objectKind": "test.BaseOrder",
+                "entityArtifactId": "test.BaseOrder.entity",
+                "entityArtifactVersion": "1.0.0",
+                "writeMode": { "kind": "upsert" }
+            }
+        }),
+        &["test.BaseOrder.entity", "test.SpecialOrder.entity"],
+    );
+    vec![base_order, special_order, upsert_special, noop_ancestor]
+}
+
+/// S7/S5b (#1551 round 8): `norn-api` fresh and replayed responses agree on the
+/// exact subtype target version when an ancestor-addressed upsert with
+/// unchanged property values reads a concrete subtype through a declared slice
+/// entry (which writes the concrete subtype via `slice_identity` to version 3
+/// while `record.object` carries the ancestor type).
+#[test]
+fn ancestor_addressed_noop_and_replay_report_subtype_target_version() {
+    let store = admitted_store(
+        &subtype_noop_documents(),
+        crate::action_admission::prepare_action_model,
+    );
+    let host = host_of(store);
+    let query = scoped("org_demo");
+
+    // Seed concrete subtype at version 1, then bump to version 2.
+    let v1 = call(
+        &host,
+        &query,
+        Some(OPERATOR),
+        "test.special_order.upsert",
+        r#"{"input":{"order_id":"ord-1","title":"draft"},"idempotencyKey":"seed-1"}"#,
+    )
+    .unwrap();
+    assert_eq!(v1.version, 1);
+    let v2 = call(
+        &host,
+        &query,
+        Some(OPERATOR),
+        "test.special_order.upsert",
+        r#"{"input":{"order_id":"ord-1","title":"ready"},"idempotencyKey":"seed-2"}"#,
+    )
+    .unwrap();
+    assert_eq!(v2.version, 2);
+
+    // Ancestor-addressed upsert with subtype slice read and unchanged property
+    // values: `FactChange::Set` writes the concrete subtype to v3 via
+    // `slice_identity`, and fresh must report v3 (not stale or v0).
+    let noop_body =
+        r#"{"input":{"order_id":"ord-1","title":"ready"},"idempotencyKey":"noop-ancestor-1"}"#;
+    let fresh = call(
+        &host,
+        &query,
+        Some(OPERATOR),
+        "test.base_order.noop_ancestor",
+        noop_body,
+    )
+    .unwrap();
+    assert_eq!(fresh.outcome, ActionCallOutcome::Committed);
+    assert_eq!(fresh.version, 3);
+
+    // Mutate concrete subtype to v4 AFTER the ancestor-addressed commit so live
+    // version != 3.
+    let v4 = call(
+        &host,
+        &query,
+        Some(OPERATOR),
+        "test.special_order.upsert",
+        r#"{"input":{"order_id":"ord-1","title":"post-noop"},"idempotencyKey":"seed-3"}"#,
+    )
+    .unwrap();
+    assert_eq!(v4.version, 4);
+
+    // Replay must still report historical version 3 (not live version 4 or v0).
+    let replayed = call(
+        &host,
+        &query,
+        Some(OPERATOR),
+        "test.base_order.noop_ancestor",
+        noop_body,
+    )
+    .unwrap();
+    assert_eq!(replayed.outcome, ActionCallOutcome::Replayed);
+    assert_eq!(replayed.version, 3);
 }
