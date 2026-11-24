@@ -782,8 +782,8 @@ pub(crate) fn reject_hostless_links<X>(output: &DecisionOutput) -> Result<(), De
 }
 
 /// Select the canonical endpoint objects whose full adjacency must be loaded
-/// before commit checking (required owned collections and incoming `from: one`).
-/// Outgoing `to: one` checks use bounded `has_link_target` proofs instead.
+/// before commit checking (required owned collections only). Both outgoing
+/// `to: one` and incoming `from: one` checks use bounded `CommitView` proofs.
 pub(crate) fn collect_link_adjacency_objects<E, C, T, V: crate::CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
@@ -805,8 +805,8 @@ pub(crate) fn collect_link_adjacency_objects<E, C, T, V: crate::CommitView + ?Si
                 .concrete(&key.source)
                 .map_err(crate::CommitError::Host)?,
         };
-        if let Some(concrete) = concrete {
-            let needs_owned = model
+        if let Some(concrete) = concrete
+            && model
                 .catalog
                 .owned_collections(&concrete)
                 .iter()
@@ -814,25 +814,17 @@ pub(crate) fn collect_link_adjacency_objects<E, C, T, V: crate::CommitView + ?Si
                     model
                         .link(&concrete, collection.id.as_str())
                         .is_some_and(|link| link.cardinality.required)
-                });
-            if needs_owned {
-                objects.insert(key.source);
-            }
-            if matches!(write.mutation, LinkMutation::Add { .. })
-                && model
-                    .link(&concrete, &write.key.link)
-                    .is_some_and(|d| d.cardinality.from == norn_ir::Multiplicity::One)
-            {
-                objects.insert(key.target);
-            }
+                })
+        {
+            objects.insert(key.source);
         }
     }
     Ok(())
 }
 
 /// Bounded outgoing `to: one` cardinality check using `CommitView::has_link_target`
-/// (`LIMIT (excluded.len() + 1)`), falling back to `links_of` only when the host
-/// cannot supply a bounded witness.
+/// (`LIMIT (excluded.len() + 1)`). Fails closed when the host cannot supply a
+/// bounded proof — never falls back to unbounded `links_of`.
 pub(crate) fn check_to_one_cardinality<E, C, T, V: crate::CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
@@ -857,45 +849,69 @@ pub(crate) fn check_to_one_cardinality<E, C, T, V: crate::CommitView + ?Sized>(
             endpoint: key.source.clone(),
         });
     }
-    if let Some(other_live) = view
+    match view
         .has_link_target(&key.source, &key.link, &excluded)
         .map_err(crate::CommitError::Host)?
     {
-        if other_live {
-            return Err(crate::CommitError::LinkCardinality {
-                key: Box::new(write.key.clone()),
-                endpoint: key.source.clone(),
-            });
-        }
-        return Ok(());
-    }
-    let mut live: BTreeSet<LinkKey> = view
-        .links_of(&key.source)
-        .map_err(crate::CommitError::Host)?
-        .iter()
-        .map(|link| model.canonical_link(link))
-        .filter(|link| link.source == key.source && link.link == key.link)
-        .collect();
-    for change in &commit.links {
-        let changed = model.canonical_link(&change.key);
-        if changed.source == key.source && changed.link == key.link {
-            match change.mutation {
-                LinkMutation::Add { .. } => {
-                    live.insert(changed);
-                }
-                LinkMutation::Remove => {
-                    live.remove(&changed);
-                }
-            }
-        }
-    }
-    if live.len() > 1 {
-        return Err(crate::CommitError::LinkCardinality {
+        Some(true) => Err(crate::CommitError::LinkCardinality {
             key: Box::new(write.key.clone()),
             endpoint: key.source.clone(),
+        }),
+        Some(false) => Ok(()),
+        None => Err(crate::CommitError::EffectiveValues {
+            key: key.source.clone(),
+            reason: format!(
+                "bounded cardinality proof unavailable for outgoing link `{}`",
+                key.link
+            ),
+        }),
+    }
+}
+
+/// Bounded incoming `from: one` cardinality check using `CommitView::has_link_source`
+/// (`LIMIT (excluded.len() + 1)`). Fails closed when the host cannot supply a
+/// bounded proof — never falls back to unbounded `links_of`.
+pub(crate) fn check_from_one_cardinality<E, C, T, V: crate::CommitView + ?Sized>(
+    commit: &CellCommit<E, C, T>,
+    model: CommitModel<'_, '_>,
+    view: &V,
+    write: &LinkWrite,
+    key: &LinkKey,
+) -> Result<(), crate::CommitError<V::Error>> {
+    let mut added_for_role = 0_usize;
+    let mut excluded = BTreeSet::new();
+    for change in &commit.links {
+        let changed = model.canonical_link(&change.key);
+        if changed.target == key.target && changed.link == key.link {
+            if matches!(change.mutation, LinkMutation::Add { .. }) {
+                added_for_role = added_for_role.saturating_add(1);
+            }
+            excluded.insert(changed.source);
+        }
+    }
+    if added_for_role > 1 {
+        return Err(crate::CommitError::LinkCardinality {
+            key: Box::new(write.key.clone()),
+            endpoint: key.target.clone(),
         });
     }
-    Ok(())
+    match view
+        .has_link_source(&key.target, &key.link, &excluded)
+        .map_err(crate::CommitError::Host)?
+    {
+        Some(true) => Err(crate::CommitError::LinkCardinality {
+            key: Box::new(write.key.clone()),
+            endpoint: key.target.clone(),
+        }),
+        Some(false) => Ok(()),
+        None => Err(crate::CommitError::EffectiveValues {
+            key: key.target.clone(),
+            reason: format!(
+                "bounded cardinality proof unavailable for incoming link `{}`",
+                key.link
+            ),
+        }),
+    }
 }
 
 fn action_link_endpoint<X>(

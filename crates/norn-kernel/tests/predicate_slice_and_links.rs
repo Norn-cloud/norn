@@ -2025,3 +2025,106 @@ fn r2_blocker7b_metered_host_commit_charges_turn_envelope() -> TestResult {
     assert_eq!(meter.used().events, 2);
     Ok(())
 }
+
+fn r3_blocker4_actions() -> TestResult<[ActionRoot; 2]> {
+    let base = |id: &str, extra: Value| -> TestResult<ActionRoot> {
+        let mut obj = json!({
+            "actionId": id,
+            "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": true,
+            "ledgered": true,
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {"item_id": {"type": "string"}, "grp": {"type": "string"}},
+                "required": ["item_id", "grp"]
+            },
+            "outputSchema": {"type": "object", "additionalProperties": false, "properties": {}},
+            "writes": [{"entityKind": "doc.Item", "change": "created"}],
+            "effectProgram": {
+                "kind": "upsert_input_object",
+                "objectIdField": "item_id",
+                "objectKind": "doc.Item",
+                "entityArtifactId": "doc.Item.entity",
+                "entityArtifactVersion": "1.0.0"
+            }
+        });
+        if let (Some(dst), Some(src)) = (obj.as_object_mut(), extra.as_object()) {
+            for (k, v) in src {
+                dst.insert(k.clone(), v.clone());
+            }
+        }
+        Ok(serde_json::from_value(obj)?)
+    };
+    let pred = base(
+        "doc.item.pred_check",
+        json!({"slice": [{"name": "rows", "objectType": "doc.Item", "key": {"predicate": {"filter": {"grp": "grp"}, "maxItems": 1}}}]}),
+    )?;
+    let agg = base(
+        "doc.item.agg_check",
+        json!({
+            "aggregates": [{"name": "cnt", "objectType": "doc.Item", "filter": {"grp": "grp"}, "aggregate": {"kind": "count"}, "maxItems": 1}],
+            "preconditions": ["aggregates.cnt <= 1"]
+        }),
+    )?;
+    Ok([pred, agg])
+}
+
+#[test]
+fn r3_blocker4_hidden_row_past_max_items_plus_one_conceals_as_target_not_found() -> TestResult {
+    let authorizer = Authorizer {
+        hidden_key: Some("R3"),
+    };
+    let types: Vec<ObjectTypeDef> = serde_json::from_value(json!([{
+        "name": "doc.Item",
+        "properties": [
+            {"id": "item_id", "type": {"kind": "text"}},
+            {"id": "grp", "type": {"kind": "text"}}
+        ]
+    }]))?;
+    let catalog = TypeCatalog::new(&types);
+    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone())
+        .with_types(types.clone());
+    for id in ["R1", "R2", "R3"] {
+        put_fact(
+            &mut cell,
+            "doc.Item",
+            id,
+            json!({"item_id": id, "grp": "g"}),
+        )?;
+    }
+    let actions = r3_blocker4_actions()?;
+    for (idx, action) in actions.iter().enumerate() {
+        let request = ActionCall {
+            action,
+            action_artifact_id: if idx == 0 {
+                "doc.item.pred_check.action"
+            } else {
+                "doc.item.agg_check.action"
+            },
+            action_version: "1.0.0",
+            scope: BTreeMap::from([
+                ("orgId".to_owned(), "org_demo".to_owned()),
+                ("environmentId".to_owned(), "dev".to_owned()),
+            ]),
+            actor: "operator".to_owned(),
+            input: serde_json::from_value(json!({"item_id": format!("W{idx}"), "grp": "g"}))?,
+            idempotency_key: format!("r3-b4-mem-{idx}"),
+            object_type: None,
+            turn: DecisionTurn {
+                id: format!("t-b4-mem-{idx}"),
+                now: LogicalTime::from_millis(1_000),
+                world: World::Main,
+                consumes: None,
+            },
+            trace: None,
+        };
+        let refusal = commit_action(&mut cell, &catalog, &request, &authorizer)
+            .expect_err("hidden row past maxItems + 1 must conceal");
+        assert!(
+            matches!(refusal, ActionRefusal::TargetNotFound),
+            "case {idx}: expected TargetNotFound, got {refusal:?}"
+        );
+    }
+    Ok(())
+}

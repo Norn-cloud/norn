@@ -3487,7 +3487,7 @@ impl<E: SqlEngine> CellStore<E> {
             crate::decision_ledger::apply(&writer.reader(), effective_batch, commit_seq)?;
             let quantity_result = writer.apply_quantity()?;
             probe(CommitPoint::FactsApplied)?;
-            let linked = writer.apply_links()?;
+            let linked = writer.apply_links(!matches!(origin, CommitOrigin::Retained(_)))?;
             probe(CommitPoint::LinksApplied)?;
             if let Some(validate) = self.candidate_validator.get() {
                 let validator_disputes = RefCell::default();

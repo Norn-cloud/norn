@@ -319,6 +319,21 @@ pub trait CommitView {
         }))
     }
 
+    /// Whether a live incoming source for `(link, target)` survives the
+    /// excluded sources. `None` means the proof is incomplete within bounds.
+    ///
+    /// # Errors
+    /// Returns the host read failure.
+    fn has_link_source(
+        &self,
+        target: &FactKey,
+        link: &str,
+        excluded: &BTreeSet<FactKey>,
+    ) -> Result<Option<bool>, Self::Error> {
+        let _ = (target, link, excluded);
+        Ok(None)
+    }
+
     /// Every live link with the canonical object at either end, in any order
     /// and naming (the check canonicalizes them).
     ///
@@ -2846,17 +2861,7 @@ fn check_cardinality<E, C, T, V: CommitView + ?Sized>(
             crate::decision_links::check_to_one_cardinality(commit, model, view, write, &key)?;
         }
         if declared.cardinality.from == Multiplicity::One {
-            let count = links.get(&key.target).map_or(0, |live| {
-                live.iter()
-                    .filter(|link| link.link == key.link && link.target == key.target)
-                    .count()
-            });
-            if count > 1 {
-                return Err(CommitError::LinkCardinality {
-                    key: Box::new(write.key.clone()),
-                    endpoint: key.target,
-                });
-            }
+            crate::decision_links::check_from_one_cardinality(commit, model, view, write, &key)?;
         }
     }
     for (source, source_links) in links {

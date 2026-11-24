@@ -908,3 +908,108 @@ async fn self_consistent_export_with_wrong_timer_preimage_fails_replay_and_clean
         1
     );
 }
+
+#[tokio::test]
+async fn r3_blocker3_restore_replays_verified_historical_classified_link_batch() {
+    let defs: Vec<norn_ir::ObjectTypeDef> = serde_json::from_value(json!([
+        {
+            "name": "restore.Secret",
+            "properties": [{"id": "ssn", "type": {"kind": "text"}, "markings": ["pii.ssn"]}]
+        },
+        {
+            "name": "restore.Public",
+            "properties": [{"id": "name", "type": {"kind": "text"}}],
+            "links": [{"id": "next", "target": "restore.Public", "cardinality": {"to": "many", "from": "many"}}]
+        }
+    ]))
+    .expect("definitions");
+    let classified_model = Model::from_definitions(&defs, &[]).expect("model");
+    let dir = tempfile::tempdir().expect("directory");
+    let export = dir.path().join("export");
+    let target = dir.path().join("restored.sqlite");
+
+    let mut store = CellStore::open_in_memory(classified_model.clone()).expect("store");
+    store.bind("scope", "org_demo/dev").expect("bind");
+    store
+        .commit(&CommitBatch {
+            writes: vec![
+                FactWriteRow::Put {
+                    object_type: "restore.Secret".to_owned(),
+                    key: "S1".to_owned(),
+                    values: BTreeMap::from([("ssn".to_owned(), rv(json!("999-00-1111")))]),
+                },
+                FactWriteRow::Put {
+                    object_type: "restore.Public".to_owned(),
+                    key: "P1".to_owned(),
+                    values: BTreeMap::from([("name".to_owned(), rv(json!("p1")))]),
+                },
+                FactWriteRow::Put {
+                    object_type: "restore.Public".to_owned(),
+                    key: "P2".to_owned(),
+                    values: BTreeMap::from([("name".to_owned(), rv(json!("p2")))]),
+                },
+            ],
+            ..batch(1)
+        })
+        .expect("seed");
+
+    let link_change = LinkChange::Add {
+        object_type: "restore.Public".to_owned(),
+        link: "next".to_owned(),
+        source: "P1".to_owned(),
+        target: "P2".to_owned(),
+        values: BTreeMap::new(),
+        target_type: Some("restore.Public".to_owned()),
+    };
+    // Live commit of a classified read + link mutation must still refuse.
+    let classified_batch = CommitBatch {
+        marking_reads: vec![norn_kernel::FactExpectation {
+            key: norn_kernel::FactKey::new("restore.Secret", "S1"),
+            expected: norn_kernel::FactVersion(1),
+        }],
+        links: vec![link_change.clone()],
+        ..batch(2)
+    };
+    assert!(matches!(
+        store.commit(&classified_batch),
+        Err(norn_cell::CellError::MarkingDeclassificationInvalid(_))
+    ));
+
+    // Construct a verified pre-guard historical export record containing the
+    // classified read lineage + link mutation and verify restore replays it.
+    store
+        .commit(&CommitBatch {
+            links: vec![link_change],
+            ..batch(2)
+        })
+        .expect("unclassified link for receipt template");
+    let first = store.export_record(1).expect("journal").expect("first");
+    let mut second = store.export_record(2).expect("journal").expect("second");
+    second.batch = classified_batch;
+    second.receipt.body.request_hash = hash(&second.batch);
+    second.receipt.hash = hash(&second.receipt.body);
+
+    let mut exporter = Exporter::local(&export).expect("exporter");
+    exporter.append(&first).await.expect("append first");
+    exporter.append(&second).await.expect("append second");
+    let manifest = exporter.verify().await.expect("verified manifest");
+
+    CellStore::restore_from(
+        &mut exporter,
+        &target,
+        classified_model.clone(),
+        "org_demo/dev",
+        &manifest.bindings,
+        StoreOptions::default(),
+    )
+    .await
+    .expect("restore must replay verified historical classified link batch");
+    let rebuilt =
+        CellStore::open(&target, classified_model, StoreOptions::default()).expect("open");
+    let links = rebuilt
+        .read()
+        .links("main", "restore.Public", "next", "P1")
+        .expect("links");
+    assert_eq!(links.len(), 1);
+    assert_eq!(links[0].target, "P2");
+}

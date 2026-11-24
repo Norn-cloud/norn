@@ -1265,12 +1265,15 @@ pub trait CellHost {
         max_bytes: u64,
         authorize: &mut dyn FnMut(&PredicateObject) -> bool,
     ) -> Result<PredicateActionRead, Self::Error> {
-        let Some(objects) = self.read_predicate(predicate, max_members, max_bytes)? else {
+        let Some(mut objects) =
+            self.read_predicate(predicate, usize::MAX.saturating_sub(1), max_bytes)?
+        else {
             return Ok(PredicateActionRead::Concealed);
         };
         if objects.iter().any(|object| !authorize(object)) {
             return Ok(PredicateActionRead::Concealed);
         }
+        objects.truncate(max_members.saturating_add(1));
         Ok(PredicateActionRead::Admitted(objects))
     }
 
@@ -1368,46 +1371,32 @@ pub trait CellHost {
         self.commit(commit)
     }
 
-    /// **perform**: execute the oldest pending command, idempotently and with
-    /// the host's bounded retry, and return its result. If that command was
-    /// already performed and its result not yet consumed, return the recorded
-    /// result without executing again. `None` when the outbox is empty.
+    /// **perform**: execute the oldest pending command idempotently, or `None` when empty.
     ///
     /// # Errors
-    ///
     /// The host's failure; the command stays pending.
     fn perform(&mut self) -> Result<Option<Performed<Self::Input>>, Self::Error>;
 
-    /// **observe**: the oldest pending external observation, not removed until
-    /// consumed. `None` when there is none.
+    /// **observe**: the oldest pending external observation, or `None`.
     ///
     /// # Errors
-    ///
     /// The host's failure.
     fn observe(&mut self) -> Result<Option<Observed<Self::Input>>, Self::Error>;
 
-    /// **clock**: the pending timer with the earliest due time (ties by id)
-    /// that is due at the host's current time, not removed until consumed.
-    /// `None` when no timer is due.
+    /// **clock**: the earliest due pending timer (ties by id), or `None`.
     ///
     /// # Errors
-    ///
     /// The host's failure.
     fn clock(&mut self) -> Result<Option<DueTimer<Self::Input>>, Self::Error>;
 
-    /// The ordering lane a commit touching `key` joins. Hosts without
-    /// concurrent writers keep the default: one lane for the cell.
+    /// The ordering lane a commit touching `key` joins (default: cell-wide).
     fn serialize_by(&self, _key: &FactKey) -> SerializationLane {
         SerializationLane::Cell
     }
 
-    /// Pushes an accepted commit to the cell's live subscribers (reactive
-    /// queries, ruling 2026-09-25 §10). Called after `commit` succeeds; it is
-    /// not part of the commit transaction, and subscribers resynchronize from
-    /// the ledger if a push is lost.
+    /// Pushes an accepted commit to live subscribers after `commit` succeeds.
     ///
     /// # Errors
-    ///
     /// The host's failure; the commit itself stands.
     fn publish(&mut self, receipt: &CommitReceipt) -> Result<(), Self::Error>;
 }

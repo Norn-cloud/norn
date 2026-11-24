@@ -4378,7 +4378,7 @@ fn r2_ifc_leak_rule() -> norn_kernel::SynchronousRule {
                         "target": {"type": "object", "additionalProperties": false, "properties": {"id": {"type": "string"}, "status": {"type": "string"}}, "required": ["id", "status"]},
                         "other": {"type": "object", "additionalProperties": false, "properties": {"id": {"type": "string"}, "status": {"type": "string"}}, "required": ["id", "status"]}
                     },
-                    "required": ["secret", "target", "other"]
+                    "required": ["target", "other"]
                 },
                 "event": {"type": "object", "additionalProperties": false, "properties": {"input": {"type": "object", "additionalProperties": false, "properties": {"id": {"type": "string"}, "p1": {"type": "string"}, "p2": {"type": "string"}, "sec": {"type": "string"}}, "required": ["id", "p1", "p2", "sec"]}, "actor": {"type": "string"}, "operationId": {"type": "string"}}, "required": ["input", "actor", "operationId"]}
             },
@@ -4886,4 +4886,441 @@ fn r2_blocker5_nullable_row_reconciles_across_predicate_and_point_slice_reads() 
         outcome,
         norn_kernel::ActionOutcome::Committed { .. }
     ));
+}
+
+fn r3_blocker1_iface_model() -> (Model, String) {
+    let iface: norn_ir::InterfaceDef = serde_json::from_value(json!({
+        "name": "iface.Target",
+        "properties": [{"id": "id", "type": {"kind": "text"}}]
+    }))
+    .expect("interface");
+    let defs: Vec<norn_ir::ObjectTypeDef> = serde_json::from_value(json!([
+        {"name": "iface.Alpha", "implements": ["iface.Target"], "properties": [{"id": "id", "type": {"kind": "text"}}]},
+        {"name": "iface.Beta", "implements": ["iface.Target"], "properties": [{"id": "id", "type": {"kind": "text"}}]},
+        {"name": "iface.Source", "properties": [{"id": "id", "type": {"kind": "text"}}], "links": [{"id": "ref_target", "target": "iface.Target", "cardinality": {"to": "many", "from": "many"}}]}
+    ]))
+    .expect("definitions");
+    let model = Model::from_definitions_with_interfaces(&defs, &[], &[iface]).expect("model");
+    let table_name = model
+        .schema()
+        .link_tables
+        .iter()
+        .find(|table| {
+            table.source.as_str() == "iface.Source" && table.link.as_str() == "ref_target"
+        })
+        .expect("link table")
+        .table
+        .clone();
+    (model, table_name)
+}
+
+/// R3 Blocker 1: a legacy physical link row lacking `_norn_link_version`
+/// metadata on an interface-target link is isolated across unrelated target
+/// hierarchies and fails closed when multiple implementing roots share the key.
+#[test]
+fn r3_blocker1_legacy_link_row_without_version_metadata_is_isolated_across_interface_targets() {
+    let (model, table_name) = r3_blocker1_iface_model();
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("legacy.sqlite");
+    let store = CellStore::open(&path, model, StoreOptions::default()).expect("store");
+    let mut cell: SqliteCell<norn_kernel::FactEvent, JsonObject, JsonObject> = SqliteCell::new(
+        store,
+        "org_demo/dev",
+        |cmd: &norn_kernel::Command<JsonObject>| cmd.payload.clone(),
+    )
+    .expect("cell");
+
+    r2_put_fact(&mut cell, "iface.Source", "S1", json!({"id": "S1"}));
+    r2_put_fact(&mut cell, "iface.Alpha", "K1", json!({"id": "K1"}));
+
+    let raw = NativeEngine::open(&path, StoreOptions::default()).expect("raw engine");
+    raw.execute(
+        &format!(
+            "INSERT INTO \"{table_name}\" (\"_world\", \"_source\", \"_target\") VALUES ('main', 'S1', 'K1')"
+        ),
+        &[],
+    )
+    .expect("legacy row");
+
+    let alpha_edge = LinkKey::new(
+        FactKey::new("iface.Source", "S1"),
+        "ref_target",
+        FactKey::new("iface.Alpha", "K1"),
+    );
+    let beta_edge = LinkKey::new(
+        FactKey::new("iface.Source", "S1"),
+        "ref_target",
+        FactKey::new("iface.Beta", "K1"),
+    );
+
+    assert!(cell.load_link(&alpha_edge).expect("alpha").exists());
+    assert!(!cell.load_link(&beta_edge).expect("beta").exists());
+
+    r2_put_fact(&mut cell, "iface.Beta", "K1", json!({"id": "K1"}));
+    assert!(
+        !cell
+            .load_link(&alpha_edge)
+            .expect("ambiguous alpha")
+            .exists()
+    );
+    assert!(!cell.load_link(&beta_edge).expect("ambiguous beta").exists());
+
+    for mutation in [
+        LinkMutation::Add {
+            values: JsonObject::new(),
+        },
+        LinkMutation::Remove,
+    ] {
+        let commit = CellCommit {
+            links: vec![LinkWrite {
+                key: beta_edge.clone(),
+                expected: FactVersion(0),
+                mutation,
+            }],
+            ..CellCommit::empty()
+        };
+        assert!(matches!(
+            cell.commit(commit),
+            Err(CommitError::EffectiveValues { .. })
+        ));
+    }
+}
+
+/// R3 Blocker 2: an action whose fresh aggregate precondition reads a
+/// classified object (with NO point/predicate slice entry for the secret)
+/// cannot emit a dynamic link between unmarked endpoints.
+#[test]
+fn r3_blocker2_classified_aggregate_precondition_cannot_emit_dynamic_link() {
+    let (model, mut cell) = r2_ifc_fixture();
+    let catalog = model.type_catalog();
+    let public_slice = norn_kernel::load_slice(
+        &cell,
+        [
+            FactKey::new("ifc.Public", "P1"),
+            FactKey::new("ifc.Public", "P2"),
+        ],
+    )
+    .expect("public");
+    norn_kernel::commit_decision(
+        &mut cell,
+        &catalog,
+        &public_slice,
+        &r2_turn("t1"),
+        &r2_ifc_link_output("add", "P1", "P2"),
+    )
+    .expect("seed link");
+
+    let sync_rule = r2_ifc_leak_rule();
+    let action: norn_ir::ActionRoot = serde_json::from_value(json!({
+        "actionId": "ifc.agg_leak_action",
+        "scopeRequired": ["orgId", "environmentId"],
+        "idempotent": true,
+        "ledgered": true,
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "id": {"type": "string"},
+                "p1": {"type": "string"},
+                "p2": {"type": "string"},
+                "sec": {"type": "string"}
+            },
+            "required": ["id", "p1", "p2", "sec"]
+        },
+        "outputSchema": {"type": "object", "additionalProperties": false, "properties": {}},
+        "slice": [
+            {"name": "target", "objectType": "ifc.Public", "key": {"property": {"from": "input", "property": "p1"}}},
+            {"name": "other", "objectType": "ifc.Public", "key": {"property": {"from": "input", "property": "p2"}}}
+        ],
+        "aggregates": [{
+            "name": "secret_count",
+            "objectType": "ifc.Secret",
+            "filter": {"id": "sec"},
+            "aggregate": {"kind": "count"},
+            "maxItems": 10
+        }],
+        "preconditions": ["aggregates.secret_count >= 1"],
+        "synchronousRule": {"artifactId": "ifc.leak_rule.rule", "version": "1.0.0"},
+        "writes": [{"entityKind": "ifc.Public", "change": "modified"}],
+        "effectProgram": {
+            "kind": "fire_transition",
+            "objectIdField": "id",
+            "objectKind": "ifc.Public",
+            "entityArtifactId": "ifc.Public.entity",
+            "entityArtifactVersion": "1.0.0",
+            "lifecycle": "status",
+            "transition": "finish"
+        }
+    }))
+    .expect("action");
+    let action_catalog = model
+        .type_catalog()
+        .with_action_rules(std::slice::from_ref(&sync_rule));
+    let request = norn_kernel::ActionCall {
+        action: &action,
+        action_artifact_id: "ifc.agg_leak_action.action",
+        action_version: "1.0.0",
+        scope: std::collections::BTreeMap::from([
+            ("orgId".to_owned(), "org_demo".to_owned()),
+            ("environmentId".to_owned(), "dev".to_owned()),
+        ]),
+        actor: "operator".to_owned(),
+        input: serde_json::from_value(json!({"id": "P1", "p1": "P1", "p2": "P2", "sec": "SEC1"}))
+            .expect("input"),
+        idempotency_key: "ifc-agg-act-1".to_owned(),
+        object_type: None,
+        turn: r2_turn("t2"),
+        trace: None,
+    };
+    let refusal = norn_kernel::commit_action(&mut cell, &action_catalog, &request, &R2AllowAll)
+        .expect_err("classified aggregate precondition must refuse dynamic link");
+    assert!(
+        matches!(
+            refusal,
+            norn_kernel::ActionRefusal::Decision(norn_kernel::DecisionRefusal::Host(
+                CellError::MarkingDeclassificationInvalid(_)
+            ))
+        ),
+        "expected MarkingDeclassificationInvalid, got {refusal:?}"
+    );
+    let edge = LinkKey::new(
+        FactKey::new("ifc.Public", "P1"),
+        "linked",
+        FactKey::new("ifc.Public", "P2"),
+    );
+    assert!(cell.load_link(&edge).expect("edge preserved").exists());
+}
+
+struct R3HideRow3;
+impl norn_kernel::ActionAuthorizer for R3HideRow3 {
+    fn authorize(
+        &self,
+        _: &norn_kernel::ActionAuthzRequest<'_>,
+    ) -> Result<(), norn_kernel::ActionDenial> {
+        Ok(())
+    }
+    fn authorize_read(
+        &self,
+        request: &norn_kernel::ActionReadAuthzRequest<'_>,
+    ) -> Result<(), norn_kernel::ActionDenial> {
+        if request.target.key == "R3" {
+            return Err(norn_kernel::ActionDenial::Invisible);
+        }
+        Ok(())
+    }
+    fn authorize_read_type(
+        &self,
+        _: &norn_kernel::ActionReadTypeAuthzRequest<'_>,
+    ) -> Result<(), norn_kernel::ActionDenial> {
+        Ok(())
+    }
+}
+
+fn r3_blocker4_sqlite_actions() -> [norn_ir::ActionRoot; 2] {
+    let make = |id: &str, extra: serde_json::Value| -> norn_ir::ActionRoot {
+        let mut obj = json!({
+            "actionId": id,
+            "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": true,
+            "ledgered": true,
+            "inputSchema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {"item_id": {"type": "string"}, "grp": {"type": "string"}},
+                "required": ["item_id", "grp"]
+            },
+            "outputSchema": {"type": "object", "additionalProperties": false, "properties": {}},
+            "writes": [{"entityKind": "doc.Item", "change": "created"}],
+            "effectProgram": {
+                "kind": "upsert_input_object",
+                "objectIdField": "item_id",
+                "objectKind": "doc.Item",
+                "entityArtifactId": "doc.Item.entity",
+                "entityArtifactVersion": "1.0.0"
+            }
+        });
+        for (k, v) in extra.as_object().expect("object") {
+            obj.as_object_mut()
+                .expect("object")
+                .insert(k.clone(), v.clone());
+        }
+        serde_json::from_value(obj).expect("action")
+    };
+    [
+        make(
+            "doc.item.pred_check",
+            json!({"slice": [{"name": "rows", "objectType": "doc.Item", "key": {"predicate": {"filter": {"grp": "grp"}, "maxItems": 1}}}]}),
+        ),
+        make(
+            "doc.item.agg_check",
+            json!({
+                "aggregates": [{"name": "cnt", "objectType": "doc.Item", "filter": {"grp": "grp"}, "aggregate": {"kind": "count"}, "maxItems": 1}],
+                "preconditions": ["aggregates.cnt <= 1"]
+            }),
+        ),
+    ]
+}
+
+/// R3 Blocker 4 (SqliteCell): with `maxItems = 1` and `[readable_1, readable_2, hidden_3]`,
+/// both `SliceKey::Predicate` and fresh `ActionAggregate` conceal via
+/// `ActionRefusal::TargetNotFound` rather than leaking cardinality via bound errors.
+#[test]
+fn r3_blocker4_sqlite_hidden_row_past_max_items_plus_one_conceals_as_target_not_found() {
+    let mut defs: Vec<norn_ir::ObjectTypeDef> = serde_json::from_value(json!([{
+        "name": "doc.Item",
+        "properties": [
+            {"id": "item_id", "type": {"kind": "text"}},
+            {"id": "grp", "type": {"kind": "text"}}
+        ]
+    }]))
+    .expect("defs");
+    defs.push(r2_action_call_type());
+    let model = common::model_of(&defs);
+    let store = CellStore::open_in_memory(model.clone()).expect("store");
+    let mut cell: SqliteCell<norn_kernel::FactEvent, JsonObject, JsonObject> = SqliteCell::new(
+        store,
+        "org_demo/dev",
+        |cmd: &norn_kernel::Command<JsonObject>| cmd.payload.clone(),
+    )
+    .expect("cell");
+    for id in ["R1", "R2", "R3"] {
+        r2_put_fact(
+            &mut cell,
+            "doc.Item",
+            id,
+            json!({"item_id": id, "grp": "g"}),
+        );
+    }
+    let actions = r3_blocker4_sqlite_actions();
+    let catalog = model.type_catalog();
+    for (idx, action) in actions.iter().enumerate() {
+        let request = norn_kernel::ActionCall {
+            action,
+            action_artifact_id: if idx == 0 {
+                "doc.item.pred_check.action"
+            } else {
+                "doc.item.agg_check.action"
+            },
+            action_version: "1.0.0",
+            scope: std::collections::BTreeMap::from([
+                ("orgId".to_owned(), "org_demo".to_owned()),
+                ("environmentId".to_owned(), "dev".to_owned()),
+            ]),
+            actor: "operator".to_owned(),
+            input: serde_json::from_value(json!({"item_id": format!("W{idx}"), "grp": "g"}))
+                .expect("input"),
+            idempotency_key: format!("r3-b4-sqlite-{idx}"),
+            object_type: None,
+            turn: r2_turn(&format!("t-b4-{idx}")),
+            trace: None,
+        };
+        let refusal = norn_kernel::commit_action(&mut cell, &catalog, &request, &R3HideRow3)
+            .expect_err("hidden row past maxItems + 1 must conceal");
+        assert!(
+            matches!(refusal, norn_kernel::ActionRefusal::TargetNotFound),
+            "case {idx}: expected TargetNotFound, got {refusal:?}"
+        );
+    }
+}
+
+#[derive(Debug)]
+struct R3SpyEngine {
+    inner: NativeEngine,
+    queries: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+}
+
+impl SqlEngine for R3SpyEngine {
+    fn read_isolation(&self) -> norn_cell::engine::ReadIsolation {
+        self.inner.read_isolation()
+    }
+    fn read_cache_revision(&self) -> Result<Option<(u64, u64)>, CellError> {
+        self.inner.read_cache_revision()
+    }
+    fn definition_writes<T>(
+        &self,
+        f: impl FnOnce() -> Result<T, CellError>,
+    ) -> Result<T, CellError> {
+        self.inner.definition_writes(f)
+    }
+    fn execute(&self, sql: &str, params: &[SqlValue]) -> Result<(), CellError> {
+        self.inner.execute(sql, params)
+    }
+    fn query(&self, sql: &str, params: &[SqlValue]) -> Result<Vec<Vec<SqlValue>>, CellError> {
+        self.queries.borrow_mut().push(sql.to_owned());
+        self.inner.query(sql, params)
+    }
+    fn execute_batch(&self, sql: &str) -> Result<(), CellError> {
+        self.inner.execute_batch(sql)
+    }
+    fn transaction<T, X: From<CellError>>(&self, f: impl FnOnce() -> Result<T, X>) -> Result<T, X> {
+        self.inner.transaction(f)
+    }
+}
+
+/// R3 Blocker 5: incoming `from: one` cardinality checks use bounded SQL
+/// (`WHERE "_world" = ?1 AND "_target" = ?2 ORDER BY "_source" LIMIT ?3`)
+/// without loading full endpoint adjacency.
+#[test]
+fn r3_blocker5_from_one_cardinality_uses_bounded_sql_proof() {
+    let defs: Vec<norn_ir::ObjectTypeDef> = serde_json::from_value(json!([
+        {"name": "cap.Slot", "properties": [{"id": "id", "type": {"kind": "text"}}]},
+        {"name": "cap.Owner", "properties": [{"id": "id", "type": {"kind": "text"}}], "links": [{"id": "owns", "target": "cap.Slot", "cardinality": {"to": "many", "from": "one"}}]}
+    ]))
+    .expect("defs");
+    let queries = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let spy = R3SpyEngine {
+        inner: NativeEngine::open_in_memory().expect("engine"),
+        queries: std::rc::Rc::clone(&queries),
+    };
+    let store = CellStore::from_engine(spy, common::model_of(&defs)).expect("store");
+    let mut cell: SqliteCell<norn_kernel::FactEvent, JsonObject, JsonObject, R3SpyEngine> =
+        SqliteCell::new(
+            store,
+            "org_demo/dev",
+            |cmd: &norn_kernel::Command<JsonObject>| cmd.payload.clone(),
+        )
+        .expect("cell");
+
+    r2_put_fact(&mut cell, "cap.Owner", "O1", json!({"id": "O1"}));
+    r2_put_fact(&mut cell, "cap.Owner", "O2", json!({"id": "O2"}));
+    r2_put_fact(&mut cell, "cap.Slot", "T1", json!({"id": "T1"}));
+
+    let add_link = |owner: &str| CellCommit {
+        links: vec![LinkWrite {
+            key: LinkKey::new(
+                FactKey::new("cap.Owner", owner),
+                "owns",
+                FactKey::new("cap.Slot", "T1"),
+            ),
+            expected: FactVersion(0),
+            mutation: LinkMutation::Add {
+                values: JsonObject::new(),
+            },
+        }],
+        ..CellCommit::empty()
+    };
+    cell.commit(add_link("O1")).expect("first owner succeeds");
+
+    queries.borrow_mut().clear();
+    assert!(matches!(
+        cell.commit(add_link("O2")),
+        Err(CommitError::LinkCardinality { .. })
+    ));
+
+    let recorded = queries.borrow();
+    assert!(
+        recorded
+            .iter()
+            .any(|sql| sql.contains("\"_target\" = ?2")
+                && sql.contains("ORDER BY \"_source\" LIMIT ?3")),
+        "expected bounded incoming LIMIT query; got {recorded:?}"
+    );
+    assert!(
+        !recorded.iter().any(|sql| {
+            sql.contains("\"_target\" = ?2")
+                && !sql.contains("LIMIT")
+                && !sql.contains("_norn_link_version")
+        }),
+        "must not execute unbounded incoming link scan; got {recorded:?}"
+    );
 }

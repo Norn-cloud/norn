@@ -251,11 +251,10 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         to_i64(self.commit_seq, "commit_seq")
     }
 
-    /// Consume the delivery, apply the whole-object writes (returning their
-    /// new versions), then the fact changes.
+    /// Consume the delivery, apply whole-object writes, then fact changes.
     #[allow(
         clippy::too_many_lines,
-        reason = "one transaction resolves value, occurrence and recomputed lineage before capturing its output snapshots"
+        reason = "resolves lineage atomically before snapshots"
     )]
     pub(crate) fn apply_writes(&mut self) -> Result<Vec<WrittenRow>, CellError> {
         self.verify_mutation_scopes()?;
@@ -293,12 +292,8 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             )?;
             let changed = self.write_changed_properties(write)?;
             let derived = self.derived_properties(write);
-            // #1355: a property the consumed mapping computed from its source
-            // record alone takes that record's classifications (its
-            // provenance `markings`), its own declaration and its own previous
-            // versions; never what the commit read to validate links or record
-            // findings. Derived outputs and every write without such proof
-            // keep the commit's full read lineage, as unproven ones must.
+            // #1355: mapped source properties take their source record markings,
+            // declaration and prior versions, never link-validation reads.
             let source = mapped
                 .get(&(write.target().0.to_owned(), write.target().1.to_owned()))
                 .filter(|_| matches!(write, FactWriteRow::Put { .. }));
@@ -1250,11 +1245,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             ),
             params![self.world, object_type, key, version],
         )?;
-        // Classify each exact version before another mutation can replace its
-        // provenance. Both whole-object writes and canonical fact changes use
-        // this boundary; later batch propagation only adds classifications.
-        // A tombstone snapshot has no new live values. Reclassifying the
-        // still-live prior row here would rewrite an older immutable version.
+        // Classify each exact live version before later mutations replace its provenance.
         if self
             .reader()
             .root_row(self.world, object_type, key)?
@@ -1289,12 +1280,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             .collect()
     }
 
-    /// The writes of this commit the mapping computed from the consumed
-    /// source records alone, each with those records' classifications: every
-    /// `observed_fact` event naming the written key carries a typed
-    /// provenance with no upstream fact (the transform read no other object)
-    /// and well-formed `markings`. Empty for a commit that consumes no
-    /// observation; a key with any other event stays out (fail closed).
+    /// Writes computed from consumed source records alone, with their markings.
     fn mapped_properties(&self) -> BTreeMap<(String, String), BTreeSet<String>> {
         let mut mapped: BTreeMap<(String, String), Option<BTreeSet<String>>> = BTreeMap::new();
         if !matches!(self.batch.consumes, Some(Consumption::Observation { .. })) {
@@ -2983,15 +2969,27 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         Ok(version)
     }
 
-    /// Apply the batch's link changes in order. Every change bumps the
-    /// link's version (`_norn_link_version`), an add replaces an existing
-    /// link's values, and a remove of an absent link only bumps its version.
+    /// Apply the batch's link changes in order (`enforce_live_guards` is false during restore).
     #[allow(
         clippy::too_many_lines,
-        reason = "link state, version and original creation evidence are written atomically"
+        reason = "link state, version and creation are atomic"
     )]
-    pub(crate) fn apply_links(&mut self) -> Result<Vec<LinkedRow>, CellError> {
-        crate::link_guard::check_link_read_markings(&self.batch.links, &self.link_read_markings)?;
+    pub(crate) fn apply_links(
+        &mut self,
+        enforce_live_guards: bool,
+    ) -> Result<Vec<LinkedRow>, CellError> {
+        let is_mapping = matches!(
+            &self.batch.consumes,
+            Some(Consumption::Observation { observation_id })
+                if observation_id.starts_with("mapping-bundle:")
+                    || observation_id.starts_with(crate::mapping_page::PAGE_PREFIX)
+        ) && self.batch.marking_events.is_empty();
+        if enforce_live_guards && !is_mapping {
+            crate::link_guard::check_link_read_markings(
+                &self.batch.links,
+                &self.link_read_markings,
+            )?;
+        }
         let mut linked = Vec::with_capacity(self.batch.links.len());
         for change in &self.batch.links {
             let (object_type, link, source, target, target_type, values) = match change {
@@ -3081,11 +3079,12 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                     Some(to_i64(version, "link version")?),
                 ))
             };
-            if values.is_none() {
+            if enforce_live_guards && values.is_none() {
                 crate::link_guard::check_remove_slot_match(
                     &self.reader(),
                     self.world,
                     &table_name,
+                    declaration.target.as_str(),
                     source,
                     target,
                     &target_type,

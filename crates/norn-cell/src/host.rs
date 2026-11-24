@@ -882,40 +882,16 @@ impl<S: SqlEngine> CommitView for GuardView<'_, '_, S> {
         link: &str,
         excluded: &std::collections::BTreeSet<FactKey>,
     ) -> Result<Option<bool>, CellError> {
-        let Some((source_type, _, _)) =
-            self.0
-                .root_row(MAIN_WORLD, source.object_type.as_str(), &source.key)?
-        else {
-            return Ok(Some(false));
-        };
-        // At most N excluded targets can occupy the first N rows. Read one
-        // extra witness, bounding records and key bytes before materialization.
-        let limits = norn_ir::ResourceLimitProfile::norn_limits_v1().slice;
-        let fetch = excluded.len().saturating_add(1).min(
-            usize::try_from(limits.max_records)
-                .unwrap_or(usize::MAX)
-                .saturating_add(1),
-        );
-        let Some(targets) = self.0.link_targets_with_versions(
-            MAIN_WORLD,
-            &source_type,
-            link,
-            &source.key,
-            fetch,
-            limits.max_canonical_bytes,
-        )?
-        else {
-            return Ok(None);
-        };
-        if targets
-            .iter()
-            .any(|(key, ty, _)| !excluded.contains(&FactKey::new(self.0.canonical_type(ty), key)))
-        {
-            return Ok(Some(true));
-        }
-        // A short page is a complete absence proof; a full page containing
-        // only excluded targets cannot establish final presence.
-        Ok((targets.len() < fetch).then_some(false))
+        crate::link_guard::has_link_target(self.0, source, link, excluded)
+    }
+
+    fn has_link_source(
+        &self,
+        target: &FactKey,
+        link: &str,
+        excluded: &std::collections::BTreeSet<FactKey>,
+    ) -> Result<Option<bool>, CellError> {
+        crate::link_guard::has_link_source(self.0, target, link, excluded)
     }
 
     fn link_targets(
@@ -1060,6 +1036,10 @@ where
         // retain reads folded into their write expectations by the kernel.
         let mut marking_reads =
             Self::occurrence_reads(commit, &marking_reads, !marking_events.is_empty());
+        crate::link_guard::extend_predicate_marking_reads(
+            &commit.predicate_reads,
+            &mut marking_reads,
+        );
         let mut marking_events = marking_events;
         let mut marking_historical_reads = Vec::new();
         // Function freshness and information lineage are separate contracts.
@@ -1244,8 +1224,14 @@ where
         // they are not evidence of a classified decision predicate. Kernel
         // decisions may fold reads of written targets into their expectations,
         // so retain that full set for attributed rule/action turns.
+        let is_mapping = matches!(
+            &commit.consumes,
+            Some(Consumed::Observation { id })
+                if id.0.starts_with("mapping-bundle:")
+                    || id.0.starts_with(crate::mapping_page::PAGE_PREFIX)
+        );
         if attributed_rule
-            || !commit.links.is_empty()
+            || (!commit.links.is_empty() && !is_mapping)
             || commit
                 .writes
                 .iter()
