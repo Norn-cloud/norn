@@ -2915,8 +2915,18 @@ mod tests {
             restored.read().automation_outbox_continuation(commit_seq)?,
             Some(continuation)
         );
+        // The pause carried evidence of its (empty) inline candidate set.
+        assert_eq!(
+            record
+                .automation_inline
+                .as_ref()
+                .map(|evidence| evidence.candidate_count),
+            Some(0)
+        );
+        // A pre-#1704 export has neither a continuation nor evidence.
         let mut pre_1704 = record;
         pre_1704.automation_continuation = None;
+        pre_1704.automation_inline = None;
         let v1_target = dir.path().join("restored-v1.sqlite");
         restore_with_last(&store, &model, &pre_1704, &v1_target).await??;
         let restored = CellStore::open(&v1_target, model.clone(), StoreOptions::default())?;
