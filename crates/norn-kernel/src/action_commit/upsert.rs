@@ -3,7 +3,8 @@ use std::collections::BTreeSet;
 use norn_ir::{ActionRoot, FactChange, ObjectTypeName, ResourceLimitProfile, UpsertWriteMode};
 
 use crate::cell_host::{CellHost, FactKey, JsonObject, JsonValue};
-use crate::decision_commit::{CreatorStamp, FactEvent, TypeCatalog};
+use crate::creator_stamp::CreatorStamp;
+use crate::decision_commit::{FactEvent, TypeCatalog};
 use crate::envelope::TurnEnvelopeMeter;
 use crate::limits::{EnvelopeLimits, SliceMeter};
 use crate::naming_series::type_series;
@@ -325,6 +326,7 @@ where
         Some(rule) => {
             let (facts, links) = writer_output(
                 host,
+                catalog,
                 call,
                 rule,
                 &mut preparation,

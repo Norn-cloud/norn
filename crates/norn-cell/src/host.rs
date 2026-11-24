@@ -1635,6 +1635,7 @@ where
             &[],
             &[],
             None,
+            None,
         )
     }
 
@@ -1651,7 +1652,7 @@ where
         commit: CellCommit<E, C, I>,
         derived: &[(FactKey, Vec<String>)],
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, None, None, derived, &[], &[], &[], None)
+        self.commit_with_authorization(commit, None, None, None, derived, &[], &[], &[], None, None)
     }
 
     /// Commit a kernel-prepared turn that creates a flow's run object, and
@@ -1669,7 +1670,18 @@ where
         start: &crate::flow_run::RunStart,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         let event = start.event().map_err(CommitError::Host)?;
-        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], &[], Some(event))
+        self.commit_with_authorization(
+            commit,
+            None,
+            None,
+            None,
+            &[],
+            &[],
+            &[],
+            &[],
+            Some(event),
+            None,
+        )
     }
 
     /// Commit a kernel-prepared turn that consumes a parked decision's
@@ -1687,7 +1699,18 @@ where
         resolved: &crate::decision_ledger::DecisionResolved,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         let event = resolved.event().map_err(CommitError::Host)?;
-        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], &[], Some(event))
+        self.commit_with_authorization(
+            commit,
+            None,
+            None,
+            None,
+            &[],
+            &[],
+            &[],
+            &[],
+            Some(event),
+            None,
+        )
     }
 
     /// S6c, S5a: run `act` with `events`, bookkeeping events, attached to
@@ -1727,6 +1750,7 @@ where
             &[],
             &[],
             Some(event),
+            None,
         )
     }
 
@@ -1754,6 +1778,7 @@ where
             &[],
             mapped,
             None,
+            None,
         )
     }
 
@@ -1773,6 +1798,7 @@ where
         property_reads: &[(norn_kernel::FactExpectation, Vec<String>)],
         mapped: &[crate::mapping_bundle::MappingBundle],
         bookkeeping: Option<norn_ir::RuntimeValue>,
+        stamp: Option<norn_kernel::CreatorStampProof>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         check_commit_identifiers(&commit)?;
         // Include the complete kernel input, including read/write expectations,
@@ -1921,8 +1947,9 @@ where
                 .type_catalog()
                 .with_governing_laws(model.law_artifacts());
             let model = CommitModel::new(&catalog);
+            // ACTOR-STAMP-1: a creator stamp is its own kernel admission.
             let versions = Proposed::new(&commit)
-                .authorize(authorization, owned_rows)?
+                .authorize_with(authorization, owned_rows, stamp)?
                 .check(&model, &GuardView(reader))
                 .map(Checked::into_versions)?;
             Ok((versions, mapping_proof))
@@ -2168,7 +2195,7 @@ where
         &mut self,
         commit: CellCommit<E, C, I>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
-        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], &[], None)
+        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], &[], None, None)
     }
 
     fn commit_action_references(
@@ -2189,6 +2216,7 @@ where
             proof.reference_reads(),
             proof.property_reads(),
             &[],
+            None,
             None,
         )
     }
@@ -2222,6 +2250,26 @@ where
             &[],
             &[],
             None,
+            None,
+        )
+    }
+
+    fn commit_stamped(
+        &mut self,
+        commit: CellCommit<E, C, I>,
+        proof: norn_kernel::CreatorStampProof,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        self.commit_with_authorization(
+            commit,
+            None,
+            None,
+            None,
+            &[],
+            &[],
+            &[],
+            &[],
+            None,
+            Some(proof),
         )
     }
 

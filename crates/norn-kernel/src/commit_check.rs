@@ -34,6 +34,7 @@ use crate::cell_host::{
     FactWrite, LinkKey, LinkMutation, LinkReadExpectation, LinkReadTarget, LinkWrite,
     OwnedRowsCommitProof, PredicateQuery, PredicateReadMember, WrittenLinkVersion, WrittenVersion,
 };
+use crate::creator_stamp::{KernelTrust as Trust, check_protected};
 
 /// Maximum complete outgoing link targets a turn may bind as one adjacency
 /// read. This is the current `norn.limits/1` slice-record ceiling.
@@ -405,7 +406,7 @@ pub fn check_commit<E, C, T, V: CommitView + ?Sized>(
     model: &CommitModel<'_, '_>,
     view: &V,
 ) -> Result<CommitVersions, CommitError<V::Error>> {
-    check_commit_inner(commit, *model, view, None, false)
+    check_commit_inner(commit, *model, view, None, Trust::Plain)
 }
 
 /// Check the kernel-prepared atomic parent/owned-row commit. Only the
@@ -486,7 +487,7 @@ pub fn check_commit_owned_rows<E, C, T, V: CommitView + ?Sized>(
             .collect::<Result<Vec<_>, CommitError<V::Error>>>()?;
         canonical_writes == commit.writes && canonical_links == commit.links
     };
-    check_commit_inner(commit, *model, view, None, trusted_owned_rows)
+    check_commit_inner(commit, *model, view, None, Trust::owned(trusted_owned_rows))
 }
 
 /// Shared host admission for a prepared observation. The opaque authority
@@ -506,19 +507,19 @@ pub fn check_commit_observed<E, C, T: serde::Serialize, V: CommitView + ?Sized>(
     if !authorization.validates(commit) {
         return Err(CommitError::ObservationAuthorization);
     }
-    check_commit_inner(commit, *model, view, Some(authorization), false)
+    check_commit_inner(commit, *model, view, Some(authorization), Trust::Plain)
 }
 
-fn check_commit_inner<E, C, T, V: CommitView + ?Sized>(
+pub(crate) fn check_commit_inner<E, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
     view: &V,
     authorization: Option<&ObservationAuthorization>,
-    trusted_owned_rows: bool,
+    trust: Trust<'_>,
 ) -> Result<CommitVersions, CommitError<V::Error>> {
     let profile = crate::execution_profile::ProfileView::new(view);
     profile.validate_consumed(commit.consumes.as_ref())?;
-    let result = check_commit_local(commit, model, &profile, authorization, trusted_owned_rows);
+    let result = check_commit_local(commit, model, &profile, authorization, trust);
     profile.validate(commit, model)?;
     result
 }
@@ -528,14 +529,14 @@ fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
     model: CommitModel<'_, '_>,
     view: &V,
     authorization: Option<&ObservationAuthorization>,
-    trusted_owned_rows: bool,
+    trust: Trust<'_>,
 ) -> Result<CommitVersions, CommitError<V::Error>> {
     run_stages(&mut LocalStages {
         commit,
         model,
         view,
         authorization,
-        trusted_owned_rows,
+        trust,
         links: BTreeMap::new(),
     })?;
     next_versions(commit)
@@ -547,7 +548,7 @@ struct LocalStages<'c, 'm, 'a, 'v, E, C, T, V: ?Sized> {
     model: CommitModel<'m, 'a>,
     view: &'v V,
     authorization: Option<&'v ObservationAuthorization>,
-    trusted_owned_rows: bool,
+    trust: Trust<'v>,
     /// The live links once the commit applies, set by [`CommitStage::Endpoints`]
     /// before [`CommitStage::Cardinality`] reads them.
     links: BTreeMap<FactKey, BTreeSet<LinkKey>>,
@@ -561,7 +562,8 @@ impl<E, C, T, V: CommitView + ?Sized> CommitStages<CommitError<V::Error>>
             (self.commit, self.model, self.view, self.authorization);
         match stage {
             CommitStage::EventLimit => check_event_limit(commit, authorization),
-            CommitStage::Shape => check_shape(commit, model, view, self.trusted_owned_rows),
+            CommitStage::Shape => check_shape(commit, model, view, self.trust.owned_rows())
+                .and_then(|()| check_protected(commit, model, view, authorization, self.trust)),
             CommitStage::Accounting => check_accounting_postings(commit, model, view),
             CommitStage::Delivery => check_delivery(commit, view),
             CommitStage::Immutable => check_immutable(commit, model, view),

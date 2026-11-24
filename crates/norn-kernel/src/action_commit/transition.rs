@@ -1,6 +1,6 @@
 use norn_ir::{FactChange, ObjectTypeName, ResourceLimitProfile};
 
-use crate::cell_host::{CellHost, FactKey, FactState, JsonObject, JsonValue};
+use crate::cell_host::{CellHost, FactKey, JsonObject, JsonValue};
 use crate::decision_commit::{FactEvent, TypeCatalog};
 use crate::envelope::TurnEnvelopeMeter;
 use crate::limits::{EnvelopeLimits, SliceMeter};
@@ -82,7 +82,9 @@ where
         &target,
     )?;
     check_kind(catalog, &object_type, object_kind)?;
-    check_independent_actor::<H::Error>(call, &state)?;
+    crate::independence::check_independent_actor::<H::Error>(
+        catalog, call, &target, lifecycle, transition, &state,
+    )?;
     let record_key = FactKey::new(
         ACTION_CALL_TYPE,
         format!("{}/{}", action.action_id, call.idempotency_key),
@@ -123,6 +125,7 @@ where
     let (mut changes, decision_links) = match rule {
         Some(rule) => writer_output(
             host,
+            catalog,
             call,
             rule,
             &mut preparation,
@@ -145,7 +148,8 @@ where
     };
     let change = FactChange::Transition {
         object_type,
-        key: object_id.clone(),
+        // The owned target key: no borrow of the preparation outlives the writer.
+        key: target.key.clone(),
         lifecycle: lifecycle.clone(),
         transition: transition.clone(),
     };
@@ -198,6 +202,7 @@ pub(super) enum WriterTarget {
 )]
 pub(super) fn writer_output<H>(
     host: &H,
+    catalog: &TypeCatalog<'_>,
     call: &ActionCall<'_>,
     rule: &crate::SynchronousRule,
     preparation: &mut ActionInputPreparation<'_>,
@@ -240,6 +245,22 @@ where
                 "the rule wrote outside the declared writer contract",
             ));
         }
+        if let FactChange::Transition {
+            lifecycle,
+            transition,
+            ..
+        } = change
+            && crate::independence::writer_transition_refused(
+                catalog,
+                &key.object_type,
+                lifecycle,
+                transition,
+            )
+        {
+            return Err(crate::synchronous_rule::refused(
+                "a writer cannot fire a transition guarded by independentOf",
+            ));
+        }
         if primary && mode == WriterTarget::Created {
             // The created target is authorized as its complete proposed state.
             continue;
@@ -263,42 +284,4 @@ where
         }
     }
     Ok((output.facts, output.links))
-}
-
-/// ACTOR-INDEPENDENT-1: the verified principal differs from every recorded
-/// protected actor the action names on its committed target. An absent or
-/// non-text recorded actor cannot show independence, so it refuses too. The
-/// commit fences the target's read version, so a concurrent change conflicts
-/// rather than passing. Refusals never carry the recorded value.
-pub(super) fn check_independent_actor<X>(
-    call: &ActionCall<'_>,
-    state: &FactState,
-) -> Result<(), ActionRefusal<X>> {
-    for property in &call.action.independent_of {
-        let recorded = state
-            .values
-            .as_ref()
-            .and_then(|values| values.get(property.as_str()))
-            .and_then(JsonValue::as_str);
-        match recorded {
-            Some(actor) if actor != call.actor => {}
-            Some(_) => {
-                return Err(ActionRefusal::PermissionDenied {
-                    reason: format!(
-                        "ACTOR-INDEPENDENT-1: the principal recorded in {} cannot also perform this action",
-                        property.as_str()
-                    ),
-                });
-            }
-            None => {
-                return Err(ActionRefusal::PermissionDenied {
-                    reason: format!(
-                        "ACTOR-INDEPENDENT-1: {} records no principal, so independence cannot be shown",
-                        property.as_str()
-                    ),
-                });
-            }
-        }
-    }
-    Ok(())
 }

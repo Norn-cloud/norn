@@ -53,10 +53,10 @@ use norn_checker::{
 use norn_expr::{EvaluationBudget, Expression, Value as ExprValue};
 use norn_ir::{
     ConstraintClass, DataQualityOutcome, DataQualityRuleRef, DecisionOutput, FactChange,
-    FiringRefusal, InterfaceDef, Invariant, InvariantId, InvariantOwner, Lifecycle, ObjectTypeDef,
+    InterfaceDef, Invariant, InvariantId, InvariantOwner, Lifecycle, ObjectTypeDef,
     ObjectTypeExtension, ObjectTypeName, PropertyId, PropertyKind, PropertyType, PropertyTypeDef,
-    RuntimeValue, RuntimeValueError, TIMER_AFTER_MILLIS_MEMBER, TIMER_ID_MEMBER, Transition,
-    TransitionId, declared_lifecycle_properties, effective_lifecycles, lifecycle_codes,
+    RuntimeValue, RuntimeValueError, TIMER_AFTER_MILLIS_MEMBER, TIMER_ID_MEMBER, TransitionId,
+    declared_lifecycle_properties, effective_lifecycles, lifecycle_codes,
 };
 use serde::{Deserialize, Serialize};
 
@@ -64,12 +64,18 @@ use crate::cell_host::{
     CellCommit, CellHost, CommitError, CommitReceipt, Consumed, FactExpectation, FactKey,
     FactMutation, FactState, FactVersion, FactWrite, JsonObject, JsonValue,
 };
+use crate::creator_stamp::CreatorStamp;
 use crate::effect::{
     Command, CommandId, Effect, FreshnessPolicy, Generation, IdempotencyKey, Timer, TimerId,
 };
 use crate::envelope::{EnvelopeCounts, TurnEnvelopeMeter, check_decision_envelope};
 use crate::limits::EnvelopeLimits;
 use crate::observations::{LogicalTime, World};
+
+mod lifecycle_admission;
+
+pub(crate) use lifecycle_admission::fill_lifecycle_defaults;
+use lifecycle_admission::{check_guards, resolve_transition, with_initial_states};
 
 /// Stable platform rule for an exact retained property-domain declaration.
 pub const PROPERTY_DOMAIN_RULE_ID: &str = "norn.values.property_validity";
@@ -79,6 +85,7 @@ pub const PROPERTY_DOMAIN_RULE_ID: &str = "norn.values.property_validity";
 #[derive(Debug, Clone, Default)]
 pub struct TypeCatalog<'a> {
     pub(crate) action_rules: &'a [crate::SynchronousRule],
+    pub(crate) transition_guards: Option<&'a [crate::TransitionGuard]>,
     pub(crate) law_artifacts: Vec<&'a norn_ir::ArtifactEnvelope>,
     types: BTreeMap<&'a str, &'a ObjectTypeDef>,
     interfaces: BTreeMap<&'a str, &'a InterfaceDef>,
@@ -149,6 +156,7 @@ impl<'a> TypeCatalog<'a> {
         norn_ir::counters::bump(norn_ir::counters::Counter::TypeCatalogBuilds);
         Self {
             action_rules: &[],
+            transition_guards: None,
             types: types
                 .into_iter()
                 .map(|object_type| (object_type.name.as_str(), object_type))
@@ -185,6 +193,14 @@ impl<'a> TypeCatalog<'a> {
     #[must_use]
     pub fn with_action_rules(mut self, rules: &'a [crate::SynchronousRule]) -> Self {
         self.action_rules = rules;
+        self
+    }
+
+    /// ACTOR-INDEPENDENT-1: the transitions the admitted actions guard with
+    /// `independentOf`. Without them a writer may fire no transition.
+    #[must_use]
+    pub fn with_transition_guards(mut self, guards: &'a [crate::TransitionGuard]) -> Self {
+        self.transition_guards = Some(guards);
         self
     }
 
@@ -2596,31 +2612,6 @@ enum AdmissionOrigin {
     OwnedRows,
 }
 
-/// ACTOR-STAMP-1: the protected creator properties one governed create may
-/// write, each only with the verified principal that executes the call.
-///
-/// The kernel builds it from the action's server-stamp derivations; no
-/// caller, rule output, observation or update can construct one, so every
-/// other write of a protected property keeps refusing (FA-PROTECT-1).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct CreatorStamp {
-    /// The object the action creates.
-    pub(crate) key: FactKey,
-    /// The protected properties stamped with the principal.
-    pub(crate) properties: BTreeSet<String>,
-    /// The verified execution principal.
-    pub(crate) principal: String,
-}
-
-impl CreatorStamp {
-    /// Whether `value` of `property` on `key` is exactly this stamp.
-    fn permits(&self, key: &FactKey, property: &str, value: &JsonValue) -> bool {
-        self.key == *key
-            && self.properties.contains(property)
-            && value.as_str() == Some(self.principal.as_str())
-    }
-}
-
 /// ACTOR-STAMP-1: prepare an action's changes, admitting the one protected
 /// creator stamp of the object it creates (and nothing else protected).
 pub(crate) fn prepare_action_decision<X>(
@@ -3213,180 +3204,6 @@ fn apply_change<X>(
     };
     entry.written = true;
     Ok(event)
-}
-
-/// `values` with every effective lifecycle property's default filled in,
-/// after checking each lifecycle property holds an initial state.
-fn with_initial_states<X>(
-    catalog: &TypeCatalog<'_>,
-    key: &FactKey,
-    values: &JsonObject,
-) -> Result<JsonObject, DecisionRefusal<X>> {
-    materialize_lifecycle_defaults(catalog, key, values, true)
-}
-
-/// Fill declared defaults for lifecycle properties without requiring their
-/// final values to already be initial states. Callers that prepare a create
-/// still use [`with_initial_states`] for that full validation.
-pub(crate) fn fill_lifecycle_defaults<X>(
-    catalog: &TypeCatalog<'_>,
-    key: &FactKey,
-    values: &JsonObject,
-) -> Result<JsonObject, DecisionRefusal<X>> {
-    materialize_lifecycle_defaults(catalog, key, values, false)
-}
-
-fn materialize_lifecycle_defaults<X>(
-    catalog: &TypeCatalog<'_>,
-    key: &FactKey,
-    values: &JsonObject,
-    validate_initial: bool,
-) -> Result<JsonObject, DecisionRefusal<X>> {
-    let mut values = values.clone();
-    let effective = catalog.lifecycles(&key.object_type);
-    if let Some(unresolved) = catalog
-        .lifecycle_properties(&key.object_type)
-        .into_iter()
-        .find(|property| !effective.contains_key(property))
-    {
-        return Err(DecisionRefusal::UnresolvedLifecycle {
-            key: key.clone(),
-            lifecycle: unresolved.as_str().to_owned(),
-        });
-    }
-    for lifecycle in effective.into_values() {
-        let property = lifecycle.property.as_str();
-        let default = catalog
-            .default_of(&key.object_type, &lifecycle.property)
-            .filter(|_| !values.contains_key(property));
-        if let Some(default) = default {
-            let default =
-                JsonValue::from_ir(default).map_err(|error| DecisionRefusal::InvalidOutput {
-                    reason: format!("the default of `{property}`: {error}"),
-                })?;
-            values.insert(property.to_owned(), default);
-        }
-        if validate_initial {
-            let state = match values.get(property) {
-                Some(JsonValue::String(state)) => Some(state),
-                _ => None,
-            };
-            if !state.is_some_and(|state| lifecycle.initial.contains(state)) {
-                return Err(DecisionRefusal::InvalidInitialState {
-                    key: key.clone(),
-                    lifecycle: property.to_owned(),
-                    state: state.cloned(),
-                    initial: lifecycle.initial.clone(),
-                });
-            }
-        }
-    }
-    Ok(values)
-}
-
-/// The effective lifecycle of `lifecycle`, then the firing of `transition`
-/// from the object's current state under `Lifecycle::fire` — the per-call
-/// semantics `norn-checker` uses for `fire_transition` (same codes).
-/// Returns the transition and the state it leaves.
-fn resolve_transition<X>(
-    catalog: &TypeCatalog<'_>,
-    key: &FactKey,
-    values: &JsonObject,
-    lifecycle: &PropertyId,
-    transition: &TransitionId,
-) -> Result<(Transition, String), DecisionRefusal<X>> {
-    let Some(declared) = catalog.lifecycle(&key.object_type, lifecycle) else {
-        let lifecycle_name = lifecycle.as_str().to_owned();
-        return Err(
-            if catalog
-                .lifecycle_properties(&key.object_type)
-                .contains(lifecycle)
-            {
-                DecisionRefusal::UnresolvedLifecycle {
-                    key: key.clone(),
-                    lifecycle: lifecycle_name,
-                }
-            } else {
-                DecisionRefusal::UnknownLifecycle {
-                    key: key.clone(),
-                    lifecycle: lifecycle_name,
-                }
-            },
-        );
-    };
-    let current = match values.get(lifecycle.as_str()) {
-        Some(JsonValue::String(state)) => Some(state.clone()),
-        _ => None,
-    };
-    match declared.fire(transition.as_str(), current.as_deref()) {
-        Ok(fired) => Ok((fired.clone(), current.unwrap_or_default())),
-        Err(FiringRefusal::UnknownTransition) => Err(DecisionRefusal::UnknownTransition {
-            key: key.clone(),
-            lifecycle: lifecycle.as_str().to_owned(),
-            transition: transition.as_str().to_owned(),
-        }),
-        Err(FiringRefusal::NotFromState) => Err(DecisionRefusal::NotFromState {
-            lifecycle: lifecycle.as_str().to_owned(),
-            key: Box::new(key.clone()),
-            transition: transition.as_str().to_owned(),
-            current,
-            from: declared
-                .transitions
-                .iter()
-                .find(|candidate| candidate.id == *transition)
-                .map_or_default(|candidate| candidate.from.clone()),
-        }),
-    }
-}
-
-/// Evaluates every guard of `declared` against the object's state before
-/// the change (the checker does not: guards read the object).
-fn check_guards<X>(
-    key: &FactKey,
-    values: &JsonObject,
-    declared: &Transition,
-) -> Result<(), DecisionRefusal<X>> {
-    if declared.guards.is_empty() {
-        return Ok(());
-    }
-    let diagnostic = declared
-        .guard_refusal_code
-        .as_deref()
-        .and_then(norn_checker::codes::lookup)
-        .map(|entry| entry.code);
-    let guard_error = |guard: &str, reason: String| DecisionRefusal::GuardError {
-        diagnostic,
-        key: Box::new(key.clone()),
-        transition: declared.id.as_str().to_owned(),
-        guard: guard.to_owned(),
-        reason,
-    };
-    let object = values
-        .iter()
-        .map(|(name, value)| expr_value(value).map(|value| (name.clone(), value)))
-        .collect::<Result<BTreeMap<_, _>, _>>();
-    let context = match object {
-        Ok(object) => ExprValue::object([("self", ExprValue::Object(object))]),
-        Err(reason) => {
-            let first = declared.guards.first().map_or("", |guard| guard.as_str());
-            return Err(guard_error(first, reason));
-        }
-    };
-    for guard in &declared.guards {
-        match guard_holds(guard.as_str(), &context) {
-            Ok(true) => {}
-            Ok(false) => {
-                return Err(DecisionRefusal::GuardFalse {
-                    diagnostic,
-                    key: key.clone(),
-                    transition: declared.id.as_str().to_owned(),
-                    guard: guard.as_str().to_owned(),
-                });
-            }
-            Err(reason) => return Err(guard_error(guard.as_str(), reason)),
-        }
-    }
-    Ok(())
 }
 
 /// Evaluates one guard; `Ok` only for a boolean result.

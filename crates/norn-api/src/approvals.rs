@@ -1178,6 +1178,13 @@ impl<E: SqlEngine> CellHost for WouldCommit<'_, E> {
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         self.stop(commit)
     }
+    fn commit_stamped(
+        &mut self,
+        commit: CellCommit<FactEvent, RuntimeObject, RuntimeObject>,
+        _proof: norn_kernel::CreatorStampProof,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        self.stop(commit)
+    }
     fn perform(&mut self) -> Result<Option<Performed<RuntimeObject>>, CellError> {
         Ok(None)
     }

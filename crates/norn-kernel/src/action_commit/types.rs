@@ -930,9 +930,7 @@ pub(super) struct Pending {
     pub(super) decision_links: Vec<norn_ir::LinkChange>,
     /// RECEIPT-EFFECT-1: the receipt delivery this commit consumes.
     pub(super) receipt: Option<crate::result_reconciliation::Acceptance>,
-    /// ACTOR-STAMP-1: the protected creator stamp of the object this commit
-    /// creates, built by the kernel from the verified principal.
-    pub(super) creator_stamp: Option<crate::decision_commit::CreatorStamp>,
+    pub(super) creator_stamp: Option<crate::creator_stamp::CreatorStamp>,
 }
 
 /// Per-decision limits and, when present, the shared aggregate turn meter.

@@ -61,6 +61,7 @@ pub mod cell_host;
 mod commit_check;
 mod commit_order;
 mod commit_versions;
+mod creator_stamp;
 mod decider;
 pub mod decision_commit;
 mod decision_links;
@@ -70,6 +71,7 @@ pub mod flow_identity;
 pub mod flow_turn;
 pub mod governing_laws;
 mod guard_diagnostic;
+mod independence;
 pub mod limits;
 pub mod naming_series;
 mod partition_slice;
@@ -118,6 +120,7 @@ pub use cell_host::{
     PredicateObject, PredicateQuery, PredicateReadExpectation, PredicateReadMember, Provenance,
     SerializationLane, WrittenLinkVersion, WrittenVersion, check_commit,
 };
+pub use creator_stamp::{CreatorStampProof, check_commit_stamped};
 pub use decider::{
     Decider, Decision, DecisionOf, EnvelopeKind, Step, StepError, StepOf, StepResult, fold, replay,
     step,
@@ -136,6 +139,7 @@ pub use effect::{
     InputIdentity, OwnerVersion, Timer, TimerId,
 };
 pub use envelope::{TurnEnvelopeLimits, TurnEnvelopeMeter, TurnEnvelopeUsage};
+pub use independence::{TransitionGuard, transition_guards};
 pub use limits::{
     EnvelopeLimits, IngressLimit, IngressLimitExceeded, LimitProfileRef, ResourceLimitProfile,
     SliceLimits, SliceMeter, check_envelope_bytes,

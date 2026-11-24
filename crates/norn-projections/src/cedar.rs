@@ -21,6 +21,10 @@ use norn_ir::{
     PropertyConstraints, PropertyType, PropertyTypeDef,
 };
 
+mod writer;
+
+use writer::writer_resource_kinds;
+
 /// Host-maintained attributes every projected object type carries (#2950):
 /// `acted_by`, the actors whose action calls committed on the object. Optional:
 /// an object no action touched has none.
@@ -575,29 +579,6 @@ fn cedar_principal_attribute_type(attribute: CedarPrincipalAttribute) -> &'stati
         CedarPrincipalAttribute::LongSet => "Set<Long>",
         CedarPrincipalAttribute::StringSet => "Set<String>",
     }
-}
-
-/// AUTH-SYNC-WRITER-1: commit authorizes every declared writer target of a
-/// transition or (CREATE-WRITER-1) create-only writer action. Catalog
-/// invocation targets stay tied to the primary effect.
-fn writer_resource_kinds<'a>(
-    action: &'a ActionRoot,
-    program: &ActionEffectProgram,
-) -> impl Iterator<Item = &'a str> {
-    let composed = action.synchronous_rule.is_some()
-        && matches!(
-            program,
-            ActionEffectProgram::FireTransition { .. }
-                | ActionEffectProgram::UpsertInputObject {
-                    write_mode: norn_ir::UpsertWriteMode::CreateOnly,
-                    ..
-                }
-        );
-    action
-        .writes
-        .iter()
-        .filter(move |_| composed)
-        .map(|write| write.entity_kind.as_str())
 }
 
 /// AUTH-SYNC-WRITER-1: authorization schema includes the declared writer footprint;

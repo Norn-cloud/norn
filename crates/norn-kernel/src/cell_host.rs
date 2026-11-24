@@ -978,23 +978,25 @@ pub use crate::commit_check::{CommitModel, CommitView, check_commit, check_commi
 /// value they check.
 #[derive(Debug)]
 pub struct Proposed<'c, E, C, T> {
-    commit: &'c CellCommit<E, C, T>,
+    pub(crate) commit: &'c CellCommit<E, C, T>,
 }
 
 /// The admission a proposed commit was authorized under.
-enum Admission<'c> {
+pub(crate) enum Admission<'c> {
     /// An ordinary commit: [`check_commit`].
     Plain,
     /// A kernel-prepared parent and owned-row commit: [`check_commit_owned_rows`].
     OwnedRows(Box<OwnedRowsCommitProof>),
     /// A sealed observation: [`crate::check_commit_observed`].
     Observed(&'c ObservationAuthorization),
+    /// A kernel-prepared governed create: [`crate::check_commit_stamped`].
+    Stamped(Box<crate::CreatorStampProof>),
 }
 
 /// A proposed commit with the admission its authority selected.
 pub struct Authorized<'c, E, C, T> {
-    commit: &'c CellCommit<E, C, T>,
-    admission: Admission<'c>,
+    pub(crate) commit: &'c CellCommit<E, C, T>,
+    pub(crate) admission: Admission<'c>,
 }
 
 /// A commit that passed the shared admission check, with the versions it
@@ -1017,29 +1019,6 @@ impl<'c, E, C, T> Proposed<'c, E, C, T> {
     pub const fn new(commit: &'c CellCommit<E, C, T>) -> Self {
         Self { commit }
     }
-
-    /// Select the admission from the host's authority: an observation
-    /// authorization, an owned-rows proof, or neither.
-    ///
-    /// # Errors
-    ///
-    /// [`CommitError::ObservationAuthorization`] when both are supplied.
-    pub fn authorize<X>(
-        self,
-        authorization: Option<&'c ObservationAuthorization>,
-        owned_rows: Option<OwnedRowsCommitProof>,
-    ) -> Result<Authorized<'c, E, C, T>, CommitError<X>> {
-        let admission = match (authorization, owned_rows) {
-            (None, None) => Admission::Plain,
-            (None, Some(proof)) => Admission::OwnedRows(Box::new(proof)),
-            (Some(authorization), None) => Admission::Observed(authorization),
-            (Some(_), Some(_)) => return Err(CommitError::ObservationAuthorization),
-        };
-        Ok(Authorized {
-            commit: self.commit,
-            admission,
-        })
-    }
 }
 
 impl<'c, E, C, T: Serialize> Authorized<'c, E, C, T> {
@@ -1060,6 +1039,9 @@ impl<'c, E, C, T: Serialize> Authorized<'c, E, C, T> {
             }
             Admission::Observed(authorization) => {
                 crate::check_commit_observed(self.commit, model, view, authorization)
+            }
+            Admission::Stamped(proof) => {
+                crate::check_commit_stamped(self.commit, model, view, &proof)
             }
         }?;
         Ok(Checked {
@@ -1345,6 +1327,17 @@ pub trait CellHost {
         if proof.quantity().is_some() {
             return Err(CommitError::ObservationAuthorization);
         }
+        self.commit(commit)
+    }
+
+    /// ACTOR-STAMP-1: a stamped create; the default's plain admission refuses the stamp.
+    /// # Errors
+    /// A commit refusal; nothing was applied.
+    fn commit_stamped(
+        &mut self,
+        commit: CellCommit<Self::Event, Self::Command, Self::Input>,
+        _proof: crate::CreatorStampProof,
+    ) -> Result<CommitReceipt, CommitError<Self::Error>> {
         self.commit(commit)
     }
 

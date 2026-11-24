@@ -20,8 +20,8 @@ use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionOutcome,
     ActionReadAuthzRequest, ActionReadTypeAuthzRequest, CellCommit, CellHost, Command,
     DecisionTurn, FactEvent, FactKey, FactMutation, FactVersion, FactWrite, LogicalTime,
-    SynchronousRule, TypeCatalog, World, actor_derived_fields, commit_action,
-    commit_action_with_preparation, prepare_action_input_for_call,
+    SynchronousRule, TransitionGuard, TypeCatalog, World, actor_derived_fields, commit_action,
+    commit_action_with_preparation, prepare_action_input_for_call, transition_guards,
 };
 use serde_json::{Value, json};
 
@@ -32,8 +32,11 @@ const INVOICE: &str = "ledger.Invoice";
 const POSTING: &str = "ledger.Posting";
 const TAX_CODE: &str = "ledger.TaxCode";
 const TRANSFER: &str = "supply.Transfer";
+const PAYABLE: &str = "ledger.Payable";
+const RECEIPT: &str = "ledger.GoodsReceipt";
 const SUBMITTER: &str = "person:submitter";
 const APPROVER: &str = "person:approver";
+const INVOICE_WRITER: &str = "ledger.invoice.writer.rule";
 
 /// The scoped authority mapper's current grants. A principal acts only while
 /// it holds membership, and every check reads the grants as they are now, so
@@ -163,45 +166,50 @@ fn artifacts() -> Vec<ArtifactEnvelope> {
     reason = "integration-test fixtures and assertions"
 )]
 fn writer() -> SynchronousRule {
-    admit_writer(writer_document())
+    admit_rule(&rule_document(INVOICE_WRITER))
 }
 
 #[allow(
     clippy::unwrap_used,
     reason = "integration-test fixtures and assertions"
 )]
-fn writer_document() -> Value {
+fn rule_document(id: &str) -> Value {
     documents()
         .into_iter()
-        .find(|document| document["artifactId"] == "ledger.invoice.writer.rule")
+        .find(|document| document["artifactId"] == id)
         .unwrap()
 }
 
-/// The generated writer with its fact output replaced by `facts`, and its
-/// closed output schema widened to name the protected creator, so a test can
-/// drive a writer that breaks the create contract through the kernel.
+/// The generated invoice writer with its fact output replaced by `facts`,
+/// and its closed output schema widened to name the protected creator and to
+/// fire transitions, so a test can drive a writer that breaks the create
+/// contract through the kernel.
 #[allow(
     clippy::indexing_slicing,
     reason = "integration-test fixtures and assertions"
 )]
 fn writer_emitting(facts: &str) -> SynchronousRule {
-    let mut document = writer_document();
+    let mut document = rule_document(INVOICE_WRITER);
     document["payload"]["graph"]["nodes"][1]["content"]["rules"][0]["out_facts"] = json!(facts);
+    let item = &mut document["payload"]["outputSchema"]["properties"]["facts"]["items"];
     for member in ["values", "patch"] {
-        document["payload"]["outputSchema"]["properties"]["facts"]["items"]["properties"][member]
-            ["properties"]["submitted_by"] = json!({"type": "string"});
+        item["properties"][member]["properties"]["submitted_by"] = json!({"type": "string"});
     }
-    admit_writer(document)
+    item["properties"]["op"]["enum"] = json!(["create", "patch", "transition"]);
+    for member in ["lifecycle", "transition"] {
+        item["properties"][member] = json!({"type": "string"});
+    }
+    admit_rule(&document)
 }
 
 #[allow(
     clippy::unwrap_used,
     reason = "integration-test fixtures and assertions"
 )]
-fn admit_writer(document: Value) -> SynchronousRule {
+fn admit_rule(document: &Value) -> SynchronousRule {
     SynchronousRule::admit(
         norn_ir::ActionRuleRef {
-            artifact_id: "ledger.invoice.writer.rule".into(),
+            artifact_id: document["artifactId"].as_str().unwrap().into(),
             version: "1.0.0".into(),
         },
         &serde_json::from_value(document["payload"].clone()).unwrap(),
@@ -212,6 +220,17 @@ fn admit_writer(document: Value) -> SynchronousRule {
         },
     )
     .unwrap()
+}
+
+/// ACTOR-INDEPENDENT-1: the transition guards of every fixture action, as a
+/// host binds them from its admitted actions.
+fn guards() -> Vec<TransitionGuard> {
+    let actions: Vec<ActionRoot> = documents()
+        .iter()
+        .filter(|document| document["kind"] == "action")
+        .filter_map(|document| serde_json::from_value(document["payload"].clone()).ok())
+        .collect();
+    transition_guards(&actions)
 }
 
 #[allow(
@@ -701,4 +720,171 @@ fn create_writer_cannot_write_the_creator_or_create_its_target() {
         assert_eq!(cell.store().read().dump().unwrap(), dump);
         assert!(values(&cell, INVOICE, "INV-1").is_none());
     }
+}
+
+/// ACTOR-STAMP-1 at shared host admission (Astra blocker 2): a direct
+/// `CellHost::commit` cannot create an object with a protected creator,
+/// change or clear an existing one, or delete an object that carries one.
+#[test]
+fn direct_host_commits_cannot_write_or_delete_a_protected_creator() {
+    let directory = tempfile::tempdir().unwrap();
+    let definitions = types();
+    let rules = [writer()];
+    let catalog = TypeCatalog::new(&definitions).with_action_rules(&rules);
+    let mut cell = open(&directory.path().join("ledger.sqlite"), &definitions, &[]);
+    seed_tax_codes(&mut cell);
+    let members = Members::of(&[SUBMITTER]);
+    let submit_action = action("ledger.invoice.submit");
+    let created = call(
+        &submit_action,
+        SUBMITTER,
+        submit("INV-1", "STD", 100),
+        "s-1",
+    );
+    commit_action(&mut cell, &catalog, &created, &members).unwrap();
+    let dump = cell.store().read().dump().unwrap();
+    let key = FactKey::new(INVOICE, "INV-1");
+    let stored = cell.load(&key).unwrap();
+    let mut changed = stored.values.clone().unwrap();
+    changed.insert("submitted_by".into(), RuntimeValue::String(APPROVER.into()));
+    let mut cleared = stored.values.clone().unwrap();
+    cleared.remove("submitted_by");
+    let mut forged = changed.clone();
+    forged.insert("invoice_id".into(), RuntimeValue::String("INV-2".into()));
+    for write in [
+        FactWrite {
+            key: FactKey::new(INVOICE, "INV-2"),
+            expected: FactVersion::ABSENT,
+            mutation: FactMutation::Put { values: forged },
+        },
+        FactWrite {
+            key: key.clone(),
+            expected: stored.version,
+            mutation: FactMutation::Put { values: changed },
+        },
+        FactWrite {
+            key: key.clone(),
+            expected: stored.version,
+            mutation: FactMutation::Put { values: cleared },
+        },
+        FactWrite {
+            key: key.clone(),
+            expected: stored.version,
+            mutation: FactMutation::Delete,
+        },
+    ] {
+        let mut proposal = CellCommit::empty();
+        proposal.writes.push(write);
+        let refusal = cell.commit(proposal).unwrap_err();
+        assert_eq!(refusal.code(), "commit.immutable_object", "{refusal}");
+        assert_eq!(cell.store().read().dump().unwrap(), dump);
+    }
+}
+
+#[allow(
+    clippy::unwrap_used,
+    reason = "integration-test fixtures and assertions"
+)]
+fn seed_receipt(cell: &mut Cell) {
+    let mut proposal = CellCommit::empty();
+    proposal.writes.push(FactWrite {
+        key: FactKey::new(RECEIPT, "GR-1"),
+        expected: FactVersion::ABSENT,
+        mutation: FactMutation::Put {
+            values: serde_json::from_value(json!({"receipt_id": "GR-1", "status": "received"}))
+                .unwrap(),
+        },
+    });
+    cell.commit(proposal).unwrap();
+}
+
+/// CREATE-WRITER-1 (#1101) with an unguarded secondary transition: raising a
+/// payable stamps its submitter and matches its goods receipt in one commit.
+/// A host that binds no transition guards lets no writer fire a transition.
+#[test]
+fn create_writer_fires_an_unguarded_secondary_transition_atomically() {
+    let directory = tempfile::tempdir().unwrap();
+    let definitions = types();
+    let rules = [admit_rule(&rule_document(
+        "ledger.payable.match_writer.rule",
+    ))];
+    let guards = guards();
+    let raise = action("ledger.payable.raise");
+    let members = Members::of(&[SUBMITTER]);
+    let input = json!({"payable_id": "PAY-1", "receipt_id": "GR-1", "amount": 50});
+
+    let unbound = TypeCatalog::new(&definitions).with_action_rules(&rules);
+    let mut cell = open(&directory.path().join("unbound.sqlite"), &definitions, &[]);
+    seed_receipt(&mut cell);
+    let dump = cell.store().read().dump().unwrap();
+    let request = call(&raise, SUBMITTER, input.clone(), "p-1");
+    let refusal = commit_action(&mut cell, &unbound, &request, &members).unwrap_err();
+    assert_eq!(refusal.code(), "core.txn.unchecked_writer", "{refusal}");
+    assert_eq!(cell.store().read().dump().unwrap(), dump);
+
+    let catalog = TypeCatalog::new(&definitions)
+        .with_action_rules(&rules)
+        .with_transition_guards(&guards);
+    let mut cell = open(&directory.path().join("bound.sqlite"), &definitions, &[]);
+    seed_receipt(&mut cell);
+    let request = call(&raise, SUBMITTER, input, "p-1");
+    assert!(matches!(
+        commit_action(&mut cell, &catalog, &request, &members).unwrap(),
+        ActionOutcome::Committed { .. }
+    ));
+    let payable = values(&cell, PAYABLE, "PAY-1").expect("created payable");
+    assert_eq!(text(&payable, "submitted_by"), Some(SUBMITTER));
+    let receipt = values(&cell, RECEIPT, "GR-1").unwrap();
+    assert_eq!(text(&receipt, "status"), Some("matched"));
+}
+
+/// ACTOR-INDEPENDENT-1 at commit (Astra ruling): the guard covers the
+/// effective transition. A writer firing the guarded approval on another
+/// invoice refuses, and a sibling action that omits `independentOf` is held
+/// to the guard bound from the admitted actions.
+#[test]
+fn guarded_transition_holds_for_writers_and_sibling_actions() {
+    let directory = tempfile::tempdir().unwrap();
+    let definitions = types();
+    let guards = guards();
+    let members = Members::of(&[SUBMITTER, APPROVER]);
+    let submit_action = action("ledger.invoice.submit");
+
+    let rules = [writer()];
+    let catalog = TypeCatalog::new(&definitions)
+        .with_action_rules(&rules)
+        .with_transition_guards(&guards);
+    let mut cell = open(&directory.path().join("sibling.sqlite"), &definitions, &[]);
+    seed_tax_codes(&mut cell);
+    let created = call(
+        &submit_action,
+        SUBMITTER,
+        submit("INV-1", "STD", 100),
+        "s-1",
+    );
+    commit_action(&mut cell, &catalog, &created, &members).unwrap();
+    let dump = cell.store().read().dump().unwrap();
+    let mut sibling = action("ledger.invoice.approve");
+    sibling.action_id = "ledger.invoice.fast_approve".into();
+    sibling.independent_of.clear();
+    let own = call(&sibling, SUBMITTER, json!({"invoice_id": "INV-1"}), "f-own");
+    let refusal = commit_action(&mut cell, &catalog, &own, &members).unwrap_err();
+    assert_eq!(refusal.code(), "action.permission_denied", "{refusal}");
+    assert_eq!(cell.store().read().dump().unwrap(), dump);
+
+    let rules = [writer_emitting(
+        "[{op: 'transition', objectType: 'ledger.Invoice', key: 'INV-1', lifecycle: 'status', transition: 'approve'}]",
+    )];
+    let catalog = TypeCatalog::new(&definitions)
+        .with_action_rules(&rules)
+        .with_transition_guards(&guards);
+    let routed = call(
+        &submit_action,
+        SUBMITTER,
+        submit("INV-2", "STD", 100),
+        "s-2",
+    );
+    let refusal = commit_action(&mut cell, &catalog, &routed, &members).unwrap_err();
+    assert_eq!(refusal.code(), "core.txn.unchecked_writer", "{refusal}");
+    assert_eq!(cell.store().read().dump().unwrap(), dump);
 }

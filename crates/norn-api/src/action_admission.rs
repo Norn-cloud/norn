@@ -103,6 +103,8 @@ pub fn prepare_action_model(model: &norn_cell::Model) -> Result<norn_cell::Model
 pub(crate) struct RetainedActions {
     pub(crate) actions: Vec<(ArtifactEnvelope, ActionRoot)>,
     pub(crate) rules: Vec<SynchronousRule>,
+    /// ACTOR-INDEPENDENT-1: the transitions the retained actions guard.
+    pub(crate) guards: Vec<norn_kernel::TransitionGuard>,
     /// APPROVAL-REVISION-1: each action's definition digest, by action id.
     digests: BTreeMap<String, String>,
 }
@@ -204,6 +206,7 @@ impl RetainedActions {
             );
         }
         Ok(Self {
+            guards: norn_kernel::transition_guards(actions.iter().map(|(_, action)| action)),
             actions,
             rules,
             digests,

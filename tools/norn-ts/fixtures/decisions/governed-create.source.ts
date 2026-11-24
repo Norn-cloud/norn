@@ -75,6 +75,40 @@ export const ApprovePayment = Norn.action({
   independentOf: ["submitted_by"],
 })
 
+// Accounting, #1101 create plus secondary transition: raising a payable
+// matches its goods receipt in the same commit. The receipt's `match` is not
+// guarded, so a writer may fire it; a guarded transition it may not.
+export const GoodsReceipt = Norn.type({
+  name: "ledger.GoodsReceipt", title: "Goods receipt", version: "1.0.0",
+  properties: Schema.Struct({ receipt_id: Schema.String, status: Schema.Literals(["received", "matched"]) }),
+  defaults: { status: "received" },
+  lifecycles: [{ property: "status", initial: ["received"], terminal: ["matched"], transitions: [{ id: "match", from: ["received"], to: "matched" }] }],
+})
+export const Payable = Norn.type({
+  name: "ledger.Payable", title: "Payable", version: "1.0.0",
+  properties: Schema.Struct({ payable_id: Schema.String, receipt_id: Schema.String, amount: Schema.Int, submitted_by: Schema.String }),
+  protected: ["submitted_by"],
+})
+const RaiseInput = Schema.Struct({ payable_id: Schema.String, receipt_id: Schema.String, amount: Schema.Int, submitted_by: Schema.String })
+export const MatchWriter = Norn.decision({
+  id: "ledger.payable.match_writer", title: "Match the goods receipt of a payable", version: "1.0.0", contract: "decide", scopeRequired: ["orgId", "environmentId"],
+  input: Schema.Struct({ slice: Schema.Struct({ receipt: Schema.Struct({ receipt_id: Schema.String, status: Schema.String }) }), event: Schema.Struct({ input: RaiseInput, actor: Schema.String, operationId: Schema.String }) }),
+  output: Schema.Struct({ facts: Schema.Array(Schema.Struct({ op: Schema.Literal("transition"), objectType: Schema.Literal("ledger.GoodsReceipt"), key: Schema.String, lifecycle: Schema.Literal("status"), transition: Schema.Literal("match") })), commands: Schema.Array(Schema.Struct({})), timers: Schema.Array(Schema.Struct({})) }),
+}, input => ({
+  facts: [{ op: "transition", objectType: "ledger.GoodsReceipt", key: input.event.input.receipt_id, lifecycle: "status", transition: "match" }],
+  commands: [], timers: [],
+}))
+export const RaisePayable = Norn.action({
+  id: "ledger.payable.raise", title: "Raise a payable", version: "1.0.0",
+  scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
+  input: RaiseInput, output: Schema.Struct({ payable_id: Schema.String }),
+  fromCaller: ["submitted_by"],
+  slice: [{ name: "receipt", type: GoodsReceipt, key: { property: { from: "input", property: "receipt_id" } } }],
+  synchronousRule: MatchWriter,
+  writes: [{ type: Payable, change: "created" }, { type: GoodsReceipt, change: "modified" }],
+  effect: { kind: "upsert_input_object", type: Payable, objectIdField: "payable_id", writeMode: { kind: "create_only" } },
+})
+
 // Supply chain: a transfer requester and the releasing custodian.
 export const Transfer = Norn.type({
   name: "supply.Transfer", title: "Stock transfer", version: "1.0.0",

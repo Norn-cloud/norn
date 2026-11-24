@@ -569,6 +569,9 @@ where
         }
     } else if let Some(proof) = reference_reads {
         host.commit_action_references(commit, proof, None)
+    } else if let Some(stamp) = creator_stamp {
+        // ACTOR-STAMP-1: only this kernel-issued proof admits the stamp.
+        host.commit_stamped(commit, crate::CreatorStampProof::new(stamp))
     } else {
         host.commit(commit)
     };
