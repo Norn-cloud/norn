@@ -14,7 +14,7 @@ const version = (writer: ObjectVersion["writer"], at = 3): ObjectVersion => ({ v
 test("a mapped fact names its source record and fields, the mapping rule and pin, the receipt and both times", () => {
   const card = factProvenance("code", version({ kind: "mapping", lineage }), null)
   expect(card.sources).toEqual([{ system: "synthetic-erpnext", record: "Item/erpnext/demo/Item/SYN-ERPNEXT-item", fields: ["name", "custom_norn_ref", "code"] }])
-  expect(card.transform).toEqual({ kind: "mapping", artifactId: "erpnext.three.mapping", version: "erpnext.three.mapping@0.1.0", sha256: lineage.mappingPin.sha256, rule: "item.code", upstream: 0 })
+  expect(card.transform).toEqual({ kind: "mapping", artifactId: "erpnext.three.mapping", version: "erpnext.three.mapping@0.2.0", sha256: lineage.mappingPin.sha256, rule: "item.code", upstream: 0 })
   expect(card.receipt).toEqual({ kind: "commit", commit: 43 })
   expect(card.digests).toEqual([{ label: "Bundle", value: lineage.bundleDigest ?? null }, { label: "Document", value: lineage.documentDigest ?? null }])
   expect(card.asOf).toEqual([{ label: "Recorded", value: "2026-11-02T12:00:00Z" }, { label: "Written", value: "2026-11-12T10:00:00.000Z" }])
@@ -38,7 +38,7 @@ test("without a history entry the record's own lineage is the card; a withheld d
 test("a fact the mapping names no field for keeps the record and the mapping, with no fields or times invented", () => {
   const card = factProvenance("not_mapped", version({ kind: "mapping", lineage }), null)
   expect(card.sources).toEqual([{ system: "synthetic-erpnext", record: "Item/erpnext/demo/Item/SYN-ERPNEXT-item", fields: [] }])
-  expect(card.transform).toMatchObject({ kind: "mapping", rule: null, version: "0.1.0" })
+  expect(card.transform).toMatchObject({ kind: "mapping", rule: null, version: "0.2.0" })
   expect(card.asOf.map(({ label }) => label)).toEqual(["Written"])
 })
 

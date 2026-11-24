@@ -1,10 +1,12 @@
 import { expect, mock, test } from "bun:test"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { RouterProvider, createMemoryHistory, createRootRoute, createRouter } from "@tanstack/react-router"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { renderToStaticMarkup } from "react-dom/server"
-import { evaluateQuestion, traceQuestion } from "../src/lib/evaluate.ts"
+import { evaluateQuestion, traceQuestion, type Evaluation } from "../src/lib/evaluate.ts"
 import { readDocument } from "../src/lib/exact.ts"
+import { recentWindow } from "../src/lib/metrics.ts"
 
 // The recorded transport reads fixtures through Vite's import.meta.glob, which bun test lacks.
 mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
@@ -55,6 +57,41 @@ test("a built question's records are traced with its lineage handle passed back 
   const read = await traceQuestion(question, handle, "2026-W28", answer(200, trace))
   expect(calls.at(-1)).toEqual({ path: "/api/host/v1/questions:trace?orgId=org_other&environmentId=warehouse", body: { question, lineageRef: handle, bucket: "2026-W28" } })
   expect(read.kind).toBe("read")
+})
+
+test("a typed compute refusal keeps the cell's reason while an unavailable response stays unavailable", async () => {
+  const refusal = {
+    format: "norn/refusal@2", retryable: false, reason: null,
+    code: "core.compute.unsupported_engine", category: "precondition",
+    message: "the question cannot be evaluated at the requested frontier",
+    explanation: "the admitted computation or exact-result precondition is not satisfied",
+  }
+  const computed = await evaluateQuestion(question, answer(422, JSON.stringify(refusal)))
+  expect(computed).toEqual({ kind: "refused", refusal })
+  expect(await evaluateQuestion(question, answer(422, '{"error":"invalid gateway response"}')))
+    .toEqual({ kind: "unavailable", status: 422 })
+  const unavailable = await evaluateQuestion(question, answer(503, '{"code":"host.unavailable","message":"unavailable"}'))
+  expect(unavailable).toEqual({ kind: "unavailable", status: 503 })
+
+  const { HomePage } = await import("../src/home.tsx")
+  const router = createRouter({
+    routeTree: createRootRoute({ component: HomePage }),
+    history: createMemoryHistory({ initialEntries: ["/"] }),
+  })
+  await router.load()
+  const metric = { name: "measure", objectType: "test.Record", expression: "amount", label: "sum(amount)", kind: "simple", timeProperty: "date", numerator: null }
+  const { studioScopeKey } = await import("../src/lib/definitions.ts")
+  const home = (evaluation: Evaluation) => {
+    const client = new QueryClient()
+    const scope = { orgId: "org_demo", environmentId: "analytics" }
+    client.setQueryData(["studio-scope"], scope)
+    client.setQueryData(["studio-mode", studioScopeKey(scope)], { kind: "live", scope })
+    client.setQueryData(["metrics"], { document: { metrics: [metric] } })
+    client.setQueryData(["key-number", metric.name, recentWindow(Date.now()).start], evaluation)
+    return renderToStaticMarkup(<QueryClientProvider client={client}><RouterProvider router={router} /></QueryClientProvider>)
+  }
+  expect(home(computed)).toContain(`Record · Total amount (not shown). ${refusal.message}`)
+  expect(home(unavailable)).toContain("Record · Total amount (not shown). The cell did not answer.")
 })
 
 test("a run answer renders like a published one, without a link to a published page", () => {

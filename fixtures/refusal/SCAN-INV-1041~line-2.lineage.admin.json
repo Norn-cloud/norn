@@ -1,7 +1,7 @@
 {
   "status": 200,
   "body": {
-    "bundleDigest": "6bd4f6381bd5a3a6e66c25479fbc0a34b0991e38e172f8d672257acdfe515f83",
+    "bundleDigest": "dd84e83f60971738fccac63658af4dd41be08f1b5253300659a1824792490aa3",
     "sourceRecordRef": {
       "system": "synthetic-scans",
       "record": "Document Line/synthetic-scans/demo/SCAN-INV-1041~line-2"

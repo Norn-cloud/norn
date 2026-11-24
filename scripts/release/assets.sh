@@ -2,13 +2,16 @@
 # Build and check the files a drop release attaches. The release-assets
 # workflow runs each command; so does any local or Boat proof of it.
 #
-#   assets.sh tools [PREFIX]       install zig and cargo-zigbuild; print the bin directory
-#   assets.sh version TAG          the package version for a release tag
-#   assets.sh cli PLATFORM OUT     OUT/norn-PLATFORM.tar.gz (the norn binary, LICENSE, NOTICE)
-#   assets.sh smoke PLATFORM OUT   run, or for macOS inspect, what `cli` built
-#   assets.sh sdk TAG OUT          OUT/norn-sdk-VERSION.tgz (packages/norn-sdk)
-#   assets.sh pyclient TAG OUT       OUT/norn_client-VERSION.tar.gz and the wheel
-#   assets.sh sums OUT             OUT/SHA256SUMS over every file in OUT
+#   assets.sh tools [PREFIX]           install zig and cargo-zigbuild; print the bin directory
+#   assets.sh version TAG              the package version for a release tag
+#   assets.sh cli PLATFORM OUT         OUT/norn-PLATFORM.tar.gz (the norn binary, LICENSE, NOTICE)
+#   assets.sh smoke PLATFORM OUT       run, or for macOS inspect, what `cli` built
+#   assets.sh dev-host PLATFORM OUT    OUT/norn-dev-host-PLATFORM.tar.gz (norn-dev-host, LICENSE, NOTICE)
+#   assets.sh smoke-dev-host PLAT OUT  run, or for macOS inspect, what `dev-host` built
+#   assets.sh wasm OUT                 OUT/norn-checker-wasm.tar.gz (norn-checker-wasm package, LICENSE, NOTICE)
+#   assets.sh sdk TAG OUT              OUT/norn-sdk-VERSION.tgz (packages/norn-sdk)
+#   assets.sh pyclient TAG OUT         OUT/norn_client-VERSION.tar.gz and the wheel
+#   assets.sh sums OUT                 OUT/SHA256SUMS over every file in OUT
 #
 # PLATFORM is linux-x64, linux-arm64, macos-arm64 or macos-x64. Every build is
 # cross-compiled on Linux x86_64 with zig as the linker; the Linux binaries are
@@ -79,6 +82,36 @@ commit_time() {
   git log -1 --format=%ct HEAD
 }
 
+# No macOS machine is available to the release: check that the file is a
+# Mach-O for the right CPU, and that an arm64 one carries a code signature
+# (macOS refuses to run an unsigned arm64 binary).
+check_macho() {
+  local platform=$1 binary=$2 require_cf=${3:-0}
+  python3 -I - "$platform" "$binary" "$require_cf" << 'PY'
+import struct, sys
+platform, path, require_cf = sys.argv[1:]
+data = open(path, "rb").read()
+magic, cpu, _sub, _type, ncmds, _size, _flags, _reserved = struct.unpack_from("<IiiIIIII", data)
+expected = {"macos-arm64": 0x0100000C, "macos-x64": 0x01000007}[platform]
+assert magic == 0xFEEDFACF, f"not a 64-bit Mach-O: {magic:#x}"
+assert cpu == expected, f"cpu {cpu:#x}, expected {expected:#x}"
+offset, commands, dylibs = 32, [], []
+for _ in range(ncmds):
+    cmd, size = struct.unpack_from("<II", data, offset)
+    commands.append(cmd)
+    if cmd in (0xC, 0x80000018):  # LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB
+        name_at = offset + struct.unpack_from("<I", data, offset + 8)[0]
+        dylibs.append(data[name_at : data.index(b"\0", name_at)].decode())
+    offset += size
+signed = 0x1D in commands
+assert signed or platform == "macos-x64", "arm64 binary has no LC_CODE_SIGNATURE"
+if require_cf == "1":
+    framework = "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
+    assert framework in dylibs, f"CoreFoundation is not linked from its system path: {dylibs}"
+print(f"{platform}: Mach-O cpu {cpu:#x}, code signature: {signed}, links {dylibs}")
+PY
+}
+
 # A reproducible archive of DIR's listed members.
 archive() {
   local out=$1 dir=$2
@@ -143,31 +176,7 @@ case "$cmd" in
       linux-x64) run=("$stage/norn") ;;
       linux-arm64) run=(qemu-aarch64-static "$stage/norn") ;;
       macos-*)
-        # No macOS machine is available to the release: check that the file is a
-        # Mach-O for the right CPU, and that an arm64 one carries a code signature
-        # (macOS refuses to run an unsigned arm64 binary).
-        python3 -I - "$platform" "$stage/norn" << 'PY'
-import struct, sys
-platform, path = sys.argv[1:]
-data = open(path, "rb").read()
-magic, cpu, _sub, _type, ncmds, _size, _flags, _reserved = struct.unpack_from("<IiiIIIII", data)
-expected = {"macos-arm64": 0x0100000C, "macos-x64": 0x01000007}[platform]
-assert magic == 0xFEEDFACF, f"not a 64-bit Mach-O: {magic:#x}"
-assert cpu == expected, f"cpu {cpu:#x}, expected {expected:#x}"
-offset, commands, dylibs = 32, [], []
-for _ in range(ncmds):
-    cmd, size = struct.unpack_from("<II", data, offset)
-    commands.append(cmd)
-    if cmd in (0xC, 0x80000018):  # LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB
-        name_at = offset + struct.unpack_from("<I", data, offset + 8)[0]
-        dylibs.append(data[name_at : data.index(b"\0", name_at)].decode())
-    offset += size
-signed = 0x1D in commands
-assert signed or platform == "macos-x64", "arm64 binary has no LC_CODE_SIGNATURE"
-framework = "/System/Library/Frameworks/CoreFoundation.framework/Versions/A/CoreFoundation"
-assert framework in dylibs, f"CoreFoundation is not linked from its system path: {dylibs}"
-print(f"{platform}: Mach-O cpu {cpu:#x}, code signature: {signed}, links {dylibs}")
-PY
+        check_macho "$platform" "$stage/norn" 1
         rm -rf "$stage"
         exit 0
         ;;
@@ -176,6 +185,62 @@ PY
     "${run[@]}" openapi > "$stage/openapi.json"
     python3 -I -c 'import json, sys; json.load(open(sys.argv[1]))' "$stage/openapi.json"
     echo "$platform: norn --version and norn openapi ran"
+    rm -rf "$stage"
+    ;;
+
+  dev-host)
+    platform=${1:?usage: assets.sh dev-host PLATFORM OUT}
+    out=${2:?usage: assets.sh dev-host PLATFORM OUT}
+    target=$(target_of "$platform")
+    export RUSTUP_TOOLCHAIN=$TOOLCHAIN CARGO_INCREMENTAL=0
+    if [[ $platform == macos-* ]]; then
+      sdk=$(mktemp -d)
+      macos_sdk "$sdk"
+      export SDKROOT=$sdk
+    fi
+    cargo zigbuild --locked --release -p norn-cell-do --bin norn-dev-host --target "$target"
+    stage=$(mktemp -d)
+    cp "${CARGO_TARGET_DIR:-target}/$target/release/norn-dev-host" LICENSE NOTICE "$stage/"
+    mkdir -p "$out"
+    archive "$out/norn-dev-host-$platform.tar.gz" "$stage" norn-dev-host LICENSE NOTICE
+    rm -rf "$stage" "${sdk:-}"
+    ;;
+
+  smoke-dev-host)
+    platform=${1:?usage: assets.sh smoke-dev-host PLATFORM OUT}
+    out=${2:?usage: assets.sh smoke-dev-host PLATFORM OUT}
+    stage=$(mktemp -d)
+    tar -xzf "$out/norn-dev-host-$platform.tar.gz" -C "$stage"
+    case "$platform" in
+      linux-x64) run=("$stage/norn-dev-host") ;;
+      linux-arm64) run=(qemu-aarch64-static "$stage/norn-dev-host") ;;
+      macos-*)
+        check_macho "$platform" "$stage/norn-dev-host" 0
+        rm -rf "$stage"
+        exit 0
+        ;;
+    esac
+    "${run[@]}" --help > /dev/null
+    echo "$platform: norn-dev-host --help ran"
+    rm -rf "$stage"
+    ;;
+
+  wasm)
+    out=${1:?usage: assets.sh wasm OUT}
+    mkdir -p "$out" && out=$(cd "$out" && pwd)
+    export RUSTUP_TOOLCHAIN=$TOOLCHAIN CARGO_INCREMENTAL=0
+    stage=$(mktemp -d)
+    crates/norn-checker-wasm/scripts/build-pkg.sh "$stage/pkg"
+    cp LICENSE NOTICE "$stage/pkg/"
+    archive "$out/norn-checker-wasm.tar.gz" "$stage/pkg" \
+      norn_checker_wasm.js \
+      norn_checker_wasm.d.ts \
+      norn_checker_wasm_bg.wasm \
+      norn_checker_wasm_bg.wasm.d.ts \
+      package.json \
+      SIZE.txt \
+      LICENSE \
+      NOTICE
     rm -rf "$stage"
     ;;
 

@@ -1,4 +1,4 @@
-import { CellUnavailable, readStudioScope, scopedHostFetch } from "./definitions.ts"
+import { CellUnavailable, readStudioScope, sameStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
 
 /**
  * Governed actions from Studio: the catalog the cell offers this reader, and one call.
@@ -86,6 +86,14 @@ export type CatalogRead =
   /** The cell does not serve the action routes yet (404 without a refusal, or 503: no host). */
   | { readonly kind: "unavailable" }
   | { readonly kind: "refused"; readonly status: number; readonly code: string; readonly message: string }
+  /** The server-reported scope moved away from the scope this call was bound to; no request reached the new cell. */
+  | { readonly kind: "scope-changed" }
+
+export interface ActionScopeOptions {
+  readonly scope?: StudioScope
+  readonly signal?: AbortSignal
+  readonly onScopeMismatch?: (actual: StudioScope | null) => void
+}
 
 /** An approval-gated call (APPROVAL-1): 202, nothing committed yet; a decider settles it in the inbox. */
 export interface PendingDecision { readonly id: string; readonly expiresAtMs: number }
@@ -130,22 +138,39 @@ function refusalOf(text: string): Refusal | null {
   return { code, message: typeof message === "string" ? message : code, diagnostics: list, ...typeof explanation === "string" ? { explanation } : {}, ...disclosed ? { reason: disclosed } : {} }
 }
 
-async function scoped(fetcher: Fetch) {
-  const scope = await readStudioScope(fetcher)
-  return scope === null ? null : scopedHostFetch(fetcher, "/api/host", async () => scope)
+async function scoped(fetcher: Fetch, options: ActionScopeOptions = {}): Promise<{ readonly kind: "ok"; readonly call: Fetch } | { readonly kind: "no-cell" } | { readonly kind: "scope-changed" }> {
+  const scope = await readStudioScope(fetcher, options.signal)
+  if (options.scope !== undefined && !sameStudioScope(scope, options.scope)) {
+    options.onScopeMismatch?.(scope)
+    return { kind: "scope-changed" }
+  }
+  return scope === null ? { kind: "no-cell" } : { kind: "ok", call: scopedHostFetch(fetcher, "/api/host", async () => scope) }
 }
 
 /**
  * The catalog for `objectKind`; with `objectId`, only what can act on that record in its current
  * state (ACTION-CATALOG-STATE-1). The cell decides the list; Studio filters nothing.
  */
-export async function listActions(objectKind: string | undefined, fetcher: Fetch = defaultFetch, objectId?: string): Promise<CatalogRead> {
-  let call
-  try { call = await scoped(fetcher) } catch (error) { if (error instanceof CellUnavailable) return { kind: "unavailable" }; throw error }
-  if (call === null) return { kind: "no-cell" }
+export async function listActions(
+  objectKind: string | undefined,
+  fetcher: Fetch = defaultFetch,
+  objectId?: string,
+  options: ActionScopeOptions = {},
+): Promise<CatalogRead> {
+  let resolved
+  try { resolved = await scoped(fetcher, options) } catch (error) {
+    if (options.signal?.aborted) throw error
+    if (error instanceof CellUnavailable) return { kind: "unavailable" }
+    throw error
+  }
+  if (resolved.kind !== "ok") return resolved
   const query = objectKind === undefined ? "" : `?${new URLSearchParams({ objectKind, ...objectId === undefined ? {} : { objectId } })}`
-  const response = await call(`/v1/actions${query}`, { headers: { accept: "application/json" } })
+  const response = await resolved.call(`/v1/actions${query}`, {
+    headers: { accept: "application/json" },
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+  })
   const text = await response.text()
+  if (options.signal?.aborted) return { kind: "scope-changed" }
   if (response.status === 404 || response.status === 503) return { kind: "unavailable" }
   if (response.ok) {
     let items: unknown
@@ -159,13 +184,21 @@ export async function listActions(objectKind: string | undefined, fetcher: Fetch
 }
 
 /** Send one call. `input` is already-encoded JSON text, so exact numbers reach the cell as typed. */
-export async function callAction(actionId: string, input: string, idempotencyKey: string, fetcher: Fetch = defaultFetch): Promise<CallResult> {
-  const call = await scoped(fetcher)
-  if (call === null) return { kind: "no-cell" }
-  const response = await call(`/v1/actions/${encodeURIComponent(actionId)}`, {
+export async function callAction(
+  actionId: string,
+  input: string,
+  idempotencyKey: string,
+  fetcher: Fetch = defaultFetch,
+  options: ActionScopeOptions = {},
+): Promise<CallResult> {
+  const resolved = await scoped(fetcher, options)
+  if (resolved.kind === "no-cell") return { kind: "no-cell" }
+  if (resolved.kind === "scope-changed") return { kind: "unavailable" }
+  const response = await resolved.call(`/v1/actions/${encodeURIComponent(actionId)}`, {
     method: "POST",
     headers: { accept: "application/json", "content-type": "application/json" },
     body: `{"input":${input},"idempotencyKey":${JSON.stringify(idempotencyKey)}}`,
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
   })
   const text = await response.text()
   if (response.status === 202) {
@@ -224,7 +257,8 @@ export interface FormField {
   readonly spec: Spec
 }
 
-const escapePointer = (name: string) => name.replaceAll("~", "~0").replaceAll("/", "~1")
+/** Escape one object member name into an RFC 6901 JSON Pointer segment (`~` → `~0`, `/` → `~1`). */
+export const escapePointer = (name: string) => name.replaceAll("~", "~0").replaceAll("/", "~1")
 const JSON_DOMAIN = ["array", "boolean", "null", "number", "object", "string"]
 
 function specOf(schema: unknown, pointer: string): { spec: Spec; nullable: boolean } {
@@ -691,7 +725,7 @@ export function sectionsOf(fields: readonly FormField[], groups: readonly Group[
   }
   place(fields)
   // The record's id leads the form when it is required and no group places it; declared groups are never regrouped.
-  const id = idField === undefined ? undefined : rest.find((f) => f.pointer === `/${idField}` && f.required)
+  const id = idField === undefined ? undefined : rest.find((f) => f.pointer === `/${escapePointer(idField)}` && f.required)
   const others = id === undefined ? rest : rest.filter((f) => f !== id)
   const sections: Section[] = named.filter((section) => section.fields.length > 0)
   if (others.length > 0) sections.push({ id: null, title: null, fields: others })

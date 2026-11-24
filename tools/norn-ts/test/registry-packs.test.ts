@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test"
+import { beforeAll, describe, expect, test } from "bun:test"
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { join, relative } from "node:path"
 import { compileDefinitionFiles } from "../src/compiler/definitions.ts"
+import { runExamples, type CompiledExample } from "../src/examples.ts"
 import { TOOL_ROOT } from "../src/profile.ts"
 import { checker } from "./checker.ts"
 
@@ -13,45 +14,74 @@ const REPO = join(TOOL_ROOT, "../..")
 const PACK_ROOTS = [join(REPO, "registry/packs"), join(REPO, "fixtures/packs")]
 const update = process.env.NORN_PACKS_UPDATE === "1"
 
-function compiled(dir: string): any[] {
+function compiledPack(dir: string): { readonly artifacts: any[]; readonly examples: CompiledExample[] } {
   const files = readdirSync(dir).filter(f => f.endsWith(".ts")).sort().map(f => join(dir, f))
   const registryPackagePath = relative(REPO, dir).split("\\").join("/")
-  return compileDefinitionFiles(files, path => ({ scope: {}, sourcePath: relative(REPO, path), registryPackagePath })).flatMap(result => {
+  const artifacts: any[] = []
+  const examples: CompiledExample[] = []
+  for (const result of compileDefinitionFiles(files, path => ({ scope: {}, sourcePath: relative(REPO, path), registryPackagePath }))) {
     if (!result.ok) throw new Error(JSON.stringify(result.diagnostics))
-    return result.artifacts as any[]
-  })
+    artifacts.push(...(result.artifacts as any[]))
+    examples.push(...result.examples)
+  }
+  return { artifacts, examples }
 }
 
 const packs = PACK_ROOTS.flatMap(root => readdirSync(root, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => join(root, d.name)).sort())
 
-test("registry packs are generated from their typed sources", () => {
-  for (const dir of packs) {
-    const artifacts = compiled(dir)
-    const out = join(dir, "artifacts")
-    if (update) {
-      rmSync(out, { recursive: true, force: true })
-      mkdirSync(out)
-      for (const artifact of artifacts) writeFileSync(join(out, `${artifact.artifactId}.json`), `${JSON.stringify(artifact, null, 2)}\n`)
-    }
-    const committed = readdirSync(out).sort()
-    expect(committed).toEqual(artifacts.map(a => `${a.artifactId}.json`).sort())
-    for (const artifact of artifacts) expect(JSON.parse(readFileSync(join(out, `${artifact.artifactId}.json`), "utf8"))).toEqual(artifact)
-  }
-}, 60_000)
+describe("compile registry and fixture packs", () => {
+  let compiledPacks: { dir: string; artifacts: any[]; examples: CompiledExample[] }[]
+  // On a 4-vCPU Boat VM, shared compilation took 11.7s at p95 over 20 runs.
+  // The generation test took 26.7s in CI run 45290410924, so allow 3× that slower run.
+  beforeAll(() => {
+    compiledPacks = packs.map(dir => ({ dir, ...compiledPack(dir) }))
+  }, 80_000)
 
-test.skipIf(!checker)("the Rust checker admits every registry pack and link", () => {
-  const artifacts = packs.flatMap(compiled)
-  const core = join(REPO, "registry/core/artifacts")
-  const physics = ["Agent", "AgentRole", "Resource", "Commitment", "Hold", "EconomicEvent", "LedgerEffect", "Claim"]
-  // The core interfaces packs implement (physics, and the scanned-documents fixture pack's norn.SourceEvidence and norn.SourceDocument), the
-  // claim type every mapped link is recorded as (norn.ObservedLinkClaim, OBS-LINK-CONVERGE-1), plus the value types and units. Not every core interface: some (core.Order) name registry standard
-  // types (iso4217) this checker call does not install.
-  const base = [...physics.map(name => `core.${name}.interface.json`), "core.TimeInterval.interface.json", "norn.SourceEvidence.interface.json", "norn.SourceDocument.interface.json", "norn.ObservedLinkClaim.entity.json", "core.value_types.entity.json", "std.value_types.entity.json", "core.units.json", "core.time.json"]
-    .map(name => JSON.parse(readFileSync(join(core, name), "utf8")))
-  const checked = checker!.checkArtifactSet(artifacts, { base })
-  if (!checked.admitted) throw new Error(JSON.stringify(checked.diagnostics))
-  // LAW-LINK-1 regression: every registered pack law stays admitted, with no finding against it.
-  const laws = new Set(artifacts.filter(a => a.kind === "law").map(a => a.artifactId as string))
-  expect(laws.size).toBeGreaterThan(0)
-  expect(checked.diagnostics.diagnostics.filter(d => laws.has(d.artifactId ?? ""))).toEqual([])
-}, 60_000)
+  test("registry packs are generated from their typed sources", () => {
+    for (const { dir, artifacts } of compiledPacks) {
+      const out = join(dir, "artifacts")
+      if (update) {
+        rmSync(out, { recursive: true, force: true })
+        mkdirSync(out)
+        for (const artifact of artifacts) writeFileSync(join(out, `${artifact.artifactId}.json`), `${JSON.stringify(artifact, null, 2)}\n`)
+      }
+      const committed = readdirSync(out).sort()
+      expect(committed).toEqual(artifacts.map(a => `${a.artifactId}.json`).sort())
+      for (const artifact of artifacts) expect(JSON.parse(readFileSync(join(out, `${artifact.artifactId}.json`), "utf8"))).toEqual(artifact)
+    }
+  })
+
+  // The checker call took 0.87s at p95 in the same 20 Boat runs; allow headroom for pack law examples.
+  test.skipIf(!checker)("the Rust checker admits every registry pack and link", () => {
+    const artifacts = compiledPacks.flatMap(pack => pack.artifacts)
+    const examples = compiledPacks.flatMap(pack => pack.examples)
+    const core = join(REPO, "registry/core/artifacts")
+    const physics = ["Agent", "AgentRole", "Resource", "Commitment", "Hold", "EconomicEvent", "LedgerEffect", "Claim"]
+    // The core interfaces packs implement (physics, and the scanned-documents fixture pack's norn.SourceEvidence and norn.SourceDocument), the
+    // claim type every mapped link is recorded as (norn.ObservedLinkClaim, OBS-LINK-CONVERGE-1), `identity.BusinessUnit` (referenced by
+    // `org.OrgUnit.business_unit`) with its base closure, plus the value types and units. Not every core interface: some (core.Order) name registry standard
+    // types (iso4217) this checker call does not install.
+    const base = [
+      ...physics.map(name => `core.${name}.interface.json`),
+      "core.TimeInterval.interface.json",
+      "identity.BusinessUnit.entity.json",
+      "identity.Directory.interface.json",
+      "party.Organization.entity.json",
+      "norn.SourceEvidence.interface.json",
+      "norn.SourceDocument.interface.json",
+      "norn.ObservedLinkClaim.entity.json",
+      "core.value_types.entity.json",
+      "std.value_types.entity.json",
+      "core.units.json",
+      "core.time.json",
+    ].map(name => JSON.parse(readFileSync(join(core, name), "utf8")))
+    const checked = checker!.checkArtifactSet(artifacts, { base })
+    if (!checked.admitted) throw new Error(JSON.stringify(checked.diagnostics))
+    // LAW-LINK-1 regression: every registered pack law stays admitted, with no finding against it.
+    const laws = new Set(artifacts.filter(a => a.kind === "law").map(a => a.artifactId as string))
+    expect(laws.size).toBeGreaterThan(0)
+    expect(checked.diagnostics.diagnostics.filter(d => laws.has(d.artifactId ?? ""))).toEqual([])
+    // LAW-EXAMPLE-1 regression: every registered pack example agrees with the Rust checker's law semantics.
+    if (examples.length > 0) expect(runExamples(checker!, artifacts, examples)).toEqual([])
+  }, 10_000)
+})

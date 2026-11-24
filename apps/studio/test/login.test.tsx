@@ -133,3 +133,37 @@ test("a tenant switch forgets parked calls, and switching back does not restore 
   expect(await read(new Response(null, { status: 401 }))).toBeNull()
   expect(parkedCalls.get(sessionKey(inOrg("o1")), form)).toBeUndefined()
 })
+
+// PR #1631 S1: changing the active cell environment within the SAME user and org invalidates the
+// session key, forgets parked calls, and clears cached mode/learning queries.
+test("an environment switch within the same user and org invalidates sessionKey, parked calls, and cached reads", async () => {
+  const { accountQuery } = await import("../src/lib/session.ts")
+  const { sessionKey } = await import("../src/actions/kept-drafts.ts")
+  const { forgetParkedCalls, parkedCalls } = await import("../src/actions/parked-calls.ts")
+  forgetParkedCalls()
+  const inEnv = (environmentId: string | null) => ({
+    user: { id: "u1", name: "Alice", email: "a@example.com" },
+    organization: { id: "org_demo", name: "Demo", role: "member" },
+    environmentId,
+  })
+  expect(sessionKey(inEnv("env-a"))).not.toBe(sessionKey(inEnv("env-b")))
+  expect(sessionKey(inEnv("env-a"))).not.toBe(sessionKey(inEnv(null)))
+
+  const answers: Response[] = []
+  const client = new QueryClient()
+  const read = (answer: Response) => {
+    answers.push(answer)
+    return client.fetchQuery({ ...accountQuery(client, async () => answers.shift() as Response), staleTime: 0 })
+  }
+  const call = { decision: { id: "dec_env", expiresAtMs: 9 }, input: '{"amount":"5"}', key: "k-env" }
+  await read(Response.json(inEnv("env-a")))
+  parkedCalls.set(sessionKey(inEnv("env-a")), "learning.triage:{}", call)
+  client.setQueryData(["studio-mode", '["org_demo","env-a"]'], { kind: "live" })
+  client.setQueryData(["learning", "episodes", '["org_demo","env-a"]', ""], { kind: "page" })
+
+  // Same user, same org, NEW environment -> parked calls and cached reads are cleared.
+  await read(Response.json(inEnv("env-b")))
+  expect(parkedCalls.get(sessionKey(inEnv("env-a")), "learning.triage:{}")).toBeUndefined()
+  expect(client.getQueryData(["studio-mode", '["org_demo","env-a"]'])).toBeUndefined()
+  expect(client.getQueryData(["learning", "episodes", '["org_demo","env-a"]', ""])).toBeUndefined()
+})

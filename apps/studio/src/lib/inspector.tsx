@@ -36,10 +36,10 @@ export function Inspector() {
     )
   }
   return (
-    <aside aria-label="Inspector" className="sticky top-0 hidden h-svh w-80 shrink-0 flex-col border-s bg-background md:flex">
-      <div className="flex h-14 items-center gap-2 border-b px-4">
+    <aside aria-label="Inspector" className="sticky top-0 hidden h-[calc(100svh-1rem)] w-80 shrink-0 flex-col border-s border-border/80 bg-background md:flex">
+      <div className="flex h-12 items-center gap-2 border-b border-border/80 px-4">
         <div className="min-w-0 flex-1 truncate font-medium">{inspected.title}</div>
-        <Button variant="ghost" size="icon" onClick={() => inspect()}><X /><span className="sr-only">Close inspector</span></Button>
+        <Button variant="ghost" size="icon-sm" onClick={() => inspect()}><X /><span className="sr-only">Close inspector</span></Button>
       </div>
       <div className="flex-1 overflow-y-auto p-4">{inspected.body}</div>
     </aside>

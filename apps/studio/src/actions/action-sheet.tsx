@@ -3,21 +3,49 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
+import { useLocale } from "@/lib/locale"
 import { useView } from "@/lib/view"
 import { conceptTitle } from "../lib/catalog.ts"
-import { listActions, type ActionSummary, type CatalogRead, type Draft } from "../lib/actions.ts"
+import { labelIndex, pick } from "../lib/labels.ts"
+import { listActions, callAction, type ActionSummary, type CatalogRead, type Draft } from "../lib/actions.ts"
+import { studioScopeKey, type StudioScope } from "../lib/definitions.ts"
 import { useAccount } from "../lib/session.ts"
-import { ActionForm } from "./action-form.tsx"
+import { useCatalog } from "../lib/use-catalog.ts"
+import { ActionForm, type EnumLabelLookup } from "./action-form.tsx"
 import { keptDrafts, sessionKey } from "./kept-drafts.ts"
 import { parkedCalls } from "./parked-calls.ts"
 import type { ParkedCall } from "../lib/screen/call.ts"
 
+export interface ActionScopeBinding {
+  readonly scope: StudioScope | null
+  readonly onScopeMismatch?: (actual: StudioScope | null) => void
+}
+
 /**
  * The actions the cell offers this reader for one object type, or for one record in its current
- * state (the server filters; Studio shows what it gets).
+ * state (the server filters; Studio shows what it gets). When `scopeBinding` is supplied, the
+ * query is keyed by that scope and refuses to hit another scope if `/api/me` moves.
  */
-export function useActions(objectKind: string, objectId?: string, enabled = true) {
-  return useQuery<CatalogRead>({ queryKey: ["actions", objectKind, objectId ?? null], queryFn: () => listActions(objectKind, undefined, objectId), retry: false, staleTime: objectId === undefined ? 60_000 : 0, enabled })
+export function useActions(objectKind: string, objectId?: string, enabled = true, scopeBinding?: ActionScopeBinding) {
+  const scopeKey = scopeBinding === undefined ? undefined : studioScopeKey(scopeBinding.scope)
+  return useQuery<CatalogRead>({
+    queryKey: scopeKey === undefined ? ["actions", objectKind, objectId ?? null] : ["actions", objectKind, objectId ?? null, scopeKey],
+    queryFn: ({ signal }) => listActions(
+      objectKind,
+      undefined,
+      objectId,
+      scopeBinding === undefined
+        ? { signal }
+        : {
+          signal,
+          ...(scopeBinding.scope === null ? {} : { scope: scopeBinding.scope }),
+          ...(scopeBinding.onScopeMismatch === undefined ? {} : { onScopeMismatch: scopeBinding.onScopeMismatch }),
+        },
+    ),
+    retry: false,
+    staleTime: objectId === undefined ? 60_000 : 0,
+    enabled,
+  })
 }
 
 const draftKey = (open: OpenAction) => `${open.action.actionId}:${JSON.stringify(open.prefill ?? {})}`
@@ -35,8 +63,34 @@ export interface OpenAction {
  * A governed action's form in a sheet. Closing a draft with unsent changes asks first; so does
  * leaving the page. After a commit the object type's records are read again.
  */
-export function ActionSheet({ open, onClose, onView }: { readonly open: OpenAction | null; readonly onClose: () => void; readonly onView?: (objectId: string) => void }) {
+export function ActionSheet({ open, onClose, onView, onChanged, scopeBinding }: {
+  readonly open: OpenAction | null; readonly onClose: () => void; readonly onView?: (objectId: string) => void
+  /** The cell committed something: besides the type's records, read whatever else shows it again. */
+  readonly onChanged?: () => void
+  /** Optional verified scope binding so commits never cross onto a different cell environment. */
+  readonly scopeBinding?: ActionScopeBinding
+}) {
   const { view } = useView()
+  const { locale } = useLocale()
+  const { read: catalogRead } = useCatalog()
+  const boundCall = useMemo(() => {
+    const scope = scopeBinding?.scope
+    if (scope == null) return undefined
+    const onScopeMismatch = scopeBinding?.onScopeMismatch
+    return (actionId: string, input: string, key: string) =>
+      callAction(actionId, input, key, undefined, { scope, ...(onScopeMismatch === undefined ? {} : { onScopeMismatch }) })
+  }, [scopeBinding?.scope, scopeBinding?.onScopeMismatch])
+  const enumLabel = useMemo<EnumLabelLookup>(() => {
+    const artifacts = catalogRead.data?.document
+    if (open === null || artifacts === undefined) return () => undefined
+    const index = labelIndex(artifacts)
+    const objectKind = open.action.objectKind
+    return (pointer, value) => {
+      const property = pointer.split("/").filter(Boolean).at(-1)
+      if (property === undefined) return undefined
+      return pick(index, `enumValue:${objectKind}.${property}=${value}`, locale)?.text
+    }
+  }, [catalogRead.data, open, locale])
   // Kept drafts belong to the session that wrote them (#1469 S6).
   const session = sessionKey(useAccount().data)
   const kept = { get: (k: string) => keptDrafts.get(session, k), set: (k: string, d: Draft) => keptDrafts.set(session, k, d), delete: (k: string) => keptDrafts.delete(session, k) }
@@ -74,6 +128,9 @@ export function ActionSheet({ open, onClose, onView }: { readonly open: OpenActi
     // Lane links and empty-state nearest jumps can change when an action writes links or intervals.
     void client.invalidateQueries({ queryKey: ["timeline-lane"] })
     void client.invalidateQueries({ queryKey: ["timeline-nearest"] })
+    void client.invalidateQueries({ queryKey: ["inbox"] })
+    void client.invalidateQueries({ queryKey: ["profile", objectKind] })
+    void client.invalidateQueries({ queryKey: ["quarantined", objectKind] })
   }
   const close = () => {
     if (open !== null) {
@@ -115,7 +172,9 @@ export function ActionSheet({ open, onClose, onView }: { readonly open: OpenActi
                 onCommitted={() => { kept.delete(draftKey(open)); parkedCalls.delete(session, draftKey(open)); setBanner(false) }}
                 parked={parked} runNow={open.runNow === true && parked === open.parked}
                 onParked={(call) => parkedCalls.set(session, draftKey(open), call)} onUnparked={() => parkedCalls.delete(session, draftKey(open))}
-                onChanged={() => invalidate(open.action.objectKind)}
+                onChanged={() => { invalidate(open.action.objectKind); onChanged?.() }}
+                {...(boundCall === undefined ? {} : { call: boundCall })}
+                enumLabel={enumLabel}
                 technical={technical} prefill={open.prefill} onDirty={setDirty} onClose={close}
                 onView={onView === undefined ? undefined : (id) => { close(); onView(id) }} />
             </div>

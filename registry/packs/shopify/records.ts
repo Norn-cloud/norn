@@ -86,7 +86,7 @@ export const Source = Norn.sourceSchema({
 export const Mapping = Norn.mapping({
   id: "shopify.three.mapping",
   title: "shopify synthetic observations to the REA canon",
-  version: "0.1.0",
+  version: "0.2.0",
   source: {schemaId: "shopify.three.source", version: "0.1.0", sha256: "cb5f00539f986adf07b0ed0bc29f9dd2aa2606935e48cba5c306ec5693fc1120"},
   sourceContract: {kind: "generic"},
   interfaces: [Catalog, Resource, Agent, AgentRole, Commitment, EconomicEvent, Settlement],

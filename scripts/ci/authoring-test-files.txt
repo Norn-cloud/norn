@@ -31,6 +31,7 @@ test/jewelry-definitions.test.ts
 test/jewelry-demo.test.ts
 test/labels.test.ts
 test/law.test.ts
+test/local-runtime-setup.test.ts
 test/model.test.ts
 test/new-developer.test.ts
 test/ontology-pack.test.ts
@@ -52,6 +53,7 @@ test/stress-purchase.test.ts
 test/studio-access.test.ts
 test/temporal-enum.test.ts
 test/temporal-intervals.test.ts
+test/time-org-foundation.test.ts
 test/transform.test.ts
 test/translation-validation.test.ts
 test/vertical-fixture.test.ts

@@ -22,6 +22,12 @@ export interface StepReceipt {
   readonly recordedAtMs: number
   /** Display words ("you", a name, "another decider"), never an id. */
   readonly executor?: string | null
+  /**
+   * PROVISIONAL CONTRACT (#1208, PR #1631 S2): the projected episode id, when the cell names one.
+   * Studio never derives it and only links to it when the cell advertises `learning.Episode`
+   * (S1 capability gate), until the backend lane pins `episodeId` with route-produced fixtures.
+   */
+  readonly episodeId?: string | null
 }
 
 export interface RunStep {
@@ -29,6 +35,7 @@ export interface RunStep {
   readonly label: string | null
   readonly kind: StepKind
   readonly status: StepStatus
+  readonly waitingOn?: "decision" | "executor" | "timer"
   readonly startedAtMs: number | null
   readonly endedAtMs: number | null
   readonly receipts: readonly StepReceipt[]
@@ -68,7 +75,7 @@ export const newRunId = () => `run_${crypto.randomUUID()}`
 export const stepTitle = (step: Pick<RunStep, "id" | "label">) => step.label ?? humanize(step.id)
 export const runTitle = (run: Pick<Run, "flow">) => run.flow.title ?? humanize(run.flow.ruleId.replace(/\.flow\.rule$/, ""))
 
-/** `active`: a run without a timeline yet, whose state alone says it has not ended. */
+/** `active`: a run in progress without a running step or a pending decision. */
 export type Phase = "running" | "waiting" | "succeeded" | "failed" | "ended" | "active"
 
 /** Where the run stands: from its steps when the cell sends them, else from its state alone. */
@@ -82,7 +89,8 @@ export function phaseOf(run: Pick<Run, "steps" | "decision" | "state" | "termina
     return steps.some((s) => s.kind === "succeed" && s.status === "done") ? "succeeded" : "ended"
   }
   if (steps.some((s) => s.status === "running")) return "running"
-  if ((run.decision ?? null) !== null || steps.some((s) => s.status === "waiting")) return "waiting"
+  if ((run.decision ?? null) !== null || steps.some((s) => s.status === "waiting" && (s.waitingOn === "decision" || (s.waitingOn === undefined && s.kind === "decide")))) return "waiting"
+  if (steps.some((s) => s.status === "waiting")) return "active"
   if (steps.some((s) => s.status === "failed") || steps.some((s) => s.kind === "fail" && s.status === "done")) return "failed"
   if (steps.some((s) => s.kind === "succeed" && s.status === "done")) return "succeeded"
   if (steps.some((s) => s.status === "pending")) return "running"

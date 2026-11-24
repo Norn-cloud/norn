@@ -42,7 +42,9 @@ test("a record page names its type and copyable id, and offers every tab", async
   const html = await page("canon.Item", "demo/item/gold")
   expect(html).toContain("Gold scrap")
   expect(html).toContain("Copy demo/item/gold")
-  for (const tab of ["Overview", "Lineage", "Guarantees"]) expect(html).toContain(`>${tab}</button>`)
+  for (const tab of ["Overview", "Lineage", "Rules"]) expect(html).toContain(`>${tab}</button>`)
+  expect(html).not.toContain(">Guarantees</button>")
+  expect(html).toContain('href="/rules"')
   // Who may act is the cell's decision: the rail is there, and the recorded demo says no role was decided.
   expect(html).not.toContain(">Access</button>")
   expect(html).toContain("Who can see or act")
@@ -63,7 +65,7 @@ test("a value the server recorded a source for opens its provenance", async () =
 test("the technical view shows only Norn artefacts: the definition, the mapping pin and ids, and what the read lacks", async () => {
   const html = await page("canon.Item", "demo/item/gold", "technical")
   expect(html).toContain("Record document")
-  expect(html).toContain("Copy erpnext.three.mapping@0.1.0")
+  expect(html).toContain("Copy erpnext.three.mapping@0.2.0")
   // The pin as the recorded source document carries it, so a regenerated fixture moves the test with it (#1347).
   const pin = (JSON.parse(readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer/objects/canon.Item/demo~item~gold.source.json"), "utf8")) as { mappingPin: { sha256: string } }).mappingPin.sha256
   expect(html).toContain(`Copy ${pin}`)
