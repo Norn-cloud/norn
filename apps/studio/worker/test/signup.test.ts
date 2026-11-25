@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { INVITE_ONLY_MESSAGE, issueSignupInvite, SIGNUP_INVITE_HEADER, verifySignupInvite } from "../auth.ts"
+import { INVITE_ONLY_MESSAGE, issueSignupInvite, SIGNUP_CLAIM_STALE_MS, SIGNUP_INVITE_HEADER, verifySignupInvite } from "../auth.ts"
 import worker, { magicLinkEnabled, signUpEmails, type Env } from "../index.ts"
 
 const ORIGIN = "https://studio-alpha.norn.cloud"
@@ -210,6 +210,14 @@ test("an invitation is bound to its address and expiry by the deployment's secre
   expect(await verifySignupInvite("x".repeat(40), token, "owner@example.com", now)).toBeNull()
   const [version, expiry, nonce, signature] = token.split(".")
   expect(await verifySignupInvite(SECRET, [version, String(Number(expiry) + 1), nonce, signature].join("."), "owner@example.com", now)).toBeNull()
+  // An expiry further out than the 30-day maximum is refused even when correctly signed.
+  const far = await issueSignupInvite(SECRET, "owner@example.com", { now: now + 10 * 24 * 60 * 60_000, ttlMs: 30 * 24 * 60 * 60_000 })
+  expect(await verifySignupInvite(SECRET, far.token, "owner@example.com", now)).toBeNull()
+  // The signature is made with a key derived for invitations, not the raw auth secret.
+  const [, , rawNonce] = token.split(".")
+  const rawKey = await crypto.subtle.importKey("raw", new TextEncoder().encode(SECRET), { name: "HMAC", hash: "SHA-256" }, false, ["sign"])
+  const rawSignature = Buffer.from(await crypto.subtle.sign("HMAC", rawKey, new TextEncoder().encode(`norn.signup-invite.v1|owner@example.com|${expiresAt}|${rawNonce}`))).toString("base64url")
+  expect(token.endsWith(rawSignature)).toBe(false)
   expect(() => issueSignupInvite(SECRET, "not-an-address")).toThrow()
   await expect(issueSignupInvite(SECRET, "a@b.co", { ttlMs: 31 * 24 * 60 * 60_000 })).rejects.toThrow("30 days")
 })
@@ -221,9 +229,29 @@ test("the operator's invite command prints a single-use link the deployment acce
   const link = new URL(printed.split("\n")[0] ?? "")
   expect(link.origin).toBe(ORIGIN)
   expect(printed).toContain("for ada@example.com, single use")
-  expect((await signUp(env, "ada@example.com", { invite: link.searchParams.get("invite") ?? "" })).status).toBe(200)
+  // The invitation rides in the fragment, which browsers never send to a server.
+  expect(link.search).toBe("")
+  expect((await signUp(env, "ada@example.com", { invite: new URLSearchParams(link.hash.slice(1)).get("invite") ?? "" })).status).toBe(200)
   expect(users(db)).toEqual([{ email: "ada@example.com" }])
   await expect(inviteLink(undefined, ["--url", ORIGIN, "a@b.co"])).rejects.toThrow("BETTER_AUTH_SECRET")
   expect(() => parseArgs(["a@b.co"])).toThrow("usage")
   expect(() => parseArgs(["--url", ORIGIN, "--days", "31", "a@b.co"])).toThrow("--days")
+})
+
+test("a claim left by a request that died is taken over after five minutes, and the dead request's user can never be written", async () => {
+  const { db, env } = stage({ invited: "owner@example.com" })
+  const token = await invite("owner@example.com")
+  const nonce = token.split(".")[2] ?? ""
+  const nonceHash = Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(nonce))).toString("hex")
+  // A fresh claim (another request is writing the user right now) is held: this sign-up writes nothing.
+  db.run(`insert into "signup_invite_use" ("nonce_hash", "email", "user_id", "claimed_at") values (?, 'owner@example.com', 'u_dead', ?)`, [nonceHash, Date.now()])
+  await signUp(env, "owner@example.com", { invite: token })
+  expect(users(db)).toEqual([])
+  // Stale: taken over, and the account is created under the new claim.
+  db.run(`update "signup_invite_use" set "claimed_at" = ? where "nonce_hash" = ?`, [Date.now() - SIGNUP_CLAIM_STALE_MS - 1000, nonceHash])
+  expect((await signUp(env, "owner@example.com", { invite: token })).status).toBe(200)
+  expect(users(db)).toEqual([{ email: "owner@example.com" }])
+  // The superseded request, waking up, cannot insert its user; the consumed claim never moves again.
+  expect(() => db.run(`insert into "user" ("id", "name", "email", "emailVerified", "createdAt", "updatedAt") values ('u_dead', 'x', 'other@example.com', 0, '2026-01-01', '2026-01-01')`)).toThrow("signup.invite_superseded")
+  expect(() => db.run(`update "signup_invite_use" set "user_id" = 'u_late', "claimed_at" = 0 where "nonce_hash" = ?`, [nonceHash])).toThrow("signup.invite_consumed")
 })

@@ -8,7 +8,7 @@ import { issueSignupInvite, SIGNUP_INVITE_MAX_TTL_MS } from "../worker/auth.ts"
  *
  *   infisical run --env prod --path /auth -- bun scripts/signup-invite.ts --url https://studio.norn.cloud ada@example.com
  *
- * It prints the link to send the invitee; nothing is stored until they sign up with it.
+ * It prints the link to send the invitee (the invitation is in its `#invite=` fragment); nothing is stored until they sign up with it.
  */
 export function parseArgs(argv: readonly string[]): { readonly url: string; readonly email: string; readonly days: number } {
   let url = ""
@@ -30,8 +30,9 @@ export async function inviteLink(secret: string | undefined, argv: readonly stri
   if (secret === undefined || secret.length < 32) throw new Error("BETTER_AUTH_SECRET (the deployment's auth secret) is required in the environment")
   const { url, email, days } = parseArgs(argv)
   const { token, expiresAt } = await issueSignupInvite(secret, email, { now, ttlMs: days * 24 * 60 * 60_000 })
+  // In the fragment: never sent to a server, so it stays out of request logs and Referer headers.
   const link = new URL("/", url)
-  link.searchParams.set("invite", token)
+  link.hash = `invite=${token}`
   return `${link.href}\n(for ${email.trim().toLowerCase()}, single use, expires ${new Date(expiresAt).toISOString()})`
 }
 

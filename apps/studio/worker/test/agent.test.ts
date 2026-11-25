@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { compile, editableDashboard, proposalSchema, propose, systemPrompt, type Proposed } from "../agent.ts"
 import { assistant, CALLS_PER_REQUEST, HOURLY_PROPOSALS, type AssistantDeps } from "../assistant.ts"
 import type { Cell, CellAnswer } from "../cell.ts"
-import { claudeCost, neuronCost, withFallback, type Answer, type Ask, type Model } from "../model.ts"
+import { claudeCost, configuredModel, neuronCost, withFallback, workersAi, worstCallMicroUsd, type Answer, type Ask, type Model } from "../model.ts"
 import { reserve, settle } from "../proposals.ts"
 import type { CellCatalog } from "../questions.ts"
 
@@ -256,61 +256,177 @@ function withDefinitions(cell: Cell, definitions: Record<string, unknown>): Cell
   return { ...cell, get: async (path) => { const id = decodeURIComponent(path.replace("/v1/definitions/", "")); return id in definitions ? { kind: "answer", status: 200, body: definitions[id] } : cell.get(path) } }
 }
 
-test("editing sends only a dashboard's editable fields, every one through the guard; any other kind is refused before any call", async () => {
+/**
+ * The cell's guard as privacy_guard.rs behaves: each call numbers its own tokens from 1, an 8-15 digit
+ * run with a dash (so every YYYY-MM-DD date) is a [PHONE_n], an address is an [EMAIL_n], more than
+ * 20,000 characters is refused, and a restore gives back that call's values.
+ */
+function realGuard(cell: Cell) {
+  const calls: { text: string; key: string }[] = []
+  const maps: Map<string, string>[] = []
+  const post: Cell["post"] = async (path, body) => {
+    if (path === "/v1/guard:prompt") {
+      const { text, idempotencyKey } = body as { text: string; idempotencyKey: string }
+      calls.push({ text, key: idempotencyKey })
+      if (text.length > 20_000) return { kind: "answer", status: 400, body: { code: "guard.invalid", message: "text is at most 20000 characters" } }
+      const map = new Map<string, string>()
+      const counts: Record<string, number> = {}
+      const token = (kind: string) => (value: string) => { const name = `[${kind}_${(counts[kind] = (counts[kind] ?? 0) + 1)}]`; map.set(name, value); return name }
+      const safePrompt = text.replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, token("EMAIL")).replace(/(?<![0-9A-Za-z])\d{4}-\d{2}-\d{2}(?![0-9])/g, token("PHONE"))
+      maps.push(map)
+      return { kind: "answer", status: 200, body: { guardId: maps.length, receiptHash: "g", safePrompt, tokens: [...map.keys()].map((t) => ({ token: t, kind: "x", label: "x", source: "detected", revealable: true })) } }
+    }
+    const restore = /^\/v1\/guard\/(\d+):restore$/.exec(path)
+    if (restore !== null) {
+      const map = maps[Number(restore[1]) - 1] ?? new Map<string, string>()
+      const text = (body as { text: string }).text.replace(/\[[A-Z]+_\d+\]/g, (t) => map.get(t) ?? t)
+      return { kind: "answer", status: 200, body: { segments: [{ text }] } }
+    }
+    return cell.post(path, body)
+  }
+  return { cell: { ...cell, post }, calls }
+}
+
+test("dates pass the boundary as dates; workspace content the guard would change is refused (422) before any call; the person's own words tokenize and restore in one numbering", async () => {
   const db = stage()
-  const { cell, calls } = cellDouble()
-  const edited = withDefinitions(cell, {
-    "studio.dashboard.weekly": { id: "studio.dashboard.weekly", kind: "dashboard", version: 3, payload: stored("amira@nilegold.com") },
-    "ops.flow.refunds": { id: "ops.flow.refunds", kind: "flow", version: 1, payload: { title: "Refunds", tiles: stored("gold").tiles, secret: "amira@nilegold.com" } },
-  })
-  const model = scripted(proposed([tile()]))
-  const deps: AssistantDeps = { db, cell: edited, scope, model, capMicroUsd: 20_000_000, perCallMicroUsd: 4000, now: NOW, newId: () => "e1" }
-  const made = await assistant(post("", { request: "Make it monthly", dashboardId: "studio.dashboard.weekly" }), "", deps)
+  const base = cellDouble().cell
+  const { cell, calls } = realGuard(withDefinitions(base, {
+    "studio.dashboard.weekly": { id: "studio.dashboard.weekly", kind: "dashboard", version: 3, payload: stored("gold") },
+    "studio.dashboard.pii": { id: "studio.dashboard.pii", kind: "dashboard", version: 1, payload: stored("amira@nilegold.com") },
+    "studio.dashboard.pii_title": { id: "studio.dashboard.pii_title", kind: "dashboard", version: 1, payload: { ...stored("gold"), title: "Refunds for amira@nilegold.com" } },
+  }))
+  const model = scripted({ ...proposed([tile()]), note: "Monthly gold yield, filtered for [EMAIL_1]." })
+  let n = 0
+  const deps: AssistantDeps = { db, cell, scope, model, capMicroUsd: 20_000_000, perCallMicroUsd: 4000, now: NOW, newId: () => `d${++n}` }
+  // (a) + (c): an edit with dated tiles, asked in words that carry an address and a date.
+  const made = await assistant(post("", { request: "Make it monthly from 2026-06-01 for amira@nilegold.com", dashboardId: "studio.dashboard.weekly" }), "", deps)
   expect(made.status).toBe(200)
+  const [ask] = model.asks
+  expect(ask?.system).toContain("Today is 2026-11-12.")
+  expect(ask?.turns[0]?.content).toContain("Make it monthly from 2026-06-01 for [EMAIL_1]")
+  expect(ask?.turns[0]?.content).toContain(`"start":"2026-05-18","end":"2026-11-16"`)
   const sent = JSON.stringify(model.asks)
   expect(sent).not.toContain("amira@nilegold.com")
+  expect(sent).not.toContain("[PHONE_")
   for (const member of ["internalNote", "origin", "annotations", "tile-1", "freshness", "irVersion"]) expect(sent).not.toContain(member)
-  expect(model.asks[0]?.turns[0]?.content).toContain(`"filters":[{"property":"metal","operator":"eq","value":"[EMAIL_1]"}]`)
-  expect((await made.json() as { targetVersion: number }).targetVersion).toBe(3)
+  // The note's token is restored from the request's own guard call: the right value, never another call's.
+  const proposal = await made.json() as { targetVersion: number; verdict: { guard: { reply: { text: string }[] } } }
+  expect(proposal.targetVersion).toBe(3)
+  expect(proposal.verdict.guard.reply.map(({ text }) => text).join("")).toBe("Monthly gold yield, filtered for amira@nilegold.com.")
+  // Every boundary check left its text unchanged; only the request's own call tokenized.
+  expect(calls.filter(({ key }) => key === "prop_d1")).toHaveLength(1)
+  // (b): an address in a dashboard's filter value or title is refused before any call, and nothing is spent.
+  for (const dashboardId of ["studio.dashboard.pii", "studio.dashboard.pii_title"]) {
+    const silent = scripted(proposed([tile()]))
+    const refusedEdit = await assistant(post("", { request: "Make it monthly", dashboardId }), "", { ...deps, model: silent })
+    expect(refusedEdit.status).toBe(422)
+    expect(silent.asks).toHaveLength(0)
+  }
+  expect(await totals(db)).toEqual({ spent: 4000, open: 0 })
   // Not a dashboard: refused, nothing sent, nothing reserved.
+  const flowCell = withDefinitions(cell, { "ops.flow.refunds": { id: "ops.flow.refunds", kind: "flow", version: 1, payload: { title: "Refunds", tiles: stored("gold").tiles } } })
   const silent = scripted(proposed([tile()]))
-  const flow = await assistant(post("", { request: "Change it", dashboardId: "ops.flow.refunds" }), "", { ...deps, model: silent, newId: () => "e2" })
-  expect(flow.status).toBe(422)
+  expect((await assistant(post("", { request: "Change it", dashboardId: "ops.flow.refunds" }), "", { ...deps, cell: flowCell, model: silent })).status).toBe(422)
   expect(silent.asks).toHaveLength(0)
-  expect(calls.filter(({ path, body }) => path === "/v1/guard:prompt" && JSON.stringify(body).includes("prop_e2"))).toEqual([])
   // A dashboard with parts this builder does not write is refused too, not forwarded raw.
   expect(editableDashboard({ title: "x", tiles: [{ title: "t", question: { aggregate: [{ metric: "m" }, { metric: "n" }] }, view: { kind: "table" }, layout: { w: 1 } }] })).toBeNull()
   expect(editableDashboard(stored("gold"))?.tiles[0]).toEqual({ title: "Gold yield", metric: "demo.yield", groupBy: "occurred_at", grain: "week", filters: [{ property: "metal", operator: "eq", value: "gold" }], start: "2026-05-18", end: "2026-11-16", view: "line", width: "full" })
 })
 
-test("the guard runs at the provider boundary on catalog text and retry feedback too, and no guard means no call", async () => {
+test("catalog text and retry feedback are checked at the boundary: a catalog the guard would change is refused, feedback it would change is not sent", async () => {
   const { cell } = cellDouble()
-  // The catalog's own words and the checker's findings carry workspace values.
+  const guard = async (text: string) => text.replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, "[EMAIL_1]").replace(/(?<![0-9A-Za-z])\d{4}-\d{2}-\d{2}(?![0-9])/g, "[PHONE_1]")
   const leaky: CellCatalog = { ...cellCatalog, metrics: cellCatalog.metrics.map((metric) => metric.name === "demo.input" ? { ...metric, label: "Input (owner amira@nilegold.com)" } : metric) }
-  const leakyCell: Cell = {
-    get: async (path) => path === "/v1/questions:catalog" ? { kind: "answer", status: 200, body: leaky } : cell.get(path),
-    post: async (path, body) => {
-      if (path === "/v1/definitions:admit") return { kind: "answer", status: 200, body: { admitted: false, diagnostics: [{ code: "definition.filter_value", message: "no rows for owner amira@nilegold.com", span: { pointer: "/tiles/0/question" } }] } }
-      return cell.post(path, body)
-    },
-  }
-  const model = scripted(proposed([tile()]), proposed([tile()]))
-  let guarded = 0
-  const guard = async (text: string) => { guarded += 1; return text.replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, "[EMAIL_1]") }
-  const outcome = await propose(leakyCell, model, "Weekly yield", { proposalId: "prop_b", targetId: "studio.dashboard.x", now: NOW, guard, maxCalls: 4 })
-  expect(model.asks).toHaveLength(2)
-  expect(JSON.stringify(model.asks)).not.toContain("amira@nilegold.com")
-  expect(model.asks[0]?.system).toContain("Input (owner [EMAIL_1])")
-  expect(model.asks[1]?.turns.at(-1)?.content).toContain("no rows for owner [EMAIL_1]")
-  expect(guarded).toBeGreaterThanOrEqual(4)
-  expect(outcome.verdict?.admitted).toBe(false)
-  // The guard unavailable at the boundary: nothing is sent.
+  const leakyCatalog: Cell = { ...cell, get: async (path) => path === "/v1/questions:catalog" ? { kind: "answer", status: 200, body: leaky } : cell.get(path) }
   const silent = scripted(proposed([tile()]))
-  const refusedOutcome = await propose(leakyCell, silent, "Weekly yield", { proposalId: "prop_c", targetId: "studio.dashboard.x", now: NOW, guard: async () => null, maxCalls: 4 })
-  expect(refusedOutcome.failureKind).toBe("guard")
+  const refusedCatalog = await propose(leakyCatalog, silent, "Weekly yield", { proposalId: "prop_a", targetId: "studio.dashboard.x", now: NOW, guard, maxCalls: 4 })
+  expect(refusedCatalog.failureKind).toBe("private")
   expect(silent.asks).toHaveLength(0)
+  // The checker's findings quote a value: the repair is not sent; the refused proposal stands.
+  const leakyFindings: Cell = { ...cell, post: async (path, body) => path === "/v1/definitions:admit" ? { kind: "answer", status: 200, body: { admitted: false, diagnostics: [{ code: "definition.filter_value", message: "no rows for owner amira@nilegold.com", span: { pointer: "/tiles/0/question" } }] } } : cell.post(path, body) }
+  const model = scripted(proposed([tile()]), proposed([tile()]))
+  const outcome = await propose(leakyFindings, model, "Weekly yield", { proposalId: "prop_b", targetId: "studio.dashboard.x", now: NOW, guard, maxCalls: 4 })
+  expect(model.asks).toHaveLength(1)
+  expect(outcome.verdict?.admitted).toBe(false)
+  // Findings with only dates are sent as written.
+  const datedFindings: Cell = { ...cell, post: async (path, body) => path === "/v1/definitions:admit" ? { kind: "answer", status: 200, body: { admitted: false, diagnostics: [{ code: "definition.window", message: "the window ends 2026-11-16, after today", span: { pointer: "/tiles/0/question" } }] } } : cell.post(path, body) }
+  const dated = scripted(proposed([tile()]), proposed([tile()]))
+  await propose(datedFindings, dated, "Weekly yield", { proposalId: "prop_e", targetId: "studio.dashboard.x", now: NOW, guard, maxCalls: 4 })
+  expect(dated.asks[1]?.turns.at(-1)?.content).toContain("the window ends 2026-11-16, after today")
+  // The guard unavailable at the boundary: nothing is sent.
+  const none = scripted(proposed([tile()]))
+  expect((await propose(cell, none, "Weekly yield", { proposalId: "prop_c", targetId: "studio.dashboard.x", now: NOW, guard: async () => null, maxCalls: 4 })).failureKind).toBe("guard")
+  expect(none.asks).toHaveLength(0)
   // The reservation's call budget bounds the calls made.
   const bounded = scripted(proposed([tile({ view: "pie", groupBy: "metal", grain: "" })]), proposed([tile()]))
   await propose(cell, bounded, "Yield by metal", { proposalId: "prop_d", targetId: "studio.dashboard.x", now: NOW, guard: async (text) => text, maxCalls: 1 })
   expect(bounded.asks).toHaveLength(1)
+})
+
+test("a catalog over the guard's 20,000-character limit is checked in pieces and still answered", async () => {
+  const db = stage()
+  const { cell: base } = cellDouble()
+  const big: CellCatalog = { ...cellCatalog, metrics: [...cellCatalog.metrics, ...Array.from({ length: 400 }, (_, index) => ({ ...cellCatalog.metrics[0], name: `demo.extra_${index}`, label: `Extra measure number ${index} of the refinery ledger` }))] as CellCatalog["metrics"] }
+  const bigCell: Cell = { ...base, get: async (path) => path === "/v1/questions:catalog" ? { kind: "answer", status: 200, body: big } : base.get(path) }
+  const { cell, calls } = realGuard(bigCell)
+  const model = scripted(proposed([tile()]))
+  const made = await assistant(post("", { request: "Weekly gold yield" }), "", { db, cell, scope, model, capMicroUsd: 20_000_000, perCallMicroUsd: 4000, now: NOW, newId: () => "big" })
+  expect(made.status).toBe(200)
+  expect(model.asks[0]?.system.length).toBeGreaterThan(25_000)
+  expect(Math.max(...calls.map(({ text }) => text.length))).toBeLessThanOrEqual(18_000)
+  expect(calls.length).toBeGreaterThan(2)
+})
+
+test("nothing dispatched or a definite unbilled answer releases the reservation; an uncertain failure keeps it", async () => {
+  const { cell } = cellDouble()
+  const httpError = (status: number) => Object.assign(new Error(`status ${status}`), { status })
+  // Before dispatch: the cell's catalog read throws.
+  {
+    const db = stage()
+    const broken: Cell = { ...cell, get: async () => { throw new Error("cell unreachable") } }
+    await expect(assistant(post("", { request: "Weekly yield" }), "", { db, cell: broken, scope, model: scripted(), capMicroUsd: 20_000_000, perCallMicroUsd: 4000, now: NOW, newId: () => "p1" })).rejects.toThrow("cell unreachable")
+    expect(await totals(db)).toEqual({ spent: 0, open: 0 })
+  }
+  // A definite 500 from the model (no fallback): nothing charged, the request answers 502.
+  for (const status of [429, 500]) {
+    const db = stage()
+    const failing: Model = { name: "m", answer: async () => { throw httpError(status) } }
+    const response = await assistant(post("", { request: "Weekly yield" }), "", { db, cell, scope, model: failing, capMicroUsd: 20_000_000, perCallMicroUsd: 4000, now: NOW, newId: () => "p2" })
+    expect(response.status).toBe(502)
+    expect(await totals(db)).toEqual({ spent: 0, open: 0 })
+  }
+  // A definite 429 from the primary, then the fallback answers: only the fallback's call is charged.
+  {
+    const db = stage()
+    const limited: Model = { name: "primary", answer: async () => { throw httpError(429) } }
+    expect((await assistant(post("", { request: "Weekly yield" }), "", { db, cell, scope, model: withFallback(limited, scripted(proposed([tile()]))), capMicroUsd: 20_000_000, perCallMicroUsd: 4000, now: NOW, newId: () => "p3" })).status).toBe(200)
+    expect(await totals(db)).toEqual({ spent: 4000, open: 0 })
+  }
+  // A timeout after dispatch: usage unknown, the whole reservation is kept.
+  {
+    const db = stage()
+    const timedOut: Model = { name: "m", answer: async () => { throw new DOMException("The operation timed out.", "TimeoutError") } }
+    await expect(assistant(post("", { request: "Weekly yield" }), "", { db, cell, scope, model: timedOut, capMicroUsd: 20_000_000, perCallMicroUsd: 4000, now: NOW, newId: () => "p4" })).rejects.toThrow("timed out")
+    expect(await totals(db)).toEqual({ spent: 4000 * CALLS_PER_REQUEST, open: 0 })
+  }
+  // The work is handed to waitUntil, so a disconnect cannot stop it before settlement.
+  {
+    const db = stage()
+    const kept: Promise<unknown>[] = []
+    await assistant(post("", { request: "Weekly yield" }), "", { db, cell, scope, model: scripted(proposed([tile()])), capMicroUsd: 20_000_000, perCallMicroUsd: 4000, now: NOW, newId: () => "p5", waitUntil: (work) => kept.push(work) })
+    expect(kept).toHaveLength(1)
+  }
+})
+
+test("an unpriced model is never configured, and a Workers AI answer without its neurons is charged at the bound", async () => {
+  const gateway = { AI_GATEWAY_URL: `https://gateway.ai.cloudflare.com/v1/${"a".repeat(32)}/studio`, AI_GATEWAY_TOKEN: "t" }
+  expect(configuredModel(gateway)?.name).toBe("claude-sonnet-5-5")
+  expect(configuredModel({ ...gateway, AGENT_MODEL: "claude-unlisted-9" })).toBeUndefined()
+  const ai = workersAi({ accountId: "a", token: "t", model: "@cf/x", fetch: async () => Response.json({ success: true, result: { response: "{\"a\":1}", usage: { prompt_tokens: 10, completion_tokens: 5 } } }) })
+  const ask = { system: "s", turns: [{ role: "user" as const, content: "hello" }], schema: {}, maxTokens: 100 }
+  const answer = await ai.answer(ask)
+  expect(answer.costMicroUsd).toBe(worstCallMicroUsd(new TextEncoder().encode("s{}hello").byteLength, 100))
+  expect(answer.costMicroUsd).toBeGreaterThan(0)
+  const reported = workersAi({ accountId: "a", token: "t", model: "@cf/x", fetch: async () => Response.json({ success: true, result: { response: "{}", usage: { neurons: 1000 } } }) })
+  expect((await reported.answer(ask)).costMicroUsd).toBe(11_000)
 })

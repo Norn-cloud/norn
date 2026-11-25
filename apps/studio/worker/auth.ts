@@ -1081,7 +1081,12 @@ const SIGNUP_INVITE_FORMAT = /^v1\.(\d{13})\.([A-Za-z0-9_-]{24})\.([A-Za-z0-9_-]
 
 const base64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "")
 const fromBase64url = (text: string) => Uint8Array.from(atob(text.replaceAll("-", "+").replaceAll("_", "/") + "=".repeat((4 - (text.length % 4)) % 4)), (c) => c.charCodeAt(0))
-const inviteKey = (secret: string) => crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"])
+const hmacKey = (raw: BufferSource) => crypto.subtle.importKey("raw", raw, { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"])
+/** A key used only for invitations: HMAC(BETTER_AUTH_SECRET, "norn:signup-invite:v1"), never the auth secret itself. */
+const inviteKey = async (secret: string) =>
+  hmacKey(await crypto.subtle.sign("HMAC", await hmacKey(new TextEncoder().encode(secret)), new TextEncoder().encode("norn:signup-invite:v1")))
+/** How long a claimed but never-consumed invitation stays held (an isolate that died before writing the user). */
+export const SIGNUP_CLAIM_STALE_MS = 5 * 60_000
 const inviteMessage = (email: string, expiresAt: number, nonce: string) => new TextEncoder().encode(`${SIGNUP_INVITE_DOMAIN}|${email}|${expiresAt}|${nonce}`)
 const normalEmail = (email: string) => email.trim().toLowerCase()
 
@@ -1107,7 +1112,7 @@ export async function verifySignupInvite(secret: string, token: string, email: s
   if (match === null) return null
   const [, expiry = "", nonce = "", signature = ""] = match
   const expiresAt = Number(expiry)
-  if (!Number.isSafeInteger(expiresAt) || expiresAt <= now) return null
+  if (!Number.isSafeInteger(expiresAt) || expiresAt <= now || expiresAt - now > SIGNUP_INVITE_MAX_TTL_MS) return null
   const valid = await crypto.subtle.verify("HMAC", await inviteKey(secret), fromBase64url(signature), inviteMessage(normalEmail(email), expiresAt, nonce))
   return valid ? { nonce, expiresAt } : null
 }
@@ -1892,13 +1897,20 @@ export function authOptions(config: AuthConfig, self: Self = {}) {
             if (store === undefined || invite === undefined || invite.email !== normalEmail(String(user.email)) || store.signupClaim !== undefined) {
               throw new APIError("FORBIDDEN", { code: "INVITE_ONLY", message: INVITE_ONLY_MESSAGE })
             }
+            // A claim left by a request that never wrote its user (its isolate died) is taken over after
+            // SIGNUP_CLAIM_STALE_MS; the superseded user id can then never be inserted (migration 0015).
+            // A consumed claim is never taken again.
             const userId = generateRandomString(32, "a-z", "A-Z", "0-9")
+            const now = Date.now()
             const claimed = await dbFirst<{ user_id: string }>(
               config.database as unknown as ProvisionDb,
-              `insert into "signup_invite_use" ("nonce_hash", "email", "user_id", "claimed_at") values (?, ?, ?, ?) on conflict ("nonce_hash") do nothing returning "user_id"`,
-              invite.nonceHash, invite.email, userId, Date.now(),
+              `insert into "signup_invite_use" ("nonce_hash", "email", "user_id", "claimed_at") values (?, ?, ?, ?)
+               on conflict ("nonce_hash") do update set "user_id" = excluded."user_id", "claimed_at" = excluded."claimed_at"
+               where "signup_invite_use"."consumed_at" is null and "signup_invite_use"."claimed_at" < ? and "signup_invite_use"."email" = excluded."email"
+               returning "user_id"`,
+              invite.nonceHash, invite.email, userId, now, now - SIGNUP_CLAIM_STALE_MS,
             )
-            if (claimed === null) throw new APIError("FORBIDDEN", { code: "INVITE_ONLY", message: INVITE_ONLY_MESSAGE })
+            if (claimed === null || claimed.user_id !== userId) throw new APIError("FORBIDDEN", { code: "INVITE_ONLY", message: INVITE_ONLY_MESSAGE })
             store.signupClaim = { nonceHash: invite.nonceHash, userId }
             return { data: { ...user, id: userId } }
           },

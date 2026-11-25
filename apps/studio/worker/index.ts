@@ -398,7 +398,7 @@ const OAUTH_DISCOVERY = new Set([
 ])
 
 const handler = {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const { pathname } = new URL(request.url)
     if (mcpOn(env) && pathname === MCP_PATH) {
       if (ACTOR_HEADERS.some((name) => request.headers.has(name))) return refuse(400, "Identity comes from the signed-in grant, not a request header.")
@@ -485,6 +485,8 @@ const handler = {
         db: env.AUTH_DB, cell: cellFor(env.NORN_HOST, auth(env), actor, resolvedScope),
         scope: { orgId: resolvedScope.orgId, environmentId: resolvedScope.environmentId, userId: actor.subjectId },
         model: configuredModel(env), capMicroUsd: Math.round((Number.isFinite(cap) && cap >= 0 ? cap : 20) * 1_000_000), now: Date.now(),
+        // A disconnect must not stop a request between its provider calls and its settlement.
+        ...ctx === undefined ? {} : { waitUntil: (work: Promise<unknown>) => ctx.waitUntil(work) },
       })
     }
     if (pathname.startsWith("/api/connectors/")) {

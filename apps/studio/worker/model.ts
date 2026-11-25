@@ -43,6 +43,8 @@ const CLAUDE_PRICES: Record<string, readonly [number, number]> = {
   "claude-haiku-5-5": [0.1, 0.5],
   "claude-opus-5-5": [4, 20],
 }
+/** Whether a Claude model has a published price here; an unpriced one is never configured (its spend could not be bounded or recorded). */
+export const pricedModel = (model: string) => Object.hasOwn(CLAUDE_PRICES, model)
 const MAX_PRICE: readonly [number, number] = [Math.max(...Object.values(CLAUDE_PRICES).map(([input]) => input)), Math.max(...Object.values(CLAUDE_PRICES).map(([, output]) => output))]
 const priceOf = (model: string) => CLAUDE_PRICES[model] ?? MAX_PRICE
 export const claudeCost = (model: string, input: number, output: number) => {
@@ -57,6 +59,19 @@ export const claudeCost = (model: string, input: number, output: number) => {
 export const worstCallMicroUsd = (inputTokens: number, outputTokens: number) => Math.ceil(inputTokens * MAX_PRICE[0] + outputTokens * MAX_PRICE[1])
 /** Workers AI bills neurons at $0.011 per thousand. */
 export const neuronCost = (neurons: number) => Math.ceil(neurons * 11)
+
+/**
+ * Provider statuses that end a call without a charge: the request was refused or failed before a
+ * completion was produced (Anthropic bills only completed messages). A call that threw any other way
+ * (network, timeout, abort after dispatch) has unknown usage.
+ */
+export const UNBILLED_STATUSES: ReadonlySet<number> = new Set([400, 401, 403, 404, 413, 422, 429, 500, 502, 503, 529])
+/** Whether a thrown provider error is a definite answer that was not billed. */
+export const unbilled = (error: unknown): boolean => {
+  const status = typeof error === "object" && error !== null && "status" in error ? (error as { status: unknown }).status : undefined
+  return typeof status === "number" && UNBILLED_STATUSES.has(status)
+}
+const promptBytes = (ask: Ask) => new TextEncoder().encode(ask.system + JSON.stringify(ask.schema) + ask.turns.map(({ content }) => content).join("")).byteLength
 
 type Fetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
 
@@ -119,8 +134,11 @@ export function workersAi(options: { readonly accountId: string; readonly token:
       })
       const body = await response.json().catch(() => null) as { success?: boolean; result?: { response?: unknown; usage?: { prompt_tokens?: number; completion_tokens?: number; neurons?: number } } } | null
       const usage = body?.result?.usage
-      const spent = { model: options.model, inputTokens: usage?.prompt_tokens ?? 0, outputTokens: usage?.completion_tokens ?? 0, costMicroUsd: neuronCost(usage?.neurons ?? 0) }
-      if (!response.ok || body?.success !== true) return { ...spent, json: null, failure: `Workers AI did not answer (${response.status}).` }
+      const answered = response.ok && body?.success === true
+      // A successful run that does not report its neurons is charged at the call's bound, never zero.
+      const cost = typeof usage?.neurons === "number" && Number.isFinite(usage.neurons) && usage.neurons >= 0 ? neuronCost(usage.neurons) : answered ? worstCallMicroUsd(promptBytes(ask), ask.maxTokens) : 0
+      const spent = { model: options.model, inputTokens: usage?.prompt_tokens ?? 0, outputTokens: usage?.completion_tokens ?? 0, costMicroUsd: cost }
+      if (!answered) return { ...spent, json: null, failure: `Workers AI did not answer (${response.status}).` }
       const answer = body.result?.response
       if (typeof answer !== "string") return { ...spent, json: answer ?? null, ...answer == null ? { failure: "Workers AI gave no answer." } : {} }
       try { return { ...spent, json: JSON.parse(answer) } } catch { return { ...spent, json: null, failure: "Workers AI's answer was not JSON." } }
@@ -133,8 +151,9 @@ export function withFallback(primary: Model, fallback: Model): Model & { answerA
   const answerAll = async (ask: Ask): Promise<readonly Answer[]> => {
     let first: Answer
     try { first = await primary.answer(ask) } catch (error) {
-      // It may have reached the provider and been billed: its usage is unknown, not zero.
-      first = { json: null, model: primary.name, inputTokens: 0, outputTokens: 0, costMicroUsd: 0, failure: error instanceof Error ? error.message : String(error), uncertain: true }
+      // A definite unbilled status costs nothing; any other throw may have reached the provider and
+      // been billed, so its usage is unknown, not zero.
+      first = { json: null, model: primary.name, inputTokens: 0, outputTokens: 0, costMicroUsd: 0, failure: error instanceof Error ? error.message : String(error), ...unbilled(error) ? {} : { uncertain: true } }
     }
     return first.json !== null ? [first] : [first, await fallback.answer(ask)]
   }
@@ -147,8 +166,11 @@ export function configuredModel(env: { readonly AI_GATEWAY_URL?: string; readonl
   if (gatewayUrl === undefined || token === undefined || gatewayUrl === "" || token === "") return undefined
   const accountId = /\/v1\/([0-9a-f]{32})\//.exec(gatewayUrl)?.[1]
   if (accountId === undefined) return undefined
+  // Fail closed on a model without a published price: its spend could be neither bounded nor recorded.
+  const model = env.AGENT_MODEL || "claude-sonnet-5-5"
+  if (!pricedModel(model)) return undefined
   return withFallback(
-    claudeViaGateway({ gatewayUrl, token, model: env.AGENT_MODEL || "claude-sonnet-5-5" }),
+    claudeViaGateway({ gatewayUrl, token, model }),
     workersAi({ accountId, token, model: env.AGENT_FALLBACK_MODEL || "@cf/meta/llama-3.3-70b-instruct-fp8-fast" }),
   )
 }

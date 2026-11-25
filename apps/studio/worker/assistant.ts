@@ -1,6 +1,6 @@
-import { MAX_OUTPUT_TOKENS, MAX_PROMPT_BYTES, editableDashboard, propose } from "./agent.ts"
+import { MAX_OUTPUT_TOKENS, MAX_PROMPT_BYTES, editableDashboard, guardKeepingDates, propose } from "./agent.ts"
 import type { Cell } from "./cell.ts"
-import { worstCallMicroUsd, type Answer, type Ask, type Model } from "./model.ts"
+import { unbilled, worstCallMicroUsd, type Answer, type Ask, type Model } from "./model.ts"
 import { decide, getProposal, insertProposal, listProposals, reserve, reserved, settle, spent, type Proposal, type Scope } from "./proposals.ts"
 
 /**
@@ -23,6 +23,8 @@ export interface AssistantDeps {
   readonly newId?: () => string
   /** The most one provider call can cost, in millionths of a dollar (default: the bound from the prompt and answer limits). */
   readonly perCallMicroUsd?: number
+  /** Keeps a request's work (and so its settlement) running after the client goes away (ExecutionContext.waitUntil). */
+  readonly waitUntil?: (work: Promise<unknown>) => void
 }
 
 export const MAX_REQUEST_CHARS = 2000
@@ -71,26 +73,44 @@ async function proposeRoute(request: Request, deps: AssistantDeps): Promise<Resp
       ? refused(429, `At most ${HOURLY_PROPOSALS} proposals an hour; try again later.`, { "x-norn-limit": "proposals_hourly", "retry-after": "3600" })
       : refused(429, "The assistant has reached its spending cap. Build the dashboard by hand, or ask an owner to raise the cap.", { "x-norn-limit": "spend_cap" })
   }
-  let answers: readonly Answer[] = []
+  // The rest runs to settlement even if the client disconnects.
+  const work = answerAdmitted(deps, proposalId, asked, target, model, newId)
+  deps.waitUntil?.(work.catch(() => undefined))
+  return work
+}
+
+/** An admitted request, from the guard to its one settlement. */
+async function answerAdmitted(deps: AssistantDeps, proposalId: string, asked: string, target: { readonly id: string; readonly version: number; readonly editable: NonNullable<ReturnType<typeof editableDashboard>> } | undefined, model: NonNullable<AssistantDeps["model"]>, newId: () => string): Promise<Response> {
+  const { db, cell, scope, now } = deps
+  // Every answer a provider call returned, recorded as it returns (so a later failure still settles what was paid).
+  const answers: Answer[] = []
+  // Whether any provider call was made: until then nothing can have been billed.
+  let dispatched = false
+  const counted: NonNullable<AssistantDeps["model"]> = {
+    name: model.name,
+    answer: async (ask) => { dispatched = true; const answer = await model.answer(ask); answers.push(answer); return answer },
+    ...model.answerAll === undefined ? {} : { answerAll: async (ask: Ask) => { dispatched = true; const made = await model.answerAll?.(ask) ?? []; answers.push(...made); return made } },
+  }
+  const settleWith = (proposalId_: string | null, uncertain = false) => settle(db, { requestId: proposalId, userId: scope.userId, proposalId: proposalId_, answers, uncertain, now })
   try {
-    // PRIVACY-GUARD-1: the model never sees personal data. The cell tokenizes the request (markings
-    // first, then a detector pass) and keeps the token map; without its guard nothing is sent. The
-    // request's own guard is the proposal's receipt; propose() guards everything else at the boundary.
-    const guarded = await guardPrompt(cell, asked, proposalId)
+    // PRIVACY-GUARD-1: the model never sees personal data. The cell tokenizes the person's words
+    // (markings first, then a detector pass) in one call and keeps the token map; without its guard
+    // nothing is sent. Valid dates are kept out of the detector. Workspace-derived content is checked
+    // at the provider boundary in propose().
+    const guarded = await guardKeepingDates(asked, (masked) => guardPrompt(cell, masked, proposalId))
     if (guarded === null) {
-      await settle(db, { requestId: proposalId, userId: scope.userId, proposalId: null, answers, now })
+      await settleWith(null)
       return refused(503, "The privacy guard is not available, so nothing was sent to the model.")
     }
     const safe = guarded.safePrompt
-    const request_ = target === undefined ? safe : `${safe}\n\nThe dashboard as it stands (change it as asked; keep what the request does not mention):\n${JSON.stringify({ title: target.editable.title, tiles: target.editable.tiles })}`
+    const context = target === undefined ? undefined : `The dashboard as it stands (change it as asked; keep what the request does not mention):\n${JSON.stringify({ title: target.editable.title, tiles: target.editable.tiles })}`
     let guards = 0
     const boundary = async (text: string) => (await guardPrompt(cell, text, `${proposalId}-b${++guards}`))?.safePrompt ?? null
-    const outcome = await propose(cell, model, request_, { proposalId, targetId: target?.id ?? "studio.dashboard.proposal", now, originRequest: safe, attempts: ATTEMPTS, guard: boundary, maxCalls: CALLS_PER_REQUEST })
-    answers = outcome.answers
+    const outcome = await propose(cell, counted, safe, { proposalId, targetId: target?.id ?? "studio.dashboard.proposal", now, originRequest: safe, ...context === undefined ? {} : { context }, attempts: ATTEMPTS, guard: boundary, maxCalls: CALLS_PER_REQUEST })
     const { definition, verdict } = outcome
     if (definition === null || verdict === null) {
-      await settle(db, { requestId: proposalId, userId: scope.userId, proposalId: null, answers, now })
-      const status = outcome.failureKind === "guard" ? 503 : outcome.failureKind === "role" || outcome.failure?.includes("role") ? 403 : outcome.failureKind === "budget" ? 422 : 502
+      await settleWith(null)
+      const status = outcome.failureKind === "guard" ? 503 : outcome.failureKind === "private" || outcome.failureKind === "budget" ? 422 : outcome.failureKind === "role" || outcome.failure?.includes("role") ? 403 : 502
       return refused(status, outcome.failure ?? "The assistant could not propose a dashboard.")
     }
     // The reply comes back through the same guard: restored only where this person may see it.
@@ -103,12 +123,16 @@ async function proposeRoute(request: Request, deps: AssistantDeps): Promise<Resp
       model: outcome.answers.at(-1)?.model ?? model.name, createdAtMs: now,
     }
     await insertProposal(db, scope, proposal)
-    await settle(db, { requestId: proposalId, userId: scope.userId, proposalId, answers, now })
+    await settleWith(proposalId)
     return json(await getProposal(db, scope, proposalId))
   } catch (error) {
-    // A failure after dispatch: what the provider billed is unknown, so the whole reservation is kept
-    // as spend. If even this fails, the reservation stays open and keeps counting against the cap.
-    await settle(db, { requestId: proposalId, userId: scope.userId, proposalId: null, answers, uncertain: true, now }).catch(() => undefined)
+    // Before any provider call, or a provider's definite unbilled answer: nothing was spent, and the
+    // reservation is released. Any other failure after dispatch: what the provider billed is unknown,
+    // so the whole reservation is kept as spend. If settling fails too, the reservation stays open
+    // and keeps counting against the cap.
+    const certain = !dispatched || unbilled(error)
+    await settleWith(null, !certain).catch(() => undefined)
+    if (dispatched && unbilled(error)) return refused(502, "The model did not answer; nothing was charged. Try again.")
     throw error
   }
 }

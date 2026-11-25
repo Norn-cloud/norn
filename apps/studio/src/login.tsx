@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react"
+import { useEffect, useState, type FormEvent } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -30,13 +30,20 @@ function Field({ label, ...props }: { readonly label: string } & React.Component
  * The only page a signed-out visitor sees: sign in, create an account, or (when configured on the
  * server) ask for an email link. Capabilities come from `/api/auth/config`, never a client flag.
  */
-/** The invitation an operator's sign-up link carries (`?invite=`), if any. */
-export function inviteFromLocation(search: string = typeof window === "undefined" ? "" : window.location.search): string {
-  return new URLSearchParams(search).get("invite")?.trim() ?? ""
+/** The invitation an operator's sign-up link carries in its fragment (`#invite=`), if any. */
+export function inviteFromLocation(hash: string = typeof window === "undefined" ? "" : window.location.hash): string {
+  return new URLSearchParams(hash.replace(/^#/, "")).get("invite")?.trim() ?? ""
+}
+
+/** Drop the invitation from the address bar once read, so it is not kept in history or copied along with the URL. */
+function scrubInvite() {
+  if (typeof window === "undefined" || inviteFromLocation() === "") return
+  window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.search}`)
 }
 
 export function LoginPage({ initial, config }: { readonly initial?: Mode; readonly config?: AuthConfig }) {
   const [invite] = useState(() => inviteFromLocation())
+  useEffect(scrubInvite, [])
   const authConfig = useAuthConfig()
   const activeConfig = config ?? authConfig.data ?? DEFAULT_AUTH_CONFIG
   const modes = activeConfig.magicLink ? MODES : MODES.filter((entry) => entry.mode !== "email-link")
