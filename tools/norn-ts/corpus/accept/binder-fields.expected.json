@@ -1,0 +1,14 @@
+{
+  "profile": "norn-effect/2",
+  "diagnostics": [],
+  "uses": [
+    "4:22 @norn/authoring#Norn.decision",
+    "7:10 effect/Schema#Struct",
+    "7:34 effect/Schema#ArraySchema",
+    "7:47 effect/Schema#Int",
+    "7:64 effect/Schema#Int",
+    "7:83 effect/Schema#Int",
+    "8:11 effect/Schema#Struct",
+    "8:34 effect/Schema#Boolean"
+  ]
+}
