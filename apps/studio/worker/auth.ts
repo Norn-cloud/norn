@@ -1076,6 +1076,8 @@ export const SIGNUP_INVITE_HEADER = "x-norn-signup-invite"
 /** How long an invitation stays valid by default, and at most. */
 export const SIGNUP_INVITE_TTL_MS = 7 * 24 * 60 * 60_000
 export const SIGNUP_INVITE_MAX_TTL_MS = 30 * 24 * 60 * 60_000
+/** Clock skew allowed between an invitation's issuer and the Worker when checking the maximum. */
+export const SIGNUP_INVITE_SKEW_MS = 5 * 60_000
 const SIGNUP_INVITE_DOMAIN = "norn.signup-invite.v1"
 const SIGNUP_INVITE_FORMAT = /^v1\.(\d{13})\.([A-Za-z0-9_-]{24})\.([A-Za-z0-9_-]{43})$/
 
@@ -1112,7 +1114,8 @@ export async function verifySignupInvite(secret: string, token: string, email: s
   if (match === null) return null
   const [, expiry = "", nonce = "", signature = ""] = match
   const expiresAt = Number(expiry)
-  if (!Number.isSafeInteger(expiresAt) || expiresAt <= now || expiresAt - now > SIGNUP_INVITE_MAX_TTL_MS) return null
+  // The 30-day maximum allows five minutes of clock skew between the issuer and the Worker.
+  if (!Number.isSafeInteger(expiresAt) || expiresAt <= now || expiresAt - now > SIGNUP_INVITE_MAX_TTL_MS + SIGNUP_INVITE_SKEW_MS) return null
   const valid = await crypto.subtle.verify("HMAC", await inviteKey(secret), fromBase64url(signature), inviteMessage(normalEmail(email), expiresAt, nonce))
   return valid ? { nonce, expiresAt } : null
 }

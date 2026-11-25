@@ -277,12 +277,16 @@ export const GUARD_CHUNK_CHARS = 18_000
 /**
  * A calendar day (optionally at midnight UTC) as the builder writes one. The cell's detector reads any
  * 8-15 digit run with a dash as a phone number, so these structurally valid dates are kept out of the
- * text the detector sees: they are server-validated values, not personal data.
+ * text the detector sees: they are server-validated values, not personal data. A date inside a longer
+ * run of digits and dashes (a phone number such as 010-2012-05-22) is not one, and stays visible.
  */
-export const ISO_DATE = /(?<![0-9A-Za-z])(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])(?:T00:00:00Z)?(?![0-9A-Za-z])/g
+export const ISO_DATE = /(?<![0-9A-Za-z-])(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])(?:T00:00:00Z)?(?![0-9A-Za-z-])/g
 const DATE_MASK = "DATE"
 
-/** Lines of `text` gathered into pieces of at most `limit` characters; null when one line alone is longer (it cannot be split safely). */
+/**
+ * Lines of `text` gathered into pieces of at most `limit` characters; null when one line alone is longer
+ * (it cannot be split safely). JSON checked here is written one member per line, so its lines are short.
+ */
 export function guardChunks(text: string, limit = GUARD_CHUNK_CHARS): string[] | null {
   const chunks: string[] = []
   let current = ""
@@ -299,11 +303,11 @@ export function guardChunks(text: string, limit = GUARD_CHUNK_CHARS): string[] |
  * Whether workspace-derived `text` may be sent as it is: the guard, run on it (dates masked, in pieces),
  * changes nothing. `changed` when it would tokenize anything (the text carries data the model may not
  * read: it is refused, never sent with tokens numbered apart from the request's), `unavailable` when the
- * guard did not answer.
+ * guard did not answer, `too_large` when one line is longer than a guard call takes.
  */
-export async function unchangedByGuard(guard: PromptGuard, text: string): Promise<"clean" | "changed" | "unavailable"> {
+export async function unchangedByGuard(guard: PromptGuard, text: string): Promise<"clean" | "changed" | "unavailable" | "too_large"> {
   const chunks = guardChunks(text.replace(ISO_DATE, DATE_MASK))
-  if (chunks === null) return "changed"
+  if (chunks === null) return "too_large"
   for (const chunk of chunks) {
     if (chunk === "") continue
     const safe = await guard(chunk)
@@ -367,15 +371,18 @@ export async function propose(cell: Cell, model: Model & { answerAll?(ask: Ask):
   if (catalog.metrics.length === 0) return { definition: null, verdict: null, note: "", answers: [], failure: "There is nothing you may read in this workspace to build a dashboard from." }
   const system = systemPrompt(catalog, options.now)
   const schema = proposalSchema(catalog)
-  const schemaText = JSON.stringify(schema)
+  // Checked one member per line, so no line comes near the guard's limit however large the catalog.
+  const schemaText = JSON.stringify(schema, null, 1)
   const answers: Answer[] = []
-  const checked = new Map<string, "clean" | "changed" | "unavailable">()
+  const checked = new Map<string, Awaited<ReturnType<typeof unchangedByGuard>>>()
   const check = async (text: string) => {
     if (!checked.has(text)) checked.set(text, await unchangedByGuard(options.guard, text))
     return checked.get(text) ?? "unavailable"
   }
-  const refusedFor = (verdict: "changed" | "unavailable"): Outcome => verdict === "unavailable"
+  const refusedFor = (verdict: "changed" | "unavailable" | "too_large"): Outcome => verdict === "unavailable"
     ? { definition: null, verdict: null, note: "", answers, failure: "The privacy guard is not available, so nothing was sent to the model.", failureKind: "guard" }
+    : verdict === "too_large"
+    ? { definition: null, verdict: null, note: "", answers, failure: "This workspace's catalog or dashboard is too large for the privacy guard to check, so nothing was sent to the model.", failureKind: "budget" }
     : { definition: null, verdict: null, note: "", answers, failure: "This workspace's catalog or dashboard carries data the model may not read, so nothing was sent to the model.", failureKind: "private" }
   for (const text of [system, schemaText, ...options.context === undefined ? [] : [options.context]]) {
     const verdict = await check(text)
@@ -404,7 +411,7 @@ export async function propose(cell: Cell, model: Model & { answerAll?(ask: Ask):
     last = { definition, verdict, note: proposed.note, answers }
     if (verdict.admitted) return last
     const repair = [
-      { role: "assistant" as const, content: JSON.stringify(proposed) },
+      { role: "assistant" as const, content: JSON.stringify(proposed, null, 1) },
       { role: "user" as const, content: `The server's checker refused this proposal:\n${refusalWords(verdict.findings)}\nPropose a corrected dashboard the checker admits. Change only what the findings name; leave out what the catalog cannot answer and say so in the note.` },
     ]
     // The repair turns quote the checker's findings and the model's proposal: sent only if the guard leaves them unchanged.

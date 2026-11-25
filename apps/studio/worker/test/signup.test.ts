@@ -210,6 +210,11 @@ test("an invitation is bound to its address and expiry by the deployment's secre
   expect(await verifySignupInvite("x".repeat(40), token, "owner@example.com", now)).toBeNull()
   const [version, expiry, nonce, signature] = token.split(".")
   expect(await verifySignupInvite(SECRET, [version, String(Number(expiry) + 1), nonce, signature].join("."), "owner@example.com", now)).toBeNull()
+  // A 30-day invitation from an issuer whose clock runs a few minutes ahead is still accepted.
+  const ahead = await issueSignupInvite(SECRET, "owner@example.com", { now: now + 3 * 60_000, ttlMs: 30 * 24 * 60 * 60_000 })
+  expect(await verifySignupInvite(SECRET, ahead.token, "owner@example.com", now)).not.toBeNull()
+  const tooFar = await issueSignupInvite(SECRET, "owner@example.com", { now: now + 6 * 60_000, ttlMs: 30 * 24 * 60 * 60_000 })
+  expect(await verifySignupInvite(SECRET, tooFar.token, "owner@example.com", now)).toBeNull()
   // An expiry further out than the 30-day maximum is refused even when correctly signed.
   const far = await issueSignupInvite(SECRET, "owner@example.com", { now: now + 10 * 24 * 60 * 60_000, ttlMs: 30 * 24 * 60 * 60_000 })
   expect(await verifySignupInvite(SECRET, far.token, "owner@example.com", now)).toBeNull()

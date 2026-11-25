@@ -103,7 +103,7 @@ async function answerAdmitted(deps: AssistantDeps, proposalId: string, asked: st
       return refused(503, "The privacy guard is not available, so nothing was sent to the model.")
     }
     const safe = guarded.safePrompt
-    const context = target === undefined ? undefined : `The dashboard as it stands (change it as asked; keep what the request does not mention):\n${JSON.stringify({ title: target.editable.title, tiles: target.editable.tiles })}`
+    const context = target === undefined ? undefined : `The dashboard as it stands (change it as asked; keep what the request does not mention):\n${JSON.stringify({ title: target.editable.title, tiles: target.editable.tiles }, null, 1)}`
     let guards = 0
     const boundary = async (text: string) => (await guardPrompt(cell, text, `${proposalId}-b${++guards}`))?.safePrompt ?? null
     const outcome = await propose(cell, counted, safe, { proposalId, targetId: target?.id ?? "studio.dashboard.proposal", now, originRequest: safe, ...context === undefined ? {} : { context }, attempts: ATTEMPTS, guard: boundary, maxCalls: CALLS_PER_REQUEST })

@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { compile, editableDashboard, proposalSchema, propose, systemPrompt, type Proposed } from "../agent.ts"
+import { compile, editableDashboard, ISO_DATE, proposalSchema, propose, systemPrompt, unchangedByGuard, type Proposed } from "../agent.ts"
 import { assistant, CALLS_PER_REQUEST, HOURLY_PROPOSALS, type AssistantDeps } from "../assistant.ts"
 import type { Cell, CellAnswer } from "../cell.ts"
 import { claudeCost, configuredModel, neuronCost, withFallback, workersAi, worstCallMicroUsd, type Answer, type Ask, type Model } from "../model.ts"
@@ -304,7 +304,8 @@ test("dates pass the boundary as dates; workspace content the guard would change
   const [ask] = model.asks
   expect(ask?.system).toContain("Today is 2026-11-12.")
   expect(ask?.turns[0]?.content).toContain("Make it monthly from 2026-06-01 for [EMAIL_1]")
-  expect(ask?.turns[0]?.content).toContain(`"start":"2026-05-18","end":"2026-11-16"`)
+  expect(ask?.turns[0]?.content).toContain(`"start": "2026-05-18"`)
+  expect(ask?.turns[0]?.content).toContain(`"end": "2026-11-16"`)
   const sent = JSON.stringify(model.asks)
   expect(sent).not.toContain("amira@nilegold.com")
   expect(sent).not.toContain("[PHONE_")
@@ -363,10 +364,12 @@ test("catalog text and retry feedback are checked at the boundary: a catalog the
   expect(bounded.asks).toHaveLength(1)
 })
 
-test("a catalog over the guard's 20,000-character limit is checked in pieces and still answered", async () => {
+test("a catalog and a schema over the guard's 20,000-character limit are checked in pieces and still answered", async () => {
   const db = stage()
   const { cell: base } = cellDouble()
-  const big: CellCatalog = { ...cellCatalog, metrics: [...cellCatalog.metrics, ...Array.from({ length: 400 }, (_, index) => ({ ...cellCatalog.metrics[0], name: `demo.extra_${index}`, label: `Extra measure number ${index} of the refinery ledger` }))] as CellCatalog["metrics"] }
+  const big: CellCatalog = { ...cellCatalog, metrics: [...cellCatalog.metrics, ...Array.from({ length: 500 }, (_, index) => ({ ...cellCatalog.metrics[0], name: `demo.extra_measure_for_the_refinery_ledger_${index}`, label: `Extra measure number ${index} of the refinery ledger` }))] as CellCatalog["metrics"] }
+  // The schema alone is longer than one guard call takes; checked one member per line, it passes in pieces.
+  expect(JSON.stringify(proposalSchema(big)).length).toBeGreaterThan(20_000)
   const bigCell: Cell = { ...base, get: async (path) => path === "/v1/questions:catalog" ? { kind: "answer", status: 200, body: big } : base.get(path) }
   const { cell, calls } = realGuard(bigCell)
   const model = scripted(proposed([tile()]))
@@ -429,4 +432,12 @@ test("an unpriced model is never configured, and a Workers AI answer without its
   expect(answer.costMicroUsd).toBeGreaterThan(0)
   const reported = workersAi({ accountId: "a", token: "t", model: "@cf/x", fetch: async () => Response.json({ success: true, result: { response: "{}", usage: { neurons: 1000 } } }) })
   expect((await reported.answer(ask)).costMicroUsd).toBe(11_000)
+})
+
+test("a line too long for one guard call is too large, not private; a date inside a phone number stays visible to the detector", async () => {
+  expect(await unchangedByGuard(async (text) => text, "x".repeat(18_001))).toBe("too_large")
+  expect(await unchangedByGuard(async (text) => text, `${"x".repeat(17_000)}\n${"y".repeat(17_000)}`)).toBe("clean")
+  expect("ends 2026-05-22.".replace(ISO_DATE, "DATE")).toBe("ends DATE.")
+  expect(`"start": "2026-05-18T00:00:00Z"`.replace(ISO_DATE, "DATE")).toBe(`"start": "DATE"`)
+  for (const phone of ["010-2012-05-22", "2012-05-22-77", "+20 2012-05-22"]) expect(phone.replace(ISO_DATE, "DATE")).toBe(phone.startsWith("+") ? "+20 DATE" : phone)
 })
