@@ -142,6 +142,9 @@ test("picker: the search field and its list are named; arrows and Enter pick by 
   await equipment.click()
   const search = page.getByRole("combobox", { name: "Search equipment records" })
   await expect(search).toBeFocused()
+  // Focus lands in the search field with Studio's 2px ring outline, never a bare `outline-none`.
+  await expect(search).toHaveCSS("outline-style", "solid")
+  await expect(search).toHaveCSS("outline-width", "2px")
   const list = page.getByRole("listbox", { name: "Equipment records" })
   await expect(list.getByRole("option").first()).toBeVisible()
   // The list opens under the field, at least as wide as it, inside the sheet: nothing scrolls the sheet sideways.

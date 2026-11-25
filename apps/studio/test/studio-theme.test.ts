@@ -302,3 +302,36 @@ test("parseColor reads a CSS none channel as 0, so every Color holds all of r, g
     for (const channel of [color!.r, color!.g, color!.b, color!.alpha]) expect(Number.isFinite(channel)).toBe(true)
   }
 })
+
+// #1724 (CodeRabbit): a translucent hover is checked over the well it lies on, and muted text on it too.
+test("the gate composites a translucent well-hover over the well and checks muted text on the hover", () => {
+  const layered = parseStudioTheme({ version: 1, name: "Dark hover", baseSkin: "polar", appearance: "light", colors: { well: "#888888", "well-hover": "rgba(0, 0, 0, 0.2)", "muted-foreground": "#000000" } })
+  expect(layered.ok).toBe(false)
+  if (!layered.ok) {
+    const paths = layered.issues.map((i) => i.path)
+    // Over the white card the hover passes (11:1); over the #888888 well it is 3.4:1.
+    expect(paths).toContain("contrast.light.foreground (on well-hover over well)")
+    expect(paths).not.toContain("contrast.light.foreground (on well-hover)")
+    expect(paths).not.toContain("contrast.light.foreground (on well)")
+  }
+  const muted = parseStudioTheme({ version: 1, name: "Grey hover", baseSkin: "polar", appearance: "light", colors: { "well-hover": "#999999" } })
+  expect(muted.ok).toBe(false)
+  if (!muted.ok) {
+    const paths = muted.issues.map((i) => i.path)
+    // Polar's #585861 muted ink is 2.5:1 on #999999; its foreground (6.2:1) passes.
+    expect(paths).toContain("contrast.light.muted-foreground (on well-hover)")
+    expect(paths).not.toContain("contrast.light.foreground (on well-hover)")
+  }
+})
+
+// #1724 (CodeRabbit): culori throwing on malformed input is a refusal, and an explicit `/ none` alpha is transparent.
+test("parseColor refuses input culori throws on and reads an explicit none alpha as 0, an omitted one as 1", async () => {
+  const { parseColor } = await import("../src/lib/color.ts")
+  for (const raw of ["color(", "color(srgb", "rgb("]) expect(parseColor(raw), raw).toBeNull()
+  expect(parseColor("rgb(0 0 0 / none)")).toEqual({ mode: "rgb", r: 0, g: 0, b: 0, alpha: 0 })
+  expect(parseColor("rgb(0 0 0)")!.alpha).toBe(1)
+  expect(parseColor("oklch(0.5 0.1 200 / none)")!.alpha).toBe(0)
+  const bad = parseStudioTheme({ version: 1, name: "Broken", colors: { foreground: "color(" } })
+  expect(bad.ok).toBe(false)
+  if (!bad.ok) expect(bad.issues.map((i) => i.path)).toEqual(["colors.foreground"])
+})

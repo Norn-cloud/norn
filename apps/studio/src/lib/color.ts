@@ -28,6 +28,9 @@ const toRgb = converter("rgb")
 /** An sRGB colour, channels 0–1, with alpha 0–1. */
 export type Color = Required<Pick<Rgb, "r" | "g" | "b" | "alpha">> & { readonly mode: "rgb" }
 
+/** A functional colour whose alpha is written `/ none`, e.g. `rgb(0 0 0 / none)`. */
+const EXPLICIT_NONE_ALPHA = /\/\s*none\s*\)$/i
+
 /**
  * Parse one CSS colour (CSS Color 4: hex, named, rgb, hsl, hwb, lab, lch, oklab, oklch) into sRGB,
  * clamped to the sRGB gamut, or null when it isn't one. Validation and rendering both read this
@@ -36,11 +39,17 @@ export type Color = Required<Pick<Rgb, "r" | "g" | "b" | "alpha">> & { readonly 
 export function parseColor(raw: string): Color | null {
   const value = raw.trim()
   if (value === "" || value.length > 64) return null
-  const parsed = parse(value)
+  let parsed: ReturnType<typeof parse>
+  // culori 4.0.2 throws on some malformed input (`color(` reads a token that isn't there); that is
+  // not a colour, so it is refused like any other.
+  try { parsed = parse(value) } catch { return null }
   if (parsed === undefined) return null
   const rgb = clampRgb(toRgb(parsed))
   // A CSS `none` channel (`rgb(none 0 0)`) reads as missing; CSS paints it as 0, so it is 0 here too.
-  return { mode: "rgb", r: rgb.r ?? 0, g: rgb.g ?? 0, b: rgb.b ?? 0, alpha: rgb.alpha ?? 1 }
+  // culori records an omitted alpha and an explicit `/ none` alike (both missing), so the explicit
+  // one is read from the text: it paints as 0 (transparent), while an omitted alpha is 1.
+  const alpha = rgb.alpha ?? (EXPLICIT_NONE_ALPHA.test(value) ? 0 : 1)
+  return { mode: "rgb", r: rgb.r ?? 0, g: rgb.g ?? 0, b: rgb.b ?? 0, alpha }
 }
 
 /** The canonical CSS for a colour: `#rrggbb` when opaque, else `rgba(r, g, b, a)`. */

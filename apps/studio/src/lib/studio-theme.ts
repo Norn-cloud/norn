@@ -320,6 +320,8 @@ const PAIRS: readonly (readonly [StudioThemeToken, string, Surface, number])[] =
   ["foreground", "card", CARD, 4.5],
   ["foreground", "well", [...CARD, "well"], 4.5],
   ["foreground", "well-hover", [...CARD, "well-hover"], 4.5],
+  // A hovered row inside a well: a translucent `well-hover` lies over the well, not the card.
+  ["foreground", "well-hover over well", [...CARD, "well", "well-hover"], 4.5],
   ["foreground", "muted", [...CARD, "muted"], 4.5],
   ["foreground", "popover", POPOVER, 4.5],
   ["foreground", "secondary", [...BG, "secondary"], 4.5],
@@ -332,6 +334,8 @@ const PAIRS: readonly (readonly [StudioThemeToken, string, Surface, number])[] =
   ["muted-foreground", "background", BG, 4.5],
   ["muted-foreground", "card", CARD, 4.5],
   ["muted-foreground", "well", [...CARD, "well"], 4.5],
+  ["muted-foreground", "well-hover", [...CARD, "well-hover"], 4.5],
+  ["muted-foreground", "well-hover over well", [...CARD, "well", "well-hover"], 4.5],
   ["muted-foreground", "muted", [...CARD, "muted"], 4.5],
   ["muted-foreground", "popover", POPOVER, 4.5],
   ["muted-foreground", "accent", [...BG, "accent"], 4.5],

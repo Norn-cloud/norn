@@ -148,7 +148,7 @@ export function pickerChoices({ records, moved, optional, value, more, typed }: 
 
 const sameChoice = (a: PickerChoice, b: PickerChoice): boolean => a.key === b.key
 
-const option = "flex cursor-default items-center gap-2 rounded-lg px-3 py-2 text-sm outline-none select-none data-highlighted:bg-muted data-highlighted:text-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
+const option = "flex cursor-default items-center gap-2 rounded-lg px-3 py-2 max-sm:min-h-[44px] text-sm outline-none select-none data-highlighted:bg-muted data-highlighted:text-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
 
 /**
  * A field that names an existing record (the cell's `inputLinks`): a searchable list of the
@@ -228,21 +228,21 @@ export function RecordPicker({ objectKind, value, onPick, aria, read = readRecor
         autoHighlight
       >
         <Combobox.Trigger {...aria}
-          className={cn(control, "flex min-w-0 flex-1 items-center justify-between gap-2 font-normal outline-none focus-visible:ring-2 focus-visible:ring-ring/50")}>
+          className={cn(control, "flex min-w-0 flex-1 items-center justify-between gap-2 font-normal outline-none max-sm:min-h-[44px] focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring")}>
           {chosenTitle === null
             ? <span className="text-muted-foreground">Choose {noun}…</span>
-            : <span className="flex min-w-0 items-baseline gap-2"><span className="truncate">{chosenTitle}</span>{chosenTitle !== value && <span className="truncate font-mono text-xs text-muted-foreground">{value}</span>}</span>}
+            : <span className="flex min-w-0 items-baseline gap-2"><span className="truncate">{chosenTitle}</span>{chosenTitle !== value && <span className="truncate font-mono text-meta text-muted-foreground">{value}</span>}</span>}
           <ChevronsUpDown className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
         </Combobox.Trigger>
         <Combobox.Portal container={layer}>
           <Combobox.Positioner align="start" sideOffset={4} className="z-50 outline-none">
             <Combobox.Popup aria-label={`Choose ${noun}`}
-              className="flex max-h-[min(24rem,var(--available-height))] w-(--anchor-width) max-w-(--available-width) min-w-64 origin-(--transform-origin) flex-col overflow-hidden rounded-node border border-node-border bg-popover p-1 text-popover-foreground shadow-float outline-none transition-[opacity,scale] duration-100 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0">
+              className="flex max-h-[min(24rem,var(--available-height))] w-(--anchor-width) max-w-(--available-width) min-w-64 origin-(--transform-origin) flex-col overflow-hidden rounded-node border border-node-border bg-popover p-1 text-popover-foreground shadow-float outline-none transition-[opacity,scale] duration-100 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0 motion-reduce:transition-none motion-reduce:data-starting-style:scale-100 motion-reduce:data-ending-style:scale-100">
               <div className="flex items-center gap-2 border-b border-border/60 px-3">
                 <Search className="size-4 shrink-0 text-muted-foreground" aria-hidden />
                 <Combobox.Input aria-label={`Search ${noun} records`}
                   placeholder={property === undefined ? "Type an id" : `Search ${noun} by ${property.replaceAll("_", " ")} or type an id`}
-                  className="h-10 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground" />
+                  className="h-10 w-full rounded-md bg-transparent text-sm outline-none max-sm:min-h-[44px] placeholder:text-muted-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-ring" />
               </div>
               <Combobox.Status className="grid gap-1 px-3 empty:hidden [&>p]:py-2 text-meta text-muted-foreground">
                 {pages.isPending && <p>Reading {noun} records…</p>}
@@ -264,7 +264,7 @@ export function RecordPicker({ objectKind, value, onPick, aria, read = readRecor
         </Combobox.Portal>
       </Combobox.Root>
       {optional && value !== "" && (
-        <Button type="button" variant="ghost" size="icon" className="size-9 shrink-0 text-muted-foreground hover:text-foreground"
+        <Button type="button" variant="ghost" size="icon" className="size-9 shrink-0 text-muted-foreground hover:text-foreground max-sm:min-h-[44px] max-sm:min-w-[44px]"
           aria-label="Clear selection" title="Clear selection" onClick={() => onPick("")}>
           <X className="size-4" aria-hidden />
         </Button>
@@ -280,11 +280,11 @@ function ChoiceLabel({ choice, value, fetching, failed }: { readonly choice: Pic
       return <>
         <Check className={cn("size-3.5 shrink-0", choice.id === value ? "opacity-100" : "opacity-0")} aria-hidden />
         <span className="min-w-0 flex-1 truncate">{choice.title}</span>
-        {choice.title !== choice.id && <span className="truncate font-mono text-xs text-muted-foreground">{choice.id}</span>}
+        {choice.title !== choice.id && <span className="truncate font-mono text-meta text-muted-foreground">{choice.id}</span>}
       </>
     case "clear": return <><X className="size-3.5 text-muted-foreground" aria-hidden /> Clear selection</>
     case "reload": return <><RefreshCw className="size-3.5" aria-hidden /> Reload list</>
     case "more": return <>{fetching ? "Reading…" : failed ? "Retry" : "Show more"}</>
-    case "typed": return <>Use the id <code className="text-xs">{choice.id}</code></>
+    case "typed": return <>Use the id <code className="text-meta">{choice.id}</code></>
   }
 }
