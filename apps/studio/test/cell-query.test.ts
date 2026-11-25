@@ -651,6 +651,7 @@ test("a refusal is an answer and is never retried; only a cell that did not answ
     // A gateway's 403 is no refusal, but asking again does not change it.
     [() => new Response('{"code":"PLAN_LIMIT"}', { status: 403 }), 1, CellUnavailable],
     [() => new Response("", { status: 404 }), 1, NotServed],
+    // No answer at all (Studio's transport says so before the SDK does), and a gateway's 502.
     [async () => { throw new TypeError("network down") }, 4, CellUnavailable],
     [() => new Response("<html>bad gateway</html>", { status: 502 }), 4, CellUnavailable],
   ] as const) {

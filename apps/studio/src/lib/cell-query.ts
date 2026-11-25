@@ -94,10 +94,17 @@ const transient = new WeakSet<Error>()
  *   deployment with no host bound) is {@link NotServed};
  * - a cell that did not answer is {@link CellUnavailable} with no code and no detail. When asking
  *   again can change that (no answer, a 5xx such as a gateway's 503 page while the host restarts,
- *   a 408 or 429) it is `retryable`, so the page offers Retry and the read is retried.
+ *   a 408 or 429) it is `retryable`, so the page offers Retry and the read is retried. Studio's
+ *   transport's own "no answer" (its read deadline, a network failure) is retried the same way.
  * Any other error passes as is.
  */
 function unansweredState(error: unknown, what: string): unknown {
+  // Studio's own transport (`fetchWithTimeout`: the read deadline, a network failure) already says
+  // no answer arrived: a cell that did not answer, retried like the SDK's.
+  if (error instanceof CellUnavailable && error.status === 0 && error.retryable !== false) {
+    transient.add(error)
+    return error
+  }
   if (!(error instanceof NornUnavailable)) return error
   if (error.notServed) return new NotServed(what)
   const { status } = error

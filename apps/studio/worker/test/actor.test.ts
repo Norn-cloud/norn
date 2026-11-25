@@ -98,7 +98,7 @@ test("without a session or a connected host, Norn calls refuse", async () => {
   const noHost = await call(env, "/api/host/v1/defs", { headers: { cookie } })
   expect(noHost.status).toBe(503)
   // The SDK tells this answer from a gateway's 503 by its body: here the route is not served at all.
-  expect(await noHost.json()).toEqual({ error: NO_HOST_ERROR })
+  expect(JSON.parse(await noHost.text()) as unknown).toEqual({ error: NO_HOST_ERROR })
 })
 
 test("a request body reaches the host unchanged", async () => {
