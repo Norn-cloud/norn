@@ -1,0 +1,95 @@
+{
+  "artifactId": "supply.demand_forecast.model",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "model",
+  "lifecycle": "active",
+  "name": "Weekly demand forecast",
+  "namespace": "supply",
+  "payload": {
+    "contracts": [
+      {
+        "id": "non_negative",
+        "output": "predicted_qty",
+        "rule": {
+          "kind": "range",
+          "min": "0"
+        }
+      },
+      {
+        "id": "finite",
+        "output": "predicted_qty",
+        "rule": {
+          "kind": "finite"
+        }
+      },
+      {
+        "id": "risk_band",
+        "output": "stockout_risk",
+        "rule": {
+          "kind": "oneOf",
+          "values": [
+            "low",
+            "medium",
+            "high"
+          ]
+        }
+      }
+    ],
+    "features": [
+      "week_index",
+      "lead_time_days",
+      "promotion"
+    ],
+    "input": {
+      "kind": "objectType",
+      "objectType": "supply.DemandObservation"
+    },
+    "method": {
+      "label": "gradient-boosted trees over 12 weeks of issues",
+      "version": "synthetic-1"
+    },
+    "modelId": "supply.demand_forecast",
+    "outputs": [
+      {
+        "id": "predicted_qty",
+        "nullable": false,
+        "type": {
+          "kind": "decimal",
+          "scale": 3
+        }
+      },
+      {
+        "id": "stockout_risk",
+        "nullable": false,
+        "type": {
+          "kind": "enum",
+          "values": [
+            {
+              "value": "low"
+            },
+            {
+              "value": "medium"
+            },
+            {
+              "value": "high"
+            }
+          ]
+        }
+      }
+    ],
+    "predictions": {
+      "objectType": "supply.DemandForecast"
+    },
+    "target": "issued_qty",
+    "title": "Weekly demand forecast",
+    "trust": "contract_checked",
+    "version": "0.1.0"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.demand_forecast.model.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

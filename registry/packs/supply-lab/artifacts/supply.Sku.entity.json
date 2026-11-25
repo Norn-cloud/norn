@@ -1,0 +1,80 @@
+{
+  "artifactId": "supply.Sku.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Stock-keeping unit",
+  "namespace": "supply",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "sku_id"
+          ]
+        }
+      ],
+      "name": "supply.Sku",
+      "properties": [
+        {
+          "id": "sku_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "category",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "dry_goods"
+              },
+              {
+                "value": "chilled"
+              },
+              {
+                "value": "pharma"
+              },
+              {
+                "value": "spares"
+              }
+            ]
+          }
+        },
+        {
+          "id": "unit_of_measure",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "each"
+              },
+              {
+                "value": "kg"
+              },
+              {
+                "value": "l"
+              }
+            ]
+          }
+        },
+        {
+          "id": "shelf_life_days",
+          "type": {
+            "kind": "integer"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.Sku.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

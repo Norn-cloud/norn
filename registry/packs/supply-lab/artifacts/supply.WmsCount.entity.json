@@ -1,0 +1,96 @@
+{
+  "artifactId": "supply.WmsCount.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "WMS scan row",
+  "namespace": "supply",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "scan_id"
+          ]
+        }
+      ],
+      "implements": [
+        "supply.CountEvidence"
+      ],
+      "name": "supply.WmsCount",
+      "properties": [
+        {
+          "id": "scan_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "warehouse_code",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "sku_code",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "on_hand_qty",
+          "type": {
+            "additivity": {
+              "kind": "semi_additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit",
+              "quantity_basis"
+            ]
+          }
+        },
+        {
+          "id": "unit",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "quantity_basis",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "on_hand"
+              },
+              {
+                "value": "available"
+              },
+              {
+                "value": "reserved"
+              }
+            ]
+          }
+        },
+        {
+          "id": "as_of",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.WmsCount.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

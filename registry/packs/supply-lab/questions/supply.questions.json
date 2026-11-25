@@ -1,0 +1,153 @@
+[
+  {
+    "aggregate": [
+      {
+        "metric": "analysis.object_737570706c792e496e76656e746f7279536e617073686f74.on_hand_qty.as_of_as_of"
+      }
+    ],
+    "calendar": "iso_utc",
+    "filter": [
+      {
+        "operator": "eq",
+        "path": {
+          "property": "quantity_basis"
+        },
+        "value": "on_hand"
+      }
+    ],
+    "freshness": {
+      "kind": "live",
+      "maxAgeMs": 60000
+    },
+    "groupBy": [
+      {
+        "path": {
+          "property": "unit"
+        }
+      },
+      {
+        "path": {
+          "property": "warehouse_id"
+        }
+      },
+      {
+        "grain": "week",
+        "path": {
+          "property": "as_of"
+        }
+      }
+    ],
+    "irVersion": "0.1",
+    "name": "supply.on_hand_weekly",
+    "objectSet": "supply.InventorySnapshot",
+    "window": {
+      "end": "2026-10-26T00:00:00Z",
+      "start": "2026-07-06T00:00:00Z"
+    }
+  },
+  {
+    "aggregate": [
+      {
+        "metric": "analysis.object_737570706c792e53746f636b4d6f76656d656e74.qty.by_occurred_at"
+      }
+    ],
+    "calendar": "iso_utc",
+    "filter": [
+      {
+        "operator": "eq",
+        "path": {
+          "property": "movement_kind"
+        },
+        "value": "issue"
+      }
+    ],
+    "freshness": {
+      "kind": "live",
+      "maxAgeMs": 60000
+    },
+    "groupBy": [
+      {
+        "path": {
+          "property": "unit"
+        }
+      },
+      {
+        "grain": "week",
+        "path": {
+          "property": "occurred_at"
+        }
+      }
+    ],
+    "irVersion": "0.1",
+    "name": "supply.movement_volume_weekly",
+    "objectSet": "supply.StockMovement",
+    "window": {
+      "end": "2026-10-26T00:00:00Z",
+      "start": "2026-07-06T00:00:00Z"
+    }
+  },
+  {
+    "aggregate": [
+      {
+        "metric": "analysis.object_737570706c792e4f726465724c696e65.fill_rate.by_promised_at.ratio_of_sums"
+      }
+    ],
+    "calendar": "iso_utc",
+    "freshness": {
+      "kind": "live",
+      "maxAgeMs": 60000
+    },
+    "groupBy": [
+      {
+        "path": {
+          "property": "unit"
+        }
+      },
+      {
+        "grain": "week",
+        "path": {
+          "property": "promised_at"
+        }
+      }
+    ],
+    "irVersion": "0.1",
+    "name": "supply.fill_rate_weekly",
+    "objectSet": "supply.OrderLine",
+    "window": {
+      "end": "2026-10-26T00:00:00Z",
+      "start": "2026-07-06T00:00:00Z"
+    }
+  },
+  {
+    "aggregate": [
+      {
+        "metric": "analysis.object_737570706c792e536869706d656e7452656365697074.received_qty.by_received_at"
+      }
+    ],
+    "calendar": "iso_utc",
+    "freshness": {
+      "kind": "live",
+      "maxAgeMs": 60000
+    },
+    "groupBy": [
+      {
+        "path": {
+          "property": "unit"
+        }
+      },
+      {
+        "grain": "week",
+        "path": {
+          "property": "received_at"
+        }
+      }
+    ],
+    "irVersion": "0.1",
+    "name": "supply.received_weekly",
+    "objectSet": "supply.ShipmentReceipt",
+    "window": {
+      "end": "2026-10-26T00:00:00Z",
+      "start": "2026-07-06T00:00:00Z"
+    }
+  }
+]

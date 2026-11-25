@@ -1,0 +1,94 @@
+{
+  "artifactId": "supply.SupplierReceiptLine.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Supplier receipt row",
+  "namespace": "supply",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "receipt_line_id"
+          ]
+        }
+      ],
+      "implements": [
+        "supply.ReceiptEvidence"
+      ],
+      "name": "supply.SupplierReceiptLine",
+      "properties": [
+        {
+          "id": "receipt_line_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "supplier_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "po_item_ref",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "received_qty",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit"
+            ]
+          }
+        },
+        {
+          "id": "damaged_qty",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit"
+            ]
+          }
+        },
+        {
+          "id": "unit",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "received_at",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.SupplierReceiptLine.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

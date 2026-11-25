@@ -1,0 +1,357 @@
+{
+  "artifactId": "supply.access.policy",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "policy",
+  "lifecycle": "active",
+  "name": "Supply lab",
+  "namespace": "supply",
+  "payload": {
+    "accessVersion": "0.1",
+    "policyId": "supply.access",
+    "rules": [
+      {
+        "actions": [
+          "supply.warehouse.register"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "data_engineer"
+              ]
+            }
+          }
+        ],
+        "resourceType": "supply.Warehouse",
+        "ruleId": "catalog_warehouse",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "supply.sku.register"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "data_engineer"
+              ]
+            }
+          }
+        ],
+        "resourceType": "supply.Sku",
+        "ruleId": "catalog_sku",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "supply.warehouse.close"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "ops_manager"
+              ]
+            }
+          }
+        ],
+        "resourceType": "supply.Warehouse",
+        "ruleId": "close_warehouse",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "supply.position.open",
+          "supply.position.record_count"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "warehouse_clerk"
+              ]
+            }
+          }
+        ],
+        "resourceType": "supply.InventorySnapshot",
+        "ruleId": "count",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "supply.position.restate"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "ops_manager"
+              ]
+            }
+          }
+        ],
+        "resourceType": "supply.InventorySnapshot",
+        "ruleId": "restate",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "supply.movement.record"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "warehouse_clerk"
+              ]
+            }
+          }
+        ],
+        "resourceType": "supply.StockMovement",
+        "ruleId": "move",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "supply.po.create"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "planner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "supply.PurchaseOrder",
+        "ruleId": "draft_order",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "supply.po.submit",
+          "supply.po.cancel"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "ops_manager"
+              ]
+            }
+          }
+        ],
+        "resourceType": "supply.PurchaseOrder",
+        "ruleId": "decide_order",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "supply.po.receive_partial",
+          "supply.po.fulfil"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "warehouse_clerk"
+              ]
+            }
+          }
+        ],
+        "resourceType": "supply.PurchaseOrder",
+        "ruleId": "receive_order",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "supply.line.add"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "planner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "supply.OrderLine",
+        "ruleId": "draft_line",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "supply.line.record_received"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "warehouse_clerk"
+              ]
+            }
+          }
+        ],
+        "resourceType": "supply.OrderLine",
+        "ruleId": "receive_line",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "supply.receipt.record",
+          "supply.receipt.record_blind"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "warehouse_clerk"
+              ]
+            }
+          }
+        ],
+        "resourceType": "supply.ShipmentReceipt",
+        "ruleId": "receive",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "supply.inspection.record",
+          "supply.inspection.record_orphan"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "warehouse_clerk"
+              ]
+            }
+          }
+        ],
+        "resourceType": "supply.Inspection",
+        "ruleId": "inspect",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "supply.observation.record"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "data_engineer"
+              ]
+            }
+          }
+        ],
+        "resourceType": "supply.DemandObservation",
+        "ruleId": "observe_demand",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
+          "supply.forecast.record"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "data_engineer",
+                "planner"
+              ]
+            }
+          }
+        ],
+        "resourceType": "supply.DemandForecast",
+        "ruleId": "forecast",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.access.policy.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

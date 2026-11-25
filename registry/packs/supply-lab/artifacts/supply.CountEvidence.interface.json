@@ -1,0 +1,67 @@
+{
+  "artifactId": "supply.CountEvidence.interface",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Stock count evidence",
+  "namespace": "supply",
+  "payload": {
+    "entityVersion": "2.0",
+    "interface": {
+      "name": "supply.CountEvidence",
+      "properties": [
+        {
+          "id": "on_hand_qty",
+          "type": {
+            "additivity": {
+              "kind": "semi_additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit",
+              "quantity_basis"
+            ]
+          }
+        },
+        {
+          "id": "unit",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "quantity_basis",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "on_hand"
+              },
+              {
+                "value": "available"
+              },
+              {
+                "value": "reserved"
+              }
+            ]
+          }
+        },
+        {
+          "id": "as_of",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.CountEvidence.interface.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

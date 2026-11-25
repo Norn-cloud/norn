@@ -1,0 +1,152 @@
+{
+  "artifactId": "supply.position.open.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Open a stock position",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.position.open",
+    "createLinks": [
+      {
+        "link": "warehouse",
+        "targetIdField": "warehouse_id",
+        "targetType": "supply.Warehouse"
+      },
+      {
+        "link": "sku",
+        "targetIdField": "sku_id",
+        "targetType": "supply.Sku"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "supply.InventorySnapshot.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "snapshot_id",
+      "objectKind": "supply.InventorySnapshot",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "type": "string"
+        },
+        "count_ref": {
+          "type": "string"
+        },
+        "count_source": {
+          "enum": [
+            "wms_scan",
+            "cycle_count",
+            "audit"
+          ],
+          "type": "string"
+        },
+        "on_hand_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "quantity_basis": {
+          "enum": [
+            "on_hand",
+            "available",
+            "reserved"
+          ],
+          "type": "string"
+        },
+        "sku_id": {
+          "type": "string"
+        },
+        "snapshot_id": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "warehouse_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "snapshot_id",
+        "warehouse_id",
+        "sku_id",
+        "on_hand_qty",
+        "unit",
+        "quantity_basis",
+        "as_of",
+        "count_source",
+        "count_ref"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "snapshot_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "snapshot_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(slice.warehouse.status == 'active') and (input.unit == slice.sku.unit_of_measure)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "warehouse_id"
+          }
+        },
+        "name": "warehouse",
+        "objectType": "supply.Warehouse"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "sku_id"
+          }
+        },
+        "name": "sku",
+        "objectType": "supply.Sku"
+      }
+    ],
+    "title": "Open a stock position",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "supply.InventorySnapshot"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.position.open.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -55,6 +55,7 @@ test/soundness-authoring.test.ts
 test/stock-definitions.test.ts
 test/stock-trace.test.ts
 test/stress-purchase.test.ts
+test/supply-lab.test.ts
 test/studio-access.test.ts
 test/temporal-enum.test.ts
 test/temporal-intervals.test.ts

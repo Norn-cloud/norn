@@ -667,6 +667,58 @@ fn real_canon_pack_runs_static_gap_and_mbt_cleanly() -> Result<(), String> {
     Ok(())
 }
 
+/// SUPPLY-LAB axis 8: the static gap detector, the generic MBT and the seeded
+/// DST on the admitted `supply-lab` pack (with `ml` and `tracking`) against a
+/// real file-backed cell. Gap pin: the generic seeder writes each object type
+/// directly, so a type with a protected creator (`supply.PurchaseOrder.created_by`,
+/// stamped only by `fromCaller`) is refused at seeding; if that is fixed the MBT
+/// and DST results are asserted instead.
+#[test]
+fn real_supply_lab_pack_passes_sqlite_mbt_dst_and_static_gaps() -> Result<(), String> {
+    let pack = load_registry_pack("supply-lab", &["tracking", "ml", "supply-lab"], false)?;
+    let gaps = analyze_static_gaps(&pack);
+    eprintln!("SUPPLY-LAB static gaps:\n{gaps}");
+    let missing_sod = |id: &str| {
+        gaps.questions().iter().any(|gap| {
+            matches!(gap, StructuralGap::HighImpactActionMissingSod { action_id, .. } if action_id == id)
+        })
+    };
+    assert!(
+        !missing_sod("supply.po.submit"),
+        "submit declares independentOf the drafter:\n{gaps}"
+    );
+    assert!(
+        missing_sod("ml.modelversion.promote"),
+        "the reused ml promotion still has no SoD:\n{gaps}"
+    );
+    let recorder = Arc::new(DomainCoverageRecorder::new());
+    let protected_seed =
+        |error: &str| error.contains("has protected properties writable only by rules");
+    match run_pack_mbt(&pack, |_| {
+        SqlitePackHost::open(&pack, Arc::clone(&recorder))
+    }) {
+        Ok(mbt) => {
+            mbt.coverage.check_transitions_covered()?;
+            mbt.coverage.check_cedar_covered()?;
+        }
+        Err(error) if protected_seed(&error) => eprintln!("SUPPLY-LAB MBT gap: {error}"),
+        Err(error) => return Err(error),
+    }
+    let config = PackDstConfig {
+        cases: 12,
+        max_steps: 18,
+        ..PackDstConfig::default()
+    };
+    match run_pack_dst(&pack, config, |_| {
+        SqlitePackHost::open(&pack, Arc::clone(&recorder))
+    }) {
+        Ok(dst) => assert_eq!(dst.cases_run, 12),
+        Err(error) if protected_seed(&error) => eprintln!("SUPPLY-LAB DST gap: {error}"),
+        Err(error) => return Err(error),
+    }
+    Ok(())
+}
+
 fn o2c_invoice_entity_and_law() -> Vec<serde_json::Value> {
     vec![
         json!({

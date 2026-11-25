@@ -1,0 +1,64 @@
+{
+  "artifactId": "supply.erp_supplier",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "connector",
+  "lifecycle": "active",
+  "name": "ERP supplier feed",
+  "namespace": "supply",
+  "payload": {
+    "auth": {
+      "authId": "erp",
+      "kind": "api_key",
+      "name": "Authorization",
+      "placement": "header",
+      "prefix": "token ",
+      "secretRef": "SUPPLY_ERP_READ_KEY"
+    },
+    "connectorVersion": "0.1",
+    "cursor": {
+      "cursorId": "erp_receipts",
+      "resourceId": "purchase_receipt_items",
+      "storageKey": "supply.erp.receipts"
+    },
+    "deadLetterPolicy": {
+      "maxFailures": 3,
+      "route": "ledger"
+    },
+    "extensions": {
+      "norn.poll/1": {
+        "feeds": [
+          {
+            "recordKeyPath": "/name",
+            "resourceId": "purchase_receipt_items"
+          }
+        ]
+      }
+    },
+    "mappings": [
+      {
+        "externalSource": "synthetic-erp",
+        "kind": "external_id",
+        "resourceId": "purchase_receipt_items",
+        "sourcePath": "/name",
+        "targetObjectKind": "supply.SupplierReceiptLine"
+      }
+    ],
+    "resources": [
+      {
+        "endpoint": "/api/resource/Purchase Receipt Item",
+        "itemsPath": "/data",
+        "kind": "delta",
+        "resourceId": "purchase_receipt_items",
+        "sinceParam": "modified_since",
+        "updatedAtPath": "/modified"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.erp_supplier.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

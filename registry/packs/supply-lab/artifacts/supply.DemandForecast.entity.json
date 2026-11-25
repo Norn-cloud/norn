@@ -1,0 +1,121 @@
+{
+  "artifactId": "supply.DemandForecast.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Demand forecast",
+  "namespace": "supply",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "forecast_id"
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "sku",
+          "target": "supply.Sku"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "warehouse",
+          "target": "supply.Warehouse"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "scored_by",
+          "target": "ml.ModelVersion"
+        }
+      ],
+      "name": "supply.DemandForecast",
+      "properties": [
+        {
+          "id": "forecast_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "subject",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "model_version",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "sku_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "warehouse_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "week_start",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
+          "id": "predicted_qty",
+          "type": {
+            "kind": "decimal",
+            "scale": 3
+          }
+        },
+        {
+          "id": "stockout_risk",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "low"
+              },
+              {
+                "value": "medium"
+              },
+              {
+                "value": "high"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.DemandForecast.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

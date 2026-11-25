@@ -1,0 +1,50 @@
+{
+  "artifactId": "supply.CountEvidence.unit_known.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.CountEvidence.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A count is held in one of the catalog's units; an unknown unit is never summed with known ones.",
+  "namespace": "supply",
+  "payload": {
+    "id": "supply.CountEvidence.unit_known",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/supply.ts"
+    },
+    "rationale": "A count is held in one of the catalog's units; an unknown unit is never summed with known ones.",
+    "response": {
+      "expression": "((self.unit == 'each') or (self.unit == 'kg')) or (self.unit == 'l')",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.CountEvidence"
+      ],
+      "root": {
+        "id": "supply.CountEvidence",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.CountEvidence"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.CountEvidence.unit_known.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,97 @@
+{
+  "artifactId": "supply.po.create.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Draft a purchase order",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.po.create",
+    "derive": [
+      {
+        "expression": "actor.subjectId",
+        "field": "created_by",
+        "inputRequired": false
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "supply.PurchaseOrder.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "po_id",
+      "objectKind": "supply.PurchaseOrder",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "created_by": {
+          "type": "string"
+        },
+        "currency": {
+          "enum": [
+            "EGP",
+            "USD",
+            "EUR"
+          ],
+          "type": "string"
+        },
+        "po_id": {
+          "type": "string"
+        },
+        "promised_at": {
+          "type": "string"
+        },
+        "supplier_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "po_id",
+        "supplier_id",
+        "promised_at",
+        "currency",
+        "created_by"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "po_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "po_id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Draft a purchase order",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "supply.PurchaseOrder"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.po.create.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

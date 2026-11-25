@@ -1,0 +1,33 @@
+{
+  "artifactId": "supply.DemandObservation.entity.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Weekly demand observation labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "الطلب الأسبوعي",
+          "en": "Weekly demand"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "supply.DemandObservation"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.DemandObservation.entity.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

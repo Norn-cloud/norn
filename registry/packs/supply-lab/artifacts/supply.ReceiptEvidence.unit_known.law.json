@@ -1,0 +1,50 @@
+{
+  "artifactId": "supply.ReceiptEvidence.unit_known.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.ReceiptEvidence.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A receipt is held in one of the catalog's units; an unknown unit is never summed with known ones.",
+  "namespace": "supply",
+  "payload": {
+    "id": "supply.ReceiptEvidence.unit_known",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/supply.ts"
+    },
+    "rationale": "A receipt is held in one of the catalog's units; an unknown unit is never summed with known ones.",
+    "response": {
+      "expression": "((self.unit == 'each') or (self.unit == 'kg')) or (self.unit == 'l')",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.ReceiptEvidence"
+      ],
+      "root": {
+        "id": "supply.ReceiptEvidence",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.ReceiptEvidence"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.ReceiptEvidence.unit_known.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

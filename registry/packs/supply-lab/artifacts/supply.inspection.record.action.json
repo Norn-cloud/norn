@@ -1,0 +1,115 @@
+{
+  "artifactId": "supply.inspection.record.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record a receipt inspection",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.inspection.record",
+    "createLinks": [
+      {
+        "link": "receipt",
+        "targetIdField": "receipt_id",
+        "targetType": "supply.ShipmentReceipt"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "supply.Inspection.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "inspection_id",
+      "objectKind": "supply.Inspection",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "inspected_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "inspection_id": {
+          "type": "string"
+        },
+        "receipt_id": {
+          "type": "string"
+        },
+        "rejected_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "unit": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "inspection_id",
+        "receipt_id",
+        "inspected_qty",
+        "rejected_qty",
+        "unit"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "inspection_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "inspection_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "input.unit == slice.receipt.unit"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "receipt_id"
+          }
+        },
+        "name": "receipt",
+        "objectType": "supply.ShipmentReceipt"
+      }
+    ],
+    "title": "Record a receipt inspection",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "supply.Inspection"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.inspection.record.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

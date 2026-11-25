@@ -1,0 +1,30 @@
+{
+  "artifactId": "supply.inspection.record_orphan.action.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Record an inspection without its receipt labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "تسجيل فحص غير مطابق",
+          "en": "Record unmatched inspection"
+        },
+        "target": {
+          "actionId": "supply.inspection.record_orphan",
+          "kind": "action"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.inspection.record_orphan.action.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

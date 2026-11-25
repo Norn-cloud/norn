@@ -1,0 +1,99 @@
+{
+  "artifactId": "supply.warehouse.register.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Register a warehouse",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.warehouse.register",
+    "effectProgram": {
+      "entityArtifactId": "supply.Warehouse.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "warehouse_id",
+      "objectKind": "supply.Warehouse",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "latitude": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "longitude": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "name": {
+          "type": "string"
+        },
+        "region": {
+          "enum": [
+            "delta",
+            "canal",
+            "upper_egypt",
+            "red_sea"
+          ],
+          "type": "string"
+        },
+        "warehouse_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "warehouse_id",
+        "name",
+        "region",
+        "latitude",
+        "longitude"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "warehouse_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "warehouse_id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Register a warehouse",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "supply.Warehouse"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.warehouse.register.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

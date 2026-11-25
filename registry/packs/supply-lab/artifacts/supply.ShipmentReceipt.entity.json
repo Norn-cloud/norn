@@ -1,0 +1,119 @@
+{
+  "artifactId": "supply.ShipmentReceipt.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Shipment receipt",
+  "namespace": "supply",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "receipt_id"
+          ]
+        }
+      ],
+      "implements": [
+        "supply.ReceiptEvidence"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "to": "one"
+          },
+          "id": "order_line",
+          "target": "supply.OrderLine"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "warehouse",
+          "target": "supply.Warehouse"
+        }
+      ],
+      "name": "supply.ShipmentReceipt",
+      "properties": [
+        {
+          "id": "receipt_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "supplier_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "warehouse_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "constraints": {
+            "nullable": true
+          },
+          "id": "line_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "received_qty",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit"
+            ]
+          }
+        },
+        {
+          "id": "damaged_qty",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit"
+            ]
+          }
+        },
+        {
+          "id": "unit",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "received_at",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.ShipmentReceipt.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,94 @@
+{
+  "artifactId": "supply.wms_scan.mapping",
+  "dependencies": [
+    {
+      "artifactId": "supply.wms_scan.source",
+      "kind": "source_schema",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "supply.CountEvidence.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "supply.WmsCount.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "mapping",
+  "lifecycle": "active",
+  "name": "WMS scans into count evidence",
+  "namespace": "supply",
+  "payload": {
+    "extensions": {
+      "norn.mapping.generic/1.0.0": {
+        "parity": "unqualified"
+      }
+    },
+    "format": "norn.mapping/1",
+    "interfaces": [
+      "supply.CountEvidence.interface"
+    ],
+    "maps": [
+      {
+        "id": "scan",
+        "properties": [
+          {
+            "property": "scan_id",
+            "value": "input.scan_id"
+          },
+          {
+            "property": "warehouse_code",
+            "value": "input.site"
+          },
+          {
+            "property": "sku_code",
+            "value": "input.item"
+          },
+          {
+            "property": "on_hand_qty",
+            "value": "input.qty"
+          },
+          {
+            "property": "unit",
+            "value": "input.uom == 'EA' ? 'each' : (input.uom == 'KG' ? 'kg' : input.uom)"
+          },
+          {
+            "property": "quantity_basis",
+            "value": "input.basis"
+          },
+          {
+            "property": "as_of",
+            "value": "timestamp(input.counted_at)"
+          }
+        ],
+        "source": {
+          "dataset": "stock_count"
+        },
+        "sourceRecord": "input.site + '/' + input.scan_id",
+        "subject": "input.scan_id",
+        "target": {
+          "entity": "supply.WmsCount.entity",
+          "interface": "supply.CountEvidence.interface"
+        }
+      }
+    ],
+    "source": {
+      "schemaId": "supply.wms_scan.source",
+      "sha256": "01262bae425d9d87d6e456fca9871dd15a2ebb7fe632511066102058096c7e65",
+      "version": "0.1.0"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.wms_scan.mapping.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

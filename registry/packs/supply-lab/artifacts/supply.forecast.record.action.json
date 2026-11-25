@@ -1,0 +1,158 @@
+{
+  "artifactId": "supply.forecast.record.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record a demand forecast",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.forecast.record",
+    "createLinks": [
+      {
+        "link": "sku",
+        "targetIdField": "sku_id",
+        "targetType": "supply.Sku"
+      },
+      {
+        "link": "warehouse",
+        "targetIdField": "warehouse_id",
+        "targetType": "supply.Warehouse"
+      },
+      {
+        "link": "scored_by",
+        "targetIdField": "model_version",
+        "targetType": "ml.ModelVersion"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "supply.DemandForecast.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "forecast_id",
+      "objectKind": "supply.DemandForecast",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "forecast_id": {
+          "type": "string"
+        },
+        "model_version": {
+          "type": "string"
+        },
+        "predicted_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 3
+          },
+          "type": "number"
+        },
+        "sku_id": {
+          "type": "string"
+        },
+        "stockout_risk": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "warehouse_id": {
+          "type": "string"
+        },
+        "week_start": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "forecast_id",
+        "subject",
+        "model_version",
+        "sku_id",
+        "warehouse_id",
+        "week_start",
+        "predicted_qty",
+        "stockout_risk"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "forecast_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "forecast_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "slice.version.status == 'production'"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "model_version"
+          }
+        },
+        "name": "version",
+        "objectType": "ml.ModelVersion"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "sku_id"
+          }
+        },
+        "name": "sku",
+        "objectType": "supply.Sku"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "warehouse_id"
+          }
+        },
+        "name": "warehouse",
+        "objectType": "supply.Warehouse"
+      }
+    ],
+    "title": "Record a demand forecast",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "supply.DemandForecast"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.forecast.record.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

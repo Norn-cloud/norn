@@ -1,0 +1,139 @@
+{
+  "artifactId": "supply.InventorySnapshot.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Inventory position",
+  "namespace": "supply",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "snapshot_id"
+          ]
+        }
+      ],
+      "implements": [
+        "supply.CountEvidence"
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "warehouse",
+          "target": "supply.Warehouse"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "sku",
+          "target": "supply.Sku"
+        }
+      ],
+      "name": "supply.InventorySnapshot",
+      "properties": [
+        {
+          "id": "snapshot_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "warehouse_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "sku_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "on_hand_qty",
+          "type": {
+            "additivity": {
+              "kind": "semi_additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit",
+              "quantity_basis"
+            ]
+          }
+        },
+        {
+          "id": "unit",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "quantity_basis",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "on_hand"
+              },
+              {
+                "value": "available"
+              },
+              {
+                "value": "reserved"
+              }
+            ]
+          }
+        },
+        {
+          "id": "as_of",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
+          "id": "count_source",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "wms_scan"
+              },
+              {
+                "value": "cycle_count"
+              },
+              {
+                "value": "audit"
+              }
+            ]
+          }
+        },
+        {
+          "id": "count_ref",
+          "type": {
+            "kind": "text"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.InventorySnapshot.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
