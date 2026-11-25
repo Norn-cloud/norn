@@ -150,6 +150,7 @@ pub(crate) fn seed_stamped<H: PackHost>(
             .map(|(dimension, value)| (dimension.to_owned(), value.to_owned()))
             .collect(),
         actor: principal,
+        approved_intent: None,
         input,
         idempotency_key: key.clone(),
         object_type: None,

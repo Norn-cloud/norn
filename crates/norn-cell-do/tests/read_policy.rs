@@ -54,6 +54,7 @@ fn caller(subject: &str) -> Option<Caller> {
             roles: roles.iter().map(|role| (*role).to_owned()).collect(),
             actor_kind: "user",
             role_table: "fixtures/1",
+            accountable_person: Some((*name).to_owned()),
         })
 }
 
@@ -219,6 +220,7 @@ fn undeclared_roles_and_other_subjects_get_no_grant() {
             roles: vec!["analyst".into(), "superuser".into()],
             actor_kind: "user",
             role_table: "fixtures/1",
+            accountable_person: Some("user:u1".into()),
         }));
         let request = ReadRequest {
             capability,
@@ -374,6 +376,7 @@ fn a_kept_grant_is_never_another_caller_s() {
             roles: vec!["viewer".into()],
             actor_kind: "user",
             role_table: "fixtures/1",
+            accountable_person: Some("admin@demo".into()),
         }));
         let request = ReadRequest {
             capability: values,

@@ -232,7 +232,27 @@ expiresAtMs}}`; a host with no verified principal for the caller denies it. The
 decision's identity binds the action, the input, the key and the requester, so
 the same call parks once and an approval approves exactly the call it was asked
 about. `GET /v1/decisions` lists it with its `call` to holders of a decider role,
-never to its requester, who cannot decide it either (#618). Deciding records the
+never to its requester, who cannot decide it either (#618).
+**APPROVAL-INDEPENDENT-1 (#618):** the requester and the decider are two
+accountable people: each verified principal names its person only through the
+issuer's explicit claim (`norn.accountablePerson`, never the session subject),
+a requester naming none parks nothing (opaque denial), and a decider naming
+none, or the requester's person through another session or assistant, may
+neither list nor decide the call. **APPROVAL-INTENT-1 (#618):** the parked
+call records the prepared-intent digest of the commit it would make
+(`intentDigest`, over exact Unicode spelling: action, scope, world, turn,
+target, raw and effective input, pinned parameters, consumed delivery, the
+fact, link and predicate reads that decide inherited markings, writes with
+expected versions, links, commands with their identities, quantity request
+with a turn-relative reservation lifetime), and
+the kernel commits the approved call only when the commit it hands the host has
+that digest; otherwise `action.approved_intent_changed` (409) is recorded as
+final. The parked call keeps its input's exact spelling (`exactInput`) beside
+the Norn1 command, and the call its requester is served to retry
+(`encodedInput`) is that exact spelling. A call parked before digests were recorded has none and its approval
+runs nothing (`approval.definition_changed`, recorded); a parked requester
+recorded without a person matches its authenticated subject, and one naming a
+person matches only that person. Deciding records the
 resolution in DECISION-LEDGER-1 and runs no flow turn. The resolution is the
 record the dispatch consults: an approved call commits through the same dispatch
 under the authority of the requester's own verified token on that request,

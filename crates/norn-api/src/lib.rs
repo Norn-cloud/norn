@@ -11,6 +11,8 @@ pub mod analytics_routes;
 pub mod answers;
 /// The `approval` retained-definition kind (APPROVAL-1).
 pub mod approval_definitions;
+/// AUTH-INDEPENDENT-PERSON (#618): accountable-person separation on approval decisions.
+pub(crate) mod approval_identity;
 /// APPROVAL-1: a call of an approval-gated action parks as a decision.
 pub mod approvals;
 /// Default-deny server authorization for host operations and kernel action requests.

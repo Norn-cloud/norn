@@ -8111,6 +8111,7 @@ fn r2_blocker3a_hidden_disputed_row_in_predicate_slice_refuses_as_target_not_fou
             ("environmentId".to_owned(), "dev".to_owned()),
         ]),
         actor: "auditor".to_owned(),
+        approved_intent: None,
         input: serde_json::from_value(json!({"target_id": "MEAS-2", "purity": "0.96"}))
             .expect("input"),
         idempotency_key: "dispute-pred-1".to_owned(),

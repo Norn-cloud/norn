@@ -260,6 +260,7 @@ impl Stress {
                 ("environmentId".into(), "dev".into()),
             ]),
             actor: actor.to_owned(),
+            approved_intent: None,
             input,
             idempotency_key: key.to_owned(),
             object_type: None,

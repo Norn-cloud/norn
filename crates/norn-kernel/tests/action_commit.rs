@@ -372,6 +372,7 @@ fn call<'a>(action: &'a ActionRoot, so_number: &str, key: &str) -> ActionCall<'a
         action_version: "0.1.0",
         scope: scope(),
         actor: "agent:ops".to_owned(),
+        approved_intent: None,
         input: JsonObject::from([(
             "so_number".to_owned(),
             JsonValue::String(so_number.to_owned()),
@@ -4823,4 +4824,206 @@ fn ancestor_addressed_action_with_subtype_slice_read_commits_and_reports_version
 
     let replayed = commit_action(&mut cell, &catalog, &noop_call, &AllowSlice).unwrap();
     assert!(matches!(replayed, ActionOutcome::Replayed { .. }));
+}
+
+/// AUTH-INDEPENDENT-PERSON (#618), exhaustive-finite over a small identity
+/// domain: two identities are independent people exactly when both are valid
+/// canonical accountable people and differ, so one person behind two sessions
+/// is never two people and a missing or non-canonical identity never stands
+/// in for one. A record retained without a person matches its authenticated
+/// subject's retry; a record naming a person matches only that person.
+#[test]
+fn independent_person_approval_uses_accountable_identity() {
+    let identities = [
+        None,
+        Some(""),
+        Some(" person:alice"),
+        Some("person:e\u{301}"),
+        Some("person:\u{202e}x"),
+        Some("person:alice"),
+        Some("person:bob"),
+    ];
+    let valid = |person: Option<&str>| norn_kernel::validate_accountable_person(person).is_some();
+    assert_eq!(
+        identities.iter().filter(|person| valid(**person)).count(),
+        2
+    );
+    for first in identities {
+        for second in identities {
+            assert_eq!(
+                norn_kernel::independent_accountable_people(first, second),
+                valid(first) && valid(second) && first != second,
+                "{first:?} / {second:?}"
+            );
+            assert_eq!(
+                norn_kernel::retained_person_matches(first, second),
+                first.is_none() || first == second,
+                "{first:?} / {second:?}"
+            );
+        }
+    }
+}
+
+/// The prepared-intent digest of `call`, when it reaches its commit point.
+fn intent_digest(cell: &Cell, catalog: &TypeCatalog<'_>, call: &ActionCall<'_>) -> Option<String> {
+    if let Ok(norn_kernel::Prepared::Commit(intent)) =
+        norn_kernel::prepare_action_intent(cell, catalog, call, &Allow)
+    {
+        Some(intent.digest)
+    } else {
+        None
+    }
+}
+
+/// AUTH-INDEPENDENT-PERSON (#618): an approval binds the commit it was granted
+/// for, not the call's raw input. Preparing writes nothing. With the input held
+/// fixed, another turn (other command identities) or a changed target refuses
+/// `action.approved_intent_changed` and writes nothing; the commit the
+/// approval was granted for commits.
+#[test]
+fn approved_intent_binds_the_prepared_commit_not_the_raw_input() {
+    let types = order_types();
+    let catalog = TypeCatalog::new(&types);
+    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let target = seed(&mut cell, ORDER, "SO-1", "draft");
+    let approve = approve_with_submit_command("input.so_number");
+    let granted = call(&approve, "SO-1", "approve-so-1");
+    let digest = intent_digest(&cell, &catalog, &granted);
+    assert!(digest.is_some());
+    assert_eq!(cell.ledger().len(), 1);
+
+    let other_turn = ActionCall {
+        approved_intent: digest.clone(),
+        turn: DecisionTurn {
+            id: "turn-other".to_owned(),
+            ..granted.turn.clone()
+        },
+        ..granted.clone()
+    };
+    let refused = commit_action(&mut cell, &catalog, &other_turn, &Allow);
+    assert!(
+        matches!(&refused, Err(refusal) if refusal.code() == "action.approved_intent_changed"),
+        "{refused:?}"
+    );
+    let restated = cell.commit(CellCommit {
+        writes: vec![FactWrite {
+            key: target,
+            expected: FactVersion(1),
+            mutation: FactMutation::Put {
+                values: JsonObject::from([
+                    ("so_number".to_owned(), JsonValue::String("SO-1".to_owned())),
+                    ("status".to_owned(), JsonValue::String("draft".to_owned())),
+                ]),
+            },
+        }],
+        ..CellCommit::empty()
+    });
+    assert!(restated.is_ok(), "{restated:?}");
+    let stale = ActionCall {
+        approved_intent: digest.clone(),
+        ..granted.clone()
+    };
+    let refused = commit_action(&mut cell, &catalog, &stale, &Allow);
+    assert!(
+        matches!(&refused, Err(refusal) if refusal.code() == "action.approved_intent_changed"),
+        "{refused:?}"
+    );
+    assert_eq!(cell.ledger().len(), 2);
+    assert!(cell.outbox().is_empty());
+
+    let regranted = intent_digest(&cell, &catalog, &granted);
+    assert!(regranted.is_some() && regranted != digest);
+    let committed = commit_action(
+        &mut cell,
+        &catalog,
+        &ActionCall {
+            approved_intent: regranted,
+            ..granted
+        },
+        &Allow,
+    );
+    assert!(
+        matches!(committed, Ok(ActionOutcome::Committed { .. })),
+        "{committed:?}"
+    );
+    assert_eq!(cell.outbox().len(), 1);
+}
+
+/// AUTH-INDEPENDENT-PERSON (#618): the intent digest keeps the exact Unicode
+/// spelling a call writes. NFC and NFD spellings of one text prepare distinct
+/// digests, and a commit under the other spelling's approval is refused.
+#[test]
+fn approved_intent_binds_the_exact_unicode_spelling() {
+    let types = order_types();
+    let catalog = TypeCatalog::new(&types);
+    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    seed(&mut cell, ORDER, "SO-1", "draft");
+    let action = approve_with_guarded_update_command("input.modified", "input.owner", "input.rows");
+    let spelled = |owner: &str| {
+        let mut call = guarded_update_call(&action, "approve-owner");
+        call.input
+            .insert("owner".to_owned(), JsonValue::String(owner.to_owned()));
+        call
+    };
+    let composed = spelled("caf\u{e9}");
+    let decomposed = spelled("cafe\u{301}");
+    let granted = intent_digest(&cell, &catalog, &composed);
+    assert!(granted.is_some() && granted != intent_digest(&cell, &catalog, &decomposed));
+    let refused = commit_action(
+        &mut cell,
+        &catalog,
+        &ActionCall {
+            approved_intent: granted,
+            ..decomposed
+        },
+        &Allow,
+    );
+    assert!(
+        matches!(&refused, Err(refusal) if refusal.code() == "action.approved_intent_changed"),
+        "{refused:?}"
+    );
+    assert!(cell.outbox().is_empty());
+}
+
+/// AUTH-INDEPENDENT-PERSON (#618): a generated-key create whose allocator
+/// diagnostics stay concealed from the caller still prepares the commit its
+/// approval is granted for, and once another create has taken that number
+/// the approved call is refused as the approval's own `ApprovedIntentChanged`,
+/// never a concealed `TargetNotFound`.
+#[test]
+fn approved_intent_binds_a_generated_key_behind_concealed_allocation() {
+    struct Concealing;
+    impl ActionAuthorizer for Concealing {
+        fn authorize(&self, _: &ActionAuthzRequest<'_>) -> Result<(), ActionDenial> {
+            Ok(())
+        }
+    }
+    let types = naming_series_types("gapless_within_commit", "year");
+    let catalog = TypeCatalog::new(&types);
+    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let action = naming_series_action("commerce.named_order.create");
+    let first = naming_call(&action, "ACME", "create-1", 1_767_225_600_000);
+    let second = naming_call(&action, "ACME", "create-2", 1_767_225_600_000);
+    let prepared = norn_kernel::prepare_action_intent(&cell, &catalog, &first, &Concealing);
+    let Ok(norn_kernel::Prepared::Commit(granted)) = prepared else {
+        panic!("the concealed create reaches its commit point: {prepared:?}");
+    };
+    let taken = commit_action(&mut cell, &catalog, &second, &Concealing);
+    assert!(
+        matches!(taken, Ok(ActionOutcome::Committed { .. })),
+        "{taken:?}"
+    );
+    let refused = commit_action(
+        &mut cell,
+        &catalog,
+        &ActionCall {
+            approved_intent: Some(granted.digest),
+            ..first
+        },
+        &Concealing,
+    );
+    assert!(
+        matches!(&refused, Err(refusal) if refusal.code() == "action.approved_intent_changed"),
+        "{refused:?}"
+    );
 }

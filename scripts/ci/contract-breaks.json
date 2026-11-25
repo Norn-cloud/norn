@@ -4,6 +4,18 @@
     {
       "ruling": "D113",
       "break": "refusal code expr.output.invalid: removed"
+    },
+    {
+      "ruling": "#1674",
+      "break": "refusal code redaction.policy_id: removed"
+    },
+    {
+      "ruling": "#1674",
+      "break": "refusal code redaction.policy_version: removed"
+    },
+    {
+      "ruling": "#618",
+      "break": "refusal code approval.would_commit: removed"
     }
   ]
 }

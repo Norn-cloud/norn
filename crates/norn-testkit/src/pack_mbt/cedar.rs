@@ -349,6 +349,7 @@ where
         action_version: &target.admitted.version,
         scope: scope_map,
         actor: attempt.actor.to_owned(),
+        approved_intent: None,
         input,
         idempotency_key: format!("cedar-call-{}", *seq),
         object_type: None,

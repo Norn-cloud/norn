@@ -422,6 +422,7 @@ fn schedule_call<'a>(
             ("environmentId".to_owned(), "dev".to_owned()),
         ]),
         actor: "scheduler:lead".to_owned(),
+        approved_intent: None,
         input: object(json!({
             "plan_id": plan_id,
             "agent_id": "A1",
@@ -1772,6 +1773,7 @@ fn r2_blocker3b_fresh_aggregate_authorizes_before_bound_and_byte_overflow() -> T
             ("environmentId".to_owned(), "dev".to_owned()),
         ]),
         actor: "scheduler:lead".to_owned(),
+        approved_intent: None,
         input: object(json!({
             "plan_id": "P1", "agent_id": "A1",
             "window_start": "2026-11-23T00:00:00Z", "window_end": "2026-11-24T00:00:00Z"
@@ -2108,6 +2110,7 @@ fn r3_blocker4_hidden_row_past_max_items_plus_one_conceals_as_target_not_found()
                 ("environmentId".to_owned(), "dev".to_owned()),
             ]),
             actor: "operator".to_owned(),
+            approved_intent: None,
             input: serde_json::from_value(json!({"item_id": format!("W{idx}"), "grp": "g"}))?,
             idempotency_key: format!("r3-b4-mem-{idx}"),
             object_type: None,
@@ -2126,5 +2129,59 @@ fn r3_blocker4_hidden_row_past_max_items_plus_one_conceals_as_target_not_found()
             "case {idx}: expected TargetNotFound, got {refusal:?}"
         );
     }
+    Ok(())
+}
+
+/// AUTH-INDEPENDENT-PERSON (#618): an approval binds the predicate membership
+/// its commit was decided on, which also decides the markings its writes
+/// inherit. A new member in the window that overlaps nothing changes the
+/// prepared commit, and the commit under the earlier approval is refused.
+#[test]
+fn approved_intent_binds_predicate_membership() -> TestResult {
+    let types = schedule_types()?;
+    let (facts_expr, links_expr) = batch_expressions(1);
+    let rule = batch_writer_rule(&facts_expr, &links_expr, &["for_agent"])?;
+    let catalog = TypeCatalog::new(&types).with_action_rules(std::slice::from_ref(&rule));
+    let action = schedule_action(50, false)?;
+    let mut cell = seeded_cell()?;
+    let request = schedule_call(
+        &action,
+        "P1",
+        "2026-11-23T11:00:00Z",
+        "2026-11-23T12:00:00Z",
+    )?;
+    let norn_kernel::Prepared::Commit(granted) =
+        norn_kernel::prepare_action_intent(&cell, &catalog, &request, &ALLOW)
+            .map_err(|refusal| format!("{refusal:?}"))?
+    else {
+        return Err("the call reaches its commit point".into());
+    };
+    put_fact(
+        &mut cell,
+        "schedule.Commitment",
+        "C9",
+        json!({
+            "commitment_id": "C9",
+            "agent_id": "A1",
+            "starts_at": "2026-11-23T14:00:00Z",
+            "ends_at": "2026-11-23T15:00:00Z",
+            "start_min": 840,
+            "end_min": 900,
+            "hours": 1.00
+        }),
+    )?;
+    let refused = commit_action(
+        &mut cell,
+        &catalog,
+        &ActionCall {
+            approved_intent: Some(granted.digest),
+            ..request
+        },
+        &ALLOW,
+    );
+    assert!(
+        matches!(&refused, Err(refusal) if refusal.code() == "action.approved_intent_changed"),
+        "{refused:?}"
+    );
     Ok(())
 }

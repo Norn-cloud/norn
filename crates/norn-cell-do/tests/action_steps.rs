@@ -204,9 +204,12 @@ fn a_flow_action_step_propagates_optional_trace_context() {
 }
 
 /// SHA-256 of the receipt and ledger rows [`flow_receipts_and_ledger_match_the_pre_u1_bytes`]
-/// reads, as the build before automations U1 (#1650, `f51541ce72`) wrote them.
+/// reads, as the build before automations U1 (#1650, `f51541ce72`) wrote them, plus
+/// the one field AUTH-INDEPENDENT-PERSON (#618) adds: the run starter's
+/// `startedBy.accountablePerson`. Without that field the rows hash to the pre-U1
+/// `37486316913f7a28786a73fc7d515c0ef335ce5094a91d614c9c70f3adea384c`.
 const PRE_U1_FLOW_BYTES_SHA256: &str =
-    "37486316913f7a28786a73fc7d515c0ef335ce5094a91d614c9c70f3adea384c";
+    "31027e19d7f8df6ac4bb52ab4cfffb299489f05ea95ade88adde52471df44275";
 
 /// #1704: a cell whose flow runs with no automation installed writes exactly
 /// the receipt and ledger bytes it wrote before automations U1 (#1650), so

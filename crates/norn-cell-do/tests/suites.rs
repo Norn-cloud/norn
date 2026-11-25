@@ -71,6 +71,8 @@ mod hosted_load;
 mod hosted_timers_quint;
 #[path = "inbox.rs"]
 mod inbox;
+#[path = "independent_approval.rs"]
+mod independent_approval;
 #[path = "ingest_rate.rs"]
 mod ingest_rate;
 #[path = "journal_from_memory.rs"]

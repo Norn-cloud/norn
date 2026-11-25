@@ -825,6 +825,7 @@ fn a_revision_racing_the_approved_dispatch_is_fenced() {
         roles: roles.to_vec(),
         actor_kind: "user",
         role_table: Box::leak(table.to_owned().into_boxed_str()),
+        accountable_person: Some(subject.to_owned()),
     };
     cell.caller.record(Some(as_caller(
         "approver@steps",
@@ -915,6 +916,7 @@ fn a_refusal_racing_an_exact_commit_never_masks_it() {
         roles: roles.to_vec(),
         actor_kind: "user",
         role_table: Box::leak(table.to_owned().into_boxed_str()),
+        accountable_person: Some(subject.to_owned()),
     };
     cell.caller.record(Some(as_caller(
         "approver@steps",
@@ -1028,6 +1030,7 @@ fn the_requesters_subject_under_another_kind_or_role_table_reads_nothing() {
         roles: vec!["admin".to_owned()],
         actor_kind: kind,
         role_table: table,
+        accountable_person: Some("operator@steps".to_owned()),
     };
     // The requester itself, as the dispatch admits it, is offered the run.
     let own = requested_as(

@@ -30,6 +30,7 @@
 //!    had the same idempotency key and binding, this one replays after current
 //!    state authorization.
 
+mod approval;
 mod automation_input;
 mod input;
 mod owned_rows;
@@ -60,6 +61,10 @@ use crate::decision_commit::{
 use crate::envelope::{EnvelopeCounts, TurnEnvelopeMeter, check_decision_envelope};
 use crate::limits::EnvelopeLimits;
 
+pub use approval::{
+    Prepared, PreparedIntent, independent_accountable_people, prepare_action_intent,
+    retained_person_matches, validate_accountable_person,
+};
 pub use automation_input::{AutomationInputViolation, validate_automation_static_input};
 pub use input::{actor_derived_fields, prepare_action_input, prepare_action_input_for_call};
 pub use types::{
@@ -72,7 +77,7 @@ pub use types::{
 
 use input::{build_action_commands, check_action_record_size};
 use owned_rows::commit_parent_rows;
-use receipt::consume_receipt;
+use receipt::{consume_receipt, precondition_read_refusal};
 use slice::{authorize_slice_type, reference_read_proof};
 use transition::commit_transition;
 use types::{EnvelopePolicy, Pending};
@@ -129,8 +134,11 @@ where
         call,
         authorizer,
         Some(preparation),
-        &EnvelopeLimits::V1,
-        None,
+        EnvelopePolicy {
+            limits: &EnvelopeLimits::V1,
+            meter: None,
+            capture: None,
+        },
     )
 }
 
@@ -152,7 +160,18 @@ where
     H::Command: From<JsonObject>,
     H::Input: From<JsonObject>,
 {
-    commit_action_inner(host, catalog, call, authorizer, None, limits, None)
+    commit_action_inner(
+        host,
+        catalog,
+        call,
+        authorizer,
+        None,
+        EnvelopePolicy {
+            limits,
+            meter: None,
+            capture: None,
+        },
+    )
 }
 
 /// Commits one action call under the meter's per-decision and aggregate turn
@@ -178,7 +197,18 @@ where
     H::Input: From<JsonObject>,
 {
     let limits = meter.decision_limits();
-    commit_action_inner(host, catalog, call, authorizer, None, &limits, Some(meter))
+    commit_action_inner(
+        host,
+        catalog,
+        call,
+        authorizer,
+        None,
+        EnvelopePolicy {
+            limits: &limits,
+            meter: Some(meter),
+            capture: None,
+        },
+    )
 }
 
 #[allow(
@@ -191,8 +221,7 @@ fn commit_action_inner<H>(
     call: &ActionCall<'_>,
     authorizer: &dyn ActionAuthorizer,
     preparation: Option<ActionInputPreparation<'_>>,
-    limits: &EnvelopeLimits,
-    meter: Option<&mut TurnEnvelopeMeter>,
+    envelope: EnvelopePolicy<'_>,
 ) -> Result<ActionOutcome, ActionRefusal<H::Error>>
 where
     H: CellHost + ?Sized,
@@ -264,8 +293,7 @@ where
             lifecycle,
             transition,
             accept_receipt.as_ref(),
-            limits,
-            meter,
+            envelope,
         ),
         Some(ActionEffectProgram::UpsertInputObject {
             object_id_field,
@@ -281,8 +309,7 @@ where
             object_id_field,
             object_kind,
             write_mode,
-            limits,
-            meter,
+            envelope,
         ),
         Some(ActionEffectProgram::MutateParentWithRows {
             object_id_field,
@@ -306,8 +333,7 @@ where
             parent_version_field,
             parent_delete_field.as_deref(),
             collections,
-            limits,
-            meter,
+            envelope,
         ),
     }
 }
@@ -421,7 +447,11 @@ where
     H::Command: From<JsonObject>,
     H::Input: From<JsonObject>,
 {
-    let EnvelopePolicy { limits, meter } = envelope;
+    let EnvelopePolicy {
+        limits,
+        meter,
+        capture,
+    } = envelope;
     let Pending {
         effective_input,
         mut remaining_fuel,
@@ -521,6 +551,7 @@ where
         writes.push(candidate.counter_write);
         reads.extend(candidate.skipped_reads);
     }
+    let quantity = crate::action_quantity::prepare_quantity_action(call, &effective_input)?;
     let target_before = receipt::target_before_version(catalog, &slice, &target);
     receipt::ensure_target_read(catalog, &target, target_before, &writes, &mut reads);
     writes.push(FactWrite {
@@ -545,6 +576,31 @@ where
         }
         None => None,
     };
+    check_action_turn_meter::<H::Error>(meter.as_deref(), counts)?;
+    // Precision granted after full snapshots were loaded cannot erase their
+    // value-dependent admission. Revocation refuses before any write rather
+    // than using empty values under newly dependent authorization.
+    if reference_only && !authorizer.supports_action_reference_lineage(call.action) {
+        return Err(ActionRefusal::TargetNotFound);
+    }
+    approval::bind_approved_intent::<H::Error>(
+        call,
+        &approval::PreparedCommit {
+            target: &target,
+            effective_input: &effective_input,
+            record: &record_key,
+            parameter_pins: &record.parameter_pins,
+            consumes: consumes.as_ref(),
+            reads: &reads,
+            link_reads: &link_reads,
+            predicate_reads: &predicate_reads,
+            writes: &writes,
+            links: &created_links,
+            effects: &prepared.effects,
+            quantity: quantity.as_ref().map(|(request, _)| request),
+        },
+        capture,
+    )?;
     let commit = CellCommit {
         consumes,
         reads,
@@ -555,14 +611,6 @@ where
         link_reads,
         predicate_reads,
     };
-    check_action_turn_meter::<H::Error>(meter.as_deref(), counts)?;
-    let quantity = crate::action_quantity::prepare_quantity_action(call, &effective_input)?;
-    // Precision granted after full snapshots were loaded cannot erase their
-    // value-dependent admission. Revocation refuses before any write rather
-    // than using empty values under newly dependent authorization.
-    if reference_only && !authorizer.supports_action_reference_lineage(call.action) {
-        return Err(ActionRefusal::TargetNotFound);
-    }
     let reference_reads = (reference_only && !generated_key)
         .then(|| reference_read_proof(catalog, call.action, authorizer, &commit, &target))
         .flatten();
@@ -799,110 +847,6 @@ fn authorize_identity_collision<H: CellHost + ?Sized>(
         }
     }
     Ok(())
-}
-
-fn precondition_read_refusal<X>(
-    error: &CommitError<X>,
-    precondition_reads: &BTreeSet<FactKey>,
-) -> Option<ActionRefusal<X>> {
-    if let CommitError::PredicateReadConflict { object_type } = error {
-        return Some(ActionRefusal::StaleAggregateRead {
-            object_type: object_type.clone(),
-        });
-    }
-    let stale_fact = match error {
-        CommitError::Conflict { key, .. } if precondition_reads.contains(key) => Some(key.clone()),
-        CommitError::Conflict { key, .. } => precondition_reads
-            .iter()
-            .find(|read| crate::snapshot_observe::tombstone_key(read) == *key)
-            .cloned(),
-        CommitError::IdentityReuse
-        | CommitError::IdentityCollision { .. }
-        | CommitError::AtomicBoundary { .. }
-        | CommitError::AtomicDeliveryBoundary { .. }
-        | CommitError::ImmutableObject { .. }
-        | CommitError::LifecycleInitialization { .. }
-        | CommitError::OwnedRowsProtected { .. }
-        | CommitError::DuplicateKey { .. }
-        | CommitError::NotPending { .. }
-        | CommitError::ReceiptNotAccepted { .. }
-        | CommitError::DuplicateLink { .. }
-        | CommitError::IdentifierTooLong { .. }
-        | CommitError::LinkConflict { .. }
-        | CommitError::LinkReadConflict { .. }
-        | CommitError::UnsupportedLinkRead { .. }
-        | CommitError::DuplicateLinkRead { .. }
-        | CommitError::LinkReadTooLarge { .. }
-        | CommitError::InvalidLinkRead { .. }
-        | CommitError::PredicateReadConflict { .. }
-        | CommitError::UnsupportedPredicateRead { .. }
-        | CommitError::InvalidPredicateRead { .. }
-        | CommitError::DanglingLink { .. }
-        | CommitError::LinkTarget { .. }
-        | CommitError::LinkCardinality { .. }
-        | CommitError::LinkRequired { .. }
-        | CommitError::TypeMismatch { .. }
-        | CommitError::EffectiveValues { .. }
-        | CommitError::TraversalLimitExceeded { .. }
-        | CommitError::AccountingPosting { .. }
-        | CommitError::InvariantViolation { .. }
-        | CommitError::InvariantBudgetExceeded { .. }
-        | CommitError::Law { .. }
-        | CommitError::InvariantModel { .. }
-        | CommitError::ObservationAuthorization
-        | CommitError::EventLimitExceeded { .. }
-        | CommitError::Overflow
-        | CommitError::Host(_) => None,
-    };
-    let stale_link = match error {
-        CommitError::LinkReadConflict { source_key, link }
-        | CommitError::UnsupportedLinkRead { source_key, link } => {
-            Some((source_key.clone(), link.clone()))
-        }
-        CommitError::IdentityReuse
-        | CommitError::IdentityCollision { .. }
-        | CommitError::AtomicBoundary { .. }
-        | CommitError::AtomicDeliveryBoundary { .. }
-        | CommitError::ImmutableObject { .. }
-        | CommitError::LifecycleInitialization { .. }
-        | CommitError::OwnedRowsProtected { .. }
-        | CommitError::DuplicateKey { .. }
-        | CommitError::NotPending { .. }
-        | CommitError::ReceiptNotAccepted { .. }
-        | CommitError::Conflict { .. }
-        | CommitError::DuplicateLink { .. }
-        | CommitError::IdentifierTooLong { .. }
-        | CommitError::LinkConflict { .. }
-        | CommitError::DuplicateLinkRead { .. }
-        | CommitError::LinkReadTooLarge { .. }
-        | CommitError::InvalidLinkRead { .. }
-        | CommitError::PredicateReadConflict { .. }
-        | CommitError::UnsupportedPredicateRead { .. }
-        | CommitError::InvalidPredicateRead { .. }
-        | CommitError::DanglingLink { .. }
-        | CommitError::LinkTarget { .. }
-        | CommitError::LinkCardinality { .. }
-        | CommitError::LinkRequired { .. }
-        | CommitError::TypeMismatch { .. }
-        | CommitError::EffectiveValues { .. }
-        | CommitError::TraversalLimitExceeded { .. }
-        | CommitError::AccountingPosting { .. }
-        | CommitError::InvariantViolation { .. }
-        | CommitError::InvariantBudgetExceeded { .. }
-        | CommitError::Law { .. }
-        | CommitError::InvariantModel { .. }
-        | CommitError::ObservationAuthorization
-        | CommitError::EventLimitExceeded { .. }
-        | CommitError::Overflow
-        | CommitError::Host(_) => None,
-    };
-    if let Some(key) = stale_fact {
-        return Some(ActionRefusal::StalePreconditionRead { key, link: None });
-    }
-    stale_link.map(|(key, link)| ActionRefusal::StalePreconditionRead {
-        key,
-        link: Some(link),
-    })
 }
 
 fn append_command_events(

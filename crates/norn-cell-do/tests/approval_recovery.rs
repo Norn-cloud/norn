@@ -1070,6 +1070,7 @@ fn an_approval_recorded_while_a_step_dispatches_on_recorded_authority_is_never_c
             roles: starter.roles.clone(),
             actor_kind: "user",
             role_table: norn_cell_do::principal::FIXTURE_ROLES,
+            accountable_person: starter.accountable_person.clone(),
         }));
         let answer = dispatch();
         cell.caller.record(None);
@@ -1124,6 +1125,7 @@ fn approve_dispatching<E: SqlEngine>(cell: &Cell<E>, id: &str, before: &dyn Fn()
         roles: roles.to_vec(),
         actor_kind: "user",
         role_table: norn_cell_do::principal::FIXTURE_ROLES,
+        accountable_person: Some(subject.to_owned()),
     };
     cell.caller
         .record(Some(as_caller("approver@steps", &["admin".to_owned()])));
@@ -1328,6 +1330,7 @@ fn a_stale_drive_denied_after_the_requesters_commit_delivers_the_commit() {
             roles: starter.roles.clone(),
             actor_kind: "user",
             role_table: norn_cell_do::principal::FIXTURE_ROLES,
+            accountable_person: starter.accountable_person.clone(),
         }));
         let answer = dispatch();
         cell.caller.record(None);
