@@ -5293,7 +5293,7 @@
       "tier": "T2",
       "severity": "error",
       "message": "a UI SDK layer refuses dismissal where nothing justifies it: {detail}",
-      "fix": "Hold a layer that cannot be dismissed only in pending states; hold an accidental-dismissal lock only in pending states, idle states that ask through onDismissAttempt, or idle confirmations with a Cancel control inside the layer.",
+      "fix": "Hold a layer that refuses a dismissal only in pending states, or in idle states with a way out: onDismissAttempt or a control inside the layer that reaches a state the layer is not held in without starting a call or entering a pending state. Say when a layer is open with heldIn, never with open; use defaultOpen only on a layer that refuses no dismissal and names no heldIn.",
       "no_fix": null
     },
     {
@@ -5301,7 +5301,7 @@
       "tier": "T2",
       "severity": "error",
       "message": "a notification surface holds the page: {detail}",
-      "fix": "Keep toasts and live regions non-modal and never held open, announce them with priority \"polite\", and let them expire or be dismissed.",
+      "fix": "Keep toasts and live regions non-modal, never held open and never trapping focus, and let them expire or be dismissed.",
       "no_fix": null
     },
     {
@@ -5501,7 +5501,7 @@
       "tier": "T2",
       "severity": "error",
       "message": "a page machine handles an outcome the awaited call cannot have: {detail}",
-      "fix": "Handle pending_approval only for actions and operations, answer_moved only for reads, and cancelled only where the state offers a cancel.",
+      "fix": "Handle pending_approval only for actions and operations, answer_moved only for reads, stale and subscription_refused only for reads of a binding the machine subscribes to, and cancelled only where the state offers a cancel.",
       "no_fix": null
     },
     {
