@@ -1,0 +1,7 @@
+--- a/overlay_core.rs
++++ b/overlay_core.rs
+@@ -134,3 +134,3 @@
+         Some(RowChange::Put { slot, version }) => match puts.get(slot) {
+-            Some(row) => Some(RowSource::Put { row, version }),
++            Some(_) => Some(RowSource::Before),
+             None => None,

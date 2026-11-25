@@ -1,0 +1,7 @@
+--- a/overlay_core.rs
++++ b/overlay_core.rs
+@@ -149,3 +149,3 @@
+         (false, true) => EdgeDelta::Insert,
+-        (true, false) => EdgeDelta::Remove,
++        (true, false) => EdgeDelta::Keep,
+         (false, false) | (true, true) => EdgeDelta::Keep,
