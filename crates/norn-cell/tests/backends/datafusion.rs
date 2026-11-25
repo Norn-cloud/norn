@@ -101,3 +101,16 @@ pub(crate) fn lineage_keys(root: &Path, tenant: &TenantId) -> Vec<String> {
         .map(|key| key.expect("key"))
         .collect()
 }
+
+/// The segments the catalog publishes for the mirror table `table`.
+#[allow(dead_code, reason = "a hook only some suites use")]
+pub(crate) fn mirror_segments(root: &Path, tenant: &TenantId, table: &str) -> Option<u64> {
+    open(root, tenant)
+        .query_row(
+            "SELECT count(*) FROM segment WHERE tbl = ?1",
+            [table],
+            |row| row.get::<_, i64>(0),
+        )
+        .ok()
+        .and_then(|count| u64::try_from(count).ok())
+}

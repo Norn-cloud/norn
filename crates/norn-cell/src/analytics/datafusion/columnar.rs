@@ -158,6 +158,69 @@ pub(super) fn write_parquet(
         .map_err(|error| engine_error(error.to_string()))
 }
 
+/// The largest row group a sink buffers before it is written out.
+const ROW_GROUP_BYTES: usize = 64 << 20;
+
+/// A Parquet file written batch by batch, each row group bounded in rows and
+/// bytes, its footer finished and its bytes synced by [`Sink::finish`].
+pub(super) struct Sink {
+    writer: ArrowWriter<File>,
+    schema: SchemaRef,
+    rows: u64,
+}
+
+impl Sink {
+    /// A new file at `path` (which must not exist) of `schema`.
+    pub(super) fn create(path: &Path, schema: &SchemaRef) -> Outcome<Self> {
+        let file = super::catalog::create_new(path)?;
+        let properties = WriterProperties::builder()
+            .set_compression(Compression::ZSTD(ZstdLevel::default()))
+            .set_max_row_group_row_count(Some(ROW_GROUP_ROWS))
+            .set_max_row_group_bytes(Some(ROW_GROUP_BYTES))
+            .build();
+        let writer = ArrowWriter::try_new(file, Arc::clone(schema), Some(properties))
+            .map_err(|error| engine_error(error.to_string()))?;
+        Ok(Self {
+            writer,
+            schema: Arc::clone(schema),
+            rows: 0,
+        })
+    }
+
+    /// Append `batch`, which must be of this sink's schema.
+    pub(super) fn write(&mut self, batch: &RecordBatch) -> Outcome<()> {
+        self.rows = self
+            .rows
+            .saturating_add(u64::try_from(batch.num_rows()).unwrap_or(u64::MAX));
+        self.writer
+            .write(batch)
+            .map_err(|error| engine_error(error.to_string()))
+    }
+
+    /// Append the columns of `batch` this sink's schema names, by name.
+    pub(super) fn write_named(&mut self, batch: &RecordBatch) -> Outcome<()> {
+        let columns = self
+            .schema
+            .fields()
+            .iter()
+            .map(|field| named(batch, field.name()).map(Arc::clone))
+            .collect::<Outcome<Vec<_>>>()?;
+        let projected = super::columnar::batch(&self.schema, columns)?;
+        self.write(&projected)
+    }
+
+    /// Finish the footer and sync the file; the rows written.
+    pub(super) fn finish(self) -> Outcome<u64> {
+        let file = self
+            .writer
+            .into_inner()
+            .map_err(|error| engine_error(error.to_string()))?;
+        file.sync_all()
+            .map_err(|error| engine_error(error.to_string()))?;
+        Ok(self.rows)
+    }
+}
+
 /// A column of a scanned batch by name.
 fn named<'b>(batch: &'b RecordBatch, name: &str) -> Outcome<&'b ArrayRef> {
     batch
@@ -237,7 +300,16 @@ pub(super) fn system<T>(
         .collect())
 }
 
-/// The cells of one stored column of a batch.
+/// Whether a stored column holds text, in any of Arrow's string encodings.
+fn is_text(kind: &DataType) -> bool {
+    matches!(
+        kind,
+        DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View
+    )
+}
+
+/// The cells of one stored column of a batch; a column stored as another
+/// kind is refused (N9), never read as nulls.
 pub(super) fn column_cells(batch: &RecordBatch, column: &Column) -> Outcome<Vec<Cell>> {
     let array = named(batch, &column.id)?;
     let rows = batch.num_rows();
@@ -268,6 +340,12 @@ pub(super) fn column_cells(batch: &RecordBatch, column: &Column) -> Outcome<Vec<
                 })
                 .collect())
         }
+        ColumnKind::Boolean if array.data_type() != &DataType::Boolean => Err(mismatch()),
+        ColumnKind::Text | ColumnKind::Opaque | ColumnKind::Timestamp | ColumnKind::Date
+            if !is_text(array.data_type()) =>
+        {
+            Err(mismatch())
+        }
         ColumnKind::Boolean => Ok((0..rows)
             .map(|row| bool_at(array.as_ref(), row).map_or(Cell::Null, Cell::Bool))
             .collect()),
@@ -277,6 +355,9 @@ pub(super) fn column_cells(batch: &RecordBatch, column: &Column) -> Outcome<Vec<
         ColumnKind::Timestamp | ColumnKind::Date => {
             let t = named(batch, &derived(&column.id, "t"))?;
             let n = named(batch, &derived(&column.id, "n"))?;
+            if t.data_type() != &DataType::Int64 || n.data_type() != &DataType::Int32 {
+                return Err(mismatch());
+            }
             Ok((0..rows)
                 .map(|row| {
                     match (

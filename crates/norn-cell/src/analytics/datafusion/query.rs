@@ -57,76 +57,102 @@ pub(super) struct Scope {
     snapshot: ReadSnapshot,
 }
 
+/// One catalog snapshot of a mirror table (N7): its frontier, schema,
+/// model and segments, read in one transaction.
+struct Snapshot {
+    reached: u64,
+    schema: super::super::TableSchema,
+    model_pin: Option<String>,
+    segments: Vec<super::catalog::Segment>,
+}
+
+fn mirror_scope(
+    engine: &Engine,
+    tenant: &mut Tenant,
+    source: &Source,
+    expected: Option<&str>,
+    history: bool,
+) -> Outcome<Scope> {
+    let Source::Mirror {
+        world,
+        table,
+        frontier,
+        scope,
+        excluded,
+        model,
+    } = source
+    else {
+        return Err(refusal(UNSUPPORTED, "not a mirror"));
+    };
+    let snapshot = tenant.catalog.read(|tx| {
+        Ok(Snapshot {
+            reached: super::catalog::frontier(tx, world)?,
+            schema: mirror::parse_schema(super::catalog::get(tx, &format!("schema:{table}"))?)?,
+            model_pin: super::catalog::get(tx, "model_pin")?,
+            segments: super::catalog::segments(tx, table, world)?,
+        })
+    })?;
+    if snapshot.reached < *frontier {
+        return Err(refusal(
+            "analytics.frontier_behind",
+            format!("the mirror is at {}", snapshot.reached),
+        ));
+    }
+    let model_pin = snapshot
+        .model_pin
+        .filter(|pin| expected.is_some_and(|expected| pin == expected))
+        .ok_or_else(|| refusal(STALE, "the mirror is of another model"))?;
+    let need = if history {
+        mirror::Need::History(*frontier)
+    } else {
+        mirror::Need::Current(*frontier)
+    };
+    let versions = mirror::versions(engine, tenant, &snapshot.schema, &snapshot.segments, need)?;
+    let all: Vec<Row> = versions
+        .iter()
+        .filter(|v| v.current_at(*frontier))
+        .cloned()
+        .map(Row::from)
+        .collect();
+    let excluded_set: BTreeSet<&str> = excluded.iter().map(String::as_str).collect();
+    let read = all
+        .iter()
+        .map(|row| !excluded_set.contains(row.id.as_str()))
+        .collect();
+    let known = history.then(|| versions.into_iter().map(Row::from).collect());
+    Ok(Scope {
+        columns: snapshot.schema.columns,
+        all,
+        read,
+        versions: known,
+        excluded: excluded.clone(),
+        at: Some((world.clone(), *frontier)),
+        model: model.clone(),
+        snapshot: ReadSnapshot::Mirror {
+            world: world.clone(),
+            table: table.clone(),
+            frontier: *frontier,
+            scope: scope.clone(),
+            model_pin,
+            schema_pin: snapshot.schema.pin,
+        },
+    })
+}
+
 impl Scope {
     /// The rows of `source`, refusing a mirror behind its frontier or of
-    /// another generation than `expected_model_pin` (when given).
+    /// any generation but `model_pin` (N1: a mirror read without a pin
+    /// refuses; it never skips the check). `history` also reads every
+    /// version known at the frontier (a snapshot question needs them).
     pub(super) fn new(
         engine: &Engine,
         tenant: &mut Tenant,
         source: &Source,
-        expected_model_pin: Option<&str>,
+        model_pin: Option<&str>,
+        history: bool,
     ) -> Outcome<Self> {
         match source {
-            Source::Mirror {
-                world,
-                table,
-                frontier,
-                scope,
-                excluded,
-                model,
-            } => {
-                let reached = tenant
-                    .catalog
-                    .meta(&format!("frontier:{world}"))?
-                    .and_then(|v| v.parse::<u64>().ok())
-                    .unwrap_or(0);
-                if reached < *frontier {
-                    return Err(refusal(
-                        "analytics.frontier_behind",
-                        format!("the mirror is at {reached}"),
-                    ));
-                }
-                let schema = mirror::schema_of(tenant, &format!("schema:{table}"))?;
-                let model_pin = tenant
-                    .catalog
-                    .meta("model_pin")?
-                    .filter(|pin| expected_model_pin.is_none_or(|expected| pin == expected))
-                    .ok_or_else(|| refusal(STALE, "the mirror is of another model"))?;
-                let versions = mirror::versions(engine, tenant, &schema, world)?;
-                let all: Vec<Row> = versions
-                    .iter()
-                    .filter(|v| v.current_at(*frontier))
-                    .cloned()
-                    .map(Row::from)
-                    .collect();
-                let excluded_set: BTreeSet<&str> = excluded.iter().map(String::as_str).collect();
-                let read = all
-                    .iter()
-                    .map(|row| !excluded_set.contains(row.id.as_str()))
-                    .collect();
-                let known: Vec<Row> = versions
-                    .into_iter()
-                    .filter(|v| v.from <= *frontier)
-                    .map(Row::from)
-                    .collect();
-                Ok(Self {
-                    columns: schema.columns,
-                    all,
-                    read,
-                    versions: Some(known),
-                    excluded: excluded.clone(),
-                    at: Some((world.clone(), *frontier)),
-                    model: model.clone(),
-                    snapshot: ReadSnapshot::Mirror {
-                        world: world.clone(),
-                        table: table.clone(),
-                        frontier: *frontier,
-                        scope: scope.clone(),
-                        model_pin,
-                        schema_pin: schema.pin,
-                    },
-                })
-            }
+            Source::Mirror { .. } => mirror_scope(engine, tenant, source, model_pin, history),
             Source::Dataset { table, load } => {
                 let dataset = dataset::dataset(engine, tenant, table, load)?;
                 Ok(Self {
@@ -286,26 +312,43 @@ pub(super) fn type_filters(scope: &Scope, filters: &[Filter]) -> Outcome<Vec<Typ
 /// reaching one refuses (a later filter is reached only when every earlier
 /// one held).
 pub(super) fn filters_hold(filters: &[TypedFilter], cells: &[Cell]) -> (bool, bool) {
-    let mut holds = true;
-    let mut refuse = false;
+    // SQL's three-valued logic: `None` is unknown. An instant filter over a
+    // value without its ordering key is unknown, negated or not (N6.5), as
+    // the `DuckDB` engine's `c IS NOT NULL AND t = ? AND n = ?` is.
+    let and = |a: Option<bool>, b: Option<bool>| match (a, b) {
+        (Some(false), _) | (_, Some(false)) => Some(false),
+        (Some(true), Some(true)) => Some(true),
+        _ => None,
+    };
+    let or = |a: Option<bool>, b: Option<bool>| match (a, b) {
+        (Some(true), _) | (_, Some(true)) => Some(true),
+        (Some(false), Some(false)) => Some(false),
+        _ => None,
+    };
+    let mut holds = Some(true);
+    let mut refuse = Some(false);
     for filter in filters {
         let cell = cells.get(filter.index).unwrap_or(&Cell::Null);
         let (test, refuses) = match &filter.test {
-            Typed::IsNull => (!cell.is_present(), false),
-            Typed::Text(text) => (cell.as_str() == Some(text.as_str()), false),
-            Typed::Bool(flag) => (matches!(cell, Cell::Bool(b) if b == flag), false),
+            Typed::IsNull => (Some(!cell.is_present()), false),
+            Typed::Text(text) => (Some(cell.as_str() == Some(text.as_str())), false),
+            Typed::Bool(flag) => (Some(matches!(cell, Cell::Bool(b) if b == flag)), false),
             Typed::Number(bound) => (
-                matches!(cell, Cell::Dec(d) if d.compare(*bound).is_eq()),
+                Some(matches!(cell, Cell::Dec(d) if d.compare(*bound).is_eq())),
                 false,
             ),
-            Typed::Instant(t, n) => (cell.instant() == Some((*t, *n)), false),
-            Typed::Never => (false, false),
-            Typed::RefusePresent => (false, cell.is_present()),
+            Typed::Instant(t, n) => match (cell.is_present(), cell.instant()) {
+                (false, _) => (Some(false), false),
+                (true, None) => (None, false),
+                (true, Some(key)) => (Some(key == (*t, *n)), false),
+            },
+            Typed::Never => (Some(false), false),
+            Typed::RefusePresent => (Some(false), cell.is_present()),
         };
-        refuse = refuse || (holds && refuses);
-        holds = holds && (test != filter.negate);
+        refuse = or(refuse, and(holds, Some(refuses)));
+        holds = and(holds, test.map(|test| test != filter.negate));
     }
-    (holds, refuse)
+    (holds == Some(true), refuse == Some(true))
 }
 
 /// The versions a snapshot picks, each with its period's label, and whether
@@ -409,14 +452,17 @@ pub(super) fn linked_times(
         .iter()
         .position(|column| column.id == link.column)
         .ok_or_else(|| refusal(UNSUPPORTED, "a linked time that is not an instant"))?;
-    let targets: BTreeMap<String, Cell> = mirror::versions(engine, tenant, &target, world)?
-        .into_iter()
-        .filter(|version| version.current_at(*frontier))
-        .map(|version| {
-            let cell = version.cells.get(index).cloned().unwrap_or(Cell::Null);
-            (version.id, cell)
-        })
-        .collect();
+    let segments = tenant.catalog.segments(&link.target, world)?;
+    let need = mirror::Need::Current(*frontier);
+    let targets: BTreeMap<String, Cell> =
+        mirror::versions(engine, tenant, &target, &segments, need)?
+            .into_iter()
+            .filter(|version| version.current_at(*frontier))
+            .map(|version| {
+                let cell = version.cells.get(index).cloned().unwrap_or(Cell::Null);
+                (version.id, cell)
+            })
+            .collect();
     let mut edges: BTreeMap<String, (u64, String)> = BTreeMap::new();
     for edge in mirror::edges(tenant, &link.link, world)?
         .into_iter()

@@ -48,7 +48,7 @@ pub(super) struct Edge {
 }
 
 /// A tenant's catalog.
-pub(in crate::analytics) struct Catalog {
+pub(super) struct Catalog {
     conn: Connection,
 }
 
@@ -92,38 +92,78 @@ impl Catalog {
         Ok(value)
     }
 
+    /// Run `f` in one read transaction: every read it makes sees one
+    /// committed state of the catalog (N7).
+    pub(super) fn read<T>(&mut self, f: impl FnOnce(&Transaction<'_>) -> Outcome<T>) -> Outcome<T> {
+        let tx = sql(self
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Deferred))?;
+        let value = f(&tx)?;
+        sql(tx.commit())?;
+        Ok(value)
+    }
+
     /// The segments of `table` in `world`, in order.
     pub(super) fn segments(&self, table: &str, world: &str) -> Outcome<Vec<Segment>> {
-        let mut statement = sql(self.conn.prepare(
-            "SELECT seq, path, sha256 FROM segment WHERE tbl = ?1 AND world = ?2 ORDER BY seq",
-        ))?;
-        let rows = sql(statement.query_map(params![table, world], |row| {
-            Ok(Segment {
-                seq: row
-                    .get::<_, i64>(0)
-                    .map(|seq| u64::try_from(seq).unwrap_or(0))?,
-                path: PathBuf::from(row.get::<_, String>(1)?),
-                sha256: row.get(2)?,
-            })
-        }))?;
-        sql(rows.collect())
+        segments(&self.conn, table, world)
     }
 
     /// The edges of `link` in `world`.
     pub(super) fn edges(&self, link: &str, world: &str) -> Outcome<Vec<Edge>> {
-        let mut statement = sql(self.conn.prepare(
-            "SELECT source, target, live, commit_seq FROM edge WHERE link = ?1 AND world = ?2 ORDER BY source, target",
-        ))?;
-        let rows = sql(statement.query_map(params![link, world], |row| {
-            Ok(Edge {
-                source: row.get(0)?,
-                target: row.get(1)?,
-                live: row.get::<_, i64>(2)? != 0,
-                commit: u64::try_from(row.get::<_, i64>(3)?).unwrap_or(0),
-            })
-        }))?;
-        sql(rows.collect())
+        edges(&self.conn, link, world)
     }
+}
+
+/// The segments of `table` in `world`, in order.
+pub(super) fn segments(conn: &Connection, table: &str, world: &str) -> Outcome<Vec<Segment>> {
+    let mut statement = sql(conn.prepare(
+        "SELECT seq, path, sha256 FROM segment WHERE tbl = ?1 AND world = ?2 ORDER BY seq",
+    ))?;
+    let rows = sql(statement.query_map(params![table, world], |row| {
+        Ok(Segment {
+            seq: row
+                .get::<_, i64>(0)
+                .map(|seq| u64::try_from(seq).unwrap_or(0))?,
+            path: PathBuf::from(row.get::<_, String>(1)?),
+            sha256: row.get(2)?,
+        })
+    }))?;
+    sql(rows.collect())
+}
+
+/// The edges of `link` in `world`.
+pub(super) fn edges(conn: &Connection, link: &str, world: &str) -> Outcome<Vec<Edge>> {
+    let mut statement = sql(conn.prepare(
+        "SELECT source, target, live, commit_seq FROM edge WHERE link = ?1 AND world = ?2 ORDER BY source, target",
+    ))?;
+    let rows = sql(statement.query_map(params![link, world], |row| {
+        Ok(Edge {
+            source: row.get(0)?,
+            target: row.get(1)?,
+            live: row.get::<_, i64>(2)? != 0,
+            commit: u64::try_from(row.get::<_, i64>(3)?).unwrap_or(0),
+        })
+    }))?;
+    sql(rows.collect())
+}
+
+/// Remove every segment of `table` in `world` within a write transaction.
+pub(super) fn clear_segments(tx: &Transaction<'_>, table: &str, world: &str) -> Outcome<()> {
+    sql(tx.execute(
+        "DELETE FROM segment WHERE tbl = ?1 AND world = ?2",
+        params![table, world],
+    ))
+    .map(drop)
+}
+
+/// Whether any segment names the object at `path`.
+pub(super) fn named(conn: &Connection, path: &Path) -> Outcome<bool> {
+    let count: i64 = sql(conn.query_row(
+        "SELECT count(*) FROM segment WHERE path = ?1",
+        [path.to_string_lossy()],
+        |row| row.get(0),
+    ))?;
+    Ok(count > 0)
 }
 
 /// `key`'s value in `conn`.

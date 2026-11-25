@@ -207,7 +207,10 @@ impl CellCore {
     pub fn enable_analytics(&mut self, olap: &crate::config::Olap) -> Result<(), String> {
         // D136: the engine the deployment selected (`NORN_OLAP_ENGINE`).
         let engine = norn_cell::analytics::AnalyticalEngineId::from_name(
-            olap.engine.as_deref().unwrap_or("duckdb"),
+            olap.engine
+                .as_deref()
+                .filter(|name| !name.is_empty())
+                .unwrap_or("duckdb"),
         )?;
         let issuer = norn_api::olap_credential::Issuer::parse(
             olap.signing_key

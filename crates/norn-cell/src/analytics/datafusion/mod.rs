@@ -12,17 +12,23 @@
 //! caller text is ever a statement, an expression or a path.
 
 mod aggregate;
+mod attempts;
 mod catalog;
 mod columnar;
+mod compact;
 mod dataset;
 mod files;
 mod landing;
 mod laws;
 mod mirror;
 mod page;
+mod parquet_text;
 mod profile;
 mod query;
 mod residue;
+mod scan;
+mod staging;
+mod typing;
 mod values;
 
 use std::collections::BTreeMap;
@@ -32,9 +38,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::execution::disk_manager::{DiskManagerBuilder, DiskManagerMode};
 use datafusion::execution::memory_pool::{FairSpillPool, MemoryPool};
-use datafusion::execution::runtime_env::{RuntimeEnv, RuntimeEnvBuilder};
+use datafusion::execution::runtime_env::RuntimeEnvBuilder;
 use datafusion::logical_expr::Expr;
-use datafusion::prelude::{ParquetReadOptions, SessionConfig, SessionContext};
 use serde_json::value::RawValue;
 
 use super::backend::{AnalyticalEngineId, EngineCapabilities, StoreBody};
@@ -45,8 +50,9 @@ use super::{
     ProfileResponse, SettleRequest, StoreRequest, SyncRequest, TenantId,
 };
 use catalog::Catalog;
+use scan::Tenant;
 
-pub use landing::{ATTEMPT_BUSY, ATTEMPT_UNKNOWN};
+pub use attempts::{ATTEMPT_BUSY, ATTEMPT_UNKNOWN};
 
 /// An engine outcome: a typed refusal the cell maps to its own answer.
 pub type Outcome<T> = Result<T, EngineRefusal>;
@@ -60,19 +66,19 @@ pub const EXPORT_RESERVED: [&str; 2] = ["id", "version"];
 /// A refusal of a read whose dataset this engine cannot rebuild.
 pub const DATASET_COLD: &str = "analytics.dataset_cold";
 
-pub(super) const STALE: &str = "core.compute.stale_input";
-pub(super) const UNSUPPORTED: &str = "core.compute.unsupported_engine";
+const STALE: &str = "core.compute.stale_input";
+const UNSUPPORTED: &str = "core.compute.unsupported_engine";
 /// A scan that would decode more than its share of memory.
 const EXHAUSTED: &str = "analytics.resource_exhausted";
 
-pub(super) fn refusal(code: &str, detail: impl Into<String>) -> EngineRefusal {
+fn refusal(code: &str, detail: impl Into<String>) -> EngineRefusal {
     EngineRefusal {
         code: code.to_owned(),
         detail: detail.into(),
     }
 }
 
-pub(super) fn engine_error(detail: impl Into<String>) -> EngineRefusal {
+fn engine_error(detail: impl Into<String>) -> EngineRefusal {
     refusal("analytics.engine", detail)
 }
 
@@ -125,34 +131,14 @@ fn parse_memory(limit: &str) -> std::io::Result<usize> {
         .ok_or_else(|| std::io::Error::other("an unreadable memory limit"))
 }
 
-/// One tenant's directory, catalog and bounded `DataFusion` runtime.
-pub(super) struct Tenant {
-    /// `t/<tenant>/`.
-    pub dir: PathBuf,
-    /// The catalog, the one publication point.
-    pub catalog: Catalog,
-    runtime: Arc<RuntimeEnv>,
-}
-
-impl Tenant {
-    /// The tenant's immutable objects.
-    pub(super) fn objects(&self) -> PathBuf {
-        self.dir.join("objects")
-    }
-
-    /// The tenant's private staging directory for files not yet installed.
-    pub(super) fn staging(&self) -> PathBuf {
-        self.dir.join("staging")
-    }
-}
-
 /// The engine: lazily opened tenants, each used by one operation at a time.
 pub struct Engine {
     settings: Settings,
     memory: usize,
     pool: Arc<dyn MemoryPool>,
     tenants: Mutex<BTreeMap<TenantId, Arc<Mutex<Tenant>>>>,
-    attempts: Mutex<BTreeMap<(TenantId, String), landing::Held>>,
+    attempts: Mutex<attempts::Attempts>,
+    attempt_ttl: std::time::Duration,
 }
 
 impl Engine {
@@ -170,6 +156,7 @@ impl Engine {
             settings,
             tenants: Mutex::new(BTreeMap::new()),
             attempts: Mutex::new(BTreeMap::new()),
+            attempt_ttl: attempts::ATTEMPT_TTL,
         })
     }
 
@@ -213,6 +200,7 @@ impl Engine {
             dir,
             catalog,
             runtime,
+            verified: Mutex::new(std::collections::BTreeSet::new()),
         }));
         tenants.insert(tenant.clone(), Arc::clone(&open));
         Ok(open)
@@ -225,81 +213,49 @@ impl Engine {
         f(&mut held)
     }
 
-    fn attempts(&self) -> MutexGuard<'_, BTreeMap<(TenantId, String), landing::Held>> {
+    fn attempts(&self) -> MutexGuard<'_, attempts::Attempts> {
         self.attempts.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Scan exactly `files` (each confined to the tenant's objects) with an
-    /// optional typed filter, on the shared bounded runtime. A scan decoding
-    /// more than the memory bound refuses rather than grow.
-    pub(super) fn scan(
+    /// Run `plan`, handing each batch to `each` within this engine's
+    /// memory bound and the scan deadline.
+    fn stream(
+        &self,
+        tenant: &Tenant,
+        plan: scan::Plan,
+        keep: scan::Keep,
+        each: &mut (dyn FnMut(&RecordBatch) -> Outcome<()> + Send),
+    ) -> Outcome<()> {
+        let threads = usize::try_from(self.settings.threads.max(1)).unwrap_or(1);
+        scan::stream(tenant, threads, self.memory, plan, keep, each)
+    }
+
+    /// Every batch of `plan`, kept within this engine's memory bound.
+    fn collect(&self, tenant: &Tenant, plan: scan::Plan) -> Outcome<Vec<RecordBatch>> {
+        let mut batches = Vec::new();
+        self.stream(tenant, plan, scan::Keep::All, &mut |batch| {
+            batches.push(batch.clone());
+            Ok(())
+        })?;
+        Ok(batches)
+    }
+
+    /// Scan exactly `files` with an optional typed filter, kept whole.
+    fn scan(
         &self,
         tenant: &Tenant,
         files: &[PathBuf],
         filter: Option<Expr>,
     ) -> Outcome<Vec<RecordBatch>> {
-        if files.is_empty() {
-            return Ok(Vec::new());
-        }
-        let objects = tenant.objects();
-        let paths = files
-            .iter()
-            .map(|file| {
-                catalog::confined(file, &objects).map(|path| path.to_string_lossy().into_owned())
-            })
-            .collect::<Outcome<Vec<_>>>()?;
-        let mut config = SessionConfig::new()
-            .with_target_partitions(usize::try_from(self.settings.threads.max(1)).unwrap_or(1))
-            .with_batch_size(8192)
-            .with_information_schema(false);
-        config
-            .options_mut()
-            .execution
-            .parquet
-            .schema_force_view_types = false;
-        let ctx = SessionContext::new_with_config_rt(config, Arc::clone(&tenant.runtime));
-        let batches = Self::block_on(async move {
-            let frame = ctx
-                .read_parquet(paths, ParquetReadOptions::default())
-                .await?;
-            let frame = match filter {
-                Some(filter) => frame.filter(filter)?,
-                None => frame,
-            };
-            frame.collect().await
-        })?;
-        let batches = df(batches)?;
-        let decoded = batches.iter().fold(0_usize, |total, batch| {
-            total.saturating_add(batch.get_array_memory_size())
-        });
-        if decoded > self.memory {
-            return Err(refusal(
-                EXHAUSTED,
-                "a scan decodes more than the memory bound",
-            ));
-        }
-        Ok(batches)
-    }
-
-    /// Drive `future` to completion on a current-thread runtime of its own,
-    /// on a thread of its own, so a caller inside another runtime never nests
-    /// one; memory and spill stay bounded by the tenant's shared `RuntimeEnv`.
-    fn block_on<F>(future: F) -> Outcome<F::Output>
-    where
-        F: std::future::Future + Send,
-        F::Output: Send,
-    {
-        std::thread::scope(|scope| {
-            scope
-                .spawn(|| {
-                    tokio::runtime::Builder::new_current_thread()
-                        .build()
-                        .map(|runtime| runtime.block_on(future))
-                        .map_err(|error| engine_error(error.to_string()))
-                })
-                .join()
-                .map_err(|_panicked| engine_error("a scan failed"))?
-        })
+        self.collect(
+            tenant,
+            scan::Plan::Scan {
+                files: files.to_vec(),
+                filter,
+                columns: None,
+                order: Vec::new(),
+            },
+        )
     }
 
     /// ANALYTICS-FRONTIER-1: the mirror's frontier for a world; a changed
@@ -318,7 +274,9 @@ impl Engine {
     /// `analytics.frontier_moved`, a batch of another mirror generation
     /// (`core.compute.stale_input`), or an unknown table.
     pub fn sync(&self, request: &SyncRequest) -> Outcome<FrontierResponse> {
-        self.with(&request.tenant, |tenant| mirror::sync(tenant, request))
+        self.with(&request.tenant, |tenant| {
+            mirror::sync(self, tenant, request)
+        })
     }
 
     /// QUERY-ENGINE-1: evaluate a lowered question exactly.
@@ -349,7 +307,7 @@ impl Engine {
     /// `bulk.digest_mismatch`, an unreadable file, or an engine failure.
     pub fn load(&self, request: &LoadRequest, file: &Path) -> Outcome<LoadResponse> {
         self.with(&request.tenant, |tenant| {
-            dataset::load(tenant, request, file)
+            dataset::load(self, tenant, request, file)
         })
     }
 
@@ -485,3 +443,7 @@ impl super::AnalyticalEngine for Engine {
         self.export(request)
     }
 }
+
+#[cfg(test)]
+#[path = "tests.rs"]
+mod tests;

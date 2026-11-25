@@ -7,7 +7,6 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
 use datafusion::common::Column as DfColumn;
 use datafusion::logical_expr::{Expr, lit};
@@ -18,17 +17,20 @@ use super::super::{
 };
 use super::catalog;
 use super::columnar;
-use super::landing::{KeptLanding, digest_of, json_text, stage, write_files};
+use super::files::Caps;
+use super::landing::{KeptLanding, digest_of, json_text};
 use super::laws::TypedRow;
+use super::staging;
 use super::{DATASET_COLD, Engine, Outcome, STALE, Tenant, engine_error, refusal};
 
-/// BULK-LOAD-1: a direct load, its files and lineage published together.
+/// BULK-LOAD-1: a direct load, staged on disk and streamed as a landing is,
+/// its files and lineage published together.
 pub(super) fn load(
+    engine: &Engine,
     tenant: &mut Tenant,
     request: &LoadRequest,
     file: &Path,
 ) -> Outcome<LoadResponse> {
-    let started = Instant::now();
     let (digest, bytes) = digest_of(file)?;
     if digest != request.file.sha256 {
         return Err(refusal(
@@ -36,16 +38,17 @@ pub(super) fn load(
             "the file is not the recorded upload",
         ));
     }
-    let staged = stage(request, file, bytes, started)?;
-    let staging = tenant.staging();
+    let dir = tempfile::Builder::new()
+        .prefix("load")
+        .tempdir_in(tenant.staging())
+        .map_err(|error| engine_error(error.to_string()))?;
+    let caps = Caps::of(engine.memory);
+    let staged = staging::stage(request, &[], file, dir.path(), bytes, caps)?;
     let (data, held) = (
-        staging.join("load-data.parquet"),
-        staging.join("load-held.parquet"),
+        dir.path().join("data.parquet"),
+        dir.path().join("held.parquet"),
     );
-    for stale in [&data, &held] {
-        let _removed = std::fs::remove_file(stale);
-    }
-    write_files(&staged, &data, &held)?;
+    staging::finish(engine, tenant, &staged, &data, &held)?;
     let objects = tenant.objects();
     let (data_path, data_sha, _) = catalog::install(&data, &objects)?;
     let (held_path, held_sha, _) = catalog::install(&held, &objects)?;
@@ -138,34 +141,45 @@ pub(super) fn dataset(
     if tenant.catalog.meta(&format!("load:{table}"))?.as_deref() != Some(load) {
         hydrate(tenant, table, load)?;
     }
-    let schema: TableSchema = serde_json::from_str(
-        &tenant
-            .catalog
-            .meta(&format!("dataset:{table}"))?
-            .ok_or_else(|| refusal(super::UNSUPPORTED, "no such table"))?,
-    )
-    .map_err(|e| engine_error(e.to_string()))?;
+    // N7: the dataset's schema and files from one catalog state.
+    let (schema, files) = tenant.catalog.read(|tx| {
+        Ok((
+            catalog::get(tx, &format!("dataset:{table}"))?,
+            catalog::get(tx, &format!("files:{table}"))?,
+        ))
+    })?;
+    let cold = || {
+        refusal(
+            DATASET_COLD,
+            "the dataset's files are not kept by this engine",
+        )
+    };
+    let schema: TableSchema =
+        serde_json::from_str(&schema.ok_or_else(|| refusal(super::UNSUPPORTED, "no such table"))?)
+            .map_err(|e| engine_error(e.to_string()))?;
     let files: Files =
-        serde_json::from_str(&tenant.catalog.meta(&format!("files:{table}"))?.ok_or_else(
-            || {
-                refusal(
-                    DATASET_COLD,
-                    "the dataset's files are not kept by this engine",
-                )
-            },
-        )?)
-        .map_err(|e| engine_error(e.to_string()))?;
+        serde_json::from_str(&files.ok_or_else(cold)?).map_err(|e| engine_error(e.to_string()))?;
+    // N8: each file is the bytes its record names before it is read.
+    tenant.verify(&files.data, &files.data_sha256)?;
+    tenant.verify(&files.held, &files.held_sha256)?;
     let rows = read_rows(engine, tenant, &schema, &files.data, None)?;
     let mut held = BTreeSet::new();
-    for batch in engine.scan(tenant, std::slice::from_ref(&files.held), None)? {
-        let row = columnar::system(&batch, ":row", columnar::u64_at)?;
-        let rule = columnar::system(&batch, ":rule", columnar::text_at)?;
-        let holds = columnar::system(&batch, ":holds", columnar::bool_at)?;
-        for ((row, rule), holds) in row.into_iter().zip(rule).zip(holds) {
-            if let (Some(row), Some(_), Some(true)) = (row, rule, holds) {
-                held.insert(row);
-            }
-        }
+    let plan = super::scan::Plan::Scan {
+        files: vec![files.held.clone()],
+        filter: Some(
+            super::scan::col(":holds")
+                .eq(lit(true))
+                .and(super::scan::col(":rule").is_not_null()),
+        ),
+        columns: Some(vec![":row".to_owned()]),
+        order: Vec::new(),
+    };
+    for batch in engine.collect(tenant, plan)? {
+        held.extend(
+            columnar::system(&batch, ":row", columnar::u64_at)?
+                .into_iter()
+                .flatten(),
+        );
     }
     Ok(Dataset {
         table: schema,

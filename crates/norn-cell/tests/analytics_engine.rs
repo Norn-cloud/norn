@@ -448,7 +448,7 @@ fn a_population_past_the_bound_answers_with_digests_that_paging_recomputes() {
                     group: group.clone(),
                     after: after.clone(),
                     limit: 2,
-                    model_pin: None,
+                    model_pin: Some(prepared.request().model_pin.clone()),
                 })
                 .expect("page")
                 .members;
@@ -663,6 +663,179 @@ fn a_refused_update_preserves_every_visible_row() -> Result<(), Box<dyn std::err
     assert_eq!(refused, Err("analytics.frontier_behind".to_owned()));
     drop(before);
     Ok(())
+}
+
+/// N6.3: both engines read a CSV as `DuckDB`'s strict reader does: a quote
+/// inside an unquoted field is part of its text, a quoted field may hold
+/// commas and doubled quotes, and a UTF-8 byte-order mark is not part of the
+/// first header.
+#[test]
+fn csv_quoting_is_strict_and_a_byte_order_mark_is_skipped() {
+    let (_dir, engine) = engine();
+    let (_store, plan, _context) = by_metal(true, 100);
+    let header = "metal,occurred_at,input,recovered,loss";
+    let (inner, inner_sha) = csv(&engine, &[header, "go\"ld,2026-10-23T12:00:00Z,1.5,1.25,0"]);
+    let loaded = engine
+        .load(&load_request(&plan, "load-inner", inner_sha), inner.path())
+        .expect("a quote inside an unquoted field");
+    assert_eq!(loaded.rows.saturating_add(loaded.rejected), 1);
+    let marked = format!("\u{feff}{header}");
+    let (good, good_sha) = csv(
+        &engine,
+        &[
+            &marked,
+            "gold,2026-10-23T12:00:00Z,1.5,1.25,0",
+            "\"silver\",\"2026-10-23T12:00:00Z\",2,1,0",
+        ],
+    );
+    let loaded = engine
+        .load(&load_request(&plan, "load-good", good_sha), good.path())
+        .expect("a marked, quoted CSV");
+    assert_eq!((loaded.rows, loaded.rejected), (2, 0));
+}
+
+/// D137 (B5): a mirrored number its column cannot store refuses the sync,
+/// as the storage cast refuses it, and the frontier does not move.
+#[test]
+fn a_sync_with_an_uncastable_number_is_refused() -> Result<(), Box<dyn std::error::Error>> {
+    let (_dir, engine) = engine();
+    let (mut store, _plan, _context) = by_metal(true, 100);
+    commit(
+        &mut store,
+        vec![row("A", 1000, Some(400), TIMES[0], "gold")],
+    );
+    let mirror = store.analytics_frontier(&tenant(), WORLD)?;
+    let initial = engine.frontier(&mirror).map_err(|r| r.detail)?;
+    let mut batch = store.analytics_delta(&tenant(), WORLD, 0, 3)?.request;
+    let value = batch
+        .rows
+        .iter_mut()
+        .filter_map(|row| row.values.as_mut())
+        .flatten()
+        .find(|value| matches!(value, norn_cell::analytics::Value::Number(_)))
+        .expect("a number");
+    *value = norn_cell::analytics::Value::Number("not a number".to_owned());
+    assert!(engine.sync(&batch).is_err(), "the cast refuses the batch");
+    assert_eq!(engine.frontier(&mirror).map_err(|r| r.detail)?, initial);
+    Ok(())
+}
+
+/// D137 (B2): a mirror synced one commit at a time answers exactly as the
+/// cell does at every frontier, however many batches it took; the engine
+/// that compacts keeps its segment count bounded.
+#[test]
+#[allow(
+    clippy::arithmetic_side_effects,
+    reason = "a generated history's arithmetic"
+)]
+fn many_small_syncs_answer_exactly_and_stay_compacted() {
+    let (dir, engine) = engine();
+    let (mut store, plan, context) = by_metal(true, 100);
+    for index in 0..24_i64 {
+        let id = format!("R{}", index % 7);
+        let metal = if index % 3 == 0 { "gold" } else { "silver" };
+        let at = TIMES[usize::try_from(index % 5).expect("index")];
+        commit(
+            &mut store,
+            vec![row(&id, 1000 + index, Some(400 + index), at, metal)],
+        );
+        sync(&store, &engine, WORLD);
+        if index % 6 == 5 {
+            compare(&store, &engine, &plan, &context);
+        }
+    }
+    if let Some(segments) = super::analytics_backend::mirror_segments(dir.path(), &tenant(), TYPE) {
+        assert!(segments <= 9, "{segments} segments");
+    }
+}
+
+/// D137 (B4, N6.2): a Parquet float, double or zoned timestamp loads into a
+/// text column as the text `DuckDB` casts it to, in both engines: every row
+/// admitted with the same text.
+#[cfg(feature = "duckdb")]
+#[test]
+fn parquet_floats_load_as_duckdb_casts_them() {
+    use norn_cell::analytics::{Column, ColumnKind, PageRequest, TableSchema, Value};
+    let (_dir, engine) = engine();
+    let path = engine
+        .scratch(&tenant())
+        .expect("scratch")
+        .join("floats.parquet");
+    let conn = ::duckdb::Connection::open_in_memory().expect("duckdb");
+    let values = "(1, 0.1::FLOAT, 0.1::DOUBLE), (2, 1e-5::FLOAT, 1e-5::DOUBLE), \
+        (3, 1e16::FLOAT, 1e16::DOUBLE), (4, 1e15::FLOAT, 1e15::DOUBLE), (5, 0.0::FLOAT, 0.0::DOUBLE), \
+        (6, -0.0::FLOAT, -0.0::DOUBLE), (7, 'nan'::FLOAT, 'nan'::DOUBLE), \
+        (8, 'inf'::FLOAT, 'inf'::DOUBLE), (9, '-inf'::FLOAT, '-inf'::DOUBLE)";
+    conn.execute_batch(&format!(
+        "COPY (SELECT f, d, CAST(TIMESTAMP '2024-01-01 10:00:00.5' + to_seconds(n) AS TIMESTAMPTZ) AS z \
+         FROM (VALUES {values}) AS t(n, f, d) ORDER BY n) TO '{}' (FORMAT parquet)",
+        path.display()
+    ))
+    .expect("fixture");
+    let mut oracle = conn
+        .prepare(&format!(
+            "SELECT CAST(f AS VARCHAR), CAST(d AS VARCHAR), CAST(z AS VARCHAR) FROM read_parquet('{}', file_row_number = true) ORDER BY file_row_number",
+            path.display()
+        ))
+        .expect("oracle");
+    let expected: Vec<(String, String, String)> = oracle
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .expect("oracle rows")
+        .map(|row| row.expect("row"))
+        .collect();
+    assert_eq!(expected.len(), 9);
+    let text = |id: &str| Column {
+        id: id.to_owned(),
+        kind: ColumnKind::Text,
+        nullable: true,
+        laws: Vec::new(),
+    };
+    let table = TableSchema {
+        name: "t.Floats".to_owned(),
+        columns: vec![text("f"), text("d"), text("z")],
+        pin: "floats".to_owned(),
+    };
+    let request = LoadRequest {
+        tenant: tenant(),
+        table,
+        load: "floats-1".to_owned(),
+        file: FileSource {
+            url: "file:".to_owned(),
+            uri: "s3://synthetic/floats.parquet".to_owned(),
+            sha256: norn_cell::analytics::hex_digest(&std::fs::read(&path).expect("read")),
+            format: FileFormat::Parquet,
+        },
+        headers: BTreeMap::new(),
+    };
+    let loaded = engine.load(&request, &path).expect("load");
+    assert_eq!((loaded.rows, loaded.rejected), (9, 0));
+    let page = engine
+        .page(&PageRequest {
+            tenant: tenant(),
+            source: Source::Dataset {
+                table: "t.Floats".to_owned(),
+                load: "floats-1".to_owned(),
+            },
+            filters: Vec::new(),
+            sort: Vec::new(),
+            ids: Vec::new(),
+            offset: 0,
+            limit: 200,
+            model_pin: None,
+        })
+        .expect("page");
+    let got: Vec<(String, String, String)> = page
+        .rows
+        .iter()
+        .map(|row| {
+            let text = |id: &str| match row.values.get(id) {
+                Some(Value::Text(text)) => text.clone(),
+                other => panic!("{id}: {other:?}"),
+            };
+            (text("f"), text("d"), text("z"))
+        })
+        .collect();
+    assert_eq!(got, expected);
 }
 
 /// A CSV in the tenant's scratch directory, the only place its load reads.
@@ -1970,7 +2143,7 @@ mod sources_pack {
                 ids: Vec::new(),
                 offset: 0,
                 limit: 10,
-                model_pin: None,
+                model_pin: Some(store.model().model_hash().to_owned()),
             })
             .expect("page");
         assert_eq!(page.total, 2);
@@ -1980,7 +2153,7 @@ mod sources_pack {
                 source,
                 columns: exported,
                 format: ExportFormat::Jsonl,
-                model_pin: None,
+                model_pin: Some(store.model().model_hash().to_owned()),
             })
             .expect("export");
         std::fs::remove_file(path).expect("scratch export");
@@ -2126,7 +2299,7 @@ mod alias_names {
                     ids: vec!["k1".into(), "k0".into(), "k2".into()],
                     offset: 1,
                     limit: 1,
-                    model_pin: None,
+                    model_pin: Some(store.model().model_hash().to_owned()),
                 })
                 .expect("page");
             assert_eq!((page.total, page.rows.len()), (3, 1), "{id}");
@@ -2145,7 +2318,7 @@ mod alias_names {
                 ids: Vec::new(),
                 offset: 0,
                 limit: 10,
-                model_pin: None,
+                model_pin: Some(store.model().model_hash().to_owned()),
             })
             .expect("label page");
         assert_eq!(text.total, 1);
@@ -2156,7 +2329,7 @@ mod alias_names {
                     source: source.clone(),
                     columns: columns.clone(),
                     format,
-                    model_pin: None,
+                    model_pin: Some(store.model().model_hash().to_owned()),
                 })
                 .expect("export");
             assert!(std::fs::metadata(&path).expect("exported").len() > 0);

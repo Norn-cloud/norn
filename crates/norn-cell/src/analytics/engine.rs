@@ -679,7 +679,8 @@ impl Engine {
     /// As [`Self::evaluate`].
     pub fn members(&self, request: &MembersRequest) -> Outcome<MembersResponse> {
         self.with(&request.tenant, |conn| {
-            let scope = Scope::new(conn, &request.source, request.model_pin.as_deref())?;
+            let pin = pinned(&request.source, request.model_pin.as_deref())?;
+            let scope = Scope::new(conn, &request.source, pin)?;
             let projection = Projection::build(&request.query, &scope)?;
             let members = projection.page(
                 conn,
@@ -1213,7 +1214,8 @@ impl Engine {
     /// An unknown column, a comparison its kind does not take, or a stale source.
     pub fn page(&self, request: &PageRequest) -> Outcome<PageResponse> {
         self.with(&request.tenant, |conn| {
-            let scope = Scope::new(conn, &request.source, request.model_pin.as_deref())?;
+            let pin = pinned(&request.source, request.model_pin.as_deref())?;
+            let scope = Scope::new(conn, &request.source, pin)?;
             let mut conditions = vec![scope.population.clone()];
             if !request.ids.is_empty() {
                 conditions.push(Frag::fmt("\":id\" IN ({})", &[&id_list(&request.ids)]));
@@ -1355,7 +1357,8 @@ impl Engine {
             .map_err(|error| refusal("analytics.engine", error.to_string()))?
             .join(name);
         self.with(&request.tenant, |conn| {
-            let scope = Scope::new(conn, &request.source, request.model_pin.as_deref())?;
+            let pin = pinned(&request.source, request.model_pin.as_deref())?;
+            let scope = Scope::new(conn, &request.source, pin)?;
             let mut select = vec![
                 format!("{} AS id", ident(":id")),
                 format!("{} AS version", ident(":v")),
@@ -1399,6 +1402,14 @@ impl Engine {
             Ok(())
         })?;
         Ok(path)
+    }
+}
+
+/// N1: a follow-up read of a mirror names the generation it is bound to.
+fn pinned<'p>(source: &Source, pin: Option<&'p str>) -> Outcome<Option<&'p str>> {
+    match (source, pin) {
+        (Source::Mirror { .. }, None) => Err(refusal(STALE, "a mirror read names no model")),
+        (Source::Mirror { .. } | Source::Dataset { .. }, pin) => Ok(pin),
     }
 }
 

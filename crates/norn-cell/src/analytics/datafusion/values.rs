@@ -262,29 +262,39 @@ impl Cell {
     }
 
     /// The cell a mirrored value is stored as in a column of `kind`.
-    pub(super) fn of_value(kind: ColumnKind, value: &Value) -> Self {
-        match (kind, value) {
-            (_, Value::Null) => Self::Null,
-            (ColumnKind::Integer, Value::Number(text) | Value::Text(text)) => {
-                Dec::cast(text, 0).map_or(Self::Null, Self::Dec)
-            }
-            (ColumnKind::Decimal { scale }, Value::Number(text) | Value::Text(text)) => {
-                Dec::cast(text, scale).map_or(Self::Null, Self::Dec)
-            }
+    ///
+    /// # Errors
+    /// A number column's value that is not a decimal of the storage domain:
+    /// the storage cast fails, so the sync refuses (B5), as `DuckDB`'s does.
+    pub(super) fn of_value(kind: ColumnKind, value: &Value) -> Result<Self, String> {
+        let text = match value {
+            Value::Null => return Ok(Self::Null),
+            Value::Bool(flag) => flag.to_string(),
+            Value::Number(text)
+            | Value::Text(text)
+            | Value::Json(text)
+            | Value::Instant { text, .. } => text.clone(),
+        };
+        let number = |scale: u32| {
+            Dec::cast(&text, scale)
+                .map(Self::Dec)
+                .ok_or_else(|| format!("{text:?} is not a decimal of scale {scale}"))
+        };
+        Ok(match (kind, value) {
+            (ColumnKind::Integer, _) => number(0)?,
+            (ColumnKind::Decimal { scale }, _) => number(scale)?,
             (ColumnKind::Boolean, Value::Bool(flag)) => Self::Bool(*flag),
-            (ColumnKind::Boolean, Value::Number(text) | Value::Text(text) | Value::Json(text)) => {
-                Self::Bool(text.to_lowercase() == "true")
-            }
-            (_, Value::Instant { text, secs, nanos }) => Self::Instant {
-                text: text.clone(),
+            (ColumnKind::Boolean, _) => Self::Bool(text.to_lowercase() == "true"),
+            (_, Value::Instant { secs, nanos, .. }) => Self::Instant {
+                text,
                 t: *secs,
                 n: i32::try_from(*nanos).unwrap_or(i32::MAX),
             },
-            (_, Value::Bool(flag)) => Self::Text(flag.to_string()),
-            (_, Value::Number(text) | Value::Text(text) | Value::Json(text)) => {
-                Self::Text(text.clone())
-            }
-        }
+            (
+                ColumnKind::Text | ColumnKind::Timestamp | ColumnKind::Date | ColumnKind::Opaque,
+                Value::Null | Value::Bool(_) | Value::Number(_) | Value::Text(_) | Value::Json(_),
+            ) => Self::Text(text),
+        })
     }
 
     /// `CAST(x AS VARCHAR)`.

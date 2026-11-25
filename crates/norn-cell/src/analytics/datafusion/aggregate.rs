@@ -13,8 +13,7 @@ use unicode_normalization::UnicodeNormalization as _;
 
 use super::super::{
     BucketTotals, ColumnKind, Dimension, EvaluateRequest, EvaluateResponse, Grain, GroupKey,
-    Lowered, MemberRow, MembersRequest, MembersResponse, MembershipDigest, Source,
-    TIME_LINK_COLUMN,
+    Lowered, MemberRow, MembersRequest, MembersResponse, MembershipDigest, TIME_LINK_COLUMN,
 };
 use super::query::{self, Linked, Row, Scope, TypedFilter};
 use super::values::{Cell, Dec, period_start};
@@ -399,7 +398,14 @@ pub(super) fn evaluate(
     tenant: &mut Tenant,
     request: &EvaluateRequest,
 ) -> Outcome<EvaluateResponse> {
-    let scope = Scope::new(engine, tenant, &request.source, Some(&request.model_pin))?;
+    let history = request.query.as_of.is_some();
+    let scope = Scope::new(
+        engine,
+        tenant,
+        &request.source,
+        Some(&request.model_pin),
+        history,
+    )?;
     let tenant = &*tenant;
     let population = u64::try_from(scope.all.len()).unwrap_or(u64::MAX);
     scope.verify_rows(&request.source, true)?;
@@ -460,11 +466,9 @@ pub(super) fn members(
     tenant: &mut Tenant,
     request: &MembersRequest,
 ) -> Outcome<MembersResponse> {
-    let expected = match &request.source {
-        Source::Mirror { .. } => request.model_pin.as_deref(),
-        Source::Dataset { .. } => None,
-    };
-    let scope = Scope::new(engine, tenant, &request.source, expected)?;
+    let history = request.query.as_of.is_some();
+    let pin = request.model_pin.as_deref();
+    let scope = Scope::new(engine, tenant, &request.source, pin, history)?;
     let tenant = &*tenant;
     scope.verify_rows(&request.source, true)?;
     let (rows, dims) = projection(engine, tenant, &scope, &request.query)?;

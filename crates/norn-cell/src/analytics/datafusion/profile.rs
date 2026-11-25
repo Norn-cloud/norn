@@ -21,7 +21,13 @@ pub(super) fn profile(
     tenant: &mut Tenant,
     request: &ProfileRequest,
 ) -> Outcome<ProfileResponse> {
-    let scope = Scope::new(engine, tenant, &request.source, Some(&request.model_pin))?;
+    let scope = Scope::new(
+        engine,
+        tenant,
+        &request.source,
+        Some(&request.model_pin),
+        false,
+    )?;
     scope.verify_rows(&request.source, false)?;
     let population: Vec<&Row> = scope.population().collect();
     let rows = u64::try_from(population.len()).unwrap_or(u64::MAX);

@@ -3314,10 +3314,10 @@ name = "norn-cell"
 version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
- "csv",
  "ct-merkle",
  "datafusion",
  "duckdb",
+ "futures",
  "hmac",
  "jiff",
  "js-sys",

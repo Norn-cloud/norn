@@ -268,7 +268,10 @@ impl NornCell {
         // D136: the engine the deployment selected (`NORN_OLAP_ENGINE`);
         // its answers alone are accepted.
         let engine = norn_cell::analytics::AnalyticalEngineId::from_name(
-            engine.as_deref().unwrap_or("duckdb"),
+            engine
+                .as_deref()
+                .filter(|name| !name.is_empty())
+                .unwrap_or("duckdb"),
         )
         .map_err(|e| JsValue::from_str(&e))?;
         let issuer = norn_api::olap_credential::Issuer::parse(

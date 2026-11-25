@@ -15,7 +15,7 @@ use transparency_sha2::{Digest as _, Sha256};
 
 use super::super::{
     Column, ColumnKind, ExportFormat, ExportRequest, PageClause, PageOp, PageOperand, PageRequest,
-    PageResponse, PageRow, Source, TableSchema, hex,
+    PageResponse, PageRow, TableSchema, hex,
 };
 use super::columnar;
 use super::query::{Row, Scope};
@@ -178,7 +178,8 @@ pub(super) fn page(
         engine,
         tenant,
         &request.source,
-        request_pin(&request.source, request.model_pin.as_deref()),
+        request.model_pin.as_deref(),
+        false,
     )?;
     scope.verify_rows(&request.source, false)?;
     let clauses = request
@@ -269,14 +270,6 @@ pub(super) fn page(
     Ok(PageResponse { total, rows })
 }
 
-/// The generation a follow-up read of a mirror is bound to.
-pub(super) fn request_pin<'r>(source: &Source, pin: Option<&'r str>) -> Option<&'r str> {
-    match source {
-        Source::Mirror { .. } => pin,
-        Source::Dataset { .. } => None,
-    }
-}
-
 /// Export columns of every row of a source into a scratch file.
 pub(super) fn export(
     engine: &Engine,
@@ -288,7 +281,8 @@ pub(super) fn export(
         engine,
         tenant,
         &request.source,
-        request_pin(&request.source, request.model_pin.as_deref()),
+        request.model_pin.as_deref(),
+        false,
     )?;
     scope.verify_rows(&request.source, false)?;
     let mut columns = Vec::new();

@@ -73,3 +73,9 @@ pub(crate) fn lineage_keys(root: &Path, tenant: &TenantId) -> Vec<String> {
         .map(|key| key.expect("key"))
         .collect()
 }
+
+/// `DuckDB` keeps no segments: `None`.
+#[allow(dead_code, reason = "a hook only some suites use")]
+pub(crate) fn mirror_segments(_root: &Path, _tenant: &TenantId, _table: &str) -> Option<u64> {
+    None
+}

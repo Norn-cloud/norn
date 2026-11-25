@@ -2,42 +2,20 @@
 //! settle contract. A page holds at most [`RESIDUE_PAGE_ROWS`] rows and
 //! [`RESIDUE_PAGE_BYTES`] of serialized JSON, brackets and separators
 //! included; its bound is enforced from each row's value bytes (a lower bound
-//! on its serialized size) before any value is materialized, and a landing
-//! whose residue needs more than [`MAX_RESIDUE_PAGES`] pages is refused
-//! before its first answer.
+//! on its serialized size, recorded when the row was staged) before any value
+//! is read back from disk, and a landing whose residue needs more than
+//! [`MAX_RESIDUE_PAGES`] pages is refused before its first answer.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::{
     EngineRefusal, MAX_RESIDUE_PAGES, RESIDUE_EXCEEDED, RESIDUE_PAGE_BYTES, RESIDUE_PAGE_ROWS,
-    ResidueRow, RuleCheck, SettleRequest, TableSchema,
+    ResidueRow, RuleCheck, SettleRequest,
 };
-use super::laws::{self, TypedRow};
-use super::{Outcome, engine_error, refusal};
-
-/// A landing's staged state between its steps.
-#[derive(Debug, Clone)]
-pub(super) struct Staged {
-    /// The landed table.
-    pub table: TableSchema,
-    /// Every typed row, in row order.
-    pub rows: Vec<TypedRow>,
-    /// Rows that could not be typed, and every finding so far.
-    pub held: Vec<laws::HeldRow>,
-    /// Each residue row's undecided rules.
-    pub residue: BTreeMap<u64, BTreeSet<String>>,
-    /// The load's counts.
-    pub load: super::super::LoadResponse,
-}
-
-impl Staged {
-    fn row(&self, number: u64) -> Option<&TypedRow> {
-        self.rows
-            .binary_search_by_key(&number, |row| row.row)
-            .ok()
-            .and_then(|at| self.rows.get(at))
-    }
-}
+use super::columnar::Sink;
+use super::laws;
+use super::staging::{self, Staged};
+use super::{Engine, Outcome, Tenant, engine_error, refusal};
 
 /// [`RESIDUE_EXCEEDED`] for residue row `row`, larger than a page alone.
 fn too_wide(row: u64) -> EngineRefusal {
@@ -47,42 +25,40 @@ fn too_wide(row: u64) -> EngineRefusal {
     )
 }
 
-/// A typed row's value bytes: its wide (text-like) values' bytes.
-fn value_bytes(table: &TableSchema, row: &TypedRow) -> usize {
-    table
-        .columns
-        .iter()
-        .zip(&row.cells)
-        .filter(|(column, _)| laws::is_wide(column.kind))
-        .map(|(_, cell)| cell.as_str().map_or(0, str::len))
-        .fold(0_usize, usize::saturating_add)
-}
-
 /// S6: the residue page after row `after`, at most `limit` rows (clamped to
 /// `1..=RESIDUE_PAGE_ROWS`), ending before the row that would take the
 /// page's serialized rows past [`RESIDUE_PAGE_BYTES`].
-pub(super) fn page(staged: &Staged, after: u64, limit: u32) -> Outcome<Vec<ResidueRow>> {
+pub(super) fn page(
+    engine: &Engine,
+    tenant: &Tenant,
+    staged: &Staged,
+    after: u64,
+    limit: u32,
+) -> Outcome<Vec<ResidueRow>> {
     let take = usize::try_from(limit.clamp(1, RESIDUE_PAGE_ROWS)).unwrap_or(1);
-    let mut candidates = Vec::new();
-    for (row, rules) in staged.residue.range(after.saturating_add(1)..).take(take) {
-        let typed = staged
-            .row(*row)
-            .ok_or_else(|| engine_error("a residue row without its typed row"))?;
-        candidates.push((typed, rules, value_bytes(&staged.table, typed)));
-    }
+    let candidates: Vec<_> = staged
+        .residue
+        .range(after.saturating_add(1)..)
+        .take(take)
+        .collect();
     // S7: one bracket, then each row and the separator after it.
     let mut lower = 1_usize;
     let mut fits = 0_usize;
-    for (_, _, bytes) in &candidates {
-        lower = lower.saturating_add(bytes.saturating_add(1));
+    for (_, residue) in &candidates {
+        lower = lower.saturating_add(residue.bytes.saturating_add(1));
         if lower > RESIDUE_PAGE_BYTES {
             break;
         }
         fits = fits.saturating_add(1);
     }
+    let wanted: Vec<u64> = candidates.iter().take(fits).map(|(row, _)| **row).collect();
+    let typed = staging::typed_rows(engine, tenant, staged, &wanted)?;
     let mut out = Vec::new();
     let mut bytes = 1_usize;
-    for (typed, rules, _) in candidates.iter().take(fits) {
+    for (row, residue) in candidates.iter().take(fits) {
+        let typed = typed
+            .get(row)
+            .ok_or_else(|| engine_error("a residue row without its typed row"))?;
         let values = staged
             .table
             .columns
@@ -93,27 +69,27 @@ pub(super) fn page(staged: &Staged, after: u64, limit: u32) -> Outcome<Vec<Resid
                     .map(|value| (column.id.clone(), value))
             })
             .collect();
-        let residue = ResidueRow {
-            row: typed.row,
+        let page_row = ResidueRow {
+            row: **row,
             values,
-            rules: rules.iter().cloned().collect(),
+            rules: residue.rules.iter().cloned().collect(),
         };
-        let size = serde_json::to_string(&residue)
+        let size = serde_json::to_string(&page_row)
             .map_err(|e| engine_error(e.to_string()))?
             .len()
             .saturating_add(1);
         if size.saturating_add(1) > RESIDUE_PAGE_BYTES {
-            return Err(too_wide(residue.row));
+            return Err(too_wide(page_row.row));
         }
         bytes = bytes.saturating_add(size);
         if bytes > RESIDUE_PAGE_BYTES {
             return Ok(out);
         }
-        out.push(residue);
+        out.push(page_row);
     }
     match candidates.get(fits) {
-        Some((typed, _, value_bytes)) if value_bytes.saturating_add(2) > RESIDUE_PAGE_BYTES => {
-            Err(too_wide(typed.row))
+        Some((row, residue)) if residue.bytes.saturating_add(2) > RESIDUE_PAGE_BYTES => {
+            Err(too_wide(**row))
         }
         _ => Ok(out),
     }
@@ -121,15 +97,15 @@ pub(super) fn page(staged: &Staged, after: u64, limit: u32) -> Outcome<Vec<Resid
 
 /// S1: refuse a landing whose residue takes more than [`MAX_RESIDUE_PAGES`]
 /// pages of `limit` rows, counted as the pages are answered.
-pub(super) fn fits(staged: &Staged, limit: u32) -> Outcome<()> {
+pub(super) fn fits(engine: &Engine, tenant: &Tenant, staged: &Staged, limit: u32) -> Outcome<()> {
     let mut after = 0;
     for _ in 0..MAX_RESIDUE_PAGES {
-        match page(staged, after, limit)?.last() {
+        match page(engine, tenant, staged, after, limit)?.last() {
             Some(last) => after = last.row,
             None => return Ok(()),
         }
     }
-    if page(staged, after, 1)?.is_empty() {
+    if page(engine, tenant, staged, after, 1)?.is_empty() {
         return Ok(());
     }
     Err(refusal(
@@ -142,10 +118,12 @@ pub(super) fn fits(staged: &Staged, limit: u32) -> Outcome<()> {
 }
 
 /// MANIFEST-LAWS-1 / LAW-04: record the per-row findings of the residue rows
-/// up to `through` and remove those rows from the residue. A finding must
-/// name a rule the engine left to that row, once, with the label and hold
-/// the landing pinned for that rule.
+/// up to `through` (into a findings file of this step) and remove those rows
+/// from the residue. A finding must name a rule the engine left to that row,
+/// once, with the label and hold the landing pinned for that rule.
 pub(super) fn settle(
+    engine: &Engine,
+    tenant: &Tenant,
     staged: &mut Staged,
     checks: &[RuleCheck],
     request: &SettleRequest,
@@ -155,7 +133,7 @@ pub(super) fn settle(
         .map(|check| (check.rule.as_str(), check))
         .collect();
     let mut seen = BTreeSet::new();
-    let mut findings = Vec::new();
+    let mut decided = Vec::new();
     for finding in &request.findings {
         let Some(check) = by_rule
             .get(finding.rule.as_str())
@@ -170,7 +148,7 @@ pub(super) fn settle(
             && staged
                 .residue
                 .get(&finding.row)
-                .is_some_and(|rules| rules.contains(&finding.rule));
+                .is_some_and(|residue| residue.rules.contains(&finding.rule));
         if !left || !seen.insert((finding.row, finding.rule.clone())) {
             return Err(refusal(
                 "bulk.invalid_finding",
@@ -180,12 +158,29 @@ pub(super) fn settle(
                 ),
             ));
         }
-        let row = staged
-            .row(finding.row)
-            .ok_or_else(|| engine_error("a residue row without its typed row"))?;
-        findings.push(laws::finding(check, row));
+        decided.push((finding.row, *check));
     }
-    staged.held.extend(findings);
+    let rows: Vec<u64> = decided.iter().map(|(row, _)| *row).collect();
+    let typed = staging::typed_rows(engine, tenant, staged, &rows)?;
+    let findings = decided
+        .iter()
+        .map(|(row, check)| {
+            typed
+                .get(row)
+                .map(|typed| laws::finding(check, typed))
+                .ok_or_else(|| engine_error("a residue row without its typed row"))
+        })
+        .collect::<Outcome<Vec<_>>>()?;
+    let dir = staged
+        .typed
+        .parent()
+        .ok_or_else(|| engine_error("a staged landing's directory"))?;
+    let part = dir.join(format!("findings-{}.parquet", staged.findings.len()));
+    let mut sink = Sink::create(&part, &staging::held_schema(&staged.table))?;
+    staging::write_held(&mut sink, &staged.table, &findings)?;
+    sink.finish()?;
+    staged.findings.push(part);
+    staged.record(&findings);
     staged.residue = staged.residue.split_off(&request.through.saturating_add(1));
     Ok(())
 }
