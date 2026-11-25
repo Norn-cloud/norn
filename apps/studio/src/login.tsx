@@ -105,8 +105,8 @@ export function LoginPage({ initial, config }: { readonly initial?: Mode; readon
           <CardContent className="space-y-4">
             <div role="tablist" aria-label="How to sign in" className={cn("grid gap-1 rounded-md border bg-surface-subtle p-1 text-meta", modes.length === 3 ? "grid-cols-3" : "grid-cols-2")}>
               {modes.map((entry) => (
-                <button key={entry.mode} type="button" role="tab" aria-selected={activeMode === entry.mode} onClick={() => { setMode(entry.mode); setMessage(null) }}
-                  className={cn("rounded-sm px-2 py-1 outline-none focus-visible:ring-3 focus-visible:ring-ring/30", activeMode === entry.mode ? "bg-card font-medium shadow-xs" : "text-muted-foreground hover:text-foreground")}>
+                <button key={entry.mode} type="button" role="tab" aria-selected={activeMode === entry.mode} disabled={pending} onClick={() => { setMode(entry.mode); setMessage(null) }}
+                  className={cn("rounded-sm px-2 py-1 outline-none focus-visible:ring-3 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-60", activeMode === entry.mode ? "bg-card font-medium shadow-xs" : "text-muted-foreground hover:text-foreground")}>
                   {entry.label}
                 </button>
               ))}
@@ -117,7 +117,9 @@ export function LoginPage({ initial, config }: { readonly initial?: Mode; readon
                 <button type="button" className="underline underline-offset-4 hover:text-foreground" onClick={() => void authConfig.refetch()}>Retry</button>
               </p>
             )}
-            <form key={activeMode} onSubmit={submit} className="grid gap-3">
+            {/* While a request is out the form is frozen: its answer can only land on the mode and address it was sent with. */}
+            <form key={activeMode} onSubmit={submit} className="grid gap-3" aria-busy={pending || undefined}>
+              <fieldset disabled={pending} className="contents">
               {activeMode === "sign-up" && activeConfig.inviteOnly && (
                 <p className="rounded-md border bg-surface-subtle px-3 py-2 text-meta text-muted-foreground">
                   This alpha is invite-only. Open the invitation link your admin sent, with your invited email address, or ask your admin for an invitation.
@@ -133,6 +135,7 @@ export function LoginPage({ initial, config }: { readonly initial?: Mode; readon
               {activeMode === "sign-up" && <p className="text-meta text-muted-foreground">At least 12 characters. You start with your own workspace.</p>}
               {message && <p role={message.tone === "error" ? "alert" : "status"} className={cn("text-meta", message.tone === "error" ? "text-destructive" : "text-muted-foreground")}>{message.text}</p>}
               <Button type="submit" disabled={pending}>{pending ? "Working…" : activeMode === "email-link" ? "Send link" : heading}</Button>
+              </fieldset>
             </form>
           </CardContent>
         </Card>

@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import type { ReactNode } from "react"
 import { readDocument } from "../src/lib/exact.ts"
 import type { SourceLineage } from "../src/lib/transport.ts"
+import { WORKSPACE_CHANGED_MESSAGE } from "../src/lib/definitions.ts"
 
 // These pages read the view from localStorage, which the tests replace; put the original back so later files in the same bun process see their own.
 const originalStorage = globalThis.localStorage
@@ -14,7 +15,7 @@ afterAll(() => { globalThis.localStorage = originalStorage })
 
 // The recorded transport reads fixtures through Vite's import.meta.glob, which bun test lacks; the reads are answered below instead.
 mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
-const { ObjectPage, SourcesItemPage, summaryOf } = await import("../src/objects.tsx")
+const { ObjectPage, SourcesItemPage, recordRead, summaryOf } = await import("../src/objects.tsx")
 const { ObjectTypePage } = await import("../src/sources.tsx")
 const { ViewProvider } = await import("../src/lib/view.tsx")
 const { ProvenanceChain } = await import("../src/components/provenance.tsx")
@@ -303,4 +304,35 @@ test("a held record's finding shows the values its law compared, a summed list a
   expect(html).toContain("72.00 = 30.00 + 40.00 + 2.00")
   expect(html).toContain("sum of lines")
   expect(html.indexOf("720.00")).toBeLessThan(html.indexOf("72.00 ="))
+})
+
+// #1700 R3: a record page's read (and so its reveals) is bound to the workspace it was read from.
+test("a record's read is keyed by and sent to its source workspace: the same id in two workspaces is two records", async () => {
+  const A = { orgId: "org_a", environmentId: "prod" }
+  const B = { orgId: "org_b", environmentId: "prod" }
+  let active = A
+  const sent: string[] = []
+  const fetcher = async (input: string) => {
+    const url = new URL(input, "https://studio.test")
+    if (url.pathname === "/api/me") return Response.json({ user: { id: "u" }, organization: { id: active.orgId, role: "admin" }, environmentId: active.environmentId })
+    sent.push(`${url.searchParams.get("orgId")}/${url.searchParams.get("environmentId")}`)
+    if (url.pathname.endsWith("/links")) return Response.json({ objectType: "canon.Party", id: "p/1", items: [], next: null })
+    if (url.pathname.endsWith("/lineage")) return Response.json({ code: "object.not_found" }, { status: 404 })
+    // Each workspace serves its own record under the same id.
+    return Response.json({ objectType: "canon.Party", id: "p/1", scope: active.orgId, version: 1, values: { display_name: `of ${active.orgId}` }, withheld: false, withheldProperties: [] })
+  }
+  const a = recordRead("canon.Party", "p/1", A, fetcher)
+  const b = recordRead("canon.Party", "p/1", B, fetcher)
+  expect(a.queryKey).toEqual(["object", "canon.Party", "p/1", "org_a", "prod"])
+  expect(b.queryKey).not.toEqual(a.queryKey)
+  expect(recordRead("canon.Party", "p/1", undefined).queryKey).toEqual(["object", "canon.Party", "p/1"])
+  expect((await a.queryFn({}))?.object.document.values["display_name"]).toBe("of org_a")
+  expect(sent).toEqual(["org_a/prod", "org_a/prod", "org_a/prod"])
+  // The session moves to B: A's read is refused before dispatch, so B's record never lands under A's key.
+  active = B
+  sent.length = 0
+  await expect(a.queryFn({})).rejects.toThrow(WORKSPACE_CHANGED_MESSAGE)
+  expect(sent).toEqual([])
+  expect((await b.queryFn({}))?.object.document.values["display_name"]).toBe("of org_b")
+  expect(sent).toEqual(["org_b/prod", "org_b/prod", "org_b/prod"])
 })

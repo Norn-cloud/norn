@@ -35,6 +35,7 @@ export const LIFECYCLE_CSS = `
   stroke: var(--canvas-surface, var(--surface-subtle, var(--background, #fff))); stroke-width: 3px; }
 .norn-life-arrows text[data-active] { fill: var(--edge-active, var(--ring, var(--primary, #2563eb))); font-weight: 600; }
 .norn-life-foot { margin: 0; font-size: .8125rem; color: var(--muted-foreground, #666); }
+.norn-life-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .norn-life-refused { margin: 0; font-size: .875rem; border-radius: var(--radius, .5rem); padding: .5rem .75rem;
   border: 1px solid var(--border, #e5e5e5); background: color-mix(in oklab, var(--muted, #f4f4f5) 60%, transparent); }
 .norn-life-retry { font: inherit; font-size: .8125rem; margin-inline-start: .5rem; border-radius: var(--radius-md, .375rem); padding: .125rem .625rem;

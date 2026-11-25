@@ -375,3 +375,50 @@ test("#1643: stale action form stays pinned to its opening workspace and refuses
   await tabA.close()
   expect(pageErrors).toEqual([])
 })
+
+// #1700 S11: while a request is out the form is frozen, so its answer lands only on the mode and address it was sent with.
+test("a slow sign-up freezes the form until it answers, and its answer never lands on another form", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await signedOut(page, { magicLink: true, inviteOnly: false })
+  let release: () => void = () => {}
+  const held = new Promise<void>((resolve) => { release = resolve })
+  await page.route("**/api/auth/sign-up/email", async (route) => {
+    await held
+    return route.fulfill({ status: 200, json: { token: null, user: { id: "u_new", email: "slow@example.com", name: "Slow", emailVerified: false } } })
+  })
+  await page.goto("/")
+  await page.getByRole("tab", { name: "Create account" }).click()
+  await page.getByLabel("Name").fill("Slow")
+  await page.getByLabel("Email").fill("slow@example.com")
+  await page.getByLabel("Password").fill("a-long-enough-password")
+  await page.getByRole("button", { name: "Create account" }).click()
+  await expect(page.getByRole("button", { name: "Working…" })).toBeDisabled()
+  await expect(page.getByRole("tab", { name: "Email link" })).toBeDisabled()
+  await expect(page.getByRole("tab", { name: "Sign in" })).toBeDisabled()
+  await expect(page.getByLabel("Email")).toBeDisabled()
+  await shoot(page, "sign-up-pending")
+  release()
+  await expect(page.getByRole("status").filter({ hasText: SIGNED_UP_MESSAGE })).toBeVisible()
+  await expect(page.getByRole("tab", { name: "Sign in" })).toHaveAttribute("aria-selected", "true")
+  await expect(page.getByLabel("Email")).toHaveValue("slow@example.com")
+  await expect(page.getByLabel("Email")).toBeEnabled()
+})
+
+// #1700 S13: a session check that never answers shows the shared loading state, then a retry, never a blank page.
+test("a stalled session check shows Studio loading, then a retry that recovers", async ({ page }) => {
+  test.setTimeout(60_000)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  let stall = true
+  await page.route("**/api/auth/config", (route) => route.fulfill({ json: { magicLink: false, inviteOnly: false } }))
+  await page.route("**/api/me", async (route) => {
+    if (stall) return // never answered: the browser's request stays open
+    return route.fulfill({ status: 401, json: { error: "Sign in first." } })
+  })
+  await page.goto("/")
+  await expect(page.getByLabel("Opening Studio")).toBeVisible()
+  await expect(page.getByText("Studio could not reach its server.")).toBeVisible({ timeout: 25_000 })
+  await shoot(page, "session-check-stalled")
+  stall = false
+  await page.getByRole("button", { name: "Try again" }).click()
+  await expect(page.getByRole("tab", { name: "Sign in" })).toBeVisible()
+})
