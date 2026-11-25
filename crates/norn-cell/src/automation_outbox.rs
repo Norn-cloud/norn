@@ -1366,7 +1366,7 @@ mod tests {
         Ok(())
     }
 
-    /// CodeRabbit (#1714): a same-batch Set that points a call at a
+    /// #1714 review: a same-batch Set that points a call at a
     /// decomposed target key keys its preimage and its recording by the same
     /// raw key, the object the commit addresses. The stored `object` is
     /// canonical JSON, so it carries the NFC key: a reread of it named `é`,
@@ -1443,7 +1443,7 @@ mod tests {
         Ok(())
     }
 
-    /// CodeRabbit (#1714): a row cutoff does not defer an action call whose
+    /// #1714 review: a row cutoff does not defer an action call whose
     /// target preimage is already held. The `demo.Ticket` writes are
     /// captured for the `demo.TicketB` rule (a supertype write may land on
     /// the subtype) and the last one falls past the budget, but none matches
