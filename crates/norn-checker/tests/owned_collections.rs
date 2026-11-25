@@ -1014,3 +1014,33 @@ fn row_operation_items_must_admit_the_bounded_json_operation_profile() {
         }
     }
 }
+
+/// ACTOR-STAMP-1 parity with runtime owned rows: a row derivation never
+/// writes a protected child property.
+#[test]
+fn row_derivations_cannot_write_protected_properties() {
+    let mut child = child_type("text", "integer");
+    child["properties"][2]["protected"] = json!(true);
+    let parent = entity_artifact(
+        PARENT_ARTIFACT,
+        PARENT,
+        &parent_type(20, &json!({ "to": "many", "from": "one" })),
+        &json!([
+            { "artifactId": CHILD_ARTIFACT, "kind": "entity", "version": "1.0.0", "required": true }
+        ]),
+    );
+    let child = entity_artifact(CHILD_ARTIFACT, CHILD, &child, &json!([]));
+    let config = json!({ "id": COLLECTION, "preconditions": [], "derive": { "label": "'fixed'" } });
+    let findings = admission_diagnostics_for_artifacts(
+        vec![parent, child],
+        action_artifact(&row_effect(&config)),
+    );
+    assert!(
+        findings.iter().any(|finding| {
+            finding.code.as_str() == TARGET_NOT_WRITABLE
+                && finding.message.contains("protected")
+                && finding.message.contains("label")
+        }),
+        "expected a protected derivation refusal; found {findings:?}"
+    );
+}

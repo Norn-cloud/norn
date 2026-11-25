@@ -383,7 +383,12 @@ test("proposals lifecycle: server-filter list, draft, edit, withdraw + undo, sub
   await dialog(page).getByRole("button", { name: "Draft proposal", exact: true }).click()
   await dialog(page).getByRole("button", { name: "Done" }).click()
   await table.getByRole("link", { name: "Add remittance grace window" }).click()
-  await expect(page.getByText("Not replayed yet")).toBeVisible()
+  // The detail page is a lazy route (#1736), so the list (whose unreplayed rows also say "Not replayed
+  // yet") can stay mounted for a moment after the click. Wait for the detail page, then read its replay panel.
+  await expect(page).toHaveURL(/\/learning\/proposals\/prop_new_\d+$/)
+  await expect(page.getByRole("heading", { level: 1, name: "Add remittance grace window", exact: true })).toBeVisible()
+  const replay = page.locator('[data-slot="panel"]').filter({ has: page.getByRole("heading", { name: "Curated-case replay", exact: true }) })
+  await expect(replay.getByText("Not replayed yet", { exact: true })).toBeVisible()
 
   // Edit draft, withdraw + Undo (returns to draft), then submit → replay populates.
   const actions = page.getByRole("group", { name: "Proposal actions" })

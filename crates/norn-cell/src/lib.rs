@@ -75,6 +75,7 @@ pub use observation_quality::AuthoritativePage;
 mod identity;
 pub mod model;
 mod payload_storage;
+mod predicate_scan;
 pub mod quantity;
 pub mod reactive;
 mod reactive_read;

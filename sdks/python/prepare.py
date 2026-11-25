@@ -5,8 +5,10 @@ names the generator turns into Python identifiers; every wire shape is kept:
 - operation tags `crate::<module>` become short module names: the ones in TAGS by
   name, any other `crate::<module>` as `<module>` without a `_routes` suffix (so a
   new route module never stops generation); a tag of any other form fails;
-- a response body that is not JSON (`:export`'s Parquet) is left out: the
-  generator cannot type it, and a client reads it as raw bytes;
+- a response body that is not a JSON document (`:export`'s Parquet and JSON
+  lines) is left out: the generator cannot type it, and a client reads it as
+  raw bytes. A JSON document is `application/json` or a `+json` type; JSON lines
+  (`application/x-ndjson`) is a stream of documents, not one;
 - an object schema (with properties, a map, or free-form) nested inline in a `oneOf`/`anyOf` variant's property is
   moved to a named component and referenced, because the generator otherwise
   names it twice and drops it;
@@ -41,7 +43,7 @@ for item in doc["paths"].values():
         for response in (op.get("responses") or {}).values() if isinstance(op, dict) else []:
             content = response.get("content")
             if isinstance(content, dict):
-                kept = {media: body for media, body in content.items() if "json" in media}
+                kept = {media: body for media, body in content.items() if media == "application/json" or media.endswith("+json")}
                 if kept:
                     response["content"] = kept
                 else:

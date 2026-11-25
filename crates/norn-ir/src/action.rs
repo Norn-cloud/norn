@@ -99,6 +99,13 @@ pub struct ActionRoot {
     /// Access definition that authorizes the action.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub access: Option<AccessRef>,
+    /// ACTOR-INDEPENDENT-1: protected actor properties of the effect target
+    /// (for example a server-stamped creator) whose recorded principal must
+    /// differ from the verified principal executing this action. The kernel
+    /// compares the committed target values at commit; admission refuses a
+    /// property that a caller could write (one that is not protected).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub independent_of: Vec<crate::PropertyId>,
     /// Closed UI-facing effect declarations that are not derivable from the
     /// action's local write set or outbound commands.
     #[serde(
@@ -173,7 +180,35 @@ fn is_true(value: &bool) -> bool {
     *value
 }
 
+/// ACTOR-STAMP-1: the one derivation expression that stamps the verified
+/// execution principal's id into an input field.
+pub const ACTOR_SUBJECT_STAMP: &str = "actor.subjectId";
+
 impl ActionRoot {
+    /// ACTOR-STAMP-1: input fields whose only derivation is the server stamp
+    /// of the verified principal ([`ACTOR_SUBJECT_STAMP`], never
+    /// caller-supplied). These are the only fields a governed create may
+    /// write into a protected creator property. A field that any other
+    /// derivation also targets is not a stamp, because that derivation could
+    /// replace the principal's id.
+    #[must_use]
+    pub fn actor_stamped_fields(&self) -> BTreeSet<String> {
+        self.derive
+            .iter()
+            .filter(|step| {
+                !step.input_required && step.expression.as_str().trim() == ACTOR_SUBJECT_STAMP
+            })
+            .filter(|step| {
+                self.derive
+                    .iter()
+                    .filter(|other| other.field == step.field)
+                    .count()
+                    == 1
+            })
+            .map(|step| step.field.clone())
+            .collect()
+    }
+
     /// The closed effects a UI must handle for this action.
     ///
     /// Effects with trustworthy sources in the action definition are derived:

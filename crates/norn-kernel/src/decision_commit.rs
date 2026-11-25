@@ -53,10 +53,10 @@ use norn_checker::{
 use norn_expr::{EvaluationBudget, Expression, Value as ExprValue};
 use norn_ir::{
     ConstraintClass, DataQualityOutcome, DataQualityRuleRef, DecisionOutput, FactChange,
-    FiringRefusal, InterfaceDef, Invariant, InvariantId, InvariantOwner, Lifecycle, ObjectTypeDef,
+    InterfaceDef, Invariant, InvariantId, InvariantOwner, Lifecycle, ObjectTypeDef,
     ObjectTypeExtension, ObjectTypeName, PropertyId, PropertyKind, PropertyType, PropertyTypeDef,
-    RuntimeValue, RuntimeValueError, TIMER_AFTER_MILLIS_MEMBER, TIMER_ID_MEMBER, Transition,
-    TransitionId, declared_lifecycle_properties, effective_lifecycles, lifecycle_codes,
+    RuntimeValue, RuntimeValueError, TIMER_AFTER_MILLIS_MEMBER, TIMER_ID_MEMBER, TransitionId,
+    declared_lifecycle_properties, effective_lifecycles, lifecycle_codes,
 };
 use serde::{Deserialize, Serialize};
 
@@ -64,6 +64,7 @@ use crate::cell_host::{
     CellCommit, CellHost, CommitError, CommitReceipt, Consumed, FactExpectation, FactKey,
     FactMutation, FactState, FactVersion, FactWrite, JsonObject, JsonValue,
 };
+use crate::creator_stamp::CreatorStamp;
 use crate::effect::{
     Command, CommandId, Effect, FreshnessPolicy, Generation, IdempotencyKey, Timer, TimerId,
 };
@@ -71,6 +72,12 @@ use crate::envelope::{EnvelopeCounts, TurnEnvelopeMeter, check_decision_envelope
 use crate::lifecycle_init::with_initial_states;
 use crate::limits::EnvelopeLimits;
 use crate::observations::{LogicalTime, World};
+
+mod lifecycle_admission;
+
+pub(crate) use lifecycle_admission::{
+    check_guards, fill_lifecycle_defaults, materialize_lifecycle_defaults, resolve_transition,
+};
 
 /// Stable platform rule for an exact retained property-domain declaration.
 pub const PROPERTY_DOMAIN_RULE_ID: &str = "norn.values.property_validity";
@@ -80,6 +87,7 @@ pub const PROPERTY_DOMAIN_RULE_ID: &str = "norn.values.property_validity";
 #[derive(Debug, Clone, Default)]
 pub struct TypeCatalog<'a> {
     pub(crate) action_rules: &'a [crate::SynchronousRule],
+    pub(crate) transition_guards: Option<&'a [crate::TransitionGuard]>,
     pub(crate) law_artifacts: Vec<&'a norn_ir::ArtifactEnvelope>,
     types: BTreeMap<&'a str, &'a ObjectTypeDef>,
     interfaces: BTreeMap<&'a str, &'a InterfaceDef>,
@@ -150,6 +158,7 @@ impl<'a> TypeCatalog<'a> {
         norn_ir::counters::bump(norn_ir::counters::Counter::TypeCatalogBuilds);
         Self {
             action_rules: &[],
+            transition_guards: None,
             types: types
                 .into_iter()
                 .map(|object_type| (object_type.name.as_str(), object_type))
@@ -187,6 +196,29 @@ impl<'a> TypeCatalog<'a> {
     pub fn with_action_rules(mut self, rules: &'a [crate::SynchronousRule]) -> Self {
         self.action_rules = rules;
         self
+    }
+
+    /// ACTOR-INDEPENDENT-1: the transitions the admitted actions guard with
+    /// `independentOf`. Without them a writer may fire no transition.
+    #[must_use]
+    pub fn with_transition_guards(mut self, guards: &'a [crate::TransitionGuard]) -> Self {
+        self.transition_guards = Some(guards);
+        self
+    }
+
+    /// ACTOR-INDEPENDENT-1: whether `object_type`, an ancestor or a descendant
+    /// declares a protected property, the types a transition guard can cover.
+    pub(crate) fn related_protected(&self, object_type: &ObjectTypeName) -> bool {
+        let lineage = self.lineage(object_type);
+        self.effective_model().is_ok_and(|model| {
+            model.object_types.iter().any(|(name, effective)| {
+                (lineage.contains(name) || self.lineage(name).contains(object_type))
+                    && effective
+                        .properties
+                        .iter()
+                        .any(EffectiveProperty::protected)
+            })
+        })
     }
 
     /// OBS-EVIDENCE-1: bind the retained law artifacts of this definition snapshot.
@@ -2522,6 +2554,7 @@ fn prepare_decision_with_limits_and_source_owned_targets<X>(
         limits,
         AdmissionOrigin::Command,
         source_owned_targets,
+        None,
     )
 }
 
@@ -2540,6 +2573,7 @@ pub(crate) fn prepare_decision_with_links_validated<X>(
         limits,
         AdmissionOrigin::Command,
         &BTreeSet::new(),
+        None,
     )
 }
 
@@ -2562,6 +2596,7 @@ pub(crate) fn prepare_owned_rows<X>(
         limits,
         AdmissionOrigin::OwnedRows,
         &BTreeSet::new(),
+        None,
     )
 }
 
@@ -2589,6 +2624,7 @@ pub(crate) fn prepare_observed_properties<X>(
         &EnvelopeLimits::V1,
         AdmissionOrigin::Observation,
         &BTreeSet::new(),
+        None,
     )
 }
 
@@ -2599,6 +2635,32 @@ enum AdmissionOrigin {
     OwnedRows,
 }
 
+/// ACTOR-STAMP-1: prepare an action's changes, admitting the one protected
+/// creator stamp of the object it creates (and nothing else protected).
+pub(crate) fn prepare_action_decision<X>(
+    catalog: &TypeCatalog<'_>,
+    slice: &FactSlice,
+    turn: &DecisionTurn,
+    output: &DecisionOutput,
+    limits: &EnvelopeLimits,
+    stamp: Option<&CreatorStamp>,
+) -> Result<PreparedDecision, DecisionRefusal<X>> {
+    prepare_decision_with_limits_for(
+        catalog,
+        slice,
+        turn,
+        output,
+        limits,
+        AdmissionOrigin::Command,
+        &BTreeSet::new(),
+        stamp,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "origin, source ownership and the creator stamp are explicit admission inputs"
+)]
 fn prepare_decision_with_limits_for<X>(
     catalog: &TypeCatalog<'_>,
     slice: &FactSlice,
@@ -2607,6 +2669,7 @@ fn prepare_decision_with_limits_for<X>(
     limits: &EnvelopeLimits,
     origin: AdmissionOrigin,
     source_owned_targets: &BTreeSet<FactKey>,
+    stamp: Option<&CreatorStamp>,
 ) -> Result<PreparedDecision, DecisionRefusal<X>> {
     if !turn.world.is_writable() {
         return Err(DecisionRefusal::ReadOnlyWorld);
@@ -2634,6 +2697,7 @@ fn prepare_decision_with_limits_for<X>(
             change,
             origin,
             source_owned_targets,
+            stamp,
         )?);
     }
     // Preserve the granular events above, then append one aggregate event per
@@ -2954,6 +3018,7 @@ fn apply_change<X>(
     change: &FactChange,
     origin: AdmissionOrigin,
     source_owned_targets: &BTreeSet<FactKey>,
+    stamp: Option<&CreatorStamp>,
 ) -> Result<FactEvent, DecisionRefusal<X>> {
     let key = match change {
         // Only a write to an object the decision read is resolved: a create
@@ -3036,10 +3101,18 @@ fn apply_change<X>(
             .property(property)
             .is_some_and(norn_checker::EffectiveProperty::protected)
     };
+    let stamped = |property: &str, value: &JsonValue| {
+        origin == AdmissionOrigin::Command
+            && stamp.is_some_and(|stamp| stamp.permits(&key, property, value))
+    };
     let forbidden = match change {
+        // ACTOR-STAMP-1: a command create writes a protected property only
+        // as the kernel's stamp of the verified principal.
         FactChange::Create { values, .. } => {
             origin != AdmissionOrigin::OwnedRows
-                && values.keys().any(|property| protected(property.as_str()))
+                && values.iter().any(|(property, value)| {
+                    protected(property.as_str()) && !stamped(property.as_str(), value)
+                })
         }
         FactChange::Set { property, .. } => protected(property.as_str()),
         FactChange::Transition { lifecycle, .. } => protected(lifecycle.as_str()),
@@ -3154,170 +3227,6 @@ fn apply_change<X>(
     };
     entry.written = true;
     Ok(event)
-}
-
-/// Fill declared defaults for lifecycle properties without requiring their
-/// final values to already be initial states. Callers that prepare a create
-/// still use [`with_initial_states`] for that full validation.
-pub(crate) fn fill_lifecycle_defaults<X>(
-    catalog: &TypeCatalog<'_>,
-    key: &FactKey,
-    values: &JsonObject,
-) -> Result<JsonObject, DecisionRefusal<X>> {
-    materialize_lifecycle_defaults(catalog, key, values, false)
-}
-
-pub(crate) fn materialize_lifecycle_defaults<X>(
-    catalog: &TypeCatalog<'_>,
-    key: &FactKey,
-    values: &JsonObject,
-    validate_initial: bool,
-) -> Result<JsonObject, DecisionRefusal<X>> {
-    let mut values = values.clone();
-    let effective = catalog.lifecycles(&key.object_type);
-    if let Some(unresolved) = catalog
-        .lifecycle_properties(&key.object_type)
-        .into_iter()
-        .find(|property| !effective.contains_key(property))
-    {
-        return Err(DecisionRefusal::UnresolvedLifecycle {
-            key: key.clone(),
-            lifecycle: unresolved.as_str().to_owned(),
-        });
-    }
-    for lifecycle in effective.into_values() {
-        let property = lifecycle.property.as_str();
-        let default = catalog
-            .default_of(&key.object_type, &lifecycle.property)
-            .filter(|_| !values.contains_key(property));
-        if let Some(default) = default {
-            let default =
-                JsonValue::from_ir(default).map_err(|error| DecisionRefusal::InvalidOutput {
-                    reason: format!("the default of `{property}`: {error}"),
-                })?;
-            values.insert(property.to_owned(), default);
-        }
-        if validate_initial {
-            let state = match values.get(property) {
-                Some(JsonValue::String(state)) => Some(state),
-                _ => None,
-            };
-            if !state.is_some_and(|state| lifecycle.initial.contains(state)) {
-                return Err(DecisionRefusal::InvalidInitialState {
-                    key: key.clone(),
-                    lifecycle: property.to_owned(),
-                    state: state.cloned(),
-                    initial: lifecycle.initial.clone(),
-                });
-            }
-        }
-    }
-    Ok(values)
-}
-
-/// The effective lifecycle of `lifecycle`, then the firing of `transition`
-/// from the object's current state under `Lifecycle::fire` — the per-call
-/// semantics `norn-checker` uses for `fire_transition` (same codes).
-/// Returns the transition and the state it leaves.
-pub(crate) fn resolve_transition<X>(
-    catalog: &TypeCatalog<'_>,
-    key: &FactKey,
-    values: &JsonObject,
-    lifecycle: &PropertyId,
-    transition: &TransitionId,
-) -> Result<(Transition, String), DecisionRefusal<X>> {
-    let Some(declared) = catalog.lifecycle(&key.object_type, lifecycle) else {
-        let lifecycle_name = lifecycle.as_str().to_owned();
-        return Err(
-            if catalog
-                .lifecycle_properties(&key.object_type)
-                .contains(lifecycle)
-            {
-                DecisionRefusal::UnresolvedLifecycle {
-                    key: key.clone(),
-                    lifecycle: lifecycle_name,
-                }
-            } else {
-                DecisionRefusal::UnknownLifecycle {
-                    key: key.clone(),
-                    lifecycle: lifecycle_name,
-                }
-            },
-        );
-    };
-    let current = match values.get(lifecycle.as_str()) {
-        Some(JsonValue::String(state)) => Some(state.clone()),
-        _ => None,
-    };
-    match declared.fire(transition.as_str(), current.as_deref()) {
-        Ok(fired) => Ok((fired.clone(), current.unwrap_or_default())),
-        Err(FiringRefusal::UnknownTransition) => Err(DecisionRefusal::UnknownTransition {
-            key: key.clone(),
-            lifecycle: lifecycle.as_str().to_owned(),
-            transition: transition.as_str().to_owned(),
-        }),
-        Err(FiringRefusal::NotFromState) => Err(DecisionRefusal::NotFromState {
-            lifecycle: lifecycle.as_str().to_owned(),
-            key: Box::new(key.clone()),
-            transition: transition.as_str().to_owned(),
-            current,
-            from: declared
-                .transitions
-                .iter()
-                .find(|candidate| candidate.id == *transition)
-                .map_or_default(|candidate| candidate.from.clone()),
-        }),
-    }
-}
-
-/// Evaluates every guard of `declared` against the object's state before
-/// the change (the checker does not: guards read the object).
-pub(crate) fn check_guards<X>(
-    key: &FactKey,
-    values: &JsonObject,
-    declared: &Transition,
-) -> Result<(), DecisionRefusal<X>> {
-    if declared.guards.is_empty() {
-        return Ok(());
-    }
-    let diagnostic = declared
-        .guard_refusal_code
-        .as_deref()
-        .and_then(norn_checker::codes::lookup)
-        .map(|entry| entry.code);
-    let guard_error = |guard: &str, reason: String| DecisionRefusal::GuardError {
-        diagnostic,
-        key: Box::new(key.clone()),
-        transition: declared.id.as_str().to_owned(),
-        guard: guard.to_owned(),
-        reason,
-    };
-    let object = values
-        .iter()
-        .map(|(name, value)| expr_value(value).map(|value| (name.clone(), value)))
-        .collect::<Result<BTreeMap<_, _>, _>>();
-    let context = match object {
-        Ok(object) => ExprValue::object([("self", ExprValue::Object(object))]),
-        Err(reason) => {
-            let first = declared.guards.first().map_or("", |guard| guard.as_str());
-            return Err(guard_error(first, reason));
-        }
-    };
-    for guard in &declared.guards {
-        match guard_holds(guard.as_str(), &context) {
-            Ok(true) => {}
-            Ok(false) => {
-                return Err(DecisionRefusal::GuardFalse {
-                    diagnostic,
-                    key: key.clone(),
-                    transition: declared.id.as_str().to_owned(),
-                    guard: guard.as_str().to_owned(),
-                });
-            }
-            Err(reason) => return Err(guard_error(guard.as_str(), reason)),
-        }
-    }
-    Ok(())
 }
 
 /// Evaluates one guard; `Ok` only for a boolean result.
@@ -3475,6 +3384,7 @@ mod field_authority_tests {
                     &change,
                     origin,
                     &BTreeSet::new(),
+                    None,
                 )
                 .unwrap_err();
                 assert_eq!(
@@ -3556,12 +3466,112 @@ mod field_authority_tests {
                 &change,
                 AdmissionOrigin::Command,
                 &BTreeSet::new(),
+                None,
             )
             .unwrap_err();
             assert_eq!(error.code(), "decision.invalid_output", "{change:?}");
             assert_eq!(working[&key].values, values);
             assert!(!working[&key].written);
         }
+    }
+
+    /// ACTOR-STAMP-1: a creator stamp admits exactly its own create, of its
+    /// own protected property, with its own principal, on the command path.
+    /// Every other protected write keeps refusing (FA-PROTECT-1).
+    #[test]
+    #[allow(clippy::unwrap_used, reason = "test fixtures require successful setup")]
+    fn creator_stamp_admits_only_its_principal_on_its_own_create() {
+        let object: ObjectTypeDef = serde_json::from_value(serde_json::json!({
+            "name": "test.Note", "properties": [{ "id": "owner",
+                "type": { "kind": "text" }, "protected": true }]
+        }))
+        .unwrap();
+        let catalog = TypeCatalog::new([&object]);
+        let key = FactKey::new("test.Note", "one");
+        let stamp = super::CreatorStamp {
+            key: key.clone(),
+            properties: BTreeSet::from(["owner".to_owned()]),
+            principal: "person:creator".to_owned(),
+        };
+        let create = |key: &FactKey, owner: &str| FactChange::Create {
+            object_type: key.object_type.clone(),
+            key: key.key.clone(),
+            values: JsonObject::from([("owner".to_owned(), JsonValue::String(owner.into()))]),
+        };
+        let apply = |change: &FactChange, origin, stamp| {
+            apply_change::<std::convert::Infallible>(
+                &catalog,
+                &FactSlice::new(),
+                &mut BTreeMap::new(),
+                change,
+                origin,
+                &BTreeSet::new(),
+                stamp,
+            )
+        };
+        assert!(
+            apply(
+                &create(&key, "person:creator"),
+                AdmissionOrigin::Command,
+                Some(&stamp)
+            )
+            .is_ok()
+        );
+        let other = FactKey::new("test.Note", "two");
+        for (change, origin, stamp) in [
+            (
+                create(&key, "person:creator"),
+                AdmissionOrigin::Command,
+                None,
+            ),
+            (
+                create(&key, "person:spoofed"),
+                AdmissionOrigin::Command,
+                Some(&stamp),
+            ),
+            (
+                create(&other, "person:creator"),
+                AdmissionOrigin::Command,
+                Some(&stamp),
+            ),
+            (
+                create(&key, "person:creator"),
+                AdmissionOrigin::Observation,
+                Some(&stamp),
+            ),
+        ] {
+            let error = apply(&change, origin, stamp).unwrap_err();
+            assert_eq!(error.code(), "decision.invalid_output", "{change:?}");
+        }
+        let mut working = BTreeMap::from([(
+            key.clone(),
+            Working {
+                expected: FactVersion(1),
+                values: Some(JsonObject::from([(
+                    "owner".to_owned(),
+                    JsonValue::String("person:creator".into()),
+                )])),
+                written: false,
+            },
+        )]);
+        let overwrite = FactChange::Set {
+            object_type: key.object_type.clone(),
+            key: key.key.clone(),
+            property: norn_ir::PropertyId("owner".into()),
+            value: JsonValue::String("person:creator".into()),
+        };
+        let error = apply_change::<std::convert::Infallible>(
+            &catalog,
+            &FactSlice::new(),
+            &mut working,
+            &overwrite,
+            AdmissionOrigin::Command,
+            &BTreeSet::new(),
+            Some(&stamp),
+        )
+        .unwrap_err();
+        assert_eq!(error.code(), "decision.invalid_output");
+        assert!(!working[&key].written);
     }
 
     #[test]
