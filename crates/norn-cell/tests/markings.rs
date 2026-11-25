@@ -1848,7 +1848,7 @@ fn definition_marking_additions_backfill_history_and_removal_is_refused() {
 
     let before_check = store.read().verify_ledger().expect("ledger verifies");
     store
-        .check_definitions(&marked, &install_input("v2", 3, &marked), Some(1))
+        .check_definitions_in_scope(&marked, &install_input("v2", 3, &marked), Some(1), SCOPE)
         .expect("check accepts a complete marking backfill");
     assert_eq!(
         store.read().verify_ledger().expect("ledger verifies"),
@@ -1878,7 +1878,12 @@ fn definition_marking_additions_backfill_history_and_removal_is_refused() {
     );
 
     let before = store.read().verify_ledger().expect("ledger verifies");
-    let checked = store.check_definitions(&unmarked, &install_input("v3", 4, &unmarked), Some(2));
+    let checked = store.check_definitions_in_scope(
+        &unmarked,
+        &install_input("v3", 4, &unmarked),
+        Some(2),
+        SCOPE,
+    );
     assert!(matches!(
         checked,
         Err(CellError::DefinitionMigrationRefused(_))
@@ -3611,7 +3616,7 @@ fn source_field_marking_removal_refuses_unchanged_object_model_atomically() {
     for rename in [false, true] {
         let candidate = source_classified_install(&model, false, rename);
         assert!(matches!(
-            store.check_definitions(&model, &candidate, Some(1)),
+            store.check_definitions_in_scope(&model, &candidate, Some(1), SCOPE),
             Err(CellError::DefinitionMigrationRefused(message)) if message.contains("removes source-derived marking")
         ));
         assert!(matches!(
@@ -3683,7 +3688,7 @@ fn source_field_marking_addition_refuses_live_and_deleted_immutable_lineage_atom
         let mut candidate = source_classified_install(&model, true, false);
         candidate.installed_at = 7;
         assert!(matches!(
-            store.check_definitions(&model, &candidate, Some(1)),
+            store.check_definitions_in_scope(&model, &candidate, Some(1), SCOPE),
             Err(CellError::DefinitionMigrationRefused(message)) if message.contains("adds source-derived marking")
         ));
         assert!(matches!(
@@ -4073,7 +4078,7 @@ fn mask_policy_weakening_is_refused_without_changing_retained_history() {
         let before = store.read().dump().expect("state");
         let candidate = install_with_mask(&model, json!({"kind":"last-n","count":4}), 3);
         assert!(matches!(
-            store.check_definitions(&model, &candidate, Some(1)),
+            store.check_definitions_in_scope(&model, &candidate, Some(1), SCOPE),
             Err(CellError::DefinitionMigrationRefused(_))
         ));
         assert!(matches!(

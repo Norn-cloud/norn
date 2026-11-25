@@ -593,7 +593,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         expected_version: Option<u64>,
     ) -> Result<InstalledDefinitionSet, CellError> {
         self.store
-            .check_definitions(candidate_model, input, expected_version)
+            .check_definitions_in_scope(candidate_model, input, expected_version, &self.scope)
     }
 }
 

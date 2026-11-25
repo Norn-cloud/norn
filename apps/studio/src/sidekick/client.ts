@@ -34,17 +34,7 @@ interface Grant { readonly token: string; readonly expiresAt: number }
 /** Renew this long before the grant expires. */
 const RENEW_BEFORE_MS = 2 * 60_000
 
-/** Whether this origin serves a Sidekick bridge: its config answers as JSON naming the socket. */
-export async function sidekickServed(fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<boolean> {
-  try {
-    const response = await fetcher("/sidekick/config.json", { headers: { accept: "application/json" }, cache: "no-store", ...signal === undefined ? {} : { signal } })
-    if (!response.ok || !(response.headers.get("content-type") ?? "").includes("application/json")) return false
-    const body = (await response.json()) as { sidekick?: unknown; socket?: unknown }
-    return body.sidekick === 1 && body.socket === "/sidekick/ws"
-  } catch {
-    return false
-  }
-}
+export { sidekickServed } from "./served.ts"
 
 /** The Worker's grant for the signed-in person; the reason in words when it refuses. */
 export async function fetchGrant(fetcher: (input: string, init?: RequestInit) => Promise<Response> = defaultFetch, boundScope?: StudioScope | null): Promise<Grant> {

@@ -1710,11 +1710,11 @@ fn collapse_whitespace(text: &str) -> String {
 /// closed. A finding on an unrelated artifact does not.
 #[derive(Debug, Clone, Default)]
 pub struct EffectiveCatalog {
-    by_artifact: BTreeMap<String, Result<EffectiveObjectType, Diagnostic>>,
-    by_name: BTreeMap<String, String>,
-    interface_names: BTreeSet<String>,
-    links_by_name: BTreeMap<String, Vec<EffectiveLink>>,
-    lineages: BTreeMap<String, Vec<ObjectTypeName>>,
+    pub(crate) by_artifact: BTreeMap<String, Result<EffectiveObjectType, Diagnostic>>,
+    pub(crate) by_name: BTreeMap<String, String>,
+    pub(crate) interface_names: BTreeSet<String>,
+    pub(crate) links_by_name: BTreeMap<String, Vec<EffectiveLink>>,
+    pub(crate) lineages: BTreeMap<String, Vec<ObjectTypeName>>,
     conserved_metric_terms: BTreeMap<String, BTreeSet<PropertyId>>,
 }
 
@@ -1751,18 +1751,7 @@ impl EffectiveCatalog {
             .is_some_and(|terms| terms.contains(property))
     }
 
-    /// Build the catalog of `artifacts` (see the type docs).
-    #[must_use]
-    pub fn from_artifacts(artifacts: &[ArtifactEnvelope]) -> Self {
-        Self::from_artifacts_with_registry(artifacts, &BTreeSet::new())
-    }
-
-    /// Build the catalog of `artifacts` against the registry (Norn Core)
-    /// value type names `registry`, so a type whose `ref` names a registry
-    /// type is available (the artifact-set check passes its context's
-    /// registry).
-    #[must_use]
-    pub fn from_artifacts_with_registry(
+    pub(crate) fn build_single_layer(
         artifacts: &[ArtifactEnvelope],
         registry: &BTreeSet<PropertyTypeName>,
     ) -> Self {
@@ -1871,7 +1860,7 @@ impl EffectiveCatalog {
         out
     }
 
-    fn add_v1_artifacts(&mut self, artifacts: &[ArtifactEnvelope]) {
+    pub(crate) fn add_v1_artifacts(&mut self, artifacts: &[ArtifactEnvelope]) {
         for artifact in artifacts {
             let ArtifactPayload::Entity(payload) = &artifact.payload else {
                 continue;

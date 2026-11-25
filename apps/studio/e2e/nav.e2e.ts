@@ -13,7 +13,17 @@ async function recorded(page: Page, errors: string[]) {
   await session(page)
 }
 
-const settled = (page: Page) => expect(page.getByText("Connecting…")).toHaveCount(0)
+const settled = async (page: Page) => {
+  await expect(page.locator("[data-route]")).toBeVisible()
+  await expect(page.getByText("Connecting…")).toHaveCount(0)
+}
+
+/** Wait for a lazy route chunk to commit and render content before asserting on its text. */
+async function routeCommitted(page: Page, path: string, label: string) {
+  await expect(page.locator(`[data-route="${path}"]`), label).toBeVisible()
+  await expect(page.getByRole("status", { name: "Loading page" }), label).toHaveCount(0)
+  await expect(page.locator("main h1, main h2").first(), label).toBeVisible()
+}
 
 test("nav: every rail destination and every sidebar entry, in both perspectives, navigates and renders", async ({ page }) => {
   test.setTimeout(300_000)
@@ -22,11 +32,13 @@ test("nav: every rail destination and every sidebar entry, in both perspectives,
   await page.goto("/sources")
   await settled(page)
   const rail = page.getByRole("toolbar", { name: "Studio" })
+  await expect(rail.locator('a[href="/decisions"]')).toBeVisible()
   const global = await rail.locator("a[href]:not([href='/'])").evaluateAll((links) => links.map((link) => link.getAttribute("href") ?? ""))
   expect(global).toContain("/decisions")
   for (const href of global) {
     await rail.locator(`a[href="${href}"]`).click()
     await expect(page).toHaveURL((url) => url.pathname === href)
+    await routeCommitted(page, href, `rail ${href}`)
     await expect(page.locator("main")).not.toContainText(/Something went wrong|Not Found/)
   }
   let entries = 0
@@ -48,6 +60,7 @@ test("nav: every rail destination and every sidebar entry, in both perspectives,
       const [path = "", hash] = href.split("#")
       await nav.locator(`a[href="${href}"]`).click()
       await expect(page, `entry ${href} in ${perspective}`).toHaveURL((url) => url.pathname === path && (hash === undefined || url.hash === `#${hash}`))
+      await routeCommitted(page, path, `entry ${href} in ${perspective}`)
       if (hash !== undefined) await expect(page.locator(`[id="${decodeURIComponent(hash)}"]`), `anchor ${hash}`).toBeInViewport()
       await expect(page.locator("main")).not.toContainText(/Something went wrong|Not Found/)
       // The page belongs to this perspective, so its sidebar stays.
@@ -114,6 +127,7 @@ test("header applies wide spacing on desktop, keeps breadcrumbs visible at 850px
   await expect(page.locator('[data-slot="assistant-panel"]')).toBeVisible()
   await page.setViewportSize({ width: 830, height: 900 })
   const { search: searchAt830 } = await checkHeader()
+  await expect(page.getByRole("navigation", { name: "breadcrumb" }).locator("a", { hasText: "Holding" })).toBeVisible()
   const renderedCrumbLinks = await page.getByRole("navigation", { name: "breadcrumb" }).locator("a").evaluateAll((links) =>
     links.filter((link) => getComputedStyle(link).display !== "none" && link.getClientRects().length > 0).map((link) => {
       const rect = link.getBoundingClientRect()

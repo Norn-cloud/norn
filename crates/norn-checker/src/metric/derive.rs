@@ -10,10 +10,11 @@ use norn_ir::metric::{
 };
 use norn_ir::{
     ArtifactEnvelope, ArtifactPayload, LawIR, LawModality, LawResponse, LawRoot, LawSeverity,
-    MetricDefinition, PropertyAdditivity, PropertyId, PropertyType, PropertyTypeName, QuestionIR,
+    MetricDefinition, PropertyAdditivity, PropertyId, PropertyType, QuestionIR,
 };
 
 use crate::entity_instance::{EffectiveCatalog, EffectiveKind, EffectiveObjectType};
+use crate::entity_scopes::ScopedView;
 use crate::{Diagnostic, Span};
 
 use super::{codes, compute, field_name};
@@ -133,23 +134,23 @@ impl MetricSpace {
     }
 }
 
-/// METRIC-DERIVE-1: derive sums and conservation ratios from an admitted
-/// ontology at an explicitly selected law scope. Units never grant additivity.
+/// METRIC-DERIVE-1: derive sums and conservation ratios from the admitted
+/// ontology `view`'s consumer sees, at an explicitly selected law scope. Units never grant additivity.
 /// Conditional, advisory and state-limited laws do not refine a population.
 ///
 /// # Errors
 /// Returns ordinary law diagnostics if the law set is not admitted, or an
 /// existing complexity diagnostic if candidate construction exceeds its bound.
 pub fn derive_metric_space(
-    artifacts: &[ArtifactEnvelope],
-    registry: &BTreeSet<PropertyTypeName>,
+    view: &ScopedView<'_>,
     scope: &LawRoot,
 ) -> Result<MetricSpace, Vec<Diagnostic>> {
-    let findings = crate::verification::check_law_set(artifacts, &[], registry);
+    let artifacts = view.pool();
+    let findings = crate::verification::check_law_set(artifacts, &[], view.registry());
     if !findings.is_empty() {
         return Err(findings);
     }
-    let mut catalog = EffectiveCatalog::from_artifacts_with_registry(artifacts, registry);
+    let mut catalog = view.catalog().clone();
     let laws = conservation_laws(artifacts, scope);
     let mut evidence: BTreeMap<String, Vec<ConservationSource>> = BTreeMap::new();
     for name in catalog.object_type_names() {
@@ -947,6 +948,18 @@ mod ontology_derived_measures {
 
     fn scope() -> LawRoot {
         LawRoot::Entity("demo.Conversion".to_owned())
+    }
+
+    /// [`super::derive_metric_space`] as the fixtures' one shared scope sees them.
+    fn derive_metric_space(
+        artifacts: &[ArtifactEnvelope],
+        registry: &BTreeSet<norn_ir::PropertyTypeName>,
+        scope: &LawRoot,
+    ) -> Result<MetricSpace, Vec<Diagnostic>> {
+        super::derive_metric_space(
+            &crate::entity_scopes::ScopedView::uniform(artifacts, registry),
+            scope,
+        )
     }
 
     fn space(artifacts: &[ArtifactEnvelope]) -> MetricSpace {
