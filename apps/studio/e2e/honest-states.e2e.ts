@@ -267,8 +267,9 @@ for (const [path, heading] of [["/markings", "Markings"], ["/map", "Semantic map
   test(`${path}: a settled Workspace unavailable recovers with the page's one Retry, which decides the mode again (top status stays hidden, nothing left errored)`, async ({ page }) => {
     await session(page)
     let unopenable = true
-    let meHits = 0
-    await page.route("**/api/me", (route) => { meHits += 1; return route.fallback() })
+    // What the session and the cell were asked, in order: the Retry's reads must wait for the mode.
+    const asked: string[] = []
+    await page.route("**/api/me", (route) => { asked.push("me"); return route.fallback() })
     await page.route("**/api/host/v1/**", (route) => {
       const url = new URL(route.request().url())
       if (url.pathname.endsWith("/v1/definitions") && route.request().method() === "GET") {
@@ -278,6 +279,7 @@ for (const [path, heading] of [["/markings", "Markings"], ["/map", "Semantic map
             json: { format: "norn/refusal@2", code: "cell.unopenable", category: "internal", retryable: false, reason: null, incidentId: "inc-cell-910", message: "The workspace cell could not be opened.", explanation: "Storage migration is paused for this environment." },
           })
         }
+        asked.push("definitions")
         return route.fulfill({ json: { artifacts: definitions } })
       }
       if (url.pathname.endsWith("/v1/definitions:list")) return route.fulfill({ json: { items: [], nextCursor: null } })
@@ -294,17 +296,18 @@ for (const [path, heading] of [["/markings", "Markings"], ["/map", "Semantic map
     await expect(retry).toHaveCount(1)
     await shoot(page, `retry${path.replaceAll("/", "-")}-unavailable`)
 
-    // The cell recovers; the page's one Retry decides the mode again and reads the page, with no second
-    // session probe (the scope was answered; the page's read waits for the mode).
+    // The cell recovers; the page's one Retry decides the mode again and only then reads the page: the
+    // scope was answered, so the mode reads the cell at once, and no page read asks the session first
+    // (a read started beside the mode would discover the scope again, before the mode answered).
     unopenable = false
-    meHits = 0
+    asked.length = 0
     await retry.click()
     await expect(page.locator("[data-workspace-unavailable]")).toHaveCount(0)
     await expect(page.getByRole("heading", { name: heading, exact: true }).first()).toBeVisible()
     await expect(page.locator("[data-connection]")).toHaveCount(0)
     await expect(page.locator('[data-load-state="error"]')).toHaveCount(0)
     await expect(page.locator('[data-load-state="loading"], [data-load-state="slow"]')).toHaveCount(0)
-    expect(meHits).toBe(0)
+    expect(asked[0]).toBe("definitions")
     await shoot(page, `retry${path.replaceAll("/", "-")}-recovered`)
   })
 }
