@@ -26,3 +26,5 @@ require_version Quint "0.32.0" quint --version
 require_version Kani "0.67.0" kani --version
 require_version Z3 "5.1.0" z3 --version
 require_version Java "21.0.12" java -version
+
+"$repo_root/scripts/bootstrap-verification-tools.sh" --check-verus

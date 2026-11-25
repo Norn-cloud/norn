@@ -1,23 +1,40 @@
 //! COMPUTE-DETERMINISTIC-1: exact coefficients, with rounding only at ratio output.
 
+use norn_ir::{ExactSum, exact_sum::U160};
+
 /// Supported decimal places for query inputs, sums and dimensionless ratios.
 pub const SCALE: u32 = 6;
 /// One unit in the coefficient representation.
 pub const FACTOR: i128 = 1_000_000;
 /// Per-object coefficient bound; the evaluator refuses larger values.
 pub const MAX_VALUE: i64 = 9_000_000_000_000_000_000;
-/// At most 1,000 objects, each within `MAX_VALUE`; every sum fits this range.
+/// Per-operand sum of magnitudes, equivalent to 1,000 maximum-size contributions.
 pub const MAX_SUM: i128 = 9_000_000_000_000_000_000_000;
 
-/// Add one signed contribution without rounding or a partial overflow result.
-#[must_use]
-pub fn add(total: i128, value: i64) -> Option<i128> {
+/// Query arithmetic exceeds the bounded profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BoundExceeded;
+
+/// Accumulate an input after checking its per-object bound.
+///
+/// # Errors
+/// Refuses an out-of-profile value or term count.
+pub fn add(sum: ExactSum, value: i64) -> Result<ExactSum, BoundExceeded> {
     if !(-MAX_VALUE..=MAX_VALUE).contains(&value) {
-        return None;
+        return Err(BoundExceeded);
     }
-    total
-        .checked_add(i128::from(value))
-        .filter(|v| (-MAX_SUM..=MAX_SUM).contains(v))
+    sum.add(i128::from(value)).ok_or(BoundExceeded)
+}
+
+/// Publish a completed bucket.
+///
+/// # Errors
+/// Refuses a magnitude outside the bounded profile.
+pub fn decide(sum: ExactSum) -> Result<i128, BoundExceeded> {
+    if sum.magnitude() > U160::from_u128(MAX_SUM.unsigned_abs()) {
+        return Err(BoundExceeded);
+    }
+    sum.total().ok_or(BoundExceeded)
 }
 
 /// Divide same-unit sums, rounding once to scale six, midpoint away from zero.
@@ -72,14 +89,17 @@ mod tests {
         }
         assert_eq!(ratio(0, 0), None);
         assert_eq!(ratio(i128::MAX, 1), None);
-        assert_eq!(add(MAX_SUM, 1), None);
-        assert_eq!(add(0, i64::MIN), None);
+        assert_eq!(
+            decide(add(ExactSum::ZERO.add(MAX_SUM).expect("one term"), 1).expect("two terms")),
+            Err(BoundExceeded)
+        );
+        assert_eq!(add(ExactSum::ZERO, i64::MIN), Err(BoundExceeded));
     }
 
     proptest! {
         #[test]
         fn exact_sum_is_commutative(a in -MAX_VALUE..=MAX_VALUE, b in -MAX_VALUE..=MAX_VALUE) {
-            prop_assert_eq!(add(i128::from(a), b), add(i128::from(b), a));
+            prop_assert_eq!(add(add(ExactSum::ZERO, a).expect("bounded"), b), add(add(ExactSum::ZERO, b).expect("bounded"), a));
         }
         #[test]
         fn ratio_is_within_half_a_quantum(n in any::<i64>(), d in any::<i64>()) {

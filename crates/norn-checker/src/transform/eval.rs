@@ -806,16 +806,17 @@ fn aggregate(
 }
 
 fn sum<'v>(values: impl Iterator<Item = &'v Value>) -> Result<Value, EvalError> {
-    let mut total: Option<Decimal> = None;
+    let mut sum = None;
     for value in values {
         if let Some(addend) = decimal(value)? {
-            total = Some(match total {
-                None => addend,
-                Some(sum) => sum.checked_add(addend).ok_or(EvalError::BoundExceeded)?,
-            });
+            sum.get_or_insert_with(norn_ir::runtime::DecimalSum::default)
+                .push(addend)
+                .ok_or(EvalError::BoundExceeded)?;
         }
     }
-    total.map_or(Ok(Value::Null), number)
+    sum.map_or(Ok(Value::Null), |s| {
+        number(s.total().ok_or(EvalError::BoundExceeded)?)
+    })
 }
 
 fn order_keys(
@@ -983,4 +984,28 @@ fn dedupe(
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod sum_tests {
+    use super::*;
+
+    #[test]
+    #[allow(clippy::expect_used, reason = "known exact decimal literals")]
+    fn unordered_sum_checks_only_the_final_decimal() {
+        let max = number(Decimal::parse("79228162514264337593543950335").expect("max decimal"))
+            .expect("number");
+        let tiny = number(Decimal::parse("0.0000000000000000000000000001").expect("quantum"))
+            .expect("number");
+        let neg =
+            number(Decimal::parse("-0.0000000000000000000000000001").expect("negative quantum"))
+                .expect("number");
+        for values in [[&max, &tiny, &neg], [&max, &neg, &tiny]] {
+            assert_eq!(sum(values.into_iter()).expect("exact cancellation"), max);
+        }
+        assert!(matches!(
+            sum([&max, &tiny].into_iter()),
+            Err(EvalError::BoundExceeded)
+        ));
+    }
 }
