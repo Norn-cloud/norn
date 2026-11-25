@@ -132,7 +132,8 @@ pub(crate) fn tools_list_snapshot(name: &str, body: &str) {
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(&file, &text).unwrap();
     }
-    let kept = std::fs::read_to_string(&file).expect("tools/list snapshot; bless with NORN_BLESS=1");
+    let kept =
+        std::fs::read_to_string(&file).expect("tools/list snapshot; bless with NORN_BLESS=1");
     assert!(
         kept == text,
         "{name}: tools/list differs from the snapshot byte for byte; review it and rerun with NORN_BLESS=1"

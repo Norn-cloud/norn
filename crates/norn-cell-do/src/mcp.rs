@@ -2,14 +2,17 @@
 //! transport, for the chat assistants a person already uses.
 //!
 //! The catalog is projected from what the cell declares, never written per
-//! screen: generic operations over its object types, admitted questions and
-//! retained definitions, plus one tool per action the caller may call
-//! ([`norn_api::action_catalog::callable_actions`], projected by
+//! screen: the route-backed tools of the server's manifest (TOOL-MANIFEST-1,
+//! [`norn_api::tool_catalog`], read by
+//! [`norn_projections::tool_manifest`]) over its object types, admitted
+//! questions and retained definitions, plus one tool per action the caller
+//! may call ([`norn_api::action_catalog::callable_actions`], projected by
 //! [`norn_projections::mcp::action_tool`]). Every tool call is a loopback
 //! through [`crate::server::handle_all`] with the caller's own
 //! `Authorization` header and scope: the same routes, principal, policy and
 //! refusals a direct HTTP caller gets. Nothing here reads data, decides access
-//! or accepts SQL, table or column names (#733).
+//! or accepts SQL, table or column names (#733). The one tool without a route
+//! is `norn_explain`, which reads only the checker's code registry.
 //!
 //! The protocol itself is [`norn_api::mcp::Session`]. Each POST is answered
 //! on its own over the catalog rebuilt for its caller; tools that render in a
@@ -17,6 +20,7 @@
 //! whose static templates the edge serves.
 
 use std::collections::BTreeMap;
+use std::sync::OnceLock;
 
 use http::StatusCode;
 use norn_api::action_catalog::callable_actions;
@@ -28,6 +32,10 @@ use norn_api::question_routes::AdHocQuestions;
 use norn_api::refusal::Refusal;
 use norn_cell::engine::SqlEngine;
 use norn_ir::{JsonObject, JsonValue, McpTool, RuntimeObject, RuntimeValue};
+use norn_projections::tool_manifest::{
+    Domains, Encoding, Location, Offered, RouteTool, ToolArgument, ToolManifest, ToolMethod,
+    route_tool,
+};
 use serde_json::json;
 
 use crate::principal::{PrincipalResolver, RequestScope};
@@ -82,6 +90,22 @@ impl View {
             Self::Findings => "ui://norn/findings.html",
             Self::Plan => "ui://norn/plan.html",
             Self::Inbox => "ui://norn/inbox.html",
+        }
+    }
+
+    /// The view a tool declaration names (`x-norn-tool.view`).
+    #[must_use]
+    pub fn named(name: &str) -> Option<Self> {
+        match name {
+            "answer" => Some(Self::Answer),
+            "lineage" => Some(Self::Lineage),
+            "dashboard" => Some(Self::Dashboard),
+            "receipt" => Some(Self::Receipt),
+            "records" => Some(Self::Records),
+            "findings" => Some(Self::Findings),
+            "plan" => Some(Self::Plan),
+            "inbox" => Some(Self::Inbox),
+            _ => None,
         }
     }
 
@@ -162,7 +186,7 @@ fn session<E: SqlEngine>(
         let (Some(actor), Ok(())) = (actor.as_deref(), admitted) else {
             return Err(norn_api::authz::read_denied());
         };
-        Catalog::build(host, questions, &scope, actor)?
+        Catalog::build(host, questions, manifest()?, &scope, actor)?
     };
     let mut session = Session::new(catalog.tools, &catalog.binding)?
         .stateless()
@@ -175,6 +199,7 @@ fn session<E: SqlEngine>(
         kinds,
         request,
         scope,
+        manifest: manifest()?,
         actions: catalog.actions,
         remedies: catalog.remedies,
         question_names: catalog.question_names,
@@ -259,6 +284,7 @@ impl Catalog {
     fn build<E: SqlEngine>(
         host: &DevHost<E>,
         questions: Option<&dyn AdHocQuestions<E>>,
+        manifest: &ToolManifest,
         scope: &ScopeQuery,
         actor: &str,
     ) -> Result<Self, Refusal> {
@@ -280,7 +306,15 @@ impl Catalog {
             norn_api::authz::Operation::WriteDefinitions,
         )
         .is_ok();
-        let mut tools = generic_tools(&object_types, &question_names, questions.is_some(), writer)?;
+        let domains = Domains {
+            object_types: &object_types,
+            questions: &question_names,
+        };
+        let mut tools = route_tools(manifest, &domains, questions.is_some(), writer)?;
+        tools.push(explain_tool()?);
+        if questions.is_some() {
+            tools.push(call_action_tool()?);
+        }
         let query = ActionQuery {
             org_id: Some(scope.org_id.clone()),
             environment_id: Some(scope.environment_id.clone()),
@@ -397,323 +431,100 @@ fn read_only() -> serde_json::Value {
     json!({"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false})
 }
 
-#[allow(
-    clippy::too_many_lines,
-    reason = "one declarative table of the generic tools, read top to bottom"
-)]
-fn generic_tools(
-    object_types: &[String],
-    question_names: &[String],
+/// TOOL-MANIFEST-1: the route-backed tools, read once from the routes' own
+/// `OpenAPI` operations ([`norn_api::tool_catalog::tool_operations`]).
+fn manifest() -> Result<&'static ToolManifest, Refusal> {
+    static MANIFEST: OnceLock<Result<ToolManifest, String>> = OnceLock::new();
+    MANIFEST
+        .get_or_init(|| {
+            let operations =
+                norn_api::tool_catalog::tool_operations().map_err(|error| error.to_string())?;
+            let operations: JsonValue =
+                serde_json::from_value(operations).map_err(|error| error.to_string())?;
+            ToolManifest::from_openapi_paths(&operations).map_err(|error| error.to_string())
+        })
+        .as_ref()
+        .map_err(Refusal::host)
+}
+
+/// The manifest's tools this caller is offered, each projected over the
+/// caller's workspace and marked with the view its declaration names.
+fn route_tools(
+    manifest: &ToolManifest,
+    domains: &Domains<'_>,
     answers: bool,
     writer: bool,
 ) -> Result<Vec<McpTool>, Refusal> {
-    let type_schema = if object_types.is_empty() {
-        json!({"type": "string", "description": "An object type from norn_catalog."})
-    } else {
-        json!({"type": "string", "enum": object_types, "description": "An object type this workspace declares."})
-    };
-    let question_schema = if question_names.is_empty() {
-        json!({"type": "string", "description": "An admitted question name from norn_question_catalog."})
-    } else {
-        json!({"type": "string", "enum": question_names, "description": "An admitted question of this workspace."})
-    };
-    let mut tools = vec![
-        tool(
-            json!({
-                "name": "norn_catalog",
-                "title": "Describe the workspace",
-                "description": "What this Norn workspace declares, one line each: its object types (with their properties), laws, actions and admitted questions, and the definitions version. Call this first. For an artifact's full definition pass detail \"full\" with the artifact ids or names you need.",
-                "inputSchema": {"type": "object", "additionalProperties": false, "properties": {
-                    "detail": {"type": "string", "enum": ["summary", "full"], "description": "summary (the default) or full artifacts; full needs names."},
-                    "names": {"type": "array", "maxItems": 20, "items": {"type": "string"}, "description": "With detail full: artifact ids or names to return, matched by substring, for example docs.ScannedDocument."}
-                }},
-                "annotations": read_only(),
-            }),
-            None,
-        )?,
-        tool(
-            json!({
-                "name": "norn_inbox",
-                "title": "What needs attention",
-                "description": "The caller's work queue: records a law holds back, grouped by the law with counts (each record with the finding in plain words and, when the caller may make it, the fix the server computed: the governed action and its arguments), decisions waiting on the caller, and connected sources whose last sync failed. Every item is what the caller may read, and each names the Studio page to act at. Apply a fix only through its action tool.",
-                "inputSchema": {"type": "object", "additionalProperties": false, "properties": {}},
-                "annotations": read_only(),
-            }),
-            Some(View::Inbox),
-        )?,
-        tool(
-            json!({
-                "name": "norn_list_definitions",
-                "title": "List saved definitions",
-                "description": "Saved dashboards, questions, agents and bindings of this workspace, newest version of each.",
-                "inputSchema": {"type": "object", "additionalProperties": false, "properties": {
-                    "kind": {"type": "string", "enum": ["dashboard", "question", "agent", "binding"]},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 100},
-                    "cursor": {"type": "string", "description": "The previous page's cursor."}
-                }},
-                "annotations": read_only(),
-            }),
-            None,
-        )?,
-        tool(
-            json!({
-                "name": "norn_query_objects",
-                "title": "Find records",
-                "description": "Read one page of records of a type that the caller may see, optionally filtered and sorted. Filter: {\"all\": [{\"property\": p, \"op\": o, \"value\": v}]} with op one of eq, ne, in, contains, prefix, lt, lte, gt, gte, between (value [low, high]), empty, present; at most 8 clauses. Sort: \"property:asc\" or \"property:desc\", up to 3, comma-separated. Pass the page's `next` as `after` for the next page. Withheld values never match a filter.",
-                "inputSchema": {"type": "object", "additionalProperties": false, "required": ["type"], "properties": {
-                    "type": type_schema,
-                    "filter": {"type": "object", "properties": {"all": {"type": "array", "maxItems": 8, "items": {"type": "object", "required": ["property", "op"], "properties": {"property": {"type": "string"}, "op": {"type": "string", "enum": ["eq", "ne", "in", "contains", "prefix", "lt", "lte", "gt", "gte", "between", "empty", "present"]}, "value": {"anyOf": [{"type": "string"}, {"type": "number"}, {"type": "boolean"}, {"type": "array", "maxItems": 100, "items": {"anyOf": [{"type": "string"}, {"type": "number"}, {"type": "boolean"}]}}], "description": "A scalar; an array for in (the values) and between ([low, high]); omitted for empty and present."}}}}}},
-                    "sort": {"type": "string"},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 200},
-                    "after": {"type": "string"}
-                }},
-                "annotations": read_only(),
-            }),
-            Some(View::Records),
-        )?,
-        tool(
-            json!({
-                "name": "norn_get_object",
-                "title": "Read a record",
-                "description": "One record by type and id, with the values the caller may see.",
-                "inputSchema": {"type": "object", "additionalProperties": false, "required": ["type", "id"], "properties": {
-                    "type": type_schema, "id": {"type": "string"}
-                }},
-                "annotations": read_only(),
-            }),
-            None,
-        )?,
-        tool(
-            json!({
-                "name": "norn_object_links",
-                "title": "Related records",
-                "description": "The records linked to one record, by declared relation.",
-                "inputSchema": {"type": "object", "additionalProperties": false, "required": ["type", "id"], "properties": {
-                    "type": type_schema, "id": {"type": "string"},
-                    "direction": {"type": "string", "enum": ["out", "in"]},
-                    "link": {"type": "string", "description": "A declared relation name."},
-                    "limit": {"type": "integer", "minimum": 1, "maximum": 200},
-                    "after": {"type": "string"}
-                }},
-                "annotations": read_only(),
-            }),
-            None,
-        )?,
-        tool(
-            json!({
-                "name": "norn_trace_object",
-                "title": "Trace a record to its source",
-                "description": "Where one record came from: the commits, receipts and source rows that produced its current values.",
-                "inputSchema": {"type": "object", "additionalProperties": false, "required": ["type", "id"], "properties": {
-                    "type": type_schema, "id": {"type": "string"}
-                }},
-                "annotations": read_only(),
-            }),
-            Some(View::Lineage),
-        )?,
-        tool(
-            json!({
-                "name": "norn_profile_type",
-                "title": "Profile a type",
-                "description": "Summary statistics of one object type over the records the caller may see: counts, missing values and ranges per property. Use it before asking questions of unfamiliar data.",
-                "inputSchema": {"type": "object", "additionalProperties": false, "required": ["type"], "properties": {
-                    "type": type_schema
-                }},
-                "annotations": read_only(),
-            }),
-            None,
-        )?,
-        tool(
-            json!({
-                "name": "norn_list_held",
-                "title": "Held-back records",
-                "description": "The records of a type that Norn holds back because a law refused them, each with a one-line summary of its open findings (the law and the values it compared). Held records are not returned by norn_query_objects or norn_get_object; read why with norn_get_findings.",
-                "inputSchema": {"type": "object", "additionalProperties": false, "required": ["type"], "properties": {
-                    "type": type_schema
-                }},
-                "annotations": read_only(),
-            }),
-            Some(View::Findings),
-        )?,
-        tool(
-            json!({
-                "name": "norn_get_findings",
-                "title": "Why a record is held",
-                "description": "The findings on one record: the law that refused it, its message, the values the law compared, when it was first and last seen, whether the record is held back, and the action tools that can correct it. Call the remedy with corrected values; the laws decide again.",
-                "inputSchema": {"type": "object", "additionalProperties": false, "required": ["type", "id"], "properties": {
-                    "type": type_schema, "id": {"type": "string"}
-                }},
-                "annotations": read_only(),
-            }),
-            Some(View::Findings),
-        )?,
-        tool(
-            json!({
-                "name": "norn_explain",
-                "title": "Explain a code",
-                "description": "Guidance for a refusal or checker diagnostic code (for example core.laws.violated, authz.denied, defs.refused): what it means and what to do next.",
-                "inputSchema": {"type": "object", "additionalProperties": false, "required": ["code"], "properties": {
-                    "code": {"type": "string", "description": "The code field of a refusal or diagnostic."}
-                }},
-                "annotations": read_only(),
-            }),
-            None,
-        )?,
-    ];
-    if writer {
-        tools.push(tool(
-            json!({
-                "name": "norn_plan_definitions",
-                "title": "Plan a definitions change",
-                "description": "Check compiled definition artifacts (a pack's artifact envelopes) against the workspace without changing it: what they add and replace, the new object types, the checker's findings, and stored records the new laws would refuse. Returns baseVersion: pass it to norn_apply_definitions as expectedVersion.",
-                "inputSchema": {"type": "object", "additionalProperties": false, "required": ["artifacts"], "properties": {
-                    "artifacts": {"type": "array", "minItems": 1, "maxItems": 500, "items": {"type": "object"}, "description": "Compiled artifact envelopes; none in a reserved namespace (core., std.)."},
-                    "approvals": {"type": "array", "maxItems": 100, "description": "The pack's approvals: admitted against these artifacts' actions and installed with them in one transaction, so a new action is never live without its gate. A plan returns each one's restatement and restatementSha256; an apply carries each one's signoff of it and the plan's fromRevision as expectedVersion. Any refusal installs nothing.", "items": {"type": "object", "additionalProperties": false, "required": ["kind", "id", "payload"], "properties": {
-                        "kind": {"type": "string", "enum": ["approval"]},
-                        "id": {"type": "string"},
-                        "payload": {"type": "object"},
-                        "expectedVersion": {"type": "integer", "minimum": 0, "description": "The approval's fromRevision from the plan; omitted for a new approval."},
-                        "signoff": {"type": "object", "additionalProperties": false, "required": ["restatementSha256"], "properties": {"restatementSha256": {"type": "string", "description": "The plan's restatementSha256 for this approval: the words the caller signs."}}}
-                    }}}
-                }},
-                "annotations": read_only(),
-            }),
-            Some(View::Plan),
-        )?);
-        tools.push(tool(
-            json!({
-                "name": "norn_apply_definitions",
-                "title": "Apply a planned definitions change",
-                "description": "Install the artifacts a plan checked, compare-and-set on the plan's baseVersion: refused with nothing written if the workspace moved, the checker refuses, or stored records break the new laws. The answer is the installed version and its receipt. The pack's actions are callable at once with norn_call_action, before their own tools appear.",
-                "inputSchema": {"type": "object", "additionalProperties": false, "required": ["artifacts", "expectedVersion"], "properties": {
-                    "artifacts": {"type": "array", "minItems": 1, "maxItems": 500, "items": {"type": "object"}},
-                    "expectedVersion": {"type": "integer", "minimum": 0, "description": "The baseVersion norn_plan_definitions returned."},
-                    "approvals": {"type": "array", "maxItems": 100, "description": "The pack's approvals: admitted against these artifacts' actions and installed with them in one transaction, so a new action is never live without its gate. A plan returns each one's restatement and restatementSha256; an apply carries each one's signoff of it and the plan's fromRevision as expectedVersion. Any refusal installs nothing.", "items": {"type": "object", "additionalProperties": false, "required": ["kind", "id", "payload"], "properties": {
-                        "kind": {"type": "string", "enum": ["approval"]},
-                        "id": {"type": "string"},
-                        "payload": {"type": "object"},
-                        "expectedVersion": {"type": "integer", "minimum": 0, "description": "The approval's fromRevision from the plan; omitted for a new approval."},
-                        "signoff": {"type": "object", "additionalProperties": false, "required": ["restatementSha256"], "properties": {"restatementSha256": {"type": "string", "description": "The plan's restatementSha256 for this approval: the words the caller signs."}}}
-                    }}}
-                }},
-                "annotations": {"readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false},
-            }),
-            Some(View::Receipt),
-        )?);
-    }
-    if answers {
-        tools.push(tool(
-            json!({
-                "name": "norn_question_catalog",
-                "title": "What can be asked",
-                "description": "The metrics and object-type properties the caller may ask about, with the grains, operators and bounds a question may use. Read it before norn_evaluate or norn_propose_definition.",
-                "inputSchema": {"type": "object", "additionalProperties": false, "properties": {}},
-                "annotations": read_only(),
-            }),
-            None,
-        )?);
-        tools.push(tool(
-            json!({
-                "name": "norn_list_metrics",
-                "title": "List metrics",
-                "description": "The workspace's declared metrics: what each measures, its unit and how it adds up.",
-                "inputSchema": {"type": "object", "additionalProperties": false, "properties": {}},
-                "annotations": read_only(),
-            }),
-            None,
-        )?);
-        tools.push(tool(
-            json!({
-                "name": "norn_answer",
-                "title": "Answer a question",
-                "description": "The current answer to an admitted question: exact values per bucket, the source frontier it was computed at and its freshness. Each bucket carries a lineageRef for norn_trace_answer.",
-                "inputSchema": {"type": "object", "additionalProperties": false, "required": ["question"], "properties": {
-                    "question": question_schema
-                }},
-                "annotations": read_only(),
-            }),
-            Some(View::Answer),
-        )?);
-        tools.push(tool(
-            json!({
-                "name": "norn_trace_answer",
-                "title": "Trace an answer to its source",
-                "description": "Why a bucket of an answer has its value: the contributing records and their source rows. Pass the answer's lineageRef and a bucket: its key in rows, or the plain value (USD); use it to explain outliers.",
-                "inputSchema": {"type": "object", "additionalProperties": false, "required": ["question", "lineageRef", "bucket"], "properties": {
-                    "question": question_schema,
-                    "lineageRef": {"type": "string"},
-                    "bucket": {"type": "string"}
-                }},
-                "annotations": read_only(),
-            }),
-            Some(View::Lineage),
-        )?);
-        tools.push(tool(
-            json!({
-                "name": "norn_evaluate",
-                "title": "Ask a new question",
-                "description": "Admit and answer a typed question (QuestionIR) over the workspace's declared metrics, once, without saving it. The checker refuses a question that names undeclared metrics or mixes incompatible units, with the reason. Take the metric name and its object type from norn_question_catalog (a metric's type_params.metric_aggregation_params.semantic_model is the objectSet). Every field below is required; keep the window to the period asked about (a year at most), and add groupBy only when a breakdown is asked for: {\"irVersion\": \"0.1\", \"name\": \"stock_now\", \"objectSet\": \"canon.Holding\", \"aggregate\": [{\"metric\": \"<metric name>\"}], \"groupBy\": [], \"filter\": [], \"window\": {\"start\": \"2026-01-01T00:00:00Z\", \"end\": \"2026-12-01T00:00:00Z\"}, \"calendar\": \"iso_utc\", \"freshness\": {\"kind\": \"live\", \"maxAgeMs\": 5000}}. Then trace a bucket with norn_trace_evaluated.",
-                "inputSchema": {"type": "object", "additionalProperties": false, "required": ["question"], "properties": {
-                    "question": {"type": "object", "description": "A QuestionIR document."}
-                }},
-                "annotations": read_only(),
-            }),
-            Some(View::Answer),
-        )?);
-        tools.push(tool(
-            json!({
-                "name": "norn_trace_evaluated",
-                "title": "Trace a new question's answer",
-                "description": "Trace one bucket of a norn_evaluate answer to its source records: pass the same question, the answer's lineageRef and a bucket (its key in rows, or the plain value, such as USD).",
-                "inputSchema": {"type": "object", "additionalProperties": false, "required": ["question", "lineageRef", "bucket"], "properties": {
-                    "question": {"type": "object"},
-                    "lineageRef": {"type": "string"},
-                    "bucket": {"type": "string"}
-                }},
-                "annotations": read_only(),
-            }),
-            Some(View::Lineage),
-        )?);
-        tools.push(tool(
-            json!({
-                "name": "norn_propose_definition",
-                "title": "Propose a dashboard or question",
-                "description": "Check a proposed dashboard or question definition against the workspace without saving it. The answer is the checker's verdict and diagnostics; a person installs it from Norn Studio by signing its restatement.",
-                "inputSchema": {"type": "object", "additionalProperties": false, "required": ["kind", "id", "payload"], "properties": {
-                    "kind": {"type": "string", "enum": ["dashboard", "question"]},
-                    "id": {"type": "string"},
-                    "payload": {"type": "object"}
-                }},
-                "annotations": read_only(),
-            }),
-            Some(View::Dashboard),
-        )?);
-        tools.push(tool(
-            json!({
-                "name": "norn_call_action",
-                "title": "Call an action by id",
-                "description": "Call any governed action you may call, by its action id (norn_catalog lists them; an action installed during this conversation is callable here before its own tool appears). The input is the action's input object; fields the server fills (the actor, the clock) are not yours to send. The workspace's laws and policy decide it: the answer is a receipt or a refusal with its reason.",
-                "inputSchema": {"type": "object", "additionalProperties": false, "required": ["action", "input"], "properties": {
-                    "action": {"type": "string", "description": "An action id, for example lab.batch.record."},
-                    "input": {"type": "object", "description": "The action's input; decimals as exact strings."},
-                    "trace": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "required": ["traceId"],
-                        "description": "Optional provenance trace context persisted on the action receipt (no raw transcript text; sessionDigest is sha256:<64 hex>).",
-                        "properties": {
-                            "traceId": {"type": "string", "minLength": 1, "maxLength": 256},
-                            "intentRef": {"type": "string", "minLength": 1, "maxLength": 512},
-                            "sessionDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
-                        }
-                    }
-                }},
-                "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false},
-            }),
-            Some(View::Receipt),
-        )?);
+    let mut tools = Vec::new();
+    for declared in manifest.tools() {
+        let offered = match declared.offered {
+            Offered::Always => true,
+            Offered::ToDefinitionWriters => writer,
+            Offered::WithQuestions => answers,
+        };
+        if !offered {
+            continue;
+        }
+        let mut tool = route_tool(declared, domains);
+        if let Some(name) = &declared.view {
+            let view = View::named(name).ok_or_else(|| {
+                Refusal::host(format!(
+                    "{} declares the unknown view {name}",
+                    declared.name
+                ))
+            })?;
+            with_view(tool.meta.get_or_insert_with(JsonObject::new), view);
+        }
+        tools.push(tool);
     }
     Ok(tools)
+}
+
+/// `norn_explain`: guidance for a refusal or diagnostic code, from the
+/// checker's registry. It has no route; it reads nothing of the cell.
+fn explain_tool() -> Result<McpTool, Refusal> {
+    tool(
+        json!({
+            "name": "norn_explain",
+            "title": "Explain a code",
+            "description": "Guidance for a refusal or checker diagnostic code (for example core.laws.violated, authz.denied, defs.refused): what it means and what to do next.",
+            "inputSchema": {"type": "object", "additionalProperties": false, "required": ["code"], "properties": {
+                "code": {"type": "string", "description": "The code field of a refusal or diagnostic."}
+            }},
+            "annotations": read_only(),
+        }),
+        None,
+    )
+}
+
+/// `norn_call_action`: any action the caller may call, by id, through
+/// `/v1/actions/{actionId}` (an action installed during a conversation is
+/// callable before its own tool appears).
+fn call_action_tool() -> Result<McpTool, Refusal> {
+    tool(
+        json!({
+            "name": "norn_call_action",
+            "title": "Call an action by id",
+            "description": "Call any governed action you may call, by its action id (norn_catalog lists them; an action installed during this conversation is callable here before its own tool appears). The input is the action's input object; fields the server fills (the actor, the clock) are not yours to send. The workspace's laws and policy decide it: the answer is a receipt or a refusal with its reason.",
+            "inputSchema": {"type": "object", "additionalProperties": false, "required": ["action", "input"], "properties": {
+                "action": {"type": "string", "description": "An action id, for example lab.batch.record."},
+                "input": {"type": "object", "description": "The action's input; decimals as exact strings."},
+                "trace": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["traceId"],
+                    "description": "Optional provenance trace context persisted on the action receipt (no raw transcript text; sessionDigest is sha256:<64 hex>).",
+                    "properties": {
+                        "traceId": {"type": "string", "minLength": 1, "maxLength": 256},
+                        "intentRef": {"type": "string", "minLength": 1, "maxLength": 512},
+                        "sessionDigest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+                    }
+                }
+            }},
+            "annotations": {"readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false},
+        }),
+        Some(View::Receipt),
+    )
 }
 
 /// Tool calls re-enter the cell's own routes as the same caller.
@@ -724,6 +535,7 @@ struct Loopback<'a, E: SqlEngine> {
     kinds: &'a DefinitionKinds,
     request: &'a Request<'a>,
     scope: ScopeQuery,
+    manifest: &'static ToolManifest,
     actions: BTreeMap<String, String>,
     remedies: BTreeMap<String, Vec<String>>,
     question_names: Vec<String>,
@@ -786,194 +598,17 @@ fn object(fields: Vec<(&str, RuntimeValue)>) -> RuntimeValue {
 }
 
 impl<E: SqlEngine> Loopback<'_, E> {
-    #[allow(
-        clippy::too_many_lines,
-        reason = "one table from tool name to the route it calls"
-    )]
     fn route(
         &self,
         name: &str,
         arguments: &RuntimeObject,
         metadata: &RuntimeObject,
     ) -> Result<Routed, Refusal> {
-        let get = |path: String, query: Vec<(&'static str, String)>| Routed {
-            method: "GET",
-            path,
-            query,
-            body: String::new(),
-        };
-        let mut scoped = self.scope.pairs();
-        let optional =
-            |scoped: &mut Vec<(&'static str, String)>, key: &'static str, field: &str| {
-                if let Some(value) = text(arguments, field)? {
-                    scoped.push((key, value));
-                }
-                Ok::<(), Refusal>(())
-            };
-        let object_path = |leaf: &str| -> Result<String, Refusal> {
-            Ok(format!(
-                "/v1/objects/{}/{}{leaf}",
-                segment(&required(arguments, "type")?),
-                segment(&required(arguments, "id")?)
-            ))
-        };
+        if let Some(tool) = self.manifest.tool(name) {
+            return self.bind(tool, arguments);
+        }
+        let scoped = self.scope.pairs();
         Ok(match name {
-            "norn_catalog" => get("/v1/definitions".into(), scoped),
-            "norn_inbox" => get("/v1/inbox".into(), scoped),
-            "norn_list_definitions" => {
-                optional(&mut scoped, "kind", "kind")?;
-                optional(&mut scoped, "limit", "limit")?;
-                optional(&mut scoped, "cursor", "cursor")?;
-                get("/v1/definitions:list".into(), scoped)
-            }
-            "norn_query_objects" => {
-                optional(&mut scoped, "sort", "sort")?;
-                optional(&mut scoped, "limit", "limit")?;
-                optional(&mut scoped, "after", "after")?;
-                match arguments.get("filter") {
-                    None | Some(RuntimeValue::Null) => {}
-                    Some(filter @ RuntimeValue::Object(_)) => {
-                        scoped.push(("filter", json_text(filter)?));
-                    }
-                    Some(
-                        RuntimeValue::Bool(_)
-                        | RuntimeValue::Number(_)
-                        | RuntimeValue::String(_)
-                        | RuntimeValue::Array(_),
-                    ) => return Err(Refusal::invalid("filter must be an object")),
-                }
-                get(
-                    format!("/v1/objects/{}", segment(&required(arguments, "type")?)),
-                    scoped,
-                )
-            }
-            "norn_get_object" => get(object_path("")?, scoped),
-            "norn_object_links" => {
-                optional(&mut scoped, "direction", "direction")?;
-                optional(&mut scoped, "link", "link")?;
-                optional(&mut scoped, "limit", "limit")?;
-                optional(&mut scoped, "after", "after")?;
-                get(object_path("/links")?, scoped)
-            }
-            "norn_trace_object" => get(object_path("/lineage")?, scoped),
-            "norn_get_findings" => get(object_path("/findings")?, scoped),
-            "norn_list_held" => get(
-                format!(
-                    "/v1/objects/{}:quarantined",
-                    segment(&required(arguments, "type")?)
-                ),
-                scoped,
-            ),
-            "norn_plan_definitions" | "norn_apply_definitions" => {
-                let Some(artifacts @ RuntimeValue::Array(_)) = arguments.get("artifacts") else {
-                    return Err(Refusal::invalid(
-                        "artifacts must be an array of artifact envelopes",
-                    ));
-                };
-                let mut body = vec![("artifacts", artifacts.clone())];
-                // #1469 S3: the pack's approvals and their sign-offs reach the
-                // same shared route as over HTTP, which admits them with the
-                // set and installs both or nothing.
-                match arguments.get("approvals") {
-                    None => {}
-                    Some(approvals @ RuntimeValue::Array(_)) => {
-                        body.push(("approvals", approvals.clone()));
-                    }
-                    Some(_) => {
-                        return Err(Refusal::invalid(
-                            "approvals must be an array of { kind, id, payload, expectedVersion, signoff }",
-                        ));
-                    }
-                }
-                let path = if name == "norn_apply_definitions" {
-                    let Some(version @ RuntimeValue::Number(_)) = arguments.get("expectedVersion")
-                    else {
-                        return Err(Refusal::invalid(
-                            "expectedVersion is required: the plan's baseVersion",
-                        ));
-                    };
-                    body.push(("expectedVersion", version.clone()));
-                    norn_api::cell_definitions::APPLY_PATH
-                } else {
-                    norn_api::cell_definitions::PLAN_PATH
-                };
-                Routed {
-                    method: "POST",
-                    path: path.into(),
-                    query: scoped,
-                    body: json_text(&object(body))?,
-                }
-            }
-            "norn_profile_type" => get(
-                format!(
-                    "/v1/objects/{}:profile",
-                    segment(&required(arguments, "type")?)
-                ),
-                scoped,
-            ),
-            "norn_question_catalog" => get("/v1/questions:catalog".into(), scoped),
-            "norn_list_metrics" => get("/v1/questions:metrics".into(), scoped),
-            "norn_answer" => get(
-                format!(
-                    "/v1/questions/{}/answer",
-                    segment(&required(arguments, "question")?)
-                ),
-                scoped,
-            ),
-            "norn_trace_answer" => {
-                optional(&mut scoped, "lineageRef", "lineageRef")?;
-                if let Some(bucket) = text(arguments, "bucket")? {
-                    scoped.push(("bucket", bucket_key(&bucket)));
-                }
-                get(
-                    format!(
-                        "/v1/questions/{}/trace",
-                        segment(&required(arguments, "question")?)
-                    ),
-                    scoped,
-                )
-            }
-            "norn_evaluate" => Routed {
-                method: "POST",
-                path: "/v1/questions:evaluate".into(),
-                query: scoped,
-                body: json_text(&object(vec![(
-                    "question",
-                    arguments.get("question").cloned().unwrap_or_default(),
-                )]))?,
-            },
-            "norn_trace_evaluated" => Routed {
-                method: "POST",
-                path: "/v1/questions:trace".into(),
-                query: scoped,
-                body: json_text(&object(vec![
-                    (
-                        "question",
-                        arguments.get("question").cloned().unwrap_or_default(),
-                    ),
-                    (
-                        "lineageRef",
-                        RuntimeValue::String(required(arguments, "lineageRef")?),
-                    ),
-                    (
-                        "bucket",
-                        RuntimeValue::String(bucket_key(&required(arguments, "bucket")?)),
-                    ),
-                ]))?,
-            },
-            "norn_propose_definition" => Routed {
-                method: "POST",
-                path: "/v1/definitions:admit".into(),
-                query: scoped,
-                body: json_text(&object(vec![
-                    ("kind", RuntimeValue::String(required(arguments, "kind")?)),
-                    ("id", RuntimeValue::String(required(arguments, "id")?)),
-                    (
-                        "payload",
-                        arguments.get("payload").cloned().unwrap_or_default(),
-                    ),
-                ]))?,
-            },
             "norn_call_action" => {
                 if let Some(unknown) = arguments
                     .keys()
@@ -1011,6 +646,166 @@ impl<E: SqlEngine> Loopback<'_, E> {
                 self.action_call(action, arguments, None, metadata, scoped)?
             }
         })
+    }
+}
+
+impl<E: SqlEngine> Loopback<'_, E> {
+    /// A route-backed tool's call as its route's own request: each argument
+    /// where the tool's declaration puts it, under the caller's scope.
+    fn bind(&self, tool: &'static RouteTool, arguments: &RuntimeObject) -> Result<Routed, Refusal> {
+        let mut query = self.scope.pairs();
+        let mut segments = BTreeMap::new();
+        let mut body = RuntimeObject::new();
+        for argument in &tool.arguments {
+            let name = argument.name.as_str();
+            match argument.location {
+                Location::Local => {}
+                Location::Path => {
+                    segments.insert(name, segment(&required(arguments, name)?));
+                }
+                Location::Query => {
+                    if let Some(value) = query_value(argument, arguments)? {
+                        query.push((name, value));
+                    }
+                }
+                Location::Body => {
+                    if let Some(value) = body_value(argument, arguments)? {
+                        body.insert(argument.name.clone(), value);
+                    }
+                }
+            }
+        }
+        Ok(Routed {
+            method: tool.method.as_str(),
+            path: fill(&tool.path, &segments)?,
+            query,
+            body: match tool.method {
+                ToolMethod::Get => String::new(),
+                ToolMethod::Post => json_text(&RuntimeValue::Object(body))?,
+            },
+        })
+    }
+
+    /// The route of the manifest's tool `name`, called with `arguments`.
+    fn routed(&self, name: &str, arguments: &RuntimeObject) -> Result<Routed, Refusal> {
+        let tool = self
+            .manifest
+            .tool(name)
+            .ok_or_else(|| Refusal::host(format!("the tool manifest has no {name}")))?;
+        self.bind(tool, arguments)
+    }
+}
+
+/// `template` with each `{name}` replaced by its encoded segment.
+fn fill(template: &str, segments: &BTreeMap<&str, String>) -> Result<String, Refusal> {
+    let mut path = String::new();
+    let mut rest = template;
+    while let Some((head, tail)) = rest.split_once('{') {
+        let (name, after) = tail
+            .split_once('}')
+            .ok_or_else(|| Refusal::host(format!("{template} has an open segment")))?;
+        let value = segments
+            .get(name)
+            .ok_or_else(|| Refusal::host(format!("{template}: {name} is unbound")))?;
+        path.push_str(head);
+        path.push_str(value);
+        rest = after;
+    }
+    path.push_str(rest);
+    Ok(path)
+}
+
+/// The refusal of a missing or malformed argument: the declaration's own
+/// explanation, or that it must be `kind`.
+fn malformed(argument: &ToolArgument, kind: &str) -> Refusal {
+    Refusal::invalid(
+        argument
+            .refusal
+            .clone()
+            .unwrap_or_else(|| format!("{} must be {kind}", argument.name)),
+    )
+}
+
+/// A query argument's text, `None` when absent.
+fn query_value(
+    argument: &ToolArgument,
+    arguments: &RuntimeObject,
+) -> Result<Option<String>, Refusal> {
+    let name = argument.name.as_str();
+    match argument.encoding {
+        Encoding::Object => match arguments.get(name) {
+            None | Some(RuntimeValue::Null) => Ok(None),
+            Some(value @ RuntimeValue::Object(_)) => json_text(value).map(Some),
+            Some(
+                RuntimeValue::Bool(_)
+                | RuntimeValue::Number(_)
+                | RuntimeValue::String(_)
+                | RuntimeValue::Array(_),
+            ) => Err(malformed(argument, "an object")),
+        },
+        Encoding::Bucket => Ok(text(arguments, name)?.map(|bucket| bucket_key(&bucket))),
+        Encoding::Text | Encoding::Value | Encoding::Array | Encoding::Number => {
+            text(arguments, name)
+        }
+    }
+}
+
+/// A body argument that must hold one kind of value: itself, or `None` when
+/// it is optional and absent.
+fn shaped(
+    argument: &ToolArgument,
+    given: Option<&RuntimeValue>,
+    fits: fn(&RuntimeValue) -> bool,
+    kind: &str,
+) -> Result<Option<RuntimeValue>, Refusal> {
+    match given {
+        None if !argument.required => Ok(None),
+        Some(value) if fits(value) => Ok(Some(value.clone())),
+        None | Some(_) => Err(malformed(argument, kind)),
+    }
+}
+
+/// A body argument's value, `None` when it is optional and absent.
+fn body_value(
+    argument: &ToolArgument,
+    arguments: &RuntimeObject,
+) -> Result<Option<RuntimeValue>, Refusal> {
+    let name = argument.name.as_str();
+    let given = arguments.get(name);
+    match argument.encoding {
+        Encoding::Value => Ok(Some(given.cloned().unwrap_or_default())),
+        Encoding::Text | Encoding::Bucket => {
+            let value = if argument.required {
+                Some(required(arguments, name)?)
+            } else {
+                text(arguments, name)?
+            };
+            Ok(value.map(|value| {
+                RuntimeValue::String(if argument.encoding == Encoding::Bucket {
+                    bucket_key(&value)
+                } else {
+                    value
+                })
+            }))
+        }
+        Encoding::Array => shaped(
+            argument,
+            given,
+            |value| matches!(value, RuntimeValue::Array(_)),
+            "an array",
+        ),
+        Encoding::Number => shaped(
+            argument,
+            given,
+            |value| matches!(value, RuntimeValue::Number(_)),
+            "a number",
+        ),
+        Encoding::Object => shaped(
+            argument,
+            given,
+            |value| matches!(value, RuntimeValue::Object(_)),
+            "an object",
+        ),
     }
 }
 
@@ -1507,15 +1302,6 @@ impl<E: SqlEngine> Loopback<'_, E> {
         Ok(((200..300).contains(&response.status), value))
     }
 
-    fn get(&self, path: String) -> Routed {
-        Routed {
-            method: "GET",
-            path,
-            query: self.scope.pairs(),
-            body: String::new(),
-        }
-    }
-
     /// An answer or trace of a question the workspace does not have: named as
     /// such when the caller may read the question catalog, else the route's
     /// own refusal.
@@ -1526,7 +1312,8 @@ impl<E: SqlEngine> Loopback<'_, E> {
         if self.question_names.contains(&question) {
             return Ok(None);
         }
-        let (readable, _) = self.send(&self.get("/v1/questions:catalog".into()))?;
+        let (readable, _) =
+            self.send(&self.routed("norn_question_catalog", &RuntimeObject::new())?)?;
         if !readable {
             return Ok(None);
         }
@@ -1562,8 +1349,11 @@ impl<E: SqlEngine> Loopback<'_, E> {
             let Some(id) = field(item, "id").map(str::to_owned) else {
                 continue;
             };
-            let path = format!("/v1/objects/{}/{}/findings", segment(&kind), segment(&id));
-            let (ok, findings) = self.send(&self.get(path))?;
+            let target = RuntimeObject::from([
+                ("type".to_owned(), string(&kind)),
+                ("id".to_owned(), RuntimeValue::String(id)),
+            ]);
+            let (ok, findings) = self.send(&self.routed("norn_get_findings", &target)?)?;
             if !ok {
                 continue;
             }

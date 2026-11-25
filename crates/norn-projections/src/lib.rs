@@ -10,6 +10,7 @@ pub mod lifecycle;
 pub mod lineage;
 pub mod mcp;
 pub mod sqlite_ddl;
+pub mod tool_manifest;
 
 pub use cedar::{
     CedarAttribute, CedarLoss, CedarPrincipalAttribute, CedarSchemaProjection, HOST_ATTRIBUTES,

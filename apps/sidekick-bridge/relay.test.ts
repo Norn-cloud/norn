@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose"
-import { BUILT_IN_TOOLS, ENV_CLAIM, MCP_SERVER_NAME, MEMBER_CLAIM, ORG_CLAIM, configFromEnv, forwardedUpdate, SIDEKICK_CLIENT, permissionAnswer, rewriteInitialize, rewriteNewSession, rewritePrompt, sameGrantIdentity, scrub, verifyGrant, viewOf } from "./relay.ts"
+import { BUILT_IN_TOOLS, ENV_CLAIM, MCP_SERVER_NAME, MEMBER_CLAIM, ORG_CLAIM, configFromEnv, forwardedUpdate, SIDEKICK_CLIENT, permissionAnswer, rewriteInitialize, rewriteNewSession, rewritePrompt, sameGrantIdentity, scrub, toolLabels, verifyGrant, viewOf } from "./relay.ts"
 
 const STUDIO = "https://studio.norn.test"
 
@@ -88,6 +88,16 @@ test("a tool's MCP Apps view is read from its listing", () => {
   expect(viewOf({ _meta: { "openai/outputTemplate": "ui://norn/lineage.html" } })).toBe("lineage")
   expect(viewOf({ _meta: { ui: { resourceUri: "ui://other/answer.html" } } })).toBeNull()
   expect(viewOf(undefined)).toBeNull()
+})
+
+test("a tool's label is the title its listing gives; an untitled tool has none", () => {
+  expect(toolLabels([
+    { name: "norn_answer", title: "Answer a question" },
+    { name: "act_x", title: "Correct a scanned document" },
+    { name: "norn_untitled" },
+    { name: "norn_blank", title: "  " },
+    { name: "norn_odd", title: 7 },
+  ])).toEqual([{ name: "norn_answer", title: "Answer a question" }, { name: "act_x", title: "Correct a scanned document" }])
 })
 
 test("the browser sees the session's updates, never the host login's status, quota or raw SDK messages", () => {

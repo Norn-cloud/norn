@@ -222,6 +222,15 @@ export function forwardedUpdate(message: Message): boolean {
 
 // ---------------------------------------------------------------- MCP views
 
+/**
+ * The server's label for each tool in a `tools/list` page: its `title`, the label the cell's own
+ * tool manifest declares (or an action's title). The browser shows it for each tool call; a tool
+ * without a title is left out, and Studio shows it by its name.
+ */
+export function toolLabels(tools: readonly { name: string; title?: unknown }[]): { name: string; title: string }[] {
+  return tools.flatMap(({ name, title }) => typeof title === "string" && title.trim() !== "" ? [{ name, title }] : [])
+}
+
 /** The MCP Apps view a tool names, from its `tools/list` entry. */
 export function viewOf(tool: { _meta?: Json } | undefined): string | null {
   const meta = tool?._meta
@@ -241,6 +250,8 @@ interface Connection {
   adapter: Subprocess<"pipe", "pipe", "pipe"> | null
   /** The MCP Apps view of each Norn tool that has one, from tools/list. */
   views: Map<string, string>
+  /** The server's label for each Norn tool that has one, from tools/list. */
+  labels: { name: string; title: string }[]
   /** Ids the relay used for its own requests to the adapter, mapped back to the browser's id. */
   readonly pendingFromBrowser: Map<string, { id: Message["id"]; method: string }>
   nextId: number
@@ -280,11 +291,13 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
   async function listTools(connection: Connection) {
     const response = await studioMcp(connection, JSON.stringify({ jsonrpc: "2.0", id: "relay-tools", method: "tools/list", params: {} }), { "mcp-protocol-version": "2025-06-18" })
     if (!response.ok) return
-    const body = await response.json().catch(() => null) as { result?: { tools?: { name: string; _meta?: Json }[] } } | null
-    for (const tool of body?.result?.tools ?? []) {
+    const body = await response.json().catch(() => null) as { result?: { tools?: { name: string; title?: unknown; _meta?: Json }[] } } | null
+    const tools = body?.result?.tools ?? []
+    for (const tool of tools) {
       const view = viewOf(tool)
       if (view !== null) connection.views.set(tool.name, view)
     }
+    connection.labels = toolLabels(tools)
   }
 
   /** Whether Studio's /mcp accepts this grant right now: the Worker's own answer, not just the signature. */
@@ -393,6 +406,7 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
         return
       }
       await listTools(connection).catch(() => undefined)
+      send(connection.ws, { jsonrpc: "2.0", method: "_norn/tools", params: { tools: connection.labels } }, secrets(connection))
       params = rewriteNewSession(join(config.scratch, connection.id), `http://127.0.0.1:${config.mcpPort}/mcp/${connection.capability}`, config.model)
     }
     if (method === "session/prompt") params = rewritePrompt(message.params)
@@ -466,7 +480,7 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
       open(ws) {
         const id = crypto.randomUUID()
         const capability = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url")
-        const connection: Connection = { id, capability, ws, grant: null, adapter: null, views: new Map(), pendingFromBrowser: new Map(), nextId: 1, closed: false }
+        const connection: Connection = { id, capability, ws, grant: null, adapter: null, views: new Map(), labels: [], pendingFromBrowser: new Map(), nextId: 1, closed: false }
         ws.data.connection = connection
         connections.set(id, connection)
         byCapability.set(capability, connection)

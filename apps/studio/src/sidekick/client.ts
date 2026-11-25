@@ -2,6 +2,7 @@ import { client, type SessionNotification } from "@agentclientprotocol/sdk"
 import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-client"
 import type { ToolResult } from "@/widget/bridge"
 import { defaultFetch, getDisplayedScope, isDefaultFetch, scopeHeaders, type StudioScope } from "../lib/definitions.ts"
+import { toolLabels, type ToolLabels } from "./transcript.ts"
 
 /**
  * Sidekick's connection: Studio as an Agent Client Protocol client.
@@ -26,6 +27,8 @@ export interface ViewDelivery {
 export interface SidekickEvents {
   readonly update: (notification: SessionNotification) => void
   readonly view: (delivery: ViewDelivery) => void
+  /** The server's label for each Norn tool, sent by the bridge when a session starts. */
+  readonly tools: (labels: ToolLabels) => void
   readonly closed: (reason: string) => void
 }
 
@@ -72,6 +75,7 @@ export class SidekickSession {
     const app = client()
       .onNotification("session/update", ({ params }) => events.update(params))
       .onNotification("_norn/tool_result", (value: unknown) => value as ViewDelivery, ({ params }) => events.view(params))
+      .onNotification("_norn/tools", (value: unknown) => toolLabels(value), ({ params }) => events.tools(params))
     const connection = app.connect(createWebSocketStream(options.url ?? socketUrl(window.location)))
     try {
       await connection.agent.request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, _meta: { "norn.cloud/grant": grant.token } })

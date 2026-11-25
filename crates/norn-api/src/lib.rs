@@ -27,6 +27,8 @@ pub mod openapi;
 pub mod refusal;
 /// Explicit cell and request scope perimeter.
 pub mod scope;
+/// TOOL-MANIFEST-1: the tools the server offers over its own routes.
+pub mod tool_catalog;
 
 pub use clock::{Clock, ManualClock};
 
