@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "name": "Dim Dark",
+  "baseSkin": "luma",
+  "variants": {
+    "dark": {
+      "muted-foreground": "#3a3a3a"
+    }
+  }
+}

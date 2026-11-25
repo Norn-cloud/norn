@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "name": "Wider Sidebar",
+  "baseSkin": "luma",
+  "colors": {
+    "sidebar-width": "#000000"
+  }
+}

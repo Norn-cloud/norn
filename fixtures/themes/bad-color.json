@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "name": "Not A Colour",
+  "baseSkin": "luma",
+  "colors": {
+    "foreground": "almost-black"
+  }
+}

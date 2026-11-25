@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "name": "Blue Chrome",
+  "baseSkin": "luma",
+  "appearance": "light",
+  "colors": {
+    "primary": "#1d4ed8",
+    "primary-foreground": "#ffffff",
+    "action": "#1d4ed8",
+    "action-hover": "#1e40af",
+    "action-foreground": "#ffffff",
+    "link": "#1d4ed8",
+    "ring": "#1d4ed8"
+  }
+}
