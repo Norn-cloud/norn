@@ -438,7 +438,8 @@ export const DemandForecast = Norn.type({
     sku_id: Schema.String,
     warehouse_id: Schema.String,
     week_start: Norn.timestamp("utc"),
-    predicted_qty: Norn.decimal(3),
+    // `core.quantity` (decimal(6)): the forecast law compares it numerically (`>= 0`).
+    predicted_qty: Norn.ref("core.quantity"),
     stockout_risk: Schema.Literals(["low", "medium", "high"]),
   }),
   needsReview: ["ar"],

@@ -1,12 +1,12 @@
 {
-  "sha256": "3bceb6d4ebf0481933e6d01af40a08eb574cfad64f4a12048669662c2c51b1f1",
+  "sha256": "9c4719943582e19fe95305b2a4deb50ea805c07ee9818c36f7b8e62ea65c70bb",
   "origin": "derived",
   "category": "generated",
   "license": "Apache-2.0",
   "sources": [],
   "analyzed_sources": [],
   "parents": [
-    "registry/packs/supply-lab/questions/supply.questions.ts"
+    "registry/packs/supply-lab/questions.ts"
   ],
   "rights_evidence": [
     {

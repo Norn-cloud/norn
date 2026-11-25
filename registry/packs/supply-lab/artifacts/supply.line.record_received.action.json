@@ -26,7 +26,7 @@
       "objectIdField": "line_id",
       "objectKind": "supply.OrderLine",
       "writeMode": {
-        "kind": "upsert"
+        "kind": "update_only"
       }
     },
     "idempotent": true,
@@ -143,10 +143,6 @@
     ],
     "title": "Record a line's received quantity",
     "writes": [
-      {
-        "change": "created",
-        "entityKind": "supply.OrderLine"
-      },
       {
         "change": "modified",
         "entityKind": "supply.OrderLine"

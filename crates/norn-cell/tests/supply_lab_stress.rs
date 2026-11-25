@@ -16,7 +16,7 @@ use norn_cell::compute::ivm::IncrementalQuestion;
 use norn_cell::compute::lineage::LineageDisclosure;
 use norn_cell::compute::transform::RowAccess;
 use norn_cell::compute::{Engine, QueryContext, QueryResult};
-use norn_cell::{CellError, KnowledgeCutoff, Model, SqliteCell, StoreOptions};
+use norn_cell::{AdmittedDefinitions, CellError, KnowledgeCutoff, Model, SqliteCell, StoreOptions};
 use norn_checker::EntityArtifactSetContext;
 use norn_checker::entity_scopes::ScopedView;
 use norn_checker::metric::compute::QuestionPlan;
@@ -27,9 +27,9 @@ use norn_kernel::cell_host::JsonObject;
 use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionOutcome,
     ActionReadAuthzRequest, ActionReadTypeAuthzRequest, DecisionTurn, FactEvent, LogicalTime,
-    TypeCatalog, commit_action,
+    commit_action,
 };
-use norn_testkit::pack_mbt::{AdmittedPack, action_call_object_type};
+use norn_testkit::pack_mbt::AdmittedPack;
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
@@ -115,13 +115,16 @@ fn envelopes(dir: &Path) -> Result<Vec<ArtifactEnvelope>, String> {
 }
 
 /// The admitted pack: candidates (tracking, ml, supply-lab), the base value
-/// types they resolve against, and the cell model with governing laws.
+/// types they resolve against, and their one projection for a cell.
 struct Lab {
     candidate: Vec<ArtifactEnvelope>,
+    /// The candidates with the base they resolve against (`core.quantity`):
+    /// what questions and transforms are admitted over.
+    pool: Vec<ArtifactEnvelope>,
     pack: AdmittedPack,
-    model: Model,
-    /// ACTOR-INDEPENDENT-1: every `independentOf` transition, bound as a host binds them.
-    guards: Vec<norn_kernel::TransitionGuard>,
+    /// INSTALL-SEAM-1: the model (with the kernel's record types), the actions
+    /// and their transition guards, built together from the same artifacts.
+    definitions: AdmittedDefinitions,
 }
 
 fn lab() -> Result<Lab, String> {
@@ -134,20 +137,20 @@ fn lab() -> Result<Lab, String> {
     let mut all = base()?;
     all.extend(candidate.iter().cloned());
     let pack = AdmittedPack::from_envelopes("supply-lab", &all)?;
-    let mut types = pack.object_types.clone();
-    types.push(action_call_object_type());
-    let model =
-        Model::from_definitions_with_interfaces(&types, &pack.property_types, &pack.interfaces)
-            .map_err(|e| format!("model: {e}"))?
-            .with_governing_laws(&pack.law_envelopes)
-            .map_err(|e| format!("laws: {e}"))?;
-    let guards = norn_kernel::transition_guards(pack.actions.iter().map(|action| &action.root));
+    let definitions =
+        AdmittedDefinitions::from_envelopes(&all).map_err(|e| format!("definitions: {e}"))?;
     Ok(Lab {
         candidate,
+        pool: all,
         pack,
-        model,
-        guards,
+        definitions,
     })
+}
+
+impl Lab {
+    fn model(&self) -> &Model {
+        self.definitions.model()
+    }
 }
 
 fn base() -> Result<Vec<ArtifactEnvelope>, String> {
@@ -202,7 +205,7 @@ impl Stress {
         let lab = lab()?;
         let dir = tempfile::tempdir().map_err(|e| format!("tempdir: {e}"))?;
         let path = dir.path().join("supply-lab.sqlite");
-        let cell = open_cell(&path, &lab.model)?;
+        let cell = open_cell(&path, lab.model())?;
         Ok(Self {
             lab,
             _dir: dir,
@@ -235,25 +238,18 @@ impl Stress {
         let now = self.now();
         self.cell.advance_to(now);
         let world = self.cell.store().world();
-        let artifact = format!("{action}.action");
         let admitted = self
             .lab
-            .pack
-            .actions
-            .iter()
-            .find(|candidate| candidate.artifact_id == artifact)
-            .ok_or_else(|| format!("no action {artifact}"))?;
+            .definitions
+            .action(action)
+            .ok_or_else(|| format!("no action {action}"))?;
         let input: JsonObject =
             serde_json::from_value(input).map_err(|e| format!("{action} input: {e}"))?;
-        let pack = &self.lab.pack;
-        let catalog = TypeCatalog::new(self.lab.model.object_types())
-            .with_interfaces(&pack.interfaces)
-            .with_property_types(&pack.property_types)
-            .with_governing_laws(&pack.law_envelopes)
-            .with_transition_guards(&self.lab.guards);
+        // One catalog, guards bound by construction: no second model, no forgotten guard.
+        let catalog = self.lab.definitions.catalog();
         let call = ActionCall {
             action: &admitted.root,
-            action_artifact_id: &artifact,
+            action_artifact_id: &admitted.artifact_id,
             action_version: &admitted.version,
             scope: BTreeMap::from([
                 ("orgId".into(), "org_demo".into()),
@@ -331,14 +327,14 @@ impl Stress {
     fn reopen(&mut self) -> Result<(), String> {
         let now = self.now();
         let replacement = Cell::new(
-            norn_cell::CellStore::open_in_memory(self.lab.model.clone())
+            norn_cell::CellStore::open_in_memory(self.lab.model().clone())
                 .map_err(|e| format!("{e}"))?,
             SCOPE,
             |c| c.payload.clone(),
         )
         .map_err(|e| format!("placeholder: {e}"))?;
         drop(std::mem::replace(&mut self.cell, replacement));
-        self.cell = open_cell(&self.path, &self.lab.model)?;
+        self.cell = open_cell(&self.path, self.lab.model())?;
         self.cell.advance_to(now);
         self.cell
             .store()
@@ -585,7 +581,7 @@ fn golden(name: &str) -> Result<QuestionIR, String> {
 
 /// Admit `question` against the metric space derived from its object set.
 fn admit(lab: &Lab, question: &QuestionIR) -> Result<QuestionPlan, Vec<String>> {
-    let view = ScopedView::uniform(&lab.candidate, &BTreeSet::new());
+    let view = ScopedView::uniform(&lab.pool, &BTreeSet::new());
     let root = LawRoot::Entity(question.object_set.as_str().to_owned());
     let space = derive_metric_space(&view, &root).map_err(|e| vec![format!("derive: {e:?}")])?;
     space.admit(question, 500).map_err(|findings| {
@@ -602,7 +598,7 @@ fn plan(lab: &Lab, name: &str) -> Result<QuestionPlan, String> {
 
 /// The metrics derived for `object_type`: (name, measured expression, linked time).
 fn metrics(lab: &Lab, object_type: &str) -> Result<Vec<(String, Option<String>, bool)>, String> {
-    let view = ScopedView::uniform(&lab.candidate, &BTreeSet::new());
+    let view = ScopedView::uniform(&lab.pool, &BTreeSet::new());
     let space = derive_metric_space(&view, &LawRoot::Entity(object_type.to_owned()))
         .map_err(|e| format!("derive: {e:?}"))?;
     Ok(space
@@ -774,10 +770,16 @@ fn axis1_unit_partition_and_no_naive_additive_stock() -> Result<(), String> {
     wire["groupBy"] = json!([{"path": {"property": "as_of"}, "grain": "week"}, {"path": {"property": "warehouse_id"}},
         {"path": {"property": "sku_id"}}]);
     let saturated: QuestionIR = serde_json::from_value(wire).map_err(|e| format!("{e}"))?;
-    let saturated = admit(&stress.lab, &saturated);
+    // At the group-by cap the free unit source cannot be added: it refuses as
+    // mixed units, never silently dropping a partition (METRIC-UNIT-PARTITION-1).
+    let refused = admit(&stress.lab, &saturated).err().ok_or(
+        "METRIC-UNIT-MIXED: a stock that cannot be partitioned by unit and basis must refuse",
+    )?;
     assert!(
-        saturated.is_err(),
-        "METRIC-UNIT-MIXED: a stock that cannot be partitioned by unit and basis must refuse"
+        refused
+            .iter()
+            .any(|finding| finding.starts_with("metric.validation.mixed_unit")),
+        "{refused:?}"
     );
     let names: Vec<String> = metrics(&stress.lab, "supply.InventorySnapshot")?
         .into_iter()
@@ -840,7 +842,7 @@ fn line_fill(stress: &Stress) -> Result<BTreeMap<String, (String, String, String
         .iter()
         .find(|a| a.artifact_id.as_str() == "supply.line_fill")
         .ok_or("no supply.line_fill")?;
-    let plan = norn_checker::transform::admit(artifact, &stress.lab.candidate, &BTreeSet::new())
+    let plan = norn_checker::transform::admit(artifact, &stress.lab.pool, &BTreeSet::new())
         .map_err(|d| format!("line_fill refused: {d:?}"))?;
     let result = stress
         .cell
@@ -924,10 +926,13 @@ fn axis2_linked_time_buckets_inspections_by_receipt_and_counts_unlinked() -> Res
 /// `supply.ShipmentReceipt`, hex-encoded as derived metric ids name it.
 const RECEIPT_HEX: &str = "737570706c792e536869706d656e7452656365697074";
 
-/// Gap pin (METRIC-GRAIN-LINK-1): a type with a time of its own gets no linked-time
-/// metric, so receipts cannot be bucketed by their order line's promised week.
+/// Spec boundary, not a gap (METRIC-LINK-OWN-FIRST, Core 03): a type with a time
+/// of its own derives no linked-time metric, and a question cannot supply its own
+/// metric definition (`MetricSpace::admit` admits only derived candidates). Receipts
+/// by their line's promised week are a derived dataset: `supply.receipts_by_promised_week`.
 #[test]
-fn axis2_gap_receipts_have_no_linked_time_metric() -> Result<(), String> {
+fn axis2_receipts_keep_their_own_time_and_bucket_by_promised_week_through_a_transform()
+-> Result<(), String> {
     let lab = lab()?;
     let linked: Vec<String> = metrics(&lab, "supply.ShipmentReceipt")?
         .into_iter()
@@ -936,9 +941,56 @@ fn axis2_gap_receipts_have_no_linked_time_metric() -> Result<(), String> {
         .collect();
     assert!(
         linked.is_empty(),
-        "if this fails the engine gap closed: {linked:?}"
+        "METRIC-LINK-OWN-FIRST: an object with its own time derives no linked-time sum: {linked:?}"
+    );
+    let stress = seeded()?;
+    let by_week = transform_rows(&stress, "supply.receipts_by_promised_week")?;
+    // PO-1's lines are all promised 2026-07-15 (W2): 600 + 300 + 100 each, 250 kg.
+    assert_eq!(
+        by_week
+            .get(&(WEEKS[1].to_owned(), "each".to_owned()))
+            .map(String::as_str),
+        Some("1000"),
+        "{by_week:?}"
+    );
+    assert_eq!(
+        by_week
+            .get(&(WEEKS[1].to_owned(), "kg".to_owned()))
+            .map(String::as_str),
+        Some("250")
     );
     Ok(())
+}
+
+/// The rows of transform `id`: (promised week, unit) → received.
+fn transform_rows(stress: &Stress, id: &str) -> Result<BTreeMap<(String, String), String>, String> {
+    let artifact = stress
+        .lab
+        .candidate
+        .iter()
+        .find(|a| a.artifact_id.as_str() == id)
+        .ok_or_else(|| format!("no {id}"))?;
+    let plan = norn_checker::transform::admit(artifact, &stress.lab.pool, &BTreeSet::new())
+        .map_err(|d| format!("{id} refused: {d:?}"))?;
+    let result = stress
+        .cell
+        .store()
+        .evaluate_transform(&plan, "main", SCOPE, |_| Ok(RowAccess::Read))
+        .map_err(|e| format!("{id}: {e}"))?;
+    let text = |row: &norn_cell::compute::transform::TransformRow, column: &str| {
+        row.values.get(column).map_or_default(scalar)
+    };
+    Ok(result
+        .rows
+        .iter()
+        .map(|row| {
+            let week = text(row, "l_promised_at");
+            (
+                (week.chars().take(10).collect(), text(row, "unit")),
+                text(row, "received"),
+            )
+        })
+        .collect())
 }
 
 // ------------------------------------ axis 3: native refusals (quarantine below)
@@ -1129,20 +1181,80 @@ fn reversed_order_matches(forward: &QueryResult) -> Result<(), String> {
     Ok(())
 }
 
-/// QUERY-ENGINE-1 gap pin: the IVM engine refuses as-of and linked-time plans.
+/// QUERY-ENGINE-1: IVM maintains a snapshot (as-of) plan and a linked-time plan,
+/// each equal to recompute after every commit: a new count, a restatement, an
+/// inspection linked to its receipt, and an unlinked one.
 #[test]
-fn axis4_ivm_refuses_snapshot_and_linked_time_plans() -> Result<(), String> {
-    let stress = seeded()?;
-    let on_hand = plan(&stress.lab, "supply.on_hand_weekly")?;
-    let refused =
-        IncrementalQuestion::rebuild(stress.cell.store(), &on_hand, context(CLOCK), |_| Ok(true));
-    assert!(
-        matches!(
-            refused,
-            Err(CellError::ComputeRefused("core.compute.unsupported_engine"))
+fn axis4_ivm_maintains_snapshot_and_linked_time_plans_equal_to_recompute() -> Result<(), String> {
+    let mut stress = seeded()?;
+    let ctx = context(CLOCK.saturating_add(10_000_000));
+    let mut views = Vec::new();
+    for name in ["supply.on_hand_weekly", "supply.inspected_by_receipt_week"] {
+        let question = plan(&stress.lab, name)?;
+        let view =
+            IncrementalQuestion::rebuild(stress.cell.store(), &question, ctx.clone(), |_| Ok(true))
+                .map_err(|e| format!("rebuild {name}: {e}"))?;
+        views.push((question, view));
+    }
+    let steps = [
+        (
+            "supply.position.record_count",
+            "clerk:hana",
+            count(
+                "WH-A/SKU-WATER/on_hand",
+                "2026-10-21T10:00:00Z",
+                "610",
+                "wms_scan",
+            ),
         ),
-        "{:?}",
-        refused.err()
+        (
+            "supply.position.restate",
+            "ops:omar",
+            count(
+                "WH-B/SKU-WATER/on_hand",
+                "2026-09-08T09:00:00Z",
+                "420",
+                "audit",
+            ),
+        ),
+        (
+            "supply.inspection.record",
+            "clerk:hana",
+            json!({"inspection_id": "IN-5", "receipt_id": "RC-3",
+                "inspected_qty": "25", "rejected_qty": "0", "unit": "each"}),
+        ),
+        (
+            "supply.inspection.record_orphan",
+            "clerk:hana",
+            json!({"inspection_id": "IN-6", "receipt_id": null,
+                "inspected_qty": "5", "rejected_qty": "0", "unit": "each"}),
+        ),
+    ];
+    for (action, actor, input) in steps {
+        stress.ok(action, actor, input)?;
+        for (question, view) in &mut views {
+            let advanced = view
+                .advance(stress.cell.store(), ctx.clone(), |_| Ok(true))
+                .map_err(|e| format!("advance after {action}: {e}"))?
+                .clone();
+            let mut recompute = answer(&stress, question)?;
+            recompute.engine = Engine::Ivm;
+            assert_eq!(advanced, recompute, "IVM = recompute after {action}");
+            assert!(!view.was_rebuilt(), "maintained, not rebuilt");
+        }
+    }
+    let (_, linked) = views.get(1).ok_or("two views")?;
+    assert_eq!(
+        total(linked.result(), &[WEEKS[1]]).as_deref(),
+        Some("145"),
+        "120 + IN-5's 25 by RC-3's week"
+    );
+    assert_eq!(linked.result().unlinked, 2, "IN-4 and IN-6");
+    let (_, snapshot) = views.first().ok_or("two views")?;
+    assert_eq!(
+        total(snapshot.result(), &[WEEKS[9], "WH-B", "each"]).as_deref(),
+        Some("420"),
+        "the restated W10 count"
     );
     Ok(())
 }
@@ -1354,11 +1466,20 @@ fn axis6_promotion_is_pinned_to_k1_and_forecasts_need_production() -> Result<(),
             "unit": "each", "lead_time_days": 7, "promotion": false}))?;
     }
     let (k1, _k2) = register_versions(&mut stress)?;
-    let (_, stale) = stress.refused(
+    // ACTOR-INDEPENDENT-1: the principal that registered a version never promotes it.
+    let (_, own) = stress.refused(
+        "ml.modelversion.promote",
+        "eng:dina",
+        json!({"version_id": "v1"}),
+    )?;
+    assert!(own.contains("ACTOR-INDEPENDENT-1"), "{own}");
+    // ANALYSIS-PUBLISH-1: evaluated on another revision than the pinned one.
+    let (code, stale) = stress.refused(
         "ml.modelversion.promote",
         "ops:omar",
         json!({"version_id": "v2"}),
     )?;
+    assert_eq!(code, "core.projection.publication_guard", "{stale}");
     let (_, failed) = stress.refused(
         "ml.modelversion.promote",
         "ops:omar",
@@ -1396,11 +1517,24 @@ fn axis6_promotion_is_pinned_to_k1_and_forecasts_need_production() -> Result<(),
         json!({"batch_id": "B-1", "model_version": "v1",
         "input_type": "supply.DemandObservation", "input_revision": k1, "rows": 4}),
     )?;
+    let (_, own) = stress.refused(
+        "ml.modelversion.retire",
+        "eng:dina",
+        json!({"version_id": "v1"}),
+    )?;
+    assert!(own.contains("ACTOR-INDEPENDENT-1"), "{own}");
     stress.ok(
         "ml.modelversion.retire",
         "ops:omar",
         json!({"version_id": "v1"}),
     )?;
+    // APPROVAL-1: a hosted cell also parks every promotion for an admin's decision.
+    let gate: Value = serde_json::from_str(
+        &fs::read_to_string(repo().join("registry/packs/ml/promote.approval.json"))
+            .map_err(|e| format!("approval: {e}"))?,
+    )
+    .map_err(|e| format!("approval: {e}"))?;
+    assert_eq!(gate["payload"]["action"], "ml.modelversion.promote");
     stress.refused("supply.forecast.record", "eng:dina", forecast("F-3", "v1"))?;
     Ok(())
 }
@@ -1534,15 +1668,9 @@ fn mapping_cell(lab: &Lab, dir: &Path) -> Result<MapCell, String> {
     let receipt =
         String::from_utf8(norn_ir::canonical::serialize(&wire).map_err(|e| format!("{e:?}"))?)
             .map_err(|e| format!("{e}"))?;
-    // INSTALL: the model is the projection of exactly the checked set (no harness audit type).
-    let model = Model::from_definitions_with_interfaces(
-        &lab.pack.object_types,
-        &lab.pack.property_types,
-        &lab.pack.interfaces,
-    )
-    .map_err(|e| format!("model: {e}"))?
-    .with_governing_laws(&lab.pack.law_envelopes)
-    .map_err(|e| format!("laws: {e}"))?;
+    // INSTALL-SEAM-1: the same model the governed cells serve installs as the
+    // projection of exactly the checked set.
+    let model = lab.model().clone();
     let mut cell = MapCell::open(
         &dir.join("map.sqlite"),
         model.clone(),
@@ -1741,6 +1869,42 @@ fn axis3_messy_feeds_quarantine_replay_stably_and_recover() -> Result<(), String
         .map_err(|e| format!("verify_ledger: {e}"))
 }
 
+/// MAP-ENUM-TEXT-1: the WMS feed sends `basis` as free text (no declared code
+/// set) into the `quantity_basis` enum. The mapping admits; a code outside the
+/// enum lands quarantined at commit, and a known code lands.
+#[test]
+fn axis3_unknown_enum_codes_land_in_quarantine() -> Result<(), String> {
+    let lab = lab()?;
+    let dir = tempfile::tempdir().map_err(|e| format!("{e}"))?;
+    let mut cell = mapping_cell(&lab, dir.path())?;
+    let row = r#"{"scan_id":"S-9","site":"WH-A","item":"SKU-WATER","qty":5,"uom":"EA","basis":"damaged","counted_at":"2026-07-07T08:00:00Z"}"#;
+    let (bundle, fresh) = cell
+        .inject_mapping_bundle(
+            &raw("synthetic-wms", "e-9", "S-9", row)?,
+            &input("supply.wms_scan.mapping", "stock_count"),
+        )
+        .map_err(|e| format!("capture: {e}"))?;
+    assert!(fresh);
+    let outcome = cell
+        .process_mapping_outcome(&bundle)
+        .map_err(|e| format!("process: {e}"))?;
+    assert!(
+        matches!(outcome, norn_cell::MappingOutcome::Quarantined(_)),
+        "{outcome:?}"
+    );
+    let landed = |cell: &MapCell, id: &str| {
+        cell.store()
+            .read()
+            .object("main", "supply.WmsCount", id)
+            .map(|found| found.is_some())
+            .map_err(|e| format!("{e}"))
+    };
+    assert!(!landed(&cell, "S-9")?, "an unknown basis never lands");
+    scan(&mut cell, "e-10", "S-10", "5", "EA", "2026-07-07T08:00:00Z")?;
+    assert!(landed(&cell, "S-10")?, "a known basis lands");
+    Ok(())
+}
+
 /// The ERP feed: vendor codes map to canonical suppliers; an over-damaged row is quarantined.
 fn supplier_feed(cell: &mut MapCell) -> Result<(), String> {
     let erp = input("supply.erp_supplier.mapping", "Purchase Receipt Item");
@@ -1791,4 +1955,127 @@ fn supplier_feed(cell: &mut MapCell) -> Result<(), String> {
         "{found:?}"
     );
     Ok(())
+}
+
+// ------------------------------ axis 4: three engines (QUERY-ENGINE-1, QUERY-THREE)
+
+/// Every supply-lab question on the exact cell, `DuckDB` (D136) and `DataFusion`
+/// (D137) at the same frontier: an engine answers with the exact envelope
+/// (only the engine label differs) or refuses as an unsupported engine shape;
+/// the additive sums and the ratio of sums are answered by both.
+#[cfg(all(feature = "duckdb", feature = "datafusion"))]
+mod olap {
+    use super::{CLOCK, SCOPE, Stress, WEEKS, context, plan, seeded, total};
+    use norn_cell::analytics::{EngineRefusal, TenantId};
+    use norn_cell::compute::{Engine as Label, QueryResult};
+    use norn_checker::metric::compute::QuestionPlan;
+
+    const ANSWERED: [&str; 3] = [
+        "supply.movement_volume_weekly",
+        "supply.received_weekly",
+        "supply.fill_rate_weekly",
+    ];
+    const SHAPED: [&str; 2] = ["supply.on_hand_weekly", "supply.inspected_by_receipt_week"];
+
+    fn refusal(error: &EngineRefusal) -> String {
+        format!("{}: {}", error.code, error.detail)
+    }
+
+    /// One engine's answer to `plan`, or its refusal code.
+    macro_rules! ask {
+        ($engine:expr, $stress:expr, $plan:expr) => {{
+            let store = $stress.cell.store();
+            let tenant = TenantId::of_scope(SCOPE);
+            let mut frontier = $engine
+                .frontier(
+                    &store
+                        .analytics_frontier(&tenant, "main")
+                        .map_err(|e| format!("frontier: {e}"))?,
+                )
+                .map_err(|e| refusal(&e))?
+                .frontier;
+            loop {
+                let batch = store
+                    .analytics_delta(&tenant, "main", frontier, 64)
+                    .map_err(|e| format!("delta: {e}"))?;
+                frontier = $engine
+                    .sync(&batch.request)
+                    .map_err(|e| refusal(&e))?
+                    .frontier;
+                if batch.complete {
+                    break;
+                }
+            }
+            let prepared = store
+                .analytics_prepare($plan, context(CLOCK.saturating_add(10_000_000)), &tenant)
+                .map_err(|e| format!("prepare: {e}"))?;
+            match $engine.evaluate(prepared.request()) {
+                Ok(response) => store
+                    .analytics_answer(prepared, response)
+                    .map(Ok)
+                    .map_err(|e| format!("answer: {e}"))?,
+                Err(refused) => Err(refused.code),
+            }
+        }};
+    }
+
+    /// QUERY-ENGINE-1: equal envelopes, or the engine's honest refusal of the shape.
+    fn agree(
+        name: &str,
+        exact: &QueryResult,
+        answered: Result<QueryResult, String>,
+        label: Label,
+    ) -> Result<bool, String> {
+        match answered {
+            Ok(mut answered) => {
+                assert_eq!(answered.engine, label, "{name}");
+                answered.engine = exact.engine;
+                assert_eq!(&answered, exact, "{name} on {label:?}");
+                Ok(true)
+            }
+            Err(code) if code == "core.compute.unsupported_engine" => Ok(false),
+            Err(other) => Err(format!("{name} on {label:?}: {other}")),
+        }
+    }
+
+    #[test]
+    fn supply_lab_questions_agree_on_the_cell_duckdb_and_datafusion() -> Result<(), String> {
+        let stress: Stress = seeded()?;
+        let dir = tempfile::tempdir().map_err(|e| format!("{e}"))?;
+        let duck =
+            norn_cell::analytics::engine::Engine::new(norn_cell::analytics::engine::Settings {
+                root: dir.path().join("duckdb"),
+                memory_limit: "256MB".into(),
+                threads: 1,
+            })
+            .map_err(|e| format!("duckdb: {e}"))?;
+        let fusion = norn_cell::analytics::datafusion::Engine::new(
+            norn_cell::analytics::datafusion::Settings {
+                root: dir.path().join("datafusion"),
+                memory_limit: "256MB".into(),
+                threads: 1,
+            },
+        )
+        .map_err(|e| format!("datafusion: {e}"))?;
+        for name in ANSWERED.iter().chain(SHAPED.iter()) {
+            let question: QuestionPlan = plan(&stress.lab, name)?;
+            let exact = super::answer(&stress, &question)?;
+            let by_duck = agree(name, &exact, ask!(duck, stress, &question), Label::Duckdb)?;
+            let by_fusion = agree(
+                name,
+                &exact,
+                ask!(fusion, stress, &question),
+                Label::DataFusion,
+            )?;
+            if ANSWERED.contains(name) {
+                assert!(by_duck && by_fusion, "{name}: both engines answer a sum");
+            }
+        }
+        let volume = super::answer(
+            &stress,
+            &plan(&stress.lab, "supply.movement_volume_weekly")?,
+        )?;
+        assert_eq!(total(&volume, &[WEEKS[0], "each"]).as_deref(), Some("120"));
+        Ok(())
+    }
 }

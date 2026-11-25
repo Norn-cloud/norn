@@ -59,13 +59,37 @@ export const LineFill = Norn.transform({
   output: "fill",
 })
 
+/**
+ * Received quantity by the week each receipt's order line was promised. A
+ * receipt keeps its own time (METRIC-LINK-OWN-FIRST derives no linked-time
+ * metric for it), so bucketing it by its line's time is a derived dataset:
+ * each linked receipt joins its one line (the line's primary key, no fan-out),
+ * then sums by the promised week, per unit.
+ */
+export const ReceiptsByPromisedWeek = Norn.transform({
+  id: "supply.receipts_by_promised_week", title: "Receipts by promised week", version: "0.1.0",
+  inputs: { receipt: ShipmentReceipt, line: OrderLine },
+  nodes: {
+    receipt: { op: "scan", input: "receipt" },
+    line: { op: "scan", input: "line" },
+    linked: { op: "filter", input: "receipt", predicate: "input.line_id != null" },
+    joined: { op: "join", left: "linked", right: "line", on: { key: { left: ["line_id"], right: "primary" } }, kind: "inner", prefix: "l_" },
+    weekly: {
+      op: "aggregate", input: "joined",
+      groupBy: [{ column: "l_promised_at", grain: "week", label: "Promised week" }, { column: "unit" }],
+      measures: [{ name: "received", fn: "sum", column: "received_qty", label: "Received" }],
+    },
+  },
+  output: "weekly",
+})
+
 /** Next-week demand per SKU and warehouse; internals opaque, outputs contract-checked. */
 export const DemandModel = Norn.model({
   id: "supply.demand_forecast", title: "Weekly demand forecast", version: "0.1.0",
   input: DemandObservation,
   features: ["week_index", "lead_time_days", "promotion"],
   target: "issued_qty",
-  outputs: Schema.Struct({ predicted_qty: Norn.decimal(3), stockout_risk: Schema.Literals(["low", "medium", "high"]) }),
+  outputs: Schema.Struct({ predicted_qty: Norn.decimal(6), stockout_risk: Schema.Literals(["low", "medium", "high"]) }),
   trust: "contract_checked",
   contracts: [
     { id: "non_negative", output: "predicted_qty", rule: { kind: "range", min: "0" } },

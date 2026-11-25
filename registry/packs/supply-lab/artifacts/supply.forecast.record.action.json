@@ -52,7 +52,7 @@
         "predicted_qty": {
           "nornType": {
             "kind": "decimal",
-            "scale": 3
+            "scale": 6
           },
           "type": "number"
         },

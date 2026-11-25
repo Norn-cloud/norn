@@ -49,7 +49,7 @@ pub enum StructuralGap {
         state: String,
     },
     /// A stored non-computed field read in a guard, invariant, or law that no
-    /// governed action in the pack ever writes.
+    /// governed action or admitted mapping in the pack ever writes.
     OrphanField {
         /// Owning object type.
         object_type: String,
@@ -421,6 +421,13 @@ fn collect_action_written_fields(pack: &AdmittedPack) -> BTreeMap<String, BTreeS
                 }
             }
         }
+    }
+    // An admitted mapping writes its target's mapped fields from source evidence.
+    for (object_type, fields) in &pack.mapping_writes {
+        written
+            .entry(object_type.clone())
+            .or_default()
+            .extend(fields.iter().cloned());
     }
     written
 }
@@ -882,7 +889,11 @@ fn detect_high_impact_sod_questions(pack: &AdmittedPack, out: &mut Vec<Structura
         let Some(reason) = high_impact_reason(&action.root) else {
             continue;
         };
-        if !action_has_sod_policy(&pack.access_policies, &action.root.action_id) {
+        // ACTOR-INDEPENDENT-1: `independentOf` separates the caller from a
+        // recorded actor in the kernel, as an AccessIR SoD rule does in policy.
+        if action.root.independent_of.is_empty()
+            && !action_has_sod_policy(&pack.access_policies, &action.root.action_id)
+        {
             let object_type = action
                 .root
                 .effect_program

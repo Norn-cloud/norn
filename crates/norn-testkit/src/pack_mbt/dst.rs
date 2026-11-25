@@ -27,6 +27,7 @@ use proptest::prelude::*;
 use proptest::test_runner::{Config, RngAlgorithm, TestError, TestRng, TestRunner};
 
 use super::coverage::{DomainCoverage, DomainTransition};
+use super::seed::{ensure_unchanged, entity_id, seed_stamped};
 use super::synth::{
     GuardEval, collect_required_link_graph, evaluate_guards, pick_non_lifecycle_mutation,
     synthesize_guard_satisfying,
@@ -408,12 +409,10 @@ impl<H: PackHost> DstCaseState<'_, H> {
             nonce,
         );
         values.insert(prop.to_owned(), JsonValue::String(init_state.clone()));
-
         let key = FactKey::new(ty_name, &id);
         let graph = collect_required_link_graph(self.pack, target.object_type, &key, nonce)?;
         let before = self.host.ledger_len();
         let already_exists = self.model.contains_key(&(type_idx, slot));
-
         let meta = CreateStepOutcome {
             id_pair: (type_idx, slot),
             ty_name,
@@ -424,7 +423,15 @@ impl<H: PackHost> DstCaseState<'_, H> {
             already_exists,
             before,
         };
-        if graph.direct_links.is_empty() {
+        let (pack, catalog, ty) = (self.pack, self.catalog, target.object_type);
+        if let Some(res) = seed_stamped(self.host, pack, catalog, ty, &id, &values, nonce)? {
+            // The governed create seeds its slice targets first; only its own commit is the step's.
+            let before = self
+                .host
+                .ledger_len()
+                .saturating_sub(usize::from(res.is_ok()));
+            return self.finish_create_step(CreateStepOutcome { before, ..meta }, res);
+        } else if graph.direct_links.is_empty() {
             let res = self.commit_single_fact(
                 &key,
                 format!("dst-create-{nonce}"),
@@ -986,12 +993,4 @@ impl<H: PackHost> DstCaseState<'_, H> {
         }
         Ok(())
     }
-}
-
-fn entity_id(type_idx: usize, slot: u8) -> String {
-    format!("dst-t{type_idx}-s{slot}")
-}
-
-fn ensure_unchanged<H: PackHost>(host: &H, before: usize, context: &str) -> Result<(), String> {
-    super::driver::assert_zero_ledger_writes(host, before, "dst", context)
 }

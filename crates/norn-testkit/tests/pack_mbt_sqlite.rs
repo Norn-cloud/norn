@@ -186,6 +186,18 @@ impl CellHost for SqlitePackHost {
             .commit_action_quantity(commit, requests, idempotency_key)
     }
 
+    // ACTOR-STAMP-1: a governed create's creator stamp reaches the cell's admission.
+    fn commit_stamped(
+        &mut self,
+        commit: CellCommit<FactEvent, JsonObject, JsonObject>,
+        proof: norn_kernel::CreatorStampProof,
+        quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        self.cell_mut()
+            .map_err(CommitError::Host)?
+            .commit_stamped(commit, proof, quantity)
+    }
+
     fn commit_owned_rows(
         &mut self,
         commit: CellCommit<FactEvent, JsonObject, JsonObject>,
@@ -423,6 +435,30 @@ fn load_registry_pack(
     AdmittedPack::from_envelopes(name, &envelopes)
 }
 
+/// `supply-lab` with `tracking` and `ml`, and the registry value types its
+/// `Norn.ref("core.quantity")` properties resolve against.
+fn load_supply_lab_pack() -> Result<AdmittedPack, String> {
+    let root = repo_root();
+    let mut envelopes = Vec::new();
+    for name in [
+        "core.value_types.entity.json",
+        "std.value_types.entity.json",
+    ] {
+        let path = root.join("registry/core/artifacts").join(name);
+        let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        envelopes.push(
+            serde_json::from_str::<ArtifactEnvelope>(&text)
+                .map_err(|e| format!("{}: {e}", path.display()))?,
+        );
+    }
+    for dir in ["tracking", "ml", "supply-lab"] {
+        envelopes.extend(load_envelopes_from_dir(
+            &root.join("registry/packs").join(dir).join("artifacts"),
+        )?);
+    }
+    AdmittedPack::from_envelopes("supply-lab", &envelopes)
+}
+
 fn runtime_obj(pairs: &[(&str, RuntimeValue)]) -> RuntimeObject {
     pairs
         .iter()
@@ -495,15 +531,16 @@ fn real_ml_pack_passes_sqlite_mbt_cedar_matrix_and_dst() -> Result<(), String> {
     )?;
     assert_eq!(dst.cases_run, 12);
 
-    // Static gap detector flags high-impact ML promote/retire lacking SoD as explicit Questions.
+    // Promote and retire are separated from the registrant (`independentOf`), so
+    // the static gap detector no longer asks whether they need SoD.
     let gaps = analyze_static_gaps(&pack);
     assert!(
-        gaps.questions().iter().any(|g| matches!(
+        !gaps.questions().iter().any(|g| matches!(
             g,
             StructuralGap::HighImpactActionMissingSod { action_id, .. }
-                if action_id == "ml.modelversion.promote"
+                if action_id == "ml.modelversion.promote" || action_id == "ml.modelversion.retire"
         )),
-        "expected SoD question for ml.modelversion.promote:\n{gaps}"
+        "ml promote and retire declare independentOf:\n{gaps}"
     );
     Ok(())
 }
@@ -667,42 +704,57 @@ fn real_canon_pack_runs_static_gap_and_mbt_cleanly() -> Result<(), String> {
     Ok(())
 }
 
-/// SUPPLY-LAB axis 8: the static gap detector, the generic MBT and the seeded
-/// DST on the admitted `supply-lab` pack (with `ml` and `tracking`) against a
-/// real file-backed cell. Gap pin: the generic seeder writes each object type
-/// directly, so a type with a protected creator (`supply.PurchaseOrder.created_by`,
-/// stamped only by `fromCaller`) is refused at seeding; if that is fixed the MBT
-/// and DST results are asserted instead.
+/// SUPPLY-LAB axis 8: the static gap detector, the generic MBT (lifecycles,
+/// immutable refusals, the full Cedar role matrix) and the seeded DST on the
+/// admitted `supply-lab` pack (with `ml` and `tracking`) against a real
+/// file-backed cell. Types with a protected creator (`supply.PurchaseOrder`,
+/// `ml.ModelVersion`) are seeded through their stamping create action
+/// (ACTOR-STAMP-1), and mapped evidence types are written by their admitted
+/// mappings, so they raise no `OrphanField`. Pinned harness limit: the
+/// generic synthesizer satisfies lifecycle guards and slice preconditions but
+/// not a membership law on free text (`unit_known`: `unit` is one of the
+/// catalog's units), so a fixture it synthesizes can be refused by that law;
+/// the test requires exactly that refusal, or a full pass once fixed.
 #[test]
 fn real_supply_lab_pack_passes_sqlite_mbt_dst_and_static_gaps() -> Result<(), String> {
-    let pack = load_registry_pack("supply-lab", &["tracking", "ml", "supply-lab"], false)?;
+    let pack = load_supply_lab_pack()?;
     let gaps = analyze_static_gaps(&pack);
-    eprintln!("SUPPLY-LAB static gaps:\n{gaps}");
     let missing_sod = |id: &str| {
         gaps.questions().iter().any(|gap| {
             matches!(gap, StructuralGap::HighImpactActionMissingSod { action_id, .. } if action_id == id)
         })
     };
+    for action in [
+        "supply.po.submit",
+        "ml.modelversion.promote",
+        "ml.modelversion.retire",
+    ] {
+        assert!(
+            !missing_sod(action),
+            "{action} declares independentOf:\n{gaps}"
+        );
+    }
     assert!(
-        !missing_sod("supply.po.submit"),
-        "submit declares independentOf the drafter:\n{gaps}"
+        gaps.defects().is_empty(),
+        "supply-lab structural defects:\n{gaps}"
     );
     assert!(
-        missing_sod("ml.modelversion.promote"),
-        "the reused ml promotion still has no SoD:\n{gaps}"
+        pack.mapping_writes
+            .get("supply.WmsCount")
+            .is_some_and(|fields| fields.contains("on_hand_qty")),
+        "the WMS mapping writes its evidence type"
     );
+    let unit_law = |error: &str| error.contains("supply.CountEvidence.unit_known");
     let recorder = Arc::new(DomainCoverageRecorder::new());
-    let protected_seed =
-        |error: &str| error.contains("has protected properties writable only by rules");
     match run_pack_mbt(&pack, |_| {
         SqlitePackHost::open(&pack, Arc::clone(&recorder))
     }) {
         Ok(mbt) => {
             mbt.coverage.check_transitions_covered()?;
+            mbt.coverage.check_immutable_refusals_covered()?;
             mbt.coverage.check_cedar_covered()?;
         }
-        Err(error) if protected_seed(&error) => eprintln!("SUPPLY-LAB MBT gap: {error}"),
-        Err(error) => return Err(error),
+        Err(error) => assert!(unit_law(&error), "supply-lab MBT: {error}"),
     }
     let config = PackDstConfig {
         cases: 12,
@@ -713,9 +765,80 @@ fn real_supply_lab_pack_passes_sqlite_mbt_dst_and_static_gaps() -> Result<(), St
         SqlitePackHost::open(&pack, Arc::clone(&recorder))
     }) {
         Ok(dst) => assert_eq!(dst.cases_run, 12),
-        Err(error) if protected_seed(&error) => eprintln!("SUPPLY-LAB DST gap: {error}"),
-        Err(error) => return Err(error),
+        Err(error) => assert!(unit_law(&error), "supply-lab DST: {error}"),
     }
+    Ok(())
+}
+
+/// The structural defects each first-party registry pack is known to carry,
+/// rendered as the report prints them: anything else fails. `canon` declares
+/// action-less entities on purpose (its invariants still reference fields).
+const KNOWN_PACK_DEFECTS: &[(&str, &str)] = &[
+    (
+        "canon",
+        r#"OrphanField { object_type: "canon.Holding", property: "stock_cost", referenced_in: ["invariant:cost_has_currency"] }"#,
+    ),
+    (
+        "canon",
+        r#"OrphanField { object_type: "canon.Holding", property: "cost_currency", referenced_in: ["invariant:cost_has_currency"] }"#,
+    ),
+    // `org` and `time` declare their entities and laws, not their writers.
+    (
+        "org",
+        r#"OrphanField { object_type: "org.Membership", property: "valid_from", referenced_in: ["law:org.Membership.valid_date_range:response"] }"#,
+    ),
+    (
+        "org",
+        r#"OrphanField { object_type: "org.Membership", property: "valid_to", referenced_in: ["law:org.Membership.valid_date_range:response"] }"#,
+    ),
+    (
+        "time",
+        r#"OrphanField { object_type: "time.WorkingWindow", property: "start_local", referenced_in: ["law:time.WorkingWindow.valid_local_window:response"] }"#,
+    ),
+    (
+        "time",
+        r#"OrphanField { object_type: "time.WorkingWindow", property: "end_local", referenced_in: ["law:time.WorkingWindow.valid_local_window:response"] }"#,
+    ),
+];
+
+/// RC-4: the static gap detector over every first-party pack in
+/// `registry/packs/` (each pack's own artifacts, with `ml` and `tracking` for
+/// `supply-lab`): zero structural defects beyond the pinned known ones.
+#[test]
+fn every_registry_pack_has_no_unexpected_structural_defects() -> Result<(), String> {
+    let root = repo_root().join("registry/packs");
+    let mut dirs: Vec<String> = fs::read_dir(&root)
+        .map_err(|e| format!("{}: {e}", root.display()))?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().join("artifacts").is_dir())
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .collect();
+    dirs.sort();
+    assert!(dirs.iter().any(|dir| dir == "supply-lab"), "{dirs:?}");
+    let mut unexpected = Vec::new();
+    for dir in &dirs {
+        let with: Vec<&str> = if dir == "supply-lab" {
+            vec!["tracking", "ml", "supply-lab"]
+        } else {
+            vec![dir.as_str()]
+        };
+        let pack = load_registry_pack(dir, &with, false)?;
+        let gaps = analyze_static_gaps(&pack);
+        for defect in gaps.defects() {
+            let rendered = format!("{defect:?}");
+            if !KNOWN_PACK_DEFECTS
+                .iter()
+                .any(|(known_pack, known)| *known_pack == dir.as_str() && *known == rendered)
+            {
+                unexpected.push(format!("{dir}: {rendered}"));
+            }
+        }
+    }
+    assert!(
+        unexpected.is_empty(),
+        "unexpected structural defects:\n{}",
+        unexpected.join("\n")
+    );
     Ok(())
 }
 

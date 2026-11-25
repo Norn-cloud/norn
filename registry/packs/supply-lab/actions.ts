@@ -60,7 +60,7 @@ export const RegisterSku = Norn.action({
 const CountInput = Schema.Struct({
   snapshot_id: Schema.String, warehouse_id: Schema.String, sku_id: Schema.String,
   on_hand_qty: Norn.decimal(6), unit: UnitText, quantity_basis: Schema.Literals(["on_hand", "available", "reserved"]),
-  as_of: Schema.String, count_source: Schema.Literals(["wms_scan", "cycle_count", "audit"]), count_ref: Schema.String,
+  as_of: Norn.timestamp("utc"), count_source: Schema.Literals(["wms_scan", "cycle_count", "audit"]), count_ref: Schema.String,
 })
 const SnapshotRef = Schema.Struct({ snapshot_id: Schema.String })
 const PositionSlice = Schema.Struct({ warehouse_id: Schema.String, sku_id: Schema.String, unit: Schema.String, quantity_basis: Schema.String })
@@ -105,9 +105,9 @@ export const RecordCount = Norn.action({
       && ctx.slice.position.unit === ctx.input.unit && ctx.slice.position.quantity_basis === ctx.input.quantity_basis,
     { root: "context" },
   )],
-  // An upsert may create; the slice read above refuses a missing target first.
-  writes: [{ type: InventorySnapshot, change: "created" }, { type: InventorySnapshot, change: "modified" }],
-  effect: { kind: "upsert_input_object", type: InventorySnapshot, objectIdField: "snapshot_id", writeMode: { kind: "upsert" } },
+  // Update-only: a count never creates a position, so only a `modified` write is declared.
+  writes: [{ type: InventorySnapshot, change: "modified" }],
+  effect: { kind: "upsert_input_object", type: InventorySnapshot, objectIdField: "snapshot_id", writeMode: { kind: "update_only" } },
 })
 
 /**
@@ -127,15 +127,15 @@ export const RestateCount = Norn.action({
       && ctx.slice.position.unit === ctx.input.unit && ctx.slice.position.quantity_basis === ctx.input.quantity_basis,
     { root: "context" },
   )],
-  // An upsert may create; the slice read above refuses a missing target first.
-  writes: [{ type: InventorySnapshot, change: "created" }, { type: InventorySnapshot, change: "modified" }],
-  effect: { kind: "upsert_input_object", type: InventorySnapshot, objectIdField: "snapshot_id", writeMode: { kind: "upsert" } },
+  // Update-only: a count never creates a position, so only a `modified` write is declared.
+  writes: [{ type: InventorySnapshot, change: "modified" }],
+  effect: { kind: "upsert_input_object", type: InventorySnapshot, objectIdField: "snapshot_id", writeMode: { kind: "update_only" } },
 })
 
 const MovementInput = Schema.Struct({
   movement_id: Schema.String, warehouse_id: Schema.String, sku_id: Schema.String,
   qty: Norn.decimal(6), unit: UnitText, movement_kind: Schema.Literals(["receipt", "issue", "adjustment", "transfer"]),
-  occurred_at: Schema.String,
+  occurred_at: Norn.timestamp("utc"),
 })
 
 /** A movement is posted once, in its SKU's unit: no cross-unit mixing. */
@@ -164,7 +164,7 @@ export const RecordMovement = Norn.action({
 // ---------------------------------------------------------------- purchasing
 
 const OrderInput = Schema.Struct({
-  po_id: Schema.String, supplier_id: Schema.String, promised_at: Schema.String, currency: Currency, created_by: Schema.String,
+  po_id: Schema.String, supplier_id: Schema.String, promised_at: Norn.timestamp("utc"), currency: Currency, created_by: Schema.String,
 })
 const OrderRef = Schema.Struct({ po_id: Schema.String })
 
@@ -218,7 +218,7 @@ export const CancelOrder = Norn.action({
 })
 
 const LineInput = Schema.Struct({
-  line_id: Schema.String, po_id: Schema.String, sku_id: Schema.String, promised_at: Schema.String,
+  line_id: Schema.String, po_id: Schema.String, sku_id: Schema.String, promised_at: Norn.timestamp("utc"),
   ordered_qty: Norn.decimal(6), received_qty: Norn.decimal(6), fill_rate: Norn.decimal(6),
   unit: UnitText, unit_price: Norn.decimal(4), currency: Currency,
 })
@@ -276,18 +276,18 @@ export const RecordLineReceived = Norn.action({
       && ctx.slice.line.unit === ctx.input.unit && ctx.slice.line.ordered_qty === ctx.input.ordered_qty,
     { root: "context" },
   )],
-  // An upsert may create; the slice read above refuses a missing target first.
-  writes: [{ type: OrderLine, change: "created" }, { type: OrderLine, change: "modified" }],
-  effect: { kind: "upsert_input_object", type: OrderLine, objectIdField: "line_id", writeMode: { kind: "upsert" } },
+  // Update-only: a receipt never creates a line, so only a `modified` write is declared.
+  writes: [{ type: OrderLine, change: "modified" }],
+  effect: { kind: "upsert_input_object", type: OrderLine, objectIdField: "line_id", writeMode: { kind: "update_only" } },
 })
 
 const ReceiptInput = Schema.Struct({
   receipt_id: Schema.String, supplier_id: Schema.String, warehouse_id: Schema.String, line_id: Schema.String,
-  received_qty: Norn.decimal(6), damaged_qty: Norn.decimal(6), unit: UnitText, received_at: Schema.String,
+  received_qty: Norn.decimal(6), damaged_qty: Norn.decimal(6), unit: UnitText, received_at: Norn.timestamp("utc"),
 })
 const BlindReceiptInput = Schema.Struct({
   receipt_id: Schema.String, supplier_id: Schema.String, warehouse_id: Schema.String, line_id: Schema.NullOr(Schema.String),
-  received_qty: Norn.decimal(6), damaged_qty: Norn.decimal(6), unit: UnitText, received_at: Schema.String,
+  received_qty: Norn.decimal(6), damaged_qty: Norn.decimal(6), unit: UnitText, received_at: Norn.timestamp("utc"),
 })
 const ReceiptRef = Schema.Struct({ receipt_id: Schema.String })
 
@@ -368,7 +368,7 @@ export const RecordOrphanInspection = Norn.action({
 // ------------------------------------------------------------- forecasting
 
 const ObservationInput = Schema.Struct({
-  observation_id: Schema.String, sku_id: Schema.String, warehouse_id: Schema.String, week_start: Schema.String,
+  observation_id: Schema.String, sku_id: Schema.String, warehouse_id: Schema.String, week_start: Norn.timestamp("utc"),
   week_index: Schema.Int, issued_qty: Norn.decimal(6), unit: UnitText, lead_time_days: Schema.Int, promotion: Schema.Boolean,
 })
 
@@ -383,7 +383,9 @@ export const RecordObservation = Norn.action({
 
 const ForecastInput = Schema.Struct({
   forecast_id: Schema.String, subject: Schema.String, model_version: Schema.String, sku_id: Schema.String,
-  warehouse_id: Schema.String, week_start: Schema.String, predicted_qty: Norn.decimal(3),
+  warehouse_id: Schema.String, week_start: Norn.timestamp("utc"),
+  // A registry value type (`core.quantity`, decimal(6)) types the input and its law alike.
+  predicted_qty: Norn.ref("core.quantity"),
   stockout_risk: Schema.Literals(["low", "medium", "high"]),
 })
 

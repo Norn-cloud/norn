@@ -11,25 +11,6 @@
       "name": "synthetic-feed-replay",
       "version": "0.1.0"
     },
-    "codeSets": [
-      {
-        "dataset": "stock_count",
-        "field": "basis",
-        "id": "basis",
-        "origin": "declared",
-        "values": [
-          {
-            "value": "on_hand"
-          },
-          {
-            "value": "available"
-          },
-          {
-            "value": "reserved"
-          }
-        ]
-      }
-    ],
     "constraints": [
       {
         "dataset": "stock_count",

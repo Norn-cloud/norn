@@ -210,6 +210,59 @@
           "chart": "area",
           "kind": "chart"
         }
+      },
+      {
+        "id": "t5",
+        "layout": {
+          "h": 1,
+          "w": 2,
+          "x": 0,
+          "y": 4
+        },
+        "question": {
+          "aggregate": [
+            {
+              "metric": "analysis.object_737570706c792e496e7370656374696f6e.inspected_qty.by_norn_path_7_receipt_11_received_uat_value"
+            }
+          ],
+          "calendar": "iso_utc",
+          "filter": [
+            {
+              "operator": "eq",
+              "path": {
+                "property": "unit"
+              },
+              "value": "each"
+            }
+          ],
+          "freshness": {
+            "kind": "live",
+            "maxAgeMs": 60000
+          },
+          "groupBy": [
+            {
+              "grain": "week",
+              "path": {
+                "links": [
+                  "receipt"
+                ],
+                "property": "received_at"
+              }
+            }
+          ],
+          "irVersion": "0.1",
+          "name": "supply.inspected_by_receipt_week",
+          "objectSet": "supply.Inspection",
+          "window": {
+            "end": "2026-10-26T00:00:00Z",
+            "start": "2026-07-06T00:00:00Z"
+          }
+        },
+        "title": "Inspected by receipt week",
+        "view": {
+          "chart": "bar",
+          "kind": "chart"
+        }
       }
     ],
     "title": "Supply lab"

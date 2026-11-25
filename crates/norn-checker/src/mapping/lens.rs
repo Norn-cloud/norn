@@ -229,3 +229,30 @@ fn check_source_schema(
 fn check_laws(lens: &AdmittedLens) -> Result<(), String> {
     decision::check_laws(&lens.sources, &lens.get, &lens.put).map_err(refusal)
 }
+
+/// MAP-ENUM-TEXT-1: a property rule into an enum may produce source text. A
+/// mapping cannot know statically which codes an untrusted source sends, so
+/// the rule is typed as text; at runtime `compile::encode` refuses a value
+/// outside the enum, so its row lands quarantined, never dropped or coerced.
+pub(super) fn mapped_value_type(ty: &Type) -> Type {
+    if let Type::Enum { .. } = ty {
+        return Type::text();
+    }
+    if let Type::Optional(inner) = ty
+        && let Type::Enum { .. } = **inner
+    {
+        return Type::text().optional();
+    }
+    ty.clone()
+}
+
+/// MAP-ENUM-TEXT-1 at runtime: text reaches an enum only as one of its values;
+/// any other code refuses the row, which lands quarantined.
+pub(super) fn enum_member(text: &str, ty: &Type) -> Result<(), String> {
+    if let Type::Enum { values } = ty
+        && !values.iter().any(|value| value == text)
+    {
+        return Err(format!("{text:?} is not one of {}", values.join(", ")));
+    }
+    Ok(())
+}

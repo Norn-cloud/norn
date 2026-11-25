@@ -28923,6 +28923,9 @@
           },
           {
             "$ref": "#/components/schemas/NornIrUpsertWriteModeOneOf2"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrUpsertWriteModeOneOf3"
           }
         ],
         "description": "Write guard for an action's object upsert."
@@ -28982,6 +28985,22 @@
           "state": {
             "type": "string",
             "description": "The lifecycle's declared initial state used as the draft state."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrUpsertWriteModeOneOf3": {
+        "type": "object",
+        "description": "The target must exist; it is patched and never created.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "update_only"
+            ]
           }
         },
         "additionalProperties": false

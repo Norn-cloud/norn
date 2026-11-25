@@ -56,7 +56,7 @@
         "nullable": false,
         "type": {
           "kind": "decimal",
-          "scale": 3
+          "scale": 6
         }
       },
       {

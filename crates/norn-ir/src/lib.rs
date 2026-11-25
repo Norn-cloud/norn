@@ -781,6 +781,8 @@ pub enum UpsertWriteMode {
         /// The lifecycle's declared initial state used as the draft state.
         state: String,
     },
+    /// The target must exist; it is patched and never created.
+    UpdateOnly,
 }
 
 impl UpsertWriteMode {
@@ -851,7 +853,7 @@ impl ActionEffectProgram {
                 ..
             } => &[WriteChange::Created],
             Self::UpsertInputObject {
-                write_mode: UpsertWriteMode::DraftOnly { .. },
+                write_mode: UpsertWriteMode::DraftOnly { .. } | UpsertWriteMode::UpdateOnly,
                 ..
             } => &[WriteChange::Modified],
             Self::UpsertInputObject { .. } => &[WriteChange::Created, WriteChange::Modified],

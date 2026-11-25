@@ -19,7 +19,7 @@
       "objectIdField": "snapshot_id",
       "objectKind": "supply.InventorySnapshot",
       "writeMode": {
-        "kind": "upsert"
+        "kind": "update_only"
       }
     },
     "idempotent": true,
@@ -115,10 +115,6 @@
     ],
     "title": "Record a stock count",
     "writes": [
-      {
-        "change": "created",
-        "entityKind": "supply.InventorySnapshot"
-      },
       {
         "change": "modified",
         "entityKind": "supply.InventorySnapshot"

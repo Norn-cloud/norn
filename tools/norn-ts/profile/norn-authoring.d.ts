@@ -84,7 +84,13 @@ declare module "@norn/authoring" {
      * sibling properties holding a decimal's unit (METRIC-UNIT-PARTITION-1):
      * a question aggregating it groups by or fixes each of them.
      */
+    function ref(name: NumericValueType, options?: { readonly additivity?: PropertyAdditivity; readonly unitSource?: ReadonlyArray<string> }): Schema.Finite
     function ref<S extends Schema.Top = Schema.String>(name: string, options?: { readonly additivity?: PropertyAdditivity; readonly unitSource?: ReadonlyArray<string> }): S
+    /**
+     * The registry value types that are numbers (`registry/core`: decimal(6)),
+     * so a law, guard or precondition compares and computes with them as numbers.
+     */
+    type NumericValueType = "core.quantity" | "core.money_amount"
 
     /** An instant with an explicit timezone policy (EntityIR `timestamp`; RFC 3339 text). */
     function timestamp(timezone: "utc" | "offset"): Schema.String
@@ -207,12 +213,18 @@ declare module "@norn/authoring" {
 
     /** Candidate QuestionIR; the host must admit it with the selected metric definitions. */
     interface QuestionDefinition { readonly _tag: "NornQuestion" }
+    /**
+     * A question path: a direct property, or one reached through to-one links
+     * (METRIC-GRAIN-LINK-1), as `link` (one hop) or `links`.
+     */
+    type QuestionPathLinks = { readonly link?: string; readonly links?: never } | { readonly link?: never; readonly links?: ReadonlyArray<string> }
     interface QuestionMeta {
       readonly name: string
       readonly of: string | TypeDefinition<unknown>
-      readonly where: ReadonlyArray<{ readonly property: string; readonly operator: "eq" | "ne"; readonly value: string | number | boolean }>
+      readonly where: ReadonlyArray<QuestionPathLinks & { readonly property: string; readonly operator: "eq" | "ne"; readonly value: string | number | boolean }>
+      /** A metric id; `Norn.metricId(...)` names an ontology-derived one. */
       readonly measure: string
-      readonly by: ReadonlyArray<{ readonly property: string; readonly grain?: "day" | "week" | "month" | "quarter" | "year" }>
+      readonly by: ReadonlyArray<QuestionPathLinks & { readonly property: string; readonly grain?: "day" | "week" | "month" | "quarter" | "year" }>
       readonly asOf:
         | { readonly basis: "effective"; readonly from: string; readonly to: string; readonly freshness: { readonly kind: "live" | "delayed"; readonly maxAgeMs: number } }
         | { readonly basis: "knowledge" }
@@ -220,6 +232,21 @@ declare module "@norn/authoring" {
     }
     /** Syntax only: authored modules and callbacks never execute. */
     function question(meta: QuestionMeta): QuestionDefinition
+
+    /**
+     * Syntax only: the deterministic id of an ontology-derived metric
+     * (METRIC-DERIVE-1), as the checker names it: `sum` of an additive property
+     * by a time (`"occurred_at"`, or `{ link, property }` one to-one hop away),
+     * `as_of` a semi-additive property at its own time, or the `ratio` of sums a
+     * ratio property declares. The cell still admits the question against the
+     * metric space it derives.
+     */
+    function metricId(spec: {
+      readonly kind: "sum" | "as_of" | "ratio"
+      readonly of: string | TypeDefinition<unknown>
+      readonly property: string
+      readonly time: string | (QuestionPathLinks & { readonly property: string })
+    }): string
 
     /** Candidate dashboard definition; the cell's checker admits each tile's question and view. */
     interface DashboardDefinition { readonly _tag: "NornDashboard" }
@@ -453,6 +480,7 @@ declare module "@norn/authoring" {
           readonly writeMode?:
             | { readonly kind: "upsert" }
             | { readonly kind: "create_only" }
+            | { readonly kind: "update_only" }
             | { readonly kind: "draft_only"; readonly lifecycle: string; readonly state: string }
         }
       | {

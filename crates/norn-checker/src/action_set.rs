@@ -1613,6 +1613,9 @@ impl Defined<'_> {
                 UpsertWriteMode::DraftOnly { .. } => format!(
                     "draft_only objectIdField {object_id_field:?} must target the generated naming-series key"
                 ),
+                UpsertWriteMode::UpdateOnly => format!(
+                    "update_only objectIdField {object_id_field:?} must target the generated naming-series key"
+                ),
             };
             return vec![finding(
                 codes::NAMING_SERIES_TARGET_MISMATCH,
@@ -1625,7 +1628,9 @@ impl Defined<'_> {
         if series_key.is_some()
             && !matches!(
                 write_mode,
-                UpsertWriteMode::CreateOnly | UpsertWriteMode::DraftOnly { .. }
+                UpsertWriteMode::CreateOnly
+                    | UpsertWriteMode::DraftOnly { .. }
+                    | UpsertWriteMode::UpdateOnly
             )
         {
             return vec![finding(
@@ -2836,15 +2841,26 @@ fn create_link_findings(
             binding.source.as_ref().map(|s| s.id_field.as_str()),
             binding.link.as_str(),
         );
-        if root.create_links.len() > 16
-            || !seen.insert(identity)
-            || !(legacy_create || composed)
-            || !source_written
-            || !(in_slice || created_target || primary_target)
-            || !input_schema_field_is_string(&root.input_schema, &binding.target_id_field)
-            || declared.is_none_or(|target| target != binding.target_type)
-        {
-            findings.push(finding(codes::CREATE_LINK, "createLinks requires a declared written source, unique source/link binding, and an authorized required slice target or a target created in the same proposal".to_owned(), artifact, "/payload/createLinks"));
+        // Each unmet requirement is named, so the fix is the message.
+        let link = binding.link.as_str();
+        let target = binding.target_type.as_str();
+        let field = binding.target_id_field.as_str();
+        let reasons = [
+            (root.create_links.len() > 16, "an action declares at most 16 createLinks".to_owned()),
+            (!seen.insert(identity), format!("link {link:?} is bound twice from the same source")),
+            (!(legacy_create || composed), "createLinks needs a create_only upsert, or a synchronousRule composed with a transition".to_owned()),
+            (!source_written, format!("the source of link {link:?} is not a string input whose type the write set declares created or modified")),
+            (!(in_slice || created_target || primary_target), format!("target {target:?} of link {link:?} must be read by a required slice entry keyed by input field {field:?} (add the slice entry `{{ name, type: {target:?}, key: {{ property: {{ from: \"input\", property: {field:?} }} }} }}`) or be created in the same proposal")),
+            (!input_schema_field_is_string(&root.input_schema, field), format!("target id field {field:?} must be a string input")),
+            (declared.is_none_or(|declared| declared != binding.target_type), format!("{} declares no link {link:?} to {target:?}", source_kind.unwrap_or("the source"))),
+        ];
+        let unmet: Vec<String> = reasons
+            .into_iter()
+            .filter(|(unmet, _)| *unmet)
+            .map(|(_, reason)| reason)
+            .collect();
+        if !unmet.is_empty() {
+            findings.push(finding(codes::CREATE_LINK, format!("createLinks requires a declared written source, unique source/link binding, and an authorized required slice target or a target created in the same proposal: {}", unmet.join("; ")), artifact, "/payload/createLinks"));
         }
     }
     findings

@@ -38,7 +38,7 @@ test("builder and compiler preserve declared and observed code-set origins", () 
   }
 }, 30_000)
 
-test.skipIf(!checker)("Rust admits the authored mapping with a receipt-pinned source and refuses candidate enums", () => {
+test.skipIf(!checker)("Rust admits the authored mapping with a receipt-pinned source and never trusts a candidate code set", () => {
   const artifacts = JSON.parse(JSON.stringify(compiled().artifacts)) as any[]
   const mapping = artifacts.find(a => a.kind === "mapping")
   const source = artifacts.find(a => a.kind === "source_schema")
@@ -59,8 +59,16 @@ test.skipIf(!checker)("Rust admits the authored mapping with a receipt-pinned so
     source.payload.codeSets[0].origin = origin
     pin()
     const checked = checker!.checkArtifactSet(artifacts)
-    expect(checked.admitted).toBe(false)
-    expect(checked.diagnostics.diagnostics.some(d => d.code === (origin === "inferred" ? "source_schema.validation.promoted_inference" : "mapping.model.expression_type"))).toBe(true)
+    if (origin === "inferred") {
+      expect(checked.admitted).toBe(false)
+      expect(checked.diagnostics.diagnostics.some(d => d.code === "source_schema.validation.promoted_inference")).toBe(true)
+    } else {
+      // An observed candidate code set is not the enum: the field reads as
+      // text, and MAP-ENUM-TEXT-1 admits text into the enum target, whose
+      // membership the commit checks (an unknown code lands quarantined).
+      expect(checked.diagnostics.diagnostics).toEqual([])
+      expect(checked.admitted).toBe(true)
+    }
   }
 }, 30_000)
 

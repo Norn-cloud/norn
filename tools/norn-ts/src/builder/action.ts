@@ -97,6 +97,8 @@ export interface ReceiptAcceptance {
 export type UpsertWriteMode =
   | { readonly kind: "upsert" }
   | { readonly kind: "create_only" }
+  /** The target must exist; it is patched, never created (declare only a `modified` write). */
+  | { readonly kind: "update_only" }
   | { readonly kind: "draft_only"; readonly lifecycle: string; readonly state: string }
 
 export interface ActionDef extends Localized {

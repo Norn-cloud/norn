@@ -81,7 +81,7 @@
     ],
     "source": {
       "schemaId": "supply.wms_scan.source",
-      "sha256": "01262bae425d9d87d6e456fca9871dd15a2ebb7fe632511066102058096c7e65",
+      "sha256": "1a5aee18537075b0700d4a8af006d68a9cbcb78858b9d7375e70acc9fbbe8ee2",
       "version": "0.1.0"
     }
   },

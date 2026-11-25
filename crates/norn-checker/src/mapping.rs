@@ -63,6 +63,7 @@ pub mod vendor;
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use lens::mapped_value_type;
 use norn_expr::{
     EnvOptions, Expression, FieldSource, RecordKind, RecordType, Type, ZenTypeEnv, check_expression,
 };
@@ -1478,7 +1479,7 @@ fn check_property_map(
                     );
                     typed(
                         &entry.value,
-                        &field.ty,
+                        &mapped_value_type(&field.ty),
                         &child_env,
                         &rule_at(context.index, "properties", rule, "value"),
                         out,
@@ -1486,7 +1487,8 @@ fn check_property_map(
                 }
             } else {
                 let value_at = rule_at(context.index, "properties", rule, "value");
-                typed(&entry.value, &field.ty, context.env, &value_at, out);
+                let ty = mapped_value_type(&field.ty);
+                typed(&entry.value, &ty, context.env, &value_at, out);
             }
         }
         Some((FieldSource::Property { read_only: true }, _)) => out.push(error(

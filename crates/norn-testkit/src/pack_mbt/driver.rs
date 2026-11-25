@@ -791,7 +791,20 @@ fn seed_and_walk_inner<H: PackHost>(
     let ty_name = object_type.name.as_str();
     let key = FactKey::new(ty_name, id);
     let mut graph = collect_required_link_graph(pack, object_type, &key, 1)?;
-    if graph.direct_links.is_empty() {
+    // ACTOR-STAMP-1: a type with protected creators is seeded by its governed create.
+    if let Some(created) =
+        super::seed::seed_stamped(host, pack, catalog, object_type, id, &values, 1)?
+    {
+        match created {
+            Ok(()) => {}
+            Err(DecisionRefusal::Law { .. } | DecisionRefusal::InvariantViolation { .. })
+                if allow_law_refusal =>
+            {
+                return Ok(false);
+            }
+            Err(err) => return Err(format!("seed {ty_name}/{id}: {err}")),
+        }
+    } else if graph.direct_links.is_empty() {
         let slice = load_slice(host, [key]).map_err(|err| format!("load_slice: {err}"))?;
         let create = DecisionOutput {
             facts: vec![FactChange::Create {

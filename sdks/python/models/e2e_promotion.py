@@ -59,10 +59,13 @@ ok("ml.modelversion.register", {**base, "version_id": "churn@2", "version": "2",
 status, _ = call("ml.modelversion.promote", {"version_id": "churn@2"}, "promote-2")
 assert status != 200 and version("churn@2")["status"] == "candidate"
 
-# Evaluated on the pinned revision with every contract held: promoted, then retired.
+# Evaluated on the pinned revision with every contract held, but the dev host's one
+# principal registered it: separation of duties (ACTOR-INDEPENDENT-1) refuses its promotion.
+# Another principal promotes it on a hosted cell (crates/norn-cell/tests/supply_lab_stress.rs).
 ok("ml.modelversion.register", {**base, "version_id": "churn@3", "version": "3", "evaluation_revision": "c42"}, "reg-3")
-ok("ml.modelversion.promote", {"version_id": "churn@3"}, "promote-3")
-assert version("churn@3")["status"] == "production"
+status, body = call("ml.modelversion.promote", {"version_id": "churn@3"}, "promote-3")
+assert status != 200 and version("churn@3")["status"] == "candidate", (status, body)
+assert "ACTOR-INDEPENDENT-1" in str(body), body
 links = http.get("/v1/objects/ml.ModelVersion/churn@3/links", params={"orgId": cell.org_id, "environmentId": cell.environment_id}).json()
 assert {"trained_by", "evaluated_by"} <= {item.get("link") for item in links["items"]}, links
 
@@ -70,4 +73,4 @@ assert {"trained_by", "evaluated_by"} <= {item.get("link") for item in links["it
 # declares the admin and owner deciders; a dev host declares no roles and
 # installs no approvals. crates/norn-cell-do/tests/ml_approval.rs checks the
 # definition against the hosted table.
-print(f"model promotion: ok (registration needs finished runs; unevaluated and failed-contract promotions refused: {refused_code}; promoted with run links)")
+print(f"model promotion: ok (registration needs finished runs; unevaluated and failed-contract promotions refused: {refused_code}; the registrant's own promotion refused; run links kept)")

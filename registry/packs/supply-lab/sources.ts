@@ -29,7 +29,8 @@ export const ErpSupplierSource = Norn.sourceSchema({
 
 export const ErpSupplierMapping = Norn.mapping({
   id: "supply.erp_supplier.mapping", title: "ERP supplier receipts into receipt evidence", version: "0.1.0",
-  source: { schemaId: "supply.erp_supplier.source", version: "0.1.0", sha256: "30ec888a4da1e67bd9b4d690bd3eb18cd9b559ca31622de64017dd8b6e7b4ffb" },
+  // MAPPING-SOURCE-REF-1: bound by reference; the compiler pins the schema's Norn1 hash.
+  source: ErpSupplierSource,
   sourceContract: { kind: "generic" }, interfaces: [ReceiptEvidence],
   maps: [{
     id: "receipt_line", source: { dataset: "Purchase Receipt Item" }, target: { type: SupplierReceiptLine, interface: ReceiptEvidence },
@@ -42,7 +43,10 @@ export const ErpSupplierMapping = Norn.mapping({
       { property: "received_qty", value: "input.received_qty" },
       { property: "damaged_qty", value: "input.rejected_qty" },
       // ERP units onto canonical units; any other unit passes through and is quarantined by
-      // `unit_known`. A third branch ('Litre') exceeds the decide cost budget of `norn.limits/1`.
+      // `unit_known`. Each `==` against this undeclared-length source text is charged the
+      // text's full size bound (norn-expr's data-proportional Equal cost; a conditional costs
+      // its condition + 3 + its dearer branch, so nothing is duplicated): a third branch
+      // ('Litre') crosses the 1,000,000-unit decide fuel of `norn.limits/1`.
       { property: "unit", value: "input.uom == 'Nos' ? 'each' : (input.uom == 'Kg' ? 'kg' : input.uom)" },
       { property: "received_at", value: "timestamp(input.posting_datetime)" },
     ],
@@ -76,13 +80,14 @@ export const WmsScanSource = Norn.sourceSchema({
     { dataset: "stock_count", name: "basis", ordinal: 5, nativeType: "VARCHAR", typeCandidate: { type: "string", origin: "declared" }, required: true },
     { dataset: "stock_count", name: "counted_at", ordinal: 6, nativeType: "TIMESTAMP", typeCandidate: { type: "string", origin: "declared" }, required: true },
   ],
-  codeSets: [{ id: "basis", dataset: "stock_count", field: "basis", origin: "declared", values: [{ value: "on_hand" }, { value: "available" }, { value: "reserved" }] }],
+  // `basis` declares no code set: the scanner sends free text, mapped into the
+  // `quantity_basis` enum (MAP-ENUM-TEXT-1), so an unknown basis lands quarantined.
   constraints: [{ id: "scan_identity", kind: "primary_key", dataset: "stock_count", fields: ["scan_id"], origin: "declared" }],
 })
 
 export const WmsScanMapping = Norn.mapping({
   id: "supply.wms_scan.mapping", title: "WMS scans into count evidence", version: "0.1.0",
-  source: { schemaId: "supply.wms_scan.source", version: "0.1.0", sha256: "01262bae425d9d87d6e456fca9871dd15a2ebb7fe632511066102058096c7e65" },
+  source: WmsScanSource,
   sourceContract: { kind: "generic" }, interfaces: [CountEvidence],
   maps: [{
     id: "scan", source: { dataset: "stock_count" }, target: { type: WmsCount, interface: CountEvidence },

@@ -88,8 +88,8 @@
         {
           "id": "predicted_qty",
           "type": {
-            "kind": "decimal",
-            "scale": 3
+            "kind": "ref",
+            "name": "core.quantity"
           }
         },
         {

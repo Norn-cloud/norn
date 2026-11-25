@@ -334,7 +334,10 @@ where
                 values: business_input.clone(),
             }]
         }
-        UpsertWriteMode::Upsert => business_input
+        UpsertWriteMode::UpdateOnly if !state.exists() => {
+            return Err(ActionRefusal::TargetNotFound);
+        }
+        UpsertWriteMode::Upsert | UpsertWriteMode::UpdateOnly => business_input
             .iter()
             .map(|(property, value)| FactChange::Set {
                 object_type: object_type.clone(),
