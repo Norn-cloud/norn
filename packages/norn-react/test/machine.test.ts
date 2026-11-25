@@ -7,7 +7,7 @@ import { join } from "node:path"
 import { pathToFileURL } from "node:url"
 
 import { NO_HOST_ERROR } from "../../norn-sdk/src/client.ts"
-import { type Classified, type Clock, type Evaluate, type Machine, type Msg, type Transport, classifyResponse, createDriver, EngineNotReady, init, lazyEngine, update, walks, wasmEvaluate } from "../src/machine/index.ts"
+import { type Classified, type Clock, type Evaluate, type Machine, type Msg, type Transport, classifyResponse, classifyText, createDriver, EngineNotReady, init, lazyEngine, update, walks, wasmEvaluate } from "../src/machine/index.ts"
 
 // The engine is built by CI's integration phase (NORN_CHECKER_WASM_PKG); without it the
 // engine-backed rows are skipped and `classifyResponse` still runs.
@@ -177,6 +177,12 @@ describe("classifyResponse", () => {
     expect(classifyResponse(503, { format: "norn/refusal@2", code: "action.receipts_unconfigured", category: "internal" })).toMatchObject({ outcome: "refused", category: "internal" })
     // A 503 from a gateway while the host restarts is a cell that did not answer.
     expect(classifyResponse(503, { error: "Service Unavailable" }).outcome).toBe("network_failure")
+  })
+  test("a success whose body is no JSON (a host's HTML fallback page) is no answer, never accepted", () => {
+    expect(classifyText(200, "<!doctype html><html><body>Studio</body></html>")).toEqual({ outcome: "network_failure", payload: {} })
+    expect(classifyText(200, '{"outcome":"committed"}').outcome).toBe("accepted")
+    expect(classifyText(204, "").outcome).toBe("accepted")
+    expect(classifyText(404, "<html>Not found</html>").outcome).toBe("not_served")
   })
 })
 

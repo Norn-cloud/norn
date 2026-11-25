@@ -3,7 +3,7 @@
 // frozen page; and everything a runtime read or sent stays in the workspace it was given.
 import { describe, expect, test } from "bun:test"
 import type { Classified, Clock } from "../src/machine/index.ts"
-import { lazyEngine, type CheckerEvaluator } from "../src/machine/evaluate.ts"
+import { lazyEngine, type CheckerEvaluator, type EngineLoader, type LazyEngine } from "../src/machine/evaluate.ts"
 import type { Fields, Machine } from "../src/machine/machine.ts"
 import type { BindingRead, WidgetCalls, WidgetReader } from "../src/reads.ts"
 import { pageKey } from "../src/renderer.tsx"
@@ -79,14 +79,14 @@ function calls(answer: Classified = { outcome: "accepted", payload: {}, body: { 
 
 const host = () => ({ context: {}, objectTypeOf: () => "canon.ValuationPolicy", actionIdOf: (artifactId: string) => (artifactId === ACTION.id ? "canon.valuation_policy.set" : undefined) })
 
-function run(options: { readonly engine: () => Promise<CheckerEvaluator>; readonly reader?: WidgetReader; readonly calls?: WidgetCalls; readonly ux?: WidgetUx; readonly machine?: Machine; readonly clock?: Clock }) {
+function run(options: { readonly engine: EngineLoader | LazyEngine; readonly reader?: WidgetReader; readonly calls?: WidgetCalls; readonly ux?: WidgetUx; readonly machine?: Machine; readonly clock?: Clock }) {
   const views: RuntimeView[] = []
   const runtime = createPageRuntime({
     ux: options.ux ?? ux,
     machine: options.machine ?? machine,
     reader: options.reader ?? reader([{ records: [] }]),
     calls: options.calls ?? calls(),
-    engine: lazyEngine(options.engine),
+    engine: typeof options.engine === "function" ? lazyEngine(options.engine) : options.engine,
     host,
     clock: options.clock ?? manualClock(),
   }, (view) => views.push(view))
@@ -136,6 +136,69 @@ describe("the engine", () => {
     release(pathEngine)
     await flush()
     expect(runtime.view()).toMatchObject({ engine: "ready", waiting: 0, snapshot: { fields: { note: "Checked twice" } } })
+    runtime.dispose()
+  })
+
+  test("a runtime built while the engine is already loading follows that load and replays (a rebuilt page)", async () => {
+    let release: (engine: CheckerEvaluator) => void = () => {}
+    let attempts = 0
+    const engine = lazyEngine(() => new Promise((resolve) => { attempts += 1; release = resolve }))
+    const first = run({ engine })
+    first.runtime.preload()
+    expect(engine.state()).toBe("loading")
+    // The page's document changed mid-load: the runtime is rebuilt on the same engine.
+    first.runtime.dispose()
+    const second = run({ engine })
+    expect(second.runtime.view().engine).toBe("loading")
+    await flush()
+    second.runtime.send(edit)
+    second.runtime.send(save)
+    expect(second.runtime.view().waiting).toBe(2)
+    release(pathEngine)
+    await flush()
+    expect(attempts).toBe(1)
+    expect(second.runtime.view()).toMatchObject({ engine: "ready", waiting: 0, snapshot: { stateId: "confirming", fields: { note: "Checked twice" } } })
+    second.runtime.dispose()
+  })
+
+  test("a StrictMode double mount: the second runtime, preloading an engine the first began, reaches ready", async () => {
+    let release: (engine: CheckerEvaluator) => void = () => {}
+    const engine = lazyEngine(() => new Promise((resolve) => { release = resolve }))
+    // Mount, effect, cleanup, mount again: one engine, two runtimes, the first gone before the load ends.
+    const first = run({ engine })
+    first.runtime.preload()
+    first.runtime.dispose()
+    const second = run({ engine })
+    second.runtime.preload()
+    second.runtime.preload()
+    release(pathEngine)
+    await flush()
+    expect(second.runtime.view().engine).toBe("ready")
+    second.runtime.send(edit)
+    expect(second.runtime.view()).toMatchObject({ waiting: 0, snapshot: { fields: { note: "Checked twice" } } })
+    second.runtime.dispose()
+  })
+
+  test("Retry after the wait limit starts a new load; the stalled attempt's late answer is ignored", async () => {
+    const clock = manualClock()
+    const attempts: { readonly fresh: boolean | undefined; readonly settle: { resolve: (engine: CheckerEvaluator) => void; reject: (error: Error) => void } }[] = []
+    const { runtime } = run({ clock, engine: (attempt) => new Promise((resolve, reject) => { attempts.push({ fresh: attempt?.fresh, settle: { resolve, reject } }) }) })
+    await flush()
+    runtime.send(edit)
+    runtime.send(save)
+    // Attempt 1 stalls (a fetch that never settles): past the wait limit the page says so.
+    clock.advance(ENGINE_WAIT_MS)
+    expect(runtime.view()).toMatchObject({ engine: "failed", waiting: 2 })
+    runtime.retryEngine()
+    expect(attempts.map((attempt) => attempt.fresh)).toEqual([false, true])
+    expect(runtime.view().engine).toBe("loading")
+    // The superseded attempt fails late: ignored, the page waits on attempt 2.
+    attempts[0]!.settle.reject(new Error("the stalled fetch finally failed"))
+    await flush()
+    expect(runtime.view()).toMatchObject({ engine: "loading", waiting: 2 })
+    attempts[1]!.settle.resolve(pathEngine)
+    await flush()
+    expect(runtime.view()).toMatchObject({ engine: "ready", waiting: 0, snapshot: { stateId: "confirming", fields: { note: "Checked twice" } } })
     runtime.dispose()
   })
 
@@ -216,6 +279,51 @@ describe("one workspace's reads and calls stay in it", () => {
     expect(b.views.some((view) => JSON.stringify([...view.reads.values(), ...view.calls.values()]).includes("a-1"))).toBe(false)
     expect(readerB.asked).toHaveLength(1)
     b.runtime.dispose()
+  })
+
+  // Cancel while saving is a request; the outcome that follows decides.
+  const cancellable: Machine = {
+    ...machine,
+    events: [...machine.events, { eventId: "cancelled", source: { kind: "outcome", outcome: "cancelled" } }],
+    transitions: [
+      ...machine.transitions,
+      { transitionId: "stop", from: "saving", on: "cancel", target: "saving", effects: [{ kind: "cancel" }] },
+      { transitionId: "stopped", from: "saving", on: "cancelled", target: "browsing" },
+    ],
+  }
+
+  test("a call whose inputs wait on a stalled engine still ends at the pending state's deadline, sending nothing", async () => {
+    const clock = manualClock()
+    const sent = calls()
+    const { runtime } = run({ clock, ux: mapped, reader: reader([{ values: { id: "a-1" } }]), calls: sent, engine: () => new Promise(() => {}) })
+    await flush()
+    runtime.send(save)
+    runtime.send(confirm)
+    expect(runtime.view().snapshot.stateId).toBe("saving")
+    const saving = machine.states.find((state) => state.stateId === "saving")!
+    clock.advance(saving.deadlineMs! - 1)
+    await flush()
+    expect(runtime.view().snapshot.stateId).toBe("saving")
+    clock.advance(1)
+    await flush()
+    expect(runtime.view().snapshot.stateId).toBe("save-failed")
+    expect(runtime.view().calls.get("save")?.kind).toBe("timed_out")
+    expect(sent.sent).toEqual([])
+    runtime.dispose()
+  })
+
+  test("Cancel while a call's inputs wait on a stalled engine ends the call at once, sending nothing", async () => {
+    const sent = calls()
+    const { runtime } = run({ ux: mapped, machine: cancellable, reader: reader([{ values: { id: "a-1" } }]), calls: sent, engine: () => new Promise(() => {}) })
+    await flush()
+    runtime.send(save)
+    runtime.send(confirm)
+    expect(runtime.view().snapshot.stateId).toBe("saving")
+    runtime.send({ kind: "user", eventId: "cancel" })
+    await flush()
+    expect(runtime.view().snapshot.stateId).toBe("browsing")
+    expect(sent.sent).toEqual([])
+    runtime.dispose()
   })
 
   test("a disposed runtime's late answers change nothing", async () => {

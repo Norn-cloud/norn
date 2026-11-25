@@ -55,6 +55,12 @@ export function literal(expression: string): { readonly value: boolean | string 
   return null
 }
 
+/**
+ * Loads the checker's engine. `fresh` asks for a new attempt rather than one already in flight: a
+ * person's Retry after a load that never settled (a stalled fetch) must fetch again.
+ */
+export type EngineLoader = (attempt?: { readonly fresh: boolean }) => Promise<CheckerEvaluator>
+
 /** The checker's engine, loaded on first use or when asked; guard-free work never waits for it. */
 export interface LazyEngine {
   readonly evaluate: Evaluate
@@ -65,23 +71,36 @@ export interface LazyEngine {
   readonly evaluateWith: (expression: string, input: unknown) => Promise<unknown>
   /** Starts loading (once) and resolves when the engine is ready. */
   readonly load: () => Promise<void>
+  /**
+   * Starts a new attempt even while one is in flight (unless the engine is ready). The attempt it
+   * replaces no longer counts: its late answer, engine or failure, is ignored, and whoever waited on
+   * it follows the new attempt.
+   */
+  readonly reload: () => Promise<void>
   readonly state: () => "idle" | "loading" | "ready" | "failed"
 }
 
-export function lazyEngine(loader: () => Promise<CheckerEvaluator>): LazyEngine {
+export function lazyEngine(loader: EngineLoader): LazyEngine {
   let ready: Evaluate | null = null
   let engine: CheckerEvaluator | null = null
   let loading: Promise<void> | null = null
   let failed = false
+  let attempts = 0
   // A load after a failure asks the loader again: it reports `loading` until that attempt settles.
-  const load = () => {
-    if (loading === null && ready === null) failed = false
-    loading ??= loader().then(
+  const start = (fresh: boolean): Promise<void> => {
+    const attempt = ++attempts
+    failed = false
+    // A superseded attempt's waiters follow the current one: ready, still loading, or failed.
+    const current = (error: unknown): Promise<void> => (ready !== null ? Promise.resolve() : loading ?? Promise.reject(error))
+    loading = loader({ fresh }).then(
       (checker) => {
+        if (attempt !== attempts || ready !== null) return current(undefined)
         engine = checker
         ready = wasmEvaluate(checker)
+        return undefined
       },
       (error: unknown) => {
+        if (attempt !== attempts || ready !== null) return current(error)
         failed = true
         loading = null
         throw error
@@ -89,6 +108,7 @@ export function lazyEngine(loader: () => Promise<CheckerEvaluator>): LazyEngine 
     )
     return loading
   }
+  const load = () => (ready !== null ? Promise.resolve() : (loading ?? start(false)))
   return {
     evaluate: (expression, input) => {
       if (ready !== null) return ready(expression, input)
@@ -103,6 +123,7 @@ export function lazyEngine(loader: () => Promise<CheckerEvaluator>): LazyEngine 
       return wasmEvaluate(engine!)(expression, input as Parameters<Evaluate>[1])
     },
     load,
+    reload: () => (ready !== null ? Promise.resolve() : start(true)),
     state: () => (ready !== null ? "ready" : loading !== null ? "loading" : failed ? "failed" : "idle"),
   }
 }

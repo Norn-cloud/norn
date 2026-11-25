@@ -19,7 +19,7 @@ import type { ActionEffects } from "./agent.ts"
 import { missingCapabilities } from "./capabilities.ts"
 import { islandsOf, type IslandRegistry } from "./islands.ts"
 import type { Clock } from "./machine/driver.ts"
-import type { CheckerEvaluator } from "./machine/evaluate.ts"
+import type { EngineLoader } from "./machine/evaluate.ts"
 import { Node, type PageScope } from "./nodes.tsx"
 import type { WidgetCalls, WidgetLive, WidgetReader } from "./reads.ts"
 import { useWidgetMachine } from "./runtime.ts"
@@ -39,7 +39,7 @@ export interface NornAppRendererProps<Scope, Reader extends WidgetReader, Record
   /** Live feeds; a page that follows a read live is refused without them. */
   readonly live?: WidgetLive
   /** Loads the checker's expression engine; called after the first paint, never before. */
-  readonly engine: () => Promise<CheckerEvaluator>
+  readonly engine: EngineLoader
   /** The contract's catalog islands, by entry id (a generated `RequiredCatalogRegistry`). */
   readonly islands?: IslandRegistry
   /** The object type the cell serves for an entity artifact, from the admitted definitions. */

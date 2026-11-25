@@ -19,7 +19,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react"
 import { createDriver, type Clock, type Driver, type Transport } from "./machine/driver.ts"
-import { type CheckerEvaluator, lazyEngine, type LazyEngine } from "./machine/evaluate.ts"
+import { type EngineLoader, lazyEngine, type LazyEngine } from "./machine/evaluate.ts"
 import { init, type Machine, type Msg, type Snapshot } from "./machine/machine.ts"
 import { bindingRead, callStateOf, followed, readStateOf, type BindingCallState, type BindingReadState, type WidgetCalls, type WidgetLive, type WidgetReader } from "./reads.ts"
 import type { WidgetUx } from "./ux.ts"
@@ -54,7 +54,7 @@ export interface MachineOptions {
   readonly reader: WidgetReader
   readonly calls: WidgetCalls
   readonly live?: WidgetLive
-  readonly engine: () => Promise<CheckerEvaluator>
+  readonly engine: EngineLoader
   readonly context: Readonly<Record<string, unknown>>
   readonly objectTypeOf: (artifactId: string) => string | undefined
   readonly actionIdOf: (artifactId: string) => string | undefined
@@ -89,6 +89,17 @@ function valuesOf(document: unknown): unknown {
 }
 
 const GLOBAL_CLOCK: Clock = { setTimeout: (callback, ms) => globalThis.setTimeout(callback, ms), clearTimeout: (handle) => globalThis.clearTimeout(handle as ReturnType<typeof setTimeout>) }
+
+/** `work`, unless `signal` aborts first: a pending state's deadline or Cancel never waits on the engine. */
+function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(signal.reason)
+  let onAbort: () => void = () => {}
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason)
+    signal.addEventListener("abort", onAbort, { once: true })
+  })
+  return Promise.race([work, aborted]).finally(() => signal.removeEventListener("abort", onAbort))
+}
 
 const errorOf = (error: unknown): Error => (error instanceof Error ? error : new Error(String(error)))
 
@@ -136,30 +147,52 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
     }, limit)
   }
 
-  const loadEngine = () => {
-    if (!live || engine.state() === "ready") return
-    change({ engine: "loading" })
-    armWait()
-    engine.load().then(
+  const ready = () => {
+    stopWaiting()
+    change({ engine: "ready" })
+    driver.resume()
+    change({ waiting: driver.deferred() })
+  }
+
+  /**
+   * Follow one load attempt to its end, once per attempt: the engine may be loading already (another
+   * runtime on the same engine asked for it, as a rebuilt or StrictMode-remounted page does).
+   */
+  let observed: Promise<void> | null = null
+  const observe = (attempt: Promise<void>) => {
+    if (attempt === observed) return
+    observed = attempt
+    attempt.then(
       () => {
-        if (!live) return
-        stopWaiting()
-        change({ engine: "ready" })
-        driver.resume()
-        change({ waiting: driver.deferred() })
+        if (live && observed === attempt) ready()
       },
       () => {
+        if (!live || observed !== attempt) return
         stopWaiting()
         change({ engine: "failed" })
       },
     )
   }
 
+  /** Load the engine; a person's Retry (`fresh`) starts a new attempt even if one never settled. */
+  const loadEngine = (fresh: boolean) => {
+    if (!live || engine.state() === "ready") return
+    change({ engine: "loading" })
+    armWait()
+    observe(fresh ? engine.reload() : engine.load())
+  }
+
   /** A message waits for the engine: load it if nothing has asked yet, and bound the wait. */
   const deferred = () => {
     change({ waiting: driver.deferred() })
-    if (engine.state() === "idle") loadEngine()
-    else if (view.engine !== "failed") armWait()
+    const state = engine.state()
+    // Ready already (another runtime loaded it): replay now. On a microtask, never inside the driver's own step.
+    if (state === "ready") queueMicrotask(() => { if (live) ready() })
+    else if (state === "idle") loadEngine(false)
+    else {
+      if (state === "loading") observe(engine.load())
+      if (view.engine !== "failed") armWait()
+    }
   }
 
   const follow = (bindingId: string, read: NonNullable<ReturnType<typeof bindingRead>>) => {
@@ -202,7 +235,9 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
       const recordValues = record?.kind === "ok" ? valuesOf(record.document) : undefined
       const sources = { context, ...(typeof recordValues === "object" && recordValues !== null && !Array.isArray(recordValues) ? { record: recordValues } : {}) }
       const mapped: Record<string, unknown> = {}
-      for (const [member, expression] of Object.entries(binding.inputMapping)) mapped[member] = await engine.evaluateWith(expression, sources)
+      for (const [member, expression] of Object.entries(binding.inputMapping)) mapped[member] = await abortable(engine.evaluateWith(expression, sources), callOptions.signal)
+      // A deadline or Cancel that passed while the engine mapped the inputs sends nothing.
+      callOptions.signal.throwIfAborted()
       return calls.call(actionId, { ...mapped, ...input }, callOptions)
     },
   }
@@ -240,9 +275,11 @@ export function createPageRuntime(options: PageRuntimeOptions, onChange: (view: 
       driver.dispatch(msg)
       if (driver.deferred() !== view.waiting) change({ waiting: driver.deferred() })
     },
-    retryEngine: loadEngine,
+    retryEngine: () => loadEngine(true),
     preload: () => {
-      if (engine.state() === "idle") loadEngine()
+      const state = engine.state()
+      if (state === "idle") loadEngine(false)
+      else if (state === "loading") observe(engine.load())
     },
     dispose: () => {
       live = false
@@ -258,7 +295,7 @@ export function useWidgetMachine(options: MachineOptions): MachineRuntime {
   const { ux, machine, reader } = options
   const latest = useRef(options)
   latest.current = options
-  const engine = useMemo(() => lazyEngine(() => latest.current.engine()), [])
+  const engine = useMemo(() => lazyEngine((attempt) => latest.current.engine(attempt)), [])
   const [view, setView] = useState<RuntimeView>(() => initialView(machine, engine))
   const runtimeRef = useRef<PageRuntime | null>(null)
 

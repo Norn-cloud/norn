@@ -54,7 +54,8 @@ export function classifyResponse(status: number, body: unknown): Classified {
 /**
  * Classify one HTTP answer from its body text, parsed by `parse` (an exact parser keeps every number's
  * text). A body that is no JSON, such as a proxy's HTML error page, is classified as no body: a 404
- * page is still not served, a gateway's 503 page still no answer.
+ * page is still not served, a gateway's 503 page still no answer. A success whose body is no JSON
+ * (an HTML page a host served in place of the route) is no answer from the cell either.
  */
 export function classifyText(status: number, text: string, parse: (text: string) => unknown = JSON.parse): Classified {
   let body: unknown
@@ -62,6 +63,7 @@ export function classifyText(status: number, text: string, parse: (text: string)
     try {
       body = parse(text)
     } catch {
+      if (status >= 200 && status < 300) return { outcome: "network_failure", payload: {} }
       body = undefined
     }
   }
