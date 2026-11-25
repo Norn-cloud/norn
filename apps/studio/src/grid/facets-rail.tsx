@@ -1,10 +1,11 @@
 import { useQueries, useQuery } from "@tanstack/react-query"
 import { Check, ListFilter, X } from "lucide-react"
+import { ReadErrorState } from "@/components/load-state"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import type { Field } from "../lib/catalog.ts"
 import { StudioScopeError, type StudioScope } from "../lib/definitions.ts"
-import { FacetsTimedOut, chosen, countText, facetsQuery, toggled, without, type Facet } from "../lib/facets.ts"
+import { FacetsTimedOut, chosen, countText, countsRetryable, facetsQuery, toggled, without, type Facet } from "../lib/facets.ts"
 import { displayOf } from "../lib/objects.ts"
 import type { Clause, Predicate } from "../lib/records-query.ts"
 import { WORKSPACE_CHANGED_MESSAGE } from "../lib/views.ts"
@@ -36,26 +37,36 @@ export function FacetsRail({ objectType, fields, filter, scope, onFilter }: {
     queries: narrowed.map((property) => facetsQuery({ objectType, filter: without(filter, property), scope, property })),
   })
   if (scope && [base, ...own].some(({ error }) => error instanceof StudioScopeError && error.message === WORKSPACE_CHANGED_MESSAGE)) {
-    return <p role="alert" className="px-1 text-meta text-destructive">{WORKSPACE_CHANGED_MESSAGE}</p>
+    return <p role="alert" className="px-2.5 py-2.5 text-meta text-destructive">{WORKSPACE_CHANGED_MESSAGE}</p>
   }
-  if (base.isPending) return <p className="px-1 text-meta text-muted-foreground">Counting values…</p>
-  if (base.isError) return (
-    <div role="status" className="grid gap-1.5 px-1 text-meta text-muted-foreground">
-      <p>{base.error instanceof FacetsTimedOut ? "Counts aren't available right now." : base.error.message}</p>
-      {base.error instanceof FacetsTimedOut && <p>{base.error.message} The records are still listed.</p>}
-      <div><Button type="button" variant="outline" size="xs" disabled={base.isFetching} onClick={() => void base.refetch()}>Count again</Button></div>
-    </div>
-  )
+  if (base.isPending) return <p className="px-2.5 py-2.5 text-meta text-muted-foreground">Counting values…</p>
+  if (base.isError) {
+    const error = base.error
+    // Counts that never arrived can be asked for again; the rows above them are unaffected.
+    if (error instanceof FacetsTimedOut) return (
+      <div role="status" className="grid gap-1.5 px-2.5 py-2.5 text-body">
+        <p className="text-foreground">Counts aren't available right now.</p>
+        <p className="text-meta text-muted-foreground">{error.message} The records are still listed.</p>
+        <div><Button type="button" variant="outline" size="xs" className="max-sm:min-h-[44px]" disabled={base.isFetching} onClick={() => void base.refetch()}>Count again</Button></div>
+      </div>
+    )
+    // Anything else is the cell's answer: the shared refused state, in this well, in its own words.
+    return (
+      <ReadErrorState inset title="Counts aren't available" error={error} isFetching={base.isFetching} onRetry={countsRetryable(error) ? () => void base.refetch() : undefined}>
+        <p className="text-meta text-muted-foreground">The records are still listed.</p>
+      </ReadErrorState>
+    )
+  }
   const document = base.data.document
   const facetOf = (property: string): Facet | undefined => {
     const at = narrowed.indexOf(property)
     return (at >= 0 ? own[at]?.data?.document.facets[0] : undefined) ?? document.facets.find((facet) => facet.property === property)
   }
   const shown = document.facets.filter(({ values }) => values.length > 0)
-  if (shown.length === 0) return <p className="px-1 text-meta text-muted-foreground">No text, choice or yes/no values to narrow by.</p>
+  if (shown.length === 0) return <p className="px-2.5 py-2.5 text-meta text-muted-foreground">No text, choice or yes/no values to narrow by.</p>
   return (
-    <div className="grid gap-4" aria-label="Narrow by">
-      <div className="flex items-center gap-2 px-1 text-meta text-muted-foreground">
+    <div className="grid gap-4 py-1" aria-label="Narrow by">
+      <div className="flex items-center gap-2 px-2 text-meta text-muted-foreground">
         <ListFilter className="size-3.5" aria-hidden />
         <span className="flex-1">{countText(document.rows, document.lowerBound)} {document.rows === 1 ? "record" : "records"}, counted by the cell</span>
       </div>
@@ -67,12 +78,12 @@ export function FacetsRail({ objectType, fields, filter, scope, onFilter }: {
         const most = Math.max(1, ...facet.values.map(({ count }) => count))
         return (
           <section key={property} className="grid gap-0.5">
-            <h3 className="px-2 pb-0.5 text-xs font-medium text-muted-foreground">{label(field, property)}</h3>
+            <h3 className="px-2 pb-0.5 text-meta text-muted-foreground">{label(field, property)}</h3>
             {facet.values.map(({ value, count }) => {
               const on = held.includes(value)
               return (
                 <button key={String(value)} type="button" aria-pressed={on} onClick={() => onFilter(toggled(filter, property, value))}
-                  className={cn("relative flex h-row-scan items-center gap-2 overflow-hidden rounded-md px-2 text-start text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/40", on && "bg-muted font-medium")}>
+                  className={cn("relative flex h-row-scan items-center gap-2 overflow-hidden rounded-(--radius-row) px-2 text-start text-body outline-none hover:bg-(--well-hover) focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring focus-visible:outline-solid max-sm:min-h-[44px]", on && "bg-card ring-1 ring-panel-border")}>
                   {/* The share is a hairline under the row, so a long list of values reads as text, not as a stack of bars. */}
                   <span aria-hidden className="absolute start-2 bottom-0.5 h-px bg-foreground/20" style={{ width: `calc((100% - 1rem) * ${count / most})` }} />
                   <span className="relative flex size-3.5 shrink-0 items-center justify-center rounded-[3px] border bg-card">{on && <Check className="size-3" aria-hidden />}</span>

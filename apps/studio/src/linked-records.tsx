@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { MarkingChips, useMarkingCatalog } from "@/components/marking-chip"
 import { Link } from "@tanstack/react-router"
-import { TableCard } from "@/components/table-card"
+import { TableCard } from "@/components/system/table-card"
 import { Badge } from "@/components/ui/badge"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import type { Read } from "@/lib/exact"

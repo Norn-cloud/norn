@@ -1,0 +1,147 @@
+{
+  "artifactId": "supply.receipt.record.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record a shipment receipt",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.receipt.record",
+    "createLinks": [
+      {
+        "link": "order_line",
+        "targetIdField": "line_id",
+        "targetType": "supply.OrderLine"
+      },
+      {
+        "link": "warehouse",
+        "targetIdField": "warehouse_id",
+        "targetType": "supply.Warehouse"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "supply.ShipmentReceipt.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "receipt_id",
+      "objectKind": "supply.ShipmentReceipt",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "damaged_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "line_id": {
+          "type": "string"
+        },
+        "receipt_id": {
+          "type": "string"
+        },
+        "received_at": {
+          "type": "string"
+        },
+        "received_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "supplier_id": {
+          "type": "string"
+        },
+        "unit": {
+          "enum": [
+            "each",
+            "kg",
+            "l"
+          ],
+          "type": "string"
+        },
+        "warehouse_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "receipt_id",
+        "supplier_id",
+        "warehouse_id",
+        "line_id",
+        "received_qty",
+        "damaged_qty",
+        "unit",
+        "received_at"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "receipt_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "receipt_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "input.unit == slice.line.unit"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "line_id"
+          }
+        },
+        "name": "line",
+        "objectType": "supply.OrderLine"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "warehouse_id"
+          }
+        },
+        "name": "warehouse",
+        "objectType": "supply.Warehouse"
+      }
+    ],
+    "title": "Record a shipment receipt",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "supply.ShipmentReceipt"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.receipt.record.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

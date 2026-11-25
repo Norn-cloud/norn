@@ -1,12 +1,14 @@
-import { keepPreviousData, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query"
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query"
+import { Dot } from "@/components/system/status-dot"
 import { MarkingChips, useMarkingCatalog } from "@/components/marking-chip"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { useVirtualizer } from "@tanstack/react-virtual"
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Columns3, ExternalLink, Filter, Play, Plus, RefreshCw, Rows3 } from "lucide-react"
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Columns3, ExternalLink, Filter, ListFilter, Play, Plus, RefreshCw, Rows3 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react"
 import { CopyId, PathText } from "@/components/copy-id"
-import { LoadState, ReadErrorState, WorkspaceUnavailable, isWorkspaceUnavailableError, useBoundedWait } from "@/components/load-state"
-import { EmptyState } from "@/components/panel"
+import { LoadState, ReadErrorState, WorkspaceUnavailable, WorkspaceUndecided, isWorkspaceUnavailableError, useBoundedWait } from "@/components/load-state"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
+import { Disclosure } from "@/components/disclosure"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -15,39 +17,38 @@ import { Sheet, SheetBody, SheetContent, SheetDescription, SheetFooter, SheetHea
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 import type { Concept, Field } from "../lib/catalog.ts"
-import { CellUnavailable, NO_DATA_CELL, readAtScope, readStudioScope, studioScopeKey, StudioScopeError, type StudioScope } from "../lib/definitions.ts"
+import { CellUnavailable, NO_DATA_CELL, studioScopeKey, StudioScopeError, useStudioScope, type StudioScope } from "../lib/definitions.ts"
 import { recordName } from "../lib/objects.ts"
-import { cycleSort, DATA_CHANGED, LIMITS, recordsQueryParams, recordsQueryPrefix, SERVER_QUERY_UNAVAILABLE, sortable, totalText, type Predicate, type RecordsQuery, type SortKey } from "../lib/records-query.ts"
-import { diagnosticsAt, readRecords, readRecordsAtScope, type RecordsRead } from "../lib/records-source.ts"
-import { retryMode, type Mode } from "../lib/live-transport.ts"
-import { drawerRead } from "../lib/record-read.ts"
+import { cycleSort, DATA_CHANGED, LIMITS, SERVER_QUERY_UNAVAILABLE, sortable, totalText, type Predicate, type RecordsQuery, type SortKey } from "../lib/records-query.ts"
+import { diagnosticsAt, type RecordsRead } from "../lib/records-source.ts"
+import { readPage, useWorkspace, type RecordedReader, type ScopedReader } from "../lib/workspace.tsx"
 import { ACTIONS_UNAVAILABLE, writesWhole } from "../lib/actions.ts"
 import { type ActionSummary } from "../../../../packages/norn-sdk/src/index.ts"
 import { ActionSheet, useActions, type ActionScopeBinding, type OpenAction } from "../actions/action-sheet.tsx"
 import { offeredFor, recordCatalog } from "../lib/screen/call.ts"
-import { alignRight, isWithheld, TracedCell, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow, RecordName } from "./cells.tsx"
+import { alignRight, isWithheld, NAME_PROPERTIES, TracedCell, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow, RecordName } from "./cells.tsx"
+import { maskedOf } from "../lib/privacy.ts"
 import { blankClause, FilterEditor, filterable, fromPredicate, toPredicate, type DraftClause } from "./filter-editor.tsx"
 import { FacetsRail, FilterChips } from "./facets-rail.tsx"
 import { RecordsTimeline } from "./records-timeline.tsx"
 import { LifecycleView } from "@/components/lifecycle-view"
-import { RevealScope } from "@/components/masked-value"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { MaskedValue, RevealScope } from "@/components/masked-value"
+import { Segmented, SegmentedItem } from "@/components/segmented"
 import { TIMELINE_MAX_USER_CLAUSES, stepAnchor, tryWindowQuery, windowOf, type Zoom } from "../lib/timeline.ts"
 
 const ROW = 32
 const DEFAULT_COLUMNS = 8
 const PAGE_SIZES = [50, 100, LIMITS.maxPageSize] as const
-const HIDDEN_FIELDS = new Set(["id", "label", "display_name"])
+/** The id and the naming properties: the grid shows them as its Record column, not as columns of their own. */
+const HIDDEN_FIELDS = new Set(["id", ...NAME_PROPERTIES])
+/** A fact's label in the record sheet, the same for its name rows and the rows under them. */
+const factLabel = (field: Field): string => field.id.replaceAll("_", " ")
 const RECORDED = "Replayed documents the engine produced. The cell doesn't serve live records here yet."
+const RECORDED_ACTIONS = "Recorded records take no actions."
 
-export type Read = (objectType: string, query: RecordsQuery, signal?: AbortSignal) => Promise<RecordsRead>
-const defaultRead: Read = (objectType, query, signal) => readRecords(objectType, query, undefined, signal)
-const scopedRead = (scope: StudioScope): Read => (objectType, query, signal) => readAtScope(
-  scope,
-  (s) => readStudioScope(undefined, s),
-  () => readRecordsAtScope(objectType, query, scope, undefined, signal),
-  signal,
-)
+
+/** Where a grid reads its records: a decided workspace's cell, or the recording (`lib/workspace.tsx`). */
+export type GridReader = ScopedReader | RecordedReader
 
 const nameOf = (row: GridRow) => isWithheld(row) ? row.record.id : recordName(row.record)
 
@@ -68,7 +69,7 @@ function Shell({ children }: { readonly children: ReactNode }) {
 }
 
 /** The Record column stays put while the others scroll sideways. */
-const STICKY = "sticky start-0 z-10 shadow-[1px_0_0_var(--node-border)]"
+const STICKY = "sticky start-0 z-10 shadow-[1px_0_0_var(--node-border)] rtl:shadow-[-1px_0_0_var(--node-border)]"
 
 /**
  * An object type's records, one server page at a time. Sorting, filtering and paging are the
@@ -101,44 +102,35 @@ export function visibleDrawerRow(openedId: string | null, rows: readonly GridRow
   return rows.find(({ record }) => record.id === openedId) ?? null
 }
 
-/** The page's own mode read, for a grid shown before the mode is decided: what a live row's drawer says meanwhile. */
-export type GridMode = Pick<UseQueryResult<Mode>, "isPending" | "isError" | "error" | "isFetching">
-
 /**
- * A type page's records, shown only once the page's mode is decided (#1745): a live cell's grid is
- * bound to the workspace the mode was read at, and with no cell connected the grid reads the
- * recording. While the mode is read the Records section shows the grid's skeleton; after a failed
- * mode read (including a refetch that failed after an earlier answer) it shows Workspace
- * unavailable with the mode's own Retry, never a grid read without a workspace.
+ * A type page's records, shown only once the page's workspace is decided (#1745, #1754): a live cell's
+ * grid reads at the workspace its mode was read at, and a recorded workspace's grid reads only the
+ * recording, even when the session's cell would serve records. While the mode is read the Records
+ * section shows the grid's skeleton; after a failed mode read (including a refetch that failed after
+ * an earlier answer) it shows Workspace unavailable with the mode's own Retry, never a grid.
  */
-export function DecidedRecordsGrid({ concept, mode, timeline = false }: {
+export function DecidedRecordsGrid({ concept, timeline = false }: {
   readonly concept: Concept
-  readonly mode: UseQueryResult<Mode>
   readonly timeline?: boolean
 }) {
-  const queries = useQueryClient()
-  if (!mode.isSuccess) {
-    return (
-      <Shell>
-        <LoadState status={mode.status} error={mode.error} isFetching={mode.isFetching} onRetry={() => void retryMode(queries)} bone="records-table" loadingLabel="Reading the records">{() => null}</LoadState>
-      </Shell>
-    )
+  const workspace = useWorkspace()
+  const session = useStudioScope()
+  if (workspace.kind === "deciding" || workspace.kind === "unavailable") {
+    return <Shell><WorkspaceUndecided workspace={workspace} bone="records-table" loadingLabel="Reading the records" /></Shell>
   }
-  const scope = mode.data.kind === "live" ? mode.data.scope : undefined
-  return <RecordsGrid key={`${concept.name}:${studioScopeKey(scope)}`} concept={concept} scope={scope} mode={mode} timeline={timeline} />
+  // The session names a workspace with no data cell: it has no records, and the recording is not its own.
+  if (workspace.kind === "recorded" && session.isSuccess && session.data === null) return <Shell><EmptyState icon={Rows3} title="No data cell">{NO_DATA_CELL}</EmptyState></Shell>
+  const key = workspace.kind === "live" ? studioScopeKey(workspace.scope) : "recorded"
+  return <RecordsGrid key={`${concept.name}:${key}`} concept={concept} reader={workspace.reader} timeline={timeline} />
 }
 
-export function RecordsGrid({ concept, read, scope, mode, initial, onQuery, timeline = false }: {
+export function RecordsGrid({ concept, reader, initial, onQuery, timeline = false }: {
   readonly concept: Concept
-  readonly read?: Read
   /**
-   * The workspace the records were decided in: a saved view's, or the page's decided mode's. Its
-   * query cache, facets, actions, reveals and drawer reads are bound to it. Without one, a live
-   * row's drawer reads nothing.
+   * The decided workspace's reader: a live workspace's (its query cache, facets, actions, reveals and
+   * drawer reads are bound to its scope), or the recording's.
    */
-  readonly scope?: StudioScope
-  /** The page's mode read, while it may be undecided (the type pages): a live row's drawer shows its state. */
-  readonly mode?: GridMode
+  readonly reader: GridReader
   /** The type is a `core.TimeInterval`: the records can also be read as a timeline (lib/timeline.ts). */
   readonly timeline?: boolean
   /** The query to open with: a saved view's. */
@@ -147,6 +139,7 @@ export function RecordsGrid({ concept, read, scope, mode, initial, onQuery, time
   readonly onQuery?: (query: DisplayedGridQuery) => void
 }) {
   const name = concept.name
+  const scope: StudioScope | undefined = reader.kind === "live" ? reader.scope : undefined
   const fields = useMemo(() => concept.fields.filter(({ id }) => !HIDDEN_FIELDS.has(id)), [concept])
   const markings = useMarkingCatalog()
   // The Record column shows the record's name: the markings of the name facts it is read from.
@@ -178,11 +171,12 @@ export function RecordsGrid({ concept, read, scope, mode, initial, onQuery, time
   const [viewing, setViewing] = useState<{ readonly id: string; readonly since: number } | null>(null)
   const navigate = useNavigate()
   const actionScope = useMemo<ActionScopeBinding | undefined>(() => scope === undefined ? undefined : { scope }, [scope])
-  const catalog = useActions(name, undefined, true, actionScope)
+  // Only a live workspace's cell offers actions: a recorded grid reads none, and offers none (#1754).
+  const catalog = useActions(name, undefined, reader.kind === "live", actionScope)
   const actions = catalog.data?.kind === "catalog" ? catalog.data.items : []
   const creates = actions.filter(writesWhole)
   // Off with the reason while the cell takes no actions; absent when it offers this reader none.
-  const actionsOff = catalog.isError ? (catalog.error instanceof Error ? catalog.error.message : ACTIONS_UNAVAILABLE)
+  const actionsOff = reader.kind === "recorded" ? RECORDED_ACTIONS : catalog.isError ? (catalog.error instanceof Error ? catalog.error.message : ACTIONS_UNAVAILABLE)
     : catalog.data?.kind === "unavailable" ? ACTIONS_UNAVAILABLE : catalog.data?.kind === "refused" ? catalog.data.message : undefined
   const [filterOpen, setFilterOpen] = useState(false)
   const client = useQueryClient()
@@ -208,13 +202,12 @@ export function RecordsGrid({ concept, read, scope, mode, initial, onQuery, time
     limit: shownTimeline ? LIMITS.maxPageSize : limit,
     ...cursors[pageIndex] === undefined ? {} : { after: cursors[pageIndex] },
   }
-  const readRecordsPage = useMemo<Read>(
-    () => read ?? (scope !== undefined ? scopedRead(scope) : defaultRead),
-    [read, scope?.orgId, scope?.environmentId],
-  )
-  const prefix = recordsQueryPrefix(name, scope)
-  const key = [...prefix, recordsQueryParams(query).toString()] as const
-  const result = useQuery({ queryKey: key, queryFn: ({ signal }) => readRecordsPage(name, query, signal), placeholderData: keepPreviousData, retry: false, enabled: filterOverflow === 0 })
+  // The Timeline's nearest-record reads go through the same reader.
+  const readRecordsPage = useMemo(() => readPage(reader), [reader])
+  const read = reader.records(name, query)
+  const key = read.queryKey
+  const prefix = key.slice(0, -1)
+  const result = useQuery({ ...read, placeholderData: keepPreviousData, retry: false, enabled: filterOverflow === 0 })
   const data = result.data
 
   const restart = () => { setCursors([undefined]); setPageIndex(0); setActive(0) }
@@ -224,7 +217,7 @@ export function RecordsGrid({ concept, read, scope, mode, initial, onQuery, time
     void client.removeQueries({ queryKey: prefix, predicate: ({ queryKey }) => queryKey.length === key.length })
     restart()
     setNotice(DATA_CHANGED)
-  }, [data, client, name, scope?.orgId, scope?.environmentId])
+  }, [data, client, name, reader])
 
   // Controls are on only when the last page says the cell applied the query.
   // A workspace change or an authorization refusal hides the cached page (and with it the drawer).
@@ -255,12 +248,13 @@ export function RecordsGrid({ concept, read, scope, mode, initial, onQuery, time
   const width = `calc(14rem + ${columns.map((field) => alignRight(field) ? "10.5rem" : "11rem").join(" + ")})`
 
   const scroller = useRef<HTMLDivElement>(null)
-  const [edges, setEdges] = useState({ right: false })
+  const [edges, setEdges] = useState({ end: false })
   const measureEdges = () => {
     const el = scroller.current
     if (el === null) return
-    const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
-    setEdges((current) => current.right === right ? current : { right })
+    // RTL scrollers count scrollLeft down from 0, so its size is the distance from the start edge.
+    const end = Math.abs(el.scrollLeft) + el.clientWidth < el.scrollWidth - 1
+    setEdges((current) => current.end === end ? current : { end })
   }
   useEffect(() => {
     measureEdges()
@@ -313,25 +307,32 @@ export function RecordsGrid({ concept, read, scope, mode, initial, onQuery, time
     <RevealScope.Provider value={scope}>
     <Shell>
       <div className={cn("grid gap-4", facets && "xl:grid-cols-[15rem_minmax(0,1fr)]")}>
-      {facets && <aside className="hidden max-h-[70vh] overflow-y-auto pe-1 xl:block">{facets}</aside>}
+      {/* The rail is a ShellCard: its title, then the counts (or the cell's reason there are none) in one well. */}
+      {facets && <aside className="hidden max-h-[70vh] overflow-y-auto xl:block"><Panel icon={ListFilter} label="Narrow by"><Well className="p-1.5">{facets}</Well></Panel></aside>}
       {/* content-start: beside a taller facets rail, the rows keep their own height (no band between them). */}
       <div className="grid min-w-0 content-start gap-3">
-        {facets && <details className="rounded-lg border border-node-border px-3 py-2 xl:hidden"><summary className="cursor-pointer text-body">Narrow by</summary><div className="pt-3">{facets}</div></details>}
+        {facets && (
+          <Panel className="xl:hidden">
+            <Disclosure summary="Narrow by" summaryClassName="min-h-11 w-full px-3.5 text-body text-foreground max-sm:min-h-[44px]">
+              <Well className="p-1.5">{facets}</Well>
+            </Disclosure>
+          </Panel>
+        )}
         {/* Problems sit above the toolbar, so the filter popover (which opens below it) never covers them. */}
         {refused && (
           <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-(--radius-well) border border-(--panel-border) bg-card px-3 py-2 text-body text-foreground">
-            <span aria-hidden className="size-[6px] shrink-0 rounded-full bg-dot-bad" /><span>{refused.message}</span>
+            <Dot tone="bad"><span>{refused.message}</span></Dot>
             {sortProblems.map((problem) => <span key={`${problem.pointer}:${problem.code}`} className="text-meta">{problem.message}</span>)}
             <span className="flex-1" />
             <Button variant="outline" size="sm" className={pill} onClick={() => { setDraft([]); changeQuery({ sort: [], filter: null }) }}>Reset sort and filter</Button>
           </div>
         )}
         {result.isError && (isWorkspaceUnavailableError(result.error)
-          ? <WorkspaceUnavailable error={result.error} isFetching={result.isFetching} onRetry={() => void result.refetch()} compact />
+          ? <WorkspaceUnavailable error={result.error} compact />
           : <ReadErrorState error={result.error} isFetching={result.isFetching} onRetry={() => void result.refetch()} />)}
         <div className="flex flex-wrap items-center gap-2">
           {hasViewModes && (
-            <ToggleGroup type="single" variant="outline" size="sm" aria-label="Show as" value={layout}
+            <Segmented aria-label="Show as" value={layout}
               onValueChange={(next) => {
                 if (next === "table" || (next === "timeline" && timeline && canQuery) || (next === "lifecycle" && hasLifecycle)) {
                   setLayout(next)
@@ -343,10 +344,10 @@ export function RecordsGrid({ concept, read, scope, mode, initial, onQuery, time
                   }
                 }
               }}>
-              <ToggleGroupItem value="table" className="px-3">Table</ToggleGroupItem>
-              {timeline && <ToggleGroupItem value="timeline" className="px-3" disabled={!canQuery && layout !== "timeline"} title={!canQuery ? off : undefined}>Timeline</ToggleGroupItem>}
-              {hasLifecycle && <ToggleGroupItem value="lifecycle" className="px-3">Lifecycle</ToggleGroupItem>}
-            </ToggleGroup>
+              <SegmentedItem value="table">Table</SegmentedItem>
+              {timeline && <SegmentedItem value="timeline" disabled={!canQuery && layout !== "timeline"} title={!canQuery ? off : undefined}>Timeline</SegmentedItem>}
+              {hasLifecycle && <SegmentedItem value="lifecycle">Lifecycle</SegmentedItem>}
+            </Segmented>
           )}
           <div role="toolbar" aria-label="Records" className="flex w-max flex-nowrap items-center gap-0.5">
             <Popover open={filterOpen} onOpenChange={(open) => { setFilterOpen(open); if (open && draft.length === 0 && filterCount === 0) { const first = filterable(fields)[0]; if (first) setDraft([blankClause(first)]) } }}>
@@ -488,7 +489,7 @@ export function RecordsGrid({ concept, read, scope, mode, initial, onQuery, time
               </div>
             </div>
           </div>
-          {edges.right && <div aria-hidden className="pointer-events-none absolute inset-y-0 right-0 z-30 w-12 bg-gradient-to-l from-card to-transparent" />}
+          {edges.end && <div aria-hidden className="pointer-events-none absolute inset-y-0 end-0 z-30 w-12 bg-gradient-to-l from-card to-transparent rtl:bg-gradient-to-r" />}
         </div>
 
         {!shownLifecycle && (
@@ -501,7 +502,7 @@ export function RecordsGrid({ concept, read, scope, mode, initial, onQuery, time
         )}
       </div>
       </div>
-      <RecordDrawer concept={concept} fields={fields} row={drawerRow} origin={page?.origin} scope={scope} mode={mode} actions={actions} actionsOff={actionsOff} onClose={() => setOpenedId(null)}
+      <RecordDrawer concept={concept} fields={fields} row={drawerRow} reader={reader} actions={actions} actionsOff={actionsOff} onClose={() => setOpenedId(null)}
         onAction={(action, id) => { setOpenedId(null); setActing({ action, prefill: { [action.objectIdField]: id } }) }} />
       <ActionSheet open={acting} onClose={() => setActing(null)} onView={(id) => setViewing({ id, since: Date.now() })} scopeBinding={actionScope} />
     </Shell>
@@ -529,40 +530,37 @@ function NewRecord({ title, creates, off, pending, onPick }: {
   )
 }
 
-/**
- * A live row's links while the grid has no decided workspace: nothing is read. A failed mode read
- * shows the shared Workspace unavailable state with the mode's own Retry; once it is decided, the
- * page passes its scope and the drawer reads there.
- */
-export function UndecidedWorkspace({ mode }: { readonly mode: GridMode | undefined }) {
-  const queries = useQueryClient()
-  if (mode?.isError) return <WorkspaceUnavailable compact error={mode.error} isFetching={mode.isFetching} onRetry={() => void retryMode(queries)} />
-  if (mode?.isPending) return <Skeleton className="h-5" aria-label="Deciding the workspace" />
-  return <p className="text-meta text-muted-foreground">{"This record's links show once its workspace is confirmed."}</p>
-}
-
-function RecordDrawer({ concept, fields, row, origin, scope, mode, actions, actionsOff, onClose, onAction }: {
-  readonly concept: Concept; readonly fields: readonly Field[]; readonly row: GridRow | null; readonly origin: "live" | "recorded" | undefined; readonly scope?: StudioScope; readonly mode?: GridMode; readonly onClose: () => void
+function RecordDrawer({ concept, fields, row, reader, actions, actionsOff, onClose, onAction }: {
+  readonly concept: Concept; readonly fields: readonly Field[]; readonly row: GridRow | null; readonly reader: GridReader; readonly onClose: () => void
   readonly actions: readonly ActionSummary[]; readonly actionsOff: string | undefined; readonly onAction: (action: ActionSummary, id: string) => void
 }) {
   const record = row?.record
   const markings = useMarkingCatalog()
+  // The grid exists only in a decided workspace, so its rows are that workspace's: live rows from its
+  // cell, recorded rows from the recording, never a live row without a workspace (#1754).
+  const live = reader.kind === "live"
+  const scope = live ? reader.scope : undefined
   const scopeBinding = useMemo<ActionScopeBinding | undefined>(() => scope === undefined ? undefined : { scope }, [scope])
   // What can act on this record now: the cell narrows the type's catalog to the record's state.
-  const narrowed = useActions(record?.objectType ?? "", record?.id, record !== undefined && origin === "live", scopeBinding)
-  const offered = recordCatalog(origin === "live", narrowed, actions)
-  // The row's record, read at the grid's workspace (or, for a recorded row, from the recording) and
-  // cached under the same key as its full page. A live row with no decided workspace is not read (#1740).
-  const recordReads = record === undefined ? null : drawerRead(record.objectType, record.id, scope, origin)
+  const narrowed = useActions(record?.objectType ?? "", record?.id, record !== undefined && live, scopeBinding)
+  const offered = recordCatalog(live, narrowed, actions)
+  // The row's record, read through the grid's reader and cached under the same key as its full page (#1740).
   const object = useQuery({
-    queryKey: recordReads?.queryKey ?? ["object", "unread"],
-    queryFn: recordReads?.queryFn ?? (async () => null),
-    enabled: recordReads !== null && row !== null && !isWithheld(row),
+    ...reader.object(record?.objectType ?? concept.name, record?.id ?? ""),
+    enabled: record !== undefined && row !== null && !isWithheld(row),
   })
   const links = object.data?.links.document.items ?? []
+  // The naming properties the grid shows as the Record column; the sheet lists one only when the server
+  // projected it for this reader, since an unmasked name is already the sheet's title.
+  const namedBy = row === null || isWithheld(row) ? [] : concept.fields.flatMap((field) => {
+    const masked = NAME_PROPERTIES.includes(field.id) ? maskedOf(row.record, field.id) : null
+    return masked === null ? [] : [{ field, masked }]
+  })
   return (
     <Sheet open={row !== null} onOpenChange={(open) => { if (!open) onClose() }}>
-      <SheetContent className="overflow-y-auto">
+      {/* As tall as what it holds (up to the screen less its 12px inset, then the body scrolls), with the
+          footer pinned under the body, so a short record is not a sheet of empty space. */}
+      <SheetContent className="overflow-y-auto data-[side=right]:bottom-auto data-[side=right]:max-h-[calc(100dvh-24px)] max-sm:data-[side=right]:bottom-auto max-sm:data-[side=right]:max-h-[calc(100dvh-16px)]">
         {row !== null && record !== undefined && <>
           <SheetHeader>
             <SheetTitle className="[overflow-wrap:break-word]"><PathText value={nameOf(row)} /></SheetTitle>
@@ -573,16 +571,18 @@ function RecordDrawer({ concept, fields, row, origin, scope, mode, actions, acti
               {isWithheld(row)
                 ? <p className="px-2.5 py-2.5 text-body"><WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark></p>
                 : <dl className="grid grid-cols-[minmax(8rem,auto)_1fr] text-body">
-                  {fields.map((field) => <div key={field.id} className="contents"><dt className="flex min-h-10 flex-wrap items-center gap-1 px-2.5 py-2.5 text-muted-foreground">{field.id.replaceAll("_", " ")}<MarkingChips markings={field.markings} catalog={markings} /></dt><dd className="flex min-h-10 min-w-0 items-center px-2.5 py-2.5 break-words"><TracedCell field={field} row={row} live={origin === "live"} lineage={object.data?.source?.document ?? null} variant="inline" /></dd></div>)}
+                  {/* The record's own name when the server projected it (masked or pseudonymised): the same chip,
+                      with the same Reveal the server allows, as the grid's Record column shows. */}
+                  {namedBy.map(({ field, masked }) => <div key={field.id} data-name-fact={field.id} className="contents"><dt className="flex min-h-10 flex-wrap items-center gap-1 px-2.5 py-2.5 text-muted-foreground">{factLabel(field)}<MarkingChips markings={field.markings} catalog={markings} /></dt><dd className="flex min-h-10 min-w-0 items-center px-2.5 py-2.5 break-words"><MaskedValue objectType={record.objectType} id={record.id} version={record.version} property={field.id} masked={masked} projected={record.values?.[field.id]} /></dd></div>)}
+                  {fields.map((field) => <div key={field.id} className="contents"><dt className="flex min-h-10 flex-wrap items-center gap-1 px-2.5 py-2.5 text-muted-foreground">{factLabel(field)}<MarkingChips markings={field.markings} catalog={markings} /></dt><dd className="flex min-h-10 min-w-0 items-center px-2.5 py-2.5 break-words"><TracedCell field={field} row={row} live={live} lineage={object.data?.source?.document ?? null} variant="inline" /></dd></div>)}
                   <dt className="flex min-h-10 items-center px-2.5 py-2.5 text-muted-foreground">version</dt><dd className="flex min-h-10 items-center px-2.5 py-2.5 tabular-nums">{record.version}</dd>
                 </dl>}
             </SheetSection>
             {!isWithheld(row) && <SheetSection label="Linked records">
               <div className="px-2.5 py-2">
-                {recordReads === null ? <UndecidedWorkspace mode={mode} />
-                  : object.isPending ? <Skeleton className="h-5" />
+                {object.isPending ? <Skeleton className="h-5" />
                   : object.data === null || object.data === undefined
-                    ? <p className="text-meta text-muted-foreground">{origin === "live" ? "This cell doesn't serve a record's links yet." : "No recorded links for this record."}</p>
+                    ? <p className="text-meta text-muted-foreground">{live ? "This cell doesn't serve a record's links yet." : "No recorded links for this record."}</p>
                     : links.length === 0 ? <p className="text-meta text-muted-foreground">Nothing links to or from this record.</p>
                       : <ul className="grid gap-1 text-body">{links.map((link) => {
                         const outgoing = link.source === record.id

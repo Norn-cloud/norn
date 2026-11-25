@@ -13,15 +13,15 @@ const changes = (count: number) => `${count} committed ${count === 1 ? "change" 
 function Reading({ title, when, bucket, note }: { readonly title: string; readonly when: string; readonly bucket: Bucket | undefined; readonly note?: string }) {
   return (
     <div className="space-y-1 rounded-lg border p-4">
-      <div className="text-sm font-medium">{title}</div>
-      <div className="text-xs text-muted-foreground">{when}</div>
+      <div className="text-body">{title}</div>
+      <div className="text-meta text-muted-foreground">{when}</div>
       {bucket
         ? <>
             <div className="pt-2 text-figure leading-none font-normal tracking-[-0.02em] tabular-nums">{shown(bucket)}</div>
             <div className="text-meta text-muted-foreground tabular-nums">{fraction(bucket.totals)}{bucket.totals.length > 1 && ` = ${bucket.value} exactly`}</div>
           </>
         : <div className="pt-2 text-muted-foreground">Not in this read.</div>}
-      {note && <div className="pt-2 text-xs text-muted-foreground">{note}</div>}
+      {note && <div className="pt-2 text-meta text-muted-foreground">{note}</div>}
     </div>
   )
 }
@@ -42,7 +42,7 @@ export function RestatementCard() {
     <Card id="corrections" className="scroll-mt-4">
       <CardHeader>
         <div className="flex flex-wrap items-center gap-2">
-          <CardTitle className="text-xl">Corrections to {headline(declared.question).toLowerCase()}</CardTitle>
+          <CardTitle className="text-heading">Corrections to {headline(declared.question).toLowerCase()}</CardTitle>
           {recorded && <Badge variant="outline" title="Documents the engine produced, replayed exactly. Not a live connection.">Recorded</Badge>}
         </div>
         <CardDescription>
@@ -52,7 +52,7 @@ export function RestatementCard() {
       <CardContent className="space-y-8">
         {restated(published, after, then).map((change) => (
           <div key={change.key} className="space-y-4">
-            <h3 className="font-medium">{change.label}</h3>
+            <h3>{change.label}</h3>
             <div className="grid gap-4 md:grid-cols-3">
               <Reading title="Published" when={read(answer.document)} bucket={change.published} />
               <Reading title="Corrected" when={read(corrected.document)} bucket={change.corrected} />
@@ -64,13 +64,13 @@ export function RestatementCard() {
               />
             </div>
             <Table>
-              <TableHeader><TableRow><TableHead>Corrected record</TableHead><TableHead className="text-right">Published</TableHead><TableHead className="text-right">Corrected</TableHead></TableRow></TableHeader>
+              <TableHeader><TableRow><TableHead>Corrected record</TableHead><TableHead className="text-end">Published</TableHead><TableHead className="text-end">Corrected</TableHead></TableRow></TableHeader>
               <TableBody>
                 {change.records.map(({ id, published: was, corrected: is }) => (
                   <TableRow key={id}>
-                    <TableCell className="font-mono text-xs">{id}</TableCell>
-                    <TableCell className="text-right tabular-nums">{was ? `${contribution(was.amounts)} (version ${was.version})` : "not counted"}</TableCell>
-                    <TableCell className="text-right tabular-nums">{is ? `${contribution(is.amounts)} (version ${is.version})` : "not counted"}</TableCell>
+                    <TableCell className="font-mono text-meta">{id}</TableCell>
+                    <TableCell className="text-end tabular-nums">{was ? `${contribution(was.amounts)} (version ${was.version})` : "not counted"}</TableCell>
+                    <TableCell className="text-end tabular-nums">{is ? `${contribution(is.amounts)} (version ${is.version})` : "not counted"}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

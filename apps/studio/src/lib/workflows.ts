@@ -1,3 +1,4 @@
+import type { Catalog } from "./catalog.ts"
 import type { RunFlow } from "./flows.ts"
 import { words } from "./format.ts"
 import type { Envelope, Schemas } from "./transport.ts"
@@ -9,6 +10,30 @@ export const workflowAnchor = (workflow: Pick<Workflow, "objectType" | "lifecycl
 /** A workflow's display name: the title of the flow whose runs it is, or its object type in words. */
 export const workflowTitle = (workflow: Pick<Workflow, "objectType">, flows: ReadonlyMap<string, RunFlow>) =>
   flows.get(workflow.objectType)?.title ?? words(workflow.objectType)
+
+/**
+ * A workflow's heading as the server names it: the flow's title, else the object type's catalog title
+ * (its label in the reader's language), and the lifecycle property's catalog label. A part with no
+ * served name stays undefined, so the page shows the raw id as code rather than a guessed name.
+ */
+export interface WorkflowHeading {
+  readonly title: string | undefined
+  readonly titleLang: string | undefined
+  readonly property: string | undefined
+  readonly propertyLang: string | undefined
+}
+
+export function workflowHeading(workflow: Pick<Workflow, "objectType" | "lifecycle">, flows: ReadonlyMap<string, RunFlow>, catalog: Pick<Catalog, "byName"> | undefined): WorkflowHeading {
+  const flow = flows.get(workflow.objectType)
+  const concept = catalog?.byName.get(workflow.objectType)
+  const field = concept?.fields.find(({ id }) => id === workflow.lifecycle.property)
+  return {
+    title: flow?.title ?? concept?.title,
+    titleLang: flow ? undefined : concept?.titleLang,
+    property: field?.label,
+    propertyLang: field?.labelLang,
+  }
+}
 
 type Lifecycle = Schemas["NornIrLifecycle"]
 type Transition = Schemas["NornIrTransition"]

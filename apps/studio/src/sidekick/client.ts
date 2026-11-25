@@ -1,7 +1,8 @@
-import { client, type SessionNotification } from "@agentclientprotocol/sdk"
+import { client, type RequestPermissionRequest, type RequestPermissionResponse, type SessionNotification } from "@agentclientprotocol/sdk"
 import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-client"
 import type { ToolResult } from "@/widget/bridge"
 import { defaultFetch, getDisplayedScope, isDefaultFetch, scopeHeaders, type StudioScope } from "../lib/definitions.ts"
+import { toolLabels, type ToolLabels } from "./transcript.ts"
 
 /**
  * Sidekick's connection: Studio as an Agent Client Protocol client.
@@ -13,6 +14,11 @@ import { defaultFetch, getDisplayedScope, isDefaultFetch, scopeHeaders, type Stu
  * The page proves who it is with a Sidekick grant from Studio's Worker (`POST
  * /api/sidekick/grant`, the person's own /mcp access, minutes long). The grant travels once in
  * `initialize` and again whenever it is renewed; it lives in this object's memory only.
+ *
+ * The bridge decides which tool calls need the person's OK first (every Norn tool the cell does not
+ * mark read-only) and asks with ACP's `session/request_permission`, offering only "allow once" and
+ * "reject". Studio shows the question and returns the person's pick; the bridge checks the pick was
+ * one it offered, and the cell still decides the call itself. The page holds no rule of its own.
  */
 
 /** A tool result with an MCP Apps view: the bridge forwards what the agent's Norn tool returned. */
@@ -26,6 +32,10 @@ export interface ViewDelivery {
 export interface SidekickEvents {
   readonly update: (notification: SessionNotification) => void
   readonly view: (delivery: ViewDelivery) => void
+  /** The server's label for each Norn tool, sent by the bridge when a session starts. */
+  readonly tools: (labels: ToolLabels) => void
+  /** The bridge asks the person before a tool call; resolve with their pick (or `cancelled`). */
+  readonly permission: (request: RequestPermissionRequest) => Promise<RequestPermissionResponse>
   readonly closed: (reason: string) => void
 }
 
@@ -69,18 +79,27 @@ export class SidekickSession {
     const pinnedScope = options.scope !== undefined ? options.scope : getDisplayedScope()
     const getGrant = options.getGrant ?? (() => fetchGrant(defaultFetch, pinnedScope))
     const grant = await getGrant()
+    // Once this session has ended, nothing the socket still delivers reaches the chat, and a question is `cancelled`.
+    let session: SidekickSession | null = null
+    // An open that failed never hands out a session: what its socket still delivers is dropped too.
+    let failed = false
+    const ended = () => failed || session?.closed === true
     const app = client()
-      .onNotification("session/update", ({ params }) => events.update(params))
-      .onNotification("_norn/tool_result", (value: unknown) => value as ViewDelivery, ({ params }) => events.view(params))
+      .onNotification("session/update", ({ params }) => { if (!ended()) events.update(params) })
+      .onNotification("_norn/tool_result", (value: unknown) => value as ViewDelivery, ({ params }) => { if (!ended()) events.view(params) })
+      .onNotification("_norn/tools", (value: unknown) => toolLabels(value), ({ params }) => { if (!ended()) events.tools(params) })
+      .onRequest("session/request_permission", ({ params }) => ended() ? Promise.resolve<RequestPermissionResponse>({ outcome: { outcome: "cancelled" } }) : events.permission(params))
     const connection = app.connect(createWebSocketStream(options.url ?? socketUrl(window.location)))
     try {
       await connection.agent.request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, _meta: { "norn.cloud/grant": grant.token } })
       const created = await connection.agent.request("session/new", { cwd: "/", mcpServers: [] })
-      const session = new SidekickSession(connection, created.sessionId, getGrant, events)
-      session.scheduleRenew(grant.expiresAt)
-      void connection.closed.then(() => session.ended("The Sidekick connection closed."))
-      return session
+      const opened = new SidekickSession(connection, created.sessionId, getGrant, events)
+      session = opened
+      opened.scheduleRenew(grant.expiresAt)
+      void connection.closed.then(() => opened.ended("The Sidekick connection closed."))
+      return opened
     } catch (error) {
+      failed = true
       connection.close()
       throw error
     }

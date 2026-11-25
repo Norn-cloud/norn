@@ -1,0 +1,30 @@
+{
+  "artifactId": "supply.CountEvidence.interface.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Stock count evidence labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "جرد المخزون",
+          "en": "Stock count"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "supply.CountEvidence"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.CountEvidence.interface.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

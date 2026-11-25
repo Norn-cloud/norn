@@ -13,7 +13,9 @@
 import { relative, resolve, sep } from "node:path"
 import ts from "typescript"
 import type { Diagnostic, ProfileChecker } from "../check.ts"
+import { createHash } from "node:crypto"
 import { type Json, toJson } from "../canonical.ts"
+import { registryValueType } from "./value-types.ts"
 import { BudgetExceeded, type ExpansionBudget } from "../builder/budget.ts"
 import * as C from "../builder/connector.ts"
 import * as A from "../builder/action.ts"
@@ -157,6 +159,7 @@ const MODEL = "@norn/authoring#Norn.model"
 const FLOW = "@norn/authoring#Norn.flow"
 const QUESTION = "@norn/authoring#Norn.question"
 const DASHBOARD = "@norn/authoring#Norn.dashboard"
+const METRIC_ID = "@norn/authoring#Norn.metricId"
 const APPROVAL = "@norn/authoring#Norn.approval"
 const CALLER_ID = "@norn/authoring#Norn.callerId"
 const DEFINITION_CALLS: ReadonlySet<string> = new Set([SOURCE_SCHEMA, ONTOLOGY_PACK, PACK_LINK, MARKINGS, TYPE, INTERFACE, ACTION, ACCESS, DECISION, MAPPING, LAW, CONNECTOR, LABELS, MODEL, TRANSFORM, SETTING])
@@ -256,7 +259,7 @@ export function compileDefinitionFiles(
 ): DefinitionsResult[] {
   const envelopeFor = (path: string): EnvelopeOptions => (typeof options === "function" ? options(path) : options)
   const forbidUnsafeZenFor = (path: string): boolean => mode.forbidUnsafeZen ?? envelopeFor(path).registryPackagePath !== undefined
-  return lowerEach<{ readonly definitions: Definition[]; readonly artifacts: Json[]; readonly flows: number; readonly sourceMap: DefinitionSource[]; readonly warnings: Diagnostic[]; readonly examples: CompiledExample[]; readonly retained: RetainedDefinitionDoc[] }>(files, overrides, (compiler, source) => {
+  const results = lowerEach<{ readonly definitions: Definition[]; readonly artifacts: Json[]; readonly flows: number; readonly sourceMap: DefinitionSource[]; readonly warnings: Diagnostic[]; readonly examples: CompiledExample[]; readonly retained: RetainedDefinitionDoc[] }>(files, overrides, (compiler, source) => {
     const { definitions, flows, examples, retained } = compiler.compile(source, mode.allowEmpty === true)
     const envelopeOptions = envelopeFor(resolve(source.fileName))
     const artifacts: Json[] = []
@@ -288,6 +291,75 @@ export function compileDefinitionFiles(
     }
     return diagnostics.length > 0 ? { ok: false, diagnostics } : { ok: true, value: { definitions, artifacts, flows, sourceMap: compiler.sourceMap, warnings: compiler.warnings, examples, retained } }
   }, mode.onModuleWork, forbidUnsafeZenFor).map((r): DefinitionsResult => (r.ok ? { ok: true, ...r.value } : r))
+  return bindCompiledSourceSchemas(results)
+}
+
+const NORN1_DOMAIN_TAG = "norn.canonical.json/norn1\u0000"
+
+/** Norn1 canonical text of `value`, or `undefined` past the subset spelled here exactly. */
+function norn1Text(value: Json): string | undefined {
+  if (value === null || typeof value === "boolean") return JSON.stringify(value)
+  if (typeof value === "number") return Number.isSafeInteger(value) ? String(value) : undefined
+  if (typeof value === "string") return /[\u0000-\u001f]/.test(value) ? undefined : JSON.stringify(value.normalize("NFC"))
+  if (Array.isArray(value)) {
+    const items = value.map(norn1Text)
+    return items.every((item) => item !== undefined) ? `[${items.join(",")}]` : undefined
+  }
+  const object = value as { readonly [key: string]: Json }
+  const keys = Object.keys(object)
+  if (keys.some((key) => !/^[\x20-\x7e]*$/.test(key))) return undefined
+  const members = keys.sort().map((key) => {
+    const member = norn1Text(object[key]!)
+    return member === undefined ? undefined : `${JSON.stringify(key)}:${member}`
+  })
+  return members.every((member) => member !== undefined) ? `{${members.join(",")}}` : undefined
+}
+
+/**
+ * The Norn1 hash (`norn-canonical` `HashProfile::Norn1`) of `value`, for the
+ * JSON subset it spells exactly (safe integers, NFC strings without control
+ * characters, ASCII keys); `undefined` otherwise. A pin computed here is a
+ * hint the Rust checker verifies, never an authority: a wrong one refuses.
+ */
+function norn1Sha256(value: Json): string | undefined {
+  const text = norn1Text(value)
+  if (text === undefined) return undefined
+  return createHash("sha256").update(NORN1_DOMAIN_TAG).update(text).digest("hex")
+}
+
+/**
+ * MAPPING-SOURCE-REF-1 at compile time: a mapping bound by reference to a
+ * source schema compiled in the same call carries that schema artifact's
+ * Norn1 hash instead of the pending pin, so a pack's committed artifacts admit
+ * without a hand-computed `sha256`. The Rust checker still verifies the pin
+ * (`mapping.model.source_hash_mismatch`); a schema the hash cannot be spelled
+ * for keeps the pending pin, which `bindSourceSchemas` binds from a receipt.
+ */
+function bindCompiledSourceSchemas(results: DefinitionsResult[]): DefinitionsResult[] {
+  const hashes = new Map<string, string>()
+  for (const result of results) {
+    if (!result.ok) continue
+    for (const artifact of result.artifacts) {
+      const value = artifact as { readonly kind?: unknown; readonly artifactId?: unknown; readonly version?: unknown }
+      if (value.kind !== "source_schema" || typeof value.artifactId !== "string" || typeof value.version !== "string") continue
+      const sha256 = norn1Sha256(artifact)
+      if (sha256 !== undefined) hashes.set(`${value.artifactId}\u0000${value.version}`, sha256)
+    }
+  }
+  if (hashes.size === 0) return results
+  return results.map((result) => {
+    if (!result.ok) return result
+    const artifacts = result.artifacts.map((artifact) => {
+      const value = artifact as { readonly kind?: unknown; readonly payload?: { readonly source?: { readonly schemaId?: unknown; readonly version?: unknown; readonly sha256?: unknown } } }
+      const source = value.payload?.source
+      if (value.kind !== "mapping" || source?.sha256 !== PENDING_SOURCE_SHA256) return artifact
+      const sha256 = hashes.get(`${String(source.schemaId)}\u0000${String(source.version)}`)
+      if (sha256 === undefined) return artifact
+      const mapping = artifact as { readonly payload: { readonly source: object } & Record<string, Json> } & Record<string, Json>
+      return toJson({ ...mapping, payload: { ...mapping.payload, source: { ...mapping.payload.source, sha256 } } })
+    })
+    return { ...result, artifacts }
+  })
 }
 
 export function compileDefinitions(
@@ -391,6 +463,9 @@ class DefinitionCompiler {
     const out: Definition[] = []
     const retained: RetainedDefinitionDoc[] = []
     let flows = 0
+    // Questions and dashboards may sit beside a pack's definitions; the question
+    // and dashboard compilers lower them, since neither is an installable artifact.
+    let answers = 0
     for (const statement of source.statements) {
       if (ts.isExportAssignment(statement)) {
         const e = this.unwrap(statement.expression)
@@ -408,8 +483,14 @@ class DefinitionCompiler {
       for (const d of statement.declarationList.declarations) {
         const init = d.initializer && this.unwrap(d.initializer)
         const id = init && ts.isCallExpression(init) ? this.id(init) : undefined
-        if (init && id === QUESTION) throw new CompileError("NORN-FLOW-RESULT", "standalone questions use the question compiler; they are not installable artifacts", init)
-        if (init && id === DASHBOARD) throw new CompileError("NORN-FLOW-RESULT", "dashboards use the dashboard compiler; the cell admits them as definitions, not artifacts", init)
+        if (init && (id === QUESTION || id === DASHBOARD)) {
+          // Never silently dropped: the module says where it compiles instead.
+          this.warnings.push(diagnostic(init, "NORN-FLOW-RESULT", id === QUESTION
+            ? "a Norn.question is compiled by the question compiler (`norn question`), not installed as an artifact"
+            : "a Norn.dashboard is compiled by the dashboard compiler (`norn dashboard`); the cell admits it as a definition, not an artifact"))
+          answers++
+          continue
+        }
         if (init && ts.isCallExpression(init) && id === APPROVAL) {
           const approval = this.approval(init)
           if (retained.some((other) => other.id === approval.id)) throw new CompileError("NORN-FLOW-LITERAL", `duplicate approval ${approval.id}`, init)
@@ -445,7 +526,7 @@ class DefinitionCompiler {
         out.push(def)
       }
     }
-    if (out.length === 0 && retained.length === 0 && !allowEmpty) throw new CompileError("NORN-FLOW-RESULT", "the module declares no Norn.type, Norn.interfaceType, Norn.action, Norn.access, Norn.decision, Norn.mapping, Norn.connector or Norn.approval definition", source)
+    if (out.length === 0 && retained.length === 0 && answers === 0 && !allowEmpty) throw new CompileError("NORN-FLOW-RESULT", "the module declares no Norn.type, Norn.interfaceType, Norn.action, Norn.access, Norn.decision, Norn.mapping, Norn.connector or Norn.approval definition", source)
     return { definitions: out, flows, examples: this.examples(source), retained }
   }
 
@@ -550,27 +631,28 @@ class DefinitionCompiler {
         const age = this.json(freshness.get("maxAgeMs")!)
         if (typeof age !== "number" || !Number.isSafeInteger(age) || age <= 0) throw new CompileError("NORN-FLOW-LITERAL", "freshness requires a positive exact integer age", freshness.get("maxAgeMs")!)
         const where = this.list(required("where")).map(node => {
-          const filter = this.closedRecord(node, ["property", "operator", "value"], ["property", "operator", "value"])
+          const filter = this.closedRecord(node, ["link", "links", "property", "operator", "value"], ["property", "operator", "value"])
           const operator = this.string(filter.get("operator")!)
           if (operator !== "eq" && operator !== "ne") throw new CompileError("core.compute.unsupported_engine", "the qualified compute profile admits Eq/Ne predicates only", node)
           const valueNode = filter.get("value")!
           if (ts.isCallExpression(this.deref(valueNode))) throw new CompileError("NORN-FLOW-LITERAL", "question predicates use scalar literals, not expression escapes", valueNode)
           const value = this.json(valueNode)
           if (typeof value !== "string" && typeof value !== "number" && typeof value !== "boolean") throw new CompileError("NORN-FLOW-LITERAL", "a question filter requires a scalar literal", node)
-          return { property: this.string(filter.get("property")!), operator, value } satisfies Q.QuestionFilter
+          return { ...this.questionLinks(filter, node), property: this.string(filter.get("property")!), operator, value } satisfies Q.QuestionFilter
         })
         const by = this.list(required("by")).map(node => {
-          const dimension = this.closedRecord(node, ["property", "grain"], ["property"])
+          const dimension = this.closedRecord(node, ["link", "links", "property", "grain"], ["property"])
           const property = this.string(dimension.get("property")!)
+          const links = this.questionLinks(dimension, node)
           const grainNode = dimension.get("grain")
-          if (!grainNode) return { property }
+          if (!grainNode) return { ...links, property }
           const grain = this.string(grainNode)
           if (grain !== "day" && grain !== "week" && grain !== "month" && grain !== "quarter" && grain !== "year") throw new CompileError("NORN-FLOW-LITERAL", "unknown calendar grain", grainNode)
-          return { property, grain } satisfies Q.QuestionDimension
+          return { ...links, property, grain } satisfies Q.QuestionDimension
         })
         const question = Q.lowerQuestion({
           name, of: this.typeName(required("of"), OBJECT_TYPES), where,
-          measure: this.string(required("measure")), by,
+          measure: this.measure(required("measure")), by,
           asOf: { basis: "effective", from: this.string(timeMember("from")), to: this.string(timeMember("to")), freshness: { kind, maxAgeMs: age } },
           population: { kind: "authorized_objects" },
         })
@@ -579,6 +661,37 @@ class DefinitionCompiler {
       }
     }
     return questions
+  }
+
+  /** METRIC-GRAIN-LINK-1: a question path's to-one links, as `link` (one hop) or `links`. */
+  private questionLinks(fields: Map<string, ts.Expression>, node: ts.Expression): { readonly links?: string[] } {
+    const one = fields.get("link"), many = fields.get("links")
+    if (one && many) throw new CompileError("NORN-FLOW-LITERAL", "a question path declares link or links, not both", node)
+    const links = one ? [this.string(one)] : many ? this.strings(many) : []
+    for (const link of links) if (link.match(/^[a-z][a-z0-9_]*$/)?.[0] !== link) throw new CompileError("NORN-FLOW-LITERAL", "a link id matches [a-z][a-z0-9_]*", node)
+    return links.length ? { links } : {}
+  }
+
+  /** A question's metric: its id, or `Norn.metricId({ kind, of, property, time })` for an ontology-derived one. */
+  private measure(input: ts.Expression): string {
+    const e = this.deref(input)
+    if (!ts.isCallExpression(e) || this.id(e) !== METRIC_ID) return this.string(input)
+    const spec = this.closedRecord(e.arguments[0] ?? e, ["kind", "of", "property", "time"], ["kind", "of", "property", "time"])
+    const kind = this.string(spec.get("kind")!)
+    if (kind !== "sum" && kind !== "as_of" && kind !== "ratio") throw new CompileError("NORN-FLOW-LITERAL", "a metric kind is sum, as_of or ratio", spec.get("kind")!)
+    const timeNode = spec.get("time")!
+    const timeLiteral = this.deref(timeNode)
+    const time = ts.isStringLiteral(timeLiteral) || ts.isNoSubstitutionTemplateLiteral(timeLiteral)
+      ? { property: timeLiteral.text }
+      : (() => {
+        const fields = this.closedRecord(timeNode, ["link", "links", "property"], ["property"])
+        return { ...this.questionLinks(fields, timeNode), property: this.string(fields.get("property")!) }
+      })()
+    try {
+      return Q.derivedMetricId({ kind, of: this.typeName(spec.get("of")!, OBJECT_TYPES), property: this.string(spec.get("property")!), time })
+    } catch (error) {
+      throw new CompileError("NORN-FLOW-LITERAL", (error as Error).message, e)
+    }
   }
 
   /** DASHBOARD-LOWER-1: each named Norn.dashboard, its tiles' questions resolved from the module's own Norn.question bindings. */
@@ -1213,17 +1326,18 @@ class DefinitionCompiler {
   private action(call: ts.CallExpression): A.ActionDef {
     const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "inputLabels", "inputGroups", "slice", "aggregates", "derive", "preconditions", "createLinks", "commands", "synchronousRule", "writes", "effect", "compensation", "dependencies", "access", "fromCaller", "independentOf", ...LABEL_MEMBERS])
     const need = (key: string): ts.Expression => this.member(members, key, call)
-    const schema = (key: string): S.ObjectSchema => {
+    const schema = (key: string, temporalWire = false): S.ObjectSchema => {
       const node = need(key)
       // An absent member is a nullable plain scalar (Schema.NullOr), as ActionIR admits.
-      const closed = this.schemas.closed(this.schemas.read(node), "scalar")
+      // An input `Norn.timestamp`/`Norn.date` is its wire text; the written property checks it.
+      const closed = this.schemas.closed(this.schemas.read(node), "scalar", temporalWire)
       if (closed.type !== "object") throw new CompileError("NORN-FLOW-SCHEMA-PROJECTION", `action ${key} is a Schema.Struct`, node)
       return closed
     }
     const effectNode = members.get("effect"), compensation = members.get("compensation")
     const description = members.get("description"), ledgerCategory = members.get("ledgerCategory")
     const compiledEffect = effectNode ? this.effect(effectNode) : undefined
-    let inputSchema = schema("input")
+    let inputSchema = schema("input", true)
     const extraDependencies: R.DecisionDependencyPin[] = []
     if (compiledEffect?.kind === "mutate_parent_with_rows") {
       const rowOpsProp = inputSchema.properties[compiledEffect.rowOpsField]
@@ -1561,7 +1675,7 @@ class DefinitionCompiler {
   private upsertWriteMode(input: ts.Expression): A.UpsertWriteMode {
     const m = this.closedRecord(input, ["kind", "lifecycle", "state"], ["kind"])
     const kind = this.string(m.get("kind")!)
-    if (kind === "upsert" || kind === "create_only") {
+    if (kind === "upsert" || kind === "create_only" || kind === "update_only") {
       if (m.has("lifecycle") || m.has("state")) {
         throw new CompileError("NORN-FLOW-LITERAL", `${kind} writeMode takes only kind`, input)
       }
@@ -1572,7 +1686,7 @@ class DefinitionCompiler {
       if (!lifecycle || !state) throw new CompileError("NORN-FLOW-LITERAL", "draft_only writeMode needs lifecycle and state", input)
       return { kind, lifecycle: this.string(lifecycle), state: this.string(state) }
     }
-    throw new CompileError("NORN-FLOW-LITERAL", "writeMode kind is upsert, create_only, or draft_only", m.get("kind")!)
+    throw new CompileError("NORN-FLOW-LITERAL", "writeMode kind is upsert, create_only, update_only, or draft_only", m.get("kind")!)
   }
 
   private access(call: ts.CallExpression): P.AccessDef {
@@ -2232,7 +2346,9 @@ class DefinitionCompiler {
       inherit(members.get("extends"), OBJECT_TYPES, false)
     }
     for (const p of this.schemas.properties(this.schemas.read(this.member(members, "properties", call)))) {
-      const t = p.projection.type
+      // A registry value type (`Norn.ref("core.quantity")`) reads as what it resolves to.
+      const declared = p.projection.type
+      const t = declared.kind === "ref" ? registryValueType(declared.name) ?? declared : declared
       const kind = t.kind === "date" || t.kind === "timestamp" ? t.kind : undefined
       if (kind) temporal.set(p.id, kind); else temporal.delete(p.id)
       const base: S.ValueSchema = t.kind === "integer" ? S.integer

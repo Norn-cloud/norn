@@ -1,0 +1,7 @@
+{
+  "code": "widget.machine.failure_without_retry_or_close",
+  "message": "a page machine state a failed call enters offers no Retry or Close a person drives: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

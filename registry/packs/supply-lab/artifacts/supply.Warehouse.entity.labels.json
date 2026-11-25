@@ -1,0 +1,91 @@
+{
+  "artifactId": "supply.Warehouse.entity.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Warehouse labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "مستودع",
+          "en": "Warehouse"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "supply.Warehouse"
+        }
+      },
+      {
+        "label": {
+          "ar": "رمز المستودع",
+          "en": "Warehouse code"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "supply.Warehouse",
+          "property": "warehouse_id"
+        }
+      },
+      {
+        "label": {
+          "ar": "المنطقة",
+          "en": "Region"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "property",
+          "objectType": "supply.Warehouse",
+          "property": "region"
+        }
+      },
+      {
+        "label": {
+          "ar": "نشط",
+          "en": "Active"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.Warehouse",
+          "property": "status",
+          "value": "active"
+        }
+      },
+      {
+        "label": {
+          "ar": "مغلق",
+          "en": "Closed"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.Warehouse",
+          "property": "status",
+          "value": "closed"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.Warehouse.entity.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

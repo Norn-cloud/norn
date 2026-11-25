@@ -34,6 +34,7 @@
               "from": [
                 "candidate"
               ],
+              "guardRefusalCode": "core.projection.publication_guard",
               "guards": [
                 "self.contracts_passed and (self.evaluation_revision == self.pinned_dataset_revision)"
               ],
@@ -178,6 +179,13 @@
           "id": "contracts_passed",
           "type": {
             "kind": "boolean"
+          }
+        },
+        {
+          "id": "registered_by",
+          "protected": true,
+          "type": {
+            "kind": "text"
           }
         }
       ]

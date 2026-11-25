@@ -1,0 +1,50 @@
+{
+  "artifactId": "supply.Inspection.rejected_within_inspected.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.Inspection.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "An inspection never rejects more than it inspected, nor a negative quantity.",
+  "namespace": "supply",
+  "payload": {
+    "id": "supply.Inspection.rejected_within_inspected",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/supply.ts"
+    },
+    "rationale": "An inspection never rejects more than it inspected, nor a negative quantity.",
+    "response": {
+      "expression": "(self.rejected_qty >= 0) and (self.rejected_qty <= self.inspected_qty)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.Inspection"
+      ],
+      "root": {
+        "id": "supply.Inspection",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.Inspection"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.Inspection.rejected_within_inspected.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

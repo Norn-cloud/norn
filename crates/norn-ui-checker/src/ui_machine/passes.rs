@@ -12,13 +12,15 @@ use norn_ir::{
 
 use super::{
     ABSORBING_STATE, AWAIT_OUTSIDE_PENDING, CANCEL_OUTSIDE_PENDING, COMPLETION_UNKNOWN,
-    COMPONENT_GUARD_OUTSIDE_CATALOG, CONTROL_WITHOUT_EVENT, ERROR_WITHOUT_RECOVERY, Env, Facts,
-    Finding, INITIAL_NOT_IDLE, INPUT_FREE_CYCLE, INVALID_EVENT, INVALID_EXPRESSION, MachineChecker,
-    NONDETERMINISTIC, OUTCOME_IMPOSSIBLE, OUTCOME_OUTSIDE_PENDING, OutcomeValue, PENDING_ABANDONED,
+    COMPONENT_GUARD_OUTSIDE_CATALOG, CONTROL_WITHOUT_EVENT, ERROR_WITHOUT_RECOVERY, Env,
+    FAILURE_WITHOUT_RETRY_OR_CLOSE, Facts, Finding, INITIAL_NOT_IDLE, INPUT_FREE_CYCLE,
+    INVALID_EVENT, INVALID_EXPRESSION, MachineChecker, NONDETERMINISTIC, OUTCOME_CODE_UNDECLARED,
+    OUTCOME_IMPOSSIBLE, OUTCOME_OUTSIDE_PENDING, OutcomeValue, PENDING_ABANDONED,
     PENDING_ENTERED_WITHOUT_START, PENDING_OUTCOME_UNCOVERED, PENDING_WITHOUT_AWAIT,
     PENDING_WITHOUT_DEADLINE, START_WITHOUT_PENDING, TERMINAL_HAS_TRANSITION, TRAP_REGION,
-    UNKNOWN_REFERENCE, UNREACHABLE_STATE, collect_nodes, event_payload, field_type,
+    UNKNOWN_REFERENCE, UNREACHABLE_STATE, collect_nodes, event_payload, field_type, is_failure,
     matched_outcomes, outcome_name, outcome_of, page_net, possible_outcomes, show_outcome,
+    subscribed,
 };
 
 struct TransitionCheck<'m, 'a> {
@@ -135,13 +137,21 @@ impl<'m> MachineChecker<'m> {
                     }
                     false
                 }
-                WidgetMachineEventSource::Outcome { outcome, category } => {
-                    if category.is_some() && *outcome != WidgetCallOutcome::Refused {
-                        self.push(
-                            INVALID_EVENT,
-                            format!("{pointer}/source/category"),
-                            "only a refused outcome has a category".to_owned(),
-                        );
+                WidgetMachineEventSource::Outcome {
+                    outcome,
+                    category,
+                    code,
+                } => {
+                    for (member, present) in
+                        [("category", category.is_some()), ("code", code.is_some())]
+                    {
+                        if present && *outcome != WidgetCallOutcome::Refused {
+                            self.push(
+                                INVALID_EVENT,
+                                format!("{pointer}/source/{member}"),
+                                format!("only a refused outcome has a {member}"),
+                            );
+                        }
                     }
                     false
                 }
@@ -358,8 +368,11 @@ impl<'m> MachineChecker<'m> {
         }
         let outcome = outcome_of(event);
         match &event.source {
-            WidgetMachineEventSource::Timer { .. } | WidgetMachineEventSource::User { .. } => {
-                facts.recovers.insert(from);
+            // Retry or Close is a person's: a timer alone recovers nothing (L4).
+            WidgetMachineEventSource::User { .. } => {
+                if transition.guard.is_none() && transition.component_guard.is_none() {
+                    facts.recovers.insert(from);
+                }
             }
             WidgetMachineEventSource::PageOpened if from != self.machine.initial_state_id => {
                 self.push(
@@ -369,6 +382,7 @@ impl<'m> MachineChecker<'m> {
                 );
             }
             WidgetMachineEventSource::PageOpened
+            | WidgetMachineEventSource::Timer { .. }
             | WidgetMachineEventSource::Outcome { .. }
             | WidgetMachineEventSource::Subscription { .. } => {}
         }
@@ -396,11 +410,28 @@ impl<'m> MachineChecker<'m> {
             ..
         } = check;
         let from = from_state.state_id.as_str();
+        let code = match &event.source {
+            WidgetMachineEventSource::Outcome { code, .. } => code.as_deref(),
+            WidgetMachineEventSource::PageOpened
+            | WidgetMachineEventSource::User { .. }
+            | WidgetMachineEventSource::Subscription { .. }
+            | WidgetMachineEventSource::Timer { .. } => None,
+        };
+        // A failure leaves the page somewhere a person can Retry or Close (L4).
+        if let Some((outcome, _)) = outcome
+            && is_failure(outcome)
+            && check.target_state.role != WidgetStateRole::Pending
+        {
+            facts
+                .failures
+                .entry(check.target_state.state_id.as_str())
+                .or_insert(index);
+        }
         // Outcome events belong to pending states, and only to outcomes their call can have.
         if let Some((outcome, category)) = outcome {
             match (from_state.role, &from_state.awaits) {
                 (WidgetStateRole::Pending, Some(call)) => {
-                    let possible = possible_outcomes(call, true);
+                    let possible = possible_outcomes(call, true, subscribed(self.machine, call));
                     let matched = matched_outcomes(outcome, category);
                     if matched.iter().all(|value| !possible.contains(value)) {
                         self.push(
@@ -411,6 +442,8 @@ impl<'m> MachineChecker<'m> {
                                 outcome_name(outcome)
                             ),
                         );
+                    } else if let Some(code) = code {
+                        self.check_outcome_code(call, code, check, facts);
                     } else if transition.guard.is_none() && transition.component_guard.is_none() {
                         let slot = facts.covered.entry(from).or_default();
                         for value in matched {
@@ -439,6 +472,42 @@ impl<'m> MachineChecker<'m> {
                 .entry((from, event.event_id.as_str()))
                 .or_default()
                 .push(index);
+        }
+    }
+
+    /// A refusal handler for one code names a code the awaited action declares (L2). It refines the
+    /// code's category and never covers it.
+    fn check_outcome_code(
+        &mut self,
+        call: &WidgetMachineCall,
+        code: &'m str,
+        check: &TransitionCheck<'m, '_>,
+        facts: &mut Facts<'m>,
+    ) {
+        let from = check.from_state.state_id.as_str();
+        if let Some(codes) = self.codes {
+            let declared = match call {
+                WidgetMachineCall::Action { binding_id } => codes
+                    .get(binding_id)
+                    .is_some_and(|declared| declared.contains(code)),
+                WidgetMachineCall::Read { .. } | WidgetMachineCall::Operation { .. } => false,
+            };
+            if !declared {
+                self.push(
+                    OUTCOME_CODE_UNDECLARED,
+                    format!("{}/on", check.pointer),
+                    format!(
+                        "the call `{from}` awaits cannot refuse with `{code}`: handle a code only when the bound action declares it"
+                    ),
+                );
+            }
+        }
+        if check.transition.guard.is_none() && check.transition.component_guard.is_none() {
+            facts
+                .coded
+                .entry((from, code))
+                .or_default()
+                .push(check.index);
         }
     }
 
@@ -538,6 +607,18 @@ impl<'m> MachineChecker<'m> {
                 );
             }
         }
+        for ((from, code), indexes) in &facts.coded {
+            if let Some(second) = indexes.get(1) {
+                self.push(
+                    NONDETERMINISTIC,
+                    format!("{base}/transitions/{second}"),
+                    format!(
+                        "state `{from}` has {} unguarded transitions on refusal code `{code}`",
+                        indexes.len()
+                    ),
+                );
+            }
+        }
         for (from, values) in &facts.covered {
             for (value, entries) in values {
                 let specific = entries.iter().any(|(_, specific)| *specific);
@@ -569,11 +650,13 @@ impl<'m> MachineChecker<'m> {
             };
             let id = state.state_id.as_str();
             let have = facts.covered.get(id);
-            let missing: Vec<String> = possible_outcomes(call, facts.cancellable.contains(id))
-                .iter()
-                .filter(|value| have.is_none_or(|have| !have.contains_key(*value)))
-                .map(|value| show_outcome(*value))
-                .collect();
+            let live = subscribed(self.machine, call);
+            let missing: Vec<String> =
+                possible_outcomes(call, facts.cancellable.contains(id), live)
+                    .iter()
+                    .filter(|value| have.is_none_or(|have| !have.contains_key(*value)))
+                    .map(|value| show_outcome(*value))
+                    .collect();
             if !missing.is_empty() {
                 self.push(
                     PENDING_OUTCOME_UNCOVERED,
@@ -645,11 +728,31 @@ impl<'m> MachineChecker<'m> {
                             ERROR_WITHOUT_RECOVERY,
                             pointer,
                             format!(
-                                "error state `{id}` has no transition a person or a timer drives"
+                                "error state `{id}` offers no Retry or Close: no unguarded transition a person drives (a timer alone is no recovery)"
                             ),
                         );
                     }
                 }
+            }
+        }
+        for (state, transition) in &facts.failures {
+            // An error state answers to its own law; a terminal one is the page's declared end,
+            // which the host closes.
+            let judged_elsewhere = machine.states.iter().any(|declared| {
+                declared.state_id == *state
+                    && matches!(
+                        declared.role,
+                        WidgetStateRole::Error | WidgetStateRole::Terminal
+                    )
+            });
+            if !judged_elsewhere && !facts.recovers.contains(state) {
+                self.push(
+                    FAILURE_WITHOUT_RETRY_OR_CLOSE,
+                    format!("{base}/transitions/{transition}/target"),
+                    format!(
+                        "state `{state}` follows a failed call but offers no Retry or Close: give it an unguarded transition a person drives"
+                    ),
+                );
             }
         }
     }

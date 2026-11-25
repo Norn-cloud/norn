@@ -1,0 +1,115 @@
+{
+  "artifactId": "supply.Warehouse.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Warehouse",
+  "namespace": "supply",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "warehouse_id"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "immutable": [
+            "closed"
+          ],
+          "initial": [
+            "active"
+          ],
+          "property": "status",
+          "terminal": [
+            "closed"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "active"
+              ],
+              "id": "close",
+              "to": "closed"
+            }
+          ]
+        }
+      ],
+      "name": "supply.Warehouse",
+      "properties": [
+        {
+          "id": "warehouse_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "name",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "region",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "delta"
+              },
+              {
+                "value": "canal"
+              },
+              {
+                "value": "upper_egypt"
+              },
+              {
+                "value": "red_sea"
+              }
+            ]
+          }
+        },
+        {
+          "id": "latitude",
+          "type": {
+            "kind": "decimal",
+            "scale": 6
+          }
+        },
+        {
+          "id": "longitude",
+          "type": {
+            "kind": "decimal",
+            "scale": 6
+          }
+        },
+        {
+          "default": "active",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "active"
+              },
+              {
+                "value": "closed"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.Warehouse.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,17 +1,24 @@
-import { Check, LoaderCircle, SquarePen, Sparkles, X } from "lucide-react"
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react"
+import { useChat } from "@ai-sdk/react"
+import type { DynamicToolUIPart } from "ai"
+import { ArrowDown, RotateCcw, SquarePen, Wrench } from "lucide-react"
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Streamdown } from "streamdown"
-import { StickToBottom } from "use-stick-to-bottom"
+import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom"
 import { useAssistant } from "@/assistant-slot"
+import { ChatComposer } from "@/components/chat-composer"
+import { Mascot, type MascotState } from "@/components/system/mascot"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
+import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Button } from "@/components/ui/button"
-import { Textarea } from "@/components/ui/textarea"
-import { cn } from "@/lib/utils"
+import { Message, MessageAvatar, MessageContent } from "@/components/ui/message"
+import { Trace, TraceCollapsible, TraceCollapsibleContent, TraceCollapsibleTrigger, TraceIcon, TraceLine, TraceTitle } from "@/components/ui/trace"
 import { getDisplayedScope, type StudioScope } from "@/lib/definitions"
 import type { ToolHost } from "@/widget/bridge"
 import type { View } from "@/widget/views"
-import type { SidekickSession, ViewDelivery } from "./client.ts"
-import { applyUpdate, promptItem, toolWords, viewItem, type Item, type Transcript } from "./transcript.ts"
+import type { ViewDelivery } from "./client.ts"
+import type { SidekickMessage } from "./transcript.ts"
+import { SidekickTransport } from "./transport.ts"
 
 export { useSidekickServed } from "./served.ts"
 
@@ -19,6 +26,12 @@ export { useSidekickServed } from "./served.ts"
  * Sidekick: the person's agent inside Studio. It answers by calling Norn's own tools as the
  * signed-in person (the cell's policy decides what it sees and may do), and each tool's result
  * is drawn here with the same views a chat assistant shows (src/widget/views.tsx).
+ *
+ * The chat is drawn with shadcn's own chat primitives (Message, Bubble and Trace from the base-luma
+ * registry, DESIGN.md 19.3) over the AI SDK's `useChat`, whose transport (`transport.ts`) speaks ACP
+ * to the bridge. Before a tool call that can change anything, the bridge asks the person; the
+ * question is drawn under the call, and the answer goes back to the bridge, which runs the call only
+ * on "Allow". The cell still decides the call.
  */
 
 // The views load with the first one drawn, never with the shell.
@@ -29,196 +42,216 @@ const viewOf = (name: string): View | null => VIEWS.find((view) => view === name
 
 export const SUGGESTIONS = ["What's our stock worth?", "Where does that number come from?", "What needs my attention?"] as const
 
-/** Enter sends; Shift+Enter is a new line; Enter that confirms an IME composition is the input method's. */
-export const sendsOnEnter = (event: { readonly key: string; readonly shiftKey: boolean; readonly nativeEvent: { readonly isComposing?: boolean } }) =>
-  event.key === "Enter" && !event.shiftKey && event.nativeEvent.isComposing !== true
-
-function ToolRow({ item }: { readonly item: Extract<Item, { kind: "tool" }> }) {
-  const failed = item.status === "failed"
-  const done = item.status === "completed"
-  return (
-    <div className="flex items-center gap-2 text-meta text-muted-foreground" data-tool={item.tool} data-status={item.status}>
-      <span className={cn("flex size-4 shrink-0 items-center justify-center rounded-full", done && "bg-success text-background", failed && "bg-destructive text-background")}>
-        {done ? <Check className="size-2.5" strokeWidth={3} /> : failed ? <X className="size-2.5" strokeWidth={3} /> : <LoaderCircle className="size-3.5 animate-spin" />}
-      </span>
-      <span className={cn(!done && !failed && "text-foreground")}>{toolWords(item.tool)}</span>
-      <Badge variant="outline" className="ms-auto font-mono text-[0.6875rem] font-normal">{item.tool}</Badge>
-    </div>
-  )
+/** Each tool part's state: its ACP-like `data-status`, its word, and its dot (DESIGN.md 4.3). */
+const STATE: Readonly<Record<DynamicToolUIPart["state"], { readonly status: string; readonly word: string; readonly dot: "outline" | "info" | "warning" | "success" | "destructive" }>> = {
+  "input-streaming": { status: "pending", word: "Pending", dot: "outline" },
+  "input-available": { status: "in_progress", word: "Running", dot: "info" },
+  "approval-requested": { status: "awaiting_approval", word: "Waiting for you", dot: "warning" },
+  "approval-responded": { status: "in_progress", word: "Running", dot: "info" },
+  "output-available": { status: "completed", word: "Done", dot: "success" },
+  "output-error": { status: "failed", word: "Failed", dot: "destructive" },
+  "output-denied": { status: "declined", word: "Declined", dot: "destructive" },
 }
+
+/** A call the turn left unfinished (the person stopped it, or it ended first): it shows as stopped, never as still running or still asking. */
+const STOPPED = { status: "stopped", word: "Stopped", dot: "outline" } as const
+const UNFINISHED: ReadonlySet<DynamicToolUIPart["state"]> = new Set(["input-streaming", "input-available", "approval-requested", "approval-responded"])
 
 function ViewCard({ delivery, host }: { readonly delivery: ViewDelivery; readonly host: ToolHost }) {
   const view = viewOf(delivery.view)
   if (view === null) return null
   return (
-    <div className="enter overflow-hidden rounded-xl border bg-card" data-view={view}>
-      <Suspense fallback={<p className="p-3 text-sm text-muted-foreground">Drawing Norn's answer…</p>}>
+    <div className="enter overflow-hidden rounded-(--radius-well) border border-(--panel-border) bg-card" data-view={view}>
+      <Suspense fallback={<p className="p-3 text-body text-muted-foreground">Drawing Norn's answer…</p>}>
         <DeliveryView view={view} delivery={{ input: delivery.input, result: delivery.result }} bridge={host} studio={window.location.origin} tool={delivery.tool} />
       </Suspense>
     </div>
   )
 }
 
-function Entry({ item, host }: { readonly item: Item; readonly host: ToolHost }) {
-  if (item.kind === "user") return <p className="ms-auto max-w-[85%] whitespace-pre-wrap rounded-2xl bg-muted px-3 py-2 text-sm">{item.text}</p>
-  if (item.kind === "text") return <Streamdown className="text-sm [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">{item.text}</Streamdown>
-  if (item.kind === "tool") return <ToolRow item={item} />
-  return <ViewCard delivery={item.delivery} host={host} />
+/** What the call will do, in the agent's own input: the action and its fields, never re-worded. */
+function CallInput({ input }: { readonly input: unknown }) {
+  if (input === null || typeof input !== "object" || Object.keys(input).length === 0) return null
+  return <pre dir="ltr" className="max-h-40 overflow-auto rounded-(--radius) bg-well px-3 py-2 font-mono text-meta text-foreground">{JSON.stringify(input, null, 2)}</pre>
 }
 
-type Status = "idle" | "connecting" | "busy"
+/** The bridge's question, under the call it is about: Allow or Decline, and afterwards what was answered. */
+function Approval({ part, live, onAnswer }: { readonly part: DynamicToolUIPart; readonly live: boolean; readonly onAnswer: (approvalId: string, approved: boolean) => void }) {
+  const approval = part.approval
+  if (approval === undefined) return null
+  // The turn ended before the person answered: the question is closed, and the call never ran.
+  if (part.state === "approval-requested" && !live) return <p className="text-meta text-muted-foreground">Stopped before you answered; nothing ran.</p>
+  if (part.state === "approval-requested") {
+    return (
+      <div role="group" aria-label="Approve this call" className="space-y-3 rounded-(--radius-well) border border-(--panel-border) bg-well p-3" data-slot="approval">
+        <p className="text-body text-foreground">Sidekick wants to run <span className="font-mono text-meta">{part.toolName}</span> as you. The workspace's laws and policy still decide it.</p>
+        <div className="flex justify-end gap-2">
+          <Button size="sm" variant="outline" onClick={() => onAnswer(approval.id, false)}>Decline</Button>
+          <Button size="sm" onClick={() => onAnswer(approval.id, true)}>Allow</Button>
+        </div>
+      </div>
+    )
+  }
+  if (approval.approved === undefined) return null
+  return <p className="text-meta text-muted-foreground">{approval.approved ? "You allowed this call." : "You declined; nothing ran."}</p>
+}
+
+function ToolCall({ part, live, onAnswer }: { readonly part: DynamicToolUIPart; readonly live: boolean; readonly onAnswer: (approvalId: string, approved: boolean) => void }) {
+  const stopped = !live && UNFINISHED.has(part.state)
+  const asking = part.state === "approval-requested" && !stopped
+  const state = stopped ? STOPPED : STATE[part.state]
+  // A call waiting on the person opens by itself; otherwise the reader opens it.
+  const [open, setOpen] = useState(asking)
+  useEffect(() => { if (asking) setOpen(true) }, [asking])
+  return (
+    <Trace data-tool={part.toolName} data-status={state.status}>
+      <TraceCollapsible open={open} onOpenChange={setOpen}>
+        <TraceCollapsibleTrigger className="gap-2">
+          <TraceLine status={part.state === "output-error" ? "error" : !stopped && (part.state === "input-available" || part.state === "approval-responded") ? "running" : undefined}>
+            <TraceIcon><Wrench /></TraceIcon>
+            <TraceTitle>{part.title ?? part.toolName}</TraceTitle>
+          </TraceLine>
+          <Badge variant={state.dot} data-tool-state={part.state}>{state.word}</Badge>
+        </TraceCollapsibleTrigger>
+        <TraceCollapsibleContent className="space-y-3">
+          <CallInput input={part.input} />
+          {part.state === "output-error" && <p className="text-body text-destructive-text">{part.errorText}</p>}
+          <Approval part={part} live={live} onAnswer={onAnswer} />
+        </TraceCollapsibleContent>
+      </TraceCollapsible>
+    </Trace>
+  )
+}
+
+/** The mascot's pose for an assistant message: what Sidekick is doing in it right now. */
+function poseOf(message: SidekickMessage, live: boolean, failed: boolean): MascotState {
+  if (live && message.parts.some((part) => part.type === "dynamic-tool" && part.state === "approval-requested")) return "asking"
+  if (failed) return "unavailable"
+  return live ? "thinking" : "answered"
+}
+
+function AssistantMessage({ message, pose, live, host, onAnswer }: { readonly message: SidekickMessage; readonly pose: MascotState; readonly live: boolean; readonly host: ToolHost; readonly onAnswer: (approvalId: string, approved: boolean) => void }) {
+  const drawn = message.parts.some((part) => part.type === "text" || part.type === "dynamic-tool" || part.type === "data-view")
+  return (
+    <Message data-role="assistant" className="items-start text-body">
+      <MessageAvatar className="mt-0.5 min-w-0 self-start bg-transparent">
+        <Mascot size={28} state={pose} label={pose === "asking" ? "Sidekick is waiting for you" : pose === "thinking" ? "Sidekick is working" : undefined} />
+      </MessageAvatar>
+      <MessageContent className="gap-3">
+        {pose === "thinking" && !drawn && <p role="status" className="text-body text-muted-foreground">Thinking…</p>}
+        {message.parts.map((part, index) => {
+          if (part.type === "text") return <Streamdown key={index} className="text-body [&>*:first-child]:mt-0 [&>*:last-child]:mb-0">{part.text}</Streamdown>
+          if (part.type === "dynamic-tool") return <ToolCall key={part.toolCallId} part={part} live={live} onAnswer={onAnswer} />
+          if (part.type === "data-view") return <ViewCard key={part.id ?? index} delivery={part.data} host={host} />
+          return null
+        })}
+      </MessageContent>
+    </Message>
+  )
+}
+
+function ScrollToLatest() {
+  const { isAtBottom, scrollToBottom } = useStickToBottomContext()
+  if (isAtBottom) return null
+  return (
+    <Button type="button" size="icon-sm" variant="outline" className="absolute bottom-3 start-1/2 -translate-x-1/2 rounded-full rtl:translate-x-1/2" onClick={() => void scrollToBottom()}>
+      <ArrowDown aria-hidden /><span className="sr-only">Scroll to the latest message</span>
+    </Button>
+  )
+}
 
 /** The chat, held by the shell's slot so closing the panel keeps it, scoped to one user/org/env tuple. */
 export function Sidekick({ scope, scopeKey }: { readonly scope?: StudioScope | null; readonly scopeKey?: string } = {}) {
-  const [transcript, setTranscript] = useState<Transcript>([])
-  const [input, setInput] = useState("")
-  const [status, setStatus] = useState<Status>("idle")
-  const [error, setError] = useState<string | null>(null)
-  const session = useRef<SidekickSession | null>(null)
-  const generation = useRef(0)
-  const lastScopeKey = useRef(scopeKey)
-  const prompts = useRef(0)
+  // A new chat, or another workspace, is a new transport (a new session) and a new chat id.
+  const [epoch, setEpoch] = useState(0)
+  // The shell hands a new scope object on every render; the chat is pinned to the scope it opened with.
+  const pinned = useRef(scope)
+  pinned.current = scope
+  const transport = useMemo(() => new SidekickTransport({ scope: pinned.current !== undefined ? pinned.current : getDisplayedScope() }), [scopeKey, epoch])
+  useEffect(() => () => transport.close(), [transport])
+  const { messages, status, error, stop, regenerate, sendMessage } = useChat<SidekickMessage>({ id: `sidekick:${scopeKey ?? ""}:${epoch}`, transport })
   const assistant = useAssistant()
+  const working = status === "submitted" || status === "streaming"
 
-  // Immediately close any prior session and discard in-flight opens/responses when the workspace scope changes.
-  useEffect(() => {
-    if (lastScopeKey.current === scopeKey) return
-    lastScopeKey.current = scopeKey
-    generation.current += 1
-    session.current?.close()
-    session.current = null
-    setTranscript([])
-    setError(null)
-    setStatus("idle")
-  }, [scopeKey])
-
-  const open = useCallback(async (expectedGeneration: number): Promise<SidekickSession | null> => {
-    if (session.current !== null && !session.current.closed) return session.current
-    setStatus("connecting")
-    const pinnedScope = scope !== undefined ? scope : getDisplayedScope()
-    const { SidekickSession: Session } = await import("./client.ts")
-    if (generation.current !== expectedGeneration) return null
-    const opened = await Session.open(
-      {
-        update: (notification) => {
-          if (generation.current !== expectedGeneration) return
-          setTranscript((current) => applyUpdate(current, notification))
-        },
-        view: (delivery) => {
-          if (generation.current !== expectedGeneration) return
-          setTranscript((current) => viewItem(current, delivery))
-        },
-        closed: () => {
-          if (generation.current === expectedGeneration) session.current = null
-        },
-      },
-      { scope: pinnedScope },
-    )
-    if (generation.current !== expectedGeneration) {
-      opened.close()
-      return null
-    }
-    session.current = opened
-    return opened
-  }, [scope])
-
-  const send = useCallback(async (text: string) => {
+  const send = useCallback((text: string) => {
     const request = text.trim()
-    if (request === "" || status !== "idle") return
-    const sendGen = generation.current
-    setError(null)
-    setInput("")
-    setTranscript((current) => promptItem(current, `user:${prompts.current++}`, request))
-    try {
-      const active = await open(sendGen)
-      if (active === null || generation.current !== sendGen) return
-      setStatus("busy")
-      await active.prompt(request)
-    } catch (failure) {
-      if (generation.current !== sendGen) return
-      setError(failure instanceof Error && failure.message !== "" ? failure.message : "Sidekick could not answer.")
-    } finally {
-      if (generation.current === sendGen) setStatus("idle")
-    }
-  }, [open, status])
+    if (request === "" || working) return
+    void sendMessage({ text: request })
+  }, [sendMessage, working])
 
   // A prompt handed over from a page (Home's Ask bar) is taken once, only for its matching scope.
   useEffect(() => {
-    if (assistant.prompt === null || status !== "idle") return
+    if (assistant.prompt === null || working) return
     if (assistant.promptScopeKey !== undefined && assistant.promptScopeKey !== scopeKey) return
     const text = assistant.prompt
     assistant.took()
-    void send(text)
-  }, [assistant, scopeKey, send, status])
+    send(text)
+  }, [assistant, scopeKey, send, working])
 
-  useEffect(() => () => {
-    generation.current += 1
-    session.current?.close()
-    session.current = null
-  }, [])
-
-  const newChat = () => {
-    generation.current += 1
-    session.current?.close()
-    session.current = null
-    setTranscript([])
-    setError(null)
-    setStatus("idle")
-  }
+  // The answer goes to the bridge and into the running turn as a tool-approval-response chunk, so the
+  // part records it in stream order (no race with what the bridge sends next).
+  const answer = useCallback((approvalId: string, approved: boolean) => {
+    transport.respond(approvalId, approved)
+  }, [transport])
 
   const host = useMemo<ToolHost>(() => ({
-    callTool: async (name, args) => {
-      const active = session.current
-      if (active === null) throw new Error("Start a chat first.")
-      return active.callTool(name, args)
-    },
+    callTool: (name, args) => transport.callTool(name, args),
     openLink: (url) => { window.open(url, "_blank", "noopener,noreferrer") },
-  }), [])
+  }), [transport])
 
-  const submit = (event: FormEvent) => { event.preventDefault(); void send(input) }
-  const working = status !== "idle"
-  const waiting = working && transcript.at(-1)?.kind === "user"
+  const last = messages.at(-1)
+  const waiting = working && last?.role === "user"
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-slot="sidekick">
-      <div className="flex items-center gap-2 border-b px-4 py-2">
+      <div className="flex items-center gap-2 border-b border-(--panel-border) px-4 py-2">
         <p className="text-meta text-muted-foreground">Acts as you, with Norn's tools only</p>
-        <Button size="sm" variant="ghost" className="ms-auto" onClick={newChat} disabled={transcript.length === 0 && !working}><SquarePen aria-hidden />New chat</Button>
+        <Button size="sm" variant="ghost" className="ms-auto" onClick={() => { void stop(); setEpoch((value) => value + 1) }} disabled={messages.length === 0 && !working}><SquarePen aria-hidden />New chat</Button>
       </div>
-      <StickToBottom className="relative min-h-0 flex-1 overflow-y-hidden" initial="smooth" resize="smooth" role="log" aria-live="polite">
-        <StickToBottom.Content className="flex flex-col gap-3 p-4">
-          {transcript.length === 0 && (
+      <StickToBottom className="relative min-h-0 flex-1 overflow-y-hidden" initial="smooth" resize="smooth" role="log" aria-live="polite" aria-label="Sidekick conversation">
+        <StickToBottom.Content className="flex flex-col gap-5 p-4">
+          {messages.length === 0 && (
             <div className="enter flex flex-col items-center gap-2 py-10 text-center">
-              <span className="mb-1 flex size-11 items-center justify-center rounded-2xl bg-muted"><Sparkles className="size-5 text-muted-foreground" /></span>
-              <div className="text-base font-semibold">Ask Sidekick</div>
-              <p className="max-w-xs text-sm text-muted-foreground">It answers from your workspace through Norn, as you. What you can't see, it can't see either.</p>
+              <Mascot size={56} state={error ? "unavailable" : "idle"} className="mb-1" />
+              <h3 className="text-body">Ask Sidekick</h3>
+              <p className="max-w-xs text-body text-muted-foreground">It answers from your workspace through Norn, as you. What you can't see, it can't see either.</p>
             </div>
           )}
-          {transcript.map((item) => <Entry key={item.id} item={item} host={host} />)}
-          {waiting && <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><LoaderCircle className="size-4 animate-spin" />{status === "connecting" ? "Connecting…" : "Thinking…"}</p>}
-          {error !== null && (
-            <div role="alert" className="rounded-xl border bg-card p-3 text-sm">
-              <p className="font-medium">Sidekick couldn't answer.</p>
-              <p className="text-muted-foreground">{error}</p>
-            </div>
+          {messages.map((message, index) => message.role === "user"
+            ? (
+              <Message key={message.id} align="end" data-role="user">
+                <MessageContent>
+                  <Bubble variant="muted" align="end"><BubbleContent className="text-body whitespace-pre-wrap">{message.parts.map((part) => part.type === "text" ? part.text : "").join("")}</BubbleContent></Bubble>
+                </MessageContent>
+              </Message>
+            )
+            : <AssistantMessage key={message.id} message={message} host={host} onAnswer={answer} live={working && index === messages.length - 1} pose={poseOf(message, working && index === messages.length - 1, error !== undefined && index === messages.length - 1)} />)}
+          {waiting && (
+            <p role="status" className="flex items-center gap-2.5 text-body text-muted-foreground">
+              <Mascot size={28} state="thinking" />{status === "submitted" ? "Connecting…" : "Thinking…"}
+            </p>
+          )}
+          {error !== undefined && (
+            <Alert variant="destructive" data-slot="sidekick-error">
+              <Mascot size={28} state="unavailable" className="row-span-2" />
+              <AlertTitle>Sidekick couldn't answer.</AlertTitle>
+              <AlertDescription>{error.message}</AlertDescription>
+              <div className="col-start-2 mt-2 flex">
+                <Button size="sm" variant="outline" onClick={() => void regenerate()}><RotateCcw aria-hidden />Retry</Button>
+              </div>
+            </Alert>
           )}
         </StickToBottom.Content>
+        <ScrollToLatest />
       </StickToBottom>
-      <div className="space-y-2.5 border-t p-3">
-        {transcript.length === 0 && (
-          <div className="flex flex-wrap gap-2">
-            {SUGGESTIONS.map((suggestion) => (
-              <Button key={suggestion} size="sm" variant="outline" disabled={working} className="h-auto rounded-full py-1.5 font-normal" onClick={() => void send(suggestion)}>{suggestion}</Button>
-            ))}
+      <div className="space-y-2.5 border-t border-(--panel-border) p-3">
+        {messages.length === 0 && (
+          <div className="flex flex-wrap gap-2" aria-label="Suggested questions" role="group">
+            {SUGGESTIONS.map((suggestion) => <Button key={suggestion} size="sm" variant="outline" disabled={working} className="h-auto rounded-full py-1.5 font-normal" onClick={() => send(suggestion)}>{suggestion}</Button>)}
           </div>
         )}
-        <form onSubmit={submit} className="flex items-end gap-2">
-          <Textarea value={input} onChange={(event) => setInput(event.target.value)} placeholder="Ask about your numbers, records or what needs you" rows={2} className="min-h-0 resize-none" aria-label="Message Sidekick"
-            onKeyDown={(event) => { if (sendsOnEnter(event)) { event.preventDefault(); void send(input) } }} />
-          {working
-            ? <Button type="button" variant="outline" onClick={() => session.current?.cancel()}>Stop</Button>
-            : <Button type="submit" disabled={input.trim() === ""}>Send</Button>}
-        </form>
+        <ChatComposer label="Message Sidekick" placeholder="Ask about your numbers, records or what needs you" status={status} onSubmit={send} onStop={() => void stop()}
+          groupClassName="rounded-(--radius-composer)" footer={<span className="px-1.5 text-meta text-muted-foreground">Enter to send · Shift+Enter for a new line</span>} />
       </div>
     </div>
   )

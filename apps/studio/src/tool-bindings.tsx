@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { Link2, Play, Wrench } from "lucide-react"
 import { useEffect, useState } from "react"
-import { EmptyState, Panel, Well } from "@/components/panel"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -31,7 +31,7 @@ function FieldInput({ field, value, onChange }: { readonly field: FormField; rea
       </select>
     )
   }
-  if (field.kind === "json") return <Textarea aria-label={field.label} rows={2} className="font-mono text-xs" value={value} onChange={(e) => onChange(e.target.value)} />
+  if (field.kind === "json") return <Textarea aria-label={field.label} rows={2} className="font-mono text-meta" value={value} onChange={(e) => onChange(e.target.value)} />
   return <Input aria-label={field.label} type={field.kind === "date" ? "date" : field.kind === "datetime" ? "datetime-local" : "text"} value={value} onChange={(e) => onChange(e.target.value)} />
 }
 
@@ -67,19 +67,19 @@ function BindingEditor({ tool, binding, onDone, scope }: { readonly tool: Tool; 
   }
   return (
     <form aria-label={binding === undefined ? `Bind ${tool.name}` : `Edit ${binding.label}`} className="space-y-3 border-t px-4 py-3" onSubmit={(e) => { e.preventDefault(); submit() }}>
-      <label className="grid gap-1 text-sm"><span className="font-medium">Name</span><Input aria-label="Binding name" value={label} maxLength={120} onChange={(e) => setLabel(e.target.value)} /></label>
-      <label className="grid gap-1 text-sm">
-        <span className="font-medium">Who may run it</span>
+      <label className="grid gap-1 text-body"><span>Name</span><Input aria-label="Binding name" value={label} maxLength={120} onChange={(e) => setLabel(e.target.value)} /></label>
+      <label className="grid gap-1 text-body">
+        <span>Who may run it</span>
         <select aria-label="Who may run it" className="h-9 rounded-md border bg-background px-2" value={runRole} onChange={(e) => setRunRole(e.target.value as RunRole)}>
           <option value="member">Members and admins</option>
           <option value="admin">Admins only</option>
         </select>
       </label>
       <fieldset className="space-y-2">
-        <legend className="text-sm font-medium">Fixed inputs</legend>
+        <legend className="text-body">Fixed inputs</legend>
         {fields.length === 0 && <p className="text-meta text-muted-foreground">This tool's input has no fields to fix.</p>}
         {fields.map((field) => (
-          <div key={field.name} className="flex flex-wrap items-center gap-2 text-sm">
+          <div key={field.name} className="flex flex-wrap items-center gap-2 text-body">
             <label className="flex w-48 items-center gap-2">
               <input type="checkbox" aria-label={`Fix ${field.name}`} checked={Object.hasOwn(fixed, field.name)} onChange={(e) => setFixed(e.target.checked ? { ...fixed, [field.name]: "" } : Object.fromEntries(Object.entries(fixed).filter(([name]) => name !== field.name)))} />
               <span className="font-mono">{field.name}</span><span className="text-meta text-muted-foreground">{field.kind}</span>
@@ -88,12 +88,12 @@ function BindingEditor({ tool, binding, onDone, scope }: { readonly tool: Tool; 
           </div>
         ))}
       </fieldset>
-      {dropped.length > 0 && <p role="status" className="text-sm text-amber-700 dark:text-amber-400">The tool no longer takes {dropped.join(", ")}; saving removes {dropped.length === 1 ? "that fixed input" : "those fixed inputs"} from this binding.</p>}
+      {dropped.length > 0 && <p role="status" className="text-body text-warning">The tool no longer takes {dropped.join(", ")}; saving removes {dropped.length === 1 ? "that fixed input" : "those fixed inputs"} from this binding.</p>}
       <div className="flex gap-2">
         <Button size="sm" type="submit" disabled={save.isPending}>{binding === undefined ? "Add binding" : "Save binding"}</Button>
         <Button size="sm" variant="ghost" type="button" onClick={onDone}>Cancel</Button>
       </div>
-      {problem && <p role="alert" className="text-sm text-destructive">{problem}</p>}
+      {problem && <p role="alert" className="text-body text-destructive">{problem}</p>}
       {save.isError && <ConnectorProblem error={save.error} scope={effectiveScope} />}
     </form>
   )
@@ -116,16 +116,16 @@ function TestRun({ binding, tool, scope }: { readonly binding: Binding; readonly
   return (
     <form aria-label={`Test run ${binding.label}`} className="space-y-3 border-t px-4 py-3" onSubmit={(e) => { e.preventDefault(); submit() }}>
       {fields.map((field) => (
-        <label key={field.name} className="grid gap-1 text-sm">
-          <span className="font-medium">{field.label}{field.required && <span className="text-destructive"> *</span>} <span className="text-meta text-muted-foreground">{field.kind}</span></span>
+        <label key={field.name} className="grid gap-1 text-body">
+          <span>{field.label}{field.required && <span className="text-destructive"> *</span>} <span className="text-meta text-muted-foreground">{field.kind}</span></span>
           <FieldInput field={field} value={texts[field.name] ?? ""} onChange={(next) => setTexts({ ...texts, [field.name]: next })} />
           {field.description && <span className="text-meta text-muted-foreground">{field.description}</span>}
         </label>
       ))}
       <Button size="sm" type="submit" disabled={run.isPending}><Play />Run</Button>
-      {problem && <p role="alert" className="text-sm text-destructive">{problem}</p>}
+      {problem && <p role="alert" className="text-body text-destructive">{problem}</p>}
       {run.isError && <ConnectorProblem error={run.error} scope={effectiveScope} />}
-      {run.isSuccess && <pre aria-label="Result" className="max-h-80 overflow-auto rounded-md bg-muted p-3 text-xs">{JSON.stringify(run.data.result, null, 2)}</pre>}
+      {run.isSuccess && <pre aria-label="Result" className="max-h-80 overflow-auto rounded-md bg-muted p-3 text-meta">{JSON.stringify(run.data.result, null, 2)}</pre>}
     </form>
   )
 }
@@ -146,7 +146,7 @@ function BindingRow({ binding, manage, scope }: { readonly binding: Binding; rea
     <div className="border-t first:border-t-0" data-binding={binding.id}>
       <div className="flex flex-wrap items-center gap-2 px-4 py-3">
         <div className="min-w-0 flex-1">
-          <div className="font-medium">{binding.label}</div>
+          <div>{binding.label}</div>
           <div className="font-mono text-meta text-muted-foreground">{binding.app}.{binding.tool}</div>
         </div>
         <Badge variant="outline">{binding.runRole === "admin" ? "Admins only" : "Members"}</Badge>
@@ -165,13 +165,13 @@ function BindingRow({ binding, manage, scope }: { readonly binding: Binding; rea
           <dt className="text-muted-foreground">Manifest</dt><dd className="truncate font-mono" title={binding.manifestDigest}>{binding.manifestDigest}</dd>
           <dt className="text-muted-foreground">Last changed</dt><dd>{new Date(binding.updatedAt).toLocaleString()}</dd>
           <dt className="text-muted-foreground">Input schema</dt>
-          <dd><pre className="max-h-48 overflow-auto rounded-md bg-muted p-2 text-xs">{tools.isPending ? "Loading…" : JSON.stringify(tool?.inputSchema ?? null, null, 2)}</pre></dd>
+          <dd><pre className="max-h-48 overflow-auto rounded-md bg-muted p-2 text-meta">{tools.isPending ? "Loading…" : JSON.stringify(tool?.inputSchema ?? null, null, 2)}</pre></dd>
         </dl>
       )}
-      {mode !== null && mode !== "view" && tools.isPending && <p className="border-t px-4 py-3 text-sm text-muted-foreground">Loading the tool…</p>}
+      {mode !== null && mode !== "view" && tools.isPending && <p className="border-t px-4 py-3 text-body text-muted-foreground">Loading the tool…</p>}
       {mode !== null && mode !== "view" && tools.isError && <ConnectorProblem error={tools.error} scope={scope} />}
       {mode !== null && mode !== "view" && tools.isSuccess && tool === undefined && (
-        <p role="alert" className="border-t px-4 py-3 text-sm text-destructive">The gateway no longer lists {binding.app}.{binding.tool}. Remove this binding, or bind the tool again once the app serves it.</p>
+        <p role="alert" className="border-t px-4 py-3 text-body text-destructive">The gateway no longer lists {binding.app}.{binding.tool}. Remove this binding, or bind the tool again once the app serves it.</p>
       )}
       {mode === "edit" && tool && <BindingEditor tool={tool} binding={binding} onDone={() => setMode(null)} scope={scope} />}
       {mode === "run" && tool && <TestRun binding={binding} tool={tool} scope={scope} />}
@@ -190,8 +190,8 @@ function AddBinding({ scope }: { readonly scope?: WorkspaceScope | null }) {
   if (inventory.isError) return <ConnectorProblem error={inventory.error} scope={scope} />
   return (
     <div className="space-y-2 border-t px-4 py-3">
-      <label className="flex items-center gap-2 text-sm">
-        <span className="font-medium">Add a binding for</span>
+      <label className="flex items-center gap-2 text-body">
+        <span>Add a binding for</span>
         <select aria-label="App" className="h-9 rounded-md border bg-background px-2" value={app ?? ""} onChange={(e) => { setApp(e.target.value || null); setBinding(null) }}>
           <option value="">choose an app</option>
           {(inventory.data?.apps ?? []).map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
@@ -201,7 +201,7 @@ function AddBinding({ scope }: { readonly scope?: WorkspaceScope | null }) {
       {tools.data?.tools.map((tool) => (
         <div key={tool.name} className="rounded-md border">
           <div className="flex items-center gap-2 px-3 py-2">
-            <div className="min-w-0 flex-1"><span className="font-mono text-sm">{tool.name}</span>{tool.description && <p className="line-clamp-1 text-meta text-muted-foreground">{tool.description}</p>}</div>
+            <div className="min-w-0 flex-1"><span className="font-mono text-body">{tool.name}</span>{tool.description && <p className="line-clamp-1 text-meta text-muted-foreground">{tool.description}</p>}</div>
             {tool.bindings.length > 0 && <Badge variant="secondary">Bound</Badge>}
             <Button size="sm" variant="outline" aria-label={`Bind ${tool.name}`} onClick={() => setBinding(binding === tool.name ? null : tool.name)}>Bind</Button>
           </div>
@@ -232,7 +232,7 @@ export function ToolBindings() {
   return (
     <Panel icon={Link2} label="Tool bindings">
       <Well>
-        {bindings.isPending ? <p className="px-4 py-3 text-sm text-muted-foreground">Loading…</p>
+        {bindings.isPending ? <p className="px-4 py-3 text-body text-muted-foreground">Loading…</p>
           : bindings.isError ? <ConnectorProblem error={bindings.error} scope={pinnedScope} />
           : (
             <>

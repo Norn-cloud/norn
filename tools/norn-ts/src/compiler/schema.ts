@@ -25,6 +25,7 @@ import type { ProfileChecker } from "../check.ts"
 import * as E from "../builder/entity.ts"
 import * as S from "../builder/schema.ts"
 import { CompileError } from "./types.ts"
+import { registryValueType } from "./value-types.ts"
 
 /** The structural reading of a Schema expression. Every node keeps the syntax it came from for diagnostics. */
 export type SchemaNode =
@@ -482,11 +483,13 @@ export class SchemaProjection {
    * `"scalar"` admits `Schema.NullOr` of a scalar only, the nullable leaf ActionIR
    * inputs and outputs admit (`["string" | "integer" | "number" | "boolean", "null"]`,
    * with what the scalar leaf carries: a string `enum`, a decimal `nornType`, labels);
-   * `false` admits none.
+   * `false` admits none. `temporalWire`: a `Norn.timestamp` or `Norn.date`
+   * lowers to its wire text (an action input: the written property's type
+   * checks the value when the action commits).
    */
-  closed(schema: SchemaNode, nullable: boolean | "scalar" = false): S.ValueSchema {
+  closed(schema: SchemaNode, nullable: boolean | "scalar" = false, temporalWire = false): S.ValueSchema {
     this.bounded(schema)
-    return this.closedAt(schema, nullable)
+    return this.closedAt(schema, nullable, temporalWire)
   }
 
   /** Wire types for syntax-only expressions; Rust derives semantic types from the real context. */
@@ -527,7 +530,8 @@ export class SchemaProjection {
         if (nullable && members.length === 2 && members.some((m) => m.kind === "null")) {
           const nonNull = members.find((m) => m.kind !== "null")!
           const scalar = ["string", "int", "finite", "boolean", "literals"].includes(nonNull.kind)
-            || (nonNull.kind === "value-type" && nonNull.type.kind === "decimal")
+            || (nonNull.kind === "value-type" && (nonNull.type.kind === "decimal" || nonNull.type.kind === "ref"))
+            || (temporalWire && nonNull.kind === "value-type" && (nonNull.type.kind === "timestamp" || nonNull.type.kind === "date"))
           if (nullable === "scalar" && !scalar) {
             throw projection("an action's absent value is a nullable scalar: Schema.NullOr of a string, literal set, integer, number, boolean or Norn.decimal (ActionIR admits no nullable struct or array)", schema.node)
           }
@@ -536,13 +540,19 @@ export class SchemaProjection {
         if (members.every((m) => m.kind === "literals")) return S.text([...new Set(members.flatMap((m) => (m.kind === "literals" ? m.values : [])))])
         throw projection("closed schemas have no unions: use a literal union, or Schema.optionalKey for an absent member", schema.node)
       }
-      case "value-type":
-        if (schema.type.kind === "decimal") {
-          if (schema.type.scale > 18) throw projection("closed exact sites require a scale from 0 to 18", schema.node)
-          return { type: "number", nornType: schema.type }
+      case "value-type": {
+        // A registry value type (`Norn.ref("core.quantity")`) reads as what it resolves to.
+        const type = schema.type.kind === "ref" ? registryValueType(schema.type.name) ?? schema.type : schema.type
+        if (type.kind === "decimal") {
+          if (type.scale > 18) throw projection("closed exact sites require a scale from 0 to 18", schema.node)
+          return { type: "number", nornType: type }
         }
-        if (temporalWire && (schema.type.kind === "timestamp" || schema.type.kind === "date")) return S.text()
-        throw projection(`Norn.${schema.type.kind === "ref" ? "ref" : schema.type.kind} projects to EntityIR properties only; closed schemas have no ${schema.type.kind} type yet`, schema.node)
+        if (type.kind === "integer") return S.integer
+        if (type.kind === "boolean") return S.boolean
+        if (schema.type.kind === "ref" && type.kind === "text") return S.text()
+        if (temporalWire && (type.kind === "timestamp" || type.kind === "date")) return S.text()
+        throw projection(`Norn.${schema.type.kind === "ref" ? "ref" : schema.type.kind} projects to EntityIR properties only; closed schemas have no ${type.kind} type yet`, schema.node)
+      }
     }
   }
 

@@ -36,18 +36,45 @@ export const ModelVersionEvidence = Norn.interfaceType({
   }],
 })
 
+// A version as stored: its evidence, and the verified principal that registered
+// it (ACTOR-STAMP-1), so promotion and retirement are separated from it.
+const StoredVersion = Schema.Struct({
+  version_id: Schema.String,
+  model_id: Schema.String,
+  version: Schema.String,
+  status: Schema.Literals(["candidate", "production", "retired"]),
+  training_run: Schema.String,
+  evaluation_run: Schema.String,
+  artifact_uri: Schema.String,
+  artifact_sha256: Schema.String,
+  artifact_size: Schema.Int,
+  input_type: Schema.String,
+  input_revision: Schema.String,
+  pinned_dataset_revision: Schema.String,
+  evaluation_revision: Schema.String,
+  metric_name: Schema.String,
+  metric_value: Norn.decimal(9),
+  contracts_passed: Schema.Boolean,
+  registered_by: Schema.String,
+})
+
 export const ModelVersion = Norn.type({
   name: "ml.ModelVersion", title: "Model version", version: "0.1.0",
-  properties: Version, implements: [ModelVersionEvidence],
+  properties: StoredVersion, implements: [ModelVersionEvidence],
   identity: [{ name: "primary", properties: ["version_id"] }],
+  // Stamped from the registering principal only; nobody rewrites it.
+  protected: ["registered_by"],
   defaults: { status: "candidate" },
   links: [
     { id: "trained_by", target: "tracking.Run", cardinality: { to: "one", from: "many" } },
     { id: "evaluated_by", target: "tracking.Run", cardinality: { to: "one", from: "many" } },
   ],
   lifecycles: [{ property: "status", initial: ["candidate"], terminal: ["retired"], transitions: [
+    // ANALYSIS-PUBLISH-1: a version evaluated on another revision than its pinned
+    // one (temporal leakage) or failing a contract is refused as a publication guard.
     { id: "promote", from: ["candidate"], to: "production",
-      guards: [Norn.expression(Version, (self) => self.contracts_passed && self.evaluation_revision === self.pinned_dataset_revision)] },
+      guards: [Norn.expression(Version, (self) => self.contracts_passed && self.evaluation_revision === self.pinned_dataset_revision)],
+      guardRefusalCode: "core.projection.publication_guard" },
     { id: "retire", from: ["candidate", "production"], to: "retired" },
   ] }],
 })
@@ -59,6 +86,7 @@ const RegisterInput = Schema.Struct({
   input_type: Schema.String, input_revision: Schema.String,
   pinned_dataset_revision: Schema.String, evaluation_revision: Schema.String,
   metric_name: Schema.String, metric_value: Norn.decimal(9), contracts_passed: Schema.Boolean,
+  registered_by: Schema.String,
 })
 
 export const RegisterModelVersion = Norn.action({
@@ -66,6 +94,8 @@ export const RegisterModelVersion = Norn.action({
   input: RegisterInput, output: Schema.Struct({ version_id: Schema.String }),
   scopeRequired: ["orgId", "environmentId"], idempotent: true, ledgered: true,
   access: { artifactId: "ml.access.policy", version: "0.1.0" },
+  // The server stamps the registering principal; a caller never supplies it.
+  fromCaller: ["registered_by"],
   slice: [
     { name: "training", type: "tracking.Run", key: { property: { from: "input", property: "training_run" } } },
     { name: "evaluation", type: "tracking.Run", key: { property: { from: "input", property: "evaluation_run" } } },
@@ -103,6 +133,8 @@ export const PromoteModelVersion = Norn.action({
   access: { artifactId: "ml.access.policy", version: "0.1.0" },
   writes: [{ type: ModelVersion, change: "modified" }],
   effect: { kind: "fire_transition", type: ModelVersion, objectIdField: "version_id", lifecycle: "status", transition: "promote" },
+  // Separation of duties (ACTOR-INDEPENDENT-1): whoever registered a version never promotes it.
+  independentOf: ["registered_by"],
 })
 
 export const RetireModelVersion = Norn.action({
@@ -112,6 +144,8 @@ export const RetireModelVersion = Norn.action({
   access: { artifactId: "ml.access.policy", version: "0.1.0" },
   writes: [{ type: ModelVersion, change: "modified" }],
   effect: { kind: "fire_transition", type: ModelVersion, objectIdField: "version_id", lifecycle: "status", transition: "retire" },
+  // Separation of duties: whoever registered a version never retires it either.
+  independentOf: ["registered_by"],
 })
 
 const Batch = Schema.Struct({

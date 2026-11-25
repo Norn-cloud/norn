@@ -31,5 +31,10 @@ test("a tile names a Norn.question from its own module, a known view and width; 
     source.replace('view: "number" }', 'view: "number", colour: "red" }'),
     source.replace("export const Refinery =", "export default"),
   ]) expect(withModule(candidate, (path) => compileDashboards(path)).ok).toBe(false)
-  expect(withModule(source, (path) => compileDefinitions(path, { scope: { orgId: "org_demo", environmentId: "analytics" }, sourcePath: "dashboard.ts" })).ok).toBe(false)
+  // Beside a pack's definitions, artifact compilation skips a dashboard and its questions, saying so.
+  const artifacts = withModule(source, (path) => compileDefinitions(path, { scope: { orgId: "org_demo", environmentId: "analytics" }, sourcePath: "dashboard.ts" }))
+  if (!artifacts.ok) throw new Error(JSON.stringify(artifacts.diagnostics))
+  expect(artifacts.artifacts).toEqual([])
+  expect(artifacts.warnings.length).toBeGreaterThan(0)
+  expect(artifacts.warnings.every((warning) => warning.code === "NORN-FLOW-RESULT")).toBe(true)
 })

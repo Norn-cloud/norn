@@ -1,0 +1,7 @@
+{
+  "code": "widget.binding.marked_value_unhandled",
+  "message": "a marked property is rendered by a catalog component that does not declare it handles masked values: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}
