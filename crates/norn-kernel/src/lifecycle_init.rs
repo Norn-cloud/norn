@@ -305,7 +305,7 @@ pub(crate) fn with_initial_states<X>(
 /// `Transitioned`, `Deleted`), that evidence is validated even when the row
 /// ends in an initial state, since a final row alone cannot tell a legal
 /// sequence from a forged one: it is replayed from initialization under the
-/// decision path's own rules ([`FirstWriteReplay`]) and must end in
+/// decision path's own rules ([`LifecycleReplay`]) and must end in
 /// exactly the written values. Under `trust`, the kernel-prepared owned-row
 /// admission's creations may initialize rules-only properties under the
 /// kernel's private origin (FA-PROTECT-1), and a governed create may hold its
