@@ -2530,6 +2530,7 @@ dependencies = [
  "norn-decisions",
  "norn-expr",
  "norn-ir",
+ "rustix",
  "serde_json",
  "sse-stream",
  "tokio",
