@@ -6,7 +6,7 @@ import { sentence } from "@/components/lifecycle-view"
 import { useLocale } from "./lib/locale.tsx"
 import { Clock, GitCommitHorizontal, Pause, ShieldX } from "lucide-react"
 import { Chip, FactChip } from "@/components/chip"
-import { FactStatusBadge, deriveFactStatus } from "@/components/fact-status-badge"
+import { FACT_STATUS_META, FactStatusBadge, deriveFactStatus } from "@/components/fact-status-badge"
 import { Braces, Database, EyeOff, GitBranch, History as HistoryIcon, Link2, RefreshCw, Rows3, ShieldCheck, type LucideIcon } from "lucide-react"
 import { Fragment, useEffect, useState, type ReactNode } from "react"
 import { Button } from "@/components/ui/button"
@@ -135,8 +135,12 @@ export function ObjectPage() {
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="min-w-0 text-title leading-tight tracking-tight [overflow-wrap:break-word]"><PathText value={data ? recordName(data.object.document) : id} /></h1>
             {data?.object.origin === "recorded" && <Chip tone="gray" title={RECORDED_HINT}>Recorded</Chip>}
-            {recordStatus !== null && <FactStatusBadge status={recordStatus} />}
-            {heldBack && <Chip tone="amber" icon={Pause} title="An open finding keeps this record out of answers and totals until a correction satisfies the law.">Held back</Chip>}
+            {/* One statement of the record's state. Withheld here means some values are masked for this reader, not
+                the record: the title says exactly how many, and each value says how it was projected. */}
+            {recordStatus === "withheld" && maskedRecord !== undefined
+              ? <Chip tone="gray" dot data-fact-status="withheld" title={FACT_STATUS_META.withheld.description}>{maskedWords(maskedRecord)}</Chip>
+              : recordStatus !== null && <FactStatusBadge status={recordStatus} />}
+            {heldBack && recordStatus === null && <Chip tone="amber" icon={Pause} title="An open finding keeps this record out of answers and totals until a correction satisfies the law.">Held back</Chip>}
             {broken.length > 0 && <Chip tone="red" dot>{broken.length} {broken.length === 1 ? "rule broken" : "rules broken"}</Chip>}
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-meta text-muted-foreground">
@@ -193,7 +197,7 @@ export function ObjectPage() {
                     </Panel>
                   )
                 })}
-                {live && <Findings objectType={name} id={id} scope={sourceScope} actionFor={corrections.actionFor} />}
+                {live && <Findings objectType={name} id={id} scope={sourceScope} actionFor={corrections.actionFor} quarantineStated={heldBack} />}
                 {live ? <div id="record-history" className="scroll-mt-6"><History objectType={name} id={id} /></div> : <Panel icon={HistoryIcon} label="History"><Well>
                   <Empty icon={HistoryIcon} action={<Button variant="outline" size="sm" onClick={() => setTab("lineage")}>See where it came from</Button>}>A recorded snapshot keeps no change history. Version {data.object.document.version} is the one stored.</Empty>
                 </Well></Panel>}
@@ -255,6 +259,15 @@ export function ObjectPage() {
 }
 
 const TABS = [["overview", "Overview"], ["lineage", "Lineage"], ["rules", "Rules"]] as const
+
+/** How many of the record's values the server projected for this reader, in words: "1 value masked", "2 values withheld". */
+export function maskedWords(masked: Readonly<Record<string, unknown>>): string {
+  const modes = Object.values(masked).map((entry) => (entry as { mode?: unknown } | null)?.mode)
+  const count = modes.length
+  const refused = modes.filter((mode) => mode === "refuse").length
+  const verb = refused === 0 ? "masked" : refused === count ? "withheld" : "masked or withheld"
+  return `${count.toLocaleString("en-US")} ${count === 1 ? "value" : "values"} ${verb}`
+}
 
 /**
  * Which read this page shows: the version and, live, the commit that wrote it and when, from the

@@ -7,7 +7,10 @@ import { Panel, Well } from "@/components/panel"
 import { CellRefusal, NotServed } from "../lib/live-transport.ts"
 import { useLocale } from "@/lib/locale"
 import { transport } from "@/lib/transport"
-import { catalogOf } from "../lib/catalog.ts"
+import { catalogOf, lawHeadline } from "../lib/catalog.ts"
+import { readableTime } from "../lib/format.ts"
+import { useView } from "../lib/view.tsx"
+import { Disclosure } from "@/components/disclosure"
 import { compared, isList, roleOf } from "../lib/law-values.ts"
 import { atScale } from "../lib/objects.ts"
 import { EvidenceList } from "./evidence-crop.tsx"
@@ -15,11 +18,11 @@ import type { Evidence, Finding, RuleRef } from "./review.ts"
 import type { StudioScope } from "../lib/definitions.ts"
 import { findingsQuery } from "../lib/record-read.ts"
 
-/** The rule a finding records, by its stable id. */
-function ruleName(rule: RuleRef): string {
+/** The rule a finding records, by its stable id: shown only under Technical, beside the rule's name. */
+function ruleId(rule: RuleRef): string | undefined {
   if (rule.kind === "law") return rule.lawId
   if (rule.kind === "builtin") return rule.id
-  return "an invariant"
+  return undefined
 }
 
 const STATUS: Record<Finding["status"], { readonly label: string; readonly variant: "destructive" | "warning" | "success" | "outline"; readonly icon: LucideIcon }> = {
@@ -74,36 +77,54 @@ function ComparedValues({ objectType, finding }: { readonly objectType: string; 
  * each finding records, whether the object is held out of authoritative reads,
  * and the evidence of where its values were read.
  */
-export function Findings({ objectType, id, scope, actionFor }: {
+export function Findings({ objectType, id, scope, actionFor, quarantineStated = false }: {
   readonly objectType: string; readonly id: string
   /** The workspace the record was read at: its findings are read and cached there (#1745). */
   readonly scope: StudioScope | undefined
   readonly actionFor?: (evidence: Evidence) => ReactNode
+  /** The page already says, once, that the record is held out of answers: the panel lists the findings only. */
+  readonly quarantineStated?: boolean
 }) {
   const read = useQuery(findingsQuery(objectType, id, scope))
+  const { locale } = useLocale()
+  const { view } = useView()
+  const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
+  const laws = catalog.data ? catalogOf(catalog.data.document, locale).byName.get(objectType)?.laws ?? [] : []
   if (read.isPending) return <Panel icon={ShieldAlert} label="Findings"><Well className="p-3 text-meta text-muted-foreground">Reading the findings…</Well></Panel>
   if (read.isError) {
     const message = read.error instanceof NotServed ? "This cell does not serve findings yet." : read.error instanceof CellRefusal ? read.error.message : "The findings could not be read."
     return <Panel icon={ShieldAlert} label="Findings"><Well className="p-3 text-meta text-muted-foreground">{message}</Well></Panel>
   }
   const { quarantined, findings, evidence } = read.data.document
+  const said = quarantined && !quarantineStated
   return (
-    <Panel icon={quarantined ? ShieldAlert : ShieldCheck} label="Findings" action={quarantined ? <Chip tone="amber" dot title="Held out of authoritative reads">Held out of authoritative reads</Chip> : undefined}>
+    <Panel icon={quarantined ? ShieldAlert : ShieldCheck} label="Findings" action={said ? <Chip tone="amber" dot title="Held out of authoritative reads">Held out of authoritative reads</Chip> : undefined}>
       <Well className="space-y-3 p-3">
-        {findings.length === 0 && <p className="flex flex-wrap items-center gap-2 text-sm"><Chip tone="green" icon={ShieldCheck}>No findings</Chip><span className="text-muted-foreground">Every law the cell checks held when this record was imported.</span></p>}
-        {quarantined && <p className="text-sm">This record is quarantined: an open finding keeps it out of answers and totals until a correction satisfies the law. Its source values stay readable here.</p>}
-        {findings.map((finding) => (
-          <article key={finding.id} className="space-y-1 rounded-md border bg-card p-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <StatusBadge status={finding.status} />
-              <span className="font-mono text-xs">{ruleName(finding.ruleRef)}</span>
-              <span className="text-meta text-muted-foreground">{finding.severity} · first seen {finding.firstSeen}</span>
-            </div>
-            <p className="text-sm">{finding.message}</p>
-            <ComparedValues objectType={objectType} finding={finding} />
-          </article>
-        ))}
-        {evidence.length > 0 && <div className="space-y-2"><div className="text-meta font-medium text-muted-foreground">Where its values were read</div><EvidenceList refs={evidence} record={{ objectType, id }} {...actionFor ? { actionFor } : {}} /></div>}
+        {findings.length === 0 && <p className="flex flex-wrap items-center gap-2 text-body"><Chip tone="green" icon={ShieldCheck}>No findings</Chip><span className="text-muted-foreground">Every law the cell checks held when this record was imported.</span></p>}
+        {said && <p className="text-body">This record is quarantined: an open finding keeps it out of answers and totals until a correction satisfies the law. Its source values stay readable here.</p>}
+        {findings.map((finding) => {
+          // The rule by the name its definition gives it, as Home names it; its id only under Technical.
+          const ref = finding.ruleRef
+          const law = ref.kind === "law" ? laws.find(({ id: lawId }) => lawId === ref.lawId) : undefined
+          const rid = ruleId(ref)
+          return (
+            <article key={finding.id} data-finding={finding.id} className="space-y-1.5 rounded-(--radius-row) bg-card p-3 ring-1 ring-line">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <StatusBadge status={finding.status} />
+                <span lang={law?.titleLang} className="min-w-0 text-body text-foreground text-pretty">{law ? lawHeadline(law) : ref.kind === "law" || ref.kind === "builtin" ? "A rule this record breaks" : "An invariant"}</span>
+                <span className="text-meta text-muted-foreground">{finding.severity} · first seen <time dateTime={finding.firstSeen} title={finding.firstSeen}>{view === "technical" ? finding.firstSeen : readableTime(finding.firstSeen)}</time></span>
+              </div>
+              <p className="text-body text-muted-foreground">{finding.message}</p>
+              <ComparedValues objectType={objectType} finding={finding} />
+              {rid !== undefined && (
+                <Disclosure open={view === "technical" || law === undefined} summary="Technical" className="text-meta text-muted-foreground">
+                  <code className="block ps-5 pt-1 font-mono [overflow-wrap:anywhere]">{rid}</code>
+                </Disclosure>
+              )}
+            </article>
+          )
+        })}
+        {evidence.length > 0 && <div className="space-y-2"><div className="text-meta text-muted-foreground">Where its values were read</div><EvidenceList refs={evidence} record={{ objectType, id }} {...actionFor ? { actionFor } : {}} /></div>}
       </Well>
     </Panel>
   )

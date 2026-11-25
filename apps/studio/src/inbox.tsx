@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query"
 import { Link, useRouter } from "@tanstack/react-router"
 import { ChevronRight, CircleAlert, Inbox as InboxIcon, Plug, ShieldAlert, type LucideIcon } from "lucide-react"
-import type { ComponentProps, MouseEvent, ReactNode } from "react"
+import { Fragment, type ComponentProps, type MouseEvent, type ReactNode } from "react"
 import { LoadState } from "@/components/load-state"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -95,7 +95,7 @@ export function Inbox() {
                   {decisions.map(({ decision, target }) => (
                     <RouteLink key={decision.id} to={target} className={rowLink}>
                       <span className="min-w-0 flex-1 truncate">{decision.question}</span>
-                      <span className="shrink-0 text-xs text-muted-foreground">{decision.flow.title ?? decision.step.label ?? ""}</span>
+                      <span className="shrink-0 text-meta text-muted-foreground">{decision.flow.title ?? decision.step.label ?? ""}</span>
                       <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground" />
                     </RouteLink>
                   ))}
@@ -109,7 +109,7 @@ export function Inbox() {
                   {sources.map((source) => (
                     <RouteLink key={source.id} to={source.target} className={rowLink}>
                       <span className="min-w-0 flex-1 truncate">{text(source.values.label) ?? source.id}</span>
-                      <span className="min-w-0 max-w-[50%] truncate text-xs text-muted-foreground">{text(source.values.last_error_message) ?? text(source.values.status) ?? ""}</span>
+                      <span className="min-w-0 max-w-[50%] truncate text-meta text-muted-foreground">{text(source.values.last_error_message) ?? text(source.values.status) ?? ""}</span>
                       <ChevronRight aria-hidden className="size-4 shrink-0 text-muted-foreground" />
                     </RouteLink>
                   ))}
@@ -123,30 +123,51 @@ export function Inbox() {
   )
 }
 
-const rowLink = "flex items-center gap-3 px-4 py-1.5 ps-10 text-sm hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+const rowLink = "flex items-center gap-3 px-4 py-1.5 ps-10 text-body max-sm:min-h-[44px] hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
 
-/** A group's head row: a small muted icon, what the group is, its count, and an optional action at the end. */
-function GroupHead({ icon: Icon, title, count, description, children }: { readonly icon: LucideIcon; readonly title: ReactNode; readonly count?: number; readonly description?: ReactNode; readonly children?: ReactNode }) {
+/**
+ * A group's head row: a small muted icon, what the group is (one title line that tells it apart from
+ * its neighbours), its count, and its actions. On a phone the actions sit under the title, so a 44px
+ * pill never squeezes the title into a column.
+ */
+function GroupHead({ icon: Icon, title, count, description, children }: { readonly icon: LucideIcon; readonly title: ReactNode; readonly count?: ReactNode; readonly description?: ReactNode; readonly children?: ReactNode }) {
   return (
     <div className="flex items-start gap-3 px-4 pt-3 pb-1.5">
-      <Icon aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-      <div className="min-w-0 flex-1">
-        <h3 className="text-sm font-medium">{title}{count !== undefined && <span className="ms-2 font-normal text-muted-foreground tabular-nums">{count}</span>}</h3>
-        {description && <p className="text-meta text-muted-foreground">{description}</p>}
+      <Icon aria-hidden strokeWidth={1.6} className="mt-[3px] size-4 shrink-0 text-muted-foreground" />
+      <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-start sm:gap-3">
+        <div className="min-w-0 flex-1">
+          <h3 className="text-body text-foreground text-pretty">{title}{count !== undefined && <span className="ms-2 text-muted-foreground tabular-nums">{count}</span>}</h3>
+          {description && <p className="text-meta text-muted-foreground">{description}</p>}
+        </div>
+        {children && <div className="flex shrink-0 items-center gap-1">{children}</div>}
       </div>
-      {children && <div className="flex shrink-0 items-center gap-1">{children}</div>}
     </div>
   )
 }
 
-/** One law and the records it holds back: open it for each record, its finding in words and a link to review the record. */
+/**
+ * A finding's words with each side of its comparison kept whole: a line breaks before the operator,
+ * never inside "ledger entry 140.00". Each side is an inline block, so it moves to the next line as
+ * one piece and wraps inside only when it is wider than the line itself.
+ */
+export function ComparisonWords({ words }: { readonly words: string }) {
+  const sides = words.split(/\s(?=[≠=<>≤≥]\s)/)
+  return <>{sides.map((side, index) => <Fragment key={index}>{index > 0 && " "}<span className="inline-block">{side}</span></Fragment>)}</>
+}
+
+/**
+ * One law and the records it holds back. Two laws can share a title, so the title line also names the
+ * record type and how many records it holds. Each record is one row of a three-column grid: its name,
+ * its finding in words (one column for every record, so findings start at one x), then its fix.
+ */
 function HeldBack({ group }: { readonly group: Group }) {
+  const held = `${group.count.toLocaleString("en-US")}${group.approximate ? "+" : ""}`
   return (
     <Collapsible defaultOpen={group.records.length <= 3}>
-      <GroupHead icon={ShieldAlert} title={heldRuleTitle(group)}
-        description={<>{group.count}{group.approximate ? "+" : ""} {conceptTitle(group.objectType).toLowerCase()} {group.count === 1 ? "record" : "records"} held back</>}>
+      <GroupHead icon={ShieldAlert}
+        title={<><span>{heldRuleTitle(group)}</span><span data-held-type="" className="text-muted-foreground"> · {conceptTitle(group.objectType)} · <span className="tabular-nums">{held}</span> held back</span></>}>
         <Button asChild size="sm" variant="outline"><RouteLink to={group.target}>Review</RouteLink></Button>
-        <CollapsibleTrigger asChild><Button size="icon-sm" variant="ghost" aria-label="Show the records" className="data-open:rotate-90"><ChevronRight /></Button></CollapsibleTrigger>
+        <CollapsibleTrigger asChild><Button size="icon-sm" variant="ghost" aria-label="Show the records" className="data-open:rotate-90 max-sm:size-[44px]"><ChevronRight /></Button></CollapsibleTrigger>
       </GroupHead>
       <CollapsibleContent className="pb-1.5">
         {group.records.map((record) => {
@@ -154,20 +175,23 @@ function HeldBack({ group }: { readonly group: Group }) {
           // The record's other open findings, or laws a fix would break: the server offers no fix then.
           const others = record.otherFindings ?? []
           return (
-            <div key={`${record.objectType}:${record.id}`} className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1 px-4 py-1 ps-11 text-sm">
-              <RouteLink to={record.target} className="font-medium underline-offset-4 hover:underline">{name}</RouteLink>
-              {record.finding && <span className="min-w-0 flex-1 text-muted-foreground tabular-nums">{record.finding.words}</span>}
-              {others.length > 0 && (
-                <div className="basis-full space-y-0.5 text-xs text-muted-foreground">
-                  <Badge variant="outline">Needs review: {others.length + 1} laws disagree</Badge>
-                  {others.map((other) => <p key={other.id}>{other.words}</p>)}
-                </div>
-              )}
-              {record.suggestedFix && (
-                <Button asChild size="xs" variant="secondary" className="ms-auto">
-                  <RouteLink to={record.target}>Review fix</RouteLink>
-                </Button>
-              )}
+            <div key={`${record.objectType}:${record.id}`} data-held-record={record.id}
+              className="grid min-h-9 gap-x-4 gap-y-1 px-4 py-1.5 ps-11 text-body sm:grid-cols-[minmax(0,14rem)_minmax(0,1fr)_auto] sm:items-baseline">
+              <RouteLink to={record.target} title={name} className="min-w-0 truncate text-foreground underline-offset-4 hover:underline">{name}</RouteLink>
+              <div className="min-w-0 space-y-1 text-muted-foreground tabular-nums">
+                {record.finding && <p data-finding=""><ComparisonWords words={record.finding.words} /></p>}
+                {others.length > 0 && <>
+                  <Badge variant="warning" className="h-auto text-body">Needs review: {others.length + 1} laws disagree</Badge>
+                  {others.map((other) => <p key={other.id}><ComparisonWords words={other.words} /></p>)}
+                </>}
+              </div>
+              {record.suggestedFix
+                ? (
+                  <Button asChild size="xs" variant="secondary" className="justify-self-start sm:justify-self-end max-sm:min-h-[44px]">
+                    <RouteLink to={record.target}>Review fix</RouteLink>
+                  </Button>
+                )
+                : <span aria-hidden className="max-sm:hidden" />}
             </div>
           )
         })}

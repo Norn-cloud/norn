@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query"
 import type { ReactNode } from "react"
 import { Scale, ShieldAlert, ShieldCheck } from "lucide-react"
 import { Chip } from "@/components/chip"
-import { EmptyState, Panel, Well } from "@/components/panel"
+import { Panel, Well } from "@/components/panel"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { useMode } from "@/lib/live-transport"
@@ -222,7 +222,8 @@ export function LawsPanel({ concept, label = "Rules it must keep", enforced = tr
   return (
     <Panel icon={Scale} label={label}>
       <Well className="divide-y">
-        {empty && <EmptyState icon={Scale}>{heldOnly ? "No rule is holding back records of this type." : "No rule is declared on this object type itself."}</EmptyState>}
+        {/* Nothing to list is one quiet line, not a tall empty card: the panel's title already says what would be here. */}
+        {empty && <p data-empty="" className="px-4 py-3 text-body text-muted-foreground">{heldOnly ? "No rule is holding back records of this type." : "No rules on this type."}</p>}
         {shownLaws.map(({ law, held }) => <LawRow key={law.id} law={law} held={held} scanLimit={bound} />)}
         {extraHeld.map((group) => <HeldRuleRow key={heldGroupKey(group)} held={group} scanLimit={bound} />)}
         {invariants.map((rule) => <div key={rule} className="flex gap-3 px-4 py-3 text-sm"><span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-tone-green/10 text-tone-green dark:bg-tone-green/15"><ShieldCheck aria-hidden className="size-4" /></span><p className="min-w-0 flex-1 font-medium text-pretty">{rule}</p></div>)}

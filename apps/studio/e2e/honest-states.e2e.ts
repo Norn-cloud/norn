@@ -226,17 +226,28 @@ test("unreachable cell: 503 cell.unopenable (retryable: false) never shows Retry
   await page.getByRole("link", { name: "Sources" }).click()
   await page.reload()
 
-  // Must NEVER render a persistent "Retrying…" banner; shows honest Workspace unavailable immediately on both banner and page.
+  // Must NEVER render a persistent "Retrying…" banner; shows honest Workspace unavailable immediately. The page
+  // carries the full state once (message, incident, Last reachable, Retry); the banner is one line pointing to it.
   const banner = page.locator('[data-connection="unavailable"]')
+  const state = page.locator("[data-workspace-unavailable]")
   await expect(banner).toBeVisible()
-  await expect(page.locator("[data-workspace-unavailable]")).toBeVisible()
+  await expect(state).toBeVisible()
+  await expect(banner).toHaveAttribute("data-compact", "")
   await expect(banner).toContainText("Workspace unavailable")
-  await expect(banner).toContainText("Storage migration is paused for this environment.")
-  await expect(banner).toContainText("inc-cell-909")
-  await expect(banner).toContainText("Last reachable")
+  await expect(state).toContainText("Storage migration is paused for this environment.")
+  await expect(state).toContainText("inc-cell-909")
+  await expect(state).toContainText("Last reachable")
+  await expect(banner).not.toContainText("inc-cell-909")
+  await expect(banner.getByRole("button", { name: "Retry" })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(1)
   await expect(page.locator('[data-connection="retrying"]')).toHaveCount(0)
   await expect(page.getByText("Retrying…")).toHaveCount(0)
-  await expect(banner.getByRole("button", { name: "Retry" })).toBeEnabled()
+  await expect(state.getByRole("button", { name: "Retry" })).toBeEnabled()
+  // Nothing can be connected to a workspace that can't be opened: the page doesn't offer it.
+  await expect(page.getByRole("link", { name: "Connect a source" })).toHaveCount(0)
+  // "See details" takes the reader (and focus) to the page's state.
+  await banner.getByRole("button", { name: "See details" }).click()
+  await expect(state).toBeFocused()
   await page.clock.resume()
   await shoot(page, "cell-unavailable")
   await page.clock.install()
@@ -250,9 +261,46 @@ test("unreachable cell: 503 cell.unopenable (retryable: false) never shows Retry
   // Clicking Retry once the cell recovers restores both the live workspace and the Sources page.
   await page.clock.resume()
   unopenable = false
-  await banner.getByRole("button", { name: "Retry" }).click()
+  await state.getByRole("button", { name: "Retry" }).click()
   await expect(banner).toHaveCount(0)
   await expect(page.locator("[data-workspace-unavailable]")).toHaveCount(0)
+  await expect(page.getByRole("link", { name: "Connect a source" })).toBeVisible()
+})
+
+test("unreachable cell on a page with no state of its own: the banner carries the full state on a phone, laid out in rows with a 44px Retry", async ({ page }) => {
+  await session(page)
+  let unopenable = false
+  await page.route("**/api/host/v1/**", (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith("/v1/definitions")) {
+      return unopenable
+        ? route.fulfill({ status: 503, json: { format: "norn/refusal@2", code: "cell.unopenable", category: "internal", retryable: false, reason: null, incidentId: "inc-cell-910", message: "The workspace cell could not be opened.", explanation: "Storage migration is paused for this environment." } })
+        : route.fulfill({ json: { artifacts: definitions } })
+    }
+    if (path.endsWith("/v1/inbox")) return route.fulfill({ json: { scanLimit: 1000, sections: [], items: [] } })
+    return route.fulfill({ status: 404, json: { code: "route.not_found", message: "not served" } })
+  })
+  await page.goto("/")
+  await expect(page.getByText("Nothing needs you")).toBeVisible()
+  unopenable = true
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto("/views")
+  const banner = page.locator('[data-connection="unavailable"]')
+  await expect(banner).toBeVisible()
+  await expect(page.locator("[data-workspace-unavailable]")).toHaveCount(0)
+  // With no page-level state, the banner is the one place the reader learns it: message, detail and incident.
+  await expect(banner).not.toHaveAttribute("data-compact", /.*/)
+  await expect(banner).toContainText("Workspace unavailable")
+  await expect(banner).toContainText("Storage migration is paused for this environment.")
+  await expect(banner).toContainText("inc-cell-910")
+  const retry = banner.getByRole("button", { name: "Retry" })
+  const box = await retry.boundingBox()
+  expect(box?.height ?? 0).toBeGreaterThanOrEqual(44)
+  // The dot sits on the first line, not floating in the middle of a tall block.
+  const dot = await banner.locator("span.rounded-full").first().boundingBox()
+  const bannerBox = await banner.boundingBox()
+  expect((dot?.y ?? 999) - (bannerBox?.y ?? 0)).toBeLessThan(28)
+  await shoot(page, "cell-unavailable-banner-390")
 })
 
 test("transient HTML 502 on /v1/definitions: retries cleanly through the bounded backoff window and settles to Workspace unavailable without falling back to recorded", async ({ page }) => {

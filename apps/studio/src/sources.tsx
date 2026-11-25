@@ -3,6 +3,7 @@ import { Link, useParams } from "@tanstack/react-router"
 import { Database, Plus, Search, Shapes } from "lucide-react"
 import { useState, type ReactNode } from "react"
 import { KpiTile, StatStrip } from "@/components/kpi-tile"
+import { ScrollX } from "@/components/scroll-x"
 import { cn } from "@/lib/utils"
 import { LoadState } from "@/components/load-state"
 import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
@@ -23,9 +24,9 @@ import { Iso } from "@/components/iso"
 import { directionOf, useLocale } from "@/lib/locale"
 
 /** The "dense, crisp" tier for data tables: one hairline frame, 13px tabular figures, a quiet header, no zebra. */
-export function DenseTable({ head, children }: { readonly head: ReactNode; readonly children: ReactNode }) {
+export function DenseTable({ head, children, className }: { readonly head: ReactNode; readonly children: ReactNode; readonly className?: string }) {
   return (
-    <div className="overflow-hidden rounded-lg border">
+    <div className={cn("overflow-hidden rounded-lg border", className)}>
       <Table className="text-meta tabular-nums">
         <TableHeader>{head}</TableHeader>
         <TableBody>{children}</TableBody>
@@ -135,11 +136,14 @@ function SourceMatrix({ concept }: { readonly concept: Concept }) {
     gaps.set(key, gap)
   }
   return (
-    <div className="space-y-3">
-      <DenseTable head={
+    <Well className="p-1.5">
+      {/* Wider than a phone: the matrix scrolls sideways inside its well and says so, instead of being cut off. */}
+      <ScrollX label="Where its records come from, by system">
+      {/* As wide as its columns need (never squeezed), on the well itself: no frame inside the well. */}
+      <DenseTable className="w-max min-w-full rounded-(--radius-row) border-0" head={
         <TableRow>
           <TableHead>Fact</TableHead>
-          {concept.feeds.map(({ system, dataset }) => <TableHead key={`${system}/${dataset}`}><div>{system}</div><div className="font-normal text-muted-foreground">{dataset}</div></TableHead>)}
+          {concept.feeds.map(({ system, dataset }) => <TableHead key={`${system}/${dataset}`} className="whitespace-nowrap"><div>{system}</div><div className="font-normal text-muted-foreground">{dataset}</div></TableHead>)}
         </TableRow>
       }>
         {[...concept.fields.map(({ id }) => ({ id, label: id.replaceAll("_", " ") })),
@@ -150,16 +154,24 @@ function SourceMatrix({ concept }: { readonly concept: Concept }) {
           </TableRow>
         ))}
       </DenseTable>
-      {[...gaps].map(([key, { system, reason, note, facts }]) => <p key={key} className="text-body text-muted-foreground"><b className="text-foreground">{system}, {facts.join(" and ")}: {reason}.</b> {note}</p>)}
-      {concept.feeds.some(({ ignored }) => ignored.length > 0) && (
-        <div className="space-y-1">
-          <h3 className="text-meta text-muted-foreground">Left out of the mapping, on purpose</h3>
-          {concept.feeds.flatMap(({ system, dataset, ignored }) => ignored.map(({ field, reason }) => (
-            <p key={`${system}/${dataset}/${field}`} className="text-body text-muted-foreground"><b className="text-foreground">{system} {dataset}, <code className="font-mono text-meta">{field}</code>:</b> {reason}</p>
-          )))}
-        </div>
+      </ScrollX>
+      {/* The notes are part of the matrix, so they sit in its well: step 1, the source named in foreground ink at 400. */}
+      {gaps.size > 0 && (
+        <ul className="grid gap-1 border-t border-line px-2.5 pt-2.5 pb-1.5 text-meta text-muted-foreground" aria-label="Gaps in the mapping">
+          {[...gaps].map(([key, { system, reason, note, facts }]) => <li key={key} className="text-pretty"><span className="text-foreground">{system}, {facts.join(" and ")}: {reason}.</span> {note}</li>)}
+        </ul>
       )}
-    </div>
+      {concept.feeds.some(({ ignored }) => ignored.length > 0) && (
+        <section data-left-out="" className="grid gap-1 border-t border-line px-2.5 pt-2.5 pb-1.5">
+          <h3 className="text-meta text-muted-foreground">Left out of the mapping, on purpose</h3>
+          <ul className="grid gap-1 text-meta text-muted-foreground">
+            {concept.feeds.flatMap(({ system, dataset, ignored }) => ignored.map(({ field, reason }) => (
+              <li key={`${system}/${dataset}/${field}`} className="text-pretty"><span className="text-foreground">{system} {dataset}, <code className="font-mono">{field}</code>:</span> {reason}</li>
+            )))}
+          </ul>
+        </section>
+      )}
+    </Well>
   )
 }
 
@@ -239,7 +251,7 @@ function ObjectTypeDetail({ catalog, concept, recorded }: { readonly catalog: Ca
       )}
       <LawsPanel concept={concept} />
       <Panel icon={Database} label="Where its records come from">
-        <div className="p-1">{concept.feeds.length > 0 ? <SourceMatrix concept={concept} /> : <p className="px-3 py-2 text-body text-muted-foreground">No connected system maps records into it directly.</p>}</div>
+        {concept.feeds.length > 0 ? <SourceMatrix concept={concept} /> : <Well><p className="px-4 py-3 text-body text-muted-foreground">No connected system maps records into it directly.</p></Well>}
       </Panel>
     </article>
   )
@@ -292,6 +304,7 @@ export { useCatalog }
 
 export function SourcesPage() {
   const { read, catalog } = useCatalog()
+  const mode = useMode()
   const [search, setSearch] = useState("")
   const { view } = useView()
   const matches = (concept: Concept) => `${concept.title} ${about(concept, view)?.text ?? ""}`.toLowerCase().includes(search.trim().toLowerCase())
@@ -299,7 +312,9 @@ export function SourcesPage() {
     <section className="space-y-8">
       <PageHeader title="Sources" meta={read.data?.origin === "recorded" && <Badge variant="outline" title={RECORDED_HINT}>Recorded</Badge>}
         description="The systems that feed this workspace, and the one model every system's records are mapped into."
-        primary={<Button asChild><Link to="/connections"><Plus aria-hidden />Connect a source</Link></Button>} />
+        // While the workspace can't be opened (the server's mode answer), nothing can be connected to it:
+        // the page's Workspace unavailable state says why, so the action is not offered beside it.
+        primary={mode.isError ? undefined : <Button asChild><Link to="/connections"><Plus aria-hidden />Connect a source</Link></Button>} />
       <LoadState
         status={read.status}
         data={catalog}

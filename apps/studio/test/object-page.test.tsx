@@ -407,7 +407,7 @@ test("a record's findings are keyed by and read at its source workspace, and not
   expect(sent).toEqual(["findings org_b/prod"])
 })
 
-test("the record page's Held back and rules-broken chips show only under a decided mode, from findings read at its workspace", async () => {
+test("the record page's Quarantined and rules-broken chips show only under a decided mode, from findings read at its workspace", async () => {
   const concept = "canon.Item"
   const id = "demo/item/gold"
   const scope = { orgId: "org_demo", environmentId: "analytics" }
@@ -424,7 +424,9 @@ test("the record page's Held back and rules-broken chips show only under a decid
     client.setQueryData(findingsQuery(concept, id, scope).queryKey, held)
   }
   const shown = await page(concept, id, "business", undefined, undefined, decided)
-  expect(shown).toContain(">Held back<")
+  // One statement of the state: the dot-first Quarantined status, not a second "Held back" chip beside it.
+  expect(shown).toContain(">Quarantined<")
+  expect(shown).not.toContain(">Held back<")
   expect(shown).toContain("1 rule broken")
   // The mode is read again and the read fails: TanStack keeps its last answer, but nothing read under it
   // shows as current: no chip, no findings panel, no record; the page's Workspace unavailable instead.
@@ -433,14 +435,14 @@ test("the record page's Held back and rules-broken chips show only under a decid
     const read = client.getQueryCache().find({ queryKey: modeKey, exact: true })
     read?.setState({ ...read.state, status: "error", error: new CellUnavailable(503, "The workspace cell could not be opened."), errorUpdatedAt: Date.now() })
   })
-  for (const absent of [">Held back<", "rule broken", "Held out of authoritative reads", "Gold scrap"]) expect(failed).not.toContain(absent)
+  for (const absent of [">Quarantined<", "rule broken", "Held out of authoritative reads", "Gold scrap"]) expect(failed).not.toContain(absent)
   expect(failed).toContain("Workspace unavailable")
   // No mode decided at all: findings cached under the key every workspace once shared show nothing.
   const undecided = await page(concept, id, "business", undefined, undefined, (client) => {
     client.setQueryData(["findings", concept, id], held)
     client.setQueryData(findingsQuery(concept, id, scope).queryKey, held)
   })
-  for (const absent of [">Held back<", "rule broken"]) expect(undecided).not.toContain(absent)
+  for (const absent of [">Quarantined<", "rule broken"]) expect(undecided).not.toContain(absent)
 })
 
 test("a live row's drawer with no decided workspace shows the mode's state: Workspace unavailable with Retry, a skeleton, or why nothing is read", async () => {

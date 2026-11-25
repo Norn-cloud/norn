@@ -2,11 +2,12 @@ import { keepPreviousData, useQuery, useQueryClient, type UseQueryResult } from 
 import { MarkingChips, useMarkingCatalog } from "@/components/marking-chip"
 import { Link, useNavigate } from "@tanstack/react-router"
 import { useVirtualizer } from "@tanstack/react-virtual"
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Columns3, ExternalLink, Filter, Play, Plus, RefreshCw, Rows3 } from "lucide-react"
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Columns3, ExternalLink, Filter, ListFilter, Play, Plus, RefreshCw, Rows3 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react"
 import { CopyId, PathText } from "@/components/copy-id"
 import { LoadState, ReadErrorState, WorkspaceUnavailable, isWorkspaceUnavailableError, useBoundedWait } from "@/components/load-state"
-import { EmptyState } from "@/components/panel"
+import { EmptyState, Panel, Well } from "@/components/panel"
+import { Disclosure } from "@/components/disclosure"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
@@ -26,18 +27,21 @@ import { type ActionSummary } from "../../../../packages/norn-sdk/src/index.ts"
 import { ActionSheet, useActions, type ActionScopeBinding, type OpenAction } from "../actions/action-sheet.tsx"
 import { offeredFor, recordCatalog } from "../lib/screen/call.ts"
 import { alignRight, isWithheld, TracedCell, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow, RecordName } from "./cells.tsx"
+import { maskedOf } from "../lib/privacy.ts"
 import { blankClause, FilterEditor, filterable, fromPredicate, toPredicate, type DraftClause } from "./filter-editor.tsx"
 import { FacetsRail, FilterChips } from "./facets-rail.tsx"
 import { RecordsTimeline } from "./records-timeline.tsx"
 import { LifecycleView } from "@/components/lifecycle-view"
-import { RevealScope } from "@/components/masked-value"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { MaskedValue, RevealScope } from "@/components/masked-value"
+import { Segmented, SegmentedItem } from "@/components/segmented"
 import { TIMELINE_MAX_USER_CLAUSES, stepAnchor, tryWindowQuery, windowOf, type Zoom } from "../lib/timeline.ts"
 
 const ROW = 32
 const DEFAULT_COLUMNS = 8
 const PAGE_SIZES = [50, 100, LIMITS.maxPageSize] as const
 const HIDDEN_FIELDS = new Set(["id", "label", "display_name"])
+/** The properties a record is named by (the grid's Record column). */
+const NAME_FIELDS = new Set(["label", "display_name"])
 const RECORDED = "Replayed documents the engine produced. The cell doesn't serve live records here yet."
 
 export type Read = (objectType: string, query: RecordsQuery, signal?: AbortSignal) => Promise<RecordsRead>
@@ -313,10 +317,17 @@ export function RecordsGrid({ concept, read, scope, mode, initial, onQuery, time
     <RevealScope.Provider value={scope}>
     <Shell>
       <div className={cn("grid gap-4", facets && "xl:grid-cols-[15rem_minmax(0,1fr)]")}>
-      {facets && <aside className="hidden max-h-[70vh] overflow-y-auto pe-1 xl:block">{facets}</aside>}
+      {/* The rail is a ShellCard: its title, then the counts (or the cell's reason there are none) in one well. */}
+      {facets && <aside className="hidden max-h-[70vh] overflow-y-auto xl:block"><Panel icon={ListFilter} label="Narrow by"><Well className="p-1.5">{facets}</Well></Panel></aside>}
       {/* content-start: beside a taller facets rail, the rows keep their own height (no band between them). */}
       <div className="grid min-w-0 content-start gap-3">
-        {facets && <details className="rounded-lg border border-node-border px-3 py-2 xl:hidden"><summary className="cursor-pointer text-body">Narrow by</summary><div className="pt-3">{facets}</div></details>}
+        {facets && (
+          <section data-slot="panel" className="overflow-hidden rounded-(--radius-panel) border border-(--panel-border) bg-card shadow-(--panel-shadow) xl:hidden">
+            <Disclosure summary="Narrow by" summaryClassName="min-h-11 w-full px-3.5 text-body text-foreground max-sm:min-h-[44px]">
+              <Well className="p-1.5">{facets}</Well>
+            </Disclosure>
+          </section>
+        )}
         {/* Problems sit above the toolbar, so the filter popover (which opens below it) never covers them. */}
         {refused && (
           <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-(--radius-well) border border-(--panel-border) bg-card px-3 py-2 text-body text-foreground">
@@ -331,7 +342,7 @@ export function RecordsGrid({ concept, read, scope, mode, initial, onQuery, time
           : <ReadErrorState error={result.error} isFetching={result.isFetching} onRetry={() => void result.refetch()} />)}
         <div className="flex flex-wrap items-center gap-2">
           {hasViewModes && (
-            <ToggleGroup type="single" variant="outline" size="sm" aria-label="Show as" value={layout}
+            <Segmented aria-label="Show as" value={layout}
               onValueChange={(next) => {
                 if (next === "table" || (next === "timeline" && timeline && canQuery) || (next === "lifecycle" && hasLifecycle)) {
                   setLayout(next)
@@ -343,10 +354,10 @@ export function RecordsGrid({ concept, read, scope, mode, initial, onQuery, time
                   }
                 }
               }}>
-              <ToggleGroupItem value="table" className="px-3">Table</ToggleGroupItem>
-              {timeline && <ToggleGroupItem value="timeline" className="px-3" disabled={!canQuery && layout !== "timeline"} title={!canQuery ? off : undefined}>Timeline</ToggleGroupItem>}
-              {hasLifecycle && <ToggleGroupItem value="lifecycle" className="px-3">Lifecycle</ToggleGroupItem>}
-            </ToggleGroup>
+              <SegmentedItem value="table">Table</SegmentedItem>
+              {timeline && <SegmentedItem value="timeline" disabled={!canQuery && layout !== "timeline"} title={!canQuery ? off : undefined}>Timeline</SegmentedItem>}
+              {hasLifecycle && <SegmentedItem value="lifecycle">Lifecycle</SegmentedItem>}
+            </Segmented>
           )}
           <div role="toolbar" aria-label="Records" className="flex w-max flex-nowrap items-center gap-0.5">
             <Popover open={filterOpen} onOpenChange={(open) => { setFilterOpen(open); if (open && draft.length === 0 && filterCount === 0) { const first = filterable(fields)[0]; if (first) setDraft([blankClause(first)]) } }}>
@@ -560,9 +571,17 @@ function RecordDrawer({ concept, fields, row, origin, scope, mode, actions, acti
     enabled: recordReads !== null && row !== null && !isWithheld(row),
   })
   const links = object.data?.links.document.items ?? []
+  // The naming properties the grid shows as the Record column; the sheet lists one only when the server
+  // projected it for this reader, since an unmasked name is already the sheet's title.
+  const namedBy = row === null || isWithheld(row) ? [] : concept.fields.flatMap((field) => {
+    const masked = NAME_FIELDS.has(field.id) ? maskedOf(row.record, field.id) : null
+    return masked === null ? [] : [{ field, masked }]
+  })
   return (
     <Sheet open={row !== null} onOpenChange={(open) => { if (!open) onClose() }}>
-      <SheetContent className="overflow-y-auto">
+      {/* As tall as what it holds (up to the screen less its 12px inset, then the body scrolls), with the
+          footer pinned under the body, so a short record is not a sheet of empty space. */}
+      <SheetContent className="overflow-y-auto data-[side=right]:bottom-auto data-[side=right]:max-h-[calc(100dvh-24px)] max-sm:data-[side=right]:bottom-auto max-sm:data-[side=right]:max-h-[calc(100dvh-16px)]">
         {row !== null && record !== undefined && <>
           <SheetHeader>
             <SheetTitle className="[overflow-wrap:break-word]"><PathText value={nameOf(row)} /></SheetTitle>
@@ -573,6 +592,9 @@ function RecordDrawer({ concept, fields, row, origin, scope, mode, actions, acti
               {isWithheld(row)
                 ? <p className="px-2.5 py-2.5 text-body"><WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark></p>
                 : <dl className="grid grid-cols-[minmax(8rem,auto)_1fr] text-body">
+                  {/* The record's own name when the server projected it (masked or pseudonymised): the same chip,
+                      with the same Reveal the server allows, as the grid's Record column shows. */}
+                  {namedBy.map(({ field, masked }) => <div key={field.id} data-name-fact={field.id} className="contents"><dt className="flex min-h-10 flex-wrap items-center gap-1 px-2.5 py-2.5 text-muted-foreground">{field.label ?? field.id}<MarkingChips markings={field.markings} catalog={markings} /></dt><dd className="flex min-h-10 min-w-0 items-center px-2.5 py-2.5 break-words"><MaskedValue objectType={record.objectType} id={record.id} version={record.version} property={field.id} masked={masked} projected={record.values?.[field.id]} /></dd></div>)}
                   {fields.map((field) => <div key={field.id} className="contents"><dt className="flex min-h-10 flex-wrap items-center gap-1 px-2.5 py-2.5 text-muted-foreground">{field.id.replaceAll("_", " ")}<MarkingChips markings={field.markings} catalog={markings} /></dt><dd className="flex min-h-10 min-w-0 items-center px-2.5 py-2.5 break-words"><TracedCell field={field} row={row} live={origin === "live"} lineage={object.data?.source?.document ?? null} variant="inline" /></dd></div>)}
                   <dt className="flex min-h-10 items-center px-2.5 py-2.5 text-muted-foreground">version</dt><dd className="flex min-h-10 items-center px-2.5 py-2.5 tabular-nums">{record.version}</dd>
                 </dl>}

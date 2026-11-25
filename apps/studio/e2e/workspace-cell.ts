@@ -252,6 +252,43 @@ function matchClause(record: DemoRecord, clause: Clause): boolean {
   }
 }
 
+/** The type's text, choice and yes/no properties, as `crates/norn-api/src/object_facets.rs` counts them (`kind_of` is "text" or "boolean"). */
+function categorical(objectType: string): string[] {
+  const entity = ARTIFACTS.find((artifact) => (artifact.payload as { objectType?: { name?: string } }).objectType?.name === objectType)
+  const properties = ((entity?.payload as { objectType?: { properties?: readonly { id: string; type: { kind: string } }[] } } | undefined)?.objectType?.properties ?? [])
+  return properties.filter(({ type }) => type.kind === "text" || type.kind === "enum" || type.kind === "boolean").map(({ id }) => id)
+}
+
+const MAX_CATEGORY_CHARS = 64
+const MAX_FACET_VALUES = 20
+
+/** `free_text` in object_facets.rs: a long value, or, over three or more rows, a different value on every row that has one. */
+function freeText(property: string, rows: readonly DemoRecord[]): boolean {
+  const present = rows.map((row) => row.values[property]).filter((value) => value !== undefined && value !== null)
+  if (present.some((value) => typeof value === "string" && value.length > MAX_CATEGORY_CHARS)) return true
+  return rows.length >= 3 && present.length >= 3 && new Set(present.map(String)).size === present.length
+}
+
+/** `facet` in object_facets.rs: each value's count, most rows first (ties in value order), the tail and the empties counted together. */
+function facetOf(property: string, rows: readonly DemoRecord[]) {
+  const held = new Map<string, { value: string | number | boolean; count: number }>()
+  let nulls = 0
+  for (const row of rows) {
+    const value = row.values[property]
+    if (value === undefined || value === null) { nulls += 1; continue }
+    const entry = held.get(String(value)) ?? { value, count: 0 }
+    entry.count += 1
+    held.set(String(value), entry)
+  }
+  const ordered = [...held.values()].sort((a, b) => b.count - a.count || String(a.value).localeCompare(String(b.value)))
+  return {
+    property,
+    values: ordered.slice(0, MAX_FACET_VALUES),
+    otherRows: ordered.slice(MAX_FACET_VALUES).reduce((sum, { count }) => sum + count, 0),
+    nulls,
+  }
+}
+
 export interface WorkspaceCell {
   readonly records: DemoRecord[]
   readonly defs: Map<string, StoredDef>
@@ -399,9 +436,15 @@ export async function workspaceCell(page: Page): Promise<WorkspaceCell> {
     const url = new URL(route.request().url())
     const rest = url.pathname.split("/v1/objects/")[1] ?? ""
     if (rest.endsWith(":facets")) {
+      // The counts the cell serves (HOST-READ-7): over the rows the filter keeps, one facet per text, choice
+      // or yes/no property (free text left out unless asked for by name).
       const objectType = decodeURIComponent(rest.slice(0, -":facets".length))
-      const rows = records.filter((r) => r.objectType === objectType)
-      return route.fulfill({ json: { objectType, rows: rows.length, withheldRows: 0, quarantinedRows: 0, lowerBound: false, scanLimit: 10000, facets: [] } })
+      const rawFilter = url.searchParams.get("filter")
+      const filter = rawFilter ? JSON.parse(rawFilter) as Predicate : null
+      const rows = records.filter((r) => r.objectType === objectType && (filter?.all ?? []).every((c) => matchClause(r, c)))
+      const named = url.searchParams.get("properties")?.split(",").map((name) => name.trim()).filter(Boolean)
+      const asked = named ?? categorical(objectType).filter((property) => !freeText(property, rows))
+      return route.fulfill({ json: { objectType, rows: rows.length, withheldRows: 0, quarantinedRows: 0, lowerBound: false, scanLimit: 10000, facets: asked.map((property) => facetOf(property, rows)) } })
     }
     const parts = rest.split("/")
     const objectType = decodeURIComponent(parts[0]!)

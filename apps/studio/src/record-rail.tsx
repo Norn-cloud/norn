@@ -26,18 +26,36 @@ const DECISION_WORDS: Readonly<Record<Decision, string>> = {
   partial: "sees which records exist, not their values",
 }
 
-/** One verb a role may or may not use here: allowed reads dark, refused reads faded and struck, "depends" reads dashed. */
+/**
+ * How each decision is drawn. Every ink is a full text token, never faded, so a refused verb stays
+ * readable (4.5:1, measured in `test/contrast.test.ts`); the strike and the dashed outline are the
+ * difference, and the legend under the roles says what they mean.
+ */
+export const VERB_STYLE: Readonly<Record<Decision, string>> = {
+  permit: "bg-foreground/[0.06] text-foreground",
+  partial: "bg-foreground/[0.04] text-muted-foreground",
+  conditional: "border border-dashed border-foreground/40 text-foreground",
+  deny: "text-muted-foreground line-through decoration-muted-foreground",
+}
+
+/** One verb a role may or may not use here: allowed reads dark, refused reads muted and struck, "depends" reads dashed. */
 function Verb({ icon: Icon, label, decision, verb }: { readonly icon: LucideIcon; readonly label: string; readonly decision: Decision; readonly verb: string }) {
   return (
     <span data-verb={verb} data-decision={decision} title={`${label}: ${DECISION_WORDS[decision]}`} aria-label={`${label}: ${DECISION_WORDS[decision]}`}
-      className={cn("inline-flex h-6 max-w-full items-center gap-1 rounded-md px-1.5 text-meta whitespace-nowrap",
-        decision === "permit" && "bg-foreground/[0.06] text-foreground",
-        decision === "partial" && "bg-foreground/[0.04] text-muted-foreground",
-        decision === "conditional" && "border border-dashed border-foreground/30 text-foreground",
-        decision === "deny" && "text-muted-foreground/55 line-through decoration-muted-foreground/40")}>
+      className={cn("inline-flex h-6 max-w-full items-center gap-1 rounded-(--radius-chip) px-1.5 text-meta whitespace-nowrap max-sm:min-h-[28px]", VERB_STYLE[decision])}>
       <Icon aria-hidden className="size-3 shrink-0" /><span className="truncate">{label}</span>
     </span>
   )
+}
+
+/** One line saying what the marks mean, shown only for the marks this list uses. */
+function VerbLegend({ decisions }: { readonly decisions: ReadonlySet<Decision> }) {
+  const marks = [
+    decisions.has("deny") && <span key="deny" className="inline-flex items-center gap-1.5"><span aria-hidden className={cn("rounded-(--radius-chip) px-1", VERB_STYLE.deny)}>Struck</span> not allowed</span>,
+    decisions.has("conditional") && <span key="conditional" className="inline-flex items-center gap-1.5"><span aria-hidden className={cn("rounded-(--radius-chip) px-1", VERB_STYLE.conditional)}>Dashed</span> the cell decides at each call</span>,
+  ].filter(Boolean)
+  if (marks.length === 0) return null
+  return <p data-verb-legend="" className="flex flex-wrap gap-x-4 gap-y-1 pt-2 text-meta text-muted-foreground">{marks}</p>
 }
 
 function RoleRow({ entry, you }: { readonly entry: RoleAccess; readonly you: boolean }) {
@@ -90,6 +108,7 @@ function RoleList({ access, yours }: { readonly access: TypeAccess; readonly you
       <ul className="divide-y divide-border/70" aria-label="Roles">
         {access.roles.map((entry) => <RoleRow key={entry.role} entry={entry} you={yours.has(entry.role)} />)}
       </ul>
+      <VerbLegend decisions={new Set(access.roles.flatMap((entry) => [entry.see.decision, entry.read.sources.decision, ...entry.actions.map(({ decision }) => decision)]))} />
       {access.roles.every(({ actions }) => actions.length === 0) && <p className="pt-2 text-meta text-muted-foreground">No action changes records of this type.</p>}
       {access.roles.some(({ scope }) => scope === "collection") && <p data-access-scope="collection" className="pt-2 text-meta text-pretty text-muted-foreground">Each answer is for every record of this type, not this one: a marked fact can still be masked or withheld for a role that sees values.</p>}
     </>
@@ -118,11 +137,6 @@ export function RulesKept({ rules, laws = [], title }: { readonly rules: readonl
 
 /** Changes the rail lists before "See every change". */
 const RECENT = 3
-
-const humanize = (id: string): string => {
-  const text = id.slice(id.lastIndexOf(".") + 1).replaceAll("_", " ")
-  return text.charAt(0).toUpperCase() + text.slice(1)
-}
 
 /**
  * The record's newest changes, from its history: what wrote each (an action and its verified actor,
@@ -154,7 +168,9 @@ export function RecentChanges({ objectType, id, actionTitles, onAll }: {
                 const last = index === versions.length - 1 && !history.document.truncated
                 const changed = last ? [] : changedProperties(history, index)
                 const { writer } = version
-                const what = writer.kind === "action" ? actionTitles.get(writer.actionId) ?? humanize(writer.actionId)
+                // An action by the title the cell declares; with none (its access read was refused), plainly an
+                // action: its id is in the full history's details, never prettified here.
+                const what = writer.kind === "action" ? actionTitles.get(writer.actionId) ?? "Ran an action"
                   : writer.kind === "mapping" ? `Imported from ${systemName(writer.lineage.sourceRecordRef.system)}`
                   : <HiddenWriter />
                 const when = readableTime(new Date(version.logicalTime).toISOString())

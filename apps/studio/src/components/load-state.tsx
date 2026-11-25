@@ -1,7 +1,8 @@
 import { AlertCircle, Clock, CloudOff, Inbox, RefreshCw, type LucideIcon } from "lucide-react"
-import { useEffect, useState, type ReactNode } from "react"
+import { useEffect, useLayoutEffect, useState, useSyncExternalStore, type ReactNode } from "react"
 import { BoneSkeleton, type StudioBoneName } from "@/components/bone-skeleton"
 import { CopyId } from "@/components/copy-id"
+import { Disclosure } from "@/components/disclosure"
 import { EmptyState } from "@/components/panel"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -93,6 +94,27 @@ export function SkeletonBlock({ kind = "list", label = "Loading" }: { readonly k
   )
 }
 
+// How many full Workspace unavailable states the page shows right now. While one is shown, the
+// shell's banner is a one-line pointer to it rather than a second copy of the same message.
+let unavailableShown = 0
+const unavailableListeners = new Set<() => void>()
+const announceUnavailable = () => { for (const listener of unavailableListeners) listener() }
+const subscribeUnavailable = (listener: () => void) => { unavailableListeners.add(listener); return () => { unavailableListeners.delete(listener) } }
+
+/** Whether the page itself shows a full Workspace unavailable state (its message, incident and Retry). */
+export function useWorkspaceUnavailableShown(): boolean {
+  return useSyncExternalStore(subscribeUnavailable, () => unavailableShown > 0, () => false)
+}
+
+/** Counts this state as shown while it is mounted (before paint, so the banner never flashes a duplicate). */
+function useShownUnavailable() {
+  useLayoutEffect(() => {
+    unavailableShown += 1
+    announceUnavailable()
+    return () => { unavailableShown -= 1; announceUnavailable() }
+  }, [])
+}
+
 /**
  * Honest state for a broken, unopenable, or unreachable workspace cell: names what the server
  * said, shows the incident id when logged, says when the workspace was last reachable, separates
@@ -111,14 +133,16 @@ export function WorkspaceUnavailable({ error, onRetry, isFetching = false, compa
   const reachable = lastReachableAt(scope)
   const reachableLabel = formatLastReachable(reachable)
   const nonRetryable = info.retryable === false
+  useShownUnavailable()
   return (
-    <div role="alert" data-workspace-unavailable="" data-retryable={nonRetryable ? "false" : "true"}
-      className={`rounded-(--radius-panel) border border-(--panel-border) bg-card text-body shadow-(--panel-shadow) ${compact ? "p-3.5" : "p-5"}`}>
+    <div role="alert" tabIndex={-1} data-workspace-unavailable="" data-retryable={nonRetryable ? "false" : "true"}
+      className={`scroll-mt-20 rounded-(--radius-panel) border border-(--panel-border) bg-card text-body shadow-(--panel-shadow) outline-none ${compact ? "p-3.5" : "p-5"}`}>
       <div className="flex flex-wrap items-start gap-3">
         <span className="flex size-9 shrink-0 items-center justify-center rounded-(--radius-well) bg-(--well) text-muted-foreground ring-1 ring-line">
           <CloudOff aria-hidden className="size-4" strokeWidth={1.6} />
         </span>
-        <div className="min-w-0 flex-1 space-y-1.5">
+        {/* The words keep at least 15rem: on a phone Retry moves under them rather than squeezing them. */}
+        <div className="min-w-0 flex-1 basis-60 space-y-1.5">
           <div className="text-foreground">Workspace unavailable</div>
           <p className="text-pretty text-muted-foreground">{info.headline}</p>
           {info.detail && <p className="text-meta text-foreground [overflow-wrap:anywhere]">{info.detail}</p>}
@@ -136,13 +160,12 @@ export function WorkspaceUnavailable({ error, onRetry, isFetching = false, compa
             )}
           </div>
           {(info.code || info.status || info.raw) && (
-            <details open={view === "technical"} className="pt-1 text-meta text-muted-foreground">
-              <summary className="cursor-pointer select-none">Technical</summary>
-              <div className="mt-1 grid gap-0.5 font-mono text-meta [overflow-wrap:anywhere]">
+            <Disclosure open={view === "technical"} summary="Technical" className="pt-1 text-meta text-muted-foreground">
+              <div className="mt-1 grid gap-0.5 ps-5 font-mono text-meta [overflow-wrap:anywhere]">
                 {(info.status || info.code) && <span>{[info.status ? `HTTP ${info.status}` : null, info.code].filter(Boolean).join(" · ")}</span>}
                 {info.raw && <span>{info.raw}</span>}
               </div>
-            </details>
+            </Disclosure>
           )}
         </div>
         {onRetry && (
@@ -160,30 +183,38 @@ export function WorkspaceUnavailable({ error, onRetry, isFetching = false, compa
  * the server's explanation (never hidden), incident id when present, technical details under
  * Technical, and an explicit Retry.
  */
-export function ReadErrorState({ error, onRetry, isFetching = false }: {
+export function ReadErrorState({ error, onRetry, isFetching = false, title, inset = false, children }: {
   readonly error: unknown
   readonly onRetry?: () => void
   readonly isFetching?: boolean
+  /** What could not be read, in plain words; the server's own words follow it. */
+  readonly title?: string
+  /** Drawn inside a panel's well: the same state with no card of its own (one way to nest). */
+  readonly inset?: boolean
+  /** One more honest line, such as what still works. */
+  readonly children?: ReactNode
 }) {
   const { locale } = useLocale()
   const { view } = useView()
   const info = explainError(error, locale, view)
   return (
-    <div role="alert" data-load-state="error" className="rounded-(--radius-panel) border border-(--panel-border) bg-card p-4 text-body shadow-(--panel-shadow)">
+    <div role={inset ? "status" : "alert"} data-load-state="error"
+      className={inset ? "px-2.5 py-2.5 text-body" : "rounded-(--radius-panel) border border-(--panel-border) bg-card p-4 text-body shadow-(--panel-shadow)"}>
       <div className="flex flex-wrap items-start gap-3">
         <AlertCircle aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" strokeWidth={1.6} />
         <div className="min-w-0 flex-1 space-y-1">
-          <p className="text-foreground">{info.headline}</p>
+          {title && <p className="text-foreground">{title}</p>}
+          <p className={title ? "text-meta text-muted-foreground [overflow-wrap:anywhere]" : "text-foreground"}>{info.headline}</p>
           {info.detail && <p className="text-meta text-muted-foreground [overflow-wrap:anywhere]">{info.detail}</p>}
           {info.incidentId && <p className="inline-flex items-center gap-1.5 text-meta text-muted-foreground">Incident <CopyId value={info.incidentId} /></p>}
+          {children}
           {(info.code || info.raw) && (
-            <details open={view === "technical"} className="pt-0.5 text-meta text-muted-foreground">
-              <summary className="cursor-pointer select-none">Technical</summary>
-              <div className="mt-1 grid gap-0.5 font-mono text-meta [overflow-wrap:anywhere]">
+            <Disclosure open={view === "technical"} summary="Technical" className="pt-0.5 text-meta text-muted-foreground">
+              <div className="mt-1 grid gap-0.5 ps-5 font-mono text-meta [overflow-wrap:anywhere]">
                 {info.code && <span>{info.code}</span>}
                 {info.raw && <span>{info.raw}</span>}
               </div>
-            </details>
+            </Disclosure>
           )}
         </div>
         {onRetry && (
