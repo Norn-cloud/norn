@@ -320,6 +320,26 @@ mod tests {
         }
         std::fs::remove_file(temp).unwrap();
     }
+    #[test]
+    fn locale_argument_accepts_tags_outside_en_ar() {
+        let cli = crate::Cli::try_parse_from([
+            "norn",
+            "explain",
+            "law",
+            "demo.law",
+            "--defs",
+            "defs.json",
+            "--wording",
+            "wording.json",
+            "--locale",
+            "fr-CA",
+        ])
+        .unwrap();
+        let crate::Command::Explain(args) = cli.command else {
+            panic!("wrong command");
+        };
+        assert_eq!(args.locale.as_deref(), Some("fr-CA"));
+    }
 
     fn explain_widget_case(tag: &str, widget: serde_json::Value) -> (String, bool) {
         let mut pool: Vec<serde_json::Value> =
