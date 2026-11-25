@@ -1,4 +1,4 @@
-import { createRoute, redirect, type AnyRootRoute, type RouteComponent } from "@tanstack/react-router"
+import { createRoute, lazyRouteComponent, redirect, type AnyRootRoute, type RouteComponent } from "@tanstack/react-router"
 import { QuestionBuilderPage } from "./builder.tsx"
 import { HomePage } from "./home.tsx"
 import { CanvasPage } from "./canvas.tsx"
@@ -19,12 +19,14 @@ import { MisfitPage } from "./learning/misfit-page.tsx"
 import { ProposalDetailPage, ProposalsPage } from "./learning/proposals-page.tsx"
 import { SourcesItemPage } from "./objects.tsx"
 import { QuestionPage, QuestionsPage } from "./questions.tsx"
-import { SemanticMapPage } from "./semantic-map.tsx"
 import { ObjectTypePage, SourcesPage } from "./sources.tsx"
 import { TransformPage, TransformsPage } from "./transforms.tsx"
 import { ToolBindings } from "./tool-bindings.tsx"
 import { ViewDetailPage, ViewEditorPage, ViewsPage } from "./views.tsx"
 import { WorkflowsPage } from "./workflows.tsx"
+
+// `/map` loads its own chunk on first visit, so the semantic map adds nothing to the index chunk.
+const SemanticMapPage = lazyRouteComponent(() => import("./semantic-map.tsx"), "SemanticMapPage")
 
 const ConnectionsWithBindings = () => <ConnectionsPage><ToolBindings /></ConnectionsPage>
 

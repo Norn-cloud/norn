@@ -293,18 +293,27 @@ fn decode_rule_page(rows: Vec<Vec<SqlValue>>, page_limit: usize) -> Result<RuleP
     Ok(RulePage { rules, has_more })
 }
 
+/// The root probe: equality on `root_type` and `IN` over the three row
+/// trigger kinds seeks the composite `(root_type, trigger_kind)` index once
+/// per kind, so its cost never grows with the root's `event:action` rules (a
+/// `!=` on `trigger_kind` walked every one of them).
+pub(super) fn row_rules_for_root_sql() -> String {
+    format!(
+        "SELECT 1 FROM \"{AUTOMATION_TRIGGER_INDEX}\" \
+         WHERE \"root_type\" = ?1 \
+         AND \"trigger_kind\" IN ('{KIND_CREATED}', '{KIND_UPDATED}', '{KIND_LIFECYCLE_ENTERED}') \
+         LIMIT 1"
+    )
+}
+
 pub(super) fn has_row_rules_for_root<E: SqlEngine>(
     conn: &E,
     root_type: &str,
 ) -> Result<bool, CellError> {
-    let found: Option<i64> = conn.query_optional(
-        &format!(
-            "SELECT 1 FROM \"{AUTOMATION_TRIGGER_INDEX}\" \
-             WHERE \"root_type\" = ?1 AND \"trigger_kind\" != '{KIND_ACTION}' LIMIT 1"
-        ),
-        params![root_type],
-        |row| row.get(0),
-    )?;
+    let found: Option<i64> =
+        conn.query_optional(&row_rules_for_root_sql(), params![root_type], |row| {
+            row.get(0)
+        })?;
     Ok(found.is_some())
 }
 

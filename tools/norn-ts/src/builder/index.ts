@@ -3,10 +3,11 @@
  * of hand-written definitions and of the syntax compiler (ruling 2026-09-27
  * authoring-effect-profile §2).
  */
+export { assignable, assignable as conforms } from "./assignable.ts"
 export * as S from "./schema.ts"
 export * as X from "./expr.ts"
 export * from "./flow.ts"
-export { type BuildOptions, type BuildResult, FLOW_LIMITS, conforms, lowerFlow, retryDelay } from "./lower-flow.ts"
+export { type BuildOptions, type BuildResult, FLOW_LIMITS, lowerFlow, retryDelay } from "./lower-flow.ts"
 export { DECISION_FN, actionFn } from "./builtins.ts"
 export type { BuildDiagnostic, SourceLocation } from "./diagnostics.ts"
 export * as E from "./entity.ts"

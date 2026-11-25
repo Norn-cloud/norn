@@ -49,8 +49,12 @@ use crate::run_routes::{FlowView, InstalledFlow, ReadAccess, installed_flow};
 use crate::scope::ScopeQuery;
 
 /// The most open decisions a list request examines; past it, `total` is a
-/// lower bound (`totalCapped`).
+/// lower bound (`totalCapped`). DECISION-SCAN-1 (#1702): every parked
+/// command a list request reads is charged, whether or not the caller sees it.
 pub const MAX_DECISION_SCAN: usize = 500;
+
+/// Parked commands a bounded decision scan reads per storage page.
+const DECISION_SCAN_PAGE: usize = 64;
 
 /// The largest page.
 pub const MAX_DECISION_PAGE: u32 = 200;
@@ -564,6 +568,39 @@ pub(crate) fn open_decisions<E: SqlEngine>(
     Ok(open)
 }
 
+/// DECISION-SCAN-1 (#1702): the open decisions among at most `budget`
+/// parked commands, oldest command first, read from storage a page at a time
+/// (never the whole backlog). Every command read is charged, whether it is an
+/// open decision, answered, expired, invisible to the caller or no decision at
+/// all. The flag is `true` when the budget ran out with commands left unread.
+pub(crate) fn scan_open_decisions<E: SqlEngine>(
+    store: &CellStore<E>,
+    budget: usize,
+) -> Result<(Vec<OpenDecision>, bool), Refusal> {
+    let (mut open, mut left, mut after) = (Vec::new(), budget, 0_u64);
+    loop {
+        let page = store
+            .read()
+            .parked_commands_page(after, left.min(DECISION_SCAN_PAGE))
+            .map_err(Refusal::host)?;
+        left = left.saturating_sub(page.read);
+        for pending in &page.commands {
+            if let Some(decision) = open_decision(store, pending)? {
+                open.push(decision);
+            }
+        }
+        match page.next_after {
+            Some(next) if left > 0 => after = next,
+            // Spent: capped only when a command is left unread.
+            Some(next) => {
+                let rest = store.read().parked_command_after(next);
+                return Ok((open, rest.map_err(Refusal::host)?));
+            }
+            None => return Ok((open, false)),
+        }
+    }
+}
+
 /// The typed failure an expired decision delivers to its step
 /// (`norn.decision@1`'s declared `Expired` error).
 fn expired_failure() -> RuntimeObject {
@@ -855,14 +892,10 @@ pub fn list_decisions<E: SqlEngine>(
     let now_ms = now.as_millis().max(cell.now().as_millis());
     let mut flows = BTreeMap::new();
     let mut visible = Vec::new();
-    let mut capped = false;
-    for decision in open_decisions(cell.store())? {
+    let (open, capped) = scan_open_decisions(cell.store(), MAX_DECISION_SCAN)?;
+    for decision in open {
         if decision.expires_at_ms <= now_ms || !may_decide(host, actor, &decision) {
             continue;
-        }
-        if visible.len() == MAX_DECISION_SCAN {
-            capped = true;
-            break;
         }
         let Some(document) = document(cell.store(), &decision, &mut flows)? else {
             continue;

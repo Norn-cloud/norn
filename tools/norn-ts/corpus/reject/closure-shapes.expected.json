@@ -32,18 +32,6 @@
       "construct": "(l, i) => i > 0"
     },
     {
-      "code": "NORN-FLOW-UNSUPPORTED-SYNTAX",
-      "start": "15:79",
-      "end": "15:83",
-      "construct": "self"
-    },
-    {
-      "code": "NORN-FLOW-UNSUPPORTED-SYNTAX",
-      "start": "16:99",
-      "end": "16:100",
-      "construct": "l"
-    },
-    {
       "code": "NORN-FLOW-UNSUPPORTED-CALL",
       "start": "17:56",
       "end": "17:73",

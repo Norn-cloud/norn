@@ -245,6 +245,12 @@ impl Variable {
         object.remove_str(last_part)
     }
 
+    /// Inserts `variable` at the dotted `key`, writing through `self` in place.
+    ///
+    /// Norn (#1711): copy-on-write along the written path. An intermediate object that is
+    /// also reachable from elsewhere (an input record assigned to another key, a value a
+    /// trace captured) is replaced by a one-level copy before it is written, so a dotted
+    /// write such as `copy.status` never mutates the record `copy` was assigned from.
     pub fn dot_insert(&self, key: &str, variable: Variable) -> Option<Variable> {
         let mut parts = key.split('.');
         let last_part = parts.next_back()?;
@@ -252,7 +258,7 @@ impl Variable {
             Variable::Object(obj) => {
                 let mut obj_ref = obj.borrow_mut();
                 Some(match obj_ref.entry(Symbol::from(part)) {
-                    Entry::Occupied(occ) => occ.get().shallow_clone(),
+                    Entry::Occupied(mut occ) => Self::unshared_child(occ.get_mut()),
                     Entry::Vacant(vac) => vac.insert(Self::empty_object()).shallow_clone(),
                 })
             }
@@ -264,6 +270,18 @@ impl Variable {
 
         let mut object = object_ref.borrow_mut();
         object.insert(Symbol::from(last_part), variable)
+    }
+
+    /// Norn (#1711): `child` as an object this write may mutate: a shared object is first
+    /// replaced (in its parent) by a one-level copy whose members stay shared.
+    fn unshared_child(child: &mut Variable) -> Variable {
+        if let Variable::Object(object) = child
+            && Rc::strong_count(object) > 1
+        {
+            let copy = object.borrow().clone();
+            *child = Variable::from_object(copy);
+        }
+        child.shallow_clone()
     }
 
     pub fn dot_insert_detached(&self, key: &str, variable: Variable) -> Option<Variable> {
