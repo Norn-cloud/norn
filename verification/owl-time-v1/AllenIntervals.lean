@@ -340,7 +340,12 @@ theorem during_before_before (x y z : Interval) (hxy : during x y) (hyz : before
 
 /-! ## Ordering key
 
-`timestamp_ordering_key` returns `(seconds, nanos)` with `0 ≤ nanos < 10⁹`.
+`timestamp_ordering_key` (`crates/norn-expr/src/temporal.rs`) returns
+`(seconds, nanos)` with `0 ≤ nanos < 10⁹`: before 1970 it floors the second
+rather than letting the fraction go negative, which its unit test
+`a_pre_1970_fractional_ordering_key_floors_the_second` pins
+(`1969-12-31T23:59:59.9Z` is `(-1, 900000000)`). That range is the hypothesis
+of the two theorems below; it is assumed here, not proved of the Rust code.
 Comparing such pairs lexicographically is comparing the instants counted in
 nanoseconds, so the key embeds in `Int` in order and the theorems above apply
 to intervals of keys. -/

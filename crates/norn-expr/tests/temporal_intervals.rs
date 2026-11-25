@@ -280,37 +280,71 @@ fn allen_relations_partition_the_grid_and_agree_with_the_interval_builtins() {
     assert_eq!(allen_relation(&0, &2, &2, &5), Some(AllenRelation::Meets));
     assert!(!AllenRelation::Meets.shares_instant());
 
-    // Compositions used for scheduling.
+    // Compositions used for scheduling: `(first, second, composed)`. Every
+    // one must be reached on the grid, so none passes vacuously.
+    const COMPOSITIONS: [(AllenRelation, AllenRelation, AllenRelation); 9] = [
+        (
+            AllenRelation::Before,
+            AllenRelation::Before,
+            AllenRelation::Before,
+        ),
+        (
+            AllenRelation::After,
+            AllenRelation::After,
+            AllenRelation::After,
+        ),
+        (
+            AllenRelation::During,
+            AllenRelation::During,
+            AllenRelation::During,
+        ),
+        (
+            AllenRelation::Contains,
+            AllenRelation::Contains,
+            AllenRelation::Contains,
+        ),
+        (
+            AllenRelation::Equals,
+            AllenRelation::Equals,
+            AllenRelation::Equals,
+        ),
+        (
+            AllenRelation::Meets,
+            AllenRelation::Meets,
+            AllenRelation::Before,
+        ),
+        (
+            AllenRelation::Before,
+            AllenRelation::Meets,
+            AllenRelation::Before,
+        ),
+        (
+            AllenRelation::Meets,
+            AllenRelation::Before,
+            AllenRelation::Before,
+        ),
+        (
+            AllenRelation::During,
+            AllenRelation::Before,
+            AllenRelation::Before,
+        ),
+    ];
     let relate = |x: (u8, u8), y: (u8, u8)| allen_relation(&x.0, &x.1, &y.0, &y.1);
-    let mut composed = 0_u32;
+    let mut reached = [0_u32; COMPOSITIONS.len()];
     for &x in &intervals {
         for &y in &intervals {
             for &z in &intervals {
-                let expected = match (relate(x, y), relate(y, z)) {
-                    (Some(AllenRelation::Before), Some(AllenRelation::Before))
-                    | (Some(AllenRelation::Meets), Some(AllenRelation::Meets))
-                    | (Some(AllenRelation::Before), Some(AllenRelation::Meets))
-                    | (Some(AllenRelation::Meets), Some(AllenRelation::Before))
-                    | (Some(AllenRelation::During), Some(AllenRelation::Before)) => {
-                        AllenRelation::Before
+                let (first, second) = (relate(x, y), relate(y, z));
+                for (index, (given, then, expected)) in COMPOSITIONS.into_iter().enumerate() {
+                    if first == Some(given) && second == Some(then) {
+                        assert_eq!(relate(x, z), Some(expected), "{x:?} {y:?} {z:?}");
+                        reached[index] += 1;
                     }
-                    (Some(AllenRelation::During), Some(AllenRelation::During)) => {
-                        AllenRelation::During
-                    }
-                    (Some(AllenRelation::Contains), Some(AllenRelation::Contains)) => {
-                        AllenRelation::Contains
-                    }
-                    (Some(AllenRelation::After), Some(AllenRelation::After)) => {
-                        AllenRelation::After
-                    }
-                    _ => continue,
-                };
-                assert_eq!(relate(x, z), Some(expected), "{x:?} {y:?} {z:?}");
-                composed += 1;
+                }
             }
         }
     }
-    assert!(composed > 0);
+    assert!(reached.iter().all(|count| *count > 0), "{reached:?}");
 
     // Fail closed: an improper interval has no relation and satisfies none.
     for (start, end, other_start, other_end) in [(3, 3, 0, 1), (4, 2, 0, 1), (0, 1, 5, 5)] {

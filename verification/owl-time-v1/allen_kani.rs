@@ -105,7 +105,9 @@ fn improper_intervals_have_no_relation() {
     }
 }
 
-/// Scheduling compositions over three proper intervals.
+/// Scheduling compositions over three proper intervals. Each `composes!`
+/// line asserts one composition and covers it, so the run also shows that
+/// every listed pair of relations is reachable.
 #[kani::proof]
 fn before_during_and_meets_compose() {
     let (a_start, a_end) = any_proper_interval();
@@ -114,23 +116,21 @@ fn before_during_and_meets_compose() {
     let first = allen_relation(&a_start, &a_end, &b_start, &b_end);
     let second = allen_relation(&b_start, &b_end, &c_start, &c_end);
     let composed = allen_relation(&a_start, &a_end, &c_start, &c_end);
-    match (first, second) {
-        (Some(AllenRelation::Before), Some(AllenRelation::Before))
-        | (Some(AllenRelation::Meets), Some(AllenRelation::Meets))
-        | (Some(AllenRelation::Before), Some(AllenRelation::Meets))
-        | (Some(AllenRelation::Meets), Some(AllenRelation::Before))
-        | (Some(AllenRelation::During), Some(AllenRelation::Before)) => {
-            assert_eq!(composed, Some(AllenRelation::Before));
-        }
-        (Some(AllenRelation::During), Some(AllenRelation::During)) => {
-            assert_eq!(composed, Some(AllenRelation::During));
-        }
-        (Some(AllenRelation::Contains), Some(AllenRelation::Contains)) => {
-            assert_eq!(composed, Some(AllenRelation::Contains));
-        }
-        (Some(AllenRelation::After), Some(AllenRelation::After)) => {
-            assert_eq!(composed, Some(AllenRelation::After));
-        }
-        _ => {}
+    macro_rules! composes {
+        ($first:ident then $second:ident gives $expected:ident, $label:literal) => {
+            if first == Some(AllenRelation::$first) && second == Some(AllenRelation::$second) {
+                kani::cover!(true, $label);
+                assert_eq!(composed, Some(AllenRelation::$expected));
+            }
+        };
     }
+    composes!(Before then Before gives Before, "Before then Before");
+    composes!(After then After gives After, "After then After");
+    composes!(During then During gives During, "During then During");
+    composes!(Contains then Contains gives Contains, "Contains then Contains");
+    composes!(Equals then Equals gives Equals, "Equals then Equals");
+    composes!(Meets then Meets gives Before, "Meets then Meets");
+    composes!(Before then Meets gives Before, "Before then Meets");
+    composes!(Meets then Before gives Before, "Meets then Before");
+    composes!(During then Before gives Before, "During then Before");
 }

@@ -19,7 +19,10 @@ the start instant is in the interval and the end instant is not. The
 `crates/norn-expr/src/temporal/allen.rs` states the thirteen relations by
 their endpoint conditions (`AllenRelation::holds`) and classifies a pair by
 comparing endpoints (`allen_relation`). `AllenIntervals.lean` states the same
-thirteen conditions and the same comparison order over `Int`.
+thirteen conditions over `Int`, and a classifier `classify` that is written
+independently of `allen_relation`, with a different branch order. Each
+classifier is tied to the thirteen conditions (the Lean one by proof, the Rust
+one by the Kani run); nothing proves the two classifiers equal to each other.
 
 | Relation (`a` to `b`) | Condition | OWL-Time property |
 |---|---|---|
@@ -41,9 +44,9 @@ Each row names what was checked and how far the check reaches.
 | The same, for the Rust `AllenRelation::holds` and `allen_relation` | bounded: every pair of proper `i64` intervals | `allen_kani.rs`: `exactly_one_relation_holds_and_the_classifier_returns_it` |
 | Converse dualities (`before`/`after`, `meets`/`metBy`, `overlaps`/`overlappedBy`, `starts`/`startedBy`, `during`/`contains`, `finishes`/`finishedBy`, `equals`/`equals`) | checked proof (reference); bounded over `i64` (Rust) | `holds_iff_converse`, `classify_swap`; `the_converse_holds_for_the_swapped_intervals` |
 | Two intervals share no instant exactly when the relation is before, after, meets or met-by; the `intervals_overlap` test `aStart < bEnd && bStart < aEnd` is true exactly when they share one; adjacent `[a, b)` and `[b, c)` meet without overlapping | checked proof (reference); bounded over `i64` (Rust) | `shareNoInstant_iff`, `intersects_iff_shared_instant`, `intersects_iff_not_apart`, `adjacent_meet_without_overlap`; `sharing_an_instant_is_the_half_open_overlap_test` |
-| `before`, `after`, `during`, `contains` and `equals` are transitive; `meets` then `meets`, `before` then `meets`, `meets` then `before`, and `during` then `before` all give `before` | checked proof (reference); bounded over `i64` (Rust) | `before_trans` … `during_before_before`; `before_during_and_meets_compose` |
+| `before`, `after`, `during`, `contains` and `equals` are transitive; `meets` then `meets`, `before` then `meets`, `meets` then `before`, and `during` then `before` all give `before` | checked proof (reference); bounded over `i64` (Rust) | `before_trans`, `after_trans`, `during_trans`, `contains_trans`, `equals_trans`, `meets_meets_before`, `before_meets_before`, `meets_before_before`, `during_before_before`; `before_during_and_meets_compose`, which also covers each of the nine compositions with `kani::cover!` |
 | An improper interval has no relation | bounded over `i64` | `improper_intervals_have_no_relation` |
-| The classifier, the thirteen predicates and the three shipped interval builtins agree | exhaustive-finite: all 225 ordered pairs of the 15 proper intervals with endpoints in `0..6`, and all 3,375 triples for the compositions | `crates/norn-expr/tests/temporal_intervals.rs`: `allen_relations_partition_the_grid_and_agree_with_the_interval_builtins` |
+| The classifier, the thirteen predicates and the three shipped interval builtins agree | exhaustive-finite: all 225 ordered pairs of the 15 proper intervals with endpoints in `0..6`, and all 3,375 triples for the nine compositions, each of which must occur | `crates/norn-expr/tests/temporal_intervals.rs`: `allen_relations_partition_the_grid_and_agree_with_the_interval_builtins` |
 | Lexicographic order on `(seconds, nanoseconds)` keys with `0 ≤ nanoseconds < 10⁹` is the order of the instants, and equal keys are equal instants | checked proof over `Int` | `AllenIntervals.lean`: `key_lt_iff_instant_lt`, `key_eq_iff_instant_eq` |
 | `canonical_timestamp` returns the UTC reading of the instant, is idempotent (`canonical(canonical(t)) = canonical(t)`), and `timestamp_ordering_key` is that instant exactly | exhaustive-finite: 115,200 spellings `2026-03-09THH:MM:SS[.FFF]±HH:MM` (every hour, five minutes, two seconds, two fractions, 240 offsets up to ±23:59), against the instant computed by plain arithmetic on the fields | `crates/norn-expr/tests/timezone_corpus.rs`: `canonical_timestamps_and_keys_are_the_exact_instant_on_a_day_grid` |
 | The same idempotence, and keys ordering canonical UTC timestamps strictly as their instants, across years `0000`–`9999` and nanosecond fractions | sampled: the admitted inputs of the recorded timezone corpus (38,350 inputs), with the instant read independently by `jiff` | `timezone_corpus.rs`: `canonical_timestamps_are_idempotent_and_keys_preserve_instant_order` |
@@ -86,6 +89,12 @@ env RUSTUP_HOME=target/verification-tools/rustup KANI_HOME=target/verification-t
 cargo test --locked -p norn-expr --test suites -- temporal_intervals:: timezone_corpus::
 ```
 
-The Lean file has no `sorry` and declares no axiom. Its theorems depend only
-on Lean's standard axioms `propext`, `Classical.choice` and `Quot.sound`
-(`#print axioms`).
+The Lean file has no `sorry` and declares no axiom:
+`scripts/check-proof-holes.py` rejects both, along with `native_decide`. No
+gate inspects the axioms the theorems depend on. `#print axioms`, run by hand
+on Lean 4.33.1 and 4.34.1, reported only Lean's standard `propext`,
+`Classical.choice` and `Quot.sound`.
+
+A satisfied `kani::cover!` is reported by Kani but an unsatisfied one does not
+fail the gate. The Rust grid test is what fails if a composition stops being
+reachable.
