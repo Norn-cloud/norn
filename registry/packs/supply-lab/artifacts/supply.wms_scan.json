@@ -1,0 +1,64 @@
+{
+  "artifactId": "supply.wms_scan",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "connector",
+  "lifecycle": "active",
+  "name": "WMS scan feed",
+  "namespace": "supply",
+  "payload": {
+    "auth": {
+      "authId": "wms",
+      "kind": "api_key",
+      "name": "X-Api-Key",
+      "placement": "header",
+      "secretRef": "SUPPLY_WMS_READ_KEY"
+    },
+    "connectorVersion": "0.1",
+    "cursor": {
+      "cursorId": "wms_scans",
+      "resourceId": "stock_counts",
+      "storageKey": "supply.wms.scans"
+    },
+    "deadLetterPolicy": {
+      "maxFailures": 5,
+      "route": "ledger"
+    },
+    "extensions": {
+      "norn.poll/1": {
+        "feeds": [
+          {
+            "recordKeyPath": "/scan_id",
+            "resourceId": "stock_counts"
+          }
+        ]
+      }
+    },
+    "mappings": [
+      {
+        "externalSource": "synthetic-wms",
+        "kind": "external_id",
+        "resourceId": "stock_counts",
+        "sourcePath": "/scan_id",
+        "targetObjectKind": "supply.WmsCount"
+      }
+    ],
+    "resources": [
+      {
+        "cursorParam": "after",
+        "endpoint": "/v3/stock-counts",
+        "itemsPath": "/counts",
+        "kind": "cursor",
+        "missingItemsIsEmpty": true,
+        "nextCursorPath": "/next",
+        "resourceId": "stock_counts"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.wms_scan.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

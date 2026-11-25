@@ -1,0 +1,30 @@
+{
+  "artifactId": "supply.ReceiptEvidence.interface.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Receipt evidence labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "استلام",
+          "en": "Receipt"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "supply.ReceiptEvidence"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.ReceiptEvidence.interface.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

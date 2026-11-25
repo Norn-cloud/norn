@@ -1,0 +1,78 @@
+{
+  "artifactId": "supply.InventorySnapshot.entity.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Inventory position labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "رصيد المخزون",
+          "en": "Inventory position"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "supply.InventorySnapshot"
+        }
+      },
+      {
+        "label": {
+          "ar": "متوفر فعليًا",
+          "en": "On hand"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.InventorySnapshot",
+          "property": "quantity_basis",
+          "value": "on_hand"
+        }
+      },
+      {
+        "label": {
+          "ar": "متاح",
+          "en": "Available"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.InventorySnapshot",
+          "property": "quantity_basis",
+          "value": "available"
+        }
+      },
+      {
+        "label": {
+          "ar": "محجوز",
+          "en": "Reserved"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.InventorySnapshot",
+          "property": "quantity_basis",
+          "value": "reserved"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.InventorySnapshot.entity.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

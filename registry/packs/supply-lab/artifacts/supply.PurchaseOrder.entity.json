@@ -1,0 +1,146 @@
+{
+  "artifactId": "supply.PurchaseOrder.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Purchase order",
+  "namespace": "supply",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "po_id"
+          ]
+        }
+      ],
+      "lifecycles": [
+        {
+          "immutable": [
+            "fulfilled",
+            "cancelled"
+          ],
+          "initial": [
+            "draft"
+          ],
+          "property": "status",
+          "terminal": [
+            "fulfilled",
+            "cancelled"
+          ],
+          "transitions": [
+            {
+              "from": [
+                "draft"
+              ],
+              "id": "submit",
+              "to": "submitted"
+            },
+            {
+              "from": [
+                "submitted"
+              ],
+              "id": "receive_partial",
+              "to": "partially_received"
+            },
+            {
+              "from": [
+                "submitted",
+                "partially_received"
+              ],
+              "id": "fulfil",
+              "to": "fulfilled"
+            },
+            {
+              "from": [
+                "draft",
+                "submitted"
+              ],
+              "id": "cancel",
+              "to": "cancelled"
+            }
+          ]
+        }
+      ],
+      "name": "supply.PurchaseOrder",
+      "properties": [
+        {
+          "id": "po_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "supplier_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "promised_at",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
+          "id": "currency",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "EGP"
+              },
+              {
+                "value": "USD"
+              },
+              {
+                "value": "EUR"
+              }
+            ]
+          }
+        },
+        {
+          "id": "created_by",
+          "protected": true,
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "default": "draft",
+          "id": "status",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "draft"
+              },
+              {
+                "value": "submitted"
+              },
+              {
+                "value": "partially_received"
+              },
+              {
+                "value": "fulfilled"
+              },
+              {
+                "value": "cancelled"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.PurchaseOrder.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,68 @@
+{
+  "artifactId": "supply.po.cancel.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Cancel a purchase order",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.po.cancel",
+    "effectProgram": {
+      "entityArtifactId": "supply.PurchaseOrder.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "po_id",
+      "objectKind": "supply.PurchaseOrder",
+      "transition": "cancel"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "po_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "po_id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "po_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "po_id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Cancel a purchase order",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "supply.PurchaseOrder"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.po.cancel.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

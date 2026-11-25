@@ -1,0 +1,50 @@
+{
+  "artifactId": "supply.DemandForecast.forecast_non_negative.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.DemandForecast.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "Demand is never negative; a model output below zero fails its output contract.",
+  "namespace": "supply",
+  "payload": {
+    "id": "supply.DemandForecast.forecast_non_negative",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/supply.ts"
+    },
+    "rationale": "Demand is never negative; a model output below zero fails its output contract.",
+    "response": {
+      "expression": "self.predicted_qty >= 0",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.DemandForecast"
+      ],
+      "root": {
+        "id": "supply.DemandForecast",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.DemandForecast"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.DemandForecast.forecast_non_negative.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

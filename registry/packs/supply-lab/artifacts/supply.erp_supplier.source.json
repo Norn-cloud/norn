@@ -1,0 +1,140 @@
+{
+  "artifactId": "supply.erp_supplier.source",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "source_schema",
+  "lifecycle": "active",
+  "name": "Synthetic ERP supplier feed",
+  "namespace": "supply",
+  "payload": {
+    "adapter": {
+      "name": "synthetic-feed-replay",
+      "version": "0.1.0"
+    },
+    "constraints": [
+      {
+        "dataset": "Purchase Receipt Item",
+        "fields": [
+          "name"
+        ],
+        "id": "row_identity",
+        "kind": "primary_key",
+        "origin": "declared"
+      }
+    ],
+    "datasets": [
+      {
+        "id": "Purchase Receipt Item",
+        "kind": "child_document",
+        "nativeName": "Synthetic Purchase Receipt Item"
+      }
+    ],
+    "fields": [
+      {
+        "dataset": "Purchase Receipt Item",
+        "name": "name",
+        "nativeType": "Data",
+        "ordinal": 0,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Purchase Receipt Item",
+        "name": "parent",
+        "nativeType": "Link",
+        "ordinal": 1,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Purchase Receipt Item",
+        "name": "supplier",
+        "nativeType": "Link",
+        "ordinal": 2,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Purchase Receipt Item",
+        "name": "purchase_order_item",
+        "nativeType": "Data",
+        "ordinal": 3,
+        "required": false,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Purchase Receipt Item",
+        "name": "received_qty",
+        "nativeType": "Float",
+        "ordinal": 4,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "Purchase Receipt Item",
+        "name": "rejected_qty",
+        "nativeType": "Float",
+        "ordinal": 5,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "decimal"
+        }
+      },
+      {
+        "dataset": "Purchase Receipt Item",
+        "name": "uom",
+        "nativeType": "Link",
+        "ordinal": 6,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      },
+      {
+        "dataset": "Purchase Receipt Item",
+        "name": "posting_datetime",
+        "nativeType": "Datetime",
+        "ordinal": 7,
+        "required": true,
+        "typeCandidate": {
+          "origin": "declared",
+          "type": "string"
+        }
+      }
+    ],
+    "format": "norn.source-schema/1",
+    "observedAt": "2026-10-26T00:00:00Z",
+    "rawMetadata": {
+      "sha256": "6f0e7e3a49c7c1c4f2b0b8f6f1d0a2f2b6c1e4d9a8b7c6d5e4f3a2b1c0d9e8f7",
+      "uri": "evidence://supply-lab/erp-supplier-v1"
+    },
+    "source": {
+      "instance": "supply-lab",
+      "system": "synthetic-erp",
+      "version": "16-purchase-receipt-v1"
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.erp_supplier.source.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

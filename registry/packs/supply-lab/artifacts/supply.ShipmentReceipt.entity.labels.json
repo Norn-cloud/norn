@@ -1,0 +1,33 @@
+{
+  "artifactId": "supply.ShipmentReceipt.entity.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Shipment receipt labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "إيصال استلام شحنة",
+          "en": "Shipment receipt"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "supply.ShipmentReceipt"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.ShipmentReceipt.entity.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

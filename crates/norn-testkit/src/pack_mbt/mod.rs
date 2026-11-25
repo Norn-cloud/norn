@@ -31,18 +31,23 @@ pub mod coverage;
 pub mod driver;
 pub mod dst;
 pub(crate) mod law_parity;
+pub(crate) mod seed;
 pub mod static_gaps;
 pub mod synth;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use norn_kernel::cell_host::{JsonObject, JsonValue};
+use norn_kernel::pack_mbt_support::MappingIr;
 use norn_kernel::pack_mbt_support::{
     AccessIr, ActionRoot, ArtifactEnvelope, ArtifactPayload, EntityRoot, InterfaceDef,
     LawExampleVerdict as Verdict, LawIR, ObjectTypeDef, ObjectTypeName, PolicyRoot, Property,
     PropertyConstraints, PropertyId, PropertyType, PropertyTypeDef, ResourceStatus,
 };
-use norn_kernel::{CellHost, DecisionRefusal, FactEvent, LogicalTime, TypeCatalog};
+use norn_kernel::{
+    CellHost, DecisionRefusal, FactEvent, LogicalTime, TransitionGuard, TypeCatalog,
+    transition_guards,
+};
 
 /// Honest evidence classification for verification outputs (`AGENTS.md`, `#1656`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -107,6 +112,12 @@ pub struct AdmittedPack {
     pub access_policies: Vec<AccessIr>,
     /// Optional inline/registered `LAW-EXAMPLE-1` cases to replay for runtime parity.
     pub law_examples: Vec<LawExampleCase>,
+    /// ACTOR-INDEPENDENT-1: the transition guards of `actions`, bound to every
+    /// catalog [`Self::type_catalog`] builds, as a host binds them.
+    pub guards: Vec<TransitionGuard>,
+    /// Admitted `Mapping` writers: each target object type and the properties
+    /// (and lifecycles) its object maps write from source evidence.
+    pub mapping_writes: BTreeMap<String, BTreeSet<String>>,
 }
 
 /// One admitted action pinned with its artifact identity and version.
@@ -135,6 +146,9 @@ impl AdmittedPack {
             name: name.into(),
             ..Self::default()
         };
+        // A map names its target by entity artifact id; resolved to the type below.
+        let mut entity_types = BTreeMap::new();
+        let mut mapped: Vec<(String, BTreeSet<String>)> = Vec::new();
         for envelope in envelopes {
             match &envelope.payload {
                 ArtifactPayload::Entity(entity) => {
@@ -147,6 +161,10 @@ impl AdmittedPack {
                         .map_err(|err| format!("{}: {err}", envelope.artifact_id))?;
                     match root {
                         EntityRoot::V2(v2) => {
+                            entity_types.insert(
+                                envelope.artifact_id.clone(),
+                                v2.object_type.name.as_str().to_owned(),
+                            );
                             pack.object_types.push(v2.object_type);
                         }
                         EntityRoot::V2Interface(iface) => {
@@ -188,6 +206,9 @@ impl AdmittedPack {
                         pack.access_policies.push(access);
                     }
                 }
+                ArtifactPayload::Mapping(mapping) => {
+                    mapped.extend(mapped_fields(&mapping.to_json_value()));
+                }
                 ArtifactPayload::Relation(_)
                 | ArtifactPayload::Rule(_)
                 | ArtifactPayload::Connector(_)
@@ -197,12 +218,19 @@ impl AdmittedPack {
                 | ArtifactPayload::BusinessPack(_)
                 | ArtifactPayload::Derived(_)
                 | ArtifactPayload::SourceSchema(_)
-                | ArtifactPayload::Mapping(_)
                 | ArtifactPayload::DefinedConcept(_)
                 | ArtifactPayload::Labels(_)
                 | ArtifactPayload::Model(_) => {}
             }
         }
+        for (entity, properties) in mapped {
+            let object_type = entity_types.get(&entity).cloned().unwrap_or(entity);
+            pack.mapping_writes
+                .entry(object_type)
+                .or_default()
+                .extend(properties);
+        }
+        pack.guards = transition_guards(pack.actions.iter().map(|action| &action.root));
         Ok(pack)
     }
 
@@ -223,7 +251,8 @@ impl AdmittedPack {
     }
 
     /// Returns a [`TypeCatalog`] wired with this pack's object types,
-    /// interfaces, property types, and retained governing laws.
+    /// interfaces, property types, retained governing laws and transition
+    /// guards (ACTOR-INDEPENDENT-1), so no caller forgets to bind them.
     ///
     /// Pass `action_call_type` if the caller also registers `norn.ActionCall`
     /// for governed `commit_action` execution.
@@ -233,7 +262,36 @@ impl AdmittedPack {
             .with_interfaces(&self.interfaces)
             .with_property_types(&self.property_types)
             .with_governing_laws(&self.law_envelopes)
+            .with_transition_guards(&self.guards)
     }
+}
+
+/// Each object map of an admitted mapping: its target entity artifact and the
+/// properties and lifecycles it writes. A law-interpretation document (the
+/// other `mapping` format) maps no source rows, so it writes nothing.
+fn mapped_fields(
+    payload: &norn_kernel::pack_mbt_support::IrJsonValue,
+) -> Vec<(String, BTreeSet<String>)> {
+    let Ok(decoded) = payload.decode::<MappingIr>() else {
+        return Vec::new();
+    };
+    decoded
+        .maps
+        .into_iter()
+        .map(|map| {
+            let written = map
+                .properties
+                .into_iter()
+                .map(|property| property.property.as_str().to_owned())
+                .chain(
+                    map.lifecycles
+                        .into_iter()
+                        .map(|lifecycle| lifecycle.property.as_str().to_owned()),
+                )
+                .collect();
+            (map.target.entity, written)
+        })
+        .collect()
 }
 
 /// Host abstraction driven by the generic pack MBT and DST harnesses.

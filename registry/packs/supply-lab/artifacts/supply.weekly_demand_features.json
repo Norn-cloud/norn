@@ -1,0 +1,115 @@
+{
+  "artifactId": "supply.weekly_demand_features",
+  "dependencies": [
+    {
+      "artifactId": "supply.StockMovement.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "derived",
+  "lifecycle": "active",
+  "name": "Weekly demand features",
+  "namespace": "supply",
+  "payload": {
+    "calc": {
+      "kind": "relational",
+      "nodes": {
+        "issues": {
+          "input": "movement",
+          "op": "filter",
+          "predicate": "input.movement_kind == \"issue\""
+        },
+        "lagged": {
+          "columns": [
+            {
+              "fn": "row_number",
+              "name": "week_number"
+            },
+            {
+              "column": "issued_qty",
+              "fn": "lag",
+              "name": "previous_week_qty",
+              "offset": 1
+            },
+            {
+              "column": "issued_qty",
+              "fn": "running_sum",
+              "name": "to_date_qty"
+            }
+          ],
+          "input": "weekly",
+          "op": "window",
+          "orderBy": [
+            {
+              "column": "occurred_at",
+              "direction": "asc"
+            }
+          ],
+          "partitionBy": [
+            "sku_id",
+            "warehouse_id",
+            "unit"
+          ]
+        },
+        "movement": {
+          "input": "movement",
+          "op": "scan"
+        },
+        "weekly": {
+          "groupBy": [
+            {
+              "column": "sku_id"
+            },
+            {
+              "column": "warehouse_id"
+            },
+            {
+              "column": "unit"
+            },
+            {
+              "column": "occurred_at",
+              "grain": "week",
+              "label": "Week"
+            }
+          ],
+          "input": "issues",
+          "measures": [
+            {
+              "column": "qty",
+              "fn": "sum",
+              "label": "Issued",
+              "name": "issued_qty"
+            },
+            {
+              "fn": "count",
+              "name": "issues"
+            }
+          ],
+          "op": "aggregate"
+        }
+      },
+      "output": "lagged"
+    },
+    "inputs": [
+      {
+        "alias": "movement",
+        "artifactId": "supply.StockMovement.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      }
+    ],
+    "maintenance": "recompute_on_read",
+    "outputSchema": {},
+    "viewId": "supply.weekly_demand_features",
+    "viewVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.weekly_demand_features.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -1,0 +1,104 @@
+{
+  "artifactId": "supply.DemandObservation.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Weekly demand observation",
+  "namespace": "supply",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "observation_id"
+          ]
+        }
+      ],
+      "name": "supply.DemandObservation",
+      "properties": [
+        {
+          "id": "observation_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "sku_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "warehouse_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "week_start",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        },
+        {
+          "id": "week_index",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "issued_qty",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit"
+            ]
+          }
+        },
+        {
+          "id": "unit",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "each"
+              },
+              {
+                "value": "kg"
+              },
+              {
+                "value": "l"
+              }
+            ]
+          }
+        },
+        {
+          "id": "lead_time_days",
+          "type": {
+            "kind": "integer"
+          }
+        },
+        {
+          "id": "promotion",
+          "type": {
+            "kind": "boolean"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.DemandObservation.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}
