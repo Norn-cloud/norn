@@ -47,7 +47,7 @@ test("the provider's union is the mode answer's: deciding, unavailable, live wit
   const live = workspaceOf({ status: "success", data: liveMode(A) })
   if (live.kind !== "live") throw new Error("expected a live workspace")
   expect(Object.keys(live)).toEqual(["kind", "scope", "reader"])
-  expect(live.scope).toEqual(A)
+  expect<StudioScope>(live.scope).toEqual(A)
   // The decided scope is a copy of the answer's, frozen, and the reader is bound to it.
   expect(live.scope).not.toBe(A)
   expect(Object.isFrozen(live.scope)).toBe(true)

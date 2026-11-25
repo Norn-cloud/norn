@@ -38,6 +38,7 @@ const DEFAULT_COLUMNS = 8
 const PAGE_SIZES = [50, 100, LIMITS.maxPageSize] as const
 const HIDDEN_FIELDS = new Set(["id", "label", "display_name"])
 const RECORDED = "Replayed documents the engine produced. The cell doesn't serve live records here yet."
+const RECORDED_ACTIONS = "Recorded records take no actions."
 
 
 /** Where a grid reads its records: a decided workspace's cell, or the recording (`lib/workspace.tsx`). */
@@ -161,11 +162,12 @@ export function RecordsGrid({ concept, reader, initial, onQuery, timeline = fals
   const [viewing, setViewing] = useState<{ readonly id: string; readonly since: number } | null>(null)
   const navigate = useNavigate()
   const actionScope = useMemo<ActionScopeBinding | undefined>(() => scope === undefined ? undefined : { scope }, [scope])
-  const catalog = useActions(name, undefined, true, actionScope)
+  // Only a live workspace's cell offers actions: a recorded grid reads none, and offers none (#1754).
+  const catalog = useActions(name, undefined, reader.kind === "live", actionScope)
   const actions = catalog.data?.kind === "catalog" ? catalog.data.items : []
   const creates = actions.filter(writesWhole)
   // Off with the reason while the cell takes no actions; absent when it offers this reader none.
-  const actionsOff = catalog.isError ? (catalog.error instanceof Error ? catalog.error.message : ACTIONS_UNAVAILABLE)
+  const actionsOff = reader.kind === "recorded" ? RECORDED_ACTIONS : catalog.isError ? (catalog.error instanceof Error ? catalog.error.message : ACTIONS_UNAVAILABLE)
     : catalog.data?.kind === "unavailable" ? ACTIONS_UNAVAILABLE : catalog.data?.kind === "refused" ? catalog.data.message : undefined
   const [filterOpen, setFilterOpen] = useState(false)
   const client = useQueryClient()

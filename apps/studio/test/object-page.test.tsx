@@ -20,8 +20,11 @@ const { ObjectPage, SourcesItemPage, summaryOf } = await import("../src/objects.
 const { untilDecided, workspaceOf, WorkspaceProvider } = await import("../src/lib/workspace.tsx")
 type Workspace = import("../src/lib/workspace.tsx").Workspace
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>
-const RECORDED = workspaceOf({ status: "success", data: { kind: "recorded" } })
-if (RECORDED.kind !== "recorded") throw new Error("expected the recorded workspace")
+const RECORDED = (() => {
+  const workspace = workspaceOf({ status: "success", data: { kind: "recorded" } })
+  if (workspace.kind !== "recorded") throw new Error("expected the recorded workspace")
+  return workspace
+})()
 /** The workspace a live mode decided at `scope`, its reads sent through `fetcher`. */
 function liveAt(scope: StudioScope, fetcher?: Fetch) {
   const workspace = workspaceOf({ status: "success", data: { kind: "live", scope, catalog: { document: [], numbers: new Map(), origin: "live" }, counts: {}, publishedQuestions: new Set<string>() } }, fetcher)

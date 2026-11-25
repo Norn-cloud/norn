@@ -327,17 +327,18 @@ test("records: a type page whose mode read fails shows Workspace unavailable for
 // a row's drawer reads the recording's links.
 test("records: a decided recorded mode reads only the recording, even from a cell that serves records", async ({ page }) => {
   const cell = await recordCell(page, "admin")
+  // Every read of the type's records, one record, or the actions its rows offer.
   const liveReads: string[] = []
   page.on("request", (request) => {
     const url = new URL(request.url())
-    if (url.pathname.startsWith("/api/host/v1/objects")) liveReads.push(url.pathname)
+    if (url.pathname.startsWith("/api/host/v1/objects") || (url.pathname === "/api/host/v1/actions" && url.searchParams.get("objectKind") === "canon.Party")) liveReads.push(`${url.pathname}${url.search}`)
   })
   await page.route("**/api/host/v1/definitions**", (route) => route.fulfill({ status: 404, json: { code: "route.not_found", message: "No such route." } }))
   for (const path of ["/sources/canon.Party", "/objects/canon.Party"]) {
     await page.goto(path)
     const records = page.getByRole("region", { name: "Records" })
     const grid = records.getByRole("grid")
-    await expect(grid.getByText("Custodian", { exact: true })).toBeVisible()
+    await expect(grid.getByText("Custodian", { exact: true }).first()).toBeVisible()
     await expect(records.getByText("Recorded", { exact: true })).toBeVisible()
     await expect(grid.getByText(/Customer #/)).toHaveCount(0)
     await grid.focus()
@@ -347,6 +348,7 @@ test("records: a decided recorded mode reads only the recording, even from a cel
     await expect(drawer.getByRole("link", { name: "demo/holding/owner/north/gold" })).toBeVisible()
     await expect(drawer.getByText(/once its workspace is confirmed/)).toHaveCount(0)
     await expect(drawer.locator("[data-reveal]")).toHaveCount(0)
+    await expect(drawer.getByText("Recorded records take no actions.")).toBeVisible()
     if (path === "/objects/canon.Party") await shoot(page, "party-recorded-mode-drawer")
     await page.keyboard.press("Escape")
   }
