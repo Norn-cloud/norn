@@ -47,7 +47,7 @@ pub use queue::{
 
 /// Decode receipt rows, checking each row's lookup columns against its
 /// hashed body: they drive idempotent replay and commit numbering.
-fn decode_receipts(rows: Vec<Vec<SqlValue>>) -> Result<Vec<Receipt>, CellError> {
+pub(crate) fn decode_receipts(rows: Vec<Vec<SqlValue>>) -> Result<Vec<Receipt>, CellError> {
     let mut out = Vec::with_capacity(rows.len());
     for values in rows {
         let row = SqlRow(values);
