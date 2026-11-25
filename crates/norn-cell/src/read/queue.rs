@@ -1,6 +1,7 @@
 //! Pending outbox commands, due timers, pending observations, and run records.
 
 use norn_ir::RuntimeValue as Value;
+use norn_kernel::world::outbox::{OutboxEvent, OutboxRefusal, OutboxState, Queue, step};
 use serde::{Deserialize, Serialize};
 
 use super::{StoreReader, to_i64, to_u64};
@@ -21,6 +22,16 @@ pub struct PendingCommand {
     pub command: OutboxCommand,
     /// The recorded `perform` result, once performed.
     pub result: Option<Value>,
+    /// D03 (#1699): the queue it waits in, stored when it was first enqueued.
+    /// Read from the row only: it is not part of the wire form, so a journal
+    /// preimage decoded as a `PendingCommand` (which never carries it) reads
+    /// as the FIFO queue and must not be used to select a queue.
+    #[serde(skip, default = "fifo")]
+    pub queue: Queue,
+}
+
+const fn fifo() -> Queue {
+    Queue::Fifo
 }
 
 /// One page of parked commands ([`StoreReader::parked_commands_page`]).
@@ -34,19 +45,62 @@ pub struct ParkedPage {
     pub next_after: Option<u64>,
 }
 
-/// PARKED-1: the SQL form of [`is_parked`] over the stored `command` JSON,
-/// so queue selection skips parked rows without loading them. A string
-/// comparison is false for a non-string or missing member, exactly as
-/// [`norn_builtins::parks`] reads it; [`is_parked`] still re-checks each row.
-const PARKED_SQL: &str = "(json_extract(\"command\", '$.payload.kind') IS 'perform' AND json_extract(\"command\", '$.payload.function') IN ('norn.decision', 'norn.action') AND json_extract(\"command\", '$.payload.functionVersion') IS '1')";
-
-/// PARKED-1: whether `command` waits outside the FIFO perform queue.
+/// PARKED-1, D03 (#1699): the queue a kernel command (as enqueued) waits
+/// in. Enqueue stores it with the row; every later read uses the stored
+/// queue, never this classification of the mutable payload.
 #[must_use]
-pub fn is_parked(command: &OutboxCommand) -> bool {
-    command
-        .command
-        .get("payload")
-        .is_some_and(norn_builtins::parks)
+pub fn classify(command: &Value) -> Queue {
+    if command.get("payload").is_some_and(norn_builtins::parks) {
+        Queue::Parked
+    } else {
+        Queue::Fifo
+    }
+}
+
+/// D03 (#1699): whether enqueueing `command` over its pending row (stored at
+/// generation `known` in queue `stored`) replaces the row in place. An older
+/// generation, or the same one, never re-executes.
+///
+/// The outbox step refuses an equal-generation reissue with another payload
+/// (`PayloadDiverged`, W8d), but the `CellHost` law every host is checked
+/// against (`norn_testkit::cell_host`) still defines it as a no-op, so the
+/// store keeps the law until that law changes.
+///
+/// # Errors
+///
+/// [`CellError::OutboxReissueRefused`] for a newer generation that would
+/// move the command to another queue.
+pub(crate) fn reissue_replaces(
+    command: &OutboxCommand,
+    known: u64,
+    same_payload: bool,
+    stored: &str,
+    queue: Queue,
+) -> Result<bool, CellError> {
+    let refused = |reason: String| CellError::OutboxReissueRefused {
+        command_id: command.command_id.clone(),
+        generation: command.generation,
+        reason,
+    };
+    let event = OutboxEvent::Reissue {
+        generation: command.generation,
+        same_payload,
+    };
+    match step(OutboxState::Requested, known, event) {
+        Err(OutboxRefusal::StaleGeneration | OutboxRefusal::PayloadDiverged) => Ok(false),
+        Ok((_, next)) if next == known => Ok(false),
+        // The queue is fixed at the first enqueue (PARKED-1).
+        Ok(_) if stored != queue.as_str() => {
+            Err(refused(format!("it waits in the {stored} queue")))
+        }
+        Ok(_) => Ok(true),
+        Err(refusal) => Err(refused(refusal.to_string())),
+    }
+}
+
+/// The SQL filter selecting rows stored in `queue`.
+fn in_queue(queue: Queue) -> String {
+    format!("\"queue\" = '{}'", queue.as_str())
 }
 
 /// A pending timer row.
@@ -100,7 +154,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     /// The oldest pending command that does not park (the next to
     /// `perform`), if any. Parked commands never block it (PARKED-1).
     ///
-    /// Bounded: SQL skips parked rows and reads one row, so a backlog of
+    /// Bounded: one indexed read of the stored FIFO queue, so a backlog of
     /// parked commands (or an unreadable result of one) never costs or
     /// blocks ordinary queue progress.
     ///
@@ -108,22 +162,14 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ///
     /// SQL engine or decode errors.
     pub fn head_command(&self) -> Result<Option<PendingCommand>, CellError> {
-        let mut after = 0_i64;
-        loop {
-            let filter = format!("AND \"position\" > ?1 AND NOT {PARKED_SQL}");
-            let Some(row) = self
-                .outbox_rows(&filter, params![after], " LIMIT 1")?
-                .into_iter()
-                .next()
-            else {
-                return Ok(None);
-            };
-            // [`is_parked`] stays the authority; `PARKED_SQL` only narrows.
-            if !is_parked(&row.command) {
-                return Ok(Some(row));
-            }
-            after = to_i64(row.position, "position")?;
-        }
+        Ok(self
+            .outbox_rows(
+                &format!("AND {}", in_queue(Queue::Fifo)),
+                params![],
+                " LIMIT 1",
+            )?
+            .into_iter()
+            .next())
     }
 
     /// PARKED-1: pending commands that wait for the cell to resolve them, in
@@ -133,11 +179,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     ///
     /// SQL engine or decode errors.
     pub fn parked_commands(&self) -> Result<Vec<PendingCommand>, CellError> {
-        Ok(self
-            .outbox_rows(&format!("AND {PARKED_SQL}"), params![], "")?
-            .into_iter()
-            .filter(|row| is_parked(&row.command))
-            .collect())
+        self.outbox_rows(&format!("AND {}", in_queue(Queue::Parked)), params![], "")
     }
 
     /// PARKED-1, DECISION-SCAN-1 (#1702): at most `limit` (at least 1) parked
@@ -150,7 +192,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
     pub fn parked_commands_page(&self, after: u64, limit: usize) -> Result<ParkedPage, CellError> {
         let limit = limit.max(1);
         let rows = self.outbox_rows(
-            &format!("AND \"position\" > ?1 AND {PARKED_SQL}"),
+            &format!("AND \"position\" > ?1 AND {}", in_queue(Queue::Parked)),
             params![to_i64(after, "position")?],
             &format!(" LIMIT {limit}"),
         )?;
@@ -160,23 +202,15 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             .map(|row| row.position)
             .filter(|_| read >= limit);
         Ok(ParkedPage {
-            commands: rows
-                .into_iter()
-                .filter(|row| is_parked(&row.command))
-                .collect(),
+            commands: rows,
             read,
             next_after,
         })
     }
 
     /// DECISION-SCAN-1 (#1702): whether a parked command is enqueued after
-    /// position `after`, checking row existence without Rust command or result
-    /// deserialization (SQL `json_extract` still reads `command` JSON to match
-    /// parked rows).
-    ///
-    /// Without an index of its own (a new outbox index is a storage version,
-    /// as `_norn_marking_version_nonempty` was) this walks the unconsumed rows
-    /// after `after` in position order until one is parked.
+    /// position `after`: one probe of `_norn_outbox/queue`, reading no
+    /// command or result.
     ///
     /// # Errors
     ///
@@ -185,7 +219,8 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         self.check_live()?;
         let found: Option<i64> = self.conn.query_optional(
             &format!(
-                "SELECT 1 FROM \"{OUTBOX}\" WHERE \"consumed_commit_seq\" IS NULL AND \"position\" > ?1 AND {PARKED_SQL} LIMIT 1"
+                "SELECT 1 FROM \"{OUTBOX}\" WHERE \"consumed_commit_seq\" IS NULL AND \"position\" > ?1 AND {} LIMIT 1",
+                in_queue(Queue::Parked)
             ),
             params![to_i64(after, "position")?],
             |row| row.get(0),
@@ -212,7 +247,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         else {
             return Ok(None);
         };
-        if is_parked(&row.command) {
+        if row.queue == Queue::Parked {
             return Ok(Some(row));
         }
         let head = self.head_command()?.map(|head| head.position);
@@ -378,7 +413,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         self.check_live()?;
         let rows = self.conn.query(
             &format!(
-                "SELECT \"position\", \"commit_seq\", \"command_id\", \"generation\", \"idempotency_key\", \"deadline\", \"command\", \"result\" FROM \"{OUTBOX}\" WHERE {base} {filter} ORDER BY \"position\"{limit}"
+                "SELECT \"position\", \"commit_seq\", \"command_id\", \"generation\", \"idempotency_key\", \"deadline\", \"command\", \"result\", \"queue\" FROM \"{OUTBOX}\" WHERE {base} {filter} ORDER BY \"position\"{limit}"
             ),
             bindings,
         )?;
@@ -388,7 +423,13 @@ impl<E: SqlEngine> StoreReader<'_, E> {
             let deadline: Option<i64> = row.get(5)?;
             let command: String = row.get(6)?;
             let result: Option<String> = row.get(7)?;
+            let queue: String = row.get(8)?;
+            let queue = Queue::parse(&queue).ok_or_else(|| CellError::CorruptValue {
+                table: OUTBOX.to_owned(),
+                column: "queue".to_owned(),
+            })?;
             out.push(PendingCommand {
+                queue,
                 position: to_u64(row.get(0)?, "position")?,
                 commit_seq: to_u64(row.get(1)?, "commit_seq")?,
                 command: OutboxCommand {

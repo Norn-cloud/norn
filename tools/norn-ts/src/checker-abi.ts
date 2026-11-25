@@ -119,6 +119,24 @@ export function checkerPackageDir(env: Readonly<Record<string, string | undefine
   return undefined
 }
 
+/**
+ * WASM freshness: in a source checkout (this tool beside `crates/norn-checker-wasm`),
+ * a checker found only in the local runtime cache was built from some release
+ * or earlier checkout, not from this source, so it can refuse definitions this
+ * source admits (an IR field or write mode it predates) and report false
+ * failures. Returns why that checker is not trusted here, or `undefined` when
+ * the checker is an explicit override, the bundled one, or outside a checkout.
+ */
+export function staleCheckerWarning(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  bundled: string = BUNDLED_CHECKER,
+  sourceCrate: string = join(TOOL_ROOT, "..", "..", "crates", "norn-checker-wasm", "Cargo.toml"),
+): string | undefined {
+  const dir = checkerPackageDir(env, bundled)
+  if (dir === undefined || env[CHECKER_PKG_ENV] || dir === bundled || !isRegularFile(sourceCrate)) return undefined
+  return `norn: the cached checker at ${dir} was not built from this source checkout and may predate it; build crates/norn-checker-wasm (wasm-pack build --target web) and set ${CHECKER_PKG_ENV} to its package`
+}
+
 /** Load the checker package from `dir` (default: `checkerPackageDir()`); undefined when there is none. */
 export async function loadChecker(dir: string | undefined = checkerPackageDir()): Promise<CheckerAbi | undefined> {
   if (!dir) return undefined

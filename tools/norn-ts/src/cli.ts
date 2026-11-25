@@ -4,7 +4,7 @@ import { existsSync, statSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { ProfileChecker } from "./check.ts"
 import { compileDashboards, compileQuestions } from "./compiler/definitions.ts"
-import { loadChecker, sourceMappedDiagnostics } from "./checker-abi.ts"
+import { loadChecker, sourceMappedDiagnostics, staleCheckerWarning } from "./checker-abi.ts"
 import { admit, compilePack } from "./pack.ts"
 
 if (process.argv[2] === "--version" || process.argv[2] === "-V") {
@@ -136,6 +136,8 @@ if (command === "compile") {
 } else {
   let checker: Awaited<ReturnType<typeof loadChecker>>
   try {
+    const stale = staleCheckerWarning()
+    if (stale) process.stderr.write(`${stale}\n`)
     checker = await loadChecker()
     if (!checker) throw new Error("NORN_CHECKER_WASM_PKG is not set")
   } catch (error) {

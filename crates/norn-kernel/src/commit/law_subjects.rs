@@ -3,7 +3,7 @@ use super::{CommitLinks, MAX_LINK_LAW_SUBJECTS, PostState};
 use crate::cell_host::{CellCommit, CommitError, FactKey, FactMutation, LinkKey};
 use crate::commit_check::CommitView;
 use crate::snapshot_observe::ObservationAuthorization;
-use norn_expr::EvaluationBudget;
+use norn_expr::TurnFuel;
 use norn_ir::ObjectTypeName;
 use std::collections::BTreeSet;
 /// LAW-LINK-MANY-1: the subjects whose governing law reads, through an
@@ -115,7 +115,7 @@ pub(super) fn check_governing_laws<E, C, T, V: CommitView + ?Sized>(
     authorization: Option<&ObservationAuthorization>,
 ) -> Result<(), CommitError<V::Error>> {
     let model = post.model();
-    let mut remaining = EvaluationBudget::default().units();
+    let mut remaining = TurnFuel::default();
     let violated = |key: &FactKey, failure: crate::governing_laws::LawFailure| CommitError::Law {
         key: key.clone(),
         reason: crate::governing_laws::LawEvaluationError::Violated(Box::new(failure)),
@@ -278,7 +278,7 @@ fn evaluate<V: CommitView + ?Sized>(
     on: &Projection<'_, '_, V>,
     key: &FactKey,
     values: &crate::cell_host::JsonObject,
-    remaining: &mut u64,
+    remaining: &mut TurnFuel,
 ) -> Result<Vec<crate::governing_laws::LawFailure>, CommitError<V::Error>> {
     let mut links = CommitLinks::new(on, key);
     let evaluated = crate::governing_laws::evaluate_linked(

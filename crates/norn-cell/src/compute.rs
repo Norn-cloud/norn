@@ -1,6 +1,9 @@
 //! Result/frontier contracts; producing evaluators must qualify their snapshot pins.
 use std::collections::{BTreeMap, BTreeSet};
 
+/// VIEW-ENGINE-1: admitted transforms lowered to `DataFusion` (#1765).
+#[cfg(feature = "datafusion")]
+mod df_transform;
 mod historical;
 /// Receipt-driven query maintenance.
 pub mod ivm;
@@ -561,6 +564,7 @@ impl<E: SqlEngine> CellStore<E> {
             let mut history = reader.history_read_seeded(frontier_receipt);
             let mut contributions = BTreeMap::new();
             let mut unlinked = 0u64;
+            let mut unlinked_members = BTreeSet::new();
             let mut members = BTreeSet::new();
             let mut finding_members = BTreeSet::new();
             for id in ids {
@@ -609,6 +613,9 @@ impl<E: SqlEngine> CellStore<E> {
                     &mut budget,
                 )?;
                 unlinked = unlinked.saturating_add(u64::from(timeless));
+                if timeless {
+                    unlinked_members.insert(id.clone());
+                }
                 if !entries.is_empty() {
                     contributions.insert(id, entries);
                 }
@@ -640,6 +647,7 @@ impl<E: SqlEngine> CellStore<E> {
                     contributions,
                     members,
                     finding_members,
+                    unlinked_members,
                 },
                 &mut budget,
             )
@@ -682,6 +690,8 @@ struct Snapshot {
     contributions: Contributions,
     members: BTreeSet<String>,
     finding_members: BTreeSet<String>,
+    /// METRIC-GRAIN-LINK-1: the members counted as `unlinked`.
+    unlinked_members: BTreeSet<String>,
 }
 
 /// Exact sums per bucket, and per operand the count of null measured values skipped.
@@ -736,7 +746,7 @@ fn null_counts(counts: Option<&Vec<u64>>) -> Vec<u64> {
 /// every stored version for a snapshot sum (METRIC-SNAPSHOT-ASOF-1), or its
 /// row's at its linked object's time (METRIC-GRAIN-LINK-1); `true` when the
 /// row would count but its optional time link is absent.
-fn subject_contributions<E: SqlEngine>(
+pub(crate) fn subject_contributions<E: SqlEngine>(
     reader: &crate::read::StoreReader<'_, E>,
     plan: &QuestionPlan,
     context: &QueryContext,

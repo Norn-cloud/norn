@@ -69,11 +69,11 @@ fn matches_action_request(
         return false;
     };
 
-    access_request.principal.subject_id == action_request.actor
-        && access_request.action_id == action_request.action.action_id
-        && access_request.resource.object_type == action_request.target.object_type.as_str()
-        && access_request.resource.id == action_request.target.key
-        && access_request.scope.as_ref() == Some(&scope)
+    access_request.principal().subject_id == action_request.actor
+        && access_request.action_id() == action_request.action.action_id
+        && access_request.resource().object_type == action_request.target.object_type.as_str()
+        && access_request.resource().id == action_request.target.key
+        && access_request.scope() == Some(&scope)
 }
 
 /// Convert the action boundary's named scope dimensions exactly. Unknown

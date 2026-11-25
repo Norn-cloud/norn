@@ -159,6 +159,7 @@
     { "symbol": "@norn/authoring#Norn.perform", "probe": "norn.Norn.perform", "row": "perform", "use": "call", "context": "flow" },
     { "symbol": "@norn/authoring#Norn.fn", "probe": "norn.Norn.fn", "row": "perform", "use": "call", "context": "definition" },
     { "symbol": "@norn/authoring#Norn.question", "probe": "norn.Norn.question", "row": "ontology", "use": "call", "context": "definition" },
+    { "symbol": "@norn/authoring#Norn.metricId", "probe": "norn.Norn.metricId", "row": "ontology", "use": "call", "context": "definition" },
     { "symbol": "@norn/authoring#Norn.dashboard", "probe": "norn.Norn.dashboard", "row": "ontology", "use": "call", "context": "definition" },
     { "symbol": "@norn/authoring#Norn.approval", "probe": "norn.Norn.approval", "row": "ontology", "use": "call", "context": "definition" },
     { "symbol": "@norn/authoring#Norn.type", "probe": "norn.Norn.type", "row": "ontology", "use": "call", "context": "definition" },

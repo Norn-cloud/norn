@@ -17,6 +17,19 @@ pub const MAX_QUANTITY_PACK_MEMBERS: usize = 16;
 pub const MAX_QUANTITY_IDENTIFIER_BYTES: usize = 128;
 /// Longest signed i128 decimal encoding, including its sign.
 pub const MAX_QUANTITY_INTEGER_BYTES: usize = 40;
+/// Maximum canonical bytes of one quantity record: a request, its pack and
+/// account list, a reservation or a posting. One constant for writer and
+/// reader (Q1): the kernel refuses a plan whose record exceeds it, and the cell
+/// refuses to decode above it, so a writer never stores what its reader refuses.
+pub const MAX_QUANTITY_RECORD_BYTES: usize = 256 * 1024;
+
+/// Whether `record`'s canonical encoding (the bytes a host persists) fits
+/// [`MAX_QUANTITY_RECORD_BYTES`]. A record that cannot be encoded never fits.
+#[must_use]
+pub fn quantity_record_fits<T: Serialize + ?Sized>(record: &T) -> bool {
+    norn_ir::canonical::canonical_json_of(record)
+        .is_ok_and(|bytes| bytes.len() <= MAX_QUANTITY_RECORD_BYTES)
+}
 
 /// Typed refusal; every refusal leaves the whole cell transaction unchanged.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -621,6 +634,9 @@ pub fn prepare_quantity(
             return Err(QuantityError::InvalidContract);
         }
         check_quantity_pack_bounds(pack)?;
+        if !quantity_record_fits(pack) || !quantity_record_fits(unrestricted_accounts) {
+            return Err(QuantityError::InvalidContract);
+        }
         let mut seen = BTreeSet::new();
         if unrestricted_accounts.len() > pack.accounts.len()
             || unrestricted_accounts.iter().any(|a| {
@@ -904,6 +920,19 @@ pub fn prepare_quantity(
                 held: held.to_string(),
             },
         );
+    }
+    // Q1: a Reserve stores its vector twice (legs and remaining); refuse any
+    // record its own reader would refuse before it reaches the store.
+    if plan
+        .reservation
+        .as_ref()
+        .is_some_and(|(_, reservation)| !quantity_record_fits(reservation))
+        || plan
+            .posting
+            .as_ref()
+            .is_some_and(|(_, posting)| !quantity_record_fits(posting))
+    {
+        return Err(QuantityError::InvalidContract);
     }
     Ok(plan)
 }

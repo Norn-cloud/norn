@@ -213,7 +213,7 @@ pub fn get_answer<E: SqlEngine>(
         },
     )?;
     let plan = runtime.plan(question)?;
-    if access.resource.object_type != plan.grain().as_str() {
+    if access.resource().object_type != plan.grain().as_str() {
         return Err(read_denied());
     }
     answer_plan(host, runtime, actor, question, &plan, key)
@@ -325,9 +325,9 @@ pub(crate) fn world_values<E: SqlEngine>(
             runtime
                 .collection_access(host.scope(), actor, Values, name)
                 .is_ok_and(|access| {
-                    access.principal.subject_id == actor
-                        && access.resource.object_type == name
-                        && access.resource.id == name
+                    access.principal().subject_id == actor
+                        && access.resource().object_type == name
+                        && access.resource().id == name
                         && host.read_permitted(&ReadRequest {
                             capability: Values,
                             access: &access,
@@ -431,7 +431,7 @@ pub fn get_numeric_trace<E: SqlEngine>(
         },
     )?;
     let plan = runtime.plan(question)?;
-    if access.resource.object_type != plan.grain().as_str() {
+    if access.resource().object_type != plan.grain().as_str() {
         return Err(read_denied());
     }
     let lineage = query
@@ -647,10 +647,10 @@ fn mapped<E: SqlEngine>(
         .access(host.scope(), actor, question, capability, row)
         .map_err(|_denial| read_denied())?;
     let id = row.map_or(question, |row| row.id.as_str());
-    if access.principal.subject_id != actor
-        || access.resource.id != id
+    if access.principal().subject_id != actor
+        || access.resource().id != id
         || row.is_some_and(|row| {
-            access.resource.object_type != row.object_type || row.scope != host.scope().key()
+            access.resource().object_type != row.object_type || row.scope != host.scope().key()
         })
     {
         return Err(read_denied());
@@ -905,7 +905,7 @@ pub fn check_ad_hoc<E: SqlEngine>(
         }));
     for (resource, over) in resources {
         let access = mapped(host, named, actor, resource, Population, None)?;
-        let governed = access.resource.object_type.as_str();
+        let governed = access.resource().object_type.as_str();
         let expected = match over {
             None => governed == resource,
             Some(Some(semantic_model)) => governed == semantic_model,
@@ -1243,7 +1243,7 @@ pub fn question_catalog<E: SqlEngine>(
     // Whether `actor` may read `resource`'s population, governed by `over`.
     let readable = |resource: &str, over: &dyn Fn(&str) -> bool| {
         mapped(host, named, actor, resource, Population, None).is_ok_and(|access| {
-            over(access.resource.object_type.as_str())
+            over(access.resource().object_type.as_str())
                 && host.read_permitted(&ReadRequest {
                     capability: Population,
                     access: &access,

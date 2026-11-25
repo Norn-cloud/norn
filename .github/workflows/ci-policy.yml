@@ -32,15 +32,15 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      # The full gate is `core.sh all` split into parallel bundle jobs. The plan comes from
-      # core.sh itself, so CI runs exactly its shards and phases (all but formal).
-      # Pull requests use affected plans; merge groups and main run the full set.
+      # The full gate is `core.sh all` split into parallel bundle jobs. Pull requests run hosted
+      # `core` + `trusted-policy` only (0 Boat starts); merge groups, main pushes and manual runs
+      # execute the complete bundle suite from `core.sh plan` (all phases but formal).
       - id: plan
         env:
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || '' }}
           HEAD_SHA: ${{ github.event.merge_group.head_sha || github.sha }}
         run: |
-          if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE" "$HEAD_SHA"); else plan=$(bash scripts/ci/core.sh plan); fi
+          if [ -n "$BASE" ]; then plan=$(jq -cn '{mode: "affected", shard: [], phase: [], packages: "", rest_shards: 1, reason: "pull_request runs hosted core; merge_group runs full", bundle: []}'); else plan=$(bash scripts/ci/core.sh plan); fi
           plan=$(jq -c --arg base "$BASE" --arg head "$HEAD_SHA" '. + {base_sha: $base, head_sha: $head}' <<<"$plan")
           echo "plan=$plan" >> "$GITHUB_OUTPUT"
           echo "$plan"

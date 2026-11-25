@@ -384,12 +384,12 @@ test("stop: a follow-up stopped while it waits keeps the line: the next prompt s
 
 test("a question names its tool by the bridge's own identity and redraws the part when that differs from the name the call opened with", () => {
   const chunks: SidekickChunk[] = []
-  const turn = new Turn((chunk) => chunks.push(chunk))
+  const turn = new Turn((chunk) => chunks.push(chunk), () => toolLabels({ tools: [{ name: "norn_call_action", title: "Call an action by id" }] }))
   turn.start()
   turn.update(update({ sessionUpdate: "tool_call", toolCallId: "t2", title: "mcp__norn__norn_answer", status: "pending", rawInput: PERMISSION.toolCall.rawInput }))
   turn.approval("approval-1", PERMISSION.toolCall)
   const inputs = chunks.filter((chunk): chunk is Extract<SidekickChunk, { type: "tool-input-available" }> => chunk.type === "tool-input-available")
   expect(inputs.map((chunk) => chunk.toolName)).toEqual(["norn_answer", "norn_call_action"])
-  expect(inputs.at(-1)).toMatchObject({ input: PERMISSION.toolCall.rawInput, title: "Called an action" })
+  expect(inputs.at(-1)).toMatchObject({ input: PERMISSION.toolCall.rawInput, title: "Call an action by id" })
   expect(chunks.at(-1)).toEqual({ type: "tool-approval-request", approvalId: "approval-1", toolCallId: "t2" })
 })

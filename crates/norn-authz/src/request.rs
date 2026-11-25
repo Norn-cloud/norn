@@ -144,7 +144,7 @@ impl ScopeKey {
 /// compare exactly (numbers are carried as their decimal text).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CommitBinding {
-    /// Action id; must equal [`AccessRequest::action_id`].
+    /// Action id; must equal [`AccessRequest::action_id()`].
     pub action_id: String,
     /// Resource kind: the resource's object type; must equal
     /// [`ResourceInput::object_type`].
@@ -276,25 +276,261 @@ pub enum Delegation {
     Biscuit(String),
 }
 
-/// One authorization request.
+/// A principal the authentication boundary verified (P7, Z7). Its fields are
+/// private: a host obtains one only from its token verifier or trusted
+/// principal mapper, through [`VerifiedPrincipal::new`], and an
+/// [`AccessRequest`] can be built only from one. The actor kind is the
+/// token's, never a host default.
+///
+/// ```compile_fail,E0451
+/// // A principal cannot be assembled as a struct literal outside the boundary.
+/// use norn_authz::{ActorKind, PrincipalInput, VerifiedPrincipal};
+/// let input = PrincipalInput {
+///     subject_id: "service:key".into(),
+///     actor_kind: ActorKind::User,
+///     agent_session_id: None,
+///     roles: Vec::new(),
+///     attributes: Default::default(),
+/// };
+/// let _ = VerifiedPrincipal { input };
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedPrincipal {
+    input: PrincipalInput,
+}
+
+impl VerifiedPrincipal {
+    /// The auth-boundary constructor: the subject, kind, session, roles and
+    /// attributes a verifier established for one request.
+    #[must_use]
+    pub fn new(
+        subject_id: impl Into<String>,
+        actor_kind: ActorKind,
+        agent_session_id: Option<String>,
+        roles: Vec<String>,
+        attributes: BTreeMap<String, AttrValue>,
+    ) -> Self {
+        Self::from_input(PrincipalInput {
+            subject_id: subject_id.into(),
+            actor_kind,
+            agent_session_id,
+            roles,
+            attributes,
+        })
+    }
+
+    /// [`Self::new`] from a principal input the boundary already mapped.
+    #[must_use]
+    pub const fn from_input(input: PrincipalInput) -> Self {
+        Self { input }
+    }
+
+    /// The actor kind the token carried.
+    #[must_use]
+    pub const fn kind(&self) -> ActorKind {
+        self.input.actor_kind
+    }
+
+    /// The exact subject id.
+    #[must_use]
+    pub fn subject(&self) -> &str {
+        &self.input.subject_id
+    }
+
+    /// The PDP input for this principal.
+    #[must_use]
+    pub const fn input(&self) -> &PrincipalInput {
+        &self.input
+    }
+}
+
+/// The complete list of decisions made without commit binding (P7).
+/// Shrink-only: a new unbound decision kind is a reviewed edit here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum UnboundProfile {
+    /// A marking reveal or declassification decision.
+    MarkingDecision,
+    /// A hosted read or disclosure decision.
+    HostedRead,
+    /// A hosted action, run or step decision checked before its commit.
+    HostedAction,
+}
+
+/// Whether a request is bound to one commit; "no binding" is a decision,
+/// never a default.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Binding {
+    /// Bound to one commit's action, resource, policy version and epoch.
+    Bound(Box<CommitBinding>),
+    /// Decided without commit binding, under one declared profile.
+    Unbound(UnboundProfile),
+}
+
+/// One authorization request. Its fields are private: [`AccessRequest::new`]
+/// is the only constructor, and it takes a [`VerifiedPrincipal`] (P7).
+///
+/// ```compile_fail,E0451
+/// // A request cannot be assembled field by field outside `norn-authz`.
+/// use norn_authz::{
+///     AccessRequest, ActorKind, Binding, Delegation, PrincipalInput, ResourceInput, ScopeKey,
+///     UnboundProfile,
+/// };
+/// let scope = ScopeKey {
+///     org: "o".into(),
+///     tenant: None,
+///     workspace: None,
+///     environment: None,
+///     business_unit: None,
+/// };
+/// let _ = AccessRequest {
+///     principal: PrincipalInput {
+///         subject_id: "service:key".into(),
+///         actor_kind: ActorKind::User,
+///         agent_session_id: None,
+///         roles: Vec::new(),
+///         attributes: Default::default(),
+///     },
+///     scope: Some(scope.clone()),
+///     capability: "norn.read".into(),
+///     action_id: "norn.read".into(),
+///     resource: ResourceInput {
+///         object_type: "a.b.C".into(),
+///         id: "1".into(),
+///         scope,
+///         attributes: Default::default(),
+///     },
+///     context: Default::default(),
+///     binding: Binding::Unbound(UnboundProfile::HostedRead),
+///     delegation: Delegation::Direct,
+/// };
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccessRequest {
     /// The principal.
-    pub principal: PrincipalInput,
+    pub(crate) principal: PrincipalInput,
     /// The request scope; `None` denies (absence is never a wildcard).
-    pub scope: Option<ScopeKey>,
+    pub(crate) scope: Option<ScopeKey>,
     /// The capability the action requires.
-    pub capability: String,
+    pub(crate) capability: String,
     /// The `ActionIR` id.
-    pub action_id: String,
+    pub(crate) action_id: String,
     /// The resource.
-    pub resource: ResourceInput,
+    pub(crate) resource: ResourceInput,
     /// Typed context values (computed outside Cedar); `scope` is reserved.
-    pub context: BTreeMap<String, AttrValue>,
-    /// Commit binding, on the commit path.
-    pub binding: Option<CommitBinding>,
+    pub(crate) context: BTreeMap<String, AttrValue>,
+    /// Commit binding, or the declared unbound profile.
+    pub(crate) binding: Binding,
     /// Delegation slot.
-    pub delegation: Delegation,
+    pub(crate) delegation: Delegation,
+}
+
+impl AccessRequest {
+    /// The sole constructor: `principal` acting with `capability` on
+    /// `action_id` over `resource` in `scope`, a direct (undelegated) request.
+    #[must_use]
+    pub fn new(
+        principal: &VerifiedPrincipal,
+        scope: Option<ScopeKey>,
+        capability: impl Into<String>,
+        action_id: impl Into<String>,
+        resource: ResourceInput,
+        context: BTreeMap<String, AttrValue>,
+        binding: Binding,
+    ) -> Self {
+        Self {
+            principal: principal.input.clone(),
+            scope,
+            capability: capability.into(),
+            action_id: action_id.into(),
+            resource,
+            context,
+            binding,
+            delegation: Delegation::Direct,
+        }
+    }
+
+    /// This request with a presented delegation (any Biscuit denies).
+    #[must_use]
+    pub fn with_delegation(mut self, delegation: Delegation) -> Self {
+        self.delegation = delegation;
+        self
+    }
+
+    /// This request pinned to the host's physical `scope`: the request scope
+    /// and the resource scope both become it. The principal, action and
+    /// binding are unchanged.
+    #[must_use]
+    pub fn with_physical_scope(mut self, scope: ScopeKey) -> Self {
+        self.resource.scope = scope.clone();
+        self.scope = Some(scope);
+        self
+    }
+
+    /// The principal.
+    #[must_use]
+    pub const fn principal(&self) -> &PrincipalInput {
+        &self.principal
+    }
+
+    /// The request scope; `None` denies.
+    #[must_use]
+    pub const fn scope(&self) -> Option<&ScopeKey> {
+        self.scope.as_ref()
+    }
+
+    /// The capability the action requires.
+    #[must_use]
+    pub fn capability(&self) -> &str {
+        &self.capability
+    }
+
+    /// The `ActionIR` id.
+    #[must_use]
+    pub fn action_id(&self) -> &str {
+        &self.action_id
+    }
+
+    /// The resource.
+    #[must_use]
+    pub const fn resource(&self) -> &ResourceInput {
+        &self.resource
+    }
+
+    /// The resource, for a trusted mapper retargeting one collection request
+    /// at each row. Principal, scope, action and binding stay sealed.
+    pub const fn resource_mut(&mut self) -> &mut ResourceInput {
+        &mut self.resource
+    }
+
+    /// Typed context values.
+    #[must_use]
+    pub const fn context(&self) -> &BTreeMap<String, AttrValue> {
+        &self.context
+    }
+
+    /// The commit binding, when the request is bound.
+    #[must_use]
+    pub fn binding(&self) -> Option<&CommitBinding> {
+        match &self.binding {
+            Binding::Bound(binding) => Some(binding.as_ref()),
+            Binding::Unbound(_) => None,
+        }
+    }
+
+    /// The unbound profile, when the request is not bound.
+    #[must_use]
+    pub const fn unbound_profile(&self) -> Option<UnboundProfile> {
+        match &self.binding {
+            Binding::Bound(_) => None,
+            Binding::Unbound(profile) => Some(*profile),
+        }
+    }
+
+    /// The delegation slot.
+    #[must_use]
+    pub const fn delegation(&self) -> &Delegation {
+        &self.delegation
+    }
 }
 
 /// One exact value: not empty after trimming and not the `*` wildcard (the

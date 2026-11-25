@@ -1,0 +1,104 @@
+{
+  "artifactId": "supply.receipts_by_promised_week",
+  "dependencies": [
+    {
+      "artifactId": "supply.ShipmentReceipt.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "supply.OrderLine.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "derived",
+  "lifecycle": "active",
+  "name": "Receipts by promised week",
+  "namespace": "supply",
+  "payload": {
+    "calc": {
+      "kind": "relational",
+      "nodes": {
+        "joined": {
+          "kind": "inner",
+          "left": "linked",
+          "on": {
+            "key": {
+              "left": [
+                "line_id"
+              ],
+              "right": "primary"
+            }
+          },
+          "op": "join",
+          "prefix": "l_",
+          "right": "line"
+        },
+        "line": {
+          "input": "line",
+          "op": "scan"
+        },
+        "linked": {
+          "input": "receipt",
+          "op": "filter",
+          "predicate": "input.line_id != null"
+        },
+        "receipt": {
+          "input": "receipt",
+          "op": "scan"
+        },
+        "weekly": {
+          "groupBy": [
+            {
+              "column": "l_promised_at",
+              "grain": "week",
+              "label": "Promised week"
+            },
+            {
+              "column": "unit"
+            }
+          ],
+          "input": "joined",
+          "measures": [
+            {
+              "column": "received_qty",
+              "fn": "sum",
+              "label": "Received",
+              "name": "received"
+            }
+          ],
+          "op": "aggregate"
+        }
+      },
+      "output": "weekly"
+    },
+    "inputs": [
+      {
+        "alias": "receipt",
+        "artifactId": "supply.ShipmentReceipt.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      },
+      {
+        "alias": "line",
+        "artifactId": "supply.OrderLine.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      }
+    ],
+    "maintenance": "recompute_on_read",
+    "outputSchema": {},
+    "viewId": "supply.receipts_by_promised_week",
+    "viewVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.receipts_by_promised_week.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

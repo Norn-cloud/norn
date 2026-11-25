@@ -32,7 +32,7 @@ use crate::decision_commit::{
 };
 use crate::envelope::{EnvelopeCounts, check_decision_envelope};
 use crate::limits::EnvelopeLimits;
-use norn_expr::EvaluationBudget;
+use norn_expr::TurnFuel;
 
 mod read_findings;
 use read_findings::AuthorizedObservedReadFinding;
@@ -1203,7 +1203,7 @@ impl ObservationAuthorization {
         let refuse = |error: String| ObservationRefusal::Encoding(format!("LAW-LINK-1: {error}"));
         let post = Projection::preview(&commit.writes, &commit.links, model, view)
             .map_err(|e| refuse(e.code().into()))?;
-        let mut remaining = EvaluationBudget::default().units();
+        let mut remaining = TurnFuel::default();
         for authorized in &mut self.writes {
             let FactMutation::Put { values } = &authorized.write.mutation else {
                 continue;
@@ -1328,7 +1328,7 @@ impl ObservationAuthorization {
             }
         }
         let before = post.snapshot();
-        let mut remaining = EvaluationBudget::default().units();
+        let mut remaining = TurnFuel::default();
         for (subject, (provenance, observation_id)) in subjects {
             let canonical = model.canonical(&subject);
             let Some(values) = view
@@ -1611,7 +1611,7 @@ pub fn observation_rule_findings(
         let (rule_ref, outcome, severity) = failure_rule(catalog, failure)?;
         found.push((rule_ref, severity, outcome));
     }
-    let mut remaining = EvaluationBudget::default().units();
+    let mut remaining = TurnFuel::default();
     for failure in crate::governing_laws::evaluate_linked(
         catalog,
         key,
@@ -1681,7 +1681,7 @@ fn findings_for(
             build(rule_ref, severity, failure.message.clone(), outcome)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let mut remaining = EvaluationBudget::default().units();
+    let mut remaining = TurnFuel::default();
     for failure in
         crate::governing_laws::evaluate_linked(catalog, key, values, links, &mut remaining)?
     {
@@ -1760,7 +1760,7 @@ fn reevaluate_finding(
     finding: &DataQualityFinding,
     links: &mut dyn crate::governing_laws::LinkTargets,
 ) -> Result<Vec<DataQualityFinding>, ObservationRefusal> {
-    let mut remaining = EvaluationBudget::default().units();
+    let mut remaining = TurnFuel::default();
     let failures = evaluate_invariants(catalog, key, values, &mut remaining).map_err(|error| {
         ObservationRefusal::Encoding(format!(
             "historical invariant evaluation refused: {error:?}"
@@ -2137,11 +2137,11 @@ fn evaluate_observed_invariants(
     key: &FactKey,
     values: &JsonObject,
 ) -> Result<Vec<InvariantFailure>, ObservationRefusal> {
-    let mut remaining = EvaluationBudget::default().units();
+    let mut remaining = TurnFuel::default();
     evaluate_invariants(catalog, key, values, &mut remaining).map_err(|error| match error {
         InvariantEvaluationError::BudgetExceeded => ObservationRefusal::InvariantBudgetExceeded {
             key: key.clone(),
-            limit: EvaluationBudget::default().units(),
+            limit: remaining.limit(),
         },
         InvariantEvaluationError::MissingInterface(interface) => {
             ObservationRefusal::InvariantModel {

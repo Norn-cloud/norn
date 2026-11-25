@@ -2892,7 +2892,7 @@ fn select_nested_value_with_budget(
         ));
     }
 
-    let mut remaining_units = total_units;
+    let mut remaining_units = norn_expr::TurnFuel::new(total_units);
     let mut selected_context = None;
     for (index, child) in rows.iter().enumerate() {
         let Json::Object(child) = child else {
@@ -2975,10 +2975,9 @@ fn nested_predicate_value(
 fn evaluate_with_remaining(
     expression: &Expression,
     context: &Value,
-    remaining_units: &mut u64,
+    remaining_units: &mut norn_expr::TurnFuel,
 ) -> Result<Value, (&'static str, String)> {
-    let attempt = expression.evaluate_metered(context, EvaluationBudget::new(*remaining_units));
-    *remaining_units = (*remaining_units).saturating_sub(attempt.units_used);
+    let attempt = remaining_units.spend(|budget| expression.evaluate_metered(context, budget));
     attempt
         .result
         .map(norn_expr::Evaluation::into_value)
@@ -3379,7 +3378,7 @@ fn encode(value: &Value, ty: &Type) -> Result<Option<RuntimeValue>, String> {
             | Type::Timestamp { .. }
             | Type::Duration
             | Type::Enum { .. },
-        ) => Ok(Some(RuntimeValue::String(text.clone()))),
+        ) => super::lens::enum_member(text, ty).map(|()| Some(RuntimeValue::String(text.clone()))),
         (Value::Number(number), Type::Integer) => {
             let integer = number
                 .as_str()

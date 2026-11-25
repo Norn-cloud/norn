@@ -20,6 +20,9 @@ from norn_regression.cell import Refused  # noqa: E402
 
 cell = Cell.from_project(sys.argv[1])
 http = cell.client.get_httpx_client()
+# DEV-REVIEWER-1: the registrant never promotes its own version (ACTOR-INDEPENDENT-1),
+# so the dev host's reviewer principal promotes it.
+REVIEWER = {"Authorization": "Bearer " + (Path(sys.argv[1]) / ".norn/dev.reviewer.token").read_text().strip()}
 where = {"orgId": cell.org_id, "environmentId": cell.environment_id}
 MODEL = "sales.churn_model"
 
@@ -46,7 +49,9 @@ base = {"model_id": MODEL, "training_run": "train-1", "evaluation_run": "eval-1"
         "input_type": "sales.Customer", "input_revision": "c41", "pinned_dataset_revision": "c42",
         "evaluation_revision": "c42", "metric_name": "auc", "metric_value": "0.88", "contracts_passed": True}
 cell.call("ml.modelversion.register", {**base, "version_id": "churn@10", "version": "10"}, "apply-reg-10")
-cell.call("ml.modelversion.promote", {"version_id": "churn@10"}, "apply-promote-10")
+promoted = http.post("/v1/actions/ml.modelversion.promote", params={"orgId": cell.org_id, "environmentId": cell.environment_id},
+                     json={"input": {"version_id": "churn@10"}, "idempotencyKey": "apply-promote-10"}, headers=REVIEWER)
+assert promoted.status_code == 200, (promoted.status_code, promoted.text)
 cell.call("ml.modelversion.register", {**base, "version_id": "churn@11", "version": "11"}, "apply-reg-11")
 
 

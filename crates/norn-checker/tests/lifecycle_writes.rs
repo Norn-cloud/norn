@@ -716,6 +716,42 @@ fn action_transitions_are_checked_against_the_effective_machine() {
 }
 
 #[test]
+fn update_only_declares_only_a_modify_and_never_targets_a_series_key() {
+    use norn_checker::action_set::codes::{
+        NAMING_SERIES_TARGET_MISMATCH, UNDECLARED_EFFECT_WRITE, WRITE_WITHOUT_EFFECT,
+    };
+    let update_only = json!({ "kind": "update_only" });
+    let mut modify = series_create_action(true, true, &update_only);
+    modify["payload"]["writes"] =
+        json!([{ "entityKind": "commerce.PurchaseOrder", "change": "modified" }]);
+    assert_eq!(
+        set_findings(vec![purchase_order_entity(), modify.clone()]),
+        Vec::new(),
+        "an update-only upsert declares exactly one modify"
+    );
+    // A `created` write it can never make is refused, and its modify is undeclared.
+    let created = series_create_action(true, true, &update_only);
+    let found = set_findings(vec![purchase_order_entity(), created]);
+    assert!(
+        found.iter().any(|(code, _)| code == WRITE_WITHOUT_EFFECT),
+        "{found:?}"
+    );
+    assert!(
+        found
+            .iter()
+            .any(|(code, _)| code == UNDECLARED_EFFECT_WRITE),
+        "{found:?}"
+    );
+    // A generated series key is created only by create_only allocation.
+    assert!(
+        set_findings(vec![series_purchase_order_entity(), modify])
+            .iter()
+            .any(|(code, pointer)| code == NAMING_SERIES_TARGET_MISMATCH
+                && pointer == "/payload/effectProgram/writeMode"),
+    );
+}
+
+#[test]
 fn optional_create_id_requires_a_matching_series_and_required_scope_inputs() {
     let valid = series_create_action(false, true, &json!({ "kind": "create_only" }));
     assert_eq!(

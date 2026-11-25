@@ -90,7 +90,7 @@ const SPARKLE_GLYPH = new RegExp(SPARKLE_POINTS.flatMap((point) => {
 /** A lucide icon export name for a sparkle, wand or stars icon, bare or with its `Lucide` prefix or `Icon` suffix. */
 const SPARKLE_ICON = /Sparkle|Wand|Stars(?:Icon)?$/
 /** The same icons by their kebab-case file or dynamic name (`star` and `star-half` are fine). */
-const SPARKLE_SLUG = /^(?:[a-z0-9-]+-)?sparkles?(?:-[a-z0-9-]+)?$|^(?:[a-z0-9-]+-)?wand(?:-[a-z0-9-]+)*$|^stars$/
+const SPARKLE_SLUG = /^(?:[a-z0-9-]+-)?sparkles?(?:-[a-z0-9-]+)?$|^(?:[a-z0-9-]+-)?wand(?:-[a-z0-9]+)*$|^stars$/
 
 /**
  * Every sparkle "AI" glyph or icon a source file uses: named, aliased, re-exported, deep-imported or

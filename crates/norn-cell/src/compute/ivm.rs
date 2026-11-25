@@ -1,11 +1,28 @@
 //! QUERY-ENGINE-1: receipt-driven maintenance at the exact cell frontier.
-use super::{Contributions, Engine, QueryContext, QueryResult, Totals, finish, refused};
+//!
+//! A member's contributions are a function of its own record: its current
+//! row, every stored version of it for a snapshot sum (METRIC-SNAPSHOT-ASOF-1),
+//! or its row at its one linked object's time (METRIC-GRAIN-LINK-1). A changed
+//! member is retracted and re-derived exactly as recompute derives it
+//! (`subject_contributions`), so `IVM == recompute` holds for every plan
+//! shape. A linked time also changes when the link or the linked object does:
+//! a receipt that relinks or unlinks a member re-derives it, and one that
+//! writes (corrects or deletes) a linked object re-derives exactly the members
+//! whose live link reaches it, read through the link table under the plan's
+//! decode budget. Shapes recompute refuses (a snapshot at a knowledge cutoff)
+//! stay refused here, through the same snapshot; a linked-time plan at a
+//! knowledge cutoff is refused too, since a member's link and linked time are
+//! read live, not as of the cutoff.
+use super::{
+    Contributions, Engine, QueryContext, QueryResult, Totals, finish, refused,
+    subject_contributions,
+};
 use crate::{
     CellError, CellStore, ObjectRecord,
     engine::SqlEngine,
     reactive::{BudgetedRead, DecodeBudget, ReactiveLimits},
 };
-use norn_checker::metric::compute::{QuestionPlan, UNSUPPORTED_ENGINE, contribution::project};
+use norn_checker::metric::compute::{QuestionPlan, UNSUPPORTED_ENGINE};
 use norn_ir::ResourceLimitProfile;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -22,6 +39,8 @@ pub struct IncrementalQuestion {
     knowledge: Option<crate::KnowledgeCutoff>,
     source_pins: BTreeMap<String, String>,
     finding_members: BTreeSet<String>,
+    /// METRIC-GRAIN-LINK-1: members whose optional time link is absent.
+    unlinked: BTreeSet<String>,
 }
 impl IncrementalQuestion {
     /// Rebuild all bounded inputs before publishing a complete generation.
@@ -54,9 +73,8 @@ impl IncrementalQuestion {
         knowledge: Option<crate::KnowledgeCutoff>,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Self, CellError> {
-        // METRIC-SNAPSHOT-ASOF-1 / METRIC-GRAIN-LINK-1: neither a snapshot nor a
-        // linked time is maintained incrementally.
-        if plan.as_of() || plan.time_link().is_some() {
+        // METRIC-GRAIN-LINK-1: links and linked times are read live, never as of a cutoff.
+        if knowledge.is_some() && plan.time_link().is_some() {
             return Err(refused(UNSUPPORTED_ENGINE));
         }
         let (snapshot, source_pins, receipt_pin) = store.question_snapshot_at_with(
@@ -91,6 +109,7 @@ impl IncrementalQuestion {
             knowledge,
             source_pins,
             finding_members: snapshot.finding_members,
+            unlinked: snapshot.unlinked_members,
         })
     }
     /// Last atomically published generation.
@@ -245,6 +264,49 @@ impl IncrementalQuestion {
                         .into_iter()
                         .filter(|id| self.members.contains(id)),
                 );
+                // METRIC-GRAIN-LINK-1: a relinked or unlinked member, and the
+                // members linked to a written (corrected or deleted) target.
+                if let Some(link) = self.plan.time_link() {
+                    let model = store.model();
+                    let related = |a: &str, b: &str| model.is_a(a, b) || model.is_a(b, a);
+                    let grain = self.plan.grain().as_str();
+                    changed.extend(
+                        receipt
+                            .body
+                            .linked
+                            .iter()
+                            .filter(|l| {
+                                l.link == link.link.as_str() && related(&l.object_type, grain)
+                            })
+                            .map(|l| l.source.clone()),
+                    );
+                    let limits =
+                        ReactiveLimits::from_profile(&ResourceLimitProfile::norn_limits_v1());
+                    let mut budget = DecodeBudget::new(&limits);
+                    let max = usize::try_from(self.plan.max_items()).map_err(|_n| stale())?;
+                    for written in receipt
+                        .body
+                        .written
+                        .iter()
+                        .filter(|w| related(&w.object_type, link.target_type.as_str()))
+                    {
+                        match reader.link_sources_to_with_budget(
+                            &context.world,
+                            grain,
+                            link.link.as_str(),
+                            &written.key,
+                            max,
+                            &mut budget,
+                        )? {
+                            crate::reactive::BudgetedLinksRead::Complete(sources) => {
+                                changed.extend(sources);
+                            }
+                            crate::reactive::BudgetedLinksRead::Exhausted => {
+                                return Err(refused("core.compute.bound_exceeded"));
+                            }
+                        }
+                    }
+                }
             }
         }
         Ok(changed)
@@ -294,6 +356,7 @@ impl IncrementalQuestion {
             }
             for id in std::mem::take(&mut changed) {
                 self.finding_members.remove(&id);
+                self.unlinked.remove(&id);
                 exclusions.remove(&id);
                 for (_, previous) in self.contributions.remove(&id).unwrap_or_default() {
                     self.totals.adjust(&previous, true)?;
@@ -327,12 +390,25 @@ impl IncrementalQuestion {
                             visible,
                         )?;
                         self.members.insert(id.clone());
-                        if authorized
-                            && let Some(value) =
-                                project(&self.plan, &record.values).map_err(refused)?
-                        {
-                            self.totals.adjust(&value, false)?;
-                            self.contributions.insert(id, vec![(record.version, value)]);
+                        if authorized {
+                            // The member's contributions exactly as recompute derives them.
+                            let (entries, timeless) = subject_contributions(
+                                &reader,
+                                &self.plan,
+                                &context,
+                                (&id, &record),
+                                self.knowledge,
+                                &mut budget,
+                            )?;
+                            for (_, value) in &entries {
+                                self.totals.adjust(value, false)?;
+                            }
+                            if timeless {
+                                self.unlinked.insert(id.clone());
+                            }
+                            if !entries.is_empty() {
+                                self.contributions.insert(id, entries);
+                            }
                         }
                     }
                     BudgetedRead::Missing => {
@@ -360,6 +436,7 @@ impl IncrementalQuestion {
             &self.totals,
         )?;
         result.engine = Engine::Ivm;
+        result.unlinked = u64::try_from(self.unlinked.len()).map_err(|_n| stale())?;
         self.totals.0.retain(|key, _| result.rows.contains_key(key));
         self.totals.1.retain(|key, _| result.rows.contains_key(key));
         self.receipt_pin = reader.receipt_at(result.revision.commits)?.map(|r| r.hash);

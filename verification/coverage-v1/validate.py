@@ -623,7 +623,7 @@ await github.rest.repos.createCommitStatus({
         "test": 'bash scripts/ci/core.sh bundle "$PLAN" "$BUNDLE_ID"',
     }
     # The plan job computes the gate plan that the bundles and the verdict read.
-    plan_command = '''if [ -n "$BASE" ]; then plan=$(bash scripts/ci/core.sh plan --affected "$BASE" "$HEAD_SHA"); else plan=$(bash scripts/ci/core.sh plan); fi
+    plan_command = '''if [ -n "$BASE" ]; then plan=$(jq -cn '{mode: "affected", shard: [], phase: [], packages: "", rest_shards: 1, reason: "pull_request runs hosted core; merge_group runs full", bundle: []}'); else plan=$(bash scripts/ci/core.sh plan); fi
 plan=$(jq -c --arg base "$BASE" --arg head "$HEAD_SHA" '. + {base_sha: $base, head_sha: $head}' <<<"$plan")
 echo "plan=$plan" >> "$GITHUB_OUTPUT"
 echo "$plan"'''

@@ -84,9 +84,9 @@ pub(crate) fn mapped(
     let (expected_type, expected_id) = row.map_or((object_type, object_type), |row| {
         (row.object_type.as_str(), row.id.as_str())
     });
-    if request.principal.subject_id != actor
-        || request.resource.object_type != expected_type
-        || request.resource.id != expected_id
+    if request.principal().subject_id != actor
+        || request.resource().object_type != expected_type
+        || request.resource().id != expected_id
         || row.is_some_and(|row| row.scope != host_scope.key())
     {
         return Err(read_denied());

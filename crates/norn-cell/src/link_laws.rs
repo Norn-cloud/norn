@@ -185,7 +185,7 @@ impl<S: SqlEngine> StoreReader<'_, S> {
         world: &str,
         subject: &FactKey,
         values: &norn_kernel::cell_host::JsonObject,
-        remaining: &mut u64,
+        remaining: &mut norn_kernel::TurnFuel,
     ) -> Result<Vec<norn_kernel::governing_laws::LawFailure>, LawEvaluationError> {
         norn_kernel::governing_laws::evaluate_linked(
             catalog,

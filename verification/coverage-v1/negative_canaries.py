@@ -643,6 +643,14 @@ def workflow_verdict_canaries(source: str) -> None:
     cases.extend(("merge_group", full_plan, {**passed, key: result}, False)
                  for key in passed for result in ("failure", "cancelled", "skipped"))
     cases.append(("pull_request", affected, {**passed, "TEST": "skipped"}, False))
+    pr_core_only = {"mode": "affected", "base_sha": "base", "head_sha": "head", "shard": [], "phase": [],
+                    "packages": "", "rest_shards": 1, "reason": "pull_request runs hosted core; merge_group runs full",
+                    "bundle": []}
+    cases.append(("pull_request", pr_core_only, {**passed, "TEST": "skipped"}, True))
+    cases.append(("pull_request", pr_core_only, {**passed, "TEST": "skipped", "CORE": "failure"}, False))
+    cases.append(("pull_request", pr_core_only, {**passed, "TEST": "skipped", "DRAFT": "true"}, False))
+    cases.extend((event, pr_core_only, {**passed, "TEST": "skipped"}, False)
+                 for event in ("push", "merge_group", "workflow_dispatch"))
     # The merge queue runs the full suite: an affected merge-group plan fails, even one that keeps
     # the always-run phases (#1348).
     merge_affected = {"mode": "affected", "base_sha": "base", "head_sha": "head", "shard": ["rest-1"], "phase": ["guards", "provenance", "clippy"]}

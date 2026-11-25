@@ -75,6 +75,55 @@ pub(super) fn parquet_text(
     plain_text(array, row, kind)
 }
 
+/// NB4 (#1765): whether a field of Arrow type `kind` has a plain text cast
+/// this load reads, decided from the file's schema before anything is
+/// decoded; [`plain_text`] refuses the same types if one is ever reached.
+pub(super) const fn plain_readable(kind: &DataType) -> bool {
+    match kind {
+        DataType::Utf8
+        | DataType::LargeUtf8
+        | DataType::Utf8View
+        | DataType::Boolean
+        | DataType::Int8
+        | DataType::Int16
+        | DataType::Int32
+        | DataType::Int64
+        | DataType::UInt8
+        | DataType::UInt16
+        | DataType::UInt32
+        | DataType::UInt64
+        | DataType::Float32
+        | DataType::Float64
+        | DataType::Decimal128(..)
+        | DataType::Date32
+        | DataType::Timestamp(..) => true,
+        DataType::Null
+        | DataType::Float16
+        | DataType::Date64
+        | DataType::Time32(_)
+        | DataType::Time64(_)
+        | DataType::Duration(_)
+        | DataType::Interval(_)
+        | DataType::Binary
+        | DataType::FixedSizeBinary(_)
+        | DataType::LargeBinary
+        | DataType::BinaryView
+        | DataType::List(_)
+        | DataType::ListView(_)
+        | DataType::FixedSizeList(..)
+        | DataType::LargeList(_)
+        | DataType::LargeListView(_)
+        | DataType::Struct(_)
+        | DataType::Union(..)
+        | DataType::Dictionary(..)
+        | DataType::Decimal32(..)
+        | DataType::Decimal64(..)
+        | DataType::Decimal256(..)
+        | DataType::Map(..)
+        | DataType::RunEndEncoded(..) => false,
+    }
+}
+
 /// A non-instant Parquet value as its text cast.
 fn plain_text(array: &dyn Array, row: usize, kind: ColumnKind) -> Outcome<Option<String>> {
     let any = array.as_any();

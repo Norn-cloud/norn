@@ -807,12 +807,12 @@ fn validate_upsert_write_mode(
     };
     let kind = mode.get("kind").and_then(JsonValue::as_string);
     let allowed: &[&str] = match kind {
-        Some("upsert" | "create_only") => &["kind"],
+        Some("upsert" | "create_only" | "update_only") => &["kind"],
         Some("draft_only") => &["kind", "lifecycle", "state"],
         _ => {
             diagnostics.push(invalid_diagnostic(
                 code,
-                "writeMode.kind must be upsert, create_only, or draft_only",
+                "writeMode.kind must be upsert, create_only, update_only, or draft_only",
                 "payload.effectProgram.writeMode.kind",
                 artifact_id,
             ));
@@ -830,7 +830,7 @@ fn validate_upsert_write_mode(
     require_literal_field(
         mode,
         "kind",
-        &["upsert", "create_only", "draft_only"],
+        &["upsert", "create_only", "update_only", "draft_only"],
         "payload.effectProgram.writeMode.kind",
         diagnostics,
         artifact_id,

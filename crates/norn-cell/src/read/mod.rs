@@ -41,8 +41,9 @@ pub use objects::{MarkedQuestionPath, ObjectRecord};
 pub use pagination::{
     BindingRootCandidate, BindingSortValue, BindingSortedCandidate, BindingSortedPosition,
 };
+pub(crate) use queue::reissue_replaces;
 pub use queue::{
-    ParkedPage, PendingCommand, PendingObservation, PendingTimer, RunRecord, is_parked,
+    ParkedPage, PendingCommand, PendingObservation, PendingTimer, RunRecord, classify,
 };
 
 /// Decode receipt rows, checking each row's lookup columns against its

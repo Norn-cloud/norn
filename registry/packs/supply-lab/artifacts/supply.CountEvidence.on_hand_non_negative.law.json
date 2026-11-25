@@ -1,0 +1,50 @@
+{
+  "artifactId": "supply.CountEvidence.on_hand_non_negative.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.CountEvidence.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A counted stock position is never negative; a shortfall is a movement or an adjustment, not a negative count.",
+  "namespace": "supply",
+  "payload": {
+    "id": "supply.CountEvidence.on_hand_non_negative",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/supply.ts"
+    },
+    "rationale": "A counted stock position is never negative; a shortfall is a movement or an adjustment, not a negative count.",
+    "response": {
+      "expression": "self.on_hand_qty >= 0",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.CountEvidence"
+      ],
+      "root": {
+        "id": "supply.CountEvidence",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.CountEvidence"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.CountEvidence.on_hand_non_negative.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

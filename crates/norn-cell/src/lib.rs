@@ -17,7 +17,7 @@
 //! - [`CellStore`]: the normalized store (T2-ST-1 #2540, T2-ST-2 #2541),
 //!   shared by native and host adapters:
 //!   object and link tables, and the ledger, receipt, outbox, timer, and run
-//!   system tables ([`system`]). One `CellStore::commit_unchecked` writes the
+//!   system tables ([`system`]). One commit writes the
 //!   consumed delivery, facts, events, the receipt, enqueued commands, and
 //!   timers in one SQLite transaction; reopening verifies the ledger hash
 //!   chain ([`StoreReader::verify_ledger`]).
@@ -29,6 +29,7 @@
 //!   each result before delivering it, and `observe`/`clock` peek until a
 //!   commit consumes.
 
+pub mod admitted;
 pub mod analytics;
 pub mod automation_outbox;
 pub mod catalog;
@@ -86,6 +87,7 @@ pub mod restore;
 pub mod retained;
 mod scrub;
 pub use scrub::ScrubStatus;
+pub mod snapshot;
 pub mod source_agreement;
 pub mod source_provenance;
 pub mod store;
@@ -109,6 +111,7 @@ mod test_door;
 pub mod transparency;
 mod write;
 
+pub use admitted::{AdmittedAction, AdmittedDefinitions};
 pub use coverage_observer::{
     CedarRuleKey, DomainCoverageRecorder, DomainCoverageSnapshot, ImmutableRefusalKey,
     ObservedSqliteCell, TransitionKey,
@@ -122,7 +125,7 @@ pub use error::CellError;
 pub use fork::{ForkEngine, ForkPin, StoreImage};
 pub use function_receipt::ResultAuthority;
 pub use history::{FactSnapshot, FactVersionEvidence, HistoricalEvidence, KnowledgeCutoff};
-pub use host::{CommitRecord, PerformClaim, Responder, SqliteCell};
+pub use host::{ClaimOutcome, CommitRecord, Responder, Settlement, SqliteCell};
 pub use mapping_process::{MappingOutcome, QuarantineReason};
 pub use model::{BindingIndexSpec, Model, ModelDefinitionSnapshot};
 pub use read::{

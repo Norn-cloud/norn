@@ -1,0 +1,135 @@
+{
+  "artifactId": "supply.position.record_count.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record a stock count",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.position.record_count",
+    "effectProgram": {
+      "entityArtifactId": "supply.InventorySnapshot.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "snapshot_id",
+      "objectKind": "supply.InventorySnapshot",
+      "writeMode": {
+        "kind": "update_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "as_of": {
+          "type": "string"
+        },
+        "count_ref": {
+          "type": "string"
+        },
+        "count_source": {
+          "enum": [
+            "wms_scan",
+            "cycle_count",
+            "audit"
+          ],
+          "type": "string"
+        },
+        "on_hand_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "quantity_basis": {
+          "enum": [
+            "on_hand",
+            "available",
+            "reserved"
+          ],
+          "type": "string"
+        },
+        "sku_id": {
+          "type": "string"
+        },
+        "snapshot_id": {
+          "type": "string"
+        },
+        "unit": {
+          "enum": [
+            "each",
+            "kg",
+            "l"
+          ],
+          "type": "string"
+        },
+        "warehouse_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "snapshot_id",
+        "warehouse_id",
+        "sku_id",
+        "on_hand_qty",
+        "unit",
+        "quantity_basis",
+        "as_of",
+        "count_source",
+        "count_ref"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "snapshot_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "snapshot_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "((((input.count_source != 'audit') and (slice.position.warehouse_id == input.warehouse_id)) and (slice.position.sku_id == input.sku_id)) and (slice.position.unit == input.unit)) and (slice.position.quantity_basis == input.quantity_basis)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "snapshot_id"
+          }
+        },
+        "name": "position",
+        "objectType": "supply.InventorySnapshot"
+      }
+    ],
+    "title": "Record a stock count",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "supply.InventorySnapshot"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.position.record_count.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

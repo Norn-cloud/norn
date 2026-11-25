@@ -10518,7 +10518,7 @@ export interface components {
          */
         NornIrUnitSystem: "ucum" | "qudt";
         /** @description Write guard for an action's object upsert. */
-        NornIrUpsertWriteMode: components["schemas"]["NornIrUpsertWriteModeOneOf0"] | components["schemas"]["NornIrUpsertWriteModeOneOf1"] | components["schemas"]["NornIrUpsertWriteModeOneOf2"];
+        NornIrUpsertWriteMode: components["schemas"]["NornIrUpsertWriteModeOneOf0"] | components["schemas"]["NornIrUpsertWriteModeOneOf1"] | components["schemas"]["NornIrUpsertWriteModeOneOf2"] | components["schemas"]["NornIrUpsertWriteModeOneOf3"];
         /** @description Create or update the target, subject to lifecycle immutability. */
         NornIrUpsertWriteModeOneOf0: {
             /** @enum {string} */
@@ -10537,6 +10537,11 @@ export interface components {
             lifecycle: string;
             /** @description The lifecycle's declared initial state used as the draft state. */
             state: string;
+        };
+        /** @description The target must exist; it is patched and never created. */
+        NornIrUpsertWriteModeOneOf3: {
+            /** @enum {string} */
+            kind: "update_only";
         };
         /** @description An RFC 3339 instant in UTC (`2026-10-01T09:30:00Z`). */
         NornIrUtcTimestamp: string;

@@ -19,7 +19,9 @@ use norn_checker::EffectiveCatalog;
 use norn_checker::metric::compute::{QuestionPlan, admit};
 use norn_ir::metric::{FreshnessPolicy, MetricAdditivity, MetricType, MetricTypeParams};
 use norn_ir::{ArtifactEnvelope, MetricDefinition, ObjectTypeDef, QuestionIR};
-use norn_kernel::authz::{AccessRequest, ActorKind, Delegation, PrincipalInput, ResourceInput};
+use norn_kernel::authz::{
+    AccessRequest, ActorKind, Binding, ResourceInput, UnboundProfile, VerifiedPrincipal,
+};
 use serde_json::{Value, json};
 
 use crate::policy::{READ_ACTION, capability_name, scope_key};
@@ -388,27 +390,20 @@ impl<E: SqlEngine> QuestionRuntime<E> for DemoQuestions {
         row: Option<&ObjectRecord>,
     ) -> Result<AccessRequest, Refusal> {
         let key = scope_key(scope);
-        Ok(AccessRequest {
-            principal: PrincipalInput {
-                subject_id: actor.into(),
-                actor_kind: ActorKind::User,
-                agent_session_id: None,
-                roles: vec![],
-                attributes: BTreeMap::new(),
-            },
-            scope: Some(key.clone()),
-            capability: capability_name(capability).into(),
-            action_id: READ_ACTION.into(),
-            resource: ResourceInput {
+        Ok(AccessRequest::new(
+            &VerifiedPrincipal::new(actor, ActorKind::User, None, vec![], BTreeMap::new()),
+            Some(key.clone()),
+            capability_name(capability),
+            READ_ACTION,
+            ResourceInput {
                 object_type: row.map_or(TYPE, |row| row.object_type.as_str()).into(),
                 id: row.map_or(question, |row| row.id.as_str()).into(),
                 scope: key,
                 attributes: BTreeMap::new(),
             },
-            context: BTreeMap::new(),
-            binding: None,
-            delegation: Delegation::Direct,
-        })
+            BTreeMap::new(),
+            Binding::Unbound(UnboundProfile::HostedRead),
+        ))
     }
 }
 

@@ -17,8 +17,8 @@ use norn_cell::Model;
 use norn_ir::access::{AccessIr, AccessRule, PolicyRoot};
 use norn_ir::{ArtifactEnvelope, ArtifactKind, IrVersion01};
 use norn_kernel::authz::{
-    self, AccessRequest, ActorKind, AuthzSchema, CapabilityGrant, Delegation, Pdp, PdpDecision,
-    PrincipalInput, ResourceInput, ScopeKey,
+    self, AccessRequest, ActorKind, AuthzSchema, Binding, CapabilityGrant, Pdp, PdpDecision,
+    ResourceInput, ScopeKey, UnboundProfile, VerifiedPrincipal,
 };
 
 use crate::policy::{Caller, scope_key};
@@ -136,27 +136,26 @@ impl RevealPolicy {
         let Ok(pdp) = Pdp::new(self.base.policy_set().clone(), &[grant]) else {
             return false;
         };
-        let request = AccessRequest {
-            principal: PrincipalInput {
-                subject_id: caller.subject_id.clone(),
+        let request = AccessRequest::new(
+            &VerifiedPrincipal::new(
+                caller.subject_id.clone(),
                 actor_kind,
-                agent_session_id: None,
-                roles: caller.roles.clone(),
-                attributes: BTreeMap::new(),
-            },
-            scope: Some(self.key.clone()),
-            capability: REVEAL.to_owned(),
-            action_id: REVEAL.to_owned(),
-            resource: ResourceInput {
+                None,
+                caller.roles.clone(),
+                BTreeMap::new(),
+            ),
+            Some(self.key.clone()),
+            REVEAL,
+            REVEAL,
+            ResourceInput {
                 object_type: MARKING_TYPE.to_owned(),
                 id: marking.to_owned(),
                 scope: self.key.clone(),
                 attributes: BTreeMap::new(),
             },
-            context: BTreeMap::new(),
-            binding: None,
-            delegation: Delegation::Direct,
-        };
+            BTreeMap::new(),
+            Binding::Unbound(UnboundProfile::MarkingDecision),
+        );
         pdp.decide_marking(&request, marking, REVEAL) == PdpDecision::Allow
     }
 }

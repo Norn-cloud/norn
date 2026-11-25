@@ -48,11 +48,11 @@ pub(super) struct Head {
     pub(super) length: usize,
 }
 
-/// A request as received: its head and its whole body.
+/// A request as received: its method, path and whole body (its credential
+/// was verified from its head before the body was read).
 pub(super) struct Request {
     pub(super) method: String,
     pub(super) path: String,
-    pub(super) authorization: Option<String>,
     pub(super) body: Vec<u8>,
 }
 
@@ -284,7 +284,6 @@ fn read_body_within(
     Ok(Request {
         method: head.method,
         path: head.path,
-        authorization: head.authorization,
         body,
     })
 }

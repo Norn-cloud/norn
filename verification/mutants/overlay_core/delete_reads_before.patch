@@ -1,0 +1,7 @@
+--- a/overlay_core.rs
++++ b/overlay_core.rs
+@@ -137,3 +137,3 @@
+         },
+-        Some(RowChange::Delete { version }) => Some(RowSource::Deleted { tombstone: version }),
++        Some(RowChange::Delete { .. }) => Some(RowSource::Before),
+         None => Some(RowSource::Before),

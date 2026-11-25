@@ -17,8 +17,8 @@
 use norn_cell::{Model, SqliteCell, StoreOptions};
 use norn_ir::{ActionRoot, InterfaceDef, ObjectTypeDef, PropertyTypeDef, RuleRoot};
 use norn_kernel::authz::{
-    self, AccessRequest, ActorKind, AuthzSchema, CapabilityGrant, Delegation, Pdp,
-    PdpActionAuthorizer, PdpDecision, PrincipalInput, ResourceInput, ScopeKey,
+    self, AccessRequest, ActorKind, AuthzSchema, Binding, CapabilityGrant, Pdp,
+    PdpActionAuthorizer, PdpDecision, ResourceInput, ScopeKey, UnboundProfile, VerifiedPrincipal,
 };
 use norn_kernel::cell_host::{JsonObject, JsonValue};
 use norn_kernel::{
@@ -431,27 +431,20 @@ impl Principals {
             environment: dimensions.get("environmentId").cloned(),
             business_unit: dimensions.get("businessUnitId").cloned(),
         };
-        let request = AccessRequest {
-            principal: PrincipalInput {
-                subject_id: actor.into(),
-                actor_kind: ActorKind::User,
-                agent_session_id: None,
-                roles: roles(actor),
-                attributes: BTreeMap::new(),
-            },
-            scope: Some(request_scope.clone()),
-            capability: action.into(),
-            action_id: action.into(),
-            resource: ResourceInput {
+        let request = AccessRequest::new(
+            &VerifiedPrincipal::new(actor, ActorKind::User, None, roles(actor), BTreeMap::new()),
+            Some(request_scope.clone()),
+            action,
+            action,
+            ResourceInput {
                 object_type: target.object_type.as_str().into(),
                 id: target.key.clone(),
                 scope: request_scope,
                 attributes: BTreeMap::new(),
             },
-            context: BTreeMap::new(),
-            binding: None,
-            delegation: Delegation::Direct,
-        };
+            BTreeMap::new(),
+            Binding::Unbound(UnboundProfile::HostedAction),
+        );
         Ok(request)
     }
     fn check(

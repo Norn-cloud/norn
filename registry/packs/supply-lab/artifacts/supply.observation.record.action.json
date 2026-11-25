@@ -1,0 +1,110 @@
+{
+  "artifactId": "supply.observation.record.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record a weekly demand observation",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.observation.record",
+    "effectProgram": {
+      "entityArtifactId": "supply.DemandObservation.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "observation_id",
+      "objectKind": "supply.DemandObservation",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "issued_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "lead_time_days": {
+          "type": "integer"
+        },
+        "observation_id": {
+          "type": "string"
+        },
+        "promotion": {
+          "type": "boolean"
+        },
+        "sku_id": {
+          "type": "string"
+        },
+        "unit": {
+          "enum": [
+            "each",
+            "kg",
+            "l"
+          ],
+          "type": "string"
+        },
+        "warehouse_id": {
+          "type": "string"
+        },
+        "week_index": {
+          "type": "integer"
+        },
+        "week_start": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "observation_id",
+        "sku_id",
+        "warehouse_id",
+        "week_start",
+        "week_index",
+        "issued_qty",
+        "unit",
+        "lead_time_days",
+        "promotion"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "observation_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "observation_id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Record a weekly demand observation",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "supply.DemandObservation"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.observation.record.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

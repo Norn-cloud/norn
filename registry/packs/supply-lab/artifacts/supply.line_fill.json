@@ -1,0 +1,144 @@
+{
+  "artifactId": "supply.line_fill",
+  "dependencies": [
+    {
+      "artifactId": "supply.ShipmentReceipt.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    },
+    {
+      "artifactId": "supply.OrderLine.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "derived",
+  "lifecycle": "active",
+  "name": "Order-line fill",
+  "namespace": "supply",
+  "payload": {
+    "calc": {
+      "kind": "relational",
+      "nodes": {
+        "fill": {
+          "columns": [
+            {
+              "expression": "input.line_id",
+              "name": "line_id"
+            },
+            {
+              "expression": "input.l_sku_id",
+              "name": "sku_id"
+            },
+            {
+              "expression": "input.unit",
+              "name": "unit"
+            },
+            {
+              "expression": "input.l_ordered_qty",
+              "name": "ordered"
+            },
+            {
+              "expression": "input.received",
+              "name": "received"
+            },
+            {
+              "expression": "input.received - input.damaged",
+              "name": "accepted"
+            },
+            {
+              "expression": "input.deliveries",
+              "name": "deliveries"
+            }
+          ],
+          "input": "joined",
+          "op": "project"
+        },
+        "joined": {
+          "kind": "inner",
+          "left": "per_line",
+          "on": {
+            "key": {
+              "left": [
+                "line_id"
+              ],
+              "right": "primary"
+            }
+          },
+          "op": "join",
+          "prefix": "l_",
+          "right": "line"
+        },
+        "line": {
+          "input": "line",
+          "op": "scan"
+        },
+        "linked": {
+          "input": "receipt",
+          "op": "filter",
+          "predicate": "input.line_id != null"
+        },
+        "per_line": {
+          "groupBy": [
+            {
+              "column": "line_id"
+            },
+            {
+              "column": "unit"
+            }
+          ],
+          "input": "linked",
+          "measures": [
+            {
+              "column": "received_qty",
+              "fn": "sum",
+              "name": "received"
+            },
+            {
+              "column": "damaged_qty",
+              "fn": "sum",
+              "name": "damaged"
+            },
+            {
+              "fn": "count",
+              "name": "deliveries"
+            }
+          ],
+          "op": "aggregate"
+        },
+        "receipt": {
+          "input": "receipt",
+          "op": "scan"
+        }
+      },
+      "output": "fill"
+    },
+    "inputs": [
+      {
+        "alias": "receipt",
+        "artifactId": "supply.ShipmentReceipt.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      },
+      {
+        "alias": "line",
+        "artifactId": "supply.OrderLine.entity",
+        "kind": "entity",
+        "version": "0.1.0"
+      }
+    ],
+    "maintenance": "recompute_on_read",
+    "outputSchema": {},
+    "viewId": "supply.line_fill",
+    "viewVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.line_fill.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

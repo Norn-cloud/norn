@@ -37,7 +37,8 @@ use norn_checker::metric::compute::QuestionPlan;
 use norn_kernel::{
     LogicalTime,
     authz::{
-        AccessRequest as PdpRequest, ActorKind, Delegation, PrincipalInput, ResourceInput, ScopeKey,
+        AccessRequest as PdpRequest, ActorKind, Binding, ResourceInput, ScopeKey, UnboundProfile,
+        VerifiedPrincipal,
     },
 };
 use query_support::governed::GovernedCommit as _;
@@ -85,18 +86,18 @@ impl Authorizer for Policy {
         Ok(())
     }
     fn read(&self, request: &ReadRequest<'_>) -> Result<(), Refusal> {
-        let actor = request.access.principal.subject_id.as_str();
+        let actor = request.access.principal().subject_id.as_str();
         let allowed = match request.capability {
             ReadCapability::Population => {
                 ["reader", "auditor", "partial", "mixed", "slice"].contains(&actor)
-                    && !(actor == "partial" && request.access.resource.id == "SYN-MELT-15-1")
+                    && !(actor == "partial" && request.access.resource().id == "SYN-MELT-15-1")
             }
             // `mixed` sees every member's values but one. `slice` sees every
             // row's values but holds no collection grant (whole-world Values,
             // #1175); only `auditor` does.
             ReadCapability::Values => {
-                let id = request.access.resource.id.as_str();
-                let collection = id == request.access.resource.object_type;
+                let id = request.access.resource().id.as_str();
+                let collection = id == request.access.resource().object_type;
                 actor == "auditor"
                     || (actor == "mixed" && !collection && id != "SYN-MELT-15-1")
                     || (actor == "slice" && !collection)
@@ -156,31 +157,30 @@ impl QuestionRuntime<NativeEngine> for Runtime {
             workspace: None,
             business_unit: None,
         };
-        Ok(PdpRequest {
-            principal: PrincipalInput {
-                subject_id: if self.bad_row && row.is_some() {
-                    "different-principal".into()
+        Ok(PdpRequest::new(
+            &VerifiedPrincipal::new(
+                if self.bad_row && row.is_some() {
+                    "different-principal"
                 } else {
-                    actor.into()
+                    actor
                 },
-                actor_kind: ActorKind::User,
-                agent_session_id: None,
-                roles: vec![],
-                attributes: BTreeMap::new(),
-            },
-            scope: Some(physical.clone()),
-            capability: format!("fixture.{capability:?}"),
-            action_id: "norn.read".into(),
-            resource: ResourceInput {
+                ActorKind::User,
+                None,
+                vec![],
+                BTreeMap::new(),
+            ),
+            Some(physical.clone()),
+            format!("fixture.{capability:?}"),
+            "norn.read",
+            ResourceInput {
                 object_type: row.map_or(TYPE, |row| row.object_type.as_str()).into(),
                 id: row.map_or(question, |row| row.id.as_str()).into(),
                 scope: physical,
                 attributes: BTreeMap::new(),
             },
-            context: BTreeMap::new(),
-            binding: None,
-            delegation: Delegation::Direct,
-        })
+            BTreeMap::new(),
+            Binding::Unbound(UnboundProfile::HostedRead),
+        ))
     }
     fn min_disclosed_bucket(&self) -> usize {
         self.min_disclosed
@@ -196,7 +196,7 @@ impl QuestionRuntime<NativeEngine> for Runtime {
         object_type: &str,
     ) -> Result<PdpRequest, Refusal> {
         let mut access = self.access(scope, actor, object_type, capability, None)?;
-        object_type.clone_into(&mut access.resource.object_type);
+        object_type.clone_into(&mut access.resource_mut().object_type);
         Ok(access)
     }
 }
@@ -1747,7 +1747,12 @@ fn no_listed_metric_names_an_internal_encoding_in_any_pack() {
         }
         if !summary.time_links.is_empty() {
             linked += 1;
-            assert_eq!(summary.time_property.as_deref(), Some("occurred_at"));
+            let expected = if summary.object_type.as_deref() == Some("supply.Inspection") {
+                "received_at"
+            } else {
+                "occurred_at"
+            };
+            assert_eq!(summary.time_property.as_deref(), Some(expected));
         }
     }
     // The posting and settlement sums of the three systems take their event's time.

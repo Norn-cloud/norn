@@ -9,39 +9,44 @@
 //! rotated out without a restart.
 //!
 //! OLAP-04: authorization comes first and is complete before the daemon
-//! routes or parses anything. The credential is verified against the
-//! operation the path names and the digest of the body received, then the
-//! body's `tenant` must be the credential's, and only then is the path
-//! routed and the body parsed into its typed request. Every refusal before
-//! that point (no, malformed, unknown or rotated-out key, bad signature,
-//! expired, minted for another operation or body, another tenant, a body
-//! naming no tenant, any method but `POST`, an unknown path) gets the same
-//! `401`, and no tenant database is opened, so a caller learns nothing about
-//! whether another tenant exists. A `400` about the request's own parse or a
-//! `404` is reachable only with a credential the cell minted for that exact
-//! request; the transport's own refusals come earlier and say nothing about
-//! any tenant: a malformed head is a `400` before any credential is read,
-//! and a body over the bound (`413`) or shorter than its declared length
-//! (`400`) is answered to any well-formed, live credential naming a key id
-//! the keyring holds, before its signature is checked. Residual timing: every
-//! request pays the keyring read; only a well-formed, live credential naming
-//! a key id the keyring holds gets its body read and digested and pays the
-//! signature check (and, when it verifies, the scope check), so response
-//! time can tell such a credential from garbage. Key ids are not secret, and
-//! nothing about any tenant (whether it exists, what it holds) changes the
-//! time of a refusal.
+//! routes or parses anything. #1747: the credential carries the digest of
+//! the body it was minted for, signed, so it is verified against the
+//! operation the path names from the request's head alone, before a single
+//! body byte is read or a body buffer allocated; the body then read must
+//! have exactly that digest, the body's `tenant` must be the credential's,
+//! and only then is the path routed and the body parsed into its typed
+//! request. Every refusal before that point (no, malformed, unknown or
+//! rotated-out key, bad signature, expired, minted for another operation or
+//! body, another tenant, a body naming no tenant, any method but `POST`, an
+//! unknown path) gets the same `401`, and no tenant database is opened, so
+//! a caller learns nothing about whether another tenant exists. A `400`
+//! about the request's own parse or a `404` is reachable only with a
+//! credential the cell minted for that exact request; the transport's own
+//! refusals come earlier and say nothing about any tenant: a malformed head
+//! is a `400` before any credential is read, and a body over the bound
+//! (`413`) or shorter than its declared length (`400`) is answered only to
+//! a credential that verified. Residual timing: every request pays the
+//! keyring read; only a well-formed, live credential naming a key id the
+//! keyring holds pays the signature check, and only one that verifies gets
+//! its body read and digested (and, when that matches, the scope check), so
+//! response time can tell such a credential from garbage. Key ids are not
+//! secret, and nothing about any tenant (whether it exists, what it holds)
+//! changes the time of a refusal.
 //!
 //! #1710: every connection's reads and writes run against absolute
-//! deadlines (`transport`), so how long one peer holds a worker is bounded.
-//! The head must arrive within `HEAD_DEADLINE` and within `MAX_HEAD_BYTES`,
-//! read no further than that budget; a credential that cannot verify (none,
-//! malformed, an unknown key, expired) is refused before any body is read
-//! or allocated; a body earns its time by the bytes that arrived, not the
-//! length it declares; and an answer has a deadline sized to its length.
-//! This bounds each connection, not the pool: peers opening connections
-//! faster than the deadlines free them can still keep every worker busy
-//! before any credential is verified; the pool itself is not yet admitted
-//! per caller.
+//! deadlines (`transport`), so how long one peer holds a connection is
+//! bounded. The head must arrive within `HEAD_DEADLINE` and within
+//! `MAX_HEAD_BYTES`, read no further than that budget; a body earns its time
+//! by the bytes that arrived, not the length it declares; and an answer has
+//! a deadline sized to its length. #1747: that reading happens in a bounded
+//! pre-admission stage apart from the engine's workers (`admission`): at
+//! most `MAX_PENDING` connections, `MAX_PENDING_PER_PEER` from one peer
+//! address, each on its own thread. Only a request whose credential and
+//! body both verified and whose scope is the credential's tenant is handed
+//! to the [`ENGINE_WORKERS`] engine workers, through a queue of
+//! [`ENGINE_QUEUE`]; a full stage, a full queue or too many held body bytes
+//! is answered `503` at once. So idle, trickling or forged connections,
+//! however many, never hold an engine worker.
 //!
 //! The cell still authorizes every request before it sends it and checks
 //! every answer. The daemon holds no storage credentials; a load reads a
@@ -58,12 +63,12 @@ use std::ffi::OsString;
 use std::io::{BufReader, Read as _, Write as _};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::{Receiver, SyncSender, TrySendError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use norn_api::clock::Clock;
-use norn_api::olap_credential::{Denied, Keyring, body_digest};
+use norn_api::olap_credential::{Denied, Keyring, Verified};
 use norn_cell::analytics::engine::{Engine, Settings};
 use norn_cell::analytics::{
     AnalyticalEngine, AnalyticalEngineId, EngineOutcome, EngineRefusal, EvaluateRequest,
@@ -75,8 +80,11 @@ use norn_kernel::LogicalTime;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+mod admission;
 mod transport;
 
+use admission::{Admission, Held, Pending};
+pub use admission::{MAX_HELD_BODY_BYTES, MAX_PENDING, MAX_PENDING_PER_PEER};
 use transport::{
     Deadlined, HEAD_DEADLINE, Head, MAX_BODY_BYTES, Request, drain, read_body, read_head,
     write_budget,
@@ -84,8 +92,10 @@ use transport::{
 
 /// Largest dataset file a load downloads, in bytes.
 const MAX_FILE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
-/// Connections served at once; more are answered 503.
-const MAX_CONNECTIONS: usize = 8;
+/// #1747: engine workers: authenticated calls run on at most this many at once.
+pub const ENGINE_WORKERS: usize = 8;
+/// #1747: authenticated calls waiting for an engine worker; more are answered 503.
+pub const ENGINE_QUEUE: usize = 8;
 /// Longest accepted keyring file, in bytes.
 const MAX_KEYRING_BYTES: u64 = 64 * 1024;
 /// The variable of the retired shared token; its presence refuses startup.
@@ -314,26 +324,72 @@ pub fn serve_with(
         clock,
         seam,
     });
-    let active = Arc::new(AtomicUsize::new(0));
+    let (jobs, queue) = std::sync::mpsc::sync_channel::<Job>(ENGINE_QUEUE);
+    let queue = Arc::new(Mutex::new(queue));
+    for index in 0..ENGINE_WORKERS {
+        let (engine, gate, queue) = (Arc::clone(&engine), Arc::clone(&gate), Arc::clone(&queue));
+        std::thread::Builder::new()
+            .name(format!("olapd-engine-{index}"))
+            .spawn(move || work(&queue, engine.as_ref(), &gate))?;
+    }
+    let admission = Arc::new(Admission::default());
     for stream in listener.incoming().flatten() {
-        if active.fetch_add(1, Ordering::SeqCst) >= MAX_CONNECTIONS {
-            active.fetch_sub(1, Ordering::SeqCst);
-            let _busy = respond(
-                &stream,
-                503,
-                "application/json",
-                b"{\"code\":\"analytics.busy\"}",
-            );
+        // #1747: a slot in the bounded pre-admission stage, or 503 at once.
+        let Some(pending) = stream
+            .peer_addr()
+            .ok()
+            .and_then(|peer| admission.enter(peer.ip()))
+        else {
+            busy(&stream);
             continue;
-        }
-        let (engine, gate, active) = (Arc::clone(&engine), Arc::clone(&gate), Arc::clone(&active));
-        std::thread::spawn(move || {
+        };
+        let (gate, admission, jobs) = (Arc::clone(&gate), Arc::clone(&admission), jobs.clone());
+        let spawned = std::thread::Builder::new().spawn(move || {
             // A broken connection affects only itself.
-            let _ignored = connection(&stream, engine.as_ref(), &gate);
-            active.fetch_sub(1, Ordering::SeqCst);
+            let _ignored = preadmit(stream, &gate, &admission, &jobs, pending);
         });
+        if spawned.is_err() {
+            let _logged = writeln!(std::io::stderr(), "norn-olapd: no thread for a connection");
+        }
     }
     Ok(())
+}
+
+/// #1747: an authenticated, digest-verified, scoped call waiting for an
+/// engine worker, with the body bytes it holds.
+struct Job {
+    stream: TcpStream,
+    request: Request,
+    tenant: TenantId,
+    _held: Held,
+}
+
+/// One engine worker: run each queued call until the daemon stops.
+fn work(queue: &Mutex<Receiver<Job>>, engine: &dyn AnalyticalEngine, gate: &Gate) {
+    loop {
+        let next = queue.lock().unwrap_or_else(PoisonError::into_inner).recv();
+        let Ok(job) = next else { return };
+        // A broken connection affects only itself.
+        let _ignored = route(
+            &Call {
+                stream: &job.stream,
+                request: &job.request,
+                tenant: &job.tenant,
+            },
+            engine,
+            gate,
+        );
+    }
+}
+
+/// #1747: the one answer to a connection the daemon has no room for, sent
+/// without waiting: a peer that does not read it holds nothing.
+fn busy(stream: &TcpStream) {
+    let answer = b"HTTP/1.1 503 Service Unavailable\r\ncontent-type: application/json\r\ncache-control: no-store\r\ncontent-length: 25\r\nconnection: close\r\n\r\n{\"code\":\"analytics.busy\"}";
+    if stream.set_nonblocking(true).is_ok() {
+        let mut stream = stream;
+        let _sent = stream.write(answer);
+    }
 }
 
 /// OLAP-CRED-1: who may call. The keyring is read on every call, so adding
@@ -379,11 +435,10 @@ impl Named {
 }
 
 impl Gate {
-    /// #1710: refuse, before any body is read, a request whose credential
-    /// no body could make verify: none, malformed, naming a key the keyring
-    /// does not hold, or expired. Passing admits nothing; [`Gate::admit`]
-    /// still decides the call once its body is read.
-    fn screen(&self, head: &Head) -> Result<(), Denied> {
+    /// #1747: the credential verified from the request's head alone, for
+    /// the operation the path names, before any body is read or allocated:
+    /// its signature covers the body digest it declares.
+    fn verify_head(&self, head: &Head) -> Result<Verified, Denied> {
         let credential = head
             .authorization
             .as_deref()
@@ -393,27 +448,16 @@ impl Gate {
             let _logged = writeln!(std::io::stderr(), "norn-olapd: {error}");
             Denied::UnknownKey
         })?;
-        keyring.screen(credential, self.clock.now().as_millis())
+        let op = head.path.strip_prefix("/v1/").unwrap_or_default();
+        keyring.verify_head(credential, op, self.clock.now().as_millis())
     }
 
     /// OLAP-04: the tenant `request` may touch, decided before it is routed
-    /// or parsed. Every screened request pays the body digest and the keyring read;
-    /// the credential must verify for the operation the path names and this
-    /// exact body (OLAP-03), and the body must name the credential's tenant.
-    fn admit(&self, request: &Request) -> Result<TenantId, Denied> {
-        let digest = body_digest(&request.body);
-        let keyring = read_keyring(&self.keys_file);
+    /// or parsed: its body must be the exact body `verified` was minted for
+    /// (OLAP-03), and must name the credential's tenant.
+    fn admit(verified: Verified, request: &Request) -> Result<TenantId, Denied> {
         let op = request.path.strip_prefix("/v1/").unwrap_or_default();
-        let credential = request
-            .authorization
-            .as_deref()
-            .and_then(|h| h.strip_prefix("Bearer "))
-            .ok_or(Denied::Malformed)?;
-        let keyring = keyring.map_err(|error| {
-            let _logged = writeln!(std::io::stderr(), "norn-olapd: {error}");
-            Denied::UnknownKey
-        })?;
-        let tenant = keyring.verify(credential, op, &digest, self.clock.now().as_millis())?;
+        let tenant = verified.body(&request.body)?;
         let named = serde_json::from_slice::<Named>(&request.body)
             .ok()
             .and_then(|named| named.tenant(op))
@@ -500,62 +544,90 @@ const fn reason(status: u16) -> &'static str {
     }
 }
 
-fn connection(
-    stream: &TcpStream,
-    engine: &dyn AnalyticalEngine,
+/// #1747: one connection's pre-admission, on its own thread and off the
+/// engine's workers: its head, its credential verified from the head, its
+/// body read within the transport's bounds and checked against the digest
+/// the credential signed, and its scope. Only then is it queued for an
+/// engine worker, and its pre-admission slot given back.
+fn preadmit(
+    stream: TcpStream,
     gate: &Gate,
+    admission: &Arc<Admission>,
+    jobs: &SyncSender<Job>,
+    pending: Pending,
 ) -> std::io::Result<()> {
-    let mut reader = BufReader::new(Deadlined::new(stream, HEAD_DEADLINE)?);
-    let head = match read_head(&mut reader) {
-        Ok(head) => head,
-        Err((status, refused)) => {
-            let sent = refuse(stream, status, &refused);
+    let (request, tenant, room) = {
+        let mut reader = BufReader::new(Deadlined::new(&stream, HEAD_DEADLINE)?);
+        let head = match read_head(&mut reader) {
+            Ok(head) => head,
+            Err((status, refused)) => {
+                let sent = refuse(&stream, status, &refused);
+                drain(&mut reader);
+                return sent;
+            }
+        };
+        if head.method == "GET" && head.path == "/healthz" {
+            return respond(&stream, 200, "application/json", b"{\"ok\":true}");
+        }
+        // Refuse a credential that does not verify, a body over the bound,
+        // and a body the daemon has no room for, before any body is read.
+        let verified = match gate.verify_head(&head) {
+            Ok(verified) => verified,
+            Err(denied) => {
+                let sent = unauthorized(&stream, denied);
+                drain(&mut reader);
+                return sent;
+            }
+        };
+        let room = if head.length > MAX_BODY_BYTES {
+            None
+        } else {
+            admission.hold(head.length)
+        };
+        let Some(room) = room else {
+            let sent = if head.length > MAX_BODY_BYTES {
+                refuse(
+                    &stream,
+                    413,
+                    &refusal("analytics.too_large", "the request body exceeds the bound"),
+                )
+            } else {
+                busy(&stream);
+                Ok(())
+            };
             drain(&mut reader);
             return sent;
+        };
+        let request = match read_body(&mut reader, head) {
+            Ok(request) => request,
+            Err((status, refused)) => return refuse(&stream, status, &refused),
+        };
+        let tenant = match Gate::admit(verified, &request) {
+            Ok(tenant) => tenant,
+            Err(denied) => return unauthorized(&stream, denied),
+        };
+        if request.method != "POST" {
+            return refuse(
+                &stream,
+                404,
+                &refusal("analytics.unknown", "no such operation"),
+            );
         }
+        (request, tenant, room)
     };
-    if head.method == "GET" && head.path == "/healthz" {
-        return respond(stream, 200, "application/json", b"{\"ok\":true}");
+    drop(pending);
+    match jobs.try_send(Job {
+        stream,
+        request,
+        tenant,
+        _held: room,
+    }) {
+        Ok(()) => Ok(()),
+        Err(TrySendError::Full(job) | TrySendError::Disconnected(job)) => {
+            busy(&job.stream);
+            Ok(())
+        }
     }
-    // #1710: refuse a caller with no plausible credential, and a body over
-    // the bound, before any body is read or allocated.
-    let early = match gate.screen(&head) {
-        Err(denied) => Some(unauthorized(stream, denied)),
-        Ok(()) if head.length > MAX_BODY_BYTES => Some(refuse(
-            stream,
-            413,
-            &refusal("analytics.too_large", "the request body exceeds the bound"),
-        )),
-        Ok(()) => None,
-    };
-    if let Some(sent) = early {
-        drain(&mut reader);
-        return sent;
-    }
-    let request = match read_body(&mut reader, head) {
-        Ok(request) => request,
-        Err((status, refused)) => return refuse(stream, status, &refused),
-    };
-    let tenant = match gate.admit(&request) {
-        Ok(tenant) => tenant,
-        Err(denied) => return unauthorized(stream, denied),
-    };
-    if request.method != "POST" {
-        return refuse(
-            stream,
-            404,
-            &refusal("analytics.unknown", "no such operation"),
-        );
-    }
-    route(
-        &Call {
-            stream,
-            request: &request,
-            tenant: &tenant,
-        },
-        engine,
-        gate,
-    )
 }
 
 /// An admitted call, routed by its path.
