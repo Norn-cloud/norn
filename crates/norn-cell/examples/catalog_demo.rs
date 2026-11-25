@@ -15,8 +15,8 @@ use norn_ir::{
     ArtifactEnvelope, ArtifactKind, EntityRoot, IrVersion01, ResourceLimitProfile, RuntimeValue,
 };
 use norn_kernel::authz::{
-    self, AccessRequest, ActorKind, AuthzSchema, CapabilityGrant, Delegation, Pdp, PrincipalInput,
-    ResourceInput, ScopeKey,
+    self, AccessRequest, ActorKind, AuthzSchema, Binding, CapabilityGrant, Pdp, ResourceInput,
+    ScopeKey, UnboundProfile, VerifiedPrincipal,
 };
 use norn_kernel::cell_host::JsonObject;
 use norn_kernel::{
@@ -119,27 +119,26 @@ fn access(scope: &ScopeKey, capabilities: Vec<String>) -> DemoResult<(Pdp, Acces
             binding: None,
         }],
     )?;
-    let request = AccessRequest {
-        principal: PrincipalInput {
-            subject_id: "demo.catalog.reader".into(),
-            actor_kind: ActorKind::User,
-            agent_session_id: None,
-            roles: vec![],
-            attributes: BTreeMap::new(),
-        },
-        scope: Some(scope.clone()),
-        capability: "norn.read".into(),
-        action_id: "norn.read".into(),
-        resource: ResourceInput {
+    let request = AccessRequest::new(
+        &VerifiedPrincipal::new(
+            "demo.catalog.reader",
+            ActorKind::User,
+            None,
+            vec![],
+            BTreeMap::new(),
+        ),
+        Some(scope.clone()),
+        "norn.read",
+        "norn.read",
+        ResourceInput {
             object_type: "norn.catalog.Artifact".into(),
             id: String::new(),
             scope: scope.clone(),
             attributes: BTreeMap::new(),
         },
-        context: BTreeMap::new(),
-        binding: None,
-        delegation: Delegation::Direct,
-    };
+        BTreeMap::new(),
+        Binding::Unbound(UnboundProfile::HostedRead),
+    );
     Ok((pdp, request))
 }
 
@@ -237,8 +236,15 @@ fn rehearse(input: &str) -> DemoResult<()> {
         stdout,
         "CURRENT: kernel PDP denies the reader without norn.read"
     )?;
-    let mut wrong = request;
-    wrong.scope = None;
+    let wrong = AccessRequest::new(
+        &VerifiedPrincipal::from_input(request.principal().clone()),
+        None,
+        request.capability(),
+        request.action_id(),
+        request.resource().clone(),
+        request.context().clone(),
+        Binding::Unbound(UnboundProfile::HostedRead),
+    );
     let error = snapshot
         .read(&query, &limits, &pdp, &wrong, &scope)
         .err()

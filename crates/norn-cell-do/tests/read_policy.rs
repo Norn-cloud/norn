@@ -16,7 +16,9 @@ use norn_cell_do::policy::{
 };
 use norn_cell_do::principal::DEMO_FIXTURES;
 use norn_cell_do::seed;
-use norn_kernel::authz::{AccessRequest, ActorKind, Delegation, PrincipalInput, ResourceInput};
+use norn_kernel::authz::{
+    AccessRequest, ActorKind, Binding, ResourceInput, UnboundProfile, VerifiedPrincipal,
+};
 use std::sync::Arc;
 
 const ALL: [ReadCapability; 3] = [
@@ -70,28 +72,32 @@ fn host() -> Demo {
 
 /// What the trusted server mapping builds for one principal, capability and row.
 fn access(subject: &str, capability: ReadCapability, scope: &CellScope) -> AccessRequest {
+    access_as(subject, ActorKind::User, (capability, READ_ACTION), scope)
+}
+
+/// [`access`] for a principal the token verified as `kind`, asking for
+/// `action`.
+fn access_as(
+    subject: &str,
+    kind: ActorKind,
+    (capability, action): (ReadCapability, &str),
+    scope: &CellScope,
+) -> AccessRequest {
     let key = scope_key(scope);
-    AccessRequest {
-        principal: PrincipalInput {
-            subject_id: subject.into(),
-            actor_kind: ActorKind::User,
-            agent_session_id: None,
-            roles: vec![],
-            attributes: BTreeMap::new(),
-        },
-        scope: Some(key.clone()),
-        capability: capability_name(capability).into(),
-        action_id: READ_ACTION.into(),
-        resource: ResourceInput {
+    AccessRequest::new(
+        &VerifiedPrincipal::new(subject, kind, None, vec![], BTreeMap::new()),
+        Some(key.clone()),
+        capability_name(capability),
+        action,
+        ResourceInput {
             object_type: "canon.Item".into(),
             id: "demo/item/gold".into(),
             scope: key,
             attributes: BTreeMap::new(),
         },
-        context: BTreeMap::new(),
-        binding: None,
-        delegation: Delegation::Direct,
-    }
+        BTreeMap::new(),
+        Binding::Unbound(UnboundProfile::HostedRead),
+    )
 }
 
 fn explicit(scope: &CellScope) -> ScopeQuery {
@@ -102,7 +108,7 @@ fn explicit(scope: &CellScope) -> ScopeQuery {
 }
 
 fn gate(host: &Demo, access: &AccessRequest, capability: ReadCapability) -> Option<u16> {
-    host.as_caller(&access.principal.subject_id);
+    host.as_caller(&access.principal().subject_id);
     let request = ReadRequest { capability, access };
     host.read_access(&explicit(host.scope()), &request)
         .err()
@@ -143,8 +149,12 @@ fn a_mapping_that_asks_for_another_capability_or_action_is_denied() {
     let population = access("guest@demo", ReadCapability::Population, &scope);
     assert_eq!(gate(&host, &population, ReadCapability::Values), Some(403));
     assert_eq!(gate(&host, &population, ReadCapability::Sources), Some(403));
-    let mut other = access("admin@demo", ReadCapability::Values, &scope);
-    other.action_id = "norn.reveal".into();
+    let other = access_as(
+        "admin@demo",
+        ActorKind::User,
+        (ReadCapability::Values, "norn.reveal"),
+        &scope,
+    );
     assert_eq!(gate(&host, &other, ReadCapability::Values), Some(403));
 }
 
@@ -158,7 +168,7 @@ fn foreign_scope_and_undeclared_types_are_denied_with_one_document() {
     };
     let request = access("admin@demo", ReadCapability::Values, &foreign);
     let denied = |access: &AccessRequest| {
-        host.as_caller(&access.principal.subject_id);
+        host.as_caller(&access.principal().subject_id);
         host.read_access(
             &explicit(&scope),
             &ReadRequest {
@@ -172,7 +182,7 @@ fn foreign_scope_and_undeclared_types_are_denied_with_one_document() {
     let baseline = denied(&access("stranger@demo", ReadCapability::Values, &scope)).unwrap();
     assert_eq!(denied(&request).as_deref(), Some(baseline.as_str()));
     let mut undeclared = access("admin@demo", ReadCapability::Values, &scope);
-    undeclared.resource.object_type = "canon.Undeclared".into();
+    undeclared.resource_mut().object_type = "canon.Undeclared".into();
     assert_eq!(denied(&undeclared).as_deref(), Some(baseline.as_str()));
     // A request naming a foreign cell in its explicit scope is denied too.
     host.as_caller("admin@demo");
@@ -311,8 +321,12 @@ fn the_grant_table_is_pinned_exactly() {
 fn a_service_request_does_not_borrow_a_user_grant() {
     let host = host();
     let scope = host.scope().clone();
-    let mut request = access("admin@demo", ReadCapability::Values, &scope);
-    request.principal.actor_kind = ActorKind::Service;
+    let request = access_as(
+        "admin@demo",
+        ActorKind::Service,
+        (ReadCapability::Values, READ_ACTION),
+        &scope,
+    );
     assert_eq!(gate(&host, &request, ReadCapability::Values), Some(403));
 }
 
@@ -413,8 +427,9 @@ fn a_model_change_replaces_every_kept_grant() {
     policy.caller().record(caller("admin@demo"));
     let reads = |object_type: &str| {
         let mut request = access("admin@demo", ReadCapability::Values, &scope);
-        object_type.clone_into(&mut request.resource.object_type);
-        object_type.clone_into(&mut request.resource.id);
+        let resource = request.resource_mut();
+        object_type.clone_into(&mut resource.object_type);
+        object_type.clone_into(&mut resource.id);
         policy
             .read(&ReadRequest {
                 capability: ReadCapability::Values,

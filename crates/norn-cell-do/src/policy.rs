@@ -38,8 +38,8 @@ use norn_ir::access::{
 };
 use norn_ir::{IrVersion01, ObjectTypeDef, ObjectTypeName};
 use norn_kernel::authz::{
-    self, ActorKind, AttrValue, AuthzSchema, CapabilityGrant, Delegation, Pdp, PrincipalInput,
-    ResourceInput, ScopeKey,
+    self, ActorKind, AttrValue, AuthzSchema, Binding, CapabilityGrant, Pdp, ResourceInput,
+    ScopeKey, UnboundProfile, VerifiedPrincipal,
 };
 use norn_kernel::{
     ActionAuthzRequest, ActionDenial, ActionReadAuthzRequest, ActionReadTypeAuthzRequest,
@@ -429,27 +429,27 @@ impl ConnectorPolicy {
             }],
         )
         .ok()?;
-        let request = authz::AccessRequest {
-            principal: PrincipalInput {
-                subject_id: caller.subject_id.clone(),
-                actor_kind,
-                agent_session_id: None,
-                roles: caller.roles.clone(),
-                attributes: std::collections::BTreeMap::new(),
-            },
-            scope: Some(self.key.clone()),
-            capability: action.to_owned(),
-            action_id: action.to_owned(),
-            resource: ResourceInput {
+        let principal = VerifiedPrincipal::new(
+            caller.subject_id.clone(),
+            actor_kind,
+            None,
+            caller.roles.clone(),
+            std::collections::BTreeMap::new(),
+        );
+        let request = authz::AccessRequest::new(
+            &principal,
+            Some(self.key.clone()),
+            action,
+            action,
+            ResourceInput {
                 object_type: kind.to_owned(),
                 id: id.to_owned(),
                 scope: self.key.clone(),
                 attributes: std::collections::BTreeMap::new(),
             },
             context,
-            binding: None,
-            delegation: Delegation::Direct,
-        };
+            Binding::Unbound(UnboundProfile::HostedAction),
+        );
         matches!(pdp.decide(&request), norn_kernel::authz::PdpDecision::Allow).then_some(rule)
     }
 }
@@ -712,7 +712,7 @@ impl ReadPolicy {
         };
         let mut request =
             collection_access_key(&self.key, actor, ReadCapability::Values, object_type);
-        id.clone_into(&mut request.resource.id);
+        id.clone_into(&mut request.resource_mut().id);
         authz::authorize(&pdp, &request).is_ok()
     }
 
@@ -744,30 +744,30 @@ impl ReadPolicy {
             }],
         )
         .ok()?;
-        let access = authz::AccessRequest {
-            principal: PrincipalInput {
-                subject_id: caller.subject_id,
-                actor_kind,
-                agent_session_id: None,
-                roles: caller.roles,
-                attributes: std::collections::BTreeMap::new(),
-            },
-            scope: Some(self.key.clone()),
-            capability: DISCLOSE_REFUSAL_DETAIL_ACTION.to_owned(),
-            action_id: DISCLOSE_REFUSAL_DETAIL_ACTION.to_owned(),
-            resource: ResourceInput {
+        let principal = VerifiedPrincipal::new(
+            caller.subject_id,
+            actor_kind,
+            None,
+            caller.roles,
+            std::collections::BTreeMap::new(),
+        );
+        let access = authz::AccessRequest::new(
+            &principal,
+            Some(self.key.clone()),
+            DISCLOSE_REFUSAL_DETAIL_ACTION,
+            DISCLOSE_REFUSAL_DETAIL_ACTION,
+            ResourceInput {
                 object_type: REFUSAL_DETAIL_RESOURCE.to_owned(),
                 id: request.action_id.to_owned(),
                 scope: self.key.clone(),
                 attributes: std::collections::BTreeMap::new(),
             },
-            context: std::collections::BTreeMap::from([(
+            std::collections::BTreeMap::from([(
                 "governedAction".to_owned(),
                 AttrValue::String(request.action_id.into()),
             )]),
-            binding: None,
-            delegation: Delegation::Direct,
-        };
+            Binding::Unbound(UnboundProfile::HostedRead),
+        );
         Some((pdp, access))
     }
 
@@ -1019,15 +1019,15 @@ impl Authorizer for ReadPolicy {
     }
 
     fn read(&self, request: &ReadRequest<'_>) -> Result<(), Refusal> {
-        let asked = request.access.capability == capability_name(request.capability)
-            && request.access.action_id == READ_ACTION
+        let asked = request.access.capability() == capability_name(request.capability)
+            && request.access.action_id() == READ_ACTION
             && self.reads_type(
-                &request.access.principal.subject_id,
-                &request.access.resource.object_type,
+                &request.access.principal().subject_id,
+                &request.access.resource().object_type,
             );
         let allowed = asked
             && self
-                .pdp_for(&request.access.principal.subject_id)
+                .pdp_for(&request.access.principal().subject_id)
                 .is_some_and(|pdp| authz::authorize(&pdp, request.access).is_ok());
         if allowed {
             Ok(())
@@ -1132,9 +1132,9 @@ impl norn_api::object_routes::ObjectAccess for CellObjectAccess {
     ) -> Result<norn_kernel::authz::AccessRequest, Refusal> {
         let mut request = collection_access(scope, actor, capability, object_type);
         if let Some(row) = row {
-            row.object_type
-                .clone_into(&mut request.resource.object_type);
-            row.id.clone_into(&mut request.resource.id);
+            let resource = request.resource_mut();
+            row.object_type.clone_into(&mut resource.object_type);
+            row.id.clone_into(&mut resource.id);
         }
         Ok(request)
     }

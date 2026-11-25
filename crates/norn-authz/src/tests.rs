@@ -401,7 +401,7 @@ mod pdp {
                 ("mfa".to_owned(), AttrValue::Bool(mfa)),
                 ("channel".to_owned(), AttrValue::String("web".to_owned())),
             ]),
-            binding: None,
+            binding: crate::Binding::Unbound(crate::UnboundProfile::HostedAction),
             delegation: Delegation::Direct,
         }
     }

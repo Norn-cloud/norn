@@ -171,7 +171,7 @@ fn local_caller(actor: &str) -> Caller {
 
 impl Authorizer for LocalDeveloper {
     fn read(&self, request: &ReadRequest<'_>) -> Result<(), Refusal> {
-        if self.is(&request.access.principal.subject_id) {
+        if self.is(&request.access.principal().subject_id) {
             Ok(())
         } else {
             Err(norn_api::authz::read_denied())

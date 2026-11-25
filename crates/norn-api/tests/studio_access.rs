@@ -8,8 +8,8 @@
     reason = "policy setup must succeed before decision assertions"
 )]
 use norn_kernel::authz::{
-    self, AccessRequest, ActorKind, AuthzSchema, CapabilityGrant, Delegation, Pdp, PdpDecision,
-    PrincipalInput, ResourceInput, ScopeKey,
+    self, AccessRequest, ActorKind, AuthzSchema, Binding, CapabilityGrant, Pdp, PdpDecision,
+    ResourceInput, ScopeKey, UnboundProfile, VerifiedPrincipal,
 };
 use std::collections::BTreeMap;
 
@@ -53,27 +53,26 @@ fn pdp(subject: &str, capabilities: &[&str]) -> Pdp {
 }
 
 fn request(subject: &str, role: &str, action: &str, workspace_org: &str) -> AccessRequest {
-    AccessRequest {
-        principal: PrincipalInput {
-            subject_id: subject.into(),
-            actor_kind: ActorKind::User,
-            agent_session_id: None,
-            roles: vec![role.into()],
-            attributes: BTreeMap::new(),
-        },
-        scope: Some(org("org_a")),
-        capability: action.into(),
-        action_id: action.into(),
-        resource: ResourceInput {
+    AccessRequest::new(
+        &VerifiedPrincipal::new(
+            subject,
+            ActorKind::User,
+            None,
+            vec![role.into()],
+            BTreeMap::new(),
+        ),
+        Some(org("org_a")),
+        action,
+        action,
+        ResourceInput {
             object_type: "studio.Workspace".into(),
             id: "main".into(),
             scope: org(workspace_org),
             attributes: BTreeMap::new(),
         },
-        context: BTreeMap::new(),
-        binding: None,
-        delegation: Delegation::Direct,
-    }
+        BTreeMap::new(),
+        Binding::Unbound(UnboundProfile::HostedAction),
+    )
 }
 
 fn allowed(pdp: &Pdp, role: &str, action: &str) -> bool {

@@ -1,11 +1,12 @@
 //! Raw, unchecked store commits for tests only (#1375 S4, #1444 fix 5).
 //!
-//! `CellStore::commit_unchecked`, `commit_probed_unchecked` and
-//! `commit_guarded_unchecked` run no law check, so they are private to this
-//! crate: an authored write reaches storage only through the kernel path,
+//! `CellStore::commit_probed_unchecked` and `commit_guarded_unchecked` run no
+//! law check, so they exist only in this crate's `#[cfg(test)]` build: an
+//! authored write reaches storage only through the kernel path,
 //! whose `Checked` stage (`norn_kernel::cell_host::Checked`) proves the
-//! shared admission ran on that exact commit. A host's own actorless writes
-//! are the fixed-input operations in [`crate::provision`].
+//! shared admission ran on that exact commit and mints the seal the store's
+//! write door demands. The engine's own writes are the closed
+//! `SystemWrite` set (`store/system_write.rs`).
 //!
 //! [`TestCommit`] re-exposes the raw commits to this crate's own tests. It
 //! is not a Cargo feature, so no dependency can switch it on, and it is not
@@ -22,7 +23,7 @@ use crate::store::{CellStore, CommitBatch, CommitOutcome, CommitPoint, GuardedEr
 
 /// Raw, unchecked commits for test fixtures. See the [module](self).
 pub(crate) trait TestCommit<E: SqlEngine> {
-    /// `CellStore::commit_unchecked`: commit `batch` atomically, with no law check.
+    /// Commit `batch` atomically, with no law check.
     ///
     /// # Errors
     ///
@@ -58,7 +59,7 @@ pub(crate) trait TestCommit<E: SqlEngine> {
 
 impl<E: SqlEngine> TestCommit<E> for CellStore<E> {
     fn commit(&mut self, batch: &CommitBatch) -> Result<CommitOutcome, CellError> {
-        CellStore::commit_unchecked(self, batch)
+        CellStore::commit_probed_unchecked(self, batch, &mut |_point| Ok(()))
     }
 
     fn commit_probed(

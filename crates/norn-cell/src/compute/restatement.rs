@@ -8,8 +8,7 @@ use super::{
     ivm::IncrementalQuestion, refused,
 };
 use crate::{
-    CellError, CellStore, CommitBatch, CommitPoint, FactWriteRow, GuardedError, KnowledgeCutoff,
-    ObjectRecord, StoreReader,
+    CellError, CellStore, CommitPoint, FactWriteRow, KnowledgeCutoff, ObjectRecord, StoreReader,
     engine::SqlEngine,
     reactive::{DecodeBudget, ReactiveLimits},
 };
@@ -545,44 +544,41 @@ impl<E: SqlEngine> CellStore<E> {
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<u64, CellError> {
         check_slot_size(&values)?;
-        let batch = CommitBatch {
-            world: context.world.clone(),
-            scope: context.scope.clone(),
+        let at = crate::store::At {
+            world: &context.world,
+            scope: &context.scope,
             logical_time: context.now_ms.max(self.read().clock_floor()?),
-            writes: vec![FactWriteRow::Put {
+        };
+        let write = crate::store::SystemWrite::RestatementSlot {
+            write: Box::new(FactWriteRow::Put {
                 object_type: RESTATEMENT_TYPE.into(),
                 key: id.into(),
                 values,
-            }],
-            facts: transition
-                .map(|transition| norn_ir::FactChange::Transition {
+            }),
+            transition: transition.map(|transition| {
+                Box::new(norn_ir::FactChange::Transition {
                     object_type: norn_ir::ObjectTypeName(RESTATEMENT_TYPE.into()),
                     key: id.into(),
                     lifecycle: norn_ir::PropertyId("status".into()),
                     transition: norn_ir::TransitionId(transition.into()),
                 })
-                .into_iter()
-                .collect(),
-            ..CommitBatch::default()
+            }),
         };
-        let ((), outcome) = self
-            .commit_guarded_unchecked(
-                &batch,
-                |reader| {
-                    if reader.version(&context.world, RESTATEMENT_TYPE, id)? != expected {
-                        return Err(refused(INVALID));
-                    }
-                    // S2c (#1559): revalidate slice markings inside the staging
-                    // commit transaction so a definition install or labelled
-                    // commit between preparation and staging cannot sneak past.
-                    check_restatement_markings(reader, checked_slices)?;
-                    Ok(())
-                },
-                probe,
-            )
-            .map_err(|e| match e {
-                GuardedError::Guard(e) | GuardedError::Store(e) => e,
-            })?;
+        let outcome = self.apply_system_guarded(
+            &at,
+            write,
+            |reader| {
+                if reader.version(&context.world, RESTATEMENT_TYPE, id)? != expected {
+                    return Err(refused(INVALID));
+                }
+                // S2c (#1559): revalidate slice markings inside the staging
+                // commit transaction so a definition install or labelled
+                // commit between preparation and staging cannot sneak past.
+                check_restatement_markings(reader, checked_slices)?;
+                Ok(())
+            },
+            probe,
+        )?;
         outcome
             .receipt()
             .body

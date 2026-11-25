@@ -29,7 +29,7 @@ use norn_cell::decision_ledger::{
 use norn_cell::engine::SqlEngine;
 use norn_cell::flow_run::RunStarter;
 use norn_cell::read::PendingCommand;
-use norn_cell::{CellStore, MAIN_WORLD};
+use norn_cell::{CellStore, MAIN_WORLD, Settlement};
 use norn_ir::{RuntimeObject, RuntimeValue};
 use norn_kernel::flow_turn::StepOutcome;
 use norn_kernel::{CommandId, Generation, LogicalTime};
@@ -1516,21 +1516,13 @@ fn record<E: SqlEngine>(
         attempt: decision.attempt.clone(),
         outcome,
     };
-    // The flow must accept the answer before anything is recorded.
-    result_turn(
+    // The flow must accept the answer; the commit records and consumes it.
+    let commit = result_turn(
         cell,
         &flow,
         delivery(StepOutcome::Output(output.clone())),
         now,
     )?;
-    if cell
-        .complete_parked(&decision.command, decision.generation, output.clone())
-        .map_err(Refusal::host)?
-        .is_none()
-    {
-        return Ok(false);
-    }
-    let commit = result_turn(cell, &flow, delivery(StepOutcome::Output(output)), now)?;
     let resolved = DecisionResolved {
         decision_id: decision.id.clone(),
         command_id: decision.command.0.clone(),
@@ -1544,9 +1536,35 @@ fn record<E: SqlEngine>(
         idempotency_key: Some(body.idempotency_key.clone()),
         request_hash: Some(request_hash(body)?),
     };
-    cell.commit_decision_resolution(commit, &resolved)
-        .map_err(resolution_refused)?;
-    Ok(true)
+    settle(cell, commit, &resolved, Settlement::Record(output))
+}
+
+/// P3: commit `resolved` with its settlement in one transaction. `false`
+/// when another call settled the parked command first.
+fn settle<E: SqlEngine>(
+    cell: &mut ActionCell<E>,
+    commit: norn_kernel::cell_host::CellCommit<
+        norn_kernel::FactEvent,
+        RuntimeObject,
+        RuntimeObject,
+    >,
+    resolved: &DecisionResolved,
+    settlement: Settlement<RuntimeObject>,
+) -> Result<bool, Refusal> {
+    match cell.commit_decision_resolution(commit, resolved, settlement) {
+        Ok(_) => Ok(true),
+        Err(error) if settled_elsewhere(&error) => Ok(false),
+        Err(error) => Err(resolution_refused(error)),
+    }
+}
+
+/// P3: the parked command was settled by another call first (its settlement
+/// found no pending parked command); nothing was written.
+pub(crate) fn settled_elsewhere(error: &norn_kernel::CommitError<norn_cell::CellError>) -> bool {
+    matches!(
+        error,
+        norn_kernel::CommitError::Host(norn_cell::CellError::NotPending(_))
+    )
 }
 
 fn resolution_refused(error: norn_kernel::CommitError<norn_cell::CellError>) -> Refusal {
@@ -1615,14 +1633,11 @@ fn resolve_call<E: SqlEngine>(
 ) -> Result<bool, Refusal> {
     let resumed =
         resolved.resolution == Resolution::Expired && expiry_recorded(cell.store(), decision)?;
-    if !resumed
-        && cell
-            .complete_parked(&decision.command, decision.generation, output)
-            .map_err(Refusal::host)?
-            .is_none()
-    {
-        return Ok(false);
-    }
+    let settlement = if resumed {
+        Settlement::Recorded
+    } else {
+        Settlement::Record(output)
+    };
     let commit = norn_kernel::cell_host::CellCommit {
         consumes: Some(norn_kernel::cell_host::Consumed::Result {
             command: decision.command.clone(),
@@ -1630,9 +1645,7 @@ fn resolve_call<E: SqlEngine>(
         }),
         ..norn_kernel::cell_host::CellCommit::empty()
     };
-    cell.commit_decision_resolution(commit, resolved)
-        .map_err(resolution_refused)?;
-    Ok(true)
+    settle(cell, commit, resolved, settlement)
 }
 
 /// DECISION-TERMINAL-1: resolve a decision past its deadline as expired. The
@@ -1684,25 +1697,20 @@ pub(crate) fn expire<E: SqlEngine>(
         attempt: decision.attempt.clone(),
         outcome,
     };
-    // The flow must accept the failure before anything is recorded.
-    result_turn(
+    // The flow must accept the failure; the commit records and consumes it.
+    let commit = result_turn(
         cell,
         &flow,
         delivery(StepOutcome::Failure(failure.clone())),
         now,
     )?;
-    // An expiry recorded earlier whose resolving commit never landed is
-    // resumed with exactly that recorded result; anything else recorded
-    // meanwhile is left to the call that recorded it.
-    if !expiry_recorded(cell.store(), decision)?
-        && cell
-            .complete_parked(&decision.command, decision.generation, failure.clone())
-            .map_err(Refusal::host)?
-            .is_none()
-    {
-        return Ok(());
-    }
-    let commit = result_turn(cell, &flow, delivery(StepOutcome::Failure(failure)), now)?;
+    // An expiry an earlier engine recorded apart is resumed with exactly that
+    // recorded result; anything else settled meanwhile is left as it is.
+    let settlement = if expiry_recorded(cell.store(), decision)? {
+        Settlement::Recorded
+    } else {
+        Settlement::Record(failure)
+    };
     let resolved = DecisionResolved {
         decision_id: decision.id.clone(),
         command_id: decision.command.0.clone(),
@@ -1716,9 +1724,11 @@ pub(crate) fn expire<E: SqlEngine>(
         idempotency_key: None,
         request_hash: None,
     };
-    cell.commit_decision_resolution(commit, &resolved)
-        .map_err(|error| Refusal::from_commit_host_error(&error))?;
-    Ok(())
+    match cell.commit_decision_resolution(commit, &resolved, settlement) {
+        Ok(_) => Ok(()),
+        Err(error) if settled_elsewhere(&error) => Ok(()),
+        Err(error) => Err(Refusal::from_commit_host_error(&error)),
+    }
 }
 
 /// The caller and what it may see: its read mapping, and the cell's

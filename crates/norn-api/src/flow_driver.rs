@@ -784,27 +784,28 @@ fn deliver_in<E: SqlEngine>(
     let result = match &delivery.outcome {
         StepOutcome::Output(object) | StepOutcome::Failure(object) => object.clone(),
     };
-    // The flow must accept the result before anything is recorded.
-    result_turn(cell, &flow, delivery.clone(), now)?;
-    if !recorded
-        && cell
-            .complete_parked(delivery.command, delivery.generation, result)
-            .map_err(Refusal::host)?
-            .is_none()
-    {
+    // The flow must accept the result; the commit records and consumes it
+    // in one transaction (P3), so a refused turn leaves nothing recorded.
+    let commit = result_turn(cell, &flow, delivery, now)?;
+    let settlement = if recorded {
+        norn_cell::Settlement::Recorded
+    } else {
+        norn_cell::Settlement::Record(result)
+    };
+    let Err(error) = cell.commit_settled(commit, settlement) else {
+        return Ok(());
+    };
+    // Settled already, by another drive.
+    if crate::decisions::settled_elsewhere(&error) {
         return Ok(());
     }
-    let commit = result_turn(cell, &flow, delivery, now)?;
-    norn_kernel::CellHost::commit(cell, commit).map_err(|error| {
-        let norn_kernel::CommitError::Host(host_error) = error else {
-            return Refusal::new(
-                StatusCode::CONFLICT,
-                "run.result_not_pending",
-                "the run changed while its step result was delivered",
-                "the step's result stays recorded and the next drive delivers it",
-            );
-        };
-        Refusal::host(host_error)
-    })?;
-    Ok(())
+    let norn_kernel::CommitError::Host(host_error) = error else {
+        return Err(Refusal::new(
+            StatusCode::CONFLICT,
+            "run.result_not_pending",
+            "the run changed while its step result was delivered",
+            "nothing was recorded; the next drive delivers the step's result again",
+        ));
+    };
+    Err(Refusal::host(host_error))
 }

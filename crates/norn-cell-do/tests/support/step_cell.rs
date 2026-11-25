@@ -26,8 +26,7 @@ use norn_checker::EffectiveCatalog;
 use norn_checker::metric::compute::QuestionPlan;
 use norn_ir::MetricDefinition;
 use norn_kernel::authz::{
-    self, ActorKind, AuthzSchema, CapabilityGrant, Delegation, Pdp, PdpDecision, PrincipalInput,
-    ResourceInput, ScopeKey,
+    self, ActorKind, AuthzSchema, CapabilityGrant, Pdp, PdpDecision, ResourceInput, ScopeKey,
 };
 use norn_kernel::{
     ActionAuthzRequest, ActionDenial, ActionReadAuthzRequest, ActionReadTypeAuthzRequest, FactKey,
@@ -150,27 +149,26 @@ impl StepPolicy {
     /// request names.
     fn request(&self, action: &str, target: &FactKey) -> Option<authz::AccessRequest> {
         let caller = self.caller.current()?;
-        Some(authz::AccessRequest {
-            principal: PrincipalInput {
-                subject_id: caller.subject_id,
-                actor_kind: ActorKind::User,
-                agent_session_id: None,
-                roles: caller.roles,
-                attributes: BTreeMap::new(),
-            },
-            scope: Some(key()),
-            capability: action.into(),
-            action_id: action.into(),
-            resource: ResourceInput {
+        Some(authz::AccessRequest::new(
+            &authz::VerifiedPrincipal::new(
+                caller.subject_id,
+                ActorKind::User,
+                None,
+                caller.roles,
+                BTreeMap::new(),
+            ),
+            Some(key()),
+            action,
+            action,
+            ResourceInput {
                 object_type: target.object_type.as_str().into(),
                 id: target.key.clone(),
                 scope: key(),
                 attributes: BTreeMap::new(),
             },
-            context: BTreeMap::new(),
-            binding: None,
-            delegation: Delegation::Direct,
-        })
+            BTreeMap::new(),
+            authz::Binding::Unbound(authz::UnboundProfile::HostedAction),
+        ))
     }
 
     fn decide(
