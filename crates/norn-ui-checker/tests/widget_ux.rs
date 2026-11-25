@@ -2398,6 +2398,49 @@ fn compose_baseline(mut value: Value) -> Value {
     value
 }
 
+/// #1376: a composed page is held to the declarations of the catalog
+/// entries it places, though they live outside the page.
+#[test]
+fn a_composed_page_is_held_to_its_placed_catalog_declarations() {
+    let entry = json!({ "entryId": "tile", "label": { "en": "Tile" }, "trust": "native" });
+    let mut renderer = entry.clone();
+    renderer["renders"] = json!("number");
+    let money = json!({ "entryId": "money", "label": { "en": "Money" }, "trust": "native", "renders": "number" });
+    let mut machined = entry.clone();
+    machined["machine"] = json!({
+        "machineVersion": "0.1", "initialStateId": "missing", "fields": [], "events": [],
+        "states": [{ "stateId": "idle", "role": "idle" }], "transitions": []
+    });
+    for (catalog, refused) in [
+        (json!([entry]), false),
+        (json!([entry, entry]), true),
+        (json!([renderer, money]), true),
+        (json!([machined]), true),
+    ] {
+        let mut baseline = baseline_widget("baseline-revision");
+        let ux = baseline.at_mut("payload").at_mut("ux");
+        ux.set("catalog", catalog);
+        let page = ux.at_mut("pages").at_mut(0);
+        let field = page.at("root").clone();
+        page.set("root", json!({
+            "nodeId": "baseline-section", "semanticId": "baseline-section",
+            "component": { "kind": "section", "section": {
+                "sectionId": "baseline", "kind": "section", "label": { "en": "Baseline" }, "fields": [], "order": 1
+            } },
+            "children": [field, {
+                "nodeId": "baseline-tile", "semanticId": "baseline-tile",
+                "component": { "kind": "catalog", "entry": { "entryId": "tile" } },
+                "children": []
+            }]
+        }));
+        let found = widget_findings_with_base(compose_baseline(widget()), &[baseline]);
+        let composed = found
+            .iter()
+            .any(|finding| finding.message.contains("fails typed UX validation"));
+        assert_eq!(composed, refused, "{found:#?}");
+    }
+}
+
 #[test]
 fn imported_override_types_use_the_baseline_binding_context() {
     let mut value = compose_baseline(widget());
@@ -4793,6 +4836,40 @@ fn catalog_edit(change: impl FnOnce(&mut Value)) -> Value {
     let mut widget = catalog_widget();
     change(widget.at_mut("payload").at_mut("ux"));
     widget
+}
+
+/// #1376: another widget's catalog entry resolves only through an exact
+/// required dependency on a widget the owner's scope sees.
+#[test]
+fn an_external_catalog_entry_resolves_only_within_the_owners_scope() {
+    let provider_id = "commerce.catalog_provider.widget";
+    let narrow = json!({ "orgId": "org_demo", "environmentId": "dev", "tenantId": "tenant_alpha" });
+    let mut provider = catalog_widget();
+    provider["artifactId"] = json!(provider_id);
+    provider["payload"]["widgetId"] = json!(provider_id);
+    provider["scope"] = narrow.clone();
+    let version = provider["version"].clone();
+    for (scope, refused) in [(widget()["scope"].clone(), true), (narrow, false)] {
+        let mut consumer = catalog_widget();
+        consumer["scope"] = scope;
+        consumer["dependencies"]
+            .as_array_mut()
+            .req("dependencies")
+            .push(json!({ "artifactId": provider_id, "kind": "widget", "version": version, "required": true }));
+        for node in consumer["payload"]["ux"]["pages"][0]["root"]["children"]
+            .as_array_mut()
+            .req("children")
+            .iter_mut()
+            .filter(|node| node["nodeId"] == "kpi-node")
+        {
+            node["component"]["entry"]["widget"] = json!({ "id": provider_id, "version": version });
+        }
+        let found = widget_findings_with_base(consumer, std::slice::from_ref(&provider));
+        let unknown = found
+            .iter()
+            .any(|finding| finding.code.as_str() == "widget.catalog.unknown_entry");
+        assert_eq!(unknown, refused, "{found:#?}");
+    }
 }
 
 #[test]

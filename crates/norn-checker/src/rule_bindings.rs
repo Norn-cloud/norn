@@ -30,6 +30,7 @@ use norn_ir::{
 use crate::action_set::Model;
 use crate::entity_artifacts::EntityArtifactSetContext;
 use crate::entity_instance::{EffectiveKind, EffectiveObjectType, EffectiveProperty};
+use crate::entity_scopes::ScopedViews;
 use crate::envelope::invalid_diagnostic;
 use crate::lifecycle_writes::finding;
 
@@ -683,11 +684,12 @@ pub(crate) fn check_rule_binding_set(
     if bound.is_empty() {
         return Vec::new();
     }
-    let model = Model::new(artifacts, context.base, context.registry, true);
+    let mut views = ScopedViews::new(artifacts, context.base, context.registry);
     let mut findings = Vec::new();
     for (artifact, triggers, slice) in bound {
-        check_trigger_binding_set(&model, artifact, &triggers, &mut findings);
-        check_slice_binding_set(&model, artifact, &slice, &mut findings);
+        let model = views.of(artifact).model();
+        check_trigger_binding_set(model, artifact, &triggers, &mut findings);
+        check_slice_binding_set(model, artifact, &slice, &mut findings);
     }
     findings
 }
@@ -712,8 +714,8 @@ fn check_trigger_binding_set(
             | RuleTrigger::Modified { object_type, .. } => (object_type, None),
             RuleTrigger::Observed { .. } => continue,
         };
-        let Some(defined) = model.object_type(object_type.as_str()) else {
-            findings.push(finding(
+        let unknown = || {
+            finding(
                 codes::UNKNOWN_BINDING,
                 format!(
                     "the trigger names {}, which is not an object type of the artifact set or the installed base",
@@ -721,8 +723,15 @@ fn check_trigger_binding_set(
                 ),
                 artifact,
                 &pointer,
-            ));
-            continue;
+            )
+        };
+        let objects = format!("{pointer}/objectType");
+        let defined = match model.resolve(artifact, object_type.as_str(), &objects, unknown) {
+            Ok(defined) => defined,
+            Err(refusal) => {
+                findings.push(*refusal);
+                continue;
+            }
         };
         if let Some(transition) = transition {
             let declared = defined.lifecycles.as_ref().is_ok_and(|lifecycles| {
@@ -799,9 +808,9 @@ fn check_slice_binding_set(
         .and_then(|slice| slice.get("properties"))
         .and_then(JsonValue::as_object);
     for (index, entry) in slice.iter().enumerate() {
-        let defined = model.object_type(entry.object_type.as_str());
-        if defined.is_none() {
-            findings.push(finding(
+        let pointer = format!("/payload/slice/{index}/objectType");
+        let unknown = || {
+            finding(
                 codes::UNKNOWN_BINDING,
                 format!(
                     "slice entry {} names {}, which is not an object type of the artifact set or the installed base",
@@ -809,9 +818,21 @@ fn check_slice_binding_set(
                     entry.object_type.as_str()
                 ),
                 artifact,
-                &format!("/payload/slice/{index}/objectType"),
-            ));
-        }
+                &pointer,
+            )
+        };
+        let defined = match model.resolve(artifact, entry.object_type.as_str(), &pointer, unknown) {
+            Ok(defined) => Some(defined),
+            Err(refusal) => {
+                let out_of_scope =
+                    refusal.code.as_str() == crate::artifact_set::codes::INCOMPATIBLE_SCOPE;
+                findings.push(*refusal);
+                if out_of_scope {
+                    continue;
+                }
+                None
+            }
+        };
         if matches!(&entry.key, SliceKey::TriggerBefore | SliceKey::TriggerAfter)
             && let Some(member) =
                 input_properties.and_then(|properties| properties.get(&entry.name))

@@ -1,7 +1,8 @@
 //! Read-only catalog projection from admitted definitions.
-use crate::action_set::{Admission, AdmittedType};
-use crate::entity_artifacts::{Decoded, Layer, decode_v2};
+use crate::action_set::{AdmittedType, Model};
+use crate::entity_artifacts::{Decoded, decode_v2};
 use crate::entity_lowering::{EntityForm, entity_object_type};
+use crate::entity_scopes::{ScopedViews, scope_visible};
 use crate::lifecycle_writes::{FactSchema, fact_decisions};
 use crate::receipt::ArtifactRef;
 /// Failure to compute a projected artifact's semantic identity.
@@ -31,25 +32,15 @@ pub fn project(
     registry: &BTreeSet<PropertyTypeName>,
 ) -> Result<DefinitionCatalog, CatalogError> {
     let all: Vec<&ArtifactEnvelope> = artifacts.iter().chain(base).collect();
-    let mut layer = Layer::default();
-    for (index, artifact) in base.iter().chain(artifacts).enumerate() {
-        if let Decoded::Root(root) = decode_v2(artifact) {
-            layer.push(index, *root);
-        }
-    }
-    let mut rows = Rows {
-        property_types: layer.catalog.into_iter().map(|(_, def)| def).collect(),
-        ..Rows::default()
-    };
+    let mut rows = Rows::default();
     for artifact in &all {
         let mut layer = crate::entity_artifacts::Layer::default();
-        let context = std::iter::once(*artifact).chain(
-            all.iter()
-                .copied()
-                .filter(|other| other.artifact_id != artifact.artifact_id),
-        );
-        for (index, artifact) in context.enumerate() {
-            if let Decoded::Root(root) = decode_v2(artifact) {
+        let context = std::iter::once(*artifact).chain(all.iter().copied().filter(|other| {
+            other.artifact_id != artifact.artifact_id
+                && scope_visible(&artifact.scope, &other.scope)
+        }));
+        for (index, item) in context.enumerate() {
+            if let Decoded::Root(root) = decode_v2(item) {
                 layer.push(index, *root);
             }
         }
@@ -71,27 +62,33 @@ pub fn project(
             candidate: index < artifacts.len(),
         });
     }
-    let combined: Vec<_> = all.iter().map(|artifact| (*artifact).clone()).collect();
-    let effective = crate::EffectiveCatalog::from_artifacts_with_registry(&combined, registry);
+    let mut views = ScopedViews::new(artifacts, base, registry);
     for artifact in &all {
-        rows.entity(artifact, &effective);
+        let view = views.of(artifact);
+        rows.property_types = view
+            .layer()
+            .catalog
+            .iter()
+            .map(|(_, def)| def.clone())
+            .collect();
+        rows.entity(artifact, view.catalog());
         rows.depends_on(artifact, &all);
     }
-    let admission = Admission::new(artifacts, base, registry);
     for artifact in &all {
+        let model = views.of(artifact).model();
         if matches!(artifact.payload, ArtifactPayload::Action(_)) {
-            rows.action(artifact, &admission);
+            rows.action(artifact, model);
         }
         if matches!(artifact.payload, ArtifactPayload::Mapping(_)) {
-            rows.mapping(artifact, &admission);
+            rows.mapping(artifact, model);
         }
         if matches!(artifact.payload, ArtifactPayload::Law(_)) {
-            rows.law(artifact, &all, &admission);
+            rows.law(artifact, &all, model);
         }
     }
     for (artifact, output) in fact_decisions(all.iter().copied()) {
         if let Some(schema) = FactSchema::of(&output) {
-            rows.fact_writes(artifact, &schema, &admission);
+            rows.fact_writes(artifact, &schema, views.of(artifact).model());
         }
     }
     Ok(rows.finish())
@@ -110,7 +107,7 @@ impl PinnedType {
         }
     }
 
-    fn lineage(admitted: AdmittedType<'_, '_>, admission: &Admission<'_>) -> Vec<Self> {
+    fn lineage(admitted: AdmittedType<'_, '_>, admission: &Model<'_>) -> Vec<Self> {
         std::iter::once(Self::of(admitted))
             .chain(
                 admitted
@@ -498,7 +495,7 @@ impl Rows {
         }
     }
 
-    fn action(&mut self, artifact: &ArtifactEnvelope, admission: &Admission<'_>) {
+    fn action(&mut self, artifact: &ArtifactEnvelope, admission: &Model<'_>) {
         let Ok(action) = serde_json::from_value::<ActionRoot>(payload_json(artifact)) else {
             return;
         };
@@ -561,7 +558,7 @@ impl Rows {
         &mut self,
         artifact: &ArtifactEnvelope,
         action: &ActionRoot,
-        admission: &Admission<'_>,
+        admission: &Model<'_>,
     ) {
         let mut concepts: BTreeSet<_> = action
             .writes
@@ -659,7 +656,7 @@ impl Rows {
         &mut self,
         artifact: &ArtifactEnvelope,
         schema: &FactSchema<'_>,
-        admission: &Admission<'_>,
+        admission: &Model<'_>,
     ) {
         let ops = schema.ops();
         let values = |name: &str| schema.values(name).unwrap_or_default();
@@ -715,7 +712,7 @@ impl Rows {
         }
     }
 
-    fn mapping(&mut self, artifact: &ArtifactEnvelope, admission: &Admission<'_>) {
+    fn mapping(&mut self, artifact: &ArtifactEnvelope, admission: &Model<'_>) {
         let Ok(mapping) = serde_json::from_value::<MappingIr>(payload_json(artifact)) else {
             return;
         };
@@ -804,7 +801,7 @@ impl Rows {
         &mut self,
         artifact: &ArtifactEnvelope,
         all: &[&ArtifactEnvelope],
-        admission: &Admission<'_>,
+        admission: &Model<'_>,
     ) {
         let Ok(law) = serde_json::from_value::<LawIR>(payload_json(artifact)) else {
             return;

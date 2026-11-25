@@ -21,6 +21,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::{fs, path::Path};
 
+use norn_checker::entity_scopes::ScopedView;
 use norn_checker::lint::coverage::{MemberRef, MemberStatus};
 use norn_checker::mapping::{
     CompiledMapping, MappingModel, SourceDocument, compile_mapping_artifact, input_fields,
@@ -125,11 +126,8 @@ fn map_pins_and_multi_retain_independent_edges_without_granting_conformance() {
         &serde_json::to_value(document).expect("interpretation"),
     );
     second.dependencies = first.dependencies.clone();
-    let findings = norn_checker::mapping::check_mapping_artifacts(
-        &[first, second],
-        &base,
-        &std::collections::BTreeSet::new(),
-    );
+    let findings =
+        norn_checker::mapping::check_mapping_artifacts(&[first, second], &base, &BTreeSet::new());
     assert_eq!(
         findings
             .iter()
@@ -216,11 +214,7 @@ fn member_findings(
         serde_json::from_value(serde_json::to_value(document).expect("wire")).expect("JSON tree"),
     )
     .expect("mapping root");
-    norn_checker::mapping::check_mapping_artifacts(
-        &[artifact],
-        base,
-        &std::collections::BTreeSet::new(),
-    )
+    norn_checker::mapping::check_mapping_artifacts(&[artifact], base, &BTreeSet::new())
 }
 
 #[test]
@@ -853,11 +847,8 @@ fn map_pins_refuse_stale_versions_and_mismatched_hashes() {
             &serde_json::to_value(changed).expect("interpretation"),
         );
         invalid.dependencies = candidate.dependencies.clone();
-        let findings = norn_checker::mapping::check_mapping_artifacts(
-            &[invalid],
-            &base,
-            &std::collections::BTreeSet::new(),
-        );
+        let findings =
+            norn_checker::mapping::check_mapping_artifacts(&[invalid], &base, &BTreeSet::new());
         assert!(
             findings
                 .iter()
@@ -877,7 +868,7 @@ fn map_pins_refuse_missing_ambiguous_edited_or_candidate_only_layers() {
         let findings = norn_checker::mapping::check_mapping_artifacts(
             std::slice::from_ref(&candidate),
             &retained,
-            &std::collections::BTreeSet::new(),
+            &BTreeSet::new(),
         );
         assert!(
             findings
@@ -887,11 +878,8 @@ fn map_pins_refuse_missing_ambiguous_edited_or_candidate_only_layers() {
     }
     let mut candidates = base;
     candidates.push(candidate);
-    let findings = norn_checker::mapping::check_mapping_artifacts(
-        &candidates,
-        &[],
-        &std::collections::BTreeSet::new(),
-    );
+    let findings =
+        norn_checker::mapping::check_mapping_artifacts(&candidates, &[], &BTreeSet::new());
     assert!(
         findings
             .iter()
@@ -915,11 +903,8 @@ fn map_pins_require_unique_required_exact_dependencies() {
                 .dependencies
                 .extend(candidate.dependencies.clone()),
         }
-        let findings = norn_checker::mapping::check_mapping_artifacts(
-            &[candidate],
-            &base,
-            &std::collections::BTreeSet::new(),
-        );
+        let findings =
+            norn_checker::mapping::check_mapping_artifacts(&[candidate], &base, &BTreeSet::new());
         assert!(
             findings
                 .iter()
@@ -1208,7 +1193,9 @@ fn model_and_source_check_clean_on_their_own() {
         },
     );
     assert_eq!(findings, [], "{findings:#?}");
-    assert!(MappingModel::from_artifacts(&model_artifacts()).is_ok());
+    let artifacts = model_artifacts();
+    let view = ScopedView::uniform(&artifacts, &BTreeSet::new());
+    assert!(MappingModel::of(&view).is_ok());
 }
 
 #[test]

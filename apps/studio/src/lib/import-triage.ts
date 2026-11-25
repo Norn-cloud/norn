@@ -15,6 +15,7 @@ import { requestedPath, requestedWords, type RequestedDecision } from "./decisio
 import { CellUnavailable, readStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
 import { readableTime } from "./format.ts"
 
+export const IMPORT_TRIAGE_QUERY_KEY = ["imports", "triage"] as const
 export const IMPORT_TRIAGE_UNAVAILABLE = "This cell doesn't serve import triage yet."
 
 /** Normalized bounding box on a source artifact (top-left origin, 0..1 page fractions as exact text). */

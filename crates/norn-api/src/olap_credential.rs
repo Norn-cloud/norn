@@ -258,6 +258,51 @@ impl Keyring {
         digest: &str,
         now_ms: u64,
     ) -> Result<TenantId, Denied> {
+        let claims = Claims::parse(credential)?;
+        let key = self.keys.get(claims.kid).ok_or(Denied::UnknownKey)?;
+        key.verify_strict(
+            &signed_bytes(
+                claims.kid,
+                claims.tenant.as_str(),
+                claims.expires_ms,
+                op,
+                digest,
+            ),
+            &Signature::from_bytes(&claims.signature),
+        )
+        .map_err(|_e| Denied::BadSignature)?;
+        claims.live_at(now_ms)?;
+        Ok(claims.tenant)
+    }
+
+    /// #1710: what can be told of `credential` before its call's body is
+    /// read: it is of this format, names a key this keyring holds, and is
+    /// live at `now_ms`. Passing proves nothing (key ids are not secret and
+    /// the signature is not checked); it only lets the engine refuse a
+    /// caller with no plausible credential before it reads or allocates
+    /// any body. [`Keyring::verify`] still decides every call.
+    ///
+    /// # Errors
+    /// Why the credential is refused.
+    pub fn screen(&self, credential: &str, now_ms: u64) -> Result<(), Denied> {
+        let claims = Claims::parse(credential)?;
+        if !self.keys.contains_key(claims.kid) {
+            return Err(Denied::UnknownKey);
+        }
+        claims.live_at(now_ms)
+    }
+}
+
+/// The parts of a credential, parsed but not verified.
+struct Claims<'a> {
+    kid: &'a str,
+    tenant: TenantId,
+    expires_ms: u64,
+    signature: [u8; 64],
+}
+
+impl<'a> Claims<'a> {
+    fn parse(credential: &'a str) -> Result<Self, Denied> {
         let mut parts = credential.split('.');
         let (Some(PREFIX), Some(kid), Some(tenant), Some(expires), Some(signature), None) = (
             parts.next(),
@@ -279,19 +324,23 @@ impl Keyring {
             .ok()
             .and_then(|bytes| bytes.try_into().ok())
             .ok_or(Denied::Malformed)?;
-        let key = self.keys.get(kid).ok_or(Denied::UnknownKey)?;
-        key.verify_strict(
-            &signed_bytes(kid, tenant.as_str(), expires_ms, op, digest),
-            &Signature::from_bytes(&signature),
-        )
-        .map_err(|_e| Denied::BadSignature)?;
-        if expires_ms <= now_ms {
+        Ok(Self {
+            kid,
+            tenant,
+            expires_ms,
+            signature,
+        })
+    }
+
+    /// Live at `now_ms`, and claiming no longer a life than the engine accepts.
+    fn live_at(&self, now_ms: u64) -> Result<(), Denied> {
+        if self.expires_ms <= now_ms {
             return Err(Denied::Expired);
         }
-        if expires_ms.saturating_sub(now_ms) > MAX_CREDENTIAL_LIFETIME_MS {
+        if self.expires_ms.saturating_sub(now_ms) > MAX_CREDENTIAL_LIFETIME_MS {
             return Err(Denied::TooLong);
         }
-        Ok(tenant)
+        Ok(())
     }
 }
 
@@ -478,5 +527,39 @@ mod tests {
         }
         assert!(Issuer::parse("k1:AAAA").is_err());
         assert!(format!("{:?}", issuer("k1", 7)).contains("k1"));
+    }
+
+    /// #1710: the screen refuses what no body could make verify, and passes
+    /// every credential the keyring would verify.
+    #[test]
+    fn the_screen_refuses_only_what_cannot_verify() {
+        let host = issuer("k1", 7);
+        let keyring = Keyring::parse(&host.public_spec()).unwrap();
+        let live = host.mint(&tenant("a"), OP, &digest(), NOW);
+        assert_eq!(keyring.screen(&live, NOW), Ok(()));
+        assert_eq!(keyring.verify(&live, OP, &digest(), NOW), Ok(tenant("a")));
+        // The screen checks no signature: a forged one passes it, not verify.
+        let forged = issuer("k1", 9).mint(&tenant("a"), OP, &digest(), NOW);
+        assert_eq!(keyring.screen(&forged, NOW), Ok(()));
+        assert_eq!(
+            keyring.verify(&forged, OP, &digest(), NOW),
+            Err(Denied::BadSignature)
+        );
+        let unknown = issuer("k2", 7).mint(&tenant("a"), OP, &digest(), NOW);
+        let far = host.mint_until(
+            &tenant("a"),
+            OP,
+            &digest(),
+            NOW + MAX_CREDENTIAL_LIFETIME_MS + 1,
+        );
+        for (credential, at, denied) in [
+            ("nonsense", NOW, Denied::Malformed),
+            ("", NOW, Denied::Malformed),
+            (unknown.as_str(), NOW, Denied::UnknownKey),
+            (live.as_str(), NOW + CREDENTIAL_LIFETIME_MS, Denied::Expired),
+            (far.as_str(), NOW, Denied::TooLong),
+        ] {
+            assert_eq!(keyring.screen(credential, at), Err(denied), "{credential}");
+        }
     }
 }

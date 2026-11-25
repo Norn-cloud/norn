@@ -200,7 +200,7 @@ fn a_retained_save_keeps_earlier_cutoffs_evaluable() {
         .find(|o| o.name.as_str() == TYPE)
         .expect("conversion")
         .clone();
-    let artifact = serde_json::json!({"irVersion":"0.1","artifactId":"demo.Conversion.entity","kind":"entity","namespace":"demo","name":"Conversion","version":"0.1.0","lifecycle":"draft","scope":{"orgId":"org_demo","environmentId":"dev"},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","objectType":object}});
+    let artifact = serde_json::json!({"irVersion":"0.1","artifactId":"demo.Conversion.entity","kind":"entity","namespace":"demo","name":"Conversion","version":"0.1.0","lifecycle":"draft","scope":{},"dependencies":[],"provenance":{"source":"authoring_sdk"},"payload":{"entityVersion":"2.0","objectType":object}});
     let kernel = norn_cell::InstalledDefinitionInput {
         canonical_set: serde_json::to_string(&vec![artifact]).expect("set"),
         registry: vec![],
