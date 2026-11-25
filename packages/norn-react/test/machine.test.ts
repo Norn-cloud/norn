@@ -20,6 +20,7 @@ const checker = pkg
     })
   : null
 checker?.initSync({ module: readFileSync(join(pkg ?? "", "norn_checker_wasm_bg.wasm")) })
+if (!checker && process.env.NORN_CHECKER_WASM_REQUIRED) throw new Error("NORN_CHECKER_WASM_PKG is required")
 const evaluate: Evaluate = checker ? wasmEvaluate(checker) : () => {
   throw new Error("no checker engine")
 }

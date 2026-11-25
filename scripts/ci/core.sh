@@ -527,7 +527,7 @@ PY
       node crates/norn-checker-wasm/tests/parity/parity.mjs "$NORN_CHECKER_WASM_PKG" "$NORN_CHECKER_WASM_PARITY_OUT"
       # @norn/react against the checker (#1762): its capability walk is the checker's, the matrix
       # fixture is admitted, and the machine runtime evaluates in the checker's engine.
-      (cd packages/norn-react && bun install --frozen-lockfile --ignore-scripts --backend copyfile && NORN_CHECKER_WASM_REQUIRED=1 bun test)
+      (cd packages/norn-react && export NORN_CHECKER_WASM_REQUIRED=1 && bun install --frozen-lockfile --ignore-scripts --backend copyfile && bun test)
       # TENANT-ISOLATION-1 (S8): the cell Worker's boundary over its real Wasm gate, built as it ships.
       cargo build --locked -p norn-cell-do --lib --target wasm32-unknown-unknown --profile wasm-release
       wasm-bindgen "${CARGO_TARGET_DIR:-$PWD/target}/wasm32-unknown-unknown/wasm-release/norn_cell_do.wasm" \
