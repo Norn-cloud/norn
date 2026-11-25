@@ -21,7 +21,9 @@ use norn_ir::{
     ObjectTypeDef, PropertyTypeCatalogRootV2, PropertyTypeDef, RuleRoot, RuntimeObject,
     RuntimeValue,
 };
-use norn_kernel::{FactKey, TypeCatalog, evaluate_invariants, invariant_evaluation_budget};
+use norn_kernel::{
+    FactKey, TurnFuel, TypeCatalog, evaluate_invariants, invariant_evaluation_budget,
+};
 use serde_json::json;
 
 #[path = "../../../registry/core/src/time.rs"]
@@ -149,7 +151,7 @@ fn assert_proper_interval_enforced(
         "2025-03-09T22:00:00Z",
         tz,
     );
-    let mut budget = invariant_evaluation_budget();
+    let mut budget = TurnFuel::new(invariant_evaluation_budget());
     assert_eq!(
         evaluate_invariants(
             catalog,
@@ -174,7 +176,7 @@ fn assert_proper_interval_enforced(
             ends_at,
             tz,
         );
-        let mut budget = invariant_evaluation_budget();
+        let mut budget = TurnFuel::new(invariant_evaluation_budget());
         let failures = evaluate_invariants(
             catalog,
             &FactKey::new(type_name, key_val),

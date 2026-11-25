@@ -731,7 +731,7 @@ fn evaluate_single_law_hold<S: SqlEngine>(
                 world: MAIN_WORLD,
                 subject: key.clone(),
             };
-            let mut remaining = 1_000_000_u64;
+            let mut remaining = norn_kernel::TurnFuel::new(1_000_000);
             norn_kernel::governing_laws::evaluate_linked(
                 &catalog,
                 key,
@@ -752,7 +752,7 @@ fn evaluate_single_law_hold<S: SqlEngine>(
                 world: MAIN_WORLD,
                 subject: key.clone(),
             };
-            let mut remaining = 1_000_000_u64;
+            let mut remaining = norn_kernel::TurnFuel::new(1_000_000);
             norn_kernel::governing_laws::evaluate_linked(
                 &catalog,
                 key,
@@ -802,7 +802,7 @@ fn linked_law_condition_active<S: SqlEngine>(
         world: MAIN_WORLD,
         subject: key.clone(),
     };
-    let mut remaining = 1_000_000_u64;
+    let mut remaining = norn_kernel::TurnFuel::new(1_000_000);
     // The probe law emits `NotSatisfied` on its `false` predicate iff its activation condition is true.
     norn_kernel::governing_laws::evaluate_linked(
         &catalog,

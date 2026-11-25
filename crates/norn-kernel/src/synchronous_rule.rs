@@ -88,7 +88,7 @@ impl SynchronousRule {
         input: &JsonObject,
         slice: &JsonObject,
         principal: Option<&crate::principal_inputs::ActionPrincipalInputs>,
-        fuel: &mut u64,
+        fuel: &mut norn_expr::TurnFuel,
     ) -> Result<DecisionOutput, ActionRefusal<X>> {
         if self.scopes.iter().any(|scope| {
             call.scope
@@ -124,16 +124,10 @@ impl SynchronousRule {
                 .bind_principal(event, values)
                 .map_err(ActionRefusal::from)?;
         }
-        let evaluated = norn_decisions::evaluate(
-            &self.decision,
-            &slice,
-            &event,
-            norn_expr::EvaluationBudget::new(*fuel),
-        )
-        .map_err(ActionRefusal::from)?;
-        *fuel = fuel
-            .checked_sub(evaluated.units_used)
-            .ok_or_else(|| refused("the rule exceeded the action fuel"))?;
+        let evaluated = norn_decisions::evaluate(&self.decision, &slice, &event, fuel.lend())
+            .map_err(ActionRefusal::from)?;
+        fuel.charge(evaluated.units_used)
+            .map_err(|_exhausted| refused("the rule exceeded the action fuel"))?;
         if !evaluated.output.commands.is_empty() || !evaluated.output.timers.is_empty() {
             return Err(refused(
                 "synchronous rules may emit only facts and links; use declared action commands",

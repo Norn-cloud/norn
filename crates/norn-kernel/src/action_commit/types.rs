@@ -285,7 +285,7 @@ pub struct ActionInputPreparation<'a> {
     pub(super) actor: Option<String>,
     pub(super) effective_input: JsonObject,
     pub(super) derived_values: Vec<ActionDerivedValue>,
-    pub(super) remaining_fuel: u64,
+    pub(super) remaining_fuel: norn_expr::TurnFuel,
     pub(super) receipt_evidence_bytes: usize,
     pub(super) precondition_outcomes: Vec<ActionPreconditionOutcome>,
 }
@@ -920,9 +920,10 @@ impl crate::replay_decision::RecordedCall for ActionCallRecord {
 }
 
 /// A call that passed every check up to the transition.
-pub(super) struct Pending {
+pub(super) struct Pending<'fuel> {
     pub(super) effective_input: JsonObject,
-    pub(super) remaining_fuel: u64,
+    /// The turn's one tank, borrowed: a retried attempt keeps what it spent.
+    pub(super) remaining_fuel: &'fuel mut norn_expr::TurnFuel,
     pub(super) target: FactKey,
     pub(super) slice: FactSlice,
     pub(super) reference_only: bool,

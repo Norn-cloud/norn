@@ -607,7 +607,7 @@ pub(crate) fn predict_oracle_law_violation(
         return true;
     };
     let mut linked_neighbors = BTreeSet::new();
-    let mut remaining = KERNEL_LAW_FUEL;
+    let mut remaining = norn_kernel::TurnFuel::new(KERNEL_LAW_FUEL);
     for key in touched_keys {
         let Some((proposed, _)) = graph.facts.get(key) else {
             continue;

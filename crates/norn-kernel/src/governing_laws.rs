@@ -1,7 +1,7 @@
 //! Governing-law resolution and evaluation on the shared metered expression engine.
 use crate::decision_commit::DataQualityRuleClassification;
 use crate::{FactKey, TypeCatalog, cell_host::JsonObject};
-use norn_expr::{EvaluationBudget, Value};
+use norn_expr::{TurnFuel, Value};
 use norn_ir::{
     ArtifactEnvelope, DataQualityOutcome, DataQualityRuleRef, DataQualitySeverity, LawIR,
     LawModality, LawResponse, LawRoot, LawSeverity, ObjectTypeName,
@@ -756,7 +756,7 @@ pub fn evaluate(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
     values: &JsonObject,
-    remaining: &mut u64,
+    remaining: &mut TurnFuel,
 ) -> Result<Vec<LawFailure>, LawEvaluationError> {
     evaluate_linked(catalog, key, values, &mut NoLinkTargets, remaining)
 }
@@ -846,7 +846,7 @@ pub fn evaluate_linked(
     key: &FactKey,
     values: &JsonObject,
     links: &mut dyn LinkTargets,
-    remaining: &mut u64,
+    remaining: &mut TurnFuel,
 ) -> Result<Vec<LawFailure>, LawEvaluationError> {
     let artifacts = catalog.governing_laws(&key.object_type)?;
     if artifacts.is_empty() {
@@ -928,20 +928,18 @@ fn boolean(
     catalog: &TypeCatalog<'_>,
     text: &str,
     context: &Value,
-    remaining: &mut u64,
+    remaining: &mut TurnFuel,
 ) -> Result<Result<bool, DataQualityOutcome>, LawEvaluationError> {
-    if *remaining == 0 {
+    if remaining.charge(1).is_err() {
         return Err(LawEvaluationError::BudgetExceeded);
     }
-    *remaining = remaining.saturating_sub(1);
     let expression = match catalog.compiled_expression(text) {
         Ok(expr) => expr,
         Err(reason) => {
             return Ok(Err(DataQualityOutcome::EvaluationFailed { reason }));
         }
     };
-    let attempt = expression.evaluate_metered(context, EvaluationBudget::new(*remaining));
-    *remaining = remaining.saturating_sub(attempt.units_used);
+    let attempt = remaining.spend(|budget| expression.evaluate_metered(context, budget));
     Ok(match attempt.result {
         Err(norn_expr::ExprError::BudgetExhausted { .. }) => {
             return Err(LawEvaluationError::BudgetExceeded);
