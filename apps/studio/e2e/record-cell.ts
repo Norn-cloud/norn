@@ -145,6 +145,8 @@ export async function recordCell(page: Page, initial: Reader, access?: { status:
   })
   await page.route("**/api/host/v1/objects/**", async (route) => {
     const url = new URL(route.request().url())
+    // The type's records page, for its grid: the Parties the privacy pages serve this reader.
+    if (/\/v1\/objects\/canon\.Party$/.test(url.pathname)) return route.fulfill({ body: file(`fixtures/privacy/canon.Party.${reader === "admin" ? "auditor" : "viewer"}.page.json`), contentType: "application/json" })
     const one = /\/v1\/objects\/([^/]+)\/(.+?)(\/links|\/lineage|\/history|\/findings|\/reveal)?$/.exec(url.pathname)
     const notFound = () => route.fulfill({ status: 404, json: { code: "object.not_found", message: "No such readable object." } })
     if (one === null) return notFound()
