@@ -8,28 +8,20 @@
  * every call a machine names, and the checker proves the machine's laws (L1–L6).
  */
 import type { Json } from "../canonical.ts"
-import catalog from "../../../../crates/norn-ui-checker/catalog/ui-sdk.json" with { type: "json" }
+import { UI_SDK } from "../../generated/ui-sdk.ts"
 import { type EnvelopeOptions, envelope } from "./envelope.ts"
 import type { LocaleText } from "./labels.ts"
 
-type Catalog = typeof catalog.primitives
+type Catalog = typeof UI_SDK.components
 /** A UI SDK primitive at the version the checker's catalog pins (`ui-sdk:<component>`). */
 export type UiSdkComponent = keyof Catalog & string
-type OptionSpec = { readonly type: string }
-type OptionsOf<C extends UiSdkComponent> = Catalog[C] extends { readonly options: infer O } ? O : never
-type ItemOptionsOf<C extends UiSdkComponent> = Catalog[C] extends { readonly itemOptions: infer O } ? O : Record<never, never>
-type AllOptions<C extends UiSdkComponent> = OptionsOf<C> & ItemOptionsOf<C>
 /** The options of `C` a page may bind: every option that is not a callback or a structure. */
-export type UiSdkProp<C extends UiSdkComponent> = {
-  [K in keyof AllOptions<C>]: AllOptions<C>[K] extends OptionSpec & { readonly type: "callback" | "other" } ? never : K
-}[keyof AllOptions<C>] & string
+export type UiSdkProp<C extends UiSdkComponent> = Catalog[C]["props"][number]
 /** The callbacks of `C`, which a page raises as `user` events that name the node (`emits`). */
-export type UiSdkCallback<C extends UiSdkComponent> = {
-  [K in keyof AllOptions<C>]: AllOptions<C>[K] extends OptionSpec & { readonly type: "callback" } ? K : never
-}[keyof AllOptions<C>] & string
+export type UiSdkCallback<C extends UiSdkComponent> = Catalog[C]["callbacks"][number]
 
 /** The pinned UI SDK version the checker's catalog names. */
-export const UI_SDK_VERSION: string = catalog.version
+export const UI_SDK_VERSION: string = UI_SDK.version
 
 export type ValueType = "text" | "integer" | "number" | "boolean" | "date" | "timestamp" | "duration" | "json"
 export type CallOutcome =

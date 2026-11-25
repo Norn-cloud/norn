@@ -60,7 +60,7 @@ function confirmPage(heldIn: ReadonlyArray<string>, cancel: boolean): W.WidgetDe
 }
 
 const codes = (def: W.WidgetDef): string[] => {
-  const checked = checker!.checkArtifactSet([W.lowerWidget(def, options)]) as { diagnostics: { diagnostics: { code: string; severity: string }[] } }
+  const checked = checker!.checkArtifactSet([W.lowerWidget(def, options)])
   return checked.diagnostics.diagnostics.filter((d) => d.severity === "error").map((d) => d.code)
 }
 
