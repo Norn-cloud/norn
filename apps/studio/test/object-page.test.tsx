@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import type { ReactNode } from "react"
 import { readDocument } from "../src/lib/exact.ts"
 import type { SourceLineage } from "../src/lib/transport.ts"
+import type { ObjectFindings } from "../src/evidence/review.ts"
 import { CellUnavailable, StudioScopeError, studioScopeKey, WORKSPACE_CHANGED_MESSAGE, type StudioScope } from "../src/lib/definitions.ts"
 
 // These pages read the view from localStorage, which the tests replace; put the original back so later files in the same bun process see their own.
@@ -299,7 +300,7 @@ test("a held record's finding shows the values its law compared, a summed list a
   client.setQueryData(["catalog"], readDocument(JSON.stringify([read("../../fixtures/packs/scans/artifacts/docs.ScannedDocument.entity.json"), read("canon/artifacts/canon.ItemizedDocument.total_matches_lines.law.json")]), "live"))
   const id = "SCAN-INV-1042"
   const scope = { orgId: "org_a", environmentId: "prod" }
-  client.setQueryData(findingsQuery("docs.ScannedDocument", id, scope).queryKey, readDocument(JSON.stringify({ objectType: "docs.ScannedDocument", id, quarantined: true, evidence: [],
+  client.setQueryData(findingsQuery("docs.ScannedDocument", id, scope).queryKey, readDocument<ObjectFindings>(JSON.stringify({ objectType: "docs.ScannedDocument", id, quarantined: true, evidence: [],
     findings: [{ id: "f-1", ruleRef: { kind: "law", artifactId: "canon.ItemizedDocument.total_matches_lines.law", lawId: "canon.ItemizedDocument.total_matches_lines", version: "0.1" }, severity: "error", message: "m", status: "open", firstSeen: "", lastSeen: "", values: { total: 720, "lines.amount": [30, 40, 2] } }] }), "live"))
   const html = renderToStaticMarkup(<QueryClientProvider client={client}><Findings objectType="docs.ScannedDocument" id={id} scope={scope} /></QueryClientProvider>)
   // The total the law read, then what it holds it against: the line objects it summed.
@@ -388,12 +389,12 @@ test("a record's findings are keyed by and read at its source workspace, and not
     return Response.json({ objectType: "canon.Party", id: "p/1", quarantined: active.orgId === "org_b", findings: [], evidence: [] })
   }
   const read = (scope: StudioScope) => findingsQuery("canon.Party", "p/1", scope, fetcher).queryFn as unknown as (context: { readonly signal?: AbortSignal }) => Promise<{ document: { quarantined: boolean } }>
-  expect(findingsQuery("canon.Party", "p/1", A).queryKey).toEqual(["findings", "canon.Party", "p/1", "org_a", "prod"])
+  expect([...findingsQuery("canon.Party", "p/1", A).queryKey]).toEqual(["findings", "canon.Party", "p/1", "org_a", "prod"])
   expect(findingsQuery("canon.Party", "p/1", B).queryKey).not.toEqual(findingsQuery("canon.Party", "p/1", A).queryKey)
   // No decided workspace: nothing is read, under a key no read answers and not the one every workspace once shared.
   const undecided = findingsQuery("canon.Party", "p/1", undefined)
   expect(undecided.enabled).toBe(false)
-  expect(undecided.queryKey).not.toEqual(["findings", "canon.Party", "p/1"])
+  expect([...undecided.queryKey]).not.toEqual(["findings", "canon.Party", "p/1"])
   await expect((undecided.queryFn as unknown as (context: object) => Promise<unknown>)({})).rejects.toBeInstanceOf(StudioScopeError)
   expect((await read(A)({})).document.quarantined).toBe(false)
   expect(sent).toEqual(["findings org_a/prod"])
@@ -412,7 +413,7 @@ test("the record page's Held back and rules-broken chips show only under a decid
   const scope = { orgId: "org_demo", environmentId: "analytics" }
   const live = (read: string) => readDocument(readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer", `objects/${concept}/${id.replaceAll("/", "~")}.${read}.json`), "utf8"), "live")
   const answer = { object: live("object"), links: live("links"), source: live("source") }
-  const held = readDocument(JSON.stringify({ objectType: concept, id, quarantined: true, evidence: [],
+  const held = readDocument<ObjectFindings>(JSON.stringify({ objectType: concept, id, quarantined: true, evidence: [],
     findings: [{ id: "f-1", ruleRef: { kind: "builtin", id: "core.required", version: "1" }, severity: "error", message: "A required value is missing.", status: "open", firstSeen: "", lastSeen: "" }] }), "live")
   const mode = { kind: "live", scope, catalog: fixture("three-systems.definitions.json"), counts: {}, publishedQuestions: new Set<string>() }
   const modeKey = ["studio-mode", studioScopeKey(scope)]

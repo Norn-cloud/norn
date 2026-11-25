@@ -246,7 +246,6 @@ test("markings: a drawer's record opened in full while the workspace read fails 
 })
 
 const SESSION_DOWN = { status: 503, json: { error: "The workspace host is unavailable.", retryable: false } }
-const CELL_DOWN = { status: 503, json: { code: "cell.unopenable", message: "The workspace cell could not be opened.", retryable: false } }
 const scopeOf = (url: URL) => `${url.searchParams.get("orgId")}/${url.searchParams.get("environmentId")}`
 
 // #1745: the record page read a record's findings under one key for every workspace and showed its
@@ -285,51 +284,39 @@ test("findings: a held record's chips leave with the mode when the workspace rea
 })
 
 // #1745: the type page showed its grid whenever the mode was not pending, so after a failed mode read it
-// read the records without a workspace: live rows the page's mode never decided, with Reveal pinned to the
-// session. The session comes back and the cell answers the catalog's read, then fails the mode's own read.
-test("records: a type page whose mode read fails after its catalog is read shows Workspace unavailable, never rows read without a workspace", async ({ page }) => {
+// mounted a grid with no workspace, which reads the records at whatever workspace the session reports when
+// it answers: rows the page's mode never decided, with Reveal pinned to the session. The session's
+// workspace read fails while the type page is open; its definition stays, and its records wait for the mode.
+test("records: a type page whose mode read fails shows Workspace unavailable for its records, never a grid without a workspace", async ({ page }) => {
   await recordCell(page, "admin")
   const pageReads: string[] = []
   page.on("request", (request) => {
     const url = new URL(request.url())
     if (url.pathname.endsWith("/v1/objects/canon.Party")) pageReads.push(scopeOf(url))
   })
-  let sessionDown = true
-  // How many definitions reads the cell answers before it fails again; a held read waits for its release.
-  let answered = 0
-  let held: Promise<void> | null = null
-  await page.route("**/api/host/v1/definitions**", async (route) => {
-    if (held !== null) await held
-    if (answered === 0) return route.fulfill(CELL_DOWN)
-    answered -= 1
-    return route.fallback()
-  })
+  let sessionDown = false
   await page.route("**/api/me", (route) => sessionDown ? route.fulfill(SESSION_DOWN) : route.fallback())
   await page.goto("/sources/canon.Party")
-  const typeUnavailable = page.locator("[data-workspace-unavailable]")
-  await expect(typeUnavailable).toBeVisible()
-  sessionDown = false
-  answered = 1
-  await typeUnavailable.getByRole("button", { name: "Retry" }).click()
-  // The type's definition is read; its records wait for a decided mode: Workspace unavailable with the mode's Retry.
+  const grid = page.getByRole("grid")
+  await expect(grid.locator('[role="row"][aria-rowindex="2"]')).toBeVisible()
+  expect(new Set(pageReads)).toEqual(new Set(["org_demo/analytics"]))
+  // The session's workspace read fails: the page's mode is undecided. The type's definition stays; its
+  // records show Workspace unavailable with the mode's Retry, and no grid is mounted to read them.
+  const readsBefore = pageReads.length
+  sessionDown = true
+  await refocus(page)
   const records = page.getByRole("region", { name: "Records" })
   const unavailable = records.locator("[data-workspace-unavailable]")
   await expect(unavailable).toBeVisible()
-  await expect(page.getByRole("grid")).toHaveCount(0)
+  await expect(grid).toHaveCount(0)
+  await expect(records.getByText("not served by this cell")).toHaveCount(0)
   await expect(page.locator("[data-reveal]")).toHaveCount(0)
-  expect(pageReads).toEqual([])
+  expect(pageReads).toHaveLength(readsBefore)
   await shoot(page, "party-type-records-mode-unavailable")
-  // The cell recovers. The Records section's Retry decides the mode: its skeleton while the mode is read,
-  // then the grid, read at the workspace the mode was decided in.
-  answered = Number.POSITIVE_INFINITY
-  let release = () => {}
-  held = new Promise<void>((resolve) => { release = resolve })
+  // The session recovers; the Records section's Retry decides the mode, and the grid reads at that workspace.
+  sessionDown = false
   await unavailable.getByRole("button", { name: "Retry" }).click()
-  await expect(records.getByRole("status", { name: "Reading the records" })).toBeAttached()
-  await expect(page.getByRole("grid")).toHaveCount(0)
-  held = null
-  release()
-  await expect(page.getByRole("grid").locator('[role="row"][aria-rowindex="2"]')).toBeVisible()
+  await expect(grid.locator('[role="row"][aria-rowindex="2"]')).toBeVisible()
   expect(new Set(pageReads)).toEqual(new Set(["org_demo/analytics"]))
 })
 
