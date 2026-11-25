@@ -20,6 +20,11 @@ pub enum VMError {
     /// Norn `metering`: the isolate's [`crate::meter::Meter`] ran out.
     #[error("{0}")]
     BudgetExhausted(crate::meter::BudgetExhausted),
+
+    /// Norn (#1711): an integer interval with more elements than the VM materializes
+    /// (or whose allocation fails) is refused before any element is allocated.
+    #[error("Interval {interval} has too many elements to enumerate")]
+    IntervalTooLarge { interval: String },
 }
 
 pub(crate) type VMResult<T> = Result<T, VMError>;

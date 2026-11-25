@@ -1,4 +1,5 @@
-import type { ActionReceipt, ActionSummary, CallResult, CatalogRead, Diagnostic, PendingDecision, RefusalReason } from "../actions.ts"
+import type { CallAnswer, CatalogRead } from "../actions.ts"
+import type { ActionReceipt, ActionSummary, Diagnostic, PendingDecision, RefusalReason } from "../../../../../packages/norn-sdk/src/index.ts"
 
 /**
  * The renderer core for one governed call, framework-neutral (#1220, L-0):
@@ -63,7 +64,7 @@ export type Msg =
   | { readonly kind: "edit"; readonly key: string }
   | { readonly kind: "submit"; readonly input: string }
   | { readonly kind: "back" }
-  | { readonly kind: "answered"; readonly result: CallResult }
+  | { readonly kind: "answered"; readonly result: CallAnswer }
   /** The call threw (network, a body the cell did not send): nothing is known to have committed. */
   | { readonly kind: "threw"; readonly message: string | null }
   | { readonly kind: "retry" }
@@ -152,7 +153,7 @@ export function update(state: State, msg: Msg): readonly [State, readonly Cmd[]]
   }
 }
 
-function answered(result: CallResult): Phase {
+function answered(result: CallAnswer): Phase {
   switch (result.kind) {
     case "receipt": return { kind: "done", receipt: result.receipt, undo: undoOf(result.receipt) }
     case "pending": return { kind: "pending", decision: result.decision }

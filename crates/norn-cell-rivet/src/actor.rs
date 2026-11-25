@@ -63,9 +63,7 @@ pub const LARGE_BODY_PATHS: &[&str] = &[
 /// How long a guard or recovery wake waits (`wake.mjs` `RECOVERY_MS`).
 pub const RECOVERY_MS: u64 = 60_000;
 /// A failed cold open is not retried sooner (`OPEN_RETRY_MS`).
-const OPEN_RETRY_MS: u64 = 60_000;
-/// A hung JWKS fetch must not hold the cell.
-const JWKS_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const OPEN_RETRY_MS: u64 = 60_000;
 /// Engine steps one request may take (D102).
 const ENGINE_STEPS: usize = 64;
 /// A hung engine call must not hold the cell.
@@ -169,17 +167,6 @@ pub fn refusal(
         json!({"format": "norn/refusal@2", "retryable": retryable, "reason": null, "code": code, "category": category, "message": message, "explanation": explanation}).to_string(),
     )
 }
-
-/// The JWKS document this process fetched last, reused by cold opens for
-/// `OPEN_RETRY_MS` (one issuer fetch a minute however many cells open).
-#[derive(Clone)]
-struct Jwks {
-    url: String,
-    text: String,
-    at: u64,
-}
-
-static LAST_JWKS: std::sync::Mutex<Option<Jwks>> = std::sync::Mutex::new(None);
 
 /// What the actor keeps about its cell between requests.
 #[derive(Default)]
@@ -527,48 +514,14 @@ impl CellActor {
         Ok(())
     }
 
-    /// The pinned JWKS document and when it was fetched; `reuse` accepts this
-    /// process's last one while it is younger than `OPEN_RETRY_MS`.
-    async fn jwks(&self, reuse: bool) -> Result<Jwks> {
+    /// The pinned JWKS document and when it was fetched (`jwks::fetch_jwks`).
+    async fn jwks(&self, reuse: bool) -> Result<crate::jwks::Jwks> {
         let url = self
             .config
             .jwks_url
             .clone()
             .context("NORN_HOST_JWKS_URL is not set")?;
-        if reuse {
-            let last = LAST_JWKS
-                .lock()
-                .map_err(|_poisoned| anyhow!("the JWKS cache is poisoned"))?
-                .clone();
-            if let Some(last) = last
-                && last.url == url
-                && now_ms()
-                    .checked_sub(last.at)
-                    .is_some_and(|age| age < OPEN_RETRY_MS)
-            {
-                return Ok(last);
-            }
-        }
-        let response = self
-            .http
-            .get(&url)
-            .timeout(JWKS_TIMEOUT)
-            .send()
-            .await
-            .context("JWKS fetch failed")?;
-        if response.status() != reqwest::StatusCode::OK {
-            return Err(anyhow!("JWKS fetch failed: HTTP {}", response.status()));
-        }
-        let text = response.text().await.context("JWKS read failed")?;
-        let fetched = Jwks {
-            url,
-            text,
-            at: now_ms(),
-        };
-        *LAST_JWKS
-            .lock()
-            .map_err(|_poisoned| anyhow!("the JWKS cache is poisoned"))? = Some(fetched.clone());
-        Ok(fetched)
+        crate::jwks::fetch_jwks(&self.http, url, reuse).await
     }
 
     async fn refresh_jwks(&self) -> bool {

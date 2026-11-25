@@ -100,3 +100,13 @@ test("the cell's own 404 (route.not_found) is a route it does not serve: the rec
   const read = await readRecords("canon.Item", EMPTY_QUERY, deps)
   expect(read.kind === "page" && read.origin).toBe("recorded")
 })
+
+// #1700 S14 (closed by #1643): a structured 503 keeps its reason and incident id; only a bare proxy 503 falls back.
+test("a structured 503 from the cell is decoded before the recorded fallback", async () => {
+  const { CellUnavailable } = await import("../src/lib/definitions.ts")
+  const { deps } = cell(() => Response.json({ code: "cell.unopenable", message: "The cell is sealed for maintenance.", incidentId: "inc_42", retryable: false }, { status: 503 }))
+  const error = await readRecords("canon.Item", EMPTY_QUERY, deps).then(() => null, (thrown: unknown) => thrown)
+  expect(error).toBeInstanceOf(CellUnavailable)
+  expect(error).toMatchObject({ status: 503, code: "cell.unopenable", incidentId: "inc_42", retryable: false, message: "The cell is sealed for maintenance." })
+  expect(deps.recorded).not.toHaveBeenCalled()
+})

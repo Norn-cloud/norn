@@ -41,7 +41,8 @@
   --popover-foreground: #1b1b1d;
   /* Single crisp blue accent from v6/tokens.css (tuned for WCAG AA >= 4.5:1 on both white & #f5f5f5 wells); knot violet reserved for the Norn mark. */
   --knot: #5b52f0;
-  --action: #2e60e0;
+  /* Darker than --primary so action-coloured text holds 4.5:1 on its own /15 tint (the active rail item). */
+  --action: #2755d0;
   --action-hover: #2451c7;
   --action-foreground: #ffffff;
   --primary: #2e60e0;
@@ -350,7 +351,7 @@
   --muted: #f1f2f5;
   --accent: #eceef2;
   --border: #e4e5ea;
-  --action: #554ce8;
+  --action: #4c43e0;
   --action-hover: #4940dc;
   --primary: #554ce8;
   --primary-foreground: #ffffff;
@@ -380,7 +381,7 @@
   --muted: #1d1d24;
   --accent: #23232d;
   --border: #262730;
-  --action: #7c74ff;
+  --action: #847dff;
   --action-hover: #695ff0;
   --primary: #6258ec;
   --primary-foreground: #ffffff;
@@ -536,6 +537,10 @@
   --color-background: var(--background);
   --color-canvas: var(--canvas);
   --color-surface-subtle: var(--surface-subtle);
+  --color-well: var(--well);
+  --color-well-border: var(--well-border);
+  --color-well-hover: var(--well-hover);
+  --color-panel-border: var(--panel-border);
   --color-link: var(--link);
   --color-action: var(--action);
   --color-action-hover: var(--action-hover);

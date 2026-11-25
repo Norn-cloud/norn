@@ -109,6 +109,10 @@ function history(reader: Reader, { objectType, id, values, version }: { objectTy
 
 export interface RecordCell {
   readonly reveals: unknown[]
+  /** The workspace (`orgId/environmentId`) each record read was sent to. */
+  readonly readScopes: string[]
+  /** Each reveal's workspace and the workspace its expected-scope headers named. */
+  readonly revealScopes: { readonly at: string; readonly expected: string }[]
   readonly asked: string[]
   /** Change who the cell answers as from the next read on (a grant revoked: the same record, projected for another role). */
   readonly become: (next: Reader) => void
@@ -121,6 +125,8 @@ export interface RecordCell {
 /** Serve the record reads for `reader`; `access` replaces the access answer (a refusal, say). */
 export async function recordCell(page: Page, initial: Reader, access?: { status: number; body: unknown }): Promise<RecordCell> {
   const reveals: unknown[] = []
+  const readScopes: string[] = []
+  const revealScopes: { readonly at: string; readonly expected: string }[] = []
   const asked: string[] = []
   let reader = initial
   let held: Promise<void> | null = null
@@ -139,6 +145,8 @@ export async function recordCell(page: Page, initial: Reader, access?: { status:
   })
   await page.route("**/api/host/v1/objects/**", async (route) => {
     const url = new URL(route.request().url())
+    // The type's records page, for its grid: the Parties the privacy pages serve this reader.
+    if (/\/v1\/objects\/canon\.Party$/.test(url.pathname)) return route.fulfill({ body: file(`fixtures/privacy/canon.Party.${reader === "admin" ? "auditor" : "viewer"}.page.json`), contentType: "application/json" })
     const one = /\/v1\/objects\/([^/]+)\/(.+?)(\/links|\/lineage|\/history|\/findings|\/reveal)?$/.exec(url.pathname)
     const notFound = () => route.fulfill({ status: 404, json: { code: "object.not_found", message: "No such readable object." } })
     if (one === null) return notFound()
@@ -147,8 +155,9 @@ export async function recordCell(page: Page, initial: Reader, access?: { status:
     const found = record(reader, objectType, id)
     if (found === null) return notFound()
     const sources = reader === "admin" ? lineage(objectType, id) : null
+    const at = `${url.searchParams.get("orgId")}/${url.searchParams.get("environmentId")}`
     switch (one[3]) {
-      case undefined: return route.fulfill({ json: found })
+      case undefined: readScopes.push(at); return route.fulfill({ json: found })
       case "/links": return route.fulfill({ body: explorer(objectType, id, "links") ?? JSON.stringify({ objectType, id, items: [], next: null }), contentType: "application/json" })
       case "/lineage": return sources === null ? notFound() : route.fulfill({ body: sources, contentType: "application/json" })
       case "/findings": return route.fulfill({ json: { objectType, id, quarantined: false, findings: [], evidence: [] } })
@@ -156,6 +165,8 @@ export async function recordCell(page: Page, initial: Reader, access?: { status:
       case "/history": return historyRefused ? notFound() : route.fulfill({ json: history(reader, { objectType, id, values: found.values as Record<string, unknown>, version: Number(found.version) }, sources === null ? null : JSON.parse(sources)) })
       case "/reveal": {
         reveals.push(JSON.parse(route.request().postData() ?? "null"))
+        const headers = route.request().headers()
+        revealScopes.push({ at, expected: `${headers["x-norn-expected-org"] ?? null}/${headers["x-norn-expected-env"] ?? null}` })
         // The cell decided the reveal when it was asked, for who was asking then.
         const asking = reader
         if (held !== null) { const wait = held; held = null; await wait }
@@ -168,7 +179,7 @@ export async function recordCell(page: Page, initial: Reader, access?: { status:
     }
   })
   return {
-    reveals, asked,
+    reveals, asked, readScopes, revealScopes,
     become: (next) => { reader = next },
     holdReveal: () => { let release = () => {}; held = new Promise<void>((resolve) => { release = resolve }); return () => release() },
     refuseHistory: () => { historyRefused = true },

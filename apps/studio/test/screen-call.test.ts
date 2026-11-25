@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { QueryClient, QueryObserver } from "@tanstack/react-query"
-import type { ActionReceipt, ActionSummary, CallResult, CatalogRead } from "../src/lib/actions.ts"
+import type { CallAnswer, CatalogRead } from "../src/lib/actions.ts"
+import type { ActionReceipt, ActionSummary } from "../../../packages/norn-sdk/src/index.ts"
 import { inFlight, init, offeredFor, parkedOf, recordCatalog, resume, undoOf, update, type Cmd, type Msg, type State } from "../src/lib/screen/call.ts"
 
 // Properties of the renderer core over seeded random message sequences (D79: properties, not cases).
@@ -28,9 +29,9 @@ function session(seed: number, length = 60): { readonly risky: boolean; readonly
   let state = init({ actionId: "learning.triage_episode", risky }, `k${keys++}`)
   const steps: Step[] = []
   for (let i = 0; i < length; i++) {
-    const result = (): CallResult => pick(r, [
+    const result = (): CallAnswer => pick(r, [
       () => ({ kind: "receipt", receipt: receipt(++seq, r() < 0.5 ? { actionId: "learning.retract_triage", input: { episodeId: `ep_${seq}` } } : undefined) }) as const,
-      () => ({ kind: "refused", status: 422, code: "action.precondition_failed", message: "no", diagnostics: [] }) as const,
+      () => ({ kind: "refused", status: 422, code: "action.precondition_failed", message: "no", category: "precondition", retryable: false, explanation: "no", diagnostics: [] }) as const,
       () => ({ kind: "unavailable" }) as const,
       () => ({ kind: "no-cell" }) as const,
       () => ({ kind: "pending", decision: { id: `d${seq}`, expiresAtMs: 9 } }) as const,
@@ -241,7 +242,7 @@ test("run-approved is only for the decision this form waits on and its own actio
 
 test("a refused approved run is final for that call: a draft sent after it is a new call under a new key", () => {
   const [running] = update(resume(TARGET, PARKED), { kind: "run-approved", decisionId: "dec_1", actionId: "ops.refund", input: PARKED.input, key: PARKED.key, next: "k-draft" })
-  const [refused] = update(running, { kind: "answered", result: { kind: "refused", status: 403, code: "action.denied", message: "denied", diagnostics: [] } })
+  const [refused] = update(running, { kind: "answered", result: { kind: "refused", status: 403, code: "action.denied", message: "denied", category: "permission", retryable: false, explanation: "denied", diagnostics: [] } })
   expect(refused.phase.kind).toBe("refused")
   // Even without an edit, the parked key never carries another body.
   expect(update(refused, { kind: "submit", input: "{}" })[1]).toEqual([{ kind: "call", actionId: "ops.refund", input: "{}", key: "k-draft" }])

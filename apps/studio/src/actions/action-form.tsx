@@ -10,10 +10,8 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
-import {
-  ACTIONS_UNAVAILABLE, callAction, decimalExample, escapePointer, instantText, isDiagnosticPlaced, offsetSuffix, pickerDateTime, rebaseFields, resolveDateTime, selectedAlternative, sentMembers, inputPointer, itemNoun, newIdempotencyKey, receiptVerb, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt,
-  type ActionReceipt, type ActionSummary, type Diagnostic, type Draft, type FormField, type Section, type Spec,
-} from "../lib/actions.ts"
+import { ACTIONS_UNAVAILABLE, callAction, decimalExample, escapePointer, instantText, isDiagnosticPlaced, offsetSuffix, pickerDateTime, rebaseFields, resolveDateTime, selectedAlternative, sentMembers, inputPointer, itemNoun, receiptVerb, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft, type FormField, type Section, type Spec } from "../lib/actions.ts"
+import { createIntentKey, type ActionReceipt, type ActionSummary, type Diagnostic } from "../../../../packages/norn-sdk/src/index.ts"
 import { parkedOf, type ParkedCall, type Phase } from "../lib/screen/call.ts"
 import { listRequested, requestedOne, requestedPath, requestedWords, runnable, type RequestedDecision } from "../lib/decisions.ts"
 import { useLiveRefresh } from "../lib/live-reads.ts"
@@ -21,7 +19,7 @@ import { useCall, type Call } from "../lib/screen/use-call.ts"
 import { LawRefusal, RedactedLawRefusal, type InputField, type RefusalRequest } from "./law-refusal.tsx"
 import { RecordPicker, control, type Aria } from "./record-picker.tsx"
 
-const newKey = newIdempotencyKey
+const newKey = createIntentKey
 
 /** The form's input fields that name a record, by pointer → object type (the cell's `inputLinks`). */
 const Links = createContext<ReadonlyMap<string, string>>(new Map())
@@ -119,7 +117,7 @@ export function ActionForm({ action, objectTitle, technical = false, prefill = {
       values: (members ?? []).filter(({ name }) => name !== action.objectIdField).map(({ name, text }) => ({ label: labelOf(name), value: text })),
     }
   }, [sentInput, action, fields])
-  const guard = phase.kind === "refused" ? refusedGuardWords(phase.explanation ?? phase.message) ?? refusedGuardWords(phase.message) : null
+  const guard = phase.kind === "refused" ? refusedGuardWords(phase.explanation || phase.message) ?? refusedGuardWords(phase.message) : null
   // A commit leaves nothing unsent; a refusal in a wizard opens the first step it names (one on no field stays on the review).
   useEffect(() => {
     if (phase.kind === "done") { onDirty?.(false); onCommitted?.() }
@@ -546,9 +544,9 @@ function RefusalPanel({ phase, action, technical, request, at, guard, top, atFie
   readonly onUse: ((path: string, text: string) => void) | undefined
 }) {
   if (phase.code === "core.laws.violated" && phase.reason !== undefined) {
-    return <LawRefusal code={phase.code} reason={phase.reason} explanation={phase.explanation ?? phase.message} fields={(action.inputSchema as { properties?: Readonly<Record<string, InputField>> } | null)?.properties ?? {}} technical={technical} onUse={onUse} request={request} at={at} decidedAt={phase.decidedAt} />
+    return <LawRefusal code={phase.code} reason={phase.reason} explanation={phase.explanation || phase.message} fields={(action.inputSchema as { properties?: Readonly<Record<string, InputField>> } | null)?.properties ?? {}} technical={technical} onUse={onUse} request={request} at={at} decidedAt={phase.decidedAt} />
   }
-  if (phase.code === "core.laws.violated") return <RedactedLawRefusal code={phase.code} message={phase.explanation ?? phase.message} technical={technical} request={request} at={at} decidedAt={phase.decidedAt} />
+  if (phase.code === "core.laws.violated") return <RedactedLawRefusal code={phase.code} message={phase.explanation || phase.message} technical={technical} request={request} at={at} decidedAt={phase.decidedAt} />
   const shown = atFields ? top : phase.diagnostics
   return (
     <div role="alert" className="grid gap-1.5 rounded-xl border border-border bg-card px-3 py-2.5 text-sm">
