@@ -12,6 +12,20 @@
       "version": "0.1.0"
     },
     "actionId": "supply.warehouse.close",
+    "aggregates": [
+      {
+        "aggregate": {
+          "kind": "sum",
+          "property": "on_hand_qty"
+        },
+        "filter": {
+          "warehouse_id": "warehouse_id"
+        },
+        "maxItems": 500,
+        "name": "live_stock",
+        "objectType": "supply.InventorySnapshot"
+      }
+    ],
     "effectProgram": {
       "entityArtifactId": "supply.Warehouse.entity",
       "entityArtifactVersion": "0.1.0",
@@ -47,6 +61,9 @@
       ],
       "type": "object"
     },
+    "preconditions": [
+      "aggregates.live_stock == 0"
+    ],
     "scopeRequired": [
       "orgId",
       "environmentId"

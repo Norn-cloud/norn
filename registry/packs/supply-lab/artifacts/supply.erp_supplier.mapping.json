@@ -45,7 +45,7 @@
           },
           {
             "property": "supplier_id",
-            "value": "input.supplier == 'NILE-001' ? 'SUP-NILE' : (input.supplier == 'DELTA-07' ? 'SUP-DELTA' : input.supplier)"
+            "value": "({'NILE-001': 'SUP-NILE', 'DELTA-07': 'SUP-DELTA'}[input.supplier]) ?? input.supplier"
           },
           {
             "property": "po_item_ref",
@@ -61,7 +61,7 @@
           },
           {
             "property": "unit",
-            "value": "input.uom == 'Nos' ? 'each' : (input.uom == 'Kg' ? 'kg' : input.uom)"
+            "value": "({'Nos': 'each', 'Kg': 'kg', 'Litre': 'l'}[input.uom]) ?? input.uom"
           },
           {
             "property": "received_at",

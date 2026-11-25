@@ -1083,3 +1083,34 @@ fn fuel_certificate_replay_preserves_certified_bound() {
         .expect("replay");
     assert!(certificate.units > 0);
 }
+
+#[test]
+fn literal_table_lookup_stays_within_decide_fuel_and_bounds_runtime() {
+    let env = ZenTypeEnv::input_only(
+        BTreeMap::from([("uom".to_owned(), Type::text())]),
+        EnvOptions::default(),
+    )
+    .expect("input env");
+    let source = "({'Nos': 'each', 'Kg': 'kg', 'Litre': 'l', 'Box': 'each', 'Gram': 'kg', 'Ml': 'l'}[input.uom]) ?? input.uom";
+    let expr = Expression::compile(source).expect("compile");
+    let checked = check_expression_with(&expr, &env, &Type::text(), &limits())
+        .expect("bounded literal-table lookup stays within norn.limits/1 decide fuel");
+    let bound = checked.cost().units();
+    assert!(
+        bound < limits().decide.fuel_units,
+        "bound {bound} exceeded decide fuel"
+    );
+
+    for uom in [
+        "Nos".to_owned(),
+        "Litre".to_owned(),
+        "PALLET".to_owned(),
+        "x".repeat(4096),
+    ] {
+        let ctx = Value::object([("input", Value::object([("uom", Value::String(uom))]))]);
+        let eval = expr
+            .evaluate(&ctx, EvaluationBudget::new(bound))
+            .expect("certified bound covers hit, miss, and long strings");
+        assert!(eval.units_used() <= bound);
+    }
+}

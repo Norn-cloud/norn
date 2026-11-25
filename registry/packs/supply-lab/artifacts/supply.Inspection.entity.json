@@ -24,6 +24,7 @@
             "to": "one"
           },
           "id": "receipt",
+          "inverse": "inspections",
           "target": "supply.ShipmentReceipt"
         }
       ],

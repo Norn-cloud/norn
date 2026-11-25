@@ -1,0 +1,50 @@
+{
+  "artifactId": "supply.Inspection.within_receipt.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.Inspection.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "An inspection linked to a shipment receipt must use the receipt's unit and inspect no more than was received.",
+  "namespace": "supply",
+  "payload": {
+    "id": "supply.Inspection.within_receipt",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/supply.ts"
+    },
+    "rationale": "An inspection linked to a shipment receipt must use the receipt's unit and inspect no more than was received.",
+    "response": {
+      "expression": "(self.receipt == null) or ((self.inspected_qty <= self.receipt.received_qty) and (self.unit == self.receipt.unit))",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.Inspection"
+      ],
+      "root": {
+        "id": "supply.Inspection",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.Inspection"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.Inspection.within_receipt.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

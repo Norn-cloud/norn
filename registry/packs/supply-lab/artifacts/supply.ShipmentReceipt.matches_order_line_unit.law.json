@@ -1,0 +1,50 @@
+{
+  "artifactId": "supply.ShipmentReceipt.matches_order_line_unit.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.ShipmentReceipt.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A receipt linked to an order line must use that line's unit of measure.",
+  "namespace": "supply",
+  "payload": {
+    "id": "supply.ShipmentReceipt.matches_order_line_unit",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/supply.ts"
+    },
+    "rationale": "A receipt linked to an order line must use that line's unit of measure.",
+    "response": {
+      "expression": "(self.order_line == null) or (self.unit == self.order_line.unit)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.ShipmentReceipt"
+      ],
+      "root": {
+        "id": "supply.ShipmentReceipt",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.ShipmentReceipt"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.ShipmentReceipt.matches_order_line_unit.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

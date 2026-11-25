@@ -2798,3 +2798,70 @@ fn val_exact_isolates_ternary_conditions_and_call_arguments_from_outer_site()
 
     Ok(())
 }
+
+#[test]
+fn literal_table_lookup_admits_non_null_string_key_and_refuses_invalid_shapes()
+-> Result<(), Box<dyn std::error::Error>> {
+    let env = ZenTypeEnv::input_only(
+        std::collections::BTreeMap::from([
+            ("uom".to_owned(), Type::text()),
+            ("maybe_uom".to_owned(), Type::text().optional()),
+            ("qty".to_owned(), Type::Integer),
+        ]),
+        EnvOptions::default(),
+    )?;
+
+    // Valid literal-table lookup with fallback yields string and evaluates hit + miss cleanly.
+    let lookup =
+        Expression::compile("({'Nos': 'each', 'Kg': 'kg', 'Litre': 'l'}[input.uom]) ?? input.uom")?;
+    check_expression(&lookup, &env, &Type::text())
+        .map_err(|errors| format!("lookup failed: {errors:?}"))?;
+    for (uom, expected) in [
+        ("Nos", "each"),
+        ("Kg", "kg"),
+        ("Litre", "l"),
+        ("PALLET", "PALLET"),
+    ] {
+        let ctx = Value::object([(
+            "input",
+            Value::object([
+                ("uom", Value::String(uom.to_owned())),
+                ("maybe_uom", Value::Null),
+                ("qty", Value::Number(Number::from(1))),
+            ]),
+        )]);
+        let result = lookup.evaluate(&ctx, EvaluationBudget::default())?;
+        assert_eq!(result.into_value(), Value::String(expected.to_owned()));
+    }
+
+    // Dynamic read on an environment record remains refused.
+    assert_eq!(
+        check(&env, "input[input.uom]", &Type::Json),
+        Err(vec![codes::DYNAMIC_READ])
+    );
+    // Empty table remains refused.
+    assert_eq!(
+        check(&env, "({})[input.uom]", &Type::Json),
+        Err(vec![codes::DYNAMIC_READ])
+    );
+    // Nullable key refuses with NULLABLE.
+    assert_eq!(
+        check(
+            &env,
+            "({'Nos': 'each'}[input.maybe_uom]) ?? 'each'",
+            &Type::text()
+        ),
+        Err(vec![codes::NULLABLE])
+    );
+    // Non-string key refuses with TYPE_ERROR.
+    assert_eq!(
+        check(&env, "({'1': 'each'}[input.qty]) ?? 'each'", &Type::text()),
+        Err(vec![codes::TYPE_ERROR])
+    );
+    // Mixed-type table refuses with TYPE_ERROR.
+    assert_eq!(
+        check(&env, "({'a': 'each', 'b': 1}[input.uom])", &Type::Json),
+        Err(vec![codes::TYPE_ERROR])
+    );
+    Ok(())
+}

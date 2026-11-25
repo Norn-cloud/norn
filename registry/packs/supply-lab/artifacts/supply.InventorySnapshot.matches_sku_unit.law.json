@@ -1,0 +1,50 @@
+{
+  "artifactId": "supply.InventorySnapshot.matches_sku_unit.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.InventorySnapshot.entity",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A stock position must be counted in its catalog SKU's unit of measure.",
+  "namespace": "supply",
+  "payload": {
+    "id": "supply.InventorySnapshot.matches_sku_unit",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/supply.ts"
+    },
+    "rationale": "A stock position must be counted in its catalog SKU's unit of measure.",
+    "response": {
+      "expression": "self.unit == self.sku.unit_of_measure",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.InventorySnapshot"
+      ],
+      "root": {
+        "id": "supply.InventorySnapshot",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.InventorySnapshot"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.InventorySnapshot.matches_sku_unit.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

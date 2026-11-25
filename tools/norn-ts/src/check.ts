@@ -500,6 +500,15 @@ class FileWalk {
     return this.every(this.typeOf(node), (t) => (t.flags & scalar) !== 0)
   }
 
+  private isNullableNullCheck(left: ts.Expression, right: ts.Expression): boolean {
+    const check = (a: ts.Expression, b: ts.Expression): boolean => {
+      if (a.kind !== ts.SyntaxKind.NullKeyword) return false
+      const t = this.typeOf(b)
+      return t.isUnion() && t.types.some((member) => (member.flags & ts.TypeFlags.Null) !== 0)
+    }
+    return check(left, right) || check(right, left)
+  }
+
   // --------------------------------------------------------------- top level
 
   private topLevel(s: ts.Statement): void {
@@ -1043,7 +1052,7 @@ class FileWalk {
     switch (op) {
       case ts.SyntaxKind.EqualsEqualsEqualsToken:
       case ts.SyntaxKind.ExclamationEqualsEqualsToken:
-        if (operands() && !(this.isScalar(b.left) && this.isScalar(b.right))) {
+        if (operands() && !(this.isScalar(b.left) && this.isScalar(b.right)) && !this.isNullableNullCheck(b.left, b.right)) {
           this.report(b, "NORN-FLOW-EXPRESSION", "===/!== compares scalars only (no object equality)")
         }
         return

@@ -2521,7 +2521,10 @@ impl<'a> Checker<'a> {
         }
         let Node::String(key) = property else {
             return match base {
-                T::Record(_) => self.report(
+                T::Record(Rec::Literal(fields)) => {
+                    self.table_lookup(node, target, property, &fields)
+                }
+                T::Record(Rec::Env { .. }) => self.report(
                     node,
                     codes::DYNAMIC_READ,
                     "a record member must be read by a literal name, not a computed key".to_owned(),
@@ -2615,6 +2618,60 @@ impl<'a> Checker<'a> {
             | T::List(_)
             | T::Optional(_)) => self.unsupported(node, &format!("a member read on `{other}`")),
         }
+    }
+
+    /// `{k1: v1, k2: v2, ...}[key]`: bounded lookup in a non-empty literal
+    /// table by a non-null string key. Yields `V?` (the common value type, or
+    /// `null` on miss), paying only one key-length scan regardless of table
+    /// size. Environment records stay closed to computed keys.
+    fn table_lookup(
+        &mut self,
+        node: &Node<'_>,
+        target: &Node<'_>,
+        property: &Node<'_>,
+        fields: &BTreeMap<String, T>,
+    ) -> Option<T> {
+        if !matches!(unparenthesized(target), Node::Object(_)) || fields.is_empty() {
+            return self.report(
+                node,
+                codes::DYNAMIC_READ,
+                "a record member must be read by a literal name, not a computed key".to_owned(),
+            );
+        }
+        let key_ty = self.value(property, None)?;
+        if !matches!(key_ty, T::Str(_)) {
+            return self.report(
+                property,
+                codes::TYPE_ERROR,
+                format!("a lookup table key must be a non-null string, not `{key_ty}`"),
+            );
+        }
+        let mut value_ty: Option<T> = None;
+        for entry_ty in fields.values() {
+            if matches!(entry_ty, T::Null | T::Optional(_)) {
+                return self.report(
+                    node,
+                    codes::TYPE_ERROR,
+                    "lookup table values must share one non-null type".to_owned(),
+                );
+            }
+            value_ty = match value_ty {
+                None => Some(entry_ty.clone()),
+                Some(acc) => match join(&acc, entry_ty) {
+                    Some(joined) => Some(joined),
+                    None => {
+                        return self.report(
+                            node,
+                            codes::TYPE_ERROR,
+                            format!(
+                                "lookup table values have incompatible types: `{acc}` and `{entry_ty}`"
+                            ),
+                        );
+                    }
+                },
+            };
+        }
+        value_ty.map(optional)
     }
 
     /// `[a, b, c][i]`: an integer literal index into a list literal, in
