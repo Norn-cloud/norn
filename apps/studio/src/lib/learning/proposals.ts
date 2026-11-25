@@ -22,7 +22,8 @@ import {
  * it with route-produced fixtures.
  */
 
-export const GAP_PROPOSAL_TYPE = "learning.GapProposal"
+import { GAP_PROPOSAL_TYPE } from "./resource-names.ts"
+export { GAP_PROPOSAL_TYPE }
 export const PROPOSALS_UNAVAILABLE = "This cell doesn't serve gap proposals yet."
 
 export type ProposalStatus = "draft" | "submitted" | "admitted" | "refused" | "ratified" | "withdrawn"

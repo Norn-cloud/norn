@@ -1,6 +1,5 @@
 import { createContext, use } from "react"
 import { QueryClientContext, queryOptions, useQuery } from "@tanstack/react-query"
-import { z } from "zod"
 
 /**
  * Dashboards are definitions in the cell: an ordered list of admitted
@@ -99,7 +98,29 @@ export const NO_DATA_CELL = "This workspace has no data cell yet."
 export const EXPECTED_ORG_HEADER = "x-norn-expected-org"
 export const EXPECTED_ENV_HEADER = "x-norn-expected-env"
 export class StudioScopeError extends Error {}
-const accountScope = z.object({ organization: z.object({ id: z.string().min(1) }).nullable(), environmentId: z.string().min(1).nullable() })
+
+function parseAccountScope(body: unknown): { readonly organization: { readonly id: string } | null; readonly environmentId: string | null } | null {
+  if (!isObject(body) || Array.isArray(body)) return null
+  const org = body.organization
+  let organization: { readonly id: string } | null
+  if (org === null) {
+    organization = null
+  } else if (isObject(org) && !Array.isArray(org) && typeof org.id === "string" && org.id.length > 0) {
+    organization = { id: org.id }
+  } else {
+    return null
+  }
+  const env = body.environmentId
+  let environmentId: string | null
+  if (env === null) {
+    environmentId = null
+  } else if (typeof env === "string" && env.length > 0) {
+    environmentId = env
+  } else {
+    return null
+  }
+  return { organization, environmentId }
+}
 
 /** Structured refusal metadata preserved when a cell answers with `norn/refusal@2` or times out. */
 export interface UnavailableDetail {
@@ -459,9 +480,9 @@ export async function readStudioScope(fetcher: Fetch = defaultFetch, signal?: Ab
   if (!response.ok) {
     throw new CellUnavailable(response.status, typeof (body as { message?: unknown } | null)?.message === "string" ? (body as { message: string }).message : undefined, parseUnavailableDetail(body))
   }
-  const parsed = accountScope.safeParse(body)
-  if (!parsed.success) throw new StudioScopeError("The server did not report the active workspace scope.")
-  const { organization, environmentId } = parsed.data
+  const parsed = parseAccountScope(body)
+  if (parsed === null) throw new StudioScopeError("The server did not report the active workspace scope.")
+  const { organization, environmentId } = parsed
   return organization === null || environmentId === null ? null : { orgId: organization.id, environmentId }
 }
 

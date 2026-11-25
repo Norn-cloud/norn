@@ -40,6 +40,7 @@ pub mod coverage_observer;
 pub mod dataset_laws;
 pub mod dataset_manifest;
 pub mod decision_ledger;
+mod definition_scope;
 pub mod due_retry;
 pub mod engine;
 pub mod engine_release;
@@ -111,6 +112,7 @@ pub use coverage_observer::{
     CedarRuleKey, DomainCoverageRecorder, DomainCoverageSnapshot, ImmutableRefusalKey,
     ObservedSqliteCell, TransitionKey,
 };
+pub use definition_scope::{is_reserved_kernel_name, kernel_record_types};
 pub use error::CellError;
 
 pub use fork::{ForkEngine, ForkPin, StoreImage};

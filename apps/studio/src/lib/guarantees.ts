@@ -1,6 +1,12 @@
 import type { Concept, Law } from "./catalog.ts"
 import type { Schemas } from "./transport.ts"
 
+/** Recorded proof document titles, shared by the Rules page and its sidebar menu. */
+export const GUARANTEE_TITLES: Readonly<Record<string, string>> = {
+  original: "As declared",
+  mutant: "With the loss rule removed (a deliberately broken copy)",
+}
+
 type Scalar = Schemas["NornGuaranteesGuaranteeScalar"]
 type Verdict = Schemas["NornGuaranteesGuaranteeVerdict"]
 type Level = Schemas["NornGuaranteesGuaranteeLevel"]

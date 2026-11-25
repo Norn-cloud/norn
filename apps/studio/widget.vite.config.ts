@@ -55,6 +55,6 @@ export default defineConfig({
     cssCodeSplit: false,
     modulePreload: false,
     chunkSizeWarningLimit: 4096,
-    rollupOptions: { input: fileURLToPath(new URL("./widget.html", import.meta.url)), output: { inlineDynamicImports: true } },
+    rollupOptions: { input: fileURLToPath(new URL("./widget.html", import.meta.url)), output: { codeSplitting: false } },
   },
 })

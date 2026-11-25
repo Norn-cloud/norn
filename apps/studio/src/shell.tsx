@@ -8,11 +8,10 @@ import { Toolbar, ToolbarButton, ToolbarLink, ToolbarSeparator } from "@ui-sdk/r
 import { Tree, TreeGroup, TreeItem, TreeItemIndicator, TreeItemLabel } from "@ui-sdk/react/tree"
 import { AssistantPanel, AssistantProvider, useAssistant, type AssistantContent } from "@/assistant-slot"
 import { Bell, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, CircleEllipsis, CloudOff, Code2, Keyboard, LayoutGrid, Loader2, LogOut, MessageCircle, Palette, PanelBottom, PanelLeft, Search, SlidersHorizontal, Sparkles, Wrench, type LucideIcon } from "lucide-react"
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react"
+import { Suspense, lazy, useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react"
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
 import { ChromeDock, ChromeDockOption, ChromeDockTray, ChromeDockTrigger } from "@/components/ui/chrome-dock"
-import { CustomThemeDialog } from "@/components/custom-theme-dialog"
 import { AppearanceProvider, SHELLS, SKINS, isShellChrome, isSkin, useAppearance, type ShellChrome, type Skin } from "@/lib/appearance"
 import { PERSPECTIVES, PerspectiveProvider, isPerspective, usePerspective, type Perspective } from "@/lib/perspective"
 import { Sidebar, SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar"
@@ -33,6 +32,8 @@ import { useAccount, type Account } from "@/lib/session"
 import { WorkspaceError, useWorkspaces, type WorkspacesDocument } from "@/lib/workspaces-api"
 import nornMark from "@/assets/norn-mark.webp"
 import { Keys } from "@/components/keys"
+
+const LazyCustomThemeDialog = lazy(() => import("@/components/custom-theme-dialog").then((module) => ({ default: module.CustomThemeDialog })))
 
 export interface Section {
   readonly path: string
@@ -277,6 +278,11 @@ function ViewAndLanguage() {
 function AppearanceTray({ side = "bottom", variant = "bar" }: { readonly side?: "top" | "bottom"; readonly variant?: "bar" | "dock" }) {
   const { skin, setSkin, shell, setShell, customTheme } = useAppearance()
   const [themeDialogOpen, setThemeDialogOpen] = useState(false)
+  const [themeDialogMounted, setThemeDialogMounted] = useState(false)
+  const openThemeDialog = () => {
+    setThemeDialogMounted(true)
+    setThemeDialogOpen(true)
+  }
   return (
     <>
     <ChromeDock
@@ -347,7 +353,7 @@ function AppearanceTray({ side = "bottom", variant = "bar" }: { readonly side?: 
           <button
             type="button"
             data-slot="custom-theme-trigger"
-            onClick={() => setThemeDialogOpen(true)}
+            onClick={openThemeDialog}
             className="flex w-full items-center justify-between gap-2 rounded-lg border border-border/80 bg-background/70 px-2.5 py-2 text-xs font-medium text-foreground transition-colors outline-none hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
           >
             <span className="flex items-center gap-1.5">
@@ -359,7 +365,7 @@ function AppearanceTray({ side = "bottom", variant = "bar" }: { readonly side?: 
         </div>
       </ChromeDockTray>
     </ChromeDock>
-    <CustomThemeDialog open={themeDialogOpen} onOpenChange={setThemeDialogOpen} />
+    {themeDialogMounted && <Suspense fallback={null}><LazyCustomThemeDialog open={themeDialogOpen} onOpenChange={setThemeDialogOpen} /></Suspense>}
     </>
   )
 }
@@ -1162,6 +1168,7 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale
 
   const { shell } = useAppearance()
   const isDock = shell === "dock"
+  const resolvedPathname = useRouterState({ select: (state) => state.resolvedLocation?.pathname ?? state.location.pathname })
 
   return (
     <>
@@ -1220,7 +1227,9 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale
               </header>
             )}
           <ConnectionBanner />
-          <div className={isDock ? "mx-auto w-full max-w-[1220px] px-6 pt-4 pb-32 md:px-8 md:pt-5 md:pb-32" : "mx-auto w-full max-w-7xl px-5 py-7 md:px-9 md:py-8"}><Outlet /></div>
+          <div data-route={resolvedPathname} className={isDock ? "mx-auto w-full max-w-[1220px] px-6 pt-4 pb-32 md:px-8 md:pt-5 md:pb-32" : "mx-auto w-full max-w-7xl px-5 py-7 md:px-9 md:py-8"}>
+            <Outlet />
+          </div>
         </div>
         <Inspector />
         <AssistantPanel assistant={assistant} />

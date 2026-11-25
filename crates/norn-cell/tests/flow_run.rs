@@ -521,7 +521,7 @@ fn provisioning_replay_adds_a_system_table_an_older_file_lacks() {
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join("tenant.sqlite");
     let input = InstalledDefinitionInput {
-        canonical_set: "[]".to_owned(),
+        canonical_set: super::definitions_install::model_set(&model(), &serde_json::json!({})),
         registry: Vec::new(),
         receipt_sha256: "synthetic".to_owned(),
         admission_receipt: None,

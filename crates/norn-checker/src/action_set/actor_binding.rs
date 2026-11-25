@@ -20,6 +20,7 @@ use norn_ir::{
 
 use super::{Model, codes, decode_action, finding, synchronous_writer_payload};
 use crate::entity_instance::{EffectiveKind, EffectiveProperty};
+use crate::entity_scopes::ScopedViews;
 use crate::{Diagnostic, Span};
 
 /// One finding at an input schema property, escaped as JSON Pointer segments.
@@ -281,11 +282,13 @@ fn guard_of<'a>(artifact: Option<&'a ArtifactEnvelope>, root: &'a ActionRoot) ->
 /// guard in both directions, so the admission order cannot route around it:
 /// a conflict is reported on the candidate side (the unguarded candidate, or
 /// the candidate guard that an installed action or writer would bypass).
+/// Each firing action resolves type names through its own scoped view
+/// (#1376).
 pub(super) fn transition_guard_findings(
     actions: &[(&ArtifactEnvelope, ActionRoot)],
     artifacts: &[ArtifactEnvelope],
     base: &[ArtifactEnvelope],
-    model: &Model<'_>,
+    views: &mut ScopedViews<'_>,
 ) -> Vec<Diagnostic> {
     let installed: Vec<(&ArtifactEnvelope, ActionRoot)> = base
         .iter()
@@ -307,6 +310,7 @@ pub(super) fn transition_guard_findings(
         .collect();
     let mut findings = Vec::new();
     for (artifact, root, candidate) in &all {
+        let model = views.of(artifact).model();
         for guard in guards
             .iter()
             .filter(|guard| fires_unguarded(root, guard, model))
@@ -416,6 +420,7 @@ mod tests {
     use super::super::synchronous_rule_findings;
     use super::*;
     use crate::entity_artifacts::EntityArtifactSetContext;
+    use crate::entity_scopes::{ScopedView, ScopedViews};
     use norn_ir::{ActionInputDerivation, ZenExpression};
 
     fn artifacts() -> Vec<ArtifactEnvelope> {
@@ -470,9 +475,10 @@ mod tests {
     #[test]
     fn caller_writable_protected_creator_refuses() {
         let artifacts = artifacts();
-        let model = Model::new(&artifacts, &[], &BTreeSet::new(), true);
+        let view = scoped(&artifacts);
+        let model = view.model();
         let (artifact, admitted) = root(&artifacts, "ledger.invoice.submit.action");
-        assert_eq!(actor_binding_findings(&artifact, &admitted, &model), []);
+        assert_eq!(actor_binding_findings(&artifact, &admitted, model), []);
         let creator = (
             codes::TARGET_NOT_WRITABLE.to_owned(),
             "/payload/inputSchema/properties/submitted_by".to_owned(),
@@ -481,7 +487,7 @@ mod tests {
         let mut caller_written = admitted.clone();
         caller_written.derive.clear();
         assert_eq!(
-            codes_at(&actor_binding_findings(&artifact, &caller_written, &model)),
+            codes_at(&actor_binding_findings(&artifact, &caller_written, model)),
             std::slice::from_ref(&creator)
         );
 
@@ -492,7 +498,7 @@ mod tests {
             input_required: false,
         });
         assert_eq!(
-            codes_at(&actor_binding_findings(&artifact, &laundered, &model)),
+            codes_at(&actor_binding_findings(&artifact, &laundered, model)),
             std::slice::from_ref(&creator)
         );
 
@@ -511,7 +517,7 @@ mod tests {
             };
             *write_mode = mode;
             assert_eq!(
-                codes_at(&actor_binding_findings(&artifact, &overwrite, &model)),
+                codes_at(&actor_binding_findings(&artifact, &overwrite, model)),
                 std::slice::from_ref(&creator)
             );
         }
@@ -522,9 +528,10 @@ mod tests {
     #[test]
     fn independent_actor_check_on_a_caller_controlled_field_refuses() {
         let artifacts = artifacts();
-        let model = Model::new(&artifacts, &[], &BTreeSet::new(), true);
+        let view = scoped(&artifacts);
+        let model = view.model();
         let (artifact, admitted) = root(&artifacts, "ledger.invoice.approve.action");
-        assert_eq!(actor_binding_findings(&artifact, &admitted, &model), []);
+        assert_eq!(actor_binding_findings(&artifact, &admitted, model), []);
         for (property, index) in [("tax_code", 0), ("unknown", 0), ("submitted_by", 1)] {
             let mut root = admitted.clone();
             if index == 0 {
@@ -533,7 +540,7 @@ mod tests {
                 root.independent_of.push(PropertyId(property.into()));
             }
             assert_eq!(
-                codes_at(&actor_binding_findings(&artifact, &root, &model)),
+                codes_at(&actor_binding_findings(&artifact, &root, model)),
                 [(
                     codes::INDEPENDENT_ACTOR.to_owned(),
                     format!("/payload/independentOf/{index}")
@@ -544,7 +551,7 @@ mod tests {
         let (create, mut created) = root(&artifacts, "ledger.invoice.submit.action");
         created.independent_of = vec![PropertyId("submitted_by".into())];
         assert_eq!(
-            codes_at(&actor_binding_findings(&create, &created, &model)),
+            codes_at(&actor_binding_findings(&create, &created, model)),
             [(
                 codes::INDEPENDENT_ACTOR.to_owned(),
                 "/payload/independentOf/0".to_owned()
@@ -584,10 +591,11 @@ mod tests {
             property["protected"] = serde_json::json!(true);
             property["computed"] = serde_json::json!("self.invoice_id");
         });
-        let model = Model::new(&artifacts, &[], &BTreeSet::new(), true);
+        let view = scoped(&artifacts);
+        let model = view.model();
         let (artifact, mut approve) = root(&artifacts, "ledger.invoice.approve.action");
         approve.independent_of = vec![PropertyId("tax_code".into())];
-        let findings = actor_binding_findings(&artifact, &approve, &model);
+        let findings = actor_binding_findings(&artifact, &approve, model);
         assert_eq!(
             codes_at(&findings),
             [(
@@ -603,10 +611,11 @@ mod tests {
     #[test]
     fn writer_schema_naming_a_protected_creator_refuses() {
         let artifacts = artifacts();
-        let model = Model::new(&artifacts, &[], &BTreeSet::new(), true);
+        let view = scoped(&artifacts);
+        let model = view.model();
         let (artifact, submit) = root(&artifacts, "ledger.invoice.submit.action");
         let writer = synchronous_writer_payload(&submit, &artifacts, &[]).expect("writer");
-        assert_eq!(writer_protected_findings(&artifact, &writer, &model), []);
+        assert_eq!(writer_protected_findings(&artifact, &writer, model), []);
         let widened = mutated(|documents| {
             let rule = document(documents, "ledger.invoice.writer.rule");
             rule["payload"]["outputSchema"]["properties"]["facts"]["items"]["properties"]["patch"]
@@ -614,7 +623,7 @@ mod tests {
         });
         let writer = synchronous_writer_payload(&submit, &widened, &[]).expect("writer");
         assert_eq!(
-            codes_at(&writer_protected_findings(&artifact, &writer, &model)),
+            codes_at(&writer_protected_findings(&artifact, &writer, model)),
             [(
                 codes::TARGET_NOT_WRITABLE.to_owned(),
                 "/payload/synchronousRule".to_owned()
@@ -657,11 +666,17 @@ mod tests {
             .expect("invoice property")
     }
 
+    /// The scoped view (#1376) the fixture's actions resolve names through.
+    fn scoped(artifacts: &[ArtifactEnvelope]) -> ScopedView<'_> {
+        ScopedView::of(&artifacts[0], artifacts, &[], &BTreeSet::new())
+    }
+
     fn approve_findings(artifacts: &[ArtifactEnvelope], independent_of: &str) -> Vec<Diagnostic> {
-        let model = Model::new(artifacts, &[], &BTreeSet::new(), true);
+        let view = scoped(artifacts);
+        let model = view.model();
         let (artifact, mut approve) = root(artifacts, "ledger.invoice.approve.action");
         approve.independent_of = vec![PropertyId(independent_of.into())];
-        actor_binding_findings(&artifact, &approve, &model)
+        actor_binding_findings(&artifact, &approve, model)
     }
 
     /// ACTOR-INDEPENDENT-1 (Astra blocker 3): a default, inherited default or
@@ -737,11 +752,11 @@ mod tests {
     #[test]
     fn sibling_action_firing_a_guarded_transition_must_declare_the_guard() {
         let artifacts = artifacts();
-        let model = Model::new(&artifacts, &[], &BTreeSet::new(), true);
+        let mut views = ScopedViews::new(&artifacts, &[], &BTreeSet::new());
         let (artifact, mut sibling) = root(&artifacts, "ledger.invoice.approve.action");
         let mut actions = action_set(&artifacts);
         assert_eq!(
-            transition_guard_findings(&actions, &artifacts, &[], &model),
+            transition_guard_findings(&actions, &artifacts, &[], &mut views),
             []
         );
         sibling.action_id = "ledger.invoice.fast_approve".into();
@@ -752,7 +767,7 @@ mod tests {
                 &actions,
                 &artifacts,
                 &[],
-                &model
+                &mut views
             )),
             [(
                 codes::INDEPENDENT_ACTOR.to_owned(),
@@ -767,7 +782,6 @@ mod tests {
     #[test]
     fn a_guard_added_after_an_installed_sibling_or_writer_refuses() {
         let artifacts = artifacts();
-        let model = Model::new(&artifacts, &[], &BTreeSet::new(), true);
         let (approve_artifact, approve) = root(&artifacts, "ledger.invoice.approve.action");
         let mut sibling = serde_json::to_value(&approve_artifact).expect("envelope");
         sibling["artifactId"] = serde_json::json!("ledger.invoice.fast_approve.action");
@@ -779,7 +793,8 @@ mod tests {
         let installed: Vec<ArtifactEnvelope> =
             vec![serde_json::from_value(sibling).expect("installed sibling")];
         let candidates = vec![(&approve_artifact, approve)];
-        let findings = transition_guard_findings(&candidates, &artifacts, &installed, &model);
+        let mut views = ScopedViews::new(&artifacts, &installed, &BTreeSet::new());
+        let findings = transition_guard_findings(&candidates, &artifacts, &installed, &mut views);
         assert_eq!(
             codes_at(&findings),
             [(
@@ -800,8 +815,9 @@ mod tests {
             item["transition"]["enum"] = serde_json::json!(["match", "approve"]);
         });
         let (raise, _) = root(&widened, "ledger.payable.raise.action");
-        let findings =
-            transition_guard_findings(&candidates, &widened, std::slice::from_ref(&raise), &model);
+        let installed = std::slice::from_ref(&raise);
+        let mut views = ScopedViews::new(&widened, installed, &BTreeSet::new());
+        let findings = transition_guard_findings(&candidates, &widened, installed, &mut views);
         assert_eq!(
             codes_at(&findings),
             [(
@@ -826,13 +842,13 @@ mod tests {
                 serde_json::json!(["ledger.GoodsReceipt", "ledger.Invoice"]);
             item["transition"]["enum"] = serde_json::json!(["match", "approve"]);
         });
-        let model = Model::new(&widened, &[], &BTreeSet::new(), true);
+        let mut views = ScopedViews::new(&widened, &[], &BTreeSet::new());
         assert_eq!(
             codes_at(&transition_guard_findings(
                 &action_set(&widened),
                 &widened,
                 &[],
-                &model
+                &mut views
             )),
             [(
                 codes::INDEPENDENT_ACTOR.to_owned(),
@@ -846,7 +862,8 @@ mod tests {
     #[test]
     fn writer_scalar_set_of_a_protected_property_refuses() {
         let artifacts = artifacts();
-        let model = Model::new(&artifacts, &[], &BTreeSet::new(), true);
+        let view = scoped(&artifacts);
+        let model = view.model();
         let (artifact, submit) = root(&artifacts, "ledger.invoice.submit.action");
         for property in [
             Some(serde_json::json!({"type": "string", "enum": ["submitted_by"]})),
@@ -862,7 +879,7 @@ mod tests {
             });
             let writer = synchronous_writer_payload(&submit, &set, &[]).expect("writer");
             assert!(
-                codes_at(&writer_protected_findings(&artifact, &writer, &model))
+                codes_at(&writer_protected_findings(&artifact, &writer, model))
                     .iter()
                     .any(|(code, _)| code == codes::TARGET_NOT_WRITABLE),
                 "{property:?}"
@@ -880,10 +897,11 @@ mod tests {
                         "timezone": "America/New_York", "scopeFields": [],
                         "resetPolicy": "day", "gapPolicy": "gapless_within_commit"}}]);
         });
-        let model = Model::new(&generated, &[], &BTreeSet::new(), true);
+        let view = scoped(&generated);
+        let model = view.model();
         let (artifact, submit) = root(&generated, "ledger.invoice.submit.action");
         assert!(
-            codes_at(&actor_binding_findings(&artifact, &submit, &model)).contains(&(
+            codes_at(&actor_binding_findings(&artifact, &submit, model)).contains(&(
                 "action.validation.invalid_payload".to_owned(),
                 "/payload/synchronousRule".to_owned()
             ))

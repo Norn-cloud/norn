@@ -34,6 +34,8 @@ mod commit_path;
 #[cfg(all(feature = "duckdb", feature = "native"))]
 #[path = "dataset_laws.rs"]
 mod dataset_laws;
+#[path = "definition_scope.rs"]
+mod definition_scope;
 #[path = "explorer_documents.rs"]
 mod explorer_documents;
 #[path = "governed_create.rs"]
