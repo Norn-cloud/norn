@@ -3292,7 +3292,7 @@
       ]
     },
     "WidgetView": {
-      "description": "A page's place in the UI ontology (UI-VIEW-1).\n\nA view is a semantic, typed UI concept, never a visual one. Its four\ncontracts are the page's typed data bindings (data), its `machine`\n(interaction), the `behaviors` on its nodes (accessibility), and the\ncapability catalog derived by [`WidgetUx::renderer_capabilities`]\n(what a renderer must implement to draw it). Renderers are compile\ntargets of this contract; swapping one never touches the page.",
+      "description": "A page's place in the UI ontology (UI-VIEW-1).\n\nA view is a semantic, typed UI concept, never a visual one. Its four\ncontracts are the page's typed data bindings (data), its `machine`\n(interaction), the `behaviors` on its nodes (accessibility), and the\ncapability catalog `norn-ui-checker` derives from the contract\n(what a renderer must implement to draw it). Renderers are compile\ntargets of this contract; swapping one never touches the page.",
       "type": "object",
       "properties": {
         "kind": {

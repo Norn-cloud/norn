@@ -272,7 +272,7 @@ pub struct WidgetPage {
 /// A view is a semantic, typed UI concept, never a visual one. Its four
 /// contracts are the page's typed data bindings (data), its `machine`
 /// (interaction), the `behaviors` on its nodes (accessibility), and the
-/// capability catalog derived by [`WidgetUx::renderer_capabilities`]
+/// capability catalog `norn-ui-checker` derives from the contract
 /// (what a renderer must implement to draw it). Renderers are compile
 /// targets of this contract; swapping one never touches the page.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
