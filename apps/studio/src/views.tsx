@@ -14,7 +14,8 @@ import { RecordsGrid } from "./grid/records-grid.tsx"
 import { openedQuery } from "./grid/views-bar.tsx"
 import type { Concept } from "./lib/catalog.ts"
 import { NO_DATA_CELL, StudioScopeError, useStudioScope, type Finding, type StudioScope } from "./lib/definitions.ts"
-import { useWorkspace, type DecidedScope } from "./lib/workspace.tsx"
+import { untilDecided, useWorkspace, type Workspace } from "./lib/workspace.tsx"
+import { matchWorkspaceState } from "./lib/state/index.ts"
 import { WorkspaceUndecided } from "@/components/load-state"
 import type { Issue } from "./lib/editor.ts"
 import { readerKeyIn, useReaderKey } from "./lib/session.ts"
@@ -602,7 +603,7 @@ export function ViewEditor({
   concepts,
   stored,
   activeScope,
-  decided,
+  workspace,
   cellAvailable,
   onSaved,
   onReload,
@@ -614,10 +615,10 @@ export function ViewEditor({
   readonly stored?: StoredView
   readonly activeScope: StudioScope | null
   /**
-   * The workspace the page's mode decided (`lib/workspace.tsx`), `null` until one is: the live preview
-   * reads only there, and only while the draft is bound to it (#1762).
+   * The workspace the page's mode decided (`lib/workspace.tsx`): the live preview reads only in a live
+   * one, and only while the draft is bound to it (#1762); until one is decided it reads and shows nothing.
    */
-  readonly decided: DecidedScope | null
+  readonly workspace: Workspace
   readonly cellAvailable: boolean
   readonly onSaved: (saved: { readonly id: string; readonly version: number }) => void
   readonly onReload?: () => Promise<ReloadViewOutcome>
@@ -816,15 +817,16 @@ export function ViewEditor({
   const columns = view.columns ?? fields.slice(0, 6).map(({ id }) => id)
 
   // Live bounded preview of matching records, bound explicitly to `draftScope` and read only when that
-  // is the workspace the page's mode decided.
-  const previewScope = decided !== null && sameScope(decided, draftScope) ? decided : null
+  // is the live workspace the page's mode decided. Until it is, the read waits under a key no answer
+  // reaches (`untilDecided`), so rows read before the mode failed, or in another workspace, never show (#1763).
+  const previewScope = workspace.kind === "live" && sameScope(workspace.scope, draftScope) ? workspace.scope : null
+  const previewRead = untilDecided(previewScope === null ? undefined : {
+    queryKey: viewPreviewQueryKey(previewScope, view),
+    queryFn: ({ signal }) => store.preview(view.objectType, { filter: view.filter ?? null, sort, limit: 5 }, previewScope, signal),
+  }, viewPreviewQueryKey(draftScope, view))
   const previewQuery = useQuery({
-    queryKey: viewPreviewQueryKey(draftScope, view),
-    queryFn: ({ signal }) => {
-      if (previewScope === null) throw new StudioScopeError(NO_DATA_CELL)
-      return store.preview(view.objectType, { filter: view.filter ?? null, sort, limit: 5 }, previewScope, signal)
-    },
-    enabled: cellAvailable && previewScope !== null && !scopeMismatch && scopeError === null && view.objectType !== "",
+    ...previewRead,
+    enabled: previewRead.enabled && cellAvailable && !scopeMismatch && scopeError === null && view.objectType !== "",
     retry: false,
   })
   useEffect(() => {
@@ -840,7 +842,7 @@ export function ViewEditor({
   const previewWorkspaceChanged =
     previewQuery.error instanceof StudioScopeError && previewQuery.error.message === WORKSPACE_CHANGED_MESSAGE
   const workspaceAlert = scopeMismatch || previewWorkspaceChanged ? WORKSPACE_CHANGED_MESSAGE : scopeError
-  const previewPage = workspaceAlert === null && previewQuery.data?.kind === "page" ? previewQuery.data : undefined
+  const previewPage = workspaceAlert === null && previewScope !== null && previewQuery.data?.kind === "page" ? previewQuery.data : undefined
 
   const issues = issuesOf(findings)
   const invalid = (field: string) => issues.some((i) => i.field === field)
@@ -1063,57 +1065,69 @@ export function ViewEditor({
       </div>
 
       <Panel label={`Live preview${previewPage?.total ? ` · ${totalText(previewPage.total)}` : ""}`}>
-        <div className="border-t px-4 py-3">
-        {workspaceAlert && <p className="text-body text-destructive">{workspaceAlert}</p>}
-        {!workspaceAlert && previewQuery.isPending && <p className="text-body text-muted-foreground">Checking matching records…</p>}
-        {!workspaceAlert && previewQuery.isError && <p className="text-body text-muted-foreground">{failure(previewQuery.error)}</p>}
-        {!workspaceAlert && previewQuery.data?.kind === "refused" && <p role="alert" className="text-body text-destructive">{previewQuery.data.message}</p>}
-        {!workspaceAlert && previewPage && previewPage.read.document.records.length === 0 && (
-          <p className="text-body text-muted-foreground">No records currently match this filter.</p>
-        )}
-        {!workspaceAlert && previewPage && previewPage.read.document.records.length > 0 && (
-          <div className="overflow-x-auto">
-            <table className="w-full text-body">
-              <thead>
-                <tr className="border-b text-start text-meta text-muted-foreground">
-                  <th className="py-1.5 pe-3 text-start">Record</th>
-                  {previewCols.map((col, colIdx) => (
-                    <th key={`${col}:${colIdx}`} className="px-3 py-1.5 text-start">{col.replaceAll("_", " ")}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {previewPage.read.document.records.map((rec, index) => {
-                  const row: GridRow = { record: rec, at: `/records/${index}`, numbers: previewPage.read.numbers }
-                  const withheld = isWithheld(row)
-                  return (
-                    <tr key={rec.id} data-withheld={withheld || undefined}>
-                      <td className="py-1.5 pe-3">
-                        {withheld ? rec.id : recordName(rec)}
-                        {withheld && previewCols.length === 0 && (
-                          <span className="ms-2 font-normal"><WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark></span>
-                        )}
-                      </td>
-                      {withheld ? (
-                        previewCols.length > 0 && (
-                          <td colSpan={previewCols.length} className="px-3 py-1.5 text-muted-foreground">
-                            <WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark>
-                          </td>
+        <div className="border-t px-4 py-3" data-view-preview="">
+        {workspaceAlert
+          ? <p className="text-body text-destructive">{workspaceAlert}</p>
+          : matchWorkspaceState(workspace, {
+            // No workspace is decided yet, or the mode read failed: nothing is read, and nothing cached shows.
+            deciding: (state) => <WorkspaceUndecided workspace={state} skeleton="inline" loadingLabel="Checking matching records" />,
+            unavailable: (state) => <WorkspaceUndecided workspace={state} />,
+            // No cell is connected: the recording neither filters nor sorts, so it previews nothing.
+            recorded: () => <p role="status" className="text-body text-muted-foreground">{NO_DATA_CELL}</p>,
+            live: () => draftScope !== null && previewScope === null
+              ? <p role="alert" className="text-body text-destructive">{WORKSPACE_CHANGED_MESSAGE}</p>
+              : <>
+              {previewQuery.isPending && <p className="text-body text-muted-foreground">Checking matching records…</p>}
+              {previewQuery.isError && <p className="text-body text-muted-foreground">{failure(previewQuery.error)}</p>}
+              {previewQuery.data?.kind === "refused" && <p role="alert" className="text-body text-destructive">{previewQuery.data.message}</p>}
+              {previewPage && previewPage.read.document.records.length === 0 && (
+                <p className="text-body text-muted-foreground">No records currently match this filter.</p>
+              )}
+              {previewPage && previewPage.read.document.records.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-body">
+                    <thead>
+                      <tr className="border-b text-start text-meta text-muted-foreground">
+                        <th className="py-1.5 pe-3 text-start">Record</th>
+                        {previewCols.map((col, colIdx) => (
+                          <th key={`${col}:${colIdx}`} className="px-3 py-1.5 text-start">{col.replaceAll("_", " ")}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {previewPage.read.document.records.map((rec, index) => {
+                        const row: GridRow = { record: rec, at: `/records/${index}`, numbers: previewPage.read.numbers }
+                        const withheld = isWithheld(row)
+                        return (
+                          <tr key={rec.id} data-withheld={withheld || undefined}>
+                            <td className="py-1.5 pe-3">
+                              {withheld ? rec.id : recordName(rec)}
+                              {withheld && previewCols.length === 0 && (
+                                <span className="ms-2 font-normal"><WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark></span>
+                              )}
+                            </td>
+                            {withheld ? (
+                              previewCols.length > 0 && (
+                                <td colSpan={previewCols.length} className="px-3 py-1.5 text-muted-foreground">
+                                  <WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark>
+                                </td>
+                              )
+                            ) : (
+                              previewCols.map((col, colIdx) => (
+                                <td key={`${col}:${colIdx}`} className="px-3 py-1.5 text-muted-foreground">
+                                  {propertyWithheld(rec, col) ? <WithheldMark /> : String(rec.values[col] ?? "—")}
+                                </td>
+                              ))
+                            )}
+                          </tr>
                         )
-                      ) : (
-                        previewCols.map((col, colIdx) => (
-                          <td key={`${col}:${colIdx}`} className="px-3 py-1.5 text-muted-foreground">
-                            {propertyWithheld(rec, col) ? <WithheldMark /> : String(rec.values[col] ?? "—")}
-                          </td>
-                        ))
-                      )}
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              </>,
+          })}
         </div>
       </Panel>
     </div>
@@ -1180,7 +1194,7 @@ export function ViewEditorPage() {
           concepts={concepts}
           stored={editorStored ?? undefined}
           activeScope={activeScope}
-          decided={workspace.kind === "live" ? workspace.scope : null}
+          workspace={workspace}
           cellAvailable={cellAvailable}
           onReload={() => reloadConflictingView(
             () => stored.refetch(),

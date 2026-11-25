@@ -37,7 +37,11 @@ export interface CallRefusal { readonly status: number; readonly code: string; r
 /** One governed call's state (`lib/state`'s {@link ActionCallState}): a draft, a call out, its answer, its undo. */
 export type Phase = ActionCallState<ActionReceipt, UndoOffer, PendingDecision, CallRefusal>
 
-/** A call that never reached a deciding cell: a Retry sends it again, under its key. */
+/**
+ * A call no deciding cell answered: no cell is served (`not_served`), the cell answered without applying
+ * it (`unavailable`), or the answer was lost and it may have committed (`timed_out`). A Retry sends it
+ * again, under its key, so it never applies twice.
+ */
 export type Unreached = Extract<Phase, { readonly kind: "not_served" | "unavailable" | "timed_out" }>
 export const unreached = (phase: Phase): phase is Unreached => phase.kind === "not_served" || phase.kind === "unavailable" || phase.kind === "timed_out"
 
@@ -107,19 +111,23 @@ export function update(state: State, msg: Msg): readonly [State, readonly Cmd[]]
     case "submit": {
       if (inFlight(state) || phase.kind === "committed" || phase.kind === "pending_approval" || phase.kind === "undoing" || phase.kind === "undo_failed" || phase.kind === "undone") return [state, []]
       if (state.target.risky && phase.kind !== "confirming") return [{ ...state, phase: { kind: "confirming" } }, []]
-      return [{ ...state, phase: { kind: "sending" }, sent: { input: msg.input, key: state.key } }, [call(state.target.actionId, msg.input, state.key)]]
+      const sent: SentCall = { input: msg.input, key: state.key }
+      return [{ ...state, phase: { kind: "sending", sent }, sent }, [call(state.target.actionId, sent.input, sent.key)]]
     }
     case "back":
       return phase.kind === "confirming" ? [{ ...state, phase: { kind: "editing" } }, []] : [state, []]
     case "retry":
-      if (unreached(phase) && state.sent !== null) return [{ ...state, phase: { kind: "sending" } }, [call(state.target.actionId, state.sent.input, state.sent.key)]]
+      if (unreached(phase) && state.sent !== null) return [{ ...state, phase: { kind: "sending", sent: state.sent } }, [call(state.target.actionId, state.sent.input, state.sent.key)]]
       // Undo keeps its own key across a retry, like any call.
       if (phase.kind === "undo_failed") return [{ ...state, phase: { kind: "undoing", receipt: phase.receipt, undo: phase.undo } }, [call(phase.undo.actionId, phase.undo.input, state.key)]]
       return [state, []]
     case "run-approved":
       // Only the decision this machine waits on, only its own action: never another call's key.
       if (phase.kind !== "pending_approval" || phase.decision.id !== msg.decisionId || msg.actionId !== state.target.actionId) return [state, []]
-      return [{ ...state, phase: { kind: "sending" }, key: msg.next, sent: { input: msg.input, key: msg.key } }, [call(state.target.actionId, msg.input, msg.key)]]
+      {
+        const sent: SentCall = { input: msg.input, key: msg.key }
+        return [{ ...state, phase: { kind: "sending", sent }, key: msg.next, sent }, [call(state.target.actionId, sent.input, sent.key)]]
+      }
     case "again":
       // A new draft is a new call; an undo left unconfirmed keeps its own Retry until then.
       if (phase.kind !== "committed" && phase.kind !== "undone" && phase.kind !== "undo_failed" && phase.kind !== "pending_approval") return [state, []]
@@ -128,11 +136,11 @@ export function update(state: State, msg: Msg): readonly [State, readonly Cmd[]]
       if (phase.kind !== "committed" || phase.undo === null) return [state, []]
       return [{ ...state, phase: { kind: "undoing", receipt: phase.receipt, undo: phase.undo }, key: msg.key }, [call(phase.undo.actionId, phase.undo.input, msg.key)]]
     case "threw":
-      if (phase.kind === "sending") return [{ ...state, phase: { kind: "timed_out", sent: sentOf(state), message: msg.message } }, []]
+      if (phase.kind === "sending") return [{ ...state, phase: { kind: "timed_out", sent: phase.sent, message: msg.message } }, []]
       if (phase.kind === "undoing") return [{ ...state, phase: { kind: "undo_failed", receipt: phase.receipt, undo: phase.undo, message: msg.message, known: false } }, []]
       return [state, []]
     case "answered":
-      if (phase.kind === "sending") return [{ ...state, phase: answered(msg.result, sentOf(state)) }, msg.result.kind === "receipt" ? [REFETCH] : []]
+      if (phase.kind === "sending") return [{ ...state, phase: answered(msg.result, phase.sent) }, msg.result.kind === "receipt" ? [REFETCH] : []]
       if (phase.kind === "undoing") {
         const result = msg.result
         if (result.kind === "receipt") return [{ ...state, phase: { kind: "undone", receipt: phase.receipt, reversal: result.receipt } }, [REFETCH]]
@@ -143,9 +151,6 @@ export function update(state: State, msg: Msg): readonly [State, readonly Cmd[]]
       return [state, []]
   }
 }
-
-/** The call a sending machine sent: `sent` is set by every message that starts a call. */
-const sentOf = (state: State): SentCall => state.sent ?? { input: "", key: state.key }
 
 function answered(result: CallAnswer, sent: SentCall): Phase {
   switch (result.kind) {

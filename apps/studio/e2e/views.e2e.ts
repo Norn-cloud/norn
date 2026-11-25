@@ -656,3 +656,51 @@ test("views: an unreadable definition answer says so and never shows No view", a
   await expect(page.getByText(`No view ${id} is saved.`)).toHaveCount(0)
   await expect(page.getByRole("button", { name: "Delete" })).toHaveCount(0)
 })
+
+// #1763 round 1: the editor's live preview was keyed by the draft's workspace, not by the page's decided
+// one. When the mode read failed, its query was only disabled and the rows it had read stayed on screen;
+// with no decided workspace and nothing cached it said "Checking matching records…" for good.
+test("views: the editor's live preview shows Workspace unavailable when the mode read fails, never its cached rows, and reads them again on Retry", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await workspaceCell(page)
+  let sessionDown = false
+  await page.route("**/api/me", (route) => sessionDown
+    ? route.fulfill({ status: 503, json: { error: "The workspace host is unavailable.", retryable: false } })
+    : route.fallback())
+  await page.goto("/views/new")
+  await page.getByLabel("View title").fill("Preview while undecided")
+  await page.getByLabel("Record type").selectOption("funnel.Application")
+  const preview = page.locator("[data-view-preview]")
+  await expect(preview.getByText("Ada Reyes")).toBeVisible()
+  // The session's workspace read fails: the page's mode is undecided, and nothing the preview read shows.
+  sessionDown = true
+  await refocus(page)
+  await expect(preview.locator("[data-workspace-unavailable]")).toBeVisible()
+  await expect(preview.getByRole("table")).toHaveCount(0)
+  await expect(preview.getByText("Ada Reyes")).toHaveCount(0)
+  await expect(preview.getByText("Checking matching records…")).toHaveCount(0)
+  await shoot(page, "views-editor-preview-workspace-unavailable")
+  // The session recovers; the preview's Retry decides the mode again, and the preview reads its records.
+  sessionDown = false
+  await Promise.all([
+    page.waitForResponse(/\/v1\/objects\/funnel\.Application\?/),
+    preview.getByRole("button", { name: "Retry" }).click(),
+  ])
+  await expect(preview.getByText("Ada Reyes")).toBeVisible()
+  await expect(preview.locator("[data-workspace-unavailable]")).toHaveCount(0)
+})
+
+test("views: in a workspace with no data cell the editor's live preview says so, and never waits for records", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await workspaceCell(page)
+  // The session names a workspace, and its definitions read answers that no cell is connected there.
+  await page.route("**/api/host/v1/definitions**", (route) => new URL(route.request().url()).pathname.endsWith("/v1/definitions")
+    ? route.fulfill({ status: 404, json: { code: "definitions.not_found", message: "No cell is connected." } })
+    : route.fallback())
+  await page.goto("/views/new")
+  const preview = page.locator("[data-view-preview]")
+  await expect(preview.getByText("This workspace has no data cell yet.")).toBeVisible()
+  await expect(preview.getByText("Checking matching records…")).toHaveCount(0)
+  await expect(preview.getByRole("table")).toHaveCount(0)
+  await shoot(page, "views-editor-preview-no-cell")
+})

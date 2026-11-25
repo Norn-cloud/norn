@@ -414,9 +414,88 @@ test("findings: the record page reads a record's findings once, and showing the 
     await page.getByRole("tab", { name: "Overview" }).click()
     await expect(page.getByText("No findings", { exact: true })).toBeVisible()
   }
-  await page.waitForLoadState("networkidle")
-  test.info().annotations.push({ type: "findings reads", description: `load ${onLoad}, after two Overview remounts ${findingsReads.length}` })
-  expect(findingsReads).toHaveLength(1)
+  const afterRemounts = findingsReads.length
+  // Read again reads the findings again: its read is the signal that the page has sent every read it was
+  // going to, since a remount's read would have gone out before it.
+  await Promise.all([
+    page.waitForResponse((response) => new URL(response.url()).pathname.endsWith("/findings")),
+    page.getByRole("button", { name: "Read again" }).click(),
+  ])
+  test.info().annotations.push({ type: "findings reads", description: `load ${onLoad}, after two Overview remounts ${afterRemounts}, after Read again ${findingsReads.length}` })
+  expect(findingsReads).toHaveLength(2)
+})
+
+/** The action that corrects the Party the stand-in holds back: the contact its required-value law asks for. */
+const CORRECT_CONTACT = {
+  actionId: VERIFY.actionId,
+  title: VERIFY.title,
+  description: "Record the contact the record is missing.",
+  objectKind: "canon.Party",
+  effect: "fire_transition",
+  objectIdField: "id",
+  toState: null,
+  uiEffects: { irreversible: false, destructive: false, money: [] },
+  inputSchema: {
+    type: "object", additionalProperties: false, required: ["id", "email"],
+    properties: { id: { type: "string", title: "Party id" }, email: { type: "string", title: "Contact email" } },
+  },
+}
+
+// #1763 round 1: a record's findings stay fresh for 30 seconds (FINDINGS_STALE_MS), so the header and the
+// Findings panel share one read. A correction that releases a quarantined record reads them again at once:
+// inside that window the page must not keep showing the record held back, or a finding the cell settled.
+test("findings: correcting a quarantined record reads its findings again, so the header and the Findings panel show it released at once", async ({ page }) => {
+  await recordCell(page, "admin")
+  let corrected = false
+  const findingsReads: string[] = []
+  const id = "demo/party/0001"
+  const held = { objectType: "canon.Party", id, quarantined: true, evidence: [],
+    findings: [{ id: "f-1", ruleRef: { kind: "builtin", id: "core.required", version: "1" }, severity: "error", message: "A required value is missing.", status: "open", firstSeen: "2026-11-18T09:12:00Z", lastSeen: "2026-11-18T09:12:00Z" }] }
+  const released = { objectType: "canon.Party", id, quarantined: false, evidence: [], findings: [] }
+  // While a law holds the record back, the cell serves it to no read: its object read is the opaque 404.
+  await page.route((url) => decodeURIComponent(url.pathname).endsWith(`/v1/objects/canon.Party/${id}`), (route) => corrected
+    ? route.fallback()
+    : route.fulfill({ status: 404, json: { code: "object.not_found", message: "No such readable object." } }))
+  await page.route((url) => url.pathname.endsWith("/findings"), (route) => {
+    findingsReads.push(route.request().url())
+    return route.fulfill({ json: corrected ? released : held })
+  })
+  // The cell offers the correction on the record, and its commit releases it.
+  await page.route("**/api/host/v1/actions**", (route) => {
+    if (route.request().method() === "GET") return route.fulfill({ json: { definitionsVersion: 1, items: [CORRECT_CONTACT] } })
+    corrected = true
+    return route.fulfill({ json: { outcome: "committed", objectType: "canon.Party", objectId: id, version: 3, receipt: { receiptHash: "c".repeat(64), commitSeq: 413, recordedAtMs: Date.now() } } })
+  })
+  await page.goto(PARTY)
+  const header = page.locator("div:has(> h1)")
+  const quarantine = page.getByRole("status").filter({ hasText: "Held in quarantine" })
+  await expect(quarantine).toBeVisible()
+  await expect(header.locator('[data-fact-status="quarantined"]')).toBeVisible()
+  await expect(header.getByText("Held back", { exact: true })).toBeVisible()
+  await expect(header.getByText("1 rule broken", { exact: true })).toBeVisible()
+  await expect.poll(() => findingsReads.length).toBe(1)
+  const read = Date.now()
+  await shoot(page, "party-quarantined")
+
+  await page.getByRole("button", { name: CORRECT_CONTACT.title }).click()
+  const sheet = page.getByRole("dialog")
+  await sheet.getByLabel("Contact email").fill("contact@example.com")
+  await sheet.getByRole("button", { name: CORRECT_CONTACT.title }).click()
+  await expect(sheet.getByRole("status")).toBeVisible()
+  await sheet.getByRole("button", { name: "Done" }).click()
+
+  // The cell serves the record now: the page shows it, and its findings as the cell answers them after the
+  // correction, in the header and in the Findings panel, without waiting for the earlier read to go stale.
+  await expect(quarantine).toHaveCount(0)
+  await expect(page.getByRole("tab", { name: "Overview" })).toBeVisible()
+  await expect(page.getByText("No findings", { exact: true })).toBeVisible()
+  await expect(header.locator('[data-fact-status="quarantined"]')).toHaveCount(0)
+  await expect(header.getByText("Held back", { exact: true })).toHaveCount(0)
+  await expect(header.getByText("1 rule broken", { exact: true })).toHaveCount(0)
+  expect(findingsReads).toHaveLength(2)
+  // The row proves the fix only inside the window: past it, the panel's mount alone would read them again.
+  expect(Date.now() - read).toBeLessThan(30_000)
+  await shoot(page, "party-corrected")
 })
 
 test("markings: a reveal asked under a projection, answered after it changed and changed back, is never shown", async ({ page }) => {

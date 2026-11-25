@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
-import { ACTIONS_UNAVAILABLE, callAction, decimalExample, escapePointer, instantText, isDiagnosticPlaced, offsetSuffix, pickerDateTime, rebaseFields, resolveDateTime, selectedAlternative, sentMembers, inputPointer, itemNoun, receiptVerb, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft, type FormField, type Section, type Spec } from "../lib/actions.ts"
+import { ACTIONS_UNAVAILABLE, CALL_OUTCOME_UNKNOWN, callAction, decimalExample, escapePointer, instantText, isDiagnosticPlaced, offsetSuffix, pickerDateTime, rebaseFields, resolveDateTime, selectedAlternative, sentMembers, inputPointer, itemNoun, receiptVerb, risky as isRisky, writesWhole, draftAt, emptyDraft, emptyFor, encodeObject, fieldsOf, groupsOf, problemsAt, sectionLabel, sectionsOf, unplaced, unsupported, withDraftAt, type Draft, type FormField, type Section, type Spec } from "../lib/actions.ts"
 import { createIntentKey, type ActionReceipt, type ActionSummary, type Diagnostic } from "../../../../packages/norn-sdk/src/index.ts"
 import { parkedOf, unreached, type ParkedCall, type Phase, type Unreached } from "../lib/screen/call.ts"
 import { listRequested, requestedOne, requestedPath, requestedWords, runnable, type RequestedDecision } from "../lib/decisions.ts"
@@ -28,9 +28,12 @@ const Links = createContext<ReadonlyMap<string, string>>(new Map())
 export type EnumLabelLookup = (pointer: string, value: string) => string | undefined
 const EnumLabels = createContext<EnumLabelLookup>(() => undefined)
 
-/** The words for a call that never reached a deciding cell. */
+/**
+ * The words for a call no deciding cell answered: none is served, the cell took nothing, or the answer
+ * was lost and the call may have been saved (`timed_out`: said so, never "nothing was saved").
+ */
 const unreachable = (phase: Unreached) =>
-  phase.kind === "not_served" ? "This workspace has no data cell yet." : phase.kind === "unavailable" ? ACTIONS_UNAVAILABLE : phase.message ?? "The cell did not answer; nothing was saved."
+  phase.kind === "not_served" ? "This workspace has no data cell yet." : phase.kind === "unavailable" ? ACTIONS_UNAVAILABLE : phase.message ?? CALL_OUTCOME_UNKNOWN
 
 /**
  * One governed action as a form built from its admitted input schema. The cell validates and
