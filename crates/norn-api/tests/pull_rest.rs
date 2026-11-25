@@ -591,7 +591,7 @@ fn failed_at_once(
     match sources.step(host, id, None, EXTRACTED_AT_MS) {
         Step::Done(summary) => {
             assert_eq!(summary.outcome, "failed", "{summary:#?}");
-            summary.error.map(|(code, _)| code).unwrap_or_default()
+            summary.error.map_or_else(String::new, |(code, _)| code)
         }
         other @ (Step::Request(_) | Step::Continue) => {
             panic!("expected a failed run, got {other:?}")

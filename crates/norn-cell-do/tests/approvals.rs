@@ -1259,8 +1259,8 @@ fn a_decision_list_charges_every_parked_command_it_reads() {
     let body = melt_body("melt-last", "12", "10", "operator-last");
     let (status, parked) = call_at(&cell, ("POST", &path, SCOPE), OPERATOR, &body, NOW + 30);
     assert_eq!(status, 202, "{parked}");
-    let last = parked["decision"]["id"].clone();
-    assert!(last.is_string(), "{parked}");
+    let newest = parked["decision"]["id"].clone();
+    assert!(newest.is_string(), "{parked}");
     let page = list(NOW + 30);
     assert_eq!(page["total"], json!(scan.saturating_sub(half)), "{page}");
     assert_eq!(page["totalCapped"], json!(true), "{page}");
@@ -1271,7 +1271,7 @@ fn a_decision_list_charges_every_parked_command_it_reads() {
     assert_eq!(page["items"], json!([]), "{page}");
     assert_eq!(page["total"], json!(0), "{page}");
     assert_eq!(page["totalCapped"], json!(true), "{page}");
-    assert!(!page.to_string().contains(&last.to_string()), "{page}");
+    assert!(!page.to_string().contains(&newest.to_string()), "{page}");
 }
 
 /// #1587: an approval-gated action with optional `trace` context parks with
