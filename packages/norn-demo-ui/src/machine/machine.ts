@@ -21,6 +21,9 @@ export type CallOutcome =
   | "pending_approval"
   | "answer_moved"
   | "network_failure"
+  | "not_served"
+  | "stale"
+  | "subscription_refused"
   | "timeout"
   | "cancelled"
 
@@ -29,7 +32,7 @@ export type RefusalCategory = "visibility" | "permission" | "precondition" | "co
 export type EventSource =
   | { readonly kind: "page_opened" }
   | { readonly kind: "user"; readonly nodeId: string; readonly emits?: string }
-  | { readonly kind: "outcome"; readonly outcome: CallOutcome; readonly category?: RefusalCategory }
+  | { readonly kind: "outcome"; readonly outcome: CallOutcome; readonly category?: RefusalCategory; readonly code?: string }
   | { readonly kind: "subscription"; readonly bindingId: string }
   | { readonly kind: "timer"; readonly afterMs: number }
 

@@ -45,6 +45,13 @@ function answer(msg: Extract<Msg, { kind: "outcome" }>): { status: number; body:
       return { status: 202, body: { outcome: "pending", decision: { id: "apv_1", expiresAtMs: Date.UTC(2026, 10, 7) } } }
     case "network_failure":
       return { status: 500, body: "" }
+    // Until the runtime tells a route that is not served apart (milestone C), the page lands in the
+    // same state through `network_failure`; the walk asserts the state.
+    case "not_served":
+      return { status: 404, body: "" }
+    case "stale":
+    case "subscription_refused":
+      return null
     case "timeout":
     case "cancelled":
       return null

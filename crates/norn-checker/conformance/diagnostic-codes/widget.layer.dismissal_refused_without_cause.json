@@ -1,0 +1,7 @@
+{
+  "code": "widget.layer.dismissal_refused_without_cause",
+  "message": "a UI SDK layer refuses dismissal where nothing justifies it: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

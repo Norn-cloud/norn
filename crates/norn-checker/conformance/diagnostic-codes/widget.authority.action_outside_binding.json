@@ -1,0 +1,7 @@
+{
+  "code": "widget.authority.action_outside_binding",
+  "message": "a page reaches a Norn action outside its action binding: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

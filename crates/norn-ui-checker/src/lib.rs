@@ -4,8 +4,9 @@
 //! Ring-1 UI/widget validation: widget artifact envelopes ([`envelope`]),
 //! typed Widget UX contracts ([`widget_ux`]), interaction rules
 //! ([`ui_interaction`]), page statecharts ([`ui_machine`]), semantic views
-//! ([`ui_view`]), catalog components ([`ui_catalog`]), and page-to-lifecycle
-//! composition ([`ui_lifecycle`]).
+//! ([`ui_view`]), catalog components ([`ui_catalog`]), page-to-lifecycle
+//! composition ([`ui_lifecycle`]), UI SDK layers and the authority split
+//! ([`ui_layer`]) over the pinned UI SDK catalog ([`ui_sdk`]).
 
 // Deterministic core policy (#3299).
 #![deny(clippy::disallowed_types)]
@@ -13,8 +14,10 @@
 pub mod envelope;
 pub mod ui_catalog;
 pub mod ui_interaction;
+pub mod ui_layer;
 pub mod ui_lifecycle;
 pub mod ui_machine;
+pub mod ui_sdk;
 pub mod ui_view;
 pub mod widget_ux;
 

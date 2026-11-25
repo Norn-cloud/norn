@@ -4463,10 +4463,10 @@ fn machine_widget(machine: Value) -> Value {
         "kind": "collection",
         "subject": { "kind": "object_type", "object": { "id": "commerce.Order.entity", "version": "0.1.0" } }
     }));
-    page.at_mut("root")
-        .at_mut("children")
-        .at_mut(0)
-        .set("behaviors", json!(["selection", "roving_focus"]));
+    page.at_mut("root").at_mut("children").at_mut(0).set(
+        "behaviors",
+        json!(["selection/selection-model", "focus/roving-focus"]),
+    );
     widget
 }
 
@@ -4529,12 +4529,14 @@ fn the_renderer_catalog_is_derived_from_the_page() {
         serde_json::to_value(payload.ux.as_value().expect("ux")).expect("ux"),
     )
     .expect("typed ux");
-    let catalog = ux.renderer_capabilities();
+    let catalog = norn_ui_checker::ui_sdk::renderer_capabilities(&ux);
     for capability in [
+        "agent:confirm",
+        "agent:redaction",
         "view:collection",
         "component:list",
-        "behavior:selection",
-        "behavior:roving_focus",
+        "behavior:selection/selection-model",
+        "behavior:focus/roving-focus",
         "effect:start:action",
         "effect:cancel",
         "event:user",
@@ -4714,7 +4716,7 @@ fn a_view_presents_a_bound_subject_with_fitting_behaviours() {
     assert_ui_code(widget, "widget.view.subject_unbound", "neither read");
 
     let mut widget = machine_widget(approve_machine());
-    widget["payload"]["ux"]["pages"][0]["root"]["behaviors"] = json!(["selection"]);
+    widget["payload"]["ux"]["pages"][0]["root"]["behaviors"] = json!(["selection/selection-model"]);
     assert_ui_code(widget, "widget.view.behavior_unfit", "orders-page");
 }
 
@@ -4797,7 +4799,7 @@ fn catalog_widget() -> Value {
             "framework": "foldkit", "density": "scan",
             "props": [{ "fieldId": "title", "type": "text", "required": true }, { "fieldId": "note", "type": "text", "required": false }],
             "events": [{ "eventId": "drill", "payload": [{ "fieldId": "period", "type": "text", "required": true }] }],
-            "behaviors": ["live_region"]
+            "behaviors": ["platform/announce"]
         },
         {
             "entryId": "yield-map", "label": { "en": "Yield map", "ar": "خريطة المردود" }, "trust": "opaque_island",
@@ -4932,14 +4934,14 @@ fn every_catalog_join_is_checked() {
     );
     catalog_code(
         catalog_edit(|ux| {
-            ux["pages"][0]["machine"]["events"][9]["source"]["emits"] = json!("explode");
+            ux["pages"][0]["machine"]["events"][10]["source"]["emits"] = json!("explode");
         }),
         "widget.catalog.unknown_event",
         "explode",
     );
     catalog_code(
         catalog_edit(|ux| {
-            ux["pages"][0]["machine"]["events"][9]["payload"][0]["type"] = json!("integer");
+            ux["pages"][0]["machine"]["events"][10]["payload"][0]["type"] = json!("integer");
         }),
         "widget.catalog.event_payload_mismatch",
         "drill",
@@ -4981,3 +4983,6 @@ fn only_a_catalog_component_may_leave_a_guard_to_its_own_code() {
         "ZEN",
     );
 }
+
+#[path = "widget_ux/ui_sdk_laws.rs"]
+mod ui_sdk_laws;
