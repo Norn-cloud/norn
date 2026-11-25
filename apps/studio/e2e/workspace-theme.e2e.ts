@@ -12,7 +12,7 @@ const WORKSPACES = [
 ] as const
 
 const PAPER = { version: 1, name: "Paper", baseSkin: "polar", variants: { light: { canvas: "#f4f2ed", shell: "#f4f2ed" }, dark: { canvas: "#121110", shell: "#121110" } } }
-const GRAPHITE = { version: 1, name: "Graphite", baseSkin: "polar", variants: { light: { canvas: "#e4e4e7", shell: "#e4e4e7" }, dark: { canvas: "#08090c", shell: "#08090c" } } }
+const GRAPHITE = { version: 1, name: "Graphite", baseSkin: "polar", variants: { light: { canvas: "#ececee", shell: "#ececee" }, dark: { canvas: "#08090c", shell: "#08090c" } } }
 
 /** The page's painted ground: `body` is `bg-canvas`. */
 const ground = (page: Page) => page.evaluate(() => getComputedStyle(document.body).backgroundColor)
@@ -142,7 +142,7 @@ test("switching workspace switches the theme, and a served theme that fails the 
   await page.reload()
   await expect(page.locator("[data-workspace-state]")).toContainText("North Operations")
   await expect.poll(() => themeName(page), { timeout: 15_000 }).toBe("Graphite")
-  await expect.poll(() => ground(page)).toBe("rgb(228, 228, 231)")
+  await expect.poll(() => ground(page)).toBe("rgb(236, 236, 238)")
 
   expect(await page.evaluate(async () => (await fetch("/api/workspaces/org_alpha/activate", { method: "POST" })).status)).toBe(200)
   await page.reload()

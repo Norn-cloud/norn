@@ -59,7 +59,9 @@ export async function readServedTheme(scope: StudioScope, fetcher: Fetch = defau
   }
   const b = body as { kind?: unknown; version?: unknown; payload?: unknown; code?: unknown; lifecycle?: unknown } | null
   if (response.status === 404 && b?.code === "definition.not_found") return { kind: "none" }
-  if (response.status !== 200 || typeof b?.version !== "number") return { kind: "unavailable" }
+  // A 200 that is not a definition read (no theme kind and no payload object) is no read at all.
+  const isDefinition = b?.kind === THEME_KIND || (typeof b?.payload === "object" && b.payload !== null && !Array.isArray(b.payload))
+  if (response.status !== 200 || typeof b?.version !== "number" || !isDefinition) return { kind: "unavailable" }
   if (b.lifecycle === "retired") return { kind: "none" }
   if (b.kind !== undefined && b.kind !== THEME_KIND) {
     return { kind: "invalid", version: b.version, issues: [{ code: "theme.validation.schema", path: "kind", message: `The workspace theme is a ${String(b.kind)} definition, not a theme.` }] }

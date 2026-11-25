@@ -29,6 +29,8 @@ test("no theme, a retired one, and a cell that does not answer all paint the def
   expect(await readServedTheme(scope, host(200, { kind: "theme", version: 4, lifecycle: "retired", payload: theme }).fetcher)).toEqual({ kind: "none" })
   expect(await readServedTheme(scope, host(404, { code: "route.not_found" }).fetcher)).toEqual({ kind: "unavailable" })
   expect(await readServedTheme(scope, host(503, { message: "cold" }).fetcher)).toEqual({ kind: "unavailable" })
+  // A route that answers 200 with something else (the definitions catalog) is no theme read.
+  expect(await readServedTheme(scope, host(200, { version: 1, artifacts: [] }).fetcher)).toEqual({ kind: "unavailable" })
   expect(await readServedTheme(scope, async () => { throw new TypeError("network") })).toEqual({ kind: "unavailable" })
 })
 
