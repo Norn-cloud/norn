@@ -64,6 +64,28 @@ export const STUDIO_THEME_TOKENS = [
   "chart-3",
   "chart-4",
   "chart-5",
+  // DESIGN.md 3: the colour tokens the spec adds join the allowlist; geometry tokens never do.
+  "subtle-foreground",
+  "line",
+  "action-dot",
+  "action-soft",
+  "dot-live",
+  "dot-held",
+  "dot-bad",
+  "dot-quiet",
+  "dot-accent",
+  "avatar-1-bg",
+  "avatar-1-fg",
+  "avatar-2-bg",
+  "avatar-2-fg",
+  "avatar-3-bg",
+  "avatar-3-fg",
+  "avatar-4-bg",
+  "avatar-4-fg",
+  "avatar-5-bg",
+  "avatar-5-fg",
+  "avatar-6-bg",
+  "avatar-6-fg",
 ] as const
 
 export type StudioThemeToken = (typeof STUDIO_THEME_TOKENS)[number]
@@ -208,6 +230,8 @@ export const STUDIO_THEME_PRESETS: readonly StudioTheme[] = [
         "action-hover": "#2f2a26",
         "action-foreground": "#fafaf9",
         border: "#e5e1d8",
+        line: "#dcd7cc",
+        "subtle-foreground": "#8a847c",
         ring: "#57534e",
       },
       dark: {
@@ -224,6 +248,8 @@ export const STUDIO_THEME_PRESETS: readonly StudioTheme[] = [
         "action-hover": "#e7e2d7",
         "action-foreground": "#191715",
         border: "#302b26",
+        line: "#3a342e",
+        "subtle-foreground": "#7c766e",
         ring: "#a8a29e",
       },
     },
@@ -317,6 +343,10 @@ const SHEET: Surface = [...CANVAS, "shell"]
 const SHEET_HOVER: Surface = [...SHEET, ["sidebar-accent", 0.5]]
 const SHEET_PILL: Surface = [...SHEET, "sidebar-accent"]
 const DOCK: Surface = [...BG, "dock-surface"]
+/** A decorative hairline only has to stay visible against its surface. */
+const HAIRLINE = 1.1
+/** A status dot beside its word only has to stay a visible mark, not carry the state alone. */
+const MARK = 1.5
 
 /**
  * The ink/surface pairs Studio renders (from the components' `bg-*`/`text-*` pairs), each with its
@@ -406,6 +436,23 @@ const PAIRS: readonly (readonly [StudioThemeToken, string, Surface, number])[] =
   ["dock-muted", "dock-well", [...DOCK, "dock-well"], 4.5],
   ["ring", "background", BG, 3],
   ["dock-ring", "dock-surface", DOCK, 3],
+  // Decorative glyphs (separators, chevrons, info marks) in `--subtle-foreground` stay visible at 3:1 (DESIGN.md 4.1).
+  ["subtle-foreground", "canvas", CANVAS, 3],
+  ["subtle-foreground", "card", CARD, 3],
+  ["subtle-foreground", "well", [...CARD, "well"], 3],
+  // Hairlines (SourceTag rings, dividers, the empty ticks of the rules bar) are decorative, but never vanish.
+  ["line", "card", CARD, HAIRLINE],
+  ["line", "well", [...CARD, "well"], HAIRLINE],
+  // `--action-soft` carries no muted text (DESIGN.md 4.2); ink on a drop target or a selection halo still reads.
+  ["foreground", "action-soft over card", [...CARD, "action-soft"], 4.5],
+  ["foreground", "action-soft over well", [...CARD, "well", "action-soft"], 4.5],
+  // Status dots always sit beside their word (StatusDot), so they are not held to 3:1, only kept visible.
+  ...(["dot-live", "dot-held", "dot-bad", "dot-quiet", "dot-accent", "action-dot"] as const).flatMap((dot) => [
+    [dot, "card", CARD, MARK] as const,
+    [dot, "well", [...CARD, "well"], MARK] as const,
+  ]),
+  // Avatar discs: initials are text on their disc, 4.5:1 (DESIGN.md 4.4, 16.2).
+  ...([1, 2, 3, 4, 5, 6] as const).map((n) => [`avatar-${n}-fg`, `avatar-${n}-bg`, [...CARD, `avatar-${n}-bg`], 4.5] as const),
 ]
 
 /** The effective palette a theme paints for one scheme: the base skin's rendered palette under its overrides. */

@@ -78,8 +78,12 @@ pub mod naming_series;
 mod partition_slice;
 pub mod predicate_read;
 pub use partition_slice::{PartitionSlice, load_partition_slice};
+mod principal_inputs;
 mod synchronous_rule;
 pub use norn_decisions::DecisionBinding;
+pub use principal_inputs::{
+    ActionPrincipalInputs, PrincipalInputsRequest, UnresolvedPrincipalInput,
+};
 pub use synchronous_rule::{SynchronousRule, SynchronousRuleError};
 mod observations;
 pub mod quantity;

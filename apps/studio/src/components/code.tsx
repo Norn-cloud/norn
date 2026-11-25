@@ -24,7 +24,7 @@ export function Code({ code, className }: { readonly code: string; readonly clas
     void load().then((shiki) => { if (live) setHtml(shiki.codeToHtml(code, { lang: "json", themes: { light: "github-light", dark: "github-dark" }, defaultColor: false })) })
     return () => { live = false }
   }, [code])
-  const frame = cn("max-h-96 overflow-auto rounded-md border bg-background p-3 font-mono text-xs leading-relaxed", className)
+  const frame = cn("max-h-96 overflow-auto rounded-md border bg-background p-3 font-mono text-meta leading-relaxed", className)
   return html === undefined
     ? <pre className={frame}><code>{code}</code></pre>
     : <div className={cn("code", frame)} dangerouslySetInnerHTML={{ __html: html }} />

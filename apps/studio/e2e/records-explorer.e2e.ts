@@ -104,6 +104,39 @@ test("facets that never arrive: the rail stops counting after its deadline, says
   await expect(rail(page)).toContainText("30 records, counted by the cell")
 })
 
+// #1763 r1: a refused count follows the server's retry flag. A refusal the cell marks retryable (it moved
+// mid-count) and an outage offer Retry, which counts again; any other refusal, coded or not, offers none.
+const REFUSED_COUNTS = [
+  { name: "a refusal the cell marks retryable (409 object.snapshot_moved)", status: 409, retry: true,
+    body: { code: "object.snapshot_moved", category: "retry", retryable: true, message: "the cell changed while the page was read", explanation: "repeat the read; a page is never assembled from two snapshots" } },
+  { name: "an outage (503)", status: 503, retry: true, body: { message: "The cell is restarting." } },
+  { name: "a coded refusal (403 authz.denied)", status: 403, retry: false, body: { code: "authz.denied", category: "forbidden", retryable: false, message: "Your role may not count this type." } },
+  { name: "an uncoded 403", status: 403, retry: false, body: { error: "forbidden" } },
+] as const
+
+for (const { name, status, retry, body } of REFUSED_COUNTS) {
+  test(`facets refused, ${name}: the rail says the counts aren't available and ${retry ? "offers Retry, which counts again" : "offers no Retry"}`, async ({ page }) => {
+    await session(page)
+    await objectCell(page, population(30))
+    await viewsCell(page)
+    let refusing = true
+    await page.route("**/v1/objects/canon.Holding:facets**", (route) => refusing ? route.fulfill({ status, json: body }) : route.fallback())
+    await page.goto("/objects/canon.Holding")
+    await expect(page.getByText("30 records", { exact: true })).toBeVisible()
+    const side = page.locator("aside")
+    await expect(side.getByText("Counts aren't available", { exact: true })).toBeVisible()
+    await expect(side.getByText("The records are still listed.")).toBeVisible()
+    const again = side.getByRole("button", { name: "Retry" })
+    if (!retry) {
+      await expect(again).toHaveCount(0)
+      return
+    }
+    refusing = false
+    await again.click()
+    await expect(rail(page)).toContainText("30 records, counted by the cell")
+  })
+}
+
 test("connections: a cell without the connection type says 'No connections yet' and never asks for it; with the type, a refused read is said quietly with a retry", async ({ page }) => {
   await session(page)
   await objectCell(page, population(3))

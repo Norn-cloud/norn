@@ -306,7 +306,9 @@ fn only_the_exact_kernel_record_types_ride_beside_a_definition_set() -> TestResu
     action_call.properties.push(serde_json::from_value(
         json!({ "id": "exfiltrated", "type": { "kind": "text" }, "constraints": { "nullable": true } }),
     )?);
-    for (records, admitted) in [(tampered, false), (exact, true)] {
+    // The one other form: a cell that records principal inputs (#1091).
+    let recording = norn_cell::kernel_record_types_recording_principal_inputs();
+    for (records, admitted) in [(tampered, false), (exact, true), (recording, true)] {
         let mut types = vec![item.clone()];
         types.extend(records);
         let model = Model::from_definitions(&types, &[])?;

@@ -11,6 +11,91 @@ use std::collections::{BTreeMap, BTreeSet};
 /// # Errors
 /// Tenant declarations using SQLite-equivalent reserved names or invalid models refuse.
 pub fn prepare_action_model(model: &norn_cell::Model) -> Result<norn_cell::Model, Refusal> {
+    prepare(model, false)
+}
+
+/// What a cell's stored model serves, which the model of every later
+/// revision keeps (DEFS-REOPEN-1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Serving {
+    /// The kernel's action receipt and owned-row types.
+    pub actions: bool,
+    /// The call record's `principalInputs` column. Once a revision records
+    /// it, later revisions keep it whether or not they declare principal
+    /// inputs, so a rollback never orphans stored values.
+    pub principal_inputs: bool,
+}
+
+impl Serving {
+    /// A cell that serves actions and has recorded no principal inputs.
+    pub const ACTIONS: Self = Self {
+        actions: true,
+        principal_inputs: false,
+    };
+
+    /// What `model` serves.
+    #[must_use]
+    pub fn of(model: &norn_cell::Model) -> Self {
+        let call_record = model
+            .object_types()
+            .find(|declared| declared.name.as_str() == norn_kernel::ACTION_CALL_TYPE);
+        Self {
+            actions: call_record.is_some(),
+            principal_inputs: call_record.is_some_and(|record| {
+                record
+                    .properties
+                    .iter()
+                    .any(|property| property.id.as_str() == norn_cell::PRINCIPAL_INPUTS_PROPERTY)
+            }),
+        }
+    }
+}
+
+impl<E: norn_cell::engine::SqlEngine> crate::host::DevHost<E> {
+    /// What this host's open cell serves. A host that installs a revision
+    /// builds its candidate model from this, so the column a cell already
+    /// records is kept (DEFS-REOPEN-1).
+    /// # Errors
+    /// The cell is fenced or its lock is poisoned.
+    pub fn serving(&self) -> Result<Serving, Refusal> {
+        Ok(Serving::of(self.cell()?.store().model()))
+    }
+}
+
+/// [`prepare_action_model`] for the definitions `artifacts`. When a decide
+/// rule of the set declares principal inputs (PRINCIPAL-INPUT-1, #1091) the
+/// call record also keeps `principalInputs`. A set that declares none is
+/// served exactly the model [`prepare_action_model`] gives it, so its ledger
+/// does not change.
+/// # Errors
+/// As [`prepare_action_model`].
+pub fn prepare_action_model_for(
+    model: &norn_cell::Model,
+    artifacts: &[ArtifactEnvelope],
+) -> Result<norn_cell::Model, Refusal> {
+    prepare_action_model_keeping(model, artifacts, false)
+}
+
+/// [`prepare_action_model_for`], keeping the call record's `principalInputs`
+/// when `keep` says the cell already records it.
+/// # Errors
+/// As [`prepare_action_model`].
+pub fn prepare_action_model_keeping(
+    model: &norn_cell::Model,
+    artifacts: &[ArtifactEnvelope],
+    keep: bool,
+) -> Result<norn_cell::Model, Refusal> {
+    let declared = artifacts.iter().any(|artifact| {
+        artifact.kind() == ArtifactKind::Rule
+            && matches!(
+                artifact.payload.to_json_value().as_object().and_then(|payload| payload.get("principalInputs")),
+                Some(norn_ir::JsonValue::Array(inputs)) if !inputs.is_empty()
+            )
+    });
+    prepare(model, declared || keep)
+}
+
+fn prepare(model: &norn_cell::Model, principal_inputs: bool) -> Result<norn_cell::Model, Refusal> {
     let mut snapshot = model.definitions_snapshot();
     let declared = snapshot.object_types.iter().map(|ty| ty.name.as_str());
     if declared
@@ -19,9 +104,13 @@ pub fn prepare_action_model(model: &norn_cell::Model) -> Result<norn_cell::Model
     {
         return Err(Refusal::invalid("reserved kernel object type"));
     }
-    snapshot
-        .object_types
-        .extend(norn_cell::kernel_record_types());
+    // The call record's `principalInputs`, only for a set that declares
+    // principal inputs or a cell that already records them.
+    snapshot.object_types.extend(if principal_inputs {
+        norn_cell::kernel_record_types_recording_principal_inputs()
+    } else {
+        norn_cell::kernel_record_types()
+    });
     norn_cell::Model::from_snapshot(&snapshot).map_err(Refusal::host)
 }
 
@@ -492,5 +581,92 @@ mod tests {
         let checked = check_artifact_set_with_receipt(&sources, &context, &limits)?;
         assert!(checked.receipt.admitted, "{:#?}", checked.diagnostics);
         assert_no_actions(&checked.receipt, &artifacts)
+    }
+}
+
+#[cfg(test)]
+mod serving_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn call_record_properties(model: &norn_cell::Model) -> Vec<String> {
+        model
+            .object_types()
+            .find(|object_type| object_type.name.as_str() == norn_kernel::ACTION_CALL_TYPE)
+            .map_or_default(|object_type| {
+                object_type
+                    .properties
+                    .iter()
+                    .map(|property| property.id.0.clone())
+                    .collect()
+            })
+    }
+
+    fn rule(payload: &serde_json::Value) -> ArtifactEnvelope {
+        serde_json::from_value(json!({
+            "irVersion": "0.1",
+            "artifactId": "document.review.rule",
+            "kind": "rule",
+            "namespace": "document",
+            "name": "Review",
+            "version": "1.0.0",
+            "lifecycle": "draft",
+            "scope": {"orgId": "org_demo", "environmentId": "dev"},
+            "dependencies": [],
+            "provenance": {"source": "authoring_sdk", "sourcePath": "test.ts"},
+            "payload": payload
+        }))
+        .expect("rule artifact")
+    }
+
+    /// PRINCIPAL-INPUT-1: the call record gains `principalInputs` only for a
+    /// set that declares principal inputs; every other set is served the
+    /// model it was served before, so its ledger does not change.
+    #[test]
+    fn only_a_set_that_declares_principal_inputs_records_them() {
+        let model = norn_cell::Model::from_definitions(&[], &[]).expect("model");
+        let plain = call_record_properties(&prepare_action_model(&model).expect("served model"));
+        assert!(!plain.iter().any(|id| id == "principalInputs"));
+        let undeclared = rule(&json!({"ruleId": "document.review"}));
+        let same = prepare_action_model_for(&model, &[undeclared]).expect("served model");
+        assert_eq!(call_record_properties(&same), plain);
+        let declared = rule(&json!({
+            "ruleId": "document.review",
+            "principalInputs": [
+                {"name": "isReviewer", "kind": {"holdsRole": {"role": "reviewer", "at": "resource"}}}
+            ]
+        }));
+        let recorded = prepare_action_model_for(&model, &[declared]).expect("served model");
+        assert_eq!(
+            Serving::of(&recorded),
+            Serving {
+                actions: true,
+                principal_inputs: true
+            }
+        );
+        let recorded = call_record_properties(&recorded);
+        assert_eq!(recorded.last().map(String::as_str), Some("principalInputs"));
+        assert_eq!(
+            recorded.split_last().map(|(_, rest)| rest),
+            Some(plain.as_slice())
+        );
+    }
+
+    /// DEFS-REOPEN-1: a cell that recorded principal inputs keeps the column
+    /// under a later set that declares none, so its stored values are never
+    /// orphaned; a cell that never recorded any is unchanged.
+    #[test]
+    fn a_cell_that_records_principal_inputs_keeps_the_column_under_any_later_set() {
+        let model = norn_cell::Model::from_definitions(&[], &[]).expect("model");
+        let undeclared = [rule(&json!({"ruleId": "document.review"}))];
+        let plain = prepare_action_model(&model).expect("served model");
+        assert!(!Serving::of(&model).actions);
+        assert_eq!(Serving::of(&plain), Serving::ACTIONS);
+        let kept = prepare_action_model_keeping(&model, &undeclared, true).expect("served model");
+        assert!(Serving::of(&kept).principal_inputs);
+        let dropped =
+            prepare_action_model_keeping(&model, &undeclared, false).expect("served model");
+        assert_eq!(dropped.model_hash(), plain.model_hash());
+        assert_ne!(kept.model_hash(), plain.model_hash());
     }
 }

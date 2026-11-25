@@ -54,7 +54,7 @@ export const sameDraft = (a: readonly DraftClause[], b: readonly DraftClause[]) 
 /** The draft as applying it would leave it: trimmed, and without what its test does not use. */
 export const settled = (draft: readonly DraftClause[], fields: readonly Field[]) => fromPredicate(toPredicate(draft, fields))
 
-const select = "h-8 rounded-md border bg-background px-2 text-sm"
+const select = "h-8 rounded-md border bg-background px-2 text-body"
 
 type ProblemProps = { readonly "aria-invalid"?: true; readonly "aria-describedby"?: string }
 
@@ -72,7 +72,7 @@ function ValueInput({ field, clause, onChange, label, problemAt }: { readonly fi
       )
     }
     return (
-      <textarea {...invalid} aria-label={label} placeholder="One value per line" className="min-h-16 rounded-md border bg-background px-2 py-1 text-sm"
+      <textarea {...invalid} aria-label={label} placeholder="One value per line" className="min-h-16 rounded-md border bg-background px-2 py-1 text-body"
         value={clause.value} onChange={(event) => onChange({ ...clause, value: event.target.value })} />
     )
   }
@@ -125,7 +125,7 @@ export function FilterEditor({ fields, draft, onDraft, onApply, onClear, applied
   const general = diagnosticsAt(diagnostics, "/filter").filter(({ pointer }) => !pointer?.startsWith("/filter/all/"))
   return (
     <form className="grid gap-3" aria-label="Filter records" onSubmit={(event) => { event.preventDefault(); onApply() }}>
-      {draft.length === 0 && <p className="text-sm text-muted-foreground">No conditions. Every record is shown.</p>}
+      {draft.length === 0 && <p className="text-body text-muted-foreground">No conditions. Every record is shown.</p>}
       <ol className="grid gap-2">
         {draft.map((clause, index) => {
           const field = options.find(({ id: fid }) => fid === clause.property) ?? options[0]

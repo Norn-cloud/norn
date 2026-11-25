@@ -60,7 +60,11 @@ export async function intervalCell(page: Page, options: { readonly pointed?: boo
   const calls: { actionId: string; body: string }[] = []
   const scoped = (url: URL) => url.searchParams.get("orgId") === "org_demo" && url.searchParams.get("environmentId") === "analytics"
   await page.route("**/api/me", (route) => route.fulfill({ json: { user: { id: "u_e2e", name: "E2E", email: "viewer@example.com" }, organization: { id: "org_demo", name: "Demo", role: "viewer" }, environmentId: "analytics" } }))
-  await page.route("**/api/host/v1/definitions**", (route) => route.fulfill({ json: { artifacts: INTERVAL_ARTIFACTS } }))
+  // The views bar lists saved views through `definitions:list`, whose wire shape is `{ items, cursor }`;
+  // every other definitions read answers the cell's artifacts.
+  await page.route("**/api/host/v1/definitions**", (route) => new URL(route.request().url()).pathname.endsWith("/v1/definitions:list")
+    ? route.fulfill({ json: { items: [], cursor: null } })
+    : route.fulfill({ json: { artifacts: INTERVAL_ARTIFACTS } }))
   await page.route("**/api/host/v1/objects/**", async (route: Route) => {
     const url = new URL(route.request().url())
     requests.push(url)

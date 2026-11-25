@@ -94,3 +94,38 @@ test("home: a key number the server refuses leaves Home, and the server's reason
     await page.screenshot({ path: info.outputPath(`home-refused-number-${scheme}.png`), animations: "disabled" })
   }
 })
+
+// UI polish: two groups held by one law tell themselves apart on the title line (type and count); each
+// record's finding starts at one x; at 390px the actions sit under the title and a comparison never splits.
+test("home: one law's groups name their type and count on the title line, findings share one column, and phones keep titles and comparisons whole", async ({ page }) => {
+  const ledger = { ...group([{ objectType: "docs.LedgerEntry", id: "LE-1", target: "/sources/docs.LedgerEntry/LE-1", finding: { id: "l1", words: "total 720.00 ≠ lines 72.00", message: "m", compared: {} } }]), objectType: "docs.LedgerEntry", count: 5, target: "/objects/docs.LedgerEntry?population=held_back" }
+  const scanned = { ...group([
+    { objectType: "docs.ScannedDocument", id: "SCAN-INV-0042", target: "/sources/docs.ScannedDocument/SCAN-INV-0042", finding: { id: "s1", words: "total 720.00 ≠ lines 72.00", message: "m", compared: {} } },
+    { objectType: "docs.ScannedDocument", id: "SCAN-INV-0099", target: "/sources/docs.ScannedDocument/SCAN-INV-0099", values: { doc_number: "October office supply invoice" }, finding: { id: "s2", words: "total 1400.00 ≠ ledger entry 140.00", message: "m", compared: {} } },
+  ]), count: 500, approximate: true }
+  await cell(page, { scanLimit: 10000, sections: [{ kind: "held_back", count: 505, shown: 3, approximate: true }, sections[1], sections[2]], items: [ledger, scanned] })
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.goto("/")
+  const heads = page.getByRole("heading", { level: 3 })
+  await expect(heads.nth(0)).toContainText("An itemized document's total equals the sum of its lines")
+  await expect(heads.nth(0)).toContainText("5 held back")
+  await expect(heads.nth(1)).toContainText("500+ held back")
+  expect(await heads.nth(0).innerText()).not.toBe(await heads.nth(1).innerText())
+  // Every finding starts at one x.
+  const xs = await page.locator("[data-held-record] [data-finding]").evaluateAll((nodes) => nodes.map((node) => Math.round(node.getBoundingClientRect().x)))
+  expect(xs.length).toBe(3)
+  expect(new Set(xs).size).toBe(1)
+  // The column is centred in the canvas.
+  const column = await page.locator("[data-home]").boundingBox()
+  const canvas = await page.locator("[data-route]").boundingBox()
+  expect(Math.abs((column!.x - canvas!.x) - (canvas!.x + canvas!.width - column!.x - column!.width))).toBeLessThan(50)
+  await page.setViewportSize({ width: 390, height: 844 })
+  // At 390 the Review action sits under its title, and "ledger entry 140.00" stays on one line.
+  const title = heads.nth(1)
+  const review = page.getByRole("link", { name: "Review", exact: true }).nth(1)
+  expect((await review.boundingBox())!.y).toBeGreaterThan((await title.boundingBox())!.y + (await title.boundingBox())!.height - 2)
+  const side = page.locator('[data-held-record="SCAN-INV-0099"] [data-finding] span').nth(1)
+  await expect(side).toHaveText("≠ ledger entry 140.00")
+  // One line high: the inline block moved whole rather than breaking inside.
+  expect(await side.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThan(26)
+})

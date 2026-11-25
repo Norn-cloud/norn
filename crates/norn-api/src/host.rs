@@ -1,5 +1,6 @@
 //! One already-opened tenant cell shared by authorized transport adapters.
 use crate::{
+    action_admission::Serving,
     authz::{Authorizer, DenyAll, ReadCapability, ReadRequest, read_denied},
     refusal::Refusal,
     scope::{CellScope, ScopeQuery},
@@ -106,20 +107,19 @@ impl<E: SqlEngine> DerefMut for CellGuard<'_, E> {
 /// [`crate::kernel_set::serving_model`]; a cell this build seeds itself
 /// reopens under the bare [`crate::kernel_set::kernel_model`].
 #[must_use]
-pub fn serves_actions(model: &Model) -> bool {
-    model
-        .object_types()
-        .any(|declared| declared.name.as_str() == norn_kernel::ACTION_CALL_TYPE)
+pub fn serves_actions(model: &Model) -> Serving {
+    Serving::of(model)
 }
 
 /// The model a restarted host rebuilds for `canonical_set` (HOST-REOPEN-1):
 /// the serving model for a cell that serves actions, else the bare model.
 /// # Errors
 /// `host.error` when the set cannot be read or projected.
-pub fn reopen_model(canonical_set: &str, serving: bool) -> Result<Model, Refusal> {
+pub fn reopen_model(canonical_set: &str, serving: Serving) -> Result<Model, Refusal> {
     let artifacts = crate::kernel_set::retained_artifacts(canonical_set).map_err(Refusal::host)?;
-    if serving {
-        crate::kernel_set::serving_model(&artifacts).map_err(Refusal::host)
+    if serving.actions {
+        crate::kernel_set::serving_model_keeping(&artifacts, serving.principal_inputs)
+            .map_err(Refusal::host)
     } else {
         crate::kernel_set::kernel_model(&artifacts)
             .map_err(|refusal| Refusal::host(format!("{refusal:?}")))
@@ -137,7 +137,7 @@ pub fn reopen_model(canonical_set: &str, serving: bool) -> Result<Model, Refusal
 pub fn check_reopens(
     candidate_model: &Model,
     canonical_set: &str,
-    serving: bool,
+    serving: Serving,
 ) -> Result<(), Refusal> {
     let reopened = reopen_model(canonical_set, serving)?;
     if reopened.model_hash() != candidate_model.model_hash()

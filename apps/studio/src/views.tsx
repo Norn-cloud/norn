@@ -1,20 +1,26 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { Dot } from "@/components/system/status-dot"
 import { Link, useNavigate, useParams } from "@tanstack/react-router"
-import { ArrowDown, ArrowUp, Bookmark, Copy, Eye, Pencil, Plus, Shapes, Trash2, Undo2 } from "lucide-react"
+import { ArrowDown, ArrowUp, Bookmark, Copy, Ellipsis, Eye, Pencil, PencilLine, Plus, Shapes, Trash2, Undo2 } from "lucide-react"
+import { MenuTrigger } from "@ui-sdk/react/menu"
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type FormEvent } from "react"
 import { DirtyGuard, EditorToolbar, ValidationPanel, useEditor } from "@/components/editor"
-import { EmptyState, PageHeader, Panel, Well } from "@/components/panel"
+import { PageHeader } from "@/components/panel"
+import { EmptyState, Panel, Well } from "@/components/system/panel"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { KitMenuContent, KitMenuItem, Menu } from "@/components/system/kit"
+import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { isWithheld, WITHHELD_HINT, WITHHELD_ROW, WithheldMark, type GridRow } from "./grid/cells.tsx"
 import { FilterEditor, fromPredicate, toPredicate, type DraftClause } from "./grid/filter-editor.tsx"
 import { RecordsGrid } from "./grid/records-grid.tsx"
 import { openedQuery } from "./grid/views-bar.tsx"
 import type { Concept } from "./lib/catalog.ts"
 import { NO_DATA_CELL, StudioScopeError, useStudioScope, type Finding, type StudioScope } from "./lib/definitions.ts"
-import { useWorkspace, type DecidedScope } from "./lib/workspace.tsx"
+import { untilDecided, useWorkspace, type Workspace } from "./lib/workspace.tsx"
+import { matchWorkspaceState } from "./lib/state/index.ts"
 import { WorkspaceUndecided } from "@/components/load-state"
 import type { Issue } from "./lib/editor.ts"
 import { readerKeyIn, useReaderKey } from "./lib/session.ts"
@@ -265,11 +271,13 @@ function UndoDeleteView({ removed, pending, error, onUndo }: {
   )
 }
 
-function RenamePopover({ current, onRename }: {
+/** Rename a saved view: the name, and the cell's reason when it refuses (a conflict or a finding). */
+function RenameDialog({ open, onOpenChange, current, onRename }: {
+  readonly open: boolean
+  readonly onOpenChange: (open: boolean) => void
   readonly current: string
   readonly onRename: (title: string) => Promise<string | null>
 }) {
-  const [open, setOpen] = useState(false)
   const [title, setTitle] = useState(current)
   const [problem, setProblem] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -279,25 +287,57 @@ function RenamePopover({ current, onRename }: {
     setBusy(true)
     const err = await onRename(title.trim())
     setBusy(false)
-    if (err === null) setOpen(false)
+    if (err === null) onOpenChange(false)
     else setProblem(err)
   }
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button type="button" variant="ghost" size="sm"><Pencil />Rename</Button>
-      </PopoverTrigger>
-      <PopoverContent align="end" className="w-72 rounded-node border-node-border shadow-float">
-        <form onSubmit={(e) => void submit(e)} className="grid gap-2">
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-sm">
+        <DialogHeader><DialogTitle>Rename view</DialogTitle></DialogHeader>
+        <form onSubmit={(e) => void submit(e)} className="grid gap-3">
           <label className="grid gap-1 text-body">
             View name
             <Input value={title} onChange={(e) => setTitle(e.target.value)} autoFocus />
           </label>
           {problem && <p role="alert" className="text-meta text-destructive">{problem}</p>}
-          <Button type="submit" size="sm" disabled={busy || title.trim() === ""}>Rename</Button>
+          <DialogFooter><Button type="submit" disabled={busy || title.trim() === ""}>Rename</Button></DialogFooter>
         </form>
-      </PopoverContent>
-    </Popover>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+/**
+ * A saved view's other actions behind one "More" menu, so a card or a header shows one primary action
+ * and never wraps a lone verb onto its own line: Edit (where it is not the primary), Rename, Duplicate
+ * and Delete. Rename opens a small dialog; Delete keeps its receipt and Undo on the page.
+ */
+function ViewMenu({ title, editId, onRename, onDuplicate, onDelete, duplicating, deleting }: {
+  readonly title: string
+  /** The view to edit when Edit belongs in the menu (on a list card); omitted where Edit is the page's primary. */
+  readonly editId?: string
+  readonly onRename: (title: string) => Promise<string | null>
+  readonly onDuplicate: () => void
+  readonly onDelete: () => void
+  readonly duplicating: boolean
+  readonly deleting: boolean
+}) {
+  const [renaming, setRenaming] = useState(false)
+  return (
+    <>
+      <Menu>
+        <MenuTrigger aria-label={`More actions for ${title}`} className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "data-open:bg-accent")}>
+          <Ellipsis aria-hidden />More
+        </MenuTrigger>
+        <KitMenuContent align="end">
+          {editId !== undefined && <KitMenuItem value="edit" label="Edit" render={<Link to="/views/$id/edit" params={{ id: editId }} />}><Pencil aria-hidden />Edit</KitMenuItem>}
+          <KitMenuItem value="rename" label="Rename" onSelect={() => setRenaming(true)}><PencilLine aria-hidden />Rename</KitMenuItem>
+          <KitMenuItem value="duplicate" label="Duplicate" disabled={duplicating} onSelect={onDuplicate}><Copy aria-hidden />Duplicate</KitMenuItem>
+          <KitMenuItem value="delete" label="Delete" disabled={deleting} onSelect={onDelete}><Trash2 aria-hidden />Delete</KitMenuItem>
+        </KitMenuContent>
+      </Menu>
+      <RenameDialog open={renaming} onOpenChange={setRenaming} current={title} onRename={onRename} />
+    </>
   )
 }
 
@@ -367,15 +407,15 @@ export function ViewsPage() {
     <section className="space-y-6">
       <PageHeader
         title="Views"
-        description="Declarative projections over admitted record types, pinned into Spaces."
+        description="Saved lists of records, filtered and sorted the way you need them, grouped by Space."
         primary={<Button disabled={!cellAvailable} onClick={() => void navigate({ to: "/views/new" })}><Plus />New view</Button>}
       />
       {scope.isSuccess && scope.data === null && <p role="status" className="text-muted-foreground">{NO_DATA_CELL}</p>}
-      {scope.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><span aria-hidden className="size-[6px] shrink-0 rounded-full bg-dot-bad" />{scope.error.message}</p>}
+      {scope.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><Dot tone="bad">{scope.error.message}</Dot></p>}
       {cellAvailable && list.isPending && <p className="text-muted-foreground">Reading views…</p>}
       {list.isError && <EmptyState icon={Bookmark}>{failure(list.error)}</EmptyState>}
-      {duplicate.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><span aria-hidden className="size-[6px] shrink-0 rounded-full bg-dot-bad" />Not duplicated. {failure(duplicate.error)}</p>}
-      {remove.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><span aria-hidden className="size-[6px] shrink-0 rounded-full bg-dot-bad" />Not deleted. {failure(remove.error)}</p>}
+      {duplicate.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><Dot tone="bad">Not duplicated. {failure(duplicate.error)}</Dot></p>}
+      {remove.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><Dot tone="bad">Not deleted. {failure(remove.error)}</Dot></p>}
       {receipts.map((receipt) => <DeletionReceiptNotice key={receipt.id} receipt={receipt} store={views} onRestored={() => void refresh()} />)}
       {list.data?.length === 0 && (
         <EmptyState
@@ -399,21 +439,21 @@ export function ViewsPage() {
                   icon={Bookmark}
                   label={stored.view.title || "Untitled view"}
                   action={
-                    <div className="flex flex-wrap items-center gap-1">
-                      <Button asChild variant="ghost" size="sm"><Link to="/views/$id" params={{ id: stored.id }}><Eye />Open</Link></Button>
-                      <Button asChild variant="ghost" size="sm"><Link to="/views/$id/edit" params={{ id: stored.id }}><Pencil />Edit</Link></Button>
-                      <RenamePopover current={stored.view.title} onRename={(title) => rename(stored, title)} />
-                      <Button variant="ghost" size="sm" disabled={duplicate.isPending} onClick={() => duplicate.mutate(stored)}><Copy />Duplicate</Button>
-                      <Button variant="ghost" size="sm" onClick={() => remove.mutate({ stored, started: deletion.start() })}><Trash2 />Delete</Button>
+                    <div className="flex items-center gap-1">
+                      <Button asChild variant="outline" size="sm"><Link to="/views/$id" params={{ id: stored.id }}><Eye />Open</Link></Button>
+                      <ViewMenu title={stored.view.title || "Untitled view"} editId={stored.id} onRename={(title) => rename(stored, title)}
+                        onDuplicate={() => duplicate.mutate(stored)} onDelete={() => remove.mutate({ stored, started: deletion.start() })}
+                        duplicating={duplicate.isPending} deleting={false} />
                     </div>
                   }
                 >
                   <Well className="px-3.5 py-3">
-                    <div className="flex flex-wrap items-center gap-2 text-body text-muted-foreground">
+                    {/* Spaced by the gap alone, so a wrapped line never starts on a stray separator. */}
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-body text-muted-foreground">
                       <Badge variant="secondary">{concept?.title ?? stored.view.objectType}</Badge>
                       {stored.view.space && <Badge variant="outline">Space: {stored.view.space}</Badge>}
                       <span>{filterCount === 0 ? "All records" : `${filterCount} filter${filterCount === 1 ? "" : "s"}`}</span>
-                      <span><span aria-hidden className="text-subtle-foreground">·</span> Version {stored.version}</span>
+                      <span>Version {stored.version}</span>
                     </div>
                     {stored.view.description && <p className="mt-1.5 text-body text-muted-foreground">{stored.view.description}</p>}
                   </Well>
@@ -520,8 +560,9 @@ function ScopedViewDetail({ id, store = views }: {
 
   return (
     <section className="space-y-6">
-      <div className="flex flex-wrap items-start gap-2">
-        <div className="min-w-0 flex-1 space-y-1">
+      {/* The title keeps at least 18rem: on a phone the actions move under it instead of squeezing it. */}
+      <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
+        <div className="min-w-0 flex-1 basis-72 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-title tracking-tight">{active?.view.title || "View"}</h1>
             {active?.view.space && <Badge variant="outline">Space: {active.view.space}</Badge>}
@@ -531,20 +572,20 @@ function ScopedViewDetail({ id, store = views }: {
           {active?.view.description && <p className="text-body text-muted-foreground">{active.view.description}</p>}
         </div>
         {active && (
-          <div className="flex flex-wrap items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1">
             <Button asChild size="sm"><Link to="/views/$id/edit" params={{ id: active.id }}><Pencil />Edit</Link></Button>
-            <RenamePopover current={active.view.title} onRename={(title) => rename(active, title)} />
-            <Button variant="ghost" size="sm" disabled={duplicate.isPending} onClick={() => duplicate.mutate(active)}><Copy />Duplicate</Button>
-            <Button variant="ghost" size="sm" disabled={remove.isPending} onClick={() => remove.mutate({ from: active, started: deletion.start() })}><Trash2 />Delete</Button>
+            <ViewMenu title={active.view.title || "Untitled view"} onRename={(title) => rename(active, title)}
+              onDuplicate={() => duplicate.mutate(active)} onDelete={() => remove.mutate({ from: active, started: deletion.start() })}
+              duplicating={duplicate.isPending} deleting={remove.isPending} />
           </div>
         )}
       </div>
 
       {scope.isSuccess && scope.data === null && <p role="status" className="text-muted-foreground">{NO_DATA_CELL}</p>}
-      {scope.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><span aria-hidden className="size-[6px] shrink-0 rounded-full bg-dot-bad" />{scope.error.message}</p>}
+      {scope.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><Dot tone="bad">{scope.error.message}</Dot></p>}
       {detailScopeMismatch && <p role="alert" className="text-destructive">{WORKSPACE_CHANGED_MESSAGE}</p>}
-      {duplicate.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><span aria-hidden className="size-[6px] shrink-0 rounded-full bg-dot-bad" />Not duplicated. {failure(duplicate.error)}</p>}
-      {remove.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><span aria-hidden className="size-[6px] shrink-0 rounded-full bg-dot-bad" />Not deleted. {failure(remove.error)}</p>}
+      {duplicate.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><Dot tone="bad">Not duplicated. {failure(duplicate.error)}</Dot></p>}
+      {remove.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><Dot tone="bad">Not deleted. {failure(remove.error)}</Dot></p>}
       {!detailScopeMismatch && (scope.isPending || (cellAvailable && stored.isPending)) && <p className="text-muted-foreground">Reading view…</p>}
       {!detailScopeMismatch && stored.isError && <EmptyState icon={Bookmark}>{failure(stored.error)}</EmptyState>}
       {deleted && <DeletionReceiptNotice receipt={deleted} store={store} onRestored={() => { invalidate(); void stored.refetch() }} />}
@@ -602,7 +643,7 @@ export function ViewEditor({
   concepts,
   stored,
   activeScope,
-  decided,
+  workspace,
   cellAvailable,
   onSaved,
   onReload,
@@ -614,10 +655,10 @@ export function ViewEditor({
   readonly stored?: StoredView
   readonly activeScope: StudioScope | null
   /**
-   * The workspace the page's mode decided (`lib/workspace.tsx`), `null` until one is: the live preview
-   * reads only there, and only while the draft is bound to it (#1762).
+   * The workspace the page's mode decided (`lib/workspace.tsx`): the live preview reads only in a live
+   * one, and only while the draft is bound to it (#1762); until one is decided it reads and shows nothing.
    */
-  readonly decided: DecidedScope | null
+  readonly workspace: Workspace
   readonly cellAvailable: boolean
   readonly onSaved: (saved: { readonly id: string; readonly version: number }) => void
   readonly onReload?: () => Promise<ReloadViewOutcome>
@@ -816,15 +857,16 @@ export function ViewEditor({
   const columns = view.columns ?? fields.slice(0, 6).map(({ id }) => id)
 
   // Live bounded preview of matching records, bound explicitly to `draftScope` and read only when that
-  // is the workspace the page's mode decided.
-  const previewScope = decided !== null && sameScope(decided, draftScope) ? decided : null
+  // is the live workspace the page's mode decided. Until it is, the read waits under a key no answer
+  // reaches (`untilDecided`), so rows read before the mode failed, or in another workspace, never show (#1763).
+  const previewScope = workspace.kind === "live" && sameScope(workspace.scope, draftScope) ? workspace.scope : null
+  const previewRead = untilDecided(previewScope === null ? undefined : {
+    queryKey: viewPreviewQueryKey(previewScope, view),
+    queryFn: ({ signal }) => store.preview(view.objectType, { filter: view.filter ?? null, sort, limit: 5 }, previewScope, signal),
+  }, viewPreviewQueryKey(draftScope, view))
   const previewQuery = useQuery({
-    queryKey: viewPreviewQueryKey(draftScope, view),
-    queryFn: ({ signal }) => {
-      if (previewScope === null) throw new StudioScopeError(NO_DATA_CELL)
-      return store.preview(view.objectType, { filter: view.filter ?? null, sort, limit: 5 }, previewScope, signal)
-    },
-    enabled: cellAvailable && previewScope !== null && !scopeMismatch && scopeError === null && view.objectType !== "",
+    ...previewRead,
+    enabled: previewRead.enabled && cellAvailable && !scopeMismatch && scopeError === null && view.objectType !== "",
     retry: false,
   })
   useEffect(() => {
@@ -840,7 +882,7 @@ export function ViewEditor({
   const previewWorkspaceChanged =
     previewQuery.error instanceof StudioScopeError && previewQuery.error.message === WORKSPACE_CHANGED_MESSAGE
   const workspaceAlert = scopeMismatch || previewWorkspaceChanged ? WORKSPACE_CHANGED_MESSAGE : scopeError
-  const previewPage = workspaceAlert === null && previewQuery.data?.kind === "page" ? previewQuery.data : undefined
+  const previewPage = workspaceAlert === null && previewScope !== null && previewQuery.data?.kind === "page" ? previewQuery.data : undefined
 
   const issues = issuesOf(findings)
   const invalid = (field: string) => issues.some((i) => i.field === field)
@@ -1064,56 +1106,68 @@ export function ViewEditor({
 
       <Panel label={`Live preview${previewPage?.total ? ` · ${totalText(previewPage.total)}` : ""}`}>
         <div className="border-t px-4 py-3">
-        {workspaceAlert && <p className="text-body text-destructive">{workspaceAlert}</p>}
-        {!workspaceAlert && previewQuery.isPending && <p className="text-body text-muted-foreground">Checking matching records…</p>}
-        {!workspaceAlert && previewQuery.isError && <p className="text-body text-muted-foreground">{failure(previewQuery.error)}</p>}
-        {!workspaceAlert && previewQuery.data?.kind === "refused" && <p role="alert" className="text-body text-destructive">{previewQuery.data.message}</p>}
-        {!workspaceAlert && previewPage && previewPage.read.document.records.length === 0 && (
-          <p className="text-body text-muted-foreground">No records currently match this filter.</p>
-        )}
-        {!workspaceAlert && previewPage && previewPage.read.document.records.length > 0 && (
-          <div className="overflow-x-auto">
-            <table className="w-full text-body">
-              <thead>
-                <tr className="border-b text-start text-meta text-muted-foreground">
-                  <th className="py-1.5 pe-3 text-start">Record</th>
-                  {previewCols.map((col, colIdx) => (
-                    <th key={`${col}:${colIdx}`} className="px-3 py-1.5 text-start">{col.replaceAll("_", " ")}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {previewPage.read.document.records.map((rec, index) => {
-                  const row: GridRow = { record: rec, at: `/records/${index}`, numbers: previewPage.read.numbers }
-                  const withheld = isWithheld(row)
-                  return (
-                    <tr key={rec.id} data-withheld={withheld || undefined}>
-                      <td className="py-1.5 pe-3">
-                        {withheld ? rec.id : recordName(rec)}
-                        {withheld && previewCols.length === 0 && (
-                          <span className="ms-2 font-normal"><WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark></span>
-                        )}
-                      </td>
-                      {withheld ? (
-                        previewCols.length > 0 && (
-                          <td colSpan={previewCols.length} className="px-3 py-1.5 text-muted-foreground">
-                            <WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark>
-                          </td>
+        {workspaceAlert
+          ? <p className="text-body text-destructive">{workspaceAlert}</p>
+          : matchWorkspaceState(workspace, {
+            // No workspace is decided yet, or the mode read failed: nothing is read, and nothing cached shows.
+            deciding: (state) => <WorkspaceUndecided workspace={state} skeleton="inline" loadingLabel="Checking matching records" />,
+            unavailable: (state) => <WorkspaceUndecided workspace={state} />,
+            // No cell is connected: the recording neither filters nor sorts, so it previews nothing.
+            recorded: () => <p role="status" className="text-body text-muted-foreground">{NO_DATA_CELL}</p>,
+            live: () => draftScope !== null && previewScope === null
+              ? <p role="alert" className="text-body text-destructive">{WORKSPACE_CHANGED_MESSAGE}</p>
+              : <>
+              {previewQuery.isPending && <p className="text-body text-muted-foreground">Checking matching records…</p>}
+              {previewQuery.isError && <p className="text-body text-muted-foreground">{failure(previewQuery.error)}</p>}
+              {previewQuery.data?.kind === "refused" && <p role="alert" className="text-body text-destructive">{previewQuery.data.message}</p>}
+              {previewPage && previewPage.read.document.records.length === 0 && (
+                <p className="text-body text-muted-foreground">No records currently match this filter.</p>
+              )}
+              {previewPage && previewPage.read.document.records.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-body">
+                    <thead>
+                      <tr className="border-b text-start text-meta text-muted-foreground">
+                        <th className="py-1.5 pe-3 text-start">Record</th>
+                        {previewCols.map((col, colIdx) => (
+                          <th key={`${col}:${colIdx}`} className="px-3 py-1.5 text-start">{col.replaceAll("_", " ")}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {previewPage.read.document.records.map((rec, index) => {
+                        const row: GridRow = { record: rec, at: `/records/${index}`, numbers: previewPage.read.numbers }
+                        const withheld = isWithheld(row)
+                        return (
+                          <tr key={rec.id} data-withheld={withheld || undefined}>
+                            <td className="py-1.5 pe-3">
+                              {withheld ? rec.id : recordName(rec)}
+                              {withheld && previewCols.length === 0 && (
+                                <span className="ms-2 font-normal"><WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark></span>
+                              )}
+                            </td>
+                            {withheld ? (
+                              previewCols.length > 0 && (
+                                <td colSpan={previewCols.length} className="px-3 py-1.5 text-muted-foreground">
+                                  <WithheldMark title={WITHHELD_HINT}>{WITHHELD_ROW}</WithheldMark>
+                                </td>
+                              )
+                            ) : (
+                              previewCols.map((col, colIdx) => (
+                                <td key={`${col}:${colIdx}`} className="px-3 py-1.5 text-muted-foreground">
+                                  {propertyWithheld(rec, col) ? <WithheldMark /> : String(rec.values[col] ?? "—")}
+                                </td>
+                              ))
+                            )}
+                          </tr>
                         )
-                      ) : (
-                        previewCols.map((col, colIdx) => (
-                          <td key={`${col}:${colIdx}`} className="px-3 py-1.5 text-muted-foreground">
-                            {propertyWithheld(rec, col) ? <WithheldMark /> : String(rec.values[col] ?? "—")}
-                          </td>
-                        ))
-                      )}
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              </>,
+          })}
         </div>
       </Panel>
     </div>
@@ -1166,7 +1220,7 @@ export function ViewEditorPage() {
         )}
       </div>
       {scope.isSuccess && scope.data === null && <p role="status" className="text-muted-foreground">{NO_DATA_CELL}</p>}
-      {scope.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><span aria-hidden className="size-[6px] shrink-0 rounded-full bg-dot-bad" />{scope.error.message}</p>}
+      {scope.isError && <p role="alert" className="flex items-center gap-2 text-foreground"><Dot tone="bad">{scope.error.message}</Dot></p>}
       {(scope.isPending || read.isPending || (!fresh && cellAvailable && latched === null && stored.isPending)) && <p className="text-muted-foreground">Reading view…</p>}
       {read.isError && <EmptyState icon={Bookmark}>{read.error.message}</EmptyState>}
       {latched === null && stored.isError && <EmptyState icon={Bookmark}>{failure(stored.error)}</EmptyState>}
@@ -1180,7 +1234,7 @@ export function ViewEditorPage() {
           concepts={concepts}
           stored={editorStored ?? undefined}
           activeScope={activeScope}
-          decided={workspace.kind === "live" ? workspace.scope : null}
+          workspace={workspace}
           cellAvailable={cellAvailable}
           onReload={() => reloadConflictingView(
             () => stored.refetch(),

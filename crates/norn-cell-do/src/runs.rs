@@ -247,6 +247,7 @@ fn decisions<E: SqlEngine>(
             let id = percent_encoding::percent_decode_str(id)
                 .decode_utf8()
                 .map_err(|_invalid| norn_api::decisions::not_found())?;
+            norn_api::principal_member::refuse_principal_member(request.body, None)?;
             let body: DecideRequest = serde_json::from_str(request.body).map_err(|error| {
                 Refusal::invalid(format!("the request body is not a decision: {error}"))
             })?;
@@ -347,13 +348,15 @@ impl<E: SqlEngine> Steps<'_, E> {
         call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>,
     ) -> Option<Result<ActionAnswer, Refusal>> {
         let slot = self.caller?;
-        let current = slot.current();
-        let acting = acting_caller(principal, current.as_ref())?;
+        let acting = acting_caller(principal, slot.current().as_ref())?;
+        // Marked as acting: it carries the roles recorded when it was
+        // verified, so nothing that needs this request's own principal
+        // (PRINCIPAL-INPUT-1) resolves for it. `as_present` never marks:
+        // an approved call runs as the request's own verified caller.
         let _restore = Restore {
             slot,
-            previous: current,
+            previous: slot.replace(Some(acting), true),
         };
-        slot.record(Some(acting));
         Some(call())
     }
 
@@ -438,11 +441,12 @@ fn acting_caller(starter: &RunStarter, current: Option<&Caller>) -> Option<Calle
 /// on every path, including unwinding.
 struct Restore<'a> {
     slot: &'a CallerSlot,
-    previous: Option<Caller>,
+    /// The slot's caller before, and whether it was itself acting.
+    previous: (Option<Caller>, bool),
 }
 
 impl Drop for Restore<'_> {
     fn drop(&mut self) {
-        self.slot.record(self.previous.take());
+        self.slot.replace(self.previous.0.take(), self.previous.1);
     }
 }

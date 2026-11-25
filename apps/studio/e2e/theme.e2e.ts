@@ -554,7 +554,7 @@ for (const scheme of ["light", "dark"] as const) {
     expect(numContrast.ratio, `${scheme} DecisionTree selected number`).toBeGreaterThanOrEqual(4.5)
 
     const unselectedOption = decisionTree.locator('button[aria-pressed="false"]').first()
-    const unselectedOptContrast = await measureRenderedContrast(unselectedOption.locator("span.font-semibold").first())
+    const unselectedOptContrast = await measureRenderedContrast(unselectedOption.locator("span[data-option-label]").first())
     expect(unselectedOptContrast.opacity, `${scheme} DecisionTree unselected option stays opaque`).toBe(1)
     expect(unselectedOptContrast.ratio, `${scheme} DecisionTree unselected option label`).toBeGreaterThanOrEqual(4.5)
 
