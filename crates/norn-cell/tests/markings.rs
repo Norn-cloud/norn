@@ -4284,7 +4284,11 @@ fn sparse_markings_unmarked_commits_write_zero_slot_rows_and_read_empty()
     ))?;
     store.commit(&batch(
         2,
-        vec![put("marking.Unmarked", "u1", &[("a", "one-v2")])],
+        vec![put(
+            "marking.Unmarked",
+            "u1",
+            &[("a", "one-v2"), ("b", "two"), ("c", "three")],
+        )],
     ))?;
     store.commit(&batch(
         3,
@@ -4295,7 +4299,11 @@ fn sparse_markings_unmarked_commits_write_zero_slot_rows_and_read_empty()
     ))?;
     store.commit(&batch(
         4,
-        vec![put("marking.Unmarked", "u2", &[("a", "live")])],
+        vec![put(
+            "marking.Unmarked",
+            "u2",
+            &[("a", "live"), ("b", "two"), ("c", "three")],
+        )],
     ))?;
 
     let empty_props = BTreeMap::from([
@@ -4571,7 +4579,7 @@ fn sparse_markings_reopen_passes_genesis_checkpoint_and_scrub_with_identical_exp
     let path = dir.path().join("sparse-checkpoint.sqlite");
     let key = norn_cell::CheckpointKey::from_bytes([0x5A; 32]);
     let keyed = || StoreOptions {
-        checkpoint_key: Some(key.clone()),
+        checkpoint_key: Some(key),
         ..StoreOptions::default()
     };
     let mut store = CellStore::open(&path, sparse_marking_model(), keyed())?;
