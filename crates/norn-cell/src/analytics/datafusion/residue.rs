@@ -162,7 +162,7 @@ pub(super) fn settle(
     }
     let rows: Vec<u64> = decided.iter().map(|(row, _)| *row).collect();
     let typed = staging::typed_rows(engine, tenant, staged, &rows)?;
-    let findings = decided
+    let mut findings = decided
         .iter()
         .map(|(row, check)| {
             typed
@@ -175,6 +175,7 @@ pub(super) fn settle(
         .typed
         .parent()
         .ok_or_else(|| engine_error("a staged landing's directory"))?;
+    super::merge::sort_held(&mut findings);
     let part = dir.join(format!("findings-{}.parquet", staged.findings.len()));
     let mut sink = Sink::create(&part, &staging::held_schema(&staged.table))?;
     staging::write_held(&mut sink, &staged.table, &findings)?;

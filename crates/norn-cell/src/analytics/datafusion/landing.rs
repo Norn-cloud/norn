@@ -74,7 +74,7 @@ fn landing(
         return Ok(response);
     }
     let (data, held) = (dir.join("data.parquet"), dir.join("held.parquet"));
-    let written = staging::finish(engine, tenant, staged, &data, &held)?;
+    let written = staging::finish(engine, staged, &data, &held)?;
     response.valid_time = written.valid_time;
     response.data = Some(landed_file(&data, written.data_rows)?);
     response.held = Some(landed_file(&held, written.held_rows)?);

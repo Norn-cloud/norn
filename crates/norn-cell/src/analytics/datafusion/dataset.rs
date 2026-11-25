@@ -48,7 +48,7 @@ pub(super) fn load(
         dir.path().join("data.parquet"),
         dir.path().join("held.parquet"),
     );
-    staging::finish(engine, tenant, &staged, &data, &held)?;
+    staging::finish(engine, &staged, &data, &held)?;
     let objects = tenant.objects();
     let (data_path, data_sha, _) = catalog::install(&data, &objects)?;
     let (held_path, held_sha, _) = catalog::install(&held, &objects)?;

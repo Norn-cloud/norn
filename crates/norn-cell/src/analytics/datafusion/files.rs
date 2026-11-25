@@ -16,8 +16,8 @@
 
 use std::collections::BTreeSet;
 use std::io::{BufRead as _, Read as _, Seek as _, SeekFrom};
-use std::sync::Arc;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
@@ -335,11 +335,14 @@ fn viewed(schema: &Schema) -> Schema {
         schema
             .fields()
             .iter()
-            .map(|field| match field.data_type() {
-                DataType::Utf8 | DataType::LargeUtf8 => {
-                    field.as_ref().clone().with_data_type(DataType::Utf8View)
+            .map(|field| {
+                let string = matches!(field.data_type(), DataType::Utf8 | DataType::LargeUtf8);
+                let field = field.as_ref().clone();
+                if string {
+                    field.with_data_type(DataType::Utf8View)
+                } else {
+                    field
                 }
-                _ => field.as_ref().clone(),
             })
             .collect::<Vec<Field>>(),
     )

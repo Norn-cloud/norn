@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::common::{Column, JoinType};
+use datafusion::common::Column;
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::logical_expr::{Expr, lit};
 use datafusion::prelude::{DataFrame, ParquetReadOptions, SessionConfig, SessionContext};
@@ -86,21 +86,6 @@ pub(super) enum Plan {
         columns: Option<Vec<String>>,
         order: Vec<(String, bool)>,
     },
-    /// A landing's trusted rows: its typed rows less every row a rule holds
-    /// back (an anti-join on `:row`), by row, as `columns`.
-    Trusted {
-        typed: PathBuf,
-        findings: Vec<PathBuf>,
-        columns: Vec<String>,
-    },
-}
-
-/// Whether a consumer keeps what it is given (the budget is cumulative) or
-/// passes each batch on (the budget is per batch).
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Keep {
-    All,
-    Each,
 }
 
 fn context(tenant: &Tenant, threads: usize) -> SessionContext {
@@ -144,17 +129,6 @@ fn resolve(tenant: &Tenant, plan: Plan) -> Outcome<Plan> {
             columns,
             order,
         },
-        Plan::Trusted {
-            typed,
-            findings,
-            columns,
-        } => Plan::Trusted {
-            typed: confine(std::slice::from_ref(&typed))?
-                .pop()
-                .ok_or_else(|| engine_error("a landing without its typed rows"))?,
-            findings: confine(&findings)?,
-            columns,
-        },
     })
 }
 
@@ -194,36 +168,17 @@ async fn frame(ctx: &SessionContext, plan: Plan) -> Outcome<Option<DataFrame>> {
             }
             Some(frame)
         }
-        Plan::Trusted {
-            typed,
-            findings,
-            columns,
-        } => {
-            let typed = super::df(read(names(&[typed])).await)?;
-            let held = super::df(read(names(&findings)).await)?;
-            let held = super::df(
-                held.filter(col(":holds").eq(lit(true)).and(col(":rule").is_not_null()))
-                    .and_then(|h| h.select(vec![col(":row").alias(":h")])),
-            )?;
-            let trusted = super::df(
-                typed
-                    .join_on(held, JoinType::LeftAnti, vec![col(":row").eq(col(":h"))])
-                    .and_then(|f| f.sort(vec![col(":row").sort(true, false)]))
-                    .and_then(|f| f.select(columns.iter().map(|c| col(c)).collect::<Vec<Expr>>())),
-            )?;
-            Some(trusted)
-        }
     })
 }
 
 /// Run `plan`, handing each batch to `each` after checking it against the
-/// byte budget (`memory`, per batch or cumulative by `keep`) and the deadline.
+/// byte budget (`memory`, cumulative: the consumer keeps what it is given)
+/// and the deadline.
 pub(super) fn stream(
     tenant: &Tenant,
     threads: usize,
     memory: usize,
     plan: Plan,
-    keep: Keep,
     each: &mut (dyn FnMut(&RecordBatch) -> Outcome<()> + Send),
 ) -> Outcome<()> {
     let ctx = context(tenant, threads);
@@ -238,10 +193,7 @@ pub(super) fn stream(
         while let Some(batch) = stream.next().await {
             let batch = super::df(batch)?;
             let size = batch.get_array_memory_size();
-            kept = match keep {
-                Keep::All => kept.saturating_add(size),
-                Keep::Each => size,
-            };
+            kept = kept.saturating_add(size);
             if kept > memory {
                 return Err(refusal(
                     EXHAUSTED,

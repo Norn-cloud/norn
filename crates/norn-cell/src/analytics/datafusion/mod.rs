@@ -21,6 +21,7 @@ mod dataset;
 mod files;
 mod landing;
 mod laws;
+mod merge;
 mod mirror;
 mod page;
 mod parquet_text;
@@ -224,17 +225,16 @@ impl Engine {
         &self,
         tenant: &Tenant,
         plan: scan::Plan,
-        keep: scan::Keep,
         each: &mut (dyn FnMut(&RecordBatch) -> Outcome<()> + Send),
     ) -> Outcome<()> {
         let threads = usize::try_from(self.settings.threads.max(1)).unwrap_or(1);
-        scan::stream(tenant, threads, self.memory, plan, keep, each)
+        scan::stream(tenant, threads, self.memory, plan, each)
     }
 
     /// Every batch of `plan`, kept within this engine's memory bound.
     fn collect(&self, tenant: &Tenant, plan: scan::Plan) -> Outcome<Vec<RecordBatch>> {
         let mut batches = Vec::new();
-        self.stream(tenant, plan, scan::Keep::All, &mut |batch| {
+        self.stream(tenant, plan, &mut |batch| {
             batches.push(batch.clone());
             Ok(())
         })?;

@@ -15,10 +15,9 @@ use std::io::BufRead;
 use super::files::Meter;
 use super::{EXHAUSTED, Outcome, engine_error, refusal};
 
-/// One record: its fields' bytes and its width in the file.
+/// One record: its fields' bytes.
 pub(super) struct Record {
     pub fields: Vec<Vec<u8>>,
-    pub width: usize,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -63,7 +62,10 @@ impl Parse<'_> {
     fn byte(&mut self, byte: u8) -> Outcome<bool> {
         self.width = self.width.saturating_add(1);
         if self.width > self.meter.caps.chunk {
-            return Err(refusal(EXHAUSTED, "a CSV record is wider than the load's bound"));
+            return Err(refusal(
+                EXHAUSTED,
+                "a CSV record is wider than the load's bound",
+            ));
         }
         match (self.state, byte) {
             (State::Quoted, b'"') => self.state = State::Quote,
@@ -105,7 +107,6 @@ impl Parse<'_> {
         self.fields.push(std::mem::take(&mut self.field));
         Record {
             fields: self.fields,
-            width: self.width,
         }
     }
 }
@@ -214,11 +215,17 @@ mod tests {
         };
         let rows: Vec<Vec<String>> = got.iter().map(|row| text(row)).collect();
         assert_eq!(rows.len(), 3);
-        assert_eq!(rows.get(1), Some(&vec!["go\"ld".to_owned(), "x,\"y\"\nz".to_owned()]));
+        assert_eq!(
+            rows.get(1),
+            Some(&vec!["go\"ld".to_owned(), "x,\"y\"\nz".to_owned()])
+        );
         assert_eq!(rows.get(2), Some(&vec![String::new(), String::new()]));
         let meter = Meter::new(caps(1 << 20));
         let mut after = BufReader::new(&b"\"a\"b\n"[..]);
-        assert!(next_record(&mut after, &meter).is_err(), "text after a closing quote");
+        assert!(
+            next_record(&mut after, &meter).is_err(),
+            "text after a closing quote"
+        );
     }
 
     #[test]
@@ -244,7 +251,10 @@ mod tests {
         let meter = Meter::new(caps(1 << 20));
         let started = std::time::Instant::now();
         let mut reader = BufReader::new(text.as_slice());
-        assert!(next_record(&mut reader, &meter).is_err(), "ends inside a quote");
+        assert!(
+            next_record(&mut reader, &meter).is_err(),
+            "ends inside a quote"
+        );
         assert!(started.elapsed() < Duration::from_secs(5));
         let endless = std::io::repeat(b'\n');
         let mut reader = BufReader::new(Read::chain(&b"\""[..], endless));

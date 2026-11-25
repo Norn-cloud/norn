@@ -23,7 +23,6 @@ use super::super::{
 use super::columnar::{self, Sink};
 use super::files::{self, Caps, SourceRow};
 use super::laws::{self, HeldRow, TypedRow};
-use super::scan::{Keep, Plan};
 use super::values::Cell;
 use super::{Engine, Outcome, Tenant, engine_error, refusal};
 
@@ -281,7 +280,9 @@ pub(super) fn stage(
             .saturating_add(u64::try_from(refused.len()).unwrap_or(u64::MAX));
         write_typed(&mut typed_sink, table, &typed)?;
         write_held(&mut typing_sink, table, &refused)?;
-        write_held(&mut findings_sink, table, &checked.findings)
+        let mut findings = checked.findings;
+        super::merge::sort_held(&mut findings);
+        write_held(&mut findings_sink, table, &findings)
     })?;
     typed_sink.finish()?;
     typing_sink.finish()?;
@@ -328,7 +329,6 @@ impl Ranges {
 /// Write `staged`'s data file to `data` and its held-set file to `held`.
 pub(super) fn finish(
     engine: &Engine,
-    tenant: &Tenant,
     staged: &Staged,
     data: &Path,
     held: &Path,
@@ -337,38 +337,20 @@ pub(super) fn finish(
     let schema = data_schema(table);
     let mut sink = Sink::create(data, &schema)?;
     let mut ranges = Ranges::default();
-    let columns: Vec<String> = schema.fields().iter().map(|f| f.name().clone()).collect();
-    let plan = Plan::Trusted {
-        typed: staged.typed.clone(),
-        findings: staged.findings.clone(),
-        columns,
-    };
-    engine.stream(tenant, plan, Keep::Each, &mut |batch| {
+    let back = super::merge::held_back(&staged.findings, engine.memory)?;
+    super::merge::trusted(&staged.typed, &back, &mut sink, &mut |batch| {
         for (index, column) in table.columns.iter().enumerate() {
             if matches!(column.kind, ColumnKind::Timestamp | ColumnKind::Date) {
                 ranges.absorb(index, &columnar::column_cells(batch, column)?);
             }
         }
-        sink.write_named(batch)
+        Ok(())
     })?;
     let data_rows = sink.finish()?;
-    let schema = held_schema(table);
-    let mut sink = Sink::create(held, &schema)?;
-    let mut files = vec![staged.typing.clone()];
-    files.extend(staged.findings.iter().cloned());
-    let plan = Plan::Scan {
-        files,
-        filter: None,
-        columns: None,
-        order: vec![
-            (":row".to_owned(), false),
-            (":rule".to_owned(), true),
-            (":reason".to_owned(), false),
-        ],
-    };
-    engine.stream(tenant, plan, Keep::Each, &mut |batch| {
-        sink.write_named(batch)
-    })?;
+    let mut sink = Sink::create(held, &held_schema(table))?;
+    let mut parts = vec![staged.typing.clone()];
+    parts.extend(staged.findings.iter().cloned());
+    super::merge::merge_held(table, &parts, &mut sink)?;
     let held_rows = sink.finish()?;
     let valid_time = table
         .columns

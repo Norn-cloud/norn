@@ -153,18 +153,24 @@ fn a_parquet_source_decodes_only_declared_columns_as_dictionary_views() {
 
     let (_dir, engine) = engine("64MB");
     let wide = "w".repeat(32 << 10);
-    let distinct: Vec<String> = (0..1024_u32).map(|i| format!("{i:08}{}", "u".repeat(32 << 10))).collect();
+    let distinct: Vec<String> = (0..1024_u32)
+        .map(|i| format!("{i:08}{}", "u".repeat(32 << 10)))
+        .collect();
     let schema = Arc::new(Schema::new(vec![
         Field::new("undeclared", DataType::Utf8, true),
         Field::new("text", DataType::Utf8, true),
     ]));
     let columns: Vec<ArrayRef> = vec![
         Arc::new(StringArray::from_iter_values(distinct.iter())),
-        Arc::new(StringArray::from_iter_values(std::iter::repeat_n(wide.as_str(), 1024))),
+        Arc::new(StringArray::from_iter_values(std::iter::repeat_n(
+            wide.as_str(),
+            1024,
+        ))),
     ];
     let batch = RecordBatch::try_new(Arc::clone(&schema), columns).expect("batch");
     let mut bytes = Vec::new();
-    let mut writer = parquet::arrow::ArrowWriter::try_new(&mut bytes, schema, None).expect("writer");
+    let mut writer =
+        parquet::arrow::ArrowWriter::try_new(&mut bytes, schema, None).expect("writer");
     writer.write(&batch).expect("write");
     writer.close().expect("close");
     let (path, request) = source(&engine, &bytes, FileFormat::Parquet);
