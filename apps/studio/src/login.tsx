@@ -30,11 +30,18 @@ function Field({ label, ...props }: { readonly label: string } & React.Component
  * The only page a signed-out visitor sees: sign in, create an account, or (when configured on the
  * server) ask for an email link. Capabilities come from `/api/auth/config`, never a client flag.
  */
-export function LoginPage({ initial = "sign-in", config }: { readonly initial?: Mode; readonly config?: AuthConfig }) {
+/** The invitation an operator's sign-up link carries (`?invite=`), if any. */
+export function inviteFromLocation(search: string = typeof window === "undefined" ? "" : window.location.search): string {
+  return new URLSearchParams(search).get("invite")?.trim() ?? ""
+}
+
+export function LoginPage({ initial, config }: { readonly initial?: Mode; readonly config?: AuthConfig }) {
+  const [invite] = useState(() => inviteFromLocation())
   const authConfig = useAuthConfig()
   const activeConfig = config ?? authConfig.data ?? DEFAULT_AUTH_CONFIG
   const modes = activeConfig.magicLink ? MODES : MODES.filter((entry) => entry.mode !== "email-link")
-  const [mode, setMode] = useState<Mode>(initial)
+  // An invitation link opens on "Create account".
+  const [mode, setMode] = useState<Mode>(initial ?? (invite === "" ? "sign-in" : "sign-up"))
   const activeMode: Mode = mode === "email-link" && !activeConfig.magicLink ? "sign-in" : mode
   const [pending, setPending] = useState(false)
   const [message, setMessage] = useState<{ readonly tone: "error" | "info"; readonly text: string } | null>(null)
@@ -52,7 +59,7 @@ export function LoginPage({ initial = "sign-in", config }: { readonly initial?: 
       if (activeMode === "sign-in") await authApi.signIn(value("email"), value("password"))
       if (activeMode === "sign-up") {
         // Server refuses non-allowlisted sign-ups explicitly (403); only an accepted 2xx transitions to sign-in.
-        await authApi.signUp(value("name"), value("email"), value("password"))
+        await authApi.signUp(value("name"), value("email"), value("password"), value("invite"))
         setMode("sign-in")
         setMessage({ tone: "info", text: SIGNED_UP })
         setPending(false)
@@ -106,9 +113,10 @@ export function LoginPage({ initial = "sign-in", config }: { readonly initial?: 
             <form key={activeMode} onSubmit={submit} className="grid gap-3">
               {activeMode === "sign-up" && activeConfig.inviteOnly && (
                 <p className="rounded-md border bg-surface-subtle px-3 py-2 text-meta text-muted-foreground">
-                  This alpha is invite-only. Use your invited email address, or ask your admin for an invitation.
+                  This alpha is invite-only. Open the invitation link your admin sent, with your invited email address, or ask your admin for an invitation.
                 </p>
               )}
+              {activeMode === "sign-up" && activeConfig.inviteOnly && <Field label="Invitation" name="invite" autoComplete="off" defaultValue={invite} />}
               {activeMode === "sign-up" && <Field label="Name" name="name" autoComplete="name" />}
               <Field label="Email" name="email" type="email" autoComplete="email" defaultValue={email} onChange={(event) => setEmail(event.currentTarget.value)} />
               {activeMode !== "email-link" && (

@@ -185,6 +185,41 @@ export function proposedOf(value: unknown): Proposed | undefined {
   return ok ? value as unknown as Proposed : undefined
 }
 
+/**
+ * The fields of a stored dashboard the assistant may edit, in the proposal's own shape (title and
+ * tiles: metric, group-by, grain, filters, window, view, width), or null when the payload is not a
+ * dashboard this builder writes. Nothing else of the stored definition (ids, layout, origin, signers,
+ * unknown members) is ever sent to the model.
+ */
+export function editableDashboard(payload: unknown): Proposed | null {
+  if (!isRecord(payload) || typeof payload.title !== "string" || !Array.isArray(payload.tiles)) return null
+  const tiles: ProposedTile[] = []
+  for (const tile of payload.tiles) {
+    if (!isRecord(tile) || typeof tile.title !== "string" || !isRecord(tile.question) || !isRecord(tile.view) || !isRecord(tile.layout)) return null
+    const { question, view, layout } = tile
+    const aggregate = Array.isArray(question.aggregate) && question.aggregate.length === 1 && isRecord(question.aggregate[0]) ? question.aggregate[0] : null
+    const groupBy = Array.isArray(question.groupBy) ? question.groupBy : null
+    const group = groupBy?.[0]
+    const window = isRecord(question.window) ? question.window : null
+    if (aggregate === null || typeof aggregate.metric !== "string" || groupBy === null || groupBy.length > 1 || !Array.isArray(question.filter) || window === null) return null
+    if (group !== undefined && (!isRecord(group) || !isRecord(group.path) || typeof group.path.property !== "string" || (group.grain !== undefined && typeof group.grain !== "string"))) return null
+    const filters: ProposedTile["filters"][number][] = []
+    for (const filter of question.filter) {
+      if (!isRecord(filter) || !isRecord(filter.path) || typeof filter.path.property !== "string" || typeof filter.operator !== "string") return null
+      if (typeof filter.value !== "string" && !(typeof filter.value === "number" && Number.isFinite(filter.value))) return null
+      filters.push({ property: filter.path.property, operator: filter.operator, value: String(filter.value) })
+    }
+    const dayOf = (instant: unknown) => typeof instant === "string" && /^\d{4}-\d{2}-\d{2}T00:00:00Z$/.test(instant) ? instant.slice(0, 10) : null
+    const start = dayOf(window.start)
+    const end = dayOf(window.end)
+    const shown = view.kind === "number" || view.kind === "table" ? view.kind : view.kind === "chart" && typeof view.chart === "string" ? view.chart : null
+    if (start === null || end === null || shown === null || !VIEWS.includes(shown as ViewName) || (layout.w !== 1 && layout.w !== 2)) return null
+    const grouped = group as { path: { property: string }; grain?: string } | undefined
+    tiles.push({ title: tile.title, metric: aggregate.metric, groupBy: grouped?.path.property ?? "", grain: grouped?.grain ?? "", filters, start, end, view: shown as ViewName, width: layout.w === 2 ? "full" : "half" })
+  }
+  return { title: payload.title, note: "", tiles }
+}
+
 export interface Finding { readonly code: string; readonly message: string; readonly pointer: string | null }
 export interface Verdict { readonly admitted: boolean; readonly findings: readonly Finding[]; readonly restatement: string | null; readonly restatementSha256: string | null }
 
@@ -213,16 +248,35 @@ export interface Outcome {
   readonly definition: Definition | null
   readonly verdict: Verdict | null
   readonly note: string
-  /** Every model call made, each paid for. */
+  /** Every model call made, each paid for (an `uncertain` one is paid for at the reservation). */
   readonly answers: readonly Answer[]
   /** Why there is no proposal, when there is none. */
   readonly failure?: string
+  /** What kind of failure, when the route answers differently for it. */
+  readonly failureKind?: "guard" | "budget" | "role"
 }
+
+/** The longest prompt (system, schema and turns, in UTF-8 bytes) one call may send: it bounds the call's input tokens. */
+export const MAX_PROMPT_BYTES = 120_000
+/** The most one call may answer with (max_tokens). */
+export const MAX_OUTPUT_TOKENS = 8000
+const bytes = (text: string) => new TextEncoder().encode(text).byteLength
+
+/**
+ * The privacy guard at the provider boundary: the text as the model may read it (personal data
+ * tokenized by the cell), or null when the guard cannot run (then nothing is sent).
+ */
+export type PromptGuard = (text: string) => Promise<string | null>
 
 /**
  * One proposal for `request`: read the catalog, ask, compile, admit; on a
  * refusal ask once more with the checker's findings. Returns the last
  * definition the model proposed and the checker's verdict on it.
+ *
+ * Every provider call goes through `guard` first: the system prompt (catalog text), the schema, and
+ * every turn (the request, the dashboard being edited, the model's earlier proposal and the
+ * checker's findings) are sent only as the guard returns them. Calls stop before `maxCalls` would be
+ * exceeded (a call with a fallback counts as two), so the spend reservation covers every call made.
  */
 export async function propose(cell: Cell, model: Model & { answerAll?(ask: Ask): Promise<readonly Answer[]> }, request: string, options: {
   readonly proposalId: string
@@ -232,18 +286,48 @@ export async function propose(cell: Cell, model: Model & { answerAll?(ask: Ask):
   /** What the origin quotes: the person's words, without any context the server added. */
   readonly originRequest?: string
   readonly attempts?: number
+  readonly guard: PromptGuard
+  /** The most provider calls the request's reservation covers. */
+  readonly maxCalls: number
 }): Promise<Outcome> {
   const cellCatalog = await readCellCatalog(cell)
-  if (cellCatalog instanceof Response) return { definition: null, verdict: null, note: "", answers: [], failure: ((await cellCatalog.json().catch(() => ({}))) as { error?: string }).error ?? "The cell's catalog could not be read." }
+  if (cellCatalog instanceof Response) {
+    const failure = ((await cellCatalog.json().catch(() => ({}))) as { error?: string }).error ?? "The cell's catalog could not be read."
+    return { definition: null, verdict: null, note: "", answers: [], failure, ...cellCatalog.status === 403 ? { failureKind: "role" as const } : {} }
+  }
   const catalog = cellCatalog
   if (catalog.metrics.length === 0) return { definition: null, verdict: null, note: "", answers: [], failure: "There is nothing you may read in this workspace to build a dashboard from." }
   const system = systemPrompt(catalog, options.now)
   const schema = proposalSchema(catalog)
+  const schemaText = JSON.stringify(schema)
   const answers: Answer[] = []
   const turns: { role: "user" | "assistant"; content: string }[] = [{ role: "user", content: request }]
   let last: Outcome = { definition: null, verdict: null, note: "", answers }
+  const guarded = new Map<string, string | null>()
+  const guard = async (text: string) => {
+    if (!guarded.has(text)) guarded.set(text, await options.guard(text))
+    return guarded.get(text) ?? null
+  }
+  const callsPerAttempt = model.answerAll ? 2 : 1
+  let calls = 0
   for (let attempt = 0; attempt < (options.attempts ?? 2); attempt += 1) {
-    const ask = { system, turns: [...turns], schema, maxTokens: 8000 }
+    if (calls + callsPerAttempt > options.maxCalls) return { ...last, answers, failure: last.definition ? undefined : "The assistant's spend reservation does not cover another call.", ...last.definition ? {} : { failureKind: "budget" as const } }
+    // PRIVACY-GUARD-1 at the provider boundary: everything sent, as the guard returns it. The schema
+    // holds only catalog names the proposal must repeat verbatim; if the guard would change any, it
+    // carries data the model may not read, and nothing is sent.
+    const safeSystem = await guard(system)
+    const safeSchema = await guard(schemaText)
+    const safeTurns = await Promise.all(turns.map(async ({ role, content }) => ({ role, content: await guard(content) })))
+    if (safeSystem === null || safeSchema === null || safeTurns.some(({ content }) => content === null)) {
+      return { ...last, answers, failure: "The privacy guard is not available, so nothing was sent to the model.", failureKind: "guard" }
+    }
+    if (safeSchema !== schemaText) return { ...last, answers, failure: "This workspace's catalog names carry data the model may not read, so nothing was sent to the model.", failureKind: "guard" }
+    const sent = safeTurns as { role: "user" | "assistant"; content: string }[]
+    if (bytes(safeSystem) + bytes(schemaText) + sent.reduce((total, { content }) => total + bytes(content), 0) > MAX_PROMPT_BYTES) {
+      return { ...last, answers, failure: "This request and workspace catalog are too large to send to the model.", failureKind: "budget" }
+    }
+    const ask = { system: safeSystem, turns: sent, schema, maxTokens: MAX_OUTPUT_TOKENS }
+    calls += callsPerAttempt
     const made = model.answerAll ? await model.answerAll(ask) : [await model.answer(ask)]
     answers.push(...made)
     const answer = made.at(-1)
@@ -251,7 +335,7 @@ export async function propose(cell: Cell, model: Model & { answerAll?(ask: Ask):
     if (answer === undefined || proposed === undefined) return { ...last, answers, failure: last.definition ? undefined : answer?.failure ?? "The model gave no proposal." }
     const definition = compile(proposed, catalog, { proposal: options.proposalId, model: answer.model, request: options.originRequest ?? request })
     const verdict = await admit(cell, options.targetId, definition)
-    if ("unavailable" in verdict) return { definition, verdict: null, note: proposed.note, answers, failure: verdict.unavailable }
+    if ("unavailable" in verdict) return { definition, verdict: null, note: proposed.note, answers, failure: verdict.unavailable, ...verdict.unavailable.includes("role") ? { failureKind: "role" as const } : {} }
     last = { definition, verdict, note: proposed.note, answers }
     if (verdict.admitted) return last
     turns.push({ role: "assistant", content: JSON.stringify(proposed) }, { role: "user", content: `The server's checker refused this proposal:\n${refusalWords(verdict.findings)}\nPropose a corrected dashboard the checker admits. Change only what the findings name; leave out what the catalog cannot answer and say so in the note.` })

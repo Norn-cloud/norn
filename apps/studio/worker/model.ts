@@ -26,6 +26,11 @@ export interface Answer {
   readonly costMicroUsd: number
   /** Why there is no document, when there is none. */
   readonly failure?: string
+  /**
+   * True when what the call used is not known: it threw after it may have reached the provider. Spend
+   * accounting then keeps the request's whole reservation (assistant.ts), never this answer's zero.
+   */
+  readonly uncertain?: boolean
 }
 export interface Model {
   readonly name: string
@@ -38,11 +43,18 @@ const CLAUDE_PRICES: Record<string, readonly [number, number]> = {
   "claude-haiku-5-5": [0.1, 0.5],
   "claude-opus-5-5": [4, 20],
 }
-const priceOf = (model: string) => CLAUDE_PRICES[model] ?? [4, 20]
+const MAX_PRICE: readonly [number, number] = [Math.max(...Object.values(CLAUDE_PRICES).map(([input]) => input)), Math.max(...Object.values(CLAUDE_PRICES).map(([, output]) => output))]
+const priceOf = (model: string) => CLAUDE_PRICES[model] ?? MAX_PRICE
 export const claudeCost = (model: string, input: number, output: number) => {
   const [inPrice, outPrice] = priceOf(model)
   return Math.ceil(input * inPrice + output * outPrice)
 }
+/**
+ * The most one call can cost, in millionths of a dollar: at the most expensive listed price, with at most
+ * `inputTokens` in (a prompt of n UTF-8 bytes is at most n tokens) and `outputTokens` out (max_tokens).
+ * The fallback (Workers AI) is priced below it.
+ */
+export const worstCallMicroUsd = (inputTokens: number, outputTokens: number) => Math.ceil(inputTokens * MAX_PRICE[0] + outputTokens * MAX_PRICE[1])
 /** Workers AI bills neurons at $0.011 per thousand. */
 export const neuronCost = (neurons: number) => Math.ceil(neurons * 11)
 
@@ -64,7 +76,8 @@ export function claudeViaGateway(options: { readonly gatewayUrl: string; readonl
       const client = new Anthropic({
         apiKey: "gateway",
         baseURL: `${options.gatewayUrl.replace(/\/$/, "")}/anthropic`,
-        maxRetries: 1,
+        // No hidden retry: each provider call is one the spend reservation counts; the fallback model is the retry.
+        maxRetries: 0,
         fetch: (input: string | URL | Request, init?: RequestInit) => {
           const headers = new Headers(init?.headers)
           headers.delete("x-api-key")
@@ -120,7 +133,8 @@ export function withFallback(primary: Model, fallback: Model): Model & { answerA
   const answerAll = async (ask: Ask): Promise<readonly Answer[]> => {
     let first: Answer
     try { first = await primary.answer(ask) } catch (error) {
-      first = { json: null, model: primary.name, inputTokens: 0, outputTokens: 0, costMicroUsd: 0, failure: error instanceof Error ? error.message : String(error) }
+      // It may have reached the provider and been billed: its usage is unknown, not zero.
+      first = { json: null, model: primary.name, inputTokens: 0, outputTokens: 0, costMicroUsd: 0, failure: error instanceof Error ? error.message : String(error), uncertain: true }
     }
     return first.json !== null ? [first] : [first, await fallback.answer(ask)]
   }
