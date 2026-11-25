@@ -98,7 +98,7 @@ test("cell query: a read whose subscription the cell refuses says it is not foll
 test("cell query: a workspace with no data cell says so, and a failed scope discovery is Workspace unavailable with Retry", async ({ page }) => {
   await standIn(page, (route) => route.fulfill({ json: { ...ME, organization: null, environmentId: null } }))
   await page.goto("/harness.html?type=demo.Item&id=i1")
-  await expect(page.getByTestId("record-read").getByText("No data cell")).toBeVisible()
+  await expect(page.getByTestId("record-read").getByText("No data cell", { exact: true })).toBeVisible()
 
   const second = await page.context().newPage()
   const cell = await standIn(second, (route, count) => count === 1 ? route.fulfill({ status: 503, json: { message: "the host is restarting" } }) : route.fulfill({ json: ME }))
