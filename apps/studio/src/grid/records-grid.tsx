@@ -312,11 +312,11 @@ export function RecordsGrid({ concept, reader, initial, onQuery, timeline = fals
       {/* content-start: beside a taller facets rail, the rows keep their own height (no band between them). */}
       <div className="grid min-w-0 content-start gap-3">
         {facets && (
-          <section data-slot="panel" className="overflow-hidden rounded-(--radius-panel) border border-(--panel-border) bg-card shadow-(--panel-shadow) xl:hidden">
+          <Panel className="xl:hidden">
             <Disclosure summary="Narrow by" summaryClassName="min-h-11 w-full px-3.5 text-body text-foreground max-sm:min-h-[44px]">
               <Well className="p-1.5">{facets}</Well>
             </Disclosure>
-          </section>
+          </Panel>
         )}
         {/* Problems sit above the toolbar, so the filter popover (which opens below it) never covers them. */}
         {refused && (
