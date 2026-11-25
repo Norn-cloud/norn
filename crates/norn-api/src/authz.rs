@@ -153,6 +153,25 @@ pub trait Authorizer: Send + Sync {
         Err(norn_kernel::ActionDenial::Invisible)
     }
 
+    /// PRINCIPAL-INPUT-1 (#1091): the declared principal inputs of a pinned
+    /// decision, resolved from this request's verified principal and the
+    /// PDP. Never read from anything the request carries.
+    ///
+    /// # Errors
+    /// The default resolves nothing: the call refuses
+    /// `decision.principal_input_unavailable`.
+    fn principal_inputs(
+        &self,
+        request: &norn_kernel::PrincipalInputsRequest<'_>,
+    ) -> Result<norn_kernel::ActionPrincipalInputs, norn_kernel::UnresolvedPrincipalInput> {
+        Err(norn_kernel::UnresolvedPrincipalInput {
+            input: request
+                .inputs
+                .first()
+                .map_or_default(|input| input.name.clone()),
+        })
+    }
+
     /// The cell's model changed: an install committed new object types (a
     /// flow's Run type, for one). Called under the definitions write epoch,
     /// before any request sees the new model, so a policy compiled over the
@@ -252,6 +271,12 @@ impl norn_kernel::ActionAuthorizer for KernelAuthorizer<'_> {
         request: &norn_kernel::ActionReadTypeAuthzRequest<'_>,
     ) -> Result<(), norn_kernel::ActionDenial> {
         self.0.action_read_type(request)
+    }
+    fn resolve_principal_inputs(
+        &self,
+        request: &norn_kernel::PrincipalInputsRequest<'_>,
+    ) -> Result<norn_kernel::ActionPrincipalInputs, norn_kernel::UnresolvedPrincipalInput> {
+        self.0.principal_inputs(request)
     }
 }
 

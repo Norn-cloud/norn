@@ -1152,6 +1152,7 @@ pub(crate) fn validate_rule_contract(
     artifact_id: Option<&str>,
 ) {
     check_unique_tables(payload, diagnostics, artifact_id);
+    crate::principal_inputs::validate(payload, diagnostics, artifact_id);
     for (member, path) in [
         ("inputSchema", "payload.inputSchema"),
         ("outputSchema", "payload.outputSchema"),
@@ -1220,7 +1221,7 @@ pub(crate) fn validate_rule_contract(
             payload.get("inputSchema"),
             "payload.inputSchema",
             &DECIDE_INPUT_MEMBERS,
-            &[],
+            &norn_ir::rule::DECIDE_OPTIONAL_INPUT_MEMBERS,
             false,
             sink.diagnostics,
             artifact_id,

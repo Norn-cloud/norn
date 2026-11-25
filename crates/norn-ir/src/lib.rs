@@ -77,6 +77,7 @@ pub mod marking;
 pub mod members;
 pub mod metric;
 pub mod osi;
+mod payload_root;
 #[allow(
     missing_docs,
     reason = "exact posting wire contract moved unchanged from accounting"
@@ -86,6 +87,7 @@ pub mod provenance;
 pub mod quantity_ledger;
 pub mod requirement_display;
 pub mod reviewed_locale;
+pub use payload_root::PayloadRootDecodeError;
 mod rounding;
 pub use rounding::Rounding;
 pub mod rule;
@@ -1289,6 +1291,7 @@ define_payload_root!(RulePayload {
         triggers => "triggers" as Vec<RuleTrigger>,
         slice => "slice" as Vec<SliceDeclaration>,
         source_commands => "sourceCommands" as Vec<RuleSourceCommand>,
+        principal_inputs => "principalInputs" as Vec<rule::PrincipalInputDeclaration>,
         defaults => "defaults" as JsonObject,
         applies_to => "appliesTo" as String,
         expression => "expression" as String,
@@ -1421,7 +1424,8 @@ define_payload_root!(
             approval_roles => "approvalRoles" as Vec<String>,
             access_version => "accessVersion" as IrVersion01,
             rules => "rules" as Vec<access::AccessRule>,
-            generic_rules => "genericRules" as Vec<access::GenericAccessRule>
+            generic_rules => "genericRules" as Vec<access::GenericAccessRule>,
+            principal_catalog => "principalCatalog" as Vec<access::PrincipalCatalogEntry>
         }
     }
 );
@@ -1593,18 +1597,6 @@ pub enum ArtifactPayload {
     Labels(LabelsPayload),
     Model(ModelPayload),
 }
-
-/// The wire payload root must be a JSON object before it can select a closed kind root.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PayloadRootDecodeError;
-
-impl std::fmt::Display for PayloadRootDecodeError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("artifact payload must be a JSON object")
-    }
-}
-
-impl std::error::Error for PayloadRootDecodeError {}
 
 impl ArtifactPayload {
     pub fn from_kind_json(

@@ -289,6 +289,22 @@
       "no_fix": null
     },
     {
+      "code": "artifact_set.decision.principal_input_type",
+      "tier": "T3",
+      "severity": "error",
+      "message": "{detail}",
+      "fix": "Give the principal column the type of its catalog entry: boolean for a held role, a list of strings for a role profile, and the declared type for a scoped attribute.",
+      "no_fix": null
+    },
+    {
+      "code": "artifact_set.decision.principal_input_unknown",
+      "tier": "T3",
+      "severity": "error",
+      "message": "{detail}",
+      "fix": "Declare the role, role profile or scoped attribute in the principalCatalog of an access policy in the definition set, or name an entry that policy already declares.",
+      "no_fix": null
+    },
+    {
       "code": "artifact_set.decision.sub_decision_bound",
       "tier": "T3",
       "severity": "error",
@@ -486,6 +502,14 @@
       "severity": "error",
       "message": "marking reference {id} has no declaration in the base or candidate set",
       "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set.",
+      "no_fix": null
+    },
+    {
+      "code": "artifact_set.policy.principal_catalog_conflict",
+      "tier": "T3",
+      "severity": "error",
+      "message": "{detail}",
+      "fix": "Keep one definition of each principal catalog name across the access policies of the set and the installed base, at the type the set's access rules use that principal attribute at.",
       "no_fix": null
     },
     {
@@ -4894,6 +4918,22 @@
       "severity": "error",
       "message": "ordered-fold execution is unavailable in this semantics profile",
       "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again.",
+      "no_fix": null
+    },
+    {
+      "code": "rule.validation.principal_input_invalid",
+      "tier": "T2",
+      "severity": "error",
+      "message": "{detail}",
+      "fix": "Declare each principal input once as {name, kind} on a decide rule, give the principal input record exactly one required column per input, and write nothing under principal.",
+      "no_fix": null
+    },
+    {
+      "code": "rule.validation.principal_input_undeclared",
+      "tier": "T2",
+      "severity": "error",
+      "message": "{detail}",
+      "fix": "Add the name the decision reads to principalInputs with its kind, or stop reading it; the host supplies only declared principal inputs.",
       "no_fix": null
     },
     {
