@@ -66,7 +66,12 @@ impl Members {
     }
 
     fn member(&self, principal: &str) -> Result<(), ActionDenial> {
-        if self.0.lock().unwrap().contains(principal) {
+        if self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains(principal)
+        {
             Ok(())
         } else {
             Err(ActionDenial::Forbidden {
@@ -357,7 +362,9 @@ fn integer(values: &JsonObject, property: &str) -> i64 {
     match serde_json::to_value(&values[property]).unwrap() {
         Value::Number(number) => number.as_i64().unwrap(),
         Value::String(text) => text.parse().unwrap(),
-        other => panic!("{property} is not an integer: {other}"),
+        other @ (Value::Null | Value::Bool(_) | Value::Array(_) | Value::Object(_)) => {
+            panic!("{property} is not an integer: {other}")
+        }
     }
 }
 
@@ -784,7 +791,7 @@ fn direct_host_commits_cannot_write_or_delete_a_protected_creator() {
             mutation: FactMutation::Put { values: cleared },
         },
         FactWrite {
-            key: key.clone(),
+            key,
             expected: stored.version,
             mutation: FactMutation::Delete,
         },
@@ -1358,6 +1365,7 @@ fn a_stamped_create_at_its_event_ceiling_refuses_one_attached_event() {
     let refused = cell
         .attributed(vec![audit()], |cell| {
             commit_action_with_limits(cell, &catalog, &request, &members, &limits(ceiling))
+                .map_err(Box::new)
         })
         .unwrap_err();
     assert_eq!(refused.code(), "decision.invalid_output", "{refused}");
@@ -1381,6 +1389,7 @@ fn a_stamped_create_at_its_event_ceiling_refuses_one_attached_event() {
                 &members,
                 &limits(ceiling.saturating_add(1)),
             )
+            .map_err(Box::new)
         })
         .unwrap_err();
     assert!(!past.to_string().contains("commit emitted"), "{past}");
