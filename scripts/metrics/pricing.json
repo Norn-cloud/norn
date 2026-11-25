@@ -5,12 +5,14 @@
   "hours_per_month": 730.0,
   "compute": {
     "hetzner_cpx62": {
-      "region": "EU (fsn1/nbg1/hel1)",
+      "region": "EU (NBG1)",
       "vcpu": 16,
       "ram_gib": 30.0,
       "nvme_gb": 610.0,
+      "monthly_eur": 130.49,
+      "eur_to_usd": 1.1724,
       "monthly_usd": 152.99,
-      "source": "Hetzner Cloud published EU tariff for CPX62 (16 vCPU, 32 GB / ~30 GiB usable RAM, 640 GB / ~610 GB usable NVMe), before VAT and IPv4 — https://docs.hetzner.com/general/infrastructure-and-availability/price-adjustment/",
+      "source": "Hetzner Cloud published EU (NBG1) tariff for CPX62 (16 vCPU, 32 GB / ~30 GiB usable RAM, 640 GB / ~610 GB usable NVMe): EUR 130.49/mo excl. VAT, incl. IPv4, converted at 1.1724 USD/EUR reference FX (= $152.99/mo) — https://www.hetzner.com/cloud/regular-performance/",
       "as_of": "2026-11-24"
     }
   },

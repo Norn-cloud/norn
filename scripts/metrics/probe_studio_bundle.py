@@ -62,10 +62,13 @@ def _resolve_local_assets(dist_dir: Path, urls: list[str]) -> list[Path]:
         rel = parsed.path.lstrip("/")
         if not rel:
             continue
-        candidate = (root / rel).resolve()
+        raw_path = root / rel
+        if raw_path.is_symlink():
+            raise RuntimeError(f"entry asset referenced by index.html is a symlink: {raw_url!r}")
+        candidate = raw_path.resolve()
         if not candidate.is_relative_to(root):
             raise RuntimeError(f"entry asset escapes dist directory: {raw_url!r}")
-        if not candidate.is_file() or candidate.is_symlink():
+        if not candidate.is_file():
             raise RuntimeError(f"entry asset referenced by index.html is missing: {raw_url!r}")
         if candidate not in seen:
             seen.add(candidate)
@@ -132,8 +135,14 @@ def measure_dist(dist_dir: Path) -> list[dict]:
         raise RuntimeError(f"no .js/.mjs files found under {dist_dir}")
 
     initial_js_files, initial_css_files = parse_initial_assets(dist_dir)
-    initial_js_gzip = sum(gzip_cache.get(p, gzip_size(p.read_bytes())) for p in initial_js_files)
-    initial_css_gzip = sum(gzip_cache.get(p, gzip_size(p.read_bytes())) for p in initial_css_files)
+
+    def _cached_gzip(path: Path) -> int:
+        if path not in gzip_cache:
+            gzip_cache[path] = gzip_size(path.read_bytes())
+        return gzip_cache[path]
+
+    initial_js_gzip = sum(_cached_gzip(p) for p in initial_js_files)
+    initial_css_gzip = sum(_cached_gzip(p) for p in initial_css_files)
 
     return [
         {

@@ -87,9 +87,13 @@ class PricingConfig(unittest.TestCase):
         self.assertEqual(cpx["vcpu"], 16)
         self.assertEqual(cpx["ram_gib"], 30.0)
         self.assertEqual(cpx["nvme_gb"], 610.0)
+        self.assertEqual(cpx["region"], "EU (NBG1)")
+        self.assertAlmostEqual(cpx["monthly_eur"], 130.49, places=2)
+        self.assertAlmostEqual(cpx["eur_to_usd"], 1.1724, places=4)
+        self.assertAlmostEqual(cpx["monthly_usd"], round(cpx["monthly_eur"] * cpx["eur_to_usd"], 2), places=2)
         self.assertAlmostEqual(cpx["monthly_usd"], 152.99, places=2)
-        self.assertIn("EU", cpx["region"])
-        self.assertIn("https://docs.hetzner.com/general/infrastructure-and-availability/price-adjustment/", cpx["source"])
+        self.assertIn("excl. VAT, incl. IPv4", cpx["source"])
+        self.assertIn("https://www.hetzner.com/cloud/regular-performance/", cpx["source"])
         self.assertRegex(cpx["as_of"], date_re)
 
         for section in ("storage", "bandwidth", "ci", "utilization", "workload_assumptions"):
@@ -295,6 +299,8 @@ class UnitEconomics(unittest.TestCase):
         custom["ci"]["boat_vm_usd_per_hour"]["as_of"] = "2026-10-10"
         custom["ci"]["effective_parallel_vms"]["as_of"] = "2026-10-10"
         custom["bandwidth"]["cdn_egress_usd_per_gb"]["as_of"] = "2026-11-24"
+        custom["workload_assumptions"]["active_tenant_commits_per_month"]["as_of"] = "2026-07-01"
+        custom["workload_assumptions"]["hot_cell_retention_months"]["as_of"] = "2026-06-15"
 
         report = unit_econ.compute_unit_economics(
             [
@@ -309,10 +315,39 @@ class UnitEconomics(unittest.TestCase):
         self.assertEqual(by_id["usd_per_1m_commits_cold_lake_month"]["pricing_as_of"], "2026-08-15")
         self.assertEqual(by_id["usd_per_pr_ci_estimate"]["pricing_as_of"], "2026-10-10")
         self.assertEqual(by_id["usd_per_10k_studio_loads"]["pricing_as_of"], "2026-11-24")
+        # Re-dated workload assumptions propagate to binding_constraint and usd_per_active_tenant_month_compute
+        self.assertIn("2026-07-01", by_id["usd_per_active_tenant_month_compute"]["pricing_as_of"])
+        self.assertNotIn("2026-06-15", by_id["usd_per_active_tenant_month_compute"]["pricing_as_of"])
+        self.assertIn("2026-07-01", by_id["binding_constraint"]["pricing_as_of"])
+        self.assertIn("2026-06-15", by_id["binding_constraint"]["pricing_as_of"])
 
         csv_rows = {r["id"]: r for r in csv.DictReader(io.StringIO(unit_econ.format_csv(report)))}
         self.assertEqual(csv_rows["usd_per_1m_commits_cold_lake_month"]["pricing_as_of"], "2026-08-15")
         self.assertEqual(csv_rows["usd_per_pr_ci_estimate"]["pricing_as_of"], "2026-10-10")
+
+    def test_zero_cold_storage_rate_reports_undefined_ratio_and_dynamic_ha(self):
+        custom = copy.deepcopy(self.pricing)
+        custom["storage"]["cloudflare_r2_storage_usd_per_gb_month"]["value"] = 0.0
+        custom["utilization"]["ha_replication_factor"]["value"] = 5
+        report = unit_econ.compute_unit_economics(
+            [
+                _rec("cell.commit.size.bytes", 2048.0, "bytes"),
+                _rec("lake.parquet.commit_size.bytes", 128.0, "bytes"),
+            ],
+            custom,
+        )
+        by_id = self._by_id(report)
+        ratio = by_id["hot_to_cold_cost_ratio"]
+        self.assertIsNone(ratio["value"])
+        self.assertEqual(ratio["missing_inputs"], [])
+        self.assertEqual(ratio["notes"], "cold storage rate is $0; ratio undefined")
+        self.assertIn("5x HA", by_id["usd_per_100k_cmd_tenant_month_storage"]["notes"])
+
+        md = unit_econ.format_markdown(report)
+        ratio_line = next(line for line in md.splitlines() if "`hot_to_cold_cost_ratio`" in line)
+        self.assertIn("null (undefined)", ratio_line)
+        self.assertNotIn("null (missing inputs)", ratio_line)
+        self.assertIn("cold storage rate is $0; ratio undefined", ratio_line)
 
     def test_cli_reads_jsonl_file(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -413,6 +448,18 @@ class NewProbes(unittest.TestCase):
             dist.mkdir()
             (dist / "index.html").write_bytes(b"<html></html>")
             with self.assertRaises(RuntimeError):
+                probe_studio.measure_dist(dist)
+
+    def test_studio_bundle_probe_refuses_symlinked_entry_asset(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            dist = Path(tmp) / "dist"
+            (dist / "assets").mkdir(parents=True)
+            real_js = dist / "assets" / "real.js"
+            real_js.write_bytes(b"console.log('ok');\n")
+            link_js = dist / "assets" / "entry.js"
+            link_js.symlink_to(real_js)
+            (dist / "index.html").write_bytes(b'<script type="module" src="/assets/entry.js"></script>')
+            with self.assertRaisesRegex(RuntimeError, "symlink"):
                 probe_studio.measure_dist(dist)
 
     def test_binary_sizes_probe_measurements_and_schema(self):

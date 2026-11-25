@@ -399,20 +399,27 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
     elif commit_size_row is not None:
         binding_inputs.append(_input_ref(commit_size_row))
 
+    binding_pricing_keys = [
+        "compute.hetzner_cpx62",
+        "utilization.ram_ceiling",
+        "utilization.cpu_target",
+        "utilization.disk_ceiling",
+        "workload_assumptions.active_tenant_commits_per_month",
+        "workload_assumptions.peak_to_average_cpu_ratio",
+        "workload_assumptions.hot_cell_retention_months",
+    ]
     if not binding_missing and tenants_ram is not None and tenants_cpu is not None and tenants_disk is not None:
         binding = min(("ram", tenants_ram), ("cpu", tenants_cpu), ("disk", tenants_disk), key=lambda pair: pair[1])[0]
         rows.append(_row(
             pricing, "binding_constraint", "compute", binding, "axis",
             "argmin(tenants_per_cpx62_by_ram, tenants_per_cpx62_by_cpu, tenants_per_cpx62_by_disk)",
-            binding_inputs, [],
-            ["compute.hetzner_cpx62", "utilization.ram_ceiling", "utilization.cpu_target", "utilization.disk_ceiling"],
+            binding_inputs, [], binding_pricing_keys,
         ))
     else:
         rows.append(_row(
             pricing, "binding_constraint", "compute", None, "axis",
             "argmin(tenants_per_cpx62_by_ram, tenants_per_cpx62_by_cpu, tenants_per_cpx62_by_disk)",
-            binding_inputs, binding_missing,
-            ["compute.hetzner_cpx62", "utilization.ram_ceiling", "utilization.cpu_target", "utilization.disk_ceiling"],
+            binding_inputs, binding_missing, binding_pricing_keys,
             notes="Requires RAM, CPU, and disk density inputs to identify the true binding resource without guessing.",
         ))
 
@@ -427,6 +434,14 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
     elif commit_row is not None:
         compute_inputs.append(_input_ref(commit_row))
 
+    compute_tenant_pricing_keys = [
+        "compute.hetzner_cpx62.monthly_usd",
+        "utilization.ha_replication_factor",
+        "utilization.ram_ceiling",
+        "utilization.cpu_target",
+        "workload_assumptions.active_tenant_commits_per_month",
+        "workload_assumptions.peak_to_average_cpu_ratio",
+    ]
     if not compute_missing and tenants_ram is not None and tenants_cpu is not None:
         tenants_compute = min(tenants_ram, tenants_cpu)
         if tenants_compute > 0:
@@ -434,27 +449,21 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
             rows.append(_row(
                 pricing, "usd_per_active_tenant_month_compute", "compute", usd_tenant_compute, "USD/tenant-month",
                 f"(${cpx_monthly_usd}/mo * {ha_factor:g}x HA) / min(tenants_per_cpx62_by_ram, tenants_per_cpx62_by_cpu)",
-                compute_inputs, [],
-                ["compute.hetzner_cpx62.monthly_usd", "utilization.ha_replication_factor",
-                 "utilization.ram_ceiling", "utilization.cpu_target"],
+                compute_inputs, [], compute_tenant_pricing_keys,
                 notes=f"Compute-bound tenant density = {tenants_compute:,} tenants per cpx62 node (before disk check).",
             ))
         else:
             rows.append(_row(
                 pricing, "usd_per_active_tenant_month_compute", "compute", None, "USD/tenant-month",
                 f"(${cpx_monthly_usd}/mo * {ha_factor:g}x HA) / min(tenants_per_cpx62_by_ram, tenants_per_cpx62_by_cpu)",
-                compute_inputs, [],
-                ["compute.hetzner_cpx62.monthly_usd", "utilization.ha_replication_factor",
-                 "utilization.ram_ceiling", "utilization.cpu_target"],
+                compute_inputs, [], compute_tenant_pricing_keys,
                 notes="Single tenant exceeds one cpx62 node's compute/RAM ceiling (density = 0 tenants/node).",
             ))
     else:
         rows.append(_row(
             pricing, "usd_per_active_tenant_month_compute", "compute", None, "USD/tenant-month",
             f"(${cpx_monthly_usd}/mo * {ha_factor:g}x HA) / min(tenants_per_cpx62_by_ram, tenants_per_cpx62_by_cpu)",
-            compute_inputs, compute_missing,
-            ["compute.hetzner_cpx62.monthly_usd", "utilization.ha_replication_factor",
-             "utilization.ram_ceiling", "utilization.cpu_target"],
+            compute_inputs, compute_missing, compute_tenant_pricing_keys,
         ))
 
     if commit_cmd_s is not None and commit_row is not None:
@@ -549,27 +558,29 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
     else:
         ratio_inputs.append(_input_ref(parquet_size_row))
 
+    ratio_pricing_keys = [
+        "storage.hetzner_volume_usd_per_gb_month",
+        "storage.cloudflare_r2_storage_usd_per_gb_month",
+        "utilization.ha_replication_factor",
+    ]
     if usd_1m_hot_mo is not None and usd_1m_cold_mo is not None and usd_1m_cold_mo > 0:
         rows.append(_row(
             pricing, "hot_to_cold_cost_ratio", "storage", usd_1m_hot_mo / usd_1m_cold_mo, "ratio",
             "usd_per_1m_commits_hot_cell_month / usd_per_1m_commits_cold_lake_month",
-            ratio_inputs, [],
-            [
-                "storage.hetzner_volume_usd_per_gb_month",
-                "storage.cloudflare_r2_storage_usd_per_gb_month",
-                "utilization.ha_replication_factor",
-            ],
+            ratio_inputs, [], ratio_pricing_keys,
+        ))
+    elif usd_1m_hot_mo is not None and usd_1m_cold_mo is not None:
+        rows.append(_row(
+            pricing, "hot_to_cold_cost_ratio", "storage", None, "ratio",
+            "usd_per_1m_commits_hot_cell_month / usd_per_1m_commits_cold_lake_month",
+            ratio_inputs, [], ratio_pricing_keys,
+            notes="cold storage rate is $0; ratio undefined",
         ))
     else:
         rows.append(_row(
             pricing, "hot_to_cold_cost_ratio", "storage", None, "ratio",
             "usd_per_1m_commits_hot_cell_month / usd_per_1m_commits_cold_lake_month",
-            ratio_inputs, ratio_missing,
-            [
-                "storage.hetzner_volume_usd_per_gb_month",
-                "storage.cloudflare_r2_storage_usd_per_gb_month",
-                "utilization.ha_replication_factor",
-            ],
+            ratio_inputs, ratio_missing, ratio_pricing_keys,
         ))
 
     if usd_1m_hot_mo is not None and commit_size_row is not None:
@@ -579,7 +590,7 @@ def compute_unit_economics(records: list[dict], pricing: dict, *, source: str = 
             "usd_per_1m_commits_hot_cell_month * (100,000 / 1,000,000)",
             [_input_ref(commit_size_row)], [],
             ["storage.hetzner_volume_usd_per_gb_month", "utilization.ha_replication_factor"],
-            notes="Monthly hot-cell storage cost for 100k commits (3x HA Hetzner Volume).",
+            notes=f"Monthly hot-cell storage cost for 100k commits ({ha_factor:g}x HA Hetzner Volume).",
         ))
     else:
         rows.append(_row(
@@ -734,9 +745,9 @@ def format_csv(report: dict) -> str:
     return buf.getvalue()
 
 
-def _fmt_value(value, unit: str) -> str:
+def _fmt_value(value, unit: str, *, has_missing: bool = True) -> str:
     if value is None:
-        return "null (missing inputs)"
+        return "null (missing inputs)" if has_missing else "null (undefined)"
     if isinstance(value, str):
         return f"`{value}`"
     if isinstance(value, int):
@@ -758,8 +769,11 @@ def _md_table_rows(rows: list[dict]) -> list[str]:
                 f"`{i['metric']}`={i['value']} {i['unit']} ({i['measured_at'][:10]})"
                 for i in row["inputs"]
             )
+            if row["value"] is None and row["notes"]:
+                detail = f"{detail} ({row['notes']})" if detail else row["notes"]
         out.append(
-            f"| {row['category']} | `{row['id']}` | {_fmt_value(row['value'], row['unit'])} "
+            f"| {row['category']} | `{row['id']}` | "
+            f"{_fmt_value(row['value'], row['unit'], has_missing=bool(row['missing_inputs']))} "
             f"| {row['unit']} | {row['pricing_as_of']} | {detail} |"
         )
     return out
