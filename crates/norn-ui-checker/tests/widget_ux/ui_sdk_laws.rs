@@ -350,6 +350,53 @@ fn l1_a_way_out_is_the_event_escape_raises() {
     assert_admits(&closed_by_open_change("ui-sdk:alert-dialog"), LAYER);
 }
 
+/// UI SDK's own pattern: a dialog held in `confirming` that refuses dismissal only while its form
+/// is dirty, asking "Discard changes?" through `onDismissAttempt`, which leads back to `browsing`.
+fn dirty_form_dialog(cancel: bool, open_change: bool) -> Vec<(String, String, String)> {
+    layer_codes(layered(
+        "ui-sdk:dialog",
+        &json!({ "dismissible": "input.fields.dirty == false" }),
+        &json!(["confirming"]),
+        |m| {
+            if !cancel {
+                without(m, "confirm-cancel");
+            }
+            m.at_mut("fields").as_array_mut().req("fields").push(
+                json!({ "fieldId": "dirty", "type": "boolean", "required": true, "initial": false }),
+            );
+            push_transition(
+                m,
+                json!({ "transitionId": "confirm-ask", "from": "confirming", "on": "confirm-ask", "target": "browsing" }),
+            );
+            if open_change {
+                m.at_mut("events").as_array_mut().req("events").push(json!({
+                    "eventId": "confirm-close",
+                    "source": { "kind": "user", "nodeId": "confirm-layer", "emits": "onOpenChange" },
+                    "payload": [{ "fieldId": "value", "type": "boolean", "required": true }]
+                }));
+                push_transition(
+                    m,
+                    json!({ "transitionId": "confirm-close", "from": "confirming", "on": "confirm-close", "target": "browsing" }),
+                );
+            }
+        },
+    ))
+}
+
+#[test]
+fn l1_a_computed_dismissible_needs_a_way_out_on_both_callbacks() {
+    // Refused: with a clean form Escape closes the dialog and raises `onOpenChange`, which nothing
+    // hears, so `heldIn` keeps it open; only a dirty form's `onDismissAttempt` leaves.
+    let found = dirty_form_dialog(false, false);
+    assert_refuses(&found, LAYER, "may close on Escape or refuse it");
+    assert_refuses(&found, LAYER, "`confirming`");
+    assert_admits(&found, "widget.catalog.invalid_prop");
+    // Admitted: `onOpenChange` leaves too.
+    assert_admits(&dirty_form_dialog(false, true), LAYER);
+    // Admitted: Cancel inside the dialog leaves whichever Escape raises.
+    assert_admits(&dirty_form_dialog(true, false), LAYER);
+}
+
 #[test]
 fn l1_held_in_is_the_one_source_of_whether_a_layer_is_open() {
     // Refused: a controlled `open` keeps a plain dialog open whatever Escape asks.
