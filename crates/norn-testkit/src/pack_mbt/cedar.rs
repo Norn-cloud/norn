@@ -8,7 +8,7 @@
 //! 3. **Foreign scope** (`Err(ActionRefusal::PermissionDenied)` + zero writes),
 //! 4. **Self-approver `SoD`** (`Err(ActionRefusal::PermissionDenied)` + zero writes).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use norn_kernel::authz::{
@@ -16,28 +16,27 @@ use norn_kernel::authz::{
     PdpDecision, ResourceInput, ScopeKey, UnboundProfile, VerifiedPrincipal, compile_all_projected,
     infer_principal_attributes,
 };
-use norn_kernel::cell_host::{
-    FactKey, FactMutation, FactVersion, FactWrite, JsonObject, JsonValue,
-};
+use norn_kernel::cell_host::{JsonObject, JsonValue};
 use norn_kernel::pack_mbt_support::cedar_projection::{
     CedarAttribute, CedarPrincipalAttribute, project_cedar_schema_with_catalog,
     project_cedar_schema_with_catalog_and_principal_attributes, project_host_access_schema,
 };
 use norn_kernel::pack_mbt_support::{
-    AccessCondition, AccessIr, AccessLiteral, AccessRule, ActionEffectProgram, IrJsonValue,
-    ObjectTypeDef, PdpExplanation, PropertyId, ResourceCompareOp, ResourceCondition,
-    ResourceOperand, ScopeDimension, SliceKey, TransitionId, ValidatedPolicySet, ZenExpression,
+    AccessCondition, AccessIr, AccessLiteral, AccessRule, ActionEffectProgram, ObjectTypeDef,
+    PdpExplanation, PropertyId, ResourceCompareOp, ResourceCondition, ResourceOperand,
+    ScopeDimension, TransitionId, ValidatedPolicySet,
 };
-use norn_kernel::{
-    ActionCall, ActionRefusal, CellCommit, DecisionTurn, TypeCatalog, World, commit_action,
-};
+use norn_kernel::{ActionCall, ActionRefusal, DecisionTurn, TypeCatalog, World, commit_action};
 
 use super::coverage::{DomainCoverage, ObservedPdpAuthorizer, PolicyRuleTarget};
 use super::driver::{
     SeedWalkSpec, assert_zero_ledger_writes, bfs_paths_to_states, collect_prefix_guards,
     seed_and_walk_object,
 };
-use super::synth::{collect_required_link_graph, synthesize_guard_satisfying, synthesize_object};
+use super::seed::{
+    encode_action_wire_input, fill_missing_action_input_fields, seed_create_links_and_slice_targets,
+};
+use super::synth::{synthesize_guard_satisfying, synthesize_object};
 use super::{AdmittedAction, AdmittedPack, PackHost};
 
 struct CedarCtx<'a> {
@@ -481,69 +480,21 @@ fn prepare_action_fixture<H: PackHost>(
         }
         ActionEffectProgram::UpsertInputObject { .. }
         | ActionEffectProgram::MutateParentWithRows { .. } => {
-            seed_create_links_and_slice_targets(ctx, admitted, &values, host, seq)?;
+            seed_create_links_and_slice_targets(
+                ctx.pack,
+                ctx.catalog,
+                admitted,
+                &mut values,
+                host,
+                seq,
+            )?;
         }
     }
 
     encode_action_wire_input(&admitted.root.input_schema, &mut values);
+    // ACTION-ACTOR-1: a stamped field comes from the principal, never the input.
+    values.retain(|field, _| !admitted.root.actor_stamped_fields().contains(field));
     Ok(values)
-}
-
-fn fill_missing_action_input_fields(
-    schema: &BTreeMap<String, IrJsonValue>,
-    values: &mut JsonObject,
-    obj_id: &str,
-    seq: u64,
-) {
-    let Some(props) = schema.get("properties").and_then(IrJsonValue::as_object) else {
-        return;
-    };
-    for (name, prop_schema) in props {
-        if values.contains_key(name) {
-            continue;
-        }
-        let prop_obj = prop_schema.as_object();
-        let is_decimal = prop_obj
-            .and_then(|obj| obj.get("nornType"))
-            .and_then(IrJsonValue::as_object)
-            .and_then(|nt| nt.get("kind"))
-            .and_then(IrJsonValue::as_string)
-            == Some("decimal");
-        let synthesized = if is_decimal {
-            JsonValue::String("10.00".to_owned())
-        } else {
-            match prop_obj
-                .and_then(|obj| obj.get("type"))
-                .and_then(IrJsonValue::as_string)
-            {
-                Some("boolean") => JsonValue::Bool(true),
-                Some("integer") => JsonValue::from(10_i64),
-                Some("number") => JsonValue::String("10.00".to_owned()),
-                Some(_) | None => JsonValue::String(format!("{name}-{obj_id}-{seq}")),
-            }
-        };
-        values.insert(name.clone(), synthesized);
-    }
-}
-
-fn encode_action_wire_input(schema: &BTreeMap<String, IrJsonValue>, values: &mut JsonObject) {
-    let Some(props) = schema.get("properties").and_then(IrJsonValue::as_object) else {
-        return;
-    };
-    values.retain(|k, _| props.contains_key(k));
-    for (name, prop_schema) in props {
-        let is_decimal = prop_schema
-            .as_object()
-            .and_then(|obj| obj.get("nornType"))
-            .and_then(IrJsonValue::as_object)
-            .and_then(|nt| nt.get("kind"))
-            .and_then(IrJsonValue::as_string)
-            == Some("decimal");
-        if is_decimal && let Some(JsonValue::Number(dec)) = values.get(name) {
-            let wire = dec.to_string();
-            values.insert(name.clone(), JsonValue::String(wire));
-        }
-    }
 }
 
 struct TransitionFixtureSpec<'a> {
@@ -626,157 +577,6 @@ fn seed_transition_fixture<H: PackHost>(
             path: &prefix,
         },
     )
-}
-
-fn seed_create_links_and_slice_targets<H: PackHost>(
-    ctx: &CedarCtx<'_>,
-    admitted: &AdmittedAction,
-    input: &JsonObject,
-    host: &mut H,
-    seq: u64,
-) -> Result<(), String> {
-    let mut seeded_keys: BTreeSet<(String, String)> = BTreeSet::new();
-    let desired_states = parse_slice_precondition_states(&admitted.root.preconditions);
-
-    for slice_spec in &admitted.root.slice {
-        if let Some(prop_name) = slice_input_key_field(&slice_spec.key)
-            && let Some(JsonValue::String(target_id)) = input.get(prop_name)
-        {
-            let target_ty_name = slice_spec.object_type.as_str();
-            if seeded_keys.insert((target_ty_name.to_owned(), target_id.clone())) {
-                seed_related_target(
-                    ctx,
-                    host,
-                    target_ty_name,
-                    target_id,
-                    desired_states.get(&slice_spec.name),
-                    seq,
-                )?;
-            }
-        }
-    }
-    for link in &admitted.root.create_links {
-        if let Some(JsonValue::String(target_id)) = input.get(&link.target_id_field) {
-            let target_ty_name = link.target_type.as_str();
-            if seeded_keys.insert((target_ty_name.to_owned(), target_id.clone())) {
-                seed_related_target(ctx, host, target_ty_name, target_id, None, seq)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn slice_input_key_field(key_spec: &SliceKey) -> Option<&str> {
-    match key_spec {
-        SliceKey::Property { from, property } if from == "input" => Some(property.as_str()),
-        SliceKey::Property { .. }
-        | SliceKey::Parameter { .. }
-        | SliceKey::TriggerObject
-        | SliceKey::TriggerBefore
-        | SliceKey::TriggerAfter
-        | SliceKey::TriggerChanges
-        | SliceKey::Link { .. }
-        | SliceKey::Predicate { .. } => None,
-    }
-}
-
-fn parse_slice_precondition_states(
-    preconditions: &[ZenExpression],
-) -> BTreeMap<String, (String, String)> {
-    let mut out = BTreeMap::new();
-    for expr in preconditions {
-        for conj in expr.as_str().split(" and ").flat_map(|s| s.split("&&")) {
-            let clause = conj
-                .trim()
-                .trim_start_matches('(')
-                .trim_end_matches(')')
-                .trim();
-            let Some((lhs, rhs)) = clause.split_once("==") else {
-                continue;
-            };
-            let Some(rest) = lhs
-                .trim()
-                .trim_start_matches('(')
-                .trim()
-                .strip_prefix("slice.")
-            else {
-                continue;
-            };
-            let mut parts = rest.split('.');
-            let (Some(slice_name), Some(prop_name)) = (parts.next(), parts.next()) else {
-                continue;
-            };
-            let desired = rhs
-                .trim()
-                .trim_end_matches(')')
-                .trim()
-                .trim_matches('\'')
-                .trim_matches('"');
-            if !desired.is_empty() {
-                out.insert(
-                    slice_name.to_owned(),
-                    (prop_name.to_owned(), desired.to_owned()),
-                );
-            }
-        }
-    }
-    out
-}
-
-fn seed_related_target<H: PackHost>(
-    ctx: &CedarCtx<'_>,
-    host: &mut H,
-    target_ty_name: &str,
-    target_id: &str,
-    desired_state: Option<&(String, String)>,
-    seq: u64,
-) -> Result<(), String> {
-    let target_ty = ctx
-        .pack
-        .object_types
-        .iter()
-        .find(|ty| ty.name.as_str() == target_ty_name)
-        .ok_or_else(|| format!("Cedar fixture: related type '{target_ty_name}' not in pack"))?;
-    if let Some((lc_prop, target_state)) = desired_state {
-        let lifecycles = ctx.catalog.lifecycles(&target_ty.name);
-        if let Some(lc) = lifecycles.values().find(|l| l.property.as_str() == lc_prop) {
-            let paths = bfs_paths_to_states(lc);
-            if let Some((init_state, prefix)) = paths.get(target_state) {
-                let guards = collect_prefix_guards(lc, prefix);
-                let mut vals =
-                    synthesize_guard_satisfying(ctx.pack, target_ty, lc, &guards, target_id, seq);
-                vals.insert(lc_prop.clone(), JsonValue::String(init_state.clone()));
-                return seed_and_walk_object(
-                    host,
-                    SeedWalkSpec {
-                        pack: ctx.pack,
-                        catalog: ctx.catalog,
-                        object_type: target_ty,
-                        prop: lc_prop,
-                        id: target_id,
-                        values: vals,
-                        path: prefix,
-                    },
-                );
-            }
-        }
-    }
-    let key = FactKey::new(target_ty_name, target_id);
-    let mut graph = collect_required_link_graph(ctx.pack, target_ty, &key, seq)?;
-    let vals = synthesize_object(ctx.pack, target_ty, target_id, seq);
-    graph.setup_writes.push(FactWrite {
-        key,
-        expected: FactVersion::ABSENT,
-        mutation: FactMutation::Put { values: vals },
-    });
-    graph.setup_links.extend(graph.direct_links);
-    host.commit(CellCommit {
-        writes: graph.setup_writes,
-        links: graph.setup_links,
-        ..CellCommit::empty()
-    })
-    .map(|_| ())
-    .map_err(|err| format!("Cedar fixture: seed related {target_ty_name}/{target_id}: {err}"))
 }
 
 fn apply_rule_conditions_to_object(rule: &AccessRule, values: &mut JsonObject) {

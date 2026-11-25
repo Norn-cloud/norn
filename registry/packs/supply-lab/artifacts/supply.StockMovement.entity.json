@@ -1,0 +1,126 @@
+{
+  "artifactId": "supply.StockMovement.entity",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "entity",
+  "lifecycle": "active",
+  "name": "Stock movement",
+  "namespace": "supply",
+  "payload": {
+    "entityVersion": "2.0",
+    "objectType": {
+      "identity": [
+        {
+          "name": "primary",
+          "properties": [
+            "movement_id"
+          ]
+        }
+      ],
+      "links": [
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "warehouse",
+          "target": "supply.Warehouse"
+        },
+        {
+          "cardinality": {
+            "from": "many",
+            "required": true,
+            "to": "one"
+          },
+          "id": "sku",
+          "target": "supply.Sku"
+        }
+      ],
+      "name": "supply.StockMovement",
+      "properties": [
+        {
+          "id": "movement_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "warehouse_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "sku_id",
+          "type": {
+            "kind": "text"
+          }
+        },
+        {
+          "id": "qty",
+          "type": {
+            "additivity": {
+              "kind": "additive"
+            },
+            "kind": "decimal",
+            "scale": 6,
+            "unitSource": [
+              "unit"
+            ]
+          }
+        },
+        {
+          "id": "unit",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "each"
+              },
+              {
+                "value": "kg"
+              },
+              {
+                "value": "l"
+              }
+            ]
+          }
+        },
+        {
+          "id": "movement_kind",
+          "type": {
+            "kind": "enum",
+            "values": [
+              {
+                "value": "receipt"
+              },
+              {
+                "value": "issue"
+              },
+              {
+                "value": "adjustment"
+              },
+              {
+                "value": "transfer"
+              }
+            ]
+          }
+        },
+        {
+          "id": "occurred_at",
+          "type": {
+            "kind": "timestamp",
+            "timezone": "utc"
+          }
+        }
+      ]
+    }
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.StockMovement.entity.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

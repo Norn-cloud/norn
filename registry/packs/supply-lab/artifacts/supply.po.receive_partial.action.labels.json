@@ -1,0 +1,30 @@
+{
+  "artifactId": "supply.po.receive_partial.action.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Mark a purchase order partially received labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "استلام جزئي",
+          "en": "Partially received"
+        },
+        "target": {
+          "actionId": "supply.po.receive_partial",
+          "kind": "action"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.po.receive_partial.action.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

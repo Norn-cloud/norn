@@ -29,6 +29,7 @@
 //!   each result before delivering it, and `observe`/`clock` peek until a
 //!   commit consumes.
 
+pub mod admitted;
 pub mod analytics;
 pub mod automation_outbox;
 pub mod catalog;
@@ -110,6 +111,7 @@ mod test_door;
 pub mod transparency;
 mod write;
 
+pub use admitted::{AdmittedAction, AdmittedDefinitions};
 pub use coverage_observer::{
     CedarRuleKey, DomainCoverageRecorder, DomainCoverageSnapshot, ImmutableRefusalKey,
     ObservedSqliteCell, TransitionKey,

@@ -1,0 +1,108 @@
+{
+  "artifactId": "supply.PurchaseOrder.entity.labels",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "labels",
+  "lifecycle": "active",
+  "name": "Purchase order labels",
+  "namespace": "supply",
+  "payload": {
+    "entries": [
+      {
+        "label": {
+          "ar": "أمر شراء",
+          "en": "Purchase order"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "objectType",
+          "objectType": "supply.PurchaseOrder"
+        }
+      },
+      {
+        "label": {
+          "ar": "مسودة",
+          "en": "Draft"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.PurchaseOrder",
+          "property": "status",
+          "value": "draft"
+        }
+      },
+      {
+        "label": {
+          "ar": "مُرسل",
+          "en": "Submitted"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.PurchaseOrder",
+          "property": "status",
+          "value": "submitted"
+        }
+      },
+      {
+        "label": {
+          "ar": "مستلم جزئيًا",
+          "en": "Partially received"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.PurchaseOrder",
+          "property": "status",
+          "value": "partially_received"
+        }
+      },
+      {
+        "label": {
+          "ar": "مكتمل",
+          "en": "Fulfilled"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.PurchaseOrder",
+          "property": "status",
+          "value": "fulfilled"
+        }
+      },
+      {
+        "label": {
+          "ar": "ملغى",
+          "en": "Cancelled"
+        },
+        "review": {
+          "ar": "needs_review"
+        },
+        "target": {
+          "kind": "enumValue",
+          "objectType": "supply.PurchaseOrder",
+          "property": "status",
+          "value": "cancelled"
+        }
+      }
+    ],
+    "labelsVersion": "0.1"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.PurchaseOrder.entity.labels.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

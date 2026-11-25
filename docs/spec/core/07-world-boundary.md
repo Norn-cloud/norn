@@ -220,6 +220,14 @@ pending maintainer review; additions beside OBS-PAGE-1, which is unchanged):
   operator's decision. The re-derived bundle has its own address, names the
   row it reprocesses, and the commit that lands it consumes that row. Capture
   and replay never reprocess.
+- **MAP-ENUM-TEXT-1:** a property rule whose target is an enum may produce
+  text (a code set the source does not declare): the static check types the
+  rule's value as text, since a mapping cannot know which codes an untrusted
+  source sends; at runtime the mapping refuses a value outside the enum
+  (`mapping.runtime.evaluation_failed`), so its row lands quarantined,
+  never dropped or coerced. Named
+  scenario: `axis3_unknown_enum_codes_land_in_quarantine`
+  (`crates/norn-cell/tests/supply_lab_stress.rs`).
 - **MAP-EXPLAIN-1:** every quarantined row is explained in structure, never by
   its code alone: the record, its dataset, the code, the mapping rule (map)
   and, for a field that does not conform, the field, a preview of the value it

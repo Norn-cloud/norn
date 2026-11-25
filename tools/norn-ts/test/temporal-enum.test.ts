@@ -38,7 +38,7 @@ test("builder and compiler preserve declared and observed code-set origins", () 
   }
 }, 30_000)
 
-test.skipIf(!checker)("Rust admits the authored mapping with a receipt-pinned source and refuses candidate enums", () => {
+test.skipIf(!checker)("Rust admits the authored mapping with a receipt-pinned source and never trusts a candidate code set", () => {
   const artifacts = JSON.parse(JSON.stringify(compiled().artifacts)) as any[]
   const mapping = artifacts.find(a => a.kind === "mapping")
   const source = artifacts.find(a => a.kind === "source_schema")
@@ -59,9 +59,39 @@ test.skipIf(!checker)("Rust admits the authored mapping with a receipt-pinned so
     source.payload.codeSets[0].origin = origin
     pin()
     const checked = checker!.checkArtifactSet(artifacts)
-    expect(checked.admitted).toBe(false)
-    expect(checked.diagnostics.diagnostics.some(d => d.code === (origin === "inferred" ? "source_schema.validation.promoted_inference" : "mapping.model.expression_type"))).toBe(true)
+    if (origin === "inferred") {
+      expect(checked.admitted).toBe(false)
+      expect(checked.diagnostics.diagnostics.some(d => d.code === "source_schema.validation.promoted_inference")).toBe(true)
+    } else {
+      // An observed candidate code set is not the enum: the field reads as
+      // text, and MAP-ENUM-TEXT-1 admits text into the enum target, whose
+      // membership the commit checks (an unknown code lands quarantined).
+      expect(checked.diagnostics.diagnostics).toEqual([])
+      expect(checked.admitted).toBe(true)
+    }
   }
+}, 30_000)
+
+// MAP-ENUM-TEXT-1 relaxes free text only: a literal outside the target enum,
+// or a declared code set wider than it, still refuses statically.
+test.skipIf(!checker)("an enum target refuses an out-of-enum literal and a wider declared code set", () => {
+  const check = (edit: (mapping: any, source: any) => void) => {
+    const artifacts = JSON.parse(JSON.stringify(compiled().artifacts)) as any[]
+    const mapping = artifacts.find(a => a.kind === "mapping")
+    const source = artifacts.find(a => a.kind === "source_schema")
+    edit(mapping, source)
+    const pinned = checker!.checkArtifactSet(artifacts.filter(a => a !== mapping))
+    const receipt = pinned.receipt as { artifactSet: { artifacts: { artifactId: string; sha256: string }[] } }
+    mapping.payload.source.sha256 = receipt.artifactSet.artifacts.find(a => a.artifactId === source.artifactId)!.sha256
+    return checker!.checkArtifactSet(artifacts)
+  }
+  const state = (mapping: any) => mapping.payload.maps[0].properties.find((p: any) => p.property === "state")
+  const literal = check((mapping) => { state(mapping).value = "'archived'" })
+  expect(literal.admitted).toBe(false)
+  expect(literal.diagnostics.diagnostics.some((d: any) => d.code === "mapping.model.expression_type")).toBe(true)
+  const wider = check((_, source) => { source.payload.codeSets.find((c: any) => c.field === "state").values.push({ value: "archived" }) })
+  expect(wider.admitted).toBe(false)
+  expect(wider.diagnostics.diagnostics.some((d: any) => d.code === "mapping.model.expression_type")).toBe(true)
 }, 30_000)
 
 test("temporal conversion cannot extend closed contracts or admit unknown code-set keys", () => {

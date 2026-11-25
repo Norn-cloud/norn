@@ -11,11 +11,18 @@ pack holds what happens to a trained model:
   evaluation actually read, a typed metric, and whether every output
   contract held. Status: `candidate` → `production` → `retired`.
 - **ml.modelversion.register**: create-only, and only when both runs are
-  `FINISHED`.
+  `FINISHED`. The kernel stamps `registered_by` (protected) with the verified
+  principal (ACTOR-STAMP-1); a caller never supplies it.
 - **ml.modelversion.promote**: the `promote` transition, guarded by the
   law `ml.promotion_policy` (invariant `evaluated_on_pinned_dataset`): no
   version reaches production unless its evaluation read the pinned dataset
-  revision and every contract held.
+  revision and every contract held. A failed guard refuses with
+  `core.projection.publication_guard` (ANALYSIS-PUBLISH-1: an evaluation on
+  another revision than the pinned one is temporal leakage). Separation of
+  duties: `independentOf: ["registered_by"]` (ACTOR-INDEPENDENT-1), so the
+  principal who registered a version never promotes it.
+- **ml.modelversion.retire**: the `retire` transition, under the same
+  separation of duties.
 - **Sign-off**: `promote.approval.json` is an APPROVAL-1 definition. Installed
   with `POST /v1/definitions:admit` then `:install` (with the signoff), it
   gates promote: a call parks as a decision an admin or owner approves, and
@@ -29,7 +36,9 @@ pack holds what happens to a trained model:
 - **ml.access**: members register, request promotion and record prediction
   batches; admins and owners retire.
 
-`sdks/python/models/run-demo.sh` runs registration, the law and applying a
+`sdks/python/models/run-demo.sh` runs registration, the law, the separation
+of duties (the registrant's own promotion is refused; the dev host's reviewer
+principal, `.norn/dev.reviewer.token`, promotes) and applying a
 model (`sdks/python/models/norn_models.apply_model`, which checks every output
 contract on every row before it writes anything) end to end on a dev host. The approval gate needs a hosted cell's roles (a dev host declares
 none); `crates/norn-cell-do/tests/ml_approval.rs` admits the definition against

@@ -1,0 +1,168 @@
+{
+  "artifactId": "supply.line.add.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Add a purchase order line",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.line.add",
+    "createLinks": [
+      {
+        "link": "order",
+        "targetIdField": "po_id",
+        "targetType": "supply.PurchaseOrder"
+      },
+      {
+        "link": "sku",
+        "targetIdField": "sku_id",
+        "targetType": "supply.Sku"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "supply.OrderLine.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "line_id",
+      "objectKind": "supply.OrderLine",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "currency": {
+          "enum": [
+            "EGP",
+            "USD",
+            "EUR"
+          ],
+          "type": "string"
+        },
+        "fill_rate": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "line_id": {
+          "type": "string"
+        },
+        "ordered_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "po_id": {
+          "type": "string"
+        },
+        "promised_at": {
+          "type": "string"
+        },
+        "received_qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "sku_id": {
+          "type": "string"
+        },
+        "unit": {
+          "enum": [
+            "each",
+            "kg",
+            "l"
+          ],
+          "type": "string"
+        },
+        "unit_price": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 4
+          },
+          "type": "number"
+        }
+      },
+      "required": [
+        "line_id",
+        "po_id",
+        "sku_id",
+        "promised_at",
+        "ordered_qty",
+        "received_qty",
+        "fill_rate",
+        "unit",
+        "unit_price",
+        "currency"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "line_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "line_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "((((slice.order.status == 'draft') and (input.currency == slice.order.currency)) and (input.unit == slice.sku.unit_of_measure)) and (input.received_qty == 0)) and (input.fill_rate == 0)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "po_id"
+          }
+        },
+        "name": "order",
+        "objectType": "supply.PurchaseOrder"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "sku_id"
+          }
+        },
+        "name": "sku",
+        "objectType": "supply.Sku"
+      }
+    ],
+    "title": "Add a purchase order line",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "supply.OrderLine"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.line.add.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

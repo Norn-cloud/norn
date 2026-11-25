@@ -1,0 +1,92 @@
+{
+  "artifactId": "supply.sku.register.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Register a SKU",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.sku.register",
+    "effectProgram": {
+      "entityArtifactId": "supply.Sku.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "sku_id",
+      "objectKind": "supply.Sku",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "enum": [
+            "dry_goods",
+            "chilled",
+            "pharma",
+            "spares"
+          ],
+          "type": "string"
+        },
+        "shelf_life_days": {
+          "type": "integer"
+        },
+        "sku_id": {
+          "type": "string"
+        },
+        "unit_of_measure": {
+          "enum": [
+            "each",
+            "kg",
+            "l"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "sku_id",
+        "category",
+        "unit_of_measure",
+        "shelf_life_days"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "sku_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "sku_id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Register a SKU",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "supply.Sku"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.sku.register.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

@@ -493,7 +493,12 @@ pub fn pick_non_lifecycle_mutation(
 
     for prop in effective_properties(pack, object_type) {
         let id = prop.id.as_str();
-        if prop.is_read_only() || lifecycle_props.contains(id) || key_props.contains(id) {
+        // FA-PROTECT-1: a protected value is never rewritten, so never a mutation.
+        if prop.is_read_only()
+            || prop.protected
+            || lifecycle_props.contains(id)
+            || key_props.contains(id)
+        {
             continue;
         }
         let resolved = resolve_property_type(prop.property_type, &shared);
@@ -643,6 +648,7 @@ struct EffectiveProp<'a> {
     id: &'a PropertyId,
     property_type: &'a PropertyType,
     read_only: bool,
+    protected: bool,
     default: Option<&'a IrJsonValue>,
 }
 
@@ -666,6 +672,7 @@ fn effective_properties<'a>(
                     id: &prop.id,
                     property_type: &prop.property_type,
                     read_only: prop.is_read_only(),
+                    protected: prop.protected,
                     default: prop.default.as_ref().map(|d| &d.0),
                 });
             }
@@ -682,6 +689,7 @@ fn effective_properties<'a>(
                             id: &prop.id,
                             property_type: &prop.property_type,
                             read_only: false,
+                            protected: false,
                             default: None,
                         });
                     }

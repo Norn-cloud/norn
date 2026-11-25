@@ -1,0 +1,145 @@
+{
+  "artifactId": "supply.movement.record.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Record a stock movement",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.movement.record",
+    "createLinks": [
+      {
+        "link": "warehouse",
+        "targetIdField": "warehouse_id",
+        "targetType": "supply.Warehouse"
+      },
+      {
+        "link": "sku",
+        "targetIdField": "sku_id",
+        "targetType": "supply.Sku"
+      }
+    ],
+    "effectProgram": {
+      "entityArtifactId": "supply.StockMovement.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "movement_id",
+      "objectKind": "supply.StockMovement",
+      "writeMode": {
+        "kind": "create_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "movement_id": {
+          "type": "string"
+        },
+        "movement_kind": {
+          "enum": [
+            "receipt",
+            "issue",
+            "adjustment",
+            "transfer"
+          ],
+          "type": "string"
+        },
+        "occurred_at": {
+          "type": "string"
+        },
+        "qty": {
+          "nornType": {
+            "kind": "decimal",
+            "scale": 6
+          },
+          "type": "number"
+        },
+        "sku_id": {
+          "type": "string"
+        },
+        "unit": {
+          "enum": [
+            "each",
+            "kg",
+            "l"
+          ],
+          "type": "string"
+        },
+        "warehouse_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "movement_id",
+        "warehouse_id",
+        "sku_id",
+        "qty",
+        "unit",
+        "movement_kind",
+        "occurred_at"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "movement_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "movement_id"
+      ],
+      "type": "object"
+    },
+    "preconditions": [
+      "(slice.warehouse.status == 'active') and (input.unit == slice.sku.unit_of_measure)"
+    ],
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "warehouse_id"
+          }
+        },
+        "name": "warehouse",
+        "objectType": "supply.Warehouse"
+      },
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "sku_id"
+          }
+        },
+        "name": "sku",
+        "objectType": "supply.Sku"
+      }
+    ],
+    "title": "Record a stock movement",
+    "writes": [
+      {
+        "change": "created",
+        "entityKind": "supply.StockMovement"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.movement.record.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

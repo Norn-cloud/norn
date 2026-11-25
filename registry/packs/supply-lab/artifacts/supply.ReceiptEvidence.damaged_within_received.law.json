@@ -1,0 +1,50 @@
+{
+  "artifactId": "supply.ReceiptEvidence.damaged_within_received.law",
+  "dependencies": [
+    {
+      "artifactId": "supply.ReceiptEvidence.interface",
+      "kind": "entity",
+      "required": true,
+      "version": "0.1.0"
+    }
+  ],
+  "irVersion": "0.1",
+  "kind": "law",
+  "lifecycle": "active",
+  "name": "A receipt never records a negative quantity, and never more damaged units than it received.",
+  "namespace": "supply",
+  "payload": {
+    "id": "supply.ReceiptEvidence.damaged_within_received",
+    "lawVersion": "0.1",
+    "modality": {
+      "kind": "always"
+    },
+    "owner": "supply",
+    "provenance": {
+      "source": "authoring_sdk",
+      "sourcePath": "registry/packs/supply-lab/supply.ts"
+    },
+    "rationale": "A receipt never records a negative quantity, and never more damaged units than it received.",
+    "response": {
+      "expression": "((self.received_qty >= 0) and (self.damaged_qty >= 0)) and (self.damaged_qty <= self.received_qty)",
+      "kind": "predicate"
+    },
+    "scope": {
+      "objectTypes": [
+        "supply.ReceiptEvidence"
+      ],
+      "root": {
+        "id": "supply.ReceiptEvidence",
+        "kind": "entity"
+      }
+    },
+    "severity": "error",
+    "subject": "supply.ReceiptEvidence"
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.ReceiptEvidence.damaged_within_received.law.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

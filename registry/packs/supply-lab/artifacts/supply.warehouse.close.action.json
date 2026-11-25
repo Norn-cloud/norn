@@ -1,0 +1,68 @@
+{
+  "artifactId": "supply.warehouse.close.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Close a warehouse",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.warehouse.close",
+    "effectProgram": {
+      "entityArtifactId": "supply.Warehouse.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "fire_transition",
+      "lifecycle": "status",
+      "objectIdField": "warehouse_id",
+      "objectKind": "supply.Warehouse",
+      "transition": "close"
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "warehouse_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "warehouse_id"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "warehouse_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "warehouse_id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "title": "Close a warehouse",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "supply.Warehouse"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.warehouse.close.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

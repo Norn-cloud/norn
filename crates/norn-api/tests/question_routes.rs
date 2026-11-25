@@ -1747,7 +1747,12 @@ fn no_listed_metric_names_an_internal_encoding_in_any_pack() {
         }
         if !summary.time_links.is_empty() {
             linked += 1;
-            assert_eq!(summary.time_property.as_deref(), Some("occurred_at"));
+            let expected = if summary.object_type.as_deref() == Some("supply.Inspection") {
+                "received_at"
+            } else {
+                "occurred_at"
+            };
+            assert_eq!(summary.time_property.as_deref(), Some(expected));
         }
     }
     // The posting and settlement sums of the three systems take their event's time.
