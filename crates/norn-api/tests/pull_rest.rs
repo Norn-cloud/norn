@@ -22,11 +22,10 @@ use norn_api::scope::CellScope;
 use norn_api::sources::{ClaimError, HttpRequest, Sources, Step, Trigger};
 use norn_cell::mapping_bundle::MappingInput;
 use norn_cell::{CellStore, InstalledDefinitionInput, MappingOutcome, Model};
-use norn_checker::{
-    EntityArtifactSetContext,
-    receipt::{ReceiptSources, check_artifact_set_with_receipt},
-};
+// Both rings, as a cell admits the set: it carries a widget (#1762 C2).
+use norn_checker::{EntityArtifactSetContext, receipt::ReceiptSources};
 use norn_ir::{ArtifactEnvelope, ArtifactKind, EntityRoot, ResourceLimitProfile, RuntimeValue};
+use norn_ui_checker::check_artifact_set_with_receipt;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
