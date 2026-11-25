@@ -28,14 +28,14 @@ fn coded(found: Vec<Diagnostic>, prefixes: &[&str]) -> Vec<(String, String, Stri
         .collect()
 }
 
-fn refuses(found: &[(String, String, String)], code: &str, part: &str) {
+fn assert_refuses(found: &[(String, String, String)], code: &str, part: &str) {
     assert!(
         found.iter().any(|(c, _, m)| c == code && m.contains(part)),
         "expected {code} containing {part:?}; got {found:#?}"
     );
 }
 
-fn admits(found: &[(String, String, String)], code: &str) {
+fn assert_admits(found: &[(String, String, String)], code: &str) {
     assert!(
         !found.iter().any(|(c, _, _)| c == code),
         "expected no {code}; got {found:#?}"
@@ -100,7 +100,7 @@ fn l1_total_non_dismissal_only_while_a_call_is_pending() {
             without(m, "confirm-cancel");
         },
     ));
-    refuses(&found, LAYER, "cannot be dismissed at all");
+    assert_refuses(&found, LAYER, "cannot be dismissed at all");
     // Admitted: held while the approve call is pending (it has a deadline and exits on every outcome).
     let found = layer_codes(layered(
         "ui-sdk:dialog",
@@ -108,10 +108,10 @@ fn l1_total_non_dismissal_only_while_a_call_is_pending() {
         &json!(["approving"]),
         |_| {},
     ));
-    admits(&found, LAYER);
+    assert_admits(&found, LAYER);
     // Refused: dismissible:false with no heldIn refuses whenever a person opens it.
     let found = layer_codes(layered("ui-sdk:dialog", &refuse, &json!([]), |_| {}));
-    refuses(&found, LAYER, "whenever it is open");
+    assert_refuses(&found, LAYER, "whenever it is open");
 }
 
 #[test]
@@ -123,7 +123,7 @@ fn l1_an_accidental_dismissal_lock_needs_pending_a_question_or_cancel() {
         &json!(["confirming"]),
         |_| {},
     ));
-    admits(&found, LAYER);
+    assert_admits(&found, LAYER);
     // Refused: the same confirmation without Cancel; Escape alone is not enough in idle.
     let found = layer_codes(layered(
         "ui-sdk:alert-dialog",
@@ -133,7 +133,7 @@ fn l1_an_accidental_dismissal_lock_needs_pending_a_question_or_cancel() {
             without(m, "confirm-cancel");
         },
     ));
-    refuses(&found, LAYER, "locks out an outside press or swipe");
+    assert_refuses(&found, LAYER, "locks out an outside press or swipe");
     // Admitted: a dirty form refuses dismissal and asks through onDismissAttempt.
     let found = layer_codes(layered(
         "ui-sdk:dialog",
@@ -146,7 +146,7 @@ fn l1_an_accidental_dismissal_lock_needs_pending_a_question_or_cancel() {
         }));
         },
     ));
-    admits(&found, LAYER);
+    assert_admits(&found, LAYER);
     // Refused: a lock held in an error state.
     let found = layer_codes(layered(
         "ui-sdk:alert-dialog",
@@ -154,10 +154,10 @@ fn l1_an_accidental_dismissal_lock_needs_pending_a_question_or_cancel() {
         &json!(["failed"]),
         |_| {},
     ));
-    refuses(&found, LAYER, "`failed`");
+    assert_refuses(&found, LAYER, "`failed`");
     // Admitted: a plain dialog refuses nothing and needs no heldIn.
     let found = layer_codes(layered("ui-sdk:dialog", &json!({}), &json!([]), |_| {}));
-    admits(&found, LAYER);
+    assert_admits(&found, LAYER);
 }
 
 #[test]
@@ -168,7 +168,7 @@ fn ui_sdk_nodes_are_checked_against_the_pinned_catalog() {
         &json!([]),
         |_| {},
     ));
-    refuses(
+    assert_refuses(
         &found,
         "widget.catalog.unknown_entry",
         "ui-sdk:no-such-primitive",
@@ -179,28 +179,28 @@ fn ui_sdk_nodes_are_checked_against_the_pinned_catalog() {
         &json!([]),
         |_| {},
     ));
-    refuses(&found, "widget.catalog.invalid_prop", "modal");
+    assert_refuses(&found, "widget.catalog.invalid_prop", "modal");
     let found = layer_codes(layered(
         "ui-sdk:dialog",
         &json!({ "onOpenChange": "true" }),
         &json!([]),
         |_| {},
     ));
-    refuses(&found, "widget.catalog.unknown_prop", "onOpenChange");
+    assert_refuses(&found, "widget.catalog.unknown_prop", "onOpenChange");
     let found = layer_codes(layered(
         "ui-sdk:dialog",
         &json!({ "modal": "\"trap-focus\"" }),
         &json!([]),
         |_| {},
     ));
-    admits(&found, "widget.catalog.invalid_prop");
+    assert_admits(&found, "widget.catalog.invalid_prop");
     // A tenant cannot declare its own entry in the UI SDK namespace.
     let mut widget = layered("ui-sdk:dialog", &json!({}), &json!([]), |_| {});
     widget.at_mut("payload").at_mut("ux").set(
         "catalog",
         json!([{ "entryId": "ui-sdk:dialog", "label": { "en": "Mine" }, "trust": "native" }]),
     );
-    refuses(
+    assert_refuses(
         &layer_codes(widget),
         "widget.catalog.duplicate_entry",
         "shadow",
@@ -214,17 +214,17 @@ fn behaviours_are_the_generated_foundation_behaviours_of_the_component() {
         widget["payload"]["ux"]["pages"][0]["root"]["children"][3]["behaviors"] = behaviors;
         layer_codes(widget)
     };
-    admits(
+    assert_admits(
         &with_behaviors(json!(["popups/modal", "popups/dismissal"])),
         "widget.view.behavior_unfit",
     );
-    refuses(
+    assert_refuses(
         &with_behaviors(json!(["selection/selection-model"])),
         "widget.view.behavior_unfit",
         "built from",
     );
     // The old hand-written names are gone.
-    refuses(
+    assert_refuses(
         &with_behaviors(json!(["focus_scope"])),
         "widget.view.behavior_unfit",
         "not a foundation behaviour",
@@ -254,25 +254,25 @@ fn toast(props: &Value, held_in: &Value) -> Vec<(String, String, String)> {
 
 #[test]
 fn l3_notifications_never_hold_the_page() {
-    admits(
+    assert_admits(
         &toast(
             &json!({ "priority": "\"polite\"", "duration": "5000" }),
             &json!([]),
         ),
         NOTIFICATION,
     );
-    admits(&toast(&json!({}), &json!([])), NOTIFICATION);
-    refuses(
+    assert_admits(&toast(&json!({}), &json!([])), NOTIFICATION);
+    assert_refuses(
         &toast(&json!({ "priority": "\"assertive\"" }), &json!([])),
         NOTIFICATION,
         "assertively",
     );
-    refuses(
+    assert_refuses(
         &toast(&json!({ "type": "\"error\"" }), &json!([])),
         NOTIFICATION,
         "assertively",
     );
-    refuses(
+    assert_refuses(
         &toast(
             &json!({ "type": "\"loading\"", "dismissible": "false" }),
             &json!([]),
@@ -280,7 +280,7 @@ fn l3_notifications_never_hold_the_page() {
         NOTIFICATION,
         "neither expires nor can be dismissed",
     );
-    refuses(
+    assert_refuses(
         &toast(&json!({}), &json!(["browsing"])),
         NOTIFICATION,
         "held open",
@@ -289,7 +289,7 @@ fn l3_notifications_never_hold_the_page() {
     let mut widget = machine_widget(approve_machine());
     widget["payload"]["ux"]["pages"][0]["root"]["behaviors"] =
         json!(["platform/announce", "popups/modal"]);
-    refuses(&layer_codes(widget), NOTIFICATION, "never modal");
+    assert_refuses(&layer_codes(widget), NOTIFICATION, "never modal");
 }
 
 fn machine_codes(widget: Value) -> Vec<(String, String, String)> {
@@ -298,14 +298,14 @@ fn machine_codes(widget: Value) -> Vec<(String, String, String)> {
 
 #[test]
 fn l2_every_pending_state_exits_on_not_served() {
-    admits(
+    assert_admits(
         &machine_codes(machine_widget(approve_machine())),
         "widget.machine.pending_outcome_uncovered",
     );
     let found = machine_codes(edit(approve_machine(), |m| {
         drop_transition(m, "on-not-served");
     }));
-    refuses(
+    assert_refuses(
         &found,
         "widget.machine.pending_outcome_uncovered",
         "not_served",
@@ -353,20 +353,20 @@ fn subscribed_read(live_outcomes: bool) -> Value {
 #[test]
 fn l2_a_subscribed_read_handles_a_lapsed_feed_and_a_refused_subscription() {
     let found = machine_codes(subscribed_read(false));
-    refuses(&found, "widget.machine.pending_outcome_uncovered", "stale");
-    refuses(
+    assert_refuses(&found, "widget.machine.pending_outcome_uncovered", "stale");
+    assert_refuses(
         &found,
         "widget.machine.pending_outcome_uncovered",
         "subscription_refused",
     );
     let found = machine_codes(subscribed_read(true));
-    admits(&found, "widget.machine.pending_outcome_uncovered");
-    admits(&found, "widget.machine.outcome_impossible");
+    assert_admits(&found, "widget.machine.pending_outcome_uncovered");
+    assert_admits(&found, "widget.machine.outcome_impossible");
     // An action never sees a feed lapse.
     let found = machine_codes(edit(approve_machine(), |m| {
         m["events"][5]["source"]["outcome"] = json!("stale");
     }));
-    refuses(&found, "widget.machine.outcome_impossible", "stale");
+    assert_refuses(&found, "widget.machine.outcome_impossible", "stale");
 }
 
 fn coded_handler(code: &str, declared: &[&str]) -> Vec<(String, String, String)> {
@@ -393,16 +393,16 @@ fn coded_handler(code: &str, declared: &[&str]) -> Vec<(String, String, String)>
 
 #[test]
 fn l2_a_code_handler_names_a_code_the_action_declares_and_never_covers_its_category() {
-    admits(
+    assert_admits(
         &coded_handler("order.locked", &["order.locked"]),
         "widget.machine.outcome_code_undeclared",
     );
-    refuses(
+    assert_refuses(
         &coded_handler("order.unknown", &["order.locked"]),
         "widget.machine.outcome_code_undeclared",
         "order.unknown",
     );
-    refuses(
+    assert_refuses(
         &coded_handler("order.locked", &[]),
         "widget.machine.outcome_code_undeclared",
         "order.locked",
@@ -417,7 +417,7 @@ fn l2_a_code_handler_names_a_code_the_action_declares_and_never_covers_its_categ
             "transitionId": "on-locked", "from": "approving", "on": "locked", "target": "refused"
         }));
     });
-    refuses(
+    assert_refuses(
         &machine_codes(widget),
         "widget.machine.pending_outcome_uncovered",
         "refused:conflict",
@@ -426,12 +426,12 @@ fn l2_a_code_handler_names_a_code_the_action_declares_and_never_covers_its_categ
     let found = machine_codes(edit(approve_machine(), |m| {
         m["events"][3]["source"]["code"] = json!("order.locked");
     }));
-    refuses(&found, "widget.machine.invalid_event", "code");
+    assert_refuses(&found, "widget.machine.invalid_event", "code");
 }
 
 #[test]
 fn l4_a_failure_offers_retry_or_close_a_person_drives() {
-    admits(
+    assert_admits(
         &machine_codes(machine_widget(approve_machine())),
         "widget.machine.error_without_recovery",
     );
@@ -448,7 +448,7 @@ fn l4_a_failure_offers_retry_or_close_a_person_drives() {
             "transitionId": "failed-tick", "from": "failed", "on": "tick", "target": "browsing"
         }));
         }));
-    refuses(
+    assert_refuses(
         &found,
         "widget.machine.error_without_recovery",
         "Retry or Close",
@@ -471,14 +471,14 @@ fn l4_a_failure_offers_retry_or_close_a_person_drives() {
                 .push(exit);
         }))
     };
-    refuses(
+    assert_refuses(
         &gave_up(
             json!({ "transitionId": "gave-up-tick", "from": "gave-up", "on": "tick", "target": "browsing" }),
         ),
         "widget.machine.failure_without_retry_or_close",
         "gave-up",
     );
-    admits(
+    assert_admits(
         &gave_up(
             json!({ "transitionId": "gave-up-close", "from": "gave-up", "on": "dismiss", "target": "browsing" }),
         ),
@@ -492,7 +492,7 @@ fn l4_a_failure_offers_retry_or_close_a_person_drives() {
             .push(json!({ "stateId": "gone", "role": "terminal" }));
         m["transitions"][5]["target"] = json!("gone");
     }));
-    admits(&found, "widget.machine.failure_without_retry_or_close");
+    assert_admits(&found, "widget.machine.failure_without_retry_or_close");
 }
 
 const AUTHORITY: &str = "widget.authority.action_outside_binding";
@@ -508,10 +508,10 @@ fn l5_an_action_is_reached_only_through_its_binding() {
             &["widget.authority."],
         )
     };
-    refuses(&operation("callAction"), AUTHORITY, "callAction");
-    refuses(&operation("post_message"), AUTHORITY, "post_message");
-    admits(&operation("decideDecision"), AUTHORITY);
-    admits(
+    assert_refuses(&operation("callAction"), AUTHORITY, "callAction");
+    assert_refuses(&operation("post_message"), AUTHORITY, "post_message");
+    assert_admits(&operation("decideDecision"), AUTHORITY);
+    assert_admits(
         &coded(
             widget_findings(machine_widget(approve_machine())),
             &["widget.authority."],
@@ -598,8 +598,8 @@ fn handled(number: Value, text: Value) -> Vec<(String, String, String)> {
 #[test]
 fn a_marked_or_exact_value_needs_a_renderer_that_handles_it() {
     let found = handled(json!([]), json!([]));
-    refuses(&found, "widget.binding.exact_value_unhandled", "total");
-    refuses(&found, "widget.binding.marked_value_unhandled", "email");
+    assert_refuses(&found, "widget.binding.exact_value_unhandled", "total");
+    assert_refuses(&found, "widget.binding.marked_value_unhandled", "email");
     let found = handled(json!(["exact"]), json!(["masked"]));
     assert_eq!(found, [], "{found:#?}");
     // The native renderer draws both faithfully by its own contract.
