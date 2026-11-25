@@ -210,7 +210,9 @@ impl CellCore {
             olap.engine.as_deref().unwrap_or("duckdb"),
         )?;
         let issuer = norn_api::olap_credential::Issuer::parse(
-            olap.signing_key.as_deref().ok_or_else(|| "NORN_OLAP_SIGNING_KEY is required".to_owned())?,
+            olap.signing_key
+                .as_deref()
+                .ok_or_else(|| "NORN_OLAP_SIGNING_KEY is required".to_owned())?,
         )
         .map_err(|error| format!("NORN_OLAP_SIGNING_KEY: {error}"))?;
         self.tenant.enable_analytics(issuer, engine);

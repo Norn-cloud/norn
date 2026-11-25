@@ -2,27 +2,23 @@
 //! suite uses to inject a fault into, or read back, the engine's catalog and
 //! objects. Every answer a suite checks must name `datafusion`, so `DuckDB`
 //! can never satisfy these suites.
-#![allow(
-    clippy::expect_used,
-    unreachable_pub,
-    dead_code,
-    unused_imports,
-    reason = "test support shared by suites that use different hooks"
-)]
 
 use std::path::Path;
 
 use norn_cell::analytics::TenantId;
-pub use norn_cell::analytics::datafusion::{
+#[allow(unused_imports, reason = "each suite uses some of these")]
+pub(crate) use norn_cell::analytics::datafusion::{
     ATTEMPT_BUSY, ATTEMPT_UNKNOWN, DATASET_COLD, ENGINE_ID, Engine, Settings,
 };
 use rusqlite::OptionalExtension as _;
 
+#[allow(clippy::expect_used, reason = "test support")]
 fn open(root: &Path, tenant: &TenantId) -> rusqlite::Connection {
     rusqlite::Connection::open(root.join("t").join(tenant.as_str()).join("catalog.sqlite3"))
         .expect("the tenant's catalog")
 }
 
+#[allow(clippy::expect_used, reason = "test support")]
 fn rows_of(path: &str) -> u64 {
     let file = std::fs::File::open(path).expect("an object");
     let reader = parquet::file::reader::SerializedFileReader::new(file).expect("parquet");
@@ -34,7 +30,8 @@ fn rows_of(path: &str) -> u64 {
 
 /// Rows of the mirror table `table` a reader could see: every version in
 /// the segments the catalog publishes.
-pub fn mirror_rows(root: &Path, tenant: &TenantId, table: &str) -> u64 {
+#[allow(dead_code, clippy::expect_used, reason = "a hook only some suites use")]
+pub(crate) fn mirror_rows(root: &Path, tenant: &TenantId, table: &str) -> u64 {
     let conn = open(root, tenant);
     let mut statement = conn
         .prepare("SELECT path FROM segment WHERE tbl = ?1")
@@ -47,7 +44,8 @@ pub fn mirror_rows(root: &Path, tenant: &TenantId, table: &str) -> u64 {
 }
 
 /// Make the tenant's catalog refuse to record `key`.
-pub fn refuse_meta_key(root: &Path, tenant: &TenantId, key: &str) {
+#[allow(dead_code, clippy::expect_used, reason = "a hook only some suites use")]
+pub(crate) fn refuse_meta_key(root: &Path, tenant: &TenantId, key: &str) {
     open(root, tenant)
         .execute_batch(&format!(
             "CREATE TRIGGER refuse_key BEFORE INSERT ON meta WHEN NEW.key = '{key}' \
@@ -57,7 +55,8 @@ pub fn refuse_meta_key(root: &Path, tenant: &TenantId, key: &str) {
 }
 
 /// One catalog record.
-pub fn meta(root: &Path, tenant: &TenantId, key: &str) -> Option<String> {
+#[allow(dead_code, clippy::expect_used, reason = "a hook only some suites use")]
+pub(crate) fn meta(root: &Path, tenant: &TenantId, key: &str) -> Option<String> {
     open(root, tenant)
         .query_row("SELECT value FROM meta WHERE key = ?1", [key], |row| {
             row.get(0)
@@ -67,7 +66,8 @@ pub fn meta(root: &Path, tenant: &TenantId, key: &str) -> Option<String> {
 }
 
 /// Rows of the current dataset `table`: its published data file's rows.
-pub fn dataset_rows(root: &Path, tenant: &TenantId, table: &str) -> u64 {
+#[allow(dead_code, clippy::expect_used, reason = "a hook only some suites use")]
+pub(crate) fn dataset_rows(root: &Path, tenant: &TenantId, table: &str) -> u64 {
     let files: serde_json::Value = serde_json::from_str(
         &meta(root, tenant, &format!("files:{table}")).expect("published files"),
     )
@@ -81,7 +81,8 @@ pub fn dataset_rows(root: &Path, tenant: &TenantId, table: &str) -> u64 {
 }
 
 /// Every `lineage:` record key, in order.
-pub fn lineage_keys(root: &Path, tenant: &TenantId) -> Vec<String> {
+#[allow(dead_code, clippy::expect_used, reason = "a hook only some suites use")]
+pub(crate) fn lineage_keys(root: &Path, tenant: &TenantId) -> Vec<String> {
     if !root
         .join("t")
         .join(tenant.as_str())
