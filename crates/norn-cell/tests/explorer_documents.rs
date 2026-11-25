@@ -50,13 +50,15 @@ fn artifacts() -> Vec<ArtifactEnvelope> {
         "party.Brand.entity",
         "party.Organization.entity",
     ];
-    // packs/locale-ar labels the model in Arabic; it changes no model or object document.
+    // packs/locale-ar labels the model in Arabic; it changes no model or object document. studio is
+    // Studio's server-held pages (#1762 C2): the demo workspace serves its record page.
     let mut paths: Vec<PathBuf> = [
         "core",
         "packs/canon",
         "packs/erpnext",
         "packs/shopify",
         "packs/locale-ar",
+        "studio",
     ]
     .into_iter()
     .flat_map(|dir| {

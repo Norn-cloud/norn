@@ -6,7 +6,7 @@ import { join } from "node:path"
 import { renderToStaticMarkup } from "react-dom/server"
 import type { ReactNode } from "react"
 import { readDocument } from "../src/lib/exact.ts"
-import type { SourceLineage } from "../src/lib/transport.ts"
+import type { ObjectReads, SourceLineage } from "../src/lib/transport.ts"
 import type { ObjectFindings } from "../src/evidence/review.ts"
 import { CellUnavailable, StudioScopeError, studioScopeKey, WORKSPACE_CHANGED_MESSAGE, type StudioScope } from "../src/lib/definitions.ts"
 
@@ -16,7 +16,8 @@ afterAll(() => { globalThis.localStorage = originalStorage })
 
 // The recorded transport reads fixtures through Vite's import.meta.glob, which bun test lacks; the reads are answered below instead.
 mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
-const { maskedWords, ObjectPage, SourcesItemPage, summaryOf } = await import("../src/objects.tsx")
+const { maskedWords, RecordBody, RecordHeader, summaryOf } = await import("../src/record/record-view.tsx")
+const { recordPageOf, SourcesItemPage } = await import("../src/record/record-page.tsx")
 const { untilDecided, workspaceOf, WorkspaceProvider } = await import("../src/lib/workspace.tsx")
 type Workspace = import("../src/lib/workspace.tsx").Workspace
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>
@@ -38,20 +39,24 @@ const { ProvenanceChain } = await import("../src/components/provenance.tsx")
 const fixture = (name: string) => readDocument(readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer", name), "utf8"), "recorded")
 
 /**
- * The record page at its route, with the recorded reads already answered (or, given `cached`, only those
- * cache entries), in the recorded workspace; `workspace: null` decides it from the cached mode read instead.
+ * The record at its route as the record page's islands draw it once its read answered (the header and
+ * the body, `src/record/record-view.tsx`), with the recorded reads and any `cached` entries, in the
+ * recorded workspace; `workspace: null` decides it from the cached mode read instead. `whole` draws the
+ * page itself (`SourcesItemPage`): what it shows before the page machine reads anything.
  */
-async function page(concept: string, id: string, view = "business", links?: unknown, access?: unknown, cached?: (client: QueryClient) => void, workspace: Workspace | null = RECORDED) {
+async function page(concept: string, id: string, view = "business", links?: unknown, access?: unknown, cached?: (client: QueryClient) => void, workspace: Workspace | null = RECORDED, whole = false) {
   globalThis.localStorage = { getItem: () => view, setItem: () => {} } as unknown as Storage
   const client = new QueryClient()
   const file = (read: string) => fixture(`objects/${concept}/${id.replaceAll("/", "~")}.${read}.json`)
   client.setQueryData(["catalog"], fixture("three-systems.definitions.json"))
   if (access !== undefined) client.setQueryData(["live-access"], access)
-  if (cached === undefined) client.setQueryData(RECORDED.reader.object(concept, id).queryKey, { object: file("object"), links: links === undefined ? file("links") : readDocument(JSON.stringify(links), "recorded"), source: file("source") })
-  else cached(client)
+  cached?.(client)
+  const data = { object: file("object"), links: links === undefined ? file("links") : readDocument(JSON.stringify(links), "recorded"), source: file("source") } as ObjectReads
+  const route = { name: concept, id }
+  const Shown = () => <><RecordHeader route={route} data={data} refreshing={false} readAgain={() => {}} /><RecordBody route={route} data={data} readAgain={() => {}} /></>
   const root = createRootRoute()
   const router = createRouter({
-    routeTree: root.addChildren([createRoute({ getParentRoute: () => root, path: "/sources/$concept/$", component: ObjectPage })]),
+    routeTree: root.addChildren([createRoute({ getParentRoute: () => root, path: "/sources/$concept/$", component: whole ? SourcesItemPage : Shown })]),
     history: createMemoryHistory({ initialEntries: [`/sources/${concept}/${id}`] }),
   })
   await router.load()
@@ -372,7 +377,7 @@ test("a record page with no decided mode never shows a cached live answer: the r
     // A live answer under the key the drawer used without a scope, and one at a workspace.
     client.setQueryData(["object", concept, id], answer)
     client.setQueryData(liveAt(scope).reader.object(concept, id).queryKey, answer)
-  }, null)
+  }, null, true)
   expect(html).not.toContain("Gold scrap")
   expect(html).not.toContain("Read again")
   expect(html).not.toContain('data-fact="')
@@ -450,14 +455,14 @@ test("the record page's Quarantined and rules-broken chips show only under a dec
     decided(client)
     const read = client.getQueryCache().find({ queryKey: modeKey, exact: true })
     read?.setState({ ...read.state, status: "error", error: new CellUnavailable(503, "The workspace cell could not be opened."), errorUpdatedAt: Date.now() })
-  }, null)
+  }, null, true)
   for (const absent of [">Quarantined<", "rule broken", "Held out of authoritative reads", "Gold scrap"]) expect(failed).not.toContain(absent)
   expect(failed).toContain("Workspace unavailable")
   // No mode decided at all: findings cached under the key every workspace once shared show nothing.
   const undecided = await page(concept, id, "business", undefined, undefined, (client) => {
     client.setQueryData(["findings", concept, id], held)
     client.setQueryData(liveAt(scope).reader.findings(concept, id).queryKey, held)
-  }, null)
+  }, null, true)
   for (const absent of [">Quarantined<", "rule broken"]) expect(undecided).not.toContain(absent)
 })
 
@@ -490,4 +495,42 @@ test("the withheld chip counts the masked values in words: one, several, none, a
   const many = Object.fromEntries(Array.from({ length: 1200 }, (_, at) => [`p${at}`, { mode: "redacted" }]))
   expect(maskedWords(many, "en")).toBe("1,200 values masked")
   expect(maskedWords(many, "de")).toBe("1.200 values masked")
+})
+
+// #1762 C2: the record page is the widget the cell serves, drawn by the renderer; a cell that serves
+// none says so, and Studio holds no second record page.
+test("the record page is the cell's: drawn by the renderer from the definitions read, or said to be not served", async () => {
+  const widget = JSON.parse(readFileSync(join(import.meta.dir, "../../../registry/studio/artifacts/norn.studio.record.widget.json"), "utf8")) as { artifactId: string }
+  const definitions = (fixture("three-systems.definitions.json") as { document: { artifactId: string }[] }).document
+  const others = definitions.filter((artifact) => artifact.artifactId !== widget.artifactId)
+  expect(recordPageOf([...others, widget])?.pages[0]?.pageId).toBe("record")
+  expect(recordPageOf(others)).toBeUndefined()
+  const render = async (artifacts: unknown[]) => {
+    const client = new QueryClient()
+    client.setQueryData(["catalog"], readDocument(JSON.stringify(artifacts), "recorded"))
+    const root = createRootRoute()
+    const router = createRouter({
+      routeTree: root.addChildren([createRoute({ getParentRoute: () => root, path: "/sources/$concept/$", component: SourcesItemPage })]),
+      history: createMemoryHistory({ initialEntries: ["/sources/canon.Item/demo/item/gold"] }),
+    })
+    await router.load()
+    return renderToStaticMarkup(<QueryClientProvider client={client}><ViewProvider><WorkspaceProvider workspace={RECORDED}><RouterProvider router={router} /></WorkspaceProvider></ViewProvider></QueryClientProvider>)
+  }
+  const drawn = await render([...others, widget])
+  expect(drawn).toContain('data-norn-page="record"')
+  expect(drawn).toContain('aria-label="Record"')
+  expect(drawn).not.toContain("data-record-page")
+  const none = await render(others)
+  expect(none).toContain('data-record-page="not-served"')
+  expect(none).toContain("serves no record page")
+})
+
+test("Studio's translations resolve the record page's messages by id, and fall back to the source text", async () => {
+  const { message, translate } = await import("../src/lib/translations.ts")
+  const { messageId } = await import("../../../tools/norn-ts/src/builder/message.ts")
+  expect(translate(messageId("Record"), "ar")).toBe("السجل")
+  expect(translate(messageId("Record"), "en")).toBeUndefined()
+  expect(translate(messageId("Record", "another use"), "ar")).toBeUndefined()
+  expect(message("Lifecycle", "ar")).toBe("دورة الحياة")
+  expect(message("Not translated", "ar")).toBe("Not translated")
 })

@@ -28,9 +28,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use norn_ir::{
-    ArtifactEnvelope, LocaleText, WidgetArtifactRef, WidgetComponent, WidgetDismissalMethod,
+    ArtifactEnvelope, WidgetArtifactRef, WidgetComponent, WidgetDismissalMethod,
     WidgetFieldControl, WidgetFieldTarget, WidgetNavigationDestination, WidgetNode,
-    WidgetOverrideValue, WidgetSectionKind, WidgetUx,
+    WidgetOverrideValue, WidgetSectionKind, WidgetText, WidgetUx,
 };
 
 use norn_checker::{Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, Span};
@@ -168,7 +168,7 @@ fn show(key: &str) -> String {
     }
 }
 
-fn label_overrides(ux: &WidgetUx) -> BTreeMap<&str, &LocaleText> {
+fn label_overrides(ux: &WidgetUx) -> BTreeMap<&str, &WidgetText> {
     ux.overrides
         .iter()
         .filter_map(|over| match &over.value {
@@ -202,8 +202,8 @@ fn text_is_named(text: &str) -> bool {
     text.chars().any(char::is_alphanumeric)
 }
 
-fn locale_text_is_named(text: &LocaleText) -> bool {
-    !text.0.is_empty() && text.0.values().all(|value| text_is_named(value))
+fn locale_text_is_named(text: &WidgetText) -> bool {
+    !text.is_empty() && text.entries().iter().all(|(_, value)| text_is_named(value))
 }
 
 /// Controls the renderer can clear to an explicit null: free-form and date inputs and checkboxes
@@ -244,7 +244,7 @@ struct Context<'a> {
     forms: &'a BTreeMap<&'a str, &'a norn_ir::WidgetForm>,
     nullable: &'a BTreeSet<Pair>,
     /// Label overrides by semantic id: the effective label of a node is the override when present.
-    label_overrides: BTreeMap<&'a str, &'a LocaleText>,
+    label_overrides: BTreeMap<&'a str, &'a WidgetText>,
     /// Control overrides by semantic id: the renderer shows the override's control when present.
     control_overrides: BTreeMap<&'a str, WidgetFieldControl>,
     composed: &'a ComposedUx<'a>,
@@ -257,7 +257,7 @@ struct Context<'a> {
 }
 
 impl Context<'_> {
-    fn effective<'t>(&'t self, node: &WidgetNode, declared: &'t LocaleText) -> &'t LocaleText {
+    fn effective<'t>(&'t self, node: &WidgetNode, declared: &'t WidgetText) -> &'t WidgetText {
         node.semantic_id
             .as_deref()
             .and_then(|semantic| self.label_overrides.get(semantic).copied())
@@ -386,13 +386,13 @@ impl Facts {
         }
     }
 
-    fn add_label(&mut self, element: &str, text: &LocaleText) {
-        if !text.0.is_empty() {
+    fn add_label(&mut self, element: &str, text: &WidgetText) {
+        if !text.is_empty() {
             self.has_label.insert(element.to_owned());
         }
-        for (locale, value) in &text.0 {
+        for (locale, value) in text.entries() {
             self.label
-                .insert((element.to_owned(), locale.clone(), text_is_named(value)));
+                .insert((element.to_owned(), locale.to_owned(), text_is_named(value)));
         }
     }
 
@@ -571,7 +571,7 @@ impl Facts {
         context: &Context<'_>,
         node: &WidgetNode,
         id: &str,
-        label: &LocaleText,
+        label: &WidgetText,
         field_ids: &[String],
     ) {
         let label = context.effective(node, label);
@@ -1035,14 +1035,14 @@ mod tests {
         assert!(text_is_named("Approve"));
         assert!(text_is_named("1"));
         assert!(!text_is_named("…"));
-        let mixed = LocaleText(
+        let mixed = WidgetText::Locales(norn_ir::LocaleText(
             [
                 ("en".to_owned(), "Go".to_owned()),
                 ("ar".to_owned(), "-".to_owned()),
             ]
             .into_iter()
             .collect(),
-        );
+        ));
         assert!(!locale_text_is_named(&mixed));
     }
 }

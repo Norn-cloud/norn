@@ -35,14 +35,17 @@ impl UxChecker<'_, '_, '_> {
     }
 
     fn check_field_presentation(&mut self, field: &WidgetFieldPresentation, path: &str) {
-        if field.label.0.is_empty() || field.label.0.values().any(|value| value.trim().is_empty()) {
+        if field.label.is_blank() {
             self.error(
                 &format!("{path}/label"),
                 "field label must contain nonblank localized text",
             );
         }
         if let Some(help) = &field.help
-            && help.0.values().any(|value| value.trim().is_empty())
+            && help
+                .entries()
+                .iter()
+                .any(|(_, value)| value.trim().is_empty())
         {
             self.error(
                 &format!("{path}/help"),

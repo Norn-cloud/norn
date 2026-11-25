@@ -11,12 +11,17 @@
  */
 import type { Classified } from "./machine/outcome.ts"
 import type { ActionCallState, ReadState, SentCall } from "./state.ts"
-import type { DataBinding } from "./ux.ts"
+import type { ContextRead, DataBinding } from "./ux.ts"
 
-/** One data binding's read, as the reader serves it. */
+/**
+ * One data binding's read, as the reader serves it. `record` is a context read
+ * (UI-CONTEXT-READ-1): the object the page's context names, with what the host reads beside it
+ * (Studio: its links and lineage), its document the host's to draw.
+ */
 export type BindingRead =
   | { readonly kind: "object"; readonly objectType: string; readonly id: string }
   | { readonly kind: "list"; readonly objectType: string; readonly size: number }
+  | { readonly kind: "record"; readonly objectType: string; readonly id: string }
 
 /** One read as TanStack Query runs it: its key names the workspace it is read in. */
 export interface WidgetReaderQuery {
@@ -80,6 +85,13 @@ export function bindingRead(binding: DataBinding, context: Readonly<Record<strin
     return typeof id === "string" && id !== "" ? { kind: "object", objectType, id } : null
   }
   return null
+}
+
+/** The read a context read needs at this page, or null when the host did not supply its type and key. */
+export function contextRead(read: ContextRead, context: Readonly<Record<string, unknown>>): BindingRead | null {
+  const objectType = context[read.typeParameterId]
+  const id = context[read.keyParameterId]
+  return typeof objectType === "string" && objectType !== "" && typeof id === "string" && id !== "" ? { kind: "record", objectType, id } : null
 }
 
 /** The read state an answer to a read leaves, given the one before it and whether it is followed live. */

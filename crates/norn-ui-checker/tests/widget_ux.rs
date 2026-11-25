@@ -4737,6 +4737,82 @@ fn studio_decision_sheet_is_admitted_clean() {
     assert_clean(&found);
 }
 
+/// Studio's record page (#1762 C2) is the demo workspace's built-in page: one page for every
+/// object type, its record a context read (UI-CONTEXT-READ-1), its text source messages
+/// (UI-TEXT-1) and its islands held in declared states. The checker admits it with no finding.
+#[test]
+fn studio_record_page_is_admitted_clean() {
+    let found: Vec<Diagnostic> = findings_with_support(record_page(), Vec::new(), &[])
+        .into_iter()
+        .filter(|finding| finding.artifact_id.as_deref() == Some("norn.studio.record.widget"))
+        .collect();
+    assert_clean(&found);
+}
+
+fn record_page() -> Value {
+    serde_json::from_str(include_str!(
+        "../../../registry/studio/artifacts/norn.studio.record.widget.json"
+    ))
+    .expect("record page should be JSON")
+}
+
+/// Each broken variant of the record page is refused, at the member that breaks it.
+#[test]
+fn a_broken_record_page_is_refused() {
+    let refused = |change: &dyn Fn(&mut Value), pointer: &str, part: &str| {
+        let mut page = record_page();
+        change(&mut page);
+        let found = findings_with_support(page, Vec::new(), &[]);
+        assert!(
+            found.iter().any(|finding| {
+                finding.message.contains(part)
+                    && finding
+                        .span
+                        .as_ref()
+                        .is_some_and(|span| span.pointer.contains(pointer))
+            }),
+            "expected a finding at {pointer} saying {part:?}; got {found:#?}"
+        );
+    };
+    // A message whose id is not the hash of its text.
+    refused(
+        &|page| {
+            let ux = &mut page["payload"]["ux"];
+            ux["catalog"][0]["label"]["msg"]["source"] = json!("Reading a record");
+        },
+        "/payload/ux/catalog/0/label/msg/id",
+        "hash of its source text",
+    );
+    // A context read whose key is no parameter of its page.
+    refused(
+        &|page| {
+            let ux = &mut page["payload"]["ux"];
+            ux["contextReads"][0]["keyParameterId"] = json!("key");
+        },
+        "/payload/ux/contextReads/0/keyParameterId",
+        "required text context parameter",
+    );
+    // A context read named by a property, as if an entity were bound to it.
+    refused(
+        &|page| {
+            let ux = &mut page["payload"]["ux"];
+            ux["pages"][0]["root"]["component"]["section"]["fields"] =
+                json!([{ "bindingId": "record", "propertyId": "display_name" }]);
+        },
+        "/payload/ux/pages/0/root/component/section/fields/0",
+        "unknown data binding",
+    );
+    // An island held in a state the machine does not declare.
+    refused(
+        &|page| {
+            let ux = &mut page["payload"]["ux"];
+            ux["pages"][0]["root"]["children"][0]["component"]["heldIn"] = json!(["waiting"]);
+        },
+        "/payload/ux/pages/0/root/children/0/component/heldIn/0",
+        "does not declare",
+    );
+}
+
 fn machine(sheet: &mut Value) -> &mut Value {
     sheet
         .at_mut("payload")

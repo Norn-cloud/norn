@@ -11,6 +11,12 @@ import type { Json } from "../canonical.ts"
 import { UI_SDK } from "../../generated/ui-sdk.ts"
 import { type EnvelopeOptions, envelope } from "./envelope.ts"
 import type { LocaleText } from "./labels.ts"
+import type { Message } from "./message.ts"
+
+export { isMessage, messageId, msg, type Message } from "./message.ts"
+
+/** User-facing text: a source message (`msg`), or locale-keyed text in older contracts. */
+export type Text = Message | LocaleText
 
 type Catalog = typeof UI_SDK.components
 /** A UI SDK primitive at the version the checker's catalog pins (`ui-sdk:<component>`). */
@@ -87,14 +93,14 @@ export interface Machine {
 }
 
 export type Component =
-  | { readonly kind: "section"; readonly section: { readonly sectionId: string; readonly kind: "section" | "tab"; readonly label: LocaleText; readonly fields: ReadonlyArray<PropertyRef>; readonly order: number } }
+  | { readonly kind: "section"; readonly section: { readonly sectionId: string; readonly kind: "section" | "tab"; readonly label: Text; readonly fields: ReadonlyArray<PropertyRef>; readonly order: number } }
   | { readonly kind: "list"; readonly dataBindingId: string; readonly fields: ReadonlyArray<PropertyRef>; readonly selection: "none" | "single" | "multiple" }
   | { readonly kind: "detail"; readonly dataBindingId: string }
   | { readonly kind: "form"; readonly formId: string }
   | { readonly kind: "field"; readonly fieldId: string }
   | { readonly kind: "action"; readonly placementId: string }
   | { readonly kind: "navigation"; readonly itemId: string }
-  | { readonly kind: "control"; readonly label: LocaleText; readonly input: "trigger" | "choice" | "text" }
+  | { readonly kind: "control"; readonly label: Text; readonly input: "trigger" | "choice" | "text" }
   | { readonly kind: "catalog"; readonly entry: { readonly entryId: string; readonly widget?: ArtifactRef }; readonly props?: Readonly<Record<string, Zen>>; readonly heldIn?: ReadonlyArray<string> }
 
 export interface WidgetNode {
@@ -135,9 +141,40 @@ export function outcome(eventId: string, value: CallOutcome, refine: { readonly 
   return { eventId, source: { kind: "outcome", outcome: value, ...refine } }
 }
 
+/** One typed value the host supplies when it opens a page (its route's parameters). */
+export interface ContextParam {
+  readonly paramId: string
+  readonly type: ValueType
+  readonly required: boolean
+  readonly runtimeKeyOf?: ArtifactRef
+}
+
+/**
+ * A read of the object a page's context names (UI-CONTEXT-READ-1): its type and key are two
+ * required text parameters of `pageId`. Only that page's machine reads it, and only catalog
+ * islands draw it.
+ */
+export interface ContextRead {
+  readonly bindingId: string
+  readonly pageId: string
+  readonly typeParameterId: string
+  readonly keyParameterId: string
+}
+
+/** A catalog entry this contract declares (UI-CATALOG-1): a custom component and its typed contract. */
+export interface CatalogEntry {
+  readonly entryId: string
+  readonly label: Text
+  readonly trust: "native" | "contract_checked" | "opaque_island"
+  readonly framework?: string
+  readonly props?: ReadonlyArray<MachineField>
+  readonly events?: ReadonlyArray<{ readonly eventId: string; readonly payload?: ReadonlyArray<MachineField> }>
+}
+
 export interface Page {
   readonly pageId: string
   readonly name: string
+  readonly contextParams?: ReadonlyArray<ContextParam>
   readonly root: WidgetNode
   readonly machine?: Machine
   readonly view?: Json
@@ -157,6 +194,7 @@ export interface WidgetDef {
   readonly version: string
   readonly pages: ReadonlyArray<Page>
   readonly actionBindings?: ReadonlyArray<ActionBinding>
+  readonly contextReads?: ReadonlyArray<ContextRead>
   /** The rest of the contract, as the Rust checker reads it (`dataBindings`, `fields`, `forms`, …). */
   readonly contract?: Readonly<{
     dataBindings?: ReadonlyArray<Json>
@@ -185,7 +223,7 @@ export function lowerWidget(def: WidgetDef, options: EnvelopeOptions): Json {
     pages: def.pages.map((page) => ({
       pageId: page.pageId,
       name: page.name,
-      contextParams: [],
+      contextParams: page.contextParams ?? [],
       root: node(page.root),
       ...(page.view === undefined ? {} : { view: page.view }),
       ...(page.machine === undefined ? {} : { machine: { machineVersion: "0.1", fields: [], ...page.machine } }),
@@ -198,6 +236,7 @@ export function lowerWidget(def: WidgetDef, options: EnvelopeOptions): Json {
     navigationItems: contract.navigationItems ?? [],
     overrides: contract.overrides ?? [],
     ...(contract.catalog === undefined ? {} : { catalog: contract.catalog }),
+    ...(def.contextReads === undefined ? {} : { contextReads: def.contextReads }),
   }
   return envelope(
     {

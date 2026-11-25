@@ -843,9 +843,10 @@ fn valid_effect_ref(reference: &str) -> bool {
 
 fn valid_typed_confirmation(confirmation: &WidgetActionConfirmation) -> bool {
     confirmation.strength == norn_ir::WidgetConfirmationStrength::Typed
-        && confirmation.phrase.as_ref().is_some_and(|phrase| {
-            !phrase.0.is_empty() && phrase.0.values().all(|text| !text.trim().is_empty())
-        })
+        && confirmation
+            .phrase
+            .as_ref()
+            .is_some_and(|phrase| !phrase.is_blank())
 }
 
 fn subtract_confirmation(

@@ -549,11 +549,17 @@ impl<'m> MachineChecker<'m> {
                 .action_bindings
                 .iter()
                 .any(|binding| &binding.binding_id == binding_id),
-            WidgetMachineCall::Read { binding_id } => self
-                .ux
-                .data_bindings
-                .iter()
-                .any(|binding| &binding.binding_id == binding_id),
+            WidgetMachineCall::Read { binding_id } => {
+                self.ux
+                    .data_bindings
+                    .iter()
+                    .any(|binding| &binding.binding_id == binding_id)
+                    || self
+                        .ux
+                        .context_reads
+                        .iter()
+                        .any(|read| &read.binding_id == binding_id)
+            }
             WidgetMachineCall::Operation { operation_id } => {
                 !operation_id.is_empty()
                     && operation_id

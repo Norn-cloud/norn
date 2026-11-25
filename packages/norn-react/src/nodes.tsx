@@ -21,7 +21,7 @@ import type { Fields, Machine, MachineEvent } from "./machine/machine.ts"
 import { messageOf, type BindingCallState, type BindingReadState } from "./reads.ts"
 import type { MachineRuntime } from "./runtime.ts"
 import { matchActionState, matchReadState } from "./state.ts"
-import { nodesOf, text, type PropertyRef, type WidgetNode, type WidgetPage, type WidgetUx } from "./ux.ts"
+import { nodesOf, text, type PropertyRef, type Translate, type WidgetNode, type WidgetPage, type WidgetUx } from "./ux.ts"
 
 /** Everything a node needs from its page. */
 export interface PageScope {
@@ -31,6 +31,8 @@ export interface PageScope {
   readonly runtime: MachineRuntime
   readonly islands: IslandRegistry
   readonly locale: string
+  /** The host's translations of the page's messages; a message without one draws its source text. */
+  readonly translate?: Translate | undefined
   readonly actionEffects: (actionId: string) => ActionEffects | undefined
   readonly navigate: (itemId: string) => void
   /** The node whose event a person or agent raised last: where focus returns when a layer it opened closes. */
@@ -143,7 +145,7 @@ function Value({ record, propertyId }: { readonly record: Doc; readonly property
 }
 
 const fieldLabel = (scope: PageScope, ref: PropertyRef): string =>
-  text(scope.ux.fields.find((field) => field.target.property?.bindingId === ref.bindingId && field.target.property.propertyId === ref.propertyId)?.label ?? { en: ref.propertyId }, scope.locale)
+  text(scope.ux.fields.find((field) => field.target.property?.bindingId === ref.bindingId && field.target.property.propertyId === ref.propertyId)?.label ?? { en: ref.propertyId }, scope.locale, scope.translate)
 
 function ObjectFields({ scope, record, refs }: { readonly scope: PageScope; readonly record: Doc; readonly refs: readonly PropertyRef[] }) {
   return (
@@ -213,7 +215,7 @@ function Layer({ scope, node, primitive }: { readonly scope: PageScope; readonly
   const open = heldIn.includes(scope.runtime.snapshot.stateId)
   const { props } = propsOf(scope, node)
   const title = node.children.find((child) => child.component.kind === "section")
-  const titled = title?.component.kind === "section" ? text(title.component.section.label, scope.locale) : scope.page.name
+  const titled = title?.component.kind === "section" ? text(title.component.section.label, scope.locale, scope.translate) : scope.page.name
   // The layer's message: the confirmation message of the action it asks about (an alert dialog points at it).
   const asked = nodesOf(node).flatMap((child) => (child.component.kind === "action" ? [child.component.placementId] : []))
   const message = scope.ux.actionPlacements.find((placement) => asked.includes(placement.placementId))?.confirmation.message
@@ -245,7 +247,7 @@ function Layer({ scope, node, primitive }: { readonly scope: PageScope; readonly
       <AlertDialogBackdrop className={backdrop} />
       <AlertDialogContent className={panel} data-node={node.nodeId} data-layer={primitive} finalFocus={finalFocus}>
         <AlertDialogTitle className="text-heading font-medium">{titled}</AlertDialogTitle>
-        {message !== undefined && <AlertDialogDescription className={MUTED}>{text(message, scope.locale)}</AlertDialogDescription>}
+        {message !== undefined && <AlertDialogDescription className={MUTED}>{text(message, scope.locale, scope.translate)}</AlertDialogDescription>}
         {children}
       </AlertDialogContent>
     </AlertDialog>
@@ -254,7 +256,7 @@ function Layer({ scope, node, primitive }: { readonly scope: PageScope; readonly
       <DialogBackdrop className={backdrop} />
       <DialogContent className={panel} data-node={node.nodeId} data-layer={primitive} finalFocus={finalFocus}>
         <DialogTitle className="text-heading font-medium">{titled}</DialogTitle>
-        {message !== undefined && <DialogDescription className={MUTED}>{text(message, scope.locale)}</DialogDescription>}
+        {message !== undefined && <DialogDescription className={MUTED}>{text(message, scope.locale, scope.translate)}</DialogDescription>}
         {children}
       </DialogContent>
     </Dialog>
@@ -268,6 +270,9 @@ function Layer({ scope, node, primitive }: { readonly scope: PageScope; readonly
  */
 function Island({ scope, node }: { readonly scope: PageScope; readonly node: WidgetNode }) {
   if (node.component.kind !== "catalog") return null
+  // An island held in states (`heldIn`) is drawn only in them: what the page shows in each state.
+  const heldIn = node.component.heldIn ?? []
+  if (heldIn.length > 0 && !heldIn.includes(scope.runtime.snapshot.stateId)) return null
   const entryId = node.component.entry.entryId
   const entry = scope.ux.catalog?.find((candidate) => candidate.entryId === entryId)
   const island = scope.islands[entryId] as ((input: unknown) => ReactNode) | undefined
@@ -293,12 +298,15 @@ export function Node({ scope, node }: { readonly scope: PageScope; readonly node
   const component = node.component
   switch (component.kind) {
     case "section": {
-      const label = text(component.section.label, scope.locale)
+      const label = text(component.section.label, scope.locale, scope.translate)
       const binding = component.section.fields[0]?.bindingId
       const read = binding === undefined ? undefined : scope.runtime.reads.get(binding)
+      // The page's root section is the page itself: its label names the page's region, and the host's
+      // shell (or a node inside it) titles the page. A nested section is headed by its label.
+      const root = node === scope.page.root
       return (
-        <section aria-label={label} data-node={node.nodeId} className="grid gap-3">
-          <h2 className="text-heading font-medium">{label}</h2>
+        <section aria-label={label} data-node={node.nodeId} className={root ? "grid gap-6" : "grid gap-3"}>
+          {!root && <h2 className="text-heading font-medium">{label}</h2>}
           {binding !== undefined && <ReadView state={read}>{(document) => <ObjectFields scope={scope} record={asDoc(document) ?? {}} refs={component.section.fields} />}</ReadView>}
           {children}
         </section>
@@ -326,7 +334,7 @@ export function Node({ scope, node }: { readonly scope: PageScope; readonly node
       const read = ref === undefined ? undefined : scope.runtime.reads.get(ref.bindingId)
       return (
         <div data-node={node.nodeId} className="grid gap-1">
-          <span className={MUTED}>{text(field?.label ?? { en: component.fieldId }, scope.locale)}</span>
+          <span className={MUTED}>{text(field?.label ?? { en: component.fieldId }, scope.locale, scope.translate)}</span>
           {ref !== undefined && read?.kind === "ok" && <Value record={asDoc(read.document) ?? {}} propertyId={ref.propertyId} />}
         </div>
       )
@@ -335,16 +343,16 @@ export function Node({ scope, node }: { readonly scope: PageScope; readonly node
       const placement = scope.ux.actionPlacements.find((candidate) => candidate.placementId === component.placementId)
       return (
         <div data-node-group={node.nodeId} className="flex flex-wrap items-center gap-2">
-          <Control scope={scope} node={node} label={text(placement?.label ?? { en: component.placementId }, scope.locale)} placementId={component.placementId} />
+          <Control scope={scope} node={node} label={text(placement?.label ?? { en: component.placementId }, scope.locale, scope.translate)} placementId={component.placementId} />
           <CallLine state={placement === undefined ? undefined : scope.runtime.calls.get(placement.bindingId)} />
         </div>
       )
     }
     case "control":
-      return <Control scope={scope} node={node} label={text(component.label, scope.locale)} placementId={null} />
+      return <Control scope={scope} node={node} label={text(component.label, scope.locale, scope.translate)} placementId={null} />
     case "navigation": {
       const item = scope.ux.navigationItems.find((candidate) => candidate.itemId === component.itemId)
-      const label = text(item?.label ?? { en: component.itemId }, scope.locale)
+      const label = text(item?.label ?? { en: component.itemId }, scope.locale, scope.translate)
       return eventsOf(scope.machine, node.nodeId).length > 0
         ? <Control scope={scope} node={node} label={label} placementId={null} />
         : <Button className={BUTTON} data-node={node.nodeId} onClick={() => scope.navigate(component.itemId)}>{label}</Button>

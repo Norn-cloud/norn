@@ -387,13 +387,7 @@ impl UxChecker<'_, '_, '_> {
         for (index, placement) in placements.iter().enumerate() {
             let path = format!("/payload/ux/actionPlacements/{index}");
             self.check_generated_transition_condition(&placement.binding_id, &path);
-            if placement.label.0.is_empty()
-                || placement
-                    .label
-                    .0
-                    .values()
-                    .any(|label| label.trim().is_empty())
-            {
+            if placement.label.is_blank() {
                 self.error(
                     &format!("{path}/label"),
                     "action placement label must contain nonblank localized text",
@@ -702,9 +696,11 @@ impl UxChecker<'_, '_, '_> {
     }
 
     pub(super) fn check_confirmation(&self, confirmation: &WidgetActionConfirmation, path: &str) {
-        if confirmation.message.as_ref().is_some_and(|text| {
-            text.0.is_empty() || text.0.values().any(|value| value.trim().is_empty())
-        }) {
+        if confirmation
+            .message
+            .as_ref()
+            .is_some_and(norn_ir::WidgetText::is_blank)
+        {
             self.error(
                 &format!("{path}/message"),
                 "confirmation message values must not be blank",
@@ -724,9 +720,7 @@ impl UxChecker<'_, '_, '_> {
             self.error(&format!("{path}/strength"), "confirm and destructive actions need click confirmation; irreversible actions need typed confirmation");
         }
         match (&confirmation.strength, &confirmation.phrase) {
-            (norn_ir::WidgetConfirmationStrength::Typed, Some(phrase))
-                if !phrase.0.is_empty()
-                    && phrase.0.values().all(|value| !value.trim().is_empty()) => {}
+            (norn_ir::WidgetConfirmationStrength::Typed, Some(phrase)) if !phrase.is_blank() => {}
             (norn_ir::WidgetConfirmationStrength::Typed, _) => self.error(
                 &format!("{path}/phrase"),
                 "typed confirmation requires nonblank localized confirmation text",
