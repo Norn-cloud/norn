@@ -1,24 +1,25 @@
 import { useQueryClient } from "@tanstack/react-query"
-import { Link, Outlet, createLink, useNavigate, useRouterState } from "@tanstack/react-router"
+import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router"
 import { Command, CommandEmpty, CommandGroup, CommandGroupLabel, CommandInput, CommandItem, CommandItemIcon, CommandList } from "@ui-sdk/react/command"
 import { Dialog, DialogBackdrop, DialogContent, DialogTitle, DialogTrigger } from "@ui-sdk/react/dialog"
 import { MenuGroup, MenuRadioGroup, MenuTrigger } from "@ui-sdk/react/menu"
 import { PopoverTitle, PopoverTrigger } from "@ui-sdk/react/popover"
 import { Toolbar, ToolbarButton, ToolbarLink, ToolbarSeparator } from "@ui-sdk/react/toolbar"
-import { Tree, TreeGroup, TreeItem, TreeItemIndicator, TreeItemLabel } from "@ui-sdk/react/tree"
 import { AssistantPanel, AssistantProvider, useAssistant, type AssistantContent } from "@/assistant-slot"
-import { Bell, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, CircleEllipsis, CloudOff, Code2, Keyboard, LayoutGrid, Loader2, LogOut, MessageCircle, Palette, PanelBottom, PanelLeft, Search, SlidersHorizontal, Sparkles, Wrench, type LucideIcon } from "lucide-react"
-import { Suspense, lazy, useEffect, useRef, useState, type ComponentProps, type ReactNode, type RefObject } from "react"
+import { Bell, ChevronDown, ChevronLeft, ChevronsUpDown, CircleEllipsis, CloudOff, Code2, Keyboard, Loader2, LogOut, MessageCircle, Palette, PanelBottom, PanelLeft, Search, SlidersHorizontal } from "lucide-react"
+import { Suspense, lazy, useEffect, useRef, useState, type ReactNode } from "react"
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
 import { ChromeDock, ChromeDockOption, ChromeDockTray, ChromeDockTrigger } from "@/components/ui/chrome-dock"
 import { AppearanceProvider, SHELLS, SKINS, isShellChrome, isSkin, useAppearance, type ShellChrome, type Skin } from "@/lib/appearance"
-import { PERSPECTIVES, PerspectiveProvider, isPerspective, usePerspective, type Perspective } from "@/lib/perspective"
-import { SIDEBAR_ID, Sidebar, SidebarClose, SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar"
+import { DENSITY } from "@/lib/perspective"
+import { appletHome, appletMenu, appletOf, appletOfSection, appletsOf, claim, decoded, destinationIn, initials, shown, target, type Applet, type AppletMenu, type MenuEntry, type Menus, type Section } from "@/lib/nav-model"
+import { AppletRail, AssistantButton, SheetApplets, SubmenuPanel, appletBadge, type MenuState, type RailApplet } from "@/shell-nav"
+import { SIDEBAR_ID, Sidebar, SidebarClose, SidebarInset, SidebarProvider, SidebarRail, SidebarTrigger, useSidebar } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { Hint, KitMenuContent, KitMenuItem, KitMenuLabel, KitMenuRadioItem, KitMenuSeparator, KitPopoverContent, Menu, Popover } from "@/components/kit"
 import { Inspector, InspectorProvider } from "@/lib/inspector"
-import { KINDS, type Kind } from "@/lib/kinds"
+import { KINDS } from "@/lib/kinds"
 import { cn } from "@/lib/utils"
 import { ViewProvider, useView } from "@/lib/view"
 import { LOCALES, LocaleProvider, isLocale, useLocale } from "@/lib/locale"
@@ -34,90 +35,6 @@ import nornMark from "@/assets/norn-mark.webp"
 import { Keys } from "@/components/keys"
 
 const LazyCustomThemeDialog = lazy(() => import("@/components/custom-theme-dialog").then((module) => ({ default: module.CustomThemeDialog })))
-
-export interface Section {
-  readonly path: string
-  readonly label: string
-  readonly icon: LucideIcon
-  /** The perspective that lists it; a global destination (Home, Inbox) sits on the rail in both. */
-  readonly perspective: Perspective | "global"
-  /** The sidebar section (a space) it is listed under: purely organisational, collapsible, never a wall. */
-  readonly group?: string
-  /** The kind of artefact the destination lists, which colours its icon. */
-  readonly kind?: Kind
-  /** The destination's own items (each object type, metric or workflow), listed under it. */
-  readonly useMenu?: () => readonly MenuEntry[] | undefined
-  /** A count that needs attention, shown on the destination; text (e.g. "500+") is shown as the server's lower bound. */
-  readonly useBadge?: () => number | string | undefined
-  /** Other route prefixes that belong to this destination, e.g. `/objects` (a type's records) under Sources. */
-  readonly paths?: readonly string[]
-  /** False when the destination has no page of its own and only groups its items (Records). */
-  readonly index?: false
-  /** True when menu entries carrying `group` pin directly into that Space in the sidebar. */
-  readonly pinned?: boolean
-}
-
-export interface MenuEntry {
-  /** The entry's route, e.g. `/sources/canon.Holding`, or `#anchor` on the section's own page. */
-  readonly href: string
-  readonly label: ReactNode
-  /** The heading this entry is listed under. */
-  readonly group?: string
-  /** The entry's leading icon; its kind's icon when absent. */
-  readonly icon?: LucideIcon
-  /** The kind of artefact the entry is, which colours its icon. */
-  readonly kind?: Kind
-  /** A count the server reported for the entry (records, open items). */
-  readonly count?: number | string
-  /** Another route prefix that is this entry too, e.g. a type's record pages under `/sources/<type>`. */
-  readonly also?: string
-}
-
-const none = () => undefined
-
-/** Whether a route is the entry's page or a page under it. */
-const within = (href: string, pathname: string) => !href.startsWith("#") && (pathname === href || pathname.startsWith(`${href}/`))
-
-/** The prefix of `pathname` an entry claims: its own route, or the other route it also is; none when it claims neither. */
-const claim = (entry: Pick<MenuEntry, "href" | "also">, pathname: string) =>
-  within(entry.href, pathname) ? entry.href : entry.also !== undefined && within(entry.also, pathname) ? entry.also : undefined
-
-/** Where an entry goes: its route, or an anchor on its section's page. */
-export const target = (section: Pick<Section, "path">, href: string) =>
-  href.startsWith("#") ? { to: section.path, hash: href.slice(1) } : { to: href }
-
-/** The section a route belongs to: its own path, or a record page under it. */
-export const sectionOf = (sections: readonly Section[], pathname: string) =>
-  sections.find(({ path }) => within(path, pathname)) ?? sections.find(({ paths }) => paths?.some((prefix) => within(prefix, pathname)))
-
-/** The destination a route belongs to: by its own routes, else the destination one of whose items claims it. */
-export const destinationOf = (sections: readonly Section[], pathname: string, menus: ReadonlyMap<string, readonly MenuEntry[]>) =>
-  sectionOf(sections, pathname) ?? sections.find(({ path }) => (menus.get(path) ?? []).some((entry) => claim(entry, pathname) !== undefined))
-
-/**
- * The perspective a page is shown in: the reader's own while the page belongs to it (or to both, like
- * Home), else the one that lists it, so the sidebar always shows where the reader is.
- */
-export function perspectiveOf(sections: readonly Section[], pathname: string, chosen: Perspective, menus: ReadonlyMap<string, readonly MenuEntry[]> = new Map()): Perspective {
-  if (destinationOf(sections.filter(({ perspective }) => perspective === chosen || perspective === "global"), pathname, menus) !== undefined) return chosen
-  const other = destinationOf(sections, pathname, menus)?.perspective
-  return other === undefined || other === "global" ? chosen : other
-}
-
-export const initials = (name: string) => name.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join("") || "?"
-
-/** A count as shown: "99+" past 99, the server's text (e.g. "500+") as sent, nothing for zero. */
-const shown = (count: number | string | undefined) =>
-  count === undefined || count === 0 || count === "" || count === "0" ? undefined : typeof count === "string" ? count : count > 99 ? "99+" : String(count)
-
-/** A path segment as text; a malformed escape (e.g. `%E0%A4%A`) is shown as written instead of failing the page. */
-export function decoded(segment: string): string {
-  try {
-    return decodeURIComponent(segment)
-  } catch {
-    return segment
-  }
-}
 
 const roleLabel = (role: string) => role === "" ? "" : `${role[0]!.toUpperCase()}${role.slice(1)}`
 
@@ -425,309 +342,23 @@ export function AccountMenu({ account, onSignOut, inToolbar = true, variant = "r
   )
 }
 
-/** Every destination's items and count, read once for the sidebar, the breadcrumbs and search. */
+/**
+ * Every destination's items and count, read once for the islands, the breadcrumbs and search. A
+ * destination whose items are not read yet (its hook returned nothing) is `unread`, so the menu
+ * claims neither items nor "none yet" for it.
+ */
+const none = () => undefined
+
 function useNavigation(sections: readonly Section[]) {
-  // Every section's hooks run on every render, in one order, whichever perspective is shown.
-  const menus = new Map(sections.map((section) => [section.path, (section.useMenu ?? none)() ?? []] as const))
+  // Every section's hooks run on every render, in one order, whichever applet is open.
+  const read = sections.map((section) => [section.path, (section.useMenu ?? none)()] as const)
+  const menus: Menus = new Map(read.map(([path, entries]) => [path, entries ?? []] as const))
+  const unread = new Set(read.filter(([path, entries]) => entries === undefined && sections.some((section) => section.path === path && section.useMenu !== undefined)).map(([path]) => path))
   const badges = new Map(sections.map((section) => [section.path, shown((section.useBadge ?? none)())] as const))
-  return { menus, badges }
+  return { menus, unread, badges }
 }
 
 type Navigation = ReturnType<typeof useNavigation>
-
-/**
- * A sidebar link without the router's own active marking: TanStack marks every fuzzy-matching link
- * `aria-current="page"`, but exactly one row is current (DESIGN.md 9.1), so the sidebar says which.
- */
-function NavAnchor({ "aria-current": _active, current, ref, ...props }: ComponentProps<"a"> & { readonly current?: boolean }) {
-  return <a ref={ref} aria-current={current ? "page" : undefined} {...props} />
-}
-const NavLink = createLink(NavAnchor)
-
-/** A destination's accessible name: its label, then its state when it has a count ("Inbox, 3 open"). */
-const named = (label: string, count: string | undefined) => count ? `${label}, ${count} open` : label
-
-// One rail button (DESIGN.md 9.1): 32×32, muted at rest, a 50% wash on hover or while pressed (the
-// assistant), the neutral pill only when current: one destination holds the pill at a time.
-const railButton = "relative flex size-[32px] shrink-0 items-center justify-center rounded-(--radius-row) text-muted-foreground transition-colors duration-150 outline-none hover:bg-sidebar-accent/50 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring aria-[current=page]:bg-sidebar-accent aria-[current=page]:text-sidebar-accent-foreground aria-pressed:bg-sidebar-accent/50 motion-reduce:transition-none [&_svg]:size-4"
-/** The attention dot: 6px in `--ring`, which reaches 3:1 on the ground, the wash and the pill; the name carries the state. */
-const attentionDot = "absolute end-[5px] top-[5px] size-[6px] rounded-full bg-ring ring-2 ring-sidebar"
-
-/** One destination on the collapsed rail: its icon, its name and state as one label and tooltip, and an attention dot. */
-function RailLink({ section, count, current, onExpandSection }: {
-  readonly section: Section; readonly count: string | undefined; readonly current: boolean; readonly onExpandSection: (path: string) => void
-}) {
-  const { setOpen } = useSidebar()
-  const Icon = section.icon
-  const label = named(section.label, count)
-  const dot = count && <span data-count aria-hidden className={attentionDot} />
-  // A destination with no page of its own (Records) expands the sidebar to show its items.
-  if (section.index === false) {
-    return (
-      <Hint side="end" label={label}>
-        <ToolbarButton aria-label={label} aria-current={current ? "page" : undefined} onClick={() => { onExpandSection(section.path); setOpen(true) }} className={railButton}>
-          <Icon aria-hidden strokeWidth={1.6} />{dot}
-        </ToolbarButton>
-      </Hint>
-    )
-  }
-  return (
-    <Hint side="end" label={label}>
-      <ToolbarLink render={<NavLink to={section.path} current={current} />} aria-label={label} className={railButton}>
-        <Icon aria-hidden strokeWidth={1.6} />{dot}
-      </ToolbarLink>
-    </Hint>
-  )
-}
-
-/**
- * The collapsed rail (48px): the shared destinations, then each space's destinations under a
- * decorative hairline. Items are hidden; the current destination keeps the pill.
- */
-function RailList({ sections, perspective, navigation, current, onExpandSection }: {
-  readonly sections: readonly Section[]; readonly perspective: Perspective; readonly navigation: Navigation
-  readonly current: Section | undefined; readonly onExpandSection: (path: string) => void
-}) {
-  const global = sections.filter((section) => section.perspective === "global")
-  const own = sections.filter((section) => section.perspective === perspective)
-  const groups = [...new Set(own.map(({ group }) => group))]
-  const label = PERSPECTIVES.find(({ id }) => id === perspective)?.label ?? ""
-  const link = (section: Section) => (
-    <RailLink key={section.path} section={section} count={navigation.badges.get(section.path)} current={current?.path === section.path} onExpandSection={onExpandSection} />
-  )
-  return (
-    <Toolbar orientation="vertical" aria-label={`${label} pages`} className="flex flex-col items-center gap-px">
-      {global.map(link)}
-      {groups.map((group) => (
-        <div key={group ?? ""} role="group" aria-label={group ?? label} className="flex flex-col items-center gap-px">
-          <div aria-hidden className="my-[8px] h-px w-[16px] bg-sidebar-border" />
-          {own.filter((section) => section.group === group).map(link)}
-        </div>
-      ))}
-    </Toolbar>
-  )
-}
-
-// Focus stays on the tree item; its row is the label inside, so the 2px ring is drawn on the row, inside the 8px gutter.
-const focusRow = "outline-none focus-visible:[&>[data-slot=tree-label]]:relative focus-visible:[&>[data-slot=tree-label]]:z-10 focus-visible:[&>[data-slot=tree-label]]:outline-2 focus-visible:[&>[data-slot=tree-label]]:outline-solid focus-visible:[&>[data-slot=tree-label]]:outline-offset-1 focus-visible:[&>[data-slot=tree-label]]:outline-ring"
-// One source-list row (DESIGN.md 9.1): 32px (44px in the phone sheet), step 2 at 400, muted at rest, a 50% wash
-// on hover with no text change, and the neutral pill with its own ink when current. No ring, bar or accent colour.
-const row = "relative flex h-[32px] w-full min-w-0 items-center gap-[8px] rounded-(--radius-row) px-[8px] text-body font-normal text-muted-foreground transition-colors duration-150 outline-none hover:bg-sidebar-accent/50 data-current:bg-sidebar-accent data-current:text-sidebar-accent-foreground motion-reduce:transition-none max-sm:h-auto max-sm:min-h-[44px] [&_svg]:size-4 [&_svg]:shrink-0 max-sm:[&_svg]:size-[18px]"
-// A group header: a quiet step-1 label in sentence case with a 32px hit area; its chevron shows on hover and focus
-// (always where the reader cannot hover, and in the phone sheet), turns when open, and mirrors in RTL.
-const groupHeading = "group/heading flex h-[32px] w-full min-w-0 items-center gap-[4px] rounded-(--radius-row) px-[8px] text-meta font-normal text-muted-foreground outline-none max-sm:min-h-[44px]"
-const chevron = "ms-auto flex text-subtle-foreground opacity-0 transition-[opacity,rotate] duration-150 group-hover/heading:opacity-100 [[role=treeitem]:focus-visible>[data-slot=tree-label]>&]:opacity-100 rtl:rotate-180 data-expanded:rotate-90 motion-reduce:transition-none [@media(hover:none)]:opacity-100 group-data-[mobile=true]/sidebar:opacity-100 [&_svg]:size-3.5"
-
-/** The current page's tree value: the item that claims the longest prefix of it, else its destination. */
-function currentOf(sections: readonly Section[], navigation: Navigation, pathname: string): string | null {
-  const claimed = sections.flatMap((section) => (navigation.menus.get(section.path) ?? []).map((entry) => ({ entry, at: claim(entry, pathname) })))
-    .filter(({ at }) => at !== undefined).sort((a, b) => (b.at?.length ?? 0) - (a.at?.length ?? 0))[0]
-  if (claimed) return claimed.entry.href
-  const section = destinationOf(sections, pathname, navigation.menus)
-  return section ? `dest:${section.path}` : null
-}
-
-/** Record only the tree branches the reader actually toggled, leaving untouched branches free to follow defaults. */
-export function diffExpanded(
-  previous: readonly string[],
-  next: readonly string[],
-  chosen: Readonly<Record<string, boolean>>,
-): Readonly<Record<string, boolean>> {
-  const prevSet = new Set(previous)
-  const nextSet = new Set(next)
-  const updated: Record<string, boolean> = { ...chosen }
-  for (const id of prevSet) if (!nextSet.has(id)) updated[id] = false
-  for (const id of nextSet) if (!prevSet.has(id)) updated[id] = true
-  return updated
-}
-
-/**
- * The expanded source list: the shared destinations (Home, Inbox), then the perspective's spaces
- * (collapsible headings, never walls), each listing its destinations; the open destination lists its
- * items under it. Built on the UI SDK `Tree`, whose `current` marks the one current row.
- */
-function SectionTree({ sections, perspective, navigation, pathname, chosen, onChosenChange }: {
-  readonly sections: readonly Section[]; readonly perspective: Perspective; readonly navigation: Navigation; readonly pathname: string
-  readonly chosen: Readonly<Record<string, boolean>>
-  readonly onChosenChange: (update: (previous: Readonly<Record<string, boolean>>) => Readonly<Record<string, boolean>>) => void
-}) {
-  const { setOpenMobile } = useSidebar()
-  const global = sections.filter((section) => section.perspective === "global")
-  const own = sections.filter((section) => section.perspective === perspective)
-  const listed = [...global, ...own]
-  const open = destinationOf(own, pathname, navigation.menus)
-  const current = currentOf(listed, navigation, pathname)
-  const spaces = [
-    ...new Set([
-      ...own.map(({ group }) => group ?? ""),
-      ...own.filter((section) => section.pinned).flatMap((section) => (navigation.menus.get(section.path) ?? []).map((entry) => entry.group ?? "").filter(Boolean)),
-    ]),
-  ]
-  // Spaces start open, the open destination's items show, and a destination's first group of items starts open;
-  // the reader's own choices win, except that the current page's row is never hidden.
-  const defaults = new Map<string, boolean>()
-  const holding = new Set<string>()
-  for (const space of spaces) defaults.set(`space:${space}`, true)
-  for (const section of own) {
-    const entries = navigation.menus.get(section.path) ?? []
-    const destEntries = section.pinned ? entries.filter((entry) => !entry.group) : entries
-    const active = section === open
-    if (destEntries.length > 0) defaults.set(`dest:${section.path}`, active || section.index === false)
-    const headings = [...new Set(destEntries.map(({ group }) => group ?? ""))].filter((heading) => heading !== "")
-    headings.forEach((heading, index) => defaults.set(`group:${section.path}:${heading}`, index === 0))
-    if (active) holding.add(`space:${section.group ?? ""}`)
-    const at = entries.find(({ href }) => href === current)
-    if (at) {
-      if (section.pinned && at.group) {
-        holding.add(`space:${at.group}`)
-      } else {
-        holding.add(`space:${section.group ?? ""}`).add(`dest:${section.path}`)
-        if (at.group) holding.add(`group:${section.path}:${at.group}`)
-      }
-    }
-  }
-  const values = [...defaults.keys()]
-  const expanded = values.filter((value) => holding.has(value) || (chosen[value] ?? defaults.get(value)))
-  const close = () => setOpenMobile(false)
-  const label = PERSPECTIVES.find(({ id }) => id === perspective)?.label ?? ""
-  return (
-    <Tree aria-label={`${label} pages`} mode="none" expandOnPress current={current} expanded={expanded}
-      onExpandedChange={(next) => onChosenChange((previous) => diffExpanded(expanded, next, previous))}>
-      {global.map((section) => <Destination key={section.path} section={section} entries={[]} badge={navigation.badges.get(section.path)} close={close} />)}
-      {spaces.map((space) => {
-        const members = own.filter((section) => (section.group ?? "") === space)
-        const pinnedItems = own.filter((section) => section.pinned).flatMap((section) =>
-          (navigation.menus.get(section.path) ?? [])
-            .filter((entry) => entry.group === space)
-            .map((entry) => {
-              const Icon = entry.icon ?? section.icon
-              return (
-                <TreeItem key={entry.href} value={entry.href} label={typeof entry.label === "string" ? entry.label : undefined} className={focusRow}>
-                  <TreeItemLabel render={<NavLink {...target(section, entry.href)} onClick={close} />} className={row}>
-                    <Icon aria-hidden strokeWidth={1.6} /><span className="truncate">{entry.label}</span>
-                  </TreeItemLabel>
-                </TreeItem>
-              )
-            }),
-        )
-        const items = [
-          ...members.map((section) => {
-            const entries = navigation.menus.get(section.path) ?? []
-            const shownEntries = section.pinned ? entries.filter((entry) => !entry.group) : entries
-            return <Destination key={section.path} section={section} entries={shownEntries} badge={navigation.badges.get(section.path)} close={close} />
-          }),
-          ...pinnedItems,
-        ]
-        if (space === "") return items
-        return (
-          <TreeItem key={space} value={`space:${space}`} label={space} className={cn("mt-[12px]", focusRow)}>
-            <TreeItemLabel className={groupHeading}>
-              <span className="truncate">{space}</span>
-              <TreeItemIndicator className={chevron}><ChevronRight aria-hidden /></TreeItemIndicator>
-            </TreeItemLabel>
-            <TreeGroup>{items}</TreeGroup>
-          </TreeItem>
-        )
-      })}
-    </Tree>
-  )
-}
-
-/** One destination in the source list: its row (a link, or a plain heading when it has no page), then its items. */
-function Destination({ section, entries, badge, close }: { readonly section: Section; readonly entries: readonly MenuEntry[]; readonly badge: string | undefined; readonly close: () => void }) {
-  const headings = [...new Set(entries.map(({ group }) => group ?? ""))]
-  // Items indent to the label column and carry no icon: under one destination they are all one kind.
-  const rows = (members: readonly MenuEntry[]) => members.map((entry) => {
-    const count = shown(entry.count)
-    return (
-      <TreeItem key={entry.href} value={entry.href} label={typeof entry.label === "string" ? entry.label : undefined} className={focusRow}>
-        <TreeItemLabel render={<NavLink {...target(section, entry.href)} onClick={close} />} className={cn(row, "ps-[32px]")}>
-          <span className="truncate">{entry.label}</span>
-          {count && <span className="ms-auto text-meta tabular-nums">{count}</span>}
-        </TreeItemLabel>
-      </TreeItem>
-    )
-  })
-  const children = headings.map((heading) => {
-    const members = entries.filter((entry) => (entry.group ?? "") === heading)
-    if (heading === "") return rows(members)
-    return (
-      <TreeItem key={heading} value={`group:${section.path}:${heading}`} label={heading} className={focusRow}>
-        <TreeItemLabel className={cn(groupHeading, "ps-[32px]")}>
-          <span className="truncate">{heading}</span>
-          <span className="tabular-nums">{members.length}</span>
-          <TreeItemIndicator className={chevron}><ChevronRight aria-hidden /></TreeItemIndicator>
-        </TreeItemLabel>
-        <TreeGroup>{rows(members)}</TreeGroup>
-      </TreeItem>
-    )
-  })
-  const Icon = section.icon
-  const head = <>
-    <Icon aria-hidden strokeWidth={1.6} /><span className="truncate">{section.label}</span>
-    {badge && <span data-count className="ms-auto text-meta tabular-nums">{badge}</span>}
-  </>
-  return (
-    <TreeItem value={`dest:${section.path}`} data-section-path={section.path} label={section.label} className={focusRow}>
-      {section.index === false
-        ? <TreeItemLabel className={cn(row, "cursor-default")}>{head}</TreeItemLabel>
-        : <TreeItemLabel render={<NavLink to={section.path} onClick={close} />} className={row}>{head}</TreeItemLabel>}
-      {entries.length > 0 && <TreeGroup>{children}</TreeGroup>}
-    </TreeItem>
-  )
-}
-
-/** The sidebar's footer row for the assistant: a source-list row expanded, a rail button collapsed (also ⌘J). */
-function AssistantRow({ title, rail }: { readonly title: string; readonly rail: boolean }) {
-  const { open, toggle } = useAssistant()
-  if (rail) {
-    return (
-      <Hint side="end" label={<>{title} <Keys className="opacity-70">⌘J</Keys></>}>
-        <button type="button" aria-label={title} aria-pressed={open} onClick={toggle} className={railButton}><Sparkles aria-hidden strokeWidth={1.6} /></button>
-      </Hint>
-    )
-  }
-  return (
-    <button type="button" aria-label={title} aria-pressed={open} onClick={toggle}
-      className={cn(row, "focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring aria-pressed:bg-sidebar-accent/50")}>
-      <Sparkles aria-hidden strokeWidth={1.6} /><span className="truncate">{title}</span>
-      <Keys className="ms-auto text-meta">⌘J</Keys>
-    </button>
-  )
-}
-
-/**
- * The sidebar (DESIGN.md 9.1): the workspace switcher, one `Studio navigation` landmark around every
- * destination (the source list expanded, the rail collapsed), then the assistant and the principal.
- */
-function SidebarBody({ sections, perspective, navigation, pathname, current, chosen, onChosenChange, account, onSignOut, assistant, navRef, onExpandSection }: {
-  readonly sections: readonly Section[]; readonly perspective: Perspective; readonly navigation: Navigation; readonly pathname: string
-  readonly current: Section | undefined
-  readonly chosen: Readonly<Record<string, boolean>>
-  readonly onChosenChange: (update: (previous: Readonly<Record<string, boolean>>) => Readonly<Record<string, boolean>>) => void
-  readonly account: Account; readonly onSignOut: () => void; readonly assistant?: AssistantContent
-  readonly navRef: RefObject<HTMLElement | null>; readonly onExpandSection: (path: string) => void
-}) {
-  const { state, isMobile } = useSidebar()
-  const rail = state === "collapsed" && !isMobile
-  return (
-    <>
-      <div className={cn("flex h-[48px] shrink-0 items-center gap-[4px] px-[8px] max-sm:h-[56px]", rail && "justify-center")}>
-        <ScopeSwitcher variant={rail ? "rail" : "sidebar"} />
-        <SidebarClose />
-      </div>
-      <nav ref={navRef} aria-label="Studio navigation" className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-[8px] pb-[8px]">
-        {rail
-          ? <RailList sections={sections} perspective={perspective} navigation={navigation} current={current} onExpandSection={onExpandSection} />
-          : <SectionTree key={perspective} sections={sections} perspective={perspective} navigation={navigation} pathname={pathname} chosen={chosen} onChosenChange={onChosenChange} />}
-      </nav>
-      <div className={cn("flex shrink-0 flex-col gap-px px-[8px] pt-[4px] pb-[8px]", rail && "items-center")}>
-        {assistant && <AssistantRow title={assistant.title} rail={rail} />}
-        <AccountMenu account={account} onSignOut={onSignOut} inToolbar={false} variant={rail ? "rail" : "sidebar"} />
-      </div>
-    </>
-  )
-}
 
 /** Destination, item, then the record under it. Collapses to the immediate parent link at narrow container widths so no link is crushed to 0px. */
 function Crumbs({ section, entries, pathname }: { readonly section: Section; readonly entries: readonly MenuEntry[]; readonly pathname: string }) {
@@ -763,25 +394,8 @@ function Crumbs({ section, entries, pathname }: { readonly section: Section; rea
   )
 }
 
-/**
- * The top-level perspective switch. It changes what the navigation lists and the default density,
- * never what the reader may do; a page the other perspective lists opens its home instead.
- */
-function PerspectiveSwitch({ perspective, onChange }: { readonly perspective: Perspective; readonly onChange: (next: Perspective) => void }) {
-  return (
-    <div role="group" aria-label="Perspective" data-perspective={perspective} className="flex h-8 shrink-0 items-center rounded-full border border-border/80 bg-surface-subtle p-0.5 dark:bg-shell">
-      {PERSPECTIVES.map(({ id, label }) => (
-        <button key={id} type="button" aria-pressed={perspective === id} onClick={() => onChange(id)}
-          className="flex h-[1.625rem] items-center gap-1.5 rounded-full px-2 text-body text-muted-foreground transition-[color,background-color,box-shadow] duration-150 outline-none hover:text-foreground focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-control aria-pressed:ring-1 aria-pressed:ring-border/70 aria-pressed:[&_svg]:text-action dark:aria-pressed:bg-accent dark:aria-pressed:ring-border @sm:px-2 @lg:px-2.5 [&_svg]:size-3.5">
-          {id === "workspace" ? <LayoutGrid aria-hidden /> : <Wrench aria-hidden />}<span className="sr-only @lg:not-sr-only">{label}</span>
-        </button>
-      ))}
-    </div>
-  )
-}
-
-/** "Search… ⌘K", the universal entry: every destination in both perspectives, every page they list, and the perspective switch. */
-function CommandMenu({ sections, navigation, onPerspective }: { readonly sections: readonly Section[]; readonly navigation: Navigation; readonly onPerspective: (next: Perspective) => void }) {
+/** "Search… ⌘K", the universal entry: every destination in every applet, every page they list, and the appearance. */
+function CommandMenu({ sections, navigation }: { readonly sections: readonly Section[]; readonly navigation: Navigation }) {
   const [open, setOpen] = useState(false)
   const navigate = useNavigate()
   const { setSkin, setShell } = useAppearance()
@@ -810,8 +424,6 @@ function CommandMenu({ sections, navigation, onPerspective }: { readonly section
             if (isShellChrome(next)) setShell(next)
             return
           }
-          const perspective = value.startsWith("perspective:") ? value.slice("perspective:".length) : undefined
-          if (isPerspective(perspective)) return onPerspective(perspective)
           const to = routes.get(value)
           if (to) void navigate(to)
         }}>
@@ -823,20 +435,16 @@ function CommandMenu({ sections, navigation, onPerspective }: { readonly section
           <CommandList className="max-h-[min(24rem,60vh)] overflow-y-auto p-1.5">
             <CommandGroup>
               <CommandGroupLabel className="px-2 pt-2 pb-1 text-meta text-muted-foreground">Go to</CommandGroupLabel>
-              {sections.filter((section) => section.index !== false).map(({ path, label, icon: Icon, perspective }) => (
-                <CommandItem key={path} value={`section:${path}`} label={label} className="flex cursor-default items-center gap-2 rounded-(--radius-row) px-2.5 py-2 text-body data-highlighted:bg-accent">
-                  <CommandItemIcon className="flex text-muted-foreground [&_svg]:size-4"><Icon /></CommandItemIcon>{label}
-                  {perspective !== "global" && <span className="ms-auto text-meta text-muted-foreground">{PERSPECTIVES.find(({ id }) => id === perspective)?.label}</span>}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-            <CommandGroup>
-              <CommandGroupLabel className="px-2 pt-3 pb-1 text-meta text-muted-foreground">Perspective</CommandGroupLabel>
-              {PERSPECTIVES.map(({ id, label }) => (
-                <CommandItem key={id} value={`perspective:${id}`} label={`Switch to ${label}`} className="flex cursor-default items-center gap-2 rounded-(--radius-row) px-2.5 py-2 text-body data-highlighted:bg-accent">
-                  <CommandItemIcon className="flex text-muted-foreground [&_svg]:size-4">{id === "workspace" ? <LayoutGrid /> : <Wrench />}</CommandItemIcon>Switch to {label}
-                </CommandItem>
-              ))}
+              {sections.filter((section) => section.index !== false).map((section) => {
+                const { path, label, icon: Icon } = section
+                const applet = appletOfSection(section)
+                return (
+                  <CommandItem key={path} value={`section:${path}`} label={label} keywords={[applet.label]} className="flex cursor-default items-center gap-2 rounded-(--radius-row) px-2.5 py-2 text-body data-highlighted:bg-accent">
+                    <CommandItemIcon className="flex text-muted-foreground [&_svg]:size-4"><Icon /></CommandItemIcon>{label}
+                    {applet.label !== label && <span className="ms-auto text-meta text-muted-foreground">{applet.label}</span>}
+                  </CommandItem>
+                )
+              })}
             </CommandGroup>
             <CommandGroup>
               <CommandGroupLabel className="px-2 pt-3 pb-1 text-meta text-muted-foreground">Appearance</CommandGroupLabel>
@@ -1016,9 +624,8 @@ function AiGlyph({ className }: { readonly className?: string }) {
  * following norn-mockups v6/shell.tsx craft: rounded-[26px] dark pill, size-10 circular buttons,
  * soft #34343a active well, hover tooltips, AI glyph, appearance tray, and overflow destinations.
  */
-function FloatingDock({ sections, perspective, navigation, current, assistant }: {
+function FloatingDock({ sections, navigation, current, assistant }: {
   readonly sections: readonly Section[]
-  readonly perspective: Perspective
   readonly navigation: Navigation
   readonly current: Section | undefined
   readonly assistant?: AssistantContent
@@ -1027,7 +634,7 @@ function FloatingDock({ sections, perspective, navigation, current, assistant }:
   const global = sections.filter((section) => section.perspective === "global")
   const firstHref = (section: Section) => navigation.menus.get(section.path)?.find(({ href }) => !href.startsWith("#"))?.href
   const resolvedOwn = sections
-    .filter((section) => section.perspective === perspective)
+    .filter((section) => section.perspective !== "global")
     .map((section) => ({
       section,
       to: section.index === false ? firstHref(section) : section.path,
@@ -1133,9 +740,9 @@ function FloatingDock({ sections, perspective, navigation, current, assistant }:
 }
 
 /**
- * The workbench shell: a slim rail and the perspective's sidebar on one quiet tint, the page flat on
- * the background beside them under one bar (breadcrumbs, search, the perspective switch), and the
- * inspector and assistant docked on the end side.
+ * The three-island workbench (DESIGN.md 9.1): on the backdrop, the applet rail, the open applet's
+ * submenu island and the main island, which holds the top bar (breadcrumbs, search, page tools),
+ * the page, and the inspector and assistant docked on its end side.
  */
 export function Shell(props: {
   readonly sections: readonly Section[]
@@ -1149,7 +756,7 @@ export function Shell(props: {
   const scopeKey = `${props.account.user.id}:${props.account.organization?.id ?? ""}:${props.account.environmentId ?? ""}`
   return (
     <AppearanceProvider initialSkin={props.initialSkin} initialShell={props.initialShell}>
-      <LocaleProvider><PerspectiveProvider><AssistantProvider available={props.assistant !== undefined} scopeKey={scopeKey}><LocalizedShell {...props} /></AssistantProvider></PerspectiveProvider></LocaleProvider>
+      <LocaleProvider><AssistantProvider available={props.assistant !== undefined} scopeKey={scopeKey}><LocalizedShell {...props} /></AssistantProvider></LocaleProvider>
     </AppearanceProvider>
   )
 }
@@ -1176,100 +783,116 @@ function useHashScroll() {
   }, [hash, at])
 }
 
-/** The sidebar, top bar and page frame inside SidebarProvider, preserving keyboard focus across collapse/expand. */
-function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, pathname, perspective, navigation, current, switchTo }: {
+/** Each applet's own reader choices, kept while Studio is open: branches opened or closed, lists shown whole, the filter. */
+function useMenuStates() {
+  const [chosen, setChosen] = useState<Readonly<Record<string, Readonly<Record<string, boolean>>>>>({})
+  const [whole, setWhole] = useState<ReadonlySet<string>>(() => new Set())
+  const [queries, setQueries] = useState<Readonly<Record<string, string>>>({})
+  return (id: string): MenuState => ({
+    chosen: chosen[id] ?? {},
+    onChosenChange: (update) => setChosen((all) => ({ ...all, [id]: update(all[id] ?? {}) })),
+    whole,
+    onWhole: (key) => setWhole((previous) => {
+      const next = new Set(previous)
+      if (!next.delete(key)) next.add(key)
+      return next
+    }),
+    query: queries[id] ?? "",
+    onQuery: (query) => setQueries((all) => ({ ...all, [id]: query })),
+  })
+}
+
+/** The rail, the submenu island (or the phone sheet holding both) and the main island, keeping focus across a collapse. */
+function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, pathname, navigation, applet, menu, current }: {
   readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly assistant?: AssistantContent
   readonly account: Account; readonly onSignOut: () => void
-  readonly pathname: string; readonly perspective: Perspective; readonly navigation: Navigation
-  readonly current: Section | undefined; readonly switchTo: (next: Perspective) => void
+  readonly pathname: string; readonly navigation: Navigation
+  readonly applet: Applet | undefined; readonly menu: AppletMenu | undefined; readonly current: Section | undefined
 }) {
-  const { open, isMobile } = useSidebar()
-  const navRef = useRef<HTMLElement>(null)
+  const { open, isMobile, openMobile, setOpenMobile } = useSidebar()
   const triggerRef = useRef<HTMLButtonElement>(null)
-  const wasOpenRef = useRef(open)
-  // Where focus last was inside the sidebar (anywhere: header, list or footer), so a collapse that
-  // unmounts that control can hand focus to its rail counterpart.
-  const lastInSidebarRef = useRef<{ readonly scope: boolean; readonly label: string | null } | null>(null)
-  const pendingFocusSectionRef = useRef<string | null>(null)
-  const [chosenByPerspective, setChosenByPerspective] = useState<Readonly<Record<Perspective, Readonly<Record<string, boolean>>>>>({ workspace: {}, builder: {} })
-  const updateChosen = (update: (previous: Readonly<Record<string, boolean>>) => Readonly<Record<string, boolean>>) =>
-    setChosenByPerspective((all) => ({ ...all, [perspective]: update(all[perspective]) }))
-  const expandSection = (path: string) => {
-    pendingFocusSectionRef.current = path
-    const section = sections.find((candidate) => candidate.path === path && candidate.perspective === perspective)
-    if (section) updateChosen((previous) => ({ ...previous, [`space:${section.group ?? ""}`]: true, [`dest:${section.path}`]: true }))
-  }
+  const menuState = useMenuStates()
+  const rail: readonly RailApplet[] = appletsOf(sections).map((each) => ({
+    applet: each,
+    home: appletHome(each, sections, navigation.menus),
+    badge: appletBadge(sections.filter((section) => appletOfSection(section).id === each.id).map((section) => navigation.badges.get(section.path))),
+  }))
 
+  // The phone sheet shows the current applet's menu when it opens; choosing another applet there shows its menu instead.
+  const [sheetApplet, setSheetApplet] = useState<string | undefined>(applet?.id)
+  useEffect(() => { if (openMobile) setSheetApplet(applet?.id) }, [openMobile, applet?.id])
+  const sheetMenu = (() => {
+    const chosen = rail.find(({ applet: each }) => each.id === sheetApplet)?.applet ?? applet
+    return chosen && appletMenu(chosen, sections, navigation.menus, navigation.badges)
+  })()
+
+  // Focus is never stranded: collapsing the island (it turns inert) while focus is in it hands focus
+  // to the current applet on the rail, else to the toggle. Focus anywhere else is left alone.
+  const focusInIsland = useRef(false)
   useEffect(() => {
     const onFocusIn = (event: FocusEvent) => {
-      const target = event.target
-      lastInSidebarRef.current = target instanceof HTMLElement && document.getElementById(SIDEBAR_ID)?.contains(target)
-        ? { scope: target.closest("[data-scope]") !== null, label: target.getAttribute("aria-label") }
-        : null
+      focusInIsland.current = event.target instanceof Node && (document.getElementById(SIDEBAR_ID)?.contains(event.target) ?? false)
     }
     document.addEventListener("focusin", onFocusIn)
     return () => document.removeEventListener("focusin", onFocusIn)
   }, [])
-
-  // Focus is never stranded. Expanding from a rail destination with no page lands on that destination's
-  // row. Otherwise, when collapsing or expanding unmounts the focused control, focus moves to its
-  // counterpart in the other form (the workspace switcher, the assistant, the account), else to the
-  // current page's row or icon, else to the toggle. A focused control that survives, or focus outside
-  // the sidebar, is left alone.
+  const wasOpen = useRef(open)
   useEffect(() => {
-    const wasOpen = wasOpenRef.current
-    wasOpenRef.current = open
-    if (isMobile || wasOpen === open) return
-    const nav = navRef.current
-    if (open && pendingFocusSectionRef.current !== null) {
-      const path = pendingFocusSectionRef.current
-      pendingFocusSectionRef.current = null
-      const sectionItem = Array.from(nav?.querySelectorAll<HTMLElement>("[data-section-path]") ?? [])
-        .find((element) => element.dataset.sectionPath === path)
-      sectionItem?.focus()
-      if (nav && !nav.contains(document.activeElement)) {
-        nav.querySelector<HTMLElement>('[role="treeitem"], a[href], button')?.focus()
-      }
-      return
-    }
-    const last = lastInSidebarRef.current
+    const collapsed = wasOpen.current && !open
+    wasOpen.current = open
+    if (isMobile || !collapsed || !focusInIsland.current) return
+    focusInIsland.current = false
     const active = document.activeElement
-    const lost = active === null || active === document.body || !active.isConnected || (!open && (nav?.contains(active) ?? false))
-    if (last === null || !lost) return
-    const sidebar = document.getElementById(SIDEBAR_ID)
-    const counterpart = last.scope
-      ? sidebar?.querySelector<HTMLElement>("[data-scope]")
-      : last.label !== null ? sidebar?.querySelector<HTMLElement>(`[aria-label="${CSS.escape(last.label)}"]`) : null
-    ;(counterpart ?? nav?.querySelector<HTMLElement>('[aria-current="page"]') ?? triggerRef.current)?.focus()
+    if (active !== null && active !== document.body && active.isConnected && !document.getElementById(SIDEBAR_ID)?.contains(active)) return
+    ;(document.querySelector<HTMLElement>('[data-slot="sidebar-rail"] [aria-current="page"]') ?? triggerRef.current)?.focus()
   }, [open, isMobile])
 
   const { shell } = useAppearance()
   const isDock = shell === "dock"
   const collapsed = !open && !isMobile
   const resolvedPathname = useRouterState({ select: (state) => state.resolvedLocation?.pathname ?? state.location.pathname })
+  const principal = <>
+    {assistant && <AssistantButton title={assistant.title} />}
+    <AccountMenu account={account} onSignOut={onSignOut} inToolbar={false} variant="rail" />
+  </>
 
   return (
     <>
       {!isDock && (
-        <Sidebar>
-          <SidebarBody sections={sections} perspective={perspective} navigation={navigation} pathname={pathname} current={current}
-            chosen={chosenByPerspective[perspective]} onChosenChange={updateChosen} account={account} onSignOut={onSignOut}
-            assistant={assistant} navRef={navRef} onExpandSection={expandSection} />
-        </Sidebar>
+        <SidebarRail>
+          <AppletRail applets={rail} current={applet?.id} top={<ScopeSwitcher variant="rail" />} bottom={principal} />
+        </SidebarRail>
       )}
-      <SidebarInset className="flex-row overflow-clip">
+      {!isDock && (
+        isMobile
+          ? (
+            <Sidebar>
+              <SheetApplets applets={rail} current={applet?.id} shown={sheetMenu?.applet.id} onShow={setSheetApplet} top={<ScopeSwitcher variant="rail" />} bottom={principal} />
+              <div className="flex min-w-0 flex-1 flex-col">
+                {sheetMenu && <SubmenuPanel menu={sheetMenu} pathname={pathname} unread={navigation.unread} state={menuState(sheetMenu.applet.id)} onFollow={() => setOpenMobile(false)} close={<SidebarClose />} />}
+              </div>
+            </Sidebar>
+          )
+          : (
+            <Sidebar>
+              {menu
+                ? <SubmenuPanel menu={menu} pathname={pathname} unread={navigation.unread} state={menuState(menu.applet.id)} onFollow={() => {}} />
+                : <p className="px-[16px] py-[16px] text-body text-muted-foreground">No applet lists this page.</p>}
+            </Sidebar>
+          )
+      )}
+      <SidebarInset className={cn("flex-row overflow-clip", isDock && "ms-0")}>
         <div className="@container flex min-w-0 flex-1 flex-col">
           {isDock
             ? (
-              <header data-slot="dock-topbar" className="flex h-[4.4rem] shrink-0 items-center gap-3 bg-canvas px-6 md:px-8">
+              <header data-slot="dock-topbar" className="flex h-[4.4rem] shrink-0 items-center gap-3 px-6 md:px-8">
                 <Link to="/" aria-label="Norn Studio home" className="flex size-8 shrink-0 items-center justify-center rounded-lg outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">
                   <img src={nornMark} alt="" width={28} height={28} className="size-7 object-contain" />
                 </Link>
                 <ScopeSwitcher variant="pill" />
                 <div className="hidden min-w-0 overflow-hidden @[36rem]:block">{current && current.path !== "/" && <Crumbs key={current.path} section={current} entries={navigation.menus.get(current.path) ?? []} pathname={pathname} />}</div>
                 <div className="ms-auto flex shrink-0 items-center gap-2">
-                  <div className="flex shrink-0 justify-center @3xl:w-52"><CommandMenu sections={sections} navigation={navigation} onPerspective={switchTo} /></div>
-                  <PerspectiveSwitch perspective={perspective} onChange={switchTo} />
+                  <div className="flex shrink-0 justify-center @3xl:w-52"><CommandMenu sections={sections} navigation={navigation} /></div>
                   {tools}
                   <Notifications />
                   <AccountMenu account={account} onSignOut={onSignOut} inToolbar={false} variant="topbar" />
@@ -1277,8 +900,8 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, pathna
               </header>
             )
             : (
-              // The top bar spans the content column only: 52px, borderless, on the canvas (DESIGN.md 9.1).
-              <header data-slot="topbar" className="flex h-[52px] shrink-0 items-center bg-canvas px-2 @sm:px-3 @2xl:px-4">
+              // The top bar sits inside the main island: 52px, borderless, on the island's own material (DESIGN.md 9.1).
+              <header data-slot="topbar" className="flex h-[52px] shrink-0 items-center px-2 @sm:px-3 @2xl:px-4">
                 <div className="mx-auto flex w-full max-w-[1260px] min-w-0 items-center justify-between gap-1 @sm:gap-2 @2xl:gap-3 @4xl:grid @4xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
                   <div className="flex min-w-0 flex-1 items-center gap-1.5">
                     <Hint side="bottom" label={<>{collapsed ? "Show sidebar" : "Hide sidebar"} <Keys className="opacity-70">⌘B</Keys></>}>
@@ -1287,9 +910,8 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, pathna
                     {/* The crumbs collapse by the room they have beside the bar's controls, not by the page's width. */}
                     <div className="hidden min-w-0 flex-1 overflow-hidden @[17rem]:block"><div className="@container min-w-0">{current && <Crumbs key={current.path} section={current} entries={navigation.menus.get(current.path) ?? []} pathname={pathname} />}</div></div>
                   </div>
-                  <div className="flex shrink-0 justify-center @2xl:w-48 @4xl:w-72 @5xl:w-96"><CommandMenu sections={sections} navigation={navigation} onPerspective={switchTo} /></div>
+                  <div className="flex shrink-0 justify-center @2xl:w-48 @4xl:w-72 @5xl:w-96"><CommandMenu sections={sections} navigation={navigation} /></div>
                   <div className="flex shrink-0 items-center justify-end gap-1 @xl:gap-2">
-                    <PerspectiveSwitch perspective={perspective} onChange={switchTo} />
                     <BarButtons tools={tools} />
                   </div>
                 </div>
@@ -1303,32 +925,31 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, pathna
         <Inspector />
         <AssistantPanel assistant={assistant} />
       </SidebarInset>
-      {isDock && <FloatingDock sections={sections} perspective={perspective} navigation={navigation} current={current} assistant={assistant} />}
+      {isDock && <FloatingDock sections={sections} navigation={navigation} current={current} assistant={assistant} />}
     </>
   )
 }
 
-/** The shell in the reader's direction: in Arabic the sidebar sits on the right (it follows the document's `dir`). */
+/**
+ * The shell in the reader's direction (in Arabic the islands sit on the right; they follow the
+ * document's `dir`). The open applet is the one that lists the page; a page two applets list stays
+ * in the one the reader came from.
+ */
 function LocalizedShell({ sections, tools, assistant, account, onSignOut }: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly assistant?: AssistantContent; readonly account: Account; readonly onSignOut: () => void }) {
   const { shell } = useAppearance()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
-  const navigate = useNavigate()
-  const chosen = usePerspective()
   const navigation = useNavigation(sections)
-  const perspective = perspectiveOf(sections, pathname, chosen.perspective, navigation.menus)
-  const density = PERSPECTIVES.find(({ id }) => id === perspective)?.density ?? "comfortable"
-  const shown = sections.filter((section) => section.perspective === perspective || section.perspective === "global")
-  const current = destinationOf(shown, pathname, navigation.menus)
-  const switchTo = (next: Perspective) => {
-    chosen.setPerspective(next)
-    if (perspectiveOf(sections, pathname, next, navigation.menus) !== next) void navigate({ to: PERSPECTIVES.find(({ id }) => id === next)?.home ?? "/" })
-  }
+  const [previous, setPrevious] = useState<string | undefined>(undefined)
+  const applet = appletOf(sections, pathname, navigation.menus, previous)
+  useEffect(() => { if (applet?.id !== undefined) setPrevious(applet.id) }, [applet?.id])
+  const menu = applet && appletMenu(applet, sections, navigation.menus, navigation.badges)
+  const current = menu && destinationIn(menu, pathname, navigation.menus)
   useHashScroll()
   return (
     <ViewProvider><InspectorProvider><TooltipProvider>
-      <SidebarProvider shortcut={shell !== "dock"} data-shell={shell} data-density={density} className="bg-canvas">
+      <SidebarProvider shortcut={shell !== "dock"} data-shell={shell} data-density={DENSITY[current?.perspective ?? "global"]}>
         <WorkbenchFrame sections={sections} tools={tools} assistant={assistant} account={account} onSignOut={onSignOut}
-          pathname={pathname} perspective={perspective} navigation={navigation} current={current} switchTo={switchTo} />
+          pathname={pathname} navigation={navigation} applet={applet} menu={menu} current={current} />
       </SidebarProvider>
     </TooltipProvider></InspectorProvider></ViewProvider>
   )
