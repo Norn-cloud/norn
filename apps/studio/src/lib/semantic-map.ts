@@ -48,6 +48,8 @@ export interface SemanticNode {
   readonly ruleHoldingsApproximate: boolean
   /** Count of feeding systems (primary or secondary) on this type reporting a live source sync error. */
   readonly sourceErrors: number
+  /** `sourceErrors` is a lower bound: the inbox capped or bounded its sources, or could not place one. */
+  readonly sourceErrorsApproximate: boolean
   readonly attention: MapAttentionTone
   readonly concept: Concept
 }
@@ -82,6 +84,7 @@ export interface SemanticIsland {
   readonly ruleHoldings: number
   readonly ruleHoldingsApproximate: boolean
   readonly sourceErrors: number
+  readonly sourceErrorsApproximate: boolean
   /** Names and mapping ids of feeding systems on this island currently reporting a live source sync error. */
   readonly errorSystems: readonly string[]
   readonly attention: MapAttentionTone
@@ -194,7 +197,6 @@ export function buildSemanticMap(
 
   const resolveSystem = (mappingId: string | undefined, systemName: string | undefined): SourceSystem | undefined => {
     if (mappingId && externalById.has(mappingId)) return externalById.get(mappingId)
-    if (systemName && externalById.has(systemName)) return externalById.get(systemName)
     if (systemName && uniqueExternalByName.has(systemName)) return uniqueExternalByName.get(systemName)
     return undefined
   }
@@ -204,6 +206,8 @@ export function buildSemanticMap(
   const sourceErrorsBySystemId = new Map<string, number>()
   let returnedHoldingsSum = 0
   let returnedSourceErrors = 0
+  // Source errors the map cannot place on a system: their island is unknown, so no island is shown clear.
+  let unplacedSourceErrors = 0
 
   if (liveInbox) {
     for (const item of liveInbox.items) {
@@ -222,9 +226,13 @@ export function buildSemanticMap(
           : typeof item.values.source_system === "string"
             ? item.values.source_system
             : undefined
-        const matched = resolveSystem(mappingId, systemName) ?? resolveSystem(item.id, undefined)
+        // Join only on the mapping the server names, or an unambiguous system; the item's own id is
+        // its connection record's id, never a mapping id.
+        const matched = resolveSystem(mappingId, systemName)
         if (matched) {
           sourceErrorsBySystemId.set(matched.id, (sourceErrorsBySystemId.get(matched.id) ?? 0) + 1)
+        } else {
+          unplacedSourceErrors += 1
         }
       }
     }
@@ -232,8 +240,9 @@ export function buildSemanticMap(
 
   const heldSection = liveInbox?.sections.find((s) => s.kind === "held_back")
   const sourceSection = liveInbox?.sections.find((s) => s.kind === "source_error")
-  // Inbox caps returned groups/source rows even when section totals are exact; never mark
-  // unseen islands/nodes green if any alert fell outside the returned slice or was approximate.
+  // Inbox caps returned groups/source rows (20 each) even when section totals are exact; never mark
+  // unseen islands/nodes green, or show a count as exact, if any alert fell outside the returned
+  // slice, was approximate, or could not be placed.
   // Note: `liveInbox.scanLimit` is always emitted as a constant server scan budget (e.g. 500)
   // and does not indicate truncation unless `approximate` is true or returned rows < section count.
   const holdingsBounded = Boolean(
@@ -246,6 +255,7 @@ export function buildSemanticMap(
     liveInbox && (
       sourceSection?.approximate
       || (sourceSection?.count ?? 0) > returnedSourceErrors
+      || unplacedSourceErrors > 0
     ),
   )
   const inboxBounded = holdingsBounded || sourcesBounded
@@ -336,8 +346,9 @@ export function buildSemanticMap(
         markings,
         feeds,
         ruleHoldings: held.count,
-        ruleHoldingsApproximate: held.approximate,
+        ruleHoldingsApproximate: held.approximate || holdingsBounded,
         sourceErrors: nodeSourceErrors,
+        sourceErrorsApproximate: sourcesBounded,
         attention: nodeAttention,
         concept,
       }
@@ -394,6 +405,7 @@ export function buildSemanticMap(
       ruleHoldings,
       ruleHoldingsApproximate,
       sourceErrors,
+      sourceErrorsApproximate: sourcesBounded,
       errorSystems: [...errorSystems],
       attention: islandAttention,
     })

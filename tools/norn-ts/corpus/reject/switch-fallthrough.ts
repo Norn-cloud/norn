@@ -8,6 +8,7 @@ export default Norn.flow(
     const invoice = yield* Norn.perform("load", loadInvoice, { invoiceId: "inv-1" })
     switch (invoice.status) {
       case "draft":
+        yield* Norn.perform("first", chargeCard, { invoiceId: invoice.id })
       case "open":
         yield* Norn.perform("charge", chargeCard, { invoiceId: invoice.id })
     }

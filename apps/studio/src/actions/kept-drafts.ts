@@ -8,13 +8,16 @@ import type { Draft } from "../lib/actions.ts"
  */
 const kept = new Map<string, Draft>()
 
-/** One session: its user, organization, and active cell environment. */
+/**
+ * One session: its user, organization, the role the server reports there, and the active cell
+ * environment. A role change is a new reader: what the previous role was served is not this one's.
+ */
 export function sessionKey(account: {
   readonly user: { readonly id: string }
-  readonly organization: { readonly id: string } | null
+  readonly organization: { readonly id: string; readonly role?: string } | null
   readonly environmentId?: string | null
 } | null | undefined): string {
-  return JSON.stringify([account?.user.id ?? null, account?.organization?.id ?? null, account?.environmentId ?? null])
+  return JSON.stringify([account?.user.id ?? null, account?.organization?.id ?? null, account?.organization?.role ?? null, account?.environmentId ?? null])
 }
 
 const key = (session: string, draft: string) => `${session}\u0000${draft}`
