@@ -38,6 +38,8 @@ async function cell(page: Page, inbox: Inbox, served: readonly unknown[] = defin
 /** The tick bar's trigger, by its name; its counts sit on the tick strip inside it. */
 const tickBar = (page: Page) => page.locator('[data-slot="topbar"]').getByRole("button", { name: /^Rules: / })
 const ticks = (page: Page) => tickBar(page).locator('[data-slot="ticks"]')
+/** The bar draws once the mode, the catalog and the inbox have answered; under a loaded suite that can take a few seconds. */
+const drawn = (page: Page) => expect(tickBar(page)).toBeVisible({ timeout: 15_000 })
 
 test.beforeEach(({ }, info) => { test.skip(Boolean(process.env.E2E_BASE), `${info.title}: replays a stubbed cell`) })
 
@@ -45,8 +47,8 @@ test("top bar: the rules tick bar shows the served laws and fills only the share
   await page.setViewportSize({ width: 1440, height: 900 })
   await cell(page, heldInbox)
   await page.goto("/map")
+  await drawn(page)
   const bar = tickBar(page)
-  await expect(bar).toBeVisible()
   const total = Number(await ticks(page).getAttribute("data-total"))
   expect(total).toBeGreaterThan(1)
   await expect(ticks(page)).toHaveAttribute("data-marked", "1")
@@ -81,6 +83,7 @@ test("top bar: an exact empty inbox reads 'nothing held back'; a failed inbox sa
   await page.setViewportSize({ width: 1440, height: 900 })
   await cell(page, cleanInbox)
   await page.goto("/map")
+  await drawn(page)
   const bar = tickBar(page)
   const total = Number(await ticks(page).getAttribute("data-total"))
   await expect(bar).toHaveAccessibleName(`Rules: ${total}, nothing held back`)
@@ -154,6 +157,7 @@ test("top bar: under reduced motion the extras switch instantly", async ({ page 
   await page.emulateMedia({ reducedMotion: "reduce" })
   await cell(page, heldInbox)
   await page.goto("/map")
+  await drawn(page)
   await expect(tickBar(page)).toHaveCSS("transition-duration", "0s")
   for (const slot of ["language-pill", "scheme-toggle"]) {
     await expect(page.locator(`[data-slot="topbar"] [data-slot="${slot}"]`)).toHaveCSS("transition-duration", "0s")
