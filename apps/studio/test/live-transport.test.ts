@@ -737,6 +737,57 @@ test("a recovery read that outlives Retry and then succeeds never clears the new
   }
 })
 
+test("a recovery read still in /api/me discovery when Retry runs stays the older generation's: its later success never clears the newer settle", async () => {
+  const scopeA = { orgId: ME.organization.id, environmentId: ME.environmentId }
+  const definitionReads: string[] = []
+  let meReads = 0
+  let releaseMe = () => {}
+  const heldMe = new Promise<void>((resolve) => { releaseMe = resolve })
+  let markMeHeld = () => {}
+  const meHeld = new Promise<void>((resolve) => { markMeHeld = resolve })
+  const fetchProbe = async (...[input]: Parameters<typeof globalThis.fetch>) => {
+    const url = String(input)
+    if (url === "/api/me") {
+      meReads += 1
+      if (meReads === 1) {
+        markMeHeld()
+        await heldMe
+      }
+      return Response.json(ME)
+    }
+    definitionReads.push(url)
+    // The first definitions read is A's own mode query (refused); the second is the held recovery read (live).
+    return definitionReads.length === 1
+      ? Response.json(
+        { code: "cell.unopenable", retryable: false, incidentId: "inc-newer", explanation: "the cell cannot open" },
+        { status: 503 },
+      )
+      : new Response(DEFINITIONS, { headers: { "content-type": "application/json" } })
+  }
+  const fetch = spyOn(globalThis, "fetch").mockImplementation(Object.assign(fetchProbe, { preconnect: globalThis.fetch.preconnect }))
+  const client = new QueryClient()
+  try {
+    // 1. Outage recovery starts, and its /api/me discovery is held.
+    const recovery = client.fetchQuery(modeQuery(undefined, true, client))
+    await meHeld
+
+    // 2. Retry (a new generation), then A's own mode query settles on A's refusal.
+    refreshMode()
+    await expect(client.fetchQuery(modeQuery(scopeA))).rejects.toMatchObject({ incidentId: "inc-newer" })
+
+    // 3. The held discovery answers A, and the recovery read's definitions read succeeds. The read began
+    //    before Retry, so A's newer settle stays: a page read reuses it with no definitions read.
+    releaseMe()
+    await expect(recovery).resolves.toMatchObject({ kind: "live" })
+    expect(definitionReads).toHaveLength(2)
+    await expect(currentMode()).rejects.toMatchObject({ incidentId: "inc-newer" })
+    expect(definitionReads).toHaveLength(2)
+  } finally {
+    fetch.mockRestore()
+    client.clear()
+  }
+})
+
 test("syncStudioScopeChange(client, undefined) immediately flips mounted scope observers to pending without writing null", () => {
   const client = new QueryClient()
   const scopeA = { orgId: "org_a", environmentId: "env_a" }

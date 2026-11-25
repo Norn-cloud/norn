@@ -95,10 +95,11 @@ async function discoverScope(fetcher: Fetch, signal?: AbortSignal): Promise<Stud
 }
 
 /**
- * Where the read behind a mode or error actually went, fixed when the request goes out: the scope
- * (`studioScopeKey`) its `/v1/definitions` read was sent to, or `null` when the session server's own
- * `/api/me` discovery was all it reached (it failed, or named no workspace), plus the mode generation
- * it ran in.
+ * Where the read behind a mode or error actually went: the scope (`studioScopeKey`) its
+ * `/v1/definitions` request was sent to, or `null` when the session server's own `/api/me` discovery
+ * was all it reached (it failed, or named no workspace), plus the mode generation the read started in.
+ * A read that outlives `refreshMode` (for example, one waiting in discovery) stays its starting
+ * generation's, so it neither records a settle for the next generation nor clears one.
  * Each mode and each error `readMode` produces carries it, so whatever later records that outcome (the
  * mode query's settled failure) binds it to what answered, never to whichever scope happens to be
  * active when it is stored. A read aborted by its caller carries none.
@@ -121,10 +122,11 @@ export async function readMode(
   signal?: AbortSignal,
 ): Promise<Mode> {
   signal?.throwIfAborted()
+  const generation = modeGeneration
   let scope: StudioScope | null = knownScope ?? null
   let session: DefinitionsTarget | undefined
   if (knownScope === undefined) {
-    session = { scopeKey: null, generation: modeGeneration }
+    session = { scopeKey: null, generation }
     try { scope = await discoverScope(fetcher, signal) } catch (error) {
       bindTarget(error, session, signal)
       throw error
@@ -136,7 +138,7 @@ export async function readMode(
     if (session !== undefined) bindTarget(recorded, session)
     return recorded
   }
-  const target: DefinitionsTarget = { scopeKey: studioScopeKey(scope), generation: modeGeneration }
+  const target: DefinitionsTarget = { scopeKey: studioScopeKey(scope), generation }
   try {
     const mode = await readDefinitions(fetcher, scope, signal)
     bindTarget(mode, target)
