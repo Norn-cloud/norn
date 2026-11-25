@@ -78,6 +78,7 @@ test("shots: transforms", async ({ page }) => {
 })
 
 test("shots: imports (aliases, review, supersession)", async ({ page }) => {
+  await session(page)
   await importTriageCell(page)
   for (const step of ["aliases", "review", "supersession"]) {
     await shoot(page, `imports-${step}`, () => page.goto(`/imports?step=${step}`).then(() => {}), heading(page))

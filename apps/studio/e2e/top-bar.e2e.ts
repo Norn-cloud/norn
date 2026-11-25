@@ -35,7 +35,9 @@ async function cell(page: Page, inbox: Inbox, served: readonly unknown[] = defin
   })
 }
 
-const tickBar = (page: Page) => page.locator('[data-slot="topbar"] [data-slot="tick-bar"]')
+/** The tick bar's trigger, by its name; its counts sit on the tick strip inside it. */
+const tickBar = (page: Page) => page.locator('[data-slot="topbar"]').getByRole("button", { name: /^Rules: / })
+const ticks = (page: Page) => tickBar(page).locator('[data-slot="ticks"]')
 
 test.beforeEach(({ }, info) => { test.skip(Boolean(process.env.E2E_BASE), `${info.title}: replays a stubbed cell`) })
 
@@ -45,10 +47,10 @@ test("top bar: the rules tick bar shows the served laws and fills only the share
   await page.goto("/map")
   const bar = tickBar(page)
   await expect(bar).toBeVisible()
-  const total = Number(await bar.getAttribute("data-total"))
+  const total = Number(await ticks(page).getAttribute("data-total"))
   expect(total).toBeGreaterThan(1)
-  await expect(bar).toHaveAttribute("data-marked", "1")
-  // The server listed fewer records (3) than... no: 3 of 3, exact, so the count is exact.
+  await expect(ticks(page)).toHaveAttribute("data-marked", "1")
+  // The section counted 3 records and the inbox listed all 3, so the count is exact.
   await expect(bar).toHaveAccessibleName(`Rules: ${total}, 1 holding records back`)
   await expect(bar).toContainText(`1/${total}`)
   const filled = await bar.locator('[data-slot="ticks"] > [data-filled]').count()
@@ -80,7 +82,7 @@ test("top bar: an exact empty inbox reads 'nothing held back'; a failed inbox sa
   await cell(page, cleanInbox)
   await page.goto("/map")
   const bar = tickBar(page)
-  const total = Number(await bar.getAttribute("data-total"))
+  const total = Number(await ticks(page).getAttribute("data-total"))
   await expect(bar).toHaveAccessibleName(`Rules: ${total}, nothing held back`)
   await expect(bar.locator('[data-slot="ticks"] > [data-filled]')).toHaveCount(0)
 
@@ -152,7 +154,8 @@ test("top bar: under reduced motion the extras switch instantly", async ({ page 
   await page.emulateMedia({ reducedMotion: "reduce" })
   await cell(page, heldInbox)
   await page.goto("/map")
-  for (const slot of ["tick-bar", "language-pill", "scheme-toggle"]) {
+  await expect(tickBar(page)).toHaveCSS("transition-duration", "0s")
+  for (const slot of ["language-pill", "scheme-toggle"]) {
     await expect(page.locator(`[data-slot="topbar"] [data-slot="${slot}"]`)).toHaveCSS("transition-duration", "0s")
   }
 })

@@ -50,7 +50,7 @@ function Level({ view, path, depth, choose }: { readonly view: DecisionView; rea
                     <OptionNumber n={index + 1} on={active} />
                     <span className="min-w-0 flex-1 space-y-1">
                       <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                        <span className={cn("tracking-[-0.01em]", muted && "text-muted-foreground")}>{option.label}</span>
+                        <span data-option-label className={cn("tracking-[-0.01em]", muted && "text-muted-foreground")}>{option.label}</span>
                         {agentPick && <span className="inline-flex items-center gap-1 text-meta leading-5 text-muted-foreground"><Sparkles aria-hidden className="size-3 text-tone-violet" />Agent's pick</span>}
                       </span>
                       <span className="block text-meta text-muted-foreground">{option.scope || "No scope stated"}</span>

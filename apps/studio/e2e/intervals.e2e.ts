@@ -56,7 +56,7 @@ test("view: only a core.TimeInterval type offers Timeline; its week shows the re
   })
   await expect(bars(page, "Equipment booking").filter({ hasText: "December service" })).toHaveCount(0)
   // A booking that began the week before is clipped at the window's start.
-  await expect(bars(page, "Equipment booking").filter({ hasText: "Inspection" })).toHaveClass(/rounded-l-none/)
+  await expect(bars(page, "Equipment booking").filter({ hasText: "Inspection" })).toHaveClass(/rounded-s-none/)
   // A record that names its zone reads its own times there.
   await expect(bars(page, "Equipment booking").filter({ hasText: "Warehouse move" })).toHaveAttribute("aria-label", /Warehouse move, Tue 24 Nov, 06:00 to Tue 24 Nov, 15:00 \(Asia\/Tokyo\)/)
   await shoot(page, "timeline-week")

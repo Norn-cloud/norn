@@ -61,7 +61,7 @@ test("workflows: headings use the titles the catalog serves, not raw type ids", 
   await page.goto("/workflows")
   for (const [objectType, property] of [["core.analytics.Restatement", "status"], ["docs.DocumentLine", "review"]] as const) {
     const { heading } = served(objectType, property)
-    await expect(section(page, objectType, property).getByRole("heading", { level: 2 })).toHaveText(heading)
+    await expect(section(page, objectType, property).locator("h2[data-workflow-heading]")).toHaveText(heading)
   }
   await expect(page.getByRole("heading", { level: 2, name: /DocumentLine/ })).toHaveCount(0)
   expect(served("docs.DocumentLine", "review").title).not.toBe("DocumentLine")
@@ -94,6 +94,6 @@ test("workflows: no horizontal page scroll at 390px", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await cell(page)
   await page.goto("/workflows")
-  await expect(section(page, "docs.DocumentLine", "review").getByRole("heading", { level: 2 })).toBeVisible()
+  await expect(section(page, "docs.DocumentLine", "review").locator("h2[data-workflow-heading]")).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
 })

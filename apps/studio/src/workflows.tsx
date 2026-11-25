@@ -327,7 +327,7 @@ function WorkflowCard({ workflow, heading, flow, recorded }: { readonly workflow
       <div className="space-y-1 px-1">
         <div className="flex flex-wrap items-center gap-2">
           {/* The served names; a part the server names nowhere shows as its id, as code. */}
-          <h2 className="text-heading font-medium">
+          <h2 data-workflow-heading className="text-heading font-medium">
             {heading.title === undefined ? <code className="font-mono">{workflow.objectType}</code> : <span lang={heading.titleLang}>{heading.title}</span>}
             {": "}
             {heading.property === undefined ? <code className="font-mono">{lifecycle.property}</code> : <span lang={heading.propertyLang}>{heading.property}</span>}

@@ -50,10 +50,11 @@ export function TickBar({ label, name, total, marked, tone, count, heading, item
   const filled = filledTicks(marked, total)
   return (
     <Popover>
-      <PopoverTrigger aria-label={name} data-slot="tick-bar" data-marked={marked} data-total={total}
+      {/* The UI SDK trigger owns its element's data attributes, so the counts sit on the tick strip below. */}
+      <PopoverTrigger aria-label={name}
         className={cn("flex h-[32px] shrink-0 items-center gap-2.5 rounded-full px-3 text-body text-foreground ring-1 ring-input ring-inset outline-none transition-colors duration-150 hover:bg-(--well) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring data-open:bg-(--well) motion-reduce:transition-none max-sm:h-[44px]", className)}>
         <span>{label}</span>
-        <span aria-hidden data-slot="ticks" className="flex h-[14px] items-stretch gap-[2px]">
+        <span aria-hidden data-slot="ticks" data-marked={marked} data-total={total} className="flex h-[14px] items-stretch gap-[2px]">
           {Array.from({ length: TICKS }, (_, index) => (
             <span key={index} data-filled={index < filled || undefined} className={cn("w-[2px] rounded-full", index < filled ? DOT[tone] : "bg-line")} />
           ))}
