@@ -8,7 +8,7 @@ import { EmptyState } from "@/components/system/panel"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { CellUnavailable, lastReachableAt, useCachedStudioScope } from "@/lib/definitions"
-import { NotServed, retryMode, useMode } from "@/lib/live-transport"
+import { NotServed, retryWorkspace, useMode } from "@/lib/live-transport"
 import { useLocale } from "@/lib/locale"
 import { explainError } from "@/lib/plain-words"
 import { useView } from "@/lib/view"
@@ -100,13 +100,22 @@ export function SkeletonBlock({ kind = "list", label = "Loading" }: { readonly k
  * Honest state for a broken, unopenable, or unreachable workspace cell: names what the server
  * said, shows the incident id when logged, says when the workspace was last reachable, separates
  * non-retryable failures from transient ones, and offers an explicit Retry.
+ *
+ * It owns that Retry, and takes none from its page: while a page shows this state the shell's one-line
+ * status steps aside, so this Retry is the only one and must do what the shell's would
+ * (`retryWorkspace`: decide the mode again, then read every errored read again). It stays disabled
+ * until both have settled. A page that passed its own read here instead left the mode unavailable.
  */
-export function WorkspaceUnavailable({ error, onRetry, isFetching = false, compact = false }: {
+export function WorkspaceUnavailable({ error, compact = false }: {
   readonly error: unknown
-  readonly onRetry?: () => void
-  readonly isFetching?: boolean
   readonly compact?: boolean
 }) {
+  const queries = useQueryClient()
+  const [retrying, setRetrying] = useState(false)
+  const retry = () => {
+    setRetrying(true)
+    void retryWorkspace(queries).finally(() => setRetrying(false))
+  }
   const scope = useCachedStudioScope()
   const { locale } = useLocale()
   const { view } = useView()
@@ -148,11 +157,9 @@ export function WorkspaceUnavailable({ error, onRetry, isFetching = false, compa
             </Disclosure>
           )}
         </div>
-        {onRetry && (
-          <Button type="button" variant="outline" size="sm" disabled={isFetching} onClick={onRetry}>
-            <RefreshCw className={isFetching ? "animate-spin" : undefined} />Retry
-          </Button>
-        )}
+        <Button type="button" variant="outline" size="sm" disabled={retrying} onClick={retry}>
+          <RefreshCw className={retrying ? "animate-spin" : undefined} />Retry
+        </Button>
       </div>
     </div>
   )
@@ -326,7 +333,7 @@ export function LoadState<T>({
       )
     }
     if (isWorkspaceUnavailableError(error)) {
-      return <WorkspaceUnavailable error={error} onRetry={onRetry} isFetching={isFetching} />
+      return <WorkspaceUnavailable error={error} />
     }
     return <ReadErrorState error={error} onRetry={onRetry} isFetching={isFetching} />
   }
@@ -361,7 +368,8 @@ export function WorkspaceUndecided({ workspace, bone, skeleton, loadingLabel }: 
       status={workspace.kind === "deciding" ? "pending" : "error"}
       error={workspace.kind === "unavailable" ? workspace.error : null}
       isFetching={mode.isFetching}
-      onRetry={() => void retryMode(queries)}
+      // The skeleton's and a refusal's Retry; Workspace unavailable owns its own, the same one.
+      onRetry={() => void retryWorkspace(queries)}
       {...bone === undefined ? {} : { bone }}
       {...skeleton === undefined ? {} : { skeleton }}
       {...loadingLabel === undefined ? {} : { loadingLabel }}

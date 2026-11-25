@@ -13,7 +13,7 @@ import { Input } from "@/components/ui/input"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { cn } from "@/lib/utils"
 import { lawHeadline } from "./lib/catalog.ts"
-import { refreshMode, useMode } from "./lib/live-transport.ts"
+import { useMode } from "./lib/live-transport.ts"
 import { useCatalog } from "./lib/use-catalog.ts"
 import {
   SEMANTIC_LENSES,
@@ -520,7 +520,9 @@ export function SemanticMapPage() {
         data={projection}
         error={read.error}
         isFetching={read.isFetching}
-        onRetry={() => { refreshMode(); void read.refetch() }}
+        // A refusal's Retry reads again; Workspace unavailable owns its own Retry, which decides the
+        // mode again as the shell's would (`WorkspaceUnavailable`).
+        onRetry={() => void read.refetch()}
         bone="semantic-map"
         skeleton="cards"
         loadingLabel="Building semantic map"

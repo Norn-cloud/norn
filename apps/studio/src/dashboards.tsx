@@ -111,7 +111,7 @@ export function DashboardsPage() {
         primary={<Button disabled={!cellAvailable} onClick={() => navigate({ to: "/dashboards/new" })}><Plus />New dashboard</Button>} />
       {scope.isPending && <LoadState status="pending" skeleton="list" loadingLabel="Connecting to workspace" onRetry={() => void scope.refetch()}>{() => null}</LoadState>}
       {scope.isSuccess && scope.data === null && <EmptyState icon={LayoutDashboard} title="No data cell">{NO_DATA_CELL}</EmptyState>}
-      {scope.isError && <WorkspaceUnavailable error={scope.error} isFetching={scope.isFetching} onRetry={() => void scope.refetch()} />}
+      {scope.isError && <WorkspaceUnavailable error={scope.error} />}
       {catalog.data && <DashboardAssistant catalog={catalog.data} preview={(dashboard) => <DashboardBoard dashboard={dashboard} catalog={catalog.data} scope={scope.data} />} />}
       {duplicate.isError && <p role="alert" className="text-destructive">Not duplicated. {failure(duplicate.error)}</p>}
       {remove.isError && <p role="alert" className="text-destructive">Not deleted. {failure(remove.error)}</p>}
@@ -303,7 +303,7 @@ export function DashboardEditorPage() {
         {id !== undefined && <Button asChild variant="outline" size="sm" className="ms-auto"><Link to="/dashboards/$id" params={{ id }}><Eye />View</Link></Button>}
       </div>
       {scope.isSuccess && scope.data === null && <p role="status" className="text-muted-foreground">{NO_DATA_CELL}</p>}
-      {scope.isError && <WorkspaceUnavailable error={scope.error} isFetching={scope.isFetching} onRetry={() => void scope.refetch()} />}
+      {scope.isError && <WorkspaceUnavailable error={scope.error} />}
       {(scope.isPending || (cellAvailable && (catalog.isPending || (!fresh && stored.isPending)))) && (
         <LoadState status="pending" skeleton="detail" loadingLabel="Reading the dashboard" onRetry={() => { void scope.refetch(); void catalog.refetch(); if (!fresh) void stored.refetch() }}>{() => null}</LoadState>
       )}
@@ -388,7 +388,7 @@ export function DashboardBoardPage() {
         )}
       </div>
       {scope.isSuccess && scope.data === null && <p role="status" className="text-muted-foreground">{NO_DATA_CELL}</p>}
-      {scope.isError && <WorkspaceUnavailable error={scope.error} isFetching={scope.isFetching} onRetry={() => void scope.refetch()} />}
+      {scope.isError && <WorkspaceUnavailable error={scope.error} />}
       {duplicate.isError && <p role="alert" className="text-destructive">Not duplicated. {failure(duplicate.error)}</p>}
       {remove.isError && <p role="alert" className="text-destructive">Not deleted. {failure(remove.error)}</p>}
       {(scope.isPending || (cellAvailable && (catalog.isPending || stored.isPending))) && (

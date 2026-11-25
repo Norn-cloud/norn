@@ -355,7 +355,7 @@ export function QuestionsPage() {
         primary={<Button asChild><Link to="/metrics/new"><Plus />Explore a metric</Link></Button>}
         secondary={[{ label: "Build step by step", icon: ListTree, to: "/metrics/build" }]} />
       {mode.isPending && <LoadState status="pending" skeleton="cards" loadingLabel="Connecting to workspace" onRetry={() => void mode.refetch()}>{() => null}</LoadState>}
-      {mode.isError && <WorkspaceUnavailable error={mode.error} isFetching={mode.isFetching} onRetry={() => void mode.refetch()} />}
+      {mode.isError && <WorkspaceUnavailable error={mode.error} />}
       {live ? <LiveQuestionsBoard /> : mode.data && (
         <LoadState
           status={board.status}

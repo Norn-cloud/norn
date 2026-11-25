@@ -6,7 +6,7 @@
  *
  * - `deciding`: the mode is being read; nothing is read and nothing cached is shown.
  * - `unavailable`: the mode read failed (including a refetch that failed after an earlier answer); the
- *   page shows Workspace unavailable with the mode's Retry (`retryMode`), never a read without a workspace.
+ *   page shows Workspace unavailable with the mode's Retry (`retryWorkspace`), never a read without a workspace.
  * - `live`: a cell answered at `scope`, a {@link DecidedScope}; every record read goes through `reader`.
  * - `recorded`: no cell is connected; `reader` reads the recording only, never a live cell.
  *
