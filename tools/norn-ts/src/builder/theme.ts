@@ -107,9 +107,6 @@ export const STUDIO_THEME_TOKENS = [
 export type StudioThemeToken = (typeof STUDIO_THEME_TOKENS)[number]
 export type StudioThemeTokenMap = Partial<Record<StudioThemeToken, string>>
 
-export type StudioThemeToken = (typeof STUDIO_THEME_TOKENS)[number]
-export type StudioThemeTokenMap = Partial<Record<StudioThemeToken, string>>
-
 /** The built-in skins a theme may start from. */
 export const THEME_SKINS = ["polar", "open", "luma", "glass"] as const
 export type ThemeSkin = (typeof THEME_SKINS)[number]
