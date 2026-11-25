@@ -13,7 +13,7 @@
  * `luma` palette, geometry and island material, so the default holds before any script runs and on
  * any page that loads this sheet without `applyAppearance`:
  * - `luma` (default, `:root` + `.dark`): shadcn's Luma style (base-luma): its neutral theme and radius scale,
- *   and liquid-glass islands on a backdrop with two ambient glows (DESIGN.md 4.7).
+ *   and opaque monochrome islands on a plain neutral backdrop (DESIGN.md 4.7).
  * - `polar` (`:root[data-skin="polar"]`): monochrome ink on neutral surfaces, colour only where
  *   DESIGN.md section 13 allows it; opaque islands.
  * - `open` (`:root[data-skin="open"]`): white canvas, 20/15px double shell, an ink accent, opaque
@@ -633,9 +633,9 @@
   --sidebar-accent: rgb(255 255 255 / 0.72);
   --sidebar-border: rgb(0 0 0 / 0.08);
   --panel-border: rgb(255 255 255 / 0.72);
-  --panel-shadow: inset 0 1px 0 rgb(255 255 255 / 0.85), 0 8px 28px -12px rgb(44 52 94 / 0.14);
+  --panel-shadow: inset 0 1px 0 rgb(255 255 255 / 0.85), 0 8px 28px -12px rgb(0 0 0 / 0.1);
   --table-border: rgb(0 0 0 / 0.08);
-  --elevation-float: inset 0 1px 0 rgb(255 255 255 / 0.85), 0 16px 40px -12px rgb(44 52 94 / 0.22);
+  --elevation-float: inset 0 1px 0 rgb(255 255 255 / 0.85), 0 16px 40px -12px rgb(0 0 0 / 0.16);
   --dock-surface: rgb(26 26 30 / 0.82);
   --dock-border: rgb(255 255 255 / 0.22);
   --dock-muted: #babac2;
@@ -981,6 +981,27 @@
    and align to its start; the text inside them decides its own. */
 [dir="rtl"] :where(p, h1, h2, h3, h4, h5, h6, li, label, button, a, dt, dd, figcaption, span):not([dir]) {
   unicode-bidi: plaintext;
+}
+
+/* A running trace title (components/ui/trace.tsx, shadcn's Trace): a lighter band of its own ink passes
+   over the words, monochrome. It holds still under reduced motion, and `shimmer-none` turns it off. */
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@utility shimmer {
+  background-image: linear-gradient(90deg, currentColor 40%, color-mix(in oklab, currentColor 35%, transparent) 50%, currentColor 60%);
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 2s linear infinite;
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+    background-image: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}
+@utility shimmer-none {
+  animation: none;
+  background-image: none;
+  -webkit-text-fill-color: currentColor;
 }
 
 /* The assistant mascot (components/system/mascot.tsx, DESIGN.md 19.4). Idle blinks now and then; thinking

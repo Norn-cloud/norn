@@ -171,3 +171,103 @@ test("close ends the session; a later send opens a new one (a remount or a new c
   expect(opened).toBe(2)
   expect(chunks.at(-1)).toEqual({ type: "finish" })
 })
+
+test("approval: the agent announces the call before its input; the input the person is asked about is drawn before the question", () => {
+  const chunks: SidekickChunk[] = []
+  const turn = new Turn((chunk) => chunks.push(chunk))
+  turn.start()
+  // The adapter's order: tool_call with no input yet, then the full input in an update and in the question.
+  turn.update(update({ sessionUpdate: "tool_call", toolCallId: "t2", title: "mcp__norn__norn_call_action", status: "pending", _meta: PERMISSION.toolCall._meta }))
+  turn.update(update({ sessionUpdate: "tool_call_update", toolCallId: "t2", rawInput: { action: "demo.record.close" } }))
+  turn.update(update({ sessionUpdate: "tool_call_update", toolCallId: "t2", rawInput: { action: "demo.record.close" } }))
+  turn.approval("approval-1", PERMISSION.toolCall)
+  // After the question, an update never redraws the part over it.
+  turn.update(update({ sessionUpdate: "tool_call_update", toolCallId: "t2", rawInput: { action: "other" } }))
+  const inputs = chunks.filter((chunk): chunk is Extract<SidekickChunk, { type: "tool-input-available" }> => chunk.type === "tool-input-available")
+  expect(inputs.map((chunk) => chunk.input)).toEqual([{}, { action: "demo.record.close" }, PERMISSION.toolCall.rawInput])
+  // The name stays the one the call opened with, even when an update does not repeat it.
+  expect(inputs.every((chunk) => chunk.toolName === "norn_call_action")).toBe(true)
+  expect(chunks.map((chunk) => chunk.type).slice(-2)).toEqual(["tool-input-available", "tool-approval-request"])
+})
+
+/** A stand-in session whose prompts are played one by one by the test. */
+function scriptedSession() {
+  const state = { cancelled: 0, prompts: [] as string[], opened: 0 }
+  const turns: { readonly text: string; readonly events: SidekickEvents; readonly settle: (reason: string) => void }[] = []
+  const waiters: (() => void)[] = []
+  const open = async (events: SidekickEvents) => {
+    state.opened += 1
+    return {
+      closed: false,
+      prompt: (text: string) => new Promise<string>((settle) => { state.prompts.push(text); turns.push({ text, events, settle }); for (const wake of waiters.splice(0)) wake() }),
+      cancel: () => { state.cancelled += 1 },
+      close: () => events.closed("closed"),
+      callTool: async () => ({ content: [] }),
+    } as unknown as SidekickSession
+  }
+  const prompted = async (count: number) => { while (turns.length < count) await new Promise<void>((resolve) => waiters.push(resolve)) }
+  return { open, state, turns, prompted }
+}
+
+async function readUntil(reader: ReadableStreamDefaultReader<SidekickChunk>, seen: SidekickChunk[], type: SidekickChunk["type"]) {
+  while (!seen.some((chunk) => chunk.type === type)) {
+    const next = await reader.read()
+    if (next.done) return
+    seen.push(next.value)
+  }
+}
+
+test("stop: the stopped turn is detached at once; a fast follow-up waits for it to settle and never gets its traffic or its cancels", async () => {
+  const bridge = scriptedSession()
+  const transport = new SidekickTransport({ open: bridge.open })
+  const first = new AbortController()
+  const one = (await transport.sendMessages(send([user("close R-1")], first.signal))).getReader()
+  const oneSeen: SidekickChunk[] = []
+  await bridge.prompted(1)
+  const turn1 = bridge.turns[0]!
+  const asked1 = turn1.events.permission(PERMISSION as never)
+  await readUntil(one, oneSeen, "tool-approval-request")
+  first.abort()
+  expect(await asked1).toEqual({ outcome: { outcome: "cancelled" } })
+  expect(bridge.state.cancelled).toBe(1)
+  // A question the bridge asks after Stop is answered `cancelled`, never left open.
+  expect(await turn1.events.permission(PERMISSION as never)).toEqual({ outcome: { outcome: "cancelled" } })
+
+  // The follow-up is sent before the stopped prompt settles: it waits, so it is not prompted yet.
+  const two = (await transport.sendMessages(send([user("and now?")]))).getReader()
+  const twoSeen: SidekickChunk[] = []
+  await Bun.sleep(5)
+  expect(bridge.state.prompts).toEqual(["close R-1"])
+  // The stopped turn's late traffic reaches no turn.
+  turn1.events.update(update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "late from turn one" } }))
+  turn1.settle("cancelled")
+  await bridge.prompted(2)
+  const turn2 = bridge.turns[1]!
+  const asked2 = turn2.events.permission({ ...PERMISSION, toolCall: { ...PERMISSION.toolCall, toolCallId: "t3" } } as never)
+  await readUntil(two, twoSeen, "tool-approval-request")
+  // Turn one's ending did not cancel turn two's question: the person can still answer it.
+  const request = twoSeen.find((chunk) => chunk.type === "tool-approval-request") as Extract<SidekickChunk, { type: "tool-approval-request" }>
+  expect(transport.respond(request.approvalId, true)).toBe(true)
+  expect(await asked2).toEqual({ outcome: { outcome: "selected", optionId: "allow" } })
+  turn2.settle("end_turn")
+  await readUntil(two, twoSeen, "finish")
+  expect(JSON.stringify(twoSeen)).not.toContain("late from turn one")
+  expect(bridge.state.opened).toBe(1)
+})
+
+test("stop: a stopped prompt that never settles does not hold the chat: the follow-up starts on a fresh session", async () => {
+  const bridge = scriptedSession()
+  const transport = new SidekickTransport({ open: bridge.open, settleMs: 20 })
+  const first = new AbortController()
+  await transport.sendMessages(send([user("one")], first.signal))
+  await bridge.prompted(1)
+  first.abort()
+  const two = (await transport.sendMessages(send([user("two")]))).getReader()
+  await bridge.prompted(2)
+  expect(bridge.state.opened).toBe(2)
+  expect(bridge.turns[1]!.events).not.toBe(bridge.turns[0]!.events)
+  bridge.turns[1]!.settle("end_turn")
+  const seen: SidekickChunk[] = []
+  await readUntil(two, seen, "finish")
+  expect(seen.at(-1)).toEqual({ type: "finish" })
+})

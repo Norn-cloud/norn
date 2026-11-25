@@ -55,7 +55,7 @@ TARGET rule is never described as shipped.
 2. **Calm, then clear.** Hierarchy comes from size, spacing and one tonal step between surfaces,
    not from weight, borders or colour. A screen reads in one breath: page title, a band of key
    figures, then lists that open into a sheet. The frame stays quiet as well: by default it is three
-   calm glass islands on a mist backdrop (section 9.1), so the content carries the colour.
+   calm opaque islands on a neutral backdrop (section 9.1), so the content carries the colour.
 3. **One way to nest.** The concentric double shell (`ShellCard` around a well) is the only nesting
    pattern. Anything else that frames a frame is a bug.
 4. **Colour means something.** Chrome is monochrome in every skin: black, white and greys, like
@@ -116,7 +116,8 @@ on skin, shell or scheme.
 **Default skin is `luma`** (CURRENT: bare `:root` and `.dark` in `src/index.css`, so the default
 holds before any script runs; `storedSkin` in `src/lib/appearance.tsx`; owner decision,
 2026-11-25). It is shadcn's Luma style: the neutral theme and Luma's radius scale, pill controls and
-fully rounded cards (section 19.1), and its islands are liquid glass (section 4.7). Knot violet now
+fully rounded cards (section 19.1), and its islands are opaque, like Polar's (section 4.7; the glass
+material is the opt-in `glass` skin). Knot violet now
 paints only the Norn mark and the mascot. `polar` (monochrome ink on neutral surfaces, colour only where section 13
 allows it) moved behind its own `:root[data-skin="polar"]` blocks and stays one choice away, with
 `open` (the first-party app's white canvas with a blue accent) and `glass`. Every skin follows the
@@ -352,24 +353,27 @@ Gated by `test/contrast.test.ts` ("nav islands' ground…") and by the StudioThe
 - **The phone sheet is opaque.** It uses `--shell` in every skin (the material and the backdrop do
   not reach inside a modal), measured on that ground by the same test.
 
-### 4.7 The backdrop and the glass material (default shell)
+### 4.7 The backdrop and the island material (default shell)
 
-The three islands float on a **backdrop**: `--backdrop`, painted on the shell wrapper with two soft
+The three islands float on a **backdrop**: `--backdrop`, painted on the shell wrapper with two
 radial pools of ambient light, `--backdrop-glow-1` and `--backdrop-glow-2` (decorative, part of the
-backdrop). The main island's material is `--island`; the nav islands' is `--sidebar` (section 4.6).
-Each island takes the backdrop blur and saturate `--island-blur`, a 1px specular edge
-`--island-border`, and a depth shadow `--island-shadow` with a 1px inner highlight on its top edge,
-at `--radius-island` (18px). It is CSS only, in the spirit of the shadcn liquid-glass registries
+backdrop; transparent in `luma`, `polar` and `open`). The main island's material is `--island`; the
+nav islands' is `--sidebar` (section 4.6). In `luma` (the default) an island is opaque: a white
+(dark #111111) surface, a 1px hairline `--island-border` and a contact shadow `--island-shadow`, with
+no blur (`--island-blur: none`), at `--radius-island` (16px; monochrome supersedes the glass, owner
+2026-11-25). The opt-in `glass` skin keeps the liquid glass: the backdrop blur and saturate
+`--island-blur`, a 1px specular edge, and a depth shadow with a 1px inner highlight on its top edge,
+at 18px. It is CSS only, in the spirit of the shadcn liquid-glass registries
 (glasscn, Glass UI) and Panelo: **no WebGL, no SVG displacement and no refraction library**
 (`test/contrast.test.ts` refuses one in the shell).
 
 | Token | luma L | luma D | polar L | polar D | open L | open D | glass L | glass D |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `--backdrop` | #e7e8ed | #050507 | #ebebee | #000000 | #f0f0f2 | #000000 | #eef1f8 | #0b0d17 |
-| `--backdrop-glow-1` | rgb(85 76 232 / .07) | rgb(124 116 255 / .10) | none | none | none | none | rgb(58 109 240 / .16) | rgb(58 109 240 / .22) |
-| `--backdrop-glow-2` | rgb(56 189 248 / .06) | rgb(56 189 248 / .05) | none | none | none | none | rgb(139 92 246 / .12) | rgb(139 92 246 / .18) |
-| `--island` | rgb(247 248 249 / .80) | rgb(13 13 16 / .80) | #f6f6f8 | #0a0a0b | #ffffff | #0d0d0e | rgb(252 253 255 / .60) | rgb(18 21 34 / .62) |
-| `--island-border` | rgb(20 22 48 / .07) | rgb(255 255 255 / .07) | rgb(24 24 27 / .06) | rgb(255 255 255 / .07) | rgb(0 0 0 / .06) | rgb(255 255 255 / .07) | rgb(255 255 255 / .72) | rgb(255 255 255 / .13) |
+| `--backdrop` | #f6f6f6 | #090909 | #ebebee | #000000 | #f0f0f2 | #000000 | #eef1f8 | #0b0d17 |
+| `--backdrop-glow-1` | none | none | none | none | none | none | rgb(58 109 240 / .16) | rgb(58 109 240 / .22) |
+| `--backdrop-glow-2` | none | none | none | none | none | none | rgb(139 92 246 / .12) | rgb(139 92 246 / .18) |
+| `--island` | #ffffff | #111111 | #f6f6f8 | #0a0a0b | #ffffff | #0d0d0e | rgb(252 253 255 / .60) | rgb(18 21 34 / .62) |
+| `--island-border` | #e5e5e5 | #212121 | rgb(24 24 27 / .06) | rgb(255 255 255 / .07) | rgb(0 0 0 / .06) | rgb(255 255 255 / .07) | rgb(255 255 255 / .72) | rgb(255 255 255 / .13) |
 | `--island-blur` | blur(24px) saturate(160%) | same | none | none | none | none | blur(24px) saturate(165%) | same |
 
 `--canvas` is the main island's opaque equivalent (luma #f3f4f6 / #0b0b0e, the composite of the
@@ -452,8 +456,8 @@ In `luma` the card, popup and sheet levels are Luma's own Tailwind shadows: `sha
 `--foreground` 6% edge (10% dark) in place of a border, as Luma's `ring-foreground/5` does. Dark keeps
 the inner highlight above.
 
-Five levels only: flat (wells, the backdrop), island (`--island-shadow`: a top inner highlight,
-whisper contact and a soft ambient drop, section 4.7), card (`panel-shadow`), popup, and sheet/dock
+Five levels only: flat (wells, the backdrop), island (`--island-shadow`: in `luma` a whisper of
+contact; in `glass` a top inner highlight, whisper contact and a soft ambient drop; section 4.7), card (`panel-shadow`), popup, and sheet/dock
 (the phone Navigation sheet takes `--sheet-shadow`). Shadows are
 whisper contact plus soft ambient; never a hard blob. Dark mode lifts with a 1px inner highlight
 rather than a darker shadow.
@@ -529,15 +533,15 @@ marked TARGET.
 
 - On the start side (the right in RTL), in order: the **applet rail** (64px, `--rail-width`), the
   **submenu island** (256px, `--sidebar-width`), then the **main island**, which fills the rest. Each
-  is 8px from the window edge and 8px from the next, at `--radius-island` (18px), in the glass
-  material of section 4.7 on the backdrop. Widths are px, so they do not scale with the 90% root.
+  is 8px from the window edge and 8px from the next, at `--radius-island` (16px in `luma`, 18px in
+  `glass`), in the island material of section 4.7 on the backdrop. Widths are px, so they do not scale with the 90% root.
 - The rail and the submenu island are `sticky` and as tall as the window less 16px; the page scrolls
   as a document, inside the main island, which is at least that tall. The main island holds the top
   bar, the connection line, the page, and the inspector and assistant docked on its end side.
 - **No card in a card.** The main island is the ground the ShellCards sit on, not a card around
-  them: its material is the luma mist (`--island`, whose opaque equivalent is `--canvas`), its edge a
-  1px specular hairline and its shadow a soft ambient drop, so the double-shell cards inside keep
-  their one tonal step (#fafafb cards on the #f3f4f6 island in luma light). The old flat,
+  them: its material is `--island` (opaque white in `luma` light, #111111 dark), its edge a 1px
+  hairline and its shadow a contact whisper, so the double-shell cards inside keep their one tonal
+  step (white cards on the #f6f6f6 shell in `luma` light). The old flat,
   unframed content column of #1753 is superseded by the owner decision.
 
 **The applet model.** Applets come from the app's navigation model (`SECTIONS` in `main.tsx`), never
@@ -1383,9 +1387,9 @@ and screenshots are internal.
   `#f4f4f4` so that the R = G = B rule holds without an exception (a 3/255 step in blue).
 - **No glass, no tinted shadow in the default.** The islands are opaque with a 1px hairline and a
   shadow-xs (`0 1px 2px rgb(0 0 0/.05)`); the ambient pools are off; cards have no shadow; popovers and
-  sheets take Polar's soft, neutral `shadow-md`; `--elevation-action` is neutral. This supersedes the
-  liquid-glass islands of sections 4.7 and 9.1; the `glass` skin keeps a plain blur, without
-  `saturate()`, as an opt-in.
+  sheets take Polar's soft, neutral `shadow-md`; `--elevation-action` is neutral. This superseded the
+  earlier liquid-glass islands (section 4.7 now describes the opaque default); the `glass` skin keeps
+  a plain blur, without `saturate()`, as an opt-in.
 - **Type:** page titles are 21.6px at 500 (the title step, between Open's 20px and Polar's 24px); no
   step was added.
 - **Colour is allowed only in named tokens:** `--chart-1…5` and the canvas's own tints, edges and

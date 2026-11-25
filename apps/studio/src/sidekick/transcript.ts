@@ -61,7 +61,8 @@ export class Turn {
   private text: string | null = null
   private texts = 0
   private views = 0
-  private readonly tools = new Map<string, { settled: boolean }>()
+  /** Each tool call this turn opened: settled once it has an outcome, its input as last drawn, and whether the person was asked. */
+  private readonly tools = new Map<string, { name: string; settled: boolean; input: string; asked: boolean }>()
   private finished = false
 
   constructor(private readonly emit: (chunk: SidekickChunk) => void) {}
@@ -76,13 +77,23 @@ export class Turn {
     this.text = null
   }
 
-  /** Open a tool part for this call if the turn has not seen it yet. */
-  private openTool(call: Pick<ToolCallUpdate, "toolCallId" | "title" | "rawInput" | "_meta">) {
-    if (this.tools.has(call.toolCallId)) return
-    this.closeText()
-    this.tools.set(call.toolCallId, { settled: false })
-    const name = toolName(call)
-    this.emit({ type: "tool-input-available", toolCallId: call.toolCallId, toolName: name, title: toolWords(name), input: call.rawInput ?? {}, dynamic: true })
+  /**
+   * Open a tool part for this call, or draw its input again when the call now carries a different
+   * one. The agent announces a call before its input has finished streaming, then sends the whole
+   * input in a later update and in the approval question; the part always shows the input the
+   * person is asked about. Once the person was asked, only the question redraws it: the part keeps
+   * their question and the input that came with it.
+   */
+  private openTool(call: Pick<ToolCallUpdate, "toolCallId" | "title" | "rawInput" | "_meta">, question = false) {
+    const known = this.tools.get(call.toolCallId)
+    const input = call.rawInput ?? {}
+    const drawn = JSON.stringify(input)
+    if (known !== undefined && (known.settled || (known.asked && !question) || call.rawInput === undefined || known.input === drawn)) return
+    if (known === undefined) this.closeText()
+    // The name is the one the call opened with: a later update may not repeat it.
+    const name = known?.name ?? toolName(call)
+    this.tools.set(call.toolCallId, { name, settled: false, input: drawn, asked: known?.asked ?? false })
+    this.emit({ type: "tool-input-available", toolCallId: call.toolCallId, toolName: name, title: toolWords(name), input, dynamic: true })
   }
 
   private settle(toolCallId: string, chunk: SidekickChunk) {
@@ -110,11 +121,13 @@ export class Turn {
         if (update.status === "completed") this.settle(update.toolCallId, { type: "tool-output-available", toolCallId: update.toolCallId, output: contentText(update), dynamic: true })
         if (update.status === "failed") this.settle(update.toolCallId, { type: "tool-output-error", toolCallId: update.toolCallId, errorText: contentText(update) || "The tool call failed.", dynamic: true })
         return
-      case "tool_call_update":
+      case "tool_call_update": {
         if (!this.tools.has(update.toolCallId)) return
+        this.openTool(update)
         if (update.status === "completed") this.settle(update.toolCallId, { type: "tool-output-available", toolCallId: update.toolCallId, output: contentText(update), dynamic: true })
         if (update.status === "failed") this.settle(update.toolCallId, { type: "tool-output-error", toolCallId: update.toolCallId, errorText: contentText(update) || "The tool call failed.", dynamic: true })
         return
+      }
       default:
         return
     }
@@ -130,7 +143,10 @@ export class Turn {
   /** The bridge asks the person before this call runs. */
   approval(approvalId: string, call: Pick<ToolCallUpdate, "toolCallId" | "title" | "rawInput" | "_meta">) {
     if (this.finished) return
-    this.openTool(call)
+    // The question's own input is drawn first, so the person sees what they are allowing.
+    this.openTool(call, true)
+    const tool = this.tools.get(call.toolCallId)
+    if (tool !== undefined) tool.asked = true
     this.emit({ type: "tool-approval-request", approvalId, toolCallId: call.toolCallId })
   }
 
