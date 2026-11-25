@@ -278,8 +278,8 @@ test("rules: /guarantees redirects preserving suffix/query/hash, nav & palette u
   await expect(page).toHaveURL((url) => url.pathname === "/rules" && url.search === "" && url.hash === "")
   await expect(page.getByRole("heading", { name: "Rules", level: 1 })).toBeVisible()
 
-  // Builder sidebar names Rules, never Guarantees.
-  const builderNav = page.getByRole("navigation", { name: "Studio navigation" }).getByRole("tree", { name: "Builder pages" })
+  // The Builder menu names Rules, never Guarantees.
+  const builderNav = page.getByRole("navigation", { name: "Builder menu" })
   await expect(builderNav.getByRole("link", { name: "Rules" })).toBeVisible()
   await expect(builderNav.getByRole("link", { name: "Guarantees" })).toHaveCount(0)
 

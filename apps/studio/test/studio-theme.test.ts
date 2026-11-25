@@ -178,10 +178,10 @@ test("forced appearance and omitted baseSkin use the exact same scheme and skin 
   if (!forcedDark.ok) return
 
   // Even when the user was on `glass` in a light OS, applying a forced dark theme without baseSkin
-  // pins `data-skin="polar"` and enables `.dark` so rendering matches the validated palette.
+  // pins the default `data-skin="luma"` and enables `.dark` so rendering matches the validated palette.
   const root = fakeRoot(false)
   applyAppearance("glass", "sidebar", root.element, forcedDark.theme)
-  expect(root.dataset.skin).toBe("polar")
+  expect(root.dataset.skin).toBe("luma")
   expect(root.classes.has("dark")).toBe(true)
   expect(root.dataset.forcedAppearance).toBe("dark")
   expect(root.styles.get("--foreground")).toBe("#fafafa")
@@ -357,22 +357,24 @@ test("over rounds every composited layer to 8 bits, and an upper-case NONE alpha
   expect(parseColor("rgb(0 0 0 / NONE)")).toBeNull()
 })
 
-// DESIGN.md 4.6 / section 18: the validator checks the sidebar's hover wash and the ring (focus ring and
-// attention dot) on the ground, the wash and the pill, not only muted text on the ground.
-test("a custom theme whose sidebar hover wash or ring fails is refused with the pair named", () => {
+// DESIGN.md 4.6 and 4.7: the validator checks the nav islands' hover wash and the ring (focus ring and
+// attention dot) on the ground, the wash and the pill, over the backdrop at its worst case.
+test("a custom theme whose nav island hover wash or ring fails is refused with the pair named", () => {
   const wash = parseStudioTheme({ version: 1, name: "Dark wash", baseSkin: "polar", appearance: "light", colors: { "sidebar-accent": "#444448", "sidebar-accent-foreground": "#ffffff" } })
   expect(wash.ok).toBe(false)
   if (!wash.ok) {
     const paths = wash.issues.map((i) => i.path)
-    expect(paths).toContain("contrast.light.muted-foreground (on sidebar hover wash)")
+    for (const where of ["backdrop", "backdrop under glow 1", "backdrop under both glows"]) {
+      expect(paths).toContain(`contrast.light.muted-foreground (on nav island hover wash over ${where})`)
+    }
     // The pill carries its own ink, so the pill itself passes.
-    expect(paths).not.toContain("contrast.light.sidebar-accent-foreground (on sidebar-accent)")
+    expect(paths.some((path) => path.startsWith("contrast.light.sidebar-accent-foreground"))).toBe(false)
   }
   const ring = parseStudioTheme({ version: 1, name: "Pale ring", baseSkin: "polar", appearance: "light", colors: { ring: "#d4d4d8" } })
   expect(ring.ok).toBe(false)
   if (!ring.ok) {
     const paths = ring.issues.map((i) => i.path)
-    for (const on of ["sidebar", "sidebar hover wash", "sidebar-accent", "canvas"]) expect(paths).toContain(`contrast.light.ring (on ${on})`)
+    for (const on of ["nav island over backdrop", "nav island hover wash over backdrop", "nav island pill over backdrop", "main island over backdrop under both glows", "canvas"]) expect(paths).toContain(`contrast.light.ring (on ${on})`)
   }
   // Every built-in skin passes the same pairs.
   for (const baseSkin of ["polar", "open", "luma", "glass"] as const) {

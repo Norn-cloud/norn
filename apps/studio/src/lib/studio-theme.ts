@@ -1,5 +1,5 @@
 import type { Skin } from "./appearance.tsx"
-import { canonicalColor, contrastOn, fade, over, parseColor, type Color } from "./color.ts"
+import { canonicalColor, contrastOn, cssColor, fade, over, parseColor, type Color } from "./color.ts"
 import PALETTES from "./theme-palettes.json"
 
 /**
@@ -86,6 +86,11 @@ export const STUDIO_THEME_TOKENS = [
   "avatar-5-fg",
   "avatar-6-bg",
   "avatar-6-fg",
+  // DESIGN.md 4.7: the three-island shell's backdrop, its two ambient glows and the main island's material.
+  "backdrop",
+  "backdrop-glow-1",
+  "backdrop-glow-2",
+  "island",
 ] as const
 
 export type StudioThemeToken = (typeof STUDIO_THEME_TOKENS)[number]
@@ -127,7 +132,7 @@ const CUSTOM_THEME_KEY = "norn.studio.customTheme"
 const APPLIED_TOKENS_ATTR = "customThemeTokens"
 
 /** Effective built-in base skin used identically for validation and rendering. */
-export const effectiveBaseSkin = (theme: Pick<StudioTheme, "baseSkin">): Skin => theme.baseSkin ?? "polar"
+export const effectiveBaseSkin = (theme: Pick<StudioTheme, "baseSkin">): Skin => theme.baseSkin ?? "luma"
 
 /**
  * Every built-in skin's painted palette, generated from `index.css` by `scripts/theme-palettes.ts`
@@ -319,6 +324,14 @@ export function resolveCustomThemeTokens(theme: StudioTheme, scheme: "light" | "
   if (theme.colors) Object.assign(overrides, theme.colors)
   const variant = theme.variants?.[scheme]
   if (variant) Object.assign(overrides, variant)
+  // A theme that paints its own ground but not the islands gets opaque islands in that ground, on a
+  // backdrop one step darker, so its canvas is what the reader sees (DESIGN.md 4.7).
+  const ground = parseColor(overrides.canvas ?? "")
+  if (ground !== null) {
+    overrides.island ??= overrides.canvas!
+    overrides.sidebar ??= overrides.shell ?? overrides.canvas!
+    overrides.backdrop ??= cssColor(over(fade(parseColor("#000000")!, scheme === "dark" ? 0.4 : 0.05), { ...ground, alpha: 1 }))
+  }
   return overrides
 }
 
@@ -334,10 +347,16 @@ const SHELL: Surface = ["canvas", "shell"]
 const BG: Surface = [...SHELL, "background"]
 const CARD: Surface = [...BG, "card"]
 const POPOVER: Surface = [...BG, "popover"]
-const SIDEBAR: Surface = [...CANVAS, "sidebar"]
-// DESIGN.md 4.6: a row's hover is `--sidebar-accent` at 50% over the ground; the current row is the full pill.
-const SIDEBAR_HOVER: Surface = [...SIDEBAR, ["sidebar-accent", 0.5]]
-const SIDEBAR_PILL: Surface = [...SIDEBAR, "sidebar-accent"]
+/**
+ * DESIGN.md 4.7: the backdrop the islands float on, at each of its extremes: flat, under either
+ * ambient glow at its peak, and under both. Every island pair is measured over all four.
+ */
+const BACKDROPS: readonly (readonly [string, Surface])[] = [
+  ["backdrop", ["backdrop"]],
+  ["backdrop under glow 1", ["backdrop", "backdrop-glow-1"]],
+  ["backdrop under glow 2", ["backdrop", "backdrop-glow-2"]],
+  ["backdrop under both glows", ["backdrop", "backdrop-glow-1", "backdrop-glow-2"]],
+]
 // The phone sheet is opaque `--shell` in every skin, so its rows are measured on that ground too.
 const SHEET: Surface = [...CANVAS, "shell"]
 const SHEET_HOVER: Surface = [...SHEET, ["sidebar-accent", 0.5]]
@@ -347,6 +366,44 @@ const DOCK: Surface = [...BG, "dock-surface"]
 const HAIRLINE = 1.1
 /** A status dot beside its word only has to stay a visible mark, not carry the state alone. */
 const MARK = 1.5
+
+/**
+ * DESIGN.md 4.6 and 4.7: what sits on the islands over one backdrop. On the main island: page text,
+ * links, accent text and the ring, and the same on a card and a well inside it. On the nav islands
+ * (the applet rail and the submenu): resting rows, the names, the 50% hover wash, the selection pill
+ * and the ring, which is also the attention dot.
+ */
+function islandPairs(where: string, backdrop: Surface): readonly (readonly [StudioThemeToken, string, Surface, number])[] {
+  const island: Surface = [...backdrop, "island"]
+  const card: Surface = [...island, "card"]
+  const well: Surface = [...card, "well"]
+  const nav: Surface = [...backdrop, "sidebar"]
+  const hover: Surface = [...nav, ["sidebar-accent", 0.5]]
+  const pill: Surface = [...nav, "sidebar-accent"]
+  return [
+    ["foreground", `main island over ${where}`, island, 4.5],
+    ["muted-foreground", `main island over ${where}`, island, 4.5],
+    ["action", `main island over ${where}`, island, 4.5],
+    ["link", `main island over ${where}`, island, 4.5],
+    ["ring", `main island over ${where}`, island, 3],
+    ["foreground", `card on the main island over ${where}`, card, 4.5],
+    ["muted-foreground", `card on the main island over ${where}`, card, 4.5],
+    ["action", `card on the main island over ${where}`, card, 4.5],
+    ["ring", `card on the main island over ${where}`, card, 3],
+    ["muted-foreground", `well on the main island over ${where}`, well, 4.5],
+    // The status line's dot sits beside its word, so it is kept visible, not held to 3:1 (DESIGN.md 4.3).
+    ["dot-bad", `main island over ${where}`, island, MARK],
+    ["dot-held", `main island over ${where}`, island, MARK],
+    ["muted-foreground", `nav island over ${where}`, nav, 4.5],
+    ["muted-foreground", `nav island hover wash over ${where}`, hover, 4.5],
+    ["sidebar-foreground", `nav island over ${where}`, nav, 4.5],
+    ["sidebar-foreground", `nav island hover wash over ${where}`, hover, 4.5],
+    ["sidebar-accent-foreground", `nav island pill over ${where}`, pill, 4.5],
+    ["ring", `nav island over ${where}`, nav, 3],
+    ["ring", `nav island hover wash over ${where}`, hover, 3],
+    ["ring", `nav island pill over ${where}`, pill, 3],
+  ]
+}
 
 /**
  * The ink/surface pairs Studio renders (from the components' `bg-*`/`text-*` pairs), each with its
@@ -374,7 +431,6 @@ const PAIRS: readonly (readonly [StudioThemeToken, string, Surface, number])[] =
   ["foreground", "accent", [...BG, "accent"], 4.5],
   ["foreground", "surface-subtle", [...BG, "surface-subtle"], 4.5],
   ["foreground", "surface-subtle over card", [...CARD, "surface-subtle"], 4.5],
-  ["foreground", "sidebar-accent", SIDEBAR_PILL, 4.5],
   ["card-foreground", "card", CARD, 4.5],
   ["popover-foreground", "popover", POPOVER, 4.5],
   ["muted-foreground", "background", BG, 4.5],
@@ -387,25 +443,15 @@ const PAIRS: readonly (readonly [StudioThemeToken, string, Surface, number])[] =
   ["muted-foreground", "popover", POPOVER, 4.5],
   ["muted-foreground", "accent", [...BG, "accent"], 4.5],
   ["muted-foreground", "surface-subtle", [...BG, "surface-subtle"], 4.5],
-  ["muted-foreground", "sidebar", SIDEBAR, 4.5],
-  ["muted-foreground", "sidebar hover wash", SIDEBAR_HOVER, 4.5],
-  ["muted-foreground", "sidebar-accent", SIDEBAR_PILL, 4.5],
   ["muted-foreground", "phone sheet", SHEET, 4.5],
   ["muted-foreground", "phone sheet hover wash", SHEET_HOVER, 4.5],
   ["secondary-foreground", "secondary", [...BG, "secondary"], 4.5],
   ["secondary-foreground", "surface-subtle", [...BG, "surface-subtle"], 4.5],
   ["accent-foreground", "accent", [...BG, "accent"], 4.5],
-  ["sidebar-foreground", "sidebar", SIDEBAR, 4.5],
-  ["sidebar-foreground", "sidebar hover wash", SIDEBAR_HOVER, 4.5],
-  ["sidebar-foreground", "sidebar-accent", SIDEBAR_PILL, 4.5],
   ["sidebar-foreground", "phone sheet", SHEET, 4.5],
   ["sidebar-foreground", "phone sheet hover wash", SHEET_HOVER, 4.5],
-  ["sidebar-accent-foreground", "sidebar-accent", SIDEBAR_PILL, 4.5],
   ["sidebar-accent-foreground", "phone sheet pill", SHEET_PILL, 4.5],
-  // The focus ring and the attention dot (both `--ring`) on the ground, the wash and the pill.
-  ["ring", "sidebar", SIDEBAR, 3],
-  ["ring", "sidebar hover wash", SIDEBAR_HOVER, 3],
-  ["ring", "sidebar-accent", SIDEBAR_PILL, 3],
+  // The focus ring and the attention dot (both `--ring`) on the phone sheet's ground, wash and pill.
   ["ring", "phone sheet", SHEET, 3],
   ["ring", "phone sheet hover wash", SHEET_HOVER, 3],
   ["ring", "phone sheet pill", SHEET_PILL, 3],
@@ -453,6 +499,8 @@ const PAIRS: readonly (readonly [StudioThemeToken, string, Surface, number])[] =
   ]),
   // Avatar discs: initials are text on their disc, 4.5:1 (DESIGN.md 4.4, 16.2).
   ...([1, 2, 3, 4, 5, 6] as const).map((n) => [`avatar-${n}-fg`, `avatar-${n}-bg`, [...CARD, `avatar-${n}-bg`], 4.5] as const),
+  // The islands, over the backdrop at each of its extremes (DESIGN.md 4.7).
+  ...BACKDROPS.flatMap(([where, backdrop]) => islandPairs(where, backdrop)),
 ]
 
 /** The effective palette a theme paints for one scheme: the base skin's rendered palette under its overrides. */

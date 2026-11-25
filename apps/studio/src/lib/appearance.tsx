@@ -9,16 +9,16 @@ import {
 
 /**
  * Swappable visual skin applied to the document root (`data-skin`).
- * - `polar`: strict Polar / Linear monochrome surfaces (black/grey/white) with colour reserved for data, status, badges, CTAs, and the knot (default).
+ * - `luma`: two-surface architectural mist with a knot-violet accent and liquid-glass islands (default; owner decision, 2026-11-25).
+ * - `polar`: strict Polar / Linear monochrome surfaces (black/grey/white) with colour reserved for data, status, badges, CTAs, and the knot.
  * - `open`: airy open-canvas surface with double-shell cards and crisp blue accent.
- * - `luma`: two-surface architectural mist shell with knot-violet accent.
  * - `glass`: translucent liquid-glass surfaces with backdrop blur and specular hairlines.
  */
 export type Skin = "polar" | "open" | "luma" | "glass"
 
 /**
  * Swappable chrome layout applied to the shell (`data-shell`), DESIGN.md section 9.
- * - `sidebar`: the thin source-list sidebar, always the default.
+ * - `sidebar`: the three-island shell (applet rail, submenu island, main island), always the default.
  * - `dock`: the floating dark pill dock, opt-in only, for kiosk or mobile-first surfaces an app chooses.
  */
 export type ShellChrome = "sidebar" | "dock"
@@ -29,9 +29,9 @@ export const SKINS: readonly {
   readonly detail: string
   readonly swatch: string
 }[] = [
+  { id: "luma", label: "Luma", detail: "Mist and knot violet on glass islands", swatch: "#554ce8" },
   { id: "polar", label: "Polar", detail: "Monochrome ink and flat hairlines", swatch: "#18181b" },
   { id: "open", label: "Open", detail: "Double-shell white canvas, blue accent", swatch: "#3a6df0" },
-  { id: "luma", label: "Luma", detail: "Two-surface mist and knot violet", swatch: "#554ce8" },
   { id: "glass", label: "Glass", detail: "Translucent frosted liquid glass", swatch: "#dbe6ff" },
 ]
 
@@ -40,7 +40,7 @@ export const SHELLS: readonly {
   readonly label: string
   readonly detail: string
 }[] = [
-  { id: "sidebar", label: "Sidebar", detail: "Thin source-list sidebar" },
+  { id: "sidebar", label: "Islands", detail: "Applet rail, submenu and main island" },
   { id: "dock", label: "Floating dock", detail: "Full-bleed canvas with bottom dock" },
 ]
 
@@ -77,8 +77,8 @@ export const isSkin = (value: unknown): value is Skin =>
 export const isShellChrome = (value: unknown): value is ShellChrome =>
   value === "sidebar" || value === "dock"
 
-/** The skin kept from the last visit, else the surface's default, else the monochrome Polar default. */
-export function storedSkin(surfaceDefault: Skin = "polar"): Skin {
+/** The skin kept from the last visit, else the surface's default, else the luma default. */
+export function storedSkin(surfaceDefault: Skin = "luma"): Skin {
   try {
     const kept = globalThis.localStorage?.getItem(SKIN_KEY)
     if (isSkin(kept)) return kept
@@ -163,7 +163,7 @@ interface AppearanceContextValue {
 const AppearanceContext = createContext<AppearanceContextValue>({
   scheme: "system",
   setScheme: () => {},
-  skin: "polar",
+  skin: "luma",
   setSkin: () => {},
   shell: "sidebar",
   setShell: () => {},

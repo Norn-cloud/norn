@@ -140,12 +140,16 @@ test("#1414: honest switcher separates real workspaces from Examples, hides life
   await mountWorkspaceServer(page)
   await page.goto("/")
 
+  // The rail's switcher is a disc named after the workspace; its name and state read under the submenu's title.
   const trigger = page.locator("[data-scope]")
-  await expect(trigger).toContainText("Core Analytics")
-  await expect(trigger).toContainText("Live · Owner")
+  const state = page.locator("[data-workspace-state]")
+  await expect(trigger).toHaveAttribute("aria-label", "Workspace: Core Analytics")
+  await expect(state).toContainText("Core Analytics")
+  await expect(state).toContainText("Live · Owner")
   // Switcher must never expose raw org id or environment id.
-  await expect(trigger).not.toContainText(RAW_ORG_ID)
-  await expect(trigger).not.toContainText("rehearsal2")
+  await expect(state).not.toContainText(RAW_ORG_ID)
+  await expect(state).not.toContainText("rehearsal2")
+  await expect(trigger).not.toHaveAttribute("aria-label", new RegExp(RAW_ORG_ID))
 
   // Open switcher: real workspaces appear under "Your workspaces", demo datasets separately under "Examples".
   await trigger.click()
@@ -176,8 +180,8 @@ test("#1414: a workspace without a cell stays current while Studio shows recorde
   await page.goto("/")
 
   const trigger = page.locator("[data-scope]")
-  await expect(trigger).toContainText("Core Analytics")
-  await expect(trigger).toContainText("Recorded demo data")
+  await expect(page.locator("[data-workspace-state]")).toContainText("Core Analytics")
+  await expect(page.locator("[data-workspace-state]")).toContainText("Recorded demo data")
   await trigger.click()
 
   const menu = page.getByRole("menu")
@@ -193,7 +197,7 @@ test("#1414: an empty workspace shows the Get started checklist on Home", async 
   await page.setViewportSize({ width: 1440, height: 900 })
   await mountWorkspaceServer(page, "empty")
   await page.goto("/")
-  await expect(page.locator("[data-scope]")).toContainText("Fresh Workspace")
+  await expect(page.locator("[data-workspace-state]")).toContainText("Fresh Workspace")
   const main = page.locator("main")
   await expect(main.getByRole("heading", { name: "Get started" })).toBeVisible()
   await expect(main.getByRole("link", { name: /Add a source/ })).toHaveAttribute("href", "/sources")
@@ -230,7 +234,7 @@ test("#1414: a slow connecting cell explains what it is waiting for and supports
 
   try {
     await page.goto("/")
-    await expect(page.locator("[data-scope]")).toContainText("Cold Workspace")
+    await expect(page.locator("[data-workspace-state]")).toContainText("Cold Workspace")
     const banner = page.locator('[data-connection="connecting"]')
     await expect(banner).toBeVisible({ timeout: 8_000 })
     await expect(banner).toContainText("Connecting to your workspace cell…")
@@ -239,7 +243,7 @@ test("#1414: a slow connecting cell explains what it is waiting for and supports
       banner.getByRole("button", { name: "Retry now" }).click(),
     ])
     expect(cancelled.failure()?.errorText).toMatch(/abort|cancel/i)
-    await expect(page.locator("[data-scope]")).toContainText("Live · Owner")
+    await expect(page.locator("[data-workspace-state]")).toContainText("Live · Owner")
     await expect(page.getByRole("heading", { name: "Get started" })).toBeVisible()
   } finally {
     releaseFirst?.()
@@ -334,7 +338,7 @@ test("#1643: stale action form stays pinned to its opening workspace and refuses
   tabA.on("pageerror", (error) => pageErrors.push(error.message))
   await tabA.setViewportSize({ width: 1440, height: 900 })
   await tabA.goto("/objects/canon.Holding")
-  await expect(tabA.locator("[data-scope]")).toContainText("Core Analytics")
+  await expect(tabA.locator("[data-workspace-state]")).toContainText("Core Analytics")
   await expect(tabA.getByText("3 records", { exact: true })).toBeVisible()
   await tabA.getByRole("button", { name: "New holding" }).click()
   await tabA.getByRole("menuitem", { name: "Restock holding" }).click()
@@ -349,14 +353,14 @@ test("#1643: stale action form stays pinned to its opening workspace and refuses
   tabB.on("pageerror", (error) => pageErrors.push(error.message))
   await tabB.setViewportSize({ width: 1440, height: 900 })
   await tabB.goto("/")
-  await expect(tabB.locator("[data-scope]")).toContainText("Core Analytics")
+  await expect(tabB.locator("[data-workspace-state]")).toContainText("Core Analytics")
   const switched = await tabB.evaluate(async () => {
     const res = await fetch("/api/workspaces/org_beta/activate", { method: "POST" })
     return res.status
   })
   expect(switched).toBe(200)
   await tabB.reload()
-  await expect(tabB.locator("[data-scope]")).toContainText("North Operations")
+  await expect(tabB.locator("[data-workspace-state]")).toContainText("North Operations")
 
   // Returning to stale Tab A and submitting sends org_alpha / env_alpha explicitly;
   // the server refuses 409 workspace.changed and commits nothing to North Operations.

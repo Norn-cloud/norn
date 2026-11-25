@@ -226,17 +226,22 @@ test("unreachable cell: 503 cell.unopenable (retryable: false) never shows Retry
   await page.getByRole("link", { name: "Sources" }).click()
   await page.reload()
 
-  // Must NEVER render a persistent "Retrying…" banner; shows honest Workspace unavailable immediately on both banner and page.
+  // Must NEVER render a persistent "Retrying…" banner; shows honest Workspace unavailable immediately, once:
+  // the page's own full state carries the server's words, the incident, Last reachable and Retry, so the
+  // main island's one-line status stays out of its way (shell v2).
   const banner = page.locator('[data-connection="unavailable"]')
-  await expect(banner).toBeVisible()
-  await expect(page.locator("[data-workspace-unavailable]")).toBeVisible()
-  await expect(banner).toContainText("Workspace unavailable")
-  await expect(banner).toContainText("Storage migration is paused for this environment.")
-  await expect(banner).toContainText("inc-cell-909")
-  await expect(banner).toContainText("Last reachable")
+  const state = page.locator("[data-workspace-unavailable]")
+  await expect(state).toBeVisible()
+  await expect(state).toContainText("Workspace unavailable")
+  await expect(state).toContainText("Storage migration is paused for this environment.")
+  await expect(state).toContainText("inc-cell-909")
+  await expect(state).toContainText("Last reachable")
+  await expect(banner).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Retry", exact: true }).filter({ visible: true })).toHaveCount(1)
+  await expect(page.getByText("inc-cell-909", { exact: true }).filter({ visible: true })).toHaveCount(1)
   await expect(page.locator('[data-connection="retrying"]')).toHaveCount(0)
   await expect(page.getByText("Retrying…")).toHaveCount(0)
-  await expect(banner.getByRole("button", { name: "Retry" })).toBeEnabled()
+  await expect(state.getByRole("button", { name: "Retry" })).toBeEnabled()
   // Nothing can be connected to a workspace that can't be opened: the page doesn't offer it (the mode's answer).
   await expect(page.getByRole("link", { name: "Connect a source" })).toHaveCount(0)
   await page.clock.resume()
@@ -252,7 +257,7 @@ test("unreachable cell: 503 cell.unopenable (retryable: false) never shows Retry
   // Clicking Retry once the cell recovers restores both the live workspace and the Sources page.
   await page.clock.resume()
   unopenable = false
-  await banner.getByRole("button", { name: "Retry" }).click()
+  await state.getByRole("button", { name: "Retry" }).click()
   await expect(banner).toHaveCount(0)
   await expect(page.locator("[data-workspace-unavailable]")).toHaveCount(0)
   await expect(page.getByRole("link", { name: "Connect a source" })).toBeVisible()
@@ -292,9 +297,13 @@ test("transient HTML 502 on /v1/definitions: retries cleanly through the bounded
   await page.clock.runFor(1_700)
   await page.clock.runFor(3_300)
 
+  // Workspace unavailable shows once: Home has its own full state, so the one-line status stays away.
   const banner = page.locator('[data-connection="unavailable"]')
-  await expect(banner).toBeVisible()
-  await expect(banner).toContainText("Workspace unavailable")
+  const state = page.locator("[data-workspace-unavailable]")
+  await expect(state).toBeVisible()
+  await expect(state).toContainText("Workspace unavailable")
+  await expect(state).toHaveCount(1)
+  await expect(banner).toHaveCount(0)
   // Let any parallel query retries (e.g. catalog's 1 s + 2 s + 4 s backoff) finish settling, then confirm retries stop completely.
   await page.clock.runFor(5_000)
   const settledHits = definitionHits - before
@@ -308,7 +317,7 @@ test("transient HTML 502 on /v1/definitions: retries cleanly through the bounded
   // Explicit Retry recovers once the gateway is back.
   await page.clock.resume()
   gatewayDown = false
-  await banner.getByRole("button", { name: "Retry" }).click()
+  await page.getByRole("button", { name: "Retry", exact: true }).filter({ visible: true }).click()
   await expect(banner).toHaveCount(0)
   await expect(page.getByText("Nothing needs you")).toBeVisible()
 })
