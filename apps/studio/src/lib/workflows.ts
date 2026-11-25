@@ -1,4 +1,14 @@
+import type { RunFlow } from "./flows.ts"
+import { words } from "./format.ts"
 import type { Envelope, Schemas } from "./transport.ts"
+
+/** The DOM anchor id for one admitted workflow section. */
+export const workflowAnchor = (workflow: Pick<Workflow, "objectType" | "lifecycle">) =>
+  `workflow-${workflow.objectType}-${workflow.lifecycle.property}`
+
+/** A workflow's display name: the title of the flow whose runs it is, or its object type in words. */
+export const workflowTitle = (workflow: Pick<Workflow, "objectType">, flows: ReadonlyMap<string, RunFlow>) =>
+  flows.get(workflow.objectType)?.title ?? words(workflow.objectType)
 
 type Lifecycle = Schemas["NornIrLifecycle"]
 type Transition = Schemas["NornIrTransition"]

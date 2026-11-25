@@ -9,7 +9,7 @@
 // Run: NORN_CELL_DO_PKG=<pkg> bun test ./worker.wasm.test.mjs (from apps/norn-cell-do).
 import { plugin } from "bun";
 import { Database } from "bun:sqlite";
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
 import { copyFileSync, cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -182,6 +182,25 @@ async function raw(response) {
   return { status: response.status, headers: [...response.headers].sort(), body: response.status === 101 ? null : await response.text() };
 }
 
+/**
+ * #1746: every test runs at one frozen host instant. The Worker reads the host clock only as
+ * Date.now(), which it hands the Wasm gate as the request's `now`; the gate stamps a refusal's
+ * `decidedAt` from it. Frozen, two requests answer at the same instant however long they take,
+ * so the same refusal is the same bytes, `decidedAt` included. The instant is mid-second, so the
+ * stamp also shows the gate truncates to the UTC second.
+ */
+const FROZEN_MS = Date.UTC(2026, 10, 25, 12, 0, 0, 250);
+const FROZEN_SECOND = "2026-11-25T12:00:00Z";
+
+/**
+ * The two refusals are byte for byte the same (status, every header, the whole body), and both
+ * were decided at the frozen instant: the comparison held the clock still, it did not skip it.
+ */
+function expectSameRefusal(actual, expected) {
+  expect(actual).toEqual(expected);
+  expect(JSON.parse(actual.body).decidedAt).toBe(FROZEN_SECOND);
+}
+
 const B = ["org_b", "prod"];
 const NOWHERE = ["org_c", "prod"];
 const keyOf = ([org, environment]) => `${org}/${environment}`;
@@ -213,6 +232,14 @@ async function provisioned() {
 }
 
 describe("the real Wasm gate at the Worker boundary", () => {
+  // Tokens, the JWKS cache, provisioning and every request below read this one instant.
+  beforeEach(() => {
+    setSystemTime(FROZEN_MS);
+  });
+  afterEach(() => {
+    setSystemTime();
+  });
+
   for (const [method, path, body] of [
     ["GET", "/v1/objects/canon.Item", undefined],
     ["GET", "/v1/access", undefined],
@@ -226,7 +253,7 @@ describe("the real Wasm gate at the Worker boundary", () => {
       expect([...objects.keys()].sort()).toEqual([keyOf(B), keyOf(NOWHERE)]);
       const atB = await raw(await router.fetch(request(B, outsider, { method, path, body }), env));
       const atNowhere = await raw(await router.fetch(request(NOWHERE, outsider, { method, path, body }), env));
-      expect(atB).toEqual(atNowhere);
+      expectSameRefusal(atB, atNowhere);
       expect(atB.status).toBeGreaterThanOrEqual(400);
       expect(JSON.parse(atB.body).format).toBe("norn/refusal@2");
       for (const o of objects.values()) expect(o.touched).toEqual([]);
@@ -262,7 +289,7 @@ describe("the real Wasm gate at the Worker boundary", () => {
     const forged = (await token("org_b")).slice(0, -4) + "AAAA";
     const atB = await raw(await router.fetch(request(B, forged), env));
     const outsider = await raw(await router.fetch(request(B, await token("org_a")), env));
-    expect(atB).toEqual(outsider);
+    expectSameRefusal(atB, outsider);
     for (const o of objects.values()) expect(o.touched).toEqual([]);
   });
 });

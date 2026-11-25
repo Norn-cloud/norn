@@ -173,16 +173,57 @@ mod sink {
 #[cfg(not(target_arch = "wasm32"))]
 mod sink {
     use std::cell::RefCell;
+    use std::collections::VecDeque;
+
+    /// #1710: the most bytes of lines one capturing thread keeps.
+    pub(super) const MAX_RECENT_BYTES: usize = 64 * 1024;
 
     thread_local! {
-        static RECENT: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+        /// `None` until the thread opts in with [`capture`]: a production
+        /// thread keeps nothing but what it writes to stderr.
+        static RECENT: RefCell<Option<Recent>> = const { RefCell::new(None) };
+    }
+
+    /// The newest lines a capturing thread logged, at most
+    /// [`MAX_RECENT_BYTES`] of them; older lines are dropped first.
+    #[derive(Default)]
+    struct Recent {
+        lines: VecDeque<String>,
+        bytes: usize,
+    }
+
+    impl Recent {
+        fn push(&mut self, line: &str) {
+            if line.len() > MAX_RECENT_BYTES {
+                return;
+            }
+            self.bytes = self.bytes.saturating_add(line.len());
+            self.lines.push_back(line.to_owned());
+            while self.bytes > MAX_RECENT_BYTES {
+                let Some(oldest) = self.lines.pop_front() else {
+                    break;
+                };
+                self.bytes = self.bytes.saturating_sub(oldest.len());
+            }
+        }
     }
 
     pub(super) fn log(line: &str) {
         use std::io::Write as _;
         // A failed write to stderr has nowhere better to go.
         let _ignored = writeln!(std::io::stderr(), "{line}");
-        RECENT.with(|recent| recent.borrow_mut().push(line.to_owned()));
+        RECENT.with(|recent| {
+            if let Some(recent) = recent.borrow_mut().as_mut() {
+                recent.push(line);
+            }
+        });
+    }
+
+    /// Start keeping this thread's lines for [`recent`].
+    pub(super) fn capture() {
+        RECENT.with(|recent| {
+            recent.borrow_mut().get_or_insert_with(Recent::default);
+        });
     }
 
     /// 128 bits of OS entropy for an opaque incident identifier.
@@ -193,9 +234,14 @@ mod sink {
             .map_err(|err| err.to_string())
     }
 
-    /// The lines logged on this thread so far (native builds; for tests).
+    /// The lines kept on this thread since it began to [`capture`].
     pub(super) fn recent() -> Vec<String> {
-        RECENT.with(|recent| recent.borrow().clone())
+        RECENT.with(|recent| {
+            recent
+                .borrow()
+                .as_ref()
+                .map_or_else(Vec::new, |recent| recent.lines.iter().cloned().collect())
+        })
     }
 }
 
@@ -207,12 +253,23 @@ fn random_bytes() -> Result<[u8; 16], String> {
     sink::random_bytes()
 }
 
-/// The incident lines logged on this thread so far (native builds only).
+/// #1710: keep the incident lines this thread logs from now on, for
+/// [`recent`] (native builds only; tests and diagnostics opt in). A thread
+/// that never calls this keeps nothing in memory; one that does keeps at
+/// most the newest 64 KiB of lines.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn capture() {
+    sink::capture();
+}
+
+/// The incident lines this thread logged since it began to [`capture`]
+/// (native builds only); empty on a thread that never did.
 #[cfg(not(target_arch = "wasm32"))]
 #[must_use]
 pub fn recent() -> Vec<String> {
     sink::recent()
 }
+
 #[cfg(test)]
 mod tests {
     use super::format_utc;
@@ -228,6 +285,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn entropy_failure_preserves_internal_refusal_without_issuing_id() {
+        super::capture();
         let response = super::respond_with(super::Refusal::host("storage fault"), || {
             Err(String::from("rng offline"))
         });
@@ -251,5 +309,29 @@ mod tests {
             }),
             "entropy failure and cause must be logged: {logged:?}"
         );
+    }
+
+    /// #1710: a thread that never opted in keeps nothing; one that did keeps
+    /// at most `MAX_RECENT_BYTES`, the newest lines.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn only_a_capturing_thread_keeps_lines_and_at_most_its_bound() {
+        let quiet = std::thread::spawn(|| {
+            super::log("norn incident quiet");
+            super::recent()
+        });
+        assert!(quiet.join().is_ok_and(|kept| kept.is_empty()));
+        super::capture();
+        let line = "x".repeat(1024);
+        for _ in 0..70 {
+            super::log(&line);
+        }
+        super::log("newest");
+        let kept = super::recent();
+        let bytes = kept.iter().map(String::len).sum::<usize>();
+        assert!(bytes <= super::sink::MAX_RECENT_BYTES, "{bytes}");
+        assert_eq!(kept.last().map(String::as_str), Some("newest"));
+        super::log(&"y".repeat(super::sink::MAX_RECENT_BYTES.saturating_add(1)));
+        assert_eq!(super::recent().last().map(String::as_str), Some("newest"));
     }
 }

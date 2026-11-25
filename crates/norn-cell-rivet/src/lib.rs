@@ -24,6 +24,7 @@ pub mod config;
 #[cfg(feature = "conformance")]
 pub mod conformance;
 pub mod core;
+pub mod egress;
 pub mod engine;
 pub mod gate;
 mod jwks;

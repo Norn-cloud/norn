@@ -9,6 +9,26 @@ use norn_ir::{DataQualityFinding, DataQualityFindingStatus, RuntimeValue};
 use norn_kernel::{FactKey, TypeCatalog};
 use std::collections::BTreeSet;
 
+/// Whether `proof`, the stored snapshot of a row's version, is the row
+/// `current` as read today. A member installed after that version reads as
+/// null on the row and is absent from its proof: both say the row holds no
+/// value for it, so only held values are compared.
+fn proves(proof: Option<&ObjectRecord>, current: &ObjectRecord) -> bool {
+    fn held(record: &ObjectRecord) -> impl Iterator<Item = (&String, &RuntimeValue)> {
+        record.values.iter().filter(|(_, value)| !value.is_null())
+    }
+    proof.is_some_and(|proof| {
+        (&proof.object_type, &proof.id, &proof.scope, proof.version)
+            == (
+                &current.object_type,
+                &current.id,
+                &current.scope,
+                current.version,
+            )
+            && held(proof).eq(held(current))
+    })
+}
+
 /// One authoritative page with explicit excluded-row accounting.
 #[derive(Debug)]
 pub struct AuthoritativePage {
@@ -187,10 +207,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         self.check_history("observation quality findings")?;
         let current = self.object(world, object_type, key)?;
         if let Some(record) = current.as_ref()
-            && self
-                .object_at_version(world, object_type, key, record.version)?
-                .as_ref()
-                != Some(record)
+            && !proves(
+                self.object_at_version(world, object_type, key, record.version)?
+                    .as_ref(),
+                record,
+            )
         {
             return Err(CellError::UnprovenCorrection);
         }
@@ -221,10 +242,11 @@ impl<E: SqlEngine> StoreReader<'_, E> {
                 break;
             }
             if let Some(record) = current
-                && self
-                    .object_at_version(world, object_type, key, record.version)?
-                    .as_ref()
-                    != Some(record)
+                && !proves(
+                    self.object_at_version(world, object_type, key, record.version)?
+                        .as_ref(),
+                    record,
+                )
             {
                 return Err(CellError::UnprovenCorrection);
             }

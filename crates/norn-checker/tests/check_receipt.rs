@@ -13,6 +13,7 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use norn_checker::entity_scopes::ScopedView;
 use norn_checker::receipt::{
     CHECKER_NAME, CHECKER_VERSION, EXPR_PROFILE, RECEIPT_FORMAT, admission_receipt_sha256, codes,
     recover_legacy_admission_receipt,
@@ -20,7 +21,7 @@ use norn_checker::receipt::{
 use norn_checker::{
     ArtifactRef, ArtifactSetRef, CheckReceipt, CheckedArtifactSet, DiagnosticsDigest,
     EntityArtifactSetContext, IDENTIFIER_ADMISSION_PROFILE, TenantLayer,
-    check_artifact_set_with_flow_source_map, check_artifact_set_with_receipt, derive_type_env,
+    check_artifact_set_with_flow_source_map, check_artifact_set_with_receipt,
 };
 use norn_ir::{
     ArtifactEnvelope, ExtensionNamespace, FlowSourceMap, FlowSourceMapArtifactRef,
@@ -175,6 +176,24 @@ fn flow_source_map(
             edges: Vec::new(),
         }],
     }
+}
+
+/// The environment of `artifacts` over `base` as their first definition's
+/// consumer sees it: every definition these fixtures hold, in one scope.
+fn derive_type_env(
+    artifacts: &[ArtifactEnvelope],
+    base: &[ArtifactEnvelope],
+    limits: &ResourceLimitProfile,
+) -> Result<norn_expr::ZenTypeEnv, Vec<norn_expr::EnvError>> {
+    let registry = BTreeSet::new();
+    let consumer = artifacts.first().or_else(|| base.first());
+    assert!(consumer.is_some(), "a consumer definition");
+    consumer
+        .map_or_else(
+            || ScopedView::uniform(base, &registry),
+            |consumer| ScopedView::of(consumer, artifacts, base, &registry),
+        )
+        .receipt_env(limits)
 }
 
 fn historical_env(
@@ -736,6 +755,10 @@ fn historical_receipt_verification_does_not_rerun_current_admission() {
     // by the cell's stored digest. Verification checks its integrity and
     // bindings; it must not use the current checker's refusal as a reason to
     // reinterpret that historical attestation.
+    assert!(
+        !candidate_envelopes.is_empty(),
+        "fixture must carry a candidate envelope"
+    );
     let type_env = derive_type_env(&candidate_envelopes, &base_envelopes, &limits)
         .expect("the entity base still supplies its type environment")
         .reference_at_version(norn_expr::env::TypeEnvVersion::V1)

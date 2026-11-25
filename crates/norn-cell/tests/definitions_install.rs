@@ -71,16 +71,16 @@ fn parent_rows_migration_model(owned: bool) -> Model {
                 {"id":"label", "type":{"kind":"text"}}
             ]
         }),
-        json!({
-            "name":"norn.OwnedRows",
-            "properties":[
-                {"id":"parentType", "type":{"kind":"text"}},
-                {"id":"parentKey", "type":{"kind":"text"}},
-                {"id":"collectionId", "type":{"kind":"text"}},
-                {"id":"rowIds", "type":{"kind":"json-ext"}}
-            ]
-        }),
+        owned_rows_record(),
     ])
+}
+
+/// The kernel's owned-row manifest type, exactly as hosts add it.
+fn owned_rows_record() -> serde_json::Value {
+    norn_cell::kernel_record_types()
+        .into_iter()
+        .find(|record| record.name.as_str() == OWNED_ROWS_TYPE)
+        .map_or(serde_json::Value::Null, |record| json!(record))
 }
 
 fn model_with_name_binding_index(model: &Model) -> Model {
@@ -473,11 +473,8 @@ fn decimal_unit_model(unit: &str) -> Model {
     ])])
 }
 
-fn install_input(
-    version_label: &str,
-    installed_at: u64,
-    model: &Model,
-) -> InstalledDefinitionInput {
+/// The canonical set of `model`'s definitions, declared at `scope`.
+pub(crate) fn model_set(model: &Model, scope: &serde_json::Value) -> String {
     let mut artifacts: Vec<serde_json::Value> = model
         .object_types()
         // The projected test model includes the host-owned manifest table,
@@ -498,7 +495,7 @@ fn install_input(
                 "name": name,
                 "version": "0.1.0",
                 "lifecycle": "draft",
-                "scope": {"orgId": "org_demo", "environmentId": "dev"},
+                "scope": scope,
                 "dependencies": [],
                 "provenance": {"source": "authoring_sdk"},
                 "payload": {"entityVersion": "2.0", "objectType": object_type}
@@ -518,7 +515,7 @@ fn install_input(
             "name": name,
             "version": "0.1.0",
             "lifecycle": "draft",
-            "scope": {"orgId": "org_demo", "environmentId": "dev"},
+            "scope": scope,
             "dependencies": [],
             "provenance": {"source": "authoring_sdk"},
             "payload": {"entityVersion": "2.0", "interface": interface}
@@ -529,8 +526,17 @@ fn install_input(
             .expect("artifact set is exact JSON")
             .canonical_json()
             .expect("artifact set canonicalizes"),
-    )
-    .expect("canonical artifact set is UTF-8");
+    );
+    assert!(canonical_set.is_ok(), "canonical artifact set is UTF-8");
+    canonical_set.unwrap_or_default()
+}
+
+fn install_input(
+    version_label: &str,
+    installed_at: u64,
+    model: &Model,
+) -> InstalledDefinitionInput {
+    let canonical_set = model_set(model, &json!({"orgId": "org_demo", "environmentId": "dev"}));
     InstalledDefinitionInput {
         canonical_set,
         registry: Vec::new(),
@@ -1362,7 +1368,7 @@ fn adding_owned_collection_refuses_preexisting_child_facts_without_manifest_migr
     let input = install_input("owned-rows-v2", 3, &candidate);
     let before = store.read().verify_ledger().expect("ledger before check");
     assert!(matches!(
-        store.check_definitions(&candidate, &input, Some(1)),
+        store.check_definitions_in_scope(&candidate, &input, Some(1), "org_demo/dev"),
         Err(CellError::DefinitionMigrationRefused(_))
     ));
     assert!(matches!(
@@ -1452,10 +1458,11 @@ fn removing_owned_collection_refuses_live_child_rows_and_parent_links() {
 
     let before = store.read().verify_ledger().expect("ledger before check");
     assert!(matches!(
-        store.check_definitions(
+        store.check_definitions_in_scope(
             &candidate,
             &install_input("owned-rows-remove-v2", 3, &candidate),
-            Some(1)
+            Some(1),
+            "org_demo/dev"
         ),
         Err(CellError::DefinitionMigrationRefused(_))
     ));
@@ -1532,10 +1539,11 @@ fn removing_owned_collection_refuses_a_live_manifest_even_without_rows() {
 
     let before = store.read().verify_ledger().expect("ledger before check");
     assert!(matches!(
-        store.check_definitions(
+        store.check_definitions_in_scope(
             &candidate,
             &install_input("owned-rows-manifest-remove-v2", 3, &candidate),
-            Some(1)
+            Some(1),
+            "org_demo/dev"
         ),
         Err(CellError::DefinitionMigrationRefused(_))
     ));
@@ -3110,7 +3118,7 @@ fn definition_check_is_read_only_and_matches_install_preview_and_refusal() {
     counter.attempts.set(0);
     counter.forbid.set(true);
     let preview = store
-        .check_definitions(&original, &initial, Some(0))
+        .check_definitions_in_scope(&original, &initial, Some(0), "org_demo/dev")
         .expect("initial candidate admitted");
     assert_eq!(counter.attempts.get(), 0);
     assert!(
@@ -3142,7 +3150,12 @@ fn definition_check_is_read_only_and_matches_install_preview_and_refusal() {
     let input = install_input("check-invalid-default", 3, &candidate);
     counter.attempts.set(0);
     counter.forbid.set(true);
-    let checked = store.check_definitions(&candidate, &input, Some(installed.version));
+    let checked = store.check_definitions_in_scope(
+        &candidate,
+        &input,
+        Some(installed.version),
+        "org_demo/dev",
+    );
     assert!(
         matches!(
             &checked,
@@ -3162,7 +3175,7 @@ fn definition_check_is_read_only_and_matches_install_preview_and_refusal() {
             .expect("active after"),
         active
     );
-    let stale = store.check_definitions(&candidate, &input, Some(0));
+    let stale = store.check_definitions_in_scope(&candidate, &input, Some(0), "org_demo/dev");
     assert!(
         matches!(&stale, Err(CellError::DefinitionVersionConflict { .. })),
         "{stale:?}"
@@ -3188,7 +3201,7 @@ fn definition_check_is_read_only_and_matches_install_preview_and_refusal() {
     counter.attempts.set(0);
     counter.forbid.set(true);
     let preview = store
-        .check_definitions(&accepted, &input, Some(1))
+        .check_definitions_in_scope(&accepted, &input, Some(1), "org_demo/dev")
         .expect("valid default admitted");
     assert_eq!(counter.attempts.get(), 0);
     counter.forbid.set(false);
@@ -3217,7 +3230,7 @@ fn definition_check_matches_overflow_default_and_orphan_refusal() {
     let input = install_input("overflow-v2", 3, &candidate);
     let before = store.read().verify_ledger().expect("ledger before");
     let preview = store
-        .check_definitions(&candidate, &input, Some(1))
+        .check_definitions_in_scope(&candidate, &input, Some(1), "org_demo/dev")
         .expect("overflow check");
     assert_eq!(
         store.read().verify_ledger().expect("ledger after check"),
@@ -3230,7 +3243,7 @@ fn definition_check_matches_overflow_default_and_orphan_refusal() {
 
     let removed = Model::from_definitions(&[], &[]).expect("empty model projects");
     let input = install_input("remove-live-type", 4, &removed);
-    let checked = store.check_definitions(&removed, &input, Some(2));
+    let checked = store.check_definitions_in_scope(&removed, &input, Some(2), "org_demo/dev");
     assert!(
         matches!(&checked, Err(CellError::DefinitionMigrationRefused(_))),
         "{checked:?}"
@@ -3276,7 +3289,7 @@ fn definition_check_refuses_a_new_unique_key_with_duplicate_live_values() {
             .commit(&batch(put_type("defs.Item", "two", "same", None), 3))
             .expect("second object");
         let input = install_input("unique-v2", 4, &candidate);
-        let checked = store.check_definitions(&candidate, &input, Some(1));
+        let checked = store.check_definitions_in_scope(&candidate, &input, Some(1), "org_demo/dev");
         assert!(
             matches!(&checked, Err(CellError::DefinitionMigrationRefused(_))),
             "{checked:?}"
@@ -3322,10 +3335,11 @@ fn added_identity_index_uses_a_rowid_bounded_query_without_sorting_before_limit(
         .expect("seed installs");
 
     store
-        .check_definitions(
+        .check_definitions_in_scope(
             &candidate,
             &install_input("identity-plan-v2", 3, &candidate),
             Some(1),
+            "org_demo/dev",
         )
         .expect("empty identity scan passes");
     let (sql, plan) = grouped_query
@@ -3368,7 +3382,7 @@ fn overflow_backfill_check_and_install_handle_a_new_rowid_property() {
 
     let input = install_input("rowid-overflow-v2", 3, &candidate);
     let preview = store
-        .check_definitions(&candidate, &input, Some(1))
+        .check_definitions_in_scope(&candidate, &input, Some(1), "org_demo/dev")
         .expect("check-only overflow backfill passes");
     let installed = store
         .install_definitions(candidate, input, Some(1), "org_demo/dev")
@@ -3420,7 +3434,7 @@ fn identity_preflight_accepts_exactly_the_row_limit() {
 
     let input = install_input("identity-row-boundary-v2", 3, &candidate);
     let preview = store
-        .check_definitions(&candidate, &input, Some(1))
+        .check_definitions_in_scope(&candidate, &input, Some(1), "org_demo/dev")
         .expect("4,096 rows with an admissible unique key are admitted");
     let installed = store
         .install_definitions(candidate, input, Some(1), "org_demo/dev")
@@ -3461,7 +3475,7 @@ fn identity_preflight_refuses_more_than_the_row_limit_in_check_and_install() {
     let before = store.read().dump().expect("snapshot before check");
 
     let input = install_input("identity-row-limit-v2", 3, &candidate);
-    let checked = store.check_definitions(&candidate, &input, Some(1));
+    let checked = store.check_definitions_in_scope(&candidate, &input, Some(1), "org_demo/dev");
     assert!(
         matches!(&checked, Err(CellError::DefinitionMigrationRefused(message)) if message.contains("4,096-row migration scan limit")),
         "{checked:?}"
@@ -3499,7 +3513,7 @@ fn identity_preflight_refuses_oversized_key_bytes_in_check_and_install() {
     let before_head = store.read().verify_ledger().expect("ledger before check");
 
     let input = install_input("identity-byte-limit-v2", 3, &candidate);
-    let checked = store.check_definitions(&candidate, &input, Some(1));
+    let checked = store.check_definitions_in_scope(&candidate, &input, Some(1), "org_demo/dev");
     assert!(
         matches!(&checked, Err(CellError::DefinitionMigrationRefused(message)) if message.contains("8 MiB migration scan byte limit")),
         "{checked:?}"
@@ -3558,7 +3572,7 @@ fn overflow_backfill_refuses_more_than_the_row_limit_in_check_and_install() {
     let before = store.read().dump().expect("snapshot before check");
 
     let input = install_input("overflow-row-limit-v2", 3, &candidate);
-    let checked = store.check_definitions(&candidate, &input, Some(1));
+    let checked = store.check_definitions_in_scope(&candidate, &input, Some(1), "org_demo/dev");
     assert!(
         matches!(&checked, Err(CellError::DefinitionMigrationRefused(message)) if message.contains("4,096-row migration scan limit")),
         "{checked:?}"
@@ -3618,7 +3632,8 @@ fn overflow_backfill_charges_multibyte_payload_bytes_before_fetching() {
         .version;
 
     let input = install_input("overflow-byte-limit-v2", 3, &candidate);
-    let checked = store.check_definitions(&candidate, &input, Some(before_version));
+    let checked =
+        store.check_definitions_in_scope(&candidate, &input, Some(before_version), "org_demo/dev");
     assert!(
         matches!(&checked, Err(CellError::DefinitionMigrationRefused(message)) if message.contains("8 MiB migration scan byte limit")),
         "{checked:?}"
@@ -3734,7 +3749,7 @@ fn migration_byte_budgets_cover_multiple_rows_below_the_do_row_limit() {
             .expect("active definitions before proof")
             .version;
         let input = install_input("aggregate-v2", 10, &candidate);
-        let checked = store.check_definitions(&candidate, &input, Some(1));
+        let checked = store.check_definitions_in_scope(&candidate, &input, Some(1), "org_demo/dev");
         assert!(
             matches!(&checked, Err(CellError::DefinitionMigrationRefused(message)) if message.contains("8 MiB migration scan byte limit")),
             "{checked:?}"
@@ -3799,7 +3814,7 @@ fn removing_an_empty_overflow_property_refuses_an_incomplete_row_scan() {
     store.commit(&rows).expect("live rows commit");
     let before = store.read().dump().expect("before proof");
     let input = install_input("remove-overflow-v2", 3, &candidate);
-    let checked = store.check_definitions(&candidate, &input, Some(1));
+    let checked = store.check_definitions_in_scope(&candidate, &input, Some(1), "org_demo/dev");
     assert!(
         matches!(&checked, Err(CellError::DefinitionMigrationRefused(message)) if message.contains("4,096-row migration scan limit")),
         "{checked:?}"
@@ -3853,7 +3868,7 @@ fn first_overflow_column_charges_the_same_empty_object_bytes_in_check_and_instal
         .expect("boundary rows commit");
     let before = store.read().verify_ledger().expect("before proof");
     let input = install_input("first-overflow-v2", 3, &candidate);
-    let checked = store.check_definitions(&candidate, &input, Some(1));
+    let checked = store.check_definitions_in_scope(&candidate, &input, Some(1), "org_demo/dev");
     assert!(
         matches!(&checked, Err(CellError::DefinitionMigrationRefused(message)) if message.contains("8 MiB migration scan byte limit")),
         "{checked:?}"
@@ -3922,7 +3937,8 @@ fn newly_acyclic_inherited_role_proves_live_graph_in_check_and_install_across_wo
                 .expect("unconstrained graph");
             let before = store.read().dump().expect("before");
             let input = install_input("v2", 3, &candidate);
-            let checked = store.check_definitions(&candidate, &input, Some(1));
+            let checked =
+                store.check_definitions_in_scope(&candidate, &input, Some(1), "org_demo/dev");
             assert_eq!(store.read().dump().expect("after check"), before);
             let installed = store.install_definitions(candidate, input, Some(1), "org_demo/dev");
             if cyclic {
@@ -3985,7 +4001,7 @@ fn newly_acyclic_role_refuses_incomplete_live_graph_proof() {
         .expect("large unconstrained chain");
     let before = store.read().dump().expect("before");
     let input = install_input("v2", 3, &candidate);
-    let checked = store.check_definitions(&candidate, &input, Some(1));
+    let checked = store.check_definitions_in_scope(&candidate, &input, Some(1), "org_demo/dev");
     assert!(
         matches!(&checked, Err(CellError::DefinitionMigrationRefused(message)) if message.contains("4,096-row")),
         "{checked:?}"
@@ -4160,7 +4176,7 @@ fn newly_acyclic_role_ignores_unrelated_large_same_name_graph() {
     let before = store.read().dump().expect("before");
     let input = install_input("v2", 3, &candidate);
     let check = store
-        .check_definitions(&candidate, &input, Some(1))
+        .check_definitions_in_scope(&candidate, &input, Some(1), "org_demo/dev")
         .expect("A proof is empty");
     assert_eq!(store.read().dump().expect("after check"), before);
     assert_eq!(
@@ -4232,7 +4248,12 @@ fn live_owned_collection_accepts_only_monotonic_bound_increases() {
         .max_rows = norn_ir::WholeNumber(20);
     let widened = Model::from_snapshot(&snapshot).expect("widened model");
     store
-        .check_definitions(&widened, &install_input("bounds-v2", 3, &widened), Some(1))
+        .check_definitions_in_scope(
+            &widened,
+            &install_input("bounds-v2", 3, &widened),
+            Some(1),
+            "org_demo/dev",
+        )
         .expect("bound increase previews");
     store
         .install_definitions(
@@ -6645,7 +6666,7 @@ impl SqlEngine for ProvisionFault {
 
 fn provision_input() -> InstalledDefinitionInput {
     InstalledDefinitionInput {
-        canonical_set: "[]".to_owned(),
+        canonical_set: model_set(&model(false), &json!({})),
         registry: Vec::new(),
         receipt_sha256: "synthetic".to_owned(),
         admission_receipt: None,
@@ -6808,6 +6829,7 @@ fn host_provision_atomic_retry_preserves_later_installs() {
     .expect("first provision");
     let mut next = original.clone();
     next.installed_at = 2;
+    next.canonical_set = model_set(&model(true), &json!({}));
     store
         .install_definitions(model(true), next, Some(1), "demo/dev")
         .expect("later install");
@@ -6864,7 +6886,7 @@ fn normalized_identity_activation_refuses_other_world_collisions_without_mutatio
     let before = store.read().dump().expect("before");
     let input = install_input("normalized-v2", 4, &candidate);
     assert!(matches!(
-        store.check_definitions(&candidate, &input, Some(1)),
+        store.check_definitions_in_scope(&candidate, &input, Some(1), "org_demo/dev"),
         Err(CellError::IdentityCollision { .. })
     ));
     assert_eq!(store.read().dump().expect("after check"), before);
@@ -7699,7 +7721,7 @@ fn additivity_only_change_skips_live_scan_over_4096_rows() {
         let before = store.read().verify_ledger().expect("ledger");
         let input = install_input("additivity-v2", 3, &candidate);
         let checked = store
-            .check_definitions(&candidate, &input, Some(1))
+            .check_definitions_in_scope(&candidate, &input, Some(1), "org_demo/dev")
             .expect("aggregation-only change needs no value scan");
         assert_eq!(
             store.read().verify_ledger().expect("read-only check"),
@@ -7722,7 +7744,7 @@ fn additivity_change_with_value_narrowing_still_scans_live_rows() {
     let mut store = additivity_migration_store(&original);
     let before = store.read().verify_ledger().expect("ledger");
     let input = install_input("additivity-and-scale-v2", 3, &candidate);
-    let checked = store.check_definitions(&candidate, &input, Some(1));
+    let checked = store.check_definitions_in_scope(&candidate, &input, Some(1), "org_demo/dev");
     assert!(
         matches!(checked, Err(CellError::DefinitionMigrationRefused(message))
         if message.contains("4,096-row migration scan limit"))

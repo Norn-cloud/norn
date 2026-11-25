@@ -865,9 +865,21 @@ class DefinitionCompiler {
   }
 
   private objectType(call: ts.CallExpression): E.ObjectTypeDef {
-    const members = this.meta(call, ["name", "title", "version", "description", "role", "properties", "extends", "implements", "links", "ownedCollections", "identity", "defaults", "lifecycles", "markings", "propertyMarkings", "dependencies", "pathEquations", ...LABEL_MEMBERS, ...MEMBER_LABEL_MEMBERS])
+    const members = this.meta(call, ["name", "title", "version", "description", "role", "properties", "extends", "implements", "links", "ownedCollections", "identity", "defaults", "lifecycles", "markings", "propertyMarkings", "dependencies", "pathEquations", "protected", ...LABEL_MEMBERS, ...MEMBER_LABEL_MEMBERS])
     const { projected, ...rest } = this.base(call, members)
     const propertyMarkings = this.propertyMarkings(members, projected.map((p) => p.id))
+    // FA-PROTECT-1 / ACTOR-STAMP-1: protected properties are written only by a
+    // governed create's server stamp of the verified principal.
+    const protectedNode = members.get("protected")
+    const protectedIds = new Set<string>()
+    if (protectedNode) {
+      for (const node of this.list(protectedNode)) {
+        const id = this.string(node)
+        if (!projected.some((p) => p.id === id)) throw new CompileError("NORN-FLOW-LITERAL", `protected names undeclared property ${id}`, node)
+        if (protectedIds.has(id)) throw new CompileError("NORN-FLOW-LITERAL", `protected names ${id} twice`, node)
+        protectedIds.add(id)
+      }
+    }
     const defaults = new Map<string, E.DefaultValue>()
     const defaultsNode = members.get("defaults")
     if (defaultsNode) {
@@ -891,6 +903,7 @@ class DefinitionCompiler {
         const value = defaults.get(p.id)
         return {
           id: p.id,
+          ...(protectedIds.has(p.id) ? { protected: true } : {}),
           ...(propertyMarkings.has(p.id) ? { markings: propertyMarkings.get(p.id)! } : {}),
           type: p.projection.type,
           ...(p.projection.nullable ? { nullable: true } : {}),
@@ -1198,7 +1211,7 @@ class DefinitionCompiler {
   }
 
   private action(call: ts.CallExpression): A.ActionDef {
-    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "inputLabels", "inputGroups", "slice", "aggregates", "derive", "preconditions", "createLinks", "commands", "synchronousRule", "writes", "effect", "compensation", "dependencies", "access", "fromCaller", ...LABEL_MEMBERS])
+    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "inputLabels", "inputGroups", "slice", "aggregates", "derive", "preconditions", "createLinks", "commands", "synchronousRule", "writes", "effect", "compensation", "dependencies", "access", "fromCaller", "independentOf", ...LABEL_MEMBERS])
     const need = (key: string): ts.Expression => this.member(members, key, call)
     const schema = (key: string): S.ObjectSchema => {
       const node = need(key)
@@ -1321,6 +1334,7 @@ class DefinitionCompiler {
       ...(compiledEffect ? { effect: compiledEffect } : {}),
       ...(compensation ? { compensation: this.actionId(compensation) } : {}),
       ...(members.has("access") ? { access: this.accessRef(need("access")) } : {}),
+      ...(members.has("independentOf") ? { independentOf: this.strings(need("independentOf")) } : {}),
       at: this.at(call),
     })
   }
@@ -1562,9 +1576,12 @@ class DefinitionCompiler {
   }
 
   private access(call: ts.CallExpression): P.AccessDef {
-    const members = this.meta(call, ["id", "title", "version", "rules"])
+    const members = this.meta(call, ["id", "title", "version", "rules", "principalCatalog"])
     const need = (key: string): ts.Expression => this.member(members, key, call)
+    const principalCatalog = members.get("principalCatalog")
     return P.access({
+      // The closed grammar (types, sources) is the Rust checker's.
+      ...(principalCatalog ? { principalCatalog: this.list(principalCatalog).map((entry) => this.json(entry) as unknown as P.PrincipalCatalogEntry) } : {}),
       id: this.string(need("id")),
       title: this.string(need("title")),
       version: this.string(need("version")),
@@ -1586,7 +1603,7 @@ class DefinitionCompiler {
   }
 
   private decision(call: ts.CallExpression): R.DecisionDef {
-    const members = this.meta(call, ["id", "artifactId", "title", "version", "contract", "dependencies", "triggers", "slice", "input", "output", "scopeRequired", "graph", "hit", ...LABEL_MEMBERS])
+    const members = this.meta(call, ["id", "artifactId", "title", "version", "contract", "dependencies", "triggers", "slice", "principalInputs", "input", "output", "scopeRequired", "graph", "hit", ...LABEL_MEMBERS])
     const hitNode = members.get("hit")
     const hitText = hitNode ? this.string(hitNode) : "first"
     if (hitText !== "first" && hitText !== "unique") throw new CompileError("NORN-FLOW-LITERAL", "a decision's hit policy is \"first\" or \"unique\"", hitNode!)
@@ -1737,6 +1754,8 @@ class DefinitionCompiler {
       dependencies: [...(dependencies ? this.list(dependencies).map((dependency) => this.decisionDependency(dependency)) : []), ...calledDependencies],
       triggers: triggers ? this.list(triggers).map((t) => this.trigger(t)) : [],
       slice: slice ? this.list(slice).map((x) => this.sliceEntry(x)) : [],
+      // PRINCIPAL-INPUT-1: the closed grammar (kinds, catalog names, column types) is the Rust checker's.
+      principalInputs: members.has("principalInputs") ? this.list(need("principalInputs")).map((entry) => this.json(entry) as unknown as R.PrincipalInputDecl) : [],
       input: inputSchema,
       output: schema("output"),
       scopeRequired: this.strings(need("scopeRequired")),

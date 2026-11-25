@@ -54,7 +54,7 @@ function TitleForm({ initial, submit, onDone }: { readonly initial: string; read
   }
   return (
     <form onSubmit={(event) => void send(event)} className="grid gap-2">
-      <label className="grid gap-1 text-sm font-medium">View name<Input value={title} onChange={(event) => setTitle(event.target.value)} autoFocus /></label>
+      <label className="grid gap-1 text-body">View name<Input value={title} onChange={(event) => setTitle(event.target.value)} autoFocus /></label>
       {problem && <p role="alert" className="text-meta text-destructive">{problem}</p>}
       <Button type="submit" size="sm" disabled={busy || title.trim() === ""}>{submit}</Button>
     </form>
@@ -180,7 +180,7 @@ export function ViewsBar({ objectType, scope: boundScope, open, query, onOpen }:
   }
   const updated = open !== null && query !== undefined ? updateGridView(open.view, query) : null
   const changed = open !== null && updated !== null && differs(open.view, updated)
-  const tab = (active: boolean) => cn("inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-sm transition-colors", active ? "bg-card font-medium shadow-node ring-1 ring-node-border" : "text-muted-foreground hover:text-foreground")
+  const tab = (active: boolean) => cn("inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-body transition-colors", active ? "bg-card shadow-node ring-1 ring-node-border" : "text-muted-foreground hover:text-foreground")
   return (
     <div className="grid gap-2">
       <div className="flex flex-wrap items-center gap-1.5" role="tablist" aria-label="Views">

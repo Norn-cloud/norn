@@ -32,6 +32,7 @@ use norn_api::refusal::Refusal;
 use norn_api::scope::{CellScope, ScopeQuery};
 use norn_cell::engine::NativeEngine;
 use norn_cell::{CellStore, CommitBatch, FactWriteRow, MAIN_WORLD, ObjectRecord};
+use norn_checker::entity_scopes::ScopedView;
 use norn_ir::RuntimeValue as V;
 use norn_kernel::authz::{
     AccessRequest as PdpRequest, ActorKind, Delegation, PrincipalInput, ResourceInput, ScopeKey,
@@ -1173,8 +1174,7 @@ fn a_question_cannot_group_or_filter_by_a_marked_party_name() {
     artifacts.push(read(
         "registry/privacy/artifacts/privacy.markings.entity.json",
     ));
-    let catalog =
-        norn_checker::EffectiveCatalog::from_artifacts_with_registry(&artifacts, &BTreeSet::new());
+    let catalog = ScopedView::uniform(&artifacts, &BTreeSet::new()).into_catalog();
     let metric: MetricDefinition = serde_json::from_value(json!({
         "name": "demo.holdings",
         "label": "demo.holdings",
@@ -1466,9 +1466,9 @@ fn a_declassified_history_is_never_served_clear_from_an_empty_catalog() {
             norn_cell::StoreOptions::default(),
         )
         .unwrap()
-        .execute(
-            "UPDATE \"_norn_marking_current\" SET \"markings\" = '[]'",
-            &[],
+        .execute_batch(
+            "DELETE FROM \"_norn_marking_current\"; \
+             UPDATE \"_norn_marking_snapshot\" SET \"nonempty_slots\" = 0 WHERE \"is_current\" = 1;",
         )
         .unwrap();
     }

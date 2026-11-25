@@ -7,7 +7,9 @@ use crate::limits::{EnvelopeLimits, SliceMeter};
 
 use super::input::check_action_record_size;
 use super::receipt::resolve_receipt_effect;
-use super::slice::{ActionSliceContext, check_action_preconditions, load_action_slice};
+use super::slice::{
+    ActionSliceContext, LoadedActionSlice, check_action_preconditions, load_action_slice,
+};
 use super::types::{
     ACTION_CALL_TYPE, ActionAuthorizer, ActionCall, ActionCallRecord, ActionInputPreparation,
     ActionOutcome, ActionRefusal, EnvelopePolicy, Pending,
@@ -80,6 +82,9 @@ where
         &target,
     )?;
     check_kind(catalog, &object_type, object_kind)?;
+    crate::independence::check_independent_actor::<H::Error>(
+        catalog, call, &target, lifecycle, transition, &state,
+    )?;
     let record_key = FactKey::new(
         ACTION_CALL_TYPE,
         format!("{}/{}", action.action_id, call.idempotency_key),
@@ -116,60 +121,27 @@ where
         .precondition_outcomes
         .clone_from(&preparation.precondition_outcomes);
     record.parameter_pins.clone_from(&slice.parameter_pins);
+    // PRINCIPAL-INPUT-1: resolved once, after the replay check, and recorded.
+    if let Some(rule) = rule {
+        record.principal_inputs =
+            crate::principal_inputs::resolve::<H::Error>(rule, call, authorizer, &target)?;
+    }
     check_action_record_size::<H::Error>(call.action, &record, limits)?;
-    let (mut changes, decision_links) = if let Some(rule) = rule {
-        let output = rule.evaluate(
+    let (mut changes, decision_links) = match rule {
+        Some(rule) => writer_output(
+            host,
+            catalog,
             call,
-            &preparation.effective_input,
-            &slice.values,
-            &mut preparation.remaining_fuel,
-        )?;
-        check_action_envelope::<H::Error>(
+            rule,
+            &mut preparation,
+            authorizer,
+            &mut slice,
+            &target,
+            WriterTarget::Existing,
+            record.principal_inputs.as_ref(),
             limits,
-            output.facts.len().saturating_add(1),
-            action.commands.len(),
-        )?;
-        for change in &output.facts {
-            let (key, operation) = crate::synchronous_rule::writer_target(change)?;
-            if key.object_type.as_str().starts_with("norn.")
-                || !action.writes.iter().any(|write| {
-                    write.entity_kind == key.object_type.as_str() && write.change == operation
-                })
-                || (key == target && matches!(change, FactChange::Transition { .. }))
-            {
-                return Err(crate::synchronous_rule::refused(
-                    "the rule wrote outside the declared writer contract",
-                ));
-            }
-            if operation == norn_ir::WriteChange::Created {
-                if let std::collections::btree_map::Entry::Vacant(entry) = slice.facts.entry(key) {
-                    let state = authorize_upsert_target(
-                        host,
-                        call,
-                        &preparation.effective_input,
-                        authorizer,
-                        entry.key(),
-                    )?;
-                    entry.insert(state);
-                }
-            } else {
-                let state = slice.facts.get(&key).ok_or_else(|| {
-                    crate::synchronous_rule::refused(
-                        "a modified object is outside the captured slice",
-                    )
-                })?;
-                authorize_current_target(
-                    call,
-                    &preparation.effective_input,
-                    authorizer,
-                    &key,
-                    state,
-                )?;
-            }
-        }
-        (output.facts, output.links)
-    } else {
-        (Vec::new(), Vec::new())
+        )?,
+        None => (Vec::new(), Vec::new()),
     };
     let receipt = match accept_receipt {
         Some(declaration) => {
@@ -182,7 +154,8 @@ where
     };
     let change = FactChange::Transition {
         object_type,
-        key: object_id.clone(),
+        // The owned target key: no borrow of the preparation outlives the writer.
+        key: target.key.clone(),
         lifecycle: lifecycle.clone(),
         transition: transition.clone(),
     };
@@ -208,7 +181,120 @@ where
             series_candidate: None,
             decision_links,
             receipt,
+            creator_stamp: None,
         },
         EnvelopePolicy { limits, meter },
     )
+}
+
+/// A writer's admitted fact changes and link changes.
+pub(super) type WriterChanges = (Vec<FactChange>, Vec<norn_ir::LinkChange>);
+
+/// How the writer may touch the action's primary target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum WriterTarget {
+    /// The target exists and the action transitions it; the writer never
+    /// transitions it itself.
+    Existing,
+    /// CREATE-WRITER-1: this commit creates the target in its initial state;
+    /// the writer may only initialize its fields with `set` changes, which
+    /// are authorized with the rest of its proposed state.
+    Created,
+}
+
+/// TXN-CLOSED-1 / CREATE-WRITER-1 (#1101): evaluate the pinned writer over the
+/// captured slice, the trusted actor and the host-resolved `principal` inputs
+/// (PRINCIPAL-INPUT-1; `None` binds none, so a writer that declares principal
+/// inputs then refuses), admitting only its declared
+/// footprint and authorizing every object it touches before any commit.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the writer shares the primary effect's preparation, slice, authorization and limits"
+)]
+pub(super) fn writer_output<H>(
+    host: &H,
+    catalog: &TypeCatalog<'_>,
+    call: &ActionCall<'_>,
+    rule: &crate::SynchronousRule,
+    preparation: &mut ActionInputPreparation<'_>,
+    authorizer: &dyn ActionAuthorizer,
+    slice: &mut LoadedActionSlice,
+    target: &FactKey,
+    mode: WriterTarget,
+    principal: Option<&crate::principal_inputs::ActionPrincipalInputs>,
+    limits: &EnvelopeLimits,
+) -> Result<WriterChanges, ActionRefusal<H::Error>>
+where
+    H: CellHost + ?Sized,
+{
+    let action = call.action;
+    let output = rule.evaluate(
+        call,
+        &preparation.effective_input,
+        &slice.values,
+        principal,
+        &mut preparation.remaining_fuel,
+    )?;
+    check_action_envelope::<H::Error>(
+        limits,
+        output.facts.len().saturating_add(1),
+        action.commands.len(),
+    )?;
+    for change in &output.facts {
+        let (key, operation) = crate::synchronous_rule::writer_target(change)?;
+        let primary = key == *target;
+        let primary_refused = primary
+            && match mode {
+                WriterTarget::Existing => matches!(change, FactChange::Transition { .. }),
+                WriterTarget::Created => !matches!(change, FactChange::Set { .. }),
+            };
+        if key.object_type.as_str().starts_with("norn.")
+            || !action.writes.iter().any(|write| {
+                write.entity_kind == key.object_type.as_str() && write.change == operation
+            })
+            || primary_refused
+        {
+            return Err(crate::synchronous_rule::refused(
+                "the rule wrote outside the declared writer contract",
+            ));
+        }
+        if let FactChange::Transition {
+            lifecycle,
+            transition,
+            ..
+        } = change
+            && crate::independence::writer_transition_refused(
+                catalog,
+                &key.object_type,
+                lifecycle,
+                transition,
+            )
+        {
+            return Err(crate::synchronous_rule::refused(
+                "a writer cannot fire a transition guarded by independentOf",
+            ));
+        }
+        if primary && mode == WriterTarget::Created {
+            // The created target is authorized as its complete proposed state.
+            continue;
+        }
+        if operation == norn_ir::WriteChange::Created {
+            if let std::collections::btree_map::Entry::Vacant(entry) = slice.facts.entry(key) {
+                let state = authorize_upsert_target(
+                    host,
+                    call,
+                    &preparation.effective_input,
+                    authorizer,
+                    entry.key(),
+                )?;
+                entry.insert(state);
+            }
+        } else {
+            let state = slice.facts.get(&key).ok_or_else(|| {
+                crate::synchronous_rule::refused("a modified object is outside the captured slice")
+            })?;
+            authorize_current_target(call, &preparation.effective_input, authorizer, &key, state)?;
+        }
+    }
+    Ok((output.facts, output.links))
 }

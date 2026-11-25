@@ -32,7 +32,7 @@ use norn_ir::function::{
     CacheOrigin, Digest, ExecutionProvenance, FunctionInvocation, FunctionOutcome, FunctionReceipt,
     ResourceUse, SuccessOutcome,
 };
-use norn_ir::{ActionRoot, ObjectTypeDef, RuntimeValue};
+use norn_ir::{ActionRoot, ObjectTypeDef, PropertyId, RuntimeValue, TransitionId};
 use norn_kernel::cell_host::{JsonObject, JsonValue};
 use norn_kernel::receipt_binding::{ReceiptBinding, ReceiptBindingError, ReceiptReference};
 use norn_kernel::result_reconciliation::{
@@ -344,6 +344,35 @@ fn put(key: FactKey, expected: FactVersion, values: &[(&str, &str)]) -> FactWrit
     }
 }
 
+/// A new run waiting on its confirmation: created in its initial state and
+/// moved by `ask` in the same commit, so the recorded transition admits its
+/// first, non-initial state (GRAPH-STATE-1).
+fn awaiting_run(run: &str) -> (FactWrite, [FactEvent; 2]) {
+    let key = FactKey::new(RUN, run);
+    let events = [
+        FactEvent::Created {
+            key: key.clone(),
+            values: JsonObject::from([
+                ("run_id".to_owned(), JsonValue::String(run.to_owned())),
+                ("status".to_owned(), JsonValue::String("started".to_owned())),
+            ]),
+        },
+        FactEvent::Transitioned {
+            key: key.clone(),
+            lifecycle: PropertyId("status".into()),
+            transition: TransitionId("ask".into()),
+            from: "started".into(),
+            to: "awaiting_perform_confirm".into(),
+        },
+    ];
+    let write = put(
+        key,
+        FactVersion::ABSENT,
+        &[("run_id", run), ("status", "awaiting_perform_confirm")],
+    );
+    (write, events)
+}
+
 /// The pinned shipment and runs waiting on their confirmation.
 fn seed(cell: &mut Sqlite, runs: &[&str]) {
     let mut writes = vec![put(
@@ -351,15 +380,15 @@ fn seed(cell: &mut Sqlite, runs: &[&str]) {
         FactVersion::ABSENT,
         &[("note", "in transit")],
     )];
-    writes.extend(runs.iter().map(|&run| {
-        put(
-            FactKey::new(RUN, run),
-            FactVersion::ABSENT,
-            &[("run_id", run), ("status", "awaiting_perform_confirm")],
-        )
-    }));
+    let mut events = Vec::new();
+    for &run in runs {
+        let (write, recorded) = awaiting_run(run);
+        writes.push(write);
+        events.extend(recorded);
+    }
     cell.commit(CellCommit {
         writes,
+        events,
         ..CellCommit::empty()
     })
     .unwrap();
@@ -708,12 +737,10 @@ fn wrong_manifest_invocation_or_tampered_bindings_refuse_without_effects() {
         dispatched,
         receipt,
     } = fixture(&dir.path().join("cell.sqlite"), "delivered");
+    let (write, events) = awaiting_run("run-2");
     cell.commit(CellCommit {
-        writes: vec![put(
-            FactKey::new(RUN, "run-2"),
-            FactVersion::ABSENT,
-            &[("run_id", "run-2"), ("status", "awaiting_perform_confirm")],
-        )],
+        writes: vec![write],
+        events: events.into(),
         ..CellCommit::empty()
     })
     .unwrap();
@@ -1424,10 +1451,7 @@ fn advance_sibling(path: &Path, receipt: &FunctionReceipt, millis: u64) {
             writes: vec![put(
                 FactKey::new(RUN, run.as_str()),
                 FactVersion::ABSENT,
-                &[
-                    ("run_id", run.as_str()),
-                    ("status", "awaiting_perform_confirm"),
-                ],
+                &[("run_id", run.as_str()), ("status", "started")],
             )],
             ..CellCommit::empty()
         })

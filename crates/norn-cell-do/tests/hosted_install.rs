@@ -853,3 +853,496 @@ fn a_change_moves_a_gate_and_replaces_it() {
     );
     assert_eq!(twice.status, 422, "two gates on one action: {}", twice.body);
 }
+
+// PRINCIPAL-INPUT-1 (#1091): the synthetic review pack on the hosted cell.
+#[path = "support/review_pack.rs"]
+mod review_pack;
+use review_pack::{APPROVE, DOCUMENT, admin_role, approval_rule, approve_action, review_base};
+
+impl Cell {
+    fn applied(&mut self, artifacts: &[Value], expected: u64) {
+        let applied = self.change(APPLY_PATH, Some("owner"), artifacts, Some(expected));
+        assert_eq!(applied.status, 200, "{}", applied.body);
+        assert_eq!(self.version(), expected + 1);
+    }
+
+    fn act(&mut self, action: &str, role: &str, input: &Value, key: &str) -> Response {
+        let body = json!({ "input": input, "idempotencyKey": key });
+        let path = format!("/v1/actions/{action}");
+        self.call("POST", &path, Some(&user(role)), &body.to_string())
+    }
+
+    /// Record document `id`, then approve it as `role` under `key`.
+    fn approve(&mut self, id: &str, role: &str, key: &str) -> Value {
+        let recorded = self.act(
+            "review.document.record",
+            "member",
+            &json!({ "id": id, "owner": "user:member-of-org_a" }),
+            &format!("record-{id}"),
+        );
+        assert_eq!(recorded.status, 200, "{}", recorded.body);
+        let approved = self.act(APPROVE, role, &json!({ "id": id }), key);
+        assert_eq!(approved.status, 200, "{}", approved.body);
+        json_of(&approved)
+    }
+
+    /// The stored record of `object_type` whose identity or key ends in `id`.
+    fn stored(&mut self, object_type: &str, id: &str) -> Value {
+        let path = format!("/v1/objects/{object_type}");
+        let page = self.call("GET", &path, Some(&user("admin")), "");
+        assert_eq!(page.status, 200, "{}", page.body);
+        json_of(&page)["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|record| record["id"].as_str().is_some_and(|key| key.ends_with(id)))
+            .expect("the stored record")
+            .clone()
+    }
+}
+
+/// S1: the call record's `principalInputs` column arrives with the first set
+/// that declares principal inputs and stays under any later set, so a
+/// rollback installs, a restart reopens, and every recorded call replays.
+#[test]
+fn principal_inputs_survive_a_rollback_and_a_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let mut cell = provisioned(&path);
+    let base = cell.version();
+    let calls = norn_kernel::ACTION_CALL_TYPE;
+    let ruled = [
+        approval_rule("0.1.0", true),
+        approve_action("0.2.0", Some("0.1.0")),
+    ];
+    let plain = [approval_rule("0.2.0", false), approve_action("0.1.0", None)];
+
+    // Without: the approval pins no decision, and a call commits.
+    let mut without = review_base(&admin_role());
+    without.push(approve_action("0.1.0", None));
+    cell.applied(&without, base);
+    assert_eq!(cell.approve("r1", "member", "a1")["outcome"], "committed");
+    assert!(
+        cell.stored(calls, "a1")["values"]
+            .get("principalInputs")
+            .is_none()
+    );
+
+    // With: an admin's approval is confirmed and a member's is not; each
+    // receipt keeps its caller's own resolved value.
+    cell.applied(&ruled, base + 1);
+    assert_eq!(cell.approve("r2", "admin", "a2")["outcome"], "committed");
+    assert_eq!(cell.approve("r3", "member", "a3")["outcome"], "committed");
+    assert_eq!(cell.stored(DOCUMENT, "r2")["values"]["confirmed"], true);
+    assert_eq!(cell.stored(DOCUMENT, "r3")["values"]["confirmed"], false);
+    let recorded = cell.stored(calls, "a2")["values"]["principalInputs"].clone();
+    assert_eq!(recorded["principal"], "user:admin-of-org_a", "{recorded}");
+    assert_eq!(recorded["values"], json!({ "isAdmin": true }));
+    assert_eq!(
+        recorded["subject"],
+        json!({ "objectType": DOCUMENT, "key": "r2" })
+    );
+    assert!(
+        recorded["policyVersion"]
+            .as_str()
+            .unwrap()
+            .starts_with("roles=studio-roles/1;grants="),
+        "{recorded}"
+    );
+    assert_eq!(
+        cell.stored(calls, "a3")["values"]["principalInputs"]["values"],
+        json!({ "isAdmin": false })
+    );
+
+    // Without again (a rollback): the set declares no principal inputs, the
+    // stored values are kept, and the install is not refused.
+    cell.applied(&plain, base + 2);
+    assert_eq!(cell.approve("r4", "member", "a4")["outcome"], "committed");
+    let replayed = cell.act(APPROVE, "member", &json!({ "id": "r1" }), "a1");
+    assert_eq!(
+        json_of(&replayed)["outcome"],
+        "replayed",
+        "{}",
+        replayed.body
+    );
+    assert_eq!(
+        cell.stored(calls, "a2")["values"]["principalInputs"],
+        recorded
+    );
+
+    // HOST-REOPEN-1: a restarted host reopens the cell under the model its
+    // installed revision recorded, with the kept column and its values.
+    drop(cell);
+    let mut cell = Cell::opened(&path);
+    assert_eq!(cell.version(), base + 3);
+    assert_eq!(
+        cell.stored(calls, "a2")["values"]["principalInputs"],
+        recorded
+    );
+    let replayed = cell.act(APPROVE, "member", &json!({ "id": "r4" }), "a4");
+    assert_eq!(
+        json_of(&replayed)["outcome"],
+        "replayed",
+        "{}",
+        replayed.body
+    );
+
+    // With again: the calls recorded under that decision replay from their
+    // receipts, with nothing resolved again.
+    cell.applied(&ruled, base + 3);
+    for (id, role, key) in [("r2", "admin", "a2"), ("r3", "member", "a3")] {
+        let replayed = cell.act(APPROVE, role, &json!({ "id": id }), key);
+        assert_eq!(
+            json_of(&replayed)["outcome"],
+            "replayed",
+            "{}",
+            replayed.body
+        );
+    }
+    assert_eq!(
+        cell.stored(calls, "a2")["values"]["principalInputs"],
+        recorded
+    );
+}
+
+/// S3: a request never supplies the principal. Both routes that take a
+/// decision or action body refuse a `principal` member at its pointer,
+/// before anything is decoded, looked up or committed.
+#[test]
+fn a_request_body_carrying_principal_is_refused_on_the_action_and_decide_routes() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("cell.sqlite"));
+    let base = cell.version();
+    let mut pack = review_base(&admin_role());
+    pack.extend([
+        approval_rule("0.1.0", true),
+        approve_action("0.2.0", Some("0.1.0")),
+    ]);
+    cell.applied(&pack, base);
+    assert_eq!(cell.approve("r1", "member", "a1")["outcome"], "committed");
+
+    let member = user("member");
+    let action = format!("/v1/actions/{APPROVE}");
+    for (path, body, pointer) in [
+        (
+            action.as_str(),
+            json!({ "input": { "id": "r9" }, "idempotencyKey": "p1",
+                "principal": { "isAdmin": true } }),
+            "/principal",
+        ),
+        (
+            action.as_str(),
+            json!({ "input": { "id": "r9", "principal": { "isAdmin": true } },
+                "idempotencyKey": "p2" }),
+            "/input/principal",
+        ),
+        (
+            "/v1/decisions/unknown:decide",
+            json!({ "choice": "approve", "idempotencyKey": "p3",
+                "principal": { "isAdmin": true } }),
+            "/principal",
+        ),
+    ] {
+        let refused = cell.call("POST", path, Some(&member), &body.to_string());
+        assert_eq!(refused.status, 400, "{path}: {}", refused.body);
+        let refusal = json_of(&refused);
+        assert_eq!(refusal["code"], "request.invalid", "{refusal}");
+        assert_eq!(
+            refusal["diagnostics"][0]["span"]["pointer"], pointer,
+            "{refusal}"
+        );
+        assert!(!refused.body.contains("isAdmin"), "{}", refused.body);
+    }
+    // Nothing was committed under the refused keys.
+    for key in ["p1", "p2"] {
+        let page = cell.call(
+            "GET",
+            &format!("/v1/objects/{}", norn_kernel::ACTION_CALL_TYPE),
+            Some(&user("admin")),
+            "",
+        );
+        assert!(
+            !page.body.contains(&format!("{APPROVE}/{key}")),
+            "{}",
+            page.body
+        );
+    }
+}
+
+/// S4: a principal catalog the host's action policy could not compile is
+/// refused at admission, before anything is installed, so it never takes the
+/// cell's governed actions down.
+#[test]
+fn a_catalog_that_disagrees_with_the_access_rules_is_refused_before_install() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("cell.sqlite"));
+    let base = cell.version();
+    // The access rules compare a text property with the principal's `id`, so
+    // `id` is a string; the catalog declares it an integer.
+    let owners = json!({ "ruleId": "owners", "actions": [APPROVE], "resourceType": DOCUMENT,
+        "scope": { "dimensions": ["org", "environment"] },
+        "allOf": [{ "resource": { "name": "owner", "op": "eq",
+            "value": { "principalAttribute": "id" } } }] });
+    let with_catalog = |catalog: Value| {
+        let mut pack = review_base(&catalog);
+        pack[1]["payload"]["rules"]
+            .as_array_mut()
+            .unwrap()
+            .push(owners.clone());
+        pack.push(approve_action("0.1.0", None));
+        pack
+    };
+    for (catalog, code) in [
+        (
+            json!([{ "name": "id", "type": "long", "source": { "kind": "attribute" } }]),
+            "artifact_set.policy.principal_catalog_conflict",
+        ),
+        (
+            json!([{ "name": "cost-center", "type": "string", "source": { "kind": "attribute" } }]),
+            "policy.validation.invalid_payload",
+        ),
+    ] {
+        for route in [PLAN_PATH, APPLY_PATH] {
+            let expected = (route == APPLY_PATH).then_some(base);
+            let refused = cell.change(
+                route,
+                Some("owner"),
+                &with_catalog(catalog.clone()),
+                expected,
+            );
+            assert_eq!(refused.status, 422, "{route}: {}", refused.body);
+            let refusal = json_of(&refused);
+            assert_eq!(refusal["code"], "defs.refused", "{refusal}");
+            let named = refusal["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|diagnostic| diagnostic["code"] == code);
+            assert!(named, "{route}: {refusal}");
+        }
+        assert_eq!(cell.version(), base, "nothing was installed");
+    }
+    // The same rules with `id` declared a string install and serve actions.
+    let agreeing = json!([{ "name": "id", "type": "string", "source": { "kind": "attribute" } }]);
+    cell.applied(&with_catalog(agreeing), base);
+    let recorded = cell.act(
+        "review.document.record",
+        "member",
+        &json!({ "id": "r1", "owner": "user:member-of-org_a" }),
+        "record-r1",
+    );
+    assert_eq!(recorded.status, 200, "{}", recorded.body);
+}
+
+/// `lowerFlow`'s output for the melt flow (a decision, then one
+/// `norn.action@1` step), retargeted at the review pack: the owner decides,
+/// and the step approves document `r1`.
+fn approval_flow() -> Value {
+    let lowered = include_str!("../../../tools/norn-ts/fixtures/flows/melt.ir.json")
+        .replace("constitution.melt.convert", APPROVE)
+        .replace(
+            "{id: 'melt-7', input_fine_g: '12', output_fine_g: '10'}",
+            "{id: 'r1'}",
+        )
+        .replace("decider: {roles: ['admin']}", "decider: {roles: ['owner']}");
+    let mut artifacts: Vec<Value> = serde_json::from_str(&lowered).unwrap();
+    for artifact in &mut artifacts {
+        artifact["scope"] = json!({ "orgId": "org_a", "environmentId": "prod" });
+    }
+    artifacts[1]["payload"]["outputSchema"]["properties"]["commands"]["items"]["properties"]["input"]
+        ["properties"]["convert"]["properties"]["input"] = json!({ "type": "object",
+        "additionalProperties": false, "required": ["id"],
+        "properties": { "id": { "type": "string" } } });
+    json!({ "kind": "flow", "id": "ops.approve_melt", "payload": {
+        "flow": { "id": "ops.approve_melt", "version": "1.0.0", "title": "Approve a document" },
+        "artifacts": artifacts } })
+}
+
+impl Cell {
+    /// The review pack whose approval pins the decision that reads
+    /// `principal.isAdmin`, installed with `approvals`, and document `r1`
+    /// recorded.
+    fn ruled(&mut self, approvals: &[Value]) {
+        let base = self.version();
+        let mut pack = review_base(&admin_role());
+        pack.extend([
+            approval_rule("0.1.0", true),
+            approve_action("0.2.0", Some("0.1.0")),
+        ]);
+        let owner = user("owner");
+        let mut approvals = approvals.to_vec();
+        let planned = json!({ "artifacts": pack, "approvals": approvals });
+        let planned = self.call("POST", PLAN_PATH, Some(&owner), &planned.to_string());
+        assert_eq!(planned.status, 200, "{}", planned.body);
+        for (index, approval) in approvals.iter_mut().enumerate() {
+            let sha = json_of(&planned)["approvals"][index]["restatementSha256"].clone();
+            approval["signoff"] = json!({ "restatementSha256": sha });
+        }
+        let body = json!({ "artifacts": pack, "approvals": approvals, "expectedVersion": base });
+        let applied = self.call("POST", APPLY_PATH, Some(&owner), &body.to_string());
+        assert_eq!(applied.status, 200, "{}", applied.body);
+        let recorded = self.act(
+            "review.document.record",
+            "member",
+            &json!({ "id": "r1", "owner": "user:member-of-org_a" }),
+            "record-r1",
+        );
+        assert_eq!(recorded.status, 200, "{}", recorded.body);
+    }
+
+    /// The owner approves decision `id`.
+    fn decided(&mut self, id: &str) -> Value {
+        let decided = self.call(
+            "POST",
+            &format!("/v1/decisions/{id}:decide"),
+            Some(&user("owner")),
+            &json!({ "choice": "approve", "idempotencyKey": "owner-1" }).to_string(),
+        );
+        assert_eq!(decided.status, 200, "{}", decided.body);
+        json_of(&decided)
+    }
+
+    /// Whether any stored call record of `action` keeps principal inputs.
+    fn recorded_principal_inputs(&mut self, action: &str) -> Vec<Value> {
+        let path = format!("/v1/objects/{}", norn_kernel::ACTION_CALL_TYPE);
+        let page = self.call("GET", &path, Some(&user("admin")), "");
+        assert_eq!(page.status, 200, "{}", page.body);
+        json_of(&page)["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|record| record["values"]["actionId"] == action)
+            .filter_map(|record| record["values"].get("principalInputs").cloned())
+            .collect()
+    }
+}
+
+/// F2: an approved call is released only on its requester's own request
+/// (`as_present`, APPROVAL-RECOVERY-1), never on the approver's, so its
+/// principal inputs resolve from that request's verified principal. Here an
+/// admin's approval waits for the owner; the owner's decide runs nothing; the
+/// admin's retry commits with `isAdmin` resolved for the admin.
+#[test]
+fn an_approved_call_resolves_principal_inputs_on_its_requesters_own_retry() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("cell.sqlite"));
+    cell.ruled(&[
+        json!({ "kind": "approval", "id": "review.document.approve_approval", "payload": {
+        "action": APPROVE, "decider": { "roles": ["owner"] },
+        "question": "Approve this document?", "risk": "high" } }),
+    ]);
+
+    let parked = cell.act(APPROVE, "admin", &json!({ "id": "r1" }), "a1");
+    assert_eq!(parked.status, 202, "the call waits: {}", parked.body);
+    let id = json_of(&parked)["decision"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    // The approver's request is not the requester's: it runs nothing, and
+    // nothing is resolved for the approver.
+    let decided = cell.decided(&id);
+    assert_eq!(
+        cell.stored(DOCUMENT, "r1")["values"]["status"],
+        "draft",
+        "{decided}"
+    );
+    assert_eq!(cell.recorded_principal_inputs(APPROVE), Vec::<Value>::new());
+
+    // The requester's own retry: its live, verified principal is resolved.
+    let released = cell.act(APPROVE, "admin", &json!({ "id": "r1" }), "a1");
+    assert_eq!(released.status, 200, "{}", released.body);
+    assert_eq!(
+        json_of(&released)["outcome"],
+        "committed",
+        "{}",
+        released.body
+    );
+    let document = cell.stored(DOCUMENT, "r1");
+    assert_eq!(document["values"]["status"], "approved", "{document}");
+    assert_eq!(document["values"]["confirmed"], true, "{document}");
+    let recorded = cell.recorded_principal_inputs(APPROVE);
+    assert_eq!(recorded.len(), 1, "{recorded:?}");
+    assert_eq!(
+        recorded[0]["principal"], "user:admin-of-org_a",
+        "{recorded:?}"
+    );
+    assert_eq!(recorded[0]["values"], json!({ "isAdmin": true }));
+}
+
+/// Flow steps fail closed, through the whole wiring: the run's starter is an
+/// admin, the owner's decide drives the `norn.action@1` step, and the step
+/// calls the approval as the recorded starter (`Steps::as_principal`). That
+/// caller carries the roles of an earlier request, so `ReadPolicy` resolves
+/// nothing, the kernel refuses `decision.principal_input_unavailable`, and
+/// nothing is committed, although the starter does hold the role.
+#[test]
+fn a_flow_step_calling_for_its_starter_resolves_no_principal_input() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("cell.sqlite"));
+    cell.ruled(&[]);
+    let owner = user("owner");
+    let mut flow = approval_flow();
+    let admitted = cell.call(
+        "POST",
+        "/v1/definitions:admit",
+        Some(&owner),
+        &flow.to_string(),
+    );
+    assert_eq!(admitted.status, 200, "{}", admitted.body);
+    flow["signoff"] = json!({ "restatementSha256": json_of(&admitted)["restatementSha256"] });
+    let installed = cell.call(
+        "POST",
+        "/v1/definitions:install",
+        Some(&owner),
+        &flow.to_string(),
+    );
+    assert_eq!(installed.status, 200, "{}", installed.body);
+
+    let admin = user("admin");
+    let started = cell.call(
+        "POST",
+        "/v1/runs",
+        Some(&admin),
+        &json!({ "flow": "ops.approve_melt", "runId": "run-1" }).to_string(),
+    );
+    assert_eq!(started.status, 201, "{}", started.body);
+    let pending = cell.tenant.handle(
+        &cell.tokens,
+        &Request {
+            method: "GET",
+            path: "/v1/decisions",
+            query: &format!("{QUERY}&state=pending"),
+            authorization: Some(&owner),
+            now: NOW,
+            body: "",
+        },
+    );
+    assert_eq!(pending.status, 200, "{}", pending.body);
+    let id = json_of(&pending)["items"][0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let decided = cell.decided(&id);
+
+    let run = cell.call("GET", "/v1/runs/run-1", Some(&admin), "");
+    assert_eq!(run.status, 200, "{}", run.body);
+    let run = json_of(&run);
+    assert_eq!(run["state"], "failed_refused", "{decided}\n{run}");
+    let step = &run["steps"][1];
+    assert_eq!(
+        (&step["id"], &step["status"]),
+        (&json!("convert"), &json!("failed")),
+        "{run}"
+    );
+    // The run keeps why its step failed: the kernel's refusal, by code.
+    let failure = cell.stored("ops.ApproveMeltRun", "run-1")["values"]["slots"]["failure"].clone();
+    assert_eq!(
+        failure,
+        json!({ "_tag": "Refused", "code": "decision.principal_input_unavailable" }),
+        "{decided}"
+    );
+    let document = cell.stored(DOCUMENT, "r1");
+    assert_eq!(document["values"]["status"], "draft", "{document}");
+    assert_eq!(document["values"]["confirmed"], false, "{document}");
+    assert_eq!(cell.recorded_principal_inputs(APPROVE), Vec::<Value>::new());
+}

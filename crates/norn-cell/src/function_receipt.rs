@@ -194,7 +194,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
 impl<E, C, I, S> SqliteCell<E, C, I, S>
 where
     S: SqlEngine,
-    E: Serialize,
+    E: Serialize + 'static,
     C: Serialize + DeserializeOwned,
     I: Serialize + DeserializeOwned,
 {
@@ -223,8 +223,15 @@ where
             consumes: Some(consumed),
             ..CellCommit::empty()
         };
-        let args: crate::host::AdmissionArgs<'_> =
-            (&[], &[], &[], &[], None, ReceiptCommitMode::ResultRefusal);
+        let args: crate::host::AdmissionArgs<'_> = (
+            &[],
+            &[],
+            &[],
+            &[],
+            None,
+            ReceiptCommitMode::ResultRefusal,
+            None,
+        );
         self.commit_admitted(commit, None, None, None, args)
     }
 }

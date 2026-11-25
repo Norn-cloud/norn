@@ -84,6 +84,10 @@
     "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
+    "code": "artifact_set.action.independent_actor",
+    "fix": "Name a protected text property of the transition target that a governed create stamps from the verified principal (fromCaller), never a field a caller, import or update can write."
+  },
+  {
     "code": "artifact_set.action.invalid_aggregate",
     "fix": "Name a declared type and a property the aggregate fold can read."
   },
@@ -138,6 +142,14 @@
   {
     "code": "artifact_set.decision.invalid_stored_property_write",
     "fix": "Correct the member at the reported path to match its declared type, schema and constraints."
+  },
+  {
+    "code": "artifact_set.decision.principal_input_type",
+    "fix": "Give the principal column the type of its catalog entry: boolean for a held role, a list of strings for a role profile, and the declared type for a scoped attribute."
+  },
+  {
+    "code": "artifact_set.decision.principal_input_unknown",
+    "fix": "Declare the role, role profile or scoped attribute in the principalCatalog of an access policy in the definition set, or name an entry that policy already declares."
   },
   {
     "code": "artifact_set.decision.sub_decision_bound",
@@ -238,6 +250,10 @@
   {
     "code": "artifact_set.marking.unknown",
     "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
+  },
+  {
+    "code": "artifact_set.policy.principal_catalog_conflict",
+    "fix": "Keep one definition of each principal catalog name across the access policies of the set and the installed base, at the type the set's access rules use that principal attribute at."
   },
   {
     "code": "artifact_set.resolution.conflicting_version",
@@ -2442,6 +2458,14 @@
   {
     "code": "rule.validation.ordered_fold_unsupported",
     "fix": "Replace the unsupported construct with a declaration admitted by the selected profile and run admission again."
+  },
+  {
+    "code": "rule.validation.principal_input_invalid",
+    "fix": "Declare each principal input once as {name, kind} on a decide rule, give the principal input record exactly one required column per input, and write nothing under principal."
+  },
+  {
+    "code": "rule.validation.principal_input_undeclared",
+    "fix": "Add the name the decision reads to principalInputs with its kind, or stop reading it; the host supplies only declared principal inputs."
   },
   {
     "code": "sealing.extension_point.capability_missing",

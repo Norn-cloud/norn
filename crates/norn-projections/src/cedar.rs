@@ -21,6 +21,10 @@ use norn_ir::{
     PropertyConstraints, PropertyType, PropertyTypeDef,
 };
 
+mod writer;
+
+use writer::writer_resource_kinds;
+
 /// Host-maintained attributes every projected object type carries (#2950):
 /// `acted_by`, the actors whose action calls committed on the object. Optional:
 /// an object no action touched has none.
@@ -620,13 +624,7 @@ fn render_actions(
         };
         let kind = program.target().object_kind;
         let mut resource_kinds = BTreeSet::from([kind]);
-        // AUTH-SYNC-WRITER-1: commit authorizes every declared writer target.
-        // Catalog invocation targets stay tied to the primary effect.
-        if action.synchronous_rule.is_some()
-            && matches!(program, ActionEffectProgram::FireTransition { .. })
-        {
-            resource_kinds.extend(action.writes.iter().map(|write| write.entity_kind.as_str()));
-        }
+        resource_kinds.extend(writer_resource_kinds(action, program));
         if let ActionEffectProgram::MutateParentWithRows { collections, .. } = program {
             let lineage = types.lineages.get(kind).cloned().unwrap_or_default();
             for collection in collections {

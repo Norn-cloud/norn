@@ -68,7 +68,7 @@ test("one wire subscription per path; every listener gets the cell's answers, a 
   socket.snapshot("s1", "d1", { items: [] })
   client.subscribe("/v1/decisions?state=pending", (s) => b.push(s))
   expect(socket.sent).toHaveLength(1)
-  expect(b).toEqual([{ status: 200, digest: "d1", body: { items: [] } }])
+  expect(b).toEqual([{ status: 200, digest: "d1", body: { items: [] }, exact: { items: [] } }])
   socket.snapshot("s1", "d2", { items: [1] })
   expect(a.map((s) => s.digest)).toEqual(["d1", "d2"])
   expect(b.map((s) => s.digest)).toEqual(["d1", "d2"])
@@ -346,5 +346,66 @@ test("an answer on a connection restores the full retry budget", async () => {
     await flush()
   }
   expect(client.state).toBe("connecting")
+  stop()
+})
+
+test("a snapshot's body is also read exactly, and a failing one carries its refusal only when it is the route's Refusal@2", async () => {
+  const { client, sockets, flush } = harness()
+  const seen: LiveSnapshot[] = []
+  client.subscribe("/v1/objects/demo.Item/i1", (s) => seen.push(s))
+  await flush()
+  const socket = sockets[0]!
+  socket.emit("open")
+  const frame = (status: number, body: string) => socket.emit("message", { data: `{"type":"snapshot","id":"s1","status":${status},"digest":"d${seen.length}","body":${body}}` })
+  // The cell sends the GET's own bytes: 28 significant digits and a decimal's scale survive in `exact`.
+  frame(200, '{"version":2,"values":{"amount":1234567890123456.789012345678,"rate":100.000}}')
+  expect(seen[0]!.exact).toEqual({ version: "2", values: { amount: "1234567890123456.789012345678", rate: "100.000" } })
+  expect(seen[0]!.body).toEqual({ version: 2, values: { amount: 1234567890123456.789012345678, rate: 100 } })
+  expect(seen[0]!.refusal).toBeUndefined()
+  // A failing answer that is the route's Refusal@2 carries it, a disclosed reason's values exact.
+  const refusal = '{"format":"norn/refusal@2","retryable":false,"code":"core.laws.violated","category":"precondition","message":"m","explanation":"e","reason":{"law":"L1","subject":"demo.Item/i1","values":{"total":9007199254740993}}}'
+  frame(422, refusal)
+  expect(seen[1]!.refusal).toMatchObject({ status: 422, code: "core.laws.violated", category: "precondition", reason: { values: { total: "9007199254740993" } } })
+  // Anything less is no refusal, and so is the cell's `route.not_found`: the read's client says the route is not served.
+  for (const [status, body] of [
+    [403, '{"code":"authz.denied"}'],
+    [403, '{"format":"norn/refusal@2","retryable":false,"reason":{},"code":"authz.denied","category":"permission","message":"m","explanation":"e"}'],
+    [404, '{"format":"norn/refusal@2","retryable":false,"reason":null,"code":"route.not_found","category":"visibility","message":"m","explanation":"e"}'],
+    [502, "null"],
+  ] as const) {
+    frame(status, body)
+    expect([status, body, seen.at(-1)!.status, seen.at(-1)!.refusal]).toEqual([status, body, status, undefined])
+  }
+})
+
+test("the cell's live host sends the GET's own bytes, so a pushed decimal reaches `exact` with every digit", async () => {
+  const body = '{"version":2,"values":{"amount":1234567890123456.789012345678,"rate":100.000}}'
+  let attachment: unknown = { scope: ["org_demo", "analytics"], authorization: "Bearer reader", subs: {}, role: "member" }
+  const clientListeners = new Map<string, Listener[]>()
+  const frames: string[] = []
+  const serverWs = {
+    serializeAttachment: (v: unknown) => { attachment = structuredClone(v) },
+    deserializeAttachment: () => structuredClone(attachment),
+    send: (data: string) => {
+      frames.push(data)
+      for (const listener of clientListeners.get("message") ?? []) listener({ data })
+    },
+    close: () => {},
+  }
+  const bridgeSocket: SocketLike = {
+    readyState: 0,
+    send: (data: string) => { void hostLive.message(serverWs, data, () => ({ status: 200, body })) },
+    close: () => {},
+    addEventListener: (type, listener) => { clientListeners.set(type, [...(clientListeners.get(type) ?? []), listener]) },
+  }
+  const seen: LiveSnapshot[] = []
+  const client = new LiveClient({ url: () => "wss://studio/api/host/v1/subscribe", connect: () => bridgeSocket })
+  const stop = client.subscribe("/v1/objects/demo.Item/i1?orgId=org_demo&environmentId=analytics", (s) => seen.push(s))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  ;(bridgeSocket as { readyState: number }).readyState = 1
+  for (const listener of clientListeners.get("open") ?? []) listener({})
+  for (let tick = 0; tick < 20 && seen.length === 0; tick += 1) await new Promise((resolve) => setTimeout(resolve, 1))
+  expect(frames[0]).toContain(`"body":${body}`)
+  expect(seen[0]!.exact).toEqual({ version: "2", values: { amount: "1234567890123456.789012345678", rate: "100.000" } })
   stop()
 })

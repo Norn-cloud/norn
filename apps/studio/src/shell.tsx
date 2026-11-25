@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query"
-import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router"
+import { Link, Outlet, createLink, useNavigate, useRouterState } from "@tanstack/react-router"
 import { Command, CommandEmpty, CommandGroup, CommandGroupLabel, CommandInput, CommandItem, CommandItemIcon, CommandList } from "@ui-sdk/react/command"
 import { Dialog, DialogBackdrop, DialogContent, DialogTitle, DialogTrigger } from "@ui-sdk/react/dialog"
 import { MenuGroup, MenuRadioGroup, MenuTrigger } from "@ui-sdk/react/menu"
@@ -8,21 +8,20 @@ import { Toolbar, ToolbarButton, ToolbarLink, ToolbarSeparator } from "@ui-sdk/r
 import { Tree, TreeGroup, TreeItem, TreeItemIndicator, TreeItemLabel } from "@ui-sdk/react/tree"
 import { AssistantPanel, AssistantProvider, useAssistant, type AssistantContent } from "@/assistant-slot"
 import { Bell, ChevronDown, ChevronLeft, ChevronRight, ChevronsUpDown, CircleEllipsis, CloudOff, Code2, Keyboard, LayoutGrid, Loader2, LogOut, MessageCircle, Palette, PanelBottom, PanelLeft, Search, SlidersHorizontal, Sparkles, Wrench, type LucideIcon } from "lucide-react"
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react"
+import { Suspense, lazy, useEffect, useRef, useState, type ComponentProps, type ReactNode, type RefObject } from "react"
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
 import { ChromeDock, ChromeDockOption, ChromeDockTray, ChromeDockTrigger } from "@/components/ui/chrome-dock"
-import { CustomThemeDialog } from "@/components/custom-theme-dialog"
 import { AppearanceProvider, SHELLS, SKINS, isShellChrome, isSkin, useAppearance, type ShellChrome, type Skin } from "@/lib/appearance"
 import { PERSPECTIVES, PerspectiveProvider, isPerspective, usePerspective, type Perspective } from "@/lib/perspective"
-import { Sidebar, SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar"
+import { SIDEBAR_ID, Sidebar, SidebarClose, SidebarInset, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { Hint, KitMenuContent, KitMenuItem, KitMenuLabel, KitMenuRadioItem, KitMenuSeparator, KitPopoverContent, Menu, Popover } from "@/components/kit"
 import { Inspector, InspectorProvider } from "@/lib/inspector"
 import { KINDS, type Kind } from "@/lib/kinds"
 import { cn } from "@/lib/utils"
 import { ViewProvider, useView } from "@/lib/view"
-import { LOCALES, LocaleProvider, directionOf, isLocale, useLocale } from "@/lib/locale"
+import { LOCALES, LocaleProvider, isLocale, useLocale } from "@/lib/locale"
 import { WORKSPACES } from "@/lib/workspaces"
 import { isRetryableModeError, retryMode, useMode } from "@/lib/live-transport"
 import { lastReachableAt, useStudioScope } from "@/lib/definitions"
@@ -33,6 +32,8 @@ import { useAccount, type Account } from "@/lib/session"
 import { WorkspaceError, useWorkspaces, type WorkspacesDocument } from "@/lib/workspaces-api"
 import nornMark from "@/assets/norn-mark.webp"
 import { Keys } from "@/components/keys"
+
+const LazyCustomThemeDialog = lazy(() => import("@/components/custom-theme-dialog").then((module) => ({ default: module.CustomThemeDialog })))
 
 export interface Section {
   readonly path: string
@@ -164,33 +165,43 @@ function useOpenWorkspace(doc: WorkspacesDocument | null | undefined) {
 const real = (workspace: (typeof WORKSPACES)[number], live: boolean) => workspace.results !== undefined || (workspace.recorded && !live)
 
 /** The workspace switcher: the user's real workspaces and a separate labelled Examples group. */
-function ScopeSwitcher({ variant = "sidebar" }: { readonly variant?: "sidebar" | "pill" }) {
+function ScopeSwitcher({ variant = "sidebar" }: { readonly variant?: "sidebar" | "rail" | "pill" }) {
   const workspaces = useWorkspaces()
   const doc = workspaces.data
   const { live, open, active, workspaceOpen, recordedSelection } = useOpenWorkspace(doc)
   const realWorkspaces = doc?.workspaces ?? []
   const examples = WORKSPACES.filter((workspace) => real(workspace, live))
   const showWorkspaceSection = realWorkspaces.length > 0 || workspaceOpen
+  const disc = <span aria-hidden className="flex size-[24px] shrink-0 items-center justify-center rounded-full bg-card text-meta text-foreground ring-1 ring-line">{initials(open?.name ?? "")}</span>
   return (
     <Menu>
       {variant === "pill"
         ? (
-          <MenuTrigger data-scope className="group/scope inline-flex h-8 max-w-60 min-w-0 items-center gap-2 rounded-full border border-border bg-card ps-1.5 pe-2.5 text-sm text-foreground transition-[color,background-color] duration-150 outline-none hover:bg-(--well) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring data-open:bg-(--well)">
-            <span aria-hidden className="flex size-5 shrink-0 items-center justify-center rounded-full bg-(--well) text-[0.625rem] font-medium text-foreground ring-1 ring-border">{initials(open?.name ?? "")}</span>
-            <span className="truncate font-normal tracking-[-0.01em]">{open?.name}</span>
-            <ChevronDown aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+          <MenuTrigger data-scope className="group/scope inline-flex h-9 max-w-60 min-w-0 items-center gap-2 rounded-full bg-card ps-1.5 pe-2.5 text-body text-foreground ring-1 ring-input transition-[color,background-color] duration-150 outline-none hover:bg-(--well) focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring data-open:bg-(--well) max-sm:min-h-[44px]">
+            {disc}
+            <span className="truncate">{open?.name}</span>
+            <ChevronDown aria-hidden className="size-3.5 shrink-0 text-subtle-foreground" />
           </MenuTrigger>
         )
-        : (
-          <MenuTrigger data-scope className="group/scope flex w-full min-w-0 items-center gap-2.5 rounded-lg px-2 py-1.5 text-start text-sm transition-[color,background-color] duration-150 outline-none hover:bg-sidebar-accent focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring data-open:bg-sidebar-accent">
-            <span aria-hidden className="flex size-6 shrink-0 items-center justify-center rounded-md bg-background text-[0.6875rem] font-semibold text-foreground shadow-control ring-1 ring-border/90 dark:bg-card">{initials(open?.name ?? "")}</span>
-            <span className="grid min-w-0 flex-1 leading-tight" title={`${open?.name ?? ""} · ${open?.detail ?? ""}`}>
-              <span className="truncate font-semibold tracking-[-0.01em] text-sidebar-foreground">{open?.name}</span>
-              <span className="truncate text-xs text-muted-foreground">{open?.detail}</span>
-            </span>
-            <ChevronsUpDown aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
-          </MenuTrigger>
-        )}
+        : variant === "rail"
+          ? (
+            <Hint side="end" label={`${open?.name ?? ""} · ${open?.detail ?? ""}`}>
+              <MenuTrigger data-scope aria-label={`Workspace: ${open?.name ?? ""}`} className="flex size-[32px] items-center justify-center rounded-full outline-none transition-colors hover:bg-sidebar-accent/50 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring data-open:bg-sidebar-accent/50">
+                {disc}
+              </MenuTrigger>
+            </Hint>
+          )
+          : (
+            // The workspace and its connection state (Live, Connecting…, unavailable): the state stays visible, never only in a tooltip.
+            <MenuTrigger data-scope className="group/scope flex min-h-[40px] w-full min-w-0 items-center gap-[8px] rounded-(--radius-row) px-[8px] py-[4px] text-start transition-colors duration-150 outline-none hover:bg-sidebar-accent/50 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring data-open:bg-sidebar-accent/50 max-sm:min-h-[44px]">
+              {disc}
+              <span className="grid min-w-0 flex-1 leading-tight" title={`${open?.name ?? ""} · ${open?.detail ?? ""}`}>
+                <span className="truncate text-body text-sidebar-foreground">{open?.name}</span>
+                <span className="truncate text-meta text-muted-foreground">{open?.detail}</span>
+              </span>
+              <ChevronsUpDown aria-hidden className="size-3.5 shrink-0 text-subtle-foreground" />
+            </MenuTrigger>
+          )}
       <KitMenuContent align="start" className="w-72">
         {showWorkspaceSection && (
           <>
@@ -199,23 +210,23 @@ function ScopeSwitcher({ variant = "sidebar" }: { readonly variant?: "sidebar" |
               {workspaceOpen && active === undefined && open && (
                 <KitMenuRadioItem value="current" label={open.name} closeOnSelect className="flex-col items-start gap-0">
                   <span className="truncate">{open.name}</span>
-                  <span className="text-xs text-muted-foreground">{open.detail}</span>
+                  <span className="text-meta text-muted-foreground">{open.detail}</span>
                 </KitMenuRadioItem>
               )}
               {realWorkspaces.map((workspace) => (
                 <KitMenuRadioItem key={workspace.id} value={`ws:${workspace.id}`} label={workspace.name} disabled={!workspace.active} closeOnSelect className="flex-col items-start gap-0">
                   <span className="truncate">{workspace.name}</span>
-                  <span className="text-xs text-muted-foreground">{workspace.hasCell ? roleLabel(workspace.role) : `${roleLabel(workspace.role)} · No cell yet`}</span>
+                  <span className="text-meta text-muted-foreground">{workspace.hasCell ? roleLabel(workspace.role) : `${roleLabel(workspace.role)} · No cell yet`}</span>
                 </KitMenuRadioItem>
               ))}
             </MenuRadioGroup>
             {realWorkspaces.some((workspace) => !workspace.active) && (
-              <p className="px-2 py-1.5 text-xs text-muted-foreground">Switching workspaces is coming soon.</p>
+              <p className="px-2 py-1.5 text-meta text-muted-foreground">Switching workspaces is coming soon.</p>
             )}
           </>
         )}
         {workspaces.isError && (
-          <div role="alert" className="flex items-center justify-between gap-2 px-2 py-1.5 text-xs text-destructive">
+          <div role="alert" className="flex items-center justify-between gap-2 px-2 py-1.5 text-meta text-destructive">
             <span>{workspaces.error instanceof WorkspaceError ? workspaces.error.message : "Could not load workspaces."}</span>
             <button type="button" className="shrink-0 underline underline-offset-2" onClick={() => void workspaces.refetch()}>Retry</button>
           </div>
@@ -228,12 +239,12 @@ function ScopeSwitcher({ variant = "sidebar" }: { readonly variant?: "sidebar" |
               {examples.map((workspace) => workspace.results !== undefined
                 ? (
                   <KitMenuItem key={workspace.id} value={`example:${workspace.id}`} label={workspace.name} render={<a href={workspace.results} target="_blank" rel="noreferrer" />} className="flex-col items-start gap-0">
-                    <span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail} · results ↗</span>
+                    <span>{workspace.name}</span><span className="text-meta text-muted-foreground">{workspace.detail} · results ↗</span>
                   </KitMenuItem>
                 )
                 : (
                   <KitMenuRadioItem key={workspace.id} value={workspace.id} label={workspace.name} className="flex-col items-start gap-0">
-                    <span>{workspace.name}</span><span className="text-xs text-muted-foreground">{workspace.detail}</span>
+                    <span>{workspace.name}</span><span className="text-meta text-muted-foreground">{workspace.detail}</span>
                   </KitMenuRadioItem>
                 ))}
             </MenuRadioGroup>
@@ -277,6 +288,11 @@ function ViewAndLanguage() {
 function AppearanceTray({ side = "bottom", variant = "bar" }: { readonly side?: "top" | "bottom"; readonly variant?: "bar" | "dock" }) {
   const { skin, setSkin, shell, setShell, customTheme } = useAppearance()
   const [themeDialogOpen, setThemeDialogOpen] = useState(false)
+  const [themeDialogMounted, setThemeDialogMounted] = useState(false)
+  const openThemeDialog = () => {
+    setThemeDialogMounted(true)
+    setThemeDialogOpen(true)
+  }
   return (
     <>
     <ChromeDock
@@ -298,11 +314,11 @@ function AppearanceTray({ side = "bottom", variant = "bar" }: { readonly side?: 
         align="end"
         sideOffset={8}
         aria-label="Appearance settings"
-        className="w-72 origin-(--transform-origin) rounded-2xl bg-popover p-3.5 text-popover-foreground shadow-float ring-1 ring-border outline-none transition-[opacity,scale] duration-150 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0"
+        className="w-72 origin-(--transform-origin) rounded-(--radius-popup) bg-popover p-3.5 text-popover-foreground shadow-popup ring-1 ring-panel-border outline-none transition-[opacity,scale] duration-150 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0"
       >
         <div className="space-y-3">
           <div className="space-y-1.5">
-            <div className="flex items-center justify-between text-xs font-medium text-muted-foreground">
+            <div className="flex items-center justify-between text-meta text-muted-foreground">
               <span>Skin</span>
               <span className="truncate capitalize text-foreground">{customTheme ? customTheme.name : skin}</span>
             </div>
@@ -312,7 +328,7 @@ function AppearanceTray({ side = "bottom", variant = "bar" }: { readonly side?: 
                   key={option.id}
                   value={option.id}
                   data-skin-option={option.id}
-                  className="flex items-center gap-2 rounded-lg border border-border/80 bg-background/70 px-2.5 py-2 text-start text-xs font-medium text-foreground transition-colors outline-none hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring data-[state=selected]:border-action data-[state=selected]:bg-action/10 data-[state=selected]:text-foreground"
+                  className="flex items-center gap-2 rounded-lg border border-border/80 bg-background/70 px-2.5 py-2 text-start text-meta text-foreground transition-colors outline-none hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring data-[state=selected]:border-action data-[state=selected]:bg-action/10 data-[state=selected]:text-foreground"
                 >
                   <span aria-hidden className="size-3.5 shrink-0 rounded-full border border-border/90 shadow-xs" style={{ backgroundColor: option.swatch }} />
                   <span className="truncate">{option.label}</span>
@@ -322,7 +338,7 @@ function AppearanceTray({ side = "bottom", variant = "bar" }: { readonly side?: 
           </div>
           <div className="h-px bg-border/80" />
           <div className="space-y-1.5">
-            <div className="text-xs font-medium text-muted-foreground">Shell chrome</div>
+            <div className="text-meta text-muted-foreground">Shell chrome</div>
             <div role="group" aria-label="Shell chrome" className="grid grid-cols-2 gap-1.5">
               {SHELLS.map((option) => {
                 const active = shell === option.id
@@ -334,7 +350,7 @@ function AppearanceTray({ side = "bottom", variant = "bar" }: { readonly side?: 
                     data-shell-option={option.id}
                     data-state={active ? "selected" : "idle"}
                     onClick={() => setShell(option.id)}
-                    className="flex items-center gap-1.5 rounded-lg border border-border/80 bg-background/70 px-2.5 py-2 text-xs font-medium text-foreground transition-colors outline-none hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring aria-pressed:border-action aria-pressed:bg-action/10"
+                    className="flex items-center gap-1.5 rounded-lg border border-border/80 bg-background/70 px-2.5 py-2 text-meta text-foreground transition-colors outline-none hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring aria-pressed:border-action aria-pressed:bg-action/10"
                   >
                     {option.id === "sidebar" ? <PanelLeft aria-hidden className="size-3.5 shrink-0" /> : <PanelBottom aria-hidden className="size-3.5 shrink-0" />}
                     <span className="truncate">{option.label}</span>
@@ -347,19 +363,19 @@ function AppearanceTray({ side = "bottom", variant = "bar" }: { readonly side?: 
           <button
             type="button"
             data-slot="custom-theme-trigger"
-            onClick={() => setThemeDialogOpen(true)}
-            className="flex w-full items-center justify-between gap-2 rounded-lg border border-border/80 bg-background/70 px-2.5 py-2 text-xs font-medium text-foreground transition-colors outline-none hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
+            onClick={openThemeDialog}
+            className="flex w-full items-center justify-between gap-2 rounded-lg border border-border/80 bg-background/70 px-2.5 py-2 text-meta text-foreground transition-colors outline-none hover:bg-surface-subtle focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
           >
             <span className="flex items-center gap-1.5">
               <Code2 aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
               <span>Custom theme JSON…</span>
             </span>
-            {customTheme && <span className="truncate text-[0.6875rem] text-muted-foreground">Active</span>}
+            {customTheme && <span className="truncate text-meta text-muted-foreground">Active</span>}
           </button>
         </div>
       </ChromeDockTray>
     </ChromeDock>
-    <CustomThemeDialog open={themeDialogOpen} onOpenChange={setThemeDialogOpen} />
+    {themeDialogMounted && <Suspense fallback={null}><LazyCustomThemeDialog open={themeDialogOpen} onOpenChange={setThemeDialogOpen} /></Suspense>}
     </>
   )
 }
@@ -369,29 +385,34 @@ export function AccountMenu({ account, onSignOut, inToolbar = true, variant = "r
   readonly account: Account
   readonly onSignOut: () => void
   readonly inToolbar?: boolean
-  readonly variant?: "rail" | "topbar" | "dock"
+  readonly variant?: "rail" | "sidebar" | "topbar" | "dock"
 }) {
   const { user, organization } = account
+  const name = user.name || user.email
+  const disc = <span aria-hidden className="flex size-[24px] shrink-0 items-center justify-center rounded-full bg-card text-meta text-foreground ring-1 ring-line">{initials(name)}</span>
   const triggerClass = variant === "topbar"
-    ? "grid size-9 place-items-center rounded-full bg-[linear-gradient(135deg,#fde2e4,#fbe8cf)] text-[0.8125rem] font-medium text-[#8a3b2c] ring-1 ring-black/5 outline-none transition-[box-shadow,transform] hover:ring-foreground/20 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring dark:bg-[linear-gradient(135deg,#33252a,#332c22)] dark:text-[#f6d6c9] dark:ring-white/10"
+    ? "grid size-9 place-items-center rounded-full bg-card text-meta text-foreground ring-1 ring-line outline-none transition-[box-shadow,transform] hover:ring-foreground/20 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
     : variant === "dock"
-      ? "flex size-8 items-center justify-center rounded-full bg-(--dock-active) text-[0.6875rem] font-medium text-(--dock-foreground) ring-1 ring-(--dock-border) outline-none hover:ring-(--dock-foreground)/40 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
-      : "flex size-8 items-center justify-center rounded-full bg-background text-[0.6875rem] font-medium ring-1 ring-border outline-none hover:ring-foreground/30 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
+      ? "flex size-8 items-center justify-center rounded-full bg-(--dock-active) text-meta text-(--dock-foreground) ring-1 ring-(--dock-border) outline-none hover:ring-(--dock-foreground)/40 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
+      : variant === "sidebar"
+        ? "flex h-[32px] w-full min-w-0 items-center gap-[8px] rounded-(--radius-row) px-[8px] text-start text-body text-sidebar-foreground outline-none transition-colors duration-150 hover:bg-sidebar-accent/50 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring data-open:bg-sidebar-accent/50 max-sm:min-h-[44px]"
+        : "flex size-[32px] items-center justify-center rounded-full outline-none transition-colors hover:bg-sidebar-accent/50 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring data-open:bg-sidebar-accent/50"
+  const content = variant === "sidebar" ? <>{disc}<span className="truncate">{user.name || user.email}</span></> : variant === "rail" ? disc : initials(name)
   const trigger = inToolbar
-    ? <ToolbarButton render={<MenuTrigger />} aria-label="Account" className={triggerClass}>{initials(user.name || user.email)}</ToolbarButton>
-    : <MenuTrigger aria-label="Account" className={triggerClass}>{initials(user.name || user.email)}</MenuTrigger>
+    ? <ToolbarButton render={<MenuTrigger />} aria-label="Account" className={triggerClass}>{content}</ToolbarButton>
+    : <MenuTrigger aria-label="Account" className={triggerClass}>{content}</MenuTrigger>
   return (
     <Menu onAction={(value) => { if (value === "sign-out") onSignOut() }}>
-      <Hint side={variant === "topbar" ? "bottom" : variant === "dock" ? "top" : "right"} label={`${user.name} · ${organization ? `${organization.name} · ${organization.role}` : "No organization"}`}>
+      <Hint side={variant === "topbar" ? "bottom" : variant === "dock" ? "top" : "end"} label={`${user.name} · ${organization ? `${organization.name} · ${organization.role}` : "No organization"}`}>
         {trigger}
       </Hint>
-      <KitMenuContent side={variant === "topbar" ? "bottom" : variant === "dock" ? "top" : "end"} align="end" className="min-w-60">
-        <div className="grid px-2 py-1.5 text-sm">
-          <span className="font-medium">{user.name}</span>
+      <KitMenuContent side={variant === "topbar" ? "bottom" : variant === "dock" || variant === "sidebar" ? "top" : "end"} align={variant === "sidebar" ? "start" : "end"} className="min-w-60">
+        <div className="grid px-2 py-1.5 text-body">
+          <span>{user.name}</span>
           <span className="text-meta text-muted-foreground">{user.email}</span>
         </div>
         <KitMenuSeparator />
-        <div className="grid px-2 py-1.5 text-sm">
+        <div className="grid px-2 py-1.5 text-body">
           <span>{organization?.name ?? "No organization"}</span>
           {organization && <span className="text-meta text-muted-foreground">Role: {organization.role}</span>}
         </div>
@@ -404,7 +425,7 @@ export function AccountMenu({ account, onSignOut, inToolbar = true, variant = "r
   )
 }
 
-/** Every destination's items and count, read once for the rail, the sidebar, the breadcrumbs and search. */
+/** Every destination's items and count, read once for the sidebar, the breadcrumbs and search. */
 function useNavigation(sections: readonly Section[]) {
   // Every section's hooks run on every render, in one order, whichever perspective is shown.
   const menus = new Map(sections.map((section) => [section.path, (section.useMenu ?? none)() ?? []] as const))
@@ -414,99 +435,88 @@ function useNavigation(sections: readonly Section[]) {
 
 type Navigation = ReturnType<typeof useNavigation>
 
-const railButton = "relative flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-[color,background-color] duration-150 outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring [&_svg]:size-[1.0625rem]"
-const railActive = "bg-action/12 text-action ring-1 ring-inset ring-action/20 hover:bg-action/15 hover:text-action dark:bg-action/18 dark:ring-action/30"
+/**
+ * A sidebar link without the router's own active marking: TanStack marks every fuzzy-matching link
+ * `aria-current="page"`, but exactly one row is current (DESIGN.md 9.1), so the sidebar says which.
+ */
+function NavAnchor({ "aria-current": _active, current, ref, ...props }: ComponentProps<"a"> & { readonly current?: boolean }) {
+  return <a ref={ref} aria-current={current ? "page" : undefined} {...props} />
+}
+const NavLink = createLink(NavAnchor)
 
-/** One destination on the rail: its icon, its name as a hint, and its count. */
-function RailLink({ section, count, firstHref, active, onExpandSection }: {
-  readonly section: Section; readonly count: string | undefined; readonly firstHref?: string; readonly active?: boolean; readonly onExpandSection?: (path: string) => void
+/** A destination's accessible name: its label, then its state when it has a count ("Inbox, 3 open"). */
+const named = (label: string, count: string | undefined) => count ? `${label}, ${count} open` : label
+
+// One rail button (DESIGN.md 9.1): 32×32, muted at rest, a 50% wash on hover or while pressed (the
+// assistant), the neutral pill only when current: one destination holds the pill at a time.
+const railButton = "relative flex size-[32px] shrink-0 items-center justify-center rounded-(--radius-row) text-muted-foreground transition-colors duration-150 outline-none hover:bg-sidebar-accent/50 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring aria-[current=page]:bg-sidebar-accent aria-[current=page]:text-sidebar-accent-foreground aria-pressed:bg-sidebar-accent/50 motion-reduce:transition-none [&_svg]:size-4"
+/** The attention dot: 6px in `--ring`, which reaches 3:1 on the ground, the wash and the pill; the name carries the state. */
+const attentionDot = "absolute end-[5px] top-[5px] size-[6px] rounded-full bg-ring ring-2 ring-sidebar"
+
+/** One destination on the collapsed rail: its icon, its name and state as one label and tooltip, and an attention dot. */
+function RailLink({ section, count, current, onExpandSection }: {
+  readonly section: Section; readonly count: string | undefined; readonly current: boolean; readonly onExpandSection: (path: string) => void
 }) {
-  const { setOpen, setOpenMobile } = useSidebar()
+  const { setOpen } = useSidebar()
   const Icon = section.icon
-  const label = count ? `${section.label}, ${count} open` : section.label
-  const badge = count && <span data-count className="absolute -end-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[0.625rem] leading-none font-semibold text-destructive-foreground tabular-nums ring-2 ring-shell">{count}</span>
-  // A destination without its own index page (Records) opens its first item, or expands the sidebar when none is loaded yet.
-  const to = section.index === false ? firstHref : section.path
-  if (to === undefined) {
+  const label = named(section.label, count)
+  const dot = count && <span data-count aria-hidden className={attentionDot} />
+  // A destination with no page of its own (Records) expands the sidebar to show its items.
+  if (section.index === false) {
     return (
-      <Hint label={section.label}>
-        <ToolbarButton aria-label={label} data-active={active || undefined} onClick={() => { onExpandSection?.(section.path); setOpen(true) }}
-          className={cn(railButton, active && railActive)}>
-          <Icon aria-hidden />{badge}
+      <Hint side="end" label={label}>
+        <ToolbarButton aria-label={label} aria-current={current ? "page" : undefined} onClick={() => { onExpandSection(section.path); setOpen(true) }} className={railButton}>
+          <Icon aria-hidden strokeWidth={1.6} />{dot}
         </ToolbarButton>
       </Hint>
     )
   }
   return (
-    <Hint label={section.label}>
-      <ToolbarLink
-        render={<Link to={to} activeOptions={{ exact: to === "/" }} onClick={() => setOpenMobile(false)} />}
-        aria-label={label}
-        data-active={active || undefined}
-        className={cn(railButton, "data-[status=active]:bg-action/12 data-[status=active]:text-action data-[status=active]:ring-1 data-[status=active]:ring-inset data-[status=active]:ring-action/20 dark:data-[status=active]:bg-action/18 dark:data-[status=active]:ring-action/30", active && railActive)}
-      >
-        <Icon aria-hidden />{badge}
+    <Hint side="end" label={label}>
+      <ToolbarLink render={<NavLink to={section.path} current={current} />} aria-label={label} className={railButton}>
+        <Icon aria-hidden strokeWidth={1.6} />{dot}
       </ToolbarLink>
     </Hint>
   )
 }
 
-/** The rail's assistant button: opens the panel beside the page (also ⌘J). */
-function AssistantToggle({ title }: { readonly title: string }) {
-  const { open, toggle } = useAssistant()
-  return (
-    <Hint label={<>{title} <Keys className="opacity-70">⌘J</Keys></>}>
-      <ToolbarButton aria-label={title} aria-pressed={open} onClick={toggle} className={cn(railButton, "aria-pressed:bg-action/12 aria-pressed:text-action aria-pressed:ring-1 aria-pressed:ring-inset aria-pressed:ring-action/20 dark:aria-pressed:bg-action/18")}>
-        <Sparkles aria-hidden />
-      </ToolbarButton>
-    </Hint>
-  )
-}
-
 /**
- * The slim rail: the mark, the destinations every perspective shares (Home, Inbox), then the
- * assistant and the viewer. With the sidebar collapsed it also carries the perspective's
- * destinations, so nothing is out of reach.
+ * The collapsed rail (48px): the shared destinations, then each space's destinations under a
+ * decorative hairline. Items are hidden; the current destination keeps the pill.
  */
-function Rail({ sections, perspective, navigation, current, account, onSignOut, assistant, railRef, onExpandSection }: {
+function RailList({ sections, perspective, navigation, current, onExpandSection }: {
   readonly sections: readonly Section[]; readonly perspective: Perspective; readonly navigation: Navigation
-  readonly current: Section | undefined; readonly account: Account; readonly onSignOut: () => void; readonly assistant?: AssistantContent
-  readonly railRef: RefObject<HTMLDivElement | null>; readonly onExpandSection: (path: string) => void
+  readonly current: Section | undefined; readonly onExpandSection: (path: string) => void
 }) {
-  const { state, isMobile } = useSidebar()
   const global = sections.filter((section) => section.perspective === "global")
-  const own = state === "collapsed" && !isMobile ? sections.filter((section) => section.perspective === perspective) : []
+  const own = sections.filter((section) => section.perspective === perspective)
   const groups = [...new Set(own.map(({ group }) => group))]
-  const firstHref = (section: Section) => navigation.menus.get(section.path)?.find(({ href }) => !href.startsWith("#"))?.href
+  const label = PERSPECTIVES.find(({ id }) => id === perspective)?.label ?? ""
+  const link = (section: Section) => (
+    <RailLink key={section.path} section={section} count={navigation.badges.get(section.path)} current={current?.path === section.path} onExpandSection={onExpandSection} />
+  )
   return (
-    <div ref={railRef} className="h-full shrink-0 border-e border-sidebar-border/75 group-data-[collapsible=icon]:border-e-0">
-      <Toolbar orientation="vertical" aria-label="Studio" className="flex h-full w-(--sidebar-width-icon) flex-col items-center gap-1 py-2.5">
-        <Link to="/" aria-label="Norn Studio home" className="mb-2 flex size-8 items-center justify-center rounded-lg outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">
-          <img src={nornMark} alt="" width={24} height={24} className="size-6 object-contain" />
-        </Link>
-        {global.map((section) => <RailLink key={section.path} section={section} count={navigation.badges.get(section.path)} />)}
-        {groups.map((group) => (
-          <div key={group ?? ""} role="group" aria-label={group} className="flex flex-col items-center gap-1">
-            <div aria-hidden className="my-1.5 h-px w-4 bg-sidebar-border" />
-            {own.filter((section) => section.group === group).map((section) => (
-              <RailLink key={section.path} section={section} count={navigation.badges.get(section.path)}
-                firstHref={firstHref(section)} active={section.index === false && current?.path === section.path}
-                onExpandSection={onExpandSection} />
-            ))}
-          </div>
-        ))}
-        <div className="mt-auto flex flex-col items-center gap-2">
-          {assistant && <AssistantToggle title={assistant.title} />}
-          <AccountMenu account={account} onSignOut={onSignOut} />
+    <Toolbar orientation="vertical" aria-label={`${label} pages`} className="flex flex-col items-center gap-px">
+      {global.map(link)}
+      {groups.map((group) => (
+        <div key={group ?? ""} role="group" aria-label={group ?? label} className="flex flex-col items-center gap-px">
+          <div aria-hidden className="my-[8px] h-px w-[16px] bg-sidebar-border" />
+          {own.filter((section) => section.group === group).map(link)}
         </div>
-      </Toolbar>
-    </div>
+      ))}
+    </Toolbar>
   )
 }
 
-// Focus stays on the tree item; its row is the label inside.
+// Focus stays on the tree item; its row is the label inside, so the 2px ring is drawn on the row, inside the 8px gutter.
 const focusRow = "outline-none focus-visible:[&>[data-slot=tree-label]]:relative focus-visible:[&>[data-slot=tree-label]]:z-10 focus-visible:[&>[data-slot=tree-label]]:outline-2 focus-visible:[&>[data-slot=tree-label]]:outline-solid focus-visible:[&>[data-slot=tree-label]]:outline-offset-1 focus-visible:[&>[data-slot=tree-label]]:outline-ring"
-const row = "relative flex h-7.5 w-full min-w-0 items-center gap-2 rounded-lg px-2 text-sm text-sidebar-foreground/80 transition-[color,background-color] duration-150 outline-none hover:bg-sidebar-accent hover:text-sidebar-foreground data-current:bg-background data-current:font-medium data-current:text-foreground data-current:shadow-control data-current:ring-1 data-current:ring-border/80 dark:data-current:bg-card dark:data-current:ring-border data-current:[&_svg]:text-action data-current:before:absolute data-current:before:inset-y-1.5 data-current:before:start-0 data-current:before:w-[2.5px] data-current:before:rounded-full data-current:before:bg-action [&_svg]:size-4 [&_svg]:shrink-0"
+// One source-list row (DESIGN.md 9.1): 32px (44px in the phone sheet), step 2 at 400, muted at rest, a 50% wash
+// on hover with no text change, and the neutral pill with its own ink when current. No ring, bar or accent colour.
+const row = "relative flex h-[32px] w-full min-w-0 items-center gap-[8px] rounded-(--radius-row) px-[8px] text-body font-normal text-muted-foreground transition-colors duration-150 outline-none hover:bg-sidebar-accent/50 data-current:bg-sidebar-accent data-current:text-sidebar-accent-foreground motion-reduce:transition-none max-sm:h-auto max-sm:min-h-[44px] [&_svg]:size-4 [&_svg]:shrink-0 max-sm:[&_svg]:size-[18px]"
+// A group header: a quiet step-1 label in sentence case with a 32px hit area; its chevron shows on hover and focus
+// (always where the reader cannot hover, and in the phone sheet), turns when open, and mirrors in RTL.
+const groupHeading = "group/heading flex h-[32px] w-full min-w-0 items-center gap-[4px] rounded-(--radius-row) px-[8px] text-meta font-normal text-muted-foreground outline-none max-sm:min-h-[44px]"
+const chevron = "ms-auto flex text-subtle-foreground opacity-0 transition-[opacity,rotate] duration-150 group-hover/heading:opacity-100 [[role=treeitem]:focus-visible>[data-slot=tree-label]>&]:opacity-100 rtl:rotate-180 data-expanded:rotate-90 motion-reduce:transition-none [@media(hover:none)]:opacity-100 group-data-[mobile=true]/sidebar:opacity-100 [&_svg]:size-3.5"
 
 /** The current page's tree value: the item that claims the longest prefix of it, else its destination. */
 function currentOf(sections: readonly Section[], navigation: Navigation, pathname: string): string | null {
@@ -532,18 +542,21 @@ export function diffExpanded(
 }
 
 /**
- * The perspective's sidebar: the workspace switcher, then its spaces (collapsible headings, never
- * walls), each listing its destinations; the open destination lists its items under it.
+ * The expanded source list: the shared destinations (Home, Inbox), then the perspective's spaces
+ * (collapsible headings, never walls), each listing its destinations; the open destination lists its
+ * items under it. Built on the UI SDK `Tree`, whose `current` marks the one current row.
  */
-function SectionSidebar({ sections, perspective, navigation, pathname, chosen, onChosenChange }: {
+function SectionTree({ sections, perspective, navigation, pathname, chosen, onChosenChange }: {
   readonly sections: readonly Section[]; readonly perspective: Perspective; readonly navigation: Navigation; readonly pathname: string
   readonly chosen: Readonly<Record<string, boolean>>
   readonly onChosenChange: (update: (previous: Readonly<Record<string, boolean>>) => Readonly<Record<string, boolean>>) => void
 }) {
   const { setOpenMobile } = useSidebar()
+  const global = sections.filter((section) => section.perspective === "global")
   const own = sections.filter((section) => section.perspective === perspective)
+  const listed = [...global, ...own]
   const open = destinationOf(own, pathname, navigation.menus)
-  const current = currentOf(own, navigation, pathname)
+  const current = currentOf(listed, navigation, pathname)
   const spaces = [
     ...new Set([
       ...own.map(({ group }) => group ?? ""),
@@ -578,63 +591,59 @@ function SectionSidebar({ sections, perspective, navigation, pathname, chosen, o
   const close = () => setOpenMobile(false)
   const label = PERSPECTIVES.find(({ id }) => id === perspective)?.label ?? ""
   return (
-    <div className="flex h-full min-w-0 flex-1 flex-col">
-      <div className="px-2 pt-2 pb-1"><ScopeSwitcher /></div>
-      <nav aria-label={label} className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
-        <Tree aria-label={`${label} pages`} mode="none" expandOnPress current={current} expanded={expanded}
-          onExpandedChange={(next) => onChosenChange((previous) => diffExpanded(expanded, next, previous))}>
-          {spaces.map((space) => {
-            const members = own.filter((section) => (section.group ?? "") === space)
-            const pinnedItems = own.filter((section) => section.pinned).flatMap((section) =>
-              (navigation.menus.get(section.path) ?? [])
-                .filter((entry) => entry.group === space)
-                .map((entry) => {
-                  const Icon = entry.icon ?? section.icon
-                  return (
-                    <TreeItem key={entry.href} value={entry.href} label={typeof entry.label === "string" ? entry.label : undefined} className={focusRow}>
-                      <TreeItemLabel render={<Link {...target(section, entry.href)} onClick={close} />} className={row}>
-                        <Icon aria-hidden /><span className="truncate">{entry.label}</span>
-                      </TreeItemLabel>
-                    </TreeItem>
-                  )
-                }),
-            )
-            const items = [
-              ...members.map((section) => {
-                const entries = navigation.menus.get(section.path) ?? []
-                const shownEntries = section.pinned ? entries.filter((entry) => !entry.group) : entries
-                return <Destination key={section.path} section={section} entries={shownEntries} badge={navigation.badges.get(section.path)} close={close} />
-              }),
-              ...pinnedItems,
-            ]
-            if (space === "") return items
-            return (
-              <TreeItem key={space} value={`space:${space}`} label={space} className={cn("mt-4 first:mt-2", focusRow)}>
-                <TreeItemLabel className="group/heading flex h-6 w-full items-center gap-1 rounded-md px-2 text-[0.6875rem] font-semibold tracking-[0.04em] text-muted-foreground uppercase outline-none hover:text-foreground">
-                  <span className="truncate">{space}</span>
-                  <TreeItemIndicator className="ms-auto flex opacity-0 transition-[opacity,rotate] group-hover/heading:opacity-100 data-expanded:rotate-90"><ChevronRight aria-hidden className="size-3.5" /></TreeItemIndicator>
-                </TreeItemLabel>
-                <TreeGroup className="mt-1 space-y-0.5">{items}</TreeGroup>
-              </TreeItem>
-            )
-          })}
-        </Tree>
-      </nav>
-    </div>
+    <Tree aria-label={`${label} pages`} mode="none" expandOnPress current={current} expanded={expanded}
+      onExpandedChange={(next) => onChosenChange((previous) => diffExpanded(expanded, next, previous))}>
+      {global.map((section) => <Destination key={section.path} section={section} entries={[]} badge={navigation.badges.get(section.path)} close={close} />)}
+      {spaces.map((space) => {
+        const members = own.filter((section) => (section.group ?? "") === space)
+        const pinnedItems = own.filter((section) => section.pinned).flatMap((section) =>
+          (navigation.menus.get(section.path) ?? [])
+            .filter((entry) => entry.group === space)
+            .map((entry) => {
+              const Icon = entry.icon ?? section.icon
+              return (
+                <TreeItem key={entry.href} value={entry.href} label={typeof entry.label === "string" ? entry.label : undefined} className={focusRow}>
+                  <TreeItemLabel render={<NavLink {...target(section, entry.href)} onClick={close} />} className={row}>
+                    <Icon aria-hidden strokeWidth={1.6} /><span className="truncate">{entry.label}</span>
+                  </TreeItemLabel>
+                </TreeItem>
+              )
+            }),
+        )
+        const items = [
+          ...members.map((section) => {
+            const entries = navigation.menus.get(section.path) ?? []
+            const shownEntries = section.pinned ? entries.filter((entry) => !entry.group) : entries
+            return <Destination key={section.path} section={section} entries={shownEntries} badge={navigation.badges.get(section.path)} close={close} />
+          }),
+          ...pinnedItems,
+        ]
+        if (space === "") return items
+        return (
+          <TreeItem key={space} value={`space:${space}`} label={space} className={cn("mt-[12px]", focusRow)}>
+            <TreeItemLabel className={groupHeading}>
+              <span className="truncate">{space}</span>
+              <TreeItemIndicator className={chevron}><ChevronRight aria-hidden /></TreeItemIndicator>
+            </TreeItemLabel>
+            <TreeGroup>{items}</TreeGroup>
+          </TreeItem>
+        )
+      })}
+    </Tree>
   )
 }
 
-/** One destination in the sidebar: its row (a link, or a plain heading when it has no page), then its items. */
+/** One destination in the source list: its row (a link, or a plain heading when it has no page), then its items. */
 function Destination({ section, entries, badge, close }: { readonly section: Section; readonly entries: readonly MenuEntry[]; readonly badge: string | undefined; readonly close: () => void }) {
   const headings = [...new Set(entries.map(({ group }) => group ?? ""))]
-  // Items carry no icon: under one destination they are all one kind, so an icon would repeat, not help scanning.
+  // Items indent to the label column and carry no icon: under one destination they are all one kind.
   const rows = (members: readonly MenuEntry[]) => members.map((entry) => {
     const count = shown(entry.count)
     return (
       <TreeItem key={entry.href} value={entry.href} label={typeof entry.label === "string" ? entry.label : undefined} className={focusRow}>
-        <TreeItemLabel render={<Link {...target(section, entry.href)} onClick={close} />} className={cn(row, "ps-8", entry.kind && KINDS[entry.kind].svg)}>
+        <TreeItemLabel render={<NavLink {...target(section, entry.href)} onClick={close} />} className={cn(row, "ps-[32px]")}>
           <span className="truncate">{entry.label}</span>
-          {count && <span className="ms-auto text-xs text-muted-foreground tabular-nums">{count}</span>}
+          {count && <span className="ms-auto text-meta tabular-nums">{count}</span>}
         </TreeItemLabel>
       </TreeItem>
     )
@@ -643,28 +652,80 @@ function Destination({ section, entries, badge, close }: { readonly section: Sec
     const members = entries.filter((entry) => (entry.group ?? "") === heading)
     if (heading === "") return rows(members)
     return (
-      <TreeItem key={heading} value={`group:${section.path}:${heading}`} label={heading} className={cn("mt-1", focusRow)}>
-        <TreeItemLabel className="group/heading flex h-6 w-full items-center gap-1 rounded-md ps-8 pe-2 text-xs text-muted-foreground outline-none hover:text-foreground">
+      <TreeItem key={heading} value={`group:${section.path}:${heading}`} label={heading} className={focusRow}>
+        <TreeItemLabel className={cn(groupHeading, "ps-[32px]")}>
           <span className="truncate">{heading}</span>
-          <span className="text-muted-foreground/70 tabular-nums">{members.length}</span>
-          <TreeItemIndicator className="ms-auto flex opacity-0 transition-[opacity,rotate] group-hover/heading:opacity-100 data-expanded:rotate-90"><ChevronRight aria-hidden className="size-3.5" /></TreeItemIndicator>
+          <span className="tabular-nums">{members.length}</span>
+          <TreeItemIndicator className={chevron}><ChevronRight aria-hidden /></TreeItemIndicator>
         </TreeItemLabel>
-        <TreeGroup className="space-y-px">{rows(members)}</TreeGroup>
+        <TreeGroup>{rows(members)}</TreeGroup>
       </TreeItem>
     )
   })
   const Icon = section.icon
   const head = <>
-    <Icon aria-hidden /><span className="truncate">{section.label}</span>
-    {badge && <span className="ms-auto rounded-full bg-destructive px-1.5 text-[0.6875rem] leading-4 font-semibold text-destructive-foreground tabular-nums">{badge}</span>}
+    <Icon aria-hidden strokeWidth={1.6} /><span className="truncate">{section.label}</span>
+    {badge && <span data-count className="ms-auto text-meta tabular-nums">{badge}</span>}
   </>
   return (
     <TreeItem value={`dest:${section.path}`} data-section-path={section.path} label={section.label} className={focusRow}>
       {section.index === false
         ? <TreeItemLabel className={cn(row, "cursor-default")}>{head}</TreeItemLabel>
-        : <TreeItemLabel render={<Link to={section.path} onClick={close} />} className={cn(row, section.kind && KINDS[section.kind].svg)}>{head}</TreeItemLabel>}
-      {entries.length > 0 && <TreeGroup className="mt-px space-y-px">{children}</TreeGroup>}
+        : <TreeItemLabel render={<NavLink to={section.path} onClick={close} />} className={row}>{head}</TreeItemLabel>}
+      {entries.length > 0 && <TreeGroup>{children}</TreeGroup>}
     </TreeItem>
+  )
+}
+
+/** The sidebar's footer row for the assistant: a source-list row expanded, a rail button collapsed (also ⌘J). */
+function AssistantRow({ title, rail }: { readonly title: string; readonly rail: boolean }) {
+  const { open, toggle } = useAssistant()
+  if (rail) {
+    return (
+      <Hint side="end" label={<>{title} <Keys className="opacity-70">⌘J</Keys></>}>
+        <button type="button" aria-label={title} aria-pressed={open} onClick={toggle} className={railButton}><Sparkles aria-hidden strokeWidth={1.6} /></button>
+      </Hint>
+    )
+  }
+  return (
+    <button type="button" aria-label={title} aria-pressed={open} onClick={toggle}
+      className={cn(row, "focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring aria-pressed:bg-sidebar-accent/50")}>
+      <Sparkles aria-hidden strokeWidth={1.6} /><span className="truncate">{title}</span>
+      <Keys className="ms-auto text-meta">⌘J</Keys>
+    </button>
+  )
+}
+
+/**
+ * The sidebar (DESIGN.md 9.1): the workspace switcher, one `Studio navigation` landmark around every
+ * destination (the source list expanded, the rail collapsed), then the assistant and the principal.
+ */
+function SidebarBody({ sections, perspective, navigation, pathname, current, chosen, onChosenChange, account, onSignOut, assistant, navRef, onExpandSection }: {
+  readonly sections: readonly Section[]; readonly perspective: Perspective; readonly navigation: Navigation; readonly pathname: string
+  readonly current: Section | undefined
+  readonly chosen: Readonly<Record<string, boolean>>
+  readonly onChosenChange: (update: (previous: Readonly<Record<string, boolean>>) => Readonly<Record<string, boolean>>) => void
+  readonly account: Account; readonly onSignOut: () => void; readonly assistant?: AssistantContent
+  readonly navRef: RefObject<HTMLElement | null>; readonly onExpandSection: (path: string) => void
+}) {
+  const { state, isMobile } = useSidebar()
+  const rail = state === "collapsed" && !isMobile
+  return (
+    <>
+      <div className={cn("flex h-[48px] shrink-0 items-center gap-[4px] px-[8px] max-sm:h-[56px]", rail && "justify-center")}>
+        <ScopeSwitcher variant={rail ? "rail" : "sidebar"} />
+        <SidebarClose />
+      </div>
+      <nav ref={navRef} aria-label="Studio navigation" className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-[8px] pb-[8px]">
+        {rail
+          ? <RailList sections={sections} perspective={perspective} navigation={navigation} current={current} onExpandSection={onExpandSection} />
+          : <SectionTree key={perspective} sections={sections} perspective={perspective} navigation={navigation} pathname={pathname} chosen={chosen} onChosenChange={onChosenChange} />}
+      </nav>
+      <div className={cn("flex shrink-0 flex-col gap-px px-[8px] pt-[4px] pb-[8px]", rail && "items-center")}>
+        {assistant && <AssistantRow title={assistant.title} rail={rail} />}
+        <AccountMenu account={account} onSignOut={onSignOut} inToolbar={false} variant={rail ? "rail" : "sidebar"} />
+      </div>
+    </>
   )
 }
 
@@ -683,19 +744,19 @@ function Crumbs({ section, entries, pathname }: { readonly section: Section; rea
         <BreadcrumbItem className={cn("min-w-0", sectionClass)}>
           {last === "section" || section.index === false
             ? <BreadcrumbPage className={cn("truncate", last !== "section" && "font-normal text-muted-foreground")}>{section.label}</BreadcrumbPage>
-            : <BreadcrumbLink asChild><Link to={section.path} className="inline-flex min-w-0 items-center gap-0.5"><ChevronLeft aria-hidden className={cn("size-3.5 shrink-0 rtl:rotate-180", last === "entry" ? "@sm:hidden" : "hidden")} /><span className="truncate">{section.label}</span></Link></BreadcrumbLink>}
+            : <BreadcrumbLink asChild><Link to={section.path} activeOptions={{ exact: true }} className="inline-flex min-w-0 items-center gap-0.5"><ChevronLeft aria-hidden className={cn("size-3.5 shrink-0 rtl:rotate-180", last === "entry" ? "@sm:hidden" : "hidden")} /><span className="truncate">{section.label}</span></Link></BreadcrumbLink>}
         </BreadcrumbItem>
         {entry && <>
           <BreadcrumbSeparator className={sep1Class} />
           <BreadcrumbItem className={cn("min-w-0", entryClass)}>
             {last === "entry"
               ? <BreadcrumbPage className="truncate">{entry.label}</BreadcrumbPage>
-              : <BreadcrumbLink asChild><Link to={entry.href} className="inline-flex min-w-0 items-center gap-0.5"><ChevronLeft aria-hidden className="size-3.5 shrink-0 rtl:rotate-180 @md:hidden" /><span className="truncate">{entry.label}</span></Link></BreadcrumbLink>}
+              : <BreadcrumbLink asChild><Link to={entry.href} activeOptions={{ exact: true }} className="inline-flex min-w-0 items-center gap-0.5"><ChevronLeft aria-hidden className="size-3.5 shrink-0 rtl:rotate-180 @md:hidden" /><span className="truncate">{entry.label}</span></Link></BreadcrumbLink>}
           </BreadcrumbItem>
         </>}
         {record !== undefined && <>
           <BreadcrumbSeparator className="hidden @md:block" />
-          <BreadcrumbItem className="hidden min-w-0 @md:inline-flex"><BreadcrumbPage className="truncate font-mono text-xs">{record}</BreadcrumbPage></BreadcrumbItem>
+          <BreadcrumbItem className="hidden min-w-0 @md:inline-flex"><BreadcrumbPage className="truncate font-mono text-meta">{record}</BreadcrumbPage></BreadcrumbItem>
         </>}
       </BreadcrumbList>
     </Breadcrumb>
@@ -708,10 +769,10 @@ function Crumbs({ section, entries, pathname }: { readonly section: Section; rea
  */
 function PerspectiveSwitch({ perspective, onChange }: { readonly perspective: Perspective; readonly onChange: (next: Perspective) => void }) {
   return (
-    <div role="group" aria-label="Perspective" data-perspective={perspective} className="flex h-8 shrink-0 items-center rounded-lg border border-border/80 bg-surface-subtle p-0.5 dark:bg-shell">
+    <div role="group" aria-label="Perspective" data-perspective={perspective} className="flex h-8 shrink-0 items-center rounded-full border border-border/80 bg-surface-subtle p-0.5 dark:bg-shell">
       {PERSPECTIVES.map(({ id, label }) => (
         <button key={id} type="button" aria-pressed={perspective === id} onClick={() => onChange(id)}
-          className="flex h-[1.625rem] items-center gap-1.5 rounded-md px-1.5 text-sm text-muted-foreground transition-[color,background-color,box-shadow] duration-150 outline-none hover:text-foreground focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-control aria-pressed:ring-1 aria-pressed:ring-border/70 aria-pressed:[&_svg]:text-action dark:aria-pressed:bg-accent dark:aria-pressed:ring-border @sm:px-2 @lg:px-2.5 [&_svg]:size-3.5">
+          className="flex h-[1.625rem] items-center gap-1.5 rounded-full px-2 text-body text-muted-foreground transition-[color,background-color,box-shadow] duration-150 outline-none hover:text-foreground focus-visible:z-10 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring aria-pressed:bg-background aria-pressed:font-medium aria-pressed:text-foreground aria-pressed:shadow-control aria-pressed:ring-1 aria-pressed:ring-border/70 aria-pressed:[&_svg]:text-action dark:aria-pressed:bg-accent dark:aria-pressed:ring-border @sm:px-2 @lg:px-2.5 [&_svg]:size-3.5">
           {id === "workspace" ? <LayoutGrid aria-hidden /> : <Wrench aria-hidden />}<span className="sr-only @lg:not-sr-only">{label}</span>
         </button>
       ))}
@@ -731,11 +792,11 @@ function CommandMenu({ sections, navigation, onPerspective }: { readonly section
   ])
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger shortcut="mod+k" aria-label="Search" className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition-[color,background-color,border-color] duration-150 outline-none hover:bg-surface-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring @2xl:w-full @2xl:justify-start @2xl:gap-2 @2xl:border @2xl:border-border/90 @2xl:bg-surface-subtle/70 @2xl:px-2.5 @2xl:hover:border-input @2xl:hover:bg-surface-subtle">
-        <Search aria-hidden className="size-4 shrink-0" /><span className="hidden truncate @2xl:inline">Search…</span><Keys className="ms-auto hidden rounded border border-border/90 bg-background px-1.5 py-0.5 text-[0.6875rem] leading-none text-muted-foreground @2xl:inline">⌘K</Keys>
+      <DialogTrigger shortcut="mod+k" aria-label="Search" className="flex size-[32px] items-center justify-center rounded-full max-sm:size-[44px] text-muted-foreground transition-[color,background-color,border-color] duration-150 outline-none hover:bg-surface-subtle hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring @2xl:w-full @2xl:justify-start @2xl:gap-2 @2xl:border @2xl:border-border/90 @2xl:bg-surface-subtle/70 @2xl:px-2.5 @2xl:hover:border-input @2xl:hover:bg-surface-subtle">
+        <Search aria-hidden className="size-4 shrink-0" /><span className="hidden truncate @2xl:inline">Search…</span><Keys className="ms-auto hidden rounded border border-border/90 bg-background px-1.5 py-0.5 text-meta leading-none text-muted-foreground @2xl:inline">⌘K</Keys>
       </DialogTrigger>
       <DialogBackdrop className="fixed inset-0 bg-black/40 backdrop-blur-[2px] transition-opacity duration-150 data-starting-style:opacity-0 data-ending-style:opacity-0" />
-      <DialogContent className="fixed top-[12vh] left-1/2 m-0 w-[min(36rem,calc(100vw-2rem))] -translate-x-1/2 overflow-hidden rounded-2xl bg-popover p-0 text-popover-foreground shadow-float ring-1 ring-border outline-none transition-[opacity,scale] duration-150 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0">
+      <DialogContent className="fixed top-[12vh] left-1/2 m-0 w-[min(36rem,calc(100vw-2rem))] -translate-x-1/2 overflow-hidden rounded-(--radius-popup) bg-popover p-0 text-popover-foreground shadow-popup ring-1 ring-panel-border outline-none transition-[opacity,scale] duration-150 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0">
         <DialogTitle className="sr-only">Search Studio</DialogTitle>
         <Command onAction={(value) => {
           setOpen(false)
@@ -756,49 +817,49 @@ function CommandMenu({ sections, navigation, onPerspective }: { readonly section
         }}>
           <div className="flex items-center gap-2 border-b px-4">
             <Search aria-hidden className="size-4 text-muted-foreground" />
-            <CommandInput aria-label="Search pages, object types, metrics" placeholder="Search pages, object types, metrics…" className="h-12 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground" />
+            <CommandInput aria-label="Search pages, object types, metrics" placeholder="Search pages, object types, metrics…" className="h-12 flex-1 bg-transparent text-body outline-none placeholder:text-muted-foreground" />
           </div>
-          <CommandEmpty className="hidden px-4 py-8 text-center text-sm text-muted-foreground data-empty:block">Nothing matches.</CommandEmpty>
+          <CommandEmpty className="hidden px-4 py-8 text-center text-body text-muted-foreground data-empty:block">Nothing matches.</CommandEmpty>
           <CommandList className="max-h-[min(24rem,60vh)] overflow-y-auto p-1.5">
             <CommandGroup>
-              <CommandGroupLabel className="px-2 pt-2 pb-1 text-xs text-muted-foreground">Go to</CommandGroupLabel>
+              <CommandGroupLabel className="px-2 pt-2 pb-1 text-meta text-muted-foreground">Go to</CommandGroupLabel>
               {sections.filter((section) => section.index !== false).map(({ path, label, icon: Icon, perspective }) => (
-                <CommandItem key={path} value={`section:${path}`} label={label} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm data-highlighted:bg-accent">
+                <CommandItem key={path} value={`section:${path}`} label={label} className="flex cursor-default items-center gap-2 rounded-(--radius-row) px-2.5 py-2 text-body data-highlighted:bg-accent">
                   <CommandItemIcon className="flex text-muted-foreground [&_svg]:size-4"><Icon /></CommandItemIcon>{label}
-                  {perspective !== "global" && <span className="ms-auto text-xs text-muted-foreground">{PERSPECTIVES.find(({ id }) => id === perspective)?.label}</span>}
+                  {perspective !== "global" && <span className="ms-auto text-meta text-muted-foreground">{PERSPECTIVES.find(({ id }) => id === perspective)?.label}</span>}
                 </CommandItem>
               ))}
             </CommandGroup>
             <CommandGroup>
-              <CommandGroupLabel className="px-2 pt-3 pb-1 text-xs text-muted-foreground">Perspective</CommandGroupLabel>
+              <CommandGroupLabel className="px-2 pt-3 pb-1 text-meta text-muted-foreground">Perspective</CommandGroupLabel>
               {PERSPECTIVES.map(({ id, label }) => (
-                <CommandItem key={id} value={`perspective:${id}`} label={`Switch to ${label}`} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm data-highlighted:bg-accent">
+                <CommandItem key={id} value={`perspective:${id}`} label={`Switch to ${label}`} className="flex cursor-default items-center gap-2 rounded-(--radius-row) px-2.5 py-2 text-body data-highlighted:bg-accent">
                   <CommandItemIcon className="flex text-muted-foreground [&_svg]:size-4">{id === "workspace" ? <LayoutGrid /> : <Wrench />}</CommandItemIcon>Switch to {label}
                 </CommandItem>
               ))}
             </CommandGroup>
             <CommandGroup>
-              <CommandGroupLabel className="px-2 pt-3 pb-1 text-xs text-muted-foreground">Appearance</CommandGroupLabel>
+              <CommandGroupLabel className="px-2 pt-3 pb-1 text-meta text-muted-foreground">Appearance</CommandGroupLabel>
               {SKINS.map(({ id, label, detail }) => (
-                <CommandItem key={id} value={`skin:${id}`} label={`Skin: ${label}`} keywords={[detail]} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm data-highlighted:bg-accent">
+                <CommandItem key={id} value={`skin:${id}`} label={`Skin: ${label}`} keywords={[detail]} className="flex cursor-default items-center gap-2 rounded-(--radius-row) px-2.5 py-2 text-body data-highlighted:bg-accent">
                   <CommandItemIcon className="flex text-muted-foreground [&_svg]:size-4"><Palette /></CommandItemIcon>Skin: {label}
-                  <span className="ms-auto text-xs text-muted-foreground">{detail}</span>
+                  <span className="ms-auto text-meta text-muted-foreground">{detail}</span>
                 </CommandItem>
               ))}
               {SHELLS.map(({ id, label, detail }) => (
-                <CommandItem key={id} value={`shell:${id}`} label={`Chrome: ${label}`} keywords={[detail]} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm data-highlighted:bg-accent">
+                <CommandItem key={id} value={`shell:${id}`} label={`Chrome: ${label}`} keywords={[detail]} className="flex cursor-default items-center gap-2 rounded-(--radius-row) px-2.5 py-2 text-body data-highlighted:bg-accent">
                   <CommandItemIcon className="flex text-muted-foreground [&_svg]:size-4">{id === "sidebar" ? <PanelLeft /> : <PanelBottom />}</CommandItemIcon>Chrome: {label}
-                  <span className="ms-auto text-xs text-muted-foreground">{detail}</span>
+                  <span className="ms-auto text-meta text-muted-foreground">{detail}</span>
                 </CommandItem>
               ))}
             </CommandGroup>
             {lists.filter(({ entries }) => entries.length > 0).map(({ section, entries }) => (
               <CommandGroup key={section.path}>
-                <CommandGroupLabel className="px-2 pt-3 pb-1 text-xs text-muted-foreground">{section.label}</CommandGroupLabel>
+                <CommandGroupLabel className="px-2 pt-3 pb-1 text-meta text-muted-foreground">{section.label}</CommandGroupLabel>
                 {entries.map((entry) => (
-                  <CommandItem key={entry.href} value={`entry:${section.path}:${entry.href}`} label={typeof entry.label === "string" ? entry.label : entry.href} keywords={entry.group ? [entry.group] : undefined} className="flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm data-highlighted:bg-accent">
+                  <CommandItem key={entry.href} value={`entry:${section.path}:${entry.href}`} label={typeof entry.label === "string" ? entry.label : entry.href} keywords={entry.group ? [entry.group] : undefined} className="flex cursor-default items-center gap-2 rounded-(--radius-row) px-2.5 py-2 text-body data-highlighted:bg-accent">
                     {(() => { const Icon = entry.icon ?? (entry.kind ? KINDS[entry.kind].icon : section.icon); return <CommandItemIcon className="flex text-muted-foreground [&_svg]:size-4"><Icon /></CommandItemIcon> })()}
-                    <span className="truncate">{entry.label}</span>{entry.group && <span className="ms-auto truncate text-xs text-muted-foreground">{entry.group}</span>}
+                    <span className="truncate">{entry.label}</span>{entry.group && <span className="ms-auto truncate text-meta text-muted-foreground">{entry.group}</span>}
                   </CommandItem>
                 ))}
               </CommandGroup>
@@ -838,9 +899,9 @@ function ConnectionBanner() {
   if (mode.failureCount === 0 && !mode.isError) {
     if (!slow) return null
     return (
-      <div role="status" data-connection="connecting" className="flex flex-wrap items-center gap-2 border-b bg-muted/50 px-4 py-2 text-sm md:px-8">
+      <div role="status" data-connection="connecting" className="flex flex-wrap items-center gap-2 border-b bg-muted/50 px-4 py-2 text-body md:px-8">
         <Loader2 aria-hidden className="size-4 shrink-0 animate-spin text-muted-foreground" />
-        <span className="font-medium">Connecting to your workspace cell…</span>
+        <span>Connecting to your workspace cell…</span>
         <span className="text-muted-foreground">Starting a cold cell can take a moment.</span>
         <Button type="button" variant="outline" size="xs" className="ms-auto" onClick={retry}>Retry now</Button>
       </div>
@@ -849,10 +910,11 @@ function ConnectionBanner() {
   const retrying = !mode.isError && isRetryableModeError(mode.failureReason)
   if (retrying) {
     return (
-      <div role="status" data-connection="retrying" className="flex flex-wrap items-center gap-2 border-b border-tone-amber/30 bg-tone-amber/10 px-4 py-2 text-sm text-tone-amber md:px-8">
-        <CloudOff aria-hidden className="size-4 shrink-0" />
-        <span className="font-medium">Couldn't reach the cell.</span>
-        <span className="text-foreground/80">Reconnecting…</span>
+      <div role="status" data-connection="retrying" className="flex flex-wrap items-center gap-2 border-b border-line bg-canvas px-4 py-2 text-body text-foreground md:px-8">
+        <span aria-hidden className="size-[6px] shrink-0 rounded-full bg-dot-held" />
+        <CloudOff aria-hidden className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.6} />
+        <span>Couldn't reach the cell.</span>
+        <span className="text-muted-foreground">Reconnecting…</span>
         <Button type="button" variant="outline" size="xs" className="ms-auto" disabled={mode.isFetching} onClick={retry}>Retry now</Button>
       </div>
     )
@@ -863,11 +925,12 @@ function ConnectionBanner() {
   const reachableLabel = formatLastReachable(reachable)
   return (
     <div role="alert" data-connection="unavailable" data-retryable={info.retryable === false ? "false" : "true"}
-      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-destructive/30 bg-destructive/10 px-4 py-2.5 text-sm md:px-8">
-      <CloudOff aria-hidden className="size-4 shrink-0 text-destructive" />
+      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-canvas px-4 py-2.5 text-body md:px-8">
+      <span aria-hidden className="size-[6px] shrink-0 rounded-full bg-dot-bad" />
+      <CloudOff aria-hidden className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.6} />
       <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-0.5">
-        <span className="font-medium text-foreground">Workspace unavailable.</span>
-        <span className="text-foreground/85">{info.headline}</span>
+        <span className="text-foreground">Workspace unavailable.</span>
+        <span className="text-muted-foreground">{info.headline}</span>
         {info.detail && <span className="text-meta text-muted-foreground">{info.detail}</span>}
         {reachable !== null && reachableLabel !== null && (
           <span className="text-meta text-muted-foreground">
@@ -878,7 +941,7 @@ function ConnectionBanner() {
           <span className="inline-flex items-center gap-1 text-meta text-muted-foreground">· Incident <CopyId value={info.incidentId} /></span>
         )}
         {view === "technical" && info.code && (
-          <span className="font-mono text-xs text-muted-foreground">· {info.code}</span>
+          <span className="font-mono text-meta text-muted-foreground">· {info.code}</span>
         )}
       </div>
       <Button type="button" variant="outline" size="xs" className="ms-auto" disabled={mode.isFetching} onClick={retry}>Retry</Button>
@@ -886,42 +949,54 @@ function ConnectionBanner() {
   )
 }
 
-const iconButton = "flex size-8 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring data-open:bg-accent [&_svg]:size-4"
+const iconButton = "flex size-[32px] items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring data-open:bg-accent max-sm:size-[44px] [&_svg]:size-4"
 
-/** The page bar's right-hand buttons: the page's own tools, then shortcuts and notifications. */
+/**
+ * Notifications, honestly: Studio has no notification feed from the cell yet, so the popover says so
+ * and points to the Inbox, where the server lists what needs the reader. It never says "Nothing yet",
+ * which would claim the feed was read and empty.
+ */
+function Notifications() {
+  return (
+    <Popover>
+      <PopoverTrigger aria-label="Notifications" className={iconButton}><Bell aria-hidden strokeWidth={1.6} /></PopoverTrigger>
+      <KitPopoverContent align="end" className="w-72">
+        <PopoverTitle className="mb-1 text-body">Notifications</PopoverTitle>
+        <p data-notifications="unavailable" className="text-body text-muted-foreground">Studio doesn't receive notifications from this cell yet. What needs you is in the <Link to="/decisions" className="text-link underline-offset-4 hover:underline">Inbox</Link>.</p>
+      </KitPopoverContent>
+    </Popover>
+  )
+}
+
+/** The page bar's end-side buttons: the page's own tools, then appearance, shortcuts and notifications. */
 function BarButtons({ tools }: { readonly tools?: ReactNode }) {
   const { view } = useView()
   const { isMobile } = useSidebar()
   return (
     <div className="flex items-center gap-0.5">
-      {view === "technical" && <span className="hidden rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground lg:inline">Technical view</span>}
-      {/* On a phone the rail's account menu is behind the sheet, so one small menu holds the view and language. */}
+      {view === "technical" && <span className="hidden rounded-full bg-(--well) px-2 py-0.5 text-meta text-muted-foreground ring-1 ring-line lg:inline">Technical view</span>}
+      {/* On a phone the account menu is behind the sheet, so one small menu holds the view and language. */}
       {/* Rendered only on a phone, so its choices never shadow the account menu's. */}
       {isMobile && <Menu>
-        <MenuTrigger aria-label="Language and view" className={iconButton}><SlidersHorizontal aria-hidden /></MenuTrigger>
+        <MenuTrigger aria-label="Language and view" className={iconButton}><SlidersHorizontal aria-hidden strokeWidth={1.6} /></MenuTrigger>
         <KitMenuContent align="end" className="w-52"><ViewAndLanguage /></KitMenuContent>
       </Menu>}
       {tools}
       <AppearanceTray />
       <Popover>
-        <PopoverTrigger aria-label="Keyboard shortcuts" className={cn(iconButton, "hidden @xl:flex")}><Keyboard aria-hidden /></PopoverTrigger>
-        <KitPopoverContent align="end" className="w-60">
-          <PopoverTitle className="mb-2 text-sm font-medium">Keyboard shortcuts</PopoverTitle>
-          <dl className="grid grid-cols-[1fr_auto] gap-y-1.5 text-sm">
+        <PopoverTrigger aria-label="Keyboard shortcuts" className={cn(iconButton, "hidden @xl:flex")}><Keyboard aria-hidden strokeWidth={1.6} /></PopoverTrigger>
+        <KitPopoverContent align="end" className="w-64">
+          <PopoverTitle className="mb-2 text-body">Keyboard shortcuts</PopoverTitle>
+          <dl className="grid grid-cols-[1fr_auto] gap-y-1.5 text-body">
             <dt className="text-muted-foreground">Search</dt><dd><Keys>⌘K</Keys></dd>
-            <dt className="text-muted-foreground">Collapse the sidebar</dt><dd><Keys>⌘B</Keys></dd>
-            <dt className="text-muted-foreground">Move between rail items</dt><dd><Keys>↑ ↓</Keys></dd>
+            <dt className="text-muted-foreground">Show or hide the sidebar</dt><dd><Keys>⌘B</Keys></dd>
+            <dt className="text-muted-foreground">Move between pages in the sidebar</dt><dd><Keys>↑ ↓</Keys></dd>
+            <dt className="text-muted-foreground">Open or close a space</dt><dd><Keys>→ ←</Keys></dd>
             <dt className="text-muted-foreground">Jump to a page</dt><dd className="text-muted-foreground">type its name</dd>
           </dl>
         </KitPopoverContent>
       </Popover>
-      <Popover>
-        <PopoverTrigger aria-label="Notifications" className={iconButton}><Bell aria-hidden /></PopoverTrigger>
-        <KitPopoverContent align="end">
-          <PopoverTitle className="mb-1 text-sm font-medium">Notifications</PopoverTitle>
-          <p className="text-sm text-muted-foreground">Nothing yet.</p>
-        </KitPopoverContent>
-      </Popover>
+      <Notifications />
     </div>
   )
 }
@@ -931,7 +1006,7 @@ function AiGlyph({ className }: { readonly className?: string }) {
   return (
     <span aria-hidden className={cn("relative grid size-[18px] place-items-center text-action", className)}>
       <MessageCircle className="absolute inset-0 size-full" strokeWidth={1.8} />
-      <span className="relative text-[7px] leading-none font-bold tracking-tight">AI</span>
+      <span className="relative text-[7px] leading-none tracking-tight">AI</span>
     </span>
   )
 }
@@ -988,7 +1063,7 @@ function FloatingDock({ sections, perspective, navigation, current, assistant }:
                 className={dockBtn}
               >
                 <Icon aria-hidden className="size-[18px]" strokeWidth={1.7} />
-                {count && <span aria-hidden className="absolute top-[7px] right-[7px] size-[6px] rounded-full bg-(--dock-indicator) ring-2 ring-(--dock-surface)" />}
+                {count && <span aria-hidden className="absolute top-[7px] end-[7px] size-[6px] rounded-full bg-(--dock-indicator) ring-2 ring-(--dock-surface)" />}
               </ToolbarLink>
             </Hint>
           )
@@ -1007,7 +1082,7 @@ function FloatingDock({ sections, perspective, navigation, current, assistant }:
                 className={dockBtn}
               >
                 <Icon aria-hidden className="size-[18px]" strokeWidth={1.7} />
-                {count && <span aria-hidden className="absolute top-[7px] right-[7px] size-[6px] rounded-full bg-(--dock-indicator) ring-2 ring-(--dock-surface)" />}
+                {count && <span aria-hidden className="absolute top-[7px] end-[7px] size-[6px] rounded-full bg-(--dock-indicator) ring-2 ring-(--dock-surface)" />}
               </ToolbarLink>
             </Hint>
           )
@@ -1044,7 +1119,7 @@ function FloatingDock({ sections, perspective, navigation, current, assistant }:
                     <KitMenuItem key={section.path} value={section.path} label={section.label} aria-label={overflowLabel} render={<Link to={to} aria-label={overflowLabel} />}>
                       <Icon aria-hidden />
                       <span className="truncate">{section.label}</span>
-                      {count && <span aria-hidden className="ms-auto rounded-full bg-destructive px-1.5 text-[0.625rem] leading-4 font-semibold text-destructive-foreground tabular-nums">{count}</span>}
+                      {count && <span aria-hidden className="ms-auto text-meta text-muted-foreground tabular-nums">{count}</span>}
                     </KitMenuItem>
                   )
                 })}
@@ -1102,18 +1177,19 @@ function useHashScroll() {
 }
 
 /** The sidebar, top bar and page frame inside SidebarProvider, preserving keyboard focus across collapse/expand. */
-function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale, pathname, perspective, navigation, current, switchTo }: {
+function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, pathname, perspective, navigation, current, switchTo }: {
   readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly assistant?: AssistantContent
-  readonly account: Account; readonly onSignOut: () => void; readonly locale: ReturnType<typeof useLocale>["locale"]
+  readonly account: Account; readonly onSignOut: () => void
   readonly pathname: string; readonly perspective: Perspective; readonly navigation: Navigation
   readonly current: Section | undefined; readonly switchTo: (next: Perspective) => void
 }) {
   const { open, isMobile } = useSidebar()
-  const sidebarPanelRef = useRef<HTMLDivElement>(null)
-  const railRef = useRef<HTMLDivElement>(null)
+  const navRef = useRef<HTMLElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const wasOpenRef = useRef(open)
-  const focusWasInPanelRef = useRef(false)
+  // Where focus last was inside the sidebar (anywhere: header, list or footer), so a collapse that
+  // unmounts that control can hand focus to its rail counterpart.
+  const lastInSidebarRef = useRef<{ readonly scope: boolean; readonly label: string | null } | null>(null)
   const pendingFocusSectionRef = useRef<string | null>(null)
   const [chosenByPerspective, setChosenByPerspective] = useState<Readonly<Record<Perspective, Readonly<Record<string, boolean>>>>>({ workspace: {}, builder: {} })
   const updateChosen = (update: (previous: Readonly<Record<string, boolean>>) => Readonly<Record<string, boolean>>) =>
@@ -1121,71 +1197,71 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale
   const expandSection = (path: string) => {
     pendingFocusSectionRef.current = path
     const section = sections.find((candidate) => candidate.path === path && candidate.perspective === perspective)
-    if (section?.group) updateChosen((previous) => ({ ...previous, [`space:${section.group}`]: true }))
+    if (section) updateChosen((previous) => ({ ...previous, [`space:${section.group ?? ""}`]: true, [`dest:${section.path}`]: true }))
   }
 
   useEffect(() => {
     const onFocusIn = (event: FocusEvent) => {
       const target = event.target
-      focusWasInPanelRef.current = target instanceof Node && Boolean(sidebarPanelRef.current?.contains(target))
+      lastInSidebarRef.current = target instanceof HTMLElement && document.getElementById(SIDEBAR_ID)?.contains(target)
+        ? { scope: target.closest("[data-scope]") !== null, label: target.getAttribute("aria-label") }
+        : null
     }
     document.addEventListener("focusin", onFocusIn)
     return () => document.removeEventListener("focusin", onFocusIn)
   }, [])
 
+  // Focus is never stranded. Expanding from a rail destination with no page lands on that destination's
+  // row. Otherwise, when collapsing or expanding unmounts the focused control, focus moves to its
+  // counterpart in the other form (the workspace switcher, the assistant, the account), else to the
+  // current page's row or icon, else to the toggle. A focused control that survives, or focus outside
+  // the sidebar, is left alone.
   useEffect(() => {
     const wasOpen = wasOpenRef.current
     wasOpenRef.current = open
-    if (isMobile) return
-    if (wasOpen && !open) {
-      const active = document.activeElement
-      const lost = sidebarPanelRef.current?.contains(active) || (active === document.body && focusWasInPanelRef.current)
-      focusWasInPanelRef.current = false
-      if (lost) {
-        const railTarget = railRef.current?.querySelector<HTMLElement>('[data-status="active"], [data-active="true"], [aria-current="page"]')
-        ;(railTarget ?? triggerRef.current)?.focus()
+    if (isMobile || wasOpen === open) return
+    const nav = navRef.current
+    if (open && pendingFocusSectionRef.current !== null) {
+      const path = pendingFocusSectionRef.current
+      pendingFocusSectionRef.current = null
+      const sectionItem = Array.from(nav?.querySelectorAll<HTMLElement>("[data-section-path]") ?? [])
+        .find((element) => element.dataset.sectionPath === path)
+      sectionItem?.focus()
+      if (nav && !nav.contains(document.activeElement)) {
+        nav.querySelector<HTMLElement>('[role="treeitem"], a[href], button')?.focus()
       }
       return
     }
-    if (!wasOpen && open && pendingFocusSectionRef.current !== null) {
-      const path = pendingFocusSectionRef.current
-      pendingFocusSectionRef.current = null
-      const panel = sidebarPanelRef.current
-      const sectionItem = Array.from(panel?.querySelectorAll<HTMLElement>("[data-section-path]") ?? [])
-        .find((element) => element.dataset.sectionPath === path)
-      sectionItem?.focus()
-      if (panel && !panel.contains(document.activeElement)) {
-        panel.querySelector<HTMLElement>('[role="treeitem"], a[href], button')?.focus()
-      }
-    }
+    const last = lastInSidebarRef.current
+    const active = document.activeElement
+    const lost = active === null || active === document.body || !active.isConnected || (!open && (nav?.contains(active) ?? false))
+    if (last === null || !lost) return
+    const sidebar = document.getElementById(SIDEBAR_ID)
+    const counterpart = last.scope
+      ? sidebar?.querySelector<HTMLElement>("[data-scope]")
+      : last.label !== null ? sidebar?.querySelector<HTMLElement>(`[aria-label="${CSS.escape(last.label)}"]`) : null
+    ;(counterpart ?? nav?.querySelector<HTMLElement>('[aria-current="page"]') ?? triggerRef.current)?.focus()
   }, [open, isMobile])
 
   const { shell } = useAppearance()
   const isDock = shell === "dock"
+  const collapsed = !open && !isMobile
+  const resolvedPathname = useRouterState({ select: (state) => state.resolvedLocation?.pathname ?? state.location.pathname })
 
   return (
     <>
       {!isDock && (
-        <Sidebar collapsible="icon" side={directionOf(locale) === "rtl" ? "right" : "left"} className="overflow-hidden border-none!">
-          <div className="flex size-full min-w-0 flex-row bg-shell">
-            <Rail sections={sections} perspective={perspective} navigation={navigation} current={current} account={account}
-              onSignOut={onSignOut} assistant={assistant} railRef={railRef}
-              onExpandSection={expandSection} />
-            <div ref={sidebarPanelRef} className="flex min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
-              <SectionSidebar key={perspective} sections={sections} perspective={perspective} navigation={navigation} pathname={pathname}
-                chosen={chosenByPerspective[perspective]} onChosenChange={updateChosen} />
-            </div>
-          </div>
+        <Sidebar>
+          <SidebarBody sections={sections} perspective={perspective} navigation={navigation} pathname={pathname} current={current}
+            chosen={chosenByPerspective[perspective]} onChosenChange={updateChosen} account={account} onSignOut={onSignOut}
+            assistant={assistant} navRef={navRef} onExpandSection={expandSection} />
         </Sidebar>
       )}
-      <SidebarInset className={cn(
-        "min-w-0 flex-row overflow-clip bg-background",
-        !isDock && "md:my-2 md:me-2 md:ms-0 md:rounded-shell md:border md:border-border/90 md:shadow-shell",
-      )}>
+      <SidebarInset className="flex-row overflow-clip">
         <div className="@container flex min-w-0 flex-1 flex-col">
           {isDock
             ? (
-              <header data-slot="dock-topbar" className="flex h-[4.4rem] shrink-0 items-center gap-3 bg-background px-6 md:px-8">
+              <header data-slot="dock-topbar" className="flex h-[4.4rem] shrink-0 items-center gap-3 bg-canvas px-6 md:px-8">
                 <Link to="/" aria-label="Norn Studio home" className="flex size-8 shrink-0 items-center justify-center rounded-lg outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring">
                   <img src={nornMark} alt="" width={28} height={28} className="size-7 object-contain" />
                 </Link>
@@ -1195,32 +1271,34 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale
                   <div className="flex shrink-0 justify-center @3xl:w-52"><CommandMenu sections={sections} navigation={navigation} onPerspective={switchTo} /></div>
                   <PerspectiveSwitch perspective={perspective} onChange={switchTo} />
                   {tools}
-                  <Popover>
-                    <PopoverTrigger aria-label="Notifications" className={iconButton}><Bell aria-hidden /></PopoverTrigger>
-                    <KitPopoverContent align="end">
-                      <PopoverTitle className="mb-1 text-sm font-medium">Notifications</PopoverTitle>
-                      <p className="text-sm text-muted-foreground">Nothing yet.</p>
-                    </KitPopoverContent>
-                  </Popover>
+                  <Notifications />
                   <AccountMenu account={account} onSignOut={onSignOut} inToolbar={false} variant="topbar" />
                 </div>
               </header>
             )
             : (
-              <header className="flex h-12 shrink-0 items-center justify-between gap-1 border-b border-border/80 bg-background/95 px-2 @sm:gap-2 @sm:px-3 @2xl:gap-3 @2xl:px-4 @4xl:grid @4xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
-                <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                  <SidebarTrigger ref={triggerRef} className="-ms-1 size-8 shrink-0 rounded-lg text-muted-foreground" />
-                  <div className="hidden min-w-0 overflow-hidden @[17rem]:block">{current && <Crumbs key={current.path} section={current} entries={navigation.menus.get(current.path) ?? []} pathname={pathname} />}</div>
-                </div>
-                <div className="flex shrink-0 justify-center @2xl:w-48 @4xl:w-72 @5xl:w-96"><CommandMenu sections={sections} navigation={navigation} onPerspective={switchTo} /></div>
-                <div className="flex shrink-0 items-center justify-end gap-1 @xl:gap-2">
-                  <PerspectiveSwitch perspective={perspective} onChange={switchTo} />
-                  <BarButtons tools={tools} />
+              // The top bar spans the content column only: 52px, borderless, on the canvas (DESIGN.md 9.1).
+              <header data-slot="topbar" className="flex h-[52px] shrink-0 items-center bg-canvas px-2 @sm:px-3 @2xl:px-4">
+                <div className="mx-auto flex w-full max-w-[1260px] min-w-0 items-center justify-between gap-1 @sm:gap-2 @2xl:gap-3 @4xl:grid @4xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+                  <div className="flex min-w-0 flex-1 items-center gap-1.5">
+                    <Hint side="bottom" label={<>{collapsed ? "Show sidebar" : "Hide sidebar"} <Keys className="opacity-70">⌘B</Keys></>}>
+                      <SidebarTrigger ref={triggerRef} className="-ms-1" />
+                    </Hint>
+                    {/* The crumbs collapse by the room they have beside the bar's controls, not by the page's width. */}
+                    <div className="hidden min-w-0 flex-1 overflow-hidden @[17rem]:block"><div className="@container min-w-0">{current && <Crumbs key={current.path} section={current} entries={navigation.menus.get(current.path) ?? []} pathname={pathname} />}</div></div>
+                  </div>
+                  <div className="flex shrink-0 justify-center @2xl:w-48 @4xl:w-72 @5xl:w-96"><CommandMenu sections={sections} navigation={navigation} onPerspective={switchTo} /></div>
+                  <div className="flex shrink-0 items-center justify-end gap-1 @xl:gap-2">
+                    <PerspectiveSwitch perspective={perspective} onChange={switchTo} />
+                    <BarButtons tools={tools} />
+                  </div>
                 </div>
               </header>
             )}
           <ConnectionBanner />
-          <div className={isDock ? "mx-auto w-full max-w-[1220px] px-6 pt-4 pb-32 md:px-8 md:pt-5 md:pb-32" : "mx-auto w-full max-w-7xl px-5 py-7 md:px-9 md:py-8"}><Outlet /></div>
+          <div data-route={resolvedPathname} className={isDock ? "mx-auto w-full max-w-[1220px] px-6 pt-4 pb-32 md:px-8 md:pt-5 md:pb-32" : "mx-auto w-full max-w-[1220px] px-6 pt-4 pb-12 sm:px-8"}>
+            <Outlet />
+          </div>
         </div>
         <Inspector />
         <AssistantPanel assistant={assistant} />
@@ -1230,9 +1308,8 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, locale
   )
 }
 
-/** The shell in the reader's direction: in Arabic the rail docks on the right. */
+/** The shell in the reader's direction: in Arabic the sidebar sits on the right (it follows the document's `dir`). */
 function LocalizedShell({ sections, tools, assistant, account, onSignOut }: { readonly sections: readonly Section[]; readonly tools?: ReactNode; readonly assistant?: AssistantContent; readonly account: Account; readonly onSignOut: () => void }) {
-  const { locale } = useLocale()
   const { shell } = useAppearance()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const navigate = useNavigate()
@@ -1249,9 +1326,9 @@ function LocalizedShell({ sections, tools, assistant, account, onSignOut }: { re
   useHashScroll()
   return (
     <ViewProvider><InspectorProvider><TooltipProvider>
-      <SidebarProvider data-shell={shell} data-density={density} className="bg-shell" style={{ "--sidebar-width": "17rem", "--sidebar-width-icon": "3rem" } as CSSProperties}>
+      <SidebarProvider shortcut={shell !== "dock"} data-shell={shell} data-density={density} className="bg-canvas">
         <WorkbenchFrame sections={sections} tools={tools} assistant={assistant} account={account} onSignOut={onSignOut}
-          locale={locale} pathname={pathname} perspective={perspective} navigation={navigation} current={current} switchTo={switchTo} />
+          pathname={pathname} perspective={perspective} navigation={navigation} current={current} switchTo={switchTo} />
       </SidebarProvider>
     </TooltipProvider></InspectorProvider></ViewProvider>
   )

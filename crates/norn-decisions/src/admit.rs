@@ -77,6 +77,7 @@ pub struct AdmittedDecision {
     decision: Decision,
     slice_schema: Arc<Schema>,
     event_schema: Arc<Schema>,
+    principal: Option<crate::principal::PrincipalContract>,
     output_schema: Schema,
     defaults: BTreeMap<String, Value>,
 }
@@ -168,7 +169,8 @@ impl AdmittedDecision {
         let loader = Arc::new(loader);
         let assignment_fuel = contracts.assignment_fuel.clone();
         let policies = fold_policies(root, sub_decisions, &loader, contracts)?;
-        let (slice_schema, event_schema) = decide_input(root)?;
+        let (slice_schema, event_schema, principal_schema) = decide_input(root)?;
+        let principal = crate::principal::PrincipalContract::admit(root, principal_schema)?;
         let output_schema = decide_output(root)?;
         let defaults = defaults(root, &output_schema, exact_defaults)?;
         Ok(Self {
@@ -181,6 +183,7 @@ impl AdmittedDecision {
                 .with_contracts(policies),
             slice_schema: Arc::new(slice_schema),
             event_schema: Arc::new(event_schema),
+            principal,
             output_schema,
             defaults,
         })
@@ -237,7 +240,13 @@ impl AdmittedDecision {
             rule_id: self.rule_id.clone(),
             schema: Arc::clone(&self.event_schema),
             value: event,
+            principal: None,
         })
+    }
+
+    /// PRINCIPAL-INPUT-1: the declared principal inputs and their record.
+    pub(crate) const fn principal_contract(&self) -> Option<&crate::principal::PrincipalContract> {
+        self.principal.as_ref()
     }
 
     /// Whether `slice` and `event` were validated for this decision: the same

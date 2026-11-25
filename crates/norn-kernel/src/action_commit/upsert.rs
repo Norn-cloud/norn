@@ -1,7 +1,11 @@
+use std::collections::BTreeSet;
+
+use norn_checker::entity_instance::InstanceError;
 use norn_ir::{ActionRoot, FactChange, ObjectTypeName, ResourceLimitProfile, UpsertWriteMode};
 
 use crate::cell_host::{CellHost, FactKey, JsonObject, JsonValue};
-use crate::decision_commit::{FactEvent, TypeCatalog};
+use crate::creator_stamp::CreatorStamp;
+use crate::decision_commit::{DecisionRefusal, FactEvent, TypeCatalog};
 use crate::envelope::TurnEnvelopeMeter;
 use crate::limits::{EnvelopeLimits, SliceMeter};
 use crate::naming_series::type_series;
@@ -9,6 +13,7 @@ use crate::naming_series::type_series;
 use super::input::check_action_record_size;
 use super::series::commit_upsert_series;
 use super::slice::{ActionSliceContext, check_action_preconditions, load_action_slice};
+use super::transition::{WriterTarget, writer_output};
 use super::types::{
     ACTION_CALL_TYPE, ActionAuthorizer, ActionCall, ActionCallRecord, ActionInputPreparation,
     ActionOutcome, ActionRefusal, EnvelopePolicy, NamingSeriesInspectionRequest, Pending,
@@ -34,6 +39,98 @@ pub(super) fn upsert_stored_input(
         }
     }
     values
+}
+
+/// ACTOR-STAMP-1: the creator stamp of a governed create: each protected
+/// property of `target` whose value is the action's server stamp of the
+/// verified principal ([`ActionRoot::actor_stamped_fields`]). Any other
+/// protected value stays refused when the create is prepared (FA-PROTECT-1).
+pub(super) fn creator_stamp(
+    catalog: &TypeCatalog<'_>,
+    call: &ActionCall<'_>,
+    target: &FactKey,
+    values: &JsonObject,
+) -> Option<CreatorStamp> {
+    let effective = catalog.effective_type(&target.object_type)?;
+    let stamped = call.action.actor_stamped_fields();
+    let properties: BTreeSet<String> = values
+        .iter()
+        .filter(|(property, value)| {
+            stamped.contains(property.as_str())
+                && value.as_str() == Some(call.actor.as_str())
+                && effective
+                    .property(property.as_str())
+                    .is_some_and(norn_checker::EffectiveProperty::protected)
+        })
+        .map(|(property, _)| property.clone())
+        .collect();
+    (!properties.is_empty()).then(|| CreatorStamp {
+        key: target.clone(),
+        properties,
+        principal: call.actor.clone(),
+    })
+}
+
+/// CREATE-WRITER-1: fold the writer's `set`s of ordinary properties of the
+/// created target into its create, so the commit records one `created` event
+/// with the object's final values; the store proves every event of a commit
+/// against that object's one committed snapshot. Each folded value is checked
+/// against the property's effective contract first, and an invalid one
+/// refuses before preparation, so no later `set` can mask it and nothing
+/// downstream (an approval gate, a dry run) ever sees it. A `set` of a
+/// protected, lifecycle or undeclared property stays a separate change,
+/// which preparation refuses as it refuses any such write.
+///
+/// # Errors
+///
+/// [`DecisionRefusal::InvalidOutput`] for a writer value its property refuses.
+fn fold_into_create<X>(
+    catalog: &TypeCatalog<'_>,
+    target: &FactKey,
+    changes: &mut Vec<FactChange>,
+    facts: Vec<FactChange>,
+) -> Result<(), ActionRefusal<X>> {
+    let effective = catalog.effective_type(&target.object_type);
+    let lifecycles = catalog.lifecycle_properties(&target.object_type);
+    for fact in facts {
+        if let FactChange::Set {
+            object_type,
+            key,
+            property,
+            value,
+        } = &fact
+            && *object_type == target.object_type
+            && *key == target.key
+            && !lifecycles.contains(property)
+            && let Some(effective) = effective
+            && effective
+                .property(property.as_str())
+                .is_some_and(|declared| !declared.protected())
+            && let Some(FactChange::Create { values, .. }) = changes.first_mut()
+        {
+            effective
+                .check_stored_property_value(property.as_str(), value)
+                .map_err(|error| {
+                    let detail = match error {
+                        InstanceError::Unsupported(feature) => {
+                            format!("uses unsupported {feature}")
+                        }
+                        InstanceError::TypeMismatch(expected) => format!("expects {expected}"),
+                        InstanceError::ConstraintViolation(reason) => reason,
+                    };
+                    ActionRefusal::Decision(DecisionRefusal::InvalidOutput {
+                        reason: format!(
+                            "the effective values for {target}: property `{}` {detail}",
+                            property.as_str()
+                        ),
+                    })
+                })?;
+            values.insert(property.as_str().to_owned(), value.clone());
+            continue;
+        }
+        changes.push(fact);
+    }
+    Ok(())
 }
 
 #[allow(
@@ -65,10 +162,18 @@ where
         .clone()
         .unwrap_or_else(|| ObjectTypeName(object_kind.to_owned()));
     check_kind(catalog, &object_type, object_kind)?;
+    // CREATE-WRITER-1: the writer's closure is resolved before any host read.
+    let rule = crate::synchronous_rule::resolve::<H::Error>(catalog, call)?;
     let naming_series = type_series(catalog, &object_type);
     if matches!(write_mode, UpsertWriteMode::CreateOnly)
         && let Some(series) = naming_series.as_ref()
     {
+        if rule.is_some() {
+            // A generated key's allocation retries are not qualified with a writer.
+            return Err(ActionRefusal::UnsupportedEffect {
+                action_id: action.action_id.clone(),
+            });
+        }
         if series.key_properties != [norn_ir::PropertyId(object_id_field.to_owned())]
             || preparation.effective_input.contains_key(object_id_field)
         {
@@ -148,7 +253,7 @@ where
         action_artifact_id: Some(call.action_artifact_id.to_owned()),
         action_version: Some(call.action_version.to_owned()),
         effect_kind: Some("upsert_input_object".to_owned()),
-        rule_binding: None,
+        rule_binding: rule.map(|rule| rule.binding(call)).transpose()?,
         object: target.clone(),
         input: call.input.clone(),
         effective_input: preparation.recorded_effective_input(),
@@ -162,6 +267,7 @@ where
         to: String::new(),
         row_operations: Vec::new(),
         trace: call.trace.clone(),
+        principal_inputs: None,
     };
     let recorded = host.load(&record_key).map_err(host_failure)?;
     if !state.exists() && recorded.exists() {
@@ -181,7 +287,7 @@ where
         return Ok(outcome);
     }
 
-    let slice = load_action_slice(
+    let mut slice = load_action_slice(
         &ActionSliceContext {
             host,
             catalog,
@@ -214,7 +320,13 @@ where
     if let Some(quantity) = &action.quantity_effect {
         business_input.remove(&quantity.balance_versions_field);
     }
-    let changes = match write_mode {
+    // ACTOR-STAMP-1: only a create-only create stamps protected creator properties.
+    let stamp = if matches!(write_mode, UpsertWriteMode::CreateOnly) && !state.exists() {
+        creator_stamp(catalog, call, &target, &business_input)
+    } else {
+        None
+    };
+    let mut changes = match write_mode {
         UpsertWriteMode::Upsert | UpsertWriteMode::CreateOnly if !state.exists() => {
             vec![FactChange::Create {
                 object_type: object_type.clone(),
@@ -271,6 +383,32 @@ where
                 .collect()
         }
     };
+    // CREATE-WRITER-1 (#1101): the writer computes the created object's
+    // remaining fields and its declared side effects from the input and the
+    // captured slice; they commit with the create as one receipt.
+    let decision_links = match rule {
+        Some(rule) => {
+            let (facts, links) = writer_output(
+                host,
+                catalog,
+                call,
+                rule,
+                &mut preparation,
+                authorizer,
+                &mut slice,
+                &target,
+                WriterTarget::Created,
+                // PRINCIPAL-INPUT-1: only a transition's writer is given
+                // principal inputs; a create's writer that declares any
+                // refuses `decision.principal_input_unavailable`.
+                None,
+                limits,
+            )?;
+            fold_into_create::<H::Error>(catalog, &target, &mut changes, facts)?;
+            links
+        }
+        None => Vec::new(),
+    };
     commit_effect(
         host,
         catalog,
@@ -293,8 +431,9 @@ where
             recorded,
             record,
             series_candidate: None,
-            decision_links: Vec::new(),
+            decision_links,
             receipt: None,
+            creator_stamp: stamp,
         },
         EnvelopePolicy { limits, meter },
     )

@@ -40,6 +40,7 @@ pub mod coverage_observer;
 pub mod dataset_laws;
 pub mod dataset_manifest;
 pub mod decision_ledger;
+mod definition_scope;
 pub mod due_retry;
 pub mod engine;
 pub mod engine_release;
@@ -73,6 +74,7 @@ pub use observation_quality::AuthoritativePage;
 mod identity;
 pub mod model;
 mod payload_storage;
+mod predicate_scan;
 pub mod quantity;
 pub mod reactive;
 mod reactive_read;
@@ -109,6 +111,10 @@ mod write;
 pub use coverage_observer::{
     CedarRuleKey, DomainCoverageRecorder, DomainCoverageSnapshot, ImmutableRefusalKey,
     ObservedSqliteCell, TransitionKey,
+};
+pub use definition_scope::{
+    PRINCIPAL_INPUTS_PROPERTY, is_reserved_kernel_name, kernel_record_types,
+    kernel_record_types_recording_principal_inputs,
 };
 pub use error::CellError;
 

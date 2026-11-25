@@ -47,6 +47,7 @@ use crate::engine::NativeEngine;
 use crate::engine::{DefaultEngine, SqlEngine};
 use crate::error::CellError;
 use crate::model::Model;
+use crate::predicate_scan::{self, predicate_objects};
 use crate::reactive::{BudgetedRead, DecodeBudget, ReactiveLimits};
 use crate::read::{PendingTimer, StoreReader};
 #[cfg(feature = "native")]
@@ -59,7 +60,7 @@ use crate::store::{
 
 /// The admission inputs beyond the commit, its authorization and quantity:
 /// derived properties, reference and property reads, mapping bundles, a
-/// bookkeeping event, and the receipt mode.
+/// bookkeeping event, the receipt mode, and an ACTOR-STAMP-1 creator stamp.
 pub(crate) type AdmissionArgs<'a> = (
     &'a [(FactKey, Vec<String>)],
     &'a [norn_kernel::FactExpectation],
@@ -67,6 +68,7 @@ pub(crate) type AdmissionArgs<'a> = (
     &'a [crate::mapping_bundle::MappingBundle],
     Option<norn_ir::RuntimeValue>,
     crate::function_receipt::ReceiptCommitMode,
+    Option<norn_kernel::CreatorStampProof>,
 );
 
 /// The simulated outside world: maps a performed command to the kernel input
@@ -593,7 +595,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
         expected_version: Option<u64>,
     ) -> Result<InstalledDefinitionSet, CellError> {
         self.store
-            .check_definitions(candidate_model, input, expected_version)
+            .check_definitions_in_scope(candidate_model, input, expected_version, &self.scope)
     }
 }
 
@@ -720,79 +722,6 @@ fn version_of<S: SqlEngine>(
         .map(FactVersion)
 }
 
-/// The slice profile's canonical byte ceiling, the read bound for a predicate
-/// no caller narrowed.
-fn slice_bytes() -> u64 {
-    norn_ir::ResourceLimitProfile::norn_limits_v1()
-        .slice
-        .max_canonical_bytes
-}
-
-/// The live objects of `predicate`'s type that match it, in key order, at
-/// most `limit` ([`norn_kernel::predicate_read`]). The cell has no property
-/// index for arbitrary predicates, so it examines at most the slice
-/// profile's record count of objects of the type, and at most `max_bytes`
-/// of stored candidate bytes; a larger type is an incomplete enumeration
-/// (`None`), which fails the read closed.
-fn predicate_objects<S: SqlEngine>(
-    reader: &StoreReader<'_, S>,
-    predicate: &PredicateQuery,
-    limit: usize,
-    max_bytes: u64,
-) -> Result<Option<Vec<PredicateObject>>, CellError> {
-    reader.check_live()?;
-    let scan_cap = usize::try_from(
-        norn_ir::ResourceLimitProfile::norn_limits_v1()
-            .slice
-            .max_records,
-    )
-    .unwrap_or(usize::MAX);
-    // Interfaces have no stored table chain; a predicate over one is
-    // unsupported on every host.
-    if !reader
-        .model()
-        .object_types()
-        .any(|defined| defined.name == predicate.object_type)
-    {
-        return Ok(None);
-    }
-    // Candidate bytes are charged before each object is decoded, matching
-    // or not: the scan stops at the byte bound instead of loading every
-    // candidate first.
-    let mut limits = ReactiveLimits::from_profile(&norn_ir::ResourceLimitProfile::norn_limits_v1());
-    limits.max_candidate_bytes_per_commit = max_bytes;
-    let mut budget = DecodeBudget::new(&limits);
-    let Some(records) = reader.list_after_with_budget(
-        MAIN_WORLD,
-        predicate.object_type.as_str(),
-        scan_cap.saturating_add(1),
-        &mut budget,
-    )?
-    else {
-        return Ok(None);
-    };
-    if records.len() > scan_cap {
-        return Ok(None);
-    }
-    let candidates: Vec<(FactKey, FactVersion, JsonObject)> = records
-        .into_iter()
-        .map(|record| {
-            (
-                FactKey::new(record.object_type, record.id),
-                FactVersion(record.version),
-                record.values,
-            )
-        })
-        .collect();
-    Ok(Some(norn_kernel::predicate_read::select_members(
-        predicate,
-        candidates
-            .iter()
-            .map(|(key, version, values)| (key, *version, values)),
-        limit,
-    )))
-}
-
 /// The committed state of link `key` as the kernel sees it.
 fn link_state<S: SqlEngine>(
     reader: &StoreReader<'_, S>,
@@ -881,7 +810,9 @@ impl<S: SqlEngine> CommitView for GuardView<'_, '_, S> {
         predicate: &PredicateQuery,
         limit: usize,
     ) -> Result<Option<Vec<PredicateReadMember>>, CellError> {
-        let Some(objects) = predicate_objects(self.0, predicate, limit, slice_bytes())? else {
+        let Some(objects) =
+            predicate_objects(self.0, predicate, limit, predicate_scan::slice_bytes())?
+        else {
             return Ok(None);
         };
         // OBS-EVIDENCE-1: a governed read never consumes a disputed source
@@ -1592,7 +1523,7 @@ where
 
 impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S>
 where
-    E: Serialize,
+    E: Serialize + 'static,
     C: Serialize + DeserializeOwned,
     I: Serialize + DeserializeOwned,
 {
@@ -1802,6 +1733,7 @@ where
             mapped,
             bookkeeping,
             mode,
+            None,
         );
         self.commit_admitted(commit, authorization, owned_rows, quantity, args)
     }
@@ -1818,7 +1750,7 @@ where
         authorization: Option<&ObservationAuthorization>,
         owned_rows: Option<OwnedRowsCommitProof>,
         quantity: Option<(&[norn_ir::quantity_ledger::QuantityRequest], &str)>,
-        (derived, references, property_reads, mapped, bookkeeping, mode): AdmissionArgs<'_>,
+        (derived, references, property_reads, mapped, bookkeeping, mode, stamp): AdmissionArgs<'_>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         check_commit_identifiers(&commit)?;
         // Include the complete kernel input, including read/write expectations,
@@ -1885,6 +1817,22 @@ where
         // RUN-LEDGER-1 / DECISION-LEDGER-1: the store records the run start
         // or the decision's resolution in this commit's transaction; S6c,
         // S5a: else the events attached for it.
+        // ACTOR-STAMP-1: attached and bookkeeping events count against the
+        // stamped envelope with the commit's events and created links.
+        if let Some(proof) = &stamp {
+            let attached = if bookkeeping.is_some() {
+                1
+            } else {
+                self.attached.len()
+            };
+            proof.check_events::<CellError>(
+                commit
+                    .events
+                    .len()
+                    .saturating_add(commit.links.len())
+                    .saturating_add(attached),
+            )?;
+        }
         match bookkeeping {
             Some(event) => batch.events.push(event),
             None => batch.events.append(&mut self.attached),
@@ -1967,8 +1915,9 @@ where
                 .type_catalog()
                 .with_governing_laws(model.law_artifacts());
             let model = CommitModel::new(&catalog);
+            // ACTOR-STAMP-1: a creator stamp is its own kernel admission.
             let versions = Proposed::new(&commit)
-                .authorize(authorization, owned_rows)?
+                .authorize_with(authorization, owned_rows, stamp)?
                 .check(&model, &GuardView(reader))
                 .map(Checked::into_versions)?;
             // RECEIPT-CONSUME-1: command authority and the deadline are
@@ -2039,7 +1988,7 @@ where
 
 impl<E, C, I, S: SqlEngine> CellHost for SqliteCell<E, C, I, S>
 where
-    E: Serialize,
+    E: Serialize + 'static,
     C: Serialize + DeserializeOwned,
     I: Serialize + DeserializeOwned,
 {
@@ -2264,6 +2213,19 @@ where
         idempotency_key: &str,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         self.commit_with_partition_postings(commit, requests, idempotency_key)
+    }
+
+    fn commit_stamped(
+        &mut self,
+        commit: CellCommit<E, C, I>,
+        proof: norn_kernel::CreatorStampProof,
+        quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        // An ordinary (Normal receipt-mode) admission carrying the stamp proof.
+        let mode = crate::function_receipt::ReceiptCommitMode::Normal;
+        let args: AdmissionArgs<'_> = (&[], &[], &[], &[], None, mode, Some(proof));
+        let quantity = quantity.map(|(request, key)| (std::slice::from_ref(request), key));
+        self.commit_admitted(commit, None, None, quantity, args)
     }
 
     fn commit_owned_rows(

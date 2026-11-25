@@ -64,6 +64,9 @@ use serde_json::{Value, json};
 use crate::principal::{PrincipalResolver, RequestScope};
 use crate::server::{self, Request, Response};
 
+mod held;
+use held::{Held, Upload};
+
 /// One routed request's answer, and what the host does next.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Routed {
@@ -83,17 +86,6 @@ impl Routed {
             then: None,
         }
     }
-}
-
-#[derive(Clone)]
-struct Upload {
-    store: Store,
-    key: String,
-    file_name: String,
-    content_type: String,
-    uri: String,
-    completed: Option<(String, u64, bool)>,
-    columns: Vec<uploads::Column>,
 }
 
 /// A completed upload, as the cell recorded it: for loaders that read the
@@ -135,7 +127,7 @@ pub struct Connect {
     sources: Sources,
     uploads_store: Option<S3Config>,
     documents_store: Option<S3Config>,
-    uploads: BTreeMap<String, Upload>,
+    uploads: Held,
     waiting: BTreeMap<String, Waiting>,
     issued: u64,
 }
@@ -354,7 +346,7 @@ impl Connect {
             sources: Sources::with_allowed_hosts(scope, config, &secrets, allowed)?,
             uploads_store: S3Config::from_vars(&vars, Store::Uploads),
             documents_store: S3Config::from_vars(&vars, Store::Documents),
-            uploads: BTreeMap::new(),
+            uploads: Held::default(),
             waiting: BTreeMap::new(),
             issued: 0,
         })
@@ -671,7 +663,7 @@ impl Connect {
             format!("{prefix}/{nonce}-{name}")
         };
         let id = upload_id(store, &key, &s3);
-        let put_url = s3.presign("PUT", &key, now_ms, URL_SECONDS);
+        let put_url = s3.presign_put(&key, begin.size, now_ms, URL_SECONDS);
         let uri = s3.uri(&key);
         self.uploads.insert(
             id.clone(),

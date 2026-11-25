@@ -3316,7 +3316,8 @@
           "200": {
             "description": "The rows, as Parquet (`application/vnd.apache.parquet`) or JSON lines (`application/x-ndjson`); `Norn-Snapshot` names the snapshot they are exact at.",
             "content": {
-              "application/vnd.apache.parquet": {}
+              "application/vnd.apache.parquet": {},
+              "application/x-ndjson": {}
             }
           },
           "400": {
@@ -6564,6 +6565,130 @@
         },
         "additionalProperties": false
       },
+      "LiveClientMessage": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "Answer `path` now and after every commit that changes its answer.\nSubscribing again under a held `id` replaces that subscription.",
+            "required": [
+              "id",
+              "path",
+              "type"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "The client's name for the subscription: 1 to 64 letters, digits\nor `_.:-`, unique on its socket."
+              },
+              "path": {
+                "type": "string",
+                "description": "One of the cell's GET routes with its query (`/v1/…?…`), at most\n512 bytes; never the live route itself."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "subscribe"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Stop answering the subscription `id`.",
+            "required": [
+              "id",
+              "type"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "The subscription's id."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "unsubscribe"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A frame a client sends on a live socket (`norn.live.v1`). A frame larger\nthan 4096 UTF-8 bytes closes the socket with 1009; one that is not JSON\ncloses it with 1007."
+      },
+      "LiveServerMessage": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The route's answer, on subscribe and on every change.",
+            "required": [
+              "id",
+              "status",
+              "digest",
+              "body",
+              "type"
+            ],
+            "properties": {
+              "body": {
+                "description": "The GET's own document, byte for byte (exact decimals stay number tokens), or null when the answer is not JSON."
+              },
+              "digest": {
+                "type": "string",
+                "description": "A digest of the status and the answer; a frame is sent only when it\nchanges."
+              },
+              "id": {
+                "type": "string",
+                "description": "The subscription's id."
+              },
+              "status": {
+                "type": "integer",
+                "format": "int32",
+                "description": "The HTTP status the GET answers with now (a refusal keeps its own).",
+                "minimum": 0
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "snapshot"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "The protocol refused a frame: no subscription was made or changed.",
+            "required": [
+              "id",
+              "code",
+              "message",
+              "type"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "Stable machine code: `live.invalid_id`, `live.not_subscribable`,\n`live.too_many_subscriptions` or `live.unknown_message`."
+              },
+              "id": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The refused subscription's id; null when the frame named no valid\nid."
+              },
+              "message": {
+                "type": "string",
+                "description": "One-line summary."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "refused"
+                ]
+              }
+            }
+          }
+        ],
+        "description": "A frame the cell sends on a live socket (`norn.live.v1`). A token the cell\nno longer admits closes the socket with 4401; the client reconnects with a\nfresh one."
+      },
       "McpError": {
         "type": "object",
         "description": "A JSON-RPC protocol error, carrying the shared refusal as its data.",
@@ -6733,6 +6858,38 @@
         },
         "additionalProperties": false
       },
+      "NornActionActionPrincipalInputs": {
+        "type": "object",
+        "description": "The principal inputs resolved for one committed call, as recorded on its\ncall record. They are the acting principal's own values for the declared\nnames only; replay reads them and never resolves again.",
+        "required": [
+          "principal",
+          "policyVersion",
+          "subject",
+          "values"
+        ],
+        "properties": {
+          "policyVersion": {
+            "type": "string",
+            "description": "The policy version the values were resolved under (the host's role\nmapping, grants and principal attribute catalog)."
+          },
+          "principal": {
+            "type": "string",
+            "description": "The acting principal the values belong to. For an agent acting on\nsomeone's behalf this is the narrower delegated principal."
+          },
+          "subject": {
+            "$ref": "#/components/schemas/NornActionFactKey",
+            "description": "The decision's subject."
+          },
+          "values": {
+            "type": "object",
+            "description": "The resolved value of every declared input, by name. Preserve source\ntext and use an exact-number JSON parser for its values.",
+            "additionalProperties": {
+              "description": "Exact JSON value. Number tokens retain decimal precision and are not binary64 values. Preserve source text or use an exact-decimal JSON parser; JavaScript JSON.parse may lose precision."
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "NornActionCallRecord": {
         "type": "object",
         "title": "ActionCallRecord",
@@ -6822,6 +6979,17 @@
               "$ref": "#/components/schemas/NornActionActionPreconditionOutcome"
             },
             "description": "Successful precondition results, in declaration order."
+          },
+          "principalInputs": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NornActionActionPrincipalInputs"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "PRINCIPAL-INPUT-1: the principal inputs resolved for the pinned\ndecision. Replay reads them here; they are never resolved again."
           },
           "rowOperations": {
             "type": "array",
@@ -10047,6 +10215,13 @@
             "type": "string",
             "description": "Identity of the policy artifact; prefixes every compiled Cedar policy id."
           },
+          "principalCatalog": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrPrincipalCatalogEntry"
+            },
+            "description": "Declared entries of the principal attribute catalog (#1091): the\nroles, role profiles and scoped attributes a decision may read as\ntyped principal inputs. A scoped attribute's type must agree with\nevery `principalAttribute` use `norn-authz` infers for it."
+          },
           "rules": {
             "type": "array",
             "items": {
@@ -10650,6 +10825,12 @@
           },
           "idempotent": {
             "type": "boolean"
+          },
+          "independentOf": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrPropertyId"
+            }
           },
           "inputSchema": {
             "$ref": "#/components/schemas/NornIrActionPayloadPropertyInputSchema"
@@ -11304,6 +11485,20 @@
           "version": {
             "type": "string",
             "description": "Exact artifact version."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrAttributeInput": {
+        "type": "object",
+        "description": "`attribute { name }`.",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "A scoped attribute the principal attribute catalog declares."
           }
         },
         "additionalProperties": false
@@ -16763,6 +16958,47 @@
             "format": "uint64",
             "description": "Maximum guest memory, in bytes.",
             "minimum": 0
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrHoldsRoleAt": {
+        "anyOf": [
+          {
+            "type": "string",
+            "description": "The scope of the decision's subject (the object the call targets).",
+            "enum": [
+              "resource"
+            ],
+            "x-enumDescriptions": [
+              "The decision subject's scope."
+            ]
+          },
+          {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrScopeDimension"
+            },
+            "description": "The request scope, which must carry exactly these dimensions."
+          }
+        ],
+        "description": "Where a [`HoldsRoleInput`] is evaluated: `\"resource\"`, or a list of scope\ndimensions."
+      },
+      "NornIrHoldsRoleInput": {
+        "type": "object",
+        "description": "`holdsRole { role, at }`.",
+        "required": [
+          "role",
+          "at"
+        ],
+        "properties": {
+          "at": {
+            "$ref": "#/components/schemas/NornIrHoldsRoleAt",
+            "description": "The scope the PDP evaluates membership at."
+          },
+          "role": {
+            "type": "string",
+            "description": "A role the principal attribute catalog declares."
           }
         },
         "additionalProperties": false
@@ -23059,6 +23295,192 @@
         },
         "additionalProperties": false
       },
+      "NornIrPrincipalAttributeSource": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrPrincipalAttributeSourceOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrPrincipalAttributeSourceOneOf1"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrPrincipalAttributeSourceOneOf2"
+          }
+        ],
+        "description": "Where a catalog entry's value comes from."
+      },
+      "NornIrPrincipalAttributeSourceOneOf0": {
+        "type": "object",
+        "description": "A role, named by the entry: a boolean the PDP evaluates.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "role"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPrincipalAttributeSourceOneOf1": {
+        "type": "object",
+        "description": "A named role bundle: the set of its roles the principal holds.",
+        "required": [
+          "kind",
+          "roles"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "roleProfile"
+            ]
+          },
+          "roles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The bundled role ids; at least one."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPrincipalAttributeSourceOneOf2": {
+        "type": "object",
+        "description": "A scoped attribute supplied by the trusted resolver.",
+        "required": [
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "attribute"
+            ]
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPrincipalAttributeType": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "bool",
+              "long",
+              "string"
+            ]
+          },
+          {
+            "type": "string",
+            "description": "`set<string>`.",
+            "enum": [
+              "stringSet"
+            ]
+          }
+        ],
+        "description": "The closed set of principal attribute types."
+      },
+      "NornIrPrincipalCatalogEntry": {
+        "type": "object",
+        "description": "One declared entry of the principal attribute catalog (#1091): a name, a\ntype and a source.",
+        "required": [
+          "name",
+          "type",
+          "source"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The role id, role profile name or scoped attribute name."
+          },
+          "source": {
+            "$ref": "#/components/schemas/NornIrPrincipalAttributeSource",
+            "description": "Where the trusted resolver takes the value from."
+          },
+          "type": {
+            "$ref": "#/components/schemas/NornIrPrincipalAttributeType",
+            "description": "The type a decision reads the entry at."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPrincipalInputDeclaration": {
+        "type": "object",
+        "description": "One declared principal input of a `decide` rule (PRINCIPAL-INPUT-1,\n#1091): the typed column `principal.<name>` and where its value comes\nfrom. The value is resolved by the host; a request never supplies it.",
+        "required": [
+          "name",
+          "kind"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/NornIrPrincipalInputKind",
+            "description": "What the host resolves the column from."
+          },
+          "name": {
+            "type": "string",
+            "description": "The column name under the reserved `principal.` namespace."
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPrincipalInputKind": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/NornIrPrincipalInputKindOneOf0"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrPrincipalInputKindOneOf1"
+          },
+          {
+            "$ref": "#/components/schemas/NornIrPrincipalInputKindOneOf2"
+          }
+        ],
+        "description": "What a [`PrincipalInputDeclaration`] reads. Externally tagged and closed."
+      },
+      "NornIrPrincipalInputKindOneOf0": {
+        "type": "object",
+        "description": "Whether the PDP finds the principal holding a role at a scope: a\nboolean. The decision never sees role lists or scope keys.",
+        "required": [
+          "holdsRole"
+        ],
+        "properties": {
+          "holdsRole": {
+            "$ref": "#/components/schemas/NornIrHoldsRoleInput"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPrincipalInputKindOneOf1": {
+        "type": "object",
+        "description": "The roles of a declared role profile the principal holds: a set of\nstrings.",
+        "required": [
+          "roleProfile"
+        ],
+        "properties": {
+          "roleProfile": {
+            "$ref": "#/components/schemas/NornIrRoleProfileInput"
+          }
+        },
+        "additionalProperties": false
+      },
+      "NornIrPrincipalInputKindOneOf2": {
+        "type": "object",
+        "description": "A declared scoped attribute, with the catalog's type.",
+        "required": [
+          "attribute"
+        ],
+        "properties": {
+          "attribute": {
+            "$ref": "#/components/schemas/NornIrAttributeInput"
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrProfileMethod": {
         "type": "string",
         "description": "How a profile was measured.",
@@ -25927,6 +26349,20 @@
         },
         "additionalProperties": false
       },
+      "NornIrRoleProfileInput": {
+        "type": "object",
+        "description": "`roleProfile { profile }`.",
+        "required": [
+          "profile"
+        ],
+        "properties": {
+          "profile": {
+            "type": "string",
+            "description": "A role profile the principal attribute catalog declares."
+          }
+        },
+        "additionalProperties": false
+      },
       "NornIrRounding": {
         "type": "string",
         "description": "FOLD-ARITHMETIC / VAL-ROUND: a rounding site declares its mode explicitly.",
@@ -26356,6 +26792,12 @@
           },
           "outputSchema": {
             "$ref": "#/components/schemas/NornIrRulePayloadPropertyOutputSchema"
+          },
+          "principalInputs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrPrincipalInputDeclaration"
+            }
           },
           "requiredServices": {
             "type": "array",
@@ -27950,6 +28392,16 @@
           }
         },
         "additionalProperties": false
+      },
+      "NornIrSubjectScope": {
+        "type": "string",
+        "description": "The literal `\"resource\"` of [`HoldsRoleAt::Subject`].",
+        "enum": [
+          "resource"
+        ],
+        "x-enumDescriptions": [
+          "The decision subject's scope."
+        ]
       },
       "NornIrTemporalScope": {
         "type": "object",

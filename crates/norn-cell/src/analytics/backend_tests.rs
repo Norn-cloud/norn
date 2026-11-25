@@ -1,6 +1,6 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use norn_checker::EffectiveCatalog;
+use norn_checker::entity_scopes::ScopedView;
 use norn_checker::metric::compute::QuestionPlan;
 use norn_ir::{MetricDefinition, ObjectTypeDef, QuestionIR};
 use serde_json::json;
@@ -39,7 +39,7 @@ fn fixture() -> Result<Fixture, Box<dyn std::error::Error>> {
         "window": {"start": "2026-01-01T00:00:00Z", "end": "2026-12-31T00:00:00Z"},
         "freshness": {"kind": "live", "maxAgeMs": 5000}, "calendar": "iso_utc"
     }))?;
-    let catalog = EffectiveCatalog::from_artifacts(&[entity]);
+    let catalog = ScopedView::uniform(&[entity], &BTreeSet::new()).into_catalog();
     let plan = norn_checker::metric::compute::admit(&[metric], &question, &catalog, 100)
         .map_err(|diags| format!("{diags:?}"))?;
     let store = CellStore::open_in_memory(Model::from_definitions(&[object], &[])?)?;

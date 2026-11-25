@@ -7,11 +7,10 @@ use std::fmt::Write as _;
 
 use norn_checker::{
     EffectiveCatalog, EffectiveKind, EffectiveLink, EffectiveObjectType, EffectiveProperty,
-    decode_artifact_json,
 };
 use norn_ir::{
-    ArtifactEnvelope, ConstraintClass, InterfaceDef, Invariant, ObjectTypeDef, ObjectTypeName,
-    PropertyType, RuntimeValue,
+    ConstraintClass, InterfaceDef, Invariant, ObjectTypeDef, ObjectTypeName, PropertyType,
+    RuntimeValue,
 };
 use norn_kernel::{
     FactKey, InvariantEvaluationError, OWNED_ROWS_TYPE, TypeCatalog, evaluate_invariants,
@@ -163,15 +162,26 @@ pub(crate) fn preflight_model_migration<E: SqlEngine>(
     previous_canonical_set: Option<&str>,
     candidate_canonical_set: &str,
     retained: Option<&crate::export::ExportRecord>,
+    cell_scope: &norn_ir::ScopeRef,
 ) -> Result<MigrationPlan, CellError> {
     check_removed_types(engine, previous, candidate)?;
     check_removed_links(engine, previous, candidate)?;
     check_removed_properties(engine, previous, candidate)?;
     check_effective_storage_owners(previous, candidate)?;
     check_compatible_layouts(previous, candidate)?;
-    let candidate_catalog = effective_catalog(candidate_canonical_set, "candidate")?;
+    let candidate_catalog = crate::definition_scope::validated_effective_catalog(
+        candidate_canonical_set,
+        "candidate",
+        cell_scope,
+    )?;
     let previous_catalog = previous_canonical_set
-        .map(|canonical_set| effective_catalog(canonical_set, "installed"))
+        .map(|canonical_set| {
+            crate::definition_scope::validated_effective_catalog(
+                canonical_set,
+                "installed",
+                cell_scope,
+            )
+        })
         .transpose()?;
     check_owned_collection_changes(
         engine,
@@ -1905,57 +1915,6 @@ fn object_types_with_existing_link_column(
     object_types.sort();
     object_types.dedup();
     object_types
-}
-
-fn effective_catalog(canonical_set: &str, label: &str) -> Result<EffectiveCatalog, CellError> {
-    let values: Vec<serde_json::Value> = serde_json::from_str(canonical_set).map_err(|error| {
-        refused(format!(
-            "{label} definition set is not a JSON artifact list: {error}"
-        ))
-    })?;
-    let artifacts: Vec<ArtifactEnvelope> = values
-        .iter()
-        .map(|value| {
-            decode_artifact_json(value).map_err(|findings| {
-                refused(format!(
-                    "{label} definition artifact could not be decoded: {findings:?}"
-                ))
-            })
-        })
-        .collect::<Result<_, _>>()?;
-    let catalog = EffectiveCatalog::from_artifacts(&artifacts);
-    for artifact in &artifacts {
-        let value = serde_json::to_value(artifact).map_err(CellError::Json)?;
-        let Some(payload) = value.get("payload") else {
-            continue;
-        };
-        let Some(type_name) = payload
-            .get("objectType")
-            .and_then(|object_type| object_type.get("name"))
-            .and_then(serde_json::Value::as_str)
-            .or_else(|| {
-                payload
-                    .get("objectKind")
-                    .and_then(serde_json::Value::as_str)
-            })
-        else {
-            continue;
-        };
-        match catalog.object_type_named(type_name) {
-            Some(Ok(_)) => {}
-            Some(Err(finding)) => {
-                return Err(refused(format!(
-                    "{label} effective contract for `{type_name}` is unavailable: {finding:?}"
-                )));
-            }
-            None => {
-                return Err(refused(format!(
-                    "{label} effective contract for `{type_name}` is unavailable"
-                )));
-            }
-        }
-    }
-    Ok(catalog)
 }
 
 fn effective_object<'a>(

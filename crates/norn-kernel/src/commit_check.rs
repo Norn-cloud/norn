@@ -30,10 +30,11 @@ use norn_ir::{
 };
 
 use crate::cell_host::{
-    CellCommit, CommitError, CommitVersions, Consumed, FactKey, FactMutation, FactVersion,
-    FactWrite, LinkKey, LinkMutation, LinkReadExpectation, LinkReadTarget, LinkWrite,
-    OwnedRowsCommitProof, PredicateQuery, PredicateReadMember, WrittenLinkVersion, WrittenVersion,
+    CellCommit, CommitError, CommitVersions, Consumed, FactKey, FactMutation, FactVersion, LinkKey,
+    LinkMutation, LinkReadExpectation, LinkReadTarget, LinkWrite, OwnedRowsCommitProof,
+    PredicateQuery, PredicateReadMember, WrittenLinkVersion, WrittenVersion,
 };
+use crate::creator_stamp::{KernelTrust as Trust, canonical_writes, check_protected};
 
 /// Maximum complete outgoing link targets a turn may bind as one adjacency
 /// read. This is the current `norn.limits/1` slice-record ceiling.
@@ -43,6 +44,7 @@ const MAX_LINK_READ_BYTES: usize = 262_144;
 use crate::commit_order::{CommitStage, CommitStages, run_stages};
 use crate::commit_versions::{CurrentVersion, first_conflict};
 use crate::decision_commit::{EffectiveValuesError, TypeCatalog};
+use crate::lifecycle_init::check_first_writes;
 use crate::snapshot_observe::ObservationAuthorization;
 
 mod laws;
@@ -385,6 +387,7 @@ pub trait CommitView {
 ///    the current version ([`CommitError::Conflict`]); an object is put only
 ///    as its live concrete type ([`CommitError::TypeMismatch`]); every link
 ///    write matches the current link version ([`CommitError::LinkConflict`]);
+///    a first write's lifecycles begin initialized (GRAPH-STATE-1);
 /// 4. **endpoints** — no link dangles once the commit applies
 ///    ([`CommitError::DanglingLink`]): both endpoints of every added link
 ///    exist as their named types, and every live link of a deleted object
@@ -404,12 +407,12 @@ pub trait CommitView {
 /// # Errors
 ///
 /// The first failed check, or [`CommitError::Host`] if a lookup failed.
-pub fn check_commit<E, C, T, V: CommitView + ?Sized>(
+pub fn check_commit<E: 'static, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: &CommitModel<'_, '_>,
     view: &V,
 ) -> Result<CommitVersions, CommitError<V::Error>> {
-    check_commit_inner(commit, *model, view, None, false)
+    check_commit_inner(commit, *model, view, None, Trust::Plain)
 }
 
 /// Check the kernel-prepared atomic parent/owned-row commit. Only the
@@ -423,7 +426,7 @@ pub fn check_commit<E, C, T, V: CommitView + ?Sized>(
     clippy::needless_pass_by_value,
     reason = "the authorization is deliberately consumed once at the admission boundary"
 )]
-pub fn check_commit_owned_rows<E, C, T, V: CommitView + ?Sized>(
+pub fn check_commit_owned_rows<E: 'static, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: &CommitModel<'_, '_>,
     view: &V,
@@ -448,29 +451,7 @@ pub fn check_commit_owned_rows<E, C, T, V: CommitView + ?Sized>(
     {
         false
     } else {
-        let canonical_writes = proof
-            .writes()
-            .iter()
-            .map(|write| {
-                let mutation = match &write.mutation {
-                    FactMutation::Put { values } => FactMutation::Put {
-                        values: model
-                            .catalog
-                            .effective_object_values(&write.key.object_type, values)
-                            .map_err(|error| CommitError::EffectiveValues {
-                                key: write.key.clone(),
-                                reason: error.to_string(),
-                            })?,
-                    },
-                    FactMutation::Delete => FactMutation::Delete,
-                };
-                Ok(FactWrite {
-                    key: write.key.clone(),
-                    expected: write.expected,
-                    mutation,
-                })
-            })
-            .collect::<Result<Vec<_>, CommitError<V::Error>>>()?;
+        let canonical_writes = canonical_writes::<V::Error>(*model, proof.writes())?;
         let canonical_links = proof
             .links()
             .iter()
@@ -490,7 +471,7 @@ pub fn check_commit_owned_rows<E, C, T, V: CommitView + ?Sized>(
             .collect::<Result<Vec<_>, CommitError<V::Error>>>()?;
         canonical_writes == commit.writes && canonical_links == commit.links
     };
-    check_commit_inner(commit, *model, view, None, trusted_owned_rows)
+    check_commit_inner(commit, *model, view, None, Trust::owned(trusted_owned_rows))
 }
 
 /// Shared host admission for a prepared observation. The opaque authority
@@ -501,7 +482,7 @@ pub fn check_commit_owned_rows<E, C, T, V: CommitView + ?Sized>(
 ///
 /// Returns the first failed admission check, or [`CommitError::Host`] if a
 /// host lookup failed.
-pub fn check_commit_observed<E, C, T: serde::Serialize, V: CommitView + ?Sized>(
+pub fn check_commit_observed<E: 'static, C, T: serde::Serialize, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: &CommitModel<'_, '_>,
     view: &V,
@@ -510,36 +491,36 @@ pub fn check_commit_observed<E, C, T: serde::Serialize, V: CommitView + ?Sized>(
     if !authorization.validates(commit) {
         return Err(CommitError::ObservationAuthorization);
     }
-    check_commit_inner(commit, *model, view, Some(authorization), false)
+    check_commit_inner(commit, *model, view, Some(authorization), Trust::Plain)
 }
 
-fn check_commit_inner<E, C, T, V: CommitView + ?Sized>(
+pub(crate) fn check_commit_inner<E: 'static, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
     view: &V,
     authorization: Option<&ObservationAuthorization>,
-    trusted_owned_rows: bool,
+    trust: Trust<'_>,
 ) -> Result<CommitVersions, CommitError<V::Error>> {
     let profile = crate::execution_profile::ProfileView::new(view);
     profile.validate_consumed(commit.consumes.as_ref())?;
-    let result = check_commit_local(commit, model, &profile, authorization, trusted_owned_rows);
+    let result = check_commit_local(commit, model, &profile, authorization, trust);
     profile.validate(commit, model)?;
     result
 }
 
-fn check_commit_local<E, C, T, V: CommitView + ?Sized>(
+fn check_commit_local<E: 'static, C, T, V: CommitView + ?Sized>(
     commit: &CellCommit<E, C, T>,
     model: CommitModel<'_, '_>,
     view: &V,
     authorization: Option<&ObservationAuthorization>,
-    trusted_owned_rows: bool,
+    trust: Trust<'_>,
 ) -> Result<CommitVersions, CommitError<V::Error>> {
     run_stages(&mut LocalStages {
         commit,
         model,
         view,
         authorization,
-        trusted_owned_rows,
+        trust,
         links: BTreeMap::new(),
     })?;
     next_versions(commit)
@@ -551,13 +532,13 @@ struct LocalStages<'c, 'm, 'a, 'v, E, C, T, V: ?Sized> {
     model: CommitModel<'m, 'a>,
     view: &'v V,
     authorization: Option<&'v ObservationAuthorization>,
-    trusted_owned_rows: bool,
+    trust: Trust<'v>,
     /// The live links once the commit applies, set by [`CommitStage::Endpoints`]
     /// before [`CommitStage::Cardinality`] reads them.
     links: BTreeMap<FactKey, BTreeSet<LinkKey>>,
 }
 
-impl<E, C, T, V: CommitView + ?Sized> CommitStages<CommitError<V::Error>>
+impl<E: 'static, C, T, V: CommitView + ?Sized> CommitStages<CommitError<V::Error>>
     for LocalStages<'_, '_, '_, '_, E, C, T, V>
 {
     fn run(&mut self, stage: CommitStage) -> Result<(), CommitError<V::Error>> {
@@ -565,11 +546,13 @@ impl<E, C, T, V: CommitView + ?Sized> CommitStages<CommitError<V::Error>>
             (self.commit, self.model, self.view, self.authorization);
         match stage {
             CommitStage::EventLimit => check_event_limit(commit, authorization),
-            CommitStage::Shape => check_shape(commit, model, view, self.trusted_owned_rows),
+            CommitStage::Shape => check_shape(commit, model, view, self.trust.owned_rows())
+                .and_then(|()| check_protected(commit, model, view, authorization, self.trust)),
             CommitStage::Accounting => check_accounting_postings(commit, model, view),
             CommitStage::Delivery => check_delivery(commit, view),
             CommitStage::Immutable => check_immutable(commit, model, view),
-            CommitStage::Versions => check_versions(commit, model, view, authorization),
+            CommitStage::Versions => check_versions(commit, model, view, authorization)
+                .and_then(|()| check_first_writes(commit, model, view, authorization, self.trust)),
             CommitStage::LinkAuthority => check_link_authority(commit, model, view, authorization),
             CommitStage::Endpoints => {
                 self.links = live_links_after(commit, model, view)?;

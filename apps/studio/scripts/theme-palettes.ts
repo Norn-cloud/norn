@@ -18,29 +18,44 @@ const ROOT = join(import.meta.dir, "..")
 export const INDEX_CSS = join(ROOT, "src", "index.css")
 export const PALETTES_JSON = join(ROOT, "src", "lib", "theme-palettes.json")
 
-/** The custom properties each top-level rule in `css` declares, by its selector. */
-function rules(css: string): Map<string, Record<string, string>> {
-  const out = new Map<string, Record<string, string>>()
+/**
+ * The custom properties each top-level rule in `css` declares, by selector, in source order. A
+ * selector list (`a, b { … }`) declares the same properties for each of its selectors.
+ */
+function rules(css: string): readonly { readonly selector: string; readonly declared: Readonly<Record<string, string>> }[] {
+  const out: { selector: string; declared: Record<string, string> }[] = []
   const stripped = css.replace(/\/\*[\s\S]*?\*\//g, "")
   for (const match of stripped.matchAll(/^([^\s@{}][^{}]*?)\s*\{([^{}]*)\}/gm)) {
-    const selector = match[1]!.trim()
-    const declared = out.get(selector) ?? {}
+    const declared: Record<string, string> = {}
     for (const decl of match[2]!.matchAll(/--([a-z0-9-]+)\s*:\s*([^;]+);/g)) declared[decl[1]!] = decl[2]!.trim()
-    out.set(selector, declared)
+    for (const selector of match[1]!.split(",")) out.push({ selector: selector.trim(), declared })
   }
   return out
 }
 
-/** The rules that apply, in cascade order (each later one wins), for a skin and scheme. */
-function cascade(skin: (typeof SKINS)[number], scheme: Scheme): readonly string[] {
-  const base = scheme === "dark" ? [":root", ".dark"] : [":root"]
-  if (skin === "open") return base
-  const skinned = `:root[data-skin="${skin}"]`
-  return scheme === "dark" ? [...base, skinned, `:root.dark[data-skin="${skin}"]`] : [...base, skinned]
+/**
+ * The selectors that apply to a skin and scheme, by specificity: bare `:root` and `.dark` (the
+ * `polar` default, 0-1-0), then `:root[data-skin=…]` (0-2-0), then `:root.dark[data-skin=…]`
+ * (0-3-0). Within one specificity the later rule in the sheet wins, so `rules` keeps source order.
+ */
+function cascade(skin: (typeof SKINS)[number], scheme: Scheme): readonly (readonly string[])[] {
+  const light = [[":root"], [`:root[data-skin="${skin}"]`]]
+  return scheme === "dark" ? [[":root", ".dark"], light[1]!, [`:root.dark[data-skin="${skin}"]`]] : light
+}
+
+/** Every custom property a skin and scheme declares, as written (`var()` and `color-mix()` unresolved). */
+export function skinVars(css: string, skin: (typeof SKINS)[number], scheme: Scheme): Readonly<Record<string, string>> {
+  const declared = rules(css)
+  const vars: Record<string, string> = {}
+  for (const tier of cascade(skin, scheme)) {
+    for (const { selector, declared: block } of declared) if (tier.includes(selector)) Object.assign(vars, block)
+  }
+  if (vars["canvas"] === undefined) throw new Error(`index.css: no rules declare ${skin} ${scheme}`)
+  return vars
 }
 
 /** Resolve one declared value to canonical CSS: `var()` references and `color-mix(…, X p%, transparent)`. */
-function resolve(value: string, vars: Readonly<Record<string, string>>, seen: ReadonlySet<string> = new Set()): string {
+export function resolve(value: string, vars: Readonly<Record<string, string>>, seen: ReadonlySet<string> = new Set()): string {
   const reference = /^var\(--([a-z0-9-]+)\)$/.exec(value)
   if (reference) {
     const name = reference[1]!
@@ -62,17 +77,11 @@ function resolve(value: string, vars: Readonly<Record<string, string>>, seen: Re
 
 /** Every allowlisted theme token's painted colour for every built-in skin and scheme. */
 export function themePalettes(css: string): ThemePalettes {
-  const declared = rules(css)
   const palettes = {} as ThemePalettes
   for (const skin of SKINS) {
     palettes[skin] = { light: {}, dark: {} }
     for (const scheme of ["light", "dark"] as const) {
-      const vars: Record<string, string> = {}
-      for (const selector of cascade(skin, scheme)) {
-        const block = declared.get(selector)
-        if (block === undefined) throw new Error(`index.css: no ${selector} rule`)
-        Object.assign(vars, block)
-      }
+      const vars = skinVars(css, skin, scheme)
       for (const token of STUDIO_THEME_TOKENS) {
         const value = vars[token]
         if (value === undefined) throw new Error(`index.css: ${skin} ${scheme} never sets --${token}`)

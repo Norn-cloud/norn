@@ -86,6 +86,10 @@
       "message": "التأثير يكتب {$objectKind}، لكن أداة الكيان {$artifactId} بالإصدار {$version} تعرّف {$definition}",
       "review": "needs_review"
     },
+    "artifact_set.action.independent_actor": {
+      "message": "فحص الفاعل المستقل يسمّي خاصية ليست خاصية فاعل نصية محمية لهدف انتقال قائم",
+      "review": "needs_review"
+    },
     "artifact_set.action.invalid_aggregate": {
       "message": "مُدخل تجميعي للإجراء يسمّي نوعًا أو خاصية غير معروفة، أو خاصية لا يستطيع الطيّ قراءتها",
       "review": "needs_review"
@@ -140,6 +144,14 @@
     },
     "artifact_set.decision.invalid_stored_property_write": {
       "message": "القرار يكتب {$property} من {$objectType}، ما يخالف عقد الخاصية المخزَّنة الفعلي: {$detail}",
+      "review": "needs_review"
+    },
+    "artifact_set.decision.principal_input_type": {
+      "message": "{$detail}",
+      "review": "needs_review"
+    },
+    "artifact_set.decision.principal_input_unknown": {
+      "message": "{$detail}",
       "review": "needs_review"
     },
     "artifact_set.decision.sub_decision_bound": {
@@ -240,6 +252,10 @@
     },
     "artifact_set.marking.unknown": {
       "message": "مرجع الوسم {$id} ليس له إعلان في القاعدة ولا في المجموعة المرشحة",
+      "review": "needs_review"
+    },
+    "artifact_set.policy.principal_catalog_conflict": {
+      "message": "{$detail}",
       "review": "needs_review"
     },
     "artifact_set.resolution.conflicting_version": {
@@ -2444,6 +2460,14 @@
     },
     "rule.validation.ordered_fold_unsupported": {
       "message": "تنفيذ الطيّ المرتَّب غير متاح في ملف الدلالات هذا",
+      "review": "needs_review"
+    },
+    "rule.validation.principal_input_invalid": {
+      "message": "{$detail}",
+      "review": "needs_review"
+    },
+    "rule.validation.principal_input_undeclared": {
+      "message": "{$detail}",
       "review": "needs_review"
     },
     "sealing.extension_point.capability_missing": {

@@ -652,7 +652,7 @@ impl Session<'_> {
                 .as_ref()
                 .map_or(0, |set| set.installed_at.saturating_add(1)),
         );
-        let admitted = match admit::admit(&artifacts, installed_at) {
+        let admitted = match admit::admit(&artifacts, installed_at, admit::keeps(serving)) {
             Ok(admitted) => admitted,
             Err(refused) => {
                 Self::rejected(
@@ -914,9 +914,7 @@ fn reopen(
     else {
         return Ok((None, None));
     };
-    let model = admit::retained_envelopes(&active.canonical_set)
-        .and_then(|artifacts| admit::model_of(&artifacts))
-        .map_err(unreadable)?;
+    let model = admit::installed_model(&active).map_err(unreadable)?;
     let store =
         CellStore::from_engine(engine, model).map_err(|error| unreadable(error.to_string()))?;
     let (store, loaded) = if loads.is_empty() {

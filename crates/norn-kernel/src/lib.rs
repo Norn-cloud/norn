@@ -61,6 +61,7 @@ pub mod cell_host;
 mod commit_check;
 mod commit_order;
 mod commit_versions;
+mod creator_stamp;
 mod decider;
 pub mod decision_commit;
 mod decision_links;
@@ -70,13 +71,19 @@ pub mod flow_identity;
 pub mod flow_turn;
 pub mod governing_laws;
 mod guard_diagnostic;
+mod independence;
+mod lifecycle_init;
 pub mod limits;
 pub mod naming_series;
 mod partition_slice;
 pub mod predicate_read;
 pub use partition_slice::{PartitionSlice, load_partition_slice};
+mod principal_inputs;
 mod synchronous_rule;
 pub use norn_decisions::DecisionBinding;
+pub use principal_inputs::{
+    ActionPrincipalInputs, PrincipalInputsRequest, UnresolvedPrincipalInput,
+};
 pub use synchronous_rule::{SynchronousRule, SynchronousRuleError};
 mod observations;
 pub mod quantity;
@@ -153,6 +160,7 @@ pub use cell_host::{
     PredicateObject, PredicateQuery, PredicateReadExpectation, PredicateReadMember, Provenance,
     SerializationLane, WrittenLinkVersion, WrittenVersion, check_commit,
 };
+pub use creator_stamp::{CreatorStampProof, check_commit_stamped};
 pub use decider::{
     Decider, Decision, DecisionOf, EnvelopeKind, Step, StepError, StepOf, StepResult, fold, replay,
     step,
@@ -171,6 +179,8 @@ pub use effect::{
     InputIdentity, OwnerVersion, Timer, TimerId,
 };
 pub use envelope::{TurnEnvelopeLimits, TurnEnvelopeMeter, TurnEnvelopeUsage};
+pub use independence::{TransitionGuard, transition_guards};
+pub use lifecycle_init::LifecycleInitRefusal;
 pub use limits::{
     EnvelopeLimits, IngressLimit, IngressLimitExceeded, LimitProfileRef, ResourceLimitProfile,
     SliceLimits, SliceMeter, check_envelope_bytes,

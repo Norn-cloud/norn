@@ -379,6 +379,7 @@ impl<E, C, I, S: SqlEngine> ObservedSqliteCell<E, C, I, S> {
                 | CommitError::AccountingPosting { .. }
                 | CommitError::InvariantBudgetExceeded { .. }
                 | CommitError::InvariantModel { .. }
+                | CommitError::LifecycleInitialization { .. }
                 | CommitError::ObservationAuthorization
                 | CommitError::EventLimitExceeded { .. }
                 | CommitError::Overflow
@@ -833,7 +834,7 @@ fn decode_law_artifact(artifact: &norn_ir::ArtifactEnvelope) -> Option<LawIR> {
 
 impl<E, C, I, S: SqlEngine> CellHost for ObservedSqliteCell<E, C, I, S>
 where
-    E: Serialize,
+    E: Serialize + 'static,
     C: Serialize + DeserializeOwned,
     I: Serialize + DeserializeOwned,
 {
@@ -944,6 +945,18 @@ where
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         let targets = Self::capture_commit_targets(&commit);
         let result = self.inner.commit_owned_rows(commit, proof);
+        self.record_commit_outcome(&targets, false, &result);
+        result
+    }
+
+    fn commit_stamped(
+        &mut self,
+        commit: CellCommit<E, C, I>,
+        proof: norn_kernel::CreatorStampProof,
+        quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        let targets = Self::capture_commit_targets(&commit);
+        let result = self.inner.commit_stamped(commit, proof, quantity);
         self.record_commit_outcome(&targets, false, &result);
         result
     }

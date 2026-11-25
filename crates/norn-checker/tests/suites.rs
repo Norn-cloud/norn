@@ -72,6 +72,10 @@ mod entity_relation_roots;
 mod evidence_pins;
 #[path = "explain.rs"]
 mod explain;
+#[path = "extension_scope.rs"]
+mod extension_scope;
+#[path = "extension_scope_consumers.rs"]
+mod extension_scope_consumers;
 #[path = "function_admission.rs"]
 mod function_admission;
 #[path = "incremental.rs"]
@@ -118,6 +122,8 @@ mod owned_collections;
 mod path_mapping;
 #[path = "predicate_slice_and_links.rs"]
 mod predicate_slice_and_links;
+#[path = "principal_inputs.rs"]
+mod principal_inputs;
 #[path = "property_types.rs"]
 mod property_types;
 #[path = "quantity_ledger.rs"]

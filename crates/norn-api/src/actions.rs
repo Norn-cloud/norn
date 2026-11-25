@@ -226,6 +226,8 @@ pub fn decode_action_request(body: &str) -> Result<ActionRequest, Refusal> {
             "an action call body is at most 260 KiB",
         ));
     }
+    // PRINCIPAL-INPUT-1: the principal is never accepted from a request.
+    crate::principal_member::refuse_principal_member(body, Some("input"))?;
     let request: ActionRequest = serde_json::from_str(body).map_err(|error| {
         Refusal::invalid(format!("the request body is not an action call: {error}"))
     })?;
@@ -495,7 +497,8 @@ pub(crate) fn call_action_bound<E: SqlEngine>(
     let catalog = model
         .type_catalog()
         .with_governing_laws(model.law_artifacts())
-        .with_action_rules(&admitted.rules);
+        .with_action_rules(&admitted.rules)
+        .with_transition_guards(&admitted.guards);
     let now = turn_clock(&mut cell, now)?;
     let kernel_call = norn_kernel::ActionCall {
         action,

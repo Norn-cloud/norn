@@ -36,10 +36,10 @@ export function PageHeader({ title, description, actions, primary, secondary, me
     <header data-slot="page-header" className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
       <div className="min-w-0 flex-1 basis-80 space-y-1.5">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-          <h1 lang={lang} className="min-w-0 text-title leading-[1.15] font-medium tracking-[-0.025em] text-foreground [overflow-wrap:anywhere]">{title}</h1>
+          <h1 lang={lang} className="min-w-0 text-title font-medium text-foreground [overflow-wrap:anywhere]">{title}</h1>
           {meta && <div className="flex flex-wrap items-center gap-2 text-meta text-muted-foreground">{meta}</div>}
         </div>
-        {description && <p className="max-w-[70ch] text-sm leading-relaxed text-pretty text-muted-foreground">{description}</p>}
+        {description && <p className="max-w-[70ch] text-body leading-relaxed text-pretty text-muted-foreground">{description}</p>}
       </div>
       {end && (
         <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -71,10 +71,9 @@ function Overflow({ actions }: { readonly actions: readonly PageAction[] }) {
 }
 
 /**
- * A section of a page (design v4): one hairline frame on a subtly tinted card surface at the panel
- * radius (11px), a quiet header row (small muted icon, title, optional hint or control at the end),
- * then the list, table or figure flush inside. A panel inside a panel is a ruled section, never a
- * card in a card.
+ * A ShellCard (DESIGN.md 10): the card rim at --radius-panel with --panel-inset padding (index.css),
+ * a quiet h-11 header row (muted icon, step-2 title at 400, an optional hint or control at the end),
+ * then one inset well. A panel inside a well is a ruled section of it, never a card in a card.
  */
 export function Panel({ icon: Icon, label, action, children, className, id }: {
   icon?: LucideIcon
@@ -89,10 +88,10 @@ export function Panel({ icon: Icon, label, action, children, className, id }: {
       // A panel inside another panel is a section of it, not a card in a card: one hairline above, no frame.
       "[[data-slot=well]_&]:rounded-none [[data-slot=well]_&]:border-x-0 [[data-slot=well]_&]:border-b-0 [[data-slot=well]_&]:bg-transparent [[data-slot=well]_&]:p-0 [[data-slot=well]_&]:shadow-none [[data-slot=well]_&>header]:px-0",
       className)}>
-      <header className="flex min-h-11 flex-wrap items-center gap-x-2 gap-y-0.5 px-3.5 py-2 text-sm">
+      <header className="flex min-h-11 flex-wrap items-center gap-x-2 gap-y-0.5 px-3.5 py-2 text-body">
         {Icon && <Icon aria-hidden className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.6} />}
         {/* A title wraps (two lines at most) rather than losing its end; a hint goes to the next line when both don't fit. */}
-        <h2 className="line-clamp-2 min-w-0 flex-1 basis-40 text-panel font-normal tracking-[-0.01em] text-foreground [overflow-wrap:anywhere]" title={typeof label === "string" ? label : undefined}>{label}</h2>
+        <h2 className="line-clamp-2 min-w-0 flex-1 basis-40 text-body font-normal tracking-[-0.01em] text-foreground [overflow-wrap:anywhere]" title={typeof label === "string" ? label : undefined}>{label}</h2>
         {/* A hint (text) gives way on a phone; a control (an element) stays. */}
         {action && <div className={cn("ms-auto shrink-0 text-meta text-muted-foreground", typeof action === "string" && "max-sm:hidden")}>{action}</div>}
       </header>
@@ -101,7 +100,7 @@ export function Panel({ icon: Icon, label, action, children, className, id }: {
   )
 }
 
-/** The body of a panel: v6 inner soft-grey well inside the outer shell, or flush hairline body on Polar/Luma. */
+/** The body of a panel: the inset well inside the rim, in every skin (the concentric double shell). */
 export function Well({ children, className }: { children: ReactNode; className?: string }) {
   return <div data-slot="well" className={cn("overflow-hidden border-t border-(--well-border) bg-(--well)", className)}>{children}</div>
 }
@@ -113,10 +112,10 @@ export function Well({ children, className }: { children: ReactNode; className?:
 export function EmptyState({ icon: Icon, title = "No data yet", children, next }: { icon: LucideIcon; title?: ReactNode; children: ReactNode; next?: ReactNode }) {
   return (
     <div className="flex flex-col items-center gap-2.5 px-6 py-12 text-center">
-      <span aria-hidden className="flex size-10 items-center justify-center rounded-xl border border-border/80 bg-surface-subtle text-muted-foreground">
-        <Icon className="size-4.5" />
+      <span aria-hidden className="flex size-[40px] items-center justify-center rounded-(--radius-well) bg-card text-muted-foreground ring-1 ring-line">
+        <Icon className="size-[18px]" strokeWidth={1.6} />
       </span>
-      <div className="text-sm font-semibold text-foreground">{title}</div>
+      <div className="text-body text-foreground">{title}</div>
       <p className="max-w-xs text-meta leading-relaxed text-muted-foreground">{children}</p>
       {next && <div className="flex flex-wrap justify-center gap-2 pt-1.5">{next}</div>}
     </div>

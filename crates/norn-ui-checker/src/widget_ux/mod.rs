@@ -26,12 +26,13 @@ use norn_expr::Type;
 use norn_expr::schema::Schema;
 use norn_ir::{
     ActionRoot, ArtifactDependency, ArtifactEnvelope, ArtifactKind, ArtifactPayload, JsonValue,
-    WidgetActionPlacement, WidgetDataBinding, WidgetDataQuery, WidgetForm, WidgetPage,
-    WidgetSelectionMode, WidgetUx, WidgetUxActionBinding,
+    PropertyTypeName, WidgetActionPlacement, WidgetDataBinding, WidgetDataQuery, WidgetForm,
+    WidgetPage, WidgetSelectionMode, WidgetUx, WidgetUxActionBinding,
 };
 
 use norn_checker::entity_instance::{EffectiveCatalog, EffectiveProperty};
 use norn_checker::entity_lowering::entity_object_type;
+use norn_checker::entity_scopes::{ScopedViews, scope_visible};
 use norn_checker::{
     Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity,
     EntityArtifactSetContext, Span,
@@ -63,11 +64,8 @@ pub fn check_widget_ux_set(
     context: &EntityArtifactSetContext<'_>,
 ) -> Vec<Diagnostic> {
     let combined: Vec<ArtifactEnvelope> = context.base.iter().chain(artifacts).cloned().collect();
-    let catalog = EffectiveCatalog::from_artifacts_with_registry(&combined, context.registry);
+    let mut views = ScopedViews::new(artifacts, context.base, context.registry);
     let mut diagnostics = Vec::new();
-    // The effective model of object types, built once and only for a set whose pages name a
-    // lifecycle to compose with (UI-LIFECYCLE-1).
-    let model = std::cell::OnceCell::new();
     for artifact in artifacts {
         let ArtifactPayload::Widget(payload) = &artifact.payload else {
             continue;
@@ -87,22 +85,19 @@ pub fn check_widget_ux_set(
                     continue;
                 }
             };
-        let mut checker = UxChecker::new(artifact, &combined, &catalog, &ux, &mut diagnostics);
+        let view = views.of(artifact);
+        let mut checker = UxChecker::new(
+            artifact,
+            &combined,
+            view.catalog(),
+            context.registry,
+            &ux,
+            &mut diagnostics,
+        );
         checker.check();
         let nullable_inputs = checker.nullable_form_inputs();
-        let composed = |widget: &norn_ir::WidgetArtifactRef| {
-            let baseline = combined.iter().find(|candidate| {
-                candidate.artifact_id == widget.id
-                    && candidate.version == widget.version
-                    && candidate.kind() == ArtifactKind::Widget
-            })?;
-            let ArtifactPayload::Widget(payload) = &baseline.payload else {
-                return None;
-            };
-            serde_json::to_value(payload.ux.as_value()?)
-                .and_then(serde_json::from_value::<norn_ir::WidgetUx>)
-                .ok()
-        };
+        let composed =
+            |widget: &norn_ir::WidgetArtifactRef| composed_ux(artifact, &combined, widget);
         diagnostics.extend(crate::ui_interaction::check(
             artifact,
             &ux,
@@ -118,15 +113,12 @@ pub fn check_widget_ux_set(
                 .is_some_and(|machine| machine.lifecycle.is_some())
         });
         if names_lifecycle {
-            let model = model.get_or_init(|| {
-                norn_checker::action_set::Model::new(
-                    artifacts,
-                    context.base,
-                    context.registry,
-                    true,
-                )
-            });
-            diagnostics.extend(crate::ui_lifecycle::check(artifact, &ux, &combined, model));
+            diagnostics.extend(crate::ui_lifecycle::check(
+                artifact,
+                &ux,
+                view.pool(),
+                view.model(),
+            ));
         }
     }
     diagnostics
@@ -136,6 +128,7 @@ struct UxChecker<'a, 'u, 'd> {
     owner: &'a ArtifactEnvelope,
     all: &'a [ArtifactEnvelope],
     catalog: &'a EffectiveCatalog,
+    registry: &'a BTreeSet<PropertyTypeName>,
     ux: &'u WidgetUx,
     diagnostics: RefCell<&'d mut Vec<Diagnostic>>,
     pages: BTreeMap<&'u str, &'u WidgetPage>,
@@ -222,6 +215,7 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
         owner: &'a ArtifactEnvelope,
         all: &'a [ArtifactEnvelope],
         catalog: &'a EffectiveCatalog,
+        registry: &'a BTreeSet<PropertyTypeName>,
         ux: &'u WidgetUx,
         diagnostics: &'d mut Vec<Diagnostic>,
     ) -> Self {
@@ -229,6 +223,7 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
             owner,
             all,
             catalog,
+            registry,
             ux,
             diagnostics: RefCell::new(diagnostics),
             pages: ux
@@ -421,6 +416,15 @@ impl<'a, 'u, 'd> UxChecker<'a, 'u, 'd> {
             );
             return None;
         };
+        if !scope_visible(&self.owner.scope, &artifact.scope) {
+            self.error(
+                path,
+                format!(
+                    "referenced artifact {id:?}@{version:?} is not visible from this widget's scope"
+                ),
+            );
+            return None;
+        }
         Some(artifact)
     }
 
@@ -461,6 +465,32 @@ fn finding(owner: &ArtifactEnvelope, path: &str, message: impl Into<String>) -> 
         artifact_id: Some(owner.artifact_id.clone()),
         remediation: Some(DiagnosticRemediation::FixDefinition),
     }
+}
+
+/// The typed UX of `widget` as `owner` may compose it: an exact required
+/// dependency of `owner` that resolves in `all` within a scope `owner` sees.
+pub(crate) fn composed_ux(
+    owner: &ArtifactEnvelope,
+    all: &[ArtifactEnvelope],
+    widget: &norn_ir::WidgetArtifactRef,
+) -> Option<WidgetUx> {
+    let kind = ArtifactKind::Widget;
+    let pinned = owner
+        .dependencies
+        .iter()
+        .any(|dependency| dependency_matches(dependency, &widget.id, &widget.version, &kind));
+    let baseline = all.iter().find(|candidate| {
+        candidate.artifact_id == widget.id
+            && candidate.version == widget.version
+            && candidate.kind() == kind
+            && scope_visible(&owner.scope, &candidate.scope)
+    });
+    let ArtifactPayload::Widget(payload) = &baseline.filter(|_| pinned)?.payload else {
+        return None;
+    };
+    serde_json::to_value(payload.ux.as_value()?)
+        .and_then(serde_json::from_value::<WidgetUx>)
+        .ok()
 }
 
 fn dependency_matches(

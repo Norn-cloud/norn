@@ -39,7 +39,13 @@ test("the open section lists its entries under their heading, the open entry mar
   expect(html).toContain('href="/sources/canon.Holding"')
   // The current page's item carries aria-current, and its row links to the page.
   expect(html).toMatch(/role="treeitem"[^>]*aria-current="page"[^>]*>\s*<a[^>]*href="\/sources\/canon.Holding"/)
-  expect(html).toContain("[&amp;&gt;svg]:text-muted-foreground")
+  // Exactly one row is current (DESIGN.md 9.1): the router's own marking on the matching links is dropped.
+  const nav = html.slice(html.indexOf('aria-label="Studio navigation"'), html.indexOf("</nav>", html.indexOf('aria-label="Studio navigation"')))
+  expect(nav.match(/aria-current="page"/g)).toHaveLength(1)
+  // A breadcrumb back to a parent page is not the current page either.
+  expect(html).not.toMatch(/data-slot="breadcrumb-link"[^>]*aria-current/)
+  // Rows are muted at rest; no kind colour on sidebar icons (colour belongs to dots and marks).
+  expect(html).not.toContain("[&amp;&gt;svg]:text-kind")
 })
 
 test("a record page belongs to the section above it", () => {
@@ -88,23 +94,31 @@ test("only the recorded demo world opens; the NC benchmark points to its offline
   expect(WORKSPACES.find(({ group }) => group === "Class demos")?.detail).toBe("Coming soon")
 })
 
-test("the sidebar lists the perspective's destinations under their spaces, counts each group of items; the rail holds the shared destinations", async () => {
+test("one Studio navigation landmark holds the shared destinations, then the perspective's spaces, counting each group of items", async () => {
   const many: Section = { ...sources, useMenu: () => Array.from({ length: 9 }, (_, index) => ({ href: `/sources/t${index}`, label: `Type ${index}`, group: "Object types" })) }
   const html = await at("/sources/t8", () => <Shell sections={[home, many, questions, records]} account={account} onSignOut={() => {}} />)
-  expect(html).toMatch(/<nav[^>]*aria-label="Builder"/)
+  expect(html.match(/<nav[^>]*aria-label="Studio navigation"/g)).toHaveLength(1)
+  expect(html).not.toMatch(/role="toolbar"[^>]*aria-label="Studio"/)
+  expect(html).toMatch(/role="tree"[^>]*aria-label="Builder pages"|aria-label="Builder pages"[^>]*role="tree"/)
+  // The shared destinations lead the list, as rows of the same tree.
+  const nav = html.slice(html.indexOf('aria-label="Studio navigation"'))
+  expect(nav.indexOf('href="/"')).toBeGreaterThan(-1)
+  expect(nav.indexOf('href="/"')).toBeLessThan(nav.indexOf('href="/questions"'))
   expect(html).toMatch(/>Model<\/span>/)
   expect(html).toMatch(/href="\/questions"[^>]*>[\s\S]*?Questions/)
   expect(html).toMatch(/>Object types<\/span><span[^>]*>9<\/span>/)
   expect(html).toContain("Type 8")
+  // Group headers are quiet: step 1, weight 400, sentence case (no uppercase or tracking).
+  const header = /<span[^>]*data-slot="tree-label"[^>]*class="([^"]*)"[^>]*>\s*<span[^>]*>Model<\/span>/.exec(html)?.[1] ?? /class="([^"]*group\/heading[^"]*)"/.exec(html)?.[1]
+  expect(header).toBeDefined()
+  expect(header).toContain("text-meta")
+  expect(header).not.toMatch(/uppercase|font-semibold|tracking-/)
   // The other perspective's destinations are not listed; the switch says which one is shown.
   expect(html).not.toContain(">Records<")
   expect(html).toMatch(/<button[^>]*aria-pressed="true"[^>]*>[\s\S]*?Builder/)
-  expect(html).toMatch(/role="toolbar"[^>]*aria-label="Studio"|aria-label="Studio"[^>]*role="toolbar"/)
-  expect(html).toMatch(/<a[^>]*aria-label="Home"/)
-  // The Norn knot is the one coloured mark (Nov 8 design): the rail never desaturates it.
-  const logo = /<a[^>]*aria-label="Norn Studio home"[^>]*>\s*<img[^>]*class="([^"]*)"/.exec(html)?.[1]
-  expect(logo).toBeDefined()
-  expect(logo).not.toMatch(/grayscale|saturate|brightness|contrast/)
+  // The toggle is named "Sidebar" in both states and controls the column it names.
+  expect(html).toMatch(/<button[^>]*aria-label="Sidebar"[^>]*aria-expanded="true"[^>]*aria-controls="studio-sidebar"/)
+  expect(html).toContain('id="studio-sidebar"')
 })
 
 test("the perspective is the reader's while the page belongs to it, else the one that lists the page", () => {
@@ -129,12 +143,12 @@ test("in the workspace a record page reads Records, its type, then its id", asyn
   expect(crumbs).toContain("demo/item/gold")
 })
 
-test("a section's count sits in the theme's destructive pair", async () => {
+test("a section's count is a quiet step-1 number, never a filled badge", async () => {
   const counted: Section = { ...questions, useBadge: () => 3 }
   const html = await at("/sources", () => <Shell sections={[sources, counted]} account={account} onSignOut={() => {}} />)
-  const badge = html.match(/<span[^>]*class="[^"]*bg-destructive[^"]*"[^>]*>3<\/span>/)?.[0] ?? ""
-  expect(badge).toContain("text-destructive-foreground")
-  expect(badge).not.toContain("text-white")
+  const count = html.match(/<span[^>]*data-count[^>]*>3<\/span>/)?.[0] ?? ""
+  expect(count).toContain("text-meta")
+  expect(count).not.toMatch(/bg-|font-semibold|rounded-full/)
 })
 
 test("a malformed escape in a record path is shown as written, not thrown", async () => {

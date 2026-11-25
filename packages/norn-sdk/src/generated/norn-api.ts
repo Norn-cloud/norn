@@ -1736,6 +1736,68 @@ export interface components {
              */
             layoutVersion: "0.1";
         };
+        /**
+         * @description A frame a client sends on a live socket (`norn.live.v1`). A frame larger
+         *     than 4096 UTF-8 bytes closes the socket with 1009; one that is not JSON
+         *     closes it with 1007.
+         */
+        LiveClientMessage: {
+            /**
+             * @description The client's name for the subscription: 1 to 64 letters, digits
+             *     or `_.:-`, unique on its socket.
+             */
+            id: string;
+            /**
+             * @description One of the cell's GET routes with its query (`/v1/…?…`), at most
+             *     512 bytes; never the live route itself.
+             */
+            path: string;
+            /** @enum {string} */
+            type: "subscribe";
+        } | {
+            /** @description The subscription's id. */
+            id: string;
+            /** @enum {string} */
+            type: "unsubscribe";
+        };
+        /**
+         * @description A frame the cell sends on a live socket (`norn.live.v1`). A token the cell
+         *     no longer admits closes the socket with 4401; the client reconnects with a
+         *     fresh one.
+         */
+        LiveServerMessage: {
+            /** @description The GET's own document, byte for byte (exact decimals stay number tokens), or null when the answer is not JSON. */
+            body: unknown;
+            /**
+             * @description A digest of the status and the answer; a frame is sent only when it
+             *     changes.
+             */
+            digest: string;
+            /** @description The subscription's id. */
+            id: string;
+            /**
+             * Format: int32
+             * @description The HTTP status the GET answers with now (a refusal keeps its own).
+             */
+            status: number;
+            /** @enum {string} */
+            type: "snapshot";
+        } | {
+            /**
+             * @description Stable machine code: `live.invalid_id`, `live.not_subscribable`,
+             *     `live.too_many_subscriptions` or `live.unknown_message`.
+             */
+            code: string;
+            /**
+             * @description The refused subscription's id; null when the frame named no valid
+             *     id.
+             */
+            id: string | null;
+            /** @description One-line summary. */
+            message: string;
+            /** @enum {string} */
+            type: "refused";
+        };
         /** @description A JSON-RPC protocol error, carrying the shared refusal as its data. */
         McpError: {
             /**
@@ -1820,6 +1882,32 @@ export interface components {
             satisfied: boolean;
         };
         /**
+         * @description The principal inputs resolved for one committed call, as recorded on its
+         *     call record. They are the acting principal's own values for the declared
+         *     names only; replay reads them and never resolves again.
+         */
+        NornActionActionPrincipalInputs: {
+            /**
+             * @description The policy version the values were resolved under (the host's role
+             *     mapping, grants and principal attribute catalog).
+             */
+            policyVersion: string;
+            /**
+             * @description The acting principal the values belong to. For an agent acting on
+             *     someone's behalf this is the narrower delegated principal.
+             */
+            principal: string;
+            /** @description The decision's subject. */
+            subject: components["schemas"]["NornActionFactKey"];
+            /**
+             * @description The resolved value of every declared input, by name. Preserve source
+             *     text and use an exact-number JSON parser for its values.
+             */
+            values: {
+                [key: string]: unknown;
+            };
+        };
+        /**
          * ActionCallRecord
          * @description The idempotency record of a committed call (the values of its
          *     [`ACTION_CALL_TYPE`] object).
@@ -1869,6 +1957,11 @@ export interface components {
             parameterPins?: components["schemas"]["NornActionActionParameterPin"][];
             /** @description Successful precondition results, in declaration order. */
             preconditionOutcomes?: components["schemas"]["NornActionActionPreconditionOutcome"][];
+            /**
+             * @description PRINCIPAL-INPUT-1: the principal inputs resolved for the pinned
+             *     decision. Replay reads them here; they are never resolved again.
+             */
+            principalInputs?: components["schemas"]["NornActionActionPrincipalInputs"] | null;
             /** @description Normalized row operations committed by a parent-and-rows action. */
             rowOperations?: unknown[];
             /** @description TXN-RULE-1: exact writer closure, action, scope and world identity. */
@@ -3220,6 +3313,13 @@ export interface components {
             genericRules?: components["schemas"]["NornIrGenericAccessRule"][];
             /** @description Identity of the policy artifact; prefixes every compiled Cedar policy id. */
             policyId: string;
+            /**
+             * @description Declared entries of the principal attribute catalog (#1091): the
+             *     roles, role profiles and scoped attributes a decision may read as
+             *     typed principal inputs. A scoped attribute's type must agree with
+             *     every `principalAttribute` use `norn-authz` infers for it.
+             */
+            principalCatalog?: components["schemas"]["NornIrPrincipalCatalogEntry"][];
             /** @description Permit rules. Authorization is default-deny: no rule, no permit. */
             rules: components["schemas"]["NornIrAccessRule"][];
         };
@@ -3473,6 +3573,7 @@ export interface components {
             effectProgram?: components["schemas"]["NornIrActionEffectProgram"];
             extensions?: components["schemas"]["NornIrActionPayloadPropertyExtensions"];
             idempotent: boolean;
+            independentOf?: components["schemas"]["NornIrPropertyId"][];
             inputSchema: components["schemas"]["NornIrActionPayloadPropertyInputSchema"];
             ledgerCategory?: string;
             ledgered: boolean;
@@ -3686,6 +3787,11 @@ export interface components {
             id: string;
             /** @description Exact artifact version. */
             version: string;
+        };
+        /** @description `attribute { name }`. */
+        NornIrAttributeInput: {
+            /** @description A scoped attribute the principal attribute catalog declares. */
+            name: string;
         };
         /**
          * @description The payload of a `business_pack` artifact: a composition pack
@@ -5715,6 +5821,18 @@ export interface components {
              * @description Maximum guest memory, in bytes.
              */
             max_guest_memory_bytes: number;
+        };
+        /**
+         * @description Where a [`HoldsRoleInput`] is evaluated: `"resource"`, or a list of scope
+         *     dimensions.
+         */
+        NornIrHoldsRoleAt: "resource" | components["schemas"]["NornIrScopeDimension"][];
+        /** @description `holdsRole { role, at }`. */
+        NornIrHoldsRoleInput: {
+            /** @description The scope the PDP evaluates membership at. */
+            at: components["schemas"]["NornIrHoldsRoleAt"];
+            /** @description A role the principal attribute catalog declares. */
+            role: string;
         };
         /**
          * @description HTTP method of a paginated resource.
@@ -8265,6 +8383,70 @@ export interface components {
         NornIrPrincipalAttributeOperand: {
             principalAttribute: string;
         };
+        /** @description Where a catalog entry's value comes from. */
+        NornIrPrincipalAttributeSource: components["schemas"]["NornIrPrincipalAttributeSourceOneOf0"] | components["schemas"]["NornIrPrincipalAttributeSourceOneOf1"] | components["schemas"]["NornIrPrincipalAttributeSourceOneOf2"];
+        /** @description A role, named by the entry: a boolean the PDP evaluates. */
+        NornIrPrincipalAttributeSourceOneOf0: {
+            /** @enum {string} */
+            kind: "role";
+        };
+        /** @description A named role bundle: the set of its roles the principal holds. */
+        NornIrPrincipalAttributeSourceOneOf1: {
+            /** @enum {string} */
+            kind: "roleProfile";
+            /** @description The bundled role ids; at least one. */
+            roles: string[];
+        };
+        /** @description A scoped attribute supplied by the trusted resolver. */
+        NornIrPrincipalAttributeSourceOneOf2: {
+            /** @enum {string} */
+            kind: "attribute";
+        };
+        /** @description The closed set of principal attribute types. */
+        NornIrPrincipalAttributeType: ("bool" | "long" | "string") | "stringSet";
+        /**
+         * @description One declared entry of the principal attribute catalog (#1091): a name, a
+         *     type and a source.
+         */
+        NornIrPrincipalCatalogEntry: {
+            /** @description The role id, role profile name or scoped attribute name. */
+            name: string;
+            /** @description Where the trusted resolver takes the value from. */
+            source: components["schemas"]["NornIrPrincipalAttributeSource"];
+            /** @description The type a decision reads the entry at. */
+            type: components["schemas"]["NornIrPrincipalAttributeType"];
+        };
+        /**
+         * @description One declared principal input of a `decide` rule (PRINCIPAL-INPUT-1,
+         *     #1091): the typed column `principal.<name>` and where its value comes
+         *     from. The value is resolved by the host; a request never supplies it.
+         */
+        NornIrPrincipalInputDeclaration: {
+            /** @description What the host resolves the column from. */
+            kind: components["schemas"]["NornIrPrincipalInputKind"];
+            /** @description The column name under the reserved `principal.` namespace. */
+            name: string;
+        };
+        /** @description What a [`PrincipalInputDeclaration`] reads. Externally tagged and closed. */
+        NornIrPrincipalInputKind: components["schemas"]["NornIrPrincipalInputKindOneOf0"] | components["schemas"]["NornIrPrincipalInputKindOneOf1"] | components["schemas"]["NornIrPrincipalInputKindOneOf2"];
+        /**
+         * @description Whether the PDP finds the principal holding a role at a scope: a
+         *     boolean. The decision never sees role lists or scope keys.
+         */
+        NornIrPrincipalInputKindOneOf0: {
+            holdsRole: components["schemas"]["NornIrHoldsRoleInput"];
+        };
+        /**
+         * @description The roles of a declared role profile the principal holds: a set of
+         *     strings.
+         */
+        NornIrPrincipalInputKindOneOf1: {
+            roleProfile: components["schemas"]["NornIrRoleProfileInput"];
+        };
+        /** @description A declared scoped attribute, with the catalog's type. */
+        NornIrPrincipalInputKindOneOf2: {
+            attribute: components["schemas"]["NornIrAttributeInput"];
+        };
         /**
          * @description How a profile was measured.
          * @enum {string}
@@ -9330,6 +9512,11 @@ export interface components {
         NornIrRoleCondition: {
             anyOf: string[];
         };
+        /** @description `roleProfile { profile }`. */
+        NornIrRoleProfileInput: {
+            /** @description A role profile the principal attribute catalog declares. */
+            profile: string;
+        };
         /**
          * @description FOLD-ARITHMETIC / VAL-ROUND: a rounding site declares its mode explicitly.
          * @enum {string}
@@ -9449,6 +9636,7 @@ export interface components {
             graph?: components["schemas"]["NornIrJdmGraph"];
             inputSchema?: components["schemas"]["NornIrRulePayloadPropertyInputSchema"];
             outputSchema?: components["schemas"]["NornIrRulePayloadPropertyOutputSchema"];
+            principalInputs?: components["schemas"]["NornIrPrincipalInputDeclaration"][];
             requiredServices?: unknown[];
             ruleId: string;
             ruleVersion?: string;
@@ -10100,6 +10288,11 @@ export interface components {
             timing: components["schemas"]["NornIrRequirementTiming"];
             wording: components["schemas"]["NornIrRequirementWording"];
         };
+        /**
+         * @description The literal `"resource"` of [`HoldsRoleAt::Subject`].
+         * @enum {string}
+         */
+        NornIrSubjectScope: "resource";
         /** @description Optional time-dimension declaration for a Derived view. */
         NornIrTemporalScope: {
             mode: components["schemas"]["NornIrTemporalScopeMode"];
@@ -15676,6 +15869,7 @@ export interface operations {
                 };
                 content: {
                     "application/vnd.apache.parquet": unknown;
+                    "application/x-ndjson": unknown;
                 };
             };
             /** @description The request was refused as invalid. */
