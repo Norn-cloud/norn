@@ -13,7 +13,10 @@ async function recorded(page: Page, errors: string[]) {
   await session(page)
 }
 
-const settled = (page: Page) => expect(page.getByText("Connecting…")).toHaveCount(0)
+const settled = async (page: Page) => {
+  await expect(page.locator("[data-route]")).toBeVisible()
+  await expect(page.getByText("Connecting…")).toHaveCount(0)
+}
 
 /** Wait for a lazy route chunk to commit and render content before asserting on its text. */
 async function routeCommitted(page: Page, path: string, label: string) {
@@ -29,6 +32,7 @@ test("nav: every rail destination and every sidebar entry, in both perspectives,
   await page.goto("/sources")
   await settled(page)
   const rail = page.getByRole("toolbar", { name: "Studio" })
+  await expect(rail.locator('a[href="/decisions"]')).toBeVisible()
   const global = await rail.locator("a[href]:not([href='/'])").evaluateAll((links) => links.map((link) => link.getAttribute("href") ?? ""))
   expect(global).toContain("/decisions")
   for (const href of global) {
@@ -123,6 +127,7 @@ test("header applies wide spacing on desktop, keeps breadcrumbs visible at 850px
   await expect(page.locator('[data-slot="assistant-panel"]')).toBeVisible()
   await page.setViewportSize({ width: 830, height: 900 })
   const { search: searchAt830 } = await checkHeader()
+  await expect(page.getByRole("navigation", { name: "breadcrumb" }).locator("a", { hasText: "Holding" })).toBeVisible()
   const renderedCrumbLinks = await page.getByRole("navigation", { name: "breadcrumb" }).locator("a").evaluateAll((links) =>
     links.filter((link) => getComputedStyle(link).display !== "none" && link.getClientRects().length > 0).map((link) => {
       const rect = link.getBoundingClientRect()

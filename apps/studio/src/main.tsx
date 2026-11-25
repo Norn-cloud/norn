@@ -139,7 +139,12 @@ function RoutePending() {
 }
 
 const root = createRootRoute({ component: Root })
-const router = createRouter({ routeTree: routeTree(root), defaultPendingComponent: RoutePending })
+const router = createRouter({
+  routeTree: routeTree(root),
+  defaultPendingComponent: RoutePending,
+  defaultPendingMs: 0,
+  defaultPendingMinMs: 0,
+})
 
 // Dark and light are peers: follow the reader's system setting unless a custom theme pins an explicit appearance.
 const dark = window.matchMedia("(prefers-color-scheme: dark)")
