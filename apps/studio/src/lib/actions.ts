@@ -1,84 +1,31 @@
+import {
+  createNornClient, NornUnavailable,
+  type ActionCatalog, type ActionSummary, type CallResult, type Diagnostic, type Fetch,
+} from "../../../../packages/norn-sdk/src/index.ts"
 import { CellUnavailable, defaultFetch, readStudioScope, resolveWriteScope, sameStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
 
 /**
- * Governed actions from Studio: the catalog the cell offers this reader, and one call.
- * Contract Studio proposes to CELL-DO (routes 3 and 4), alongside `GET /v1/objects/{type}`:
+ * Governed actions from Studio: the catalog the cell offers this reader, and one call, through
+ * the generic `@norn/sdk` client (`packages/norn-sdk/src/client.ts` holds the wire contract).
+ * Studio binds each request to the active scope through its Worker's `/api/host` forwarding and
+ * sends one random idempotency key per draft (`createIntentKey`), kept across retries.
  *
- *   GET  /v1/actions?orgId&environmentId[&objectKind=T]
- *        200 { items: ActionSummary[] }: only actions this actor may call and the kernel can run
- *        (the cell decides; Studio filters nothing). Each item carries the admitted `inputSchema`
- *        (ActionIR's closed input dialect with DEFS's title, description, enum and x-norn.groups),
- *        `effect` and `objectIdField` from its effect program, `title` (falls back to `actionId`)
- *        and `uiEffects`, the kernel's effective effects (always present).
+ * A visibility or permission refusal is the one opaque 403 `authz.denied`, whatever the target or
+ * action, so that refusal never tells a known action from an unknown one. Any 404 or 503 means the
+ * cell does not serve the route: Studio says so and offers no action.
  *
- *   POST /v1/actions/{actionId}?orgId&environmentId[&version]   (served: norn_api::actions)
- *        body { input: <object>, idempotencyKey: string }   (1..128 chars and at most 256 UTF-8
- *        bytes; Studio sends one random UUID per draft)
- *        200 { outcome: "committed" | "replayed", objectType, objectId, version,
- *              receipt: { receiptHash, commitSeq, recordedAtMs } }: a replay reports the
- *              original commit; `receiptHash` is a keyed handle unless the reader holds Values
- *              over the whole cell.
- *        4xx Refusal@2 { code, category, message, explanation, diagnostics?: [{ code, message,
- *            span: { pointer } | null }] }: each pointer into the request body. Only a malformed
- *            envelope carries one today (`/input` not an object, `/idempotencyKey`). Input the
- *            action's schema refuses is one 400 `action.invalid_input` with no field pointers, so
- *            Studio shows it on the form, not on a field; a rule, law or precondition refusal
- *            carries none either. A diagnostic at `/input/<field>` (nested: `/input/lines/0/sku`)
- *            reads on that field's row; one at `/input` itself, or at no pointer, reads on the form.
- *        202 { outcome: "pending", decision: { id, expiresAtMs } }: an approval-gated action
- *            (APPROVAL-1); nothing is committed until a decider approves it in the inbox.
- *        409 `action.idempotency_conflict` when the key was used for a different call.
- *        Fixture: test/fixtures/action-call.json, produced by crates/norn-cell-do/tests/actions.rs.
- *
- *   A visibility or permission refusal is the one opaque 403 `authz.denied`, whatever the target or
- *   action, so that refusal never tells a known action from an unknown one. The guarantee is not
- *   universal: a caller the host lets call any action and that pins a stale `version` gets 409
- *   `defs.stale` for a known action but 403 `authz.denied` for an unknown one, until action-level
- *   host authorization closes that gap.
- *   Any 404 or 503, whatever its body (the cell's carries `route.not_found`), means the cell does
- *   not serve the route: Studio says so and offers no action.
- *
- * Studio never validates input. It encodes what was typed as faithfully as JSON allows and
- * shows the cell's refusal at the field its pointer names.
+ * Studio never validates input. It encodes what was typed as faithfully as JSON allows and shows
+ * the cell's refusal at the field its pointer names: a diagnostic at `/input/<field>` (nested:
+ * `/input/lines/0/sku`) reads on that field's row; one at `/input` itself, or at no pointer, reads
+ * on the form. Input the action's schema refuses is one 400 `action.invalid_input` with no field
+ * pointers. Fixture: test/fixtures/action-call.json, produced by crates/norn-cell-do/tests/actions.rs.
  */
-
-export interface UiEffects { readonly irreversible: boolean; readonly destructive: boolean; readonly money: readonly string[] }
-
-export interface ActionSummary {
-  readonly actionId: string
-  readonly title: string
-  readonly description: string | null
-  readonly objectKind: string
-  /** `mutate_parent_with_rows` writes a parent and its owned rows; `objectIdField` is the parent's id. */
-  readonly effect: "upsert_input_object" | "mutate_parent_with_rows" | "fire_transition"
-  readonly objectIdField: string
-  readonly inputSchema: unknown
-  /** The kernel's effective effects: destructive can be true without being declared. */
-  readonly uiEffects: UiEffects
-  /** Input fields that name an existing record of `objectKind`: the form offers a picker (ACTION-CATALOG-LINKS-1). */
-  readonly inputLinks?: readonly { readonly field: string; readonly objectKind: string }[]
-  /** A transition's target state, so the receipt says what the record is now. */
-  readonly toState?: string
-}
 
 /** Whether an action writes a record whole (creating it when the id is new): offered as "New …". */
 export const writesWhole = (action: ActionSummary) => action.effect !== "fire_transition"
 
 /** Whether the form confirms before it calls. */
 export const risky = (action: ActionSummary) => action.uiEffects.destructive || action.uiEffects.irreversible
-
-/** One idempotency key per draft: a random UUID, ASCII and 36 bytes, well inside the cell's 256-byte bound. */
-export const newIdempotencyKey = (): string => crypto.randomUUID()
-
-export interface ActionReceipt {
-  readonly outcome: "committed" | "replayed"
-  readonly objectType: string
-  readonly objectId: string
-  readonly version: number
-  readonly receipt: { readonly receiptHash: string; readonly commitSeq: number; readonly recordedAtMs: number }
-}
-
-export interface Diagnostic { readonly code: string; readonly message: string; readonly pointer: string | null }
 
 export type CatalogRead =
   | { readonly kind: "catalog"; readonly items: readonly ActionSummary[] }
@@ -88,6 +35,9 @@ export type CatalogRead =
   | { readonly kind: "refused"; readonly status: number; readonly code: string; readonly message: string }
   /** The server-reported scope moved away from the scope this call was bound to; no request reached the new cell. */
   | { readonly kind: "scope-changed" }
+
+/** A call's answer as Studio shows it: the cell's three (receipt, pending, refused), or no cell to ask. */
+export type CallAnswer = CallResult | { readonly kind: "no-cell" } | { readonly kind: "unavailable" }
 
 export interface ListActionsScopeOptions {
   readonly scope?: StudioScope | null
@@ -101,63 +51,33 @@ export interface ActionScopeOptions {
   readonly onScopeMismatch?: (actual: StudioScope | null | undefined) => void
 }
 
-/** An approval-gated call (APPROVAL-1): 202, nothing committed yet; a decider settles it in the inbox. */
-export interface PendingDecision { readonly id: string; readonly expiresAtMs: number }
-
-export type CallResult =
-  | { readonly kind: "receipt"; readonly receipt: ActionReceipt }
-  | { readonly kind: "pending"; readonly decision: PendingDecision }
-  | { readonly kind: "refused"; readonly status: number; readonly code: string; readonly message: string; readonly diagnostics: readonly Diagnostic[]; readonly explanation?: string; readonly reason?: RefusalReason; readonly decidedAt?: string; readonly incidentId?: string }
-  | { readonly kind: "no-cell" }
-  | { readonly kind: "unavailable" }
-
 export const ACTIONS_UNAVAILABLE = "This cell doesn't take actions from Studio yet."
 
-type Fetch = (input: string, init?: RequestInit) => Promise<Response>
-
-/**
- * DIAG-REASON-1: what refused a call, disclosed with the caller's authority: the law (its pinned
- * declaration), the subject, and the stored values it checked, by path (`total`, `ledger_entry.amount`).
- */
-export interface RefusalReason {
-  readonly law: string
-  readonly subject: string
-  readonly values: Readonly<Record<string, unknown>>
-  readonly pin?: { readonly kind?: string; readonly artifactId?: string; readonly lawId?: string; readonly version?: string }
-}
-
-interface Refusal { readonly code: string; readonly message: string; readonly diagnostics: readonly Diagnostic[]; readonly explanation?: string; readonly reason?: RefusalReason; readonly decidedAt?: string; readonly incidentId?: string }
-
-function refusalOf(text: string): Refusal | null {
-  let body: unknown
-  try { body = JSON.parse(text) } catch { return null }
-  const { code, message, diagnostics, explanation, reason, decidedAt, incidentId } = (body ?? {}) as { code?: unknown; message?: unknown; diagnostics?: unknown; explanation?: unknown; reason?: unknown; decidedAt?: unknown; incidentId?: unknown }
-  if (typeof code !== "string") return null
-  // The cell's refusal@2 places a finding at `span.pointer`; a bare `pointer` is read too.
-  const list = Array.isArray(diagnostics) ? diagnostics.map((d: { code?: unknown; message?: unknown; pointer?: unknown; span?: { pointer?: unknown } | null }) => ({
-    code: String(d.code ?? ""), message: String(d.message ?? ""),
-    pointer: typeof d.span?.pointer === "string" ? d.span.pointer : typeof d.pointer === "string" ? d.pointer : null,
-  })) : []
-  // The cell's own explanation names what refused the call (a law and its statement, say); it is shown as sent.
-  const disclosed = reason !== null && typeof reason === "object" && typeof (reason as { law?: unknown }).law === "string" ? reason as RefusalReason : undefined
-  return {
-    code,
-    message: typeof message === "string" ? message : code,
-    diagnostics: list,
-    ...typeof explanation === "string" ? { explanation } : {},
-    ...disclosed ? { reason: disclosed } : {},
-    ...typeof decidedAt === "string" && decidedAt !== "" ? { decidedAt } : {},
-    ...typeof incidentId === "string" && incidentId !== "" ? { incidentId } : {},
-  }
-}
-
-async function scoped(fetcher: Fetch, options: ListActionsScopeOptions = {}): Promise<{ readonly kind: "ok"; readonly call: Fetch } | { readonly kind: "no-cell" } | { readonly kind: "scope-changed" }> {
+/** The SDK client for the active scope, through the Studio Worker's `/api/host` forwarding. */
+async function scoped(fetcher: Fetch, options: ListActionsScopeOptions = {}) {
   const scope = await readStudioScope(fetcher, options.signal)
   if (options.scope !== undefined && !sameStudioScope(scope, options.scope)) {
     options.onScopeMismatch?.(scope)
-    return { kind: "scope-changed" }
+    return { kind: "scope-changed" } as const
   }
-  return scope === null ? { kind: "no-cell" } : { kind: "ok", call: scopedHostFetch(fetcher, "/api/host", async () => scope) }
+  if (scope === null) return { kind: "no-cell" } as const
+  return { kind: "ok", client: createNornClient({ scope, fetch: scopedHostFetch(fetcher, "/api/host", async () => scope) }) } as const
+}
+
+/** A write whose answer was lost or unreadable: it may have been saved, and Retry resends the same call under its key. */
+export const CALL_OUTCOME_UNKNOWN = "Couldn't confirm this was saved: the cell's answer was lost, so it may or may not have happened. Retry sends the same request, so it can't apply twice."
+
+/**
+ * The SDK's "no readable answer" in Studio's words (the SDK's own message is developer copy). A route
+ * the cell does not serve is a state: for a read, any `notServed` answer; for a write, only one that
+ * applied nothing (a 404). A read that got no readable answer is Studio's usual "did not answer". A
+ * write whose outcome is unknown says so, and its Retry resends the same call under its key
+ * (`lib/screen/call.ts`), so it cannot apply twice.
+ */
+function unanswered(error: unknown, write: boolean): { readonly kind: "unavailable" } {
+  if (error instanceof NornUnavailable && (write ? error.outcome === "not-applied" : error.notServed)) return { kind: "unavailable" }
+  if (error instanceof NornUnavailable) throw new CellUnavailable(error.status, write ? CALL_OUTCOME_UNKNOWN : undefined)
+  throw error
 }
 
 /**
@@ -177,23 +97,17 @@ export async function listActions(
     throw error
   }
   if (resolved.kind !== "ok") return resolved
-  const query = objectKind === undefined ? "" : `?${new URLSearchParams({ objectKind, ...objectId === undefined ? {} : { objectId } })}`
-  const response = await resolved.call(`/v1/actions${query}`, {
-    headers: { accept: "application/json" },
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-  })
-  const text = await response.text()
-  if (options.signal?.aborted) return { kind: "scope-changed" }
-  if (response.status === 404 || response.status === 503) return { kind: "unavailable" }
-  if (response.ok) {
-    let items: unknown
-    try { items = (JSON.parse(text) as { items?: unknown }).items } catch { items = undefined }
-    if (!Array.isArray(items)) throw new CellUnavailable(response.status, "The cell's action catalog was not a list.")
-    return { kind: "catalog", items: items as ActionSummary[] }
+  let read: ActionCatalog
+  try {
+    read = await resolved.client.listActions(objectKind === undefined ? {} : { objectKind, ...objectId === undefined ? {} : { objectId } }, options.signal)
+  } catch (error) {
+    if (options.signal?.aborted) return { kind: "scope-changed" }
+    return unanswered(error, false)
   }
-  const refusal = refusalOf(text)
-  if (refusal !== null) return { kind: "refused", status: response.status, code: refusal.code, message: refusal.message }
-  throw new CellUnavailable(response.status)
+  if (options.signal?.aborted) return { kind: "scope-changed" }
+  // Studio pins no definitions version, so the client's own stale check never applies.
+  if (read.kind === "stale") throw new Error("Studio reads the catalog unpinned")
+  return read.kind === "catalog" ? { kind: "catalog", items: read.items } : { kind: "refused", status: read.status, code: read.code, message: read.message }
 }
 
 const isStudioScopeArg = (value: StudioScope | null | ActionScopeOptions | undefined): value is StudioScope | null =>
@@ -206,36 +120,25 @@ export async function callAction(
   idempotencyKey: string,
   fetcher: Fetch = defaultFetch,
   boundOrOptions?: StudioScope | null | ActionScopeOptions,
-): Promise<CallResult> {
+): Promise<CallAnswer> {
   const boundScope = isStudioScopeArg(boundOrOptions) ? boundOrOptions : boundOrOptions?.scope
   const signal = isStudioScopeArg(boundOrOptions) ? undefined : boundOrOptions?.signal
   const onScopeMismatch = isStudioScopeArg(boundOrOptions) ? undefined : boundOrOptions?.onScopeMismatch
   const scope = await resolveWriteScope(fetcher, boundScope)
   if (scope === null) return { kind: "no-cell" }
-  const call = scopedHostFetch(fetcher, "/api/host", async () => scope)
-  const response = await call(`/v1/actions/${encodeURIComponent(actionId)}`, {
-    method: "POST",
-    headers: { accept: "application/json", "content-type": "application/json" },
-    body: `{"input":${input},"idempotencyKey":${JSON.stringify(idempotencyKey)}}`,
-    ...(signal === undefined ? {} : { signal }),
-  })
-  const text = await response.text()
-  if (response.status === 202) {
-    const pending = JSON.parse(text) as { readonly outcome?: unknown; readonly decision?: PendingDecision }
-    if (pending.outcome === "pending" && pending.decision !== undefined) return { kind: "pending", decision: pending.decision }
-    throw new CellUnavailable(response.status)
+  const client = createNornClient({ scope, fetch: scopedHostFetch(fetcher, "/api/host", async () => scope) })
+  let result: CallResult
+  try {
+    result = await client.callEncoded(actionId, input, { idempotencyKey, ...signal === undefined ? {} : { signal } })
+  } catch (error) {
+    return unanswered(error, true)
   }
-  if (response.ok) return { kind: "receipt", receipt: JSON.parse(text) as ActionReceipt }
-  const refusal = refusalOf(text)
-  if (response.status === 404 || response.status === 503) return { kind: "unavailable" }
-  if (refusal !== null) {
-    if (response.status === 409 && refusal.code === "workspace.changed" && onScopeMismatch !== undefined) {
-      const actual = await readStudioScope(fetcher, signal).then((next) => next, () => undefined)
-      onScopeMismatch(actual)
-    }
-    return { kind: "refused", status: response.status, ...refusal }
+  // The cell refused because the workspace moved under this call: say where it is now.
+  if (result.kind === "refused" && result.status === 409 && result.code === "workspace.changed" && onScopeMismatch !== undefined) {
+    const actual = await readStudioScope(fetcher, signal).then((next) => next, () => undefined)
+    onScopeMismatch(actual)
   }
-  throw new CellUnavailable(response.status)
+  return result
 }
 
 // ---- The form a closed input schema implies -------------------------------------------------
@@ -702,7 +605,7 @@ const IRREGULAR: Readonly<Record<string, string>> = { send: "sent", make: "made"
  * verb guessed from the action's title.
  */
 export function receiptVerb(action: ActionSummary, version: number): string {
-  if (action.effect === "fire_transition") return action.toState === undefined ? "updated" : `is now ${action.toState.replaceAll("_", " ")}`
+  if (action.effect === "fire_transition") return action.toState == null ? "updated" : `is now ${action.toState.replaceAll("_", " ")}`
   return version === 1 ? "created" : "updated"
 }
 

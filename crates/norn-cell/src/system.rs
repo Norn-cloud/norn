@@ -649,8 +649,8 @@ pub const SYSTEM_DDL: &[&str] = &[
     crate::open_checkpoint::DDL,
 ];
 
-/// Ensure every core, flow, decision-ledger, due-retry, and automation-outbox
-/// system table exists (idempotent DDL).
+/// Ensure every core, flow, decision-ledger, due-retry, automation-outbox and
+/// retained Function receipt system table exists (idempotent DDL).
 pub(crate) fn init_core_tables<E: crate::engine::SqlEngine>(
     conn: &E,
 ) -> Result<(), crate::CellError> {
@@ -660,6 +660,7 @@ pub(crate) fn init_core_tables<E: crate::engine::SqlEngine>(
         .chain(&crate::decision_ledger::DDL)
         .chain(&crate::due_retry::DDL)
         .chain(&crate::automation_outbox::DDL)
+        .chain(&crate::function_receipt::DDL)
     {
         conn.execute_batch(statement)?;
     }
