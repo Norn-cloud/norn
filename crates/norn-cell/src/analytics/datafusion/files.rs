@@ -8,19 +8,27 @@
 //! (LAW-03): a nanosecond field a reader would narrow or zone refuses.
 //!
 //! B1: nothing here holds a whole file. Rows reach the caller [`CHUNK_ROWS`]
-//! at a time, and every cell, chunk, file and footer is checked against the
-//! [`Caps`] the engine's memory bound gives before more is read.
+//! (or half a chunk's bytes) at a time; a CSV is split incrementally
+//! ([`super::csv`]), never past a record's bound; a Parquet file decodes only
+//! its declared columns, strings as views of their dictionary; and every
+//! cell, chunk, file and footer is checked against the [`Caps`] the engine's
+//! memory bound gives before more is read.
 
 use std::collections::BTreeSet;
 use std::io::{BufRead as _, Read as _, Seek as _, SeekFrom};
+use std::sync::Arc;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use datafusion::arrow::datatypes::{DataType, TimeUnit};
-use parquet::arrow::arrow_reader::{ArrowReaderOptions, ParquetRecordBatchReaderBuilder};
+use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit};
+use parquet::arrow::ProjectionMask;
+use parquet::arrow::arrow_reader::{
+    ArrowReaderMetadata, ArrowReaderOptions, ParquetRecordBatchReaderBuilder,
+};
 use parquet::basic::{LogicalType, Type as PhysicalType};
 
 use super::super::{Column, ColumnKind, FileFormat, LoadRequest};
+use super::csv::next_record;
 use super::parquet_text::{Encoding, is_temporal, parquet_text};
 use super::{EXHAUSTED, Outcome, engine_error, refusal};
 
@@ -83,31 +91,82 @@ fn field_name<'r>(request: &'r LoadRequest, column: &'r Column) -> &'r str {
 }
 
 /// The running bounds of one read.
-struct Meter {
-    caps: Caps,
+pub(super) struct Meter {
+    pub caps: Caps,
     started: Instant,
     total: u64,
 }
 
 impl Meter {
-    fn chunk(&mut self, bytes: usize) -> Outcome<()> {
-        self.total = self
-            .total
-            .saturating_add(u64::try_from(bytes).unwrap_or(u64::MAX));
-        if bytes > self.caps.chunk || self.total > self.caps.total {
-            return Err(refusal(EXHAUSTED, "the load decodes more than its bound"));
+    /// A read starting now under `caps`.
+    pub(super) fn new(caps: Caps) -> Self {
+        Self {
+            caps,
+            started: Instant::now(),
+            total: 0,
         }
+    }
+
+    /// Refuse once the read has run past its deadline.
+    pub(super) fn deadline(&self) -> Outcome<()> {
         if self.started.elapsed() > self.caps.deadline {
             return Err(refusal(EXHAUSTED, "the load ran past its deadline"));
         }
         Ok(())
     }
 
-    fn cell(&self, text: &str) -> Outcome<()> {
+    /// One decoded batch of `bytes`, within the chunk bound and the deadline.
+    fn batch(&self, bytes: usize) -> Outcome<()> {
+        if bytes > self.caps.chunk {
+            return Err(refusal(EXHAUSTED, "the load decodes more than its bound"));
+        }
+        self.deadline()
+    }
+
+    /// One value's text, within the cell bound and the whole load's.
+    fn text(&mut self, text: &str) -> Outcome<()> {
         if text.len() > self.caps.cell {
             return Err(refusal(EXHAUSTED, "a value is wider than the load's bound"));
         }
+        self.total = self
+            .total
+            .saturating_add(u64::try_from(text.len()).unwrap_or(u64::MAX));
+        if self.total > self.caps.total {
+            return Err(refusal(EXHAUSTED, "the load decodes more than its bound"));
+        }
         Ok(())
+    }
+}
+
+/// Rows gathered for the caller: handed on at [`CHUNK_ROWS`] rows or half
+/// the chunk bound of text, whichever comes first.
+struct Chunker<'e> {
+    rows: Vec<SourceRow>,
+    bytes: usize,
+    each: &'e mut dyn FnMut(Vec<SourceRow>) -> Outcome<()>,
+}
+
+impl Chunker<'_> {
+    fn push(&mut self, row: SourceRow, meter: &Meter) -> Outcome<()> {
+        let bytes = row
+            .texts
+            .iter()
+            .flatten()
+            .fold(0_usize, |total, text| total.saturating_add(text.len()));
+        self.bytes = self.bytes.saturating_add(bytes);
+        self.rows.push(row);
+        if self.rows.len() >= CHUNK_ROWS || self.bytes >= meter.caps.chunk.div_euclid(2) {
+            self.flush()?;
+        }
+        Ok(())
+    }
+
+    fn flush(&mut self) -> Outcome<()> {
+        self.bytes = 0;
+        if self.rows.is_empty() {
+            return Ok(());
+        }
+        (self.each)(std::mem::take(&mut self.rows))
     }
 }
 
@@ -122,95 +181,10 @@ pub(super) fn read_source(
     for column in &request.table.columns {
         super::typing::check_laws(column)?;
     }
-    let mut meter = Meter {
-        caps,
-        started: Instant::now(),
-        total: 0,
-    };
+    let mut meter = Meter::new(caps);
     match request.file.format {
         FileFormat::Csv => read_csv(request, file, &mut meter, each),
         FileFormat::Parquet => read_parquet(request, file, &mut meter, each),
-    }
-}
-
-/// One record of `line` (its line ending removed), as `DuckDB`'s strict
-/// reader splits it: fields at commas; a field that starts with a quote is
-/// quoted (doubled quotes undone, and anything but a comma after its closing
-/// quote refuses); a quote inside an unquoted field is a literal character.
-/// `None` when the line ends inside a quoted field (the record goes on).
-fn fields(line: &[u8]) -> Outcome<Option<Vec<Vec<u8>>>> {
-    let mut out = Vec::new();
-    let mut at = 0;
-    loop {
-        let mut field = Vec::new();
-        if line.get(at) == Some(&b'"') {
-            at = at.saturating_add(1);
-            loop {
-                match (line.get(at), line.get(at.saturating_add(1))) {
-                    (Some(b'"'), Some(b'"')) => {
-                        field.push(b'"');
-                        at = at.saturating_add(2);
-                    }
-                    (Some(b'"'), next) => {
-                        at = at.saturating_add(1);
-                        if !matches!(next, None | Some(b',')) {
-                            return Err(engine_error("the CSV has text after a closing quote"));
-                        }
-                        break;
-                    }
-                    (Some(byte), _) => {
-                        field.push(*byte);
-                        at = at.saturating_add(1);
-                    }
-                    (None, _) => return Ok(None),
-                }
-            }
-        } else {
-            while let Some(byte) = line.get(at).filter(|b| **b != b',') {
-                field.push(*byte);
-                at = at.saturating_add(1);
-            }
-        }
-        out.push(field);
-        if line.get(at) == Some(&b',') {
-            at = at.saturating_add(1);
-        } else {
-            return Ok(Some(out));
-        }
-    }
-}
-
-/// The next record's fields (lines joined while a quoted field is open), or
-/// `None` at the end; blank lines are skipped.
-fn next_record(
-    reader: &mut impl std::io::BufRead,
-    meter: &Meter,
-) -> Outcome<Option<(usize, Vec<Vec<u8>>)>> {
-    let mut record = Vec::new();
-    loop {
-        let read = reader.read_until(b'\n', &mut record).map_err(unreadable)?;
-        if record.len() > meter.caps.chunk {
-            return Err(refusal(
-                EXHAUSTED,
-                "a CSV record is wider than the load's bound",
-            ));
-        }
-        let mut line = record.clone();
-        while matches!(line.last(), Some(b'\n' | b'\r')) {
-            line.pop();
-        }
-        if read == 0 && line.is_empty() {
-            return Ok(None);
-        }
-        if line.is_empty() && read > 0 && !record.contains(&b'"') {
-            record.clear();
-            continue;
-        }
-        match fields(&line)? {
-            Some(found) => return Ok(Some((line.len(), found))),
-            None if read == 0 => return Err(engine_error("the CSV ends inside a quoted field")),
-            None => {}
-        }
     }
 }
 
@@ -232,7 +206,7 @@ fn read_csv(
     }
     let text = |bytes: Vec<u8>| String::from_utf8(bytes).map_err(unreadable);
     let headers = next_record(&mut reader, meter)?
-        .map_or_else(Vec::new, |(_, found)| found)
+        .map_or_else(Vec::new, |record| record.fields)
         .into_iter()
         .map(text)
         .collect::<Outcome<Vec<_>>>()?;
@@ -246,33 +220,26 @@ fn read_csv(
                 .ok_or_else(|| missing(name))?,
         );
     }
-    let mut chunk = Vec::new();
-    let mut bytes = 0_usize;
+    let mut chunker = Chunker {
+        rows: Vec::new(),
+        bytes: 0,
+        each,
+    };
     let mut number = 0_u64;
-    while let Some((width, record)) = next_record(&mut reader, meter)? {
-        if record.len() != headers.len() {
+    while let Some(record) = next_record(&mut reader, meter)? {
+        if record.fields.len() != headers.len() {
             return Err(engine_error("a CSV row has another number of fields"));
         }
         number = number.saturating_add(1);
-        bytes = bytes.saturating_add(width);
         let mut texts = Vec::with_capacity(positions.len());
         for at in &positions {
-            let value = text(record.get(*at).cloned().unwrap_or_default())?;
-            meter.cell(&value)?;
+            let value = text(record.fields.get(*at).cloned().unwrap_or_default())?;
+            meter.text(&value)?;
             texts.push((!value.trim_matches(' ').is_empty()).then_some(value));
         }
-        chunk.push(SourceRow { row: number, texts });
-        if chunk.len() >= CHUNK_ROWS {
-            meter.chunk(std::mem::take(&mut bytes))?;
-            each(std::mem::take(&mut chunk))?;
-        }
+        chunker.push(SourceRow { row: number, texts }, meter)?;
     }
-    meter.chunk(bytes)?;
-    if chunk.is_empty() {
-        Ok(())
-    } else {
-        each(chunk)
-    }
+    chunker.flush()
 }
 
 /// Refuse a Parquet file whose footer is past the bound, before any of its
@@ -304,11 +271,11 @@ fn check_footer(file: &mut std::fs::File, caps: Caps) -> Outcome<()> {
 /// that hold instants this load cannot import exactly.
 fn parquet_plan(
     request: &LoadRequest,
-    builder: &ParquetRecordBatchReaderBuilder<std::fs::File>,
+    metadata: &ArrowReaderMetadata,
 ) -> Outcome<Vec<(usize, Encoding, ColumnKind)>> {
     let mut nanos = BTreeSet::new();
     let mut int96 = BTreeSet::new();
-    for descriptor in builder.parquet_schema().columns() {
+    for descriptor in metadata.parquet_schema().columns() {
         let name = descriptor
             .path()
             .parts()
@@ -324,7 +291,7 @@ fn parquet_plan(
             nanos.insert(name);
         }
     }
-    let schema = builder.schema();
+    let schema = metadata.schema();
     let mut plan = Vec::new();
     for column in &request.table.columns {
         let name = field_name(request, column);
@@ -361,6 +328,23 @@ fn parquet_plan(
     Ok(plan)
 }
 
+/// `schema` with every string field read as a view: a dictionary-encoded
+/// column's values are then shared from its dictionary, never copied per row.
+fn viewed(schema: &Schema) -> Schema {
+    Schema::new(
+        schema
+            .fields()
+            .iter()
+            .map(|field| match field.data_type() {
+                DataType::Utf8 | DataType::LargeUtf8 => {
+                    field.as_ref().clone().with_data_type(DataType::Utf8View)
+                }
+                _ => field.as_ref().clone(),
+            })
+            .collect::<Vec<Field>>(),
+    )
+}
+
 fn read_parquet(
     request: &LoadRequest,
     file: &Path,
@@ -373,43 +357,60 @@ fn read_parquet(
     // N6.4: the file's own Arrow schema hint is ignored; values are read as
     // their Parquet types say, as `DuckDB` reads them.
     let options = ArrowReaderOptions::new().with_skip_arrow_metadata(true);
-    let builder = ParquetRecordBatchReaderBuilder::try_new_with_options(source, options)
-        .map_err(unreadable)?;
-    if builder.metadata().num_row_groups() > MAX_ROW_GROUPS
-        || builder.schema().fields().len() > MAX_FIELDS
+    let metadata = ArrowReaderMetadata::load(&source, options.clone()).map_err(unreadable)?;
+    if metadata.metadata().num_row_groups() > MAX_ROW_GROUPS
+        || metadata.schema().fields().len() > MAX_FIELDS
     {
         return Err(refusal(
             "bulk.unsupported_encoding",
             "the file declares too much structure",
         ));
     }
-    let plan = parquet_plan(request, &builder)?;
-    let reader = builder
+    let plan = parquet_plan(request, &metadata)?;
+    let options = options.with_schema(Arc::new(viewed(metadata.schema())));
+    let metadata = ArrowReaderMetadata::try_new(Arc::clone(metadata.metadata()), options)
+        .map_err(unreadable)?;
+    // Only the declared columns are decoded; the batch holds them in file order.
+    let roots: Vec<usize> = plan
+        .iter()
+        .map(|(index, _, _)| *index)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let mask = ProjectionMask::roots(metadata.parquet_schema(), roots.iter().copied());
+    let reader = ParquetRecordBatchReaderBuilder::new_with_metadata(source, metadata)
+        .with_projection(mask)
         .with_batch_size(CHUNK_ROWS)
         .build()
         .map_err(unreadable)?;
+    let mut chunker = Chunker {
+        rows: Vec::new(),
+        bytes: 0,
+        each,
+    };
     let mut number = 0_u64;
     for batch in reader {
         let batch = batch.map_err(unreadable)?;
-        meter.chunk(batch.get_array_memory_size())?;
-        let mut chunk = Vec::with_capacity(batch.num_rows());
+        meter.batch(batch.get_array_memory_size())?;
         for row in 0..batch.num_rows() {
             number = number.saturating_add(1);
             let mut texts = Vec::with_capacity(plan.len());
             for (index, encoding, kind) in &plan {
+                let at = roots
+                    .binary_search(index)
+                    .map_err(|_absent| engine_error("a Parquet column"))?;
                 let array = batch
                     .columns()
-                    .get(*index)
+                    .get(at)
                     .ok_or_else(|| engine_error("a Parquet column"))?;
                 let text = parquet_text(array.as_ref(), row, *encoding, *kind)?;
                 if let Some(text) = &text {
-                    meter.cell(text)?;
+                    meter.text(text)?;
                 }
                 texts.push(text);
             }
-            chunk.push(SourceRow { row: number, texts });
+            chunker.push(SourceRow { row: number, texts }, meter)?;
         }
-        each(chunk)?;
     }
-    Ok(())
+    chunker.flush()
 }

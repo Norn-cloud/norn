@@ -328,7 +328,9 @@ pub(super) fn sync(
     for name in by_table.keys() {
         // Best effort: a compaction that cannot run leaves the mirror exact,
         // and the next sync tries again.
-        let _compacted = super::compact::compact(engine, tenant, name, &request.world);
+        if let Err(error) = super::compact::compact(engine, tenant, name, &request.world) {
+            tracing::warn!(code = %error.code, detail = %error.detail, "mirror compaction failed");
+        }
     }
     Ok(FrontierResponse {
         frontier: request.through,

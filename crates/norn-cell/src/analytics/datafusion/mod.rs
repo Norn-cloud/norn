@@ -16,6 +16,7 @@ mod attempts;
 mod catalog;
 mod columnar;
 mod compact;
+mod csv;
 mod dataset;
 mod files;
 mod landing;
