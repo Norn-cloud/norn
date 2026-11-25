@@ -6,15 +6,15 @@
 //! `principal` record of its `inputSchema`; the host resolves the values and
 //! a request never supplies them.
 //!
-//! - **T2** ([`validate`], one rule): the declarations are well formed and
+//! - **T2** (`validate`, one rule): the declarations are well formed and
 //!   unique, the `principal` record has exactly one required column per
 //!   declaration ([`codes::PRINCIPAL_INPUT_INVALID`]), no node writes into
 //!   the reserved namespace, and every `principal.<name>` an expression
 //!   reads is declared ([`codes::PRINCIPAL_INPUT_UNDECLARED`]). A rule with
 //!   no declarations reads nothing under `principal`.
-//! - **T2** ([`validate_catalog`], one policy): every `principalCatalog`
+//! - **T2** (`validate_catalog`, one policy): every `principalCatalog`
 //!   entry of an `AccessIR` policy is well formed.
-//! - **T3** ([`check_set`], the resolved set): the catalog is every entry the
+//! - **T3** (`check_set`, the resolved set): the catalog is every entry the
 //!   `AccessIR` policies of the set and the installed base declare, by name.
 //!   Two different declarations of one name refuse
 //!   ([`codes::PRINCIPAL_CATALOG_CONFLICT`]). Each input names an entry of
