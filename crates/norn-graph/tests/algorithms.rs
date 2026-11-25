@@ -754,3 +754,47 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn signed_rollup_keeps_cancellation_across_decimal_scales() {
+    let graph = Graph {
+        nodes: vec![0, 1, 2],
+        edges: vec![(0, 1), (0, 2)],
+    };
+    for unit in [Decimal::ONE, Decimal::new(1, 28)] {
+        for term in [unit, -unit] {
+            let values = BTreeMap::from([(0, Decimal::MAX), (1, term), (2, -term)]);
+            let result =
+                hierarchical_rollup(&graph, &0, &values, Aggregation::Sum, BUDGET).unwrap();
+            assert_eq!(result[&0], Decimal::MAX);
+        }
+    }
+}
+
+#[test]
+fn parallel_bom_lines_sum_small_fractions_before_narrowing() {
+    let part = |cost| Part {
+        cost,
+        lead_time: Decimal::ZERO,
+    };
+    let large = Decimal::MAX - Decimal::ONE;
+    for quantities in [
+        [large, Decimal::new(1, 1), Decimal::new(9, 1)],
+        [Decimal::new(9, 1), Decimal::new(1, 1), large],
+    ] {
+        let bom = Bom {
+            parts: BTreeMap::from([(0, part(Decimal::ZERO)), (1, part(Decimal::ONE))]),
+            lines: quantities
+                .into_iter()
+                .map(|quantity| Composition {
+                    parent: 0,
+                    child: 1,
+                    quantity,
+                })
+                .collect(),
+        };
+        let result = explode(&bom, &BTreeMap::from([(0, Decimal::ONE)]), BUDGET).unwrap();
+        assert_eq!(result.total_cost, Decimal::MAX);
+        assert_eq!(result.requirements.get(&1), Some(&Decimal::MAX));
+    }
+}

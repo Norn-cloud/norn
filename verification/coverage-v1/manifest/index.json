@@ -116,5 +116,21 @@
     ".github/workflows/trusted-policy.yml",
     "scripts/ci/core.sh",
     "verification/coverage-v1/assurance-certificate-obligations.json"
-  ]
+  ],
+  "inlineVerus": {
+    "version_check": {
+      "checked_next_version": {
+        "postcondition": "successor",
+        "mutant": "saturating_add",
+        "statementDigest": "a3ed7825fcb2f91f4aecc90d457ece1b46a7f841348e34d7d3df3144f8f704ef",
+        "secondLensGate": "kernel-l1-version-correspondence"
+      },
+      "has_committed_deletion": {
+        "postcondition": "deleted",
+        "mutant": "zero",
+        "statementDigest": "4ebd1d99570a6f88d71954d7fa3143473d975152f60988bd4449c9fbda0b0269",
+        "secondLensGate": "kernel-version-kani"
+      }
+    }
+  }
 }

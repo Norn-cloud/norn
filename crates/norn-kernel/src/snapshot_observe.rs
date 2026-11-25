@@ -24,6 +24,7 @@ use crate::cell_host::{
     FactMutation, FactState, FactVersion, FactWrite, JsonObject, JsonValue, LinkKey, LinkMutation,
     LinkReadExpectation, LinkWrite,
 };
+use crate::commit::{CommitLinks, Projection, linked_subjects};
 use crate::commit_check::{InvariantEvaluationError, InvariantFailure, evaluate_invariants};
 use crate::decision_commit::{
     DecisionRefusal, DecisionTurn, FactEvent, FactSlice, TypeCatalog, modified_event,
@@ -1200,6 +1201,8 @@ impl ObservationAuthorization {
     ) -> Result<(), ObservationRefusal> {
         let model = crate::CommitModel::new(catalog);
         let refuse = |error: String| ObservationRefusal::Encoding(format!("LAW-LINK-1: {error}"));
+        let post = Projection::preview(&commit.writes, &commit.links, model, view)
+            .map_err(|e| refuse(e.code().into()))?;
         let mut remaining = EvaluationBudget::default().units();
         for authorized in &mut self.writes {
             let FactMutation::Put { values } = &authorized.write.mutation else {
@@ -1216,7 +1219,7 @@ impl ObservationAuthorization {
                 &mut remaining,
             )
             .ok_or_else(|| refuse("invariant evaluation refused".into()))?;
-            let mut links = crate::commit_check::CommitLinks::new(commit, model, view, &key);
+            let mut links = CommitLinks::new(&post, &key);
             let findings = findings_for(
                 catalog,
                 &key,
@@ -1242,8 +1245,7 @@ impl ObservationAuthorization {
                 &mut remaining,
             )
             .ok_or_else(|| refuse("invariant evaluation refused".into()))?;
-            let mut links =
-                crate::commit_check::CommitLinks::new(commit, model, view, &authorized.key);
+            let mut links = CommitLinks::new(&post, &authorized.key);
             let findings = findings_for(
                 catalog,
                 &authorized.key,
@@ -1295,6 +1297,8 @@ impl ObservationAuthorization {
                 refuse("a linked subject or its target cannot be read")
             }
         };
+        let post =
+            Projection::preview(&commit.writes, &commit.links, model, view).map_err(from_commit)?;
         let written: BTreeSet<FactKey> = commit
             .writes
             .iter()
@@ -1312,16 +1316,8 @@ impl ObservationAuthorization {
                 continue;
             }
             let mut found = BTreeSet::new();
-            crate::commit_check::linked_subjects(
-                commit,
-                model,
-                view,
-                &index,
-                &authorized.write.key,
-                &written,
-                &mut found,
-            )
-            .map_err(from_commit)?;
+            linked_subjects(&post, &index, &authorized.write.key, &written, &mut found)
+                .map_err(from_commit)?;
             for subject in found {
                 subjects.entry(subject).or_insert_with(|| {
                     (
@@ -1331,20 +1327,20 @@ impl ObservationAuthorization {
                 });
             }
         }
-        let before = CellCommit::<E, C, T>::empty();
+        let before = post.snapshot();
         let mut remaining = EvaluationBudget::default().units();
         for (subject, (provenance, observation_id)) in subjects {
+            let canonical = model.canonical(&subject);
             let Some(values) = view
-                .object_values(&model.canonical(&subject))
+                .object_values(&canonical)
                 .map_err(|_host| refuse("a linked subject's values cannot be read"))?
             else {
-                continue;
+                return Err(refuse("a linked subject's values cannot be read"));
             };
             let expected = view
-                .version(&model.canonical(&subject))
+                .version(&canonical)
                 .map_err(|_host| refuse("a linked subject's version cannot be read"))?;
-            let mut held_links =
-                crate::commit_check::CommitLinks::new(&before, model, view, &subject);
+            let mut held_links = CommitLinks::new(&before, &subject);
             let held = crate::governing_laws::evaluate_linked(
                 catalog,
                 &subject,
@@ -1352,8 +1348,7 @@ impl ObservationAuthorization {
                 &mut held_links,
                 &mut remaining,
             )?;
-            let mut after_links =
-                crate::commit_check::CommitLinks::new(commit, model, view, &subject);
+            let mut after_links = CommitLinks::new(&post, &subject);
             let after = crate::governing_laws::evaluate_linked(
                 catalog,
                 &subject,
@@ -1382,7 +1377,7 @@ impl ObservationAuthorization {
                 &mut remaining,
             )
             .ok_or_else(|| refuse("invariant evaluation refused"))?;
-            let mut links = crate::commit_check::CommitLinks::new(commit, model, view, &subject);
+            let mut links = CommitLinks::new(&post, &subject);
             let findings: Vec<_> = findings_for(
                 catalog,
                 &subject,
@@ -1402,11 +1397,10 @@ impl ObservationAuthorization {
                 continue;
             }
             // One canonical object, one read: bind to a pin already there.
-            let stored = model.canonical(&subject);
             let pinned = commit
                 .reads
                 .iter()
-                .find(|read| model.canonical(&read.key) == stored);
+                .find(|read| model.canonical(&read.key) == canonical);
             let read_key = pinned.map_or_else(|| subject.clone(), |read| read.key.clone());
             if pinned.is_none() {
                 commit.reads.push(FactExpectation {
