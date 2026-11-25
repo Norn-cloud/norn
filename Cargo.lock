@@ -3712,6 +3712,7 @@ dependencies = [
  "norn-expr",
  "norn-ir",
  "proptest",
+ "regex-lite",
  "serde_json",
 ]
 

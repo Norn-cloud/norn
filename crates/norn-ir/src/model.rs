@@ -20,8 +20,10 @@ use crate::entity_v2::object::{ObjectTypeName, PropertyId};
 use crate::entity_v2::property::{DecimalLiteral, PropertyType};
 use crate::members::present_non_null;
 use crate::trust::TrustLevel;
+use crate::{JsonValue, PayloadField};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Grammar of a [`ModelRoot::model_id`]: two or more dotted snake_case
 /// segments (`sales.churn_model`).
@@ -215,6 +217,28 @@ pub struct ModelRoot {
     #[schemars(with = "crate::JsonObject")]
     pub extensions: Option<crate::JsonObject>,
 }
+
+define_payload_root!(
+    /// The payload root of a `model` artifact: [`ModelRoot`] on the wire.
+    #[schemars(with = "ModelRoot")]
+    ModelPayload {
+        required {
+            model_id => "modelId" as String,
+            title => "title" as String,
+            version => "version" as String,
+            input => "input" as ModelInput,
+            features => "features" as Vec<PropertyId>,
+            outputs => "outputs" as Vec<ModelOutput>,
+            trust => "trust" as TrustLevel,
+            method => "method" as ModelMethod
+        }
+        optional {
+            target => "target" as PropertyId,
+            contracts => "contracts" as Vec<ModelContract>,
+            predictions => "predictions" as ModelPredictions
+        }
+    }
+);
 
 #[cfg(test)]
 mod tests {

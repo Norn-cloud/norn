@@ -5161,6 +5161,70 @@
       "no_fix": null
     },
     {
+      "code": "theme.validation.contrast",
+      "tier": "T2",
+      "severity": "error",
+      "message": "{scheme} {ink} (on {surface}) contrast is {ratio}:1 (WCAG AA requires >= {floor}:1)",
+      "fix": "Darken or lighten the ink or its surface until the pair meets its WCAG floor (4.5:1 for text, 3:1 for focus rings and status icons) in every scheme the theme applies to.",
+      "no_fix": null
+    },
+    {
+      "code": "theme.validation.invalid_color",
+      "tier": "T2",
+      "severity": "error",
+      "message": "invalid color value for {token}; use a CSS color such as #rrggbb, rgb(…), hsl(…) or oklch(…)",
+      "fix": "Write the value as a CSS colour: #rrggbb, rgb(), hsl(), hwb(), lab(), lch(), oklab() or oklch().",
+      "no_fix": null
+    },
+    {
+      "code": "theme.validation.monochrome",
+      "tier": "T2",
+      "severity": "error",
+      "message": "{scheme} {token} is {value} (OKLCH chroma {chroma}); chrome tokens must be neutral (chroma below 0.02)",
+      "fix": "Keep chrome tokens grey (OKLCH chroma below 0.02); colour belongs only in chart, status, avatar and data-highlight tokens.",
+      "no_fix": null
+    },
+    {
+      "code": "theme.validation.multiple",
+      "tier": "T3",
+      "severity": "error",
+      "message": "a workspace has one theme, but {first} and {other} are both themes",
+      "fix": "Apply the new theme under the existing theme's artifact id to replace it, or remove the other theme first.",
+      "no_fix": null
+    },
+    {
+      "code": "theme.validation.ring1_required",
+      "tier": "T2",
+      "severity": "error",
+      "message": "theme artifacts require Ring-1 norn-ui-checker validation and cannot be admitted by Ring-0 norn-checker alone",
+      "fix": "Validate theme artifacts with Ring-1 norn-ui-checker rather than Ring-0 norn-checker alone.",
+      "no_fix": null
+    },
+    {
+      "code": "theme.validation.schema",
+      "tier": "T2",
+      "severity": "error",
+      "message": "theme payload is not a valid StudioTheme: {reason}",
+      "fix": "Give the theme version 1, a name of 1 to 64 characters, an appearance of light or dark when set, and token maps only under colors, variants.light and variants.dark.",
+      "no_fix": null
+    },
+    {
+      "code": "theme.validation.unknown_skin",
+      "tier": "T2",
+      "severity": "error",
+      "message": "baseSkin must be one of the built-in skins: {skins}",
+      "fix": "Set baseSkin to one of Studio's built-in skins (polar, open, luma or glass), or omit it for luma.",
+      "no_fix": null
+    },
+    {
+      "code": "theme.validation.unknown_token",
+      "tier": "T2",
+      "severity": "error",
+      "message": "unknown or disallowed theme token {token}",
+      "fix": "Use only Studio's semantic colour tokens (theme-palettes.json lists them); layout, geometry and other CSS cannot be themed.",
+      "no_fix": null
+    },
+    {
       "code": "widget.catalog.duplicate_entry",
       "tier": "T2",
       "severity": "error",

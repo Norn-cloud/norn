@@ -197,7 +197,8 @@ impl RetainedActions {
                 | ArtifactKind::Law
                 | ArtifactKind::DefinedConcept
                 | ArtifactKind::Labels
-                | ArtifactKind::Model => {}
+                | ArtifactKind::Model
+                | ArtifactKind::Theme => {}
             }
         }
         let binding = retained_binding(set)?;

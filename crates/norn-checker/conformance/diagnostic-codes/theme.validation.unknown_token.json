@@ -1,0 +1,7 @@
+{
+  "code": "theme.validation.unknown_token",
+  "message": "unknown or disallowed theme token {token}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

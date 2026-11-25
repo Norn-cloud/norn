@@ -67,6 +67,8 @@ mod held_back;
 mod hosted_install;
 #[path = "hosted_load.rs"]
 mod hosted_load;
+#[path = "hosted_theme.rs"]
+mod hosted_theme;
 #[path = "hosted_timers_quint.rs"]
 mod hosted_timers_quint;
 #[path = "inbox.rs"]

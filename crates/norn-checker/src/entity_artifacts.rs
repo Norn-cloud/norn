@@ -284,6 +284,11 @@ pub fn dedupe_findings(findings: impl IntoIterator<Item = Diagnostic>) -> Vec<Di
             ((diagnostic.code.as_str() == "widget.validation.invalid_payload"
                 && diagnostic.message.starts_with("UI law:"))
                 || diagnostic.code.as_str() == "consistency.normative.conflict"
+                // Each failing contrast pair or coloured chrome token is its own finding.
+                || matches!(
+                    diagnostic.code.as_str(),
+                    "theme.validation.contrast" | "theme.validation.monochrome"
+                )
                 || STATE_FINDINGS.contains(&diagnostic.code.as_str())
                 // A finding with its own run (one per stuck or violating pair) is distinct
                 // from another at the same pointer.

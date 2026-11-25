@@ -11,6 +11,7 @@
 #![deny(clippy::disallowed_types)]
 
 pub mod envelope;
+pub mod theme;
 pub mod ui_catalog;
 pub mod ui_interaction;
 pub mod ui_lifecycle;
@@ -161,14 +162,69 @@ fn widget_extra_diagnostics(artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {
     }
 }
 
+/// Ring-1 theme findings for a `theme` artifact (none for any other kind).
+fn theme_extra_legacy(artifact: &ArtifactEnvelope) -> Vec<norn_ir::Diagnostic> {
+    if !matches!(artifact.payload, ArtifactPayload::Theme(_)) {
+        return Vec::new();
+    }
+    let payload = norn_checker::envelope::validation_json_value(&artifact.payload);
+    theme::validate_theme_payload(&payload, Some(artifact.artifact_id.as_str()))
+}
+
+fn theme_extra_diagnostics(artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {
+    let legacy = theme_extra_legacy(artifact);
+    match serde_json::to_value(artifact) {
+        Ok(document) => legacy
+            .into_iter()
+            .map(|diagnostic| Diagnostic::from_legacy_in(diagnostic, &document))
+            .collect(),
+        Err(_unserializable) => legacy.into_iter().map(Diagnostic::from_legacy).collect(),
+    }
+}
+
+/// Replace Ring-0's [`norn_checker::codes::THEME_RING1_REQUIRED`] marker with the Ring-1
+/// theme findings, in the marker's slot.
+fn merge_theme_diagnostics(ring0: Vec<Diagnostic>, extra: Vec<Diagnostic>) -> Vec<Diagnostic> {
+    let mut out = Vec::with_capacity(ring0.len().saturating_add(extra.len()));
+    let mut pending = Some(extra);
+    for finding in ring0 {
+        if finding.code.as_str() == norn_checker::codes::THEME_RING1_REQUIRED {
+            out.extend(pending.take().into_iter().flatten());
+        } else {
+            out.push(finding);
+        }
+    }
+    out.extend(pending.into_iter().flatten());
+    norn_checker::entity_artifacts::dedupe_findings(out)
+}
+
 /// Validate one artifact envelope with Ring-0 checks completed first, then
 /// Ring-1 widget payload/dependency validation merged at the
-/// [`norn_checker::codes::WIDGET_RING1_REQUIRED`] marker.
+/// [`norn_checker::codes::WIDGET_RING1_REQUIRED`] marker, or Ring-1 theme
+/// admission at the [`norn_checker::codes::THEME_RING1_REQUIRED`] marker.
 ///
 /// # Errors
 ///
 /// Returns every legacy diagnostic found when the envelope is invalid.
 pub fn validate_artifact(artifact: &ArtifactEnvelope) -> Result<(), Vec<norn_ir::Diagnostic>> {
+    if matches!(artifact.payload, ArtifactPayload::Theme(_)) {
+        let ring0 = norn_checker::validate_artifact(artifact)
+            .err()
+            .unwrap_or_default();
+        let diagnostics: Vec<norn_ir::Diagnostic> = ring0
+            .into_iter()
+            .filter(|d| d.code != norn_checker::codes::THEME_RING1_REQUIRED)
+            .chain(theme_extra_legacy(artifact))
+            .collect();
+        return if diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.severity == DiagnosticSeverity::Error)
+        {
+            Err(diagnostics)
+        } else {
+            Ok(())
+        };
+    }
     if !matches!(artifact.payload, ArtifactPayload::Widget(_)) {
         return norn_checker::validate_artifact(artifact);
     }
@@ -195,6 +251,9 @@ pub fn validate_artifact(artifact: &ArtifactEnvelope) -> Result<(), Vec<norn_ir:
 #[must_use]
 pub fn check_artifact(artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {
     let findings = norn_checker::check_artifact(artifact);
+    if matches!(artifact.payload, ArtifactPayload::Theme(_)) {
+        return merge_theme_diagnostics(findings, theme_extra_diagnostics(artifact));
+    }
     if !matches!(artifact.payload, ArtifactPayload::Widget(_)) {
         return findings;
     }
@@ -213,6 +272,22 @@ pub fn check_artifact(artifact: &ArtifactEnvelope) -> Vec<Diagnostic> {
 #[must_use]
 pub fn check_artifact_json(value: &serde_json::Value) -> Vec<Diagnostic> {
     let findings = norn_checker::check_artifact_json(value);
+    if findings
+        .iter()
+        .any(|d| d.code.as_str() == norn_checker::codes::THEME_RING1_REQUIRED)
+    {
+        // An undecodable envelope already carries its decode findings.
+        let extra = norn_checker::decode_artifact_json(value).map_or_else(
+            |_undecodable| Vec::new(),
+            |artifact| {
+                theme_extra_legacy(&artifact)
+                    .into_iter()
+                    .map(|diagnostic| Diagnostic::from_legacy_in(diagnostic, value))
+                    .collect()
+            },
+        );
+        return merge_theme_diagnostics(findings, extra);
+    }
     let had_ring1_marker = findings
         .iter()
         .any(|d| d.code.as_str() == norn_checker::codes::WIDGET_RING1_REQUIRED);
@@ -258,10 +333,20 @@ pub fn check_artifact_set(
         .flat_map(|(artifact, ring0_local)| {
             if matches!(artifact.payload, ArtifactPayload::Widget(_)) {
                 merge_widget_diagnostics(ring0_local, widget_extra_diagnostics(artifact))
+            } else if matches!(artifact.payload, ArtifactPayload::Theme(_)) {
+                merge_theme_diagnostics(ring0_local, theme_extra_diagnostics(artifact))
             } else {
                 ring0_local
             }
         });
+    let theme_set = theme::check_theme_set(
+        phases
+            .normalized_artifacts
+            .iter()
+            .chain(&phases.normalized_base),
+    )
+    .into_iter()
+    .map(Diagnostic::from_legacy);
 
     let ux_findings = if phases.resolved_ok {
         check_widget_ux_set(&phases.normalized_artifacts, &normalized_context)
@@ -271,6 +356,7 @@ pub fn check_artifact_set(
 
     norn_checker::entity_artifacts::dedupe_findings(
         merged_per_artifact
+            .chain(theme_set)
             .chain(phases.pre_ux_set)
             .chain(ux_findings)
             .chain(phases.post_ux_set),

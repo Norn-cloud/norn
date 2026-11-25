@@ -2213,7 +2213,11 @@ pub(crate) fn check_typed_root(
         }
         ArtifactPayload::Labels(_) => crate::labels::check_local(payload, diagnostics, artifact_id),
         ArtifactPayload::Model(_) => crate::model::check_local(payload, diagnostics, artifact_id),
-        ArtifactPayload::Action(_) | ArtifactPayload::Rule(_) | ArtifactPayload::Law(_) => {}
+        // Theme payloads are admitted by Ring-1 `norn-ui-checker` (`THEME_RING1_REQUIRED`).
+        ArtifactPayload::Theme(_)
+        | ArtifactPayload::Action(_)
+        | ArtifactPayload::Rule(_)
+        | ArtifactPayload::Law(_) => {}
     }
 }
 

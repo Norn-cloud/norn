@@ -2580,6 +2580,38 @@
     "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
   },
   {
+    "code": "theme.validation.contrast",
+    "fix": "Darken or lighten the ink or its surface until the pair meets its WCAG floor (4.5:1 for text, 3:1 for focus rings and status icons) in every scheme the theme applies to."
+  },
+  {
+    "code": "theme.validation.invalid_color",
+    "fix": "Write the value as a CSS colour: #rrggbb, rgb(), hsl(), hwb(), lab(), lch(), oklab() or oklch()."
+  },
+  {
+    "code": "theme.validation.monochrome",
+    "fix": "Keep chrome tokens grey (OKLCH chroma below 0.02); colour belongs only in chart, status, avatar and data-highlight tokens."
+  },
+  {
+    "code": "theme.validation.multiple",
+    "fix": "Apply the new theme under the existing theme's artifact id to replace it, or remove the other theme first."
+  },
+  {
+    "code": "theme.validation.ring1_required",
+    "fix": "Validate theme artifacts with Ring-1 norn-ui-checker rather than Ring-0 norn-checker alone."
+  },
+  {
+    "code": "theme.validation.schema",
+    "fix": "Give the theme version 1, a name of 1 to 64 characters, an appearance of light or dark when set, and token maps only under colors, variants.light and variants.dark."
+  },
+  {
+    "code": "theme.validation.unknown_skin",
+    "fix": "Set baseSkin to one of Studio's built-in skins (polar, open, luma or glass), or omit it for luma."
+  },
+  {
+    "code": "theme.validation.unknown_token",
+    "fix": "Use only Studio's semantic colour tokens (theme-palettes.json lists them); layout, geometry and other CSS cannot be themed."
+  },
+  {
     "code": "widget.catalog.duplicate_entry",
     "fix": "Give every catalog entry its own id."
   },

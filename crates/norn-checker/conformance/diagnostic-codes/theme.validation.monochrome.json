@@ -1,0 +1,7 @@
+{
+  "code": "theme.validation.monochrome",
+  "message": "{scheme} {token} is {value} (OKLCH chroma {chroma}); chrome tokens must be neutral (chroma below 0.02)",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

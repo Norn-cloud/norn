@@ -75,7 +75,7 @@ fn token(org: &str, role: &str) -> String {
     )
 }
 
-fn user(role: &str) -> String {
+pub(crate) fn user(role: &str) -> String {
     token("org_a", role)
 }
 
@@ -113,7 +113,7 @@ fn with_law(expression: &str) -> Vec<Value> {
     artifacts
 }
 
-struct Cell {
+pub(crate) struct Cell {
     tenant: Tenant<NativeEngine>,
     tokens: TokenPrincipals,
 }
@@ -135,7 +135,13 @@ impl Cell {
         Self { tenant, tokens }
     }
 
-    fn call(&mut self, method: &str, path: &str, auth: Option<&str>, body: &str) -> Response {
+    pub(crate) fn call(
+        &mut self,
+        method: &str,
+        path: &str,
+        auth: Option<&str>,
+        body: &str,
+    ) -> Response {
         self.tenant.handle(
             &self.tokens,
             &Request {
@@ -149,7 +155,7 @@ impl Cell {
         )
     }
 
-    fn change(
+    pub(crate) fn change(
         &mut self,
         path: &str,
         role: Option<&str>,
@@ -164,7 +170,7 @@ impl Cell {
         self.call("POST", path, auth.as_deref(), &body.to_string())
     }
 
-    fn version(&mut self) -> u64 {
+    pub(crate) fn version(&mut self) -> u64 {
         let read = self.call("GET", "/v1/definitions", Some(&user("admin")), "");
         assert_eq!(read.status, 200, "{}", read.body);
         json_of(&read)["version"].as_u64().unwrap()
@@ -192,11 +198,11 @@ impl Cell {
     }
 }
 
-fn json_of(response: &Response) -> Value {
+pub(crate) fn json_of(response: &Response) -> Value {
     serde_json::from_str(&response.body).unwrap()
 }
 
-fn provisioned(path: &Path) -> Cell {
+pub(crate) fn provisioned(path: &Path) -> Cell {
     let mut cell = Cell::opened(path);
     let body =
         json!({ "baseSha256": base::trusted_base().unwrap().sha256(), "artifacts": tenant_set() });

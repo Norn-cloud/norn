@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "ModelPayload",
-  "description": "A typed predictive model with opaque internals ([`model`]).",
+  "description": "The payload root of a `model` artifact: [`ModelRoot`] on the wire.",
   "type": "object",
   "properties": {
     "contracts": {

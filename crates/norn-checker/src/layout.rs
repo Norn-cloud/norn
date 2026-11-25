@@ -879,29 +879,14 @@ struct LayoutIds {
     columns: BTreeMap<String, BTreeSet<String>>,
 }
 
+/// Only rule decision graphs and widget UX contracts carry layout; every other kind has none.
 fn artifact_layout_ids(artifact: &ArtifactEnvelope) -> LayoutIds {
-    match &artifact.payload {
-        ArtifactPayload::Rule(payload) => {
-            payload.graph.as_value().map_or_default(layout_ids_from_jdm)
-        }
-        ArtifactPayload::Widget(payload) => {
-            payload.ux.as_value().map_or_default(layout_ids_from_widget)
-        }
-        ArtifactPayload::Entity(_)
-        | ArtifactPayload::Relation(_)
-        | ArtifactPayload::Action(_)
-        | ArtifactPayload::Connector(_)
-        | ArtifactPayload::Customization(_)
-        | ArtifactPayload::Setting(_)
-        | ArtifactPayload::BusinessPack(_)
-        | ArtifactPayload::Policy(_)
-        | ArtifactPayload::Derived(_)
-        | ArtifactPayload::SourceSchema(_)
-        | ArtifactPayload::Mapping(_)
-        | ArtifactPayload::Law(_)
-        | ArtifactPayload::DefinedConcept(_)
-        | ArtifactPayload::Labels(_)
-        | ArtifactPayload::Model(_) => LayoutIds::default(),
+    if let ArtifactPayload::Rule(payload) = &artifact.payload {
+        payload.graph.as_value().map_or_default(layout_ids_from_jdm)
+    } else if let ArtifactPayload::Widget(payload) = &artifact.payload {
+        payload.ux.as_value().map_or_default(layout_ids_from_widget)
+    } else {
+        LayoutIds::default()
     }
 }
 

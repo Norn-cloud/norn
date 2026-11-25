@@ -307,6 +307,22 @@
         "kind",
         "payload"
       ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "theme"
+        },
+        "payload": {
+          "$ref": "#/$defs/ThemePayload"
+        }
+      },
+      "required": [
+        "kind",
+        "payload"
+      ]
     }
   ],
   "required": [
@@ -1490,7 +1506,8 @@
             "customization",
             "setting",
             "business_pack",
-            "policy"
+            "policy",
+            "theme"
           ]
         },
         {
@@ -8128,7 +8145,7 @@
       ]
     },
     "ModelPayload": {
-      "description": "A typed predictive model with opaque internals ([`model`]).",
+      "description": "The payload root of a `model` artifact: [`ModelRoot`] on the wire.",
       "type": "object",
       "properties": {
         "contracts": {
@@ -12660,6 +12677,110 @@
           "const": "uuid"
         }
       ]
+    },
+    "ThemeAppearance": {
+      "description": "The colour scheme a theme is limited to; absent means it applies to both.",
+      "type": "string",
+      "enum": [
+        "light",
+        "dark"
+      ]
+    },
+    "ThemePayload": {
+      "description": "The payload root of a `theme` artifact: [`Theme`] on the wire.",
+      "type": "object",
+      "properties": {
+        "accent": {
+          "description": "Shorthand for the action, primary, ring and link tokens, with a contrasting ink.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "appearance": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThemeAppearance"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "baseSkin": {
+          "description": "The built-in Studio skin the theme recolours (`luma` when absent).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "canvas": {
+          "description": "Shorthand for the canvas and shell tokens.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "colors": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "name": {
+          "description": "Display name, 1 to 64 characters after trimming.",
+          "type": "string"
+        },
+        "variants": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ThemeVariants"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "version": {
+          "$ref": "#/$defs/ThemeVersion1"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "name"
+      ]
+    },
+    "ThemeVariants": {
+      "description": "Per-scheme token overrides, applied over [`Theme::colors`].",
+      "type": "object",
+      "properties": {
+        "dark": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "light": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "ThemeVersion1": {
+      "const": 1
     },
     "TimeGrain": {
       "description": "Calendar bucket grain.",

@@ -68,7 +68,7 @@ pub fn explain(
 /// Read-only Ring-0 explain closure for higher rings that have already
 /// admitted widget artifacts. Still enforces the node budget and fails closed
 /// on every Ring-0 error (everything other than
-/// [`crate::codes::WIDGET_RING1_REQUIRED`]).
+/// [`crate::codes::WIDGET_RING1_REQUIRED`] and [`crate::codes::THEME_RING1_REQUIRED`]).
 ///
 /// # Errors
 /// Returns checker diagnostics for invalid, ambiguous or oversized input.
@@ -85,7 +85,10 @@ pub fn project_report(
     }
     let ring0_errors: Vec<Diagnostic> = crate::check_artifact_set(artifacts, context)
         .into_iter()
-        .filter(|d| d.code.as_str() != crate::codes::WIDGET_RING1_REQUIRED)
+        .filter(|d| {
+            d.code.as_str() != crate::codes::WIDGET_RING1_REQUIRED
+                && d.code.as_str() != crate::codes::THEME_RING1_REQUIRED
+        })
         .collect();
     if ring0_errors.iter().any(Diagnostic::is_error) {
         return Err(ring0_errors);

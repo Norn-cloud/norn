@@ -200,7 +200,8 @@ impl AdmittedPack {
                 | ArtifactPayload::Mapping(_)
                 | ArtifactPayload::DefinedConcept(_)
                 | ArtifactPayload::Labels(_)
-                | ArtifactPayload::Model(_) => {}
+                | ArtifactPayload::Model(_)
+                | ArtifactPayload::Theme(_) => {}
             }
         }
         Ok(pack)

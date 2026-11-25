@@ -811,7 +811,8 @@ fn quantity_action() -> (ActionRoot, SynchronousRule) {
             | ArtifactPayload::Law(_)
             | ArtifactPayload::DefinedConcept(_)
             | ArtifactPayload::Labels(_)
-            | ArtifactPayload::Model(_) => continue,
+            | ArtifactPayload::Model(_)
+            | ArtifactPayload::Theme(_) => continue,
         };
         artifact.payload = ArtifactPayload::from_kind_json(
             &artifact.kind(),

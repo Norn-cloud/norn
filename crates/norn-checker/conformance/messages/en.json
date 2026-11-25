@@ -1937,6 +1937,30 @@
     "source_schema.validation.unknown_field": {
       "message": "dataset {$dataset} has no field {$field}"
     },
+    "theme.validation.contrast": {
+      "message": "{$scheme} {$ink} (on {$surface}) contrast is {$ratio}:1 (WCAG AA requires >= {$floor}:1)"
+    },
+    "theme.validation.invalid_color": {
+      "message": "invalid color value for {$token}; use a CSS color such as #rrggbb, rgb(…), hsl(…) or oklch(…)"
+    },
+    "theme.validation.monochrome": {
+      "message": "{$scheme} {$token} is {$value} (OKLCH chroma {$chroma}); chrome tokens must be neutral (chroma below 0.02)"
+    },
+    "theme.validation.multiple": {
+      "message": "a workspace has one theme, but {$first} and {$other} are both themes"
+    },
+    "theme.validation.ring1_required": {
+      "message": "theme artifacts require Ring-1 norn-ui-checker validation and cannot be admitted by Ring-0 norn-checker alone"
+    },
+    "theme.validation.schema": {
+      "message": "theme payload is not a valid StudioTheme: {$reason}"
+    },
+    "theme.validation.unknown_skin": {
+      "message": "baseSkin must be one of the built-in skins: {$skins}"
+    },
+    "theme.validation.unknown_token": {
+      "message": "unknown or disallowed theme token {$token}"
+    },
     "widget.catalog.duplicate_entry": {
       "message": "a widget's catalog declares one entry id twice: {$detail}"
     },
