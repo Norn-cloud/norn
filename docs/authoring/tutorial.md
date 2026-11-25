@@ -20,7 +20,7 @@ Two programs are called `norn` (renaming one is [#1451](https://github.com/Norn-
 
 ## 1. Install the runtime (prebuilt or from source)
 
-Each `drop-*` release attaches the prebuilt checker WASM (`norn-checker-wasm.tar.gz`), local dev host (`norn-dev-host-PLATFORM.tar.gz`), Rust `norn`, `@norn/sdk`, Python client, `install.sh`, and `SHA256SUMS` ([`scripts/release/assets.sh`](../../scripts/release/assets.sh)). The fastest way from a checkout is `norn setup`, which downloads and verifies the checker WASM and dev host into `~/.cache/norn/runtime/`:
+Each `drop-*` release attaches the prebuilt checker WASM (`norn-checker-wasm.tar.gz`), local dev host (`norn-dev-host-PLATFORM.tar.gz`), Rust `norn`, `@norn/sdk`, Python client, `install.sh`, and `SHA256SUMS` ([`scripts/release/assets.sh`](../../scripts/release/assets.sh)). The fastest way from a checkout is `norn setup`, which downloads and verifies the checker WASM, dev host, and Rust `norn` into `~/.cache/norn/runtime/`:
 
 ```sh
 git clone https://github.com/Norn-cloud/norn && cd norn
@@ -110,6 +110,6 @@ Put `"sku"` back and save; the next revision installs.
 ## Not in the alpha yet
 
 - A `norn call` command (until then, use `curl` as above or `@norn/sdk`).
-- Standalone npm package for the TypeScript CLI (run from `tools/norn-ts` in a checkout; `norn setup` downloads the prebuilt checker WASM and dev host).
+- Standalone npm package for the TypeScript CLI (run from `tools/norn-ts` in a checkout; `norn setup` downloads the prebuilt checker WASM, dev host, and Rust `norn`).
 
 `norn plan` and `norn apply` send a pack to a running hosted cell (`--url`), `norn codegen --ts` generates TypeScript definitions for `@norn/sdk`, and the Rust `norn mcp` serves the available operations to an agent over MCP stdio.

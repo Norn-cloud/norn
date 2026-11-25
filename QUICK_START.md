@@ -93,7 +93,7 @@ npm i https://github.com/Norn-cloud/norn/releases/download/$TAG/norn-sdk-0.0.29.
 damaged download, it is not a signature. The macOS binaries are cross-built on Linux
 and have not been run natively yet; treat them as experimental. The TypeScript `norn`
 runs from `tools/norn-ts` in a checkout; run `bun tools/norn-ts/src/cli.ts setup`
-to download and verify the prebuilt checker WASM and dev host automatically.
+to download and verify the prebuilt checker WASM, dev host, and Rust `norn` automatically.
 
 # Check a typed definition
 

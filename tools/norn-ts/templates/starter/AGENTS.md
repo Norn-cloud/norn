@@ -14,7 +14,7 @@ Run bunx norn dev to serve the project's cell on loopback; every save is checked
 Run bunx norn explain action|law|concept <id> to see what a declaration reads, writes and must preserve.
 Add --json to dev or explain for machine-readable output; check always prints JSON.
 Run bunx norn --version to see the CLI version and the commit it was built from.
-Run bunx norn plan/apply --url <url> for hosted cells, bunx norn codegen --ts for SDK types, or Rust norn mcp for MCP stdio.
+Run bunx norn plan/apply --url <url> for hosted cells and bunx norn codegen --ts for SDK types; ~/.cache/norn/runtime/bin/norn mcp serves MCP after setup.
 
 ## Agents
 
