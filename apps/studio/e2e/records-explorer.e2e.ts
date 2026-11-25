@@ -111,7 +111,7 @@ test("connections: a cell without the connection type says 'No connections yet' 
   const asked: string[] = []
   await page.route("**/api/host/v1/objects/source.Connection**", (route) => {
     asked.push(route.request().url())
-    return route.fulfill({ status: 403, json: { format: "norn/refusal@2", code: "authz.denied", message: "the read request is not authorized", reason: null } })
+    return route.fulfill({ status: 403, json: { format: "norn/refusal@2", code: "authz.denied", category: "permission", retryable: false, message: "the read request is not authorized", explanation: "", reason: null } })
   })
   // The recorded three systems declare no source.Connection: nothing to read, and nothing is asked.
   await page.goto("/sources")

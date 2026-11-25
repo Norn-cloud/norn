@@ -428,6 +428,191 @@ fn sub_decision(rule_id: &str, calls: Option<&str>) -> Json {
     })
 }
 
+type Outcome = Result<norn_decisions::Evaluated, DecisionError>;
+type Built<T> = Result<T, Box<dyn std::error::Error>>;
+
+/// A decide graph over `slice` that calls the ordinary helper `demo.helper`
+/// on `input_field`, binds its result to `called`, and emits `commands`.
+fn caller(slice: &Json, input_field: &str, commands: &str) -> Built<Json> {
+    let mut root = commands_rule("demo.rule.caller", slice, commands);
+    root["graph"]["nodes"]
+        .as_array_mut()
+        .ok_or("root nodes")?
+        .insert(
+            1,
+            json!({ "id": "call", "name": "call", "type": "decisionNode", "content": {
+                "key": "demo.helper", "inputField": input_field, "outputPath": "called", "passThrough": true
+            } }),
+        );
+    root["graph"]["edges"][0]["targetId"] = json!("call");
+    root["graph"]["edges"]
+        .as_array_mut()
+        .ok_or("root edges")?
+        .push(json!({ "id": "e_call", "sourceId": "call", "targetId": "x" }));
+    Ok(root)
+}
+
+/// The helper `demo.helper`: one expression node computing `expressions`
+/// (passing its input through when `pass_through`) between closed `input`
+/// and `output` records.
+fn helper(input: &Json, output: &Json, expressions: &Json, pass_through: bool) -> Built<Json> {
+    let mut helper = sub_decision("demo.rule.helper", None);
+    helper["inputSchema"] = closed(input);
+    helper["outputSchema"] = closed(output);
+    helper["graph"]["nodes"]
+        .as_array_mut()
+        .ok_or("helper nodes")?
+        .insert(
+            1,
+            json!({ "id": "body", "name": "body", "type": "expressionNode", "content": {
+                "expressions": expressions, "passThrough": pass_through
+            } }),
+        );
+    helper["graph"]["edges"] = json!([
+        { "id": "e_in", "sourceId": "in", "targetId": "body" },
+        { "id": "e_out", "sourceId": "body", "targetId": "out" }
+    ]);
+    Ok(helper)
+}
+
+/// Admits `root` with `helper` as `demo.helper` and evaluates it on `slice`.
+fn call_outcome(root: &Json, helper: &Json, slice: &Json) -> Built<Outcome> {
+    let subs = BTreeMap::from([("demo.helper".to_owned(), rule(helper))]);
+    let decision = AdmittedDecision::admit(&rule(root), &subs, binding())?;
+    Ok(run(
+        &decision,
+        value(slice),
+        event(),
+        EvaluationBudget::default(),
+    ))
+}
+
+/// `{n: 2}` passed on `input_field` to a helper declaring
+/// `{n: number} -> {approved: boolean}` that computes `approved` as
+/// `approved`.
+fn approval_outcome(input_field: &str, approved: &str, pass_through: bool) -> Built<Outcome> {
+    let n = json!({ "n": { "type": "number" } });
+    call_outcome(
+        &caller(&closed(&n), input_field, "[]")?,
+        &helper(
+            &n,
+            &json!({ "approved": { "type": "boolean" } }),
+            &json!([{ "id": "a", "key": "approved", "value": approved }]),
+            pass_through,
+        )?,
+        &json!({ "n": 2 }),
+    )
+}
+
+/// The `actionId` of the single command an evaluation emitted.
+fn action_id(outcome: &Outcome) -> Option<String> {
+    match outcome
+        .as_ref()
+        .ok()?
+        .output
+        .commands
+        .first()?
+        .get("actionId")?
+    {
+        norn_ir::RuntimeValue::String(id) => Some(id.clone()),
+        norn_ir::RuntimeValue::Null
+        | norn_ir::RuntimeValue::Bool(_)
+        | norn_ir::RuntimeValue::Number(_)
+        | norn_ir::RuntimeValue::Array(_)
+        | norn_ir::RuntimeValue::Object(_) => None,
+    }
+}
+
+/// Whether the evaluation was refused at the root's `call` node.
+fn refused_at_call(outcome: &Outcome) -> bool {
+    let Err(DecisionError::Engine { node_id, .. }) = outcome else {
+        return false;
+    };
+    node_id == "call"
+}
+
+/// #1708: an ordinary (non-fold) sub-decision is held to its declared
+/// input and output records at every invocation, not only fold steps.
+#[test]
+fn ordinary_sub_decisions_are_held_to_their_declared_schemas() -> Built<()> {
+    // Valid: the declared input and a boolean output pass cleanly.
+    assert!(approval_outcome("slice", "n > 0", false)?.is_ok());
+    // The caller's whole context carries undeclared members (slice, event);
+    // the declared `n` is absent, so the input is refused.
+    assert!(refused_at_call(&approval_outcome("", "true", false)?));
+    // A declared member of the wrong type is refused before the helper runs.
+    assert!(refused_at_call(&approval_outcome(
+        "{n: 'two'}",
+        "true",
+        false
+    )?));
+    // `{approved: "yes"}` violates the declared boolean output.
+    assert!(refused_at_call(&approval_outcome("slice", "'yes'", false)?));
+    // An undeclared output member (the passed-through `n`) is refused:
+    // outputs are exact.
+    assert!(refused_at_call(&approval_outcome("slice", "n > 0", true)?));
+    Ok(())
+}
+
+/// #1708: a helper runs on its declared members only. An undeclared caller
+/// member is absent inside the helper, so no value of it can change the
+/// helper's result; declared members still flow through.
+#[test]
+fn an_undeclared_caller_member_cannot_reach_a_helper() -> Built<()> {
+    let root = caller(
+        &closed(&json!({ "n": { "type": "number" }, "extra": { "type": "string" } })),
+        "slice",
+        "[{actionId: called.seen}]",
+    )?;
+    let helper = helper(
+        &json!({ "n": { "type": "number" } }),
+        &json!({ "seen": { "type": "string" } }),
+        &json!([{
+            "id": "s",
+            "key": "seen",
+            "value": "extra == null and n == 2 ? 'declared only' : 'leaked'"
+        }]),
+        false,
+    )?;
+    for extra in ["a", "b"] {
+        let outcome = call_outcome(&root, &helper, &json!({ "n": 2, "extra": extra }))?;
+        assert_eq!(
+            action_id(&outcome).as_deref(),
+            Some("declared only"),
+            "{extra}"
+        );
+    }
+    Ok(())
+}
+
+/// #1708: a temporal value crosses a helper boundary in the canonical string
+/// form its `string` schema checked, in both directions: the helper and its
+/// caller apply string operations to it.
+#[test]
+fn temporal_values_cross_helper_boundaries_as_checked_strings() -> Built<()> {
+    let day = json!({ "day": { "type": "string" } });
+    let root = caller(
+        &closed(&json!({})),
+        "{day: date('2026-01-02')}",
+        "[{actionId: called.day + '|' + called.tag}]",
+    )?;
+    let helper = helper(
+        &day,
+        &json!({ "day": { "type": "string" }, "tag": { "type": "string" } }),
+        &json!([
+            { "id": "d", "key": "day", "value": "date(day)" },
+            { "id": "t", "key": "tag", "value": "day + '!'" }
+        ]),
+        false,
+    )?;
+    let outcome = call_outcome(&root, &helper, &json!({}))?;
+    assert_eq!(
+        action_id(&outcome).as_deref(),
+        Some("2026-01-02|2026-01-02!")
+    );
+    Ok(())
+}
+
 #[test]
 fn malformed_fold_is_refused_instead_of_an_ordinary_sub_decision() {
     let fixture = corpus("reorder_decision.json");
@@ -875,6 +1060,37 @@ fn folded(
         EvaluationBudget::new(2_000_000),
     )?;
     Ok(result.output.commands[0]["state"].clone())
+}
+
+/// #1708: a fold carries its accumulator in the exact spelling its schema
+/// checked: a decomposed string survives the initial value (an empty fold
+/// returns it) and every step (each step returns it as a literal; fold
+/// arithmetic is numeric, so a step cannot concatenate).
+#[test]
+fn folds_keep_a_decomposed_accumulator_string_as_spelled() -> Built<()> {
+    let decomposed = "e\u{301}";
+    let mut rules = fold_rules(
+        &closed(&json!({ "id": { "type": "string" } })),
+        &closed(&json!({ "label": { "type": "string" } })),
+        &[vec![("label", "'e\u{301}'")]],
+    );
+    let Some(norn_ir::JdmNode::DecisionNode { content, .. }) = rules
+        .0
+        .graph
+        .as_mut()
+        .and_then(|graph| graph.nodes.get_mut(1))
+    else {
+        return Err("the fold node".into());
+    };
+    content.ordered_fold.as_mut().ok_or("the fold")?.initial =
+        norn_ir::ZenExpression("{label: 'e\u{301}'}".into());
+    for items in [json!([]), json!([{ "id": "a" }, { "id": "b" }])] {
+        let state = folded(&rules, json!({ "label": "unused" }), items)?;
+        let label = norn_ir::RuntimeValue::String(decomposed.to_owned());
+        let expected = BTreeMap::from([("label".to_owned(), label)]);
+        assert_eq!(state, norn_ir::RuntimeValue::Object(expected));
+    }
+    Ok(())
 }
 
 fn capacity_fold() -> (norn_ir::RuleRoot, BTreeMap<String, norn_ir::RuleRoot>) {

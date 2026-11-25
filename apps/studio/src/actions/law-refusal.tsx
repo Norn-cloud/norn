@@ -5,7 +5,7 @@ import { Chip, FactChip } from "@/components/chip"
 import { liveAccess } from "@/lib/live"
 import { Button } from "@/components/ui/button"
 import { transport, type Artifact } from "@/lib/transport"
-import type { RefusalReason } from "../lib/actions.ts"
+import type { RefusalReason } from "../../../../packages/norn-sdk/src/index.ts"
 import { compared, isList, roleOf } from "../lib/law-values.ts"
 
 /** The law the cell pinned, from the catalog: its own sentence, as declared. */
@@ -137,7 +137,9 @@ export function LawRefusal({ code, reason, explanation, fields, technical, onUse
   /** Put a value the record holds into the form's field (the cell checks it again on the next submit). */
   readonly onUse?: (path: string, text: string) => void }) {
   const catalog = useQuery({ queryKey: ["catalog"], queryFn: transport.catalog })
-  const rationale = rationaleOf(catalog.data?.document ?? [], reason.pin?.artifactId)
+  // Only a law's pin names an artifact; an invariant or builtin pin names none.
+  const pin = reason.pin?.kind === "law" ? reason.pin : undefined
+  const rationale = rationaleOf(catalog.data?.document ?? [], pin?.artifactId)
   const checked = Object.entries(reason.values)
   // The checked values this form did not set are the ones the record still holds.
   const held = checked.filter(([path]) => !Object.hasOwn(fields, path))
@@ -151,7 +153,7 @@ export function LawRefusal({ code, reason, explanation, fields, technical, onUse
   const shown = (path: string, value: unknown) => isList(value) ? atDeclared(compared(value).text, listScale) : atDeclared(value, scaleOf(path))
   const parts = (value: unknown) => isList(value) ? value.map((part) => atDeclared(part, listScale)).join(" + ") : undefined
   return (
-    <RefusalSteps variant="disclosed" request={request} at={at} decidedAt={decidedAt} why={lawNameOf(catalog.data?.document ?? [], reason.pin?.artifactId) ?? rationale ?? explanation} check={
+    <RefusalSteps variant="disclosed" request={request} at={at} decidedAt={decidedAt} why={lawNameOf(catalog.data?.document ?? [], pin?.artifactId) ?? rationale ?? explanation} check={
       <div className="grid gap-2.5">
         {rationale !== undefined && <p className="flex items-start gap-2 font-medium text-pretty text-foreground"><span className="min-w-0 flex-1">{rationale}</span><Chip tone="red" icon={ShieldX} data-verdict="fails">Fails</Chip></p>}
         {checked.length === 2 && held.length === 1 ? (() => {
@@ -182,7 +184,7 @@ export function LawRefusal({ code, reason, explanation, fields, technical, onUse
         {technical && (
           <span className="grid gap-0.5 border-t border-border/70 pt-2 font-mono text-xs text-muted-foreground">
             <span>{code} · {reason.subject}</span>
-            {reason.pin?.artifactId !== undefined && <span>{reason.pin.artifactId}@{reason.pin.version ?? "?"}</span>}
+            {pin !== undefined && <span>{pin.artifactId}@{pin.version}</span>}
             <span className="whitespace-pre-wrap">{explanation}</span>
           </span>
         )}

@@ -10,12 +10,12 @@ export interface CheckerEvaluator {
 }
 
 export class EvaluationError extends Error {
-  constructor(
-    readonly expression: string,
-    readonly code: string,
-    message: string,
-  ) {
+  readonly expression: string
+  readonly code: string
+  constructor(expression: string, code: string, message: string) {
     super(message)
+    this.expression = expression
+    this.code = code
   }
 }
 

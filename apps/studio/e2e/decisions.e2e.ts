@@ -198,10 +198,11 @@ test("validate: a disclosed evaluated law refusal renders Fails with checked ope
       category: "precondition",
       retryable: false,
       message: "Refunds over 1,000.00 USD need a finance manager's approval.",
+      explanation: "Refunds over 1,000.00 USD need a finance manager's approval.",
       decidedAt: "2027-01-15T08:00:00Z",
       reason: {
         law: "canon.refund.approval_authority",
-        pin: { artifactId: "canon.refund.approval_authority.law", version: "sha256:abc123" },
+        pin: { kind: "law", artifactId: "canon.refund.approval_authority.law", lawId: "approval_authority", version: "sha256:abc123" },
         subject: "canon.Refund/ref-1042",
         values: { amount: "1240.00 USD", role_limit: "1000.00 USD" },
       },
@@ -243,7 +244,7 @@ test("validate: an unevaluated decision law refusal renders Not evaluated withou
       decidedAt: "2027-01-15T08:00:00Z",
       reason: {
         law: "canon.refund.approval_authority",
-        pin: { artifactId: "canon.refund.approval_authority.law", version: "sha256:abc123" },
+        pin: { kind: "law", artifactId: "canon.refund.approval_authority.law", lawId: "approval_authority", version: "sha256:abc123" },
         subject: "decision/dec_refund",
         values: {},
       },
