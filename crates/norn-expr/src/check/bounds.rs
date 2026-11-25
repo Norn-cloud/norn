@@ -126,7 +126,6 @@ fn bounded_string_call(
         | InternalFunction::Avg
         | InternalFunction::Min
         | InternalFunction::Max
-        | InternalFunction::Rand
         | InternalFunction::Median
         | InternalFunction::Mode
         | InternalFunction::Floor

@@ -74,37 +74,57 @@ pub(super) fn resolve_receipt_effect<H: CellHost + ?Sized>(
 /// check makes this the receipt's only consumption; a refused commit applies
 /// neither the transition nor the consumption.
 pub(super) fn consume_receipt<X>(
+    catalog: &crate::decision_commit::TypeCatalog<'_>,
     already_consumes: bool,
     acceptance: &crate::result_reconciliation::Acceptance,
     writes: &[FactWrite],
     reads: &mut Vec<FactExpectation>,
 ) -> Result<crate::cell_host::Consumed, ActionRefusal<X>> {
-    let mismatch = ActionRefusal::ReceiptRefused {
-        reason: crate::receipt_binding::ReceiptRefusal::BindingMismatch,
-    };
     if already_consumes {
-        return Err(mismatch);
+        return Err(ActionRefusal::ReceiptRefused {
+            reason: crate::receipt_binding::ReceiptRefusal::BindingMismatch,
+        });
     }
-    for pin in &acceptance.reads {
-        if let Some(write) = writes.iter().find(|write| write.key == pin.key) {
-            if write.expected != pin.expected {
+    merge_receipt_pins(catalog, &acceptance.reads, writes, reads)?;
+    Ok(acceptance.consumed.clone())
+}
+
+/// Each receipt pin joins the commit's expectations by canonical identity
+/// (hierarchy root and key, #1701): a pin on a supertype of an object the
+/// commit writes or reads as its concrete type is that same expectation, so
+/// a pin at the same version adds nothing (reads stay disjoint from writes)
+/// and a pin at another version is a stale read.
+pub(super) fn merge_receipt_pins<X>(
+    catalog: &crate::decision_commit::TypeCatalog<'_>,
+    pins: &[FactExpectation],
+    writes: &[FactWrite],
+    reads: &mut Vec<FactExpectation>,
+) -> Result<(), ActionRefusal<X>> {
+    let model = crate::CommitModel::new(catalog);
+    for pin in pins {
+        let canonical = model.canonical(&pin.key);
+        let expected = writes
+            .iter()
+            .find(|write| model.canonical(&write.key) == canonical)
+            .map(|write| write.expected)
+            .or_else(|| {
+                reads
+                    .iter()
+                    .find(|read| model.canonical(&read.key) == canonical)
+                    .map(|read| read.expected)
+            });
+        match expected {
+            Some(version) if version != pin.expected => {
                 return Err(ActionRefusal::StalePreconditionRead {
                     key: pin.key.clone(),
                     link: None,
                 });
             }
-        } else if let Some(read) = reads.iter().find(|read| read.key == pin.key) {
-            if read.expected != pin.expected {
-                return Err(ActionRefusal::StalePreconditionRead {
-                    key: pin.key.clone(),
-                    link: None,
-                });
-            }
-        } else {
-            reads.push(pin.clone());
+            Some(_) => {}
+            None => reads.push(pin.clone()),
         }
     }
-    Ok(acceptance.consumed.clone())
+    Ok(())
 }
 
 /// Target's pre-commit version from `slice`, matched by canonical identity.

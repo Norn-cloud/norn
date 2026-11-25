@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { RouterProvider, createRootRoute, createRouter } from "@tanstack/react-router"
 import { BarChart3, Blend, Bookmark, BookMarked, ChartLine, Columns2, Database, FileDiff, Fingerprint, GitCompareArrows, House, Inbox, LayoutDashboard, Map as MapIcon, Network, Plug, Rows3, ShieldCheck, Workflow } from "lucide-react"
 import { StrictMode, useMemo } from "react"
+import { LoadState } from "@/components/load-state"
 import { Button } from "@/components/ui/button"
 import { CellUnavailable, scopeFromAccount } from "@/lib/definitions"
 import { CellRefusal, NotServed } from "@/lib/live-transport"
@@ -82,7 +83,14 @@ function Root() {
   // Sidekick is offered only where a bridge serves it (a private deployment); elsewhere the rail shows no entry for it.
   const sidekick = useSidekickServed()
   if (account.data != null) return <SignedInShell account={account.data} sidekick={sidekick} />
-  if (account.isPending) return null
+  if (account.isPending) {
+    // The shared loading state: a skeleton, then "still waiting" and a retry if the check runs long.
+    return (
+      <main className="mx-auto flex min-h-svh max-w-xl flex-col justify-center p-8">
+        <LoadState status="pending" data={undefined} error={null} isFetching onRetry={() => void account.refetch({ cancelRefetch: true })} loadingLabel="Opening Studio">{() => null}</LoadState>
+      </main>
+    )
+  }
   if (account.isError) {
     return (
       <main className="flex min-h-svh flex-col items-center justify-center gap-3 p-8 text-muted-foreground">

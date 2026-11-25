@@ -227,7 +227,8 @@ fn connect() -> Connect {
         "NORN_S3_ACCESS_KEY_ID": "key-id",
         "NORN_S3_SECRET_ACCESS_KEY": "secret",
     });
-    Connect::new("[]", &vars.to_string()).unwrap()
+    Connect::new(&scope("org_a", "prod"), "[]", &vars.to_string())
+        .unwrap_or_else(|error| unreachable!("the configuration is well formed: {error}"))
 }
 
 fn host(tenant: Tenant<Counting>, calls: Rc<Cell<u64>>) -> Host {

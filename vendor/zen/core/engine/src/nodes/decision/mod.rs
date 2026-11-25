@@ -53,15 +53,12 @@ impl NodeHandler for DecisionNodeHandler {
                     .node_context(&ctx)
                     .and_then(|value| ctx.success(value));
             }
-            contracts
-                .check(
-                    &ctx.node.key,
-                    &ctx.input,
-                    true,
-                    ctx.extensions.meter.as_ref(),
-                )
-                .node_context(&ctx)?;
         }
+        // Norn (#1708): the child graph runs on the value the host carries across,
+        // and a host-shaped child sees no caller node data through `$nodes`.
+        let shaped = cross(&ctx, &ctx.input, true)?;
+        let shaped_input = shaped.is_some();
+        let input = shaped.unwrap_or_else(|| ctx.input.clone());
         let mut decision_graph_ref = self.decision_graph.borrow_mut();
 
         if decision_graph_ref.is_none() {
@@ -100,20 +97,17 @@ impl NodeHandler for DecisionNodeHandler {
             return ctx.error("Failed to initialize decision graph".to_string());
         };
 
-        decision_graph.set_parent_nodes(ctx.nodes.clone());
+        decision_graph.set_parent_nodes(if shaped_input {
+            None
+        } else {
+            ctx.nodes.clone()
+        });
 
-        let evaluate_result = Box::pin(decision_graph.evaluate(ctx.input.clone())).await;
+        let evaluate_result = Box::pin(decision_graph.evaluate(input)).await;
         match evaluate_result {
-            Ok(result) => {
-                if let Some(contracts) = &ctx.extensions.contracts {
-                    contracts
-                        .check(
-                            &ctx.node.key,
-                            &result.result,
-                            false,
-                            ctx.extensions.meter.as_ref(),
-                        )
-                        .node_context(&ctx)?;
+            Ok(mut result) => {
+                if let Some(shaped) = cross(&ctx, &result.result, false)? {
+                    result.result = shaped;
                 }
                 ctx.trace(|trace| {
                     *trace = result
@@ -137,5 +131,21 @@ impl NodeHandler for DecisionNodeHandler {
                 ctx.error(*err)
             }
         }
+    }
+}
+
+/// Norn (#1708): checks `value` at the sub-decision boundary of `ctx`
+/// ([`DecisionContracts::cross`](crate::nodes::DecisionContracts::cross)) and
+/// returns the host-shaped value to carry across, if any.
+fn cross(
+    ctx: &NodeContext<DecisionNodeData, DecisionNodeTrace>,
+    value: &Variable,
+    input: bool,
+) -> Result<Option<Variable>, NodeError> {
+    match &ctx.extensions.contracts {
+        None => Ok(None),
+        Some(contracts) => contracts
+            .cross(&ctx.node.key, value, input, ctx.extensions.meter.as_ref())
+            .node_context(ctx),
     }
 }

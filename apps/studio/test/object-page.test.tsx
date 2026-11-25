@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server"
 import type { ReactNode } from "react"
 import { readDocument } from "../src/lib/exact.ts"
 import type { SourceLineage } from "../src/lib/transport.ts"
+import { WORKSPACE_CHANGED_MESSAGE } from "../src/lib/definitions.ts"
 
 // These pages read the view from localStorage, which the tests replace; put the original back so later files in the same bun process see their own.
 const originalStorage = globalThis.localStorage
@@ -15,20 +16,22 @@ afterAll(() => { globalThis.localStorage = originalStorage })
 // The recorded transport reads fixtures through Vite's import.meta.glob, which bun test lacks; the reads are answered below instead.
 mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
 const { ObjectPage, SourcesItemPage, summaryOf } = await import("../src/objects.tsx")
+const { drawerRead, recordRead } = await import("../src/lib/record-read.ts")
 const { ObjectTypePage } = await import("../src/sources.tsx")
 const { ViewProvider } = await import("../src/lib/view.tsx")
 const { ProvenanceChain } = await import("../src/components/provenance.tsx")
 
 const fixture = (name: string) => readDocument(readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer", name), "utf8"), "recorded")
 
-/** The record page at its route, with the recorded reads already answered. */
-async function page(concept: string, id: string, view = "business", links?: unknown, access?: unknown) {
+/** The record page at its route, with the recorded reads already answered (or, given `cached`, only those cache entries). */
+async function page(concept: string, id: string, view = "business", links?: unknown, access?: unknown, cached?: (client: QueryClient) => void) {
   globalThis.localStorage = { getItem: () => view, setItem: () => {} } as unknown as Storage
   const client = new QueryClient()
   const file = (read: string) => fixture(`objects/${concept}/${id.replaceAll("/", "~")}.${read}.json`)
   client.setQueryData(["catalog"], fixture("three-systems.definitions.json"))
   if (access !== undefined) client.setQueryData(["live-access"], access)
-  client.setQueryData(["object", concept, id], { object: file("object"), links: links === undefined ? file("links") : readDocument(JSON.stringify(links), "recorded"), source: file("source") })
+  if (cached === undefined) client.setQueryData(recordRead(concept, id, undefined).queryKey, { object: file("object"), links: links === undefined ? file("links") : readDocument(JSON.stringify(links), "recorded"), source: file("source") })
+  else cached(client)
   const root = createRootRoute()
   const router = createRouter({
     routeTree: root.addChildren([createRoute({ getParentRoute: () => root, path: "/sources/$concept/$", component: ObjectPage })]),
@@ -303,4 +306,68 @@ test("a held record's finding shows the values its law compared, a summed list a
   expect(html).toContain("72.00 = 30.00 + 40.00 + 2.00")
   expect(html).toContain("sum of lines")
   expect(html.indexOf("720.00")).toBeLessThan(html.indexOf("72.00 ="))
+})
+
+// #1700 R3: a record page's read (and so its reveals) is bound to the workspace it was read from.
+test("a record's read is keyed by and sent to its source workspace: the same id in two workspaces is two records", async () => {
+  const A = { orgId: "org_a", environmentId: "prod" }
+  const B = { orgId: "org_b", environmentId: "prod" }
+  let active = A
+  const sent: string[] = []
+  const fetcher = async (input: string) => {
+    const url = new URL(input, "https://studio.test")
+    if (url.pathname === "/api/me") return Response.json({ user: { id: "u" }, organization: { id: active.orgId, role: "admin" }, environmentId: active.environmentId })
+    sent.push(`${url.searchParams.get("orgId")}/${url.searchParams.get("environmentId")}`)
+    if (url.pathname.endsWith("/links")) return Response.json({ objectType: "canon.Party", id: "p/1", items: [], next: null })
+    if (url.pathname.endsWith("/lineage")) return Response.json({ code: "object.not_found" }, { status: 404 })
+    // Each workspace serves its own record under the same id.
+    return Response.json({ objectType: "canon.Party", id: "p/1", scope: active.orgId, version: 1, values: { display_name: `of ${active.orgId}` }, withheld: false, withheldProperties: [] })
+  }
+  const a = recordRead("canon.Party", "p/1", A, fetcher)
+  const b = recordRead("canon.Party", "p/1", B, fetcher)
+  expect(a.queryKey).toEqual(["object", "canon.Party", "p/1", "org_a", "prod"])
+  expect(b.queryKey).not.toEqual(a.queryKey)
+  expect(recordRead("canon.Party", "p/1", undefined).queryKey).toEqual(["object", "recorded", "canon.Party", "p/1"])
+  expect((await a.queryFn({}))?.object.document.values["display_name"]).toBe("of org_a")
+  expect(sent).toEqual(["org_a/prod", "org_a/prod", "org_a/prod"])
+  // The session moves to B: A's read is refused before dispatch, so B's record never lands under A's key.
+  active = B
+  sent.length = 0
+  await expect(a.queryFn({})).rejects.toThrow(WORKSPACE_CHANGED_MESSAGE)
+  expect(sent).toEqual([])
+  expect((await b.queryFn({}))?.object.document.values["display_name"]).toBe("of org_b")
+  expect(sent).toEqual(["org_b/prod", "org_b/prod", "org_b/prod"])
+})
+
+// #1740: the grid drawer once read a record through the mode-deciding transport and cached the live
+// answer under the key the record page read without a decided mode, so the page could show it with no
+// workspace. Only the recording reaches that key now, and the drawer reads only at a decided scope.
+test("a record page with no decided mode never shows a cached live answer: the recording's read has a key of its own", async () => {
+  const concept = "canon.Item"
+  const id = "demo/item/gold"
+  const live = (read: string) => readDocument(readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer", `objects/${concept}/${id.replaceAll("/", "~")}.${read}.json`), "utf8"), "live")
+  const answer = { object: live("object"), links: live("links"), source: live("source") }
+  const scope = { orgId: "org_demo", environmentId: "analytics" }
+  const html = await page(concept, id, "business", undefined, undefined, (client) => {
+    // A live answer under the key the drawer used without a scope, and one at a workspace.
+    client.setQueryData(["object", concept, id], answer)
+    client.setQueryData(recordRead(concept, id, scope).queryKey, answer)
+  })
+  expect(html).not.toContain("Gold scrap")
+  expect(html).not.toContain("Read again")
+  expect(html).not.toContain('data-fact="')
+  // The recording's key is none of the live ones, whatever the type or id.
+  expect(recordRead(concept, id, undefined).queryKey).not.toEqual(["object", concept, id])
+  expect(recordRead("recorded", concept, scope).queryKey).not.toEqual(recordRead(concept, id, undefined).queryKey)
+})
+
+test("the grid drawer reads a row at the grid's workspace, a recorded row from the recording, and a live row with no workspace not at all", () => {
+  const scope = { orgId: "org_a", environmentId: "prod" }
+  // At a workspace: the record page's own key and read for that workspace.
+  expect(drawerRead("canon.Party", "p/1", scope, "live")?.queryKey).toEqual(recordRead("canon.Party", "p/1", scope).queryKey)
+  // A recorded row: the recording, under the recording's key.
+  expect(drawerRead("canon.Party", "p/1", undefined, "recorded")?.queryKey).toEqual(["object", "recorded", "canon.Party", "p/1"])
+  // A live row while no workspace is decided, or a row from no page yet: nothing is read.
+  expect(drawerRead("canon.Party", "p/1", undefined, "live")).toBeNull()
+  expect(drawerRead("canon.Party", "p/1", undefined, undefined)).toBeNull()
 })

@@ -14,7 +14,6 @@ use std::sync::Arc;
 use zen_engine::{
     Decision, EvaluationOptions, Isolate, TzdbLookup, Variable,
     meter::Meter,
-    nodes::DecisionContracts,
     scaled::{Rounding, ScaledArithmetic},
 };
 
@@ -70,7 +69,7 @@ impl FoldPlan {
             &meter,
             profile,
         )?;
-        state = crate::convert::to_variable(&from_variable(&state)?)?;
+        state = crate::convert::to_variable_exact(&from_variable(&state)?)?;
         for (index, (_, item)) in ordered.into_iter().enumerate() {
             meter.charge(1)?;
             let step = Variable::from_object(
@@ -82,7 +81,7 @@ impl FoldPlan {
                 .into_iter()
                 .collect(),
             );
-            contracts.check(&self.key, &step, true, Some(&meter))?;
+            contracts.check_exact(&self.key, &step, true, Some(&meter))?;
             let response = poll_once(self.helper.evaluate_metered_with_tzdb(
                 step,
                 EvaluationOptions::default(),
@@ -90,7 +89,7 @@ impl FoldPlan {
                 tzdb.map(Arc::clone),
             ))??;
             state = response.result;
-            contracts.check(&self.key, &state, false, Some(&meter))?;
+            contracts.check_exact(&self.key, &state, false, Some(&meter))?;
             check_state(
                 &state,
                 &self.state_schema,
@@ -98,7 +97,7 @@ impl FoldPlan {
                 &meter,
                 profile,
             )?;
-            state = crate::convert::to_variable(&from_variable(&state)?)?;
+            state = crate::convert::to_variable_exact(&from_variable(&state)?)?;
         }
         Ok(state)
     }

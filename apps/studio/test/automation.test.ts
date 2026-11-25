@@ -19,7 +19,7 @@ const route: Graph = {
   nodes: [
     node("start", "start"),
     node("load", "perform", { tool: "billing.load_invoice", bind: "invoice", input: JSON.stringify({ invoiceId: "inv-1" }) }),
-    node("settled", "route", { branches: branches([{ left: "invoice.status", op: "==", right: "paid" }], [{ left: "invoice.status", op: "==", right: "draft" }]) }),
+    node("settled", "route", { branches: branches([{ left: "invoice.status", op: "==", right: "paid" }], [{ left: "invoice.status", op: "==", right: "draft" }], [{ left: "invoice.status", op: "==", right: "open" }]) }),
     node("paid", "succeed", { outcome: "already-paid" }),
     node("draft", "succeed", { outcome: "not-issued" }),
     node("overdue", "route", { branches: branches([{ left: "invoice.overdue", op: "==", right: "true" }, { left: "invoice.amountMinor", op: ">", right: "0" }]) }),
@@ -69,11 +69,11 @@ test("a lowering finding lands on the step that caused it", () => {
 
 test("reordering a route's branches carries each branch's exit; removing a branch removes its exit", () => {
   const settled = route.nodes.find(({ id }) => id === "settled")!
-  const [paid, draft] = branchesOf(settled) as [Condition[], Condition[]]
-  const swapped = setBranches(route, "settled", [draft, paid], [1, 0])
+  const [paid, draft, open] = branchesOf(settled) as [Condition[], Condition[], Condition[]]
+  const swapped = setBranches(route, "settled", [draft, paid, open], [1, 0, 2])
   expect(swapped.edges.filter(({ source, sourcePort }) => source === "settled" && sourcePort.startsWith("b")).map(({ sourcePort, target }) => `${sourcePort}->${target}`).sort()).toEqual(["b0->draft", "b1->paid"])
   expect(lower(swapped, tools, meta, options).problems).toEqual([])
-  const dropped = setBranches(route, "settled", [draft], [1])
+  const dropped = setBranches(route, "settled", [draft, open], [1, 2])
   expect(dropped.edges.filter(({ source }) => source === "settled").map(({ sourcePort, target }) => `${sourcePort}->${target}`).sort()).toEqual(["b0->draft", "next->overdue"])
 })
 
