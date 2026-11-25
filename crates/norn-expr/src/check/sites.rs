@@ -212,7 +212,6 @@ const fn is_exact_supported_builtin(function: InternalFunction) -> bool {
         | InternalFunction::Avg
         | InternalFunction::Min
         | InternalFunction::Max
-        | InternalFunction::Rand
         | InternalFunction::Median
         | InternalFunction::Mode
         | InternalFunction::Floor

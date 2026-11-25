@@ -173,3 +173,89 @@ async fn transform_loop_is_charged_per_element() {
     assert!(exhausted.used > 100_000, "{exhausted:?}");
     assert_eq!(meter.exhausted(), Some(exhausted));
 }
+
+/// Norn (#1711): a table whose second column's cell is blank (or, with `omit`,
+/// absent). Its selector would exhaust any budget if it ran, so the trace must not
+/// run it.
+fn skipped_selector_table(hit_policy: &str, output_field: &str, omit: bool) -> Option<Decision> {
+    let mut rule = json!({ "_id": "r1", "c1": "> 0", "c2": "", "o": "'hit'" });
+    if omit {
+        rule.as_object_mut()?.remove("c2");
+    }
+    let content: GraphContent = serde_json::from_value(json!({
+        "nodes": [
+            { "id": "in", "name": "in", "type": "inputNode" },
+            { "id": "table", "name": "table", "type": "decisionTableNode", "content": {
+                "hitPolicy": hit_policy,
+                "inputs": [
+                    { "id": "c1", "name": "c1", "field": "size", "type": "expression" },
+                    { "id": "c2", "name": "c2", "field": SKIPPED_SELECTOR, "type": "expression" }
+                ],
+                "outputs": [{ "id": "o", "name": "o", "field": output_field, "type": "expression" }],
+                "rules": [rule]
+            }},
+            { "id": "out", "name": "out", "type": "outputNode" }
+        ],
+        "edges": [
+            { "id": "e1", "sourceId": "in", "targetId": "table" },
+            { "id": "e2", "sourceId": "table", "targetId": "out" }
+        ]
+    }))
+    .ok()?;
+    Some(Decision::from(content))
+}
+
+const SKIPPED_SELECTOR: &str = "count([0..1000000000], # >= 0)";
+
+/// Norn (#1711): a trace is built only from values observed while matching. The
+/// blank cell's selector is listed as unevaluated, never run outside the meter, and
+/// tracing costs nothing extra.
+#[tokio::test]
+async fn trace_never_runs_a_skipped_selector() {
+    let cases = [("first", "tier"), ("collect", "tier"), ("first", "tiers[]")];
+    for ((hit_policy, output_field), omit) in
+        cases.into_iter().flat_map(|c| [(c, false), (c, true)])
+    {
+        let Some(decision) = skipped_selector_table(hit_policy, output_field, omit) else {
+            panic!("{hit_policy}: the table should decode");
+        };
+        let mut costs = Vec::new();
+        for trace in [false, true] {
+            let meter = Meter::new(10_000);
+            let options = EvaluationOptions {
+                trace,
+                ..Default::default()
+            };
+            let response = decision
+                .evaluate_metered(json!({ "size": 5 }).into(), options, meter.clone())
+                .await;
+            let response = match response {
+                Ok(response) => response,
+                Err(err) => panic!("{hit_policy} omit={omit} trace={trace}: {err:?}"),
+            };
+            costs.push((meter.used(), meter.scan_steps()));
+            if !trace {
+                continue;
+            }
+            let table = response
+                .trace
+                .and_then(|trace| trace.into_graph())
+                .and_then(|graph| graph.get("table").and_then(|node| node.trace_data.clone()))
+                .map(|data| data.to_value());
+            let row = match table {
+                Some(Value::Array(rows)) => rows.into_iter().next(),
+                other => other,
+            };
+            let row = row.unwrap_or(Value::Null);
+            assert_eq!(row["unevaluated"], json!([SKIPPED_SELECTOR]), "{row}");
+            assert_eq!(row["reference_map"], json!({ "size": 5 }), "{row}");
+            let cell = if omit { Value::Null } else { json!("") };
+            assert_eq!(
+                row["rule"][format!("{SKIPPED_SELECTOR}[c2]")],
+                cell,
+                "{row}"
+            );
+        }
+        assert_eq!(costs[0], costs[1], "{hit_policy}: tracing changed the cost");
+    }
+}

@@ -18,7 +18,6 @@ bumpalo = { version = "3", features = ["collections"] }
 # pure deterministic temporal values; versioned IANA tzdb bundles are injected
 # explicitly via `TzdbLookup` (no clock, no host zoneinfo, no runtime jiff-tzdb).
 jiff = { version = "0.2.37", default-features = false, features = ["std"] }
-fastrand = "2"
 once_cell = "1"
 # Norn (#3404): the only regex backend.
 regex-lite = "0.1"
