@@ -227,10 +227,10 @@ test("sidebar below 640px: the toggle opens a modal 'Navigation' sheet from the 
   for (const indicator of await sheet.locator('[role="treeitem"][aria-expanded] > [data-slot="tree-label"] > :last-child').all()) {
     expect(await style(indicator, "opacity")).toBe("1")
   }
-  // Focus is trapped in the sheet.
+  // Focus is trapped in the sheet: past its last control Base UI's focus guard hands it back on the next frame.
   for (let step = 0; step < 25; step += 1) {
     await page.keyboard.press("Tab")
-    expect(await page.evaluate(() => Boolean(document.activeElement?.closest('[role="dialog"]')))).toBe(true)
+    await expect.poll(() => page.evaluate(() => document.activeElement?.closest('[role="dialog"]')?.id ?? document.activeElement?.outerHTML.slice(0, 120))).toBe("studio-sidebar-sheet")
   }
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/sidebar-sheet-390-light.png` })
   await page.keyboard.press("Escape")
