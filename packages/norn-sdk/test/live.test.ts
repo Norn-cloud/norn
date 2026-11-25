@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 // @ts-expect-error: the host module is plain JavaScript without declarations.
 import * as hostLive from "../../../apps/norn-cell-do/subscribe.mjs"
-import { LiveClient, type LiveClientRefusal, type LiveRefusal, type LiveSnapshot, type SocketLike } from "../src/live/client.ts"
+import { LiveClient, type LiveClientRefusal, type LiveRefusal, type LiveSnapshot, type SocketLike } from "../src/live.ts"
 
 type Listener = (event: { code?: number; data?: unknown }) => void
 
@@ -10,7 +10,10 @@ class FakeSocket implements SocketLike {
   readonly sent: unknown[] = []
   readonly listeners = new Map<string, Listener[]>()
   closed: number | null = null
-  constructor(readonly url: string) {}
+  readonly url: string
+  constructor(url: string) {
+    this.url = url
+  }
   send(data: string) {
     this.sent.push(JSON.parse(data))
   }

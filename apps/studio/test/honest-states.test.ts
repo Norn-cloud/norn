@@ -25,6 +25,7 @@ test("a non-retryable cell failure (503 cell.unopenable) is never auto-retried a
       code: "cell.unopenable",
       category: "internal",
       retryable: false,
+      reason: null,
       incidentId: "inc-unopenable-42",
       message: "The workspace cell could not be opened.",
       explanation: "Storage migration is paused for this environment.",

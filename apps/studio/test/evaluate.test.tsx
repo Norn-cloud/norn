@@ -34,7 +34,7 @@ test("an admitted question is answered with the server's document, its numbers r
 })
 
 test("the cell's checker refusal gives each finding's code, message and field; the read gates' refusal is the host's own; anything else is unavailable", async () => {
-  expect(await evaluateQuestion(question, answer(422, JSON.stringify({ format: "norn/refusal@2", code: "question.refused", diagnostics: [{ code: "question.window_order", severity: "error", message: "The time window must be an ordered half-open UTC interval.", span: { pointer: "/question/window" } }] }))))
+  expect(await evaluateQuestion(question, answer(422, JSON.stringify({ format: "norn/refusal@2", code: "question.refused", category: "invalid", retryable: false, reason: null, message: "the question was refused", explanation: "", diagnostics: [{ code: "question.window_order", severity: "error", message: "The time window must be an ordered half-open UTC interval.", span: { pointer: "/question/window" } }] }))))
     .toEqual({ kind: "not-a-question", findings: [{ code: "question.window_order", severity: "error", message: "The time window must be an ordered half-open UTC interval.", pointer: "/question/window" }] })
   expect(await evaluateQuestion(question, answer(403, '{"code":"authz.denied","message":"the read request is not authorized"}')))
     .toEqual({ kind: "refused", refusal: { code: "authz.denied", message: "the read request is not authorized" } })
