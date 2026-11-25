@@ -822,13 +822,8 @@ impl ActionEffectProgram {
                 entity_artifact_id,
                 entity_artifact_version,
                 ..
-            } => ActionEffectTarget {
-                object_id_field,
-                object_kind,
-                entity_artifact_id,
-                entity_artifact_version,
-            },
-            Self::MutateParentWithRows {
+            }
+            | Self::MutateParentWithRows {
                 object_id_field,
                 object_kind,
                 entity_artifact_id,
@@ -1739,15 +1734,6 @@ impl ArtifactPayload {
             Self::Model(payload) => payload.has_invalid_extensions(),
         }
     }
-
-    /// Transitional JSON view for callers not yet migrated to their typed root.
-    #[deprecated(
-        note = "migrate callers to ArtifactPayload variants; remove after norn-engine payload access is typed"
-    )]
-    #[must_use]
-    pub fn as_json_value(&self) -> JsonValue {
-        self.to_json_value()
-    }
 }
 
 impl PartialEq<JsonValue> for ArtifactPayload {
@@ -2365,47 +2351,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(
-        deprecated,
-        reason = "the test explicitly covers the transitional compatibility accessor"
-    )]
-    fn entity_payload_compatibility_view_tracks_typed_field_mutations() {
-        let mut artifact = entity_artifact();
-        let ArtifactPayload::Entity(payload) = &mut artifact.payload else {
-            panic!("entity artifact should select EntityPayload");
-        };
-        let mutation_authority = JsonValue::Object(BTreeMap::from([
-            (
-                "kind".to_string(),
-                JsonValue::String("domain_engine".to_string()),
-            ),
-            (
-                "domain".to_string(),
-                JsonValue::String("inventory".to_string()),
-            ),
-        ]));
-        payload.mutation_authority = PayloadField::present(mutation_authority.clone());
-
-        let compatibility_view = artifact.payload.as_json_value();
-        assert_eq!(
-            compatibility_view
-                .as_object()
-                .and_then(|payload| payload.get("mutationAuthority")),
-            Some(&mutation_authority),
-        );
-
-        let serialized = serde_json::to_value(&artifact.payload)
-            .expect("typed payload should serialize through its current fields");
-        assert_eq!(
-            serialized["payload"]["mutationAuthority"],
-            serde_json::json!({
-                "kind": "domain_engine",
-                "domain": "inventory"
-            })
-        );
-    }
-
-    #[test]
     fn rejects_non_object_payloads_during_envelope_decode() {
         let mut source =
             serde_json::to_value(entity_artifact()).expect("entity artifact should serialize");
@@ -2438,14 +2383,6 @@ mod tests {
         assert_eq!(serialized["irVersion"], "0.1");
         assert_eq!(serialized["artifactId"], "commerce.entity.product");
         assert_eq!(serialized["kind"], "entity");
-    }
-
-    #[test]
-    fn exposes_artifact_json_schema() {
-        let schema = artifact_envelope_schema();
-        let schema_json = serde_json::to_value(schema).expect("schema should serialize");
-
-        assert!(schema_json.is_object());
     }
 
     fn artifact_with_payload(kind: &ArtifactKind, payload: serde_json::Value) -> ArtifactEnvelope {

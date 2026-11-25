@@ -2,13 +2,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use norn_expr::schema::Schema;
 use norn_ir::rule::{DECIDE_OPTIONAL_INPUT_MEMBERS, DECIDE_PRINCIPAL_MEMBER};
 use norn_ir::{
     DECIDE_INPUT_MEMBERS, DECIDE_OPTIONAL_OUTPUT_MEMBERS, DECIDE_OUTPUT_MEMBERS, RuleRoot,
 };
 
 use crate::error::AdmissionError;
-use crate::schema::Schema;
 
 pub(crate) fn invalid_schema(
     rule_id: &str,

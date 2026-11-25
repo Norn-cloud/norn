@@ -70,7 +70,6 @@ mod error;
 mod evaluate;
 mod fold;
 mod principal;
-mod schema;
 mod step;
 
 pub use admit::{

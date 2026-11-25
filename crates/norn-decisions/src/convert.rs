@@ -59,10 +59,23 @@ fn convert_to_variable(
             if let Variable::Object(map) = &object {
                 let mut map = map.borrow_mut();
                 for (key, item) in entries {
-                    map.insert(
-                        Variable::key(&spell(key)),
-                        convert_to_variable(item, spell)?,
-                    );
+                    // P6: two distinct keys that are one key after NFC are refused,
+                    // never silently overwritten by whichever sorts last.
+                    let normalized = spell(key);
+                    if map
+                        .insert(
+                            Variable::key(&normalized),
+                            convert_to_variable(item, spell)?,
+                        )
+                        .is_some()
+                    {
+                        return Err(DecisionError::Engine {
+                            node_id: String::new(),
+                            message: format!(
+                                "object keys collide after NFC normalization: `{normalized}`"
+                            ),
+                        });
+                    }
                 }
             }
             object

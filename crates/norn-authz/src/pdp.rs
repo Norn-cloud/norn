@@ -25,8 +25,11 @@ use cedar_policy::{
 use crate::admit::ValidatedPolicySet;
 use crate::diag::AuthzError;
 use crate::grants::{CapabilityQuery, CompiledGrants, scope_record, uid};
-use crate::lower::{ACTION_TYPE, ACTOR_TYPE, ROLE_TYPE, SCOPE_ATTRIBUTE, cedar_type_name};
-use crate::lower::{DECLASSIFY_ACTION_ID, MARKING_RESOURCE_TYPE, REVEAL_ACTION_ID};
+use crate::lower::{
+    ACTION_TYPE, ACTOR_TYPE, DECLASSIFY_ACTION_ID, ENTITLEMENT_GROUPS_ATTRIBUTE,
+    ENTITLEMENT_KINDS_ATTRIBUTE, ENTITLEMENT_ROLES_ATTRIBUTE, MARKING_RESOURCE_TYPE,
+    REVEAL_ACTION_ID, ROLE_TYPE, SCOPE_ATTRIBUTE, cedar_type_name,
+};
 use crate::request::{
     AccessRequest, AttrValue, CapabilityGrant, Delegation, EntitlementInput, EntityRef,
     ResourceInput, ScopeKey, is_exact_value,
@@ -212,9 +215,12 @@ impl Pdp {
         entitlements: &[EntitlementInput],
         explain_shadow: bool,
     ) -> PdpExplanation {
+        if !is_well_formed(request) {
+            return invalid_request_explanation();
+        }
         let mut explanation = PdpExplanation {
             decision: PdpDecision::Deny(DenyReason::InvalidRequest),
-            scope: ConjunctOutcome::NotEvaluated,
+            scope: ConjunctOutcome::Allow,
             capability: ConjunctOutcome::NotEvaluated,
             delegation: ConjunctOutcome::NotEvaluated,
             access: ConjunctOutcome::NotEvaluated,
@@ -222,13 +228,6 @@ impl Pdp {
             diagnostics: Vec::new(),
             entitlement_evaluation: EntitlementEvaluation::not_evaluated(),
         };
-
-        if !is_well_formed(request) {
-            explanation.scope = ConjunctOutcome::Error;
-            explanation.decision = PdpDecision::Deny(DenyReason::InvalidRequest);
-            return explanation;
-        }
-        explanation.scope = ConjunctOutcome::Allow;
         let Some(scope) = &request.scope else {
             explanation.scope = ConjunctOutcome::Deny;
             explanation.decision = PdpDecision::Deny(DenyReason::AbsentScope);
@@ -296,14 +295,11 @@ impl Pdp {
         marking_id: &str,
         action_id: &str,
     ) -> PdpExplanation {
-        let mut marking_request = request.clone();
         let valid_action = matches!(action_id, REVEAL_ACTION_ID | DECLASSIFY_ACTION_ID);
         if !valid_action || !crate::lower::canonical_marking_id(marking_id) {
-            // Reuse the PDP's stable malformed-request denial. This helper is
-            // an allow-list boundary as well as a convenience constructor.
-            marking_request.capability.clear();
-            return self.explain(&marking_request);
+            return invalid_request_explanation();
         }
+        let mut marking_request = request.clone();
 
         action_id.clone_into(&mut marking_request.capability);
         action_id.clone_into(&mut marking_request.action_id);
@@ -414,11 +410,11 @@ impl Pdp {
         // Verified membership keys are inputs to the typed entitlement
         // matcher, not Cedar entity attributes; keeping them out also
         // preserves old projected schemas without generic rules.
-        principal_input_attributes.remove("entitlement_roles");
-        principal_input_attributes.remove("entitlement_groups");
+        principal_input_attributes.remove(ENTITLEMENT_ROLES_ATTRIBUTE);
+        principal_input_attributes.remove(ENTITLEMENT_GROUPS_ATTRIBUTE);
         if self.access.uses_entitlements() {
             principal_input_attributes.insert(
-                "entitlement_kinds".to_owned(),
+                ENTITLEMENT_KINDS_ATTRIBUTE.to_owned(),
                 AttrValue::Set(
                     entitlement_kinds
                         .iter()
@@ -497,6 +493,19 @@ struct AccessEvaluation {
     diagnostics: Vec<String>,
 }
 
+fn invalid_request_explanation() -> PdpExplanation {
+    PdpExplanation {
+        decision: PdpDecision::Deny(DenyReason::InvalidRequest),
+        scope: ConjunctOutcome::Error,
+        capability: ConjunctOutcome::NotEvaluated,
+        delegation: ConjunctOutcome::NotEvaluated,
+        access: ConjunctOutcome::NotEvaluated,
+        determining_policies: Vec::new(),
+        diagnostics: Vec::new(),
+        entitlement_evaluation: EntitlementEvaluation::not_evaluated(),
+    }
+}
+
 /// The checks `norn-engine` applies before its decision, the reserved `scope`
 /// attribute, and target consistency: a commit binding must name the same
 /// action and resource the access conjunct evaluates, so a grant bound to one
@@ -513,7 +522,9 @@ fn is_well_formed(request: &AccessRequest) -> bool {
         && request.scope.as_ref().is_none_or(ScopeKey::is_exact)
         && request.resource.scope.is_exact()
         && !principal.attributes.contains_key(SCOPE_ATTRIBUTE)
-        && !principal.attributes.contains_key("entitlement_kinds")
+        && !principal
+            .attributes
+            .contains_key(ENTITLEMENT_KINDS_ATTRIBUTE)
         && !request.resource.attributes.contains_key(SCOPE_ATTRIBUTE)
         && !request.context.contains_key(SCOPE_ATTRIBUTE)
         && request.binding().is_none_or(|binding| {

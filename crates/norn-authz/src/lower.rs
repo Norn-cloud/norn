@@ -53,6 +53,12 @@ pub const ACTION_TYPE: &str = "Norn::Action";
 /// The context value, principal attribute, and resource attribute holding a
 /// `Norn::Scope`. Reserved: a context condition may not name it.
 pub const SCOPE_ATTRIBUTE: &str = "scope";
+/// Synthetic principal attribute holding verified entitlement relationship kinds.
+pub(crate) const ENTITLEMENT_KINDS_ATTRIBUTE: &str = "entitlement_kinds";
+/// Verified principal attribute holding role memberships for entitlement matching.
+pub(crate) const ENTITLEMENT_ROLES_ATTRIBUTE: &str = "entitlement_roles";
+/// Verified principal attribute holding group memberships for entitlement matching.
+pub(crate) const ENTITLEMENT_GROUPS_ATTRIBUTE: &str = "entitlement_groups";
 /// Synthetic resource type used for per-marking authorization.
 pub const MARKING_RESOURCE_TYPE: &str = "norn.Marking";
 /// Scoped capability and `AccessIR` action for revealing marked values.
@@ -154,15 +160,12 @@ fn infer_principal_attributes_with_projection(
     let mut diagnostics = Vec::new();
     for document in documents {
         if !document.generic_rules.is_empty() {
-            {
-                let name = "entitlement_kinds";
-                if let Some(diagnostic) = register_principal_attribute(
-                    &mut inferred,
-                    name,
-                    CedarPrincipalAttribute::StringSet,
-                ) {
-                    diagnostics.push(diagnostic.for_policy(&document.policy_id));
-                }
+            if let Some(diagnostic) = register_principal_attribute(
+                &mut inferred,
+                ENTITLEMENT_KINDS_ATTRIBUTE,
+                CedarPrincipalAttribute::StringSet,
+            ) {
+                diagnostics.push(diagnostic.for_policy(&document.policy_id));
             }
         }
         for rule in &document.rules {
@@ -199,14 +202,7 @@ fn infer_principal_attributes_with_projection(
     }
 }
 
-fn inferred_principal_attribute(
-    resource_type: &str,
-    resource: &ResourceCondition,
-    principal: &PrincipalAttributeOperand,
-    projection: Option<&CedarSchemaProjection>,
-) -> Result<(String, CedarPrincipalAttribute), AuthzDiagnostic> {
-    let expected = infer_principal_attribute_type(resource_type, resource, projection)?;
-    let name = principal.principal_attribute.as_str();
+fn validate_principal_attribute_name(name: &str) -> Result<(), AuthzDiagnostic> {
     if !is_context_name(name) {
         return Err(AuthzDiagnostic::new(
             AuthzCode::AccessNameInvalid,
@@ -218,15 +214,27 @@ fn inferred_principal_attribute(
         SCOPE_ATTRIBUTE
             | "represents"
             | "acted_by"
-            | "entitlement_kinds"
-            | "entitlement_roles"
-            | "entitlement_groups"
+            | ENTITLEMENT_KINDS_ATTRIBUTE
+            | ENTITLEMENT_ROLES_ATTRIBUTE
+            | ENTITLEMENT_GROUPS_ATTRIBUTE
     ) {
         return Err(AuthzDiagnostic::new(
             AuthzCode::AccessPrincipalReserved,
             format!("principal attribute '{name}' is reserved"),
         ));
     }
+    Ok(())
+}
+
+fn inferred_principal_attribute(
+    resource_type: &str,
+    resource: &ResourceCondition,
+    principal: &PrincipalAttributeOperand,
+    projection: Option<&CedarSchemaProjection>,
+) -> Result<(String, CedarPrincipalAttribute), AuthzDiagnostic> {
+    let expected = infer_principal_attribute_type(resource_type, resource, projection)?;
+    let name = principal.principal_attribute.as_str();
+    validate_principal_attribute_name(name)?;
     Ok((name.to_owned(), expected))
 }
 
@@ -973,26 +981,8 @@ fn lower_principal_comparison(
     diagnostics: &mut Vec<AuthzDiagnostic>,
 ) -> Option<String> {
     let name = principal.principal_attribute.as_str();
-    if !is_context_name(name) {
-        diagnostics.push(AuthzDiagnostic::new(
-            AuthzCode::AccessNameInvalid,
-            format!("principal attribute '{name}' is not an identifier ([A-Za-z_][A-Za-z0-9_]*)"),
-        ));
-        return None;
-    }
-    if matches!(
-        name,
-        SCOPE_ATTRIBUTE
-            | "represents"
-            | "acted_by"
-            | "entitlement_kinds"
-            | "entitlement_roles"
-            | "entitlement_groups"
-    ) {
-        diagnostics.push(AuthzDiagnostic::new(
-            AuthzCode::AccessPrincipalReserved,
-            format!("principal attribute '{name}' is reserved"),
-        ));
+    if let Err(diagnostic) = validate_principal_attribute_name(name) {
+        diagnostics.push(diagnostic);
         return None;
     }
     let resource_name = string_literal(&resource.name);
@@ -1077,7 +1067,7 @@ pub(crate) fn string_literal(value: &str) -> String {
 
 /// `EntityIR` v2 object type name: one or more `[a-z][a-z0-9_]*` domain
 /// segments, then a `[A-Z][A-Za-z0-9]*` local name, joined by `.`.
-fn is_object_type_name(value: &str) -> bool {
+pub(crate) fn is_object_type_name(value: &str) -> bool {
     match value.rsplit_once('.') {
         Some((domain, local)) => {
             let mut chars = local.chars();
@@ -1090,7 +1080,7 @@ fn is_object_type_name(value: &str) -> bool {
 }
 
 /// `[a-z][a-z0-9_]*`, the `EntityIR` v2 member id grammar.
-fn is_member_id(value: &str) -> bool {
+pub(crate) fn is_member_id(value: &str) -> bool {
     let mut chars = value.chars();
     chars.next().is_some_and(|first| first.is_ascii_lowercase())
         && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')

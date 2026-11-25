@@ -13,11 +13,11 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use norn_expr::Value;
+use norn_expr::schema::Schema;
 use norn_ir::RuleRoot;
 use norn_ir::rule::{DECIDE_PRINCIPAL_MEMBER, PrincipalInputDeclaration};
 
 use crate::contract::invalid_schema;
-use crate::schema::Schema;
 use crate::{AdmissionError, AdmittedDecision, DecisionError, TypedEvent};
 
 const PRINCIPAL_PATH: &str = "inputSchema.properties.principal";

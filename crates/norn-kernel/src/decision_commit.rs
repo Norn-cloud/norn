@@ -2250,11 +2250,6 @@ impl<X> DecisionRefusal<X> {
     pub(crate) fn from_commit(error: CommitError<X>) -> Self {
         use crate::cell_host::CommitError::{AccountingPosting, AtomicDeliveryBoundary};
 
-        // A decision prepares no link writes or set reads, so a link or
-        // read-set refusal means its commit was malformed.
-        if let Some(reason) = Self::read_set_reason(&error) {
-            return Self::InvalidOutput { reason };
-        }
         match error {
             CommitError::IdentityReuse => Self::IdentityReuse,
             CommitError::AtomicBoundary { key } => Self::AtomicBoundary { key },
@@ -2273,7 +2268,11 @@ impl<X> DecisionRefusal<X> {
                 field,
                 actual_bytes,
                 max_bytes,
-            } => Self::commit_identifier_refusal(field, actual_bytes, max_bytes),
+            } => Self::IdentifierTooLong {
+                field,
+                actual_bytes,
+                max_bytes,
+            },
             CommitError::ImmutableObject { key } => Self::InvalidOutput {
                 reason: format!("{key} is immutable"),
             },
@@ -2290,7 +2289,8 @@ impl<X> DecisionRefusal<X> {
                 expected,
                 current,
             },
-            // Mapped by `read_set_reason` above; the arm keeps the match exhaustive.
+            // A decision prepares no link writes or set reads, so any link or
+            // read-set refusal means its commit was malformed.
             read_set @ (CommitError::DuplicateLink { .. }
             | CommitError::LinkConflict { .. }
             | CommitError::LinkReadConflict { .. }
@@ -2318,7 +2318,14 @@ impl<X> DecisionRefusal<X> {
                 id,
                 message,
                 outcome,
-            } => Self::commit_invariant_refusal(key, owner, version, id, message, outcome),
+            } => Self::InvariantViolation {
+                key,
+                owner,
+                version,
+                id,
+                message,
+                outcome,
+            },
             CommitError::InvariantBudgetExceeded { key, limit } => {
                 Self::InvariantBudgetExceeded { key, limit }
             }
@@ -2340,128 +2347,6 @@ impl<X> DecisionRefusal<X> {
             },
             CommitError::Overflow => Self::Overflow,
             CommitError::Host(error) => Self::Host(error),
-        }
-    }
-
-    /// The malformed-commit reason of a link or predicate read-set error;
-    /// `None` for every other commit error.
-    fn read_set_reason(error: &CommitError<X>) -> Option<String> {
-        match error {
-            CommitError::DuplicateLink { key } => {
-                Some(format!("link {key} appears twice in one commit"))
-            }
-            CommitError::LinkConflict { key, .. } => {
-                Some(format!("link {key} changed since the turn read it"))
-            }
-            CommitError::LinkReadConflict { source_key, link } => Some(format!(
-                "link targets for {source_key} -{link}-> changed since the turn read them"
-            )),
-            CommitError::UnsupportedLinkRead { source_key, link } => Some(format!(
-                "host cannot verify link targets for {source_key} -{link}->"
-            )),
-            CommitError::DuplicateLinkRead { source_key, link } => Some(format!(
-                "link targets for {source_key} -{link}-> appear more than once"
-            )),
-            CommitError::LinkReadTooLarge {
-                source_key,
-                link,
-                actual,
-                max,
-            } => Some(Self::link_read_limit_reason(
-                source_key, link, *actual, *max,
-            )),
-            CommitError::InvalidLinkRead { source_key, link } => Some(format!(
-                "link targets for {source_key} -{link}-> are malformed"
-            )),
-            CommitError::PredicateReadConflict { object_type } => Some(format!(
-                "objects matching a predicate over {object_type:?} changed since the turn read them"
-            )),
-            CommitError::UnsupportedPredicateRead { object_type } => Some(format!(
-                "host cannot verify a predicate read over {object_type:?}"
-            )),
-            CommitError::InvalidPredicateRead {
-                object_type,
-                reason,
-            } => Some(format!(
-                "predicate read over {object_type:?} is malformed: {reason}"
-            )),
-            CommitError::DanglingLink { key, missing } => {
-                Some(format!("link {key} would dangle: {missing} does not exist"))
-            }
-            CommitError::LinkTarget { key } => Some(format!(
-                "link {key} is not a declared link to an admitted target"
-            )),
-            CommitError::LinkCardinality { key, endpoint } => {
-                Some(format!("link {key} exceeds its cardinality at {endpoint}"))
-            }
-            CommitError::LinkRequired { parent, link } => {
-                Some(format!("{parent} has no required link {link}"))
-            }
-            CommitError::IdentityReuse
-            | CommitError::AtomicBoundary { .. }
-            | CommitError::AtomicDeliveryBoundary { .. }
-            | CommitError::Law { .. }
-            | CommitError::IdentityCollision { .. }
-            | CommitError::DuplicateKey { .. }
-            | CommitError::OwnedRowsProtected { .. }
-            | CommitError::IdentifierTooLong { .. }
-            | CommitError::ImmutableObject { .. }
-            | CommitError::LifecycleInitialization { .. }
-            | CommitError::NotPending { .. }
-            | CommitError::ReceiptNotAccepted { .. }
-            | CommitError::Conflict { .. }
-            | CommitError::TypeMismatch { .. }
-            | CommitError::AccountingPosting { .. }
-            | CommitError::InvariantViolation { .. }
-            | CommitError::InvariantBudgetExceeded { .. }
-            | CommitError::InvariantModel { .. }
-            | CommitError::EffectiveValues { .. }
-            | CommitError::TraversalLimitExceeded { .. }
-            | CommitError::ObservationAuthorization
-            | CommitError::EventLimitExceeded { .. }
-            | CommitError::Overflow
-            | CommitError::Host(_) => None,
-        }
-    }
-
-    fn link_read_limit_reason(
-        source_key: &FactKey,
-        link: &str,
-        actual: usize,
-        max: usize,
-    ) -> String {
-        format!(
-            "link targets for {source_key} -{link}-> exceed the {max} item/byte limit ({actual})"
-        )
-    }
-
-    fn commit_identifier_refusal(
-        field: &'static str,
-        actual_bytes: usize,
-        max_bytes: usize,
-    ) -> Self {
-        Self::IdentifierTooLong {
-            field,
-            actual_bytes,
-            max_bytes,
-        }
-    }
-
-    fn commit_invariant_refusal(
-        key: Box<FactKey>,
-        owner: InvariantOwner,
-        version: String,
-        id: InvariantId,
-        message: String,
-        outcome: Box<DataQualityOutcome>,
-    ) -> Self {
-        Self::InvariantViolation {
-            key,
-            owner,
-            version,
-            id,
-            message,
-            outcome,
         }
     }
 }

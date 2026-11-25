@@ -1204,61 +1204,59 @@ impl ObservationAuthorization {
         let post = Projection::preview(&commit.writes, &commit.links, model, view)
             .map_err(|e| refuse(e.code().into()))?;
         let mut remaining = TurnFuel::default();
+        let mut recompute =
+            |key: &FactKey,
+             values: &JsonObject,
+             provenance: &InstanceProvenance,
+             observation_id: &str|
+             -> Result<Option<Vec<DataQualityFinding>>, ObservationRefusal> {
+                if !crate::governing_laws::reads_links(catalog, &key.object_type)? {
+                    return Ok(None);
+                }
+                let failures = crate::commit_check::observed_invariant_failures(
+                    catalog,
+                    key,
+                    values,
+                    &mut remaining,
+                )
+                .ok_or_else(|| refuse("invariant evaluation refused".into()))?;
+                let mut links = CommitLinks::new(&post, key);
+                let findings = findings_for(
+                    catalog,
+                    key,
+                    values,
+                    provenance,
+                    observation_id,
+                    &failures,
+                    &mut links,
+                )?;
+                if links.take_host_error().is_some() {
+                    return Err(refuse("a link target cannot be read".into()));
+                }
+                Ok(Some(findings))
+            };
         for authorized in &mut self.writes {
             let FactMutation::Put { values } = &authorized.write.mutation else {
                 continue;
             };
-            let key = authorized.write.key.clone();
-            if !crate::governing_laws::reads_links(catalog, &key.object_type)? {
-                continue;
-            }
-            let failures = crate::commit_check::observed_invariant_failures(
-                catalog,
-                &key,
-                values,
-                &mut remaining,
-            )
-            .ok_or_else(|| refuse("invariant evaluation refused".into()))?;
-            let mut links = CommitLinks::new(&post, &key);
-            let findings = findings_for(
-                catalog,
-                &key,
+            if let Some(findings) = recompute(
+                &authorized.write.key,
                 values,
                 &authorized.provenance,
                 &authorized.observation_id,
-                &failures,
-                &mut links,
-            )?;
-            if links.take_host_error().is_some() {
-                return Err(refuse("a link target cannot be read".into()));
+            )? {
+                authorized.findings = findings;
             }
-            authorized.findings = findings;
         }
         for authorized in &mut self.read_findings {
-            if !crate::governing_laws::reads_links(catalog, &authorized.key.object_type)? {
-                continue;
-            }
-            let failures = crate::commit_check::observed_invariant_failures(
-                catalog,
-                &authorized.key,
-                &authorized.values,
-                &mut remaining,
-            )
-            .ok_or_else(|| refuse("invariant evaluation refused".into()))?;
-            let mut links = CommitLinks::new(&post, &authorized.key);
-            let findings = findings_for(
-                catalog,
+            if let Some(findings) = recompute(
                 &authorized.key,
                 &authorized.values,
                 &authorized.provenance,
                 &authorized.observation_id,
-                &failures,
-                &mut links,
-            )?;
-            if links.take_host_error().is_some() {
-                return Err(refuse("a link target cannot be read".into()));
+            )? {
+                authorized.findings = findings;
             }
-            authorized.findings = findings;
         }
         Ok(())
     }
@@ -1490,7 +1488,8 @@ fn property_finding_rule_ref(
         failure
             .id
             .as_str()
-            .trim_start_matches("$property.")
+            .strip_prefix("$property.")
+            .unwrap_or_else(|| failure.id.as_str())
             .to_owned(),
     );
     catalog

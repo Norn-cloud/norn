@@ -53,8 +53,8 @@ use crate::admit::ENGINE_MAX_DEPTH;
 use norn_ir::{DecisionOutput, FactChange, LinkChange, RuleRoot, RuntimeObject, RuntimeValue};
 
 use crate::convert::{from_variable, to_variable, value_to_runtime};
-use crate::schema::Schema;
 use crate::{AdmissionError, AdmittedDecision, DecisionBinding, DecisionError, StrictSite};
+use norn_expr::schema::Schema;
 
 impl AdmittedDecision {
     /// Loads `root` with the sub-decisions it reaches under the operational

@@ -10,6 +10,7 @@ use norn_ir::entitlement::{
     EntitlementCondition, EntitlementGrantee, EntitlementStatus, ObjectRef,
 };
 
+use crate::lower::{is_member_id, is_object_type_name};
 use crate::pdp::ConjunctOutcome;
 use crate::request::{AccessRequest, AttrValue, EntitlementInput, PrincipalInput, ScopeKey};
 
@@ -67,10 +68,10 @@ pub fn validate_entitlement(input: &EntitlementInput) -> Result<(), EntitlementV
     if !input.scope.is_exact() {
         return Err(EntitlementValidationError::ScopeInvalid);
     }
-    if !valid_object_type(row.target_type.as_str()) {
+    if !is_object_type_name(row.target_type.as_str()) {
         return Err(EntitlementValidationError::IdentifierInvalid);
     }
-    if !valid_object_type(row.grantee.object_type().as_str()) || !exact(row.grantee.key()) {
+    if !is_object_type_name(row.grantee.object_type().as_str()) || !exact(row.grantee.key()) {
         return Err(EntitlementValidationError::IdentifierInvalid);
     }
     match &row.grantee {
@@ -96,22 +97,22 @@ pub fn validate_entitlement(input: &EntitlementInput) -> Result<(), EntitlementV
         return Err(EntitlementValidationError::ActionsInvalid);
     }
     for (name, value) in &row.scope_attributes {
-        if !valid_member(name) || !exact(value) {
+        if !is_member_id(name) || !exact(value) {
             return Err(EntitlementValidationError::ScopeAttributeInvalid);
         }
     }
     match &row.condition {
         EntitlementCondition::None => {}
         EntitlementCondition::OwnerOnly { link } => {
-            if !valid_member(link.as_str()) {
+            if !is_member_id(link.as_str()) {
                 return Err(EntitlementValidationError::LinkInvalid);
             }
         }
         EntitlementCondition::LinkedRecord { link, target } => {
-            if !valid_member(link.as_str()) {
+            if !is_member_id(link.as_str()) {
                 return Err(EntitlementValidationError::LinkInvalid);
             }
-            if !valid_object_type(target.object_type.as_str()) || !exact(&target.key) {
+            if !is_object_type_name(target.object_type.as_str()) || !exact(&target.key) {
                 return Err(EntitlementValidationError::IdentifierInvalid);
             }
         }
@@ -534,38 +535,6 @@ fn bounded_text(value: &str) -> String {
         end = end.saturating_sub(1);
     }
     format!("{}…", value.get(..end).unwrap_or_default())
-}
-
-fn valid_object_type(value: &str) -> bool {
-    let Some((namespace, local)) = value.rsplit_once('.') else {
-        return false;
-    };
-    !namespace.is_empty()
-        && namespace.split('.').all(valid_namespace)
-        && local.chars().next().is_some_and(char::is_uppercase)
-        && local
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric())
-}
-
-fn valid_namespace(value: &str) -> bool {
-    let mut characters = value.chars();
-    characters
-        .next()
-        .is_some_and(|first| first.is_ascii_lowercase())
-        && characters.all(|character| {
-            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_'
-        })
-}
-
-fn valid_member(value: &str) -> bool {
-    let mut characters = value.chars();
-    characters
-        .next()
-        .is_some_and(|first| first.is_ascii_lowercase())
-        && characters.all(|character| {
-            character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_'
-        })
 }
 
 fn valid_action_id(value: &str) -> bool {

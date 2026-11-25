@@ -250,65 +250,7 @@ impl<X> CommitError<X> {
             | Self::LinkRequired { .. }
             | Self::TypeMismatch { .. }
             | Self::InvariantViolation { .. } => RefusalCategory::Precondition,
-            Self::AccountingPosting { reason, .. } => match reason {
-                norn_ir::posting::AccountingError::PostedJournalImmutable
-                | norn_ir::posting::AccountingError::JournalDeleteForbidden => {
-                    RefusalCategory::Precondition
-                }
-                norn_ir::posting::AccountingError::ArithmeticOverflow => RefusalCategory::Limit,
-                norn_ir::posting::AccountingError::InvalidState
-                | norn_ir::posting::AccountingError::UnsupportedIrVersion
-                | norn_ir::posting::AccountingError::InvalidIdentity
-                | norn_ir::posting::AccountingError::ScopeMismatch
-                | norn_ir::posting::AccountingError::BookMismatch
-                | norn_ir::posting::AccountingError::GraphMismatch
-                | norn_ir::posting::AccountingError::GraphVersionMismatch
-                | norn_ir::posting::AccountingError::CalendarMismatch
-                | norn_ir::posting::AccountingError::CalendarVersionMismatch
-                | norn_ir::posting::AccountingError::StaleOwnerVersion
-                | norn_ir::posting::AccountingError::OwnerVersionOverflow
-                | norn_ir::posting::AccountingError::InvalidDate
-                | norn_ir::posting::AccountingError::PeriodNotFound
-                | norn_ir::posting::AccountingError::PeriodClosed
-                | norn_ir::posting::AccountingError::PeriodExceptionMissing
-                | norn_ir::posting::AccountingError::PeriodExceptionScopeMismatch
-                | norn_ir::posting::AccountingError::PeriodExceptionDateMismatch
-                | norn_ir::posting::AccountingError::PeriodExceptionVersionMismatch
-                | norn_ir::posting::AccountingError::PeriodExceptionExpired
-                | norn_ir::posting::AccountingError::PeriodExceptionConsumed
-                | norn_ir::posting::AccountingError::DuplicateUnit
-                | norn_ir::posting::AccountingError::InvalidOntologyBinding
-                | norn_ir::posting::AccountingError::DuplicateLayer
-                | norn_ir::posting::AccountingError::DuplicateAccount
-                | norn_ir::posting::AccountingError::UnknownParentAccount
-                | norn_ir::posting::AccountingError::AccountGraphCycle
-                | norn_ir::posting::AccountingError::UnknownAccount
-                | norn_ir::posting::AccountingError::AccountReferenceMismatch
-                | norn_ir::posting::AccountingError::UnknownUnit
-                | norn_ir::posting::AccountingError::AccountUnitMismatch
-                | norn_ir::posting::AccountingError::UnitPrecisionMismatch
-                | norn_ir::posting::AccountingError::UnknownLayer
-                | norn_ir::posting::AccountingError::DuplicateLeg
-                | norn_ir::posting::AccountingError::TooFewLegs
-                | norn_ir::posting::AccountingError::InvalidLegRecord
-                | norn_ir::posting::AccountingError::LegIdentityMismatch
-                | norn_ir::posting::AccountingError::InvalidAmount
-                | norn_ir::posting::AccountingError::AmountNotReversible
-                | norn_ir::posting::AccountingError::JournalUnbalanced
-                | norn_ir::posting::AccountingError::JournalUnbalancedByUnit
-                | norn_ir::posting::AccountingError::JournalUnbalancedByLayer
-                | norn_ir::posting::AccountingError::JournalAlreadyExists
-                | norn_ir::posting::AccountingError::JournalNotFound
-                | norn_ir::posting::AccountingError::JournalVersionMismatch
-                | norn_ir::posting::AccountingError::ReversalNotExact
-                | norn_ir::posting::AccountingError::JournalAlreadyReversed
-                | norn_ir::posting::AccountingError::CannotReverseReversal
-                | norn_ir::posting::AccountingError::IdempotencyConflict
-                | norn_ir::posting::AccountingError::QuantityCheckerRejected
-                | norn_ir::posting::AccountingError::SerializationFailed => {
-                    RefusalCategory::Invalid
-                }
-            },
+            Self::AccountingPosting { reason, .. } => accounting_category(reason),
             Self::LinkReadTooLarge { .. }
             | Self::TraversalLimitExceeded { .. }
             | Self::InvariantBudgetExceeded { .. }
@@ -317,6 +259,67 @@ impl<X> CommitError<X> {
             | Self::Overflow => RefusalCategory::Limit,
             Self::Host(_) => RefusalCategory::Internal,
         }
+    }
+}
+
+const fn accounting_category(reason: &norn_ir::posting::AccountingError) -> RefusalCategory {
+    use norn_ir::posting::AccountingError;
+
+    match reason {
+        AccountingError::PostedJournalImmutable | AccountingError::JournalDeleteForbidden => {
+            RefusalCategory::Precondition
+        }
+        AccountingError::ArithmeticOverflow => RefusalCategory::Limit,
+        AccountingError::InvalidState
+        | AccountingError::UnsupportedIrVersion
+        | AccountingError::InvalidIdentity
+        | AccountingError::ScopeMismatch
+        | AccountingError::BookMismatch
+        | AccountingError::GraphMismatch
+        | AccountingError::GraphVersionMismatch
+        | AccountingError::CalendarMismatch
+        | AccountingError::CalendarVersionMismatch
+        | AccountingError::StaleOwnerVersion
+        | AccountingError::OwnerVersionOverflow
+        | AccountingError::InvalidDate
+        | AccountingError::PeriodNotFound
+        | AccountingError::PeriodClosed
+        | AccountingError::PeriodExceptionMissing
+        | AccountingError::PeriodExceptionScopeMismatch
+        | AccountingError::PeriodExceptionDateMismatch
+        | AccountingError::PeriodExceptionVersionMismatch
+        | AccountingError::PeriodExceptionExpired
+        | AccountingError::PeriodExceptionConsumed
+        | AccountingError::DuplicateUnit
+        | AccountingError::InvalidOntologyBinding
+        | AccountingError::DuplicateLayer
+        | AccountingError::DuplicateAccount
+        | AccountingError::UnknownParentAccount
+        | AccountingError::AccountGraphCycle
+        | AccountingError::UnknownAccount
+        | AccountingError::AccountReferenceMismatch
+        | AccountingError::UnknownUnit
+        | AccountingError::AccountUnitMismatch
+        | AccountingError::UnitPrecisionMismatch
+        | AccountingError::UnknownLayer
+        | AccountingError::DuplicateLeg
+        | AccountingError::TooFewLegs
+        | AccountingError::InvalidLegRecord
+        | AccountingError::LegIdentityMismatch
+        | AccountingError::InvalidAmount
+        | AccountingError::AmountNotReversible
+        | AccountingError::JournalUnbalanced
+        | AccountingError::JournalUnbalancedByUnit
+        | AccountingError::JournalUnbalancedByLayer
+        | AccountingError::JournalAlreadyExists
+        | AccountingError::JournalNotFound
+        | AccountingError::JournalVersionMismatch
+        | AccountingError::ReversalNotExact
+        | AccountingError::JournalAlreadyReversed
+        | AccountingError::CannotReverseReversal
+        | AccountingError::IdempotencyConflict
+        | AccountingError::QuantityCheckerRejected
+        | AccountingError::SerializationFailed => RefusalCategory::Invalid,
     }
 }
 
@@ -369,65 +372,7 @@ impl<X> DecisionRefusal<X> {
             | Self::SourceOwnedTarget { .. }
             | Self::InvariantViolation { .. } => RefusalCategory::Precondition,
             Self::Stale { .. } | Self::NotPending { .. } => RefusalCategory::Conflict,
-            Self::AccountingPosting { reason, .. } => match reason {
-                norn_ir::posting::AccountingError::PostedJournalImmutable
-                | norn_ir::posting::AccountingError::JournalDeleteForbidden => {
-                    RefusalCategory::Precondition
-                }
-                norn_ir::posting::AccountingError::ArithmeticOverflow => RefusalCategory::Limit,
-                norn_ir::posting::AccountingError::InvalidState
-                | norn_ir::posting::AccountingError::UnsupportedIrVersion
-                | norn_ir::posting::AccountingError::InvalidIdentity
-                | norn_ir::posting::AccountingError::ScopeMismatch
-                | norn_ir::posting::AccountingError::BookMismatch
-                | norn_ir::posting::AccountingError::GraphMismatch
-                | norn_ir::posting::AccountingError::GraphVersionMismatch
-                | norn_ir::posting::AccountingError::CalendarMismatch
-                | norn_ir::posting::AccountingError::CalendarVersionMismatch
-                | norn_ir::posting::AccountingError::StaleOwnerVersion
-                | norn_ir::posting::AccountingError::OwnerVersionOverflow
-                | norn_ir::posting::AccountingError::InvalidDate
-                | norn_ir::posting::AccountingError::PeriodNotFound
-                | norn_ir::posting::AccountingError::PeriodClosed
-                | norn_ir::posting::AccountingError::PeriodExceptionMissing
-                | norn_ir::posting::AccountingError::PeriodExceptionScopeMismatch
-                | norn_ir::posting::AccountingError::PeriodExceptionDateMismatch
-                | norn_ir::posting::AccountingError::PeriodExceptionVersionMismatch
-                | norn_ir::posting::AccountingError::PeriodExceptionExpired
-                | norn_ir::posting::AccountingError::PeriodExceptionConsumed
-                | norn_ir::posting::AccountingError::DuplicateUnit
-                | norn_ir::posting::AccountingError::InvalidOntologyBinding
-                | norn_ir::posting::AccountingError::DuplicateLayer
-                | norn_ir::posting::AccountingError::DuplicateAccount
-                | norn_ir::posting::AccountingError::UnknownParentAccount
-                | norn_ir::posting::AccountingError::AccountGraphCycle
-                | norn_ir::posting::AccountingError::UnknownAccount
-                | norn_ir::posting::AccountingError::AccountReferenceMismatch
-                | norn_ir::posting::AccountingError::UnknownUnit
-                | norn_ir::posting::AccountingError::AccountUnitMismatch
-                | norn_ir::posting::AccountingError::UnitPrecisionMismatch
-                | norn_ir::posting::AccountingError::UnknownLayer
-                | norn_ir::posting::AccountingError::DuplicateLeg
-                | norn_ir::posting::AccountingError::TooFewLegs
-                | norn_ir::posting::AccountingError::InvalidLegRecord
-                | norn_ir::posting::AccountingError::LegIdentityMismatch
-                | norn_ir::posting::AccountingError::InvalidAmount
-                | norn_ir::posting::AccountingError::AmountNotReversible
-                | norn_ir::posting::AccountingError::JournalUnbalanced
-                | norn_ir::posting::AccountingError::JournalUnbalancedByUnit
-                | norn_ir::posting::AccountingError::JournalUnbalancedByLayer
-                | norn_ir::posting::AccountingError::JournalAlreadyExists
-                | norn_ir::posting::AccountingError::JournalNotFound
-                | norn_ir::posting::AccountingError::JournalVersionMismatch
-                | norn_ir::posting::AccountingError::ReversalNotExact
-                | norn_ir::posting::AccountingError::JournalAlreadyReversed
-                | norn_ir::posting::AccountingError::CannotReverseReversal
-                | norn_ir::posting::AccountingError::IdempotencyConflict
-                | norn_ir::posting::AccountingError::QuantityCheckerRejected
-                | norn_ir::posting::AccountingError::SerializationFailed => {
-                    RefusalCategory::Invalid
-                }
-            },
+            Self::AccountingPosting { reason, .. } => accounting_category(reason),
             Self::InvariantBudgetExceeded { .. }
             | Self::TraversalLimitExceeded { .. }
             | Self::IdentifierTooLong { .. }

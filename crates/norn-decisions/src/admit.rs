@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use norn_expr::Value;
+use norn_expr::schema::Schema;
 use norn_ir::jdm::{
     JdmDecisionTableContent, JdmEdge, JdmExecutionMode, JdmExpressionContent, JdmGraph,
     JdmHitPolicy, JdmNode, JdmSchemaContent, JdmSubDecisionContent, JdmSwitchContent,
@@ -23,7 +24,6 @@ use zen_engine::model::{
 };
 
 use crate::convert::{value_from_ir, value_from_runtime};
-use crate::schema::Schema;
 use crate::{AdmissionError, DecisionError, TypedEvent, ValidatedSlice};
 
 /// The `Norn-cloud/zen` tag the vendored engine (`vendor/zen`) was imported
