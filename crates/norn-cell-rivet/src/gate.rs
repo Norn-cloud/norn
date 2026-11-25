@@ -8,7 +8,7 @@
 //! The gate is the cell's own check, run early: `norn-cell-do`'s
 //! [`IssuerKeys`] (the same verifier, key ages and refetch policy as each
 //! cell's `TokenPrincipals`), against the pinned issuer and JWKS location,
-//! with this process's shared JWKS fetch ([`crate::actor::fetch_jwks`]).
+//! with this process's shared JWKS fetch (the `jwks` module).
 //! Admission here grants nothing: the cell verifies the token again and its
 //! policy authorizes every read and write.
 
@@ -17,8 +17,9 @@ use norn_api::scope::CellScope;
 use norn_cell_do::principal::IssuerKeys;
 use tokio::sync::OnceCell;
 
-use crate::actor::{fetch_jwks, now_ms, outbound_client};
+use crate::actor::{now_ms, outbound_client};
 use crate::config::HostConfig;
+use crate::jwks::fetch_jwks;
 
 /// What the gate says about one request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
