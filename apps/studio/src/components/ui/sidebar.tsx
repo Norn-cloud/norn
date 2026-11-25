@@ -213,7 +213,7 @@ function Sidebar({ className, children, ...props }: React.ComponentProps<"div">)
       aria-hidden={collapsed || undefined}
       className={cn(
         sideIsland,
-        "group/sidebar ms-[8px] w-(--sidebar-width) transition-[width,margin,opacity,border-width] duration-200 ease-out data-[state=collapsed]:ms-0 data-[state=collapsed]:w-0 data-[state=collapsed]:border-0 data-[state=collapsed]:opacity-0 motion-reduce:transition-none",
+        "group/sidebar ms-[8px] w-(--sidebar-width) transition-[width,margin,opacity,border-width] duration-200 ease-out data-[state=collapsed]:ms-0 data-[state=collapsed]:w-0 data-[state=collapsed]:border-0 data-[state=collapsed]:opacity-0 data-[state=collapsed]:shadow-none motion-reduce:transition-none",
         className
       )}
       {...props}

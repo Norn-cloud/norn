@@ -77,11 +77,11 @@ test("gating (negative): signed-in cell advertising no learning resources hides 
   await page.goto("/")
   await expect(page.getByText("Connecting…")).toHaveCount(0)
 
-  const nav = page.getByRole("navigation", { name: "Studio navigation" }).getByRole("tree", { name: "Workspace pages" })
-  await expect(nav).toBeVisible()
-  await expect(nav).not.toContainText("Learning")
+  const rail = page.getByRole("navigation", { name: "Applets" })
+  await expect(rail).toBeVisible()
+  await expect(rail.getByRole("link", { name: "Learning" })).toHaveCount(0)
   for (const label of ["Episodes", "Cases & eval sets", "Misfit board", "Proposals"]) {
-    await expect(nav.getByRole("link", { name: label })).toHaveCount(0)
+    await expect(page.getByRole("link", { name: label })).toHaveCount(0)
   }
 
   for (const path of LEARNING_URLS) {
@@ -117,8 +117,7 @@ test("gating (failed read): when /v1/definitions fails, Learning stays hidden an
   await expect(gate).toBeVisible()
   await expect(page.getByText("Unavailable in this workspace")).toBeVisible()
   await expect(gate.getByRole("button", { name: "Retry", exact: true })).toBeVisible()
-  const nav = page.getByRole("navigation", { name: "Studio navigation" }).getByRole("tree", { name: "Workspace pages" })
-  await expect(nav).not.toContainText("Learning")
+  await expect(page.getByRole("navigation", { name: "Applets" }).getByRole("link", { name: "Learning" })).toHaveCount(0)
   expect(leakedDataCalls).toEqual([])
 })
 
@@ -147,8 +146,8 @@ test("gating (positive & partial): cell advertising all learning resources shows
   await page.route("**/api/host/v1/actions**", (route) => route.fulfill({ json: { definitionsVersion: 1, items: [] } }))
 
   await page.goto("/")
-  const nav = page.getByRole("navigation", { name: "Studio navigation" }).getByRole("tree", { name: "Workspace pages" })
-  await expect(nav).toContainText("Learning")
+  await page.getByRole("navigation", { name: "Applets" }).getByRole("link", { name: "Learning" }).click()
+  const nav = page.getByRole("navigation", { name: "Learning menu" })
   for (const label of ["Episodes", "Cases & eval sets", "Misfit board", "Proposals"]) {
     await expect(nav.getByRole("link", { name: label })).toBeVisible()
   }
@@ -185,7 +184,7 @@ test("gating (positive & partial): cell advertising all learning resources shows
     return route.fulfill({ status: 500, body: "should stay gated when second question is absent" })
   })
 
-  await page.goto("/")
+  await page.goto("/learning/episodes")
   await expect(nav.getByRole("link", { name: "Episodes" })).toBeVisible()
   await expect(nav.getByRole("link", { name: "Cases & eval sets" })).toHaveCount(0)
   await expect(nav.getByRole("link", { name: "Misfit board" })).toHaveCount(0)
@@ -290,7 +289,7 @@ test("gating (same-tab environment switch): invalidates cached catalog, unmounts
 
   // 1. Mount /learning/episodes in org_demo / env-a (advertises all Learning resources).
   await page.goto("/learning/episodes")
-  const nav = page.getByRole("navigation", { name: "Studio navigation" }).getByRole("tree", { name: "Workspace pages" })
+  const nav = page.getByRole("navigation", { name: "Learning menu" })
   await expect(page.getByText("Cell A episode")).toBeVisible()
   await expect(nav.getByRole("link", { name: "Episodes" })).toBeVisible()
   expect(learningRequestsByEnv["env-a"]!.length).toBeGreaterThan(0)

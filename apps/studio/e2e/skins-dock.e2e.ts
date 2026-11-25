@@ -31,28 +31,28 @@ const contrastRatio = (a: [number, number, number], b: [number, number, number])
   return (hi! + 0.05) / (lo! + 0.05)
 }
 
-test("skins and floating dock: switch open, polar, luma, glass skins via ChromeDock tray, persist across reload, and verify v6 dock AccountMenu, overflow destinations, and bottom clearance", async ({ page }) => {
+test("skins and floating dock: switch luma, open, polar, glass skins via ChromeDock tray, persist across reload, and verify v6 dock AccountMenu, overflow destinations, and bottom clearance", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.emulateMedia({ colorScheme: "light" })
   await recorded(page)
   await page.goto("/")
   await expect(page.getByRole("heading", { name: "Home", level: 1 })).toBeVisible()
 
-  // 1. Default skin is strict monochrome Polar with sidebar chrome and Geist font family.
+  // 1. Default skin is Luma with the three-island chrome and Geist font family (owner decision, 2026-11-25).
   await expect.poll(() => page.evaluate(() => ({
     skin: document.documentElement.dataset.skin,
     shell: document.documentElement.dataset.shell,
     font: getComputedStyle(document.documentElement).fontFamily,
   }))).toEqual({
-    skin: "polar",
+    skin: "luma",
     shell: "sidebar",
     font: expect.stringContaining("Geist Variable"),
   })
-  await capture(page, "polar-light-home")
+  await capture(page, "luma-light-home")
 
   await page.goto("/sources")
   await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible()
-  await capture(page, "polar-light-sources")
+  await capture(page, "luma-light-sources")
 
   // 2. Open the first-party @ui-sdk/core + @ui-sdk/react ChromeDock appearance tray and verify data-state transitions.
   const trigger = page.locator('[data-slot="chrome-dock-trigger"]').first()
@@ -61,17 +61,19 @@ test("skins and floating dock: switch open, polar, luma, glass skins via ChromeD
   await expect(trigger).toHaveAttribute("data-state", "open")
   const tray = page.locator('[data-slot="chrome-dock-tray"][data-state="open"]')
   await expect(tray).toBeVisible()
-  await expect(tray.locator('[data-skin-option="polar"]')).toHaveAttribute("data-state", "selected")
+  await expect(tray.locator('[data-skin-option="luma"]')).toHaveAttribute("data-state", "selected")
 
-  // 3. Verify Polar monochrome light palette: the #f6f6f8 canvas under unframed content, near-black #18181b primary (zero purple buttons!).
+  // 3. Verify Luma: the main island is the translucent mist glass with a real backdrop blur, and the CTA is knot violet.
   await expect.poll(() => page.evaluate(() => ({
     skin: document.documentElement.dataset.skin,
     pageBg: getComputedStyle(document.querySelector('[data-slot="sidebar-inset"]')!).backgroundColor,
+    backdrop: getComputedStyle(document.querySelector('[data-slot="sidebar-inset"]')!).backdropFilter,
     primaryBg: getComputedStyle(document.querySelector('[data-slot="button"][data-variant="default"]')!).backgroundColor,
   }))).toEqual({
-    skin: "polar",
-    pageBg: "rgb(246, 246, 248)",
-    primaryBg: "rgb(24, 24, 27)",
+    skin: "luma",
+    pageBg: "rgba(247, 248, 249, 0.8)",
+    backdrop: expect.stringContaining("blur("),
+    primaryBg: "rgb(85, 76, 232)",
   })
 
   // Switch to Open skin and verify persistence across reload.
@@ -85,11 +87,16 @@ test("skins and floating dock: switch open, polar, luma, glass skins via ChromeD
   await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible()
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.skin)).toBe("open")
 
-  // 5. Switch to Luma skin, then Liquid Glass skin (verifying real backdrop-filter blur).
+  // 5. Switch to Polar (opaque monochrome islands, near-black CTA, no blur), then Liquid Glass (a real backdrop-filter blur).
   await page.locator('[data-slot="chrome-dock-trigger"]').first().click()
   const trayAfterReload = page.locator('[data-slot="chrome-dock-tray"][data-state="open"]')
-  await trayAfterReload.locator('[data-skin-option="luma"]').click()
-  await expect.poll(() => page.evaluate(() => document.documentElement.dataset.skin)).toBe("luma")
+  await trayAfterReload.locator('[data-skin-option="polar"]').click()
+  await expect.poll(() => page.evaluate(() => ({
+    skin: document.documentElement.dataset.skin,
+    pageBg: getComputedStyle(document.querySelector('[data-slot="sidebar-inset"]')!).backgroundColor,
+    backdrop: getComputedStyle(document.querySelector('[data-slot="sidebar-inset"]')!).backdropFilter,
+    primaryBg: getComputedStyle(document.querySelector('[data-slot="button"][data-variant="default"]')!).backgroundColor,
+  }))).toEqual({ skin: "polar", pageBg: "rgb(246, 246, 248)", backdrop: "none", primaryBg: "rgb(24, 24, 27)" })
 
   await trayAfterReload.locator('[data-skin-option="glass"]').click()
   await expect.poll(() => page.evaluate(() => ({
@@ -153,20 +160,20 @@ test("skins and floating dock: switch open, polar, luma, glass skins via ChromeD
   await expect(page.locator('[data-slot="sidebar"]')).toBeVisible()
 })
 
-test("dark mode cascade: open, polar monochrome, luma, and glass skins render dark surfaces with WCAG AA text contrast in Chromium", async ({ page }) => {
+test("dark mode cascade: luma, polar monochrome, open, and glass skins render dark surfaces with WCAG AA text contrast in Chromium", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.emulateMedia({ colorScheme: "dark" })
   await recorded(page)
   await page.goto("/")
   await expect(page.getByRole("heading", { name: "Home", level: 1 })).toBeVisible()
   await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains("dark"))).toBe(true)
-  await capture(page, "open-dark-home")
+  await capture(page, "luma-dark-home")
 
   await page.goto("/sources")
   await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible()
-  await capture(page, "open-dark-sources")
+  await capture(page, "luma-dark-sources")
 
-  for (const [skin, shotName] of [["polar", "polar-dark-sources"], ["luma", "luma-dark-sources"], ["glass", "glass-dark-sources"]] as const) {
+  for (const [skin, shotName] of [["polar", "polar-dark-sources"], ["open", "open-dark-sources"], ["glass", "glass-dark-sources"]] as const) {
     await page.locator('[data-slot="chrome-dock-trigger"]').first().click()
     const tray = page.locator('[data-slot="chrome-dock-tray"][data-state="open"]')
     await tray.locator(`[data-skin-option="${skin}"]`).click()

@@ -52,11 +52,12 @@ test("views: create 'Applications needing help' in Operations Space, keep column
   await expect(page.getByText("Cid Patel")).toHaveCount(0)
   await shoot(page, "views-editor")
 
-  // Save view -> lands on /views/$id, pinned into the Operations Space in the sidebar!
+  // Save view -> lands on /views/$id, pinned into the Operations applet's menu under "Pinned views".
   await page.getByRole("button", { name: "Save", exact: true }).click()
   await expect(page).toHaveURL(/\/views\/studio\.view\./)
   await expect(page.getByRole("heading", { name: "Applications needing help" })).toBeVisible()
-  await expect(page.getByRole("navigation", { name: "Studio navigation" }).getByRole("tree", { name: "Workspace pages" }).getByRole("link", { name: "Applications needing help" })).toBeVisible()
+  await expect(page.getByRole("navigation", { name: "Operations menu" }).getByRole("link", { name: "Applications needing help" })).toBeVisible()
+  await expect(page.getByRole("navigation", { name: "Applets" }).locator('[aria-current="page"]')).toHaveAttribute("data-applet", "operations")
 
   // 3. List -> saved column order puts `score` before `stage`, and row actions run through RecordDrawer's per-record /v1/actions read.
   const grid = page.getByRole("grid", { name: "Application records" })
@@ -443,8 +444,8 @@ test("views (second domain): create and open an Equipment Fleet Tickets view in 
 
   await page.getByRole("button", { name: "Save", exact: true }).click()
   await expect(page.getByRole("heading", { name: "Urgent fleet tickets" })).toBeVisible()
-  // Custom Space appears in Workspace sidebar with the pinned view.
-  const nav = page.getByRole("navigation", { name: "Studio navigation" }).getByRole("tree", { name: "Workspace pages" })
+  // A custom space no applet is named after becomes a heading in the Data menu, with the pinned view.
+  const nav = page.getByRole("navigation", { name: "Data menu" })
   await expect(nav.getByText("Fleet Ops")).toBeVisible()
   await expect(nav.getByRole("link", { name: "Urgent fleet tickets" })).toBeVisible()
 

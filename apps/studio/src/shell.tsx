@@ -117,7 +117,7 @@ function ScopeSwitcher({ variant = "sidebar" }: { readonly variant?: "sidebar" |
         : variant === "rail"
           ? (
             <Hint side="end" label={`${open?.name ?? ""} · ${open?.detail ?? ""}`}>
-              <MenuTrigger data-scope aria-label={`Workspace: ${open?.name ?? ""}`} className="flex size-[32px] items-center justify-center rounded-full outline-none transition-colors hover:bg-sidebar-accent/50 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring data-open:bg-sidebar-accent/50">
+              <MenuTrigger data-scope aria-label={`Workspace: ${open?.name ?? ""}`} className="flex size-[32px] max-sm:size-[44px] items-center justify-center rounded-full outline-none transition-colors hover:bg-sidebar-accent/50 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring data-open:bg-sidebar-accent/50">
                 {disc}
               </MenuTrigger>
             </Hint>
@@ -334,7 +334,7 @@ export function AccountMenu({ account, onSignOut, inToolbar = true, variant = "r
       ? "flex size-8 items-center justify-center rounded-full bg-(--dock-active) text-meta text-(--dock-foreground) ring-1 ring-(--dock-border) outline-none hover:ring-(--dock-foreground)/40 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring"
       : variant === "sidebar"
         ? "flex h-[32px] w-full min-w-0 items-center gap-[8px] rounded-(--radius-row) px-[8px] text-start text-body text-sidebar-foreground outline-none transition-colors duration-150 hover:bg-sidebar-accent/50 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring data-open:bg-sidebar-accent/50 max-sm:min-h-[44px]"
-        : "flex size-[32px] items-center justify-center rounded-full outline-none transition-colors hover:bg-sidebar-accent/50 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring data-open:bg-sidebar-accent/50"
+        : "flex size-[32px] max-sm:size-[44px] items-center justify-center rounded-full outline-none transition-colors hover:bg-sidebar-accent/50 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring data-open:bg-sidebar-accent/50"
   const content = variant === "sidebar" ? <>{disc}<span className="truncate">{user.name || user.email}</span></> : variant === "rail" ? disc
     : variant === "topbar" ? <Initials id={user.id} name={name} letters={initials(name)} size={36} /> : initials(name)
   const trigger = inToolbar
