@@ -52,6 +52,8 @@ mod jewelry_pricing;
 mod label_identity;
 #[path = "lifecycle_initialization.rs"]
 mod lifecycle_initialization;
+#[path = "lifecycle_updates.rs"]
+mod lifecycle_updates;
 #[path = "mapping_links.rs"]
 mod mapping_links;
 #[path = "model_interfaces.rs"]
