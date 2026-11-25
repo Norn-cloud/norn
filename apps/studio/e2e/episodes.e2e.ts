@@ -76,7 +76,7 @@ async function open(
   await page.route("**/api/host/v1/actions**", (route) => {
     if (actions.serve === "unserved") return route.fulfill({ status: 404, body: "not found" })
     const request = route.request()
-    if (request.method() === "GET") return route.fulfill({ json: { items: [TRIAGE, RETRACT] } })
+    if (request.method() === "GET") return route.fulfill({ json: { definitionsVersion: 1, items: [TRIAGE, RETRACT] } })
     const actionId = decodeURIComponent(new URL(request.url()).pathname.split("/v1/actions/")[1] ?? "")
     const { input } = JSON.parse(request.postData() ?? "{}") as { input: Record<string, unknown> }
     calls.push({ actionId, input })
@@ -321,7 +321,7 @@ test("list: Workspace Learning space lists episodes, sends flat server agreement
 
   // Reach Episodes through the Workspace → Learning space in the shell sidebar.
   await page.goto("/")
-  const nav = page.getByRole("navigation", { name: "Workspace" })
+  const nav = page.getByRole("navigation", { name: "Studio navigation" }).getByRole("tree", { name: "Workspace pages" })
   await expect(nav).toContainText("Learning")
   await nav.getByRole("link", { name: "Episodes" }).click()
   await expect(page).toHaveURL(/\/learning\/episodes$/)

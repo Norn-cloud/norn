@@ -2,7 +2,7 @@ import { orderLifecycleStates } from "../../../../packages/norn-demo-ui/src/elem
 import type { Field, Lifecycle } from "./catalog.ts"
 import { member } from "./exact.ts"
 import { groupDigits, readableTime } from "./format.ts"
-import type { LinkPage, ObjectRecord } from "./transport.ts"
+import type { ObjectRecord } from "./transport.ts"
 
 /**
  * An exact decimal's text written to its declared scale, up to two places: the cell stores
@@ -53,24 +53,12 @@ export function displayOf(field: Field, value: unknown, exact: string): string {
   return exact
 }
 
-/** The record's own name when its concept declares one, else its identity. */
-export const recordName = (record: { readonly id: string; readonly values?: Readonly<Record<string, unknown>> | null }): string => {
-  const values = record.values ?? undefined
-  const label = values?.["label"]
-  if (typeof label === "string" && label !== "") return label
-  const displayName = values?.["display_name"]
-  if (typeof displayName === "string" && displayName !== "") return displayName
-  return record.id
-}
+export { readsOf, recordName } from "./record-name.ts"
 
 /** The first failed read's message, exactly as the server or transport gave it; nothing reads as "loading" forever. */
 export function readProblem(...reads: readonly { readonly error: Error | null }[]): string | undefined {
   return reads.find(({ error }) => error !== null)?.error?.message
 }
-
-/** Whether an object read and its link read are both about the object that was asked for. */
-export const readsOf = (objectType: string, id: string, object: ObjectRecord, links: LinkPage): boolean =>
-  object.objectType === objectType && object.id === id && links.objectType === objectType && links.id === id
 
 /** Every declared state of a lifecycle: the enum property's values when declared, else the union of initial, terminal and transitions. */
 export function declaredLifecycleStates(lifecycle: Lifecycle, field?: Field): readonly string[] {

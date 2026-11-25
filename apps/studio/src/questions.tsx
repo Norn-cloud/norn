@@ -17,13 +17,12 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { buckets, contribution, declarations, fraction, shown, type Bucket } from "./lib/answer.ts"
 import { conceptTitle } from "./lib/catalog.ts"
 import { chartFrame } from "./lib/chart.ts"
-import { FRESHNESS, day, headline, period, scope } from "./lib/format.ts"
+import { FRESHNESS, day, period, scope } from "./lib/format.ts"
 import { amountTexts, liveAnswer, liveTrace, type LiveRead, type Refusal, type Trace } from "./lib/live.ts"
 import type { Read } from "./lib/exact.ts"
 import { transport, type Metric, type ObjectType, type Question, type QuestionAnswer } from "./lib/transport.ts"
 import { CopyId } from "@/components/copy-id"
 import { RestatementCard } from "./restatement.tsx"
-import type { MenuEntry } from "./shell.tsx"
 
 import { AnswerView, AskedAnswer, RefusedNote } from "./answer-view.tsx"
 import { useStudioScope, type StudioScope } from "./lib/definitions.ts"
@@ -277,7 +276,7 @@ function TypeSections({ types, list, scope: boundScope }: { readonly types: read
   return <>
     {held.map((type) => (
       <div key={type} className="space-y-3">
-        <h2 className="text-section font-medium"><Link to="/objects/$type" params={{ type }} className="underline-offset-4 hover:underline">{conceptTitle(type)}</Link></h2>
+        <h2 className="text-heading font-medium"><Link to="/objects/$type" params={{ type }} className="underline-offset-4 hover:underline">{conceptTitle(type)}</Link></h2>
         <div className="grid gap-3">{list.filter(({ objectType }) => objectType === type).map((metric) => <MetricCard key={metric.name} metric={metric} turn={turnOf(metric.name)} onSettled={settle.get(metric.name)!} scope={boundScope} />)}</div>
       </div>
     ))}
@@ -319,17 +318,7 @@ function QuestionCard({ read: recorded, heading = "h2" }: { readonly read: Quest
 }
 
 
-/** The questions on the board, for the submenu island. */
-export function useQuestionsMenu(): readonly MenuEntry[] | undefined {
-  const board = useQuery({ queryKey: ["question-board"], queryFn: transport.questionBoard })
-  return board.data && [
-    ...board.data.map((read) => ({ href: `/metrics/${read.question.document.name}`, label: headline(read.question.document), group: subject(read) })),
-    { href: "#corrections", label: "Corrections", group: "Corrections" },
-  ]
-}
-
-/** The object type a question counts, which is how the list groups questions. */
-const subject = ({ objectType }: QuestionAnswer) => conceptTitle(objectType.document.name)
+export { useQuestionsMenu } from "./lib/nav-menus.ts"
 
 /** One question as a record page; the submenu lists the others by the object type they count. */
 export function QuestionPage() {

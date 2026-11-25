@@ -34,12 +34,18 @@ mod commit_path;
 #[cfg(all(feature = "duckdb", feature = "native"))]
 #[path = "dataset_laws.rs"]
 mod dataset_laws;
+#[path = "definition_scope.rs"]
+mod definition_scope;
 #[path = "explorer_documents.rs"]
 mod explorer_documents;
+#[path = "governed_create.rs"]
+mod governed_create;
 #[path = "jewelry_pricing.rs"]
 mod jewelry_pricing;
 #[path = "label_identity.rs"]
 mod label_identity;
+#[path = "lifecycle_initialization.rs"]
+mod lifecycle_initialization;
 #[path = "mapping_links.rs"]
 mod mapping_links;
 #[path = "model_interfaces.rs"]

@@ -8,12 +8,14 @@
  * authority or bypasses cell laws.
  */
 import { deriveFactStatus, type FactStatus } from "../components/fact-status-badge.tsx"
-import { callAction, newIdempotencyKey, type ActionReceipt, type CallResult } from "./actions.ts"
+import { callAction, type CallAnswer } from "./actions.ts"
+import { createIntentKey, type ActionReceipt } from "../../../../packages/norn-sdk/src/index.ts"
 import { cellCall, type CellResult, type Fetch } from "./cell-read.ts"
 import { requestedPath, requestedWords, type RequestedDecision } from "./decisions.ts"
 import { CellUnavailable, readStudioScope, scopedHostFetch, type StudioScope } from "./definitions.ts"
 import { readableTime } from "./format.ts"
 
+export const IMPORT_TRIAGE_QUERY_KEY = ["imports", "triage"] as const
 export const IMPORT_TRIAGE_UNAVAILABLE = "This cell doesn't serve import triage yet."
 
 /** Normalized bounding box on a source artifact (top-left origin, 0..1 page fractions as exact text). */
@@ -349,7 +351,7 @@ export function resolvePayloadIdempotencyKey(
   scopeKey: string,
   actionId: string,
   payload: unknown,
-  mintKey: () => string = newIdempotencyKey,
+  mintKey: () => string = createIntentKey,
 ): string {
   const payloadFingerprint = canonicalPayloadKey(actionId, payload)
   const existing = cache.get(scopeKey)
@@ -750,7 +752,7 @@ export type ClassifiedActionResult =
  * - HTTP 5xx (even with a structured JSON error body) and `unavailable` are retryable server errors.
  * - Only HTTP 4xx domain refusals (422 / 409 / 403 / 400) are non-retryable domain refusals.
  */
-export function classifyTriageActionResult(result: CallResult): ClassifiedActionResult {
+export function classifyTriageActionResult(result: CallAnswer): ClassifiedActionResult {
   if (result.kind === "receipt") return result
   if (result.kind === "pending") {
     return { kind: "pending", decisionId: result.decision.id, expiresAtMs: result.decision.expiresAtMs }
@@ -1120,10 +1122,10 @@ export function commitAliasBinding(
     readonly externalHandle: string
     readonly targetRecordId: string
   },
-  idempotencyKey = newIdempotencyKey(),
+  idempotencyKey = createIntentKey(),
   fetcher?: Fetch,
   boundScope?: StudioScope | null,
-): Promise<CallResult> {
+): Promise<CallAnswer> {
   return callAction(actionId, JSON.stringify(payload), idempotencyKey, fetcher, boundScope)
 }
 
@@ -1136,10 +1138,10 @@ export function commitEntityCreateAndBind(
     readonly label: string
     readonly externalKey?: string
   },
-  idempotencyKey = newIdempotencyKey(),
+  idempotencyKey = createIntentKey(),
   fetcher?: Fetch,
   boundScope?: StudioScope | null,
-): Promise<CallResult> {
+): Promise<CallAnswer> {
   return callAction(actionId, JSON.stringify(payload), idempotencyKey, fetcher, boundScope)
 }
 
@@ -1151,10 +1153,10 @@ export function commitAliasIgnore(
     readonly externalHandle: string
     readonly note?: string
   },
-  idempotencyKey = newIdempotencyKey(),
+  idempotencyKey = createIntentKey(),
   fetcher?: Fetch,
   boundScope?: StudioScope | null,
-): Promise<CallResult> {
+): Promise<CallAnswer> {
   return callAction(actionId, JSON.stringify(payload), idempotencyKey, fetcher, boundScope)
 }
 
@@ -1171,10 +1173,10 @@ export function commitRowPromotion(
     readonly observedAt: string
     readonly values: Readonly<Record<string, string>>
   },
-  idempotencyKey = newIdempotencyKey(),
+  idempotencyKey = createIntentKey(),
   fetcher?: Fetch,
   boundScope?: StudioScope | null,
-): Promise<CallResult> {
+): Promise<CallAnswer> {
   return callAction(actionId, JSON.stringify(payload), idempotencyKey, fetcher, boundScope)
 }
 
@@ -1191,9 +1193,9 @@ export function commitSupersessionDecision(
     readonly preserveEarlierEvidence: true
     readonly note?: string
   },
-  idempotencyKey = newIdempotencyKey(),
+  idempotencyKey = createIntentKey(),
   fetcher?: Fetch,
   boundScope?: StudioScope | null,
-): Promise<CallResult> {
+): Promise<CallAnswer> {
   return callAction(actionId, JSON.stringify(payload), idempotencyKey, fetcher, boundScope)
 }

@@ -116,6 +116,7 @@ fn required_target<'a>(
         .filter(|a| a.artifact_id == reference.artifact_id && a.version == reference.version);
     let target = targets.next().ok_or("a dependency target is unavailable")?;
     if targets.next().is_some()
+        || !crate::entity_scopes::scope_visible(&owner.scope, &target.scope)
         || !owner.dependencies.iter().any(|pin| {
             pin.required
                 && pin.artifact_id == target.artifact_id
@@ -128,6 +129,7 @@ fn required_target<'a>(
     Ok(target)
 }
 fn has_member(
+    owner: &ArtifactEnvelope,
     target: &ArtifactEnvelope,
     reference: &norn_ir::definition_catalog::MemberRef,
     pool: &[&ArtifactEnvelope],
@@ -139,7 +141,7 @@ fn has_member(
             || matches!(&reference.member, Member::Type { type_name }
                 if decode(&target.payload).is_ok_and(|root| root.id == *type_name));
     }
-    let Ok(closure) = entity_closure(target, pool) else {
+    let Ok(closure) = entity_closure(owner, target, pool) else {
         return false;
     };
     let Ok(catalog) = crate::definition_catalog::project(&[], &closure, registry) else {
@@ -154,9 +156,13 @@ fn has_member(
             || catalog.states.contains(reference))
 }
 fn entity_closure(
+    owner: &ArtifactEnvelope,
     target: &ArtifactEnvelope,
     pool: &[&ArtifactEnvelope],
 ) -> Result<Vec<ArtifactEnvelope>, &'static str> {
+    if !crate::entity_scopes::scope_visible(&owner.scope, &target.scope) {
+        return Err("the pinned base type closure contains an out-of-scope dependency");
+    }
     let mut closure = vec![target.clone()];
     let mut cursor = 0;
     while let Some(current) = closure.get(cursor).cloned() {
@@ -168,6 +174,11 @@ fn entity_closure(
         let resolved = crate::resolve_artifact_set(std::slice::from_ref(&current), &others)
             .map_err(|_error| "the pinned base type closure must resolve")?;
         for dependency in resolved.base_dependencies {
+            if !crate::entity_scopes::scope_visible(&current.scope, &dependency.scope)
+                || !crate::entity_scopes::scope_visible(&owner.scope, &dependency.scope)
+            {
+                return Err("the pinned base type closure contains an out-of-scope dependency");
+            }
             if pool
                 .iter()
                 .filter(|a| {
@@ -186,6 +197,9 @@ fn entity_closure(
             }
         }
         cursor = cursor.saturating_add(1);
+    }
+    if !crate::entity_scopes::check_entity_reference_scopes_all(&closure).is_empty() {
+        return Err("the pinned base type closure contains an out-of-scope entity reference");
     }
     Ok(closure)
 }
@@ -250,12 +264,16 @@ pub(crate) fn qualify(
     }
     for reference in &root.dependencies {
         let dependency = required_target(artifact, reference, pool)?;
-        if !has_member(dependency, reference, pool, registry) {
+        if !has_member(artifact, dependency, reference, pool, registry) {
             return Err("a declared dependency member is unavailable");
         }
     }
-    let closure = entity_closure(target, pool)?;
-    let env = crate::derive_type_env(&[], &closure, &root.bounds)
+    let closure = entity_closure(artifact, target, pool)?;
+    let env = crate::entity_scopes::ScopedView::of(artifact, &closure, &[], registry)
+        .type_env(
+            norn_expr::EnvOptions::from_limit_profile(&root.bounds),
+            false,
+        )
         .map_err(|_error| "the exact base closure must have a supported type environment")?;
     let env = if object {
         env.bind_self(&norn_ir::ObjectTypeName(type_name.clone()))

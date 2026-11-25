@@ -1,20 +1,11 @@
-//! D102: the tenant analytics engine's typed contract.
+//! D102/D136: the tenant analytics engine's typed contract.
 //!
 //! The cell decides who may read what, lowers an admitted plan and verifies
-//! every answer; the engine (`DuckDB` in a native sidecar, the `engine` module) only
-//! executes these typed operations over one tenant's own database. No
-//! operation carries SQL, a table path or a column expression (#733): the
-//! engine builds its statements from admitted names and binds every value.
-//!
-//! - ANALYTICS-TENANT-1: a tenant's database is named by the SHA-256 of the
-//!   cell scope key the cell verified ([`TenantId`]); the engine never reads
-//!   claims and never opens another tenant's file for a request.
-//! - ANALYTICS-FRONTIER-1: the governed-fact mirror keeps every object
-//!   version with its commit interval, so an answer at frontier `F` reads
-//!   exactly the versions current at `F`, whatever was synced after it.
-//! - MEMBERSHIP-DIGEST-1: a bucket's membership digest is
-//!   [`MembershipDigest`] over its members in identity order; recomputing it
-//!   over the paged members gives the same digest.
+//! every answer; the engine executes only typed operations over one tenant's
+//! database with no caller-supplied SQL, table paths, or expressions (#733).
+//! - ANALYTICS-TENANT-1: database named by SHA-256 of verified cell scope ([`TenantId`]).
+//! - ANALYTICS-FRONTIER-1: governed-fact mirror keeps every version with its commit interval.
+//! - MEMBERSHIP-DIGEST-1: [`MembershipDigest`] over members in identity order.
 
 use std::collections::BTreeMap;
 
@@ -23,12 +14,18 @@ use serde::{Deserialize, Serialize};
 use transparency_sha2::{Digest as _, Sha256};
 
 mod assemble;
+pub mod backend;
 #[cfg(all(feature = "duckdb", feature = "native"))]
 pub mod engine;
 mod lower;
 mod mirror;
+mod store_body;
 
 pub use assemble::{Prepared, bucket_value};
+pub use backend::{
+    AnalyticalEngine, AnalyticalEngineId, EngineCapabilities, EngineOutcome, ReadSnapshot,
+    SnapshotProvenance, StoreBody, dispatch_evaluate, dispatch_members,
+};
 pub use lower::{lower, table_schema};
 pub use mirror::MirrorBatch;
 
@@ -223,6 +220,8 @@ pub struct FrontierRequest {
     /// mirror as a changed pin does.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub links: Vec<String>,
+    /// The cell model; a changed model clears the mirror as a changed pin does.
+    pub model_pin: String,
 }
 
 /// The last commit the mirror applied for the world.
@@ -247,6 +246,10 @@ pub struct SyncRequest {
     pub through: u64,
     /// Every version committed in `(after, through]`, in commit order.
     pub rows: Vec<MirrorRow>,
+    /// The cell model the rows were encoded under.
+    pub model_pin: String,
+    /// The table schema each mirrored root type's rows were encoded with.
+    pub schema_pins: BTreeMap<String, String>,
     /// Every link edge those commits changed, in commit order, as it stands
     /// after its last change.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -469,6 +472,8 @@ pub struct EvaluateRequest {
     /// rows (the plan's bound); otherwise each bucket carries its count and
     /// membership digest and members are paged.
     pub inline_members: u64,
+    /// The cell model the mirror must have been synced under.
+    pub model_pin: String,
 }
 
 /// A bucket's grouping value as the engine grouped it.
@@ -541,6 +546,9 @@ pub struct EvaluateResponse {
     /// object, so no time: skipped and counted.
     #[serde(default)]
     pub unlinked: u64,
+    /// D136: the engine and the snapshot it read; the cell accepts only an
+    /// exact read (`Freshness::Exact`) of the snapshot it prepared.
+    pub provenance: SnapshotProvenance,
 }
 
 /// Page one bucket's members in identity order.
@@ -561,7 +569,8 @@ pub struct MembersRequest {
     pub limit: u32,
 }
 
-/// One page of members.
+/// One page of members. It names no snapshot or freshness: paging needs only
+/// `exact_bitemporal`, and no cell reader checks a page against a snapshot yet.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct MembersResponse {
@@ -842,20 +851,11 @@ pub struct RuleCheck {
     pub predicate: Option<RowPredicate>,
     /// The value the predicate must have (`always`: true, `never`: false).
     pub expect: bool,
-    /// MANIFEST-LAWS-1 (S2): a bound on the fuel the per-row evaluator
-    /// charges for the rule's operations, apart from the data they read
-    /// ([`rule_fuel`]). The engine adds what each row's values cost and
-    /// leaves a row whose rules may cost more than [`row_fuel`] to the
-    /// per-row evaluator. A landing's first check also carries the row's
-    /// typed-property charge, paid once per row before any rule.
+    /// MANIFEST-LAWS-1 (S2): static rule fuel bound ([`rule_fuel`]); rows exceeding [`row_fuel`] fall back per-row.
     pub fuel: u64,
 }
 
-/// MANIFEST-LAWS-1 (S2): the fuel the per-row evaluator gives one row's
-/// rules: its invariants share one decide budget and its governing laws
-/// another (`snapshot_observe::observation_rule_findings`). The engine
-/// compares the bound of all of a row's rules together against one budget,
-/// so it never decides a row either budget would refuse.
+/// MANIFEST-LAWS-1 (S2): per-row decide fuel budget (`snapshot_observe::observation_rule_findings`).
 #[must_use]
 pub fn row_fuel() -> u64 {
     norn_ir::ResourceLimitProfile::norn_limits_v1()
@@ -880,14 +880,10 @@ pub fn rule_fuel(nodes: u64) -> u64 {
     RULE_FUEL.saturating_add(NODE_FUEL.saturating_mul(nodes))
 }
 
-/// D102 / MANIFEST-LAWS-1 (S1): engine calls one request may make, on every
-/// host: the Durable Object's Worker takes this bound from the cell, and
-/// the native host's landing loop is bounded by it too.
+/// D102 / MANIFEST-LAWS-1 (S1): maximum engine calls one request may make.
 pub const MAX_ENGINE_STEPS: u32 = 64;
-/// MANIFEST-LAWS-1 (S1): residue pages one landing may take. A landing is
-/// one land call, a settle per page, and a store, so its calls fit
-/// [`MAX_ENGINE_STEPS`]; the engine refuses a landing whose residue takes
-/// more ([`RESIDUE_EXCEEDED`]) and drops its staging.
+/// MANIFEST-LAWS-1 (S1): maximum residue pages per landing (land, settles,
+/// store fit [`MAX_ENGINE_STEPS`]; more is [`RESIDUE_EXCEEDED`]).
 pub const MAX_RESIDUE_PAGES: u32 = MAX_ENGINE_STEPS - 2;
 /// Residue rows one page carries at most.
 pub const RESIDUE_PAGE_ROWS: u32 = 2_000;
@@ -1126,6 +1122,11 @@ pub struct ProfileRequest {
     pub source: Source,
     /// The properties to profile, in order.
     pub columns: Vec<String>,
+    /// The cell model the mirror must have been synced under.
+    pub model_pin: String,
+    /// The cell version the profile was decided at; it is part of the
+    /// call's digest, so an answer to another version is never re-entered.
+    pub cell_revision: String,
 }
 
 /// The percentiles a profile reports, by nearest rank.
@@ -1219,6 +1220,8 @@ pub struct ProfileResponse {
     pub quarantined: u64,
     /// Per requested column.
     pub columns: Vec<ColumnProfile>,
+    /// D136: the engine and the snapshot it read, accepted only if read exactly.
+    pub provenance: SnapshotProvenance,
 }
 
 /// An export's format.
@@ -1370,11 +1373,8 @@ pub struct EngineRefusal {
     pub detail: String,
 }
 
-/// MEMBERSHIP-DIGEST-1: SHA-256 over each member in identity (byte) order,
-/// each written as `<identity bytes>:<identity>,<version>` then
-/// `,<coefficient>` per operand (empty when absent), then `;`. The length
-/// prefix makes the encoding unambiguous whatever an identity contains, and
-/// the engine computes the same bytes in SQL.
+/// MEMBERSHIP-DIGEST-1: SHA-256 over each member in identity (byte) order as
+/// `<len>:<id>,<version>[,<coeff>...];`. Length-prefixed and SQL-reproducible.
 #[derive(Clone, Default)]
 pub struct MembershipDigest(Sha256);
 

@@ -69,6 +69,16 @@ fn boolean(source: &str, context: &Value) -> Result<bool, String> {
 /// A [`codes::UNSUPPORTED`] reason: a timed or progress law, a non-predicate response, an
 /// invalid exception tree, or an expression that does not evaluate to a Boolean.
 pub fn evaluate(law: &LawIR, subject: &serde_json::Value) -> Result<Verdict, String> {
+    let runtime: RuntimeValue =
+        serde_json::from_value(subject.clone()).map_err(|error| error.to_string())?;
+    evaluate_runtime(law, &runtime)
+}
+
+/// Exact-[`RuntimeValue`] counterpart of [`evaluate`] (avoids `serde_json` round-trips).
+///
+/// # Errors
+/// As [`evaluate`].
+pub fn evaluate_runtime(law: &LawIR, subject: &RuntimeValue) -> Result<Verdict, String> {
     if law.timing.is_some() {
         return Err("a timed law needs a run, not one state".into());
     }
@@ -84,9 +94,7 @@ pub fn evaluate(law: &LawIR, subject: &serde_json::Value) -> Result<Verdict, Str
     };
     crate::law_exceptions::check_tree(&law.id, &law.exceptions)
         .map_err(|refusal| refusal.code().to_owned())?;
-    let runtime: RuntimeValue =
-        serde_json::from_value(subject.clone()).map_err(|error| error.to_string())?;
-    let value = Value::try_from(&runtime).map_err(|error| error.to_string())?;
+    let value = Value::try_from(subject).map_err(|error| error.to_string())?;
     let context = Value::object([("self", value)]);
     if let Some(condition) = &law.condition
         && !boolean(condition.as_str(), &context)?

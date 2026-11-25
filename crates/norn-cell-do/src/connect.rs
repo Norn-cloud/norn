@@ -53,7 +53,7 @@ use norn_api::authz::Operation;
 use norn_api::definition_routes::authorize;
 use norn_api::host::DevHost;
 use norn_api::refusal::Refusal;
-use norn_api::scope::ScopeQuery;
+use norn_api::scope::{CellScope, ScopeQuery};
 use norn_api::sources::{
     ClaimError, HttpRequest, Sources, Step, Trigger, UploadRun, report_upload,
 };
@@ -63,6 +63,9 @@ use serde_json::{Value, json};
 
 use crate::principal::{PrincipalResolver, RequestScope};
 use crate::server::{self, Request, Response};
+
+mod held;
+use held::{Held, Upload};
 
 /// One routed request's answer, and what the host does next.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,17 +86,6 @@ impl Routed {
             then: None,
         }
     }
-}
-
-#[derive(Clone)]
-struct Upload {
-    store: Store,
-    key: String,
-    file_name: String,
-    content_type: String,
-    uri: String,
-    completed: Option<(String, u64, bool)>,
-    columns: Vec<uploads::Column>,
 }
 
 /// A completed upload, as the cell recorded it: for loaders that read the
@@ -135,7 +127,7 @@ pub struct Connect {
     sources: Sources,
     uploads_store: Option<S3Config>,
     documents_store: Option<S3Config>,
-    uploads: BTreeMap<String, Upload>,
+    uploads: Held,
     waiting: BTreeMap<String, Waiting>,
     issued: u64,
 }
@@ -337,27 +329,24 @@ struct Begin {
 }
 
 impl Connect {
-    /// The connections in `config` (`NORN_SOURCES`) and the server variables
-    /// `vars` (a JSON object of the `NORN_SECRET_*` and `NORN_S3_*` values,
-    /// and the operator's `NORN_SOURCE_ALLOWED_HOSTS`, SYNC-URL-1).
+    /// The connections in `config` (`NORN_SOURCES`) that `scope` owns
+    /// (SOURCE-SCOPE-1) and the server variables `vars` (a JSON object of the
+    /// `NORN_SECRET_*`, `NORN_S3_*` and `NORN_SOURCE_ALLOWED_HOSTS` values).
     ///
     /// # Errors
     /// Malformed configuration, or a deployment secret under a connection
     /// secret's name (`NORN_SECRET_S3_*`, `NORN_SECRET_OLAP_*`, `NORN_SECRET_DUCKDB_*`).
-    pub fn new(config: &str, vars: &str) -> Result<Self, String> {
+    pub fn new(scope: &CellScope, config: &str, vars: &str) -> Result<Self, String> {
         let vars: BTreeMap<String, String> =
             serde_json::from_str(vars).map_err(|e| format!("server variables: {e}"))?;
         let secrets = connection_secrets(&vars)?;
+        let allowed = vars.get(norn_api::sources::ALLOWED_HOSTS_VAR);
+        let allowed = allowed.map_or("", String::as_str);
         Ok(Self {
-            sources: Sources::with_allowed_hosts(
-                config,
-                secrets,
-                vars.get(norn_api::sources::ALLOWED_HOSTS_VAR)
-                    .map_or("", String::as_str),
-            )?,
+            sources: Sources::with_allowed_hosts(scope, config, &secrets, allowed)?,
             uploads_store: S3Config::from_vars(&vars, Store::Uploads),
             documents_store: S3Config::from_vars(&vars, Store::Documents),
-            uploads: BTreeMap::new(),
+            uploads: Held::default(),
             waiting: BTreeMap::new(),
             issued: 0,
         })
@@ -674,7 +663,7 @@ impl Connect {
             format!("{prefix}/{nonce}-{name}")
         };
         let id = upload_id(store, &key, &s3);
-        let put_url = s3.presign("PUT", &key, now_ms, URL_SECONDS);
+        let put_url = s3.presign_put(&key, begin.size, now_ms, URL_SECONDS);
         let uri = s3.uri(&key);
         self.uploads.insert(
             id.clone(),
@@ -1150,6 +1139,7 @@ fn load_observations<E: SqlEngine>(host: &DevHost<E>, body: &str, bound: &LoadBo
 #[allow(clippy::expect_used, reason = "route parsing scenarios")]
 mod tests {
     use super::*;
+    use crate::seed::demo_scope;
 
     #[test]
     fn only_the_declared_routes_are_this_modules() {
@@ -1199,7 +1189,8 @@ mod tests {
             "NORN_S3_DOCUMENTS_ACCESS_KEY_ID": "documents-key-id",
             "NORN_S3_DOCUMENTS_SECRET_ACCESS_KEY": secret,
         });
-        Connect::new("[]", &vars.to_string()).expect("configuration")
+        Connect::new(&demo_scope(), "[]", &vars.to_string())
+            .unwrap_or_else(|error| unreachable!("the configuration is well formed: {error}"))
     }
 
     /// OLAP-01: no secretRef a connector can write reaches a deployment
@@ -1265,7 +1256,9 @@ mod tests {
                 connection_secrets(&stale).is_err_and(|e| e.contains(old)),
                 "{old}"
             );
-            assert!(Connect::new("[]", &serde_json::to_string(&stale).expect("json")).is_err());
+            let refused = serde_json::to_string(&stale)
+                .is_ok_and(|vars| Connect::new(&demo_scope(), "[]", &vars).is_err());
+            assert!(refused, "{old}");
         }
     }
 

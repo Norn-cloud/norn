@@ -9,7 +9,7 @@ import { BOOK_EQUIPMENT, INTERVAL_ARTIFACTS } from "../e2e/interval-fixtures.ts"
 const catalog = catalogOf(INTERVAL_ARTIFACTS as unknown as readonly Artifact[])
 // The recorded transport reads fixtures through Vite's import.meta.glob, which bun test lacks.
 mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
-const { RecordPicker, fetchPickerPage, pickedTitle, pickerMode, pickerPage, pickerPageError, pickerQuery, pickerSnapshotMoved, titleProperty } = await import("../src/actions/record-picker.tsx")
+const { RecordPicker, choiceKey, fetchPickerPage, pickedTitle, pickerChoices, pickerMode, pickerPage, pickerPageError, pickerQuery, pickerSnapshotMoved, titleProperty } = await import("../src/actions/record-picker.tsx")
 const { ActionForm } = await import("../src/actions/action-form.tsx")
 
 // ACTION-CATALOG-LINKS-1: the picker titles and searches records by the type's declared title property.
@@ -148,4 +148,32 @@ test("ActionForm DateTimePicker preserves an explicit fall-back offset (-05:00) 
     expect(utcHtml).toContain("-05:00 (second occurrence)")
     expect(utcHtml).not.toContain(".250-05:00 (second occurrence)")
   }
+})
+
+// #1705: options are keyed by kind and id, so a record whose id reads like an action stays that record.
+test("a record named like an action is still a record: options are keyed by kind, never by bare value", () => {
+  const records = [{ id: "__clear", title: "Clear" }, { id: "__more", title: "More" }, { id: "equipment/2", title: "Forklift" }]
+  const choices = pickerChoices({ records, moved: false, optional: true, value: "equipment/2", more: true, typed: "" })
+  expect(choices.map((choice) => choice.kind)).toEqual(["clear", "record", "record", "record", "more"])
+  const keys = choices.map((choice) => choice.key)
+  expect(new Set(keys).size).toBe(keys.length)
+  expect(choices.find((choice) => choice.kind === "record" && choice.id === "__clear")?.key).toBe("record:__clear")
+  expect(choiceKey({ kind: "clear" })).not.toBe(choiceKey({ kind: "record", id: "__clear" }))
+  expect(choiceKey({ kind: "typed", id: "__clear" })).not.toBe(choiceKey({ kind: "record", id: "__clear" }))
+})
+
+// #1724 (Fable r1): a search highlights the first option, so Clear is listed only while nothing is searched.
+test("an optional field with a value lists Clear only with an empty search, so Enter after a search picks the match", () => {
+  const records = [{ id: "equipment/1", title: "Forklift" }, { id: "equipment/2", title: "Cutter" }]
+  expect(pickerChoices({ records, moved: false, optional: true, value: "equipment/2", more: false, typed: "" }).map((choice) => choice.key)).toEqual(["clear", "record:equipment/1", "record:equipment/2"])
+  const searched = pickerChoices({ records: [records[0]!], moved: false, optional: true, value: "equipment/2", more: true, typed: "fork" })
+  expect(searched.map((choice) => choice.key)).toEqual(["record:equipment/1", "more", "typed:fork"])
+  expect(searched[0]).toMatchObject({ kind: "record", id: "equipment/1" })
+})
+
+test("the options follow the list's state: Reload alone when the snapshot moved; Use the id only for an unlisted id", () => {
+  const records = [{ id: "equipment/2", title: "Forklift" }]
+  expect(pickerChoices({ records, moved: true, optional: true, value: "equipment/2", more: true, typed: "" }).map((choice) => choice.kind)).toEqual(["reload"])
+  expect(pickerChoices({ records, moved: false, optional: false, value: "equipment/2", more: false, typed: "equipment/2" }).map((choice) => choice.kind)).toEqual(["record"])
+  expect(pickerChoices({ records, moved: false, optional: true, value: "", more: false, typed: "equipment/9" }).map((choice) => choice.key)).toEqual(["record:equipment/2", "typed:equipment/9"])
 })

@@ -37,7 +37,7 @@ export const fieldWithheld = (row: GridRow, field: Field): boolean => isWithheld
 export function EnumChip({ field: _field, value, label = value }: { readonly field: Field; readonly value: string; readonly label?: string }) {
   return (
     <span title={value}
-      className="inline-block max-w-full truncate rounded-md bg-muted px-1.5 py-0.5 text-xs leading-tight text-foreground ring-1 ring-border ring-inset">
+      className="inline-block max-w-full truncate rounded-md bg-muted px-1.5 py-0.5 text-meta leading-tight text-foreground ring-1 ring-border ring-inset">
       {label}
     </span>
   )
@@ -98,10 +98,10 @@ export function Cell({ field, row }: { readonly field: Field; readonly row: Grid
     case "enum": return <EnumChip field={field} value={exact} label={text} />
     case "boolean": return <span>{text}</span>
     case "date":
-    case "timestamp": return <time className={cn("tabular-nums", view === "technical" && "font-mono text-xs")} dateTime={exact} title={exact}>{text}</time>
-    case "duration": return <time className="font-mono text-xs tabular-nums">{text}</time>
+    case "timestamp": return <time className={cn("tabular-nums", view === "technical" && "font-mono text-meta")} dateTime={exact} title={exact}>{text}</time>
+    case "duration": return <time className="font-mono text-meta tabular-nums">{text}</time>
     case "record":
-    case "json-ext": return <code className="block max-w-64 truncate text-xs" title={text}>{text}</code>
+    case "json-ext": return <code className="block max-w-64 truncate text-meta" title={text}>{text}</code>
     case "decimal":
     case "integer": return <span className="tabular-nums" title={exact}>{text}</span>
     default: return <span className="block max-w-80 truncate" title={text}>{text}</span>
@@ -127,7 +127,7 @@ export function RecordName({ row, fallback }: { readonly row: GridRow; readonly 
 
 /** The way from a fact's card to the record's full lineage. */
 export function LineageLink({ objectType, id }: { readonly objectType: string; readonly id: string }) {
-  return <Link to="/sources/$concept/$" params={{ concept: objectType, _splat: id }} hash="lineage" className="text-sm font-medium underline-offset-4 hover:underline">Open the record's lineage</Link>
+  return <Link to="/sources/$concept/$" params={{ concept: objectType, _splat: id }} hash="lineage" className="text-body underline-offset-4 hover:underline">Open the record's lineage</Link>
 }
 
 /**

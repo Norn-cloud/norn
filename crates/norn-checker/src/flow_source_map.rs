@@ -7,9 +7,7 @@ use norn_ir::{
     FlowSourceMapEdgeKind, JdmGraph, JdmNode,
 };
 
-use crate::{
-    Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, EffectiveCatalog, Span,
-};
+use crate::{Diagnostic, DiagnosticCode, DiagnosticRemediation, DiagnosticSeverity, Span};
 
 /// Diagnostic codes emitted by flow source-map admission.
 pub mod codes {
@@ -63,22 +61,25 @@ pub fn validate_flow_source_map(
         })
         .collect::<BTreeMap<_, _>>();
     let artifact_values = base.iter().chain(candidates).cloned().collect::<Vec<_>>();
-    let catalog = EffectiveCatalog::from_artifacts(&artifact_values);
+    let mut views = crate::entity_scopes::ScopedViews::new(candidates, base, &BTreeSet::new());
 
     let mut artifacts_by_state = BTreeMap::<String, BTreeSet<String>>::new();
     let mut artifacts_by_row = BTreeMap::<String, BTreeSet<String>>::new();
     for artifact in &artifact_values {
-        if let Some(Ok(object_type)) = catalog.object_type(&artifact.artifact_id) {
-            let states = object_type
-                .lifecycles
-                .iter()
-                .flat_map(|lifecycle| lifecycle.states.iter().cloned())
-                .collect::<BTreeSet<_>>();
-            for state in &states {
-                artifacts_by_state
-                    .entry(state.clone())
-                    .or_default()
-                    .insert(artifact.artifact_id.clone());
+        if matches!(artifact.payload, ArtifactPayload::Entity(_)) {
+            let catalog = views.of(artifact).catalog();
+            if let Some(Ok(object_type)) = catalog.object_type(&artifact.artifact_id) {
+                let states = object_type
+                    .lifecycles
+                    .iter()
+                    .flat_map(|lifecycle| lifecycle.states.iter().cloned())
+                    .collect::<BTreeSet<_>>();
+                for state in &states {
+                    artifacts_by_state
+                        .entry(state.clone())
+                        .or_default()
+                        .insert(artifact.artifact_id.clone());
+                }
             }
         }
         let ArtifactPayload::Rule(payload) = &artifact.payload else {

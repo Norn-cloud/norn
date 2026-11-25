@@ -199,12 +199,15 @@ fn body(response: &[u8]) -> String {
 }
 
 fn frontier(of: &TenantId) -> String {
-    json!({ "tenant": of, "world": WORLD, "tables": [] }).to_string()
+    json!({ "tenant": of, "world": WORLD, "tables": [], "modelPin": "m" }).to_string()
 }
 
 fn sync(of: &TenantId, after: u64, through: u64) -> String {
-    json!({ "tenant": of, "world": WORLD, "after": after, "through": through, "rows": [] })
-        .to_string()
+    json!({
+        "tenant": of, "world": WORLD, "after": after, "through": through, "rows": [],
+        "modelPin": "m", "schemaPins": {}
+    })
+    .to_string()
 }
 
 fn export(of: &TenantId) -> String {
@@ -369,7 +372,11 @@ fn the_exchange_mints_each_call_for_its_own_tenant() {
     let host = issuer("k1", 7);
     let keyring = Keyring::parse(&host.public_spec()).unwrap();
     let a = tenant("org_a/prod");
-    let exchange = Exchange::new(issuer("k1", 7), a.clone());
+    let exchange = Exchange::new(
+        issuer("k1", 7),
+        a.clone(),
+        norn_cell::analytics::EngineCapabilities::DUCKDB,
+    );
     let call = EngineCall {
         op: "frontier".to_owned(),
         digest: "d".to_owned(),
@@ -413,7 +420,8 @@ fn a_credential_is_good_for_its_own_operation_and_body_only() {
     let read = mint(&host, &a, "frontier", &frontier(&a));
     // Another operation (a write), and another body for the same operation.
     assert_eq!(daemon.call("sync", &read, &sync(&a, 0, 3)), uniform);
-    let staging = json!({ "tenant": &a, "world": "staging", "tables": [] }).to_string();
+    let staging =
+        json!({ "tenant": &a, "world": "staging", "tables": [], "modelPin": "m" }).to_string();
     assert_eq!(daemon.call("frontier", &read, &staging), uniform);
     assert_eq!(daemon.call("export", &read, &export(&a)), uniform);
     // Nothing was written; the request it was minted for still answers.
@@ -479,6 +487,39 @@ fn malformed_bodies_and_unknown_routes_are_refused_before_routing() {
     let untyped = json!({ "tenant": &a, "world": WORLD }).to_string();
     assert_eq!(status(&daemon.by(&host, &a, "frontier", &untyped)), "400");
     assert!(!daemon.database_exists(&b));
+}
+
+/// #1710: a caller without a credential that could verify is refused on
+/// its head alone: the daemon answers without waiting for (or allocating)
+/// the body it declares, so such a caller cannot hold a worker for a body.
+#[test]
+fn a_caller_without_a_credential_is_refused_before_its_body() {
+    let host = issuer("k1", 7);
+    let daemon = daemon(&[&host]);
+    let uniform = refused(&daemon);
+    let expired = host.mint_until(&tenant("a"), "frontier", &body_digest(b""), NOW);
+    for authorization in [
+        String::new(),
+        "authorization: Bearer nonsense\r\n".to_owned(),
+        format!("authorization: Bearer {expired}\r\n"),
+        format!(
+            "authorization: Bearer {}\r\n",
+            issuer("k9", 7).mint(&tenant("a"), "frontier", "", NOW)
+        ),
+    ] {
+        let mut stream = TcpStream::connect(daemon.addr).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        write!(
+            stream,
+            "POST /v1/frontier HTTP/1.1\r\nhost: olapd\r\n{authorization}content-length: 67108864\r\n\r\n"
+        )
+        .unwrap();
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).unwrap();
+        assert_eq!(response, uniform, "{authorization}");
+    }
 }
 
 /// An object store serving `objects` by path, each response held half-sent

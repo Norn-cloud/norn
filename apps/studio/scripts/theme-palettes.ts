@@ -1,0 +1,98 @@
+/**
+ * Derives every built-in skin's light and dark palette from `src/index.css`, the one source of the
+ * colours Studio paints, and writes them to `src/lib/theme-palettes.json` for the custom-theme
+ * contrast gate. `test/theme-palettes.test.ts` fails when the JSON drifts from the CSS.
+ *
+ *   bun scripts/theme-palettes.ts
+ */
+import { readFileSync, writeFileSync } from "node:fs"
+import { join } from "node:path"
+import { canonicalColor, cssColor, fade, parseColor } from "../src/lib/color.ts"
+import { STUDIO_THEME_TOKENS } from "../src/lib/studio-theme.ts"
+
+export const SKINS = ["polar", "open", "luma", "glass"] as const
+export type Scheme = "light" | "dark"
+export type ThemePalettes = Record<(typeof SKINS)[number], Record<Scheme, Record<string, string>>>
+
+const ROOT = join(import.meta.dir, "..")
+export const INDEX_CSS = join(ROOT, "src", "index.css")
+export const PALETTES_JSON = join(ROOT, "src", "lib", "theme-palettes.json")
+
+/**
+ * The custom properties each top-level rule in `css` declares, by selector, in source order. A
+ * selector list (`a, b { … }`) declares the same properties for each of its selectors.
+ */
+function rules(css: string): readonly { readonly selector: string; readonly declared: Readonly<Record<string, string>> }[] {
+  const out: { selector: string; declared: Record<string, string> }[] = []
+  const stripped = css.replace(/\/\*[\s\S]*?\*\//g, "")
+  for (const match of stripped.matchAll(/^([^\s@{}][^{}]*?)\s*\{([^{}]*)\}/gm)) {
+    const declared: Record<string, string> = {}
+    for (const decl of match[2]!.matchAll(/--([a-z0-9-]+)\s*:\s*([^;]+);/g)) declared[decl[1]!] = decl[2]!.trim()
+    for (const selector of match[1]!.split(",")) out.push({ selector: selector.trim(), declared })
+  }
+  return out
+}
+
+/**
+ * The selectors that apply to a skin and scheme, by specificity: bare `:root` and `.dark` (the
+ * `polar` default, 0-1-0), then `:root[data-skin=…]` (0-2-0), then `:root.dark[data-skin=…]`
+ * (0-3-0). Within one specificity the later rule in the sheet wins, so `rules` keeps source order.
+ */
+function cascade(skin: (typeof SKINS)[number], scheme: Scheme): readonly (readonly string[])[] {
+  const light = [[":root"], [`:root[data-skin="${skin}"]`]]
+  return scheme === "dark" ? [[":root", ".dark"], light[1]!, [`:root.dark[data-skin="${skin}"]`]] : light
+}
+
+/** Every custom property a skin and scheme declares, as written (`var()` and `color-mix()` unresolved). */
+export function skinVars(css: string, skin: (typeof SKINS)[number], scheme: Scheme): Readonly<Record<string, string>> {
+  const declared = rules(css)
+  const vars: Record<string, string> = {}
+  for (const tier of cascade(skin, scheme)) {
+    for (const { selector, declared: block } of declared) if (tier.includes(selector)) Object.assign(vars, block)
+  }
+  if (vars["canvas"] === undefined) throw new Error(`index.css: no rules declare ${skin} ${scheme}`)
+  return vars
+}
+
+/** Resolve one declared value to canonical CSS: `var()` references and `color-mix(…, X p%, transparent)`. */
+export function resolve(value: string, vars: Readonly<Record<string, string>>, seen: ReadonlySet<string> = new Set()): string {
+  const reference = /^var\(--([a-z0-9-]+)\)$/.exec(value)
+  if (reference) {
+    const name = reference[1]!
+    const next = vars[name]
+    if (next === undefined || seen.has(name)) throw new Error(`index.css: --${name} is undefined or circular`)
+    return resolve(next, vars, new Set([...seen, name]))
+  }
+  const mix = /^color-mix\(in [a-z0-9-]+,\s*(.+?)\s+(\d+(?:\.\d+)?)%,\s*transparent\)$/.exec(value)
+  if (mix) {
+    // Mixing with `transparent` keeps the colour and scales its alpha, in any interpolation space.
+    const color = parseColor(resolve(mix[1]!, vars, seen))
+    if (color === null) throw new Error(`index.css: ${value} does not mix a colour`)
+    return cssColor(fade(color, Number(mix[2]) / 100))
+  }
+  const canonical = canonicalColor(value)
+  if (canonical === null) throw new Error(`index.css: "${value}" is not a colour Studio can gate`)
+  return canonical
+}
+
+/** Every allowlisted theme token's painted colour for every built-in skin and scheme. */
+export function themePalettes(css: string): ThemePalettes {
+  const palettes = {} as ThemePalettes
+  for (const skin of SKINS) {
+    palettes[skin] = { light: {}, dark: {} }
+    for (const scheme of ["light", "dark"] as const) {
+      const vars = skinVars(css, skin, scheme)
+      for (const token of STUDIO_THEME_TOKENS) {
+        const value = vars[token]
+        if (value === undefined) throw new Error(`index.css: ${skin} ${scheme} never sets --${token}`)
+        palettes[skin][scheme][token] = resolve(value, vars)
+      }
+    }
+  }
+  return palettes
+}
+
+if (import.meta.main) {
+  writeFileSync(PALETTES_JSON, `${JSON.stringify(themePalettes(readFileSync(INDEX_CSS, "utf8")), null, 2)}\n`)
+  console.log(`wrote ${PALETTES_JSON}`)
+}

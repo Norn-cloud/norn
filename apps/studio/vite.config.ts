@@ -16,7 +16,23 @@ export default defineConfig({
   plugins: [react(), tailwindcss(), widget()],
   resolve: { alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) } },
   server: { fs: { allow: ["../.."] } },
-  // The contact sheet (sheet.html) builds beside the app so a deployed stage serves it too.
+  // The contact sheet (sheet.html) and the read harness (harness.html, #1374) build beside the app so a deployed stage serves them too.
   // The app's input stays `index`: its entry chunk is assets/index-<hash>.js, which the deploys' served-build checks read.
-  build: { rollupOptions: { input: { index: fileURLToPath(new URL("./index.html", import.meta.url)), sheet: fileURLToPath(new URL("./sheet.html", import.meta.url)) } } },
+  build: {
+    rollupOptions: {
+      input: {
+        index: fileURLToPath(new URL("./index.html", import.meta.url)),
+        sheet: fileURLToPath(new URL("./sheet.html", import.meta.url)),
+        harness: fileURLToPath(new URL("./harness.html", import.meta.url)),
+      },
+      output: {
+        codeSplitting: {
+          groups: [
+            { name: "vendor-react", test: /node_modules\/(react|react-dom|scheduler)\//, priority: 30 },
+            { name: "vendor-parse5", test: /node_modules\/parse5\//, priority: 20 },
+          ],
+        },
+      },
+    },
+  },
 })

@@ -112,6 +112,12 @@ export interface PropertyDecl {
   readonly nullable?: boolean
   readonly markings?: ReadonlyArray<string>
   readonly default?: DefaultValue
+  /**
+   * FA-PROTECT-1 / ACTOR-STAMP-1: no caller, import, update or bulk write may
+   * set this property; a governed create stamps it from the verified
+   * principal (`fromCaller`), and it is immutable afterwards.
+   */
+  readonly protected?: boolean
   readonly at?: SourceLocation
 }
 
@@ -339,6 +345,7 @@ function defaultJson(value: DefaultValue): Json {
 
 function propertyJson(p: PropertyDecl, withDefault: boolean): Json {
   return {
+    protected: p.protected === true ? true : undefined,
     id: p.id,
     markings: omitEmpty(p.markings ?? []),
     description: p.description,

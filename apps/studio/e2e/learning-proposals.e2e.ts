@@ -19,7 +19,7 @@ const DRAFT_PROPOSAL = {
   title: "Draft proposal",
   description: "Draft a definition diff citing decision episodes.",
   objectKind: "learning.GapProposal",
-  effect: "create_object",
+  effect: "upsert_input_object",
   objectIdField: "proposalId",
   uiEffects: { irreversible: false, destructive: false, money: [] },
   inputSchema: {
@@ -182,7 +182,7 @@ async function mountCell(page: Page, options: { mode?: "fixture" | "unserved" | 
     const url = new URL(request.url())
     if (request.method() === "GET") {
       const objectId = url.searchParams.get("objectId")
-      if (!objectId) return route.fulfill({ json: { items: [DRAFT_PROPOSAL] } })
+      if (!objectId) return route.fulfill({ json: { definitionsVersion: 1, items: [DRAFT_PROPOSAL] } })
       const found = proposals.find((p) => p.id === objectId)
       const status = found?.values["status"]
       const items = status === "draft"
@@ -192,7 +192,7 @@ async function mountCell(page: Page, options: { mode?: "fixture" | "unserved" | 
           : status === "refused"
             ? [WITHDRAW_PROPOSAL]
             : []
-      return route.fulfill({ json: { items } })
+      return route.fulfill({ json: { definitionsVersion: 1, items } })
     }
 
     const actionId = decodeURIComponent(url.pathname.split("/v1/actions/")[1] ?? "")
@@ -383,7 +383,12 @@ test("proposals lifecycle: server-filter list, draft, edit, withdraw + undo, sub
   await dialog(page).getByRole("button", { name: "Draft proposal", exact: true }).click()
   await dialog(page).getByRole("button", { name: "Done" }).click()
   await table.getByRole("link", { name: "Add remittance grace window" }).click()
-  await expect(page.getByText("Not replayed yet")).toBeVisible()
+  // The detail page is a lazy route (#1736), so the list (whose unreplayed rows also say "Not replayed
+  // yet") can stay mounted for a moment after the click. Wait for the detail page, then read its replay panel.
+  await expect(page).toHaveURL(/\/learning\/proposals\/prop_new_\d+$/)
+  await expect(page.getByRole("heading", { level: 1, name: "Add remittance grace window", exact: true })).toBeVisible()
+  const replay = page.locator('[data-slot="panel"]').filter({ has: page.getByRole("heading", { name: "Curated-case replay", exact: true }) })
+  await expect(replay.getByText("Not replayed yet", { exact: true })).toBeVisible()
 
   // Edit draft, withdraw + Undo (returns to draft), then submit → replay populates.
   const actions = page.getByRole("group", { name: "Proposal actions" })

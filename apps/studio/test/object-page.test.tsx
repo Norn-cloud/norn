@@ -7,6 +7,8 @@ import { renderToStaticMarkup } from "react-dom/server"
 import type { ReactNode } from "react"
 import { readDocument } from "../src/lib/exact.ts"
 import type { SourceLineage } from "../src/lib/transport.ts"
+import type { ObjectFindings } from "../src/evidence/review.ts"
+import { CellUnavailable, StudioScopeError, studioScopeKey, WORKSPACE_CHANGED_MESSAGE, type StudioScope } from "../src/lib/definitions.ts"
 
 // These pages read the view from localStorage, which the tests replace; put the original back so later files in the same bun process see their own.
 const originalStorage = globalThis.localStorage
@@ -15,20 +17,22 @@ afterAll(() => { globalThis.localStorage = originalStorage })
 // The recorded transport reads fixtures through Vite's import.meta.glob, which bun test lacks; the reads are answered below instead.
 mock.module("../src/lib/transport.ts", () => ({ transport: {}, recordedTransport: {} }))
 const { ObjectPage, SourcesItemPage, summaryOf } = await import("../src/objects.tsx")
+const { drawerRead, findingsQuery, recordRead } = await import("../src/lib/record-read.ts")
 const { ObjectTypePage } = await import("../src/sources.tsx")
 const { ViewProvider } = await import("../src/lib/view.tsx")
 const { ProvenanceChain } = await import("../src/components/provenance.tsx")
 
 const fixture = (name: string) => readDocument(readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer", name), "utf8"), "recorded")
 
-/** The record page at its route, with the recorded reads already answered. */
-async function page(concept: string, id: string, view = "business", links?: unknown, access?: unknown) {
+/** The record page at its route, with the recorded reads already answered (or, given `cached`, only those cache entries). */
+async function page(concept: string, id: string, view = "business", links?: unknown, access?: unknown, cached?: (client: QueryClient) => void) {
   globalThis.localStorage = { getItem: () => view, setItem: () => {} } as unknown as Storage
   const client = new QueryClient()
   const file = (read: string) => fixture(`objects/${concept}/${id.replaceAll("/", "~")}.${read}.json`)
   client.setQueryData(["catalog"], fixture("three-systems.definitions.json"))
   if (access !== undefined) client.setQueryData(["live-access"], access)
-  client.setQueryData(["object", concept, id], { object: file("object"), links: links === undefined ? file("links") : readDocument(JSON.stringify(links), "recorded"), source: file("source") })
+  if (cached === undefined) client.setQueryData(recordRead(concept, id, undefined).queryKey, { object: file("object"), links: links === undefined ? file("links") : readDocument(JSON.stringify(links), "recorded"), source: file("source") })
+  else cached(client)
   const root = createRootRoute()
   const router = createRouter({
     routeTree: root.addChildren([createRoute({ getParentRoute: () => root, path: "/sources/$concept/$", component: ObjectPage })]),
@@ -295,12 +299,180 @@ test("a held record's finding shows the values its law compared, a summed list a
   const client = new QueryClient()
   client.setQueryData(["catalog"], readDocument(JSON.stringify([read("../../fixtures/packs/scans/artifacts/docs.ScannedDocument.entity.json"), read("canon/artifacts/canon.ItemizedDocument.total_matches_lines.law.json")]), "live"))
   const id = "SCAN-INV-1042"
-  client.setQueryData(["findings", "docs.ScannedDocument", id], readDocument(JSON.stringify({ objectType: "docs.ScannedDocument", id, quarantined: true, evidence: [],
+  const scope = { orgId: "org_a", environmentId: "prod" }
+  client.setQueryData(findingsQuery("docs.ScannedDocument", id, scope).queryKey, readDocument<ObjectFindings>(JSON.stringify({ objectType: "docs.ScannedDocument", id, quarantined: true, evidence: [],
     findings: [{ id: "f-1", ruleRef: { kind: "law", artifactId: "canon.ItemizedDocument.total_matches_lines.law", lawId: "canon.ItemizedDocument.total_matches_lines", version: "0.1" }, severity: "error", message: "m", status: "open", firstSeen: "", lastSeen: "", values: { total: 720, "lines.amount": [30, 40, 2] } }] }), "live"))
-  const html = renderToStaticMarkup(<QueryClientProvider client={client}><Findings objectType="docs.ScannedDocument" id={id} /></QueryClientProvider>)
+  const html = renderToStaticMarkup(<QueryClientProvider client={client}><Findings objectType="docs.ScannedDocument" id={id} scope={scope} /></QueryClientProvider>)
   // The total the law read, then what it holds it against: the line objects it summed.
   expect(html).toContain("720.00")
   expect(html).toContain("72.00 = 30.00 + 40.00 + 2.00")
   expect(html).toContain("sum of lines")
   expect(html.indexOf("720.00")).toBeLessThan(html.indexOf("72.00 ="))
+})
+
+// #1700 R3: a record page's read (and so its reveals) is bound to the workspace it was read from.
+test("a record's read is keyed by and sent to its source workspace: the same id in two workspaces is two records", async () => {
+  const A = { orgId: "org_a", environmentId: "prod" }
+  const B = { orgId: "org_b", environmentId: "prod" }
+  let active = A
+  const sent: string[] = []
+  const fetcher = async (input: string) => {
+    const url = new URL(input, "https://studio.test")
+    if (url.pathname === "/api/me") return Response.json({ user: { id: "u" }, organization: { id: active.orgId, role: "admin" }, environmentId: active.environmentId })
+    sent.push(`${url.searchParams.get("orgId")}/${url.searchParams.get("environmentId")}`)
+    if (url.pathname.endsWith("/links")) return Response.json({ objectType: "canon.Party", id: "p/1", items: [], next: null })
+    if (url.pathname.endsWith("/lineage")) return Response.json({ code: "object.not_found" }, { status: 404 })
+    // Each workspace serves its own record under the same id.
+    return Response.json({ objectType: "canon.Party", id: "p/1", scope: active.orgId, version: 1, values: { display_name: `of ${active.orgId}` }, withheld: false, withheldProperties: [] })
+  }
+  const a = recordRead("canon.Party", "p/1", A, fetcher)
+  const b = recordRead("canon.Party", "p/1", B, fetcher)
+  expect(a.queryKey).toEqual(["object", "canon.Party", "p/1", "org_a", "prod"])
+  expect(b.queryKey).not.toEqual(a.queryKey)
+  expect(recordRead("canon.Party", "p/1", undefined).queryKey).toEqual(["object", "recorded", "canon.Party", "p/1"])
+  expect((await a.queryFn({}))?.object.document.values["display_name"]).toBe("of org_a")
+  expect(sent).toEqual(["org_a/prod", "org_a/prod", "org_a/prod"])
+  // The session moves to B: A's read is refused before dispatch, so B's record never lands under A's key.
+  active = B
+  sent.length = 0
+  await expect(a.queryFn({})).rejects.toThrow(WORKSPACE_CHANGED_MESSAGE)
+  expect(sent).toEqual([])
+  expect((await b.queryFn({}))?.object.document.values["display_name"]).toBe("of org_b")
+  expect(sent).toEqual(["org_b/prod", "org_b/prod", "org_b/prod"])
+})
+
+// #1740: the grid drawer once read a record through the mode-deciding transport and cached the live
+// answer under the key the record page read without a decided mode, so the page could show it with no
+// workspace. Only the recording reaches that key now, and the drawer reads only at a decided scope.
+test("a record page with no decided mode never shows a cached live answer: the recording's read has a key of its own", async () => {
+  const concept = "canon.Item"
+  const id = "demo/item/gold"
+  const live = (read: string) => readDocument(readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer", `objects/${concept}/${id.replaceAll("/", "~")}.${read}.json`), "utf8"), "live")
+  const answer = { object: live("object"), links: live("links"), source: live("source") }
+  const scope = { orgId: "org_demo", environmentId: "analytics" }
+  const html = await page(concept, id, "business", undefined, undefined, (client) => {
+    // A live answer under the key the drawer used without a scope, and one at a workspace.
+    client.setQueryData(["object", concept, id], answer)
+    client.setQueryData(recordRead(concept, id, scope).queryKey, answer)
+  })
+  expect(html).not.toContain("Gold scrap")
+  expect(html).not.toContain("Read again")
+  expect(html).not.toContain('data-fact="')
+  // The recording's key is none of the live ones, whatever the type or id.
+  expect(recordRead(concept, id, undefined).queryKey).not.toEqual(["object", concept, id])
+  expect(recordRead("recorded", concept, scope).queryKey).not.toEqual(recordRead(concept, id, undefined).queryKey)
+})
+
+test("the grid drawer reads a row at the grid's workspace, a recorded row from the recording, and a live row with no workspace not at all", () => {
+  const scope = { orgId: "org_a", environmentId: "prod" }
+  // At a workspace: the record page's own key and read for that workspace.
+  expect(drawerRead("canon.Party", "p/1", scope, "live")?.queryKey).toEqual(recordRead("canon.Party", "p/1", scope).queryKey)
+  // A recorded row: the recording, under the recording's key.
+  expect(drawerRead("canon.Party", "p/1", undefined, "recorded")?.queryKey).toEqual(["object", "recorded", "canon.Party", "p/1"])
+  // A live row while no workspace is decided, or a row from no page yet: nothing is read.
+  expect(drawerRead("canon.Party", "p/1", undefined, "live")).toBeNull()
+  expect(drawerRead("canon.Party", "p/1", undefined, undefined)).toBeNull()
+})
+
+// #1745: a record's findings were read and cached under one key for every workspace, so the record
+// page's "Held back" and "N rules broken" could show findings from another workspace, or from before
+// its mode failed, beside Workspace unavailable.
+test("a record's findings are keyed by and read at its source workspace, and nothing is read without one", async () => {
+  const A = { orgId: "org_a", environmentId: "prod" }
+  const B = { orgId: "org_b", environmentId: "prod" }
+  let active = A
+  const sent: string[] = []
+  const fetcher = async (input: string) => {
+    const url = new URL(input, "https://studio.test")
+    if (url.pathname === "/api/me") return Response.json({ user: { id: "u" }, organization: { id: active.orgId, role: "admin" }, environmentId: active.environmentId })
+    sent.push(`${url.pathname.endsWith("/findings") ? "findings" : url.pathname} ${url.searchParams.get("orgId")}/${url.searchParams.get("environmentId")}`)
+    return Response.json({ objectType: "canon.Party", id: "p/1", quarantined: active.orgId === "org_b", findings: [], evidence: [] })
+  }
+  const read = (scope: StudioScope) => findingsQuery("canon.Party", "p/1", scope, fetcher).queryFn as unknown as (context: { readonly signal?: AbortSignal }) => Promise<{ document: { quarantined: boolean } }>
+  expect([...findingsQuery("canon.Party", "p/1", A).queryKey]).toEqual(["findings", "canon.Party", "p/1", "org_a", "prod"])
+  expect(findingsQuery("canon.Party", "p/1", B).queryKey).not.toEqual(findingsQuery("canon.Party", "p/1", A).queryKey)
+  // No decided workspace: nothing is read, under a key no read answers and not the one every workspace once shared.
+  const undecided = findingsQuery("canon.Party", "p/1", undefined)
+  expect(undecided.enabled).toBe(false)
+  expect([...undecided.queryKey]).not.toEqual(["findings", "canon.Party", "p/1"])
+  await expect((undecided.queryFn as unknown as (context: object) => Promise<unknown>)({})).rejects.toBeInstanceOf(StudioScopeError)
+  expect((await read(A)({})).document.quarantined).toBe(false)
+  expect(sent).toEqual(["findings org_a/prod"])
+  // The session moves to B: A's read is refused before dispatch, so B's findings never land under A's key.
+  active = B
+  sent.length = 0
+  await expect(read(A)({})).rejects.toThrow(WORKSPACE_CHANGED_MESSAGE)
+  expect(sent).toEqual([])
+  expect((await read(B)({})).document.quarantined).toBe(true)
+  expect(sent).toEqual(["findings org_b/prod"])
+})
+
+test("the record page's Held back and rules-broken chips show only under a decided mode, from findings read at its workspace", async () => {
+  const concept = "canon.Item"
+  const id = "demo/item/gold"
+  const scope = { orgId: "org_demo", environmentId: "analytics" }
+  const live = (read: string) => readDocument(readFileSync(join(import.meta.dir, "../../../fixtures/demo/explorer", `objects/${concept}/${id.replaceAll("/", "~")}.${read}.json`), "utf8"), "live")
+  const answer = { object: live("object"), links: live("links"), source: live("source") }
+  const held = readDocument<ObjectFindings>(JSON.stringify({ objectType: concept, id, quarantined: true, evidence: [],
+    findings: [{ id: "f-1", ruleRef: { kind: "builtin", id: "core.required", version: "1" }, severity: "error", message: "A required value is missing.", status: "open", firstSeen: "", lastSeen: "" }] }), "live")
+  const mode = { kind: "live", scope, catalog: fixture("three-systems.definitions.json"), counts: {}, publishedQuestions: new Set<string>() }
+  const modeKey = ["studio-mode", studioScopeKey(scope)]
+  const decided = (client: QueryClient) => {
+    client.setQueryData(["studio-scope"], scope)
+    client.setQueryData(modeKey, mode)
+    client.setQueryData(recordRead(concept, id, scope).queryKey, answer)
+    client.setQueryData(findingsQuery(concept, id, scope).queryKey, held)
+  }
+  const shown = await page(concept, id, "business", undefined, undefined, decided)
+  expect(shown).toContain(">Held back<")
+  expect(shown).toContain("1 rule broken")
+  // The mode is read again and the read fails: TanStack keeps its last answer, but nothing read under it
+  // shows as current: no chip, no findings panel, no record; the page's Workspace unavailable instead.
+  const failed = await page(concept, id, "business", undefined, undefined, (client) => {
+    decided(client)
+    const read = client.getQueryCache().find({ queryKey: modeKey, exact: true })
+    read?.setState({ ...read.state, status: "error", error: new CellUnavailable(503, "The workspace cell could not be opened."), errorUpdatedAt: Date.now() })
+  })
+  for (const absent of [">Held back<", "rule broken", "Held out of authoritative reads", "Gold scrap"]) expect(failed).not.toContain(absent)
+  expect(failed).toContain("Workspace unavailable")
+  // No mode decided at all: findings cached under the key every workspace once shared show nothing.
+  const undecided = await page(concept, id, "business", undefined, undefined, (client) => {
+    client.setQueryData(["findings", concept, id], held)
+    client.setQueryData(findingsQuery(concept, id, scope).queryKey, held)
+  })
+  for (const absent of [">Held back<", "rule broken"]) expect(undecided).not.toContain(absent)
+})
+
+test("a live row's drawer with no decided workspace shows the mode's state: Workspace unavailable with Retry, a skeleton, or why nothing is read", async () => {
+  const { UndecidedWorkspace } = await import("../src/grid/records-grid.tsx")
+  const render = (mode: Parameters<typeof UndecidedWorkspace>[0]["mode"]) => renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><ViewProvider><UndecidedWorkspace mode={mode} /></ViewProvider></QueryClientProvider>)
+  const failed = render({ isPending: false, isError: true, error: new CellUnavailable(503, "The workspace cell could not be opened."), isFetching: false })
+  expect(failed).toContain("data-workspace-unavailable")
+  expect(failed).toContain("Workspace unavailable")
+  expect(failed).toContain(">Retry<")
+  expect(render({ isPending: true, isError: false, error: null, isFetching: true })).toContain('aria-label="Deciding the workspace"')
+  const settled = render({ isPending: false, isError: false, error: null, isFetching: false })
+  expect(settled).toContain("This record&#x27;s links show once its workspace is confirmed.")
+  expect(settled).not.toContain("read only")
+  // A page that passes no mode (none to show) still says why nothing is read.
+  expect(render(undefined)).toContain("show once its workspace is confirmed")
+})
+
+test("a type page's grid waits for a decided mode: its skeleton while the mode is read, Workspace unavailable with Retry after a failed read", async () => {
+  const { DecidedRecordsGrid } = await import("../src/grid/records-grid.tsx")
+  const { catalogOf } = await import("../src/lib/catalog.ts")
+  const concept = catalogOf((fixture("three-systems.definitions.json") as { document: Parameters<typeof catalogOf>[0] }).document, "en").byName.get("canon.Item")!
+  type GridModeRead = Parameters<typeof DecidedRecordsGrid>[0]["mode"]
+  const render = (mode: Partial<GridModeRead>) => renderToStaticMarkup(<QueryClientProvider client={new QueryClient()}><ViewProvider><DecidedRecordsGrid concept={concept} mode={mode as GridModeRead} /></ViewProvider></QueryClientProvider>)
+  const pending = render({ status: "pending", isSuccess: false, isPending: true, isError: false, error: null, isFetching: true })
+  expect(pending).toContain('data-bone="records-table"')
+  expect(pending).toContain('aria-label="Reading the records"')
+  expect(pending).not.toContain('role="grid"')
+  // A refetch that failed after an earlier live answer: the answer is kept, but no grid reads under it.
+  const failed = render({ status: "error", isSuccess: false, isPending: false, isError: true, error: new CellUnavailable(503, "The workspace cell could not be opened."), isFetching: false,
+    data: { kind: "live", scope: { orgId: "org_demo", environmentId: "analytics" }, catalog: fixture("three-systems.definitions.json"), counts: {}, publishedQuestions: new Set<string>() } as never })
+  expect(failed).toContain("Workspace unavailable")
+  expect(failed).toContain(">Retry<")
+  expect(failed).toContain('aria-label="Records"')
+  expect(failed).not.toContain('role="grid"')
 })

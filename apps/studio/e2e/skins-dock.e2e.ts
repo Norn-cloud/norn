@@ -63,14 +63,14 @@ test("skins and floating dock: switch open, polar, luma, glass skins via ChromeD
   await expect(tray).toBeVisible()
   await expect(tray.locator('[data-skin-option="polar"]')).toHaveAttribute("data-state", "selected")
 
-  // 3. Verify Polar monochrome light palette: white canvas, near-black #18181b primary (zero purple buttons!).
+  // 3. Verify Polar monochrome light palette: the #f6f6f8 canvas under unframed content, near-black #18181b primary (zero purple buttons!).
   await expect.poll(() => page.evaluate(() => ({
     skin: document.documentElement.dataset.skin,
     pageBg: getComputedStyle(document.querySelector('[data-slot="sidebar-inset"]')!).backgroundColor,
     primaryBg: getComputedStyle(document.querySelector('[data-slot="button"][data-variant="default"]')!).backgroundColor,
   }))).toEqual({
     skin: "polar",
-    pageBg: "rgb(255, 255, 255)",
+    pageBg: "rgb(246, 246, 248)",
     primaryBg: "rgb(24, 24, 27)",
   })
 

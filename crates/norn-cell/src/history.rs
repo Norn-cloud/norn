@@ -1984,7 +1984,7 @@ impl<E: SqlEngine> StoreReader<'_, E> {
         // An accepted Function classification is derived from its independently
         // committed reconciliation state, with the receipt identity preserved.
         for row in &receipt.body.written {
-            if row.object_type != "norn.FunctionCommand" {
+            if row.object_type != crate::function_receipt::FUNCTION_COMMAND_TYPE {
                 continue;
             }
             let snapshot =

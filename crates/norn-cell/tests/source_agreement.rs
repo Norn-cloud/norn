@@ -16,6 +16,7 @@ use norn_cell::compute::QueryContext;
 use norn_cell::mapping_bundle::MappingInput;
 use norn_cell::source_agreement::{SourceDisagreementCount, SourceDisagreementCounts};
 use norn_cell::{CellStore, InstalledDefinitionInput, MAIN_WORLD, Model, SqliteCell, StoreOptions};
+use norn_checker::entity_scopes::ScopedView;
 use norn_checker::metric::compute::QuestionPlan;
 use norn_ir::{
     ArtifactEnvelope, DataQualityFindingStatus, DataQualityOutcome, InterfaceDef, LawRoot,
@@ -254,8 +255,7 @@ fn load(cell: &mut Cell, system: &str) {
 /// The derived "stock on hand as of each week" question over holdings.
 fn stock_plan() -> QuestionPlan {
     let space = norn_checker::metric::derive::derive_metric_space(
-        &fixture_artifacts(),
-        &BTreeSet::new(),
+        &ScopedView::uniform(&fixture_artifacts(), &BTreeSet::new()),
         &LawRoot::Entity("canon.Holding".to_owned()),
     )
     .expect("derived space");
@@ -538,7 +538,7 @@ fn the_analytics_engine_answers_and_counts_disagreements_as_the_exact_engine_doe
     let prepared = store
         .analytics_prepare(&plan, context(), &tenant)
         .expect("prepared");
-    let response = engine.evaluate(&prepared.request).expect("DuckDB answers");
+    let response = engine.evaluate(prepared.request()).expect("DuckDB answers");
     let mut answered = store
         .analytics_answer(prepared, response)
         .expect("the engine's answer");

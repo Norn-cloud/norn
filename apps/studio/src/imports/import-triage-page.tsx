@@ -7,7 +7,7 @@ import { FactStatusBadge } from "@/components/fact-status-badge"
 import { EmptyState, PageHeader } from "@/components/panel"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { type ActionReceipt } from "@/lib/actions"
+import { type ActionReceipt } from "../../../../packages/norn-sdk/src/index.ts"
 import type { CellResult } from "@/lib/cell-read"
 import { NO_DATA_CELL } from "@/lib/definitions"
 import { usePinnedScope } from "@/lib/session"
@@ -24,6 +24,7 @@ import {
   fetchImportTriage,
   fetchRequestedDecisionForReconciliation,
   fieldEditKey,
+  IMPORT_TRIAGE_QUERY_KEY as QUERY_KEY,
   IMPORT_TRIAGE_UNAVAILABLE,
   initialAliasDraft,
   initialSupersessionDraft,
@@ -61,8 +62,6 @@ import { AliasMatcher } from "./alias-matcher.tsx"
 import { SplitPaneReview } from "./split-pane-review.tsx"
 import { SupersessionDiffList } from "./supersession-diff.tsx"
 
-const QUERY_KEY = ["imports", "triage"] as const
-
 /** Unsent drafts, in-flight/queued promotion locks, and request outcomes scoped to one `batchId`. */
 interface BatchDraftState {
   readonly aliases: Readonly<Record<string, AliasDraftState>>
@@ -88,18 +87,7 @@ const EMPTY_BATCH_DRAFT: BatchDraftState = {
   supersessions: {},
 }
 
-/** Sidebar rail badge showing total open triage items awaiting operator review. */
-export function useImportTriageBadge(): number | undefined {
-  const read = useQuery({
-    queryKey: QUERY_KEY,
-    queryFn: () => fetchImportTriage(),
-    refetchInterval: 60_000,
-    retry: false,
-  })
-  if (read.data?.kind !== "ok") return undefined
-  const total = triageSummary(read.data.value).totalAttention
-  return total > 0 ? total : undefined
-}
+export { useImportTriageBadge } from "@/lib/nav-menus"
 
 /**
  * `/imports`: Dedicated domain-agnostic Split-Pane Import Triage surface (separate from DecisionSheet).

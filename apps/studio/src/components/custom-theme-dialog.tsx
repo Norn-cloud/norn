@@ -63,7 +63,7 @@ export function CustomThemeDialog({
       >
         <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
           <div>
-            <DialogTitle className="text-panel font-medium text-popover-foreground">Custom theme JSON</DialogTitle>
+            <DialogTitle className="text-body font-medium text-popover-foreground">Custom theme JSON</DialogTitle>
             <DialogDescription className="mt-0.5 text-xs text-muted-foreground">
               Override semantic tokens in JSON (VS Code / T3 Code style). Every theme is checked against WCAG AA contrast before applying.
             </DialogDescription>

@@ -7,6 +7,9 @@ use norn_ir::{
     WidgetNode, WidgetOverrideValue, WidgetUx,
 };
 
+use norn_checker::Diagnostic;
+use norn_checker::entity_scopes::ScopedView;
+
 use super::{ActionSurface, Usage, UxChecker};
 
 impl UxChecker<'_, '_, '_> {
@@ -173,9 +176,16 @@ impl UxChecker<'_, '_, '_> {
             &mut selected_stack,
             &mut selected_ids,
         );
-        let mut nested_findings = Vec::new();
-        let mut nested =
-            UxChecker::new(artifact, self.all, self.catalog, &ux, &mut nested_findings);
+        let nested_view = ScopedView::of(artifact, &[], self.all, self.registry);
+        let mut nested_findings = page_findings(artifact, &ux, page_id, &nested_view);
+        let mut nested = UxChecker::new(
+            artifact,
+            self.all,
+            nested_view.catalog(),
+            self.registry,
+            &ux,
+            &mut nested_findings,
+        );
         nested.enforce_effect_root = false;
         nested.composition_stack.clone_from(&self.composition_stack);
         nested.composition_stack.insert(identity);
@@ -391,4 +401,45 @@ fn collect_tree_semantic_ids(
     for child in &node.children {
         collect_tree_semantic_ids(all, ux, child, stack, out);
     }
+}
+
+/// The lifecycle composition and catalog findings of the composed page
+/// `page_id` of `widget`, and the declaration findings of the catalog
+/// entries it places, read under the composed widget's own scope and
+/// dependencies.
+fn page_findings(
+    widget: &ArtifactEnvelope,
+    ux: &WidgetUx,
+    page_id: &str,
+    view: &ScopedView<'_>,
+) -> Vec<Diagnostic> {
+    let Some(index) = ux.pages.iter().position(|page| page.page_id == page_id) else {
+        return Vec::new();
+    };
+    let names_lifecycle = ux.pages.get(index).is_some_and(|page| {
+        page.machine
+            .as_ref()
+            .is_some_and(|machine| machine.lifecycle.is_some())
+    });
+    let lifecycle = if names_lifecycle {
+        crate::ui_lifecycle::check(widget, ux, view.pool(), view.model())
+    } else {
+        Vec::new()
+    };
+    let composed =
+        |other: &norn_ir::WidgetArtifactRef| super::composed_ux(widget, view.pool(), other);
+    let prefix = format!("/payload/ux/pages/{index}/");
+    lifecycle
+        .into_iter()
+        .chain(crate::ui_catalog::check(widget, ux, &composed))
+        .filter(|finding| {
+            finding
+                .span
+                .as_ref()
+                .is_some_and(|span| span.pointer.starts_with(&prefix))
+        })
+        .chain(crate::ui_catalog::placed_entry_findings(
+            widget, ux, index, &composed,
+        ))
+        .collect()
 }

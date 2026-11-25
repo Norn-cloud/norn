@@ -25,8 +25,10 @@ use crate::store::{
 };
 use crate::system::{
     INBOX, LEDGER, LINK_CREATION, LINK_VERSIONS, MARKING_CURRENT, MARKING_OCCURRENCE,
-    MARKING_SNAPSHOT, MARKING_VERSION, OUTBOX, PENDING_LINK_INDEX, PERFORM_CLAIM, RECEIPT, RUN,
-    TIMER, VERSIONS, ensure_marking_subject, marking_subject,
+    MARKING_SNAPSHOT, MarkingSlot, MarkingTarget, OUTBOX, PENDING_LINK_INDEX, PERFORM_CLAIM,
+    RECEIPT, RUN, TIMER, VERSIONS, apply_sparse_declassification, ensure_marking_subject,
+    has_marking_snapshot, marking_subject, persist_sparse_marking_rows, query_marking_slot,
+    write_nonempty_marking_slot,
 };
 
 struct NamingCounterAttribution {
@@ -39,6 +41,9 @@ struct NamingCounterAttribution {
     period: String,
     current: u64,
 }
+
+/// Stored current-table property keys paired with their non-empty label sets.
+type CurrentMarkings = (BTreeSet<String>, BTreeMap<String, BTreeSet<String>>);
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -1124,13 +1129,14 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
     }
 
     fn clear_current_markings(&self, concrete: &str, key: &str) -> Result<(), CellError> {
-        let subject = marking_subject(self.conn, self.world, concrete, key)?;
-        self.conn.execute(
-            &format!(
-                "DELETE FROM \"{MARKING_CURRENT}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3"
-            ),
-            params![self.world, concrete, subject],
-        )?;
+        if let Some(subject) = marking_subject(self.conn, self.world, concrete, key)? {
+            self.conn.execute(
+                &format!(
+                    "DELETE FROM \"{MARKING_CURRENT}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3"
+                ),
+                params![self.world, concrete, subject],
+            )?;
+        }
         self.conn.execute(
             &format!(
                 "DELETE FROM \"{MARKING_SNAPSHOT}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3 AND \"is_current\" = 1"
@@ -1156,16 +1162,17 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
     /// Preserve the previous labels, add declarations from the effective
     /// model, and snapshot the result for this exact fact version. Labels are
     /// monotone on writes; only the dedicated declassification flow removes
-    /// them from the current table.
+    /// them from the current table. Under sparse markings (#1533), empty
+    /// slots are omitted while `_norn_marking_snapshot` records completeness.
     fn persist_marking_snapshot(
         &self,
         object_type: &str,
         key: &str,
         version: u64,
     ) -> Result<(), CellError> {
-        let subject = ensure_marking_subject(self.conn, self.world, object_type, key)?;
-        let fact_version = version;
-        let mut markings = self.current_markings(object_type, key)?;
+        let existing_subject = marking_subject(self.conn, self.world, object_type, key)?;
+        let (existing_current, mut markings) =
+            self.current_markings(object_type, existing_subject)?;
         let declared_markings = self.model.effective_property_markings(object_type)?;
 
         // Declassification changes only current visibility. A later fact
@@ -1175,7 +1182,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             match self.previous_markings(object_type, key, previous_version)? {
                 Some(previous) => {
                     for (property, labels) in previous {
-                        if declared_markings.contains_key(&property) {
+                        if !labels.is_empty() && declared_markings.contains_key(&property) {
                             markings.entry(property).or_default().extend(labels);
                         }
                     }
@@ -1195,64 +1202,43 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         }
 
         for (property, declared) in declared_markings {
-            markings.entry(property).or_default().extend(declared);
-        }
-        // Explicitly record public occurrences too, so a missing slot is
-        // distinguishable from a trusted empty classification.
-        markings
-            .entry(MARKING_OCCURRENCE.to_owned())
-            .or_default()
-            .extend(self.model.object_markings(object_type)?);
-        if let Some(previous_version) = version.checked_sub(1).filter(|previous| *previous != 0) {
-            let labels = self.previous_occurrence_markings(object_type, key, previous_version)?;
-            if !labels.is_empty() {
-                markings
-                    .entry(MARKING_OCCURRENCE.to_owned())
-                    .or_default()
-                    .extend(labels);
+            if !declared.is_empty() {
+                markings.entry(property).or_default().extend(declared);
             }
         }
-        for (property, labels) in markings {
-            let labels = labels.into_iter().collect::<Vec<_>>();
-            let encoded = serde_json::to_string(&labels).map_err(CellError::Json)?;
-            let version = to_i64(version, "marking snapshot version")?;
-            self.conn.execute(
-                &format!(
-                    "INSERT INTO \"{MARKING_CURRENT}\" (\"world\", \"object_type\", \"subject\", \"property\", \"version\", \"markings\") VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (\"world\", \"object_type\", \"subject\", \"property\") DO UPDATE SET \"version\" = excluded.\"version\", \"markings\" = excluded.\"markings\""
-                ),
-                params![self.world, object_type, subject, property, version, encoded],
-            )?;
-            self.conn.execute(
-                &format!(
-                    "INSERT INTO \"{MARKING_VERSION}\" (\"world\", \"object_type\", \"subject\", \"property\", \"version\", \"markings\") VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
-                ),
-                params![self.world, object_type, subject, property, version, encoded],
-            )?;
+        let mut occurrence = self.model.object_markings(object_type)?;
+        if let Some(previous_version) = version.checked_sub(1).filter(|previous| *previous != 0) {
+            occurrence.extend(self.previous_occurrence_markings(
+                object_type,
+                key,
+                previous_version,
+            )?);
         }
-        let version = to_i64(version, "marking snapshot version")?;
-        self.conn.execute(
-            &format!(
-                "DELETE FROM \"{MARKING_SNAPSHOT}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3 AND \"is_current\" = 1"
-            ),
-            params![self.world, object_type, key],
-        )?;
-        self.conn.execute(
-            &format!(
-                "INSERT INTO \"{MARKING_SNAPSHOT}\" (\"world\", \"object_type\", \"id\", \"version\", \"is_current\") VALUES (?1, ?2, ?3, ?4, 1)"
-            ),
-            params![self.world, object_type, key, version],
-        )?;
-        self.conn.execute(
-            &format!(
-                "INSERT INTO \"{MARKING_SNAPSHOT}\" (\"world\", \"object_type\", \"id\", \"version\", \"is_current\") VALUES (?1, ?2, ?3, ?4, 0)"
-            ),
-            params![self.world, object_type, key, version],
+        if !occurrence.is_empty() {
+            markings
+                .entry(MARKING_OCCURRENCE.to_owned())
+                .or_default()
+                .extend(occurrence);
+        }
+        markings.retain(|_, labels| !labels.is_empty());
+        let target = MarkingTarget {
+            world: self.world,
+            object_type,
+            key,
+            version: to_i64(version, "marking snapshot version")?,
+        };
+        persist_sparse_marking_rows(
+            self.conn,
+            &target,
+            existing_subject,
+            &existing_current,
+            &markings,
         )?;
         // Classify each exact live version before later mutations replace its provenance.
         if self
             .reader()
             .root_row(self.world, object_type, key)?
-            .is_some_and(|(_, _, live_version)| live_version == fact_version)
+            .is_some_and(|(_, _, live_version)| live_version == version)
         {
             self.apply_record_value_provenance_markings(object_type, key, true)?;
         }
@@ -1262,25 +1248,30 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
     fn current_markings(
         &self,
         object_type: &str,
-        key: &str,
-    ) -> Result<BTreeMap<String, BTreeSet<String>>, CellError> {
-        let subject = marking_subject(self.conn, self.world, object_type, key)?;
+        subject: Option<i64>,
+    ) -> Result<CurrentMarkings, CellError> {
+        let Some(subject) = subject else {
+            return Ok((BTreeSet::new(), BTreeMap::new()));
+        };
         let rows = self.conn.query(
             &format!(
                 "SELECT \"property\", \"markings\" FROM \"{MARKING_CURRENT}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3 ORDER BY \"property\""
             ),
             params![self.world, object_type, subject],
         )?;
-        rows.into_iter()
-            .map(|row| {
-                let row = SqlRow(row);
-                let property: String = row.get(0)?;
-                let encoded: String = row.get(1)?;
-                let labels: Vec<String> =
-                    serde_json::from_str(&encoded).map_err(CellError::Json)?;
-                Ok((property, labels.into_iter().collect()))
-            })
-            .collect()
+        let mut stored = BTreeSet::new();
+        let mut markings = BTreeMap::new();
+        for row in rows {
+            let row = SqlRow(row);
+            let property: String = row.get(0)?;
+            let encoded: String = row.get(1)?;
+            let labels: Vec<String> = serde_json::from_str(&encoded).map_err(CellError::Json)?;
+            stored.insert(property.clone());
+            if !labels.is_empty() {
+                markings.insert(property, labels.into_iter().collect());
+            }
+        }
+        Ok((stored, markings))
     }
 
     /// Writes computed from consumed source records alone, with their markings.
@@ -1906,21 +1897,33 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                 CellError::Engine("emitted version lacks complete marking snapshot".to_owned())
             })?;
         labels.extend(inherited.iter().cloned());
-        let subject = marking_subject(self.conn, self.world, object_type, key)?;
+        let subject = ensure_marking_subject(self.conn, self.world, object_type, key)?;
         let encoded = serde_json::to_string(&labels).map_err(CellError::Json)?;
-        let version = to_i64(version, "marking snapshot version")?;
-        self.conn.execute(
-            &format!(
-                "INSERT INTO \"{MARKING_VERSION}\" (\"world\", \"object_type\", \"subject\", \"property\", \"version\", \"markings\") VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (\"world\", \"object_type\", \"subject\", \"property\", \"version\") DO UPDATE SET \"markings\" = excluded.\"markings\""
-            ),
-            params![self.world, object_type, subject, MARKING_OCCURRENCE, version, encoded],
+        let version_sql = to_i64(version, "marking snapshot version")?;
+        let target = MarkingTarget {
+            world: self.world,
+            object_type,
+            key,
+            version: version_sql,
+        };
+        write_nonempty_marking_slot(
+            self.conn,
+            false,
+            &target,
+            subject,
+            MARKING_OCCURRENCE,
+            &encoded,
         )?;
-        self.conn.execute(
-            &format!(
-                "INSERT INTO \"{MARKING_CURRENT}\" (\"world\", \"object_type\", \"subject\", \"property\", \"version\", \"markings\") VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (\"world\", \"object_type\", \"subject\", \"property\") DO UPDATE SET \"version\" = excluded.\"version\", \"markings\" = excluded.\"markings\""
-            ),
-            params![self.world, object_type, subject, MARKING_OCCURRENCE, version, encoded],
-        )?;
+        if has_marking_snapshot(self.conn, self.world, object_type, key, version_sql, true)? {
+            write_nonempty_marking_slot(
+                self.conn,
+                true,
+                &target,
+                subject,
+                MARKING_OCCURRENCE,
+                &encoded,
+            )?;
+        }
         Ok(())
     }
 
@@ -2299,7 +2302,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                 || object_type == "norn.ConnectorPollApplyCursor"
                 || object_type == "norn.ConnectorPollConflict"
                 || object_type == "norn.ScimResource"
-                || object_type == "norn.FunctionCommand"
+                || object_type == crate::function_receipt::FUNCTION_COMMAND_TYPE
                 || object_type == "norn.SweepCursor"
                 || object_type == "norn.PendingLinks"
                 || object_type == norn_kernel::NAMING_SERIES_COUNTER_TYPE)
@@ -2324,7 +2327,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                 // A trigger/read set authenticates its own inputs, not arbitrary
                 // caller-supplied siblings in the complete RuleRun detail.
                 "norn.RuleRun" => unknown_lineage(),
-                "norn.FunctionCommand" => {
+                crate::function_receipt::FUNCTION_COMMAND_TYPE => {
                     // Reconciliation state contains only typed generation,
                     // count and receipt metadata. Dispatch and result inputs
                     // have already classified it in this transaction.
@@ -2350,7 +2353,7 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                                     .get("payload")
                                     .and_then(|payload| payload.get("type"))
                                     .and_then(Value::as_str)
-                                    == Some("norn.function/v1")
+                                    == Some(crate::function_receipt::FUNCTION_PAYLOAD_TYPE)
                         })
                     });
                     if state.is_some()
@@ -2644,38 +2647,44 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         version: u64,
         additions: &BTreeSet<String>,
     ) -> Result<(), CellError> {
-        let subject = marking_subject(self.conn, self.world, object_type, key)?;
-        let current: Option<String> = self.conn.query_optional(
-            &format!(
-                "SELECT \"markings\" FROM \"{MARKING_VERSION}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3 AND \"property\" = ?4 AND \"version\" = ?5"
-            ),
-            params![self.world, object_type, subject, property, to_i64(version, "marking snapshot version")?],
-            |row| row.get(0),
-        )?;
-        let mut labels: BTreeSet<String> = current
+        let version_sql = to_i64(version, "marking snapshot version")?;
+        if !self
+            .model
+            .effective_property_markings(object_type)?
+            .contains_key(property)
+            || !has_marking_snapshot(self.conn, self.world, object_type, key, version_sql, false)?
+        {
+            return Err(CellError::MarkingDeclassificationInvalid(format!(
+                "mapping provenance names unknown property `{object_type}.{property}`"
+            )));
+        }
+        if additions.is_empty() {
+            return Ok(());
+        }
+        let subject = ensure_marking_subject(self.conn, self.world, object_type, key)?;
+        let target = MarkingTarget {
+            world: self.world,
+            object_type,
+            key,
+            version: version_sql,
+        };
+        let slot = MarkingSlot {
+            world: self.world,
+            object_type,
+            subject,
+            property,
+            version: version_sql,
+        };
+        let mut labels: BTreeSet<String> = query_marking_slot(self.conn, false, &slot)?
             .map(|encoded| serde_json::from_str(&encoded).map_err(CellError::Json))
             .transpose()?
-            .ok_or_else(|| {
-                CellError::MarkingDeclassificationInvalid(format!(
-                    "mapping provenance names unknown property `{object_type}.{property}`"
-                ))
-            })?;
+            .unwrap_or_default();
         labels.extend(additions.iter().cloned());
-        let labels = labels.into_iter().collect::<Vec<_>>();
         let encoded = serde_json::to_string(&labels).map_err(CellError::Json)?;
-        let version = to_i64(version, "marking snapshot version")?;
-        self.conn.execute(
-            &format!(
-                "UPDATE \"{MARKING_CURRENT}\" SET \"markings\" = ?1 WHERE \"world\" = ?2 AND \"object_type\" = ?3 AND \"subject\" = ?4 AND \"property\" = ?5 AND \"version\" = ?6"
-            ),
-            params![encoded, self.world, object_type, subject, property, version],
-        )?;
-        self.conn.execute(
-            &format!(
-                "UPDATE \"{MARKING_VERSION}\" SET \"markings\" = ?1 WHERE \"world\" = ?2 AND \"object_type\" = ?3 AND \"subject\" = ?4 AND \"property\" = ?5 AND \"version\" = ?6"
-            ),
-            params![encoded, self.world, object_type, subject, property, version],
-        )?;
+        write_nonempty_marking_slot(self.conn, false, &target, subject, property, &encoded)?;
+        if has_marking_snapshot(self.conn, self.world, object_type, key, version_sql, true)? {
+            write_nonempty_marking_slot(self.conn, true, &target, subject, property, &encoded)?;
+        }
         Ok(())
     }
 
@@ -2772,58 +2781,30 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
                 actual: (actual != 0).then_some(actual),
             });
         }
-        let subject = marking_subject(self.conn, self.world, &change.object_type, &change.key)?;
-        let current: Option<String> = self.conn.query_optional(
-            &format!(
-                "SELECT \"markings\" FROM \"{MARKING_CURRENT}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3 AND \"property\" = ?4 AND \"version\" = ?5"
-            ),
-            params![
-                self.world,
-                change.object_type,
-                subject,
-                change.property,
-                to_i64(change.expected_version, "marking snapshot version")?,
-            ],
-            |row| row.get(0),
-        )?;
-        let mut labels: BTreeSet<String> = current
-            .map(|encoded| serde_json::from_str(&encoded).map_err(CellError::Json))
-            .transpose()?
-            .ok_or_else(|| {
-                CellError::MarkingDeclassificationInvalid(
-                    "the current property marking snapshot is unavailable".to_owned(),
-                )
-            })?;
-        let distinct: BTreeSet<_> = change.markings.iter().collect();
-        if distinct.len() != change.markings.len()
-            || change
-                .markings
-                .iter()
-                .any(|marking| !labels.contains(marking))
+        let target = MarkingTarget {
+            world: self.world,
+            object_type: &change.object_type,
+            key: &change.key,
+            version: to_i64(change.expected_version, "marking snapshot version")?,
+        };
+        if !self
+            .model
+            .effective_property_markings(target.object_type)?
+            .contains_key(&change.property)
+            || !has_marking_snapshot(
+                self.conn,
+                target.world,
+                target.object_type,
+                target.key,
+                target.version,
+                true,
+            )?
         {
             return Err(CellError::MarkingDeclassificationInvalid(
-                "a requested marking is duplicated or is not effective on the property".to_owned(),
+                "the current property marking snapshot is unavailable".to_owned(),
             ));
         }
-        for marking in &change.markings {
-            labels.remove(marking);
-        }
-        let labels = serde_json::to_string(&labels.into_iter().collect::<Vec<_>>())
-            .map_err(CellError::Json)?;
-        self.conn.execute(
-            &format!(
-                "UPDATE \"{MARKING_CURRENT}\" SET \"markings\" = ?1 WHERE \"world\" = ?2 AND \"object_type\" = ?3 AND \"subject\" = ?4 AND \"property\" = ?5 AND \"version\" = ?6"
-            ),
-            params![
-                labels,
-                self.world,
-                change.object_type,
-                subject,
-                change.property,
-                to_i64(change.expected_version, "marking snapshot version")?,
-            ],
-        )?;
-        Ok(())
+        apply_sparse_declassification(self.conn, &target, &change.property, &change.markings)
     }
 
     fn set(

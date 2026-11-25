@@ -19,6 +19,9 @@ use duckdb::{Connection, params_from_iter};
 use serde_json::value::RawValue;
 use transparency_sha2::{Digest as _, Sha256};
 
+pub use super::backend::StoreBody;
+use super::backend::{AnalyticalEngineId, ReadSnapshot, SnapshotProvenance};
+use super::store_body::{legacy_land_response, legacy_store_request};
 use super::{
     BucketTotals, Column, ColumnKind, ColumnProfile, EngineRefusal, EvaluateRequest,
     EvaluateResponse, ExportFormat, ExportRequest, FileFormat, Filter, FrontierRequest,
@@ -167,111 +170,6 @@ struct RecordedStore {
     version: StoreReceiptVersion,
     request: Box<RawValue>,
     response: Box<RawValue>,
-}
-
-/// A store body from either the current cell or a cell replaying a
-/// pre-law store. Legacy bodies can only replay a legacy receipt.
-#[derive(serde::Deserialize)]
-#[serde(try_from = "Box<RawValue>")]
-pub struct StoreBody {
-    request: StoreRequest,
-    legacy: bool,
-}
-
-impl StoreBody {
-    /// The decoded request, including the scope and object digests.
-    #[must_use]
-    pub fn request(&self) -> &StoreRequest {
-        &self.request
-    }
-}
-
-impl TryFrom<Box<RawValue>> for StoreBody {
-    type Error = serde_json::Error;
-
-    fn try_from(body: Box<RawValue>) -> Result<Self, Self::Error> {
-        match serde_json::from_str(body.get()) {
-            Ok(request) => Ok(Self {
-                request,
-                legacy: false,
-            }),
-            Err(error) => legacy_store_request(&body)
-                .map(|request| Self {
-                    request,
-                    legacy: true,
-                })
-                .map_err(|_old_shape_error| error),
-        }
-    }
-}
-
-// This is the original receipt contract. A versioned receipt is decoded
-// directly into the current types, with all its required fields intact.
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct LegacyLanding {
-    load: LoadRequest,
-    pins: crate::dataset_manifest::ManifestPins,
-    #[serde(default)]
-    landing: String,
-    #[serde(default)]
-    attempt: String,
-}
-
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct LegacyLandingAnswer {
-    landing: String,
-    attempt: String,
-    load: LoadResponse,
-    data: LandedFile,
-    held: LandedFile,
-    valid_time: Vec<ValidRange>,
-    stored: Option<String>,
-}
-
-impl From<LegacyLandingAnswer> for LandResponse {
-    fn from(old: LegacyLandingAnswer) -> Self {
-        Self {
-            landing: old.landing,
-            attempt: old.attempt,
-            load: old.load,
-            data: Some(old.data),
-            held: Some(old.held),
-            valid_time: old.valid_time,
-            stored: old.stored,
-            findings: BTreeMap::new(),
-            held_by_rules: 0,
-            residue_total: 0,
-            residue: Vec::new(),
-        }
-    }
-}
-
-#[derive(serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LegacyStore {
-    land: LegacyLanding,
-    landed: LegacyLandingAnswer,
-    data: super::StoredObject,
-    held: super::StoredObject,
-}
-
-fn legacy_store_request(raw: &RawValue) -> serde_json::Result<StoreRequest> {
-    let old: LegacyStore = serde_json::from_str(raw.get())?;
-    Ok(StoreRequest {
-        land: LandRequest {
-            load: old.land.load,
-            pins: old.land.pins,
-            landing: old.land.landing,
-            attempt: old.land.attempt,
-            checks: Vec::new(),
-            residue_page: RESIDUE_PAGE_ROWS,
-        },
-        landed: old.landed.into(),
-        data: old.data,
-        held: old.held,
-    })
 }
 
 struct StoreAnswer {
@@ -637,11 +535,12 @@ impl Engine {
     pub fn frontier(&self, request: &FrontierRequest) -> Outcome<FrontierResponse> {
         self.with(&request.tenant, |conn| {
             let mut stale = meta(conn, "links")?.unwrap_or_default() != request.links.join("\n");
+            stale |= meta(conn, "model_pin")?.as_deref() != Some(&request.model_pin);
             for table in &request.tables {
                 stale |= meta(conn, &format!("pin:{}", table.name))?.as_deref() != Some(&table.pin);
             }
             if stale {
-                reset_mirror(conn, &request.tables, &request.links)?;
+                reset_mirror(conn, &request.tables, &request.links, &request.model_pin)?;
             }
             let frontier = meta(conn, &format!("frontier:{}", request.world))?
                 .and_then(|v| v.parse().ok())
@@ -654,7 +553,8 @@ impl Engine {
     ///
     /// # Errors
     /// `analytics.frontier_moved` when the batch does not continue the
-    /// mirror's frontier, or an unknown table.
+    /// mirror's frontier, a batch encoded under another model or table schema
+    /// than the mirror holds (`core.compute.stale_input`), or an unknown table.
     pub fn sync(&self, request: &SyncRequest) -> Outcome<FrontierResponse> {
         self.with(&request.tenant, |conn| {
             let key = format!("frontier:{}", request.world);
@@ -664,6 +564,17 @@ impl Engine {
                     "analytics.frontier_moved",
                     format!("the mirror is at {current}"),
                 ));
+            }
+            let mut same = meta(conn, "model_pin")?.as_deref() == Some(request.model_pin.as_str())
+                && request
+                    .rows
+                    .iter()
+                    .all(|row| request.schema_pins.contains_key(&row.table));
+            for (table, pin) in &request.schema_pins {
+                same &= meta(conn, &format!("pin:{table}"))?.as_deref() == Some(pin.as_str());
+            }
+            if !same {
+                return Err(refusal(STALE, "the batch is of another mirror generation"));
             }
             db(conn.execute_batch("BEGIN TRANSACTION"))?;
             let applied = apply_sync(conn, request)
@@ -688,7 +599,7 @@ impl Engine {
     /// mirror has not reached (`analytics.frontier_behind`), or a stale load.
     pub fn evaluate(&self, request: &EvaluateRequest) -> Outcome<EvaluateResponse> {
         self.with(&request.tenant, |conn| {
-            let scope = Scope::new(conn, &request.source)?;
+            let scope = Scope::new(conn, &request.source, Some(&request.model_pin))?;
             let (cell, bad) = match &request.source {
                 Source::Mirror { scope, .. } => (
                     Frag::bind("\":scope\" <> ?", Sql::Text(scope.clone())),
@@ -755,6 +666,7 @@ impl Engine {
                 excluded,
                 buckets,
                 unlinked,
+                provenance: scope.provenance(&request.tenant),
             })
         })
     }
@@ -765,7 +677,7 @@ impl Engine {
     /// As [`Self::evaluate`].
     pub fn members(&self, request: &MembersRequest) -> Outcome<MembersResponse> {
         self.with(&request.tenant, |conn| {
-            let scope = Scope::new(conn, &request.source)?;
+            let scope = Scope::new(conn, &request.source, None)?;
             let projection = Projection::build(&request.query, &scope)?;
             let members = projection.page(
                 conn,
@@ -1087,11 +999,11 @@ impl Engine {
         body: &StoreBody,
         send: impl FnOnce(&Path, &Path) -> Outcome<()>,
     ) -> Outcome<Box<RawValue>> {
-        let result = if body.legacy {
-            self.replayed(&body.request, true)?
+        let result = if body.is_legacy() {
+            self.replayed(body.request(), true)?
                 .ok_or_else(|| refusal(ATTEMPT_UNKNOWN, "the legacy receipt does not exist"))?
         } else {
-            self.store_answer(&body.request, send)?
+            self.store_answer(body.request(), send)?
         };
         result.recorded.map_or_else(
             || {
@@ -1280,9 +1192,7 @@ impl Engine {
             return Err(refusal(STALE, "the store is another request's"));
         }
         let answer = if matches!(receipt.version, StoreReceiptVersion::Unversioned) {
-            serde_json::from_str::<LegacyLandingAnswer>(receipt.response.get())
-                .map_err(decode_error)?
-                .into()
+            legacy_land_response(&receipt.response).map_err(decode_error)?
         } else {
             serde_json::from_str(receipt.response.get()).map_err(decode_error)?
         };
@@ -1301,7 +1211,7 @@ impl Engine {
     /// An unknown column, a comparison its kind does not take, or a stale source.
     pub fn page(&self, request: &PageRequest) -> Outcome<PageResponse> {
         self.with(&request.tenant, |conn| {
-            let scope = Scope::new(conn, &request.source)?;
+            let scope = Scope::new(conn, &request.source, None)?;
             let mut conditions = vec![scope.population.clone()];
             if !request.ids.is_empty() {
                 conditions.push(Frag::fmt("\":id\" IN ({})", &[&id_list(&request.ids)]));
@@ -1397,7 +1307,8 @@ impl Engine {
     /// An unknown column or a stale source.
     pub fn profile(&self, request: &ProfileRequest) -> Outcome<ProfileResponse> {
         self.with(&request.tenant, |conn| {
-            let scope = Scope::new(conn, &request.source)?;
+            let scope = Scope::new(conn, &request.source, Some(&request.model_pin))?;
+            scope.verify_mirror_rows(conn, &request.source)?;
             let rows = query_u64(
                 conn,
                 &Frag::fmt(
@@ -1416,6 +1327,7 @@ impl Engine {
                 rows,
                 quarantined,
                 columns,
+                provenance: scope.provenance(&request.tenant),
             })
         })
     }
@@ -1441,7 +1353,7 @@ impl Engine {
             .map_err(|error| refusal("analytics.engine", error.to_string()))?
             .join(name);
         self.with(&request.tenant, |conn| {
-            let scope = Scope::new(conn, &request.source)?;
+            let scope = Scope::new(conn, &request.source, None)?;
             let mut select = vec![
                 format!("{} AS id", ident(":id")),
                 format!("{} AS version", ident(":v")),
@@ -1505,7 +1417,12 @@ fn set_meta(conn: &Connection, key: &str, value: &str) -> Outcome<()> {
     Ok(())
 }
 
-fn reset_mirror(conn: &Connection, tables: &[TableSchema], links: &[String]) -> Outcome<()> {
+fn reset_mirror(
+    conn: &Connection,
+    tables: &[TableSchema],
+    links: &[String],
+    model_pin: &str,
+) -> Outcome<()> {
     db(conn.execute_batch("BEGIN TRANSACTION"))?;
     let reset = (|| {
         let mut statement = db(conn.prepare(
@@ -1517,7 +1434,7 @@ fn reset_mirror(conn: &Connection, tables: &[TableSchema], links: &[String]) -> 
             db(conn.execute_batch(&format!("DROP TABLE {}", ident(&name))))?;
         }
         db(conn.execute_batch(
-            "DELETE FROM \":meta\" WHERE key LIKE 'frontier:%' OR key LIKE 'pin:%'",
+            "DELETE FROM \":meta\" WHERE key LIKE 'frontier:%' OR key LIKE 'pin:%' OR key = 'model_pin'",
         ))?;
         for table in tables {
             let columns: Vec<String> = table.columns.iter().map(column_ddl).collect();
@@ -1559,6 +1476,7 @@ fn reset_mirror(conn: &Connection, tables: &[TableSchema], links: &[String]) -> 
             )))?;
         }
         set_meta(conn, "links", &links.join("\n"))?;
+        set_meta(conn, "model_pin", model_pin)?;
         Ok(())
     })();
     match reset {
@@ -1810,18 +1728,20 @@ struct Scope {
     at: Option<(String, u64)>,
     /// At a knowledge cutoff, the model every version read must be of.
     model: Option<String>,
+    /// The snapshot this scope reads, as an answer names it.
+    read: ReadSnapshot,
 }
 
 impl Scope {
-    fn new(conn: &Connection, source: &Source) -> Outcome<Self> {
+    fn new(conn: &Connection, source: &Source, expected_model_pin: Option<&str>) -> Outcome<Self> {
         match source {
             Source::Mirror {
                 world,
                 table,
                 frontier,
+                scope,
                 excluded,
                 model,
-                ..
             } => {
                 let reached: u64 = meta(conn, &format!("frontier:{world}"))?
                     .and_then(|v| v.parse().ok())
@@ -1833,6 +1753,9 @@ impl Scope {
                     ));
                 }
                 let schema = schema_of(conn, &format!("schema:{table}"))?;
+                let model_pin = meta(conn, "model_pin")?
+                    .filter(|pin| expected_model_pin.is_none_or(|expected| pin == expected))
+                    .ok_or_else(|| refusal(STALE, "the mirror is of another model"))?;
                 let at = Frag::bind("?", Sql::UBigInt(*frontier));
                 let all = Frag::fmt(
                     "(\":w\" = {} AND \":from\" <= {} AND (\":to\" IS NULL OR \":to\" > {}))",
@@ -1849,13 +1772,21 @@ impl Scope {
                 );
                 Ok(Self {
                     table: mirror_table(table),
-                    columns: schema.columns,
                     all,
                     population,
                     versions: Some(versions),
                     excluded: excluded.clone(),
                     at: Some((world.clone(), *frontier)),
                     model: model.clone(),
+                    read: ReadSnapshot::Mirror {
+                        world: world.clone(),
+                        table: table.clone(),
+                        frontier: *frontier,
+                        scope: scope.clone(),
+                        model_pin,
+                        schema_pin: schema.pin,
+                    },
+                    columns: schema.columns,
                 })
             }
             Source::Dataset { table, load } => {
@@ -1879,8 +1810,52 @@ impl Scope {
                     excluded: Vec::new(),
                     at: None,
                     model: None,
+                    read: ReadSnapshot::Dataset {
+                        table: table.clone(),
+                        load: load.clone(),
+                    },
                 })
             }
+        }
+    }
+
+    /// Enforce mirror row scope and model pin on non-question reads (`profile`),
+    /// matching [`Engine::evaluate`].
+    fn verify_mirror_rows(&self, conn: &Connection, source: &Source) -> Outcome<()> {
+        let Source::Mirror { scope, .. } = source else {
+            return Ok(());
+        };
+        let other_scope = Frag::fmt(
+            &format!(
+                "SELECT count(*) FROM {} WHERE {{}} AND \":scope\" <> {{}}",
+                self.table
+            ),
+            &[&self.all, &Frag::bind("?", Sql::Text(scope.clone()))],
+        );
+        if query_u64(conn, &other_scope)? > 0 {
+            return Err(refusal(STALE, "a row of another scope"));
+        }
+        if let Some(model) = &self.model {
+            let other_model = Frag::fmt(
+                &format!(
+                    "SELECT count(*) FROM {} WHERE {{}} AND \":model\" <> {{}}",
+                    self.table
+                ),
+                &[&self.all, &Frag::bind("?", Sql::Text(model.clone()))],
+            );
+            if query_u64(conn, &other_model)? > 0 {
+                return Err(refusal(UNSUPPORTED, "a version of another model"));
+            }
+        }
+        Ok(())
+    }
+
+    fn provenance(&self, tenant: &TenantId) -> SnapshotProvenance {
+        SnapshotProvenance {
+            engine: AnalyticalEngineId::DuckDb,
+            tenant: tenant.clone(),
+            snapshot: self.read.clone(),
+            freshness: crate::compute::Freshness::Exact,
         }
     }
 

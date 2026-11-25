@@ -534,7 +534,7 @@ function CasesPageContent() {
       </Tabs>
 
       <Sheet open={openedCaseId !== null} onOpenChange={(open) => { if (!open) setOpenedCaseId(null) }}>
-        <SheetContent className="w-[min(34rem,100vw)] overflow-y-auto border-node-border shadow-float sm:max-w-lg">
+        <SheetContent className="overflow-y-auto">
           {openedCaseId !== null && (
             liveCaseRow?.kind === "ok" ? (
               <>

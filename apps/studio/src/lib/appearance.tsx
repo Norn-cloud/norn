@@ -17,9 +17,9 @@ import {
 export type Skin = "polar" | "open" | "luma" | "glass"
 
 /**
- * Swappable chrome layout applied to the shell (`data-shell`).
- * - `sidebar`: collapsible Spaces sidebar and navigation rail (default).
- * - `dock`: full-bleed open canvas with a centered floating dark pill dock at the bottom.
+ * Swappable chrome layout applied to the shell (`data-shell`), DESIGN.md section 9.
+ * - `sidebar`: the thin source-list sidebar, always the default.
+ * - `dock`: the floating dark pill dock, opt-in only, for kiosk or mobile-first surfaces an app chooses.
  */
 export type ShellChrome = "sidebar" | "dock"
 
@@ -40,7 +40,7 @@ export const SHELLS: readonly {
   readonly label: string
   readonly detail: string
 }[] = [
-  { id: "sidebar", label: "Sidebar", detail: "Spaces sidebar and rail" },
+  { id: "sidebar", label: "Sidebar", detail: "Thin source-list sidebar" },
   { id: "dock", label: "Floating dock", detail: "Full-bleed canvas with bottom dock" },
 ]
 
@@ -53,22 +53,26 @@ export const isSkin = (value: unknown): value is Skin =>
 export const isShellChrome = (value: unknown): value is ShellChrome =>
   value === "sidebar" || value === "dock"
 
-/** The skin kept from the last visit, else the monochrome Polar default. */
-export function storedSkin(): Skin {
+/** The skin kept from the last visit, else the surface's default, else the monochrome Polar default. */
+export function storedSkin(surfaceDefault: Skin = "polar"): Skin {
   try {
     const kept = globalThis.localStorage?.getItem(SKIN_KEY)
     if (isSkin(kept)) return kept
   } catch { /* storage blocked: fall through */ }
-  return "polar"
+  return surfaceDefault
 }
 
-/** The shell chrome kept from the last visit, else the sidebar workbench. */
-export function storedShellChrome(): ShellChrome {
+/**
+ * The shell chrome: the reader's choice kept from the last visit, else the surface's own default
+ * (an app may opt a kiosk or mobile-first surface into the dock), else the sidebar. A reader's stored
+ * choice always wins over a default, including a surface's dock opt-in (lead ruling, 2026-11-25).
+ */
+export function storedShellChrome(surfaceDefault: ShellChrome = "sidebar"): ShellChrome {
   try {
     const kept = globalThis.localStorage?.getItem(SHELL_KEY)
     if (isShellChrome(kept)) return kept
   } catch { /* storage blocked: fall through */ }
-  return "sidebar"
+  return surfaceDefault
 }
 
 /** Resolve OS dark-mode preference when no custom theme forces an explicit appearance. */
@@ -136,8 +140,9 @@ export function AppearanceProvider({
   readonly initialShell?: ShellChrome
   readonly initialCustomTheme?: StudioTheme | null
 }) {
-  const [skin, setSkinState] = useState<Skin>(() => initialSkin ?? storedSkin())
-  const [shell, setShellState] = useState<ShellChrome>(() => initialShell ?? storedShellChrome())
+  // `initialSkin` and `initialShell` are the surface's defaults; the reader's stored choice wins over them.
+  const [skin, setSkinState] = useState<Skin>(() => storedSkin(initialSkin))
+  const [shell, setShellState] = useState<ShellChrome>(() => storedShellChrome(initialShell))
   const [customTheme, setCustomThemeState] = useState<StudioTheme | null>(
     () => (initialCustomTheme !== undefined ? initialCustomTheme : storedCustomTheme()),
   )

@@ -21,7 +21,8 @@ import {
  * backend learning-pack lane pins it with route-produced fixtures.
  */
 
-export const EPISODE_TYPE = "learning.Episode"
+import { EPISODE_TYPE } from "./resource-names.ts"
+export { EPISODE_TYPE }
 
 export type Agreement = "accepted" | "edited" | "overridden" | "none"
 export type Lifecycle = "candidate" | "shadow" | "active" | "retired"

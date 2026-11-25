@@ -9,7 +9,7 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
     >
       <table
         data-slot="table"
-        className={cn("w-full caption-bottom text-sm", className)}
+        className={cn("w-full caption-bottom text-body", className)}
         {...props}
       />
     </div>
@@ -41,7 +41,7 @@ function TableFooter({ className, ...props }: React.ComponentProps<"tfoot">) {
     <tfoot
       data-slot="table-footer"
       className={cn(
-        "border-t bg-surface-subtle/80 font-medium [&>tr]:last:border-b-0",
+        "border-t bg-surface-subtle/80 [&>tr]:last:border-b-0",
         className
       )}
       {...props}
@@ -67,7 +67,7 @@ function TableHead({ className, ...props }: React.ComponentProps<"th">) {
     <th
       data-slot="table-head"
       className={cn(
-        "h-9 px-3.5 text-start align-middle text-xs font-medium tracking-[0.01em] whitespace-nowrap text-muted-foreground [&:has([role=checkbox])]:pe-0",
+        "h-9 px-3.5 text-start align-middle text-meta font-normal tracking-[0.01em] whitespace-nowrap text-muted-foreground [&:has([role=checkbox])]:pe-0",
         className
       )}
       {...props}
@@ -95,7 +95,7 @@ function TableCaption({
   return (
     <caption
       data-slot="table-caption"
-      className={cn("mt-4 text-sm text-muted-foreground", className)}
+      className={cn("mt-4 text-body text-muted-foreground", className)}
       {...props}
     />
   )

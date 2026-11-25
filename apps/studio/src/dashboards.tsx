@@ -267,7 +267,7 @@ export function DashboardEditor({ store, catalog, stored, guard, onSaved, onRelo
       </div>
       <Button type="button" variant="outline" size="sm" onClick={() => setEditing("new")}><Plus />Add question</Button>
       <Sheet open={editing !== undefined} onOpenChange={(next) => { if (!next) setEditing(undefined) }}>
-        <SheetContent className="w-full overflow-y-auto sm:max-w-4xl">
+        <SheetContent className="overflow-y-auto data-[side=right]:w-[56rem]">
           <SheetHeader>
             <SheetTitle>{open ? `Edit "${questionTitle(open)}"` : "Add a question"}</SheetTitle>
             <SheetDescription>The server's checker must admit the question before it joins the dashboard.</SheetDescription>

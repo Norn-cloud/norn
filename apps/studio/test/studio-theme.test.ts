@@ -3,6 +3,7 @@ import { applyAppearance } from "../src/lib/appearance.tsx"
 import {
   STUDIO_THEME_PRESETS,
   applyCustomTheme,
+  effectiveThemePalette,
   exportStudioThemeJson,
   parseStudioTheme,
   resolveCustomThemeTokens,
@@ -237,5 +238,145 @@ test("exportStudioThemeJson produces valid WCAG-AA StudioTheme JSON for every bu
     const raw = exportStudioThemeJson(skin, null)
     const parsed = parseStudioTheme(raw)
     expect(parsed.ok, `${skin} export should validate: ${JSON.stringify(parsed.issues)}`).toBe(true)
+  }
+})
+
+// #1705: every built-in skin, unchanged, passes the gate it applies to custom themes.
+test("every built-in skin passes the rendered-pair contrast gate in light and dark", () => {
+  for (const baseSkin of ["polar", "open", "luma", "glass"] as const) {
+    expect(validateStudioThemeContrast({ version: 1, name: baseSkin, baseSkin }), baseSkin).toEqual([])
+  }
+})
+
+// #1705: the gate reads the colours index.css paints, not a hand-kept copy.
+test("the gate validates the rendered palette: dark Luma hover is index.css's #695ff0", () => {
+  expect(effectiveThemePalette({ version: 1, name: "Luma", baseSkin: "luma" }, "dark")["action-hover"]).toBe("#695ff0")
+  expect(effectiveThemePalette({ version: 1, name: "Polar", baseSkin: "polar" }, "dark")["dock-ring"]).toBe("#e4e4e7")
+})
+
+// #1705: pairs the old gate missed.
+test("the gate catches white initials on a white dock-active and foregrounds lost on surface-subtle", () => {
+  const dock = parseStudioTheme({ version: 1, name: "White dock", colors: { "dock-active": "#ffffff" } })
+  expect(dock.ok).toBe(false)
+  if (!dock.ok) expect(dock.issues.map((i) => i.path)).toContain("contrast.light.dock-foreground (on dock-active)")
+  const subtle = parseStudioTheme({ version: 1, name: "Dim subtle", appearance: "light", colors: { "surface-subtle": "#6b6b73" } })
+  expect(subtle.ok).toBe(false)
+  if (!subtle.ok) {
+    const paths = subtle.issues.map((i) => i.path)
+    expect(paths).toContain("contrast.light.foreground (on surface-subtle)")
+    expect(paths).toContain("contrast.light.muted-foreground (on surface-subtle)")
+    expect(paths).toContain("contrast.light.secondary-foreground (on surface-subtle)")
+  }
+})
+
+// #1705: a malformed colour is refused; a valid one is stored and applied as canonical CSS.
+test("colours are parsed by culori and written as canonical CSS; mixed-syntax rgb() is refused", () => {
+  const mixed = parseStudioTheme({ version: 1, name: "Mixed", colors: { foreground: "rgb(24, 24 27)" } })
+  expect(mixed.ok).toBe(false)
+  if (!mixed.ok) expect(mixed.issues.map((i) => i.path)).toEqual(["colors.foreground"])
+
+  const modern = parseStudioTheme({ version: 1, name: "Modern", baseSkin: "polar", appearance: "light", colors: { foreground: " rgb(24 24 27) ", "surface-subtle": "oklch(0.97 0 0)", "dock-border": "rgb(255 255 255 / 8%)" } })
+  expect(modern.ok, JSON.stringify(modern.issues)).toBe(true)
+  if (!modern.ok) return
+  expect(modern.theme.colors).toEqual({ foreground: "#18181b", "surface-subtle": "#f5f5f5", "dock-border": "rgba(255, 255, 255, 0.08)" })
+  const { element, styles } = fakeRoot()
+  applyCustomTheme(modern.theme, false, element)
+  expect(styles.get("--foreground")).toBe("#18181b")
+  expect(styles.get("--dock-border")).toBe("rgba(255, 255, 255, 0.08)")
+
+  // A theme object that skipped parsing still only ever writes canonical, allowlisted colours.
+  const { element: raw, styles: rawStyles } = fakeRoot()
+  applyCustomTheme({ version: 1, name: "Raw", colors: { foreground: "rgb(24, 24 27)", background: "RED" } }, false, raw)
+  expect(rawStyles.has("--foreground")).toBe(false)
+  expect(rawStyles.get("--background")).toBe("#ff0000")
+})
+
+// #1724 (Fable r1): a CSS `none` channel is painted as 0, so the parsed colour has every channel.
+test("parseColor reads a CSS none channel as 0, so every Color holds all of r, g, b and alpha", async () => {
+  const { canonicalColor, parseColor } = await import("../src/lib/color.ts")
+  expect(parseColor("rgb(none 0 0)")).toEqual({ mode: "rgb", r: 0, g: 0, b: 0, alpha: 1 })
+  expect(canonicalColor("rgb(none 255 0)")).toBe("#00ff00")
+  for (const raw of ["rgb(none none none / none)", "hsl(none 0% 50%)", "oklch(none none none)"]) {
+    const color = parseColor(raw)
+    expect(color).not.toBeNull()
+    for (const channel of [color!.r, color!.g, color!.b, color!.alpha]) expect(Number.isFinite(channel)).toBe(true)
+  }
+})
+
+// #1724 (CodeRabbit): a translucent hover is checked over the well it lies on, and muted text on it too.
+test("the gate composites a translucent well-hover over the well and checks muted text on the hover", () => {
+  const layered = parseStudioTheme({ version: 1, name: "Dark hover", baseSkin: "polar", appearance: "light", colors: { well: "#888888", "well-hover": "rgba(0, 0, 0, 0.2)", "muted-foreground": "#000000" } })
+  expect(layered.ok).toBe(false)
+  if (!layered.ok) {
+    const paths = layered.issues.map((i) => i.path)
+    // Over the white card the hover passes (11:1); over the #888888 well it is 3.4:1.
+    expect(paths).toContain("contrast.light.foreground (on well-hover over well)")
+    expect(paths).not.toContain("contrast.light.foreground (on well-hover)")
+    expect(paths).not.toContain("contrast.light.foreground (on well)")
+  }
+  const muted = parseStudioTheme({ version: 1, name: "Grey hover", baseSkin: "polar", appearance: "light", colors: { "well-hover": "#999999" } })
+  expect(muted.ok).toBe(false)
+  if (!muted.ok) {
+    const paths = muted.issues.map((i) => i.path)
+    // Polar's #585861 muted ink is 2.5:1 on #999999; its foreground (6.2:1) passes.
+    expect(paths).toContain("contrast.light.muted-foreground (on well-hover)")
+    expect(paths).not.toContain("contrast.light.foreground (on well-hover)")
+  }
+  // The map's node cards swap `bg-card` for the hover, so a translucent hover is also read over the page.
+  const page = parseStudioTheme({ version: 1, name: "Page hover", baseSkin: "polar", appearance: "light", colors: { background: "#777777", "well-hover": "rgba(0, 0, 0, 0.25)", "muted-foreground": "#000000", foreground: "#000000" } })
+  expect(page.ok).toBe(false)
+  if (!page.ok) expect(page.issues.map((i) => i.path)).toContain("contrast.light.foreground (on well-hover over background)")
+})
+
+// #1724 (CodeRabbit): culori throwing on malformed input is a refusal, and an explicit `/ none` alpha is transparent.
+test("parseColor refuses input culori throws on and reads an explicit none alpha as 0, an omitted one as 1", async () => {
+  const { parseColor } = await import("../src/lib/color.ts")
+  for (const raw of ["color(", "color(srgb", "rgb("]) expect(parseColor(raw), raw).toBeNull()
+  expect(parseColor("rgb(0 0 0 / none)")).toEqual({ mode: "rgb", r: 0, g: 0, b: 0, alpha: 0 })
+  expect(parseColor("rgb(0 0 0)")!.alpha).toBe(1)
+  expect(parseColor("oklch(0.5 0.1 200 / none)")!.alpha).toBe(0)
+  const bad = parseStudioTheme({ version: 1, name: "Broken", colors: { foreground: "color(" } })
+  expect(bad.ok).toBe(false)
+  if (!bad.ok) expect(bad.issues.map((i) => i.path)).toEqual(["colors.foreground"])
+})
+
+// #1724 (Fable r2): composited layers are measured as a browser paints them, 8 bits per channel per layer.
+test("over rounds every composited layer to 8 bits, and an upper-case NONE alpha is refused, not read", async () => {
+  const { over, parseColor, cssColor } = await import("../src/lib/color.ts")
+  const white = parseColor("#ffffff")!
+  // Half black over white is 127.5 per channel in floats; a browser paints 128 (0x80).
+  const half = over(parseColor("rgb(0 0 0 / 0.5)")!, white)
+  expect(cssColor(half)).toBe("#808080")
+  for (const channel of [half.r, half.g, half.b]) expect(Number.isInteger(channel * 255)).toBe(true)
+  // Two layers round after each one: 0.1 black over white is 229.5 → 230, then 0.1 black over that is
+  // 207.0 → 207. The intermediate surface is what a hovered row sits on, so it is 8-bit already.
+  const tenth = parseColor("rgb(0 0 0 / 0.1)")!
+  const once = over(tenth, white)
+  expect(once.r * 255).toBeCloseTo(230, 9)
+  expect(over(tenth, once).r * 255).toBeCloseTo(207, 9)
+  expect(parseColor("rgb(0 0 0 / NONE)")).toBeNull()
+})
+
+// DESIGN.md 4.6 / section 18: the validator checks the sidebar's hover wash and the ring (focus ring and
+// attention dot) on the ground, the wash and the pill, not only muted text on the ground.
+test("a custom theme whose sidebar hover wash or ring fails is refused with the pair named", () => {
+  const wash = parseStudioTheme({ version: 1, name: "Dark wash", baseSkin: "polar", appearance: "light", colors: { "sidebar-accent": "#444448", "sidebar-accent-foreground": "#ffffff" } })
+  expect(wash.ok).toBe(false)
+  if (!wash.ok) {
+    const paths = wash.issues.map((i) => i.path)
+    expect(paths).toContain("contrast.light.muted-foreground (on sidebar hover wash)")
+    // The pill carries its own ink, so the pill itself passes.
+    expect(paths).not.toContain("contrast.light.sidebar-accent-foreground (on sidebar-accent)")
+  }
+  const ring = parseStudioTheme({ version: 1, name: "Pale ring", baseSkin: "polar", appearance: "light", colors: { ring: "#d4d4d8" } })
+  expect(ring.ok).toBe(false)
+  if (!ring.ok) {
+    const paths = ring.issues.map((i) => i.path)
+    for (const on of ["sidebar", "sidebar hover wash", "sidebar-accent", "canvas"]) expect(paths).toContain(`contrast.light.ring (on ${on})`)
+  }
+  // Every built-in skin passes the same pairs.
+  for (const baseSkin of ["polar", "open", "luma", "glass"] as const) {
+    const plain = parseStudioTheme({ version: 1, name: `Plain ${baseSkin}`, baseSkin })
+    expect(plain.ok, baseSkin).toBe(true)
   }
 })

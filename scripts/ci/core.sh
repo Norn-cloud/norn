@@ -689,9 +689,9 @@ if plan["mode"] == "full" and set(tasks) != known:
     raise SystemExit("full bundle plan omitted a registered task")
 target_seconds = 11 * 60
 # #1652 moved `core` to hosted `ubuntu-24.04`, so only `test` bundles take a Boat start.
-# At 8 bundles a full plan hits the exact indivisible floor (847s / 14.1m:
-# integration-authoring + provenance); higher limits still pack into 8 bundles.
-max_bundles = 8
+# Six bundles balance ~20m wall clock with +33% daily Boat start capacity (140 full runs
+# per 840 daily starts).
+max_bundles = 6
 # Use the fewest jobs that meet the service target. If an indivisible task
 # exceeds it, minimize the critical path before allocating additional VMs.
 # For each bundle count, try both splitting and coalescing each shared build group

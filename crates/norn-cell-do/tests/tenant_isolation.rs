@@ -227,7 +227,8 @@ fn connect() -> Connect {
         "NORN_S3_ACCESS_KEY_ID": "key-id",
         "NORN_S3_SECRET_ACCESS_KEY": "secret",
     });
-    Connect::new("[]", &vars.to_string()).unwrap()
+    Connect::new(&scope("org_a", "prod"), "[]", &vars.to_string())
+        .unwrap_or_else(|error| unreachable!("the configuration is well formed: {error}"))
 }
 
 fn host(tenant: Tenant<Counting>, calls: Rc<Cell<u64>>) -> Host {
@@ -1423,6 +1424,8 @@ fn a_parked_call_by_id_is_its_requesters_alone() {
 /// records each incident with its monotonic `(seq N)`.
 #[test]
 fn incident_ids_do_not_leak_another_tenants_errors() {
+    // #1710: this thread opts in to keeping its incident lines.
+    norn_cell_do::incident::capture();
     let parse_opaque = |response: &Response| -> String {
         assert_eq!(response.status, 500, "{}", response.body);
         let doc = json_of(response);

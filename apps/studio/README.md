@@ -20,6 +20,7 @@ Run from this directory with Bun (`bun install --frozen-lockfile` first).
 | `bun run checker` | Builds the checker and engine WebAssembly packages from `crates/norn-checker-wasm` into `src/checker/` and `src/engine/` (not committed). Without them the build still succeeds and the canvas reports the checker as absent. |
 | `bun run local --project <dir>` | After `bun run build`: serves the build on loopback against a running `norn dev` cell in `<dir>` (`scripts/local-cell.ts`). |
 | `bun run deploy` | Builds the checker and app, then deploys with Alchemy (`alchemy.run.ts`). |
+| `bun scripts/signup-invite.ts --url <studio origin> [--days 1-30] <email>` | Prints a single-use sign-up link (the invitation is in its `#invite=` fragment) for one invited address (it must also be in the stage's `STUDIO_SIGNUP_EMAILS`), signed with the stage's `BETTER_AUTH_SECRET`, which it reads from the environment (run it under `infisical run`). On an invite-only stage, password sign-up needs this link. |
 
 ## Depends on
 

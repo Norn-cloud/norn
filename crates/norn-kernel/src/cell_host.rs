@@ -687,6 +687,13 @@ pub enum CommitError<X> {
         /// The reference the commit named.
         consumed: Consumed,
     },
+    /// RECEIPT-CONSUME-1: inside the commit, the host refuses to accept the
+    /// consumed Function result (authority, deadline, or no recheck).
+    #[error("action.receipt_not_accepted: {consumed} is no longer accepted")]
+    ReceiptNotAccepted {
+        /// The delivery the commit named.
+        consumed: Consumed,
+    },
     /// Compare-and-swap failed: the object changed since the turn read it.
     #[error("fact {key} version conflict: expected {expected}, current {current}")]
     Conflict {
@@ -900,6 +907,15 @@ pub enum CommitError<X> {
         /// The unresolved interface name.
         interface: String,
     },
+    /// GRAPH-STATE-1: a first write's lifecycles do not begin in an admitted
+    /// initial state, or its recorded evidence does not replay to its row.
+    #[error("{key}: lifecycle initialization was refused: {refusal}")]
+    LifecycleInitialization {
+        /// The object written for the first time.
+        key: FactKey,
+        /// Why its initialization was refused.
+        refusal: Box<crate::lifecycle_init::LifecycleInitRefusal>,
+    },
     /// An observed write did not match its opaque prepared authorization, or
     /// its findings differed from the shared final-state evaluation.
     #[error("observation authorization did not match its prepared commit")]
@@ -921,52 +937,6 @@ pub enum CommitError<X> {
     Host(#[source] X),
 }
 
-impl<X> CommitError<X> {
-    /// Stable machine-readable code of the refusal.
-    #[must_use]
-    pub const fn code(&self) -> &'static str {
-        match self {
-            Self::IdentityReuse => norn_checker::IDENTITY_REUSE,
-            Self::IdentityCollision { .. } => norn_checker::IDENTITY_COLLISION,
-            Self::ImmutableObject { .. } => "commit.immutable_object",
-            Self::AtomicBoundary { .. } | Self::AtomicDeliveryBoundary { .. } => {
-                norn_checker::execution_profile::ATOMIC_BOUNDARY_CODE
-            }
-            Self::DuplicateKey { .. } => "commit.duplicate_key",
-            Self::NotPending { .. } => "commit.not_pending",
-            Self::Conflict { .. } => "commit.conflict",
-            Self::DuplicateLink { .. } => "commit.duplicate_link",
-            Self::IdentifierTooLong { .. } => "commit.identifier_too_long",
-            Self::LinkConflict { .. } => "commit.link_conflict",
-            Self::LinkReadConflict { .. } => "commit.link_read_conflict",
-            Self::UnsupportedLinkRead { .. } => "commit.unsupported_link_read",
-            Self::DuplicateLinkRead { .. } => "commit.duplicate_link_read",
-            Self::LinkReadTooLarge { .. } => "commit.link_read_too_large",
-            Self::InvalidLinkRead { .. } => "commit.invalid_link_read",
-            Self::PredicateReadConflict { .. } => "commit.predicate_read_conflict",
-            Self::UnsupportedPredicateRead { .. } => "commit.unsupported_predicate_read",
-            Self::InvalidPredicateRead { .. } => "commit.invalid_predicate_read",
-            Self::DanglingLink { .. } => "commit.dangling_link",
-            Self::LinkTarget { .. } => "commit.link_target",
-            Self::LinkCardinality { .. } => "commit.link_cardinality",
-            Self::LinkRequired { .. } => "commit.link_required",
-            Self::OwnedRowsProtected { .. } => "commit.owned_rows_protected",
-            Self::TypeMismatch { .. } => "commit.type_mismatch",
-            Self::EffectiveValues { .. } => "commit.effective_values",
-            Self::TraversalLimitExceeded { .. } => "commit.traversal_limit_exceeded",
-            Self::AccountingPosting { reason, .. } => reason.code(),
-            Self::Law { reason, .. } => reason.code(),
-            Self::InvariantViolation { .. } => "commit.invariant_violation",
-            Self::InvariantBudgetExceeded { .. } => "commit.invariant_budget_exceeded",
-            Self::InvariantModel { .. } => "commit.invariant_model",
-            Self::ObservationAuthorization => "commit.observation_authorization",
-            Self::EventLimitExceeded { .. } => "commit.event_limit",
-            Self::Overflow => "commit.overflow",
-            Self::Host(_) => "commit.host",
-        }
-    }
-}
-
 pub use crate::commit_check::{CommitModel, CommitView, check_commit, check_commit_owned_rows};
 
 /// K3 (#1375): the commit pipeline as types, `Proposed → Authorized → Checked
@@ -978,23 +948,25 @@ pub use crate::commit_check::{CommitModel, CommitView, check_commit, check_commi
 /// value they check.
 #[derive(Debug)]
 pub struct Proposed<'c, E, C, T> {
-    commit: &'c CellCommit<E, C, T>,
+    pub(crate) commit: &'c CellCommit<E, C, T>,
 }
 
 /// The admission a proposed commit was authorized under.
-enum Admission<'c> {
+pub(crate) enum Admission<'c> {
     /// An ordinary commit: [`check_commit`].
     Plain,
     /// A kernel-prepared parent and owned-row commit: [`check_commit_owned_rows`].
     OwnedRows(Box<OwnedRowsCommitProof>),
     /// A sealed observation: [`crate::check_commit_observed`].
     Observed(&'c ObservationAuthorization),
+    /// A kernel-prepared governed create: [`crate::check_commit_stamped`].
+    Stamped(Box<crate::CreatorStampProof>),
 }
 
 /// A proposed commit with the admission its authority selected.
 pub struct Authorized<'c, E, C, T> {
-    commit: &'c CellCommit<E, C, T>,
-    admission: Admission<'c>,
+    pub(crate) commit: &'c CellCommit<E, C, T>,
+    pub(crate) admission: Admission<'c>,
 }
 
 /// A commit that passed the shared admission check, with the versions it
@@ -1017,32 +989,9 @@ impl<'c, E, C, T> Proposed<'c, E, C, T> {
     pub const fn new(commit: &'c CellCommit<E, C, T>) -> Self {
         Self { commit }
     }
-
-    /// Select the admission from the host's authority: an observation
-    /// authorization, an owned-rows proof, or neither.
-    ///
-    /// # Errors
-    ///
-    /// [`CommitError::ObservationAuthorization`] when both are supplied.
-    pub fn authorize<X>(
-        self,
-        authorization: Option<&'c ObservationAuthorization>,
-        owned_rows: Option<OwnedRowsCommitProof>,
-    ) -> Result<Authorized<'c, E, C, T>, CommitError<X>> {
-        let admission = match (authorization, owned_rows) {
-            (None, None) => Admission::Plain,
-            (None, Some(proof)) => Admission::OwnedRows(Box::new(proof)),
-            (Some(authorization), None) => Admission::Observed(authorization),
-            (Some(_), Some(_)) => return Err(CommitError::ObservationAuthorization),
-        };
-        Ok(Authorized {
-            commit: self.commit,
-            admission,
-        })
-    }
 }
 
-impl<'c, E, C, T: Serialize> Authorized<'c, E, C, T> {
+impl<'c, E: 'static, C, T: Serialize> Authorized<'c, E, C, T> {
     /// Run the shared admission check for this commit's admission.
     ///
     /// # Errors
@@ -1060,6 +1009,9 @@ impl<'c, E, C, T: Serialize> Authorized<'c, E, C, T> {
             }
             Admission::Observed(authorization) => {
                 crate::check_commit_observed(self.commit, model, view, authorization)
+            }
+            Admission::Stamped(proof) => {
+                crate::check_commit_stamped(self.commit, model, view, &proof)
             }
         }?;
         Ok(Checked {
@@ -1346,6 +1298,24 @@ pub trait CellHost {
             return Err(CommitError::ObservationAuthorization);
         }
         self.commit(commit)
+    }
+
+    /// ACTOR-STAMP-1: a stamped create, with its quantity posting if any, in
+    /// one transaction; the default's plain admission refuses the stamp.
+    /// # Errors
+    /// A commit refusal; nothing was applied.
+    fn commit_stamped(
+        &mut self,
+        commit: CellCommit<Self::Event, Self::Command, Self::Input>,
+        _proof: crate::CreatorStampProof,
+        quantity: Option<(&norn_ir::quantity_ledger::QuantityRequest, &str)>,
+    ) -> Result<CommitReceipt, CommitError<Self::Error>> {
+        match quantity {
+            Some((request, key)) => {
+                self.commit_action_quantity(commit, std::slice::from_ref(request), key)
+            }
+            None => self.commit(commit),
+        }
     }
 
     /// Commit a snapshot prepared by the kernel's observation reconciler.

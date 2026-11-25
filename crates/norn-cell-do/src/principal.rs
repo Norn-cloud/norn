@@ -17,7 +17,7 @@ use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
-use norn_api::principal::{STUDIO_ROLES, TokenVerifier};
+use norn_api::principal::{Principal, STUDIO_ROLES, TokenVerifier};
 use norn_api::refusal::Refusal;
 use norn_api::scope::CellScope;
 
@@ -98,9 +98,19 @@ impl PrincipalResolver for NoPrincipals {
 
 /// Verifies signed host tokens for one cell.
 pub struct TokenPrincipals {
-    issuer: String,
     cell: CellScope,
     slot: Arc<CallerSlot>,
+    keys: IssuerKeys,
+}
+
+/// The pinned issuer's keys in force, their age and the refetch policy
+/// (`JWKS_MAX_AGE_SECS`, `JWKS_MAX_STALE_SECS`, `JWKS_RETRY_SECS`). One
+/// implementation for every verifier of host tokens: each cell's
+/// [`TokenPrincipals`] and the Rivet router's gate in front of the actors
+/// (`norn-cell-rivet`'s `gate`), which checks the same token for the scope it
+/// routes to before anything reaches a cell.
+pub struct IssuerKeys {
+    issuer: String,
     keys: Mutex<Keys>,
 }
 
@@ -172,24 +182,15 @@ fn token_kid(token: &str) -> Option<String> {
     header.get("kid")?.as_str().map(str::to_owned)
 }
 
-impl TokenPrincipals {
-    /// Admit the pinned issuer's JWKS, fetched at `now` (Unix seconds), for
-    /// `cell`.
+impl IssuerKeys {
+    /// Admit the pinned issuer's JWKS, fetched at `now` (Unix seconds).
     ///
     /// # Errors
     /// The document is not a JWKS or publishes no Ed25519 key.
-    pub fn new(
-        issuer: &str,
-        jwks: &str,
-        cell: CellScope,
-        slot: Arc<CallerSlot>,
-        now: u64,
-    ) -> Result<Self, Refusal> {
+    pub fn new(issuer: &str, jwks: &str, now: u64) -> Result<Self, Refusal> {
         let verifier = TokenVerifier::from_jwks(issuer, HOST_AUDIENCE, jwks, &STUDIO_ROLES)?;
         Ok(Self {
             issuer: issuer.to_owned(),
-            cell,
-            slot,
             keys: Mutex::new(Keys {
                 verifier,
                 kids: kids(jwks),
@@ -254,7 +255,12 @@ impl TokenPrincipals {
         allowed
     }
 
-    fn verify(&self, token: &str, now: u64) -> Option<Caller> {
+    /// The principal `token` names for `cell` at `now`, or `None`: keys past
+    /// the stale bound or after a clock regression verify nothing, and a
+    /// token naming a key id the JWKS lacks is noted for
+    /// [`Self::take_unknown_kid`].
+    #[must_use]
+    pub fn principal(&self, token: &str, cell: &CellScope, now: u64) -> Option<Principal> {
         let mut keys = self.keys.lock().ok()?;
         keys.observe(now);
         // Keys older than the stale bound are not honoured: a removed key
@@ -267,7 +273,51 @@ impl TokenPrincipals {
         if token_kid(token).is_some_and(|kid| !keys.kids.contains(&kid)) {
             keys.unknown_kid = true;
         }
-        let principal = keys.verifier.principal(token, &self.cell, now).ok()?;
+        keys.verifier.principal(token, cell, now).ok()
+    }
+}
+
+impl TokenPrincipals {
+    /// Admit the pinned issuer's JWKS, fetched at `now` (Unix seconds), for
+    /// `cell`.
+    ///
+    /// # Errors
+    /// The document is not a JWKS or publishes no Ed25519 key.
+    pub fn new(
+        issuer: &str,
+        jwks: &str,
+        cell: CellScope,
+        slot: Arc<CallerSlot>,
+        now: u64,
+    ) -> Result<Self, Refusal> {
+        Ok(Self {
+            cell,
+            slot,
+            keys: IssuerKeys::new(issuer, jwks, now)?,
+        })
+    }
+
+    /// Replace the keys after a refetch ([`IssuerKeys::replace_jwks`]).
+    ///
+    /// # Errors
+    /// The new document is unusable; the previous keys stay in force.
+    pub fn replace_jwks(&self, jwks: &str, now: u64) -> Result<(), Refusal> {
+        self.keys.replace_jwks(jwks, now)
+    }
+
+    /// Whether the keys should be refetched now ([`IssuerKeys::refresh_due`]).
+    pub fn refresh_due(&self, now: u64) -> bool {
+        self.keys.refresh_due(now)
+    }
+
+    /// Whether a token named an unknown key id and a refetch is allowed now
+    /// ([`IssuerKeys::take_unknown_kid`]).
+    pub fn take_unknown_kid(&self, now: u64) -> bool {
+        self.keys.take_unknown_kid(now)
+    }
+
+    fn verify(&self, token: &str, now: u64) -> Option<Caller> {
+        let principal = self.keys.principal(token, &self.cell, now)?;
         Some(Caller {
             subject_id: principal.subject_id,
             roles: principal.roles,

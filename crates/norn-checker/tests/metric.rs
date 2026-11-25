@@ -7,6 +7,7 @@
 
 use std::collections::BTreeSet;
 
+use norn_checker::entity_scopes::ScopedView;
 use norn_checker::metric::codes;
 use norn_checker::{EffectiveCatalog, check_metrics_and_questions};
 use norn_ir::{ArtifactEnvelope, MetricDefinition, PropertyTypeName, QuestionIR};
@@ -37,7 +38,7 @@ const CUSTOMER_QUESTION: &str =
 fn catalog(source: &str) -> EffectiveCatalog {
     let artifacts: Vec<ArtifactEnvelope> = serde_json::from_str(source).expect("ontology decodes");
     let registry = BTreeSet::from([PropertyTypeName("iso4217.currency_code".into())]);
-    EffectiveCatalog::from_artifacts_with_registry(&artifacts, &registry)
+    ScopedView::uniform(&artifacts, &registry).into_catalog()
 }
 
 fn check(metric: &Value, question: &Value) -> Vec<norn_checker::Diagnostic> {
@@ -1414,7 +1415,7 @@ fn catalog_of(artifacts: &[Value]) -> EffectiveCatalog {
     let artifacts: Vec<ArtifactEnvelope> =
         serde_json::from_value(Value::Array(artifacts.to_vec())).expect("ontology decodes");
     let registry = BTreeSet::from([PropertyTypeName("iso4217.currency_code".into())]);
-    EffectiveCatalog::from_artifacts_with_registry(&artifacts, &registry)
+    ScopedView::uniform(&artifacts, &registry).into_catalog()
 }
 
 /// PRIVACY-4: a question cannot group or filter by a property that carries a

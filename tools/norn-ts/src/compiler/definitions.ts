@@ -58,7 +58,7 @@ interface SubjectSchema {
  */
 function parsedTemporal(expr: X.Expr, temporal: ReadonlyMap<string, "date" | "timestamp">): X.Expr {
   const kindOf = (e: X.Expr): "date" | "timestamp" | undefined =>
-    e._tag === "Ref" && e.name === "input" ? temporal.get(e.path.join(".")) : X.temporalKind(e)
+    e._tag === "Input" && e.name === "input" ? temporal.get(e.path.join(".")) : X.temporalKind(e)
   const walk = (e: X.Expr): X.Expr => {
     switch (e._tag) {
       case "Compare": {
@@ -68,7 +68,7 @@ function parsedTemporal(expr: X.Expr, temporal: ReadonlyMap<string, "date" | "ti
         if (leftKind && rightKind && leftKind !== rightKind) throw new X.ExprError("NORN-FLOW-TYPE", `ordering compares a ${leftKind} with a ${rightKind}; convert one side explicitly`)
         const kind = leftKind ?? rightKind
         if (!kind) return { ...e, left, right }
-        const parse = (side: X.Expr): X.Expr => (X.temporalKind(side) ? side : (side._tag === "Ref" && kindOf(side)) || (side._tag === "Literal" && typeof side.value === "string") ? X.call(kind, side) : side)
+        const parse = (side: X.Expr): X.Expr => (X.temporalKind(side) ? side : (side._tag === "Input" && kindOf(side)) || (side._tag === "Literal" && typeof side.value === "string") ? X.call(kind, side) : side)
         return { ...e, left: parse(left), right: parse(right) }
       }
       case "Binary": case "Logical": return { ...e, left: walk(e.left), right: walk(e.right) }
@@ -865,9 +865,21 @@ class DefinitionCompiler {
   }
 
   private objectType(call: ts.CallExpression): E.ObjectTypeDef {
-    const members = this.meta(call, ["name", "title", "version", "description", "role", "properties", "extends", "implements", "links", "ownedCollections", "identity", "defaults", "lifecycles", "markings", "propertyMarkings", "dependencies", "pathEquations", ...LABEL_MEMBERS, ...MEMBER_LABEL_MEMBERS])
+    const members = this.meta(call, ["name", "title", "version", "description", "role", "properties", "extends", "implements", "links", "ownedCollections", "identity", "defaults", "lifecycles", "markings", "propertyMarkings", "dependencies", "pathEquations", "protected", ...LABEL_MEMBERS, ...MEMBER_LABEL_MEMBERS])
     const { projected, ...rest } = this.base(call, members)
     const propertyMarkings = this.propertyMarkings(members, projected.map((p) => p.id))
+    // FA-PROTECT-1 / ACTOR-STAMP-1: protected properties are written only by a
+    // governed create's server stamp of the verified principal.
+    const protectedNode = members.get("protected")
+    const protectedIds = new Set<string>()
+    if (protectedNode) {
+      for (const node of this.list(protectedNode)) {
+        const id = this.string(node)
+        if (!projected.some((p) => p.id === id)) throw new CompileError("NORN-FLOW-LITERAL", `protected names undeclared property ${id}`, node)
+        if (protectedIds.has(id)) throw new CompileError("NORN-FLOW-LITERAL", `protected names ${id} twice`, node)
+        protectedIds.add(id)
+      }
+    }
     const defaults = new Map<string, E.DefaultValue>()
     const defaultsNode = members.get("defaults")
     if (defaultsNode) {
@@ -891,6 +903,7 @@ class DefinitionCompiler {
         const value = defaults.get(p.id)
         return {
           id: p.id,
+          ...(protectedIds.has(p.id) ? { protected: true } : {}),
           ...(propertyMarkings.has(p.id) ? { markings: propertyMarkings.get(p.id)! } : {}),
           type: p.projection.type,
           ...(p.projection.nullable ? { nullable: true } : {}),
@@ -1198,7 +1211,7 @@ class DefinitionCompiler {
   }
 
   private action(call: ts.CallExpression): A.ActionDef {
-    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "inputLabels", "inputGroups", "slice", "aggregates", "derive", "preconditions", "createLinks", "commands", "synchronousRule", "writes", "effect", "compensation", "dependencies", "access", "fromCaller", ...LABEL_MEMBERS])
+    const members = this.meta(call, ["id", "title", "version", "description", "scopeRequired", "idempotent", "ledgered", "ledgerCategory", "input", "output", "inputLabels", "inputGroups", "slice", "aggregates", "derive", "preconditions", "createLinks", "commands", "synchronousRule", "writes", "effect", "compensation", "dependencies", "access", "fromCaller", "independentOf", ...LABEL_MEMBERS])
     const need = (key: string): ts.Expression => this.member(members, key, call)
     const schema = (key: string): S.ObjectSchema => {
       const node = need(key)
@@ -1321,6 +1334,7 @@ class DefinitionCompiler {
       ...(compiledEffect ? { effect: compiledEffect } : {}),
       ...(compensation ? { compensation: this.actionId(compensation) } : {}),
       ...(members.has("access") ? { access: this.accessRef(need("access")) } : {}),
+      ...(members.has("independentOf") ? { independentOf: this.strings(need("independentOf")) } : {}),
       at: this.at(call),
     })
   }
@@ -1616,6 +1630,10 @@ class DefinitionCompiler {
       const calls: Json[] = []
       const syntax = new SyntaxCompiler(this.profile, this.program, call.getSourceFile(), this.started, this.limits, this.expansion, TOOL_ROOT, (site, input) => {
         if (!ts.isVariableDeclaration(site.parent) || !ts.isVariableDeclarationList(site.parent.parent) || !ts.isVariableStatement(site.parent.parent.parent) || site.parent.parent.parent.parent !== body.body) throw new CompileError("NORN-FLOW-EXPRESSION", "evaluate a sub-decision in a top-level const before branching", site)
+        const declaration = site.parent.parent.parent
+        if (!ts.isBlock(body.body) || body.body.statements.slice(0, body.body.statements.indexOf(declaration)).some(statement => !ts.isVariableStatement(statement))) {
+          throw new CompileError("NORN-FLOW-EXPRESSION", "evaluate a sub-decision in the unconditional const prefix before branching", site)
+        }
         const child = this.referenced(site.arguments[0]!, DECISIONS, "a Norn.decision definition")
         if (this.string(this.member(child.members, "contract", child.call)) !== "sub_decision") throw new CompileError("NORN-FLOW-TYPE", "evaluate requires contract sub_decision", site.arguments[0]!)
         const pin = this.decisionDependency(site.arguments[0]!)
@@ -1637,7 +1655,7 @@ class DefinitionCompiler {
           const stepInput = this.schemas.closed(this.schemas.read(this.member(child.members, "input", child.call)), true)
           if (stepInput.type !== "object" || output.type !== "object" || !stepInput.properties.item) throw new CompileError("NORN-FLOW-TYPE", "orderedFold requires a closed step input and object state", site)
           try {
-            if (!X.conforms(items, { type: "array", items: stepInput.properties.item }, scope) || !X.conforms(initial, output, scope)) throw new CompileError("NORN-FLOW-TYPE", "orderedFold items and initial must satisfy the helper's closed schemas", site)
+            if (X.assignmentError(items, { type: "array", items: stepInput.properties.item }, scope) || X.assignmentError(initial, output, scope)) throw new CompileError("NORN-FLOW-TYPE", "orderedFold items and initial must satisfy the helper's closed schemas", site)
           } catch (error) {
             if (error instanceof X.ExprError) throw new CompileError("NORN-FLOW-TYPE", error.message, site)
             throw error
@@ -1653,7 +1671,12 @@ class DefinitionCompiler {
         calls.push({ id: name, name, type: "decisionNode", content: { key: pin.artifactId, inputField, outputPath: name, passThrough: true, ...(orderedFold ? { orderedFold } : {}) } })
         scope.set(name, { zen: name, schema: output })
         return X.ref(name)
-      }, this.forbidUnsafeZen)
+      }, this.forbidUnsafeZen, (text, schema) => {
+        // Explicit legacy decision escapes still go through Rust admission.
+        const name = `@escape:${scope.size}`
+        scope.set(name, { zen: `(${text})`, schema })
+        return X.ref(name)
+      })
       const rows = syntax.decisionRows(body)
       this.warnings.push(...syntax.warnings)
       const outputSchema = schema("output")
@@ -1668,7 +1691,7 @@ class DefinitionCompiler {
       const rules = rows.map((row, i): Record<string, Json> => {
         const project = (value: X.Expr, field: string): X.Expr | undefined => {
           if (value._tag === "Record") return value.fields.find(([key]) => key === field)?.[1]
-          if (value._tag === "Ref") return X.ref(value.name, ...value.path, field)
+          if (value._tag === "Input") return X.ref(value.name, ...value.path, field)
           if (value._tag === "Conditional") {
             const yes = project(value.yes, field), no = project(value.no, field)
             return yes && no ? X.conditional(value.condition, yes, no) : undefined

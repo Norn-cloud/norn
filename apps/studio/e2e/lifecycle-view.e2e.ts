@@ -32,9 +32,12 @@ const PURCHASE_WIDGET_ID = "commerce.submit_order.widget"
 
 /** Build the real stuck-widget artifact set from `crates/norn-checker/tests/ui_lifecycle.rs`, plus Arabic labels. */
 function purchaseOrderArtifacts(): unknown[] {
+  const scope = { orgId: "org_demo", environmentId: "analytics" }
   const entity = readFixture("fixtures/ir/entity-v2/artifact-set/commerce-purchase-order.entity.json") as {
+    scope: Record<string, string>
     payload: { objectType: { lifecycles: { property: string; transitions: { id: string; from: string[] }[] }[] } }
   }
+  entity.scope = scope
   for (const lifecycle of entity.payload.objectType.lifecycles) {
     if (lifecycle.property !== "status") continue
     for (const transition of lifecycle.transitions) {
@@ -42,10 +45,11 @@ function purchaseOrderArtifacts(): unknown[] {
     }
   }
   const rule = readFixture("fixtures/rule-ir-v2/valid/purchase-order-approval.rule.json")
+  rule.scope = scope
   const action = {
     irVersion: "0.1", artifactId: PURCHASE_ACTION_ID, kind: "action",
     namespace: "commerce", name: PURCHASE_ACTION_ID, version: "0.1.0", lifecycle: "draft",
-    scope: { orgId: "org_demo", environmentId: "analytics" },
+    scope,
     dependencies: [], provenance: { source: "authoring_sdk" },
     payload: {
       actionId: "commerce.submit_purchase_order", scopeRequired: ["orgId", "environmentId"],
@@ -60,7 +64,7 @@ function purchaseOrderArtifacts(): unknown[] {
   const widget = {
     irVersion: "0.1", artifactId: PURCHASE_WIDGET_ID, kind: "widget",
     namespace: "commerce", name: PURCHASE_WIDGET_ID, version: "0.1.0", lifecycle: "draft",
-    scope: { orgId: "org_demo", environmentId: "analytics" },
+    scope,
     dependencies: [{ artifactId: PURCHASE_ACTION_ID, kind: "action", version: "0.1.0", required: true }],
     provenance: { source: "authoring_sdk" },
     payload: {
@@ -729,4 +733,85 @@ test.describe("Records page Lifecycle view mode", () => {
     await expect(view.locator('[data-region="stepper"]')).toHaveCount(0)
     await expect(view.locator("[data-current]")).toHaveCount(0)
   })
+})
+
+// #1700 S10: the arrows are drawn for sight; a screen reader reads every transition from a list.
+test("a11y: the transitions the arrows draw are readable as a list", async ({ page }) => {
+  const view = await specimen(page, "lifecycle-view/counts")
+  await expect(card(view, "draft").locator("[data-count]")).toHaveText("12")
+  const transitions = view.getByRole("list", { name: "Transitions" })
+  const items = transitions.getByRole("listitem")
+  expect(await items.count()).toBeGreaterThan(0)
+  await expect(items.first()).toHaveText(/^.+: from .+ to .+$/)
+  // Read by assistive technology, not drawn: it takes no space on the board.
+  const box = await transitions.boundingBox()
+  expect((box?.width ?? 0) <= 1 && (box?.height ?? 0) <= 1).toBe(true)
+})
+
+// #1700 S9: a live connection that cannot be restored says so and offers Refresh, never stale counts as live.
+test("records page: a lost live connection shows the counts as the last read and Refresh reads again", async ({ page }) => {
+  test.skip(Boolean(process.env.E2E_BASE), "uses the lifecycle stand-in cell")
+  test.setTimeout(90_000)
+  const cell = await lifecycleCell(page, { status: okFacets("status", { draft: 3 }) }, { includeWidget: false })
+  // Every socket fails before it opens, so the client exhausts its reconnects (about 15 s of backoff).
+  // Installed after the stand-in cell's routeWebSocket, so it replaces Playwright's routed WebSocket.
+  await page.addInitScript(() => {
+    class DeadSocket extends EventTarget {
+      readyState = 0
+      constructor(readonly url: string) {
+        super()
+        setTimeout(() => { this.readyState = 3; this.dispatchEvent(new CloseEvent("close", { code: 1006 })) }, 0)
+      }
+      send() {}
+      close() {}
+    }
+    Object.defineProperty(window, "WebSocket", { configurable: true, value: DeadSocket })
+  })
+  await page.goto("/objects/commerce.PurchaseOrder#lifecycle")
+  const view = page.locator('[data-testid="lifecycle-view"] norn-lifecycle-view').first()
+  const count = card(view, "draft").locator("[data-count]")
+  await expect(count).toHaveText("3")
+  const banner = view.locator('[data-region="live-off"]')
+  await expect(banner).toBeVisible({ timeout: 40_000 })
+  await expect(banner).toContainText("Live updates are off; counts show the last read.")
+  await expect(view.locator('[data-live-refusal-code="live.unavailable"]')).toHaveCount(1)
+  await shoot(page, "records-live-lost")
+  cell.setFacets("status", okFacets("status", { draft: 4 }))
+  await view.getByRole("button", { name: "Refresh" }).click()
+  await expect(count).toHaveText("4")
+})
+
+// #1700 R5: a cell that accepts each socket and sheds it (1013) before any answer still exhausts the
+// reconnects: the board says Live is off and offers Refresh, never stale counts as live.
+test("records page: sockets accepted then shed before any answer still end in Refresh", async ({ page }) => {
+  test.skip(Boolean(process.env.E2E_BASE), "uses the lifecycle stand-in cell")
+  test.setTimeout(90_000)
+  const cell = await lifecycleCell(page, { status: okFacets("status", { draft: 3 }) }, { includeWidget: false })
+  // Installed after the stand-in cell's routeWebSocket, so it replaces Playwright's routed WebSocket.
+  await page.addInitScript(() => {
+    class ShedSocket extends EventTarget {
+      readyState = 0
+      constructor(readonly url: string) {
+        super()
+        setTimeout(() => {
+          this.readyState = 1
+          this.dispatchEvent(new Event("open"))
+          setTimeout(() => { this.readyState = 3; this.dispatchEvent(new CloseEvent("close", { code: 1013 })) }, 0)
+        }, 0)
+      }
+      send() {}
+      close() {}
+    }
+    Object.defineProperty(window, "WebSocket", { configurable: true, value: ShedSocket })
+  })
+  await page.goto("/objects/commerce.PurchaseOrder#lifecycle")
+  const view = page.locator('[data-testid="lifecycle-view"] norn-lifecycle-view').first()
+  const count = card(view, "draft").locator("[data-count]")
+  await expect(count).toHaveText("3")
+  const banner = view.locator('[data-region="live-off"]')
+  await expect(banner).toBeVisible({ timeout: 40_000 })
+  await expect(banner).toContainText("Live updates are off; counts show the last read.")
+  cell.setFacets("status", okFacets("status", { draft: 4 }))
+  await view.getByRole("button", { name: "Refresh" }).click()
+  await expect(count).toHaveText("4")
 })

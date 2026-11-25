@@ -157,6 +157,17 @@ impl S3Config {
     /// `expires` seconds from `now_ms` (path-style addressing).
     #[must_use]
     pub fn presign(&self, method: &str, key: &str, now_ms: u64, expires: u32) -> String {
+        self.sign(method, None, key, now_ms, expires)
+    }
+
+    /// #1710: a [`Self::presign`]ed `PUT` the store accepts only with exactly
+    /// `length` bytes: `content-length` is a signed header.
+    #[must_use]
+    pub fn presign_put(&self, key: &str, length: u64, now_ms: u64, expires: u32) -> String {
+        self.sign("PUT", Some(length), key, now_ms, expires)
+    }
+
+    fn sign(&self, method: &str, size: Option<u64>, key: &str, at: u64, secs: u32) -> String {
         let host = self.endpoint.trim_start_matches("https://");
         let path = format!("/{}/{}", encode(&self.bucket, false), encode(key, true));
         presign(&Presign {
@@ -166,8 +177,9 @@ impl S3Config {
             region: &self.region,
             access_key_id: &self.access_key_id,
             secret_access_key: &self.secret_access_key,
-            now_ms,
-            expires,
+            now_ms: at,
+            expires: secs,
+            content_length: size,
         })
         .map_or_else(String::new, |query| {
             format!("{}{path}?{query}", self.endpoint)
@@ -184,9 +196,10 @@ struct Presign<'a> {
     secret_access_key: &'a str,
     now_ms: u64,
     expires: u32,
+    content_length: Option<u64>,
 }
 
-/// The signed query string (`SigV4`, `UNSIGNED-PAYLOAD`, only `host` signed).
+/// The signed query string (`SigV4`, `UNSIGNED-PAYLOAD`; `host` and any `content-length` signed).
 fn presign(p: &Presign<'_>) -> Option<String> {
     let at = jiff::Timestamp::from_millisecond(i64::try_from(p.now_ms).ok()?).ok()?;
     let stamp = at.strftime("%Y%m%dT%H%M%SZ").to_string();
@@ -200,16 +213,19 @@ fn presign(p: &Presign<'_>) -> Option<String> {
         ),
         ("X-Amz-Date".to_owned(), stamp.clone()),
         ("X-Amz-Expires".to_owned(), p.expires.to_string()),
-        ("X-Amz-SignedHeaders".to_owned(), "host".to_owned()),
     ]);
+    let length = p.content_length.map(|n| format!("content-length:{n}\n"));
+    let signed = length.as_ref().map_or("host", |_n| "content-length;host");
+    let headers = format!("{}host:{}\n", length.unwrap_or_default(), p.host);
+    query.insert("X-Amz-SignedHeaders".to_owned(), signed.to_owned());
     let canonical_query = query
         .iter()
         .map(|(k, v)| format!("{}={}", encode(k, false), encode(v, false)))
         .collect::<Vec<_>>()
         .join("&");
     let request = format!(
-        "{}\n{}\n{canonical_query}\nhost:{}\n\nhost\nUNSIGNED-PAYLOAD",
-        p.method, p.path, p.host
+        "{}\n{}\n{canonical_query}\n{headers}\n{signed}\nUNSIGNED-PAYLOAD",
+        p.method, p.path
     );
     let to_sign = format!(
         "AWS4-HMAC-SHA256\n{stamp}\n{scope}\n{}",
@@ -1028,6 +1044,7 @@ mod tests {
             secret_access_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
             now_ms: 1_369_353_600_000,
             expires: 86_400,
+            content_length: None,
         })
         .expect("signed");
         assert!(
@@ -1036,6 +1053,29 @@ mod tests {
             ),
             "{query}"
         );
+    }
+
+    /// #1710: an upload's `PUT` signs its `content-length`, so the store
+    /// refuses any other length; the signatures are independent `SigV4`
+    /// computations of the same request.
+    #[test]
+    fn a_presigned_put_signs_its_length() {
+        let s3 = S3Config::fixed("https://store.example", "uploads", "auto", "id", "secret");
+        let put = |length| s3.presign_put("k.csv", length, 1_794_484_800_000, URL_SECONDS);
+        let sized = put(5);
+        assert!(
+            sized.ends_with("&X-Amz-SignedHeaders=content-length%3Bhost"),
+            "{sized}"
+        );
+        assert!(sized.contains(
+            "X-Amz-Signature=8d909dd22a4e1c9e978becfa876969af317b7f131543ff7bbf650e2887f9f0c0"
+        ));
+        assert_ne!(sized, put(6));
+        let unsized_put = s3.presign("PUT", "k.csv", 1_794_484_800_000, URL_SECONDS);
+        assert!(unsized_put.ends_with("&X-Amz-SignedHeaders=host"));
+        assert!(unsized_put.contains(
+            "X-Amz-Signature=095d91f63acd9d9761cb14e0ec49dd38d7ceac935e0cadbf0e8bda82c82858f2"
+        ));
     }
 
     #[test]

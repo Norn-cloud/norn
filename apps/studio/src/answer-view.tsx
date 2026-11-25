@@ -56,10 +56,16 @@ function amounts(read: Read<Trace>, index: number) {
 export type FetchTrace = (lineageRef: string, bucket: string) => Promise<LiveRead<Trace>>
 
 /**
- * Which engine computed the answer, as the cell reports it: DuckDB when the cell could lower the
- * plan to it, the cell's maintained totals, or its own exact engine. The figures are exact either way.
+ * Which engine computed the answer, as the cell reports it: DataFusion or DuckDB when the cell
+ * could lower the plan to it, the cell's maintained totals, or its own exact engine. The figures
+ * are exact either way.
  */
-const ENGINES: Readonly<Record<string, string>> = { duckdb: "Computed by DuckDB", cell: "Computed by the cell's exact engine", ivm: "Read from the cell's maintained totals" }
+const ENGINES: Readonly<Record<string, string>> = {
+  datafusion: "Computed by DataFusion",
+  duckdb: "Computed by DuckDB",
+  cell: "Computed by the cell's exact engine",
+  ivm: "Read from the cell's maintained totals",
+}
 export const engineOf = (answer: unknown): string | undefined => {
   const engine = (answer as { engine?: unknown } | null)?.engine
   return typeof engine === "string" ? ENGINES[engine] ?? `Computed by ${engine}` : undefined
@@ -167,7 +173,7 @@ export function RefusedNote({ refusal }: { readonly refusal: Refusal }) {
 function DrillDown({ bucket, onClose, live }: { readonly bucket: Bucket | undefined; readonly onClose: () => void; readonly live?: { readonly question: string; readonly lineageRef: string; readonly fetchTrace?: FetchTrace; readonly onStale?: () => void } }) {
   return (
     <Sheet open={bucket !== undefined} onOpenChange={(open) => { if (!open) onClose() }}>
-      <SheetContent className="data-[side=right]:w-full data-[side=right]:sm:max-w-lg">
+      <SheetContent>
         {bucket && <>
           <SheetHeader>
             <SheetTitle>{bucket.label}</SheetTitle>
@@ -271,7 +277,7 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
       <div className="space-y-2 px-1">
         {heading === "none" ? null : heading === "h1" ? <h1 className="text-title font-normal tracking-[-0.025em]">{named}</h1>
           : heading === "h3" ? <h3 className="font-medium">{named}</h3>
-          : <h2 className="text-section font-medium">{link ? <Link to="/metrics/$name" params={{ name: question.name }} className="underline-offset-4 hover:underline">{named}</Link> : named}</h2>}
+          : <h2 className="text-heading font-medium">{link ? <Link to="/metrics/$name" params={{ name: question.name }} className="underline-offset-4 hover:underline">{named}</Link> : named}</h2>}
         {/* A condition that a value is empty only says what the group label already does: it is not repeated. */}
         <p className="text-muted-foreground">{scope({ ...question, filter: (question.filter ?? []).filter(({ value }) => value !== null) })} · {period(question.window)}</p>
         <div className="flex flex-wrap items-center gap-1.5 pt-1">
@@ -365,7 +371,7 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
       </div>
       <DrillDown bucket={open} onClose={() => setOpen(undefined)} live={read.answer.origin === "live" ? { question: question.name, lineageRef: answer.lineageRef, fetchTrace, onStale } : undefined} />
       <Sheet open={drill !== undefined} onOpenChange={(next) => { if (!next) setDrill(undefined) }}>
-        <SheetContent className="w-full overflow-y-auto sm:max-w-4xl">
+        <SheetContent className="overflow-y-auto data-[side=right]:w-[56rem]">
           {drill && <>
             <SheetHeader>
               <SheetTitle>{named}, {drill.label.charAt(0).toLowerCase() + drill.label.slice(1)}</SheetTitle>

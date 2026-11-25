@@ -1736,6 +1736,68 @@ export interface components {
              */
             layoutVersion: "0.1";
         };
+        /**
+         * @description A frame a client sends on a live socket (`norn.live.v1`). A frame larger
+         *     than 4096 UTF-8 bytes closes the socket with 1009; one that is not JSON
+         *     closes it with 1007.
+         */
+        LiveClientMessage: {
+            /**
+             * @description The client's name for the subscription: 1 to 64 letters, digits
+             *     or `_.:-`, unique on its socket.
+             */
+            id: string;
+            /**
+             * @description One of the cell's GET routes with its query (`/v1/…?…`), at most
+             *     512 bytes; never the live route itself.
+             */
+            path: string;
+            /** @enum {string} */
+            type: "subscribe";
+        } | {
+            /** @description The subscription's id. */
+            id: string;
+            /** @enum {string} */
+            type: "unsubscribe";
+        };
+        /**
+         * @description A frame the cell sends on a live socket (`norn.live.v1`). A token the cell
+         *     no longer admits closes the socket with 4401; the client reconnects with a
+         *     fresh one.
+         */
+        LiveServerMessage: {
+            /** @description The GET's own document, byte for byte (exact decimals stay number tokens), or null when the answer is not JSON. */
+            body: unknown;
+            /**
+             * @description A digest of the status and the answer; a frame is sent only when it
+             *     changes.
+             */
+            digest: string;
+            /** @description The subscription's id. */
+            id: string;
+            /**
+             * Format: int32
+             * @description The HTTP status the GET answers with now (a refusal keeps its own).
+             */
+            status: number;
+            /** @enum {string} */
+            type: "snapshot";
+        } | {
+            /**
+             * @description Stable machine code: `live.invalid_id`, `live.not_subscribable`,
+             *     `live.too_many_subscriptions` or `live.unknown_message`.
+             */
+            code: string;
+            /**
+             * @description The refused subscription's id; null when the frame named no valid
+             *     id.
+             */
+            id: string | null;
+            /** @description One-line summary. */
+            message: string;
+            /** @enum {string} */
+            type: "refused";
+        };
         /** @description A JSON-RPC protocol error, carrying the shared refusal as its data. */
         McpError: {
             /**
@@ -3473,6 +3535,7 @@ export interface components {
             effectProgram?: components["schemas"]["NornIrActionEffectProgram"];
             extensions?: components["schemas"]["NornIrActionPayloadPropertyExtensions"];
             idempotent: boolean;
+            independentOf?: components["schemas"]["NornIrPropertyId"][];
             inputSchema: components["schemas"]["NornIrActionPayloadPropertyInputSchema"];
             ledgerCategory?: string;
             ledgered: boolean;
@@ -12212,8 +12275,9 @@ export interface components {
              */
             approximate: boolean;
             /**
-             * @description The engine that computed the profile: `cell`, the native exact engine,
-             *     or `duckdb`, the tenant analytics engine.
+             * @description The engine that computed the profile: `cell` (the native exact engine),
+             *     `duckdb` (the historical tenant analytics engine), or `datafusion` (the
+             *     `DataFusion` tenant analytics engine).
              */
             engine: string;
             /** @description The concept profiled; rows may be of its subtypes. */
@@ -12453,7 +12517,7 @@ export interface components {
          * @description The evaluator that produced an answer.
          * @enum {string}
          */
-        NornQueryEngine: "ivm" | "cell" | "duckdb";
+        NornQueryEngine: "ivm" | "cell" | "duckdb" | "datafusion";
         /**
          * @description Snapshot freshness, independent of source cursor ordering.
          * @enum {string}
@@ -15675,6 +15739,7 @@ export interface operations {
                 };
                 content: {
                     "application/vnd.apache.parquet": unknown;
+                    "application/x-ndjson": unknown;
                 };
             };
             /** @description The request was refused as invalid. */

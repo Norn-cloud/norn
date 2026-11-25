@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { badgeText, cellNow, countDecisions, decide, flowTitle, listDecisions, listRequested, needsConfirm, parkedFrom, remaining, requestedAction, requestedWords, runnable, stepTitle, urgent, type RequestedDecision } from "../src/lib/decisions.ts"
 import { defaultFetch, setDisplayedScope } from "../src/lib/definitions.ts"
-import type { ActionSummary } from "../src/lib/actions.ts"
+import type { ActionSummary } from "../../../packages/norn-sdk/src/index.ts"
 import { getRun, newRunId, phaseOf, refreshEvery, runTitle, startRun, type RunStep } from "../src/lib/runs.ts"
 
 const ME = { user: { id: "u" }, organization: { id: "org_demo", name: "Demo", role: "member" }, environmentId: "analytics" }
@@ -195,4 +195,20 @@ test("decide and startRun via defaultFetch stay bound to their pinned scope with
     setDisplayedScope(undefined)
     globalThis.fetch = original
   }
+})
+
+// #1753 (CodeRabbit): a requested call's dot follows its outcome, not just approved-or-not.
+test("a requested call's dot is held while pending, bad when rejected or refused, quiet when it lapsed, and live or accent once approved", async () => {
+  const { requestDot } = await import("../src/decisions/inbox.tsx")
+  const call = { action: "a", definition: "d", input: {}, encodedInput: "{}", idempotencyKey: "k" }
+  const dot = (status: "pending" | "approved" | "rejected" | "expired" | "withdrawn", extra: { canRun?: boolean; state?: "committed" | "refused" } = {}) =>
+    requestDot({ status, canRun: extra.canRun ?? false, call: extra.state === undefined ? call : { ...call, state: { state: extra.state } as never } })
+  expect(dot("pending")).toBe("bg-dot-held")
+  expect(dot("rejected")).toBe("bg-dot-bad")
+  expect(dot("expired")).toBe("bg-dot-quiet")
+  expect(dot("withdrawn")).toBe("bg-dot-quiet")
+  expect(dot("approved", { state: "refused" })).toBe("bg-dot-bad")
+  expect(dot("approved", { state: "committed" })).toBe("bg-dot-live")
+  expect(dot("approved", { canRun: true })).toBe("bg-dot-accent")
+  expect(dot("approved")).toBe("bg-dot-live")
 })

@@ -8,9 +8,10 @@ import { cn } from "@/lib/utils"
 // Studio's look for UI SDK parts: the behaviour (keys, focus, dismissal, ARIA) is UI SDK's, the
 // tokens are shadcn's. Popups render in the top layer, so they carry their own surface.
 
-const surface = "rounded-xl bg-popover p-1 text-popover-foreground shadow-float ring-1 ring-border outline-none"
+// Menus and popovers (DESIGN.md 10): --popover, --radius-popup, --popup-shadow, a --panel-border ring.
+const surface = "rounded-(--radius-popup) bg-popover p-1 text-popover-foreground shadow-popup ring-1 ring-panel-border outline-none"
 const motion = "origin-(--transform-origin) transition-[opacity,scale] duration-150 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0"
-const row = "flex cursor-default items-center gap-2 rounded-md px-2 py-1.5 text-sm outline-none select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0"
+const row = "flex cursor-default items-center gap-2 rounded-(--radius-row) px-2.5 py-2 text-body outline-none select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0"
 
 export { Menu, Popover }
 
@@ -32,7 +33,7 @@ export function KitMenuRadioItem({ className, children, ...props }: Omit<Compone
 }
 
 export function KitMenuLabel({ className, ...props }: ComponentProps<typeof MenuGroupLabel>) {
-  return <MenuGroupLabel className={cn("px-2 pt-1.5 pb-1 text-xs text-muted-foreground", className)} {...props} />
+  return <MenuGroupLabel className={cn("px-2 pt-1.5 pb-1 text-meta text-muted-foreground", className)} {...props} />
 }
 
 export function KitMenuSeparator({ className, ...props }: ComponentProps<typeof MenuSeparator>) {
@@ -48,7 +49,7 @@ export function Hint({ label, side = "right", children }: { readonly label: Reac
   return (
     <Tooltip>
       <TooltipTrigger render={children} />
-      <TooltipContent side={side} sideOffset={8} className={cn("rounded-md bg-foreground px-2 py-1 text-xs text-background shadow-md", motion)}>{label}</TooltipContent>
+      <TooltipContent side={side} sideOffset={8} className={cn("rounded-md bg-foreground px-2 py-1 text-meta text-background shadow-md", motion)}>{label}</TooltipContent>
     </Tooltip>
   )
 }

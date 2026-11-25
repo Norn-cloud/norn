@@ -113,7 +113,7 @@ export class ExpansionBudget {
       }
       switch (expr._tag) {
         case "Literal": bytes = this.capBytes(bytes + utf8(JSON.stringify(expr.value))); break
-        case "Ref": {
+        case "Input": {
           const binding = scope.get(expr.name)
           if (!binding) break // Existing type checker supplies the slice diagnostic.
           if ("zen" in binding) { bytes = this.capBytes(bytes + utf8(binding.zen) + expr.path.reduce((n, part) => n + utf8(part) + 1, 0)); break }
@@ -123,17 +123,17 @@ export class ExpansionBudget {
               const field = value.fields.find(([name]) => name === segment)
               if (!field) break
               value = field[1]
-            } else if (value._tag === "Ref") {
-              value = { _tag: "Ref", name: value.name, path: [...value.path, ...expr.path.slice(index)] }; break
+            } else if (value._tag === "Input") {
+              value = { _tag: "Input", name: value.name, path: [...value.path, ...expr.path.slice(index)] }; break
             } else break
           }
           child(value, binding.scope)
           break
         }
         case "Binary": case "Compare": case "Logical": child(expr.left); child(expr.right); break
-        case "Unsafe": bytes = this.capBytes(bytes + utf8(expr.text)); break
+        case "Bound": bytes = this.capBytes(bytes + expr.path.reduce((n, part) => n + utf8(part) + 1, 0)); break
         case "Call": for (const arg of expr.args) child(arg); break
-        case "Closure": bytes = this.capBytes(bytes + utf8(expr.fn) + utf8(expr.alias) * 2); child(expr.list); child(expr.body); break
+        case "Closure": bytes = this.capBytes(bytes + utf8(expr.fn)); child(expr.list); child(expr.body); break
         case "Conditional": child(expr.condition); child(expr.yes); child(expr.no); break
         case "Coalesce": child(expr.value); child(expr.fallback); break
         case "Not": child(expr.operand); break

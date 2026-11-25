@@ -11,91 +11,17 @@ use std::collections::{BTreeMap, BTreeSet};
 /// # Errors
 /// Tenant declarations using SQLite-equivalent reserved names or invalid models refuse.
 pub fn prepare_action_model(model: &norn_cell::Model) -> Result<norn_cell::Model, Refusal> {
-    use norn_ir::{ObjectTypeDef, ObjectTypeName, Property, PropertyId, PropertyType};
     let mut snapshot = model.definitions_snapshot();
-    for (name, text_fields, json_fields) in [
-        (
-            norn_kernel::ACTION_CALL_TYPE,
-            &[
-                "actionId",
-                "actionArtifactId",
-                "actionVersion",
-                "effectKind",
-                "actor",
-                "turn",
-                "transition",
-                "from",
-                "to",
-                "ruleBinding",
-            ][..],
-            &[
-                "object",
-                "input",
-                "effectiveInput",
-                "derivedValues",
-                "preconditionOutcomes",
-                "parameterPins",
-                "rowOperations",
-                "trace",
-            ][..],
-        ),
-        (
-            norn_kernel::OWNED_ROWS_TYPE,
-            &["parentType", "parentKey", "collectionId"][..],
-            &["rowIds"][..],
-        ),
-    ] {
-        if snapshot
-            .object_types
-            .iter()
-            .any(|ty| ty.name.as_str().eq_ignore_ascii_case(name))
-            || snapshot
-                .interfaces
-                .iter()
-                .any(|ty| ty.name.as_str().eq_ignore_ascii_case(name))
-        {
-            return Err(Refusal::invalid("reserved kernel object type"));
-        }
-        let properties = text_fields
-            .iter()
-            .map(|id| (*id, PropertyType::Text { format: None }))
-            .chain(
-                json_fields
-                    .iter()
-                    .map(|id| (*id, PropertyType::JsonExt { schema: None })),
-            )
-            .map(|(id, property_type)| Property {
-                protected: false,
-                id: PropertyId(id.into()),
-                property_type,
-                description: None,
-                constraints: norn_ir::PropertyConstraints {
-                    nullable: true,
-                    ..Default::default()
-                },
-                default: None,
-                markings: vec![],
-                computed: None,
-            })
-            .collect();
-        snapshot.object_types.push(ObjectTypeDef {
-            immutable: false,
-            name: ObjectTypeName(name.into()),
-            role: None,
-            description: None,
-            status: norn_ir::ResourceStatus::default(),
-            extends: None,
-            implements: vec![],
-            properties,
-            links: vec![],
-            owned_collections: vec![],
-            identity: vec![],
-            invariants: vec![],
-            lifecycles: vec![],
-            markings: vec![],
-            accounting_leg: None,
-        });
+    let declared = snapshot.object_types.iter().map(|ty| ty.name.as_str());
+    if declared
+        .chain(snapshot.interfaces.iter().map(|ty| ty.name.as_str()))
+        .any(norn_cell::is_reserved_kernel_name)
+    {
+        return Err(Refusal::invalid("reserved kernel object type"));
     }
+    snapshot
+        .object_types
+        .extend(norn_cell::kernel_record_types());
     norn_cell::Model::from_snapshot(&snapshot).map_err(Refusal::host)
 }
 
@@ -103,12 +29,37 @@ pub fn prepare_action_model(model: &norn_cell::Model) -> Result<norn_cell::Model
 pub(crate) struct RetainedActions {
     pub(crate) actions: Vec<(ArtifactEnvelope, ActionRoot)>,
     pub(crate) rules: Vec<SynchronousRule>,
+    /// ACTOR-INDEPENDENT-1: the transitions the retained actions guard.
+    pub(crate) guards: Vec<norn_kernel::TransitionGuard>,
     /// APPROVAL-REVISION-1: each action's definition digest, by action id.
     digests: BTreeMap<String, String>,
 }
+/// The expression profile and type environment the retained admission
+/// receipt pins, which every retained writer is admitted under.
+fn retained_binding(set: &InstalledDefinitionSet) -> Result<DecisionBinding, Refusal> {
+    let receipt: serde_json::Value = serde_json::from_str(
+        set.admission_receipt
+            .as_deref()
+            .ok_or_else(|| Refusal::host("missing retained receipt"))?,
+    )
+    .map_err(Refusal::host)?;
+    Ok(DecisionBinding {
+        profile_id: receipt
+            .get("exprProfile")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| Refusal::host("missing expression profile"))?
+            .into(),
+        environment_hash: receipt
+            .pointer("/typeEnv/sha256")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| Refusal::host("missing type environment"))?
+            .into(),
+    })
+}
+
 impl RetainedActions {
     pub(crate) fn load(set: &InstalledDefinitionSet, scope: &CellScope) -> Result<Self, Refusal> {
-        crate::routes::verify_retained(set, scope)?;
+        crate::routes::admit_retained(set, scope)?;
         let RuntimeValue::Array(sources) =
             RuntimeValue::from_json_text(&set.canonical_set).map_err(Refusal::host)?
         else {
@@ -160,24 +111,7 @@ impl RetainedActions {
                 | ArtifactKind::Model => {}
             }
         }
-        let receipt: serde_json::Value = serde_json::from_str(
-            set.admission_receipt
-                .as_deref()
-                .ok_or_else(|| Refusal::host("missing retained receipt"))?,
-        )
-        .map_err(Refusal::host)?;
-        let binding = DecisionBinding {
-            profile_id: receipt
-                .get("exprProfile")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| Refusal::host("missing expression profile"))?
-                .into(),
-            environment_hash: receipt
-                .pointer("/typeEnv/sha256")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| Refusal::host("missing type environment"))?
-                .into(),
-        };
+        let binding = retained_binding(set)?;
         let mut rules = Vec::new();
         let digests = action_digests(&actions, &action_sources, &artifacts, &sources, &roots)?;
         let mut loaded = BTreeSet::new();
@@ -204,6 +138,7 @@ impl RetainedActions {
             );
         }
         Ok(Self {
+            guards: norn_kernel::transition_guards(actions.iter().map(|(_, action)| action)),
             actions,
             rules,
             digests,
@@ -387,4 +322,175 @@ pub(crate) fn target_version<E: norn_cell::engine::SqlEngine>(
             receipt.body.commit_seq,
         )
         .map_err(Refusal::host)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RetainedActions;
+    use crate::scope::CellScope;
+    use norn_checker::entity_scopes::ScopedView;
+    use norn_checker::{
+        CheckReceipt, EntityArtifactSetContext, ReceiptSources, check_artifact_set_with_receipt,
+    };
+    use norn_ir::{ArtifactEnvelope, ResourceLimitProfile, RuntimeValue};
+    use serde_json::{Value, json};
+    use std::collections::BTreeSet;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    fn envelope(
+        id: &str,
+        kind: &str,
+        scope: &Value,
+        payload: &Value,
+    ) -> serde_json::Result<ArtifactEnvelope> {
+        serde_json::from_value(json!({
+            "irVersion": "0.1", "artifactId": id, "kind": kind, "namespace": "retail", "name": id,
+            "version": "1.0.0", "lifecycle": "draft", "scope": scope, "dependencies": [],
+            "provenance": { "source": "authoring_sdk" }, "payload": payload
+        }))
+    }
+
+    /// A broader writer of a narrower extension's property, as a set admitted
+    /// before scoped admission retains it.
+    fn legacy_set() -> serde_json::Result<Vec<ArtifactEnvelope>> {
+        let sku = json!({ "entityVersion": "2.0", "objectType": {
+            "name": "retail.Sku",
+            "properties": [{ "id": "sku_code", "type": { "kind": "text" } }],
+            "identity": [{ "name": "primary", "properties": ["sku_code"] }]
+        } });
+        let extension = json!({ "entityVersion": "2.0", "objectTypeExtension": {
+            "namespace": "acme",
+            "target": "retail.Sku",
+            "properties": [{ "id": "acme__secret_tag", "type": { "kind": "text" }, "constraints": { "nullable": true } }]
+        } });
+        let writer = json!({
+            "actionId": "retail.write_secret",
+            "scopeRequired": ["orgId", "environmentId"],
+            "idempotent": true,
+            "ledgered": true,
+            "inputSchema": {
+                "type": "object",
+                "properties": { "sku_code": { "type": "string" }, "acme__secret_tag": { "type": "string" } },
+                "required": ["sku_code"],
+                "additionalProperties": false
+            },
+            "outputSchema": { "type": "object", "properties": {}, "additionalProperties": false },
+            "effectProgram": {
+                "kind": "upsert_input_object",
+                "objectKind": "retail.Sku",
+                "objectIdField": "sku_code",
+                "entityArtifactId": "retail.Sku.entity",
+                "entityArtifactVersion": "1.0.0"
+            },
+            "writes": [
+                { "entityKind": "retail.Sku", "change": "created" },
+                { "entityKind": "retail.Sku", "change": "modified" }
+            ]
+        });
+        Ok(vec![
+            envelope("retail.Sku.entity", "entity", &json!({}), &sku)?,
+            envelope(
+                "acme.SkuExt.entity",
+                "entity",
+                &json!({ "orgId": "org_demo", "environmentId": "dev" }),
+                &extension,
+            )?,
+            envelope(
+                "retail.write_secret",
+                "action",
+                &json!({ "orgId": "org_demo" }),
+                &writer,
+            )?,
+        ])
+    }
+
+    fn values(
+        artifacts: &[ArtifactEnvelope],
+    ) -> Result<Vec<RuntimeValue>, Box<dyn std::error::Error>> {
+        artifacts
+            .iter()
+            .map(|artifact| {
+                RuntimeValue::from_json(serde_json::to_value(artifact)?).map_err(Into::into)
+            })
+            .collect()
+    }
+
+    /// `verify_retained` accepts `artifacts` under `receipt`, yet they supply no actions.
+    fn assert_no_actions(receipt: &CheckReceipt, artifacts: &[ArtifactEnvelope]) -> TestResult {
+        let installed = norn_cell::InstalledDefinitionSet {
+            version: 1,
+            receipt_sha256: receipt.content_sha256()?,
+            admission_receipt: Some(String::from_utf8(receipt.canonical_json()?)?),
+            canonical_set: String::from_utf8(norn_ir::canonical::canonical_json_of(artifacts)?)?,
+            registry: Vec::new(),
+            model_hash: String::new(),
+            ddl_hash: String::new(),
+            installed_at: 1,
+            commit_seq: 1,
+            layout: None,
+            layout_revision: 0,
+        };
+        let scope = CellScope {
+            org_id: "org_demo".to_owned(),
+            environment_id: "dev".to_owned(),
+        };
+        crate::routes::verify_retained(&installed, &scope)
+            .map_err(|refusal| format!("{refusal:?}"))?;
+        let refused = format!(
+            "{:?}",
+            RetainedActions::load(&installed, &scope)
+                .err()
+                .ok_or("actions loaded")?
+        );
+        assert!(
+            refused.contains("no longer pass scoped admission"),
+            "{refused}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_retained_candidate_the_scoped_checks_refuse_supplies_no_actions() -> TestResult {
+        let artifacts = legacy_set()?;
+        let candidates = [artifacts[1].clone(), artifacts[2].clone()];
+        let base = [artifacts[0].clone()];
+        let limits = ResourceLimitProfile::norn_limits_v1();
+        let registry = BTreeSet::new();
+        let context = EntityArtifactSetContext {
+            registry: &registry,
+            base: &base,
+            tenant: None,
+        };
+        let sources = ReceiptSources::new(&values(&candidates)?, &values(&base)?)?;
+        let checked = check_artifact_set_with_receipt(&sources, &context, &limits)?;
+        assert!(!checked.receipt.admitted, "{:#?}", checked.diagnostics);
+        let mut legacy = checked.receipt;
+        legacy.admitted = true;
+        legacy.diagnostics.count = 0;
+        legacy.diagnostics.errors = 0;
+        let whole_set = ScopedView::of(&artifacts[1], &candidates, &base, &registry)
+            .receipt_env(&limits)
+            .map_err(|errors| format!("{errors:?}"))?;
+        legacy.type_env = Some(whole_set.reference()?);
+        assert_no_actions(&legacy, &artifacts)
+    }
+
+    #[test]
+    fn a_retained_base_action_the_scoped_checks_refuse_supplies_no_actions() -> TestResult {
+        let artifacts = legacy_set()?;
+        let candidates = [artifacts[1].clone()];
+        let base = [artifacts[0].clone(), artifacts[2].clone()];
+        let registry = BTreeSet::new();
+        let context = EntityArtifactSetContext {
+            registry: &registry,
+            base: &base,
+            tenant: None,
+        };
+        let sources = ReceiptSources::new(&values(&candidates)?, &values(&base)?)?;
+        let limits = ResourceLimitProfile::norn_limits_v1();
+        let checked = check_artifact_set_with_receipt(&sources, &context, &limits)?;
+        assert!(checked.receipt.admitted, "{:#?}", checked.diagnostics);
+        assert_no_actions(&checked.receipt, &artifacts)
+    }
 }
