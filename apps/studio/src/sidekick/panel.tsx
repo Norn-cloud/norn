@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
+import { getDisplayedScope, type StudioScope } from "@/lib/definitions"
 import type { ToolHost } from "@/widget/bridge"
 import type { View } from "@/widget/views"
 import { SidekickSession, sidekickServed, type ViewDelivery } from "./client.ts"
@@ -71,56 +72,95 @@ function Entry({ item, host }: { readonly item: Item; readonly host: ToolHost })
 
 type Status = "idle" | "connecting" | "busy"
 
-/** The chat, held by the shell's slot so closing the panel keeps it. */
-export function Sidekick() {
+/** The chat, held by the shell's slot so closing the panel keeps it, scoped to one user/org/env tuple. */
+export function Sidekick({ scope, scopeKey }: { readonly scope?: StudioScope | null; readonly scopeKey?: string } = {}) {
   const [transcript, setTranscript] = useState<Transcript>([])
   const [input, setInput] = useState("")
   const [status, setStatus] = useState<Status>("idle")
   const [error, setError] = useState<string | null>(null)
   const session = useRef<SidekickSession | null>(null)
+  const generation = useRef(0)
+  const lastScopeKey = useRef(scopeKey)
   const prompts = useRef(0)
   const assistant = useAssistant()
 
-  const open = useCallback(async () => {
+  // Immediately close any prior session and discard in-flight opens/responses when the workspace scope changes.
+  useEffect(() => {
+    if (lastScopeKey.current === scopeKey) return
+    lastScopeKey.current = scopeKey
+    generation.current += 1
+    session.current?.close()
+    session.current = null
+    setTranscript([])
+    setError(null)
+    setStatus("idle")
+  }, [scopeKey])
+
+  const open = useCallback(async (expectedGeneration: number): Promise<SidekickSession | null> => {
     if (session.current !== null && !session.current.closed) return session.current
     setStatus("connecting")
-    const opened = await SidekickSession.open({
-      update: (notification) => setTranscript((current) => applyUpdate(current, notification)),
-      view: (delivery) => setTranscript((current) => viewItem(current, delivery)),
-      closed: () => { session.current = null },
-    })
+    const pinnedScope = scope !== undefined ? scope : getDisplayedScope()
+    const opened = await SidekickSession.open(
+      {
+        update: (notification) => {
+          if (generation.current !== expectedGeneration) return
+          setTranscript((current) => applyUpdate(current, notification))
+        },
+        view: (delivery) => {
+          if (generation.current !== expectedGeneration) return
+          setTranscript((current) => viewItem(current, delivery))
+        },
+        closed: () => {
+          if (generation.current === expectedGeneration) session.current = null
+        },
+      },
+      { scope: pinnedScope },
+    )
+    if (generation.current !== expectedGeneration) {
+      opened.close()
+      return null
+    }
     session.current = opened
     return opened
-  }, [])
+  }, [scope])
 
   const send = useCallback(async (text: string) => {
     const request = text.trim()
     if (request === "" || status !== "idle") return
+    const sendGen = generation.current
     setError(null)
     setInput("")
     setTranscript((current) => promptItem(current, `user:${prompts.current++}`, request))
     try {
-      const active = await open()
+      const active = await open(sendGen)
+      if (active === null || generation.current !== sendGen) return
       setStatus("busy")
       await active.prompt(request)
     } catch (failure) {
+      if (generation.current !== sendGen) return
       setError(failure instanceof Error && failure.message !== "" ? failure.message : "Sidekick could not answer.")
     } finally {
-      setStatus("idle")
+      if (generation.current === sendGen) setStatus("idle")
     }
   }, [open, status])
 
-  // A prompt handed over from a page (Home's Ask bar) is taken once.
+  // A prompt handed over from a page (Home's Ask bar) is taken once, only for its matching scope.
   useEffect(() => {
     if (assistant.prompt === null || status !== "idle") return
+    if (assistant.promptScopeKey !== undefined && assistant.promptScopeKey !== scopeKey) return
     const text = assistant.prompt
     assistant.took()
     void send(text)
-  }, [assistant, send, status])
+  }, [assistant, scopeKey, send, status])
 
-  useEffect(() => () => session.current?.close(), [])
+  useEffect(() => () => {
+    generation.current += 1
+    session.current?.close()
+    session.current = null
+  }, [])
 
   const newChat = () => {
+    generation.current += 1
     session.current?.close()
     session.current = null
     setTranscript([])

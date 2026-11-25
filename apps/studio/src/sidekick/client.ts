@@ -1,6 +1,7 @@
 import { client, type SessionNotification } from "@agentclientprotocol/sdk"
 import { createWebSocketStream } from "@agentclientprotocol/sdk/experimental/ws-client"
 import type { ToolResult } from "@/widget/bridge"
+import { defaultFetch, getDisplayedScope, isDefaultFetch, scopeHeaders, type StudioScope } from "../lib/definitions.ts"
 
 /**
  * Sidekick's connection: Studio as an Agent Client Protocol client.
@@ -46,8 +47,13 @@ export async function sidekickServed(fetcher: typeof fetch = fetch, signal?: Abo
 }
 
 /** The Worker's grant for the signed-in person; the reason in words when it refuses. */
-export async function fetchGrant(fetcher: typeof fetch = fetch): Promise<Grant> {
-  const response = await fetcher("/api/sidekick/grant", { method: "POST", headers: { accept: "application/json" }, credentials: "same-origin" })
+export async function fetchGrant(fetcher: (input: string, init?: RequestInit) => Promise<Response> = defaultFetch, boundScope?: StudioScope | null): Promise<Grant> {
+  const scope = boundScope !== undefined ? boundScope : getDisplayedScope()
+  const response = await fetcher("/api/sidekick/grant", {
+    method: "POST",
+    headers: { accept: "application/json", ...scopeHeaders(scope) },
+    credentials: "same-origin",
+  })
   const body = (await response.json().catch(() => null)) as { token?: unknown; expiresAt?: unknown; error?: unknown } | null
   if (!response.ok || typeof body?.token !== "string" || typeof body.expiresAt !== "number") {
     throw new Error(typeof body?.error === "string" ? body.error : "Studio did not grant Sidekick access.")
@@ -68,9 +74,10 @@ export class SidekickSession {
     private readonly events: SidekickEvents,
   ) {}
 
-  /** Open a socket, initialize with a fresh grant and start one session. */
-  static async open(events: SidekickEvents, options: { readonly url?: string; readonly getGrant?: () => Promise<Grant> } = {}): Promise<SidekickSession> {
-    const getGrant = options.getGrant ?? (() => fetchGrant())
+  /** Open a socket, initialize with a fresh grant and start one session pinned to the opening workspace. */
+  static async open(events: SidekickEvents, options: { readonly url?: string; readonly getGrant?: () => Promise<Grant>; readonly scope?: StudioScope | null } = {}): Promise<SidekickSession> {
+    const pinnedScope = options.scope !== undefined ? options.scope : getDisplayedScope()
+    const getGrant = options.getGrant ?? (() => fetchGrant(defaultFetch, pinnedScope))
     const grant = await getGrant()
     const app = client()
       .onNotification("session/update", ({ params }) => events.update(params))
