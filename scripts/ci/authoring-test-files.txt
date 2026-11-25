@@ -3,6 +3,7 @@ test/action-input-labels.test.ts
 test/action-nullable.test.ts
 test/apply.test.ts
 test/authoring-sdk.test.ts
+test/binders-cfg-assignability.test.ts
 test/builder-browser.test.ts
 test/builtins.test.ts
 test/cli-code-registry.test.ts
