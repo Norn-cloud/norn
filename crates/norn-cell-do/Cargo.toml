@@ -105,6 +105,8 @@ fixtures = []
 # `norn-dev-host` answers questions DuckDB can lower on DuckDB (QUERY-ENGINE-1)
 # and falls back to the native exact engine. Opt-in: it builds bundled DuckDB.
 duckdb = ["norn-cell/duckdb"]
+# D137: the native DataFusion analytical engine, selectable at startup next to DuckDB.
+datafusion = ["norn-cell/datafusion"]
 
 [lints]
 workspace = true

@@ -103,7 +103,7 @@ struct LegacyStore {
     held: StoredObject,
 }
 
-#[cfg(all(feature = "duckdb", feature = "native"))]
+#[cfg(any(all(feature = "duckdb", feature = "native"), feature = "datafusion"))]
 pub(super) fn legacy_land_response(raw: &RawValue) -> serde_json::Result<LandResponse> {
     serde_json::from_str::<LegacyLandingAnswer>(raw.get()).map(Into::into)
 }

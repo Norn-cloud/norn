@@ -73,6 +73,8 @@ pub struct Prepared {
     schema_pin: Option<String>,
     /// At a knowledge cutoff: the cutoff and the receipt it is pinned to.
     known_at: Option<(crate::KnowledgeCutoff, Option<String>)>,
+    /// D136: the engine the answer must name, when the host pinned one.
+    engine: Option<super::AnalyticalEngineId>,
 }
 
 impl Prepared {
@@ -80,6 +82,13 @@ impl Prepared {
     #[must_use]
     pub const fn request(&self) -> &EvaluateRequest {
         &self.request
+    }
+
+    /// D136: accept an answer only from `engine` (the deployment's selection).
+    #[must_use]
+    pub const fn expecting(mut self, engine: Option<super::AnalyticalEngineId>) -> Self {
+        self.engine = engine;
+        self
     }
 }
 
@@ -234,6 +243,7 @@ impl<E: SqlEngine> CellStore<E> {
             definition_pin,
             schema_pin,
             known_at: cutoff.map(|cutoff| (cutoff, receipt)),
+            engine: None,
         })
     }
 
@@ -361,6 +371,7 @@ impl<E: SqlEngine> CellStore<E> {
         self.check_prepared(&prepared)?;
         let request = &prepared.request;
         response.provenance.verify(
+            prepared.engine,
             &request.tenant,
             &request.source,
             &request.model_pin,
