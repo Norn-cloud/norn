@@ -468,10 +468,10 @@ test("findings: correcting a quarantined record reads its findings again, so the
   })
   await page.goto(PARTY)
   const header = page.locator("div:has(> h1)")
-  const quarantine = page.getByRole("status").filter({ hasText: "Held in quarantine" })
-  await expect(quarantine).toBeVisible()
+  // One statement of the state: the title's Quarantined status, and the "Not served" sentence in a neutral well.
+  const quarantine = page.locator("[data-quarantine-statement]")
+  await expect(quarantine).toContainText("Not served")
   await expect(header.locator('[data-fact-status="quarantined"]')).toBeVisible()
-  await expect(header.getByText("Held back", { exact: true })).toBeVisible()
   await expect(header.getByText("1 rule broken", { exact: true })).toBeVisible()
   await expect.poll(() => findingsReads.length).toBe(1)
   const read = Date.now()
@@ -490,7 +490,6 @@ test("findings: correcting a quarantined record reads its findings again, so the
   await expect(page.getByRole("tab", { name: "Overview" })).toBeVisible()
   await expect(page.getByText("No findings", { exact: true })).toBeVisible()
   await expect(header.locator('[data-fact-status="quarantined"]')).toHaveCount(0)
-  await expect(header.getByText("Held back", { exact: true })).toHaveCount(0)
   await expect(header.getByText("1 rule broken", { exact: true })).toHaveCount(0)
   expect(findingsReads).toHaveLength(2)
   // The row proves the fix only inside the window: past it, the panel's mount alone would read them again.
