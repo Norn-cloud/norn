@@ -33,6 +33,7 @@
 pub mod actions;
 pub mod analytics;
 pub mod base;
+pub mod caller;
 pub mod connect;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod connections;

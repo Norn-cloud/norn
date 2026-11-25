@@ -46,6 +46,7 @@ use norn_kernel::{
 };
 
 use crate::actions::{ActionPolicy, collection_access_key};
+pub use crate::caller::{Caller, CallerSlot};
 
 use crate::seed::SeedError;
 
@@ -451,59 +452,6 @@ impl ConnectorPolicy {
         };
         matches!(pdp.decide(&request), norn_kernel::authz::PdpDecision::Allow).then_some(rule)
     }
-}
-
-/// The principal a resolver verified for the current request.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Caller {
-    /// Norn subject id; the request's actor.
-    pub subject_id: String,
-    /// Norn roles from the declared role table.
-    pub roles: Vec<String>,
-    /// `user` or `service`.
-    pub actor_kind: &'static str,
-    /// The declared role table the roles came from.
-    pub role_table: &'static str,
-}
-
-/// Where the resolver records the current request's verified principal for
-/// the policy. Every request records first (possibly nobody), so a caller
-/// never outlives its request. A request runs on one thread from resolution
-/// to answer, and the slot keeps each thread's caller apart, so requests a
-/// host serves concurrently (the dev host's workers, DEV-CONCURRENT-1) never
-/// see each other's caller.
-#[derive(Debug, Default)]
-pub struct CallerSlot(Mutex<Vec<(Option<std::thread::ThreadId>, Caller)>>);
-
-impl CallerSlot {
-    /// Record the request's verified principal, or nobody, for the calling
-    /// thread's request.
-    pub fn record(&self, caller: Option<Caller>) {
-        let me = this_thread();
-        if let Ok(mut slot) = self.0.lock() {
-            slot.retain(|(thread, _)| *thread != me);
-            if let Some(caller) = caller {
-                slot.push((me, caller));
-            }
-        }
-    }
-
-    /// The calling thread's request's verified principal, if any.
-    #[must_use]
-    pub fn current(&self) -> Option<Caller> {
-        let me = this_thread();
-        self.0.lock().ok().and_then(|slot| {
-            slot.iter()
-                .find(|(thread, _)| *thread == me)
-                .map(|(_, caller)| caller.clone())
-        })
-    }
-}
-
-/// The calling thread, on a host with threads; the Durable Object cell has
-/// one thread and serves one request at a time.
-fn this_thread() -> Option<std::thread::ThreadId> {
-    (!cfg!(target_arch = "wasm32")).then(|| std::thread::current().id())
 }
 
 /// The compiled read rules with no grant, one per object type of the cell's
@@ -993,7 +941,12 @@ impl Authorizer for ReadPolicy {
         &self,
         request: &norn_kernel::PrincipalInputsRequest<'_>,
     ) -> Result<norn_kernel::ActionPrincipalInputs, norn_kernel::UnresolvedPrincipalInput> {
-        let (caller, policy) = (self.member(request.actor), self.action_policy());
+        // A recorded principal acting for a run or an approved call carries
+        // the roles of an earlier request: nothing resolves for it.
+        let caller = self
+            .member(request.actor)
+            .filter(|_| !self.caller.is_acting());
+        let policy = self.action_policy();
         crate::principal_inputs::resolve(caller.as_ref(), policy.as_deref(), self.table, request)
     }
 

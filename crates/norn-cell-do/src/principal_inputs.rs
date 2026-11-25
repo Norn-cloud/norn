@@ -12,6 +12,9 @@
 //! cell lives in the cell's scope, so that is the scope of a decision's
 //! subject. The one scoped attribute this host verifies is `id`, the
 //! caller's subject id; any other declared attribute is unavailable.
+//! A recorded principal acting for a flow run or an approved call
+//! ([`crate::caller::CallerSlot::is_acting`]) carries the roles of an earlier
+//! request, so nothing resolves for it.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -191,3 +194,7 @@ pub fn resolve(
         .principal_resolver()
         .resolve(caller, table.version, request)
 }
+
+#[cfg(test)]
+#[path = "principal_inputs_tests.rs"]
+mod tests;

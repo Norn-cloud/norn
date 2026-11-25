@@ -228,7 +228,8 @@ pub enum PrincipalAttributeSource {
 /// Why a catalog entry or a principal input does not resolve.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrincipalCatalogError {
-    /// The entry's name is not an identifier, or its type contradicts its
+    /// The entry's name is not well formed (a scoped attribute is an
+    /// identifier, `[A-Za-z_][A-Za-z0-9_]*`), or its type contradicts its
     /// source (a role is `bool`, a role profile `stringSet`).
     InvalidEntry {
         /// The entry.
@@ -261,13 +262,18 @@ impl PrincipalAttributeCatalog {
     /// # Errors
     /// An invalid entry, or one that differs from an earlier declaration.
     pub fn declare(&mut self, entry: &PrincipalCatalogEntry) -> Result<(), PrincipalCatalogError> {
-        let identifier = entry
+        // A scoped attribute is read as `principal.<name>` by Cedar and by
+        // decisions, so it is an identifier; a role or role profile name is a
+        // role id, which may also carry `.` and `-` after its first character.
+        let attribute = entry.source == PrincipalAttributeSource::Attribute;
+        let named = entry
             .name
             .chars()
             .enumerate()
             .all(|(index, character)| match character {
                 'A'..='Z' | 'a'..='z' | '_' => true,
-                '0'..='9' | '.' | '-' => index > 0,
+                '0'..='9' => index > 0,
+                '.' | '-' => index > 0 && !attribute,
                 _ => false,
             });
         let typed = match &entry.source {
@@ -279,7 +285,7 @@ impl PrincipalAttributeCatalog {
             }
             PrincipalAttributeSource::Attribute => true,
         };
-        if entry.name.is_empty() || !identifier || !typed {
+        if entry.name.is_empty() || !named || !typed {
             return Err(PrincipalCatalogError::InvalidEntry {
                 name: entry.name.clone(),
             });

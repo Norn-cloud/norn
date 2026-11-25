@@ -1195,7 +1195,7 @@ fn reopen<E: SqlEngine>(
             .map_err(|e| format!("active definitions: {e}"))?;
         // The serving model every install path checks against (DEFS-REOPEN-1):
         // the kernel's action types are part of it, as provisioned.
-        let model = norn_api::kernel_set::serving_model(&artifacts)
+        let model = norn_api::kernel_set::serving_model_installed(&artifacts, &active.model_hash)
             .map_err(|e| format!("active definitions: {e}"))?;
         CellStore::from_engine(engine, model).map_err(|e| format!("open: {e}"))
     })();

@@ -16,8 +16,8 @@ pub use norn_authz::{
 // PRINCIPAL-INPUT-1 (#1091): the shared catalog and the trusted resolver.
 pub use norn_authz::{
     HOLDS_ROLE_ACTION, HoldsRoleKey, HoldsRolePdp, HoldsRolePolicy, PrincipalContext,
-    PrincipalInputUnavailable, holds_role_keys, principal_attribute_catalog,
-    resolve_principal_inputs, scope_dimensions,
+    PrincipalInputUnavailable, admit_principal_catalog, holds_role_keys,
+    principal_attribute_catalog, resolve_principal_inputs, scope_dimensions,
 };
 
 /// A denied authorization.

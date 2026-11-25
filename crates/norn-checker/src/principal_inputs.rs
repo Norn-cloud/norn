@@ -37,20 +37,17 @@ use crate::envelope::invalid_diagnostic;
 use crate::lifecycle_writes::finding;
 
 /// Stable diagnostic codes of principal-input admission.
-pub(crate) mod codes {
+pub mod codes {
     /// A `principalInputs` declaration or its `principal` record is malformed.
-    pub(crate) const PRINCIPAL_INPUT_INVALID: &str = "rule.validation.principal_input_invalid";
+    pub const PRINCIPAL_INPUT_INVALID: &str = "rule.validation.principal_input_invalid";
     /// An expression reads a `principal.*` name the rule does not declare.
-    pub(crate) const PRINCIPAL_INPUT_UNDECLARED: &str =
-        "rule.validation.principal_input_undeclared";
+    pub const PRINCIPAL_INPUT_UNDECLARED: &str = "rule.validation.principal_input_undeclared";
     /// An input names a role, role profile or attribute no catalog declares.
-    pub(crate) const PRINCIPAL_INPUT_UNKNOWN: &str =
-        "artifact_set.decision.principal_input_unknown";
+    pub const PRINCIPAL_INPUT_UNKNOWN: &str = "artifact_set.decision.principal_input_unknown";
     /// An input's column type is not its catalog entry's type.
-    pub(crate) const PRINCIPAL_INPUT_TYPE: &str = "artifact_set.decision.principal_input_type";
+    pub const PRINCIPAL_INPUT_TYPE: &str = "artifact_set.decision.principal_input_type";
     /// Two policies declare one catalog name differently.
-    pub(crate) const PRINCIPAL_CATALOG_CONFLICT: &str =
-        "artifact_set.policy.principal_catalog_conflict";
+    pub const PRINCIPAL_CATALOG_CONFLICT: &str = "artifact_set.policy.principal_catalog_conflict";
 }
 
 const POLICY_CODE: &str = "policy.validation.invalid_payload";
@@ -278,8 +275,25 @@ impl Site<'_> {
     }
 }
 
+/// The ids of a decision table's input columns that declare a `field`: their
+/// row cells are unary tests of that field, not standard expressions.
+fn unary_columns(content: &JsonValue) -> BTreeSet<&str> {
+    member(Some(content), "inputs")
+        .and_then(JsonValue::as_array)
+        .unwrap_or_default()
+        .iter()
+        .filter(|column| {
+            member(Some(column), "field")
+                .and_then(JsonValue::as_string)
+                .is_some_and(|field| !field.trim().is_empty())
+        })
+        .filter_map(|column| member(Some(column), "id")?.as_string())
+        .collect()
+}
+
 /// No node writes under `principal`, and every `principal.<name>` an
-/// expression reads is declared. Only text that names `principal` is parsed.
+/// expression reads is declared. Only text that names `principal` is parsed,
+/// each site in its own mode: a unary test or a standard expression.
 fn check_graph(payload: &BTreeMap<String, JsonValue>, names: &BTreeSet<&str>, sink: &mut Sink<'_>) {
     let nodes = member(payload.get("graph"), "nodes")
         .and_then(JsonValue::as_array)
@@ -287,10 +301,12 @@ fn check_graph(payload: &BTreeMap<String, JsonValue>, names: &BTreeSet<&str>, si
     let reserved = format!("{DECIDE_PRINCIPAL_MEMBER}.");
     for (index, node) in nodes.iter().enumerate() {
         let path = format!("payload.graph.nodes[{index}].content");
+        let Some(content) = member(Some(node), "content") else {
+            continue;
+        };
+        let unary = unary_columns(content);
         let mut found = Vec::new();
-        if let Some(content) = member(Some(node), "content") {
-            strings(content, "content", "node", &mut found);
-        }
+        strings(content, "content", "node", &mut found);
         for site in found {
             if !site.text.contains(DECIDE_PRINCIPAL_MEMBER) {
                 continue;
@@ -306,21 +322,28 @@ fn check_graph(payload: &BTreeMap<String, JsonValue>, names: &BTreeSet<&str>, si
                     );
                 }
             } else if !site.is_metadata() {
-                check_read(site.text, names, &path, sink);
+                let unary_test = site.parent == "rules" && unary.contains(site.holder);
+                check_read(site.text, unary_test, names, &path, sink);
             }
         }
     }
 }
 
-fn check_read(source: &str, names: &BTreeSet<&str>, path: &str, sink: &mut Sink<'_>) {
-    let Ok(reads) = norn_expr::expression_reads(source, DECIDE_PRINCIPAL_MEMBER) else {
-        sink.push(
-            codes::PRINCIPAL_INPUT_UNDECLARED,
-            format!(
-                "{source:?} names `principal` outside a standard expression; read a principal input in an expression, a switch condition, an input column's field or an output cell"
-            ),
-            path.to_owned(),
-        );
+/// The `principal` names `source` reads, in its own mode. Text that does not
+/// parse in that mode reads nothing here: it is the JDM profile's finding.
+fn check_read(
+    source: &str,
+    unary_test: bool,
+    names: &BTreeSet<&str>,
+    path: &str,
+    sink: &mut Sink<'_>,
+) {
+    let reads = if unary_test {
+        norn_expr::unary_test_reads(source, DECIDE_PRINCIPAL_MEMBER)
+    } else {
+        norn_expr::expression_reads(source, DECIDE_PRINCIPAL_MEMBER)
+    };
+    let Ok(reads) = reads else {
         return;
     };
     if reads.whole_root {

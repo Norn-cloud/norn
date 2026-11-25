@@ -348,13 +348,14 @@ impl<E: SqlEngine> Steps<'_, E> {
         call: &mut dyn FnMut() -> Result<ActionAnswer, Refusal>,
     ) -> Option<Result<ActionAnswer, Refusal>> {
         let slot = self.caller?;
-        let current = slot.current();
-        let acting = acting_caller(principal, current.as_ref())?;
+        let acting = acting_caller(principal, slot.current().as_ref())?;
+        // Marked as acting: it carries the roles recorded when it was
+        // verified, so nothing that needs this request's own principal
+        // (PRINCIPAL-INPUT-1) resolves for it.
         let _restore = Restore {
             slot,
-            previous: current,
+            previous: slot.replace(Some(acting), true),
         };
-        slot.record(Some(acting));
         Some(call())
     }
 
@@ -439,11 +440,12 @@ fn acting_caller(starter: &RunStarter, current: Option<&Caller>) -> Option<Calle
 /// on every path, including unwinding.
 struct Restore<'a> {
     slot: &'a CallerSlot,
-    previous: Option<Caller>,
+    /// The slot's caller before, and whether it was itself acting.
+    previous: (Option<Caller>, bool),
 }
 
 impl Drop for Restore<'_> {
     fn drop(&mut self) {
-        self.slot.record(self.previous.take());
+        self.slot.replace(self.previous.0.take(), self.previous.1);
     }
 }

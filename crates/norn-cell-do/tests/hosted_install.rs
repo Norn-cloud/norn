@@ -853,3 +853,452 @@ fn a_change_moves_a_gate_and_replaces_it() {
     );
     assert_eq!(twice.status, 422, "two gates on one action: {}", twice.body);
 }
+
+// PRINCIPAL-INPUT-1 (#1091): a synthetic review pack on the hosted cell. A
+// document is recorded, then approved by an action whose pinned decision
+// writes `confirmed = principal.isAdmin`.
+const DOCUMENT: &str = "review.Document";
+const APPROVE: &str = "review.document.approve";
+
+fn review_artifact(
+    kind: &str,
+    id: &str,
+    version: &str,
+    dependencies: Value,
+    payload: Value,
+) -> Value {
+    json!({ "artifactId": id, "dependencies": dependencies, "irVersion": "0.1", "kind": kind,
+        "lifecycle": "active", "name": id, "namespace": "review", "payload": payload,
+        "provenance": { "source": "system", "sourcePath": "tests/hosted_install.rs" },
+        "scope": {}, "version": version })
+}
+
+/// The document type and the access policy, with `catalog` as its principal
+/// attribute catalog, and the action that records a document.
+fn review_base(catalog: Value) -> Vec<Value> {
+    let entity = json!({ "entityVersion": "2.0", "objectType": {
+        "identity": [{ "name": "primary", "properties": ["id"] }],
+        "name": DOCUMENT,
+        "properties": [
+            { "id": "id", "type": { "kind": "text" } },
+            { "id": "owner", "type": { "kind": "text" } },
+            { "id": "confirmed", "type": { "kind": "boolean" }, "default": false },
+            { "id": "status", "type": { "kind": "enum",
+                "values": [{ "value": "draft" }, { "value": "approved" }] }, "default": "draft" }
+        ],
+        "lifecycles": [{ "property": "status", "initial": ["draft"], "terminal": ["approved"],
+            "transitions": [{ "id": "approve", "from": ["draft"], "to": "approved" }] }] } });
+    let policy = json!({ "accessVersion": "0.1", "policyId": "review.access",
+        "rules": [{ "ruleId": "staff", "actions": ["review.document.record", APPROVE],
+            "resourceType": DOCUMENT, "scope": { "dimensions": ["org", "environment"] },
+            "allOf": [{ "role": { "anyOf": ["member", "admin", "owner"] } }] }],
+        "principalCatalog": catalog });
+    let record = json!({ "actionId": "review.document.record", "title": "Record a document",
+        "description": "Record a document for review.",
+        "scopeRequired": ["orgId", "environmentId"], "idempotent": true, "ledgered": true,
+        "access": { "artifactId": "review.access.policy", "version": "0.1.0" },
+        "inputSchema": { "type": "object", "additionalProperties": false,
+            "required": ["id", "owner"],
+            "properties": { "id": { "type": "string", "title": "Document number" },
+                "owner": { "type": "string", "title": "Owner" } } },
+        "outputSchema": { "type": "object", "additionalProperties": false, "required": ["id"],
+            "properties": { "id": { "type": "string" } } },
+        "effectProgram": { "kind": "upsert_input_object", "entityArtifactId": "review.Document.entity",
+            "entityArtifactVersion": "0.1.0", "objectKind": DOCUMENT, "objectIdField": "id" },
+        "writes": [{ "change": "created", "entityKind": DOCUMENT },
+            { "change": "modified", "entityKind": DOCUMENT }] });
+    vec![
+        review_artifact(
+            "entity",
+            "review.Document.entity",
+            "0.1.0",
+            json!([]),
+            entity,
+        ),
+        review_artifact("policy", "review.access.policy", "0.1.0", json!([]), policy),
+        review_artifact(
+            "action",
+            "review.document.record.action",
+            "0.1.0",
+            json!([]),
+            record,
+        ),
+    ]
+}
+
+fn admin_role() -> Value {
+    json!([{ "name": "admin", "type": "bool", "source": { "kind": "role" } }])
+}
+
+/// The approval action at `version`, pinning the decision at `rule` if any.
+fn approve_action(version: &str, rule: Option<&str>) -> Value {
+    let mut payload = json!({ "actionId": APPROVE, "title": "Approve a document",
+        "description": "Approve a recorded document.",
+        "scopeRequired": ["orgId", "environmentId"], "idempotent": true, "ledgered": true,
+        "access": { "artifactId": "review.access.policy", "version": "0.1.0" },
+        "inputSchema": { "type": "object", "additionalProperties": false, "required": ["id"],
+            "properties": { "id": { "type": "string", "title": "Document number" } } },
+        "outputSchema": { "type": "object", "additionalProperties": false, "required": ["id"],
+            "properties": { "id": { "type": "string" } } },
+        "effectProgram": { "kind": "fire_transition", "entityArtifactId": "review.Document.entity",
+            "entityArtifactVersion": "0.1.0", "objectKind": DOCUMENT, "objectIdField": "id",
+            "lifecycle": "status", "transition": "approve" },
+        "writes": [{ "change": "modified", "entityKind": DOCUMENT }] });
+    let mut dependencies = json!([]);
+    if let Some(rule) = rule {
+        payload["synchronousRule"] =
+            json!({ "artifactId": "review.approval.decide.rule", "version": rule });
+        dependencies = json!([{ "artifactId": "review.approval.decide.rule", "kind": "rule",
+            "required": true, "version": rule }]);
+    }
+    review_artifact(
+        "action",
+        "review.document.approve.action",
+        version,
+        dependencies,
+        payload,
+    )
+}
+
+/// The approval decision at `version`: with principal inputs it writes
+/// `confirmed = principal.isAdmin`; without, it declares and reads nothing
+/// about the principal and writes `confirmed = false`.
+fn approval_rule(version: &str, principal_inputs: bool) -> Value {
+    let empty = json!({ "type": "array", "items": { "type": "object",
+        "additionalProperties": false, "properties": {} } });
+    let event = json!({ "type": "object", "additionalProperties": false,
+        "required": ["input", "actor", "operationId"],
+        "properties": { "actor": { "type": "string" }, "operationId": { "type": "string" },
+            "input": { "type": "object", "additionalProperties": false, "required": ["id"],
+                "properties": { "id": { "type": "string" } } } } });
+    let value = if principal_inputs {
+        "principal.isAdmin"
+    } else {
+        "false"
+    };
+    let mut payload = json!({ "ruleVersion": "2.0", "ruleId": "review.approval.decide",
+        "contract": "decide", "scopeRequired": ["orgId", "environmentId"],
+        "inputSchema": { "type": "object", "additionalProperties": false,
+            "required": ["slice", "event"],
+            "properties": { "event": event,
+                "slice": { "type": "object", "additionalProperties": false, "properties": {} } } },
+        "outputSchema": { "type": "object", "additionalProperties": false,
+            "required": ["facts", "commands", "timers"],
+            "properties": { "commands": empty, "timers": empty,
+                "facts": { "type": "array", "items": { "type": "object",
+                    "additionalProperties": false,
+                    "required": ["op", "objectType", "key", "property", "value"],
+                    "properties": { "op": { "type": "string", "enum": ["set"] },
+                        "objectType": { "type": "string", "enum": [DOCUMENT] },
+                        "key": { "type": "string" },
+                        "property": { "type": "string", "enum": ["confirmed"] },
+                        "value": { "type": "boolean" } } } } } },
+        "graph": { "contentType": "application/vnd.gorules.decision",
+            "nodes": [
+                { "id": "in", "type": "inputNode", "name": "input" },
+                { "id": "decision", "type": "decisionTableNode", "name": "decision", "content": {
+                    "hitPolicy": "first",
+                    "inputs": [{ "id": "condition", "name": "condition", "type": "expression" }],
+                    "outputs": [
+                        { "field": "facts", "id": "out_facts", "name": "facts" },
+                        { "field": "commands", "id": "out_commands", "name": "commands" },
+                        { "field": "timers", "id": "out_timers", "name": "timers" }],
+                    "rules": [{ "_id": "row_0", "condition": "",
+                        "out_facts": format!("[{{op: 'set', objectType: 'review.Document', key: event.input.id, property: 'confirmed', value: {value}}}]"),
+                        "out_commands": "[]", "out_timers": "[]" }] } },
+                { "id": "out", "type": "outputNode", "name": "output" }],
+            "edges": [
+                { "id": "edge_0", "sourceId": "in", "targetId": "decision", "type": "edge" },
+                { "id": "edge_1", "sourceId": "decision", "targetId": "out", "type": "edge" }] } });
+    if principal_inputs {
+        payload["principalInputs"] = json!([{ "name": "isAdmin",
+            "kind": { "holdsRole": { "role": "admin", "at": "resource" } } }]);
+        payload["inputSchema"]["required"] = json!(["slice", "event", "principal"]);
+        payload["inputSchema"]["properties"]["principal"] = json!({ "type": "object",
+            "additionalProperties": false, "required": ["isAdmin"],
+            "properties": { "isAdmin": { "type": "boolean" } } });
+    }
+    review_artifact(
+        "rule",
+        "review.approval.decide.rule",
+        version,
+        json!([]),
+        payload,
+    )
+}
+
+impl Cell {
+    fn applied(&mut self, artifacts: &[Value], expected: u64) {
+        let applied = self.change(APPLY_PATH, Some("owner"), artifacts, Some(expected));
+        assert_eq!(applied.status, 200, "{}", applied.body);
+        assert_eq!(self.version(), expected + 1);
+    }
+
+    fn act(&mut self, action: &str, role: &str, input: Value, key: &str) -> Response {
+        let body = json!({ "input": input, "idempotencyKey": key });
+        let path = format!("/v1/actions/{action}");
+        self.call("POST", &path, Some(&user(role)), &body.to_string())
+    }
+
+    /// Record document `id`, then approve it as `role` under `key`.
+    fn approve(&mut self, id: &str, role: &str, key: &str) -> Value {
+        let recorded = self.act(
+            "review.document.record",
+            "member",
+            json!({ "id": id, "owner": "user:member-of-org_a" }),
+            &format!("record-{id}"),
+        );
+        assert_eq!(recorded.status, 200, "{}", recorded.body);
+        let approved = self.act(APPROVE, role, json!({ "id": id }), key);
+        assert_eq!(approved.status, 200, "{}", approved.body);
+        json_of(&approved)
+    }
+
+    /// The stored record of `object_type` whose identity or key ends in `id`.
+    fn stored(&mut self, object_type: &str, id: &str) -> Value {
+        let path = format!("/v1/objects/{object_type}");
+        let page = self.call("GET", &path, Some(&user("admin")), "");
+        assert_eq!(page.status, 200, "{}", page.body);
+        json_of(&page)["records"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|record| record["id"].as_str().is_some_and(|key| key.ends_with(id)))
+            .unwrap_or_else(|| panic!("no {object_type} {id}: {}", page.body))
+            .clone()
+    }
+}
+
+/// S1: the call record's `principalInputs` column arrives with the first set
+/// that declares principal inputs and stays under any later set, so a
+/// rollback installs, a restart reopens, and every recorded call replays.
+#[test]
+fn principal_inputs_survive_a_rollback_and_a_restart() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("cell.sqlite");
+    let mut cell = provisioned(&path);
+    let base = cell.version();
+    let calls = norn_kernel::ACTION_CALL_TYPE;
+    let ruled = [
+        approval_rule("0.1.0", true),
+        approve_action("0.2.0", Some("0.1.0")),
+    ];
+    let plain = [approval_rule("0.2.0", false), approve_action("0.1.0", None)];
+
+    // Without: the approval pins no decision, and a call commits.
+    let mut without = review_base(admin_role());
+    without.push(approve_action("0.1.0", None));
+    cell.applied(&without, base);
+    assert_eq!(cell.approve("r1", "member", "a1")["outcome"], "committed");
+    assert!(
+        cell.stored(calls, "a1")["values"]
+            .get("principalInputs")
+            .is_none()
+    );
+
+    // With: an admin's approval is confirmed and a member's is not; each
+    // receipt keeps its caller's own resolved value.
+    cell.applied(&ruled, base + 1);
+    assert_eq!(cell.approve("r2", "admin", "a2")["outcome"], "committed");
+    assert_eq!(cell.approve("r3", "member", "a3")["outcome"], "committed");
+    assert_eq!(cell.stored(DOCUMENT, "r2")["values"]["confirmed"], true);
+    assert_eq!(cell.stored(DOCUMENT, "r3")["values"]["confirmed"], false);
+    let recorded = cell.stored(calls, "a2")["values"]["principalInputs"].clone();
+    assert_eq!(recorded["principal"], "user:admin-of-org_a", "{recorded}");
+    assert_eq!(recorded["values"], json!({ "isAdmin": true }));
+    assert_eq!(
+        recorded["subject"],
+        json!({ "objectType": DOCUMENT, "key": "r2" })
+    );
+    assert!(
+        recorded["policyVersion"]
+            .as_str()
+            .unwrap()
+            .starts_with("roles=studio-roles/1;grants="),
+        "{recorded}"
+    );
+    assert_eq!(
+        cell.stored(calls, "a3")["values"]["principalInputs"]["values"],
+        json!({ "isAdmin": false })
+    );
+
+    // Without again (a rollback): the set declares no principal inputs, the
+    // stored values are kept, and the install is not refused.
+    cell.applied(&plain, base + 2);
+    assert_eq!(cell.approve("r4", "member", "a4")["outcome"], "committed");
+    let replayed = cell.act(APPROVE, "member", json!({ "id": "r1" }), "a1");
+    assert_eq!(
+        json_of(&replayed)["outcome"],
+        "replayed",
+        "{}",
+        replayed.body
+    );
+    assert_eq!(
+        cell.stored(calls, "a2")["values"]["principalInputs"],
+        recorded
+    );
+
+    // HOST-REOPEN-1: a restarted host reopens the cell under the model its
+    // installed revision recorded, with the kept column and its values.
+    drop(cell);
+    let mut cell = Cell::opened(&path);
+    assert_eq!(cell.version(), base + 3);
+    assert_eq!(
+        cell.stored(calls, "a2")["values"]["principalInputs"],
+        recorded
+    );
+    let replayed = cell.act(APPROVE, "member", json!({ "id": "r4" }), "a4");
+    assert_eq!(
+        json_of(&replayed)["outcome"],
+        "replayed",
+        "{}",
+        replayed.body
+    );
+
+    // With again: the calls recorded under that decision replay from their
+    // receipts, with nothing resolved again.
+    cell.applied(&ruled, base + 3);
+    for (id, role, key) in [("r2", "admin", "a2"), ("r3", "member", "a3")] {
+        let replayed = cell.act(APPROVE, role, json!({ "id": id }), key);
+        assert_eq!(
+            json_of(&replayed)["outcome"],
+            "replayed",
+            "{}",
+            replayed.body
+        );
+    }
+    assert_eq!(
+        cell.stored(calls, "a2")["values"]["principalInputs"],
+        recorded
+    );
+}
+
+/// S3: a request never supplies the principal. Both routes that take a
+/// decision or action body refuse a `principal` member at its pointer,
+/// before anything is decoded, looked up or committed.
+#[test]
+fn a_request_body_carrying_principal_is_refused_on_the_action_and_decide_routes() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("cell.sqlite"));
+    let base = cell.version();
+    let mut pack = review_base(admin_role());
+    pack.extend([
+        approval_rule("0.1.0", true),
+        approve_action("0.2.0", Some("0.1.0")),
+    ]);
+    cell.applied(&pack, base);
+    assert_eq!(cell.approve("r1", "member", "a1")["outcome"], "committed");
+
+    let member = user("member");
+    let action = format!("/v1/actions/{APPROVE}");
+    for (path, body, pointer) in [
+        (
+            action.as_str(),
+            json!({ "input": { "id": "r9" }, "idempotencyKey": "p1",
+                "principal": { "isAdmin": true } }),
+            "/principal",
+        ),
+        (
+            action.as_str(),
+            json!({ "input": { "id": "r9", "principal": { "isAdmin": true } },
+                "idempotencyKey": "p2" }),
+            "/input/principal",
+        ),
+        (
+            "/v1/decisions/unknown:decide",
+            json!({ "choice": "approve", "idempotencyKey": "p3",
+                "principal": { "isAdmin": true } }),
+            "/principal",
+        ),
+    ] {
+        let refused = cell.call("POST", path, Some(&member), &body.to_string());
+        assert_eq!(refused.status, 400, "{path}: {}", refused.body);
+        let refusal = json_of(&refused);
+        assert_eq!(refusal["code"], "request.invalid", "{refusal}");
+        assert_eq!(
+            refusal["diagnostics"][0]["span"]["pointer"], pointer,
+            "{refusal}"
+        );
+        assert!(!refused.body.contains("isAdmin"), "{}", refused.body);
+    }
+    // Nothing was committed under the refused keys.
+    for key in ["p1", "p2"] {
+        let page = cell.call(
+            "GET",
+            &format!("/v1/objects/{}", norn_kernel::ACTION_CALL_TYPE),
+            Some(&user("admin")),
+            "",
+        );
+        assert!(
+            !page.body.contains(&format!("{APPROVE}/{key}")),
+            "{}",
+            page.body
+        );
+    }
+}
+
+/// S4: a principal catalog the host's action policy could not compile is
+/// refused at admission, before anything is installed, so it never takes the
+/// cell's governed actions down.
+#[test]
+fn a_catalog_that_disagrees_with_the_access_rules_is_refused_before_install() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = provisioned(&directory.path().join("cell.sqlite"));
+    let base = cell.version();
+    // The access rules compare a text property with the principal's `id`, so
+    // `id` is a string; the catalog declares it an integer.
+    let owners = json!({ "ruleId": "owners", "actions": [APPROVE], "resourceType": DOCUMENT,
+        "scope": { "dimensions": ["org", "environment"] },
+        "allOf": [{ "resource": { "name": "owner", "op": "eq",
+            "value": { "principalAttribute": "id" } } }] });
+    let with_catalog = |catalog: Value| {
+        let mut pack = review_base(catalog);
+        pack[1]["payload"]["rules"]
+            .as_array_mut()
+            .unwrap()
+            .push(owners.clone());
+        pack.push(approve_action("0.1.0", None));
+        pack
+    };
+    for (catalog, code) in [
+        (
+            json!([{ "name": "id", "type": "long", "source": { "kind": "attribute" } }]),
+            "artifact_set.policy.principal_catalog_conflict",
+        ),
+        (
+            json!([{ "name": "cost-center", "type": "string", "source": { "kind": "attribute" } }]),
+            "policy.validation.invalid_payload",
+        ),
+    ] {
+        for route in [PLAN_PATH, APPLY_PATH] {
+            let expected = (route == APPLY_PATH).then_some(base);
+            let refused = cell.change(
+                route,
+                Some("owner"),
+                &with_catalog(catalog.clone()),
+                expected,
+            );
+            assert_eq!(refused.status, 422, "{route}: {}", refused.body);
+            let refusal = json_of(&refused);
+            assert_eq!(refusal["code"], "defs.refused", "{refusal}");
+            let codes: Vec<&str> = refusal["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|diagnostic| diagnostic["code"].as_str())
+                .collect();
+            assert!(codes.contains(&code), "{route}: {refusal}");
+        }
+        assert_eq!(cell.version(), base, "nothing was installed");
+    }
+    // The same rules with `id` declared a string install and serve actions.
+    let agreeing = json!([{ "name": "id", "type": "string", "source": { "kind": "attribute" } }]);
+    cell.applied(&with_catalog(agreeing), base);
+    let recorded = cell.act(
+        "review.document.record",
+        "member",
+        json!({ "id": "r1", "owner": "user:member-of-org_a" }),
+        "record-r1",
+    );
+    assert_eq!(recorded.status, 200, "{}", recorded.body);
+}

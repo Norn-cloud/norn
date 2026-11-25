@@ -146,6 +146,27 @@ pub fn principal_attribute_catalog(
     }
 }
 
+/// The principal attribute catalog of a definition set, as admission checks
+/// it before install: the Cedar schema is projected from the set's own
+/// model and actions, [`crate::infer_principal_attributes`] reads what the
+/// set's access rules use each principal attribute at, and
+/// [`principal_attribute_catalog`] holds the declared entries to that.
+///
+/// # Errors
+///
+/// As [`crate::infer_principal_attributes`] and
+/// [`principal_attribute_catalog`].
+pub fn admit_principal_catalog(
+    documents: &[AccessIr],
+    object_types: &[norn_ir::ObjectTypeDef],
+    interfaces: &[norn_ir::InterfaceDef],
+    actions: &[norn_ir::ActionRoot],
+) -> Result<PrincipalAttributeCatalog, AuthzError> {
+    let projection = norn_projections::project_cedar_schema(object_types, interfaces, actions);
+    let inferred = crate::lower::infer_principal_attributes(documents, &projection)?;
+    principal_attribute_catalog(documents, &inferred)
+}
+
 /// One `(role, dimensions)` pair a `holdsRole` decision is compiled for. The
 /// dimensions are distinct and ordered.
 pub type HoldsRoleKey = (String, Vec<ScopeDimension>);

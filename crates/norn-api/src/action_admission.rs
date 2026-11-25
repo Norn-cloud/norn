@@ -14,6 +14,47 @@ pub fn prepare_action_model(model: &norn_cell::Model) -> Result<norn_cell::Model
     prepare(model, false)
 }
 
+/// The property of the kernel's call record that keeps resolved principal
+/// inputs (PRINCIPAL-INPUT-1, #1091).
+const PRINCIPAL_INPUTS: &str = "principalInputs";
+
+/// What a cell's stored model serves, which the model of every later
+/// revision keeps (DEFS-REOPEN-1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Serving {
+    /// The kernel's action receipt and owned-row types.
+    pub actions: bool,
+    /// The call record's `principalInputs` column. Once a revision records
+    /// it, later revisions keep it whether or not they declare principal
+    /// inputs, so a rollback never orphans stored values.
+    pub principal_inputs: bool,
+}
+
+impl Serving {
+    /// A cell that serves actions and has recorded no principal inputs.
+    pub const ACTIONS: Self = Self {
+        actions: true,
+        principal_inputs: false,
+    };
+
+    /// What `model` serves.
+    #[must_use]
+    pub fn of(model: &norn_cell::Model) -> Self {
+        let call_record = model
+            .object_types()
+            .find(|declared| declared.name.as_str() == norn_kernel::ACTION_CALL_TYPE);
+        Self {
+            actions: call_record.is_some(),
+            principal_inputs: call_record.is_some_and(|record| {
+                record
+                    .properties
+                    .iter()
+                    .any(|property| property.id.as_str() == PRINCIPAL_INPUTS)
+            }),
+        }
+    }
+}
+
 /// [`prepare_action_model`] for the definitions `artifacts`. When a decide
 /// rule of the set declares principal inputs (PRINCIPAL-INPUT-1, #1091) the
 /// call record also keeps `principalInputs`. A set that declares none is
@@ -25,6 +66,18 @@ pub fn prepare_action_model_for(
     model: &norn_cell::Model,
     artifacts: &[ArtifactEnvelope],
 ) -> Result<norn_cell::Model, Refusal> {
+    prepare_action_model_keeping(model, artifacts, false)
+}
+
+/// [`prepare_action_model_for`], keeping the call record's `principalInputs`
+/// when `keep` says the cell already records it.
+/// # Errors
+/// As [`prepare_action_model`].
+pub fn prepare_action_model_keeping(
+    model: &norn_cell::Model,
+    artifacts: &[ArtifactEnvelope],
+    keep: bool,
+) -> Result<norn_cell::Model, Refusal> {
     let declared = artifacts.iter().any(|artifact| {
         artifact.kind() == ArtifactKind::Rule
             && matches!(
@@ -32,14 +85,14 @@ pub fn prepare_action_model_for(
                 Some(norn_ir::JsonValue::Array(inputs)) if !inputs.is_empty()
             )
     });
-    prepare(model, declared)
+    prepare(model, declared || keep)
 }
 
 fn prepare(model: &norn_cell::Model, principal_inputs: bool) -> Result<norn_cell::Model, Refusal> {
     use norn_ir::{ObjectTypeDef, ObjectTypeName, Property, PropertyId, PropertyType};
     // The call record's `principalInputs`, only for a set that declares them.
     let recorded_principal: &[&str] = if principal_inputs {
-        &["principalInputs"]
+        &[PRINCIPAL_INPUTS]
     } else {
         &[]
     };
@@ -478,11 +531,36 @@ mod tests {
             ]
         }));
         let recorded = prepare_action_model_for(&model, &[declared]).expect("served model");
+        assert_eq!(
+            Serving::of(&recorded),
+            Serving {
+                actions: true,
+                principal_inputs: true
+            }
+        );
         let recorded = call_record_properties(&recorded);
         assert_eq!(recorded.last().map(String::as_str), Some("principalInputs"));
         assert_eq!(
             recorded.split_last().map(|(_, rest)| rest),
             Some(plain.as_slice())
         );
+    }
+
+    /// DEFS-REOPEN-1: a cell that recorded principal inputs keeps the column
+    /// under a later set that declares none, so its stored values are never
+    /// orphaned; a cell that never recorded any is unchanged.
+    #[test]
+    fn a_cell_that_records_principal_inputs_keeps_the_column_under_any_later_set() {
+        let model = norn_cell::Model::from_definitions(&[], &[]).expect("model");
+        let undeclared = [rule(&json!({"ruleId": "document.review"}))];
+        let plain = prepare_action_model(&model).expect("served model");
+        assert!(!Serving::of(&model).actions);
+        assert_eq!(Serving::of(&plain), Serving::ACTIONS);
+        let kept = prepare_action_model_keeping(&model, &undeclared, true).expect("served model");
+        assert!(Serving::of(&kept).principal_inputs);
+        let dropped =
+            prepare_action_model_keeping(&model, &undeclared, false).expect("served model");
+        assert_eq!(dropped.model_hash(), plain.model_hash());
+        assert_ne!(kept.model_hash(), plain.model_hash());
     }
 }

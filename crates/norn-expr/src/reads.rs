@@ -11,7 +11,10 @@ use zen_expression::parser::Node;
 
 use norn_ir::ResourceLimitProfile;
 
-use crate::{ExprError, check::validate_evaluation_source};
+use crate::{
+    ExprError,
+    check::{validate_evaluation_source, validate_unary_evaluation_source},
+};
 
 /// Root fields an expression may read, and whether it uses the whole root.
 ///
@@ -46,19 +49,39 @@ impl ExpressionReads {
 /// Returns [`ExprError::Compile`] when the source is malformed or exceeds the
 /// checked expression source bounds.
 pub fn expression_reads(source: &str, root: &str) -> Result<ExpressionReads, ExprError> {
-    validate_evaluation_source(source, &ResourceLimitProfile::norn_limits_v1()).map_err(
-        |diagnostics| ExprError::Compile {
-            message: diagnostics
-                .into_iter()
-                .map(|diagnostic| diagnostic.to_string())
-                .collect::<Vec<_>>()
-                .join("; "),
-        },
-    )?;
+    reads_in(source, root, false)
+}
+
+/// [`expression_reads`] for a JDM **unary test**: the cell of a decision-table
+/// input column that declares a `field` (`> 100`, `'gold', 'silver'`), whose
+/// implicit subject `$` is that field and reads nothing of `root`.
+///
+/// # Errors
+///
+/// Returns [`ExprError::Compile`] when the source is not a unary test or
+/// exceeds the checked source bounds.
+pub fn unary_test_reads(source: &str, root: &str) -> Result<ExpressionReads, ExprError> {
+    reads_in(source, root, true)
+}
+
+fn reads_in(source: &str, root: &str, unary: bool) -> Result<ExpressionReads, ExprError> {
+    let limits = ResourceLimitProfile::norn_limits_v1();
+    let bounded = if unary {
+        validate_unary_evaluation_source(source, &limits)
+    } else {
+        validate_evaluation_source(source, &limits)
+    };
+    bounded.map_err(|diagnostics| ExprError::Compile {
+        message: diagnostics
+            .into_iter()
+            .map(|diagnostic| diagnostic.to_string())
+            .collect::<Vec<_>>()
+            .join("; "),
+    })?;
 
     let mut intellisense = IntelliSense::new().with_strict(true);
     intellisense
-        .with_ast(source, false, |ast, _metadata| {
+        .with_ast(source, unary, |ast, _metadata| {
             let mut reads = ExpressionReads::default();
             collect(ast, root, &BTreeMap::new(), &[], &mut reads);
             reads
@@ -660,6 +683,28 @@ mod tests {
                 .collect::<BTreeSet<_>>(),
             whole_root: false,
         }
+    }
+
+    #[test]
+    fn unary_tests_read_only_what_they_name_and_never_the_subject() {
+        // A string that merely spells the root, and a member of another
+        // root, read nothing of `principal`.
+        for source in ["'principal', 'interest'", "> slice.principal_cap", "[1..5]"] {
+            assert_eq!(
+                unary_test_reads(source, "principal").expect("a unary test"),
+                ExpressionReads::default(),
+                "{source}"
+            );
+            // The same text is not a standard expression.
+            assert!(expression_reads("> 5", "principal").is_err());
+        }
+        let reads = unary_test_reads("< principal.limit, > principal.floor", "principal")
+            .expect("a unary test");
+        assert_eq!(
+            reads.fields,
+            BTreeSet::from(["floor".to_owned(), "limit".to_owned()])
+        );
+        assert!(!reads.whole_root);
     }
 
     #[test]

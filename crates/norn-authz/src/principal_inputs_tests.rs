@@ -11,8 +11,8 @@ use serde_json::{Value, json};
 
 use crate::{
     ActorKind, AttrValue, AuthzCode, CapabilityGrant, Delegation, HOLDS_ROLE_ACTION, HoldsRolePdp,
-    HoldsRolePolicy, PrincipalContext, PrincipalInput, ScopeKey, holds_role_keys,
-    principal_attribute_catalog, resolve_principal_inputs, scope_dimensions,
+    HoldsRolePolicy, PrincipalContext, PrincipalInput, ScopeKey, admit_principal_catalog,
+    holds_role_keys, principal_attribute_catalog, resolve_principal_inputs, scope_dimensions,
 };
 
 fn scope(org: &str) -> ScopeKey {
@@ -299,4 +299,46 @@ fn a_listed_scope_must_be_present_and_compiled_pairs_are_exact() {
     )
     .expect("resolved");
     assert_eq!(resolved["inTenant"], RuntimeValue::Bool(false));
+}
+
+/// S4: the catalog a definition set declares is checked against what the
+/// set's own access rules use each principal attribute at, before install.
+#[test]
+fn admission_refuses_a_catalog_its_own_access_rules_contradict() {
+    let object_type: norn_ir::ObjectTypeDef = serde_json::from_value(json!({
+        "name": "review.Document",
+        "properties": [{"id": "owner", "type": {"kind": "text"}}]
+    }))
+    .expect("object type");
+    // The rule compares a text property with the principal's `id`.
+    let policy = |catalog: Value| -> AccessIr {
+        serde_json::from_value(json!({
+            "accessVersion": "0.1", "policyId": "review.access",
+            "rules": [{"ruleId": "owners", "actions": ["review.approve"],
+                "resourceType": "review.Document", "scope": {"dimensions": ["org"]},
+                "allOf": [{"resource": {"name": "owner", "op": "eq",
+                    "value": {"principalAttribute": "id"}}}]}],
+            "principalCatalog": catalog
+        }))
+        .expect("access policy")
+    };
+    let admit = |catalog: Value| {
+        admit_principal_catalog(
+            &[policy(catalog)],
+            std::slice::from_ref(&object_type),
+            &[],
+            &[],
+        )
+    };
+    let agreed = admit(json!([{"name": "id", "type": "string", "source": {"kind": "attribute"}}]))
+        .expect("the declared type is the inferred one");
+    assert!(agreed.get("id").is_some());
+    let error = admit(json!([{"name": "id", "type": "long", "source": {"kind": "attribute"}}]))
+        .expect_err("id is used as a string");
+    assert!(error.has(AuthzCode::AccessPrincipalConflict), "{error}");
+    let error = admit(json!([
+        {"name": "cost-center", "type": "string", "source": {"kind": "attribute"}}
+    ]))
+    .expect_err("not an identifier");
+    assert!(error.has(AuthzCode::AccessNameInvalid), "{error}");
 }

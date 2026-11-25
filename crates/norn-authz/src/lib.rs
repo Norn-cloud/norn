@@ -66,8 +66,8 @@ pub use lower::{
 pub use pdp::{ConjunctOutcome, DenyReason, DeterminingPolicy, Pdp, PdpDecision, PdpExplanation};
 pub use principal_inputs::{
     HOLDS_ROLE_ACTION, HOLDS_ROLE_POLICY_ID, HoldsRoleKey, HoldsRolePdp, HoldsRolePolicy,
-    PRINCIPAL_ROLE_RESOURCE, PrincipalContext, PrincipalInputUnavailable, holds_role_keys,
-    principal_attribute_catalog, resolve_principal_inputs, scope_dimensions,
+    PRINCIPAL_ROLE_RESOURCE, PrincipalContext, PrincipalInputUnavailable, admit_principal_catalog,
+    holds_role_keys, principal_attribute_catalog, resolve_principal_inputs, scope_dimensions,
 };
 pub use request::{
     AccessRequest, ActorKind, AttrValue, CapabilityGrant, CommitBinding, Delegation,

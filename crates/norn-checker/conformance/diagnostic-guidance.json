@@ -249,7 +249,7 @@
   },
   {
     "code": "artifact_set.policy.principal_catalog_conflict",
-    "fix": "Keep one definition of the principal catalog name across the access policies of the set and the installed base: one type and one source."
+    "fix": "Keep one definition of each principal catalog name across the access policies of the set and the installed base, at the type the set's access rules use that principal attribute at."
   },
   {
     "code": "artifact_set.resolution.conflicting_version",

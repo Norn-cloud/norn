@@ -355,6 +355,10 @@ fn the_catalog_has_one_definition_per_name() -> TestResult {
         json!({"name": "approver", "type": "string", "source": {"kind": "role"}}),
         json!({"name": "finance", "type": "stringSet", "source": {"kind": "roleProfile", "roles": []}}),
         json!({"name": "", "type": "string", "source": {"kind": "attribute"}}),
+        // A scoped attribute is an identifier: the host's policy could not
+        // compile `cost-center`, so it is refused here, before install.
+        json!({"name": "cost-center", "type": "string", "source": {"kind": "attribute"}}),
+        json!({"name": "cost.center", "type": "string", "source": {"kind": "attribute"}}),
     ] {
         let invalid = vec![policy("expense.access.policy", &json!([entry]))?];
         assert!(
@@ -362,5 +366,95 @@ fn the_catalog_has_one_definition_per_name() -> TestResult {
             "{entry}"
         );
     }
+    Ok(())
+}
+
+/// The rule with its table's first input column testing `event.expense_id`
+/// (so that column's cells are unary tests), a second column of standard
+/// conditions, and `event.principal_cap` declared.
+fn table_rule(unary_cell: &str, standard_cell: &str) -> TestResult<Value> {
+    rule_with(&[
+        (
+            "/inputSchema/properties/event",
+            json!({
+                "type": "object", "additionalProperties": false,
+                "required": ["expense_id", "principal_cap"],
+                "properties": {
+                    "expense_id": {"type": "string"},
+                    "principal_cap": {"type": "string"}
+                }
+            }),
+        ),
+        (
+            "/graph/nodes/1/content/inputs",
+            json!([
+                {"id": "kind", "name": "kind", "type": "expression", "field": "event.expense_id"},
+                {"id": "condition", "name": "condition", "type": "expression"}
+            ]),
+        ),
+        (
+            "/graph/nodes/1/content/rules/0",
+            json!({
+                "_id": "row_0",
+                "kind": unary_cell,
+                "condition": standard_cell,
+                "out_facts": "[{op: 'set', objectType: 'expense.Expense', key: event.expense_id, property: 'approver_confirmed', value: principal.isApprover}]",
+                "out_commands": "[]",
+                "out_timers": "[]"
+            }),
+        ),
+    ])
+}
+
+#[test]
+fn unary_cells_and_names_that_only_spell_principal_are_not_principal_reads() -> TestResult {
+    // Unary tests of another field: a string that spells `principal`, and a
+    // member of another record whose name starts with it.
+    for unary in ["'principal', 'interest'", "> event.principal_cap", ""] {
+        // Standard expressions that name other things spelled like it.
+        for standard in [
+            "event.principal_cap != 'principal'",
+            "event.principal_cap == 'cap'",
+        ] {
+            let rule = table_rule(unary, standard)?;
+            assert_eq!(
+                codes(&rule, &catalog()?)?,
+                BTreeSet::new(),
+                "{unary} | {standard}"
+            );
+        }
+    }
+    // The same cells in a rule that declares no principal inputs at all.
+    let mut plain = table_rule("'principal', 'interest'", "event.principal_cap != ''")?;
+    plain
+        .as_object_mut()
+        .ok_or("payload")?
+        .remove("principalInputs");
+    let input = plain
+        .pointer_mut("/inputSchema")
+        .and_then(Value::as_object_mut)
+        .ok_or("input schema")?;
+    input.insert("required".to_owned(), json!(["slice", "event"]));
+    input
+        .get_mut("properties")
+        .and_then(Value::as_object_mut)
+        .ok_or("properties")?
+        .remove("principal");
+    *plain
+        .pointer_mut("/graph/nodes/1/content/rules/0/out_facts")
+        .ok_or("cell")? = facts("event.principal_cap == 'principal'");
+    assert_eq!(codes(&plain, &[])?, BTreeSet::new());
+    Ok(())
+}
+
+#[test]
+fn an_undeclared_principal_read_in_a_unary_cell_is_still_refused() -> TestResult {
+    for unary in ["> principal.limit", "principal.isOwner"] {
+        let rule = table_rule(unary, "")?;
+        assert_eq!(codes(&rule, &catalog()?)?, only(UNDECLARED), "{unary}");
+    }
+    // A declared input is read by name in either mode.
+    let rule = table_rule("principal.actorId", "principal.isApprover")?;
+    assert_eq!(codes(&rule, &catalog()?)?, BTreeSet::new());
     Ok(())
 }
