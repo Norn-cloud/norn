@@ -110,6 +110,9 @@ pub enum NornQueryEngine {
     Cell,
     /// Embedded SQL over the exact authorized contribution snapshot.
     Duckdb,
+    /// `DataFusion` analytical engine over the exact authorized snapshot.
+    #[serde(rename = "datafusion")]
+    DataFusion,
 }
 
 /// Snapshot freshness, independent of source cursor ordering.
