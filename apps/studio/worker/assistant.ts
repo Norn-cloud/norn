@@ -1,7 +1,7 @@
-import { propose } from "./agent.ts"
+import { MAX_OUTPUT_TOKENS, MAX_PROMPT_BYTES, editableDashboard, guardKeepingDates, propose } from "./agent.ts"
 import type { Cell } from "./cell.ts"
-import type { Answer, Ask, Model } from "./model.ts"
-import { decide, getProposal, insertProposal, listProposals, recordSpend, spent, type Proposal, type Scope } from "./proposals.ts"
+import { unbilled, worstCallMicroUsd, type Answer, type Ask, type Model } from "./model.ts"
+import { decide, getProposal, insertProposal, listProposals, reserve, reserved, settle, spent, type Proposal, type Scope } from "./proposals.ts"
 
 /**
  * `/api/agent/dashboards*`: the dashboard assistant's routes. The person asks;
@@ -21,11 +21,21 @@ export interface AssistantDeps {
   readonly now: number
   /** New ids (proposals, dashboards); tests make them deterministic. */
   readonly newId?: () => string
+  /** The most one provider call can cost, in millionths of a dollar (default: the bound from the prompt and answer limits). */
+  readonly perCallMicroUsd?: number
+  /** Keeps a request's work (and so its settlement) running after the client goes away (ExecutionContext.waitUntil). */
+  readonly waitUntil?: (work: Promise<unknown>) => void
 }
 
 export const MAX_REQUEST_CHARS = 2000
 /** Proposals one person may ask for in an hour. */
 export const HOURLY_PROPOSALS = 20
+/** Model attempts per request (the first, and one repair after a refusal). */
+export const ATTEMPTS = 2
+/** Provider calls one request may make: each attempt may call the primary and its fallback. */
+export const CALLS_PER_REQUEST = ATTEMPTS * 2
+/** The default bound on one call's cost: the longest prompt and answer at the most expensive price. */
+export const PER_CALL_MICRO_USD = worstCallMicroUsd(MAX_PROMPT_BYTES, MAX_OUTPUT_TOKENS)
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) => Response.json(body, { status, headers: { "cache-control": "no-store", ...headers } })
 const refused = (status: number, error: string, headers: Record<string, string> = {}) => json({ error }, status, headers)
@@ -41,42 +51,90 @@ async function proposeRoute(request: Request, deps: AssistantDeps): Promise<Resp
   const body = await request.json().catch(() => null) as { request?: unknown; dashboardId?: unknown } | null
   const asked = typeof body?.request === "string" ? body.request.trim() : ""
   if (asked === "" || asked.length > MAX_REQUEST_CHARS) return refused(400, `Say what the dashboard should show, in at most ${MAX_REQUEST_CHARS} characters.`)
-  if (await spent(db) >= deps.capMicroUsd) return refused(429, "The assistant has reached its spending cap. Build the dashboard by hand, or ask an owner to raise the cap.", { "x-norn-limit": "spend_cap" })
-  const recent = await db.prepare("SELECT COUNT(*) AS n FROM dashboard_proposal WHERE user_id = ? AND created_at > ?").bind(scope.userId, now - 3_600_000).first<{ n: number }>()
-  if ((recent?.n ?? 0) >= HOURLY_PROPOSALS) return refused(429, `At most ${HOURLY_PROPOSALS} proposals an hour; try again later.`, { "x-norn-limit": "proposals_hourly", "retry-after": "3600" })
-  // Editing: the dashboard as it stands now, read as the person, is what the request changes.
-  let target: { readonly id: string; readonly version: number; readonly payload: unknown } | undefined
-  if (typeof body?.dashboardId === "string") {
+  // Editing: the dashboard as it stands now, read as the person. Only a dashboard, and only the fields
+  // an edit changes, ever reach the model; anything else is refused before any call.
+  let target: { readonly id: string; readonly version: number; readonly editable: NonNullable<ReturnType<typeof editableDashboard>> } | undefined
+  if (body?.dashboardId !== undefined) {
+    if (typeof body.dashboardId !== "string" || body.dashboardId === "") return refused(400, "Name the dashboard to change.")
     const read = await cell.get(`/v1/definitions/${encodeURIComponent(body.dashboardId)}`)
     const doc = read.kind === "answer" && isRecord(read.body) ? read.body : undefined
     if (read.kind !== "answer" || read.status !== 200 || doc === undefined || typeof doc.version !== "number") return refused(read.kind === "answer" && read.status === 403 ? 403 : 404, "That dashboard could not be read.")
-    target = { id: body.dashboardId, version: doc.version, payload: doc.payload }
+    if (doc.kind !== "dashboard") return refused(422, "Only a dashboard can be changed by the assistant.")
+    const editable = editableDashboard(doc.payload)
+    if (editable === null) return refused(422, "This dashboard has parts the assistant cannot change; edit it by hand.")
+    target = { id: body.dashboardId, version: doc.version, editable }
   }
   const proposalId = `prop_${newId()}`
-  // PRIVACY-GUARD-1: the model never sees personal data. The cell tokenizes the request (markings
-  // first, then a detector pass) and keeps the token map; without its guard nothing is sent.
-  const guarded = await guardPrompt(cell, asked, proposalId)
-  if (guarded === null) return refused(503, "The privacy guard is not available, so nothing was sent to the model.")
-  const safe = guarded.safePrompt
-  const request_ = target === undefined ? safe : `${safe}\n\nThe dashboard as it stands (change it as asked; keep what the request does not mention):\n${JSON.stringify(target.payload)}`
-  const outcome = await propose(cell, model, request_, { proposalId, targetId: target?.id ?? "studio.dashboard.proposal", now, originRequest: safe })
-  const { definition, verdict } = outcome
-  if (definition === null || verdict === null) {
-    await recordSpend(db, scope.userId, null, outcome.answers, now)
-    return refused(outcome.failure?.includes("role") ? 403 : 502, outcome.failure ?? "The assistant could not propose a dashboard.")
+  // Admission: one hourly slot and the request's worst-case cost, reserved atomically before any provider call.
+  const perCall = deps.perCallMicroUsd ?? PER_CALL_MICRO_USD
+  const admitted = await reserve(db, { requestId: proposalId, userId: scope.userId, amountMicroUsd: perCall * CALLS_PER_REQUEST, capMicroUsd: deps.capMicroUsd, hourly: HOURLY_PROPOSALS, now })
+  if (!admitted.ok) {
+    return admitted.limit === "proposals_hourly"
+      ? refused(429, `At most ${HOURLY_PROPOSALS} proposals an hour; try again later.`, { "x-norn-limit": "proposals_hourly", "retry-after": "3600" })
+      : refused(429, "The assistant has reached its spending cap. Build the dashboard by hand, or ask an owner to raise the cap.", { "x-norn-limit": "spend_cap" })
   }
-  // The reply comes back through the same guard: restored only where this person may see it.
-  const restored = await restoreReply(cell, guarded.guardId, outcome.note, `${proposalId}-note`)
-  const guard = { guardId: guarded.guardId, receiptHash: guarded.receiptHash, safePrompt: safe, tokens: guarded.tokens, reply: restored, model: outcome.answers.at(-1)?.model ?? model.name }
-  const proposal = {
-    // A new dashboard's id follows its proposed title.
-    id: proposalId, request: asked, targetId: target?.id ?? dashboardId(definition.title, newId()), targetVersion: target?.version ?? null, definition,
-    verdict: { ...verdict, note: outcome.note, guard }, state: verdict.admitted ? "pending" as const : "refused" as const,
-    model: outcome.answers.at(-1)?.model ?? model.name, createdAtMs: now,
+  // The rest runs to settlement even if the client disconnects.
+  const work = answerAdmitted(deps, proposalId, asked, target, model, newId)
+  deps.waitUntil?.(work.catch(() => undefined))
+  return work
+}
+
+/** An admitted request, from the guard to its one settlement. */
+async function answerAdmitted(deps: AssistantDeps, proposalId: string, asked: string, target: { readonly id: string; readonly version: number; readonly editable: NonNullable<ReturnType<typeof editableDashboard>> } | undefined, model: NonNullable<AssistantDeps["model"]>, newId: () => string): Promise<Response> {
+  const { db, cell, scope, now } = deps
+  // Every answer a provider call returned, recorded as it returns (so a later failure still settles what was paid).
+  const answers: Answer[] = []
+  // Whether any provider call was made: until then nothing can have been billed.
+  let dispatched = false
+  const counted: NonNullable<AssistantDeps["model"]> = {
+    name: model.name,
+    answer: async (ask) => { dispatched = true; const answer = await model.answer(ask); answers.push(answer); return answer },
+    ...model.answerAll === undefined ? {} : { answerAll: async (ask: Ask) => { dispatched = true; const made = await model.answerAll?.(ask) ?? []; answers.push(...made); return made } },
   }
-  await insertProposal(db, scope, proposal)
-  await recordSpend(db, scope.userId, proposalId, outcome.answers, now)
-  return json(await getProposal(db, scope, proposalId))
+  const settleWith = (proposalId_: string | null, uncertain = false) => settle(db, { requestId: proposalId, userId: scope.userId, proposalId: proposalId_, answers, uncertain, now })
+  try {
+    // PRIVACY-GUARD-1: the model never sees personal data. The cell tokenizes the person's words
+    // (markings first, then a detector pass) in one call and keeps the token map; without its guard
+    // nothing is sent. Valid dates are kept out of the detector. Workspace-derived content is checked
+    // at the provider boundary in propose().
+    const guarded = await guardKeepingDates(asked, (masked) => guardPrompt(cell, masked, proposalId))
+    if (guarded === null) {
+      await settleWith(null)
+      return refused(503, "The privacy guard is not available, so nothing was sent to the model.")
+    }
+    const safe = guarded.safePrompt
+    const context = target === undefined ? undefined : `The dashboard as it stands (change it as asked; keep what the request does not mention):\n${JSON.stringify({ title: target.editable.title, tiles: target.editable.tiles }, null, 1)}`
+    let guards = 0
+    const boundary = async (text: string) => (await guardPrompt(cell, text, `${proposalId}-b${++guards}`))?.safePrompt ?? null
+    const outcome = await propose(cell, counted, safe, { proposalId, targetId: target?.id ?? "studio.dashboard.proposal", now, originRequest: safe, ...context === undefined ? {} : { context }, attempts: ATTEMPTS, guard: boundary, maxCalls: CALLS_PER_REQUEST })
+    const { definition, verdict } = outcome
+    if (definition === null || verdict === null) {
+      await settleWith(null)
+      const status = outcome.failureKind === "guard" ? 503 : outcome.failureKind === "private" || outcome.failureKind === "budget" ? 422 : outcome.failureKind === "role" || outcome.failure?.includes("role") ? 403 : 502
+      return refused(status, outcome.failure ?? "The assistant could not propose a dashboard.")
+    }
+    // The reply comes back through the same guard: restored only where this person may see it.
+    const restored = await restoreReply(cell, guarded.guardId, outcome.note, `${proposalId}-note`)
+    const guard = { guardId: guarded.guardId, receiptHash: guarded.receiptHash, safePrompt: safe, tokens: guarded.tokens, reply: restored, model: outcome.answers.at(-1)?.model ?? model.name }
+    const proposal = {
+      // A new dashboard's id follows its proposed title.
+      id: proposalId, request: asked, targetId: target?.id ?? dashboardId(definition.title, newId()), targetVersion: target?.version ?? null, definition,
+      verdict: { ...verdict, note: outcome.note, guard }, state: verdict.admitted ? "pending" as const : "refused" as const,
+      model: outcome.answers.at(-1)?.model ?? model.name, createdAtMs: now,
+    }
+    await insertProposal(db, scope, proposal)
+    await settleWith(proposalId)
+    return json(await getProposal(db, scope, proposalId))
+  } catch (error) {
+    // Before any provider call, or a provider's definite unbilled answer: nothing was spent, and the
+    // reservation is released. Any other failure after dispatch: what the provider billed is unknown,
+    // so the whole reservation is kept as spend. If settling fails too, the reservation stays open
+    // and keeps counting against the cap.
+    const certain = !dispatched || unbilled(error)
+    await settleWith(null, !certain).catch(() => undefined)
+    if (dispatched && unbilled(error)) return refused(502, "The model did not answer; nothing was charged. Try again.")
+    throw error
+  }
 }
 
 async function acceptRoute(id: string, deps: AssistantDeps): Promise<Response> {
@@ -135,7 +193,7 @@ export async function restoreReply(cell: Cell, guardId: number, text: string, ke
 /** One `/api/agent/dashboards*` request, resolved to its person and their cell. */
 export async function assistant(request: Request, route: string, deps: AssistantDeps): Promise<Response> {
   if (route === "" || route === "/") {
-    if (request.method === "GET") return json({ proposals: await listProposals(deps.db, deps.scope), spentMicroUsd: await spent(deps.db), capMicroUsd: deps.capMicroUsd, model: deps.model?.name ?? null })
+    if (request.method === "GET") return json({ proposals: await listProposals(deps.db, deps.scope), spentMicroUsd: await spent(deps.db), reservedMicroUsd: await reserved(deps.db), capMicroUsd: deps.capMicroUsd, model: deps.model?.name ?? null })
     if (request.method === "POST") return proposeRoute(request, deps)
     return refused(405, "Method not allowed.")
   }
