@@ -12,6 +12,7 @@
       "apps/studio/src/components/ui/avatar.tsx",
       "apps/studio/src/components/ui/badge.tsx",
       "apps/studio/src/components/ui/breadcrumb.tsx",
+      "apps/studio/src/components/ui/bubble.tsx",
       "apps/studio/src/components/ui/button.tsx",
       "apps/studio/src/components/ui/card.tsx",
       "apps/studio/src/components/ui/chart.tsx",
@@ -20,6 +21,7 @@
       "apps/studio/src/components/ui/dropdown-menu.tsx",
       "apps/studio/src/components/ui/input-group.tsx",
       "apps/studio/src/components/ui/input.tsx",
+      "apps/studio/src/components/ui/message.tsx",
       "apps/studio/src/components/ui/popover.tsx",
       "apps/studio/src/components/ui/scroll-area.tsx",
       "apps/studio/src/components/ui/separator.tsx",
@@ -34,6 +36,7 @@
       "apps/studio/src/components/ui/toggle-group.tsx",
       "apps/studio/src/components/ui/toggle.tsx",
       "apps/studio/src/components/ui/tooltip.tsx",
+      "apps/studio/src/components/ui/trace.tsx",
       "apps/studio/src/hooks/use-mobile.ts",
       "apps/studio/src/index.css",
       "apps/studio/src/lib/utils.ts"
@@ -41,10 +44,11 @@
     "changes": [
       "`cn` is imported from `@/lib/utils` (it knows the five type steps), not the CLI's `cn` package",
       "All interactive primitives are backed by @base-ui/react or @ui-sdk/react (no Radix dependencies or CSS variables)",
-      "Luma's geometry (pill controls, filled bg-input/50 fields, rounded-3xl popovers and menus, rounded-4xl cards and dialogs, shadow-md/lg/xl) reaches the components through Norn's tokens (--radius-*, --radius-step-*, --panel-shadow, --popup-shadow, --sheet-shadow)",
       "Type steps and weights of DESIGN.md section 8 (text-sm and text-xs become text-body and text-meta; 400 except where 500 is allowed), the 2px --ring focus outline in place of Luma's translucent ring, 44px targets below 640px",
       "shadcn.css holds Base UI / UI SDK keyframes, state variants and the no-scrollbar utility",
-      "index.css carries the Norn theme tokens: luma (shadcn's neutral theme and radius scale mapped onto Norn's semantic tokens, with AA-passing neutrals where Luma's raw values fail a gate), and the polar, open and glass skins, and base layer"
+      "index.css carries the Norn theme tokens: luma (Luma's radius scale with the monochrome greys measured from Polar and getopen.so, R = G = B, DESIGN.md 19.6), and the polar, open and glass skins, and base layer",
+      "Luma's geometry (pill buttons, toggles and tabs, rounded-3xl popovers and menus, rounded-4xl cards and dialogs) reaches the components through Norn's tokens (--radius-*, --radius-step-*); inputs, textareas and field groups are white 1px-hairline fields at --radius / --radius-composer (12-14px), not Luma's filled pills (DESIGN.md 19.6)",
+      "message, bubble and trace (shadcn's chat primitives) carry the type steps, logical inline classes and the 2px --ring focus outline; Sidekick draws the person's words in a muted Bubble and each tool call as a Trace"
     ]
   },
   "upstream": {

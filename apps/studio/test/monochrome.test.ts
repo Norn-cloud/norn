@@ -1,36 +1,58 @@
 import { expect, test } from "bun:test"
 import { readFileSync } from "node:fs"
 import { converter, parse } from "culori"
-import { INDEX_CSS, SKINS, themePalettes } from "../scripts/theme-palettes.ts"
+import { INDEX_CSS, SKINS, resolve, skinVars, themePalettes } from "../scripts/theme-palettes.ts"
 
 /**
- * DESIGN.md 19.6, the monochrome rule (owner, 2026-11-25): chrome is black, white and greys in every
- * skin and scheme, like Polar's dashboard. Colour is for charts and visualisations, status dots
- * beside their word, avatars, the Norn mark and its mascot, and data highlights; those tokens are
- * named here and nothing else is exempt.
+ * DESIGN.md 19.6, the monochrome rule (owner, 2026-11-25; measured against Polar's dashboard and the
+ * getopen.so demo): chrome is black, white and greys. Colour is for charts and visualisations, status
+ * dots beside their word, avatars, the mascot, and data highlights; those tokens are named below and
+ * nothing else is exempt.
  *
- * Threshold: OKLCH chroma below 0.02. A neutral with a cool or warm cast (Tailwind's zinc and stone
- * sit at 0.004–0.012, the islands' mist at about 0.006) passes; any accent fails by a wide margin
- * (the old blue action was 0.20, the violet 0.23, a 7% violet glow still 0.23, since a translucent
- * colour keeps its hue over a neutral ground). Each colour is judged as written, alpha aside.
+ * - The default skin (`luma`) is pure neutral: every chrome colour it declares, shadows, dock, island
+ *   and kind tokens included, has R = G = B (no cool or warm cast; alpha aside).
+ * - The opt-in skins (`polar`, `open`, `glass`) keep a cast (polar is Tailwind zinc, about C 0.005) but
+ *   no hue: every chrome token's OKLCH chroma is below 0.02, which every accent fails by a wide margin
+ *   (the old blue action was 0.20, a 7% violet glow 0.23).
  */
-const EXEMPT: Readonly<Record<string, string>> = {
-  "chart-1": "chart series", "chart-2": "chart series", "chart-3": "chart series", "chart-4": "chart series", "chart-5": "chart series",
-  "dot-live": "status dot beside its word", "dot-held": "status dot beside its word", "dot-bad": "status dot beside its word",
-  success: "status text", warning: "status text", destructive: "status: the destructive confirm and error", "destructive-foreground": "ink on the destructive fill", "destructive-text": "status text",
-  "avatar-1-bg": "avatar disc", "avatar-1-fg": "avatar disc", "avatar-2-bg": "avatar disc", "avatar-2-fg": "avatar disc", "avatar-3-bg": "avatar disc", "avatar-3-fg": "avatar disc",
-  "avatar-4-bg": "avatar disc", "avatar-4-fg": "avatar disc", "avatar-5-bg": "avatar disc", "avatar-5-fg": "avatar disc", "avatar-6-bg": "avatar disc", "avatar-6-fg": "avatar disc",
-  knot: "the Norn mark and the mascot",
-}
+const DATA = /^(chart-\d|dot-(live|held|bad)|success|warning|destructive(-foreground|-text)?|avatar-\d-(bg|fg)|mascot-body|tone-[a-z]+|tint-[a-z]+|edge(-active)?|node-[a-z]+|canvas-[a-z]+)$/
+const WHY = "chart and canvas visualisation, status beside a word, avatar, the mascot, or a data highlight"
 const MAX_CHROMA = 0.02
 const oklch = converter("oklch")
-const palettes = themePalettes(readFileSync(INDEX_CSS, "utf8"))
+const css = readFileSync(INDEX_CSS, "utf8")
+const palettes = themePalettes(css)
+
+/** Every colour literal in a declared value (a colour, or a shadow listing several). */
+function colours(value: string): string[] {
+  return [...value.matchAll(/#[0-9a-fA-F]{3,8}\b|rgba?\([^)]*\)/g)].map((match) => match[0])
+}
+
+/** R, G and B of a colour literal, 0–255, alpha ignored. */
+function channels(colour: string): readonly [number, number, number] {
+  const rgb = converter("rgb")(parse(colour))
+  if (rgb === undefined) throw new Error(`not a colour: ${colour}`)
+  return [rgb.r, rgb.g, rgb.b].map((value) => Math.round(value * 255)) as unknown as readonly [number, number, number]
+}
+
+for (const scheme of ["light", "dark"] as const) {
+  test(`luma/${scheme}: every chrome colour the default skin declares is a pure grey (R = G = B)`, () => {
+    const vars = skinVars(css, "luma", scheme)
+    const cast = Object.entries(vars).filter(([name]) => !DATA.test(name)).flatMap(([name, value]) => {
+      const literal = /^(var|color-mix)\(/.test(value) ? [resolveOrNull(value, vars)].filter((v): v is string => v !== null) : colours(value)
+      return literal.filter((colour) => { const [r, g, b] = channels(colour); return r !== g || g !== b }).map((colour) => `--${name}: ${colour}`)
+    })
+    expect(cast).toEqual([])
+  })
+}
+
+function resolveOrNull(value: string, vars: Readonly<Record<string, string>>): string | null {
+  try { return resolve(value, vars) } catch { return null }
+}
 
 for (const skin of SKINS) for (const scheme of ["light", "dark"] as const) {
-  test(`${skin}/${scheme}: every chrome token is a neutral (OKLCH C < ${MAX_CHROMA}); colour lives only in the named data, status, avatar and mark tokens`, () => {
-    const tokens = palettes[skin][scheme]
-    const coloured = Object.entries(tokens)
-      .filter(([name]) => EXEMPT[name] === undefined)
+  test(`${skin}/${scheme}: every chrome token has no hue (OKLCH C < ${MAX_CHROMA}); colour lives only in tokens for ${WHY}`, () => {
+    const coloured = Object.entries(palettes[skin][scheme])
+      .filter(([name]) => !DATA.test(name))
       .map(([name, value]) => ({ name, value, chroma: oklch(parse(value))?.c ?? 0 }))
       .filter(({ chroma }) => chroma >= MAX_CHROMA)
       .map(({ name, value, chroma }) => `--${name}: ${value} (C ${chroma.toFixed(3)})`)
@@ -38,14 +60,15 @@ for (const skin of SKINS) for (const scheme of ["light", "dark"] as const) {
   })
 }
 
-test("the CTA, the accent text and the focus ring are neutral in every skin: near-black on light, near-white on dark", () => {
+test("the CTA, accent text, link and focus ring are neutral in every skin: near-black on light, near-white or grey on dark", () => {
   for (const skin of SKINS) for (const scheme of ["light", "dark"] as const) {
     const lightness = (name: string) => oklch(parse(palettes[skin][scheme][name]!))!.l
-    for (const name of ["primary", "action", "link"]) expect(scheme === "light" ? lightness(name) < 0.3 : lightness(name) > 0.85).toBe(true)
+    for (const name of ["primary", "action"]) expect(scheme === "light" ? lightness(name) < 0.3 : lightness(name) > 0.85).toBe(true)
+    expect(scheme === "light" ? lightness("link") < 0.3 : lightness("link") > 0.6).toBe(true)
   }
 })
 
-test("a category dot (a source system, a kind) draws the neutral mark, never a hue", () => {
+test("a category dot (a source system, a kind, a version) draws the neutral mark, never a hue", () => {
   const dots = readFileSync(new URL("../src/components/system/status-dot.tsx", import.meta.url), "utf8")
   expect(dots).not.toMatch(/bg-tone-/)
 })

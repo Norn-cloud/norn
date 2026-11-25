@@ -181,19 +181,19 @@ async function shot(page: Page, name: string, locator?: Locator) {
 }
 
 for (const scheme of ["light", "dark"] as const) {
-  test(`theme v4 (${scheme}): Luma glass islands by default, Polar monochrome + Open v6 double-shell geometry, primary button states (rest/hover/focus), and layered surfaces`, async ({ page }) => {
+  test(`theme v4 (${scheme}): Luma opaque islands by default, Polar monochrome + Open v6 double-shell geometry, primary button states (rest/hover/focus), and layered surfaces`, async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.emulateMedia({ colorScheme: scheme })
     await recorded(page)
-    // The default is luma (owner decision, 2026-11-25): the main island is a floating glass panel with
-    // its specular edge, radius and depth shadow, blurred over the backdrop.
+    // The default is luma (owner decisions, 2026-11-25): the main island is an opaque floating panel, as
+    // in Polar's dashboard, with its 1px hairline, 16px radius and at most a shadow-xs; no glass.
     await page.goto("/sources")
     await expect(page.getByRole("heading", { name: "Sources", level: 1 })).toBeVisible()
     await expect.poll(() => page.evaluate(() => document.documentElement.dataset.skin)).toBe("luma")
     const island = page.locator('[data-slot="sidebar-inset"]')
-    await expect(island).toHaveCSS("border-top-left-radius", "18px")
+    await expect(island).toHaveCSS("border-top-left-radius", "16px")
     await expect(island).toHaveCSS("border-top-width", "1px")
-    await expect(island).toHaveCSS("backdrop-filter", /blur\(24px\)/)
+    await expect(island).toHaveCSS("backdrop-filter", "none")
     expect(await island.evaluate((element) => getComputedStyle(element).boxShadow)).not.toBe("none")
     // Polar is the monochrome alternative, one choice away.
     await page.evaluate(() => localStorage.setItem("norn.studio.skin", "polar"))
@@ -319,9 +319,9 @@ for (const scheme of ["light", "dark"] as const) {
     expect(open.panelRadius).toBe(20)
     expect(open.kpiRadius).toBe(20)
     expect(open.kpiWellRadius).toBe(15)
+    // Chrome is monochrome in every skin (DESIGN.md 19.6): open's CTA is ink, not blue.
     const [opr, opg, opb] = rgb(open.primaryBg)
-    expect(opb).toBeGreaterThan(opr + 40)
-    expect(opb).toBeGreaterThan(opg + 60)
+    expect(Math.max(opr, opg, opb) - Math.min(opr, opg, opb)).toBeLessThanOrEqual(4)
   })
 
   test(`theme v4 (${scheme}): keyboard focus stays visible on selected line tabs, the current applet on the rail and the current menu row`, async ({ page }) => {

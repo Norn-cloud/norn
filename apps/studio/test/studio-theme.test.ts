@@ -249,8 +249,8 @@ test("every built-in skin passes the rendered-pair contrast gate in light and da
 })
 
 // #1705: the gate reads the colours index.css paints, not a hand-kept copy.
-test("the gate validates the rendered palette: dark Luma hover is index.css's #d4d4d4", () => {
-  expect(effectiveThemePalette({ version: 1, name: "Luma", baseSkin: "luma" }, "dark")["action-hover"]).toBe("#d4d4d4")
+test("the gate validates the rendered palette: dark Luma hover is index.css's #d9d9d9", () => {
+  expect(effectiveThemePalette({ version: 1, name: "Luma", baseSkin: "luma" }, "dark")["action-hover"]).toBe("#d9d9d9")
   expect(effectiveThemePalette({ version: 1, name: "Polar", baseSkin: "polar" }, "dark")["dock-ring"]).toBe("#e4e4e7")
 })
 

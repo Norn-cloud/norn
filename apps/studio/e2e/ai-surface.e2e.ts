@@ -4,7 +4,7 @@ import { expect, test, type Page, type WebSocketRoute } from "@playwright/test"
 import { session } from "./object-cell.ts"
 
 /**
- * The AI surface (DESIGN.md 19): the Ask Norn bar, Sidekick's AI Elements composer over useChat, the
+ * The AI surface (DESIGN.md 19): the Ask Norn bar, Sidekick's shadcn chat primitives over useChat, the
  * approval prompt the bridge asks through, and the mascot. A stand-in bridge speaks ACP on the page's
  * own origin like apps/sidekick-bridge does; each row checks what Studio draws and what it sends back.
  * With AI_SHOTS=<dir> the last rows also save the review screenshots (light/dark, desktop/390).
@@ -225,7 +225,9 @@ test("refusal: a call the cell refuses draws the server's words; a refused grant
   await error.getByRole("button", { name: "Retry" }).click()
   await expect(error).toHaveCount(0)
   const refused = panel.locator("[data-view=receipt]")
-  await expect(refused).toContainText("Closing R-1 needs a review first.")
+  // The card keeps the server's words: its explanation, the law, the values and the code.
+  await expect(refused).toContainText("The workspace's law asks for a reviewer before a record closes.")
+  await expect(refused).toContainText("demo.close_after_review")
   await expect(refused).toContainText("law.refused")
   await expect(refused).toContainText("Nothing was changed.")
 })

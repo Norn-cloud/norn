@@ -29,57 +29,57 @@
    * (--radius 0.625rem = 10px; sm..4xl = 0.6, 0.8, 1, 1.4, 1.8, 2.2, 2.6 × that), mapped onto Norn's tokens.
    * Concentric double shell: radius-panel = radius-well + panel-inset + 1px border (21 + 4 + 1 = 26, Luma's card).
    */
-  --radius: 10px;
+  --radius: 12px;
   --radius-chip: 9999px;
   --radius-panel: 26px;
   --panel-inset: 4px;
   --radius-well: 21px;
   --radius-row: 16px;
   --radius-sheet: 26px;
-  --radius-search: 26px;
+  --radius-search: 14px;
   --radius-dock: 26px;
   --radius-popup: 22px;
   /* The chat composer and the Ask bar's field: Luma's input-group textarea (3xl). */
-  --radius-composer: 22px;
+  --radius-composer: 14px;
   /* Tailwind's rounded-* steps (the @theme below reads these): Luma's scale in luma; the crisp one elsewhere. */
   --radius-step-xl: 14px;
   --radius-step-2xl: 18px;
   --radius-step-3xl: 22px;
   --radius-step-4xl: 26px;
-  --shell: #f3f4f6;
-  --canvas: #f3f4f6;
+  --shell: #f6f6f6;
+  --canvas: #ffffff;
   --background: #ffffff;
-  --foreground: #0a0a0a;
+  --foreground: #171717;
   --card: #ffffff;
-  --card-foreground: #0a0a0a;
-  --well: #fafafa;
-  --well-border: #ebebeb;
-  --well-hover: #f2f2f2;
+  --card-foreground: #171717;
+  --well: #f6f6f6;
+  --well-border: #e9e9e9;
+  --well-hover: #f0f0f0;
   --popover: #ffffff;
-  --popover-foreground: #0a0a0a;
-  /* Knot violet is reserved for the Norn mark. */
-  --knot: #5b52f0;
-  /* The assistant mascot (DESIGN.md 19.4) is the Norn mark's character: knot body, white eyes (5.42:1 light,
-     3.62:1 on the dark knot; a graphic, so 3:1). Declared once here: `.dark` changes `--knot` on the same element. */
-  --mascot-body: var(--knot);
+  --popover-foreground: #171717;
+  /* The knot (the Norn mark's accent) is neutral: chrome is monochrome (DESIGN.md 19.6). */
+  --knot: #181818;
+  /* The assistant mascot (DESIGN.md 19.4) keeps its own violet (the knot itself is neutral now, 19.6):
+     white eyes at 5.37:1 light and 3.62:1 dark, a graphic, so 3:1. */
+  --mascot-body: #5b52f0;
   --mascot-eye: #ffffff;
   /* Fill and text are separate roles (DESIGN.md 4.2): `--primary` fills the CTA, `--action` is accent text. */
-  --action: #171717;
-  --action-hover: #404040;
+  --action: #181818;
+  --action-hover: #333333;
   --action-foreground: #fafafa;
-  --primary: #171717;
+  --primary: #181818;
   --primary-foreground: #fafafa;
   --action-dot: #737373;
-  --action-soft: color-mix(in oklab, var(--action) 8%, transparent);
-  --secondary: #f5f5f5;
+  --action-soft: rgb(0 0 0 / 0.06);
+  --secondary: #f4f4f4;
   --secondary-foreground: #171717;
-  --muted: #f5f5f5;
-  --muted-foreground: #6b6b6b;
+  --muted: #f4f4f4;
+  --muted-foreground: #6d6d6d;
   /* Decorative only (separators, chevrons, info glyphs): never the only carrier of information. */
   --subtle-foreground: #8a8a8a;
-  --accent: #f5f5f5;
+  --accent: #f0f0f0;
   --accent-foreground: #171717;
-  --surface-subtle: #fafafa;
+  --surface-subtle: #f6f6f6;
   /* Muted semantic colours, each >= 4.5:1 as text on white, card and well. */
   /* Luma's red (#e7000b) is 4.01:1 as text on its own 10% wash; Norn keeps its AA red (DESIGN.md 19.1). */
   --destructive: #b83228;
@@ -94,19 +94,19 @@
   --dot-quiet: color-mix(in oklab, var(--subtle-foreground) 60%, transparent);
   --dot-accent: var(--action-dot);
   --border: #e5e5e5;
-  --line: #e5e5e5;
-  --input: #e5e5e5;
+  --line: #ebebeb;
+  --input: #e1e1e1;
   --ring: #737373;
   --link: #171717;
   /* Detail colour per kind of artefact; each >= 4.5:1 on card and on its tinted fill. */
-  --kind-source: #0f726a;
-  --kind-mapping: #475569;
-  --kind-object: #2d5cd9;
-  --kind-transform: #8f420e;
-  --kind-question: #9a1ca6;
-  --kind-workflow: #4f46e5;
-  --kind-guarantee: #166534;
-  --kind-policy: #b33b0a;
+  --kind-source: #5c5c5c;
+  --kind-mapping: #5c5c5c;
+  --kind-object: #5c5c5c;
+  --kind-transform: #5c5c5c;
+  --kind-question: #5c5c5c;
+  --kind-workflow: #5c5c5c;
+  --kind-guarantee: #5c5c5c;
+  --kind-policy: #5c5c5c;
   /* Chart series: the accent first, then a categorical set separated for 3:1 marks. */
   --chart-1: #3a6df0;
   --chart-2: #0f726a;
@@ -114,35 +114,35 @@
   --chart-4: #9a1ca6;
   --chart-5: #7d8494;
   /* The default sidebar shell (DESIGN.md 4.6 and 9.1). */
-  --sidebar: rgb(247 248 249 / 0.8);
-  --sidebar-foreground: #1b1b1d;
-  --sidebar-primary: #171717;
+  --sidebar: #f6f6f6;
+  --sidebar-foreground: #171717;
+  --sidebar-primary: #181818;
   --sidebar-primary-foreground: #fafafa;
-  --sidebar-accent: #e8eaf0;
-  --sidebar-accent-foreground: #1b1b1d;
-  --sidebar-border: #e2e4ea;
+  --sidebar-accent: #ebebeb;
+  --sidebar-accent-foreground: #171717;
+  --sidebar-border: #e5e5e5;
   --sidebar-ring: #737373;
-  --panel-border: color-mix(in oklab, var(--foreground) 6%, transparent);
-  --panel-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-  --table-border: color-mix(in oklab, var(--border) 92%, transparent);
+  --panel-border: #e5e5e5;
+  --panel-shadow: 0 0 0 0 rgb(0 0 0 / 0);
+  --table-border: #e5e5e5;
   /* The opt-in floating dock (DESIGN.md 4.5): dark in every skin and scheme. */
-  --dock-surface: #1d1d20;
+  --dock-surface: #2b2b2b;
   --dock-border: rgb(255 255 255 / 0.08);
-  --dock-well: #34343a;
+  --dock-well: rgb(255 255 255 / 0.1);
   --dock-foreground: #ffffff;
-  --dock-muted: #b4b4bc;
-  --dock-active: #34343a;
-  --dock-ring: #d4d4d8;
-  --dock-indicator: #f4f4f5;
+  --dock-muted: #b4b4b4;
+  --dock-active: rgb(255 255 255 / 0.1);
+  --dock-ring: #d4d4d4;
+  --dock-indicator: #f4f4f4;
   --dock-shadow: 0 10px 30px -8px rgb(0 0 0 / 0.35), 0 2px 6px rgb(0 0 0 / 0.12);
   /* Elevation (DESIGN.md 6): whisper contact plus soft ambient shadow, never a hard blob. */
-  --popup-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
-  --sheet-shadow: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+  --popup-shadow: 0 0 15px rgb(0 0 0 / 0.04), 0 0 2px rgb(0 0 0 / 0.06);
+  --sheet-shadow: 0 0 32px rgb(0 0 0 / 0.08), 0 0 2px rgb(0 0 0 / 0.08);
   --elevation-1: 0 1px 2px rgb(0 0 0 / 0.025), 0 2px 6px -2px rgb(0 0 0 / 0.02);
   --elevation-control: 0 1px 2px rgb(0 0 0 / 0.04), inset 0 1px 0 rgb(255 255 255 / 0.75);
-  --elevation-action: 0 1px 2px rgb(0 0 0 / 0.16), inset 0 1px 0 rgb(255 255 255 / 0.12);
-  --elevation-node: 0 1px 1px rgb(15 23 42 / 0.05), 0 1px 2px rgb(15 23 42 / 0.06), 0 12px 28px -10px rgb(15 23 42 / 0.12);
-  --elevation-node-hover: 0 1px 2px rgb(15 23 42 / 0.06), 0 2px 4px rgb(15 23 42 / 0.06), 0 18px 40px -12px rgb(15 23 42 / 0.18);
+  --elevation-action: 0 1px 2px rgb(0 0 0 / 0.08);
+  --elevation-node: 0 1px 1px rgb(0 0 0 / 0.05), 0 1px 2px rgb(0 0 0 / 0.06), 0 12px 28px -10px rgb(0 0 0 / 0.12);
+  --elevation-node-hover: 0 1px 2px rgb(0 0 0 / 0.06), 0 2px 4px rgb(0 0 0 / 0.06), 0 18px 40px -12px rgb(0 0 0 / 0.18);
   --elevation-float: 0 16px 40px -12px rgb(0 0 0 / 0.16), 0 2px 6px rgb(0 0 0 / 0.05);
   --node-border: rgb(15 23 42 / 0.08);
   --node-highlight: inset 0 1px 0 rgb(255 255 255 / 0.9);
@@ -173,19 +173,19 @@
   --tone-pink: #ad2168;
   --tone-orange: #b0440a;
   /*
-   * The three-island shell (DESIGN.md 4.7 and 9.1): a backdrop with two pools of ambient light, and on
-   * it the applet rail, the submenu island and the main island. Luma's islands are liquid glass: a
-   * translucent mist surface, a backdrop blur and saturate, a 1px specular edge and a soft depth
-   * shadow. Text on them is measured against the worst-case backdrop (a glow at its peak under it).
+   * The three-island shell (DESIGN.md 4.7 and 9.1): on a neutral backdrop, the applet rail, the submenu
+   * island and the main island. Luma's islands are opaque, like Polar's: a white (dark #111111) surface,
+   * a 1px hairline and at most a shadow-xs (owner, 2026-11-25: monochrome supersedes the glass; the
+   * `glass` skin keeps it as an opt-in). The pools of ambient light are off (transparent).
    */
-  --backdrop: #e7e8ed;
-  --backdrop-glow-1: rgb(255 255 255 / 0.55);
-  --backdrop-glow-2: rgb(0 0 0 / 0.03);
-  --island: rgb(247 248 249 / 0.8);
-  --island-border: rgb(0 0 0 / 0.07);
-  --island-shadow: inset 0 1px 0 rgb(255 255 255 / 0.75), 0 1px 2px rgb(0 0 0 / 0.04), 0 12px 32px -16px rgb(0 0 0 / 0.16);
-  --island-blur: blur(24px) saturate(160%);
-  --radius-island: 18px;
+  --backdrop: #f6f6f6;
+  --backdrop-glow-1: rgb(0 0 0 / 0);
+  --backdrop-glow-2: rgb(0 0 0 / 0);
+  --island: #ffffff;
+  --island-border: #e5e5e5;
+  --island-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+  --island-blur: none;
+  --radius-island: 16px;
   /*
    * Avatar discs (DESIGN.md 4.4): six bg/fg pairs, the index a stable hash of the principal's or
    * record's id, never its display name. Every pair reads at >= 5:1; the same in every skin.
@@ -202,36 +202,37 @@
   --avatar-5-fg: #6b3fae;
   --avatar-6-bg: #dff3f6;
   --avatar-6-fg: #1f6f7a;
+  --dock-icon: rgb(255 255 255 / 0.4);
 }
 
 .dark {
-  --shell: #0b0b0e;
-  --canvas: #0b0b0e;
-  --background: #0a0a0a;
-  --foreground: #fafafa;
-  --card: #171717;
-  --card-foreground: #fafafa;
-  --well: #1c1c1c;
-  --well-border: #2a2a2a;
-  --well-hover: #262626;
-  --popover: #171717;
-  --popover-foreground: #fafafa;
-  --knot: #7c74ff;
-  --action: #e5e5e5;
-  --action-hover: #d4d4d4;
-  --action-foreground: #171717;
-  --primary: #e5e5e5;
-  --primary-foreground: #171717;
+  --shell: #090909;
+  --canvas: #111111;
+  --background: #111111;
+  --foreground: #ededed;
+  --card: #181818;
+  --card-foreground: #ededed;
+  --well: #1e1e1e;
+  --well-border: #262626;
+  --well-hover: #2a2a2a;
+  --popover: #181818;
+  --popover-foreground: #ededed;
+  --knot: #a1a1a1;
+  --action: #f4f4f4;
+  --action-hover: #d9d9d9;
+  --action-foreground: #181818;
+  --primary: #f4f4f4;
+  --primary-foreground: #181818;
   --action-dot: #a1a1a1;
-  --action-soft: color-mix(in oklab, var(--action) 10%, transparent);
-  --secondary: #262626;
-  --secondary-foreground: #fafafa;
-  --muted: #262626;
-  --muted-foreground: #a1a1a1;
+  --action-soft: rgb(255 255 255 / 0.08);
+  --secondary: #212121;
+  --secondary-foreground: #ededed;
+  --muted: #212121;
+  --muted-foreground: #969696;
   --subtle-foreground: #7a7a7a;
-  --accent: #262626;
-  --accent-foreground: #fafafa;
-  --surface-subtle: #1c1c1c;
+  --accent: #2e2e2e;
+  --accent-foreground: #ededed;
+  --surface-subtle: #1e1e1e;
   --destructive: #ff6467;
   --destructive-foreground: #0a0a0a;
   --destructive-text: #ff6467;
@@ -240,43 +241,43 @@
   --dot-live: #3ccf8e;
   --dot-held: #f0b04a;
   --dot-bad: #ff6b6f;
-  --border: #2e2e2e;
-  --line: #2a2a2a;
-  --input: #383838;
-  --ring: #737373;
-  --link: #e5e5e5;
-  --kind-source: #34d8c4;
-  --kind-mapping: #9caac0;
-  --kind-object: #84aaff;
-  --kind-transform: #fbc236;
-  --kind-question: #f2b2fc;
-  --kind-workflow: #a5b4fc;
-  --kind-guarantee: #52e086;
-  --kind-policy: #fdbd7c;
+  --border: #212121;
+  --line: #262626;
+  --input: #2e2e2e;
+  --ring: #a1a1a1;
+  --link: #a1a1a1;
+  --kind-source: #a3a3a3;
+  --kind-mapping: #a3a3a3;
+  --kind-object: #a3a3a3;
+  --kind-transform: #a3a3a3;
+  --kind-question: #a3a3a3;
+  --kind-workflow: #a3a3a3;
+  --kind-guarantee: #a3a3a3;
+  --kind-policy: #a3a3a3;
   --chart-1: #5b8cff;
   --chart-2: #34d8c4;
   --chart-3: #fbc236;
   --chart-4: #f2b2fc;
   --chart-5: #7b7d8e;
-  --sidebar: rgb(13 13 16 / 0.8);
-  --sidebar-foreground: #ececee;
-  --sidebar-primary: #e5e5e5;
-  --sidebar-primary-foreground: #171717;
-  --sidebar-accent: #18181f;
-  --sidebar-accent-foreground: #ececee;
-  --sidebar-border: #1e1e26;
-  --sidebar-ring: #737373;
-  --panel-border: color-mix(in oklab, var(--foreground) 10%, transparent);
+  --sidebar: #090909;
+  --sidebar-foreground: #ededed;
+  --sidebar-primary: #f4f4f4;
+  --sidebar-primary-foreground: #181818;
+  --sidebar-accent: #212121;
+  --sidebar-accent-foreground: #ededed;
+  --sidebar-border: #212121;
+  --sidebar-ring: #a1a1a1;
+  --panel-border: #212121;
   --panel-shadow: var(--elevation-1);
-  --table-border: color-mix(in oklab, var(--border) 95%, transparent);
-  --dock-surface: #222226;
+  --table-border: #212121;
+  --dock-surface: #2b2b2b;
   --dock-border: rgb(255 255 255 / 0.08);
-  --dock-well: #3a3a41;
+  --dock-well: rgb(255 255 255 / 0.1);
   --dock-foreground: #ffffff;
-  --dock-muted: #b4b4bc;
-  --dock-active: #3a3a41;
-  --dock-ring: #d4d4d8;
-  --dock-indicator: #f4f4f5;
+  --dock-muted: #b4b4b4;
+  --dock-active: rgb(255 255 255 / 0.1);
+  --dock-ring: #d4d4d4;
+  --dock-indicator: #f4f4f4;
   --dock-shadow: 0 10px 30px -8px rgb(0 0 0 / 0.7);
   --popup-shadow: 0 18px 44px -14px rgb(0 0 0 / 0.72);
   --sheet-shadow: 0 24px 64px -16px rgb(0 0 0 / 0.8);
@@ -311,12 +312,12 @@
   --tone-teal: #4ad6d6;
   --tone-pink: #f797cb;
   --tone-orange: #f7a465;
-  --backdrop: #050507;
-  --backdrop-glow-1: rgb(255 255 255 / 0.05);
-  --backdrop-glow-2: rgb(255 255 255 / 0.03);
-  --island: rgb(13 13 16 / 0.8);
-  --island-border: rgb(255 255 255 / 0.07);
-  --island-shadow: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 16px 40px -16px rgb(0 0 0 / 0.7);
+  --backdrop: #090909;
+  --backdrop-glow-1: rgb(0 0 0 / 0);
+  --backdrop-glow-2: rgb(0 0 0 / 0);
+  --island: #111111;
+  --island-border: #212121;
+  --island-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
   /* Dark discs: the light ink at 30% over the dark card (#151517), with the light fill as ink (>= 12:1). */
   --avatar-1-bg: #3d201e;
   --avatar-1-fg: #fde4e1;
@@ -330,13 +331,16 @@
   --avatar-5-fg: #efe6fd;
   --avatar-6-bg: #183035;
   --avatar-6-fg: #dff3f6;
+  --mascot-body: #7c74ff;
+  --dock-icon: rgb(255 255 255 / 0.4);
 }
 
 /*
  * Skin: Polar (monochrome ink on neutral surfaces; colour only where DESIGN.md section 13 allows it).
  */
 :root[data-skin="polar"] {
-  /* Crisp geometry (not Luma's): 8px controls and rows, 5px chips, 16px popups. */
+  /* Crisp geometry (not Luma's): 8px controls and rows, 5px chips, 16px popups, 18px islands. */
+  --radius-island: 18px;
   --radius: 8px;
   --radius-chip: 5px;
   --radius-row: 11px;
@@ -473,7 +477,8 @@
  */
 :root[data-skin="open"],
 :root[data-skin="glass"] {
-  /* Crisp geometry (not Luma's): 8px controls and rows, 5px chips, 16px popups. */
+  /* Crisp geometry (not Luma's): 8px controls and rows, 5px chips, 16px popups, 18px islands. */
+  --radius-island: 18px;
   --radius: 8px;
   --radius-chip: 5px;
   --radius-row: 11px;
@@ -640,7 +645,9 @@
   --island: rgb(253 253 254 / 0.6);
   --island-border: rgb(255 255 255 / 0.72);
   --island-shadow: inset 0 1px 0 rgb(255 255 255 / 0.85), 0 8px 28px -12px rgb(0 0 0 / 0.16);
-  --island-blur: blur(24px) saturate(165%);
+  --island-blur: blur(24px);
+  --dock-well: #3a3a3e;
+  --dock-active: #3a3a3e;
 }
 
 :root.dark[data-skin="glass"] {
@@ -674,6 +681,8 @@
   --island: rgb(20 20 23 / 0.62);
   --island-border: rgb(255 255 255 / 0.13);
   --island-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12), 0 10px 30px -12px rgb(0 0 0 / 0.55);
+  --dock-well: #3a3a3e;
+  --dock-active: #3a3a3e;
 }
 
 /* Layered, so a utility on an island (the phone main island drops its edge and radius) still wins. */
@@ -693,7 +702,7 @@
 
   /*
    * The islands' material: the applet rail and the submenu island take `--sidebar`, the main island
-   * `--island`; each takes the backdrop blur and saturate, a 1px specular edge and its depth shadow.
+   * `--island`; each takes the skin's backdrop blur (none in luma), a 1px edge and its depth shadow.
    * Painted here, not by utilities, so every fallback below can make it opaque in one place.
    */
   [data-island] {
@@ -708,8 +717,8 @@
 
   /* Glass skins frost the surfaces inside the islands too (cards, tables, popovers, the dock tray). */
   :root[data-skin="glass"] :is([data-slot="panel"], [data-slot="stat-strip"], [data-slot="table-card"], [data-slot="records-table-frame"], [data-slot="popover-content"], [data-slot="dropdown-menu-content"], [data-slot="chrome-dock-tray"]) {
-    -webkit-backdrop-filter: blur(20px) saturate(165%);
-    backdrop-filter: blur(20px) saturate(165%);
+    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(20px);
   }
 
   /*
@@ -857,7 +866,7 @@
   --text-heading: 1.35rem;
   --text-heading--line-height: 1.25;
   --text-heading--letter-spacing: -0.02em;
-  --text-title: 1.85rem;
+  --text-title: 1.5rem;
   --text-title--line-height: 1.15;
   --text-title--letter-spacing: -0.025em;
   --text-figure: 2rem;

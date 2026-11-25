@@ -18,12 +18,12 @@ test("bare :root and .dark are the luma palette, so the default needs no data-sk
   const css = readFileSync(INDEX_CSS, "utf8")
   expect(css).not.toContain('[data-skin="luma"]')
   const palettes = themePalettes(css)
-  expect(palettes.luma.light.canvas).toBe("#f3f4f6")
-  expect(palettes.luma.light.primary).toBe("#171717")
-  expect(palettes.luma.dark.canvas).toBe("#0b0b0e")
-  expect(palettes.luma.dark.primary).toBe("#e5e5e5")
-  // Its islands are glass: a translucent material over a backdrop of its own.
-  expect(palettes.luma.light.island).toMatch(/^rgba\(/)
+  expect(palettes.luma.light.canvas).toBe("#ffffff")
+  expect(palettes.luma.light.primary).toBe("#181818")
+  expect(palettes.luma.dark.canvas).toBe("#111111")
+  expect(palettes.luma.dark.primary).toBe("#f4f4f4")
+  // Its islands are opaque white on a grey backdrop, like Polar's (monochrome, DESIGN.md 19.6).
+  expect(palettes.luma.light.island).toBe("#ffffff")
   expect(palettes.luma.light.backdrop).not.toBe(palettes.luma.light.canvas)
   // Polar keeps its monochrome palette, now behind its own attribute, with opaque islands.
   expect(css).toContain(':root[data-skin="polar"] {')

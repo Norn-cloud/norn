@@ -11,7 +11,8 @@ import { cn } from "@/lib/utils"
  * silhouette) and at 96px. Motion is CSS (`index.css`, `[data-slot=mascot]`) and stops under
  * `prefers-reduced-motion`, where each state is still its own still pose.
  *
- * Two tones: `brand` fills the body with `--mascot-body` (the knot violet) and the eyes with
+ * Two tones: `brand` fills the body with `--mascot-body` (its own violet, the one colour the
+ * monochrome chrome allows on the AI surface) and the eyes with
  * `--mascot-eye`; `ink` draws the body in `currentColor` with the eyes cut out, for chrome that is
  * monochrome by rule (the rail, the dock, the Ask bar's lead). Both are tokens, both schemes.
  *

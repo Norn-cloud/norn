@@ -1,16 +1,14 @@
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query"
 import { ListRow, TypeDisc } from "@/components/system/list-row"
 import { Link, useNavigate } from "@tanstack/react-router"
-import { ArrowRight, ArrowUp, Blend, Database, LayoutDashboard, ListChecks, ShieldCheck, Sigma } from "lucide-react"
-import { useState } from "react"
+import { ArrowRight, Blend, Database, LayoutDashboard, ListChecks, ShieldCheck, Sigma } from "lucide-react"
 import { useAssistant } from "@/assistant-slot"
 import { LoadState, WorkspaceUnavailable } from "@/components/load-state"
 import { PageHeader } from "@/components/panel"
 import { Panel, Well } from "@/components/system/panel"
 import { StatStrip } from "@/components/system/kpi-tile"
 import { Button } from "@/components/ui/button"
-import { InputGroupAddon } from "@/components/ui/input-group"
-import { PromptInput, PromptInputSubmit, PromptInputTextarea } from "@/components/ai-elements/prompt-input"
+import { ChatComposer } from "@/components/chat-composer"
 import { Skeleton } from "@/components/ui/skeleton"
 import { conceptTitle } from "./lib/catalog.ts"
 import { useStudioScope } from "./lib/definitions.ts"
@@ -80,30 +78,22 @@ export function HomePage() {
 }
 
 /**
- * Ask Norn: one field for a question or an instruction, AI Elements' composer (DESIGN.md 19.3) led by
- * the mascot. The assistant takes it where the server serves one, else Metrics.
+ * Ask Norn: one field for a question or an instruction (the chat composer, DESIGN.md 19.3), led by the
+ * mascot. The assistant takes it where the server serves one, else Metrics.
  */
 function AskBar() {
-  const [text, setText] = useState("")
   const assistant = useAssistant()
   const navigate = useNavigate()
-  const submit = (value: string) => {
-    const request = value.trim()
-    if (request === "") return
+  const submit = (request: string) => {
     if (assistant.available) assistant.ask(request)
     else void navigate({ to: "/metrics" })
-    setText("")
   }
   return (
-    <PromptInput data-slot="ask-norn" onSubmit={({ text: value }) => submit(value)}
-      groupClassName="min-h-12 rounded-(--radius-search) border-(--panel-border) bg-card px-1 shadow-(--panel-shadow) has-[>textarea]:h-auto max-sm:min-h-[52px] dark:bg-card">
-      <InputGroupAddon><Mascot tone="ink" size={22} className="text-muted-foreground" /></InputGroupAddon>
-      <PromptInputTextarea rows={1} aria-label="Ask or tell Norn anything" placeholder="Ask or tell Norn anything" value={text} onChange={(event) => setText(event.target.value)}
-        className="min-h-0 py-3 max-sm:py-3.5" />
-      <InputGroupAddon align="inline-end">
-        <PromptInputSubmit aria-label="Ask" size="sm" className="rounded-full px-3.5" disabled={text.trim() === ""}><ArrowUp aria-hidden />Ask</PromptInputSubmit>
-      </InputGroupAddon>
-    </PromptInput>
+    <div data-slot="ask-norn">
+      <ChatComposer label="Ask or tell Norn anything" placeholder="Ask or tell Norn anything" rows={1} onSubmit={submit} submitLabel="Ask" submitText="Ask"
+        lead={<Mascot tone="ink" size={22} className="text-muted-foreground" />}
+        groupClassName="min-h-12 rounded-(--radius-search) border-(--panel-border) bg-card px-1 shadow-(--panel-shadow) max-sm:min-h-[52px] dark:bg-card" />
+    </div>
   )
 }
 

@@ -605,8 +605,9 @@ test("the gate's saturate matches the Filter Effects matrix: grey is unchanged, 
   const vivid = saturated(tint, 1.65)
   expect(vivid.b).toBeGreaterThan(tint.b)
   expect(vivid.r).toBeLessThan(tint.r)
-  expect(saturation("glass", "light")).toBe(1.65)
-  expect(saturation("luma", "light")).toBe(1.6)
+  // Monochrome (DESIGN.md 19.6): no skin saturates its islands any more; luma's are opaque.
+  expect(saturation("glass", "light")).toBe(1)
+  expect(saturation("luma", "light")).toBe(1)
 })
 function backdrops(color: (token: string) => Color, amount: number): readonly (readonly [string, Color])[] {
   const flat = color("backdrop")
