@@ -1,5 +1,8 @@
 //! Setting artifact payload validation.
 
+use std::collections::BTreeMap;
+
+use norn_expr::temporal::timestamp_ordering_key;
 use norn_ir::{Diagnostic, JsonValue};
 
 use super::helpers::{
@@ -50,6 +53,27 @@ pub(super) fn validate_setting_payload(
         diagnostics,
         artifact_id,
     );
+    validate_setting_window(payload, diagnostics, artifact_id);
+    validate_setting_supersedes(payload.get("supersedes"), diagnostics, artifact_id);
+    validate_setting_review(payload.get("review"), diagnostics, artifact_id);
+    validate_non_empty_string_array_field(
+        payload,
+        "scopeRequired",
+        "payload.scopeRequired",
+        diagnostics,
+        artifact_id,
+        CODE,
+    );
+}
+
+/// `[effectiveFrom, effectiveTo)`: both endpoints are RFC 3339 instants and
+/// the interval is not empty.
+fn validate_setting_window(
+    payload: &BTreeMap<String, JsonValue>,
+    diagnostics: &mut Vec<Diagnostic>,
+    artifact_id: Option<&str>,
+) {
+    const CODE: &str = "setting.validation.invalid_payload";
     let effective_from = require_non_empty_field(
         payload,
         "effectiveFrom",
@@ -58,15 +82,34 @@ pub(super) fn validate_setting_payload(
         artifact_id,
         CODE,
     );
+    // Endpoints are instants, ordered as resolution orders them: by text,
+    // `.100Z` would sort before `Z` and offsets would not be normalized.
+    let from = effective_from.as_deref().and_then(|from| {
+        let key = timestamp_ordering_key(from);
+        if key.is_err() {
+            diagnostics.push(invalid_diagnostic(
+                CODE,
+                "payload.effectiveFrom must be an RFC 3339 timestamp",
+                "payload.effectiveFrom",
+                artifact_id,
+            ));
+        }
+        key.ok()
+    });
     if let Some(effective_to) = payload.get("effectiveTo") {
         match effective_to {
             JsonValue::String(value) if !value.trim().is_empty() => {
-                if let Some(effective_from) = effective_from.as_deref()
-                    && value.as_str() <= effective_from
-                {
+                let message = match timestamp_ordering_key(value) {
+                    Err(_) => Some("payload.effectiveTo must be an RFC 3339 timestamp"),
+                    Ok(to) if from.is_some_and(|from| to <= from) => {
+                        Some("payload.effectiveTo must be after payload.effectiveFrom")
+                    }
+                    Ok(_) => None,
+                };
+                if let Some(message) = message {
                     diagnostics.push(invalid_diagnostic(
                         CODE,
-                        "payload.effectiveTo must be after payload.effectiveFrom",
+                        message,
                         "payload.effectiveTo",
                         artifact_id,
                     ));
@@ -85,16 +128,6 @@ pub(super) fn validate_setting_payload(
             )),
         }
     }
-    validate_setting_supersedes(payload.get("supersedes"), diagnostics, artifact_id);
-    validate_setting_review(payload.get("review"), diagnostics, artifact_id);
-    validate_non_empty_string_array_field(
-        payload,
-        "scopeRequired",
-        "payload.scopeRequired",
-        diagnostics,
-        artifact_id,
-        CODE,
-    );
 }
 
 fn validate_setting_typed_value(
@@ -225,5 +258,65 @@ fn validate_setting_review(
                 CODE,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use norn_ir::JsonValue;
+
+    use super::validate_setting_window;
+
+    /// The messages `[from, to)` admits with, in order.
+    fn window(from: &str, to: &str) -> Vec<String> {
+        let payload = BTreeMap::from([
+            (
+                "effectiveFrom".to_owned(),
+                JsonValue::String(from.to_owned()),
+            ),
+            ("effectiveTo".to_owned(), JsonValue::String(to.to_owned())),
+        ]);
+        let mut diagnostics = Vec::new();
+        validate_setting_window(&payload, &mut diagnostics, None);
+        diagnostics.into_iter().map(|d| d.message).collect()
+    }
+
+    const AFTER: &str = "payload.effectiveTo must be after payload.effectiveFrom";
+
+    #[test]
+    fn a_fractional_second_end_is_after_its_whole_second_start() {
+        // By text `.` sorts before `Z`: this valid window was refused.
+        assert_eq!(
+            window("2026-01-01T00:00:00Z", "2026-01-01T00:00:00.100Z"),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn a_reversed_or_empty_window_is_refused_by_instant() {
+        // By text this reversed window was admitted.
+        assert_eq!(
+            window("2026-01-01T00:00:00.100Z", "2026-01-01T00:00:00Z"),
+            [AFTER]
+        );
+        // One instant spelled with two offsets is an empty window.
+        assert_eq!(
+            window("2026-07-01T00:00:00Z", "2026-07-01T02:00:00+02:00"),
+            [AFTER]
+        );
+    }
+
+    #[test]
+    fn an_endpoint_that_is_no_timestamp_is_refused() {
+        assert_eq!(
+            window("2026-02-30T00:00:00Z", "2026-03-01T00:00:00Z"),
+            ["payload.effectiveFrom must be an RFC 3339 timestamp"]
+        );
+        assert_eq!(
+            window("2026-03-01T00:00:00Z", "soon"),
+            ["payload.effectiveTo must be an RFC 3339 timestamp"]
+        );
     }
 }
