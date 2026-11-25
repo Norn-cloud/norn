@@ -6,8 +6,7 @@ use norn_ir::{ActionRoot, FactChange, ObjectTypeName, ResourceLimitProfile, Upse
 use crate::cell_host::{CellHost, FactKey, JsonObject, JsonValue};
 use crate::creator_stamp::CreatorStamp;
 use crate::decision_commit::{DecisionRefusal, FactEvent, TypeCatalog};
-use crate::envelope::TurnEnvelopeMeter;
-use crate::limits::{EnvelopeLimits, SliceMeter};
+use crate::limits::SliceMeter;
 use crate::naming_series::type_series;
 
 use super::input::check_action_record_size;
@@ -147,8 +146,7 @@ pub(super) fn commit_upsert<H>(
     object_id_field: &str,
     object_kind: &str,
     write_mode: &UpsertWriteMode,
-    limits: &EnvelopeLimits,
-    meter: Option<&mut TurnEnvelopeMeter>,
+    envelope: EnvelopePolicy<'_>,
 ) -> Result<ActionOutcome, ActionRefusal<H::Error>>
 where
     H: CellHost + ?Sized,
@@ -156,6 +154,7 @@ where
     H::Command: From<JsonObject>,
     H::Input: From<JsonObject>,
 {
+    let limits = envelope.limits;
     let action = call.action;
     let object_type = call
         .object_type
@@ -201,17 +200,20 @@ where
             series.key_name,
             series.key_properties,
             series.declaration,
-            limits,
-            meter,
+            envelope,
         );
         // No honest target exists for some allocator failures. Conceal all
         // refusals alike unless diagnostic access was separately granted, so
         // denied calls cannot distinguish a healthy counter from a bad one.
-        return if disclose {
-            outcome
-        } else {
-            outcome.map_err(|_concealed_refusal| ActionRefusal::TargetNotFound)
-        };
+        // An approval's binding of the allocated commit is past the allocator
+        // and says nothing about the counter (#618).
+        return outcome.map_err(|refusal| {
+            if disclose || matches!(refusal, ActionRefusal::ApprovedIntentChanged) {
+                refusal
+            } else {
+                ActionRefusal::TargetNotFound
+            }
+        });
     }
     let Some(JsonValue::String(object_id)) = preparation.effective_input.get(object_id_field)
     else {
@@ -435,6 +437,6 @@ where
             receipt: None,
             creator_stamp: stamp,
         },
-        EnvelopePolicy { limits, meter },
+        envelope,
     )
 }

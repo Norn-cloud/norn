@@ -1,6 +1,11 @@
+use std::collections::BTreeSet;
+
 use norn_ir::{FactChange, RuntimeValue};
 
-use crate::cell_host::{CellHost, FactExpectation, FactKey, FactWrite, JsonObject};
+use crate::cell_host::{
+    CellCommit, CellHost, CommitError, FactExpectation, FactKey, FactWrite, JsonObject,
+    LinkReadExpectation, LinkWrite,
+};
 
 use super::host_failure;
 use super::types::ActionRefusal;
@@ -183,4 +188,177 @@ pub(super) fn committed_target_version(
         .iter()
         .find(|written| model.canonical(&written.key) == canonical)
         .map_or(before, |written| written.version)
+}
+
+pub(super) fn precondition_read_refusal<X>(
+    error: &CommitError<X>,
+    precondition_reads: &BTreeSet<FactKey>,
+) -> Option<ActionRefusal<X>> {
+    if let CommitError::PredicateReadConflict { object_type } = error {
+        return Some(ActionRefusal::StaleAggregateRead {
+            object_type: object_type.clone(),
+        });
+    }
+    let stale_fact = match error {
+        CommitError::Conflict { key, .. } if precondition_reads.contains(key) => Some(key.clone()),
+        CommitError::Conflict { key, .. } => precondition_reads
+            .iter()
+            .find(|read| crate::snapshot_observe::tombstone_key(read) == *key)
+            .cloned(),
+        CommitError::IdentityReuse
+        | CommitError::IdentityCollision { .. }
+        | CommitError::AtomicBoundary { .. }
+        | CommitError::AtomicDeliveryBoundary { .. }
+        | CommitError::ImmutableObject { .. }
+        | CommitError::LifecycleInitialization { .. }
+        | CommitError::OwnedRowsProtected { .. }
+        | CommitError::DuplicateKey { .. }
+        | CommitError::NotPending { .. }
+        | CommitError::ReceiptNotAccepted { .. }
+        | CommitError::DuplicateLink { .. }
+        | CommitError::IdentifierTooLong { .. }
+        | CommitError::LinkConflict { .. }
+        | CommitError::LinkReadConflict { .. }
+        | CommitError::UnsupportedLinkRead { .. }
+        | CommitError::DuplicateLinkRead { .. }
+        | CommitError::LinkReadTooLarge { .. }
+        | CommitError::InvalidLinkRead { .. }
+        | CommitError::PredicateReadConflict { .. }
+        | CommitError::UnsupportedPredicateRead { .. }
+        | CommitError::InvalidPredicateRead { .. }
+        | CommitError::DanglingLink { .. }
+        | CommitError::LinkTarget { .. }
+        | CommitError::LinkCardinality { .. }
+        | CommitError::LinkRequired { .. }
+        | CommitError::TypeMismatch { .. }
+        | CommitError::EffectiveValues { .. }
+        | CommitError::TraversalLimitExceeded { .. }
+        | CommitError::AccountingPosting { .. }
+        | CommitError::InvariantViolation { .. }
+        | CommitError::InvariantBudgetExceeded { .. }
+        | CommitError::Law { .. }
+        | CommitError::InvariantModel { .. }
+        | CommitError::ObservationAuthorization
+        | CommitError::EventLimitExceeded { .. }
+        | CommitError::Overflow
+        | CommitError::Host(_) => None,
+    };
+    let stale_link = match error {
+        CommitError::LinkReadConflict { source_key, link }
+        | CommitError::UnsupportedLinkRead { source_key, link } => {
+            Some((source_key.clone(), link.clone()))
+        }
+        CommitError::IdentityReuse
+        | CommitError::IdentityCollision { .. }
+        | CommitError::AtomicBoundary { .. }
+        | CommitError::AtomicDeliveryBoundary { .. }
+        | CommitError::ImmutableObject { .. }
+        | CommitError::LifecycleInitialization { .. }
+        | CommitError::OwnedRowsProtected { .. }
+        | CommitError::DuplicateKey { .. }
+        | CommitError::NotPending { .. }
+        | CommitError::ReceiptNotAccepted { .. }
+        | CommitError::Conflict { .. }
+        | CommitError::DuplicateLink { .. }
+        | CommitError::IdentifierTooLong { .. }
+        | CommitError::LinkConflict { .. }
+        | CommitError::DuplicateLinkRead { .. }
+        | CommitError::LinkReadTooLarge { .. }
+        | CommitError::InvalidLinkRead { .. }
+        | CommitError::PredicateReadConflict { .. }
+        | CommitError::UnsupportedPredicateRead { .. }
+        | CommitError::InvalidPredicateRead { .. }
+        | CommitError::DanglingLink { .. }
+        | CommitError::LinkTarget { .. }
+        | CommitError::LinkCardinality { .. }
+        | CommitError::LinkRequired { .. }
+        | CommitError::TypeMismatch { .. }
+        | CommitError::EffectiveValues { .. }
+        | CommitError::TraversalLimitExceeded { .. }
+        | CommitError::AccountingPosting { .. }
+        | CommitError::InvariantViolation { .. }
+        | CommitError::InvariantBudgetExceeded { .. }
+        | CommitError::Law { .. }
+        | CommitError::InvariantModel { .. }
+        | CommitError::ObservationAuthorization
+        | CommitError::EventLimitExceeded { .. }
+        | CommitError::Overflow
+        | CommitError::Host(_) => None,
+    };
+    if let Some(key) = stale_fact {
+        return Some(ActionRefusal::StalePreconditionRead { key, link: None });
+    }
+    stale_link.map(|(key, link)| ActionRefusal::StalePreconditionRead {
+        key,
+        link: Some(link),
+    })
+}
+
+/// Kernel-owned attribution for direct reference validation. It cannot cross a
+/// serialized commit boundary or be constructed by an action caller.
+#[derive(Debug)]
+pub struct ActionReferenceReads {
+    pub(super) reads: Vec<FactExpectation>,
+    pub(super) references: Vec<FactExpectation>,
+    pub(super) property_reads: Vec<(FactExpectation, Vec<String>)>,
+    pub(super) writes: Vec<FactWrite>,
+    pub(super) links: Vec<LinkWrite>,
+    pub(super) link_reads: Vec<LinkReadExpectation>,
+    pub(super) event_count: usize,
+}
+
+impl ActionReferenceReads {
+    /// Exact-version references whose existence, rather than values, was used.
+    #[must_use]
+    pub fn reference_reads(&self) -> &[FactExpectation] {
+        &self.references
+    }
+
+    /// Exact property operands proved by the kernel's expression analysis.
+    /// Empty properties preserve an independent patch target's identity only.
+    #[must_use]
+    pub fn property_reads(&self) -> &[(FactExpectation, Vec<String>)] {
+        &self.property_reads
+    }
+
+    /// Bind the one-use proof to the kernel-prepared transaction.
+    #[must_use]
+    pub fn validates<E, C, I>(&self, commit: &CellCommit<E, C, I>) -> bool {
+        self.reads == commit.reads
+            && self.writes == commit.writes
+            && self.links == commit.links
+            && self.link_reads == commit.link_reads
+            && commit.predicate_reads.is_empty()
+            && self.event_count == commit.events.len()
+            && commit.effects.is_empty()
+            && commit.consumes.is_none()
+    }
+
+    /// Add ordinary CAS/lineage guards without changing any authorized output.
+    /// An overlapping guard restores whole-object lineage for that source.
+    pub fn with_read_guards<E, C, I>(
+        mut self,
+        commit: &mut CellCommit<E, C, I>,
+        guards: &[FactExpectation],
+    ) -> Option<Self> {
+        if !self.validates(commit) {
+            return None;
+        }
+        for guard in guards {
+            if let Some(previous) = commit.reads.iter().find(|read| read.key == guard.key) {
+                if previous.expected != guard.expected {
+                    return None;
+                }
+            } else if commit.writes.iter().any(|write| write.key == guard.key) {
+                return None;
+            } else {
+                commit.reads.push(guard.clone());
+            }
+            self.references.retain(|read| read.key != guard.key);
+            self.property_reads
+                .retain(|(read, _)| read.key != guard.key);
+        }
+        self.reads.clone_from(&commit.reads);
+        Some(self)
+    }
 }

@@ -284,8 +284,8 @@ pub use norn_canonical::counters;
 /// `norn-canonical` edge (SKELETON.md: `norn-expr ← zen-expression, ir`).
 pub mod canonical {
     pub use norn_canonical::{
-        CanonicalJsonError, HashProfile, JsonValue, canonical_json_of, canonicalize_json,
-        domain_hash_hex, legacy_hash_value, nfc, parse_json, parse_json_tokens,
+        CanonicalJsonError, HashProfile, JsonValue, canonical_json_exact_of, canonical_json_of,
+        canonicalize_json, domain_hash_hex, legacy_hash_value, nfc, parse_json, parse_json_tokens,
         parse_json_verbatim, serialize, write_canonical_string,
     };
 }

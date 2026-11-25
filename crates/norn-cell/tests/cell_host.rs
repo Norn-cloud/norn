@@ -4638,6 +4638,7 @@ fn r2_blocker2b_classified_action_cannot_emit_dynamic_link_between_unmarked_endp
             ("environmentId".to_owned(), "dev".to_owned()),
         ]),
         actor: "operator".to_owned(),
+        approved_intent: None,
         input: serde_json::from_value(json!({"id": "P1", "p1": "P1", "p2": "P2", "sec": "SEC1"}))
             .expect("input"),
         idempotency_key: "ifc-act-1".to_owned(),
@@ -4868,15 +4869,14 @@ fn r2_blocker5_nullable_row_reconciles_across_predicate_and_point_slice_reads() 
             ("environmentId".to_owned(), "dev".to_owned()),
         ]),
         actor: "operator".to_owned(),
+        approved_intent: None,
         input: serde_json::from_value(json!({"task_id": "T1", "group": "alpha", "note": "ok"}))
             .expect("input"),
         idempotency_key: "reconcile-1".to_owned(),
         object_type: None,
         turn: norn_kernel::DecisionTurn {
-            id: "turn-reconcile".to_owned(),
             now: LogicalTime::from_millis(2_000),
-            world: norn_kernel::World::Main,
-            consumes: None,
+            ..r2_turn("turn-reconcile")
         },
         trace: None,
     };
@@ -5066,6 +5066,7 @@ fn r3_blocker2_classified_aggregate_precondition_cannot_emit_dynamic_link() {
             ("environmentId".to_owned(), "dev".to_owned()),
         ]),
         actor: "operator".to_owned(),
+        approved_intent: None,
         input: serde_json::from_value(json!({"id": "P1", "p1": "P1", "p2": "P2", "sec": "SEC1"}))
             .expect("input"),
         idempotency_key: "ifc-agg-act-1".to_owned(),
@@ -5208,6 +5209,7 @@ fn r3_blocker4_sqlite_hidden_row_past_max_items_plus_one_conceals_as_target_not_
                 ("environmentId".to_owned(), "dev".to_owned()),
             ]),
             actor: "operator".to_owned(),
+            approved_intent: None,
             input: serde_json::from_value(json!({"item_id": format!("W{idx}"), "grp": "g"}))
                 .expect("input"),
             idempotency_key: format!("r3-b4-sqlite-{idx}"),

@@ -261,11 +261,13 @@ mod tests {
                         actor_kind: "user".into(),
                         roles: vec!["member".into()],
                         role_table: "default".into(),
+                        accountable_person: Some("requester".into()),
                     },
                     action_digest: "digest".into(),
                     definitions_version: None,
                     attempt: None,
                     trace: None,
+                    intent_digest: None,
                 },
             }),
         }

@@ -649,11 +649,10 @@ fn expiry_recorded<E: SqlEngine>(
 /// the request's declared roles and law.
 fn may_decide<E: SqlEngine>(host: &DevHost<E>, actor: &str, decision: &OpenDecision) -> bool {
     let request = &decision.request;
-    // The approver of a parked call is never its requester (#618).
     if decision
         .call
         .as_ref()
-        .is_some_and(|call| call.call.requester.subject == actor)
+        .is_some_and(|call| !crate::approval_identity::allows_decider(host, actor, call))
     {
         return false;
     }
@@ -1062,8 +1061,11 @@ fn requested_document(
     state: Option<&CallState>,
 ) -> Result<RequestedDecision, Refusal> {
     let input = RuntimeValue::Object(held.call.input.clone());
-    let encoded_input =
-        String::from_utf8(input.canonical_json().map_err(Refusal::host)?).map_err(Refusal::host)?;
+    // The exact spelling the call's approval is granted for (#618).
+    let encoded_input = String::from_utf8(
+        norn_ir::canonical::canonical_json_exact_of(&input).map_err(Refusal::host)?,
+    )
+    .map_err(Refusal::host)?;
     Ok(RequestedDecision {
         id: decision.id.clone(),
         question: decision.request.question.clone(),

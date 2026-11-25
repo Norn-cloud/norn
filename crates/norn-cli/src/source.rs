@@ -5,6 +5,7 @@
 //! SKUs, labels and arrival order never establish identity, and a row outside
 //! the crosswalk carries no reference, so mapping holds it back as a finding.
 //! `SRC-LIVE-1`: a refused read fails the pull. There is no recorded fallback.
+use super::cell::Endpoint;
 use clap::{Args, Subcommand};
 const MAX_PAGES: usize = 1000;
 use norn_ir::connector::{ConnectorKeysetProfile, ConnectorResource, ConnectorRoot};
@@ -124,8 +125,16 @@ fn observation(pipeline: &str, row: SourceRow, extracted_at: u64) -> Result<Stri
     serde_json::to_string(&line).map_err(|e| e.to_string())
 }
 
-fn agent() -> ureq::Agent {
-    ureq::Agent::config_builder()
+/// The agent for `base`: a loopback source is reached directly, never through
+/// an environment proxy. A base that does not parse gets no proxy either;
+/// `checked_url` refuses it before any request.
+fn agent(base: &str) -> ureq::Agent {
+    let builder = ureq::Agent::config_builder();
+    let builder = match Endpoint::parse(base) {
+        Ok(endpoint) => endpoint.configure(builder),
+        Err(_refused) => builder.proxy(None),
+    };
+    builder
         .http_status_as_error(false)
         .max_redirects(0)
         .timeout_global(Some(Duration::from_secs(60)))
@@ -252,14 +261,11 @@ fn checked_url(base: &str, path: &str) -> Result<String, String> {
         return Err("connector endpoint must be a path beginning with '/'".into());
     }
     let url = format!("{}{path}", base.trim_end_matches('/'));
-    let uri: ureq::http::Uri = url.parse().map_err(|_error| "invalid source URL")?;
-    let authority = uri.authority().ok_or("source URL lacks an authority")?;
-    if authority.as_str().contains('@') || uri.query().is_some() {
-        return Err("source URL must not contain credentials or a query".into());
+    let endpoint = Endpoint::parse(&url).map_err(|e| format!("source {e}"))?;
+    if endpoint.has_query() {
+        return Err("source URL must not contain a query".into());
     }
-    if uri.scheme_str() == Some("https")
-        || (uri.scheme_str() == Some("http") && uri.host() == Some("127.0.0.1"))
-    {
+    if endpoint.is_https() || endpoint.is_http_to("127.0.0.1") {
         return Ok(url);
     }
     Err("source URL must be HTTPS or loopback".into())
@@ -280,9 +286,9 @@ pub(super) fn execute(args: &SourceArgs) -> Result<(String, bool), String> {
     } = &args.command;
     let crosswalk_text = env(crosswalk_env)?;
     let crosswalk = crosswalk(&crosswalk_text)?;
-    let agent = agent();
     let connector = read_connector(connector)?;
     let base = env("ERPNEXT_BASE_URL")?;
+    let agent = agent(&base);
     let authorization = format!(
         "token {}:{}",
         env("ERPNEXT_API_KEY")?,
@@ -382,7 +388,7 @@ mod tests {
             }
         }
         let rows = pull_frappe(
-            &agent(),
+            &agent(&base),
             &base,
             "token fixture:fixture",
             &connector,
