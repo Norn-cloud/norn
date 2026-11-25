@@ -479,8 +479,14 @@ PY
       "${nextest[@]}" run --locked --ignore-default-filter --no-fail-fast "${guard[@]}"
       ;;
     integration-authoring)
+      # The checker WASM package (a wasm-release LTO link, then wasm-opt: mostly one core) builds
+      # in the background while the native binaries and the runnable-docs tests build in the
+      # foreground; its target triple and profile keep Cargo's build directories apart. The
+      # phase waits for it, and fails with its log, before the authoring tests read it.
+      local wasm_pkg wasm_pkg_log="$upstream/checker-wasm-pkg.log"
+      ensure_checker_wasm_pkg > "$wasm_pkg_log" 2>&1 &
+      wasm_pkg=$!
       cargo build --locked -p norn-cli --bin norn -p norn-cell-do --bin norn-dev-host
-      ensure_checker_wasm_pkg
       export CI=true
       export NORN_BIN="${CARGO_TARGET_DIR:-$PWD/target}/debug/norn"
       export NORN_DEV_HOST_BIN="${CARGO_TARGET_DIR:-$PWD/target}/debug/norn-dev-host"
@@ -518,6 +524,8 @@ PY
       )
       mapfile -t runnable_docs_args <<< "$runnable_docs_raw"
       cargo test --locked --no-run "${runnable_docs_args[@]}"
+      wait "$wasm_pkg" || { cat "$wasm_pkg_log"; printf 'integration-authoring: the checker WASM package build failed\n' >&2; exit 1; }
+      cat "$wasm_pkg_log"
       run_authoring_tests
       ;;
     integration-wasm)
@@ -636,30 +644,21 @@ plan = json.loads(raw)
 known = {"test/" + shard for shard in shards.split()} | {
     "phase/" + phase for phase in phases.split() + ["test-shards"]
     if phase not in {"cheap", "test", "formal", "rivet-conformance"}}
-# Task seconds on Boat, refitted from green run 45206607883 (2026-11-23, df92ecf)
-# and Boat benchmarks for batched runnable-docs pre-build, shared integration binaries,
-# and combined nextest duckdb execution.
-# A test task's seconds are net of the test build it carries (compile_seconds), and
-# a WASM-pkg task's seconds are net of the shared norn-checker-wasm build (wasm_compile_seconds).
-weights = {
-    "test/heavy-1": 33, "test/heavy-2": 146, "test/heavy-3": 90,
-    "test/heavy-4": 37, "test/heavy-5": 43, "test/heavy-6": 56,
-    "test/rest-1": 221, "test/rest-2": 391, "test/rest-3": 312,
-    "phase/doctest": 17, "phase/features": 347, "phase/duckdb": 510, "phase/wasm": 173,
-    "phase/clippy": 51, "phase/doc": 48, "phase/guards": 117,
-    "phase/rivet": 259,
-    "phase/integration-authoring": 543, "phase/integration-wasm": 293,
-    "phase/integration-clients": 15, "phase/provenance": 4, "phase/test-shards": 3,
-    "phase/browser": 239,
-}
+# Measured task seconds and shared build costs: the table bundle.rs embeds, generated from green
+# merge-group bundle logs by crates/norn-skeleton-guard/scripts/bundle_durations.py (never by hand).
+# A test task's seconds are net of the workspace test build (compile_seconds), and a WASM-pkg
+# task's seconds are net of the shared norn-checker-wasm package build (wasm_compile_seconds).
+with open("crates/norn-skeleton-guard/src/ci/bundle-durations.json", encoding="utf-8") as table_file:
+    table = json.load(table_file)
+weights = table["task_seconds"]
 # Shared compile costs amortized once per bundle containing any task in the group:
 # - Test: workspace test binaries (test/* and phase/test-shards).
 # - WasmPkg: norn-checker-wasm wasm-release LTO + wasm-opt -Oz package (charged only for
 #   actual WASM consumers). integration-clients shares the WasmPkg coalescing/pruning group
 #   so it co-locates with integration-authoring and reuses target/debug/{norn,norn-dev-host},
 #   without charging wasm_compile_seconds when packed alone.
-compile_seconds = 216
-wasm_compile_seconds = 300
+compile_seconds = table["test_build_seconds"]
+wasm_compile_seconds = table["wasm_pkg_seconds"]
 wasm_compile_tasks = {"phase/integration-authoring", "phase/integration-wasm", "phase/browser"}
 wasm_group_tasks = wasm_compile_tasks | {"phase/integration-clients"}
 def compiles_tests(task):
