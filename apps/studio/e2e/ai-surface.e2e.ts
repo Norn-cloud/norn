@@ -7,12 +7,12 @@ import { session } from "./object-cell.ts"
  * The AI surface (DESIGN.md 19): the Ask Norn bar, Sidekick's AI Elements composer over useChat, the
  * approval prompt the bridge asks through, and the mascot. A stand-in bridge speaks ACP on the page's
  * own origin like apps/sidekick-bridge does; each row checks what Studio draws and what it sends back.
- * With SHOTS=<dir> the last rows also save the review screenshots (light/dark, desktop/390).
+ * With AI_SHOTS=<dir> the last rows also save the review screenshots (light/dark, desktop/390).
  */
 
 const ANSWER = readFileSync(new URL("../../../fixtures/demo/answers/scrap-yield.k1.answer.json", import.meta.url), "utf8")
 const GRANT = "e2e.sidekick.grant"
-const shots = process.env.SHOTS
+const shots = process.env.AI_SHOTS
 /** The WCAG 2.2 A and AA rules axe checks (its best-practice rules are page-level and left out). */
 const WCAG = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"]
 const RECEIPT = JSON.stringify({ outcome: "committed", objectType: "demo.Record", objectId: "R-1", version: 2, receipt: { receiptHash: "sha256:5f0c3a9be12d4471a0c6e3f2b8d94e7c1a2b3c4d5e6f708192a3b4c5d6e7f809", commitSeq: 41, recordedAtMs: 1764000000000 } })
@@ -293,7 +293,7 @@ async function shoot(page: Page, name: string) {
 }
 
 test("screenshots: home with the Ask Norn bar and a few core pages in Luma geometry", async ({ page }) => {
-  test.skip(!shots, "review screenshots only with SHOTS=<dir>")
+  test.skip(!shots, "review screenshots only with AI_SHOTS=<dir>")
   await studio(page)
   await bridge(page, async () => "end_turn")
   for (const [path, name, ready] of [["/", "home", "[data-slot=ask-norn]"], ["/rules", "rules", "main"], ["/sources", "sources", "main"], ["/dashboards", "dashboards", "main"]] as const) {
