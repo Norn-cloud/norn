@@ -86,10 +86,7 @@ use crate::error::CellError;
 use crate::read::{ObjectRecord, StoreReader, to_i64};
 use crate::store::{CommitBatch, WrittenRow};
 
-use capture::{
-    ActionCallFields, ActionCallMeta, action_calls_in_batch, at_or_after, extract_action_call,
-    replay_key,
-};
+use capture::{ActionCallMeta, action_calls_in_batch, at_or_after, extract_action_call, replay_key};
 pub(crate) use capture::{AutomationWatch, capture_before, preimage_limit};
 use continuation::REPLAYABLE_MATCHER_VERSIONS;
 pub use continuation::{
@@ -391,7 +388,7 @@ pub(crate) struct RecordedAutomation {
 /// replayed cursor must equal the exported one and the replayed inline
 /// candidates must match the record's [`AutomationInlineEvidence`]. A matcher
 /// version 1 record carries no evidence; it is accepted only when no target in
-/// the commit is [`nfc_ambiguous`], since then the live ids are the NFC ids
+/// the commit is [`nfc_ambiguous`](evidence::nfc_ambiguous), since then the live ids are the NFC ids
 /// and both orders traverse identical targets identically. Anything else is
 /// refused with [`CellError::AutomationMatcherUnreplayable`] before the
 /// restore writes its file.
@@ -436,11 +433,13 @@ pub(crate) fn record<E: SqlEngine>(
                         reason: "automation continuation does not match replay".to_owned(),
                     });
                 }
-                let same_partition = match &export.automation_inline {
-                    Some(evidence) => inline.as_ref() == Some(evidence),
-                    None => {
-                        row.matcher_version == 1 && !commit_has_nfc_ambiguous_target(batch, written)
-                    }
+                // Version 1 never wrote evidence and version 2 always does:
+                // a record pairing them otherwise is refused, since its
+                // continuation would expand in the order its version names.
+                let same_partition = match (row.matcher_version, &export.automation_inline) {
+                    (1, None) => !commit_has_nfc_ambiguous_target(batch, written),
+                    (1, Some(_)) | (_, None) => false,
+                    (_, Some(evidence)) => inline.as_ref() == Some(evidence),
                 };
                 if paused.as_ref() != Some(&row.cursor) || !same_partition {
                     return Err(CellError::AutomationMatcherUnreplayable {
@@ -484,26 +483,18 @@ pub(crate) fn record<E: SqlEngine>(
     Ok(recorded)
 }
 
+/// The batch's committed action calls, from the same fold
+/// [`capture_before`] keyed its preimages by ([`action_calls_in_batch`]).
 fn committed_action_calls<E: SqlEngine>(
     reader: &StoreReader<'_, E>,
     batch: &CommitBatch,
-) -> Result<BTreeMap<String, ActionCallMeta>, CellError> {
-    let mut calls = BTreeMap::new();
-    for (key, fields) in action_calls_in_batch(batch) {
-        let metadata = if fields.metadata_set {
-            reader
-                .object(&batch.world, norn_kernel::ACTION_CALL_TYPE, key)?
-                .and_then(|row| {
-                    extract_action_call(reader, &ActionCallFields::from_values(&row.values))
-                })
-        } else {
-            extract_action_call(reader, &fields)
-        };
-        if let Some(metadata) = metadata {
-            calls.insert(key.to_owned(), metadata);
-        }
-    }
-    Ok(calls)
+) -> BTreeMap<String, ActionCallMeta> {
+    action_calls_in_batch(batch)
+        .into_iter()
+        .filter_map(|(key, fields)| {
+            extract_action_call(reader, &fields).map(|call| (key.to_owned(), call))
+        })
+        .collect()
 }
 
 fn record_inline<E: SqlEngine>(
@@ -517,7 +508,7 @@ fn record_inline<E: SqlEngine>(
         return Ok(None);
     }
     let model = reader.model();
-    let action_calls = committed_action_calls(reader, batch)?;
+    let action_calls = committed_action_calls(reader, batch);
     let mut final_rows: BTreeMap<(String, String), &WrittenRow> = BTreeMap::new();
     for row in written {
         if model.has_type(&row.object_type) {
@@ -1370,6 +1361,157 @@ mod tests {
         assert_eq!(candidate.action_id.as_deref(), Some("demo.ticket.remove"));
         assert!(candidate.before_values.is_some());
         assert_eq!(candidate.before_values, candidate.after_values);
+        Ok(())
+    }
+
+    /// CodeRabbit (#1714): a same-batch Set that points a call at a
+    /// decomposed target key keys its preimage and its recording by the same
+    /// raw key, the object the commit addresses. The stored `object` is
+    /// canonical JSON, so it carries the NFC key: a reread of it named `é`,
+    /// another object, and the candidate lost its target's before-state.
+    #[test]
+    fn same_batch_set_to_a_decomposed_target_keys_capture_and_record_alike() -> TestResult {
+        const DECOMPOSED: &str = "e\u{301}";
+        let dir = tempfile::tempdir()?;
+        let (mut store, model, canonical) =
+            open_with_ticket_automations(&dir.path().join("decomposed-call.sqlite"))?;
+        install_automation_for(
+            &mut store,
+            &model,
+            &canonical,
+            3,
+            "ops.on_ping",
+            "demo.Ticket",
+            &json!({ "kind": "event", "event": "action", "actionId": "demo.ticket.ping" }),
+        )?;
+        store.commit(&CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: SCOPE.to_owned(),
+            logical_time: 80,
+            writes: vec![put_ticket(DECOMPOSED)],
+            ..CommitBatch::default()
+        })?;
+        let call_key = "demo.ticket.ping/decomposed";
+        let batch = CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: SCOPE.to_owned(),
+            logical_time: 100,
+            writes: vec![action_call_write(
+                "demo.ticket.ping",
+                "demo.Ticket",
+                "original",
+                "decomposed",
+            )],
+            facts: vec![FactChange::Set {
+                object_type: ObjectTypeName(norn_kernel::ACTION_CALL_TYPE.to_owned()),
+                key: call_key.to_owned(),
+                property: norn_ir::PropertyId("object".to_owned()),
+                value: Value::Object(BTreeMap::from([
+                    ("objectType".to_owned(), Value::String("demo.Ticket".into())),
+                    ("key".to_owned(), Value::String(DECOMPOSED.into())),
+                ])),
+            }],
+            ..CommitBatch::default()
+        };
+
+        let outcome = store.commit(&batch)?;
+        let read = store.read();
+        let stored = read
+            .object(MAIN_WORLD, norn_kernel::ACTION_CALL_TYPE, call_key)?
+            .ok_or("missing call")?;
+        assert_eq!(
+            stored
+                .values
+                .get("object")
+                .and_then(Value::as_object)
+                .and_then(|object| object.get("key"))
+                .and_then(Value::as_str),
+            Some("\u{e9}"),
+            "the stored call names the NFC key"
+        );
+        let triggers =
+            read.automation_triggers_for_commit(MAIN_WORLD, outcome.receipt().body.commit_seq)?;
+        let [candidate] = triggers.as_slice() else {
+            return Err(format!("expected one action trigger: {triggers:?}").into());
+        };
+        assert_eq!(candidate.key.automation_id, "ops.on_ping");
+        assert_eq!(candidate.key.object_id, DECOMPOSED);
+        assert!(candidate.before_values.is_some());
+        assert_eq!(candidate.before_values, candidate.after_values);
+        Ok(())
+    }
+
+    /// CodeRabbit (#1714): a row cutoff does not defer an action call whose
+    /// target preimage is already held. The `demo.Ticket` writes are
+    /// captured for the `demo.TicketB` rule (a supertype write may land on
+    /// the subtype) and the last one falls past the budget, but none matches
+    /// a rule on its own chain, so Pass 1 never pauses: the call on a
+    /// captured target records inline instead of deferring.
+    #[test]
+    fn row_cutoff_keeps_an_action_call_whose_preimage_is_held() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("held-preimage.sqlite");
+        let (model, canonical) = sample_model()?;
+        let mut store = CellStore::open(&path, model.clone(), StoreOptions::default())?;
+        store.bind("scope", SCOPE)?;
+        store.install_definitions(model.clone(), install_input(&canonical, 10), Some(0), SCOPE)?;
+        install_automation_for(
+            &mut store,
+            &model,
+            &canonical,
+            1,
+            "ops.b_created",
+            "demo.TicketB",
+            &json!({ "kind": "event", "event": "created" }),
+        )?;
+        install_automation_for(
+            &mut store,
+            &model,
+            &canonical,
+            2,
+            "ops.on_ping",
+            "demo.Ticket",
+            &json!({ "kind": "event", "event": "action", "actionId": "demo.ticket.ping" }),
+        )?;
+        let mut writes: Vec<FactWriteRow> = (0..=MAX_PREIMAGES_PER_COMMIT)
+            .map(|idx| put_ticket(&format!("p-{idx:04}")))
+            .collect();
+        writes.push(action_call_write(
+            "demo.ticket.ping",
+            "demo.Ticket",
+            "p-0000",
+            "held",
+        ));
+        let batch = CommitBatch {
+            world: MAIN_WORLD.to_owned(),
+            scope: SCOPE.to_owned(),
+            logical_time: 300,
+            idempotency_key: Some("held-preimage".to_owned()),
+            writes,
+            ..CommitBatch::default()
+        };
+        let watch = capture_before(&store.read(), &batch, MAX_PREIMAGES_PER_COMMIT)?;
+        assert_eq!(
+            watch.row_cutoff,
+            Some((
+                "demo.Ticket".to_owned(),
+                format!("p-{MAX_PREIMAGES_PER_COMMIT:04}")
+            ))
+        );
+        assert_eq!(watch.action_cutoff, None);
+
+        let CommitOutcome::Committed(receipt) = store.commit(&batch)? else {
+            return Err("expected committed receipt".into());
+        };
+        let commit_seq = receipt.body.commit_seq;
+        let read = store.read();
+        let triggers = read.automation_triggers_for_commit(MAIN_WORLD, commit_seq)?;
+        let [candidate] = triggers.as_slice() else {
+            return Err(format!("expected one action trigger: {triggers:?}").into());
+        };
+        assert_eq!(candidate.key.automation_id, "ops.on_ping");
+        assert_eq!(candidate.key.object_id, "p-0000");
+        assert_eq!(read.automation_outbox_continuation(commit_seq)?, None);
         Ok(())
     }
 
@@ -2744,6 +2886,23 @@ mod tests {
         );
         assert!(!v1_target.exists());
 
+        // A v1 row cannot carry evidence: version 1 never wrote any, and the
+        // row would expand in raw order from a cursor found in NFC order. The
+        // uncapped replay reaches the same cursor and candidates, and is
+        // refused all the same.
+        let mut mixed = record.clone();
+        mixed.automation_continuation = Some(AutomationOutboxContinuation {
+            matcher_version: 1,
+            ..live.clone()
+        });
+        let mixed_target = dir.path().join("restored-mixed.sqlite");
+        assert_unreplayable(
+            &restore_with_last(&store, &model, &mixed, &mixed_target).await?,
+            commit_seq,
+            1,
+        );
+        assert!(!mixed_target.exists());
+
         // Evidence of another partition (the v1 one) is refused too.
         let mut swapped = record;
         swapped.automation_inline = Some(AutomationInlineEvidence {
@@ -2806,8 +2965,58 @@ mod tests {
         assert!(plain_record.automation_continuation.is_none());
         let plain_target = dir.path().join("restored-plain.sqlite");
         let refused = restore_with_last(&plain, &plain_model, &plain_record, &plain_target).await?;
-        assert!(refused.is_err(), "{refused:?}");
+        assert!(
+            matches!(refused, Err(crate::RestoreError::ReceiptMismatch(seq)) if seq == plain_seq),
+            "{refused:?}"
+        );
         assert!(!plain_target.exists());
+        Ok(())
+    }
+
+    /// A v1 continuation (no evidence) restores when every target id is
+    /// plain ASCII, and is refused when an ASCII id contains `K`: KELVIN
+    /// SIGN normalizes to `K`, so the NFC export cannot tell which spelling
+    /// the live commit wrote.
+    #[tokio::test]
+    async fn v1_continuation_restores_only_without_nfc_ambiguous_ids() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        for (name, last, restores) in [("ascii", "a256", true), ("kelvin", "aK00", false)] {
+            let ids: Vec<String> = (0..256_usize)
+                .map(|idx| format!("a{idx:03}"))
+                .chain([last.to_owned()])
+                .collect();
+            let (store, model, commit_seq) =
+                commit_created_tickets(&dir.path().join(format!("{name}.sqlite")), &ids)?;
+            let live = store
+                .read()
+                .automation_outbox_continuation(commit_seq)?
+                .ok_or("missing live continuation")?;
+            assert_eq!(live.cursor, row_cursor(last));
+            let mut v1 = store
+                .export_record(commit_seq)?
+                .ok_or("missing overflow record")?;
+            v1.automation_inline = None;
+            v1.automation_continuation = Some(AutomationOutboxContinuation {
+                matcher_version: 1,
+                ..live
+            });
+            let target = dir.path().join(format!("{name}-restored.sqlite"));
+            let restored = restore_with_last(&store, &model, &v1, &target).await?;
+            if restores {
+                restored?;
+                let reopened = CellStore::open(&target, model.clone(), StoreOptions::default())?;
+                assert_eq!(
+                    reopened
+                        .read()
+                        .automation_outbox_continuation(commit_seq)?
+                        .map(|row| row.matcher_version),
+                    Some(1)
+                );
+            } else {
+                assert_unreplayable(&restored, commit_seq, 1);
+                assert!(!target.exists());
+            }
+        }
         Ok(())
     }
 

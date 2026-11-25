@@ -106,15 +106,13 @@ pub(super) struct ActionCallMeta {
 pub(super) struct ActionCallFields<'a> {
     pub(super) action_id: Option<&'a Value>,
     pub(super) object: Option<&'a Value>,
-    pub(super) metadata_set: bool,
 }
 
 impl<'a> ActionCallFields<'a> {
-    pub(super) fn from_values(values: &'a BTreeMap<String, Value>) -> Self {
+    fn from_values(values: &'a BTreeMap<String, Value>) -> Self {
         Self {
             action_id: values.get("actionId"),
             object: values.get("object"),
-            metadata_set: false,
         }
     }
 }
@@ -139,10 +137,15 @@ pub(super) fn extract_action_call<E: SqlEngine>(
     })
 }
 
+/// The batch's action calls with their final metadata, folded in the
+/// writer's order (legacy rows before canonical facts). Pre-commit capture
+/// and candidate recording both read this one fold, so a call's target is
+/// keyed by the same `(root, key)` on both sides: the raw key the batch
+/// addresses, which is the object the commit writes and whose after-state
+/// recording reads. (The stored `object` property is canonical JSON, so a
+/// reread would carry the NFC key, which can name another object or none.)
+/// A Set alone does not introduce a new action call.
 pub(super) fn action_calls_in_batch(batch: &CommitBatch) -> BTreeMap<&str, ActionCallFields<'_>> {
-    // The writer applies legacy rows before canonical facts. Fold both in
-    // that order so the same final metadata drives pre-commit snapshots and
-    // candidate recording. A Set alone does not introduce a new action call.
     let mut calls = BTreeMap::new();
     for write in &batch.writes {
         let (object_type, key) = write.target();
@@ -177,9 +180,8 @@ pub(super) fn action_calls_in_batch(batch: &CommitBatch) -> BTreeMap<&str, Actio
                     match property.as_str() {
                         "actionId" => fields.action_id = Some(value),
                         "object" => fields.object = Some(value),
-                        _ => continue,
+                        _ => {}
                     }
-                    fields.metadata_set = true;
                 }
             }
             FactChange::Transition { .. } => {}
@@ -292,11 +294,11 @@ pub(crate) fn capture_before<E: SqlEngine>(
     action_order.sort_by_cached_key(|&(key, _)| replay_key(norn_kernel::ACTION_CALL_TYPE, key));
     let mut action_cutoff = None;
     for (call_key, call) in action_order {
-        // Pass 2 runs only after Pass 1 finishes, so a deferred row target
-        // defers every action call too.
-        let captured = row_cutoff.is_none()
-            && (!model.has_type(&call.target_type)
-                || budget.capture(&call.target_root, &call.target_key)?);
+        // A call defers only on its own target: a preimage already held
+        // completes it even past a row cutoff, and any other read fails once
+        // the budget is spent. A Pass 1 pause skips Pass 2 regardless.
+        let captured = !model.has_type(&call.target_type)
+            || budget.capture(&call.target_root, &call.target_key)?;
         if !captured {
             action_cutoff = Some(call_key.to_owned());
             break;

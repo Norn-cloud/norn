@@ -25,13 +25,14 @@ const SHORTEST_TARGET_ID: &str = "_";
 /// per call at dispatch. An action input string schema admits only `enum`
 /// as a constraint (`norn_expr::schema`, which refuses `const`,
 /// `minLength` and `pattern`), so an enum on the target id field is the one
-/// lower bound to derive; without one, the bound is one byte.
-fn shortest_target_id(action: &ActionRoot, target_id_field: &str) -> RuntimeValue {
+/// lower bound to derive; without one, the bound is one byte. `None` when
+/// the enum admits no nonblank id: no run can address an object.
+fn shortest_target_id(action: &ActionRoot, target_id_field: &str) -> Option<RuntimeValue> {
     let encoded_len = |id: &str| {
         norn_ir::canonical::canonical_json_of(&RuntimeValue::String(id.into()))
             .map_or(usize::MAX, |bytes| bytes.len())
     };
-    action
+    let Some(values) = action
         .input_schema
         .get("properties")
         .and_then(|properties| properties.as_object())
@@ -39,17 +40,15 @@ fn shortest_target_id(action: &ActionRoot, target_id_field: &str) -> RuntimeValu
         .and_then(|schema| schema.as_object())
         .and_then(|schema| schema.get("enum"))
         .and_then(|values| values.as_array())
-        .and_then(|values| {
-            values
-                .iter()
-                .filter_map(|value| value.as_string())
-                .filter(|id| !id.trim().is_empty())
-                .min_by_key(|id| (encoded_len(id), *id))
-        })
-        .map_or_else(
-            || RuntimeValue::String(SHORTEST_TARGET_ID.into()),
-            |id| RuntimeValue::String(id.into()),
-        )
+    else {
+        return Some(RuntimeValue::String(SHORTEST_TARGET_ID.into()));
+    };
+    values
+        .iter()
+        .filter_map(|value| value.as_string())
+        .filter(|id| !id.trim().is_empty())
+        .min_by_key(|id| (encoded_len(id), *id))
+        .map(|id| RuntimeValue::String(id.into()))
 }
 
 /// One defect reported by [`validate_automation_static_input`] when admitting
@@ -176,11 +175,16 @@ fn check_receipt_input(
     target_id_field: &str,
     supplied: &JsonObject,
 ) -> Result<(), Vec<AutomationInputViolation>> {
+    let Some(target_id) = shortest_target_id(action, target_id_field) else {
+        return Err(vec![AutomationInputViolation {
+            pointer: "/then/actionId".to_owned(),
+            message: format!(
+                "target action's `{target_id_field}` enum admits no nonblank target id, so no run can address an object"
+            ),
+        }]);
+    };
     let mut call_input = supplied.clone();
-    call_input.insert(
-        target_id_field.to_owned(),
-        shortest_target_id(action, target_id_field),
-    );
+    call_input.insert(target_id_field.to_owned(), target_id);
     check_call_receipt_input::<()>(action, &call_input).map_err(|refusal| {
         let message = if let ActionRefusal::InputBoundExceeded {
             subject,
@@ -705,6 +709,27 @@ mod tests {
                     max_bytes.saturating_add(1)
                 )
                 .as_str()
+            )]
+        );
+    }
+
+    /// An enum of only blank target ids admits no object key, so every run
+    /// would be refused: admission refuses it instead of measuring `_`.
+    #[test]
+    fn refuses_a_target_id_enum_of_only_blank_values() {
+        let mut raw = serde_json::to_value(sample_action()).expect("action JSON");
+        raw["inputSchema"]["properties"]["orderId"]["enum"] = serde_json::json!(["", "  "]);
+        let action: ActionRoot = serde_json::from_value(raw).expect("enum action");
+        let errors = validate_automation_static_input(&action, Some(&input_with_tag(String::new())))
+            .expect_err("no legal target id");
+        assert_eq!(
+            errors
+                .iter()
+                .map(|error| (error.pointer.as_str(), error.message.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(
+                "/then/actionId",
+                "target action's `orderId` enum admits no nonblank target id, so no run can address an object"
             )]
         );
     }
