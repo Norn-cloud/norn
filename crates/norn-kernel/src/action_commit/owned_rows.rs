@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use norn_expr::{Expression, TurnFuel, Value as ExprValue};
 use norn_ir::{
     ActionRoot, Decimal, DecisionOutput, FactChange, ObjectTypeName, OwnedChildCollection,
-    OwnedCollectionAction, PropertyId,
+    OwnedCollectionAction, PropertyId, ResourceLimitProfile,
 };
 
 use crate::cell_host::{
