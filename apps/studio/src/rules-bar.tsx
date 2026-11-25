@@ -2,7 +2,7 @@ import type { UseQueryResult } from "@tanstack/react-query"
 import { Link } from "@tanstack/react-router"
 import { TickBar } from "@/components/system/tick-bar"
 import { readStateOf } from "@/lib/cell-query"
-import { matchReadState, matchWorkspaceState, type ReadState } from "@/lib/state"
+import { matchReadState, matchWorkspaceState, type ReadState } from "../../../packages/norn-react/src/state.ts"
 import { useCatalog } from "@/lib/use-catalog"
 import { useWorkspace } from "@/lib/workspace"
 import { lawHeadline } from "./lib/catalog.ts"
@@ -10,7 +10,7 @@ import { heldCountText, uniqueLaws } from "./lib/guarantees.ts"
 import { rulesSummary, type RulesSummary } from "./lib/rules-summary.ts"
 import { useInbox, type Group } from "./inbox.tsx"
 
-/** One query as the read state a page shows (`lib/state`): pending, its error's state, or its answer. */
+/** One query as the read state a page shows (`@norn/react` state.ts): pending, its error's state, or its answer. */
 function stateOf<Q, T>(query: Pick<UseQueryResult<Q, Error>, "status" | "data" | "error">, document: (data: Q) => T): ReadState<T> {
   if (query.status === "error" && query.error !== null) return readStateOf(query.error)
   if (query.status === "pending" || query.data === undefined) return { kind: "pending" }
