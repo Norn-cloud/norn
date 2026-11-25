@@ -526,8 +526,9 @@ Operations (workflows, import triage), Learning (where the cell serves it), Buil
 semantic map, transforms, the canvas, rules, markings) and Settings (connections). Which ones show is
 the server's: the catalog and the mode decide, as before. The page's applet is the one whose item
 claims its route (an item that is the page itself first, then the longest claim, then the model's
-order); a page two applets list, such as a type's record page, stays in the applet the reader came
-from (`appletOf`). An item the reader pinned (a saved view's space) goes to the applet of that name,
+order); a page two applets list, such as a type's record page, opens in the applet whose rail button
+or menu row the reader followed (kept in the history entry, so Back restores it), else stays in the
+applet the reader came from (`appletOf`). An item the reader pinned (a saved view's space) goes to the applet of that name,
 under "Pinned views", or under its own heading in its destination's applet (`placeOf`).
 
 **Applet rail (first island)**

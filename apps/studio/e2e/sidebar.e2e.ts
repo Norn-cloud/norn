@@ -161,6 +161,15 @@ test("rail: a page two applets list opens in the same applet on every fresh load
   await menu(page, "Builder").getByRole("link", { name: "Holding" }).click()
   await expect(page).toHaveURL(/\/sources\/canon\.Holding$/)
   await expect(current(page)).toHaveAttribute("data-applet", "builder")
+  // The rail opens the applet it names, even when its first page is one Builder lists too, and the
+  // browser's Back returns to Builder.
+  await rail(page).getByRole("link", { name: /^Data(,|$)/ }).click()
+  await expect(page).toHaveURL(/\/objects\//)
+  await expect(current(page)).toHaveAttribute("data-applet", "data")
+  await expect(menu(page, "Data")).toBeVisible()
+  await page.goBack()
+  await expect(page).toHaveURL(/\/sources\/canon\.Holding$/)
+  await expect(current(page)).toHaveAttribute("data-applet", "builder")
 })
 
 test("submenu island: the toggle, ⌘B and Ctrl+B collapse it to nothing (rail and main island stay), the choice survives a reload, focus is never stranded, and 640–1023px starts collapsed", async ({ page }) => {

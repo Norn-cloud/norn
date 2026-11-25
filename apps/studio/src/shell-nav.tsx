@@ -27,6 +27,13 @@ function NavAnchor({ "aria-current": _active, current, ref, ...props }: Componen
 }
 export const NavLink = createLink(NavAnchor)
 
+declare module "@tanstack/history" {
+  interface HistoryState {
+    /** The applet whose rail button or menu row the reader followed: a page two applets list opens in that one, also on Back. */
+    readonly applet?: string
+  }
+}
+
 /** The rail's and the sheet's applet button: 40px (44px in the phone sheet), muted, the neutral pill only when current. */
 export const railButton = "relative flex size-[40px] shrink-0 items-center justify-center rounded-(--radius-row) text-muted-foreground transition-colors duration-150 outline-none hover:bg-sidebar-accent/50 focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-1 focus-visible:outline-ring aria-[current=page]:bg-sidebar-accent aria-[current=page]:text-sidebar-accent-foreground aria-pressed:bg-sidebar-accent/50 motion-reduce:transition-none max-sm:size-[44px] [&_svg]:size-[18px]"
 /** The attention dot: 6px in `--ring`, which reaches 3:1 on the island, the wash and the pill; the name carries the state. */
@@ -56,7 +63,7 @@ function AppletLink({ item, current }: { readonly item: RailApplet; readonly cur
     <Hint side="end" label={label}>
       {item.home === undefined
         ? <ToolbarButton aria-label={`${label}, nothing to open yet`} aria-disabled aria-current={current ? "page" : undefined} className={cn(railButton, "opacity-60")}><Icon aria-hidden strokeWidth={1.6} />{dot}</ToolbarButton>
-        : <ToolbarLink render={<NavLink to={item.home} current={current} />} aria-label={label} data-applet={item.applet.id} className={railButton}><Icon aria-hidden strokeWidth={1.6} />{dot}</ToolbarLink>}
+        : <ToolbarLink render={<NavLink to={item.home} state={{ applet: item.applet.id }} current={current} />} aria-label={label} data-applet={item.applet.id} className={railButton}><Icon aria-hidden strokeWidth={1.6} />{dot}</ToolbarLink>}
     </Hint>
   )
 }
@@ -267,7 +274,7 @@ function MenuTree({ menu, full, pathname, unread, state, filtering, onFollow, la
         const Icon = entry.icon ?? owner.icon
         return (
           <TreeItem key={entry.href} value={entry.href} label={typeof entry.label === "string" ? entry.label : undefined} className={focusRow}>
-            <TreeItemLabel render={<NavLink {...target(owner, entry.href)} onClick={onFollow} />} className={row}>
+            <TreeItemLabel render={<NavLink {...target(owner, entry.href)} state={{ applet: menu.applet.id }} onClick={onFollow} />} className={row}>
               <Icon aria-hidden strokeWidth={1.6} /><span className="truncate">{entry.label}</span>
             </TreeItemLabel>
           </TreeItem>
@@ -318,7 +325,7 @@ function Destination({ destination, applet, unread, list, more, onFollow }: {
         const count = shown(entry.count)
         return (
           <TreeItem key={entry.href} value={entry.href} label={typeof entry.label === "string" ? entry.label : undefined} className={focusRow}>
-            <TreeItemLabel render={<NavLink {...target(section, entry.href)} onClick={onFollow} />} className={cn(row, "ps-[32px]")}>
+            <TreeItemLabel render={<NavLink {...target(section, entry.href)} state={{ applet: applet.id }} onClick={onFollow} />} className={cn(row, "ps-[32px]")}>
               <span className="truncate">{entry.label}</span>
               {count && <span className="ms-auto text-meta tabular-nums">{count}</span>}
             </TreeItemLabel>
@@ -354,7 +361,7 @@ function Destination({ destination, applet, unread, list, more, onFollow }: {
     <TreeItem value={`dest:${section.path}`} data-section-path={section.path} label={section.label} className={focusRow}>
       {section.index === false
         ? <TreeItemLabel className={cn(row, "cursor-default")}>{head}</TreeItemLabel>
-        : <TreeItemLabel render={<NavLink to={section.path} onClick={onFollow} />} className={row}>{head}</TreeItemLabel>}
+        : <TreeItemLabel render={<NavLink to={section.path} state={{ applet: applet.id }} onClick={onFollow} />} className={row}>{head}</TreeItemLabel>}
       {entries.length > 0 && <TreeGroup>{children}</TreeGroup>}
     </TreeItem>
   )

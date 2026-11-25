@@ -991,10 +991,13 @@ function LocalizedShell({ sections, tools, assistant, account, onSignOut }: { re
   const { shell } = useAppearance()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const navigation = useNavigation(sections)
-  // The applet the reader was in on the page before this one decides a page two applets list. It is
-  // the last applet shown on that page, so a menu that loads late on this page never locks it in.
+  // The applet whose rail button or menu row the reader followed decides a page two applets list
+  // (Data's first record type is also Builder's); the history entry keeps it, so Back restores it.
+  // Else the applet the reader was in on the page before this one does: the last applet shown on
+  // that page, so a menu that loads late on this page never locks it in.
+  const opened = useRouterState({ select: (state) => state.location.state.applet })
   const [trail, setTrail] = useState<{ readonly path: string; readonly from?: string; readonly shown?: string }>({ path: pathname })
-  const from = trail.path === pathname ? trail.from : trail.shown
+  const from = opened ?? (trail.path === pathname ? trail.from : trail.shown)
   const applet = appletOf(sections, pathname, navigation.menus, from)
   useEffect(() => {
     setTrail((last) => last.path === pathname
