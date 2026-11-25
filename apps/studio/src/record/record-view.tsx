@@ -87,9 +87,10 @@ export function useReadAgain({ name, id }: RecordRoute, emit: () => void): () =>
 /**
  * One header: the record's name with its state beside it, one quiet line of facts under it, the
  * record's actions at the end. Drawn from the page's record read while it shows; on Read again the
- * record it showed stays until the cell answers.
+ * record it showed stays until the cell answers. A record the cell does not serve (`data` absent)
+ * keeps its header: its id, its type, and the state its findings give it.
  */
-export function RecordHeader({ route, data, refreshing, readAgain }: { readonly route: RecordRoute; readonly data: ObjectReads; readonly refreshing: boolean; readonly readAgain: () => void }) {
+export function RecordHeader({ route, data, refreshing, readAgain }: { readonly route: RecordRoute; readonly data: ObjectReads | undefined; readonly refreshing: boolean; readonly readAgain: () => void }) {
   const { name, id } = route
   const { catalog } = useCatalog()
   const concept = catalog?.byName.get(name)
@@ -98,7 +99,7 @@ export function RecordHeader({ route, data, refreshing, readAgain }: { readonly 
   const { broken, heldBack } = useReviewed(route)
   const { locale } = useLocale()
   const { icon: TypeIcon, text } = KINDS.objectType
-  const maskedRecord = data.object.document.masked
+  const maskedRecord = data?.object.document.masked
   const recordWithheld = maskedRecord !== undefined && Object.keys(maskedRecord).length > 0
   // Derive header status strictly from real typed cell fields (quarantined/open findings and masked properties).
   const recordStatus = live ? deriveFactStatus({ quarantined: heldBack, openFindings: broken.length, withheld: recordWithheld }) : null
@@ -106,8 +107,8 @@ export function RecordHeader({ route, data, refreshing, readAgain }: { readonly 
     <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
       <div className="min-w-0 flex-1 basis-96 space-y-1.5">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="min-w-0 text-title leading-tight tracking-tight [overflow-wrap:break-word]"><PathText value={recordName(data.object.document)} /></h1>
-          {data.object.origin === "recorded" && <Chip tone="gray" title={RECORDED_HINT}>Recorded</Chip>}
+          <h1 className="min-w-0 text-title leading-tight tracking-tight [overflow-wrap:break-word]"><PathText value={data ? recordName(data.object.document) : id} /></h1>
+          {data?.object.origin === "recorded" && <Chip tone="gray" title={RECORDED_HINT}>Recorded</Chip>}
           {/* One statement of the record's state. Withheld here means some values are masked for this reader, not
               the record: the title says exactly how many, and each value says how it was projected. */}
           {recordStatus === "withheld" && maskedRecord !== undefined
@@ -117,12 +118,14 @@ export function RecordHeader({ route, data, refreshing, readAgain }: { readonly 
         </div>
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-meta text-muted-foreground">
           <Link to="/objects/$type" params={{ type: name }} className="inline-flex items-center gap-1.5 text-foreground underline-offset-4 hover:underline"><TypeIcon aria-hidden className={cn("size-3.5", text)} />{concept?.title ?? conceptTitle(name)}</Link>
-          {data.source?.document && <SourceChip system={data.source.document.sourceRecordRef.system} title="The connected system this record was read from" />}
-          <CopyId value={id} />
-          <AsOf objectType={name} id={id} version={data.object.document.version} live={data.object.origin === "live"} />
+          {data?.source?.document && <SourceChip system={data.source.document.sourceRecordRef.system} title="The connected system this record was read from" />}
+          {data && <>
+            <CopyId value={id} />
+            <AsOf objectType={name} id={id} version={data.object.document.version} live={data.object.origin === "live"} />
+          </>}
         </div>
       </div>
-      {data.object.origin === "live" && (
+      {data?.object.origin === "live" && (
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           <Button type="button" variant="ghost" size="sm" disabled={refreshing} onClick={readAgain} title="Read this record from the cell again">
             <RefreshCw className={refreshing ? "animate-spin" : undefined} />Read again
@@ -257,8 +260,14 @@ export function RecordAbsent({ route, readAgain }: { readonly route: RecordRoute
   const { catalog } = useCatalog()
   const concept = catalog?.byName.get(name)
   const workspace = useWorkspace()
-  if (workspace.kind === "live") return <QuarantinedRecord objectType={name} id={id} reader={workspace.reader} onDone={readAgain} />
-  return <EmptyState icon={Rows3} title="Record not available" next={<Button asChild size="sm" variant="outline"><Link to="/objects/$type" params={{ type: name }}>Back to {concept?.title ?? conceptTitle(name)}</Link></Button>}>This record is not available yet.</EmptyState>
+  return (
+    <div className="space-y-6">
+      <RecordHeader route={route} data={undefined} refreshing={false} readAgain={readAgain} />
+      {workspace.kind === "live"
+        ? <QuarantinedRecord objectType={name} id={id} reader={workspace.reader} onDone={readAgain} />
+        : <EmptyState icon={Rows3} title="Record not available" next={<Button asChild size="sm" variant="outline"><Link to="/objects/$type" params={{ type: name }}>Back to {concept?.title ?? conceptTitle(name)}</Link></Button>}>This record is not available yet.</EmptyState>}
+    </div>
+  )
 }
 
 const TABS = [["overview", "Overview"], ["lineage", "Lineage"], ["rules", "Rules"]] as const

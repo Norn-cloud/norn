@@ -12,7 +12,7 @@
 import { parseExactJson } from "../../../../../packages/norn-sdk/src/index.ts"
 import { classifyText, type Classified } from "../../../../../packages/norn-react/src/machine/outcome.ts"
 import type { BindingRead } from "../../../../../packages/norn-react/src/reads.ts"
-import { defaultFetch, NO_DATA_CELL, readAtScope, readStudioScope, scopedHostFetch, StudioScopeError } from "../definitions.ts"
+import { CellUnavailable, defaultFetch, NO_DATA_CELL, readAtScope, readStudioScope, scopedHostFetch, StudioScopeError } from "../definitions.ts"
 import type { Fetch } from "../live-transport.ts"
 import { recordsPath } from "../records-query.ts"
 import type { DecidedScope } from "../workspace.tsx"
@@ -56,7 +56,18 @@ async function readRecord(get: (path: string) => Promise<Answer>, objectType: st
  * One binding's read at the decided workspace `scope`, and only while the session is still there,
  * checked before and after (`readAtScope`): an answer read in another workspace is never shown.
  */
-export function readWidgetAtScope(read: BindingRead, scope: DecidedScope, signal: AbortSignal, fetcher: Fetch = defaultFetch): Promise<Classified> {
+export async function readWidgetAtScope(read: BindingRead, scope: DecidedScope, signal: AbortSignal, fetcher: Fetch = defaultFetch): Promise<Classified> {
+  try {
+    return await readBindingAtScope(read, scope, signal, fetcher)
+  } catch (error) {
+    // The session's own workspace read failed around the read: the workspace did not answer, not the
+    // record's cell. The page shows Workspace unavailable for it (`unavailableWorkspaceOf`).
+    if (error instanceof CellUnavailable && !signal.aborted) return { outcome: "network_failure", payload: {}, body: { workspace: error } }
+    throw error
+  }
+}
+
+function readBindingAtScope(read: BindingRead, scope: DecidedScope, signal: AbortSignal, fetcher: Fetch): Promise<Classified> {
   const call = scopedHostFetch(fetcher, "/api/host", async () => scope)
   return readAtScope(scope, (s) => readStudioScope(fetcher, s), async () => {
     const get = async (path: string): Promise<Answer> => {

@@ -9,11 +9,12 @@
  * island's declared event, which the machine takes.
  */
 import { createContext, use, useRef, type ReactNode } from "react"
-import { LoadState, ReadErrorState } from "@/components/load-state"
+import { LoadState, ReadErrorState, WorkspaceUnavailable } from "@/components/load-state"
 import type { IslandStates } from "../../../../packages/norn-react/src/islands.ts"
 import { matchReadState } from "../../../../packages/norn-react/src/state.ts"
 import type { BindingReadState } from "../../../../packages/norn-react/src/reads.ts"
 import type { ObjectReads } from "../lib/transport.ts"
+import { unavailableWorkspaceOf } from "../lib/definitions.ts"
 import { useMessage } from "../lib/translations.ts"
 import type { RequiredCatalogRegistry, WidgetIslands } from "./record-islands.d.ts"
 import { RecordAbsent, RecordBody, RecordHeader, useReadAgain, type RecordRoute } from "./record-view.tsx"
@@ -41,9 +42,15 @@ function Reading() {
   return <LoadState status="pending" skeleton="detail" loadingLabel={say("Reading the record")} timeoutMs={60_000}>{() => null}</LoadState>
 }
 
-/** What the record read failed with, as the cell said it, and a person's Retry. */
+/**
+ * What the record read failed with, as the cell said it, and a person's Retry. When the workspace,
+ * not the cell, did not answer, it is the shell's Workspace unavailable, whose Retry decides the
+ * workspace again and then reads the record again.
+ */
 function Failed({ read, retry }: { readonly read: BindingReadState | undefined; readonly retry: () => void }) {
   const say = useMessage()
+  const workspace = read?.kind === "unavailable" ? unavailableWorkspaceOf(read.error.cause) : undefined
+  if (workspace !== undefined) return <div data-record-read="workspace"><WorkspaceUnavailable error={workspace} onRetried={retry} /></div>
   const error = read === undefined ? new Error("The record was not read.") : matchReadState(read, {
     pending: (): Error => new Error("The record is being read."),
     ok: () => new Error("The record was read."),

@@ -112,7 +112,8 @@ export function readStateOf(answer: Classified, before: BindingReadState | undef
     case "timeout":
       return { kind: "timed_out", error: new Error("No answer came in time.") }
     case "network_failure":
-      return { kind: "unavailable", error: new Error(messageOf(answer.body, "The cell did not answer.")), retry: true }
+      // The host's account of the failure, when it gave one, stays with it as the error's cause.
+      return { kind: "unavailable", error: new Error(messageOf(answer.body, "The cell did not answer."), { cause: answer.body }), retry: true }
     case "cancelled":
       return before !== undefined && before.kind !== "pending" ? before : { kind: "unavailable", error: new Error("The read was cancelled."), retry: true }
     case "pending_approval":

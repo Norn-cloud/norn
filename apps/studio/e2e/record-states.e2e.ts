@@ -136,7 +136,7 @@ test("workspace unavailable: the shell's Workspace unavailable with its one Retr
   let failing = true
   const definitions = JSON.parse(readFileSync(new URL("../../../fixtures/demo/explorer/three-systems.definitions.json", import.meta.url), "utf8")) as unknown
   await page.route("**/api/host/v1/definitions**", (route) => failing
-    ? route.fulfill({ status: 503, json: { format: "norn/refusal@2", code: "cell.unopenable", category: "internal", retryable: true, reason: null, message: "The workspace cell could not be opened.", explanation: "" } })
+    ? route.fulfill({ status: 503, json: { code: "cell.unopenable", message: "The workspace cell could not be opened.", retryable: false } })
     : route.fulfill({ json: { artifacts: definitions } }))
   await page.goto(URL_OF)
   const unavailable = page.locator("[data-workspace-unavailable]")
