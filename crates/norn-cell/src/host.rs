@@ -57,6 +57,18 @@ use crate::store::{
     MarkingDeclassification, MarkingReveal, OutboxCommand, TimerEntry,
 };
 
+/// The admission inputs beyond the commit, its authorization and quantity:
+/// derived properties, reference and property reads, mapping bundles, a
+/// bookkeeping event, and the receipt mode.
+pub(crate) type AdmissionArgs<'a> = (
+    &'a [(FactKey, Vec<String>)],
+    &'a [norn_kernel::FactExpectation],
+    &'a [(norn_kernel::FactExpectation, Vec<String>)],
+    &'a [crate::mapping_bundle::MappingBundle],
+    Option<norn_ir::RuntimeValue>,
+    crate::function_receipt::ReceiptCommitMode,
+);
+
 /// The simulated outside world: maps a performed command to the kernel input
 /// its result becomes. `Send`, so a driver can be shared behind a mutex by a
 /// server host.
@@ -82,13 +94,15 @@ pub enum PerformClaim<C, I> {
 /// A `CellHost` over a [`CellStore`], using its selected SQL engine.
 pub struct SqliteCell<E, C, I, S: SqlEngine = DefaultEngine> {
     store: CellStore<S>,
-    scope: String,
+    pub(crate) scope: String,
     now: LogicalTime,
     responder: Responder<C, I>,
     published: Vec<CommitReceipt>,
     /// S6c, S5a: the bookkeeping events the next commit carries, set only
     /// for the span of [`Self::attributed`].
     attached: Vec<norn_ir::RuntimeValue>,
+    /// RECEIPT-CONSUME-1: the host's Function receipt authority state.
+    pub(crate) receipts: crate::function_receipt::ReceiptHost,
     events: PhantomData<fn() -> E>,
 }
 
@@ -130,6 +144,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             responder: Box::new(responder),
             published: Vec::new(),
             attached: Vec::new(),
+            receipts: crate::function_receipt::ReceiptHost::default(),
             events: PhantomData,
         })
     }
@@ -160,6 +175,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             responder: self.responder,
             published: self.published,
             attached: self.attached,
+            receipts: self.receipts,
             events: PhantomData,
         }
     }
@@ -1060,7 +1076,7 @@ where
                 .get("payload")
                 .and_then(|payload| payload.get("type"))
                 .and_then(Value::as_str)
-                == Some("norn.function/v1")
+                == Some(crate::function_receipt::FUNCTION_PAYLOAD_TYPE)
         {
             self.dispatch_lineage(&pending, &mut marking_historical_reads, &mut marking_events)?;
         }
@@ -1130,7 +1146,10 @@ where
         // generation state). Its immutable classification freezes exactly
         // the visibility admitted then: a pre-dispatch declassification is
         // respected, and a later one cannot declassify in-flight inputs.
-        let state_key = FactKey::new("norn.FunctionCommand", pending.command.command_id.as_str());
+        let state_key = FactKey::new(
+            crate::function_receipt::FUNCTION_COMMAND_TYPE,
+            pending.command.command_id.as_str(),
+        );
         let state = batch.writes.iter().find_map(|write| match write {
             FactWriteRow::Put {
                 object_type,
@@ -1185,7 +1204,9 @@ where
         let Some(payload) = command.get("payload") else {
             return;
         };
-        if payload.get("type").and_then(Value::as_str) != Some("norn.function/v1") {
+        if payload.get("type").and_then(Value::as_str)
+            != Some(crate::function_receipt::FUNCTION_PAYLOAD_TYPE)
+        {
             return;
         }
         let invocation = payload.get("invocation").and_then(|value| {
@@ -1571,7 +1592,7 @@ where
 
 impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S>
 where
-    E: Serialize,
+    E: Serialize + 'static,
     C: Serialize + DeserializeOwned,
     I: Serialize + DeserializeOwned,
 {
@@ -1758,13 +1779,12 @@ where
     }
 
     #[allow(
-        clippy::too_many_lines,
         clippy::too_many_arguments,
-        reason = "shared admission and optional quantity data join one guarded transaction"
+        reason = "every ordinary commit is a normal receipt-mode admission"
     )]
     fn commit_with_authorization(
         &mut self,
-        mut commit: CellCommit<E, C, I>,
+        commit: CellCommit<E, C, I>,
         authorization: Option<&ObservationAuthorization>,
         owned_rows: Option<OwnedRowsCommitProof>,
         quantity: Option<(&[norn_ir::quantity_ledger::QuantityRequest], &str)>,
@@ -1773,6 +1793,32 @@ where
         property_reads: &[(norn_kernel::FactExpectation, Vec<String>)],
         mapped: &[crate::mapping_bundle::MappingBundle],
         bookkeeping: Option<norn_ir::RuntimeValue>,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        let mode = crate::function_receipt::ReceiptCommitMode::Normal;
+        let args = (
+            derived,
+            references,
+            property_reads,
+            mapped,
+            bookkeeping,
+            mode,
+        );
+        self.commit_admitted(commit, authorization, owned_rows, quantity, args)
+    }
+
+    /// Admit one commit in `mode`: [`crate::function_receipt::ReceiptCommitMode`]
+    /// decides how a consumed Function delivery is rechecked.
+    #[allow(
+        clippy::too_many_lines,
+        reason = "shared admission and optional quantity data join one guarded transaction"
+    )]
+    pub(crate) fn commit_admitted(
+        &mut self,
+        mut commit: CellCommit<E, C, I>,
+        authorization: Option<&ObservationAuthorization>,
+        owned_rows: Option<OwnedRowsCommitProof>,
+        quantity: Option<(&[norn_ir::quantity_ledger::QuantityRequest], &str)>,
+        (derived, references, property_reads, mapped, bookkeeping, mode): AdmissionArgs<'_>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         check_commit_identifiers(&commit)?;
         // Include the complete kernel input, including read/write expectations,
@@ -1925,6 +1971,10 @@ where
                 .authorize(authorization, owned_rows)?
                 .check(&model, &GuardView(reader))
                 .map(Checked::into_versions)?;
+            // RECEIPT-CONSUME-1: command authority and the deadline are
+            // rechecked at the commit's own clock, under its write lock.
+            let receipts = (&self.receipts, self.scope.as_str(), self.now, mode);
+            crate::function_receipt::check_consumption(reader, &commit, &batch, receipts)?;
             Ok((versions, mapping_proof))
         };
         match self.store.commit_guarded_submitted(
@@ -1989,7 +2039,7 @@ where
 
 impl<E, C, I, S: SqlEngine> CellHost for SqliteCell<E, C, I, S>
 where
-    E: Serialize,
+    E: Serialize + 'static,
     C: Serialize + DeserializeOwned,
     I: Serialize + DeserializeOwned,
 {
@@ -2081,6 +2131,20 @@ where
         };
         reader.refuse_disputed_subject(key)?;
         Ok(Some(state))
+    }
+
+    /// RECEIPT-CONSUME-1: retained Function evidence, re-reconciled under
+    /// this cell's scope, `main`, current clock and installed command
+    /// authority ([`crate::function_receipt`]); unsupported without one.
+    fn resolve_accepted_receipt(
+        &self,
+        reference: &norn_kernel::receipt_binding::ReceiptReference,
+        manifest: &norn_ir::function::Digest,
+    ) -> Result<
+        Option<norn_kernel::receipt_binding::ReceiptBinding<JsonObject>>,
+        norn_kernel::receipt_binding::ReceiptBindingError<CellError>,
+    > {
+        crate::function_receipt::resolve(self, reference, manifest)
     }
 
     fn load_link(&self, key: &LinkKey) -> Result<LinkState, CellError> {

@@ -36,6 +36,7 @@ pub mod cell_identity;
 pub mod classification;
 mod codec;
 pub mod compute;
+pub mod coverage_observer;
 pub mod dataset_laws;
 pub mod dataset_manifest;
 pub mod decision_ledger;
@@ -47,6 +48,7 @@ pub mod export;
 mod export_journal;
 pub mod flow_run;
 pub mod fork;
+pub mod function_receipt;
 mod history;
 mod history_selection;
 pub mod host;
@@ -104,17 +106,22 @@ mod test_door;
 pub mod transparency;
 mod write;
 
+pub use coverage_observer::{
+    CedarRuleKey, DomainCoverageRecorder, DomainCoverageSnapshot, ImmutableRefusalKey,
+    ObservedSqliteCell, TransitionKey,
+};
 pub use error::CellError;
 
 pub use fork::{ForkEngine, ForkPin, StoreImage};
+pub use function_receipt::ResultAuthority;
 pub use history::{FactSnapshot, FactVersionEvidence, HistoricalEvidence, KnowledgeCutoff};
 pub use host::{CommitRecord, PerformClaim, Responder, SqliteCell};
 pub use mapping_process::{MappingOutcome, QuarantineReason};
 pub use model::{BindingIndexSpec, Model, ModelDefinitionSnapshot};
 pub use read::{
     BindingSortValue, BindingSortedCandidate, BindingSortedPosition, FindingLedgerPage,
-    LedgerEntry, LedgerHead, LinkRecord, MarkedQuestionPath, ObjectRecord, PendingCommand,
-    PendingObservation, PendingTimer, RunRecord, StoreReader,
+    LedgerEntry, LedgerHead, LinkRecord, MarkedQuestionPath, ObjectRecord, ParkedPage,
+    PendingCommand, PendingObservation, PendingTimer, RunRecord, StoreReader,
 };
 #[cfg(feature = "native")]
 pub use restore::{HistoryDiagnosis, PrefixRestore, RestoreError, RestoreReport, UnprovenEntry};

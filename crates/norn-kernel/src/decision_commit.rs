@@ -68,6 +68,7 @@ use crate::effect::{
     Command, CommandId, Effect, FreshnessPolicy, Generation, IdempotencyKey, Timer, TimerId,
 };
 use crate::envelope::{EnvelopeCounts, TurnEnvelopeMeter, check_decision_envelope};
+use crate::lifecycle_init::with_initial_states;
 use crate::limits::EnvelopeLimits;
 use crate::observations::{LogicalTime, World};
 
@@ -667,7 +668,7 @@ impl<'a> TypeCatalog<'a> {
 
     /// Canonicalize one present temporal property value while preserving
     /// untyped or computed values and invalid temporal source strings.
-    fn canonicalize_working_temporal_value(
+    pub(crate) fn canonicalize_working_temporal_value(
         &self,
         object_type: &ObjectTypeName,
         property_name: &str,
@@ -2244,7 +2245,10 @@ impl<X> DecisionRefusal<X> {
             CommitError::ImmutableObject { key } => Self::InvalidOutput {
                 reason: format!("{key} is immutable"),
             },
-            CommitError::NotPending { consumed } => Self::NotPending { consumed },
+            // Outside the action path, an unaccepted Function result is unconsumable.
+            CommitError::NotPending { consumed } | CommitError::ReceiptNotAccepted { consumed } => {
+                Self::NotPending { consumed }
+            }
             CommitError::Conflict {
                 key,
                 expected,
@@ -2295,6 +2299,7 @@ impl<X> DecisionRefusal<X> {
             CommitError::TraversalLimitExceeded { key, reason } => {
                 Self::TraversalLimitExceeded { key, reason }
             }
+            CommitError::LifecycleInitialization { key, refusal } => Self::from_init(key, *refusal),
             CommitError::ObservationAuthorization => Self::InvalidOutput {
                 reason: "observation authorization did not match its prepared commit".to_owned(),
             },
@@ -2369,7 +2374,9 @@ impl<X> DecisionRefusal<X> {
             | CommitError::OwnedRowsProtected { .. }
             | CommitError::IdentifierTooLong { .. }
             | CommitError::ImmutableObject { .. }
+            | CommitError::LifecycleInitialization { .. }
             | CommitError::NotPending { .. }
+            | CommitError::ReceiptNotAccepted { .. }
             | CommitError::Conflict { .. }
             | CommitError::TypeMismatch { .. }
             | CommitError::AccountingPosting { .. }
@@ -3149,16 +3156,6 @@ fn apply_change<X>(
     Ok(event)
 }
 
-/// `values` with every effective lifecycle property's default filled in,
-/// after checking each lifecycle property holds an initial state.
-fn with_initial_states<X>(
-    catalog: &TypeCatalog<'_>,
-    key: &FactKey,
-    values: &JsonObject,
-) -> Result<JsonObject, DecisionRefusal<X>> {
-    materialize_lifecycle_defaults(catalog, key, values, true)
-}
-
 /// Fill declared defaults for lifecycle properties without requiring their
 /// final values to already be initial states. Callers that prepare a create
 /// still use [`with_initial_states`] for that full validation.
@@ -3170,7 +3167,7 @@ pub(crate) fn fill_lifecycle_defaults<X>(
     materialize_lifecycle_defaults(catalog, key, values, false)
 }
 
-fn materialize_lifecycle_defaults<X>(
+pub(crate) fn materialize_lifecycle_defaults<X>(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
     values: &JsonObject,
@@ -3222,7 +3219,7 @@ fn materialize_lifecycle_defaults<X>(
 /// from the object's current state under `Lifecycle::fire` — the per-call
 /// semantics `norn-checker` uses for `fire_transition` (same codes).
 /// Returns the transition and the state it leaves.
-fn resolve_transition<X>(
+pub(crate) fn resolve_transition<X>(
     catalog: &TypeCatalog<'_>,
     key: &FactKey,
     values: &JsonObject,
@@ -3275,7 +3272,7 @@ fn resolve_transition<X>(
 
 /// Evaluates every guard of `declared` against the object's state before
 /// the change (the checker does not: guards read the object).
-fn check_guards<X>(
+pub(crate) fn check_guards<X>(
     key: &FactKey,
     values: &JsonObject,
     declared: &Transition,

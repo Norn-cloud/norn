@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { renderToStaticMarkup } from "react-dom/server"
-import { LoginPage, SIGNED_UP, type Mode } from "../src/login.tsx"
+import { inviteFromLocation, LoginPage, SIGNED_UP, type Mode } from "../src/login.tsx"
 import { readAuthConfig, type AuthConfig } from "../src/lib/session.ts"
 
 const render = (initial: Mode, config?: AuthConfig) =>
@@ -29,10 +29,15 @@ test("creating an account asks for a name and a 12-character password and states
   expect(open).toContain('minLength="12"')
   expect(open).toContain('autoComplete="new-password"')
   expect(open).not.toContain("invite-only")
+  expect(open).not.toContain('name="invite"')
 
   const inviteOnly = render("sign-up", { magicLink: false, inviteOnly: true })
   expect(inviteOnly).toContain("invite-only")
   expect(inviteOnly).not.toContain("Email link")
+  // Invite-only sign-up carries the operator's invitation (from the link's #invite=), required.
+  expect(inviteOnly).toContain('name="invite"')
+  expect(inviteFromLocation("#invite=v1.123.abc.def")).toBe("v1.123.abc.def")
+  expect(inviteFromLocation("#other=1")).toBe("")
 })
 
 test("an email link needs only the address when the server enables magic links", () => {
@@ -197,4 +202,48 @@ test("an environment switch within the same user and org invalidates sessionKey,
   expect(parkedCalls.get(sessionKey(inEnv("env-a")), "learning.triage:{}")).toBeUndefined()
   expect(client.getQueryData(["studio-mode", '["org_demo","env-a"]'])).toBeUndefined()
   expect(client.getQueryData(["learning", "episodes", '["org_demo","env-a"]', ""])).toBeUndefined()
+})
+
+// #1700 B4: a role downgrade in the same user, org and environment is a different reader: the
+// previous role's catalog, mode and counts are forgotten even though the workspace scope is unchanged.
+test("a role change in the same workspace forgets the previous role's catalog, actions and counts", async () => {
+  const { accountQuery } = await import("../src/lib/session.ts")
+  const { sessionKey } = await import("../src/actions/kept-drafts.ts")
+  const asRole = (role: string) => ({
+    user: { id: "u1", name: "Alice", email: "a@example.com" },
+    organization: { id: "org_demo", name: "Demo", role },
+    environmentId: "env-a",
+  })
+  expect(sessionKey(asRole("admin"))).not.toBe(sessionKey(asRole("viewer")))
+
+  const answers: Response[] = []
+  const client = new QueryClient()
+  const read = (answer: Response) => {
+    answers.push(answer)
+    return client.fetchQuery({ ...accountQuery(client, async () => answers.shift() as Response), staleTime: 0 })
+  }
+  await read(Response.json(asRole("admin")))
+  // The scope query already agrees with the session: only the role is about to change.
+  client.setQueryData(["studio-scope"], { orgId: "org_demo", environmentId: "env-a" })
+  client.setQueryData(["studio-mode", '["org_demo","env-a"]'], { kind: "live" })
+  client.setQueryData(["actions", "canon.Item", null, '["org_demo","env-a"]'], { kind: "catalog", items: [{ actionId: "canon.item.delete" }] })
+  client.setQueryData(["facets", "canon.Item"], { rows: 12 })
+
+  await read(Response.json(asRole("viewer")))
+  expect(client.getQueryData(["studio-mode", '["org_demo","env-a"]'])).toBeUndefined()
+  expect(client.getQueryData(["actions", "canon.Item", null, '["org_demo","env-a"]'])).toBeUndefined()
+  expect(client.getQueryData(["facets", "canon.Item"])).toBeUndefined()
+})
+
+// #1700 S13: a session check that never answers fails within its deadline, so the root can offer a retry.
+test("a stalled session check fails within its deadline instead of leaving Studio blank", async () => {
+  const { accountQuery } = await import("../src/lib/session.ts")
+  const { CellUnavailable } = await import("../src/lib/definitions.ts")
+  const client = new QueryClient()
+  const stalled = (_input: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+    init?.signal?.addEventListener("abort", () => reject(init.signal?.reason))
+  })
+  const started = Date.now()
+  await expect(client.fetchQuery(accountQuery(client, stalled, 20))).rejects.toBeInstanceOf(CellUnavailable)
+  expect(Date.now() - started).toBeLessThan(2_000)
 })

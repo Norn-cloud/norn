@@ -39,8 +39,8 @@ use crate::read::{
 };
 use crate::system::{
     DEFINITION_ACTIVE, DEFINITION_ADMISSION_RECEIPT, DEFINITION_LAYOUT, DEFINITION_REGISTRY,
-    DEFINITION_VERSION, INBOX, MARKING_CURRENT, MARKING_SNAPSHOT, MARKING_VERSION, META, OUTBOX,
-    RUN, STORE_FORMAT, ensure_marking_subject, marking_subject,
+    DEFINITION_VERSION, INBOX, MARKING_SNAPSHOT, META, MarkingSlot, MarkingTarget, OUTBOX, RUN,
+    STORE_FORMAT, ensure_marking_subject, query_marking_slot, write_nonempty_marking_slot,
 };
 use crate::write::Writer;
 
@@ -305,24 +305,8 @@ fn apply_marking_definition_changes<E: SqlEngine>(
     // readable under the new catalog. The bounded scan refuses the whole
     // install before publishing an incomplete classification update.
     for ((object_type, property), added) in additions {
-        backfill_marking_table(
-            engine,
-            MARKING_SNAPSHOT,
-            MARKING_CURRENT,
-            &object_type,
-            &property,
-            &added,
-            true,
-        )?;
-        backfill_marking_table(
-            engine,
-            MARKING_SNAPSHOT,
-            MARKING_VERSION,
-            &object_type,
-            &property,
-            &added,
-            false,
-        )?;
+        backfill_marking_table(engine, &object_type, &property, &added, true)?;
+        backfill_marking_table(engine, &object_type, &property, &added, false)?;
     }
     for object_type in changed_types {
         backfill_computed_markings(engine, candidate, &object_type)?;
@@ -368,20 +352,22 @@ fn backfill_computed_markings<E: SqlEngine>(
             .map(|(property, labels)| (property, labels.into_iter().collect::<BTreeSet<_>>()))
             .collect::<BTreeMap<_, _>>();
         let changed = candidate.close_computed_markings(object_type, &mut effective)?;
-        let table = if current {
-            MARKING_CURRENT
-        } else {
-            MARKING_VERSION
-        };
         for property in changed {
             let labels = effective.get(&property).ok_or_else(|| {
                 CellError::Engine("computed classification target is missing".to_owned())
             })?;
+            if labels.is_empty() {
+                continue;
+            }
+            let subject = ensure_marking_subject(engine, &world, object_type, &id)?;
             let encoded = serde_json::to_string(labels).map_err(CellError::Json)?;
-            engine.execute(
-                &format!("UPDATE \"{table}\" SET \"markings\" = ?1 WHERE \"world\" = ?2 AND \"object_type\" = ?3 AND \"subject\" = ?4 AND \"property\" = ?5 AND \"version\" = ?6"),
-                params![encoded, &world, object_type, marking_subject(engine, &world, object_type, &id)?, property, version],
-            )?;
+            let target = MarkingTarget {
+                world: &world,
+                object_type,
+                key: &id,
+                version,
+            };
+            write_nonempty_marking_slot(engine, current, &target, subject, &property, &encoded)?;
         }
     }
     Ok(())
@@ -389,17 +375,18 @@ fn backfill_computed_markings<E: SqlEngine>(
 
 fn backfill_marking_table<E: SqlEngine>(
     engine: &E,
-    snapshots: &str,
-    values: &str,
     object_type: &str,
     property: &str,
     additions: &[String],
     current: bool,
 ) -> Result<(), CellError> {
+    if additions.is_empty() {
+        return Ok(());
+    }
     let is_current = i64::from(current);
     let rows = engine.query(
         &format!(
-            "SELECT \"world\", \"id\", \"version\" FROM \"{snapshots}\" WHERE \"object_type\" = ?1 AND \"is_current\" = ?2 ORDER BY \"world\", \"id\" LIMIT ?3"
+            "SELECT \"world\", \"id\", \"version\" FROM \"{MARKING_SNAPSHOT}\" WHERE \"object_type\" = ?1 AND \"is_current\" = ?2 ORDER BY \"world\", \"id\" LIMIT ?3"
         ),
         params![object_type, is_current, i64::try_from(MARKING_INSTALL_BACKFILL_LIMIT + 1).map_err(|_conversion_error| CellError::OutOfRange("marking backfill limit"))?],
     )?;
@@ -414,14 +401,14 @@ fn backfill_marking_table<E: SqlEngine>(
         let id: String = row.get(1)?;
         let version: i64 = row.get(2)?;
         let subject = ensure_marking_subject(engine, &world, object_type, &id)?;
-        let existing = engine.query_optional(
-            &format!(
-                "SELECT \"markings\" FROM \"{values}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = ?3 AND \"property\" = ?4 AND \"version\" = ?5"
-            ),
-            params![&world, object_type, subject, property, version],
-            |row| row.get::<String>(0),
-        )?;
-        let mut markings = existing
+        let slot = MarkingSlot {
+            world: &world,
+            object_type,
+            subject,
+            property,
+            version,
+        };
+        let mut markings = query_marking_slot(engine, current, &slot)?
             .map(|encoded| serde_json::from_str::<Vec<String>>(&encoded).map_err(CellError::Json))
             .transpose()?
             .unwrap_or_default();
@@ -432,19 +419,13 @@ fn backfill_marking_table<E: SqlEngine>(
         }
         markings.sort();
         let encoded = serde_json::to_string(&markings).map_err(CellError::Json)?;
-        let sql = if current {
-            format!(
-                "INSERT INTO \"{values}\" (\"world\", \"object_type\", \"subject\", \"property\", \"version\", \"markings\") VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (\"world\", \"object_type\", \"subject\", \"property\") DO UPDATE SET \"version\" = excluded.\"version\", \"markings\" = excluded.\"markings\""
-            )
-        } else {
-            format!(
-                "INSERT INTO \"{values}\" (\"world\", \"object_type\", \"subject\", \"property\", \"version\", \"markings\") VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (\"world\", \"object_type\", \"subject\", \"property\", \"version\") DO UPDATE SET \"markings\" = excluded.\"markings\""
-            )
+        let target = MarkingTarget {
+            world: &world,
+            object_type,
+            key: &id,
+            version,
         };
-        engine.execute(
-            &sql,
-            params![&world, object_type, subject, property, version, encoded],
-        )?;
+        write_nonempty_marking_slot(engine, current, &target, subject, property, &encoded)?;
     }
     Ok(())
 }
@@ -3283,9 +3264,13 @@ impl<E: SqlEngine> CellStore<E> {
             if prior_receipt.is_none() && effective_batch.idempotency_key.is_some() {
                 self.scrub.borrow().refuse_unproven_miss()?;
             }
-            crate::quantity::clock_floor(&self.conn)?;
+            let floor = crate::quantity::clock_floor(&self.conn)?;
             // Reconcile host time only after the transaction-local retry lookup.
             let mut reconciled = effective_batch.clone();
+            // RECEIPT-CONSUME-1: a host commit consuming a Function result follows the floor.
+            if matches!(origin, CommitOrigin::Host) && prior_receipt.is_none() && crate::function_receipt::follows_floor(&self.conn, &reconciled)? {
+                reconciled.logical_time = reconciled.logical_time.max(floor);
+            }
             if let Some(prior) = &prior_receipt
                 && prior.body.quantity.is_some() != reconciled.quantity.is_some()
             {
@@ -3459,11 +3444,13 @@ impl<E: SqlEngine> CellStore<E> {
             }
             crate::flow_run::check_starts(&writer.reader(), effective_batch)?;
             crate::decision_ledger::check(&writer.reader(), effective_batch)?;
-            let watch = automation_outbox::capture_before(&writer.reader(), effective_batch)?;
+            let watch = automation_outbox::capture_before(
+                &writer.reader(), effective_batch, automation_outbox::preimage_limit(retained),
+            )?;
             let written = writer.apply_writes()?;
             crate::flow_run::apply(&writer.reader(), effective_batch, &written, commit_seq)?;
             crate::decision_ledger::apply(&writer.reader(), effective_batch, commit_seq)?;
-            let automation_continuation = automation_outbox::record(
+            let automation = automation_outbox::record(
                 &writer.reader(), effective_batch, &written, commit_seq, version, &watch, retained,
             )?;
             let quantity_result = writer.apply_quantity()?;
@@ -3560,7 +3547,7 @@ impl<E: SqlEngine> CellStore<E> {
                         Some(crate::engine_release::STORAGE_VERSION)
                     }
                 },
-                automation_continuation,
+                automation,
                 entries,
             )?;
             probe(CommitPoint::ReceiptWritten)?;

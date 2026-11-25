@@ -30,10 +30,10 @@ use norn_kernel::snapshot_observe::{
 };
 use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionRefusal, CellCommit,
-    CellHost, CommitError, DecisionRefusal, DecisionTurn, FactEvent, FactExpectation, FactKey,
-    FactMutation, FactVersion, FactWrite, LinkKey, LinkMutation, LinkWrite, LogicalTime,
-    ObservationId, Observed, Provenance, TypeCatalog, World, commit_action, commit_decision,
-    load_slice,
+    CellHost, CommitError, CommitView, Consumed, DecisionRefusal, DecisionTurn, FactEvent,
+    FactExpectation, FactKey, FactMutation, FactVersion, FactWrite, LinkKey, LinkMutation,
+    LinkWrite, LogicalTime, ObservationId, Observed, Provenance, TypeCatalog, World, commit_action,
+    commit_decision, load_slice,
 };
 use norn_testkit::cell_host::MemoryCell;
 use serde_json::{Value, json};
@@ -4213,5 +4213,457 @@ fn val_exact_invariants_admit_and_evaluate_temporal_functions_with_decimals()
         DataQualityOutcome::EvaluationFailed { .. }
     ));
 
+    Ok(())
+}
+
+// ------------------------------------------- #1701: post-commit link laws
+
+const DOC: &str = "linklaw.Doc";
+const SPECIAL_DOC: &str = "linklaw.SpecialDoc";
+const LINE: &str = "linklaw.Line";
+const SPECIAL_LINE: &str = "linklaw.SpecialLine";
+const OWNER: &str = "linklaw.Owner";
+const TASK: &str = "linklaw.Task";
+
+type Checked = Result<(), Box<dyn std::error::Error>>;
+
+/// A retained predicate law `never <expression>` on `subject`.
+fn link_law(
+    id: &str,
+    subject: &str,
+    expression: &str,
+) -> Result<norn_ir::ArtifactEnvelope, serde_json::Error> {
+    let provenance = json!({"source": "authoring_sdk", "sourcePath": "invariant_commit.rs"});
+    serde_json::from_value(json!({
+        "artifactId": format!("{id}.law"),
+        "dependencies": [{"artifactId": format!("{subject}.entity"), "kind": "entity",
+                          "required": true, "version": "0.1.0"}],
+        "irVersion": "0.1", "kind": "law", "lifecycle": "draft", "name": id,
+        "namespace": "linklaw",
+        "payload": {
+            "id": id, "lawVersion": "0.1", "modality": {"kind": "never"},
+            "owner": "linklaw.controls", "provenance": provenance, "rationale": id,
+            "response": {"kind": "predicate", "expression": expression},
+            "scope": {"root": {"kind": "entity", "id": subject}, "objectTypes": [subject]},
+            "severity": "error", "subject": subject
+        },
+        "provenance": provenance,
+        "scope": {"environmentId": "dev", "orgId": "org_demo"},
+        "version": "0.1.0"
+    }))
+}
+
+fn put_new(object_type: &str, key: &str, values: Value) -> Result<FactWrite, serde_json::Error> {
+    Ok(FactWrite {
+        key: FactKey::new(object_type, key),
+        expected: FactVersion::ABSENT,
+        mutation: FactMutation::Put {
+            values: serde_json::from_value(values)?,
+        },
+    })
+}
+
+fn add_link(source: &FactKey, link: &str, target: &FactKey) -> LinkWrite {
+    LinkWrite {
+        key: LinkKey::new(source.clone(), link, target.clone()),
+        expected: FactVersion::ABSENT,
+        mutation: LinkMutation::Add {
+            values: JsonObject::new(),
+        },
+    }
+}
+
+/// The refusal code of `result`, if it refused.
+fn refusal<T>(result: &Result<T, CommitError<std::convert::Infallible>>) -> Option<&'static str> {
+    result.as_ref().err().map(CommitError::code)
+}
+
+/// A document whose law bounds its lines; only the `SpecialLine` subtype
+/// (not its root `Line`) declares the link whose inverse role is `lines`.
+fn document_cell() -> Result<CommandCell, serde_json::Error> {
+    let law = link_law("lines_within_limit", DOC, "len(self.lines) > self.limit")?;
+    Ok(CommandCell::new(|command| command.payload.clone())
+        .with_types(document_types()?)
+        .with_governing_laws(vec![law]))
+}
+
+fn document_types() -> Result<Vec<ObjectTypeDef>, serde_json::Error> {
+    serde_json::from_value(json!([
+        {"name": DOC, "properties": [{"id": "limit", "type": {"kind": "integer"}}]},
+        {"name": SPECIAL_DOC, "extends": DOC},
+        {"name": LINE, "properties": [{"id": "amount", "type": {"kind": "integer"}}]},
+        {"name": SPECIAL_LINE, "extends": LINE, "links": [{
+            "id": "doc", "target": DOC, "cardinality": {"to": "one", "from": "many"},
+            "inverse": "lines"
+        }]}
+    ]))
+}
+
+/// #1701 (a): a document written in the batch that creates and links a
+/// subtype line counts that line, as a later evaluation of the stored graph
+/// would.
+#[test]
+fn inverse_role_law_counts_a_subtype_line_created_with_its_document() -> Checked {
+    for (limit, admitted) in [(0, false), (1, true)] {
+        let mut cell = document_cell()?;
+        let doc = FactKey::new(DOC, "d");
+        let line = FactKey::new(SPECIAL_LINE, "l");
+        let result = cell.commit(CellCommit {
+            writes: vec![
+                put_new(DOC, "d", json!({"limit": limit}))?,
+                put_new(SPECIAL_LINE, "l", json!({"amount": 1}))?,
+            ],
+            links: vec![add_link(&line, "doc", &doc)],
+            ..CellCommit::empty()
+        });
+        let expected = (!admitted).then_some("core.laws.violated");
+        assert_eq!(refusal(&result), expected, "limit {limit}");
+        assert_eq!(cell.load(&doc)?.exists(), admitted);
+        assert_eq!(cell.load(&line)?.exists(), admitted);
+    }
+    Ok(())
+}
+
+/// #1701 (b): a stored document the batch does not write is re-checked with
+/// the subtype line the batch creates and links to it.
+#[test]
+fn inverse_role_law_rechecks_a_stored_document_for_a_new_subtype_line() -> Checked {
+    for (limit, admitted) in [(0, false), (1, true)] {
+        let mut cell = document_cell()?;
+        let doc = FactKey::new(DOC, "d");
+        // A document without lines holds its law.
+        cell.commit(CellCommit {
+            writes: vec![put_new(DOC, "d", json!({"limit": limit}))?],
+            ..CellCommit::empty()
+        })?;
+        let line = FactKey::new(SPECIAL_LINE, "l");
+        let result = cell.commit(CellCommit {
+            writes: vec![put_new(SPECIAL_LINE, "l", json!({"amount": 1}))?],
+            links: vec![add_link(&line, "doc", &doc)],
+            ..CellCommit::empty()
+        });
+        let expected = (!admitted).then_some("core.laws.violated");
+        assert_eq!(refusal(&result), expected, "limit {limit}");
+        assert_eq!(cell.load(&line)?.exists(), admitted);
+    }
+    Ok(())
+}
+
+/// #1701: a stored document of a subtype is read by its canonical identity
+/// (as every host stores it) and judged by its subtype's laws when a new line
+/// links to it.
+#[test]
+fn inverse_role_law_rechecks_a_stored_subtype_document_for_a_new_line() -> Checked {
+    for (limit, admitted) in [(0, false), (1, true)] {
+        let mut cell = document_cell()?;
+        let doc = FactKey::new(SPECIAL_DOC, "d");
+        cell.commit(CellCommit {
+            writes: vec![put_new(SPECIAL_DOC, "d", json!({"limit": limit}))?],
+            ..CellCommit::empty()
+        })?;
+        let line = FactKey::new(SPECIAL_LINE, "l");
+        let result = cell.commit(CellCommit {
+            writes: vec![put_new(SPECIAL_LINE, "l", json!({"amount": 1}))?],
+            links: vec![add_link(&line, "doc", &doc)],
+            ..CellCommit::empty()
+        });
+        let expected = (!admitted).then_some("core.laws.violated");
+        assert_eq!(refusal(&result), expected, "limit {limit}");
+        assert_eq!(cell.load(&line)?.exists(), admitted);
+    }
+    Ok(())
+}
+
+/// A task's law reads its owner (a forward link); an owner's law reads its
+/// tasks (the inverse role).
+fn owner_cell() -> Result<CommandCell, serde_json::Error> {
+    let types: Vec<ObjectTypeDef> = serde_json::from_value(json!([
+        {"name": OWNER, "properties": [
+            {"id": "capacity", "type": {"kind": "integer"}},
+            {"id": "minimum", "type": {"kind": "integer"}}
+        ]},
+        {"name": TASK, "properties": [{"id": "size", "type": {"kind": "integer"}}],
+         "links": [{
+            "id": "owner", "target": OWNER, "cardinality": {"to": "one", "from": "many"},
+            "inverse": "tasks"
+        }]}
+    ]))?;
+    let laws = vec![
+        link_law("task_fits_owner", TASK, "self.size > self.owner.capacity")?,
+        link_law("owner_keeps_tasks", OWNER, "len(self.tasks) < self.minimum")?,
+    ];
+    Ok(CommandCell::new(|command| command.payload.clone())
+        .with_types(types)
+        .with_governing_laws(laws))
+}
+
+/// #1701 (P2): deleting a law-governed root subject and removing its law-read
+/// link in one batch leaves it no law to hold, so it commits; the owner it
+/// leaves survives and still refuses when that breaks the owner's law.
+#[test]
+fn deleting_and_unlinking_a_law_governed_subject_rechecks_only_its_survivors() -> Checked {
+    for (minimum, admitted) in [(0, true), (1, false)] {
+        let mut cell = owner_cell()?;
+        let owner = FactKey::new(OWNER, "o");
+        let task = FactKey::new(TASK, "t");
+        // A task within its owner's capacity.
+        cell.commit(CellCommit {
+            writes: vec![
+                put_new(OWNER, "o", json!({"capacity": 10, "minimum": minimum}))?,
+                put_new(TASK, "t", json!({"size": 1}))?,
+            ],
+            links: vec![add_link(&task, "owner", &owner)],
+            ..CellCommit::empty()
+        })?;
+        let link = LinkKey::new(task.clone(), "owner", owner);
+        let task_version = cell.load(&task)?.version;
+        let link_version = cell.load_link(&link)?.version;
+        let result = cell.commit(CellCommit {
+            writes: vec![FactWrite {
+                key: task.clone(),
+                expected: task_version,
+                mutation: FactMutation::Delete,
+            }],
+            links: vec![LinkWrite {
+                key: link.clone(),
+                expected: link_version,
+                mutation: LinkMutation::Remove,
+            }],
+            ..CellCommit::empty()
+        });
+        let expected = (!admitted).then_some("core.laws.violated");
+        assert_eq!(refusal(&result), expected, "minimum {minimum}");
+        assert_eq!(cell.load(&task)?.exists(), !admitted);
+        assert_eq!(cell.load_link(&link)?.exists(), !admitted);
+    }
+    Ok(())
+}
+
+/// #1701: removing an already-absent law-read link from a task that was never
+/// stored re-checks no subject for that task: it has no law to hold.
+#[test]
+fn removing_an_absent_law_read_link_from_an_absent_subject_commits() -> Checked {
+    let mut cell = owner_cell()?;
+    let owner = FactKey::new(OWNER, "o");
+    cell.commit(CellCommit {
+        writes: vec![put_new(OWNER, "o", json!({"capacity": 10, "minimum": 0}))?],
+        ..CellCommit::empty()
+    })?;
+    let ghost = FactKey::new(TASK, "ghost");
+    let result = cell.commit(CellCommit {
+        links: vec![LinkWrite {
+            key: LinkKey::new(ghost.clone(), "owner", owner.clone()),
+            expected: FactVersion::ABSENT,
+            mutation: LinkMutation::Remove,
+        }],
+        ..CellCommit::empty()
+    });
+    assert_eq!(refusal(&result), None);
+    assert!(!cell.load(&ghost)?.exists());
+    assert!(cell.load(&owner)?.exists());
+    Ok(())
+}
+
+/// The stored graph of the observed-line regression: `SpecialDoc/d`
+/// (`limit` 3) with one `SpecialLine/l` (`amount` 1), each at version 1.
+struct StoredDocument;
+
+impl CommitView for StoredDocument {
+    type Error = std::convert::Infallible;
+
+    fn pending(&self, _: &Consumed) -> Result<bool, Self::Error> {
+        Ok(true)
+    }
+
+    fn version(&self, key: &FactKey) -> Result<FactVersion, Self::Error> {
+        Ok(match key.key.as_str() {
+            "d" | "l" => FactVersion(1),
+            _ => FactVersion::ABSENT,
+        })
+    }
+
+    fn concrete(&self, key: &FactKey) -> Result<Option<ObjectTypeName>, Self::Error> {
+        Ok(match key.key.as_str() {
+            "d" => Some(ObjectTypeName(SPECIAL_DOC.to_owned())),
+            "l" => Some(ObjectTypeName(SPECIAL_LINE.to_owned())),
+            _ => None,
+        })
+    }
+
+    fn link_version(&self, _: &LinkKey) -> Result<FactVersion, Self::Error> {
+        Ok(FactVersion(1))
+    }
+
+    fn links_of(&self, key: &FactKey) -> Result<Vec<LinkKey>, Self::Error> {
+        Ok(match key.key.as_str() {
+            "d" | "l" => vec![LinkKey::new(
+                FactKey::new(LINE, "l"),
+                "doc",
+                FactKey::new(DOC, "d"),
+            )],
+            _ => Vec::new(),
+        })
+    }
+
+    fn object_values(&self, key: &FactKey) -> Result<Option<JsonObject>, Self::Error> {
+        let values = match key.key.as_str() {
+            "d" => json!({"limit": 3}),
+            "l" => json!({"amount": 1}),
+            _ => return Ok(None),
+        };
+        Ok(serde_json::from_value(values).ok())
+    }
+}
+
+/// #1701: a mapped line that pins its document as `Doc/d` and, observed,
+/// breaks the document's inverse-role law on the stored `SpecialDoc/d`, files
+/// the document's finding against that one pin: one read of the document, and
+/// the observation and its finding commit.
+#[test]
+fn observed_line_finding_binds_to_the_documents_existing_alias_pin() -> Checked {
+    let types = document_types()?;
+    let laws = vec![link_law(
+        "lines_sum_within_limit",
+        DOC,
+        "sum(map(self.lines, #.amount)) > self.limit",
+    )?];
+    let catalog = TypeCatalog::new(&types).with_governing_laws(&laws);
+    let mut cell: ObservationCell = MemoryCell::new(|_| JsonObject::new())
+        .with_types(types.clone())
+        .with_governing_laws(laws.clone());
+    let doc = FactKey::new(SPECIAL_DOC, "d");
+    let line = FactKey::new(SPECIAL_LINE, "l");
+    cell.commit(CellCommit {
+        writes: vec![
+            put_new(SPECIAL_DOC, "d", json!({"limit": 3}))?,
+            put_new(SPECIAL_LINE, "l", json!({"amount": 1}))?,
+        ],
+        links: vec![add_link(&line, "doc", &doc)],
+        ..CellCommit::empty()
+    })?;
+    let slice = load_slice(&cell, [line.clone()])?;
+    let provenance = source_provenance();
+    let observed: JsonObject = serde_json::from_value(json!({"amount": 5}))?;
+    let prepared = prepare_observed_snapshot(
+        &catalog,
+        &slice,
+        &turn("observed-line"),
+        ObservedSnapshot {
+            key: &line,
+            values: &observed,
+            lifecycles: &[],
+            provenance: &provenance,
+        },
+    )?;
+    let (mut commit, mut authorization) = prepared.into_parts();
+    // The mapping pinned the line's document through its root type.
+    let pin = FactExpectation {
+        key: FactKey::new(DOC, "d"),
+        expected: FactVersion(1),
+    };
+    commit.reads.push(pin.clone());
+    authorization.refresh_link_findings(&catalog, &mut commit, &StoredDocument)?;
+    let document_reads = commit
+        .reads
+        .iter()
+        .filter(|read| read.key.key == "d")
+        .collect::<Vec<_>>();
+    assert_eq!(document_reads, [&pin]);
+    let receipt = cell.commit_observed(commit, authorization);
+    assert_eq!(refusal(&receipt), None);
+    let findings = cell.ledger().last().map_or(0, |entry| {
+        entry
+            .events
+            .iter()
+            .filter(|event| matches!(event, ObservationEvent::DataQualityFinding { .. }))
+            .count()
+    });
+    assert_ne!(findings, 0);
+    assert_eq!(cell.load(&line)?.values, Some(observed));
+    Ok(())
+}
+
+/// Documents whose `SpecialDoc` carries the inverse-role law itself, and is
+/// a `Doc` only when `aliased`.
+fn alias_types(aliased: bool) -> Result<Vec<ObjectTypeDef>, serde_json::Error> {
+    let mut special = json!({
+        "name": SPECIAL_DOC,
+        "properties": [{"id": "limit", "type": {"kind": "integer"}}]
+    });
+    if aliased && let Some(definition) = special.as_object_mut() {
+        definition.insert("extends".to_owned(), json!(DOC));
+    }
+    serde_json::from_value(json!([
+        {"name": DOC},
+        special,
+        {"name": LINE, "properties": [{"id": "amount", "type": {"kind": "integer"}}]},
+        {"name": SPECIAL_LINE, "extends": LINE, "links": [{
+            "id": "doc", "target": SPECIAL_DOC, "cardinality": {"to": "one", "from": "many"},
+            "inverse": "lines"
+        }]}
+    ]))
+}
+
+/// #1701: a read finding sealed under a catalog where `SpecialDoc/d` and its
+/// `Doc/d` pin are one object is refused by a host whose catalog makes them
+/// two: the pin would guard another object than the finding's subject.
+#[test]
+fn read_finding_bound_to_an_alias_the_host_does_not_share_is_refused() -> Checked {
+    let laws = vec![link_law(
+        "special_lines_within_limit",
+        SPECIAL_DOC,
+        "sum(map(self.lines, #.amount)) > self.limit",
+    )?];
+    let prep_types = alias_types(true)?;
+    let catalog = TypeCatalog::new(&prep_types).with_governing_laws(&laws);
+    let mut cell: ObservationCell = MemoryCell::new(|_| JsonObject::new())
+        .with_types(alias_types(false)?)
+        .with_governing_laws(laws.clone());
+    let line = FactKey::new(SPECIAL_LINE, "l");
+    // Here `Doc/d` is its own object, at the version the pin expects.
+    cell.commit(CellCommit {
+        writes: vec![
+            put_new(DOC, "d", json!({}))?,
+            put_new(SPECIAL_DOC, "d", json!({"limit": 3}))?,
+            put_new(SPECIAL_LINE, "l", json!({"amount": 1}))?,
+        ],
+        links: vec![add_link(&line, "doc", &FactKey::new(SPECIAL_DOC, "d"))],
+        ..CellCommit::empty()
+    })?;
+    let slice = load_slice(&cell, [line.clone()])?;
+    let provenance = source_provenance();
+    let observed: JsonObject = serde_json::from_value(json!({"amount": 5}))?;
+    let (mut commit, mut authorization) = prepare_observed_snapshot(
+        &catalog,
+        &slice,
+        &turn("observed-line-alias"),
+        ObservedSnapshot {
+            key: &line,
+            values: &observed,
+            lifecycles: &[],
+            provenance: &provenance,
+        },
+    )?
+    .into_parts();
+    let pin = FactExpectation {
+        key: FactKey::new(DOC, "d"),
+        expected: FactVersion(1),
+    };
+    commit.reads.push(pin.clone());
+    authorization.refresh_link_findings(&catalog, &mut commit, &StoredDocument)?;
+    let document_reads = commit
+        .reads
+        .iter()
+        .filter(|read| read.key.key == "d")
+        .collect::<Vec<_>>();
+    assert_eq!(document_reads, [&pin]);
+    let before = cell.ledger().len();
+    let refused = cell.commit_observed(commit, authorization);
+    assert_eq!(refusal(&refused), Some("commit.observation_authorization"));
+    assert_eq!(cell.ledger().len(), before);
+    assert_eq!(
+        cell.load(&line)?.values,
+        Some(serde_json::from_value(json!({"amount": 1}))?)
+    );
     Ok(())
 }

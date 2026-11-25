@@ -1,5 +1,5 @@
 import { verifyJwsAccessToken } from "better-auth/oauth2"
-import { ENV_CLAIM, MCP_PATH, MEMBER_CLAIM, ORG_CLAIM, activeMembership, mcpResource, type Auth } from "./auth.ts"
+import { ENV_CLAIM, MCP_PATH, MEMBER_CLAIM, ORG_CLAIM, mcpResource, membershipIn, type Auth } from "./auth.ts"
 import { hostToken, type NornActor } from "./actor.ts"
 import { viewPage } from "./widget-page.ts"
 
@@ -46,11 +46,11 @@ export async function grantActor(
   claims: { readonly sub?: unknown; readonly [ORG_CLAIM]?: unknown; readonly [MEMBER_CLAIM]?: unknown; readonly [ENV_CLAIM]?: unknown },
 ): Promise<(NornActor & { readonly environmentId: string | null }) | null> {
   if (typeof claims.sub !== "string" || claims.sub === "") return null
-  const org = typeof claims[ORG_CLAIM] === "string" && claims[ORG_CLAIM] !== "" ? claims[ORG_CLAIM] : null
+  const org = typeof claims[ORG_CLAIM] === "string" && claims[ORG_CLAIM].trim() !== "" ? claims[ORG_CLAIM] : null
   if (org === null) return null
   const memberClaim = typeof claims[MEMBER_CLAIM] === "string" && claims[MEMBER_CLAIM] !== "" ? claims[MEMBER_CLAIM] : null
   if (memberClaim === null) return null
-  const member = await activeMembership(auth, claims.sub, org)
+  const member = await membershipIn(auth, claims.sub, org)
   if (member === null || member.organizationId !== org || member.memberId !== memberClaim) return null
   if (claims[ENV_CLAIM] !== undefined) {
     if (typeof claims[ENV_CLAIM] !== "string" || claims[ENV_CLAIM] === "" || member.environmentId !== claims[ENV_CLAIM]) return null

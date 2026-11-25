@@ -70,6 +70,7 @@ pub mod flow_identity;
 pub mod flow_turn;
 pub mod governing_laws;
 mod guard_diagnostic;
+mod lifecycle_init;
 pub mod limits;
 pub mod naming_series;
 mod partition_slice;
@@ -95,6 +96,41 @@ pub use commit_check::{
     check_commit_owned_rows, check_fact_key_identity, evaluate_invariants,
     invariant_evaluation_budget,
 };
+#[doc(hidden)]
+pub mod pack_mbt_support {
+    pub use norn_authz::cedar_projection;
+    pub use norn_authz::{PdpExplanation, ValidatedPolicySet};
+    pub use norn_checker::law_examples::{
+        Verdict as LawExampleVerdict, evaluate_runtime as evaluate_law_example_runtime,
+    };
+    pub use norn_expr::{EvaluationBudget, Expression, Value as ExprValue, expression_read_paths};
+    pub use norn_ir::access::{
+        AccessCondition, AccessIr, AccessLiteral, AccessRule, PolicyRoot, ResourceCompareOp,
+        ResourceCondition, ResourceOperand, ScopeDimension,
+    };
+    pub use norn_ir::{
+        ActionEffectProgram, ActionRoot, ActionUiEffect, ArtifactEnvelope, ArtifactPayload,
+        DataQualityOutcome, DataQualityRuleRef, Decimal, DecisionOutput, EntityRoot, FactChange,
+        InterfaceDef, JsonValue as IrJsonValue, LawIR, LawModality, LawResponse, Lifecycle,
+        ObjectTypeDef, ObjectTypeName, Property, PropertyConstraints, PropertyId, PropertyType,
+        PropertyTypeDef, RecordMember, ResourceStatus, SliceKey, Transition, TransitionId,
+        WriteChange, ZenExpression, lifecycle_codes,
+    };
+
+    /// Computes the canonical `sha256:...` content pin for a retained [`LawIR`],
+    /// matching [`crate::governing_laws`]'s `DataQualityRuleRef::Law::version`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if canonical JSON encoding fails.
+    pub fn law_content_pin(law: &LawIR) -> Result<String, String> {
+        let bytes = norn_ir::canonical::canonical_json_of(law).map_err(|err| err.to_string())?;
+        Ok(format!(
+            "sha256:{}",
+            norn_ir::canonical::HashProfile::Norn1.hash_canonical_bytes(&bytes)
+        ))
+    }
+}
 pub use norn_ir::{MAX_INTENT_REF_BYTES, MAX_TRACE_ID_BYTES, TraceContext, TraceContextError};
 pub use serde;
 pub use snapshot_observe::{ObservationAuthorization, ObservationEvent, PreparedObservation};
@@ -136,6 +172,7 @@ pub use effect::{
     InputIdentity, OwnerVersion, Timer, TimerId,
 };
 pub use envelope::{TurnEnvelopeLimits, TurnEnvelopeMeter, TurnEnvelopeUsage};
+pub use lifecycle_init::LifecycleInitRefusal;
 pub use limits::{
     EnvelopeLimits, IngressLimit, IngressLimitExceeded, LimitProfileRef, ResourceLimitProfile,
     SliceLimits, SliceMeter, check_envelope_bytes,

@@ -135,9 +135,7 @@ impl AdmittedDecision {
                     });
                 }
                 if loaded_keys.insert(key) {
-                    closed_record(sub, "inputSchema")?;
-                    closed_record(sub, "outputSchema")?;
-
+                    contracts.insert_helper(key, sub)?;
                     if loaded_keys.len() > MAX_SUB_DECISION_CLOSURE {
                         return Err(AdmissionError::SubDecisionBound {
                             depth: child_depth,
@@ -690,7 +688,7 @@ fn sub_decision_content(content: &JdmSubDecisionContent) -> DecisionNodeContent 
     }
 }
 
-use crate::contract::{closed_record, decide_input, decide_output, invalid_schema};
+use crate::contract::{decide_input, decide_output, invalid_schema};
 
 fn defaults(
     rule: &RuleRoot,
@@ -909,4 +907,25 @@ fn validate_call_sources(
         )?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use norn_ir::ResourceLimitProfile;
+
+    use crate::AdmissionError;
+
+    /// #1711: the deterministic VM has no RNG, so decision admission refuses `rand`
+    /// as a standard expression and as a unary cell.
+    #[test]
+    fn rand_is_refused_by_decision_admission() {
+        let limits = ResourceLimitProfile::norn_limits_v1();
+        for (source, unary) in [("rand(1)", false), ("rand(1)", true), ("< rand(1)", true)] {
+            let result = super::validate_source("t.rule", "cell", source, unary, &limits);
+            assert!(
+                matches!(result, Err(AdmissionError::InvalidExpression { .. })),
+                "{source} (unary {unary}): {result:?}"
+            );
+        }
+    }
 }

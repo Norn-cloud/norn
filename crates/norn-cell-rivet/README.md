@@ -53,7 +53,9 @@ are the Durable Object Worker's:
 - `NORN_HOST_ISSUER`, `NORN_HOST_JWKS_URL`
 - `NORN_LINEAGE_KEY`
 - `NORN_TENANT_ENVIRONMENTS`
-- `NORN_SOURCES`, `NORN_SECRET_*`, `NORN_S3_*`
+- `NORN_SOURCES`, `NORN_SECRET_*`, `NORN_S3_*` (each connection names its owning
+  `orgId`/`environmentId` and the `secretRefs` it may resolve; a cell loads only
+  its own, SOURCE-SCOPE-1)
 - `NORN_OLAP_URL`, `NORN_OLAP_SIGNING_KEY`
 - `ALLOWED_ORIGINS`
 - `NORN_SYNC_STEP_MS`

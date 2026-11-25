@@ -5886,7 +5886,6 @@ dependencies = [
  "anyhow",
  "bumpalo",
  "csv",
- "fastrand",
  "jiff",
  "nohash-hasher",
  "once_cell",

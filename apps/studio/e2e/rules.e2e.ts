@@ -220,7 +220,7 @@ async function cell(page: Page, options: CellOptions = {}) {
     if (path.endsWith("/v1/actions")) {
       return url.searchParams.has("objectId") && !options.servesRecord
         ? route.fulfill(notFound)
-        : route.fulfill({ json: { items: [] } })
+        : route.fulfill({ json: { definitionsVersion: 1, items: [] } })
     }
     if (path.endsWith("/v1/objects/docs.ScannedDocument:profile")) {
       const profile = options.profile ?? { rows: 9500, quarantinedRows: 500, approximate: true, scanLimit: 10000 }

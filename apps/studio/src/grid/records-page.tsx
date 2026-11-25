@@ -5,7 +5,7 @@ import { LoadState } from "@/components/load-state"
 import { EmptyState, PageHeader } from "@/components/panel"
 import { Button } from "@/components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { refreshMode } from "@/lib/live-transport"
+import { refreshMode, useMode } from "@/lib/live-transport"
 import type { Concept } from "../lib/catalog.ts"
 import { studioScopeKey, useStudioScope, type StudioScope } from "../lib/definitions.ts"
 import { useCatalog } from "../sources.tsx"
@@ -52,6 +52,10 @@ export function RecordsPage() {
   const scopeRead = useStudioScope()
   const activeScope = scopeRead.data ?? undefined
   const scopeKey = studioScopeKey(activeScope)
+  // A recorded catalog's grid is still bound to the decided mode's workspace when there is one; while
+  // none is decided, a live row's drawer reads nothing (#1740).
+  const mode = useMode()
+  const decided = mode.data?.kind === "live" ? mode.data.scope : undefined
   const concept = catalog?.byName.get(type)
   // A `core.TimeInterval` (through any parent) can be read as a timeline too; the catalog says which types are.
   const timeline = catalog !== undefined && concept !== undefined && offersTimeline(catalog, concept)
@@ -79,7 +83,7 @@ export function RecordsPage() {
                 actions={<Button asChild variant="ghost" size="sm"><Link to="/sources/$concept" params={{ concept: concept.name }}>Definition</Link></Button>} />
               {live
                 ? <ScopedRecordsTabs key={`${concept.name}:${scopeKey}:${initialTab}`} concept={concept} scope={activeScope} scopeKey={scopeKey} initialTab={initialTab} timeline={timeline} />
-                : <RecordsGrid key={concept.name} concept={concept} timeline={timeline} />}
+                : <RecordsGrid key={`${concept.name}:${studioScopeKey(decided)}`} concept={concept} timeline={timeline} scope={decided} mode={mode} />}
             </>}
           </>
         )}

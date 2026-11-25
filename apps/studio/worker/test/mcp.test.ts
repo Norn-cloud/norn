@@ -23,7 +23,7 @@ interface Forwarded { readonly url: string; readonly authorization: string | nul
 
 function stage(mcp = true): Env & { forwarded: Forwarded[] } {
   const db = new Database(":memory:")
-  for (const name of ["0001_better_auth.sql", "0002_workspace_provisioning.sql", "0007_oauth_provider.sql", "0013_oauth_membership_guards.sql"]) db.exec(migration(name))
+  for (const name of ["0001_better_auth.sql", "0002_workspace_provisioning.sql", "0007_oauth_provider.sql", "0013_oauth_membership_guards.sql", "0017_oauth_unscoped_grants.sql"]) db.exec(migration(name))
   const assets = { fetch: async () => new Response("<!doctype html>studio") } as unknown as Fetcher
   const forwarded: Forwarded[] = []
   const host = {
@@ -889,4 +889,42 @@ test("S3 generation isolation: unredeemed codes, legacy grants, prior consents, 
       query: { client_id: clientD, redirect_uri: CLAUDE, scope: "openid", claims: { userinfo: { email: null, name: null } }, code_challenge: pkce().challenge, state: "st-uc" },
     })],
   )).toThrow("oauth.membership_invalid")
+})
+
+test("a session with no active workspace never resolves a grant by falling back to another membership: it must consent again", async () => {
+  const env = stage()
+  const { cookie, user, org } = await person(env, "no-fallback@example.com")
+  // A first, scoped grant for `org` exists.
+  await grant(env, cookie, org)
+  expect((db(env).query(`select count(*) as n from "oauthConsent" where "userId" = ?`).get(user) as { n: number }).n).toBe(1)
+  // With no active workspace, re-authorizing does not silently reuse that grant (the earliest membership): it asks again.
+  db(env).run(`update "session" set "activeOrganizationId" = null where "userId" = ?`, [user])
+  const clientId = (db(env).query(`select "clientId" from "oauthConsent" where "userId" = ?`).get(user) as { clientId: string }).clientId
+  const again = await call(env, authorizeUrl(clientId, pkce().challenge), { headers: { cookie } })
+  expect(again.status).toBe(302)
+  const location = new URL(again.headers.get("location") ?? "", ORIGIN)
+  expect(location.pathname).toBe("/oauth/consent")
+  expect(location.searchParams.has("code")).toBe(false)
+  // Verification resolves strictly in the claimed organization: a blank or foreign one names nobody.
+  const auth = createAuth({ clientIpHeader: "cf-connecting-ip", database: env.AUTH_DB, secret: env.BETTER_AUTH_SECRET, baseURL: ORIGIN, mcp: true })
+  const member = (db(env).query(`select "id" from "member" where "userId" = ?`).get(user) as { id: string }).id
+  expect(await grantActor(auth, { sub: user, [ORG_CLAIM]: org, [MEMBER_CLAIM]: member })).toMatchObject({ orgId: org, memberId: member })
+  expect(await grantActor(auth, { sub: user, [ORG_CLAIM]: "  ", [MEMBER_CLAIM]: member })).toBeNull()
+  expect(await grantActor(auth, { sub: user, [ORG_CLAIM]: "org_elsewhere", [MEMBER_CLAIM]: member })).toBeNull()
+})
+
+test("grants recorded before workspace scoping are withdrawn: the person consents again", () => {
+  const legacy = new Database(":memory:")
+  for (const name of ["0001_better_auth.sql", "0002_workspace_provisioning.sql", "0007_oauth_provider.sql"]) legacy.exec(migration(name))
+  const at = new Date().toISOString()
+  for (const [id, reference] of [["c_scoped", "org_a|m_a"], ["c_bare", "org_a"], ["c_null", null], ["c_empty_member", "org_a|"]] as const) {
+    legacy.run(`insert into "oauthConsent" ("id", "clientId", "userId", "referenceId", "scopes", "createdAt", "updatedAt") values (?, 'client', 'u', ?, '[]', ?, ?)`, [id, reference, at, at])
+    legacy.run(`insert into "oauthRefreshToken" ("id", "token", "clientId", "userId", "referenceId", "expiresAt", "createdAt", "scopes") values (?, ?, 'client', 'u', ?, ?, ?, '[]')`, [`r_${id}`, `t_${id}`, reference, at, at])
+    legacy.run(`insert into "oauthAccessToken" ("id", "token", "clientId", "userId", "referenceId", "expiresAt", "createdAt", "scopes") values (?, ?, 'client', 'u', ?, ?, ?, '[]')`, [`a_${id}`, `ta_${id}`, reference, at, at])
+  }
+  legacy.exec(migration("0013_oauth_membership_guards.sql"))
+  legacy.exec(migration("0017_oauth_unscoped_grants.sql"))
+  expect(legacy.query(`select "id" from "oauthConsent" order by "id"`).all()).toEqual([{ id: "c_scoped" }])
+  expect(legacy.query(`select "id" from "oauthRefreshToken" where "revoked" is null`).all()).toEqual([{ id: "r_c_scoped" }])
+  expect(legacy.query(`select "id" from "oauthAccessToken" where "revoked" is null`).all()).toEqual([{ id: "a_c_scoped" }])
 })

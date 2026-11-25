@@ -219,12 +219,14 @@ impl CellCore {
         Ok(())
     }
 
-    /// Configure the cell's source connections and the variables they read.
+    /// Configure the cell's source connections and the variables they read:
+    /// only the connections of the cell's own scope and the secrets they bind
+    /// (SOURCE-SCOPE-1).
     ///
     /// # Errors
     /// Malformed configuration; the cell then serves without connections.
     pub fn configure_connect(&mut self, config: &str, vars: &str) -> Result<(), String> {
-        self.connect = Some(connect::Connect::new(config, vars)?);
+        self.connect = Some(connect::Connect::new(self.tenant.scope(), config, vars)?);
         Ok(())
     }
 
