@@ -12,10 +12,14 @@
 //! install `host` Functions; nothing here is reachable through definition
 //! admission.
 //!
+//! [`geo`] holds the deterministic geo functions (GEO-1). They are a library
+//! here, not registered built-ins: [`resolve`] answers nothing for them.
+//!
 //! Ring 0: pure, sans-IO and wasm32-portable.
 
 pub mod action;
 pub mod decision;
+pub mod geo;
 
 use norn_ir::function::{
     Capability, DependencyClosure, DeterminismProfile, Digest, EffectfulPolicy, FUNCTION_ABI_V1,
