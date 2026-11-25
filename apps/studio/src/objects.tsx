@@ -81,9 +81,15 @@ export function ObjectPage() {
   const reads = useQuery(untilDecided(decided?.reader.object(name, id), ["object", name, id]))
   const modeError = workspace.kind === "unavailable" ? workspace.error : null
   // The header names the version this read shows and, from the history, the commit that wrote it: a
-  // read again reads both, so neither is left from an earlier read.
+  // read again reads both, so neither is left from an earlier read. It reads the findings again too,
+  // under the reader's own key: a correction can release a held record or settle a finding, and the
+  // header and the Findings panel would otherwise keep the earlier answer while it is fresh (FINDINGS_STALE_MS).
   const queries = useQueryClient()
-  const readAgain = () => { void reads.refetch(); void queries.invalidateQueries({ queryKey: historyQueryPrefix(name, id) }) }
+  const readAgain = () => {
+    void reads.refetch()
+    void queries.invalidateQueries({ queryKey: historyQueryPrefix(name, id) })
+    if (workspace.kind === "live") void queries.invalidateQueries({ queryKey: workspace.reader.findings(name, id).queryKey, exact: true })
+  }
   // Retry decides the mode again (the shell's own retry); the record is read once it is decided,
   // at that mode's scope. An errored read under a decided mode is read again here.
   const retry = () => {
@@ -153,7 +159,7 @@ export function ObjectPage() {
             <Button type="button" variant="ghost" size="sm" disabled={reads.isFetching} onClick={readAgain} title="Read this record from the cell again">
               <RefreshCw className={reads.isFetching ? "animate-spin" : undefined} />Read again
             </Button>
-            <RecordActions objectType={name} id={id} onDone={() => { readAgain(); void review.refetch() }} />
+            <RecordActions objectType={name} id={id} onDone={readAgain} />
           </div>
         )}
       </header>
@@ -248,7 +254,7 @@ export function ObjectPage() {
           </TabsContent>
         </Tabs>
       )}
-      {corrections.sheet(() => { readAgain(); void review.refetch() })}
+      {corrections.sheet(readAgain)}
     </section>
     </RevealScope.Provider>
   )

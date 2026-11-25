@@ -106,8 +106,8 @@ export type ActionCallState<Out, Undo = never, Decision = unknown, Refusal exten
   | { readonly kind: "editing" }
   /** A risky call asks first. */
   | { readonly kind: "confirming" }
-  /** The call is out: the form is locked until it answers. */
-  | { readonly kind: "sending" }
+  /** The call `sent` is out: the form is locked until it answers. */
+  | { readonly kind: "sending"; readonly sent: SentCall }
   /** Sent for approval: nothing committed; the decision waits in the inbox. */
   | { readonly kind: "pending_approval"; readonly decision: Decision }
   | { readonly kind: "committed"; readonly receipt: Out; readonly undo: Undo | null }
@@ -131,7 +131,7 @@ export type ActionCallState<Out, Undo = never, Decision = unknown, Refusal exten
 export interface ActionArms<Out, Undo, Decision, Refusal extends object, R> {
   readonly editing: (state: { readonly kind: "editing" }) => R
   readonly confirming: (state: { readonly kind: "confirming" }) => R
-  readonly sending: (state: { readonly kind: "sending" }) => R
+  readonly sending: (state: { readonly kind: "sending"; readonly sent: SentCall }) => R
   readonly pending_approval: (state: { readonly kind: "pending_approval"; readonly decision: Decision }) => R
   readonly committed: (state: { readonly kind: "committed"; readonly receipt: Out; readonly undo: Undo | null }) => R
   readonly refused: (state: { readonly kind: "refused" } & Refusal) => R
