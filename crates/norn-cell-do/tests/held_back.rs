@@ -417,6 +417,22 @@ impl Cell {
     }
 }
 
+/// The scanned-documents pack's `tools/list` for each role, byte for byte
+/// (MCP-TOOLS-SNAPSHOT-1, #1762): its action tools beside the generic ones,
+/// with and without the definition tools.
+#[test]
+fn the_documents_tools_list_is_byte_for_byte_the_snapshot() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut cell = loaded(&directory.path().join("a.sqlite"));
+    for role in ["admin", "member"] {
+        let message =
+            json!({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {"limit": 100}});
+        let response = cell.call("/v1/mcp", &user(role), &message.to_string());
+        assert_eq!(response.status, 200, "{}", response.body);
+        crate::mcp::tools_list_snapshot(&format!("documents.{role}.json"), &response.body);
+    }
+}
+
 /// The same correction through MCP, as an agent drives it (#520): the held record
 /// and why, from the same routes and policy; the correction refused at 70.00
 /// and committed at 72.00; the actor is the server's to fill, never an input.
