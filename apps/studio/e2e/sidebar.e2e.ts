@@ -59,15 +59,16 @@ test("islands: luma by default, a 64px applet rail, a 256px submenu island and t
   await page.goto("/sources")
   await settled(page)
   await expect.poll(() => page.evaluate(() => ({ skin: document.documentElement.dataset.skin, shell: document.documentElement.dataset.shell }))).toEqual({ skin: "luma", shell: "sidebar" })
-  // Geometry: three islands, 8px apart and 8px from the window, each a rounded glass panel.
+  // Geometry: three islands, 8px apart and 8px from the window, each an opaque rounded panel (luma has
+  // no glass since the monochrome rule, DESIGN.md 19.6; the glass skin keeps it).
   const [r, s, m] = await Promise.all([railIsland(page).boundingBox(), island(page).boundingBox(), main(page).boundingBox()])
   expect([Math.round(r!.x), Math.round(r!.y), Math.round(r!.width)]).toEqual([8, 8, 64])
   expect([Math.round(s!.x), Math.round(s!.width)]).toEqual([80, 256])
   expect(Math.round(m!.x)).toBe(344)
   expect(Math.round(m!.x + m!.width)).toBe(1440 - 8)
   for (const each of [railIsland(page), island(page), main(page)]) {
-    await expect(each).toHaveCSS("border-top-left-radius", "18px")
-    await expect(each).toHaveCSS("backdrop-filter", /blur\(24px\)/)
+    await expect(each).toHaveCSS("border-top-left-radius", "16px")
+    await expect(each).toHaveCSS("backdrop-filter", "none")
   }
   // Two landmarks: the applets, and the open applet's menu.
   await expect(rail(page)).toHaveCount(1)
@@ -512,8 +513,10 @@ test("islands under reduced motion: collapsing, rows and the phone sheet switch 
   expect(await style(sheet, "transition-property")).toBe("none")
 })
 
-test("islands under reduced transparency and forced colours: the glass falls back to opaque luma surfaces with no blur", async ({ page }) => {
+test("islands under reduced transparency and forced colours: the glass skin falls back to opaque surfaces with no blur", async ({ page }) => {
   await recorded(page)
+  // Luma's islands are opaque already (DESIGN.md 19.6); the glass skin is where the fallback matters.
+  await page.addInitScript(() => localStorage.setItem("norn.studio.skin", "glass"))
   const cdp = await page.context().newCDPSession(page)
   await cdp.send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-transparency", value: "reduce" }] })
   await page.goto("/sources")

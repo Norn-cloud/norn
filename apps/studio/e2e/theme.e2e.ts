@@ -319,9 +319,10 @@ for (const scheme of ["light", "dark"] as const) {
     expect(open.panelRadius).toBe(20)
     expect(open.kpiRadius).toBe(20)
     expect(open.kpiWellRadius).toBe(15)
-    // Chrome is monochrome in every skin (DESIGN.md 19.6): open's CTA is ink, not blue.
+    // Chrome is monochrome in every skin (DESIGN.md 19.6): open's CTA is polar's zinc ink, not blue
+    // (a cast of a few units at most; the old blue had its blue channel 60 above the others).
     const [opr, opg, opb] = rgb(open.primaryBg)
-    expect(Math.max(opr, opg, opb) - Math.min(opr, opg, opb)).toBeLessThanOrEqual(4)
+    expect(Math.max(opr, opg, opb) - Math.min(opr, opg, opb)).toBeLessThanOrEqual(8)
   })
 
   test(`theme v4 (${scheme}): keyboard focus stays visible on selected line tabs, the current applet on the rail and the current menu row`, async ({ page }) => {
