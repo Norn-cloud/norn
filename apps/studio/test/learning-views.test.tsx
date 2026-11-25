@@ -4,6 +4,7 @@ import { GitCompareArrows } from "lucide-react"
 import { readFileSync } from "node:fs"
 import { renderToStaticMarkup } from "react-dom/server"
 import { ActionForm } from "../src/actions/action-form.tsx"
+import { engineOf } from "../src/answer-view.tsx"
 import { LearningGate } from "../src/learning/gate.tsx"
 import { listActions } from "../src/lib/actions.ts"
 import { type ActionSummary } from "../../../packages/norn-sdk/src/index.ts"
@@ -427,6 +428,18 @@ test("misfit_by_law ranks by exact ratios (0.41704 beats 0.41701), keeps BigInt 
 
   const badEngine = { ...misfitFixture.misfitByLaw, engine: "unknown" }
   expect(decodeMisfitByLaw(readDocument<Answer>(JSON.stringify(badEngine), "live")).kind).toBe("malformed")
+
+  // D136: both additive "datafusion" and historical "duckdb" decode cleanly, while "data_fusion" fails closed.
+  const datafusionEngine = { ...misfitFixture.misfitByLaw, engine: "datafusion" }
+  const datafusionDecoded = decodeMisfitByLaw(readDocument<Answer>(JSON.stringify(datafusionEngine), "live"))
+  expect(datafusionDecoded.kind === "ok" && datafusionDecoded.data.meta.engine).toBe("datafusion")
+  const duckdbEngine = { ...misfitFixture.misfitByLaw, engine: "duckdb" }
+  const duckdbDecoded = decodeMisfitByLaw(readDocument<Answer>(JSON.stringify(duckdbEngine), "live"))
+  expect(duckdbDecoded.kind === "ok" && duckdbDecoded.data.meta.engine).toBe("duckdb")
+  const snakeDataFusion = { ...misfitFixture.misfitByLaw, engine: "data_fusion" }
+  expect(decodeMisfitByLaw(readDocument<Answer>(JSON.stringify(snakeDataFusion), "live")).kind).toBe("malformed")
+  expect(engineOf({ engine: "datafusion" })).toBe("Computed by DataFusion")
+  expect(engineOf({ engine: "duckdb" })).toBe("Computed by DuckDB")
 
   const badSuppressed = structuredClone(misfitFixture.misfitByLaw)
   badSuppressed.rows = { bad: { bucket: ["demo.law", "override"], totals: [1, 2], value: 0.5, suppressed: true, members: {} } as never }
