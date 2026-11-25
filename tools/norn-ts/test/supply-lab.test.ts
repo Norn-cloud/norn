@@ -129,9 +129,11 @@ test("supply_lab_workspace: init, dev and seed admit the pack, seed the referenc
     expect((await http(ready.actor, "POST", "/v1/actions/supply.po.create", { input: order, idempotencyKey: "live-3" })).status).toBe(403)
     expect((await http("planner:amal", "POST", "/v1/actions/supply.po.create", { input: order, idempotencyKey: "live-4" })).status).toBe(200)
 
-    // The questions answer over the seeded data, through the cell's own question route.
-    const answer = await http("clerk:hana", "GET", "/v1/questions/supply.movement_volume_weekly/answer")
-    expect(answer.status).toBe(200)
+    // An installed question answers over the seeded data, as Studio asks it (`POST /v1/questions:evaluate`).
+    const saved = await http("clerk:hana", "GET", "/v1/definitions/supply.movement_volume_weekly")
+    expect(saved.status).toBe(200)
+    const answer = await http("clerk:hana", "POST", "/v1/questions:evaluate", { question: saved.body.payload })
+    expect({ status: answer.status, rows: Object.keys(answer.body.rows ?? {}).length > 0 }).toEqual({ status: 200, rows: true })
     // Seeding again commits nothing new.
     const again = JSON.parse(spawnSync(process.execPath, [CLI, "seed", "--json"], { cwd: dir, env, encoding: "utf8", timeout: 300_000 }).stdout)
     expect(again).toMatchObject({ ok: true, calls: calls.length })
