@@ -9,7 +9,7 @@ import { INTERVAL_ACTIONS, INTERVAL_ARTIFACTS, intervalRecords, type IntervalRec
  *
  * `pointed` serves input refusals with a diagnostic per field at `/input/<field>` (nested pointers
  * included), the refusal shape requested of the backend lane; the served route sends one
- * `action.invalid_input` without pointers today (src/lib/actions.ts).
+ * `action.invalid_input` without pointers today (packages/norn-sdk/src/client.ts).
  */
 
 interface Clause { property: string; op: string; value?: unknown }
@@ -111,16 +111,16 @@ export async function intervalCell(page: Page, options: { readonly pointed?: boo
   await page.route("**/api/host/v1/actions**", async (route: Route) => {
     const request = route.request()
     const url = new URL(request.url())
-    if (!scoped(url)) return route.fulfill({ status: 403, json: { code: "authz.denied", message: "the action request is not authorized" } })
+    if (!scoped(url)) return route.fulfill({ status: 403, json: { format: "norn/refusal@2", code: "authz.denied", category: "permission", retryable: false, reason: null, message: "the action request is not authorized", explanation: "" } })
     if (request.method() === "GET") {
       const kind = url.searchParams.get("objectKind")
-      return route.fulfill({ json: { items: INTERVAL_ACTIONS.filter((a) => kind === null || a.objectKind === kind) } })
+      return route.fulfill({ json: { definitionsVersion: 1, items: INTERVAL_ACTIONS.filter((a) => kind === null || a.objectKind === kind) } })
     }
     const actionId = decodeURIComponent(url.pathname.split("/v1/actions/")[1] ?? "")
     const body = request.postData() ?? ""
     calls.push({ actionId, body })
     const action = INTERVAL_ACTIONS.find((a) => a.actionId === actionId)
-    if (action === undefined) return route.fulfill({ status: 403, json: { code: "authz.denied", message: "the action request is not authorized" } })
+    if (action === undefined) return route.fulfill({ status: 403, json: { format: "norn/refusal@2", code: "authz.denied", category: "permission", retryable: false, reason: null, message: "the action request is not authorized", explanation: "" } })
     const { input } = JSON.parse(body) as { input: Record<string, unknown> }
     const problems: { code: string; message: string; span: { pointer: string } }[] = []
     const schema = action.inputSchema as { required: readonly string[]; properties: Record<string, { format?: string; title?: string }> }
@@ -138,8 +138,8 @@ export async function intervalCell(page: Page, options: { readonly pointed?: boo
     }
     if (problems.length > 0) {
       return route.fulfill({ status: 400, json: options.pointed
-        ? { code: "action.invalid_input", category: "invalid", message: "the input does not satisfy the declared schema", explanation: "", diagnostics: problems.map((p) => ({ ...p, severity: "error" })) }
-        : { code: "action.invalid_input", category: "invalid", message: "the input does not satisfy the declared schema", explanation: "" } })
+        ? { format: "norn/refusal@2", code: "action.invalid_input", category: "invalid", retryable: false, reason: null, message: "the input does not satisfy the declared schema", explanation: "", diagnostics: problems.map((p) => ({ ...p, severity: "error" })) }
+        : { format: "norn/refusal@2", code: "action.invalid_input", category: "invalid", retryable: false, reason: null, message: "the input does not satisfy the declared schema", explanation: "" } })
     }
     const id = String(input["id"])
     const existing = records.find((r) => r.objectType === action.objectKind && r.id === id)

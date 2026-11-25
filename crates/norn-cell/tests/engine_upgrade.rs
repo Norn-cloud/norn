@@ -233,6 +233,36 @@ fn add_empty_automation_rows(image: &mut Value) {
     );
 }
 
+/// RECEIPT-STORE-1 adds the retained Function receipt table, empty on every
+/// older cell. Older engines ignore it, so it needs no storage version.
+fn add_function_receipt_table(image: &mut Value) {
+    image["schema"]
+        .as_array_mut()
+        .expect("schema")
+        .push(serde_json::json!({
+            "type": "table",
+            "name": "_norn_function_receipt",
+            "table": "_norn_function_receipt",
+            "sql": "CREATE TABLE \"_norn_function_receipt\" (\n  \"reference\" TEXT NOT NULL PRIMARY KEY,\n  \"scope\" TEXT NOT NULL,\n  \"world\" TEXT NOT NULL,\n  \"command_id\" TEXT NOT NULL,\n  \"generation\" INTEGER NOT NULL,\n  \"retained_at\" INTEGER NOT NULL,\n  \"body\" TEXT NOT NULL\n)",
+        }));
+    image["tables"].as_object_mut().expect("tables").insert(
+        "_norn_function_receipt".to_owned(),
+        serde_json::json!({
+            "columns": [
+                "rowid",
+                "reference",
+                "scope",
+                "world",
+                "command_id",
+                "generation",
+                "retained_at",
+                "body"
+            ],
+            "rows": [],
+        }),
+    );
+}
+
 /// The marking history storage version (storage version 5, #1547) adds the
 /// partial index of the version marking labels that are not empty to every
 /// older cell; no row changes.
@@ -702,6 +732,7 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
     add_marking_history_index(&mut expected);
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
+    add_function_receipt_table(&mut expected);
     apply_v8_sparse_markings_upgrade(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
@@ -833,6 +864,7 @@ fn a_storage_v2_cell_opens_on_this_engine_with_identical_receipts() {
     add_marking_history_index(&mut expected);
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
+    add_function_receipt_table(&mut expected);
     apply_v8_sparse_markings_upgrade(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
@@ -935,6 +967,7 @@ fn a_storage_v3_cell_opens_on_this_engine_with_identical_receipts() {
     add_marking_history_index(&mut expected);
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
+    add_function_receipt_table(&mut expected);
     apply_v8_sparse_markings_upgrade(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
@@ -1007,6 +1040,7 @@ fn a_storage_v4_cell_opens_on_this_engine_with_identical_receipts() {
     add_marking_history_index(&mut expected);
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
+    add_function_receipt_table(&mut expected);
     apply_v8_sparse_markings_upgrade(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
@@ -1079,6 +1113,7 @@ fn a_storage_v5_cell_opens_on_this_engine_with_identical_receipts() {
     expected["storage"] = STORAGE_VERSION.into();
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
+    add_function_receipt_table(&mut expected);
     apply_v8_sparse_markings_upgrade(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
@@ -1179,6 +1214,7 @@ fn upgrade_v6_with_checkpoint(path: &Path) -> CellStore<NativeEngine> {
     stamp_row[2] = stamp.into();
     expected["storage"] = STORAGE_VERSION.into();
     add_automation_tables(&mut expected);
+    add_function_receipt_table(&mut expected);
     apply_v8_sparse_markings_upgrade(&mut expected);
     by_name(&mut expected);
     let mut actual = engine_fixture::image_of(path);
@@ -1860,6 +1896,7 @@ fn a_storage_v7_cell_opens_on_this_engine_and_backfills_nonempty_slots()
     drop(store);
 
     let mut expected = image;
+    add_function_receipt_table(&mut expected);
     apply_v8_marked_fixture_upgrade(&mut expected)?;
     by_name(&mut expected);
     let mut actual = engine_fixture::image_of(&path);

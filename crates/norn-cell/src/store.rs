@@ -3264,9 +3264,13 @@ impl<E: SqlEngine> CellStore<E> {
             if prior_receipt.is_none() && effective_batch.idempotency_key.is_some() {
                 self.scrub.borrow().refuse_unproven_miss()?;
             }
-            crate::quantity::clock_floor(&self.conn)?;
+            let floor = crate::quantity::clock_floor(&self.conn)?;
             // Reconcile host time only after the transaction-local retry lookup.
             let mut reconciled = effective_batch.clone();
+            // RECEIPT-CONSUME-1: a host commit consuming a Function result follows the floor.
+            if matches!(origin, CommitOrigin::Host) && prior_receipt.is_none() && crate::function_receipt::follows_floor(&self.conn, &reconciled)? {
+                reconciled.logical_time = reconciled.logical_time.max(floor);
+            }
             if let Some(prior) = &prior_receipt
                 && prior.body.quantity.is_some() != reconciled.quantity.is_some()
             {
@@ -3440,11 +3444,13 @@ impl<E: SqlEngine> CellStore<E> {
             }
             crate::flow_run::check_starts(&writer.reader(), effective_batch)?;
             crate::decision_ledger::check(&writer.reader(), effective_batch)?;
-            let watch = automation_outbox::capture_before(&writer.reader(), effective_batch)?;
+            let watch = automation_outbox::capture_before(
+                &writer.reader(), effective_batch, automation_outbox::preimage_limit(retained),
+            )?;
             let written = writer.apply_writes()?;
             crate::flow_run::apply(&writer.reader(), effective_batch, &written, commit_seq)?;
             crate::decision_ledger::apply(&writer.reader(), effective_batch, commit_seq)?;
-            let automation_continuation = automation_outbox::record(
+            let automation = automation_outbox::record(
                 &writer.reader(), effective_batch, &written, commit_seq, version, &watch, retained,
             )?;
             let quantity_result = writer.apply_quantity()?;
@@ -3541,7 +3547,7 @@ impl<E: SqlEngine> CellStore<E> {
                         Some(crate::engine_release::STORAGE_VERSION)
                     }
                 },
-                automation_continuation,
+                automation,
                 entries,
             )?;
             probe(CommitPoint::ReceiptWritten)?;

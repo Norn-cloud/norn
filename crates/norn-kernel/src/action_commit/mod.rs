@@ -514,8 +514,13 @@ where
     let mut consumes = prepared.consumes;
     let receipt_delivery = match receipt {
         Some(acceptance) => {
-            let delivery =
-                consume_receipt::<H::Error>(consumes.is_some(), &acceptance, &writes, &mut reads)?;
+            let delivery = consume_receipt::<H::Error>(
+                catalog,
+                consumes.is_some(),
+                &acceptance,
+                &writes,
+                &mut reads,
+            )?;
             consumes = Some(delivery.clone());
             Some(delivery)
         }
@@ -564,6 +569,15 @@ where
                 receipt,
                 record,
                 target_version,
+            })
+        }
+        // RECEIPT-CONSUME-1: the host refused the result inside the commit
+        // (revoked command authority or a passed deadline); nothing applied.
+        Err(CommitError::ReceiptNotAccepted { consumed })
+            if receipt_delivery.as_ref() == Some(&consumed) =>
+        {
+            Err(ActionRefusal::ReceiptRefused {
+                reason: crate::receipt_binding::ReceiptRefusal::NotAccepted,
             })
         }
         Err(error) if error.is_invariant_refusal() => Err(ActionRefusal::Decision(
@@ -783,6 +797,7 @@ fn precondition_read_refusal<X>(
         | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }
+        | CommitError::ReceiptNotAccepted { .. }
         | CommitError::DuplicateLink { .. }
         | CommitError::IdentifierTooLong { .. }
         | CommitError::LinkConflict { .. }
@@ -824,6 +839,7 @@ fn precondition_read_refusal<X>(
         | CommitError::OwnedRowsProtected { .. }
         | CommitError::DuplicateKey { .. }
         | CommitError::NotPending { .. }
+        | CommitError::ReceiptNotAccepted { .. }
         | CommitError::Conflict { .. }
         | CommitError::DuplicateLink { .. }
         | CommitError::IdentifierTooLong { .. }
