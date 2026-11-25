@@ -879,11 +879,12 @@ fn a_checkpoint_rewritten_with_the_history_it_covers_is_never_trusted() {
         open_unkeyed(&path).is_err(),
         "an unkeyed open admitted the rewritten history"
     );
-    // The rewritten receipt also no longer rebuilds commit 7's residue
-    // journal row (EXPORT-RESIDUE-1); either refusal is the history's own.
+    // Commit 7's journal row is a residue rebuilt from that receipt
+    // (EXPORT-RESIDUE-1): the open refuses at its record before the ledger
+    // pass reaches the time check.
     let error = refused(&path);
-    assert!(
-        error.contains("logical time") || error.contains("export journal record does not verify"),
+    assert_eq!(
+        error, "ledger corrupt at seq 7: export journal record does not verify",
         "{error}"
     );
 }

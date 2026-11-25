@@ -380,20 +380,21 @@ impl ResidueCursor {
     }
 }
 
-/// Whether `commit_seq`'s journal row is a residue whose receipt row is gone:
-/// its record can no longer be rebuilt, so a diagnosis of the provable
-/// journal prefix (`restore`) ends before it, as at a lost row.
+/// Whether `commit_seq`'s journal row is a residue. A diagnosis of the
+/// provable journal prefix (`restore`) ends before a residue its source rows
+/// no longer rebuild, as at a lost journal row.
 #[cfg(feature = "native")]
-pub(crate) fn lost_with_its_receipt(
-    engine: &impl SqlEngine,
-    commit_seq: u64,
-) -> Result<bool, CellError> {
-    let lost: Option<i64> = engine.query_optional(
-        r#"SELECT substr(j."record",1,27)='norn.cell.export-residue/1:' AND NOT EXISTS (SELECT 1 FROM "_norn_receipt" AS r WHERE r."commit_seq"=j."commit_seq") FROM "_norn_export_journal" AS j WHERE j."commit_seq"=?1"#,
-        params![to_i64(commit_seq, "commit_seq")?],
+pub(crate) fn is_residue(engine: &impl SqlEngine, commit_seq: u64) -> Result<bool, CellError> {
+    let residue: Option<i64> = engine.query_optional(
+        r#"SELECT substr("record",1,?2)=?3 FROM "_norn_export_journal" WHERE "commit_seq"=?1"#,
+        params![
+            to_i64(commit_seq, "commit_seq")?,
+            i64::try_from(PREFIX.len()).map_err(|_overflow| CellError::OutOfRange("prefix"))?,
+            PREFIX
+        ],
         |row| row.get(0),
     )?;
-    Ok(lost == Some(1))
+    Ok(residue == Some(1))
 }
 
 /// The hash-verified receipt row of `commit_seq`.
@@ -413,9 +414,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_prefix_is_the_length_the_byte_bound_skips() {
-        // `payload_storage::EXPORT_BYTES` reads the residue's context address
-        // from `substr("record", 28)`.
-        assert_eq!(PREFIX.len(), 27);
+    fn the_byte_bound_names_the_residue_prefix_and_its_length() {
+        // `payload_storage::EXPORT_BYTES` is a SQL literal: it must test the
+        // exact prefix at its exact length and read the context address
+        // right after it.
+        let bytes = crate::payload_storage::EXPORT_BYTES;
+        let test = format!(
+            r#"substr("_norn_export_journal"."record",1,{})='{PREFIX}'"#,
+            PREFIX.len()
+        );
+        let address = format!(
+            r#"json_extract(substr("_norn_export_journal"."record",{}),'$.context')"#,
+            PREFIX.len().saturating_add(1)
+        );
+        assert!(bytes.contains(&test), "{bytes}");
+        assert!(bytes.contains(&address), "{bytes}");
+        assert_eq!(bytes.matches("export-residue").count(), 1);
     }
 }

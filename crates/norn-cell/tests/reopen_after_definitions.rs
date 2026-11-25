@@ -256,7 +256,15 @@ proptest! {
 /// cut too, never as a fully proven history.
 #[tokio::test]
 async fn a_refused_cell_is_diagnosed_and_restored_to_its_proven_prefix() {
-    for damage in ["snapshot", "journal", "receipt", "all-logs"] {
+    for damage in [
+        "snapshot",
+        "journal",
+        "receipt",
+        "altered-receipt",
+        "ledger-tail",
+        "altered-event",
+        "all-logs",
+    ] {
         refused_cell_restores(damage).await;
     }
 }
@@ -281,6 +289,14 @@ async fn refused_cell_restores(damage: &str) {
     // Or: the journal lost its last record, so a restore can rebuild no
     // further than commit 3.
     let raw = rusqlite::Connection::open(&path).expect("operator seam");
+    let residue: String = raw
+        .query_row(
+            "SELECT record FROM _norn_export_journal WHERE commit_seq = 4",
+            [],
+            |row| row.get(0),
+        )
+        .expect("journal row");
+    assert!(residue.starts_with("norn.cell.export-residue/1:"));
     if damage == "snapshot" {
         raw.execute(
             "UPDATE _norn_fact_values SET hash = ?1 WHERE commit_seq = 4",
@@ -294,6 +310,23 @@ async fn refused_cell_restores(damage: &str) {
         // Or the receipts lost their last row.
         raw.execute("DELETE FROM _norn_receipt WHERE commit_seq = 4", [])
             .expect("tamper");
+    } else if damage == "altered-receipt" {
+        // Commit 4's journal row is a residue (EXPORT-RESIDUE-1): each change
+        // to a row it is rebuilt from cuts the provable journal there too.
+        raw.execute(
+            "UPDATE _norn_receipt SET receipt = replace(receipt, '\"logicalTime\":22', '\"logicalTime\":23') WHERE commit_seq = 4",
+            [],
+        )
+        .expect("tamper");
+    } else if damage == "ledger-tail" {
+        raw.execute("DELETE FROM _norn_ledger WHERE commit_seq = 4", [])
+            .expect("tamper");
+    } else if damage == "altered-event" {
+        raw.execute(
+            "UPDATE _norn_ledger SET event = replace(event, '\"c\"', '\"z\"') WHERE commit_seq = 4",
+            [],
+        )
+        .expect("tamper");
     } else {
         // Or all three logs lost commit 4 together; the clock still names it.
         for table in ["_norn_receipt", "_norn_ledger", "_norn_export_journal"] {
@@ -310,9 +343,9 @@ async fn refused_cell_restores(damage: &str) {
     let diagnosis = CellStore::diagnose_history(&path).expect("diagnosis");
     assert_eq!(diagnosis.head_commit, 4, "{damage}");
     assert_eq!(diagnosis.proven_through, 3, "{damage}");
-    // Commit 4's journal row is a residue rebuilt from its receipt
-    // (EXPORT-RESIDUE-1), so a lost receipt ends the journal there too.
-    if damage == "receipt" {
+    // Commit 4's journal row is a residue rebuilt from its receipt and ledger
+    // span (EXPORT-RESIDUE-1), so a lost or changed one ends the journal there.
+    if matches!(damage, "receipt" | "altered-receipt" | "altered-event") {
         assert_eq!(diagnosis.journal_commits, 3);
         let unproven = diagnosis
             .first_unproven
@@ -322,7 +355,7 @@ async fn refused_cell_restores(damage: &str) {
             (unproven.commit_seq, unproven.op.as_deref()),
             (4, Some("created"))
         );
-    } else if damage == "journal" || damage == "all-logs" {
+    } else if matches!(damage, "journal" | "ledger-tail" | "all-logs") {
         assert_eq!(diagnosis.journal_commits, 3);
         assert_eq!(diagnosis.first_unproven, None);
     } else {

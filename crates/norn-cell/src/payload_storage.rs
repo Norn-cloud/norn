@@ -362,8 +362,8 @@ struct Packed {
 /// A journal row's logical byte bound. A residue row (EXPORT-RESIDUE-1) is
 /// also charged every row it is rebuilt from: its receipt, each ledger entry
 /// with its referenced body, and its context, with a per-entry allowance for
-/// the field names the rebuilt record spells out, and twice the raw DDL
-/// for the escapes its JSON string takes.
+/// the field names the rebuilt record spells out, and six times the raw DDL:
+/// the longest JSON escape of one byte (`\u00XX`).
 pub(crate) const EXPORT_BYTES: &str = r#"(octet_length("_norn_export_journal"."record") + COALESCE((
     SELECT SUM(octet_length(b."body")) FROM "_norn_export_payload" AS p
     JOIN "_norn_payload" AS b ON b."hash"=p."hash"
@@ -380,7 +380,7 @@ pub(crate) const EXPORT_BYTES: &str = r#"(octet_length("_norn_export_journal"."r
     FROM "_norn_ledger" AS l WHERE l."commit_seq"="_norn_export_journal"."commit_seq"
 ),0) + COALESCE((
     SELECT octet_length(c."store_format") + octet_length(c."ddl_hash") + octet_length(c."model_hash")
-        + 2 * octet_length(c."ddl_sql") + octet_length(c."bindings")
+        + 6 * octet_length(c."ddl_sql") + octet_length(c."bindings")
     FROM "_norn_export_context" AS c
     WHERE c."hash"=json_extract(substr("_norn_export_journal"."record",28),'$.context')
 ),0) ELSE 0 END)"#;

@@ -483,12 +483,16 @@ fn a_receipt_below_the_exact_integer_range_is_refused_on_reopen() {
 
 #[test]
 fn orphan_ledger_events_are_refused_on_reopen() {
-    // Dropping receipt 2 leaves events 4 and 5 without a receipt, and commit
-    // 2's residue journal row without the receipt it is rebuilt from
-    // (EXPORT-RESIDUE-1): whichever the open reads first refuses it.
+    // Dropping receipt 2 leaves commit 2's residue journal row without the
+    // receipt it is rebuilt from (EXPORT-RESIDUE-1), and the open refuses it
+    // there; `orphan_ledger_events_without_a_journal_residue_are_refused`
+    // isolates the events left without a receipt.
     let reopened = reopen_after("DELETE FROM \"_norn_receipt\" WHERE \"commit_seq\" = 2");
     assert!(
-        matches!(reopened, Err(CellError::LedgerCorrupt { seq: 2 | 4, .. })),
+        matches!(
+            &reopened,
+            Err(CellError::LedgerCorrupt { seq: 2, reason }) if reason.contains("receipt row is missing")
+        ),
         "{reopened:?}"
     );
     // Moving an event to another commit breaks its receipt's span.
@@ -717,4 +721,38 @@ fn a_store_binding_is_checked_on_every_later_bind() {
         Err(CellError::BindingMismatch { .. })
     ));
     store.bind("scope", "org_demo/dev").expect("same binding");
+}
+
+/// The ledger's own guard: with commit 2's journal row a self-contained
+/// record again (no residue to rebuild from the receipt), dropping receipt 2
+/// leaves events 4 and 5 without a receipt and the ledger pass refuses them.
+#[test]
+fn orphan_ledger_events_without_a_journal_residue_are_refused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("cell.sqlite");
+    let mut store = CellStore::open(&path, model(), StoreOptions::default()).expect("opens");
+    store.commit(&batch(1, 3)).expect("commits");
+    store.commit(&batch(2, 2)).expect("commits");
+    let record = store
+        .export_record(2)
+        .expect("record reads")
+        .expect("record exists");
+    drop(store);
+    let raw = rusqlite::Connection::open(&path).expect("raw open");
+    raw.execute(
+        "UPDATE \"_norn_export_journal\" SET \"record\" = ?1 WHERE \"commit_seq\" = 2",
+        [serde_json::to_string(&record).expect("record text")],
+    )
+    .expect("inline record");
+    raw.execute("DELETE FROM \"_norn_receipt\" WHERE \"commit_seq\" = 2", [])
+        .expect("tampers");
+    drop(raw);
+    let reopened = CellStore::open(&path, model(), StoreOptions::default());
+    assert!(
+        matches!(
+            &reopened,
+            Err(CellError::LedgerCorrupt { seq: 4, reason }) if reason == "ledger events without a receipt"
+        ),
+        "{reopened:?}"
+    );
 }
