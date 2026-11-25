@@ -37,8 +37,6 @@ def _sibling(name, directory=None):
     return module
 
 coverage_manifest = _sibling("coverage_manifest")
-_test_migrate_registry_pr = _sibling("test_migrate_registry_pr")
-MigrationTests = _test_migrate_registry_pr.MigrationTests
 _proof_enrollment = _sibling("proof_enrollment")
 ROOT = _proof_enrollment.ROOT
 discover_sources = _proof_enrollment.discover_sources
@@ -343,8 +341,8 @@ class AffectedPlanTests(unittest.TestCase):
         expected = ["test/" + value for value in self.full["shard"]]
         expected += ["phase/" + value for value in self.full["phase"]]
         self.assertEqual(sorted(task for bundle in self.full["bundle"] for task in bundle["tasks"]), sorted(expected))
-        # Each bundle is one Boat start: the full plan fills the eight-bundle budget exactly.
-        self.assertEqual(len(self.full["bundle"]), 8)
+        # Each bundle is one Boat start: the full plan fills the six-bundle budget exactly.
+        self.assertEqual(len(self.full["bundle"]), 6)
         self.assertTrue(all(len(bundle["tasks"]) >= 2 for bundle in self.full["bundle"]))
         reordered = copy.deepcopy(self.full)
         reordered["shard"].reverse()

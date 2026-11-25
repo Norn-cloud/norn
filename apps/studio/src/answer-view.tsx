@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query"
-import { NO_DATA_CELL } from "@/lib/definitions"
+import { NO_DATA_CELL, type StudioScope } from "@/lib/definitions"
 import { Link } from "@tanstack/react-router"
 import { useEffect, useState, type ReactNode } from "react"
 import { ChartLine, Clock, Cpu, Database, Ellipsis, GitCommitHorizontal, Info, Rows3, Split } from "lucide-react"
@@ -56,10 +56,16 @@ function amounts(read: Read<Trace>, index: number) {
 export type FetchTrace = (lineageRef: string, bucket: string) => Promise<LiveRead<Trace>>
 
 /**
- * Which engine computed the answer, as the cell reports it: DuckDB when the cell could lower the
- * plan to it, the cell's maintained totals, or its own exact engine. The figures are exact either way.
+ * Which engine computed the answer, as the cell reports it: DataFusion or DuckDB when the cell
+ * could lower the plan to it, the cell's maintained totals, or its own exact engine. The figures
+ * are exact either way.
  */
-const ENGINES: Readonly<Record<string, string>> = { duckdb: "Computed by DuckDB", cell: "Computed by the cell's exact engine", ivm: "Read from the cell's maintained totals" }
+const ENGINES: Readonly<Record<string, string>> = {
+  datafusion: "Computed by DataFusion",
+  duckdb: "Computed by DuckDB",
+  cell: "Computed by the cell's exact engine",
+  ivm: "Read from the cell's maintained totals",
+}
 export const engineOf = (answer: unknown): string | undefined => {
   const engine = (answer as { engine?: unknown } | null)?.engine
   return typeof engine === "string" ? ENGINES[engine] ?? `Computed by ${engine}` : undefined
@@ -201,7 +207,7 @@ const changes = (count: number) => `${count} committed ${count === 1 ? "change" 
  * latest bucket, the chart, every bucket, and each bucket's records. Used for
  * published questions and for questions built and run in Studio alike.
  */
-export function AnswerView({ read, title, unit, heading = "h2", link = false, refusal, fetchTrace, onStale, openBucket, total }: {
+export function AnswerView({ read, title, unit, heading = "h2", link = false, refusal, fetchTrace, onStale, openBucket, total, originScope }: {
   readonly read: QuestionAnswer
   /** A total the cell answered for the whole window (a separate question), shown beside the lead: never added up here. */
   readonly total?: { readonly label: string; readonly value: string }
@@ -221,6 +227,8 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
   readonly fetchTrace?: FetchTrace
   /** A bucket whose records open at once: a tile's number asked for its trace. */
   readonly openBucket?: string
+  /** Originating workspace scope so follow-up drills and catalog reads stay pinned to this workspace. */
+  readonly originScope?: StudioScope | null
 }) {
   const question = read.question.document
   const answer = read.answer.document
@@ -344,7 +352,7 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
                 </TableCell>
                 {ratio && <TableCell className="text-right text-muted-foreground tabular-nums max-sm:hidden">{bucket.suppressed ? "" : `${bucket.totals.map(groupDigits).join(" / ")} = ${groupDigits(bucket.value)}`}</TableCell>}
                 <TableCell className="text-right text-muted-foreground tabular-nums max-sm:hidden">{bucket.members.length}</TableCell>
-                <TableCell className="w-10 p-1 text-right"><DrillMenu bucket={bucket} question={question} live={live} onRecords={() => setOpen(bucket)} onDrill={setDrill} /></TableCell>
+                <TableCell className="w-10 p-1 text-right"><DrillMenu bucket={bucket} question={question} live={live} originScope={originScope} onRecords={() => setOpen(bucket)} onDrill={setDrill} /></TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -369,7 +377,7 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
               <SheetTitle>{named}, {drill.label.charAt(0).toLowerCase() + drill.label.slice(1)}</SheetTitle>
               <SheetDescription>A question derived from this answer, answered by the cell.</SheetDescription>
             </SheetHeader>
-            <div className="px-4 pb-6"><AskedAnswer question={drill.question} title={named} unit={unit} declared={read} /></div>
+            <div className="px-4 pb-6"><AskedAnswer question={drill.question} title={named} unit={unit} declared={read} scope={originScope} /></div>
           </>}
         </SheetContent>
       </Sheet>
@@ -378,16 +386,17 @@ export function AnswerView({ read, title, unit, heading = "h2", link = false, re
 }
 
 /** The cell's question catalog, for the properties a drill may break an answer out by. */
-const readQuestionCatalog = () => cellRead<{ readonly objectTypes: readonly { readonly name: string; readonly properties: readonly CatalogProperty[] }[] }>("/v1/questions:catalog", "The question catalog is")
+const readQuestionCatalog = (boundScope?: StudioScope | null) => cellRead<{ readonly objectTypes: readonly { readonly name: string; readonly properties: readonly CatalogProperty[] }[] }>("/v1/questions:catalog", "The question catalog is", {}, undefined, boundScope)
 
 /**
  * One bucket's drill menu: its records with their receipts, then each question derived from it
  * (break out by a property the cell's catalog declares). A recorded snapshot offers only its records.
  */
-function DrillMenu({ bucket, question, live, onRecords, onDrill }: {
+function DrillMenu({ bucket, question, live, originScope, onRecords, onDrill }: {
   readonly bucket: Bucket
   readonly question: Question
   readonly live: boolean
+  readonly originScope?: StudioScope | null
   readonly onRecords: () => void
   readonly onDrill: (drill: Drill) => void
 }) {
@@ -399,16 +408,17 @@ function DrillMenu({ bucket, question, live, onRecords, onDrill }: {
       <DropdownMenuContent align="end" className="min-w-56 rounded-node border-node-border shadow-float" onClick={(event) => event.stopPropagation()}>
         <DropdownMenuLabel>{bucket.label}</DropdownMenuLabel>
         <DropdownMenuItem onSelect={onRecords}><Rows3 />See the {bucket.members.length} {bucket.members.length === 1 ? "record" : "records"}</DropdownMenuItem>
-        {live && <><DropdownMenuSeparator /><DrillItems bucket={bucket} question={question} onDrill={onDrill} /></>}
+        {live && <><DropdownMenuSeparator /><DrillItems bucket={bucket} question={question} originScope={originScope} onDrill={onDrill} /></>}
       </DropdownMenuContent>
     </DropdownMenu>
   )
 }
 
 /** The questions derived from one bucket, read from the cell's catalog only once its menu opens. */
-function DrillItems({ bucket, question, onDrill }: { readonly bucket: Bucket; readonly question: Question; readonly onDrill: (drill: Drill) => void }) {
+function DrillItems({ bucket, question, originScope, onDrill }: { readonly bucket: Bucket; readonly question: Question; readonly originScope?: StudioScope | null; readonly onDrill: (drill: Drill) => void }) {
+  const scopeKey = originScope ? `${originScope.orgId}:${originScope.environmentId}` : ""
   // Its own key: ["question-catalog"] is the Worker's builder catalog, a different document.
-  const catalog = useQuery({ queryKey: ["cell-question-catalog"], queryFn: readQuestionCatalog, retry: false, staleTime: 60_000 })
+  const catalog = useQuery({ queryKey: ["cell-question-catalog", scopeKey], queryFn: () => readQuestionCatalog(originScope), retry: false, staleTime: 60_000 })
   const properties = catalog.data?.document.objectTypes.find(({ name }) => name === question.objectSet)?.properties ?? []
   const drills = bucket.suppressed ? [] : breakOuts(question, bucket, properties)
   return <>
@@ -423,7 +433,7 @@ function DrillItems({ bucket, question, onDrill }: { readonly bucket: Bucket; re
  * A question asked of the cell as soon as it is shown, answered, refused, or why it was not run. The
  * answer is read with `declared`'s metric and type declarations.
  */
-export function AskedAnswer({ question, title, unit, declared, heading = "h3", total, onSettled, placeholder }: {
+export function AskedAnswer({ question, title, unit, declared, heading = "h3", total, onSettled, placeholder, scope: boundScope }: {
   readonly question: Question
   readonly title: string
   readonly unit?: string | null
@@ -434,8 +444,11 @@ export function AskedAnswer({ question, title, unit, declared, heading = "h3", t
   readonly onSettled?: () => void
   /** What shows while the cell answers (a figure the page already has), instead of "Asking the cell…". */
   readonly placeholder?: ReactNode
+  /** Originating workspace scope so cache keys, evaluations, and traces stay bound to this workspace. */
+  readonly scope?: StudioScope | null
 }) {
-  const run = useQuery({ queryKey: ["asked", JSON.stringify(question)], queryFn: () => evaluateQuestion(question), retry: false, staleTime: 30_000 })
+  const scopeKey = boundScope ? `${boundScope.orgId}:${boundScope.environmentId}` : ""
+  const run = useQuery({ queryKey: ["asked", scopeKey, JSON.stringify(question)], queryFn: () => evaluateQuestion(question, undefined, boundScope), retry: false, staleTime: 30_000 })
   useEffect(() => { if (!run.isPending) onSettled?.() }, [run.isPending, onSettled])
   const result = run.data
   if (run.isPending) {
@@ -452,6 +465,6 @@ export function AskedAnswer({ question, title, unit, declared, heading = "h3", t
   if (result.kind === "not-a-question") return <div role="status" className="space-y-1 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">{result.findings.map(({ code, message }) => <div key={`${code}:${message}`}><span className="font-medium">{message}</span> <span className="font-mono text-xs text-muted-foreground">{code}</span></div>)}</div>
   if (result.kind !== "answer") return <p role="status" className="text-sm text-muted-foreground">{result.kind === "too-large" ? result.message : result.kind === "bad-request" ? result.message : "The cell did not answer."}</p>
   const read: QuestionAnswer = { ...declared, question: readDocument<Question>(JSON.stringify(question), "live"), answer: result.read }
-  return <AnswerView read={read} title={title} unit={unit} heading={heading} total={total} onStale={() => void run.refetch()}
-    fetchTrace={(lineageRef, bucket) => traceQuestion(question, lineageRef, bucket, undefined, { knownAsOf: result.read.document.knownAsOf, nowMs: result.read.document.nowMs })} />
+  return <AnswerView read={read} title={title} unit={unit} heading={heading} total={total} originScope={boundScope} onStale={() => void run.refetch()}
+    fetchTrace={(lineageRef, bucket) => traceQuestion(question, lineageRef, bucket, undefined, { knownAsOf: result.read.document.knownAsOf, nowMs: result.read.document.nowMs }, boundScope)} />
 }

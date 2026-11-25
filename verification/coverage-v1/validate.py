@@ -793,7 +793,7 @@ jq -e --arg base "$BASE" --arg head "$HEAD_SHA" '
   .base_sha == $base and .head_sha == $head and
   (.shard | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length)) and
   (.phase | type == "array" and all(.[]; type == "string" and length > 0) and length == (unique | length)) and
-  (.bundle | type == "array" and length <= 8 and all(.[];
+  (.bundle | type == "array" and length <= 6 and all(.[];
     type == "object" and (.id | type == "string" and length > 0) and
     (.tasks | type == "array" and length > 0 and all(.[]; type == "string"))) and
     (map(.id) | length) == (map(.id) | unique | length)) and
