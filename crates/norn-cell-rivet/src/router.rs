@@ -150,32 +150,6 @@ impl Router {
         })
     }
 
-    /// Like [`Router::new`], with the gate's cold-start JWKS backoff
-    /// cooldown overridden (0 disables the backoff: every call retries).
-    /// For tests only; production builds through [`Router::new`].
-    ///
-    /// # Errors
-    /// The gate's outbound HTTP client cannot be built.
-    #[doc(hidden)]
-    pub fn with_cold_backoff_ms(
-        client: Client,
-        config: Arc<HostConfig>,
-        cold_backoff_ms: u64,
-    ) -> anyhow::Result<Self> {
-        let gate = Gate::with_cold_backoff_ms(&config, cold_backoff_ms)?;
-        Ok(Self {
-            client,
-            config,
-            gate,
-        })
-    }
-
-    /// Clear the gate's cold-start backoff state (test-only).
-    #[doc(hidden)]
-    pub async fn clear_cold_backoff_for_test(&self) {
-        self.gate.clear_cold_backoff_for_test().await;
-    }
-
     /// The gate's answer for a request carrying `headers` to `target`, as a
     /// refusal when it is not admitted.
     async fn admitted(&self, headers: &HeaderMap, target: &Target) -> Result<(), Box<Response>> {
@@ -256,6 +230,10 @@ impl Router {
                 && orgs.first() == Some(&synthetic.org_id)
                 && envs.first() == Some(&synthetic.environment_id))
             {
+                tracing::debug!(
+                    scope_named = !orgs.is_empty() || !envs.is_empty(),
+                    "the router refused a request (conformance scope mismatch)"
+                );
                 return Err(Box::new(refuse(
                     StatusCode::FORBIDDEN,
                     "conformance.scope",
@@ -435,6 +413,10 @@ impl Router {
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned)
         else {
+            tracing::debug!(
+                scope_named = target.scope.is_some(),
+                "the router refused a WebSocket upgrade (no authorization header)"
+            );
             return refuse(
                 StatusCode::UNAUTHORIZED,
                 "authn.required",
