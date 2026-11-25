@@ -122,8 +122,8 @@ pub use mapping_process::{MappingOutcome, QuarantineReason};
 pub use model::{BindingIndexSpec, Model, ModelDefinitionSnapshot};
 pub use read::{
     BindingSortValue, BindingSortedCandidate, BindingSortedPosition, FindingLedgerPage,
-    LedgerEntry, LedgerHead, LinkRecord, MarkedQuestionPath, ObjectRecord, PendingCommand,
-    PendingObservation, PendingTimer, RunRecord, StoreReader,
+    LedgerEntry, LedgerHead, LinkRecord, MarkedQuestionPath, ObjectRecord, ParkedPage,
+    PendingCommand, PendingObservation, PendingTimer, RunRecord, StoreReader,
 };
 #[cfg(feature = "native")]
 pub use restore::{HistoryDiagnosis, PrefixRestore, RestoreError, RestoreReport, UnprovenEntry};

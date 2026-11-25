@@ -146,7 +146,7 @@ fn host_with(
         "name": TYPE,
         "properties": [
             {"id": "name", "type": {"kind": "text"}},
-            {"id": "email", "type": {"kind": "text"}, "markings": ["pii.contact"]}
+            {"id": "email", "type": {"kind": "text"}, "constraints": {"nullable": true}, "markings": ["pii.contact"]}
         ]
     }))
     .unwrap();
@@ -790,6 +790,189 @@ fn the_guard_tokenizes_marked_fields_and_detected_identifiers_and_restores_throu
     );
     assert!(!joined.contains("ada@example.com"), "{joined}");
     assert!(viewer.reveals.is_empty() && !viewer.complete);
+}
+
+/// Guard `text` as `actor` with the `shop.Customer` records `context` as
+/// context, in a fresh cell where `later` was committed after the seed rows.
+fn guarded_in(
+    later: &[Vec<FactWriteRow>],
+    actor: &str,
+    text: &str,
+    context: &[&str],
+) -> Result<norn_api::privacy_guard::NornGuarded, String> {
+    use norn_api::privacy_guard::{NornGuardRef, NornGuardRequest, guard};
+    let (cell, _dir) = host_with("org_a", &pseudonym(), Some(&SECRET), later);
+    let request = NornGuardRequest {
+        text: text.into(),
+        context: context
+            .iter()
+            .map(|id| NornGuardRef {
+                object_type: TYPE.into(),
+                id: (*id).into(),
+            })
+            .collect(),
+        purpose: Some("probe".into()),
+        idempotency_key: "probe".into(),
+    };
+    guard(&cell, &scope("org_a"), Some(actor), &request, &Mapping)
+        .map_err(|refusal| format!("{refusal:?}"))
+}
+
+/// What a guarded prompt shows its caller and the model: the prompt with
+/// its context block, the tokens, and the fields withheld.
+fn shown(
+    guarded: &norn_api::privacy_guard::NornGuarded,
+) -> Result<(String, String, Vec<String>), String> {
+    let tokens = serde_json::to_string(&guarded.tokens).map_err(|error| error.to_string())?;
+    Ok((
+        guarded.safe_prompt.clone(),
+        tokens,
+        guarded.withheld.clone(),
+    ))
+}
+
+/// GUARD-ORACLE-1 (#1702): a reader who may read a context row but not
+/// reveal its marked field learns nothing about that field from the guard.
+/// The same free text guarded with the same context reads byte for byte the
+/// same whether the protected value equals the guess in the text or not: the
+/// field is tokenized by its identity, and the guess is matched only against
+/// values the reader may reveal (a detected email still becomes its own token).
+#[test]
+fn a_reader_who_may_not_reveal_a_context_field_cannot_probe_its_value() -> Result<(), String> {
+    for (guess, other) in [
+        ("vip-grace", "vip-grace-2"),
+        ("grace@example.com", "grace@example.org"),
+    ] {
+        let text = format!("Is the contact on file {guess}?");
+        let equal = guarded_in(
+            &[vec![customer("c3", "Grace", guess)]],
+            "viewer",
+            &text,
+            &["c3"],
+        )?;
+        let differs = guarded_in(
+            &[vec![customer("c3", "Grace", other)]],
+            "viewer",
+            &text,
+            &["c3"],
+        )?;
+        assert_eq!(
+            equal.safe_prompt.as_bytes(),
+            differs.safe_prompt.as_bytes(),
+            "{guess}"
+        );
+        assert_eq!(shown(&equal)?, shown(&differs)?, "{guess}");
+        assert!(!equal.safe_prompt.contains(other), "{}", equal.safe_prompt);
+        assert!(
+            equal.safe_prompt.contains("- email: [CUSTOMER_1]"),
+            "{}",
+            equal.safe_prompt
+        );
+    }
+    // The non-email guess stays as typed: nothing marks it as a known value.
+    let text = "Is the contact on file vip-grace?";
+    let viewer = guarded_in(
+        &[vec![customer("c3", "Grace", "vip-grace")]],
+        "viewer",
+        text,
+        &["c3"],
+    )?;
+    assert!(
+        viewer.safe_prompt.starts_with(text),
+        "{}",
+        viewer.safe_prompt
+    );
+    // A reader who may reveal the field still has the guess matched to it.
+    let auditor = guarded_in(
+        &[vec![customer("c3", "Grace", "vip-grace")]],
+        "auditor",
+        text,
+        &["c3"],
+    )?;
+    assert!(
+        auditor
+            .safe_prompt
+            .starts_with("Is the contact on file [CUSTOMER_1]?"),
+        "{}",
+        auditor.safe_prompt
+    );
+    Ok(())
+}
+
+/// GUARD-ORACLE-1 (#1702): neither the token nor the `withheld` entry of a
+/// marked context field a reader may not reveal says whether it holds a
+/// value: null, never written, or text, the prompt, its context block, the
+/// tokens and the fields withheld are byte for byte the same.
+#[test]
+fn a_hidden_context_field_reads_the_same_null_or_populated() -> Result<(), String> {
+    let with_email = |email: V| FactWriteRow::Put {
+        object_type: TYPE.into(),
+        key: "c4".into(),
+        values: BTreeMap::from([
+            ("name".to_owned(), V::from("Grace")),
+            ("email".to_owned(), email),
+        ]),
+    };
+    let without_email = FactWriteRow::Put {
+        object_type: TYPE.into(),
+        key: "c4".into(),
+        values: BTreeMap::from([("name".to_owned(), V::from("Grace"))]),
+    };
+    let text = "Summarize this customer.";
+    let populated = guarded_in(
+        &[vec![with_email(V::from("grace@example.com"))]],
+        "viewer",
+        text,
+        &["c4"],
+    )?;
+    let expected = shown(&populated)?;
+    assert!(
+        populated.safe_prompt.contains("- email: [CUSTOMER_1]"),
+        "{}",
+        populated.safe_prompt
+    );
+    assert_eq!(populated.withheld, ["shop.Customer/c4.email"]);
+    for (case, write) in [("null", with_email(V::Null)), ("absent", without_email)] {
+        let hidden = guarded_in(&[vec![write]], "viewer", text, &["c4"])?;
+        assert_eq!(
+            hidden.safe_prompt.as_bytes(),
+            populated.safe_prompt.as_bytes(),
+            "{case}"
+        );
+        assert_eq!(shown(&hidden)?, expected, "{case}");
+    }
+    Ok(())
+}
+
+/// GUARD-ORACLE-1 (#1702): a sealed field's token is keyed by its exact
+/// identity, so two records whose ids differ only in case never share one.
+#[test]
+fn case_distinct_records_never_share_a_sealed_token() -> Result<(), String> {
+    let later = [vec![
+        customer("cust-a", "Ana", "ana@example.com"),
+        customer("cust-A", "Ann", "ann@example.com"),
+    ]];
+    let guarded = guarded_in(&later, "viewer", "Compare them.", &["cust-a", "cust-A"])?;
+    let fields: Vec<Option<String>> = guarded
+        .tokens
+        .iter()
+        .map(|token| token.field.clone())
+        .collect();
+    assert_eq!(
+        fields,
+        [
+            Some("shop.Customer/cust-a.email".to_owned()),
+            Some("shop.Customer/cust-A.email".to_owned())
+        ]
+    );
+    let names: Vec<&str> = guarded
+        .tokens
+        .iter()
+        .map(|token| token.token.as_str())
+        .collect();
+    assert_eq!(names, ["[CUSTOMER_1]", "[CUSTOMER_2]"]);
+    assert_eq!(guarded.withheld.len(), 2, "{:?}", guarded.withheld);
+    Ok(())
 }
 
 /// A privacy cell's set: the three-systems catalog with the privacy pack

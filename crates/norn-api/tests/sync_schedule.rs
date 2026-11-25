@@ -6,6 +6,7 @@
 
 use std::collections::BTreeMap;
 
+use norn_api::scope::CellScope;
 use norn_api::sources::{RUN_LEASE_MS, Sources};
 use serde_json::json;
 
@@ -13,13 +14,22 @@ const NOW: u64 = 1_800_000_000_000;
 
 fn connection(id: &str, every: u32) -> serde_json::Value {
     json!({ "id": id, "system": "erpnext", "label": id, "connector": "c", "mapping": "m",
-            "instance": "i", "baseUrl": "https://erp.example.test", "everyMinutes": every })
+            "instance": "i", "baseUrl": "https://erp.example.test", "everyMinutes": every,
+            "orgId": "org_a", "environmentId": "prod", "secretRefs": [] })
+}
+
+fn configured(config: &str) -> Result<Sources, String> {
+    let scope = CellScope {
+        org_id: "org_a".into(),
+        environment_id: "prod".into(),
+    };
+    Sources::new(&scope, config, &BTreeMap::new())
 }
 
 #[test]
-fn an_idle_cell_knows_when_its_next_sync_is_due() {
+fn an_idle_cell_knows_when_its_next_sync_is_due() -> Result<(), String> {
     let config = json!([connection("erpnext.rest", 15)]).to_string();
-    let mut sources = Sources::new(&config, BTreeMap::new()).expect("configured");
+    let mut sources = configured(&config)?;
     // Never synced: due now, and the schedule claims it.
     assert_eq!(sources.next_due(NOW), Some(NOW));
     assert_eq!(sources.due(NOW).as_deref(), Some("erpnext.rest"));
@@ -28,8 +38,9 @@ fn an_idle_cell_knows_when_its_next_sync_is_due() {
     assert_eq!(sources.due(NOW + 1), None);
 
     let off = json!([connection("erpnext.rest", 0)]).to_string();
-    let off = Sources::new(&off, BTreeMap::new()).expect("configured");
+    let off = configured(&off)?;
     assert_eq!(off.next_due(NOW), None);
+    Ok(())
 }
 
 /// TIMER-ALARM-1 / SYNC-SERIAL-1: while one connection's sync holds the
@@ -37,11 +48,12 @@ fn an_idle_cell_knows_when_its_next_sync_is_due() {
 /// run's lease lapses, never "now" for a connection that is due but
 /// blocked (an alarm would otherwise fire in a tight loop).
 #[test]
-fn the_next_sync_waits_for_the_global_lease() {
+fn the_next_sync_waits_for_the_global_lease() -> Result<(), String> {
     let config = json!([connection("a.rest", 15), connection("b.rest", 15)]).to_string();
-    let mut sources = Sources::new(&config, BTreeMap::new()).expect("configured");
+    let mut sources = configured(&config)?;
     assert_eq!(sources.due(NOW).as_deref(), Some("a.rest"));
     // b.rest was never synced, but a.rest holds the cell.
     assert_eq!(sources.due(NOW + 1), None);
     assert_eq!(sources.next_due(NOW + 1), Some(NOW + RUN_LEASE_MS));
+    Ok(())
 }

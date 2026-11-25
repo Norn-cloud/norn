@@ -22,8 +22,9 @@ import { Code } from "@/components/code"
 import { cn } from "@/lib/utils"
 import { TableCell, TableHead, TableRow } from "@/components/ui/table"
 import { conceptTitle, lawHeadline, systemName, type Concept } from "./lib/catalog.ts"
-import { useStudioScope } from "./lib/definitions.ts"
-import { useMode } from "./lib/live-transport.ts"
+import { useStudioScope, type StudioScope } from "./lib/definitions.ts"
+import { readObjectAtScope, retryMode, useMode } from "./lib/live-transport.ts"
+import type { Fetch } from "./lib/cell-read.ts"
 import { LinkedRecords } from "./linked-records.tsx"
 import { RecordActions } from "./actions/record-actions.tsx"
 import { QuarantinedRecord } from "./quarantined-record.tsx"
@@ -35,12 +36,11 @@ import { useEvidenceActions } from "./actions/evidence-actions.tsx"
 import { atScale, exactPretty, factDisplay, readProblem, recordName } from "./lib/objects.ts"
 import { compared, isList, roleOf } from "./lib/law-values.ts"
 import { stamp } from "./lib/format.ts"
-import { transport, type ObjectReads, type SourceLineage } from "./lib/transport.ts"
+import { recordedTransport, type ObjectReads, type SourceLineage } from "./lib/transport.ts"
 import { countText, linkGroups, type CountedLinkPage, type LinkGroup } from "./lib/record-page.ts"
 import { maskedOf } from "./lib/privacy.ts"
-import { MaskedValue } from "@/components/masked-value"
+import { MaskedValue, RevealScope } from "@/components/masked-value"
 import { LoadState } from "@/components/load-state"
-import { refreshMode } from "./lib/live-transport.ts"
 import { SourceChip } from "@/components/source-chip"
 import { RecentChanges, RulesKept, WhoCanAct, useTypeAccess } from "./record-rail.tsx"
 import { RecordLineage } from "./record-lineage.tsx"
@@ -53,6 +53,21 @@ import { DenseTable, ObjectTypePage, RECORDED_HINT, useCatalog } from "./sources
  * `/sources/$concept/$`: a record, its id the rest of the path. The splat also
  * matches the object type's own URL with an empty id, which is the type's page.
  */
+/**
+ * One record's read, keyed by and read at its source workspace when that is known (a live cell);
+ * the recording has none. Without a scope it reads only the recording, never the mode-deciding
+ * transport, so an unscoped read can never come back live and be cached or revealed without its
+ * workspace. Exported for the test that reads the same id in two workspaces.
+ */
+export function recordRead(objectType: string, id: string, scope: StudioScope | undefined, fetcher?: Fetch) {
+  return {
+    queryKey: scope === undefined ? ["object", objectType, id] as const : ["object", objectType, id, scope.orgId, scope.environmentId] as const,
+    queryFn: ({ signal }: { readonly signal?: AbortSignal }): Promise<ObjectReads | null> => scope === undefined
+      ? recordedTransport.object(objectType, id)
+      : readObjectAtScope(objectType, id, scope, signal, fetcher),
+  }
+}
+
 export function SourcesItemPage() {
   const { _splat: id = "" } = useParams({ strict: false })
   return id === "" ? <ObjectTypePage /> : <ObjectPage />
@@ -68,12 +83,26 @@ export function ObjectPage() {
   const { concept: name = "", _splat: id = "" } = useParams({ strict: false })
   const { read: catalogRead, catalog } = useCatalog()
   const concept = catalog?.byName.get(name)
-  const reads = useQuery({ queryKey: ["object", name, id], queryFn: () => transport.object(name, id) })
+  // The record's source workspace: a live record is read at the scope its decided mode was read
+  // at (checked before and after the read), cached under it, and its reveals go to it. The same id
+  // in another workspace is another record, never this one's cached read. Nothing is read until the
+  // mode is decided: a failed mode read waits for Retry rather than reading without a workspace.
+  const mode = useMode()
+  const sourceScope = mode.data?.kind === "live" ? mode.data.scope : undefined
+  const reads = useQuery({ ...recordRead(name, id, sourceScope), enabled: mode.isSuccess })
+  const modeError = mode.isError ? mode.error : null
   // The header names the version this read shows and, from the history, the commit that wrote it: a
   // read again reads both, so neither is left from an earlier read.
   const queries = useQueryClient()
   const readAgain = () => { void reads.refetch(); void queries.invalidateQueries({ queryKey: historyQueryPrefix(name, id) }) }
-  const live = useMode().data?.kind === "live"
+  // Retry decides the mode again (the shell's own retry); the record is read once it is decided,
+  // at that mode's scope. An errored read under a decided mode is read again here.
+  const retry = () => {
+    void retryMode(queries)
+    void catalogRead.refetch()
+    if (mode.isSuccess) void reads.refetch()
+  }
+  const live = mode.data?.kind === "live"
   // Where each value was read, when a document scan carries it: the evidence the cell links to the record.
   const review = useQuery({ queryKey: ["findings", name, id], queryFn: () => readFindings(name, id), enabled: live, retry: false })
   const evidence = review.data?.document.evidence ?? []
@@ -86,7 +115,9 @@ export function ObjectPage() {
   const { locale } = useLocale()
   const data = reads.data
   const lineage = data?.source?.document
-  const problem = readProblem(catalogRead, reads)
+  // A failed mode read is the workspace's state, not this read's: it shows Workspace unavailable
+  // with the page's Retry (below) instead of a bare message.
+  const problem = mode.isError ? undefined : readProblem(catalogRead, reads)
   const { icon: TypeIcon, text } = KINDS.objectType
   // The cell's own decisions over this type: the reader's Sources grant and each role's actions.
   const typeAccess = useTypeAccess(name, live)
@@ -104,6 +135,7 @@ export function ObjectPage() {
     })
     : null
   return (
+    <RevealScope.Provider value={sourceScope}>
     <section className="space-y-6">
       {/* One header: the record's name with its state beside it, one quiet line of facts under it, the record's actions at the end. */}
       <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
@@ -137,10 +169,10 @@ export function ObjectPage() {
       {problem !== undefined && <p role="alert" className="text-destructive">{problem}</p>}
       {problem === undefined && (reads.isPending || catalogRead.isPending || reads.isError || catalogRead.isError) && (
         <LoadState
-          status={reads.isError || catalogRead.isError ? "error" : "pending"}
-          error={reads.error ?? catalogRead.error}
-          isFetching={reads.isFetching || catalogRead.isFetching}
-          onRetry={() => { refreshMode(); void catalogRead.refetch(); void reads.refetch() }}
+          status={reads.isError || catalogRead.isError || modeError !== null ? "error" : "pending"}
+          error={modeError ?? reads.error ?? catalogRead.error}
+          isFetching={reads.isFetching || catalogRead.isFetching || mode.isFetching}
+          onRetry={retry}
           skeleton="detail"
           loadingLabel="Reading the record"
         >
@@ -226,6 +258,7 @@ export function ObjectPage() {
       )}
       {corrections.sheet(() => { readAgain(); void review.refetch() })}
     </section>
+    </RevealScope.Provider>
   )
 }
 
