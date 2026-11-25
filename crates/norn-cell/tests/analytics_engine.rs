@@ -28,7 +28,6 @@ use norn_cell::analytics::{
 use norn_cell::compute::{QueryContext, QueryResult};
 use norn_cell::dataset_manifest::ManifestPins;
 use norn_cell::{CellError, CellStore, CommitBatch, FactWriteRow, Model};
-use norn_checker::EffectiveCatalog;
 use norn_checker::entity_scopes::ScopedView;
 use norn_checker::metric::compute::{QuestionPlan, admit};
 use norn_ir::{
@@ -1170,6 +1169,7 @@ mod snapshot {
     use norn_cell::compute::QueryContext;
     use norn_cell::test_door::TestCommit as _;
     use norn_cell::{CellStore, CommitBatch, FactWriteRow, Model};
+    use norn_checker::entity_scopes::ScopedView;
     use norn_checker::metric::compute::QuestionPlan;
     use norn_ir::{
         ArtifactEnvelope, Decimal, LawRoot, ObjectTypeDef, QuestionIR, RuntimeValue as V,
@@ -1546,6 +1546,7 @@ mod linked_time {
     use norn_cell::compute::QueryContext;
     use norn_cell::test_door::TestCommit as _;
     use norn_cell::{CellStore, CommitBatch, FactWriteRow, LinkChange, Model};
+    use norn_checker::entity_scopes::ScopedView;
     use norn_checker::metric::compute::QuestionPlan;
     use norn_checker::metric::derive::derive_metric_space;
     use norn_ir::{
