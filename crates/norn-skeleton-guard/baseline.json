@@ -1430,7 +1430,7 @@
       "crates/norn-kernel/src/action_commit/series.rs": 1,
       "crates/norn-kernel/src/action_commit/transition.rs": 1,
       "crates/norn-kernel/src/action_commit/upsert.rs": 1,
-      "crates/norn-kernel/src/commit_check.rs": 4,
+      "crates/norn-kernel/src/commit_check.rs": 2,
       "crates/norn-kernel/src/decision_commit.rs": 1,
       "crates/norn-kernel/src/naming_series.rs": 1,
       "crates/norn-kernel/src/quantity.rs": 1,

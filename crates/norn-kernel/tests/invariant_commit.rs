@@ -4465,8 +4465,9 @@ fn removing_an_absent_law_read_link_from_an_absent_subject_commits() -> Checked 
 }
 
 /// The stored graph of the observed-line regression: `SpecialDoc/d`
-/// (`limit` 3) with one `SpecialLine/l` (`amount` 1), each at version 1.
-struct StoredDocument;
+/// (`limit` 3) with one `SpecialLine/l` (`amount` 1), each at version 1,
+/// and their incident edge at version `.0`.
+struct StoredDocument(u64);
 
 impl CommitView for StoredDocument {
     type Error = std::convert::Infallible;
@@ -4491,7 +4492,7 @@ impl CommitView for StoredDocument {
     }
 
     fn link_version(&self, _: &LinkKey) -> Result<FactVersion, Self::Error> {
-        Ok(FactVersion(1))
+        Ok(FactVersion(self.0))
     }
 
     fn links_of(&self, key: &FactKey) -> Result<Vec<LinkKey>, Self::Error> {
@@ -4562,7 +4563,7 @@ fn observed_line_finding_binds_to_the_documents_existing_alias_pin() -> Checked 
         expected: FactVersion(1),
     };
     commit.reads.push(pin.clone());
-    authorization.refresh_link_findings(&catalog, &mut commit, &StoredDocument)?;
+    authorization.refresh_link_findings(&catalog, &mut commit, &StoredDocument(1))?;
     let document_reads = commit
         .reads
         .iter()
@@ -4650,7 +4651,7 @@ fn read_finding_bound_to_an_alias_the_host_does_not_share_is_refused() -> Checke
         expected: FactVersion(1),
     };
     commit.reads.push(pin.clone());
-    authorization.refresh_link_findings(&catalog, &mut commit, &StoredDocument)?;
+    authorization.refresh_link_findings(&catalog, &mut commit, &StoredDocument(1))?;
     let document_reads = commit
         .reads
         .iter()
@@ -4664,6 +4665,73 @@ fn read_finding_bound_to_an_alias_the_host_does_not_share_is_refused() -> Checke
     assert_eq!(
         cell.load(&line)?.values,
         Some(serde_json::from_value(json!({"amount": 1}))?)
+    );
+    Ok(())
+}
+
+#[test]
+fn exhausted_link_version_refuses_before_post_state_evaluation() -> Checked {
+    let types = document_types()?;
+    let laws = [link_law(
+        "document_keeps_a_line",
+        DOC,
+        "len(self.lines) == 0",
+    )?];
+    let catalog = TypeCatalog::new(&types).with_governing_laws(&laws);
+    let model = norn_kernel::CommitModel::new(&catalog);
+    let mut write = put_new(SPECIAL_DOC, "d", json!({"limit":1}))?;
+    write.expected = FactVersion(1);
+    let mut other = put_new(SPECIAL_LINE, "l", json!({"amount":1}))?;
+    other.expected = FactVersion(1);
+    let edge = LinkWrite {
+        key: LinkKey::new(other.key.clone(), "doc", write.key.clone()),
+        expected: FactVersion(u64::MAX),
+        mutation: LinkMutation::Remove,
+    };
+    let commit = CellCommit::<(), (), ()> {
+        writes: vec![write, other],
+        links: vec![edge],
+        ..CellCommit::empty()
+    };
+    assert_eq!(
+        norn_kernel::check_commit(&commit, &model, &StoredDocument(u64::MAX)),
+        Err(CommitError::Overflow)
+    );
+    Ok(())
+}
+
+#[test]
+fn forward_law_pins_the_created_targets_concrete_type_and_checked_version() -> Checked {
+    let types: Vec<ObjectTypeDef> = serde_json::from_value(json!([
+        {"name": LINE, "properties": [{"id": "amount", "type": {"kind": "integer"}}]},
+        {"name": SPECIAL_LINE, "extends": LINE},
+        {"name": DOC, "links": [{"id":"line","target":LINE,"cardinality":{"to":"one","from":"many"}}]}
+    ]))?;
+    let law = link_law("positive_line", DOC, "self.line.amount < 0")?;
+    let mut cell = CommandCell::new(|command| command.payload.clone())
+        .with_types(types)
+        .with_governing_laws(vec![law]);
+    let doc = FactKey::new(DOC, "d");
+    let line = FactKey::new(LINE, "l");
+    let result = cell.commit(CellCommit {
+        writes: vec![
+            put_new(DOC, "d", json!({}))?,
+            put_new(SPECIAL_LINE, "l", json!({"amount":-1}))?,
+        ],
+        links: vec![add_link(&doc, "line", &line)],
+        ..CellCommit::empty()
+    });
+    let Err(CommitError::Law {
+        reason: norn_kernel::governing_laws::LawEvaluationError::Violated(failure),
+        ..
+    }) = result
+    else {
+        panic!("the document must refuse the proposed line");
+    };
+    let pin = failure.links.get("line").expect("linked evidence");
+    assert_eq!(
+        (pin.object_type.as_str(), pin.key.as_str(), pin.version),
+        (SPECIAL_LINE, "l", 1)
     );
     Ok(())
 }
