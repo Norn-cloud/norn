@@ -183,7 +183,9 @@ is the split Studio's CSS and the StudioTheme validator already use (`studio-the
   highlights only: muted text on it falls below 4.5:1 (4.35:1 on the open-light well). Selected
   rows use `--card` + ring (section 10); the active segment uses `--card` (section 10). There is
   no `--action-fill` token.
-- **`glass`** sets no action tokens, so it inherits `open`'s row for its scheme. Its translucent
+- **`glass`** sets no action tokens, so it inherits `open`'s row for its scheme. Its dark scheme lifts
+  `--subtle-foreground` to #6e6e76: the islands' `saturate(165%)` leaves open's #6a6a72 at 2.97:1 on
+  the main island under both glows, and #6e6e76 reads 3.15:1 there. Its translucent
   surfaces are measured composited over its `--canvas` (#eef1f8 / #0b0d17); the decorative
   radial tint must not be used to lift a failing pair. A StudioTheme with `baseSkin: "glass"`
   starts from the same inherited palette and passes the same validator.
@@ -316,14 +318,14 @@ Gated by `test/contrast.test.ts` ("nav islands' ground…") and by the StudioThe
 
 | Skin / scheme | backdrop | ground (flat) | muted on ground | muted on hover | pill ink on pill | `--ring` (focus and dot) on ground / hover / pill |
 | --- | --- | --- | --- | --- | --- | --- |
-| luma L | #e7e8ed | #f4f5f7 | 5.92 | 5.71 | 14.30 | 5.23 / 5.05 / 4.87 |
+| luma L | #e7e8ed | #f4f5f7 | 5.92 | 5.72 | 14.30 | 5.23 / 5.05 / 4.87 |
 | luma D | #050507 | #0b0b0e | 6.93 | 6.66 | 14.97 | 5.28 / 5.08 / 4.88 |
 | polar L | #ebebee | #f6f6f8 | 6.52 | 6.24 | 14.90 | 7.16 / 6.85 / 6.50 |
 | polar D | #000000 | #0a0a0b | 7.36 | 6.84 | 16.10 | 7.72 / 7.18 / 6.56 |
 | open L | #f0f0f2 | #f6f6f7 | 6.14 | 5.88 | 14.59 | 5.03 / 4.82 / 4.61 |
 | open D | #000000 | #09090a | 7.21 | 6.89 | 15.02 | 6.29 / 6.01 / 5.60 |
-| glass L | #eef1f8 | #f3f5fc | 5.45 | 5.84 | 16.36 | 4.47 / 4.79 / 5.17 |
-| glass D | #0b0d17 | #0d101b | 5.98 | 5.30 | 10.78 | 5.22 / 4.62 / 4.02 |
+| glass L | #eef1f8 | #f2f5fe | 5.41 | 5.84 | 16.24 | 4.43 / 4.78 / 5.13 |
+| glass D | #0b0d17 | #0d101e | 5.84 | 5.19 | 10.58 | 5.09 / 4.53 / 3.95 |
 
 - **The attention dot uses `--ring`, not `--dot-accent`.** A rail applet's dot carries its state only
   through the applet's `aria-label` ("Inbox, 3 open"), so nothing visible sits beside it, and it
@@ -362,7 +364,8 @@ therefore measured on the main island's fallback, and the island itself over the
 - **Worst-case backdrop.** A glow is brightest at its centre, so an island over a glow at its peak is
   the extreme of what the reader can see under it. Every island pair is measured four times: over
   the flat backdrop, under either glow at its peak, and under both (8-bit compositing per layer,
-  section 4.2), and the minimum must clear the floor. The glows never lift a failing pair: each
+  section 4.2), each as the island's `saturate()` paints it (the Filter Effects saturate matrix on
+  the sRGB values, clamped), and the minimum must clear the floor. The glows never lift a failing pair: each
   measurement includes the darkest of them.
 - **Main island pairs** (`test/contrast.test.ts`, "the main island's text…", and the validator): page
   text, muted text, `--action` and `--link` at 4.5:1 and `--ring` at 3:1 on the island, and on a card,
@@ -372,13 +375,13 @@ therefore measured on the main island's fallback, and the island itself over the
   | Skin / scheme | island (flat) | figure | muted | `--action` | `--link` | `--ring` | muted on a well |
   | --- | --- | --- | --- | --- | --- | --- | --- |
   | luma L | #f4f5f7 | 15.35 | 5.92 | 5.88 | 5.61 | 5.23 | 6.36 |
-  | luma D | #0b0b0e | 16.21 | 6.93 | 5.79 | 6.77 | 5.28 | 6.47 |
+  | luma D | #0b0b0e | 16.20 | 6.93 | 5.79 | 6.77 | 5.28 | 6.47 |
   | polar L | #f6f6f8 | 16.41 | 6.52 | 16.41 | 16.41 | 7.16 | 6.58 |
   | polar D | #0a0a0b | 18.96 | 7.36 | 18.00 | 15.60 | 7.72 | 6.39 |
   | open L | #ffffff | 17.20 | 6.63 | 6.37 | 6.83 | 5.43 | 6.08 |
   | open D | #0d0d0e | 16.47 | 7.04 | 6.99 | 7.98 | 6.14 | 6.16 |
-  | glass L | #f6f8fc | 14.42 | 5.56 | 5.34 | 5.72 | 4.55 | 6.15 |
-  | glass D | #0f121e | 13.72 | 5.87 | 5.83 | 6.65 | 5.12 | 5.77 |
+  | glass L | #f6f8fe | 14.30 | 5.52 | 5.30 | 5.68 | 4.52 | 6.15 |
+  | glass D | #0f1220 | 13.50 | 5.77 | 5.73 | 6.54 | 5.04 | 5.80 |
 
 - **Opaque fallbacks** (CURRENT, `index.css`, gated by `test/contrast.test.ts` and the Playwright
   row "islands under reduced transparency and forced colours"). Under

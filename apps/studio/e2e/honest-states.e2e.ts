@@ -294,11 +294,13 @@ test("transient HTML 502 on /v1/definitions: retries cleanly through the bounded
   await page.clock.runFor(1_700)
   await page.clock.runFor(3_300)
 
-  // Workspace unavailable shows once: the page's full state when the page has one, else the one-line status.
+  // Workspace unavailable shows once: Home has its own full state, so the one-line status stays away.
   const banner = page.locator('[data-connection="unavailable"]')
   const state = page.locator("[data-workspace-unavailable]")
-  await expect(banner.or(state).first()).toContainText("Workspace unavailable")
-  await expect.poll(async () => (await banner.count()) + (await state.filter({ visible: true }).count())).toBe(1)
+  await expect(state).toBeVisible()
+  await expect(state).toContainText("Workspace unavailable")
+  await expect(state).toHaveCount(1)
+  await expect(banner).toHaveCount(0)
   // Let any parallel query retries (e.g. catalog's 1 s + 2 s + 4 s backoff) finish settling, then confirm retries stop completely.
   await page.clock.runFor(5_000)
   const settledHits = definitionHits - before

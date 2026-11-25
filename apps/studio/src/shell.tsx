@@ -11,7 +11,7 @@ import { AssistantPanel, AssistantProvider, useAssistant, type AssistantContent 
 import { Bell, ChevronDown, ChevronLeft, ChevronsUpDown, CircleEllipsis, Code2, Keyboard, Loader2, LogOut, MessageCircle, Palette, PanelBottom, PanelLeft, Search, SlidersHorizontal } from "lucide-react"
 import { Suspense, lazy, useEffect, useRef, useState, type ReactNode } from "react"
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
-import { Button } from "@/components/ui/button"
+import { Button, buttonVariants } from "@/components/ui/button"
 import { ChromeDock, ChromeDockOption, ChromeDockTray, ChromeDockTrigger } from "@/components/ui/chrome-dock"
 import { AppearanceProvider, SCHEMES, SHELLS, SKINS, isScheme, isShellChrome, isSkin, useAppearance, type ShellChrome, type Skin } from "@/lib/appearance"
 import { TopBarExtras } from "@/top-bar-extras"
@@ -526,7 +526,8 @@ function usePageShowsUnavailable(watching: boolean): boolean {
  *   never says "Retrying…". The page's own Workspace unavailable state is the full one (what the
  *   server said, the incident, when it was last reachable, Retry), so while the page shows it this
  *   line is gone; on a page that does not, it is the compact status: a dot and "Workspace
- *   unavailable", what the server said and the incident from 640px up, and one Retry.
+ *   unavailable", what the server said and the incident from 640px up, and one Retry. Below 640px
+ *   the server's words and the incident sit behind "Details", so a phone reader can still quote them.
  */
 function ConnectionBanner() {
   const queryClient = useQueryClient()
@@ -576,7 +577,16 @@ function ConnectionBanner() {
       <span className="shrink-0 text-foreground">Workspace unavailable</span>
       <span className="hidden min-w-0 truncate text-muted-foreground sm:inline" title={info.headline}>{info.headline}</span>
       {info.incidentId && <span className="hidden shrink-0 items-center gap-1 text-meta text-muted-foreground sm:inline-flex">Incident <CopyId value={info.incidentId} /></span>}
-      <Button type="button" variant="outline" size="sm" className="ms-auto shrink-0" disabled={mode.isFetching} onClick={retry}>Retry</Button>
+      <Popover>
+        <PopoverTrigger className={cn(buttonVariants({ variant: "ghost", size: "sm" }), "ms-auto shrink-0 sm:hidden")}>Details</PopoverTrigger>
+        <KitPopoverContent align="end" data-connection-details="" className="w-[min(18rem,calc(100vw-32px))]">
+          <PopoverTitle className="mb-1 text-body">Workspace unavailable</PopoverTitle>
+          <p className="text-body text-muted-foreground">{info.headline}</p>
+          {info.detail && <p className="mt-1 text-meta text-foreground [overflow-wrap:anywhere]">{info.detail}</p>}
+          {info.incidentId && <p className="mt-2 flex items-center gap-1 text-meta text-muted-foreground">Incident <CopyId value={info.incidentId} /></p>}
+        </KitPopoverContent>
+      </Popover>
+      <Button type="button" variant="outline" size="sm" className="shrink-0 sm:ms-auto" disabled={mode.isFetching} onClick={retry}>Retry</Button>
     </div>
   )
 }

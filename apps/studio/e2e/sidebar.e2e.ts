@@ -7,7 +7,8 @@ import { workspaceCell } from "./workspace-cell.ts"
  * The three-island shell (apps/studio/DESIGN.md 9.1; owner decision, 2026-11-25): luma, an applet rail,
  * the open applet's submenu island and the main island, on the backdrop. One row per behaviour: the
  * frame and its rows, the rail's roving focus and `aria-current`, collapsing the submenu (pointer, ⌘B,
- * persistence, focus, width defaults), Show all and the filter, the phone sheet, RTL, reduced motion,
+ * persistence, focus, width defaults), the menu's headings (pointer, Left/Right, Home/End, what holds
+ * them open and for how long), Show all and the filter, the phone sheet, RTL, reduced motion,
  * the opaque fallbacks, and one Workspace unavailable. SHOTS=<dir> also saves the shell's surfaces in
  * light and dark at 1440 and 390.
  */
@@ -244,6 +245,90 @@ test("submenu island: a long list shows 8 rows and Show all; Show all and Show f
   await expect(page.locator(":focus")).toHaveAttribute("role", "treeitem")
 })
 
+test("submenu island: a heading collapses and reopens by pointer and by Left/Right with aria-expanded on the heading, Home and End reach the first and last row, and the reader's choice holds while moving inside the applet and across an applet switch, never hides the current row, and lasts while Studio is open", async ({ page }) => {
+  await recorded(page)
+  await page.goto("/sources")
+  await settled(page)
+  const builder = menu(page, "Builder")
+  const rows = builder.getByRole("treeitem")
+  const heading = (name: string) => builder.getByRole("treeitem", { name, exact: true })
+  const model = heading("Model")
+  const logic = heading("Logic")
+  const logicLabel = logic.locator(':scope > [data-slot="tree-label"]')
+  const canvas = builder.locator('[data-section-path="/canvas"]')
+  const markings = builder.locator('[data-section-path="/markings"]')
+  // Headings start open, and the state is on the heading itself, not only on the island toggle.
+  await expect(model).toHaveAttribute("aria-expanded", "true")
+  await expect(logic).toHaveAttribute("aria-expanded", "true")
+  await expect(canvas).toBeVisible()
+  // Pointer: a click on the heading closes it and hides its rows; a second click opens it again.
+  await logicLabel.click()
+  await expect(logic).toHaveAttribute("aria-expanded", "false")
+  await expect(canvas).toBeHidden()
+  await logicLabel.click()
+  await expect(logic).toHaveAttribute("aria-expanded", "true")
+  await expect(canvas).toBeVisible()
+  // Keyboard: Left closes the focused heading, Right opens it.
+  await logic.focus()
+  await page.keyboard.press("ArrowLeft")
+  await expect(logic).toHaveAttribute("aria-expanded", "false")
+  await expect(canvas).toBeHidden()
+  await expect(logic).toBeFocused()
+  await page.keyboard.press("ArrowRight")
+  await expect(logic).toHaveAttribute("aria-expanded", "true")
+  await expect(canvas).toBeVisible()
+  // Home and End reach the first and the last row: with Logic open the last is its last destination…
+  await page.keyboard.press("End")
+  await expect(markings).toBeFocused()
+  await expect(rows.last()).toBeFocused()
+  await page.keyboard.press("Home")
+  await expect(model).toBeFocused()
+  await expect(rows.first()).toBeFocused()
+  // …and with Logic closed it is the heading itself, since its rows are gone.
+  await logic.focus()
+  await page.keyboard.press("ArrowLeft")
+  await expect(logic).toHaveAttribute("aria-expanded", "false")
+  await page.keyboard.press("Home")
+  await expect(model).toBeFocused()
+  await page.keyboard.press("End")
+  await expect(logic).toBeFocused()
+  await expect(rows.last()).toBeFocused()
+  // The choice holds while moving inside the applet…
+  await builder.getByRole("link", { name: "Semantic map" }).click()
+  await expect(page).toHaveURL(/\/map$/)
+  await expect(model).toHaveAttribute("aria-expanded", "true")
+  await expect(logic).toHaveAttribute("aria-expanded", "false")
+  await expect(canvas).toBeHidden()
+  // …and across a switch to another applet and back, though Builder's menu leaves the page meanwhile.
+  await rail(page).getByRole("link", { name: /^Data(,|$)/ }).click()
+  await expect(current(page)).toHaveAttribute("data-applet", "data")
+  await expect(builder).toHaveCount(0)
+  await rail(page).getByRole("link", { name: "Builder" }).click()
+  await expect(current(page)).toHaveAttribute("data-applet", "builder")
+  await expect(logic).toHaveAttribute("aria-expanded", "false")
+  await expect(canvas).toBeHidden()
+  // The current row is never hidden: a page under the closed heading holds it open, even against a click…
+  const filter = page.getByRole("searchbox", { name: "Filter Builder" })
+  await filter.fill("Canvas")
+  await builder.getByRole("link", { name: "Canvas" }).click()
+  await expect(page).toHaveURL(/\/canvas$/)
+  await filter.fill("")
+  await expect(logic).toHaveAttribute("aria-expanded", "true")
+  await expect(canvas).toHaveAttribute("aria-current", "page")
+  await logicLabel.click()
+  await expect(logic).toHaveAttribute("aria-expanded", "true")
+  await expect(canvas).toBeVisible()
+  // …and once the reader leaves it, their choice to keep Logic closed applies again.
+  await builder.locator('[data-section-path="/map"] > [data-slot="tree-label"]').click()
+  await expect(page).toHaveURL(/\/map$/)
+  await expect(logic).toHaveAttribute("aria-expanded", "false")
+  // The choice lasts while Studio is open (DESIGN.md 18): a fresh load starts from the defaults.
+  await page.reload()
+  await settled(page)
+  await expect(logic).toHaveAttribute("aria-expanded", "true")
+  await expect(canvas).toBeVisible()
+})
+
 test("submenu island: a destination with no page whose items were read and are none says so", async ({ page }) => {
   await session(page)
   // A live cell with no definitions: the records list is read, and empty.
@@ -441,7 +526,7 @@ test("islands under reduced transparency and forced colours: the glass falls bac
   await expect(main(page)).toHaveCSS("box-shadow", "none")
 })
 
-test("Workspace unavailable shows once: the page's full state, or a one-line status; one Retry and one incident id, and the Retry is 44px at 390px", async ({ page }) => {
+test("Workspace unavailable shows once: the page's full state, or a one-line status; one Retry and one incident id, and below 640px the server's words and the incident sit behind a 44px Details beside a 44px Retry", async ({ page }) => {
   await session(page)
   await page.route("**/api/host/v1/**", (route) => {
     const path = new URL(route.request().url()).pathname
@@ -455,21 +540,42 @@ test("Workspace unavailable shows once: the page's full state, or a one-line sta
   })
   const banner = page.locator('[data-connection="unavailable"]')
   const state = page.locator("[data-workspace-unavailable]")
+  const details = page.getByRole("button", { name: "Details", exact: true })
+  let headline = ""
   for (const [width, height] of [[1440, 900], [390, 844]] as const) {
     await page.setViewportSize({ width, height })
-    for (const path of ["/", "/connections"]) {
+    // Home shows the page's own full state; Connections has none, so the one-line status stands in.
+    for (const [path, full] of [["/", true], ["/connections", false]] as const) {
+      const at = `${path} at ${width}`
       await page.goto(path)
-      await expect(banner.or(state).first()).toBeVisible()
-      // Exactly one of them, never both.
-      await expect.poll(async () => (await banner.count()) + (await state.filter({ visible: true }).count()), `${path} at ${width}`).toBe(1)
+      await expect(full ? state : banner, at).toBeVisible()
+      await expect(full ? banner : state, at).toHaveCount(0)
       const retries = page.getByRole("button", { name: "Retry", exact: true }).filter({ visible: true })
-      await expect(retries, `${path} at ${width}`).toHaveCount(1)
-      if (width === 390) expect((await retries.boundingBox())!.height, `${path} Retry at 390`).toBeGreaterThanOrEqual(44)
-      // The one-line status never wraps into a column on a phone.
-      if (await banner.count()) expect((await banner.boundingBox())!.height, `${path} status at ${width}`).toBeLessThanOrEqual(60)
-      // The incident is shown once (the one-line status keeps it from 640px up; the page's state always).
-      const incidents = await page.getByText("inc-shell-404", { exact: true }).filter({ visible: true }).count()
-      expect(incidents, `${path} at ${width}`).toBe(await state.count() > 0 || width >= 640 ? 1 : 0)
+      await expect(retries, at).toHaveCount(1)
+      if (width === 390) expect((await retries.boundingBox())!.height, `${at}: Retry`).toBeGreaterThanOrEqual(44)
+      const incidents = page.getByText("inc-shell-404", { exact: true }).filter({ visible: true })
+      if (full || width >= 640) {
+        // The page's state, and the status line from 640px up, show the server's words and the incident once.
+        await expect(incidents, at).toHaveCount(1)
+        await expect(details, at).toBeHidden()
+        if (!full) headline = (await banner.locator("span[title]").first().getAttribute("title")) ?? ""
+      } else {
+        // The phone line keeps to one row; Details opens the server's words and the incident to quote.
+        expect((await banner.boundingBox())!.height, `${at}: status`).toBeLessThanOrEqual(60)
+        await expect(incidents, at).toHaveCount(0)
+        expect((await details.boundingBox())!.height, `${at}: Details`).toBeGreaterThanOrEqual(44)
+        await details.click()
+        const opened = page.locator("[data-connection-details]")
+        expect(headline, "the wide line's headline").not.toBe("")
+        await expect(opened).toContainText(headline)
+        await expect(opened).toContainText("Storage migration is paused for this environment.")
+        await expect(incidents, at).toHaveCount(1)
+        await expect(opened.getByRole("button", { name: "Copy inc-shell-404" })).toBeVisible()
+        if (SHOTS) await page.screenshot({ path: `${SHOTS}/islands-unavailable-details-390-light.png` })
+        await page.keyboard.press("Escape")
+        await expect(opened).toBeHidden()
+        await expect(details).toBeFocused()
+      }
       if (SHOTS && path === "/") await page.screenshot({ path: `${SHOTS}/islands-unavailable-${width === 390 ? "390" : "desktop"}-light.png` })
     }
   }

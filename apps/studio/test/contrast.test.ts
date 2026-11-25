@@ -567,16 +567,52 @@ test("shell never duplicates data-skin inside the document body, keeping :root.d
 /**
  * DESIGN.md 4.6 and 4.7: the islands' measured pairs in every skin and scheme, composited the same way
  * as section 4.2 (8 bits per layer), over the backdrop at its worst case: flat, under either ambient
- * glow at its peak, and under both. The nav islands (rail and submenu) are `--sidebar` over that
+ * glow at its peak, and under both, each as the island's `saturate()` paints it. The nav islands (rail and submenu) are `--sidebar` over that
  * backdrop, with the hover wash (`--sidebar-accent` at 50%) and the pill (`--sidebar-accent`) on it;
  * the main island is `--island`, with a card and a well inside it. The phone sheet is opaque `--shell`.
  * The reduced-transparency fallback paints `--shell` and `--canvas`, measured by the canvas pairs.
  */
 const PALETTES = themePalettes(css)
-function backdrops(color: (token: string) => Color): readonly (readonly [string, Color])[] {
+/**
+ * The backdrop as an island sees it: `--island-blur`'s `saturate()` (the Filter Effects saturate
+ * matrix on the sRGB values, clamped, 8 bits a channel, as Chromium paints a CSS filter function).
+ * The glows are wide gradients, so the blur leaves their peak as it is; the saturation does not.
+ */
+function saturated(color: Color, amount: number): Color {
+  const { r, g, b } = color
+  const channel = (value: number) => Math.round(Math.min(1, Math.max(0, value)) * 255) / 255
+  return {
+    ...color,
+    r: channel((0.213 + 0.787 * amount) * r + (0.715 - 0.715 * amount) * g + (0.072 - 0.072 * amount) * b),
+    g: channel((0.213 - 0.213 * amount) * r + (0.715 + 0.285 * amount) * g + (0.072 - 0.072 * amount) * b),
+    b: channel((0.213 - 0.213 * amount) * r + (0.715 - 0.715 * amount) * g + (0.072 + 0.928 * amount) * b),
+  }
+}
+function saturation(skin: Skin, theme: Theme): number {
+  const filter = skinVars(css, skin, theme)["island-blur"]
+  expect(filter, `${skin}/${theme} --island-blur`).toBeDefined()
+  const amount = /saturate\(\s*([\d.]+)(%?)\s*\)/.exec(filter!)
+  return amount ? Number(amount[1]) / (amount[2] === "%" ? 100 : 1) : 1
+}
+test("the gate's saturate matches the Filter Effects matrix: grey is unchanged, 100% is the identity, 0% is the luminance grey", () => {
+  const grey = parseColor("#808080")!
+  expect(cssColor(saturated(grey, 1.6))).toBe("#808080")
+  const tint = parseColor("#eef1f8")!
+  expect(cssColor(saturated(tint, 1))).toBe("#eef1f8")
+  const flat = saturated(tint, 0)
+  expect([flat.r, flat.g]).toEqual([flat.g, flat.b])
+  // More than 100% pushes a tint away from grey: the blue channel rises and the red one falls.
+  const vivid = saturated(tint, 1.65)
+  expect(vivid.b).toBeGreaterThan(tint.b)
+  expect(vivid.r).toBeLessThan(tint.r)
+  expect(saturation("glass", "light")).toBe(1.65)
+  expect(saturation("luma", "light")).toBe(1.6)
+})
+function backdrops(color: (token: string) => Color, amount: number): readonly (readonly [string, Color])[] {
   const flat = color("backdrop")
   const glow1 = over(color("backdrop-glow-1"), flat)
-  return [["backdrop", flat], ["glow 1", glow1], ["glow 2", over(color("backdrop-glow-2"), flat)], ["both glows", over(color("backdrop-glow-2"), glow1)]]
+  const seen = [["backdrop", flat], ["glow 1", glow1], ["glow 2", over(color("backdrop-glow-2"), flat)], ["both glows", over(color("backdrop-glow-2"), glow1)]] as const
+  return seen.map(([where, backdrop]) => [where, saturated(backdrop, amount)] as const)
 }
 for (const skin of ["luma", "polar", "open", "glass"] as const) for (const theme of ["light", "dark"] as const) {
   const palette = PALETTES[skin][theme]
@@ -585,8 +621,9 @@ for (const skin of ["luma", "polar", "open", "glass"] as const) for (const theme
     expect(parsed, `${skin}/${theme} --${token}`).not.toBeNull()
     return parsed!
   }
+  const amount = saturation(skin, theme)
   test(`skin=${skin} (${theme}): nav islands' ground, 50% hover wash and selection pill pass DESIGN.md 4.6 over the worst-case backdrop (text 4.5:1, ring and dot 3:1)`, () => {
-    const grounds = [...backdrops(color).map(([where, backdrop]) => [`nav island over ${where}`, over(color("sidebar"), backdrop)] as const), ["phone sheet", over(color("shell"), color("canvas"))] as const]
+    const grounds = [...backdrops(color, amount).map(([where, backdrop]) => [`nav island over ${where}`, over(color("sidebar"), backdrop)] as const), ["phone sheet", over(color("shell"), color("canvas"))] as const]
     for (const [where, ground] of grounds) {
       const hover = over(fade(color("sidebar-accent"), 0.5), ground)
       const pill = over(color("sidebar-accent"), ground)
@@ -607,7 +644,7 @@ for (const skin of ["luma", "polar", "open", "glass"] as const) for (const theme
     }
   })
   test(`skin=${skin} (${theme}): the main island's text, links, ring, cards and wells pass DESIGN.md 4.2 over the worst-case backdrop`, () => {
-    for (const [where, backdrop] of backdrops(color)) {
+    for (const [where, backdrop] of backdrops(color, amount)) {
       const island = over(color("island"), backdrop)
       const card = over(color("card"), island)
       const well = over(color("well"), card)

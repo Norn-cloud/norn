@@ -594,6 +594,8 @@
   --well: rgb(30 35 54 / 0.62);
   --well-border: rgb(255 255 255 / 0.13);
   --well-hover: rgb(38 44 68 / 0.72);
+  /* Lifted from open's #6a6a72: the islands' saturate() leaves it at 2.97:1 under both glows (3.15 here). */
+  --subtle-foreground: #6e6e76;
   --popover: rgb(26 30 48 / 0.88);
   --surface-subtle: rgb(30 35 54 / 0.62);
   --muted: rgb(30 34 54 / 0.68);
