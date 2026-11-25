@@ -160,7 +160,8 @@ function listings(sections: readonly Section[], pathname: string, menus: Menus):
   sections.forEach((section, order) => {
     for (const entry of menus.get(section.path) ?? []) {
       const at = claim(entry, pathname)
-      if (at !== undefined) found.push({ applet: placeOf(section, entry, applets).applet, strength: at.length, order })
+      // The item that is the page itself beats one that only also covers it (a type's page vs its records).
+      if (at !== undefined) found.push({ applet: placeOf(section, entry, applets).applet, strength: at.length + (pathname === entry.href ? 0.5 : 0), order })
     }
     if (within(section.path, pathname) || section.paths?.some((prefix) => within(prefix, pathname))) {
       found.push({ applet: appletOfSection(section).id, strength: 0, order })
@@ -172,7 +173,8 @@ function listings(sections: readonly Section[], pathname: string, menus: Menus):
 /**
  * The applet a page is shown in. A page more than one applet lists (a type's record page, which the
  * records and the model both list) stays in the applet the reader came from; else the applet whose
- * item claims the longest route, then the model's order. A page no applet lists has none.
+ * item claims the longest route (an item that is the page itself first), then the model's order. A
+ * page no applet lists has none.
  */
 export function appletOf(sections: readonly Section[], pathname: string, menus: Menus, previous?: string): Applet | undefined {
   const found = listings(sections, pathname, menus)

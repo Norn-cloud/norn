@@ -77,7 +77,11 @@
       "avatar-5-bg": "#efe6fd",
       "avatar-5-fg": "#6b3fae",
       "avatar-6-bg": "#dff3f6",
-      "avatar-6-fg": "#1f6f7a"
+      "avatar-6-fg": "#1f6f7a",
+      "backdrop": "#ebebee",
+      "backdrop-glow-1": "rgba(0, 0, 0, 0)",
+      "backdrop-glow-2": "rgba(0, 0, 0, 0)",
+      "island": "#f6f6f8"
     },
     "dark": {
       "shell": "#0a0a0b",
@@ -156,7 +160,11 @@
       "avatar-5-bg": "#2f2244",
       "avatar-5-fg": "#efe6fd",
       "avatar-6-bg": "#183035",
-      "avatar-6-fg": "#dff3f6"
+      "avatar-6-fg": "#dff3f6",
+      "backdrop": "#000000",
+      "backdrop-glow-1": "rgba(0, 0, 0, 0)",
+      "backdrop-glow-2": "rgba(0, 0, 0, 0)",
+      "island": "#0a0a0b"
     }
   },
   "open": {
@@ -237,7 +245,11 @@
       "avatar-5-bg": "#efe6fd",
       "avatar-5-fg": "#6b3fae",
       "avatar-6-bg": "#dff3f6",
-      "avatar-6-fg": "#1f6f7a"
+      "avatar-6-fg": "#1f6f7a",
+      "backdrop": "#f0f0f2",
+      "backdrop-glow-1": "rgba(0, 0, 0, 0)",
+      "backdrop-glow-2": "rgba(0, 0, 0, 0)",
+      "island": "#ffffff"
     },
     "dark": {
       "shell": "#09090a",
@@ -316,7 +328,11 @@
       "avatar-5-bg": "#2f2244",
       "avatar-5-fg": "#efe6fd",
       "avatar-6-bg": "#183035",
-      "avatar-6-fg": "#dff3f6"
+      "avatar-6-fg": "#dff3f6",
+      "backdrop": "#000000",
+      "backdrop-glow-1": "rgba(0, 0, 0, 0)",
+      "backdrop-glow-2": "rgba(0, 0, 0, 0)",
+      "island": "#0d0d0e"
     }
   },
   "luma": {
@@ -348,7 +364,7 @@
       "input": "#e4e4e4",
       "ring": "#554ce8",
       "link": "#4f46e5",
-      "sidebar": "#f3f4f6",
+      "sidebar": "rgba(247, 248, 249, 0.8)",
       "sidebar-foreground": "#1b1b1d",
       "sidebar-primary": "#554ce8",
       "sidebar-primary-foreground": "#ffffff",
@@ -379,13 +395,13 @@
       "chart-5": "#7d8494",
       "subtle-foreground": "#85858b",
       "line": "#e8e8e8",
-      "action-dot": "#7f9ef4",
-      "action-soft": "rgba(58, 109, 240, 0.1)",
+      "action-dot": "#4c43e0",
+      "action-soft": "rgba(76, 67, 224, 0.1)",
       "dot-live": "#1f9d61",
       "dot-held": "#e09a2b",
       "dot-bad": "#e5484d",
       "dot-quiet": "rgba(133, 133, 139, 0.6)",
-      "dot-accent": "#7f9ef4",
+      "dot-accent": "#4c43e0",
       "avatar-1-bg": "#fde4e1",
       "avatar-1-fg": "#9a3b2e",
       "avatar-2-bg": "#e3ecff",
@@ -397,7 +413,11 @@
       "avatar-5-bg": "#efe6fd",
       "avatar-5-fg": "#6b3fae",
       "avatar-6-bg": "#dff3f6",
-      "avatar-6-fg": "#1f6f7a"
+      "avatar-6-fg": "#1f6f7a",
+      "backdrop": "#e7e8ed",
+      "backdrop-glow-1": "rgba(85, 76, 232, 0.07)",
+      "backdrop-glow-2": "rgba(56, 189, 248, 0.06)",
+      "island": "rgba(247, 248, 249, 0.8)"
     },
     "dark": {
       "shell": "#0b0b0e",
@@ -427,7 +447,7 @@
       "input": "#2c2c30",
       "ring": "#7c74ff",
       "link": "#938cff",
-      "sidebar": "#0b0b0e",
+      "sidebar": "rgba(13, 13, 16, 0.8)",
       "sidebar-foreground": "#ececee",
       "sidebar-primary": "#7c74ff",
       "sidebar-primary-foreground": "#ffffff",
@@ -458,13 +478,13 @@
       "chart-5": "#7b7d8e",
       "subtle-foreground": "#6a6a72",
       "line": "#2a2a2e",
-      "action-dot": "#6f97ff",
-      "action-soft": "rgba(91, 140, 255, 0.14)",
+      "action-dot": "#847dff",
+      "action-soft": "rgba(132, 125, 255, 0.14)",
       "dot-live": "#3ccf8e",
       "dot-held": "#f0b04a",
       "dot-bad": "#ff6b6f",
       "dot-quiet": "rgba(106, 106, 114, 0.6)",
-      "dot-accent": "#6f97ff",
+      "dot-accent": "#847dff",
       "avatar-1-bg": "#3d201e",
       "avatar-1-fg": "#fde4e1",
       "avatar-2-bg": "#1c2642",
@@ -476,7 +496,11 @@
       "avatar-5-bg": "#2f2244",
       "avatar-5-fg": "#efe6fd",
       "avatar-6-bg": "#183035",
-      "avatar-6-fg": "#dff3f6"
+      "avatar-6-fg": "#dff3f6",
+      "backdrop": "#050507",
+      "backdrop-glow-1": "rgba(124, 116, 255, 0.1)",
+      "backdrop-glow-2": "rgba(56, 189, 248, 0.05)",
+      "island": "rgba(13, 13, 16, 0.8)"
     }
   },
   "glass": {
@@ -557,7 +581,11 @@
       "avatar-5-bg": "#efe6fd",
       "avatar-5-fg": "#6b3fae",
       "avatar-6-bg": "#dff3f6",
-      "avatar-6-fg": "#1f6f7a"
+      "avatar-6-fg": "#1f6f7a",
+      "backdrop": "#eef1f8",
+      "backdrop-glow-1": "rgba(58, 109, 240, 0.16)",
+      "backdrop-glow-2": "rgba(139, 92, 246, 0.12)",
+      "island": "rgba(252, 253, 255, 0.6)"
     },
     "dark": {
       "shell": "#0b0d17",
@@ -636,7 +664,11 @@
       "avatar-5-bg": "#2f2244",
       "avatar-5-fg": "#efe6fd",
       "avatar-6-bg": "#183035",
-      "avatar-6-fg": "#dff3f6"
+      "avatar-6-fg": "#dff3f6",
+      "backdrop": "#0b0d17",
+      "backdrop-glow-1": "rgba(58, 109, 240, 0.22)",
+      "backdrop-glow-2": "rgba(139, 92, 246, 0.18)",
+      "island": "rgba(18, 21, 34, 0.62)"
     }
   }
 }

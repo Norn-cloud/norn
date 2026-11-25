@@ -8,7 +8,7 @@ import { MenuGroup, MenuRadioGroup, MenuTrigger } from "@ui-sdk/react/menu"
 import { PopoverTitle, PopoverTrigger } from "@ui-sdk/react/popover"
 import { Toolbar, ToolbarButton, ToolbarLink, ToolbarSeparator } from "@ui-sdk/react/toolbar"
 import { AssistantPanel, AssistantProvider, useAssistant, type AssistantContent } from "@/assistant-slot"
-import { Bell, ChevronDown, ChevronLeft, ChevronsUpDown, CircleEllipsis, CloudOff, Code2, Keyboard, Loader2, LogOut, MessageCircle, Palette, PanelBottom, PanelLeft, Search, SlidersHorizontal } from "lucide-react"
+import { Bell, ChevronDown, ChevronLeft, ChevronsUpDown, CircleEllipsis, Code2, Keyboard, Loader2, LogOut, MessageCircle, Palette, PanelBottom, PanelLeft, Search, SlidersHorizontal } from "lucide-react"
 import { Suspense, lazy, useEffect, useRef, useState, type ReactNode } from "react"
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from "@/components/ui/breadcrumb"
 import { Button } from "@/components/ui/button"
@@ -28,9 +28,7 @@ import { ViewProvider, useView } from "@/lib/view"
 import { LOCALES, LocaleProvider, isLocale, useLocale } from "@/lib/locale"
 import { WORKSPACES } from "@/lib/workspaces"
 import { isRetryableModeError, retryMode, useMode } from "@/lib/live-transport"
-import { lastReachableAt, useStudioScope } from "@/lib/definitions"
 import { CopyId } from "@/components/copy-id"
-import { formatLastReachable } from "@/components/load-state"
 import { explainError } from "@/lib/plain-words"
 import { useAccount, type Account } from "@/lib/session"
 import { WorkspaceError, useWorkspaces, type WorkspacesDocument } from "@/lib/workspaces-api"
@@ -85,6 +83,16 @@ function useOpenWorkspace(doc: WorkspacesDocument | null | undefined) {
 
 /** An example dataset entry that opens here: published benchmark results, or the recording while no cell is connected. */
 const real = (workspace: (typeof WORKSPACES)[number], live: boolean) => workspace.results !== undefined || (workspace.recorded && !live)
+
+/**
+ * The open workspace and its connection state (Live, Recorded demo data, Connecting…, unavailable)
+ * as one quiet line under the submenu island's title, so the state is never only in the rail
+ * switcher's tooltip (DESIGN.md 9.1 and 12.2).
+ */
+function WorkspaceState() {
+  const { open } = useOpenWorkspace(useWorkspaces().data)
+  return <span data-workspace-state className="truncate text-meta text-muted-foreground">{open ? `${open.name} · ${open.detail}` : ""}</span>
+}
 
 /** The workspace switcher: the user's real workspaces and a separate labelled Examples group. */
 function ScopeSwitcher({ variant = "sidebar" }: { readonly variant?: "sidebar" | "rail" | "pill" }) {
@@ -493,21 +501,41 @@ function CommandMenu({ sections, navigation }: { readonly sections: readonly Sec
   )
 }
 
+/** Whether the page in the main island shows the full Workspace unavailable state itself (`WorkspaceUnavailable`). */
+function usePageShowsUnavailable(watching: boolean): boolean {
+  const [shows, setShows] = useState(false)
+  useEffect(() => {
+    if (!watching) { setShows(false); return }
+    const page = document.querySelector("[data-route]")
+    if (page === null) return
+    const read = () => setShows(page.querySelector("[data-workspace-unavailable]") !== null)
+    read()
+    const observer = new MutationObserver(read)
+    observer.observe(page, { childList: true, subtree: true })
+    return () => observer.disconnect()
+  }, [watching])
+  return shows
+}
+
 /**
- * Honest cell connection banner (#1424):
- * - Slow initial cold start (`data-connection="connecting"`): explains why and offers Retry now.
+ * Honest cell connection status (#1424), one line at the top of the main island that never wraps
+ * into a column on a phone:
+ * - Slow initial cold start (`data-connection="connecting"`): says why and offers Retry now.
  * - Brief automatic retry on transient outages (`data-connection="retrying"`): never lingers forever.
  * - Persistent failure or non-retryable refusal such as `503 cell.unopenable` (`data-connection="unavailable"`):
- *   never says "Retrying…"; shows "Workspace unavailable", what the server said, incident id when logged,
- *   when it was last reachable, and an explicit Retry button.
+ *   never says "Retrying…". The page's own Workspace unavailable state is the full one (what the
+ *   server said, the incident, when it was last reachable, Retry), so while the page shows it this
+ *   line is gone; on a page that does not, it is the compact status: a dot and "Workspace
+ *   unavailable", what the server said and the incident from 640px up, and one Retry.
  */
 function ConnectionBanner() {
   const queryClient = useQueryClient()
-  const scope = useStudioScope()
   const mode = useMode()
   const slow = useSlowConnecting(mode)
   const { locale } = useLocale()
   const { view } = useView()
+  const unavailable = mode.data === undefined && (mode.isError || (mode.failureCount > 0 && !isRetryableModeError(mode.failureReason)))
+  const pageShows = usePageShowsUnavailable(unavailable)
   const retry = () => {
     void retryMode(queryClient)
     void queryClient.invalidateQueries({
@@ -517,56 +545,38 @@ function ConnectionBanner() {
       },
     })
   }
+  const line = "flex min-h-[44px] flex-nowrap items-center gap-2 px-4 py-1.5 text-body md:px-8"
   if (mode.data !== undefined) return null
   if (mode.failureCount === 0 && !mode.isError) {
     if (!slow) return null
     return (
-      <div role="status" data-connection="connecting" className="flex flex-wrap items-center gap-2 border-b bg-muted/50 px-4 py-2 text-body md:px-8">
+      <div role="status" data-connection="connecting" className={line}>
         <Loader2 aria-hidden className="size-4 shrink-0 animate-spin text-muted-foreground" />
-        <span>Connecting to your workspace cell…</span>
-        <span className="text-muted-foreground">Starting a cold cell can take a moment.</span>
-        <Button type="button" variant="outline" size="xs" className="ms-auto" onClick={retry}>Retry now</Button>
+        <span className="min-w-0 truncate">Connecting to your workspace cell…</span>
+        <span className="hidden min-w-0 truncate text-muted-foreground sm:inline">Starting a cold cell can take a moment.</span>
+        <Button type="button" variant="outline" size="sm" className="ms-auto shrink-0" onClick={retry}>Retry now</Button>
       </div>
     )
   }
-  const retrying = !mode.isError && isRetryableModeError(mode.failureReason)
-  if (retrying) {
+  if (!unavailable) {
     return (
-      <div role="status" data-connection="retrying" className="flex flex-wrap items-center gap-2 border-b border-line bg-canvas px-4 py-2 text-body text-foreground md:px-8">
+      <div role="status" data-connection="retrying" className={cn(line, "text-foreground")}>
         <Dot tone="held" />
-        <CloudOff aria-hidden className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.6} />
-        <span>Couldn't reach the cell.</span>
-        <span className="text-muted-foreground">Reconnecting…</span>
-        <Button type="button" variant="outline" size="xs" className="ms-auto" disabled={mode.isFetching} onClick={retry}>Retry now</Button>
+        <span className="min-w-0 truncate">Couldn't reach the cell.</span>
+        <span className="hidden text-muted-foreground sm:inline">Reconnecting…</span>
+        <Button type="button" variant="outline" size="sm" className="ms-auto shrink-0" disabled={mode.isFetching} onClick={retry}>Retry now</Button>
       </div>
     )
   }
-  const error = mode.error ?? mode.failureReason
-  const info = explainError(error, locale, view)
-  const reachable = lastReachableAt(scope.data)
-  const reachableLabel = formatLastReachable(reachable)
+  if (pageShows) return null
+  const info = explainError(mode.error ?? mode.failureReason, locale, view)
   return (
-    <div role="alert" data-connection="unavailable" data-retryable={info.retryable === false ? "false" : "true"}
-      className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-canvas px-4 py-2.5 text-body md:px-8">
+    <div role="alert" data-connection="unavailable" data-retryable={info.retryable === false ? "false" : "true"} className={line}>
       <Dot tone="bad" />
-      <CloudOff aria-hidden className="size-4 shrink-0 text-muted-foreground" strokeWidth={1.6} />
-      <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-0.5">
-        <span className="text-foreground">Workspace unavailable.</span>
-        <span className="text-muted-foreground">{info.headline}</span>
-        {info.detail && <span className="text-meta text-muted-foreground">{info.detail}</span>}
-        {reachable !== null && reachableLabel !== null && (
-          <span className="text-meta text-muted-foreground">
-            · Last reachable <time dateTime={new Date(reachable).toISOString()} title={new Date(reachable).toISOString()}>{reachableLabel}</time>
-          </span>
-        )}
-        {info.incidentId && (
-          <span className="inline-flex items-center gap-1 text-meta text-muted-foreground">· Incident <CopyId value={info.incidentId} /></span>
-        )}
-        {view === "technical" && info.code && (
-          <span className="font-mono text-meta text-muted-foreground">· {info.code}</span>
-        )}
-      </div>
-      <Button type="button" variant="outline" size="xs" className="ms-auto" disabled={mode.isFetching} onClick={retry}>Retry</Button>
+      <span className="shrink-0 text-foreground">Workspace unavailable</span>
+      <span className="hidden min-w-0 truncate text-muted-foreground sm:inline" title={info.headline}>{info.headline}</span>
+      {info.incidentId && <span className="hidden shrink-0 items-center gap-1 text-meta text-muted-foreground sm:inline-flex">Incident <CopyId value={info.incidentId} /></span>}
+      <Button type="button" variant="outline" size="sm" className="ms-auto shrink-0" disabled={mode.isFetching} onClick={retry}>Retry</Button>
     </div>
   )
 }
@@ -900,14 +910,14 @@ function WorkbenchFrame({ sections, tools, assistant, account, onSignOut, pathna
             <Sidebar>
               <SheetApplets applets={rail} current={applet?.id} shown={sheetMenu?.applet.id} onShow={setSheetApplet} top={<ScopeSwitcher variant="rail" />} bottom={principal} />
               <div className="flex min-w-0 flex-1 flex-col">
-                {sheetMenu && <SubmenuPanel menu={sheetMenu} pathname={pathname} unread={navigation.unread} state={menuState(sheetMenu.applet.id)} onFollow={() => setOpenMobile(false)} close={<SidebarClose />} />}
+                {sheetMenu && <SubmenuPanel menu={sheetMenu} pathname={pathname} unread={navigation.unread} state={menuState(sheetMenu.applet.id)} onFollow={() => setOpenMobile(false)} close={<SidebarClose />} context={<WorkspaceState />} />}
               </div>
             </Sidebar>
           )
           : (
             <Sidebar>
               {menu
-                ? <SubmenuPanel menu={menu} pathname={pathname} unread={navigation.unread} state={menuState(menu.applet.id)} onFollow={() => {}} />
+                ? <SubmenuPanel menu={menu} pathname={pathname} unread={navigation.unread} state={menuState(menu.applet.id)} onFollow={() => {}} context={<WorkspaceState />} />
                 : <p className="px-[16px] py-[16px] text-body text-muted-foreground">No applet lists this page.</p>}
             </Sidebar>
           )

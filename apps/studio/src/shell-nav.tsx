@@ -171,11 +171,13 @@ function narrowed(menu: AppletMenu, query: string): AppletMenu {
  * Home/End, type-ahead; `current` marks the one current row). Long lists show their first rows and
  * a "Show all" row; a filter that matches nothing says so.
  */
-export function SubmenuPanel({ menu, pathname, unread, state, onFollow, close }: {
+export function SubmenuPanel({ menu, pathname, unread, state, onFollow, close, context }: {
   readonly menu: AppletMenu; readonly pathname: string
   /** Destinations whose items are not read yet (pending or failed): they claim neither items nor "none yet". */
   readonly unread: ReadonlySet<string>
   readonly state: MenuState; readonly onFollow: () => void; readonly close?: ReactNode
+  /** A quiet line under the applet's name (the open workspace and its state). */
+  readonly context?: ReactNode
 }) {
   const { applet } = menu
   const navRef = useRef<HTMLElement>(null)
@@ -184,8 +186,11 @@ export function SubmenuPanel({ menu, pathname, unread, state, onFollow, close }:
   const shownMenu = narrowed(menu, state.query)
   return (
     <>
-      <div className="flex h-[52px] shrink-0 items-center gap-[4px] ps-[16px] pe-[8px] max-sm:h-[56px]">
-        <span id={headingId} className="min-w-0 flex-1 truncate text-body text-foreground">{applet.label}</span>
+      <div className="flex min-h-[52px] shrink-0 items-center gap-[4px] ps-[16px] pe-[8px] pt-[6px] pb-[4px] max-sm:min-h-[56px]">
+        <div className="grid min-w-0 flex-1 leading-tight">
+          <span id={headingId} className="truncate text-body text-foreground">{applet.label}</span>
+          {context}
+        </div>
         {close}
       </div>
       {filterable(menu) && (
