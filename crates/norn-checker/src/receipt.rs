@@ -509,6 +509,8 @@ struct ReceiptCheckRequest<'a> {
 
 /// Finalize a [`CheckReceipt`] from already-computed diagnostics under the
 /// current admission profile (used by Ring-1 checkers composing above Ring-0).
+/// Callers must pass the complete Ring-0 diagnostic output (plus any Ring-1
+/// diagnostics composed above it).
 ///
 /// # Errors
 ///

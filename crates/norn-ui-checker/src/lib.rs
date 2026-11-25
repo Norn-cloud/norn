@@ -26,7 +26,7 @@ use norn_checker::{
     ReceiptError, ReceiptSources,
 };
 use norn_ir::explain::{ExplainKind, ExplainReport};
-use norn_ir::{ArtifactEnvelope, FlowSourceMap, ResourceLimitProfile};
+use norn_ir::{ArtifactEnvelope, ArtifactPayload, FlowSourceMap, ResourceLimitProfile};
 
 pub use widget_ux::{
     GeneratedTransitionEnabledWhenError, check_widget_ux_set, generated_transition_enabled_when,
