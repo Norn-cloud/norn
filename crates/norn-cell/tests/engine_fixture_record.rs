@@ -55,3 +55,33 @@ fn record_engine_storage_fixture() {
     let text = serde_json::to_string_pretty(&image).expect("image") + "\n";
     std::fs::write(out, text).expect("write fixture");
 }
+
+#[test]
+#[ignore = "records fixtures/engine-storage-v7.json (with marked + declassified snapshots); run on the last v7 engine (origin/main)"]
+fn record_engine_storage_v7_fixture() -> Result<(), Box<dyn std::error::Error>> {
+    let out = std::env::var_os("NORN_RECORD_ENGINE_FIXTURE")
+        .ok_or_else(|| std::io::Error::other("NORN_RECORD_ENGINE_FIXTURE not set"))?;
+    let dir = tempfile::tempdir()?;
+    let cell = dir.path().join("cell.sqlite");
+    engine_fixture::write_v7_marked_cell(&cell)?;
+    let store = norn_cell::CellStore::open(
+        &cell,
+        engine_fixture::v7_marked_model(),
+        engine_fixture::checkpoint_fixture_options(),
+    )?;
+    store.conn.transaction(|| {
+        let verified = store.verify_history(&std::cell::RefCell::default())?;
+        store.finish_open_scrub(true, &verified)
+    })?;
+    drop(store);
+    let image = engine_fixture::image_of(&cell);
+    assert_eq!(
+        image["tables"]["_norn_open_checkpoint"]["rows"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+    let text = format!("{}\n", serde_json::to_string_pretty(&image)?);
+    std::fs::write(out, text)?;
+    Ok(())
+}

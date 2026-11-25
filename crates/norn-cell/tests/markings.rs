@@ -311,7 +311,8 @@ fn uninterned_marking_storage_converts_atomically_without_reclassifying() {
     }
     tx.execute_batch(
         "DROP TABLE _norn_marking_subject;
-        DELETE FROM _norn_marking_snapshot WHERE id = 'partial';",
+        DELETE FROM _norn_marking_current WHERE id = 'partial' AND property = 'email';
+        DELETE FROM _norn_marking_version WHERE id = 'partial' AND property = 'email';",
     )
     .expect("incomplete slots stay incomplete");
     tx.commit().expect("fixture commits");
@@ -1030,13 +1031,13 @@ fn action_and_command_outputs_preserve_empty_unions_and_fail_closed_on_partial_s
         .expect("target facts commit with complete snapshots");
     drop(store);
 
-    // Keep the stored marking rows but remove the current completeness marker.
-    // Reads must fail closed rather than trust rows without a snapshot marker.
+    // Keep one real marking row but remove another. A union over the rows
+    // left behind would understate the target's complete classification.
     let raw = rusqlite::Connection::open(&path).expect("raw SQLite connection opens");
     let removed = raw
         .execute(
-            "DELETE FROM \"_norn_marking_snapshot\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3 AND \"is_current\" = 1",
-            rusqlite::params![MAIN_WORLD, "marking.MarkedTarget", "partial"],
+            "DELETE FROM \"_norn_marking_current\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"subject\" = (SELECT \"subject\" FROM \"_norn_marking_subject\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3) AND \"property\" = ?4",
+            rusqlite::params![MAIN_WORLD, "marking.MarkedTarget", "partial", "health"],
         )
         .expect("remove one row from the current marking snapshot");
     assert_eq!(removed, 1);
@@ -3413,11 +3414,11 @@ async fn noop_put_occurrence_lineage_preserves_values_and_survives_restart_and_r
             Some(std::collections::BTreeSet::from([label.to_owned()]))
         );
     }
-    // A lost immutable snapshot marker must not make a version look like a
-    // public no-op event.
+    // A lost occurrence row must not make an otherwise complete, public
+    // property snapshot look like a public no-op event.
     let connection = rusqlite::Connection::open(&target).expect("corruption fixture");
     connection.execute(
-        "DELETE FROM _norn_marking_snapshot WHERE world = ?1 AND object_type = 'marking.Evidence' AND id = 'classified' AND version = 2 AND is_current = 0",
+        "DELETE FROM _norn_marking_version WHERE world = ?1 AND object_type = 'marking.Evidence' AND subject = (SELECT subject FROM _norn_marking_subject WHERE world = ?1 AND object_type = 'marking.Evidence' AND id = 'classified') AND version = 2 AND property = ''",
         [MAIN_WORLD],
     ).expect("remove only immutable occurrence evidence");
     let event = restored
@@ -4721,5 +4722,92 @@ fn legacy_explicit_empty_marking_rows_open_read_and_clean_up_on_rewrite()
         |row| row.get(0),
     )?;
     assert_eq!(bob_current, 0);
+    Ok(())
+}
+
+#[test]
+fn sparse_markings_tamper_detection_fails_closed_on_snapshot_row_or_version_mismatch()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("sparse-tamper.sqlite");
+    let mut store = CellStore::open(&path, sparse_marking_model(), StoreOptions::default())?;
+    store.commit(&batch(
+        1,
+        vec![
+            put("marking.Unmarked", "u1", &[("a", "1")]),
+            put(
+                "marking.Mixed",
+                "m1",
+                &[("email", "a@example.test"), ("name", "Alice")],
+            ),
+            put(
+                "marking.Mixed",
+                "m2",
+                &[("email", "b@example.test"), ("name", "Bob")],
+            ),
+        ],
+    ))?;
+    drop(store);
+
+    // 1) Deleting `_norn_marking_snapshot` for an unmarked object fails closed.
+    let raw = rusqlite::Connection::open(&path)?;
+    raw.execute(
+        "DELETE FROM _norn_marking_snapshot WHERE world = ?1 AND object_type = 'marking.Unmarked' AND id = 'u1' AND is_current = 1",
+        [MAIN_WORLD],
+    )?;
+    // 2) Deleting a non-empty row while leaving `_norn_marking_snapshot` intact fails closed via `nonempty_slots`.
+    raw.execute(
+        "DELETE FROM _norn_marking_current WHERE world = ?1 AND object_type = 'marking.Mixed' AND subject = (SELECT subject FROM _norn_marking_subject WHERE world = ?1 AND object_type = 'marking.Mixed' AND id = 'm1') AND property = 'email'",
+        [MAIN_WORLD],
+    )?;
+    // 3) Inserting a stale-version row into `_norn_marking_current` for a subject fails closed.
+    let m2_subject: i64 = raw.query_row(
+        "SELECT subject FROM _norn_marking_subject WHERE world = ?1 AND object_type = 'marking.Mixed' AND id = 'm2'",
+        [MAIN_WORLD],
+        |row| row.get(0),
+    )?;
+    raw.execute(
+        "INSERT INTO _norn_marking_current (world, object_type, subject, property, version, markings) VALUES (?1, 'marking.Mixed', ?2, 'name', 99, '[]')",
+        rusqlite::params![MAIN_WORLD, m2_subject],
+    )?;
+    drop(raw);
+
+    let reopened = CellStore::open(&path, sparse_marking_model(), StoreOptions::default())?;
+    assert_eq!(
+        reopened
+            .read()
+            .effective_markings(MAIN_WORLD, "marking.Unmarked", "u1", None)?,
+        None
+    );
+    assert_eq!(
+        reopened
+            .read()
+            .property_marking_summary(MAIN_WORLD, "marking.Unmarked", "a")?,
+        None
+    );
+    assert_eq!(
+        reopened
+            .read()
+            .effective_markings(MAIN_WORLD, "marking.Mixed", "m1", None)?,
+        None
+    );
+    assert_eq!(
+        reopened
+            .read()
+            .fact_occurrence_markings(MAIN_WORLD, "marking.Mixed", "m1", None)?,
+        None
+    );
+    assert_eq!(
+        reopened
+            .read()
+            .effective_markings(MAIN_WORLD, "marking.Mixed", "m2", None)?,
+        None
+    );
+    assert_eq!(
+        reopened
+            .read()
+            .property_marking_summary(MAIN_WORLD, "marking.Mixed", "email")?,
+        None
+    );
     Ok(())
 }

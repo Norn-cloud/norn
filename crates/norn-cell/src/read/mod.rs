@@ -702,7 +702,11 @@ mod link_candidate_index_tests {
             details.iter().all(|detail| !detail.contains("CORRELATED")),
             "no correlated subquery: {details:?}"
         );
-        for table in ["o ", "s "] {
+        assert!(
+            details.iter().all(|detail| !detail.contains("TEMP B-TREE")),
+            "no temp B-tree: {details:?}"
+        );
+        for table in ["o ", "s ", "ms ", "m "] {
             assert!(
                 details
                     .iter()
@@ -711,8 +715,10 @@ mod link_candidate_index_tests {
             );
         }
         assert!(
-            details.iter().all(|detail| !detail.starts_with("SCAN")),
-            "no full scan: {details:?}"
+            details
+                .iter()
+                .all(|detail| !detail.starts_with("SCAN ") || detail.contains("subquery")),
+            "no full table scan: {details:?}"
         );
         Ok(())
     }

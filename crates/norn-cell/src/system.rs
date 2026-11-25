@@ -430,7 +430,7 @@ pub(crate) fn query_marking_slot<E: SqlEngine>(
 
 /// Upsert one non-empty marking slot into `_norn_marking_current` or
 /// `_norn_marking_version`. Callers never persist empty `'[]'` slots.
-pub(crate) fn upsert_marking_slot<E: SqlEngine>(
+fn upsert_marking_slot<E: SqlEngine>(
     engine: &E,
     current: bool,
     slot: &MarkingSlot<'_>,
@@ -483,10 +483,60 @@ pub(crate) struct MarkingTarget<'a> {
     pub(crate) version: i64,
 }
 
+/// Adjust `_norn_marking_snapshot.nonempty_slots` by `delta` (`+1` when a
+/// slot transitions from absent/empty to non-empty; `-1` when declassification
+/// clears a current slot to empty).
+fn adjust_snapshot_nonempty_slots<E: SqlEngine>(
+    engine: &E,
+    target: &MarkingTarget<'_>,
+    current: bool,
+    delta: i64,
+) -> Result<(), CellError> {
+    engine.execute(
+        &format!(
+            "UPDATE \"{MARKING_SNAPSHOT}\" SET \"nonempty_slots\" = \"nonempty_slots\" + ?1 WHERE \"world\" = ?2 AND \"object_type\" = ?3 AND \"id\" = ?4 AND \"version\" = ?5 AND \"is_current\" = ?6"
+        ),
+        params![
+            delta,
+            target.world,
+            target.object_type,
+            target.key,
+            target.version,
+            i64::from(current),
+        ],
+    )
+}
+
+/// Upsert one guaranteed non-empty marking slot and increment
+/// `_norn_marking_snapshot.nonempty_slots` when the slot transitions from
+/// absent or legacy `'[]'` to non-empty.
+pub(crate) fn write_nonempty_marking_slot<E: SqlEngine>(
+    engine: &E,
+    current: bool,
+    target: &MarkingTarget<'_>,
+    subject: i64,
+    property: &str,
+    encoded: &str,
+) -> Result<(), CellError> {
+    let slot = MarkingSlot {
+        world: target.world,
+        object_type: target.object_type,
+        subject,
+        property,
+        version: target.version,
+    };
+    let was_nonempty = query_marking_slot(engine, current, &slot)?.is_some_and(|raw| raw != "[]");
+    upsert_marking_slot(engine, current, &slot, encoded)?;
+    if !was_nonempty {
+        adjust_snapshot_nonempty_slots(engine, target, current, 1)?;
+    }
+    Ok(())
+}
+
 /// Persist sparse non-empty marking rows for `target`, remove any stale or
 /// legacy empty rows from `_norn_marking_current`, and update the
-/// `_norn_marking_snapshot` completeness markers for both current and
-/// immutable history.
+/// `_norn_marking_snapshot` completeness markers and `nonempty_slots` counts
+/// for both current and immutable history.
 pub(crate) fn persist_sparse_marking_rows<E: SqlEngine>(
     engine: &E,
     target: &MarkingTarget<'_>,
@@ -525,6 +575,8 @@ pub(crate) fn persist_sparse_marking_rows<E: SqlEngine>(
             upsert_marking_slot(engine, false, &slot, &encoded)?;
         }
     }
+    let nonempty_slots =
+        i64::try_from(markings.len()).map_err(|_| CellError::OutOfRange("marking slot count"))?;
     engine.execute(
         &format!(
             "DELETE FROM \"{MARKING_SNAPSHOT}\" WHERE \"world\" = ?1 AND \"object_type\" = ?2 AND \"id\" = ?3 AND \"is_current\" = 1"
@@ -534,14 +586,15 @@ pub(crate) fn persist_sparse_marking_rows<E: SqlEngine>(
     for is_current in [1_i64, 0_i64] {
         engine.execute(
             &format!(
-                "INSERT INTO \"{MARKING_SNAPSHOT}\" (\"world\", \"object_type\", \"id\", \"version\", \"is_current\") VALUES (?1, ?2, ?3, ?4, ?5)"
+                "INSERT INTO \"{MARKING_SNAPSHOT}\" (\"world\", \"object_type\", \"id\", \"version\", \"is_current\", \"nonempty_slots\") VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
             ),
             params![
                 target.world,
                 target.object_type,
                 target.key,
                 target.version,
-                is_current
+                is_current,
+                nonempty_slots
             ],
         )?;
     }
@@ -549,7 +602,8 @@ pub(crate) fn persist_sparse_marking_rows<E: SqlEngine>(
 }
 
 /// Remove `remove` markings from the current sparse slot of `(target, property)`.
-/// Deletes the `_norn_marking_current` row when the resulting label set is empty,
+/// Deletes the `_norn_marking_current` row and decrements
+/// `_norn_marking_snapshot.nonempty_slots` when the resulting label set is empty,
 /// leaving `_norn_marking_version` immutable for historical `as_of` queries.
 pub(crate) fn apply_sparse_declassification<E: SqlEngine>(
     engine: &E,
@@ -590,6 +644,7 @@ pub(crate) fn apply_sparse_declassification<E: SqlEngine>(
     }
     if labels.is_empty() {
         delete_marking_current_slot(engine, target.world, target.object_type, subject, property)?;
+        adjust_snapshot_nonempty_slots(engine, target, true, -1)?;
     } else {
         let encoded = serde_json::to_string(&labels).map_err(CellError::Json)?;
         let slot = MarkingSlot {
@@ -881,6 +936,7 @@ pub const SYSTEM_DDL: &[&str] = &[
   "id" TEXT NOT NULL,
   "version" INTEGER NOT NULL,
   "is_current" INTEGER NOT NULL,
+  "nonempty_slots" INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY ("world", "object_type", "id", "version", "is_current")
 )"#,
     MARKING_NONEMPTY_DDL,

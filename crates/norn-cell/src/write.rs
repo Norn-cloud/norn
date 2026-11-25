@@ -28,7 +28,7 @@ use crate::system::{
     MARKING_SNAPSHOT, MarkingSlot, MarkingTarget, OUTBOX, PENDING_LINK_INDEX, PERFORM_CLAIM,
     RECEIPT, RUN, TIMER, VERSIONS, apply_sparse_declassification, ensure_marking_subject,
     has_marking_snapshot, marking_subject, persist_sparse_marking_rows, query_marking_slot,
-    upsert_marking_slot,
+    write_nonempty_marking_slot,
 };
 
 struct NamingCounterAttribution {
@@ -1897,16 +1897,29 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
         let subject = ensure_marking_subject(self.conn, self.world, object_type, key)?;
         let encoded = serde_json::to_string(&labels).map_err(CellError::Json)?;
         let version_sql = to_i64(version, "marking snapshot version")?;
-        let slot = MarkingSlot {
+        let target = MarkingTarget {
             world: self.world,
             object_type,
-            subject,
-            property: MARKING_OCCURRENCE,
+            key,
             version: version_sql,
         };
-        upsert_marking_slot(self.conn, false, &slot, &encoded)?;
+        write_nonempty_marking_slot(
+            self.conn,
+            false,
+            &target,
+            subject,
+            MARKING_OCCURRENCE,
+            &encoded,
+        )?;
         if has_marking_snapshot(self.conn, self.world, object_type, key, version_sql, true)? {
-            upsert_marking_slot(self.conn, true, &slot, &encoded)?;
+            write_nonempty_marking_slot(
+                self.conn,
+                true,
+                &target,
+                subject,
+                MARKING_OCCURRENCE,
+                &encoded,
+            )?;
         }
         Ok(())
     }
@@ -2646,6 +2659,12 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             return Ok(());
         }
         let subject = ensure_marking_subject(self.conn, self.world, object_type, key)?;
+        let target = MarkingTarget {
+            world: self.world,
+            object_type,
+            key,
+            version: version_sql,
+        };
         let slot = MarkingSlot {
             world: self.world,
             object_type,
@@ -2659,9 +2678,9 @@ impl<'a, E: SqlEngine> Writer<'a, E> {
             .unwrap_or_default();
         labels.extend(additions.iter().cloned());
         let encoded = serde_json::to_string(&labels).map_err(CellError::Json)?;
-        upsert_marking_slot(self.conn, false, &slot, &encoded)?;
+        write_nonempty_marking_slot(self.conn, false, &target, subject, property, &encoded)?;
         if has_marking_snapshot(self.conn, self.world, object_type, key, version_sql, true)? {
-            upsert_marking_slot(self.conn, true, &slot, &encoded)?;
+            write_nonempty_marking_slot(self.conn, true, &target, subject, property, &encoded)?;
         }
         Ok(())
     }

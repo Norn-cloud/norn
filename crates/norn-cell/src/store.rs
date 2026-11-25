@@ -39,8 +39,8 @@ use crate::read::{
 };
 use crate::system::{
     DEFINITION_ACTIVE, DEFINITION_ADMISSION_RECEIPT, DEFINITION_LAYOUT, DEFINITION_REGISTRY,
-    DEFINITION_VERSION, INBOX, MARKING_SNAPSHOT, META, MarkingSlot, OUTBOX, RUN, STORE_FORMAT,
-    ensure_marking_subject, query_marking_slot, upsert_marking_slot,
+    DEFINITION_VERSION, INBOX, MARKING_SNAPSHOT, META, MarkingSlot, MarkingTarget, OUTBOX, RUN,
+    STORE_FORMAT, ensure_marking_subject, query_marking_slot, write_nonempty_marking_slot,
 };
 use crate::write::Writer;
 
@@ -361,14 +361,13 @@ fn backfill_computed_markings<E: SqlEngine>(
             }
             let subject = ensure_marking_subject(engine, &world, object_type, &id)?;
             let encoded = serde_json::to_string(labels).map_err(CellError::Json)?;
-            let slot = MarkingSlot {
+            let target = MarkingTarget {
                 world: &world,
                 object_type,
-                subject,
-                property: &property,
+                key: &id,
                 version,
             };
-            upsert_marking_slot(engine, current, &slot, &encoded)?;
+            write_nonempty_marking_slot(engine, current, &target, subject, &property, &encoded)?;
         }
     }
     Ok(())
@@ -420,7 +419,13 @@ fn backfill_marking_table<E: SqlEngine>(
         }
         markings.sort();
         let encoded = serde_json::to_string(&markings).map_err(CellError::Json)?;
-        upsert_marking_slot(engine, current, &slot, &encoded)?;
+        let target = MarkingTarget {
+            world: &world,
+            object_type,
+            key: &id,
+            version,
+        };
+        write_nonempty_marking_slot(engine, current, &target, subject, property, &encoded)?;
     }
     Ok(())
 }

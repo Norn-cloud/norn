@@ -40,16 +40,40 @@ const STORAGE_V4: &str = include_str!("fixtures/engine-storage-v4.json");
 const STORAGE_V5: &str = include_str!("fixtures/engine-storage-v5.json");
 const STORAGE_V6: &str = include_str!("fixtures/engine-storage-v6.json");
 
-/// Storage version 8 (#1533 Part 1) drops the strictly redundant
+/// Storage version 8 (#1533 Part 1) adds `_norn_marking_snapshot.nonempty_slots`
+/// (backfilled from non-empty rows) and drops the strictly redundant
 /// `_norn_link_version/source` and `_norn_link_version/target` prefix indexes
 /// (exact prefixes of `source_order` and `target_order`). Existing stored
 /// `'[]'` marking rows are retained verbatim and remain readable as empty.
-fn drop_redundant_link_indexes(image: &mut Value) {
+fn apply_v8_sparse_markings_upgrade(image: &mut Value) {
     if let Some(schema) = image["schema"].as_array_mut() {
         schema.retain(|entry| {
             entry["name"] != "_norn_link_version/source"
                 && entry["name"] != "_norn_link_version/target"
         });
+        for entry in schema.iter_mut() {
+            if entry["name"] == "_norn_marking_snapshot"
+                && let Some(sql) = entry["sql"].as_str()
+            {
+                entry["sql"] = Value::String(sql.replacen(
+                    "\"is_current\" INTEGER NOT NULL,",
+                    "\"is_current\" INTEGER NOT NULL, \"nonempty_slots\" INTEGER NOT NULL DEFAULT 0,",
+                    1,
+                ));
+            }
+        }
+    }
+    if let Some(snapshot) = image["tables"]["_norn_marking_snapshot"].as_object_mut() {
+        if let Some(columns) = snapshot.get_mut("columns").and_then(Value::as_array_mut) {
+            columns.push(Value::String("nonempty_slots".to_owned()));
+        }
+        if let Some(rows) = snapshot.get_mut("rows").and_then(Value::as_array_mut) {
+            for row in rows.iter_mut() {
+                if let Some(cells) = row.as_array_mut() {
+                    cells.push(Value::from(0_i64));
+                }
+            }
+        }
     }
 }
 
@@ -677,7 +701,7 @@ fn a_storage_v1_cell_opens_on_this_engine_with_identical_receipts() {
     add_marking_history_index(&mut expected);
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
-    drop_redundant_link_indexes(&mut expected);
+    apply_v8_sparse_markings_upgrade(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -808,7 +832,7 @@ fn a_storage_v2_cell_opens_on_this_engine_with_identical_receipts() {
     add_marking_history_index(&mut expected);
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
-    drop_redundant_link_indexes(&mut expected);
+    apply_v8_sparse_markings_upgrade(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -910,7 +934,7 @@ fn a_storage_v3_cell_opens_on_this_engine_with_identical_receipts() {
     add_marking_history_index(&mut expected);
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
-    drop_redundant_link_indexes(&mut expected);
+    apply_v8_sparse_markings_upgrade(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -982,7 +1006,7 @@ fn a_storage_v4_cell_opens_on_this_engine_with_identical_receipts() {
     add_marking_history_index(&mut expected);
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
-    drop_redundant_link_indexes(&mut expected);
+    apply_v8_sparse_markings_upgrade(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -1054,7 +1078,7 @@ fn a_storage_v5_cell_opens_on_this_engine_with_identical_receipts() {
     expected["storage"] = STORAGE_VERSION.into();
     add_open_checkpoint(&mut expected, &after, &head, &root, &quantity, &pins);
     add_automation_tables(&mut expected);
-    drop_redundant_link_indexes(&mut expected);
+    apply_v8_sparse_markings_upgrade(&mut expected);
     let mut catalog = after;
     by_name(&mut catalog);
     by_name(&mut expected);
@@ -1154,7 +1178,7 @@ fn upgrade_v6_with_checkpoint(path: &Path) -> CellStore<NativeEngine> {
     stamp_row[2] = stamp.into();
     expected["storage"] = STORAGE_VERSION.into();
     add_automation_tables(&mut expected);
-    drop_redundant_link_indexes(&mut expected);
+    apply_v8_sparse_markings_upgrade(&mut expected);
     by_name(&mut expected);
     let mut actual = engine_fixture::image_of(path);
     by_name(&mut actual);
@@ -1708,4 +1732,152 @@ async fn an_export_a_newer_engine_wrote_refuses_before_staging() {
         0,
         "nothing is staged"
     );
+}
+
+fn downgrade_cell_to_v7_layout(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let conn = raw(path);
+    conn.transaction(|| {
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS \"_norn_link_version/source\" ON \"_norn_link_version\" (\"world\", \"source\");\n\
+             CREATE INDEX IF NOT EXISTS \"_norn_link_version/target\" ON \"_norn_link_version\" (\"world\", \"target\");\n\
+             ALTER TABLE \"_norn_marking_snapshot\" RENAME TO \"_norn_marking_snapshot_v8\";\n\
+             CREATE TABLE \"_norn_marking_snapshot\" (\n\
+               \"world\" TEXT NOT NULL,\n\
+               \"object_type\" TEXT NOT NULL,\n\
+               \"id\" TEXT NOT NULL,\n\
+               \"version\" INTEGER NOT NULL,\n\
+               \"is_current\" INTEGER NOT NULL,\n\
+               PRIMARY KEY (\"world\", \"object_type\", \"id\", \"version\", \"is_current\")\n\
+             );\n\
+             INSERT INTO \"_norn_marking_snapshot\" (\"world\", \"object_type\", \"id\", \"version\", \"is_current\") \
+             SELECT \"world\", \"object_type\", \"id\", \"version\", \"is_current\" FROM \"_norn_marking_snapshot_v8\";\n\
+             DROP TABLE \"_norn_marking_snapshot_v8\";\n\
+             INSERT OR IGNORE INTO \"_norn_marking_current\" (\"world\", \"object_type\", \"subject\", \"property\", \"version\", \"markings\") \
+             SELECT 'main', 'fixture.MarkedItem', \"subject\", 'secret', 1, '[]' FROM \"_norn_marking_subject\" WHERE \"world\" = 'main' AND \"object_type\" = 'fixture.MarkedItem' AND \"id\" = 'm1';\n\
+             INSERT OR IGNORE INTO \"_norn_marking_current\" (\"world\", \"object_type\", \"subject\", \"property\", \"version\", \"markings\") \
+             SELECT 'main', 'fixture.MarkedItem', \"subject\", 'label', 1, '[]' FROM \"_norn_marking_subject\" WHERE \"world\" = 'main' AND \"object_type\" = 'fixture.MarkedItem' AND \"id\" = 'm1';\n\
+             INSERT OR IGNORE INTO \"_norn_marking_version\" (\"world\", \"object_type\", \"subject\", \"property\", \"version\", \"markings\") \
+             SELECT 'main', 'fixture.MarkedItem', \"subject\", 'label', 1, '[]' FROM \"_norn_marking_subject\" WHERE \"world\" = 'main' AND \"object_type\" = 'fixture.MarkedItem' AND \"id\" = 'm1';",
+        )?;
+        let v7_stamp = serde_json::to_string(&EngineStamp {
+            format: STAMP_FORMAT.to_owned(),
+            storage: 7,
+            writer: "v7-fixture".to_owned(),
+        })
+        .map_err(|error| CellError::Encoding(error.to_string()))?;
+        conn.execute(
+            "UPDATE \"_norn_meta\" SET \"value\" = ?1 WHERE \"key\" = ?2",
+            &[SqlValue::from(v7_stamp), SqlValue::from(STAMP_KEY)],
+        )
+    })?;
+    Ok(())
+}
+
+/// Storage version 7 → 8 (#1533 Part 1): upgrading a v7 cell carrying unmarked,
+/// marked, and declassified objects drops the two redundant `_norn_link_version`
+/// prefix indexes and backfills exact `_norn_marking_snapshot.nonempty_slots`
+/// pins (`0` for unmarked/declassified current, `1` for marked current and
+/// immutable historical versions), so deleting a marked row after upgrade fails
+/// closed.
+#[test]
+fn a_storage_v7_marked_and_declassified_cell_upgrades_and_backfills_nonempty_slots()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join("v7-marked.sqlite");
+    engine_fixture::write_v7_marked_cell(&path)?;
+    downgrade_cell_to_v7_layout(&path)?;
+    assert_eq!(
+        engine_release::admission(&raw(&path))?,
+        Admission::Upgrade { from: 7 }
+    );
+
+    let store = CellStore::open(
+        &path,
+        engine_fixture::v7_marked_model(),
+        StoreOptions::default(),
+    )?;
+    assert_eq!(
+        store
+            .read()
+            .effective_markings("main", "fixture.MarkedItem", "m1", None)?,
+        Some(std::collections::BTreeMap::from([
+            ("label".to_owned(), Vec::new()),
+            ("secret".to_owned(), Vec::new()),
+        ]))
+    );
+    assert_eq!(
+        store
+            .read()
+            .effective_markings("main", "fixture.MarkedItem", "m1", Some(1))?,
+        Some(std::collections::BTreeMap::from([
+            ("label".to_owned(), Vec::new()),
+            ("secret".to_owned(), vec!["pii.contact".to_owned()]),
+        ]))
+    );
+    assert_eq!(
+        store
+            .read()
+            .effective_markings("main", "fixture.MarkedItem", "m2", None)?,
+        Some(std::collections::BTreeMap::from([
+            ("label".to_owned(), Vec::new()),
+            ("secret".to_owned(), vec!["pii.contact".to_owned()]),
+        ]))
+    );
+    drop(store);
+
+    let conn = raw(&path);
+    assert_eq!(engine_release::admission(&conn)?, Admission::Current);
+    let dropped = conn.query(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name IN ('_norn_link_version/source', '_norn_link_version/target')",
+        &[],
+    )?;
+    assert!(dropped.is_empty());
+    let pins = conn.query(
+        "SELECT id, is_current, nonempty_slots FROM _norn_marking_snapshot WHERE object_type = 'fixture.MarkedItem' ORDER BY id, is_current",
+        &[],
+    )?;
+    assert_eq!(
+        pins,
+        vec![
+            vec![
+                SqlValue::from("m1"),
+                SqlValue::Integer(0),
+                SqlValue::Integer(1)
+            ],
+            vec![
+                SqlValue::from("m1"),
+                SqlValue::Integer(1),
+                SqlValue::Integer(0)
+            ],
+            vec![
+                SqlValue::from("m2"),
+                SqlValue::Integer(0),
+                SqlValue::Integer(1)
+            ],
+            vec![
+                SqlValue::from("m2"),
+                SqlValue::Integer(1),
+                SqlValue::Integer(1)
+            ],
+        ]
+    );
+    // Deleting `m2`'s marked row while leaving its backfilled snapshot intact must fail closed.
+    conn.execute(
+        "DELETE FROM _norn_marking_current WHERE world = 'main' AND object_type = 'fixture.MarkedItem' AND subject = (SELECT subject FROM _norn_marking_subject WHERE world = 'main' AND object_type = 'fixture.MarkedItem' AND id = 'm2') AND property = 'secret'",
+        &[],
+    )?;
+    drop(conn);
+
+    let reopened = CellStore::open(
+        &path,
+        engine_fixture::v7_marked_model(),
+        StoreOptions::default(),
+    )?;
+    assert_eq!(
+        reopened
+            .read()
+            .effective_markings("main", "fixture.MarkedItem", "m2", None)?,
+        None
+    );
+    Ok(())
 }

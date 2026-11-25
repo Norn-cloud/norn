@@ -84,7 +84,7 @@ pub const CHANNEL: &[StorageVersion] = &[
     },
     StorageVersion {
         version: 8,
-        change: "#1533 Part 1: sparse markings omit empty '[]' rows from _norn_marking_current and _norn_marking_version (and omit _norn_marking_subject rows when no non-empty markings exist; an absent slot alongside _norn_marking_snapshot equals the empty set), and drop the strictly redundant _norn_link_version/source and _norn_link_version/target prefix indexes",
+        change: "#1533 Part 1: sparse markings omit empty '[]' rows from _norn_marking_current and _norn_marking_version (and omit _norn_marking_subject rows when no non-empty markings exist), pin each snapshot's non-empty slot count in _norn_marking_snapshot.nonempty_slots for fail-closed tamper detection, and drop the strictly redundant _norn_link_version/source and _norn_link_version/target prefix indexes",
     },
 ];
 
@@ -353,19 +353,90 @@ fn migrate_to<E: SqlEngine>(engine: &E, to: u32) -> Result<(), CellError> {
         // statements that follow the chain. Previously committed rows are unchanged.
         2..=7 => Ok(()),
         // Version 8 (#1533 Part 1): sparse markings are backward-compatible with
-        // legacy stored `'[]'` rows (no marking row is rewritten), and the two
-        // strict-prefix indexes on `_norn_link_version` are dropped so upgraded
-        // cells shed their write amplification too.
-        8 => engine.execute_batch(
-            "DROP INDEX IF EXISTS \"_norn_link_version/source\";\n\
-             DROP INDEX IF EXISTS \"_norn_link_version/target\";",
-        ),
+        // legacy stored `'[]'` rows (no marking row is rewritten); add and
+        // backfill `_norn_marking_snapshot.nonempty_slots`, and drop the two
+        // strict-prefix indexes on `_norn_link_version` so upgraded cells shed
+        // their write amplification too.
+        8 => migrate_v8_sparse_markings(engine),
         _ => Err(CellError::EngineUpgradeUnsupported {
             cell: to.saturating_sub(1),
             engine: STORAGE_VERSION,
             reason: format!("no migration to storage version {to}"),
         }),
     }
+}
+
+fn migrate_v8_sparse_markings<E: SqlEngine>(engine: &E) -> Result<(), CellError> {
+    engine.execute_batch(
+        "DROP INDEX IF EXISTS \"_norn_link_version/source\";\n\
+         DROP INDEX IF EXISTS \"_norn_link_version/target\";",
+    )?;
+    let has_snapshot = engine
+        .query_optional(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '_norn_marking_snapshot'",
+            params![],
+            |row| row.get::<i64>(0),
+        )?
+        .is_some();
+    if !has_snapshot {
+        return Ok(());
+    }
+    let has_column = engine
+        .query_optional(
+            "SELECT 1 FROM pragma_table_info('_norn_marking_snapshot') WHERE \"name\" = 'nonempty_slots'",
+            params![],
+            |row| row.get::<i64>(0),
+        )?
+        .is_some();
+    if !has_column {
+        engine.execute_batch(
+            "ALTER TABLE \"_norn_marking_snapshot\" ADD COLUMN \"nonempty_slots\" INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+    backfill_snapshot_nonempty_slots(engine)
+}
+
+fn backfill_snapshot_nonempty_slots<E: SqlEngine>(engine: &E) -> Result<(), CellError> {
+    let interned = engine
+        .query_optional(
+            "SELECT 1 FROM pragma_table_info('_norn_marking_current') WHERE \"name\" = 'subject'",
+            params![],
+            |row| row.get::<i64>(0),
+        )?
+        .is_some();
+    for (table, is_current) in [
+        ("_norn_marking_current", 1_i64),
+        ("_norn_marking_version", 0_i64),
+    ] {
+        let count_expr = if interned {
+            format!(
+                "SELECT COUNT(*) FROM \"{table}\" AS m \
+                 JOIN \"_norn_marking_subject\" AS s \
+                   ON s.\"subject\" = m.\"subject\" AND s.\"world\" = m.\"world\" AND s.\"object_type\" = m.\"object_type\" \
+                 WHERE s.\"world\" = \"_norn_marking_snapshot\".\"world\" \
+                   AND s.\"object_type\" = \"_norn_marking_snapshot\".\"object_type\" \
+                   AND s.\"id\" = \"_norn_marking_snapshot\".\"id\" \
+                   AND m.\"version\" = \"_norn_marking_snapshot\".\"version\" \
+                   AND m.\"markings\" != '[]'"
+            )
+        } else {
+            format!(
+                "SELECT COUNT(*) FROM \"{table}\" AS m \
+                 WHERE m.\"world\" = \"_norn_marking_snapshot\".\"world\" \
+                   AND m.\"object_type\" = \"_norn_marking_snapshot\".\"object_type\" \
+                   AND m.\"id\" = \"_norn_marking_snapshot\".\"id\" \
+                   AND m.\"version\" = \"_norn_marking_snapshot\".\"version\" \
+                   AND m.\"markings\" != '[]'"
+            )
+        };
+        engine.execute(
+            &format!(
+                "UPDATE \"_norn_marking_snapshot\" SET \"nonempty_slots\" = COALESCE(({count_expr}), 0) WHERE \"is_current\" = ?1"
+            ),
+            params![is_current],
+        )?;
+    }
+    Ok(())
 }
 
 /// Bring `engine`'s cell to this engine's storage version: the ordered
