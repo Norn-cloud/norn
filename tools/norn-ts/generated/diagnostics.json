@@ -169,6 +169,14 @@
       "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
     },
     {
+      "code": "artifact_set.action.independent_actor",
+      "tier": "T3",
+      "severity": "error",
+      "message": "an independent-actor check names a property that is not a protected text actor property of an existing transition target",
+      "fix": "Name a protected text property of the transition target that a governed create stamps from the verified principal (fromCaller), never a field a caller, import or update can write.",
+      "no_fix": null
+    },
+    {
       "code": "artifact_set.action.invalid_aggregate",
       "tier": "T3",
       "severity": "error",

@@ -1005,6 +1005,12 @@
         "idempotent": {
           "type": "boolean"
         },
+        "independentOf": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PropertyId"
+          }
+        },
         "inputSchema": {
           "type": "object",
           "additionalProperties": {

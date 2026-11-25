@@ -76,6 +76,7 @@ pub mod marking;
 pub mod members;
 pub mod metric;
 pub mod osi;
+mod payload_root;
 #[allow(
     missing_docs,
     reason = "exact posting wire contract moved unchanged from accounting"
@@ -85,6 +86,7 @@ pub mod provenance;
 pub mod quantity_ledger;
 pub mod requirement_display;
 pub mod reviewed_locale;
+pub use payload_root::PayloadRootDecodeError;
 mod rounding;
 pub use rounding::Rounding;
 pub mod rule;
@@ -102,11 +104,11 @@ pub use access::{
     AccessIr, ApprovalPolicyRoot, ObligationPolicyRoot, PolicyObligation, PolicyRoot,
 };
 pub use action::{
-    AccessRef, ActionCommand, ActionCommandChildMerge, ActionCommandOperation, ActionCompensation,
-    ActionCreateLink, ActionInputDerivation, ActionLinkSource, ActionQuantityEffect,
-    ActionQuantityOperation, ActionQuantityParameter, ActionRoot, ActionRuleRef, ActionUiEffect,
-    ActionUiEffects, ActionWrite, MAX_INTENT_REF_BYTES, MAX_TRACE_ID_BYTES, McpTool,
-    McpToolAnnotations, TraceContext, TraceContextError, WriteChange,
+    ACTOR_SUBJECT_STAMP, AccessRef, ActionCommand, ActionCommandChildMerge, ActionCommandOperation,
+    ActionCompensation, ActionCreateLink, ActionInputDerivation, ActionLinkSource,
+    ActionQuantityEffect, ActionQuantityOperation, ActionQuantityParameter, ActionRoot,
+    ActionRuleRef, ActionUiEffect, ActionUiEffects, ActionWrite, MAX_INTENT_REF_BYTES,
+    MAX_TRACE_ID_BYTES, McpTool, McpToolAnnotations, TraceContext, TraceContextError, WriteChange,
 };
 pub use aggregate_input::{ActionAggregateInput, AggregateFunction, AggregateWindow};
 pub use business_pack::{
@@ -1270,6 +1272,7 @@ define_payload_root!(ActionPayload {
         writes => "writes" as Vec<ActionWrite>,
         compensation => "compensation" as ActionCompensation,
         access => "access" as AccessRef,
+        independent_of => "independentOf" as Vec<PropertyId>,
         ui_effects => "uiEffects" as ActionUiEffects
     }
 });
@@ -1593,18 +1596,6 @@ pub enum ArtifactPayload {
     Labels(LabelsPayload),
     Model(ModelPayload),
 }
-
-/// The wire payload root must be a JSON object before it can select a closed kind root.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PayloadRootDecodeError;
-
-impl std::fmt::Display for PayloadRootDecodeError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("artifact payload must be a JSON object")
-    }
-}
-
-impl std::error::Error for PayloadRootDecodeError {}
 
 impl ArtifactPayload {
     pub fn from_kind_json(

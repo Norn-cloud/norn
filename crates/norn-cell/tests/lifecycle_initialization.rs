@@ -1009,9 +1009,29 @@ fn a_replayed_transition_of_a_rules_only_lifecycle_is_refused() {
     let mut cell = cell();
     let key = FactKey::new("test.Grant", "G-1");
     let before = snapshot(&cell, &key);
+    // A final row holding a non-default protected state is refused first by
+    // the protected-property check (ACTOR-STAMP-1 / FA-PROTECT-1).
     let commit = evidence(
         &key,
         json!({ "state": "closed" }),
+        vec![
+            created(&key, json!({})),
+            fired(&key, "state", "close", "open", "closed"),
+        ],
+    );
+    let protected = cell
+        .commit(commit)
+        .expect_err("a non-default protected state in the final row");
+    assert!(
+        matches!(protected, CommitError::ImmutableObject { .. }),
+        "{protected:?}"
+    );
+    assert_eq!(snapshot(&cell, &key), before);
+    // A final row at the canonical default passes that check, so the replay
+    // of the recorded transition itself refuses the rules-only lifecycle.
+    let commit = evidence(
+        &key,
+        json!({ "state": "open" }),
         vec![
             created(&key, json!({})),
             fired(&key, "state", "close", "open", "closed"),
@@ -1034,12 +1054,33 @@ fn a_created_event_cannot_supply_a_rules_only_property() {
     let mut cell = cell();
     let key = FactKey::new("test.Claim", "C-2");
     let before = snapshot(&cell, &key);
+    // A final row holding a non-default protected value is refused first by
+    // the protected-property check (ACTOR-STAMP-1 / FA-PROTECT-1).
     let commit = evidence(
         &key,
         json!({ "status": "granted", "verified": true }),
         vec![
             created(&key, json!({ "verified": true })),
             fired(&key, "status", "grant", "draft", "granted"),
+        ],
+    );
+    let protected = cell
+        .commit(commit)
+        .expect_err("a non-default protected value in the final row");
+    assert!(
+        matches!(protected, CommitError::ImmutableObject { .. }),
+        "{protected:?}"
+    );
+    assert_eq!(snapshot(&cell, &key), before);
+    // A final row at the canonical default passes that check, so the replay
+    // of the recorded creation itself refuses the supplied rules-only input.
+    let commit = evidence(
+        &key,
+        json!({ "status": "granted", "verified": false }),
+        vec![
+            created(&key, json!({ "verified": true })),
+            fired(&key, "status", "grant", "draft", "granted"),
+            set(&key, "verified", json!(false)),
         ],
     );
     let (_, supplied) = refusal(

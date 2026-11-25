@@ -86,6 +86,10 @@
       "message": "التأثير يكتب {$objectKind}، لكن أداة الكيان {$artifactId} بالإصدار {$version} تعرّف {$definition}",
       "review": "needs_review"
     },
+    "artifact_set.action.independent_actor": {
+      "message": "فحص الفاعل المستقل يسمّي خاصية ليست خاصية فاعل نصية محمية لهدف انتقال قائم",
+      "review": "needs_review"
+    },
     "artifact_set.action.invalid_aggregate": {
       "message": "مُدخل تجميعي للإجراء يسمّي نوعًا أو خاصية غير معروفة، أو خاصية لا يستطيع الطيّ قراءتها",
       "review": "needs_review"

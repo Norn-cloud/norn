@@ -925,6 +925,7 @@ pub(super) struct Pending {
     pub(super) decision_links: Vec<norn_ir::LinkChange>,
     /// RECEIPT-EFFECT-1: the receipt delivery this commit consumes.
     pub(super) receipt: Option<crate::result_reconciliation::Acceptance>,
+    pub(super) creator_stamp: Option<crate::creator_stamp::CreatorStamp>,
 }
 
 /// Per-decision limits and, when present, the shared aggregate turn meter.

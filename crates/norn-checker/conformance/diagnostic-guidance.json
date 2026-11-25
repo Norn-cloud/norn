@@ -84,6 +84,10 @@
     "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
+    "code": "artifact_set.action.independent_actor",
+    "fix": "Name a protected text property of the transition target that a governed create stamps from the verified principal (fromCaller), never a field a caller, import or update can write."
+  },
+  {
     "code": "artifact_set.action.invalid_aggregate",
     "fix": "Name a declared type and a property the aggregate fold can read."
   },

@@ -15,7 +15,7 @@ use super::types::{
     ACTION_CALL_TYPE, ActionAuthorizer, ActionCall, ActionCallRecord, ActionInputPreparation,
     ActionOutcome, ActionRefusal, EnvelopePolicy, Pending,
 };
-use super::upsert::upsert_stored_input;
+use super::upsert::{creator_stamp, upsert_stored_input};
 use super::{authorize_target, commit_effect, host_failure};
 
 const MAX_NAMING_SERIES_RETRIES: usize = 128;
@@ -160,10 +160,12 @@ where
             principal_inputs: None,
         };
         check_action_record_size::<H::Error>(call.action, &record, limits)?;
+        let values = upsert_stored_input(catalog, call.action, object_type, &generated_input);
+        let stamp = creator_stamp(catalog, call, &target, &values);
         let changes = vec![FactChange::Create {
             object_type: object_type.clone(),
             key: target.key.clone(),
-            values: upsert_stored_input(catalog, call.action, object_type, &generated_input),
+            values,
         }];
         let pending = Pending {
             effective_input: generated_input,
@@ -180,6 +182,7 @@ where
             decision_links: Vec::new(),
             remaining_fuel: preparation.remaining_fuel,
             receipt: None,
+            creator_stamp: stamp,
         };
         let outcome = commit_effect(
             host,

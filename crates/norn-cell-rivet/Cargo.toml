@@ -64,6 +64,14 @@ uuid = { version = "1.18.1", features = ["v4"] }
 [dev-dependencies]
 # Signs host tokens in the router gate tests (tests/router_gate.rs).
 ed25519-dalek = { version = "2.2.0", default-features = false, features = ["std"] }
+# Drives the WebSocket handshake in the router gate tests over a plain TCP
+# stream (no TLS): the test opens the socket itself, so only `handshake` is
+# needed on top of the host's own tokio-tungstenite dependency.
+tokio-tungstenite = { version = "0.26.2", default-features = false, features = ["handshake"] }
+# `test-util` enables `tokio::time::pause` / `advance` / `resume`, which
+# the cold-start JWKS backoff test uses to prove the real cooldown elapses
+# without sleeping.
+tokio = { version = "1.48.0", features = ["test-util"] }
 
 [features]
 # Local smoke and test builds only: fixture principals (norn-cell-do's

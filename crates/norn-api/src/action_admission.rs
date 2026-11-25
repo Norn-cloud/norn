@@ -118,9 +118,34 @@ fn prepare(model: &norn_cell::Model, principal_inputs: bool) -> Result<norn_cell
 pub(crate) struct RetainedActions {
     pub(crate) actions: Vec<(ArtifactEnvelope, ActionRoot)>,
     pub(crate) rules: Vec<SynchronousRule>,
+    /// ACTOR-INDEPENDENT-1: the transitions the retained actions guard.
+    pub(crate) guards: Vec<norn_kernel::TransitionGuard>,
     /// APPROVAL-REVISION-1: each action's definition digest, by action id.
     digests: BTreeMap<String, String>,
 }
+/// The expression profile and type environment the retained admission
+/// receipt pins, which every retained writer is admitted under.
+fn retained_binding(set: &InstalledDefinitionSet) -> Result<DecisionBinding, Refusal> {
+    let receipt: serde_json::Value = serde_json::from_str(
+        set.admission_receipt
+            .as_deref()
+            .ok_or_else(|| Refusal::host("missing retained receipt"))?,
+    )
+    .map_err(Refusal::host)?;
+    Ok(DecisionBinding {
+        profile_id: receipt
+            .get("exprProfile")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| Refusal::host("missing expression profile"))?
+            .into(),
+        environment_hash: receipt
+            .pointer("/typeEnv/sha256")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| Refusal::host("missing type environment"))?
+            .into(),
+    })
+}
+
 impl RetainedActions {
     pub(crate) fn load(set: &InstalledDefinitionSet, scope: &CellScope) -> Result<Self, Refusal> {
         crate::routes::admit_retained(set, scope)?;
@@ -175,24 +200,7 @@ impl RetainedActions {
                 | ArtifactKind::Model => {}
             }
         }
-        let receipt: serde_json::Value = serde_json::from_str(
-            set.admission_receipt
-                .as_deref()
-                .ok_or_else(|| Refusal::host("missing retained receipt"))?,
-        )
-        .map_err(Refusal::host)?;
-        let binding = DecisionBinding {
-            profile_id: receipt
-                .get("exprProfile")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| Refusal::host("missing expression profile"))?
-                .into(),
-            environment_hash: receipt
-                .pointer("/typeEnv/sha256")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| Refusal::host("missing type environment"))?
-                .into(),
-        };
+        let binding = retained_binding(set)?;
         let mut rules = Vec::new();
         let digests = action_digests(&actions, &action_sources, &artifacts, &sources, &roots)?;
         let mut loaded = BTreeSet::new();
@@ -219,6 +227,7 @@ impl RetainedActions {
             );
         }
         Ok(Self {
+            guards: norn_kernel::transition_guards(actions.iter().map(|(_, action)| action)),
             actions,
             rules,
             digests,
