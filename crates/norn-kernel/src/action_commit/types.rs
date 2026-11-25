@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use norn_ir::{ActionRoot, KeyName, ObjectTypeName, RuntimeValue, TraceContext};
 use serde::{Deserialize, Serialize};
 
+pub use super::parameter::ActionParameterPin;
 use crate::action::ActionCommandRejection;
 use crate::cell_host::{
     CellCommit, CommitReceipt, FactExpectation, FactKey, FactState, FactVersion, FactWrite,
@@ -12,6 +13,7 @@ use crate::decision_commit::{DecisionRefusal, DecisionTurn, FactSlice};
 use crate::envelope::TurnEnvelopeMeter;
 use crate::limits::EnvelopeLimits;
 use crate::naming_series::SeriesCandidate;
+use crate::principal_inputs::UnresolvedPrincipalInput;
 
 /// Object type of the kernel's idempotency records of action calls (registered by host, #2911).
 pub const ACTION_CALL_TYPE: &str = "norn.ActionCall";
@@ -222,6 +224,25 @@ pub trait ActionAuthorizer {
     ) -> Result<(), ActionDenial> {
         Err(ActionDenial::Invisible)
     }
+
+    /// PRINCIPAL-INPUT-1: resolves the declared principal inputs of the
+    /// action's pinned decision from the verified principal and the PDP,
+    /// never from the call. The default resolves nothing (fail closed).
+    ///
+    /// # Errors
+    ///
+    /// The first declared input that cannot be resolved.
+    fn resolve_principal_inputs(
+        &self,
+        request: &crate::principal_inputs::PrincipalInputsRequest<'_>,
+    ) -> Result<crate::principal_inputs::ActionPrincipalInputs, UnresolvedPrincipalInput> {
+        Err(UnresolvedPrincipalInput {
+            input: request
+                .inputs
+                .first()
+                .map_or_default(|input| input.name.clone()),
+        })
+    }
 }
 
 /// One field produced by an ordered action input derivation.
@@ -246,53 +267,6 @@ pub struct ActionPreconditionOutcome {
     pub expression: String,
     /// Whether it held (successful records contain only `true`).
     pub satisfied: bool,
-}
-
-/// One effective-dated parameter resolved and pinned during an action commit
-/// (D07, PARAM-EXACT-1, PARAM-BOUND-1).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(test, derive(schemars::JsonSchema))]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ActionParameterPin {
-    /// The declared parameter slice entry name.
-    pub entry: String,
-    /// The stable parameter key.
-    pub setting_key: String,
-    /// The declared effective timestamp evaluated for this selection.
-    pub effective_at: String,
-    /// The selected setting fact's concrete object type and key.
-    pub setting: FactKey,
-    /// The committed fact version of the selected setting at commit time.
-    pub version: u64,
-    /// Canonical Norn1 SHA-256 digest (`sha256:...`) of the selected setting's
-    /// exact values at commit time.
-    pub digest: String,
-}
-
-impl ActionParameterPin {
-    fn to_runtime_value(&self) -> JsonValue {
-        let string = |value: &str| JsonValue::String(value.to_owned());
-        JsonValue::Object(JsonObject::from([
-            ("entry".to_owned(), string(&self.entry)),
-            ("settingKey".to_owned(), string(&self.setting_key)),
-            ("effectiveAt".to_owned(), string(&self.effective_at)),
-            (
-                "setting".to_owned(),
-                JsonValue::Object(JsonObject::from([
-                    (
-                        "objectType".to_owned(),
-                        string(self.setting.object_type.as_str()),
-                    ),
-                    ("key".to_owned(), string(&self.setting.key)),
-                ])),
-            ),
-            (
-                "version".to_owned(),
-                JsonValue::Number(norn_ir::Decimal::from(self.version)),
-            ),
-            ("digest".to_owned(), string(&self.digest)),
-        ]))
-    }
 }
 
 /// The result of applying ordered derivations and validating the final input.
@@ -415,6 +389,10 @@ pub struct ActionCallRecord {
     /// Optional provenance trace context supplied by the caller.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trace: Option<TraceContext>,
+    /// PRINCIPAL-INPUT-1: the principal inputs resolved for the pinned
+    /// decision. Replay reads them here; they are never resolved again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub principal_inputs: Option<crate::principal_inputs::ActionPrincipalInputs>,
 }
 
 impl ActionCallRecord {
@@ -451,6 +429,7 @@ impl ActionCallRecord {
             to: String::new(),
             row_operations: Vec::new(),
             trace: call.trace.clone(),
+            principal_inputs: None,
         }
     }
 
@@ -578,6 +557,9 @@ impl ActionCallRecord {
         if let Some(trace) = &self.trace {
             values.insert("trace".to_owned(), trace.to_runtime_value());
         }
+        if let Some(principal) = &self.principal_inputs {
+            values.insert("principalInputs".to_owned(), principal.to_runtime_value());
+        }
         values
     }
 
@@ -650,6 +632,10 @@ impl ActionCallRecord {
                 Some(decoded)
             }
         };
+        let principal_inputs = match values.get("principalInputs") {
+            None | Some(JsonValue::Null) => None,
+            Some(value) => Some(norn_ir::runtime::decode(value).ok()?),
+        };
         Some(Self {
             action_id: string("actionId")?,
             action_artifact_id,
@@ -673,6 +659,7 @@ impl ActionCallRecord {
             to: string("to")?,
             row_operations,
             trace,
+            principal_inputs,
         })
     }
 }
@@ -713,6 +700,13 @@ pub enum ActionRefusal<X> {
     UnsupportedEffect {
         /// The action.
         action_id: String,
+    },
+    /// PRINCIPAL-INPUT-1: a declared principal input could not be resolved.
+    /// Names the input; never carries a value. There is no default.
+    #[error("principal input {input:?} could not be resolved")]
+    PrincipalInputUnavailable {
+        /// The declared input.
+        input: String,
     },
     /// A synchronous writer escaped its closed declared effect set.
     #[error("synchronous action writer refused: {reason}")]
@@ -877,6 +871,7 @@ impl<X> ActionRefusal<X> {
             Self::MissingScope { .. } => "action.missing_scope",
             Self::UnsupportedEffect { .. } => "action.unsupported_effect",
             Self::UncheckedWriter { .. } => "core.txn.unchecked_writer",
+            Self::PrincipalInputUnavailable { .. } => "decision.principal_input_unavailable",
             Self::InvalidInput { .. } => "action.invalid_input",
             Self::DerivationFailed { .. } => "action.derivation_failed",
             Self::InputBoundExceeded { .. } => "action.input_bound_exceeded",

@@ -121,6 +121,7 @@ mod action_contract_tests {
             "derivedValues",
             "preconditionOutcomes",
             "parameterPins",
+            "principalInputs",
             "rowOperations",
             "trace",
         ] {
