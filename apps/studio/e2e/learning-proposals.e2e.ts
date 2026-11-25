@@ -383,6 +383,7 @@ test("proposals lifecycle: server-filter list, draft, edit, withdraw + undo, sub
   await dialog(page).getByRole("button", { name: "Draft proposal", exact: true }).click()
   await dialog(page).getByRole("button", { name: "Done" }).click()
   await table.getByRole("link", { name: "Add remittance grace window" }).click()
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Add remittance grace window")
   await expect(page.getByText("Not replayed yet")).toBeVisible()
 
   // Edit draft, withdraw + Undo (returns to draft), then submit → replay populates.
