@@ -186,7 +186,7 @@ for (const answer of ["Allow", "Decline"] as const) {
     await expect(call.getByRole("button", { name: "Decline" })).toBeVisible()
     const violations = (await new AxeBuilder({ page }).withTags(WCAG).include("[data-slot=sidekick]").analyze()).violations
     expect(violations.map(({ id, nodes }) => `${id}: ${nodes.map((node) => node.target.join(" ")).join(", ")}`)).toEqual([])
-    if (shots) await shoot(page, "sidekick-approval")
+    if (shots && answer === "Allow") await shoot(page, "sidekick-approval")
     await call.getByRole("button", { name: answer }).click()
     await expect.poll(() => picked).toEqual({ outcome: { outcome: "selected", optionId: answer === "Allow" ? "allow" : "reject" } })
     if (answer === "Allow") {
@@ -220,7 +220,7 @@ test("refusal: a call the cell refuses draws the server's words; a refused grant
   const error = panel.locator("[data-slot=sidekick-error]")
   await expect(error).toContainText("Sidekick couldn't answer.")
   await expect(error).toContainText("Your role in this workspace does not include Sidekick.")
-  await expect(panel.locator("[data-role=assistant] [data-slot=mascot]").first()).toHaveAttribute("data-state", "unavailable")
+  await expect(error.locator("[data-slot=mascot]")).toHaveAttribute("data-state", "unavailable")
   grant.grant = "ok"
   await error.getByRole("button", { name: "Retry" }).click()
   await expect(error).toHaveCount(0)
@@ -249,10 +249,12 @@ test("a11y: Sidekick idle and mid-conversation and the Ask bar have no axe viola
   await page.keyboard.press("Enter")
   await expect(panel.getByText("Here is weekly yield from Norn.")).toBeVisible()
   expect(await check("[data-slot=sidekick]")).toEqual([])
-  for (const scheme of ["dark"] as const) {
-    await page.emulateMedia({ colorScheme: scheme })
-    expect(await check("[data-slot=sidekick]")).toEqual([])
-  }
+  // Dark: measured once the scheme has settled (colours transition for 150ms; reduced motion stops that).
+  await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" })
+  await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains("dark"))).toBe(true)
+  await page.waitForTimeout(400)
+  expect(await check("[data-slot=sidekick]")).toEqual([])
+  await page.emulateMedia({ colorScheme: "light", reducedMotion: "no-preference" })
   if (shots) await shoot(page, "sidekick-conversation")
 })
 
@@ -278,19 +280,45 @@ test("mascot: every state draws on the contact sheet; it moves only when motion 
   }
 })
 
-/** Light and dark at a desktop width and at 390px, for review. */
+/**
+ * Light and dark at the current width, for review. The width never changes mid-conversation: below
+ * 768px the panel is a sheet, and moving between the two remounts the chat (a 390px pass starts its
+ * own conversation, below).
+ */
 async function shoot(page: Page, name: string) {
-  for (const [width, height, label] of [[1440, 900, "desktop"], [390, 844, "390"]] as const) {
-    await page.setViewportSize({ width, height })
-    for (const scheme of ["light", "dark"] as const) {
-      await page.emulateMedia({ colorScheme: scheme, reducedMotion: "reduce" })
-      await page.waitForTimeout(300)
-      await page.screenshot({ path: `${shots}/${name}-${label}-${scheme}.png` })
-    }
+  const label = (page.viewportSize()?.width ?? 1440) < 640 ? "390" : "desktop"
+  for (const scheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme: scheme, reducedMotion: "reduce" })
+    await page.waitForTimeout(400)
+    await page.screenshot({ path: `${shots}/${name}-${label}-${scheme}.png` })
   }
-  await page.setViewportSize({ width: 1440, height: 900 })
-  await page.emulateMedia({ colorScheme: "light" })
+  await page.emulateMedia({ colorScheme: "light", reducedMotion: "no-preference" })
 }
+
+test("screenshots at 390px: the Ask bar opens Sidekick as a sheet, mid-conversation and with an approval prompt", async ({ page }) => {
+  test.skip(!shots, "review screenshots only with AI_SHOTS=<dir>")
+  await studio(page)
+  await bridge(page, async ({ update, view, ask }) => {
+    update(tool("t1", "norn_answer"))
+    view("norn_answer", "answer", { content: [{ type: "text", text: ANSWER }] })
+    update({ sessionUpdate: "tool_call_update", toolCallId: "t1", status: "completed" })
+    update(words("Here is weekly yield. Shall I close R-1?"))
+    update(tool("t2", "norn_call_action", { rawInput: { action: "demo.record.close", input: { id: "R-1" } } }))
+    await ask("norn_call_action", { action: "demo.record.close", input: { id: "R-1" } })
+    return "end_turn"
+  })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto("/")
+  await expect(page.locator("[data-slot=ask-norn]")).toBeVisible()
+  await shoot(page, "home")
+  await page.getByLabel("Ask or tell Norn anything").fill("Weekly yield, then close R-1")
+  await page.getByLabel("Ask or tell Norn anything").press("Enter")
+  const panel = page.locator("[data-slot=sidekick]")
+  await expect(panel.locator("[data-tool=norn_call_action]")).toHaveAttribute("data-status", "awaiting_approval")
+  await shoot(page, "sidekick-approval")
+  await panel.locator("[data-view=answer]").scrollIntoViewIfNeeded()
+  await shoot(page, "sidekick-conversation")
+})
 
 test("screenshots: home with the Ask Norn bar and a few core pages in Luma geometry", async ({ page }) => {
   test.skip(!shots, "review screenshots only with AI_SHOTS=<dir>")

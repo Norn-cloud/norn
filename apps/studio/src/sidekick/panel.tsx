@@ -189,9 +189,10 @@ export function Sidekick({ scope, scopeKey }: { readonly scope?: StudioScope | n
           )}
           {error !== undefined && (
             <Alert variant="destructive" data-slot="sidekick-error">
+              <Mascot size={28} state="unavailable" className="row-span-2" />
               <AlertTitle>Sidekick couldn't answer.</AlertTitle>
               <AlertDescription>{error.message}</AlertDescription>
-              <div className="col-start-1 mt-2 flex">
+              <div className="col-start-2 mt-2 flex">
                 <Button size="sm" variant="outline" onClick={() => void regenerate()}><RotateCcw aria-hidden />Retry</Button>
               </div>
             </Alert>
