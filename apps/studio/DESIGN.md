@@ -57,8 +57,9 @@ TARGET rule is never described as shipped.
    calm glass islands on a mist backdrop (section 9.1), so the content carries the colour.
 3. **One way to nest.** The concentric double shell (`ShellCard` around a well) is the only nesting
    pattern. Anything else that frames a frame is a bug.
-4. **Colour means something.** Surfaces are neutral. Saturated colour is reserved for status dots,
-   data marks, avatar discs, the focus ring and the single primary action on a view.
+4. **Colour means something.** Chrome is monochrome in every skin: black, white and greys, like
+   Polar's dashboard (section 19.6). Colour is reserved for charts and visualisations, status dots
+   beside their word, avatar discs, the Norn mark and its mascot, and data highlights.
 5. **Honest by construction.** Every state a screen can be in (loading, empty, unavailable,
    refused, withheld, committed) has a designed, truthful rendering. Nothing is inferred as
    "verified" or "zero" from silence.
@@ -897,8 +898,10 @@ the principal may take it.
 
 ## 13. Status and colour discipline
 
-- Saturated colour appears only in: status dots, data bars and chart marks, avatar discs, the focus
-  ring, the sidebar's and the dock's attention dots, and the single primary CTA.
+- Saturated colour appears only in: status dots beside their word (success, warning, error, in muted
+  tones), data bars and chart marks, avatar discs, the Norn mark and its mascot, and data highlights
+  (search matches, diff marks). The primary CTA, the focus ring, links, tabs, inputs, chips, borders,
+  icons and the navigation attention dots are neutral (section 19.6, gated by `test/monochrome.test.ts`).
 - Coloured **text** appears only for: a PageHead live line, signed money or Before → After values,
   and inline links. Always the AA text tokens (`--success`, `--warning`, `--destructive-text`,
   `--link`), never the dot tokens.
@@ -1373,4 +1376,33 @@ question when the person stops the turn. If `tools/list` fails, nothing is pre-a
 draws the question as the tool's Confirmation and relays the person's pick; it holds no rule of its
 own. The cell still decides every call, so an allowed call can still be refused (section 12.3), and
 an action that needs another person's sign-off still parks as a decision (section 12.4).
+
+### 19.6 Monochrome chrome (owner, 2026-11-25)
+
+In the owner's words: "again, i said monochrome, black/white/greys like polar … in the main islands,
+etc. colours only for highlights, visualisations, etc." The references are Polar's dashboard and the
+getopen.so demo: a white canvas, grey text, and colour only on avatars, flags and the map.
+
+- **Chrome is neutral in every skin and scheme:** the islands, the rail, the top bar, every button
+  (the primary and the Ask button: near-black on light, near-white on dark), tabs, inputs, chips,
+  borders, links, icons, the focus ring and the navigation attention dots. `--primary`, `--action`,
+  `--link` and `--ring` are greys in `luma`, `polar`, `open` and `glass`; the backdrop's ambient pools
+  are white or black at low alpha, never a hue.
+- **Colour is allowed only in named tokens:** `--chart-1…5` (charts and visualisations, and the
+  canvas's own kind tints), `--dot-live`, `--dot-held`, `--dot-bad`, `--success`, `--warning`,
+  `--destructive`, `--destructive-text` (status, beside a word), `--avatar-n-*`, and `--knot` (the Norn
+  mark and the mascot). Data highlights (a search match, a diff mark, a masked entity in the privacy
+  guard) use the tone tokens inside the data they mark, never on chrome.
+- **Category marks are neutral.** A `Chip` or `StatusDot` in a kind tone (`blue`, `violet`, `teal`,
+  `pink`, `orange`: a source system, a version, a role) draws the same neutral mark; its word tells it
+  apart.
+- **The gate:** `test/monochrome.test.ts` resolves every built-in palette from `index.css` and fails
+  when any token outside the named list has OKLCH chroma of 0.02 or more (a neutral with a cast, such
+  as zinc at 0.004–0.012 or the islands' mist at about 0.006, passes; the old blue action at 0.20 and a
+  7% violet glow at 0.23 fail), and when the CTA, accent text or link is not near-black on light and
+  near-white on dark. It also refuses a hue in the category dots. No allowlist beyond the named tokens.
+- **Values are provisional** until the measured Polar and getopen.so spec lands: `open` and `glass`
+  take `polar`'s ink row (`#18181b` / `#f4f4f5` CTA, `#52525b` / `#a1a1aa` ring), `glass` loses its blue
+  and violet tints, and `luma` keeps shadcn's neutral row (section 19.1). The rows for `open` and
+  `glass` in sections 4.2 and 4.7 are superseded; the contrast gate measures the new values.
 

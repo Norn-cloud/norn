@@ -2,15 +2,16 @@ import type { ComponentProps, ReactNode } from "react"
 import { cn } from "@/lib/utils"
 
 /**
- * The tones a 6px mark takes (DESIGN.md 4.3 and 4.4). The five states use the saturated dot tokens;
- * the kind tones mark a category (a source system, a kind of artefact) and never a state.
+ * The tones a 6px mark takes (DESIGN.md 4.3 and 4.4). The states use the dot tokens; the kind tones
+ * mark a category (a source system, a kind of artefact) and never a state. Chrome is monochrome
+ * (DESIGN.md 19.6): a category is told by its word, so every kind tone draws the same neutral mark.
  */
 export type DotTone = "live" | "held" | "bad" | "quiet" | "accent" | "blue" | "violet" | "teal" | "pink" | "orange"
 
 /** The fill class for each tone: the one place a dot token becomes a fill (the tick bar reuses it). */
 export const DOT: Readonly<Record<DotTone, string>> = {
   live: "bg-dot-live", held: "bg-dot-held", bad: "bg-dot-bad", quiet: "bg-dot-quiet", accent: "bg-dot-accent",
-  blue: "bg-tone-blue", violet: "bg-tone-violet", teal: "bg-tone-teal", pink: "bg-tone-pink", orange: "bg-tone-orange",
+  blue: "bg-muted-foreground", violet: "bg-muted-foreground", teal: "bg-muted-foreground", pink: "bg-muted-foreground", orange: "bg-muted-foreground",
 }
 
 /** A 6px round mark in a tone, always beside its word; `pulse` for something live (off under reduced motion). */

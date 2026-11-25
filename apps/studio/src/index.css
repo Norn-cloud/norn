@@ -16,7 +16,7 @@
  *   and liquid-glass islands on a backdrop with two ambient glows (DESIGN.md 4.7).
  * - `polar` (`:root[data-skin="polar"]`): monochrome ink on neutral surfaces, colour only where
  *   DESIGN.md section 13 allows it; opaque islands.
- * - `open` (`:root[data-skin="open"]`): white canvas, 20/15px double shell, one blue accent, opaque
+ * - `open` (`:root[data-skin="open"]`): white canvas, 20/15px double shell, an ink accent, opaque
  *   islands. `glass` starts from its text and action rows, then sets its own surfaces.
  * - `glass`: translucent frosted surfaces with backdrop blur over an ambient mesh.
  * Geometry is in px so it does not scale with the 90% root. Every palette passes the contrast gate
@@ -132,8 +132,8 @@
   --dock-foreground: #ffffff;
   --dock-muted: #b4b4bc;
   --dock-active: #34343a;
-  --dock-ring: #93b4ff;
-  --dock-indicator: #6b98ff;
+  --dock-ring: #d4d4d8;
+  --dock-indicator: #f4f4f5;
   --dock-shadow: 0 10px 30px -8px rgb(0 0 0 / 0.35), 0 2px 6px rgb(0 0 0 / 0.12);
   /* Elevation (DESIGN.md 6): whisper contact plus soft ambient shadow, never a hard blob. */
   --popup-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
@@ -179,11 +179,11 @@
    * shadow. Text on them is measured against the worst-case backdrop (a glow at its peak under it).
    */
   --backdrop: #e7e8ed;
-  --backdrop-glow-1: rgb(85 76 232 / 0.07);
-  --backdrop-glow-2: rgb(56 189 248 / 0.06);
+  --backdrop-glow-1: rgb(255 255 255 / 0.55);
+  --backdrop-glow-2: rgb(0 0 0 / 0.03);
   --island: rgb(247 248 249 / 0.8);
-  --island-border: rgb(20 22 48 / 0.07);
-  --island-shadow: inset 0 1px 0 rgb(255 255 255 / 0.75), 0 1px 2px rgb(20 22 48 / 0.04), 0 12px 32px -16px rgb(20 22 48 / 0.16);
+  --island-border: rgb(0 0 0 / 0.07);
+  --island-shadow: inset 0 1px 0 rgb(255 255 255 / 0.75), 0 1px 2px rgb(0 0 0 / 0.04), 0 12px 32px -16px rgb(0 0 0 / 0.16);
   --island-blur: blur(24px) saturate(160%);
   --radius-island: 18px;
   /*
@@ -275,8 +275,8 @@
   --dock-foreground: #ffffff;
   --dock-muted: #b4b4bc;
   --dock-active: #3a3a41;
-  --dock-ring: #93b4ff;
-  --dock-indicator: #6b98ff;
+  --dock-ring: #d4d4d8;
+  --dock-indicator: #f4f4f5;
   --dock-shadow: 0 10px 30px -8px rgb(0 0 0 / 0.7);
   --popup-shadow: 0 18px 44px -14px rgb(0 0 0 / 0.72);
   --sheet-shadow: 0 24px 64px -16px rgb(0 0 0 / 0.8);
@@ -312,8 +312,8 @@
   --tone-pink: #f797cb;
   --tone-orange: #f7a465;
   --backdrop: #050507;
-  --backdrop-glow-1: rgb(124 116 255 / 0.1);
-  --backdrop-glow-2: rgb(56 189 248 / 0.05);
+  --backdrop-glow-1: rgb(255 255 255 / 0.05);
+  --backdrop-glow-2: rgb(255 255 255 / 0.03);
   --island: rgb(13 13 16 / 0.8);
   --island-border: rgb(255 255 255 / 0.07);
   --island-shadow: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 16px 40px -16px rgb(0 0 0 / 0.7);
@@ -468,7 +468,7 @@
 }
 
 /*
- * Skin: Open (the first-party app's white canvas and blue accent). `glass` starts from its text and
+ * Skin: Open (the first-party app's white canvas, now with an ink accent: chrome is monochrome, DESIGN.md 19.6). `glass` starts from its text and
  * action rows, so it shares these blocks and sets its own surfaces after them.
  */
 :root[data-skin="open"],
@@ -499,13 +499,13 @@
   --popover: #ffffff;
   --popover-foreground: #1b1b1d;
   /* Darker than --primary so action-coloured text holds 4.5:1 on its own tint. */
-  --action: #2755d0;
-  --action-hover: #2451c7;
-  --action-foreground: #ffffff;
-  --primary: #2e60e0;
-  --primary-foreground: #ffffff;
-  --action-dot: #7f9ef4;
-  --action-soft: rgb(58 109 240 / 0.1);
+  --action: #18181b;
+  --action-hover: #2c2c32;
+  --action-foreground: #fafafa;
+  --primary: #18181b;
+  --primary-foreground: #fafafa;
+  --action-dot: #71717a;
+  --action-soft: rgb(24 24 27 / 0.08);
   --secondary: #f5f5f5;
   --secondary-foreground: #1b1b1d;
   --muted: #f5f5f5;
@@ -516,23 +516,23 @@
   --border: #ebebeb;
   --line: #e8e8e8;
   --input: #e4e4e4;
-  --ring: #2e60e0;
-  --link: #2451c7;
+  --ring: #52525b;
+  --link: #18181b;
   --chart-1: #3a6df0;
   --sidebar: #f6f6f7;
   --sidebar-foreground: #1b1b1d;
-  --sidebar-primary: #3a6df0;
-  --sidebar-primary-foreground: #ffffff;
+  --sidebar-primary: #18181b;
+  --sidebar-primary-foreground: #fafafa;
   --sidebar-accent: #ececef;
   --sidebar-accent-foreground: #1b1b1d;
   --sidebar-border: #ebebeb;
-  --sidebar-ring: #3a6df0;
+  --sidebar-ring: #52525b;
   --panel-border: #ebebeb;
   --panel-shadow: 0 1px 2px rgb(0 0 0 / 0.025), 0 2px 6px -2px rgb(0 0 0 / 0.02);
   --table-border: #ebebeb;
-  --dock-ring: #93b4ff;
-  --dock-indicator: #6b98ff;
-  --elevation-action: 0 1px 2px rgb(58 109 240 / 0.22), inset 0 1px 0 rgb(255 255 255 / 0.18);
+  --dock-ring: #d4d4d8;
+  --dock-indicator: #f4f4f5;
+  --elevation-action: 0 1px 2px rgb(0 0 0 / 0.16), inset 0 1px 0 rgb(255 255 255 / 0.12);
   --backdrop: #f0f0f2;
   --backdrop-glow-1: rgb(0 0 0 / 0);
   --backdrop-glow-2: rgb(0 0 0 / 0);
@@ -560,13 +560,13 @@
   --well-hover: #232327;
   --popover: #19191c;
   --popover-foreground: #ececee;
-  --action: #6b98ff;
-  --action-hover: #2451c7;
-  --action-foreground: #ffffff;
-  --primary: #2e60e0;
-  --primary-foreground: #ffffff;
-  --action-dot: #6f97ff;
-  --action-soft: rgb(91 140 255 / 0.14);
+  --action: #f4f4f5;
+  --action-hover: #e4e4e7;
+  --action-foreground: #141416;
+  --primary: #f4f4f5;
+  --primary-foreground: #141416;
+  --action-dot: #a1a1aa;
+  --action-soft: rgb(244 244 245 / 0.1);
   --secondary: #1c1c1f;
   --secondary-foreground: #ececee;
   --muted: #1c1c1f;
@@ -578,22 +578,22 @@
   --border: #232326;
   --line: #2a2a2e;
   --input: #2c2c30;
-  --ring: #5b8cff;
-  --link: #7da4ff;
+  --ring: #a1a1aa;
+  --link: #e4e4e7;
   --chart-1: #5b8cff;
   --sidebar: #09090a;
   --sidebar-foreground: #ececee;
-  --sidebar-primary: #5b8cff;
-  --sidebar-primary-foreground: #ffffff;
+  --sidebar-primary: #f4f4f5;
+  --sidebar-primary-foreground: #141416;
   --sidebar-accent: #18181b;
   --sidebar-accent-foreground: #ececee;
   --sidebar-border: #202024;
-  --sidebar-ring: #5b8cff;
+  --sidebar-ring: #a1a1aa;
   --panel-border: #232326;
   --panel-shadow: inset 0 1px 0 rgb(255 255 255 / 0.02);
   --table-border: #232326;
-  --dock-ring: #93b4ff;
-  --dock-indicator: #6b98ff;
+  --dock-ring: #d4d4d8;
+  --dock-indicator: #f4f4f5;
   --elevation-action: 0 1px 2px rgb(0 0 0 / 0.45), inset 0 1px 0 rgb(255 255 255 / 0.18);
   --backdrop: #000000;
   --island: #0d0d0e;
@@ -611,67 +611,67 @@
 :root[data-skin="glass"] {
   --radius-panel: 20px;
   --radius-well: 15px;
-  --shell: #eef1f8;
-  --canvas: #eef1f8;
+  --shell: #eff0f2;
+  --canvas: #eff0f2;
   --background: rgb(255 255 255 / 0.74);
   --card: rgb(255 255 255 / 0.62);
-  --well: rgb(244 246 252 / 0.65);
+  --well: rgb(245 245 247 / 0.65);
   --well-border: rgb(255 255 255 / 0.72);
-  --well-hover: rgb(236 240 250 / 0.78);
+  --well-hover: rgb(238 238 241 / 0.78);
   --popover: rgb(255 255 255 / 0.88);
-  --surface-subtle: rgb(241 244 252 / 0.68);
-  --muted: rgb(236 240 250 / 0.72);
-  --accent: rgb(228 233 248 / 0.78);
-  --border: rgb(58 109 240 / 0.14);
-  --input: rgb(58 109 240 / 0.2);
-  --sidebar: rgb(246 248 254 / 0.62);
+  --surface-subtle: rgb(243 243 246 / 0.68);
+  --muted: rgb(238 238 241 / 0.72);
+  --accent: rgb(234 234 238 / 0.78);
+  --border: rgb(0 0 0 / 0.08);
+  --input: rgb(0 0 0 / 0.12);
+  --sidebar: rgb(248 248 250 / 0.62);
   --sidebar-accent: rgb(255 255 255 / 0.72);
-  --sidebar-border: rgb(58 109 240 / 0.14);
+  --sidebar-border: rgb(0 0 0 / 0.08);
   --panel-border: rgb(255 255 255 / 0.72);
   --panel-shadow: inset 0 1px 0 rgb(255 255 255 / 0.85), 0 8px 28px -12px rgb(44 52 94 / 0.14);
-  --table-border: rgb(58 109 240 / 0.14);
+  --table-border: rgb(0 0 0 / 0.08);
   --elevation-float: inset 0 1px 0 rgb(255 255 255 / 0.85), 0 16px 40px -12px rgb(44 52 94 / 0.22);
-  --dock-surface: rgb(24 26 36 / 0.82);
+  --dock-surface: rgb(26 26 30 / 0.82);
   --dock-border: rgb(255 255 255 / 0.22);
   --dock-muted: #babac2;
-  --backdrop: #eef1f8;
-  --backdrop-glow-1: rgb(58 109 240 / 0.16);
-  --backdrop-glow-2: rgb(139 92 246 / 0.12);
-  --island: rgb(252 253 255 / 0.6);
+  --backdrop: #eff0f2;
+  --backdrop-glow-1: rgb(255 255 255 / 0.55);
+  --backdrop-glow-2: rgb(0 0 0 / 0.03);
+  --island: rgb(253 253 254 / 0.6);
   --island-border: rgb(255 255 255 / 0.72);
-  --island-shadow: inset 0 1px 0 rgb(255 255 255 / 0.85), 0 8px 28px -12px rgb(44 52 94 / 0.16);
+  --island-shadow: inset 0 1px 0 rgb(255 255 255 / 0.85), 0 8px 28px -12px rgb(0 0 0 / 0.16);
   --island-blur: blur(24px) saturate(165%);
 }
 
 :root.dark[data-skin="glass"] {
-  --shell: #0b0d17;
-  --canvas: #0b0d17;
-  --background: rgb(18 21 34 / 0.72);
-  --card: rgb(24 28 44 / 0.58);
-  --well: rgb(30 35 54 / 0.62);
+  --shell: #0c0c0e;
+  --canvas: #0c0c0e;
+  --background: rgb(20 20 23 / 0.72);
+  --card: rgb(28 28 32 / 0.58);
+  --well: rgb(36 36 41 / 0.62);
   --well-border: rgb(255 255 255 / 0.13);
-  --well-hover: rgb(38 44 68 / 0.72);
+  --well-hover: rgb(46 46 52 / 0.72);
   /* Lifted from open's #6a6a72: the islands' saturate() leaves it at 2.97:1 under both glows (3.15 here). */
   --subtle-foreground: #6e6e76;
-  --popover: rgb(26 30 48 / 0.88);
-  --surface-subtle: rgb(30 35 54 / 0.62);
-  --muted: rgb(30 34 54 / 0.68);
-  --accent: rgb(42 48 74 / 0.72);
+  --popover: rgb(30 30 34 / 0.88);
+  --surface-subtle: rgb(36 36 41 / 0.62);
+  --muted: rgb(36 36 41 / 0.68);
+  --accent: rgb(52 52 58 / 0.72);
   --border: rgb(255 255 255 / 0.13);
   --input: rgb(255 255 255 / 0.18);
-  --sidebar: rgb(15 18 30 / 0.6);
+  --sidebar: rgb(18 18 20 / 0.6);
   --sidebar-accent: rgb(255 255 255 / 0.09);
   --sidebar-border: rgb(255 255 255 / 0.12);
   --panel-border: rgb(255 255 255 / 0.15);
   --panel-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12), 0 10px 30px -12px rgb(0 0 0 / 0.55);
   --table-border: rgb(255 255 255 / 0.13);
   --elevation-float: inset 0 1px 0 rgb(255 255 255 / 0.16), 0 20px 48px -12px rgb(0 0 0 / 0.78);
-  --dock-surface: rgb(18 20 34 / 0.8);
+  --dock-surface: rgb(22 22 25 / 0.8);
   --dock-border: rgb(255 255 255 / 0.18);
-  --backdrop: #0b0d17;
-  --backdrop-glow-1: rgb(58 109 240 / 0.22);
-  --backdrop-glow-2: rgb(139 92 246 / 0.18);
-  --island: rgb(18 21 34 / 0.62);
+  --backdrop: #0c0c0e;
+  --backdrop-glow-1: rgb(255 255 255 / 0.05);
+  --backdrop-glow-2: rgb(255 255 255 / 0.03);
+  --island: rgb(20 20 23 / 0.62);
   --island-border: rgb(255 255 255 / 0.13);
   --island-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12), 0 10px 30px -12px rgb(0 0 0 / 0.55);
 }
