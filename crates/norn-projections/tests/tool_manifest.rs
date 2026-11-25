@@ -150,7 +150,9 @@ fn a_declaration_that_does_not_fit_its_operation_is_refused() {
     // Two operations, one tool name.
     let tool = declared(&bound());
     let mut twice = document(&tool);
-    twice["/v1/inbox"]["get"][TOOL_EXTENSION] = tool;
+    let mut again = twice["/v1/objects/{type}/{id}"].clone();
+    again["get"]["operationId"] = json!("get_object_again");
+    twice["/v1/objects/{type}/{id}/again"] = again;
     let error =
         ToolManifest::from_openapi_paths(&paths(&twice).expect("JSON")).expect_err("refused");
     assert!(error.to_string().contains("repeats"), "{error}");

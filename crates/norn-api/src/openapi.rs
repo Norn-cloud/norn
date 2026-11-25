@@ -213,6 +213,12 @@ mod free_form_contract_tests {
     /// `additionalProperties` for free-form members, or a composition. A bare
     /// `object` generates as an object with no members (`Record<string,
     /// never>` in TypeScript), which no reader can use.
+    ///
+    /// The value of a route's tool declaration (`x-norn-tool`) is extension
+    /// data, not an `OpenAPI` schema: no SDK type is generated from it, and its
+    /// `inputSchema` is the MCP tool's own JSON Schema, kept byte for byte by
+    /// the `tools/list` snapshots (`norn-cell-do` `tests/fixtures/mcp-tools-list`),
+    /// where `{"type": "object"}` means any object.
     #[test]
     fn no_object_schema_is_bare() {
         fn walk(node: &Value, at: &str, bare: &mut Vec<String>) {
@@ -236,7 +242,9 @@ mod free_form_contract_tests {
                         bare.push(at.to_owned());
                     }
                     for (key, child) in members {
-                        walk(child, &format!("{at}/{key}"), bare);
+                        if key != crate::tool_catalog::TOOL_EXTENSION {
+                            walk(child, &format!("{at}/{key}"), bare);
+                        }
                     }
                 }
                 Value::Array(items) => {
