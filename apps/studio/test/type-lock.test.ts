@@ -87,12 +87,16 @@ const SPARKLE_GLYPH = new RegExp(SPARKLE_POINTS.flatMap((point) => {
   }
   return [String.fromCodePoint(point), ...escapes]
 }).join("|") + String.raw`|\bAiGlyph\b|>\s*AI\s*<\/text>`, "giu")
-/** A lucide icon export name for a sparkle, wand or stars icon. */
-const SPARKLE_ICON = /Sparkle|Wand|^Stars(?:Icon)?$/
+/** A lucide icon export name for a sparkle, wand or stars icon, bare or with its `Lucide` prefix or `Icon` suffix. */
+const SPARKLE_ICON = /Sparkle|Wand|Stars(?:Icon)?$/
 /** The same icons by their kebab-case file or dynamic name (`star` and `star-half` are fine). */
 const SPARKLE_SLUG = /^(?:[a-z0-9-]+-)?sparkles?(?:-[a-z0-9-]+)?$|^(?:[a-z0-9-]+-)?wand(?:-[a-z0-9-]+)*$|^stars$/
 
-/** Every sparkle "AI" glyph or icon a source file uses: named, aliased, namespaced, re-exported, deep-imported or dynamic. */
+/**
+ * Every sparkle "AI" glyph or icon a source file uses: named, aliased, re-exported, deep-imported or
+ * dynamic. A namespace import, `export *` or an `import()`/`require()` of lucide-react can reach any
+ * icon by a computed name, so each is a hit in itself.
+ */
 function sparkleHits(text: string): string[] {
   const lucide = String.raw`["'](lucide-react(?:\/[^"']*)?)["']`
   const hits: string[] = []
@@ -103,18 +107,12 @@ function sparkleHits(text: string): string[] {
       if (SPARKLE_ICON.test(name)) hits.push(name)
     }
   }
-  // import * as Icons from "lucide-react" … Icons.Sparkles / Icons["Sparkles"]; export * re-exports every icon.
-  for (const match of text.matchAll(new RegExp(String.raw`import\s+(?:[\w$]+\s*,\s*)?\*\s+as\s+([\w$]+)\s+from\s*${lucide}`, "g"))) {
-    const alias = match[1]!.replace(/\$/g, "\\$")
-    for (const use of text.matchAll(new RegExp(String.raw`(?<![\w$])${alias}\s*(?:\.\s*([\w$]+)|\[\s*["'\x60]([\w$]+)["'\x60]\s*\])`, "g"))) {
-      const name = use[1] ?? use[2]!
-      if (SPARKLE_ICON.test(name)) hits.push(`${match[1]}.${name}`)
-    }
-  }
-  for (const match of text.matchAll(new RegExp(String.raw`export\s+\*\s+(?:as\s+[\w$]+\s+)?from\s*${lucide}`, "g"))) hits.push(match[0])
-  // A deep import names the icon's file: lucide-react/dist/esm/icons/sparkles(.js).
+  // import * as Icons / export * / import("lucide-react") / require("lucide-react"): every icon, by any name.
+  for (const match of text.matchAll(new RegExp(String.raw`(?:import|export)\s+(?:type\s+)?(?:[\w$]+\s*,\s*)?\*\s+(?:as\s+[\w$]+\s+)?from\s*${lucide}`, "g"))) hits.push(match[0])
+  for (const match of text.matchAll(new RegExp(String.raw`(?<![\w$.])(?:import|require)\s*\(\s*${lucide}`, "g"))) hits.push(match[0])
+  // A deep import names the icon's file: lucide-react/dist/esm/icons/sparkles(.js, .mjs, .cjs, .d.ts).
   for (const match of text.matchAll(new RegExp(lucide, "g"))) {
-    const file = match[1]!.split("/").at(-1)!.replace(/\.js$/, "")
+    const file = match[1]!.split("/").at(-1)!.replace(/\.(?:d\.ts|[mc]?js)$/, "")
     if (match[1] !== "lucide-react" && SPARKLE_SLUG.test(file)) hits.push(match[1]!)
   }
   // lucide-react/dynamic draws an icon by its kebab-case name: any literal naming a sparkle icon.
@@ -140,6 +138,17 @@ test("the sparkle ban sees every way in, and not a plain star", () => {
     `import { Wand2 as Magic, Check } from "lucide-react"`,
     `import * as Icons from "lucide-react"\nconst A = <Icons.Sparkles />`,
     `import * as L from "lucide-react"\nconst A = L["WandSparkles"]`,
+    `import * as Icons from "lucide-react"\nconst A = Icons[name]`,
+    `import Lucide, * as Icons from "lucide-react"`,
+    `const Icons = await import("lucide-react")`,
+    `const { Sparkles } = await import( 'lucide-react/dist/esm/icons/star.js' )`,
+    `const Icons = require("lucide-react")`,
+    `import { LucideStars } from "lucide-react"`,
+    `import { LucideSparklesIcon as Glow } from "lucide-react"`,
+    `import { StarsIcon } from "lucide-react"`,
+    `import Shine from "lucide-react/dist/esm/icons/sparkles.mjs"`,
+    `import Shine from "lucide-react/dist/cjs/icons/wand-sparkles.cjs"`,
+    `import type Shine from "lucide-react/dist/esm/icons/sparkles.d.ts"`,
     `export { Sparkle } from "lucide-react"`,
     `export { Stars as Shine } from "lucide-react"`,
     `export * from "lucide-react"`,
@@ -149,7 +158,7 @@ test("the sparkle ban sees every way in, and not a plain star", () => {
     `const a = "✦"`, `const a = "✧"`, `const a = "🪄"`, `const a = "\\u{1FA84}"`, `const a = "\\uD83E\\uDE84"`, `content: "&#X2728;"`, `.ask::before { content: "\\2728" }`,
   ]
   for (const text of banned) expect(sparkleHits(text)).not.toEqual([])
-  for (const text of [`import { Star, StarHalf } from "lucide-react"`, `import Star from "lucide-react/dist/esm/icons/star.js"`, `import StarHalf from "lucide-react/dist/esm/icons/star-half"`, `import * as Icons from "lucide-react"\nconst A = <Icons.Star />`, `import { DynamicIcon } from "lucide-react/dynamic"\nconst A = <DynamicIcon name="star" />`, `const a = "★ rated"`]) {
+  for (const text of [`import { Star, StarHalf } from "lucide-react"`, `import Star from "lucide-react/dist/esm/icons/star.js"`, `import StarHalf from "lucide-react/dist/esm/icons/star-half"`, `import StarOff from "lucide-react/dist/esm/icons/star-off.mjs"`, `import { LucideStar, StarIcon } from "lucide-react"`, `const icons = await import("./icons.ts")`, `import { DynamicIcon } from "lucide-react/dynamic"\nconst A = <DynamicIcon name="star" />`, `const a = "★ rated"`]) {
     expect(sparkleHits(text)).toEqual([])
   }
 })

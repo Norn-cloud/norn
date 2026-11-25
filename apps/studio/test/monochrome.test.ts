@@ -61,7 +61,7 @@ interface Paint { readonly colours: string[]; readonly unresolved: string[] }
 
 /**
  * Every colour a value paints. `vars` resolves `var()` (and its fallback); with `vars` null (source
- * utilities), a `var()` is a token, gated by the CSS rules, and paints nothing here. A relative
+ * utilities), a `var()` is a token, gated by the CSS rules, and only its fallback paints here. A relative
  * colour counts only as `oklch(from X l c-or-less h)`, whose chroma is at most X's.
  */
 function paint(value: string, vars: Readonly<Record<string, string>> | null, seen: ReadonlySet<string> = new Set()): Paint {
@@ -91,8 +91,9 @@ function paint(value: string, vars: Readonly<Record<string, string>> | null, see
     const whole = value.slice(at, fn.end)
     at = fn.end
     if (name === "var") {
-      if (vars === null) continue
       const [reference = "", ...fallback] = args(fn.inner)
+      // In a source utility the token itself is gated by the CSS rules, but its fallback is a literal and paints.
+      if (vars === null) { if (fallback.length > 0) take(paint(fallback.join(","), null, seen)); continue }
       const token = reference.replace(/^--/, "")
       const declared = vars[token]
       if (declared !== undefined && !seen.has(token)) take(paint(declared, vars, new Set([...seen, token])))
@@ -186,10 +187,64 @@ function sources(dir: string): string[] {
     return /\.tsx?$/.test(entry.name) && !entry.name.endsWith(".d.ts") ? [path] : []
   })
 }
-const LITERAL = /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`/g
+const QUOTED = { '"': /"(?:[^"\\\n]|\\.)*"/y, "'": /'(?:[^'\\\n]|\\.)*'/y } as const
+
+/**
+ * Every string a source file writes, with where it starts: each quoted string, and each template
+ * literal's static text, whose `${}` expressions are read the same way (so a class in a quoted or
+ * template string inside a template is found too).
+ */
+function literals(text: string): { readonly body: string; readonly index: number }[] {
+  const out: { body: string; index: number }[] = []
+  // Code from `at` to the end, or (inside a template's `${}`) to its closing brace, whose index it returns.
+  const code = (from: number, nested: boolean): number => {
+    let depth = 0
+    let at = from
+    while (at < text.length) {
+      const char = text[at]!
+      if (char === '"' || char === "'") {
+        const quoted = QUOTED[char]
+        quoted.lastIndex = at
+        const match = quoted.exec(text)
+        if (match !== null) { out.push({ body: match[0].slice(1, -1), index: at }); at += match[0].length; continue }
+      } else if (char === "`") {
+        const end = template(at)
+        if (end !== null) { at = end; continue }
+      } else if (nested && char === "{") depth += 1
+      else if (nested && char === "}") { if (depth === 0) return at; depth -= 1 }
+      at += 1
+    }
+    return at
+  }
+  // A template from its opening backtick: its static text is one string; the index after its closing backtick, or null.
+  const template = (open: number): number | null => {
+    let body = ""
+    let at = open + 1
+    while (at < text.length) {
+      const char = text[at]!
+      if (char === "\\") { body += text.slice(at, at + 2); at += 2; continue }
+      if (char === "`") { out.push({ body, index: open }); return at + 1 }
+      if (char === "$" && text[at + 1] === "{") {
+        const close = code(at + 2, true)
+        if (close >= text.length) return null
+        body += " "
+        at = close + 1
+        continue
+      }
+      body += char
+      at += 1
+    }
+    return null
+  }
+  code(0, false)
+  return out
+}
+
+/** The class-like tokens of a string: split at whitespace, and again at quotes too, so `"bg-x"` left in a template's text still reads as `bg-x`. */
+const tokens = (body: string): string[] => [...new Set([...body.split(/\s+/), ...body.split(/[\s"'`]+/)])].filter((token) => token !== "")
 const PALETTE = /^-?(?:bg|text|border(?:-[trblxyse])?|ring(?:-offset)?|inset-ring|outline|fill|stroke|from|via|to|decoration|shadow|inset-shadow|accent|caret|divide|placeholder)-(?:red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose|slate|gray|zinc|neutral|stone|mauve|olive|mist|taupe)-\d{2,3}(?:\/\S+)?!?$/
 
-/** The utility of a class (what follows its last variant `:` outside brackets and parentheses). */
+/** The utility of a class (what follows its last variant `:` outside brackets and parentheses), without a leading `!`. */
 function utility(token: string): string {
   let depth = 0
   let start = 0
@@ -198,28 +253,37 @@ function utility(token: string): string {
     else if (token[at] === "]" || token[at] === ")") depth -= 1
     else if (token[at] === ":" && depth === 0) start = at + 1
   }
-  return token.slice(start)
+  return token.slice(start).replace(/^!/, "")
 }
 
 /** `why` for a class that paints a colour outside the tokens: a palette class, or an arbitrary value with a hue or an unresolvable colour. */
 function colouredClass(token: string): string | null {
   const name = utility(token)
   if (PALETTE.test(name)) return "a Tailwind palette colour"
-  const arbitrary = /^-?[a-z][a-z0-9-]*-\[(.+)\](?:\/\S+)?!?$/.exec(name)
-  if (arbitrary === null) return null
-  const { colours, unresolved } = paint(arbitrary[1]!.replaceAll("_", " "), null)
+  // An arbitrary value `bg-[…]`, a variable shorthand `bg-(--x,…)` (its fallback paints), or an arbitrary property `[color:…]`.
+  const shorthand = /^-?[a-z][a-z0-9-]*-\((--.+)\)(?:\/\S+)?!?$/.exec(name)?.[1]
+  const value = /^-?[a-z][a-z0-9-]*-\[(.+)\](?:\/\S+)?!?$/.exec(name)?.[1]
+    ?? (shorthand === undefined ? undefined : `var(${shorthand})`)
+    ?? /^\[(?:--)?[a-zA-Z][\w-]*:(.+)\]!?$/.exec(name)?.[1]
+  if (value === undefined) return null
+  const { colours, unresolved } = paint(value.replaceAll("_", " "), null)
   const hue = colours.find((colour) => chroma(colour) >= MAX_CHROMA)
   if (hue !== undefined) return `a coloured literal ${hue}`
   return unresolved.length > 0 ? `an unresolvable colour ${unresolved[0]}` : null
 }
 
+/** Every class a source text writes that paints a colour outside the tokens, with its line. */
+function colouredClasses(text: string): { readonly token: string; readonly line: number; readonly why: string }[] {
+  return literals(text).flatMap(({ body, index }) => tokens(body).flatMap((token) => {
+    const why = colouredClass(token)
+    return why === null ? [] : [{ token, line: text.slice(0, index).split("\n").length, why }]
+  }))
+}
+
 test("source paints chrome only through tokens: no Tailwind palette colour class and no coloured arbitrary utility", () => {
   const found = sources(SRC).flatMap((path) => {
     const text = readFileSync(path, "utf8")
-    return [...text.matchAll(LITERAL)].flatMap((match) => match[0].slice(1, -1).split(/\s+/).flatMap((token) => {
-      const why = colouredClass(token)
-      return why === null ? [] : [`${relative(SRC, path)}:${text.slice(0, match.index).split("\n").length}  ${token}  (${why})`]
-    }))
+    return colouredClasses(text).map(({ token, line, why }) => `${relative(SRC, path)}:${line}  ${token}  (${why})`)
   })
   expect(found).toEqual([])
 })
@@ -231,4 +295,26 @@ test("the source scan sees through variants and arbitrary values, and lets token
   for (const token of ["bg-success/10", "text-warning", "ring-tone-amber", "bg-white", "text-black", "bg-[color-mix(in_oklch,var(--muted),var(--foreground)_5%)]", "bg-[oklch(from_var(--primary)_0.93_calc(c*0.4)_h)]", "shadow-[0_1px_2px_rgb(0_0_0/0.1)]", "data-[tone=red]:bg-muted", "grid-cols-[1fr_auto]"]) {
     expect(colouredClass(token)).toBeNull()
   }
+})
+
+test("the source scan reads classes in strings inside templates, arbitrary properties and var() fallbacks", () => {
+  // A class in a quoted or template string inside a template literal's ${}.
+  for (const text of [
+    "const a = `p-2 ${on ? \"bg-blue-500\" : \"\"}`",
+    "const a = `p-2 ${on?\"hover:text-rose-600\":\"\"}`",
+    "const a = `p-2 ${on ? `ring-sky-300 ${x ? 'border-red-500' : ''}` : ''}`",
+    "const a = `p-2 ${on ? \"bg-[#2563eb]\" : \"\"} gap-1`",
+  ]) expect(colouredClasses(text).length).toBeGreaterThan(0)
+  // Tailwind arbitrary properties, bare and under a variant, and a coloured custom property.
+  for (const token of ["[color:#2563eb]", "hover:[background:#2563eb]", "dark:[border-color:oklch(0.6_0.2_250)]", "[--brand:royalblue]", "[box-shadow:0_0_4px_rgb(var(--x))]"]) {
+    expect(colouredClass(token)).not.toBeNull()
+  }
+  // A coloured fallback in var(), in an arbitrary value or the variable shorthand; and the important prefix.
+  for (const token of ["bg-[var(--x,#2563eb)]", "text-[var(--x,_var(--y,_crimson))]", "bg-(--x,#2563eb)", "!bg-blue-500", "hover:!text-[#2563eb]"]) {
+    expect(colouredClass(token)).not.toBeNull()
+  }
+  for (const token of ["[color:var(--foreground)]", "hover:[background:var(--muted)]", "[mask-image:linear-gradient(black,transparent)]", "bg-[var(--x,white)]", "bg-(--muted)", "[grid-area:main]", "[&>svg]:size-4"]) {
+    expect(colouredClass(token)).toBeNull()
+  }
+  expect(colouredClasses("const a = `p-2 ${on ? \"bg-muted\" : \"text-foreground\"} ${`gap-1`}`\nconst b = 'it\\'s'")).toEqual([])
 })

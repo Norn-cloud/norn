@@ -76,18 +76,22 @@ export class SidekickSession {
     const pinnedScope = options.scope !== undefined ? options.scope : getDisplayedScope()
     const getGrant = options.getGrant ?? (() => fetchGrant(defaultFetch, pinnedScope))
     const grant = await getGrant()
+    // Once this session has ended, nothing the socket still delivers reaches the chat, and a question is `cancelled`.
+    let session: SidekickSession | null = null
+    const ended = () => session?.closed === true
     const app = client()
-      .onNotification("session/update", ({ params }) => events.update(params))
-      .onNotification("_norn/tool_result", (value: unknown) => value as ViewDelivery, ({ params }) => events.view(params))
-      .onRequest("session/request_permission", ({ params }) => events.permission(params))
+      .onNotification("session/update", ({ params }) => { if (!ended()) events.update(params) })
+      .onNotification("_norn/tool_result", (value: unknown) => value as ViewDelivery, ({ params }) => { if (!ended()) events.view(params) })
+      .onRequest("session/request_permission", ({ params }) => ended() ? Promise.resolve<RequestPermissionResponse>({ outcome: { outcome: "cancelled" } }) : events.permission(params))
     const connection = app.connect(createWebSocketStream(options.url ?? socketUrl(window.location)))
     try {
       await connection.agent.request("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, _meta: { "norn.cloud/grant": grant.token } })
       const created = await connection.agent.request("session/new", { cwd: "/", mcpServers: [] })
-      const session = new SidekickSession(connection, created.sessionId, getGrant, events)
-      session.scheduleRenew(grant.expiresAt)
-      void connection.closed.then(() => session.ended("The Sidekick connection closed."))
-      return session
+      const opened = new SidekickSession(connection, created.sessionId, getGrant, events)
+      session = opened
+      opened.scheduleRenew(grant.expiresAt)
+      void connection.closed.then(() => opened.ended("The Sidekick connection closed."))
+      return opened
     } catch (error) {
       connection.close()
       throw error

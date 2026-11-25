@@ -3,7 +3,7 @@ import { SignJWT, createLocalJWKSet, exportJWK, generateKeyPair } from "jose"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { BUILT_IN_TOOLS, ENV_CLAIM, MCP_SERVER_NAME, MEMBER_CLAIM, ORG_CLAIM, canonicalJson, configFromEnv, forwardedUpdate, manualMode, nornToolName, SIDEKICK_CLIENT, permissionDecision, personAnswer, proxyAdmits, questionFor, readOnlyTools, rewriteInitialize, rewriteNewSession, rewritePrompt, sameGrantIdentity, scrub, startRelay, verifyGrant, viewOf, type Approval, type Config } from "./relay.ts"
+import { BUILT_IN_TOOLS, ENV_CLAIM, MCP_SERVER_NAME, MEMBER_CLAIM, ORG_CLAIM, canonicalJson, configFromEnv, exactDecimal, exactNumbers, manualConfigOptions, PROXY_METHODS, forwardedUpdate, manualMode, nornToolName, SIDEKICK_CLIENT, permissionDecision, personAnswer, proxyAdmits, questionFor, readOnlyTools, rewriteInitialize, rewriteNewSession, rewritePrompt, sameGrantIdentity, scrub, startRelay, verifyGrant, viewOf, type Approval, type Config } from "./relay.ts"
 
 const STUDIO = "https://studio.norn.test"
 
@@ -152,6 +152,12 @@ test("the session must be in the manual permission mode", () => {
   expect(manualMode({ sessionId: "s", modes: { currentModeId: "default" } })).toBe(true)
   for (const mode of ["auto", "bypassPermissions", "acceptEdits", "dontAsk", "plan", undefined]) expect(manualMode({ sessionId: "s", modes: { currentModeId: mode } })).toBe(false)
   expect(manualMode({ sessionId: "s" })).toBe(false)
+  // A mode config option must say manual too; options without a mode do not matter.
+  const option = (currentValue: string, key: Record<string, string> = { id: "mode" }) => ({ ...key, name: "Mode", type: "select", currentValue, options: [] })
+  expect(manualMode({ sessionId: "s", modes: { currentModeId: "default" }, configOptions: [option("default"), option("opus", { id: "model", category: "model" })] })).toBe(true)
+  expect(manualMode({ sessionId: "s", modes: { currentModeId: "default" }, configOptions: [option("auto")] })).toBe(false)
+  expect(manualConfigOptions([option("bypassPermissions", { id: "permissions", category: "mode" })])).toBe(false)
+  expect(manualConfigOptions("mode=auto")).toBe(false)
 })
 
 test("the proxy lets a call through only if it is read-only or spends the person's one-time approval for exactly those arguments", () => {
@@ -172,11 +178,38 @@ test("the proxy lets a call through only if it is read-only or spends the person
   expect(proxyAdmits({ jsonrpc: "2.0", id: 4, method: "tools/call", params: {} }, readOnly, [])).toBe(false)
 })
 
+test("the proxy fails closed: only a plain JSON-RPC object, and only tools/call or a method that runs nothing", () => {
+  const readOnly = new Set(["norn_answer"])
+  for (const method of PROXY_METHODS) expect(proxyAdmits({ jsonrpc: "2.0", id: 1, method }, readOnly, [])).toBe(true)
+  for (const body of [
+    null, "tools/list", 7, true,
+    { jsonrpc: "2.0", id: 1 },
+    { jsonrpc: "2.0", id: 1, result: {} },
+    { jsonrpc: "2.0", id: 1, method: 5 },
+    { jsonrpc: "2.0", id: 1, method: "tools/delete" },
+    { jsonrpc: "2.0", id: 1, method: "sampling/createMessage" },
+    { jsonrpc: "2.0", id: 1, method: "prompts/get", params: { name: "norn_answer" } },
+    { jsonrpc: "2.0", id: 1, method: "TOOLS/CALL", params: { name: "norn_call_action", arguments: {} } },
+    { jsonrpc: "2.0", id: 1, method: "tools/call", params: [ "norn_answer" ] },
+    { jsonrpc: "2.0", id: 1, method: "tools/call", params: null },
+    Object.assign(Object.create({ method: "tools/list" }), { jsonrpc: "2.0", id: 1 }),
+    Object.assign(Object.create(null), { jsonrpc: "2.0", id: 1, method: "tools/list" }),
+  ]) expect(proxyAdmits(body, readOnly, [])).toBe(false)
+})
+
+test("a number passes the proxy only when a double keeps it exactly, so Studio reads the decimal that was checked and shown", () => {
+  expect(exactDecimal("1.50e2")).toBe(exactDecimal("150"))
+  expect(exactDecimal("-0.0")).toBe("0")
+  expect(exactDecimal("1e-400")).not.toBe(exactDecimal("0"))
+  for (const text of ['{"a":9007199254740992}', '{"a":0.1,"b":-12.5e-3,"c":1E21,"d":-0}', '{"s":"9007199254740993 and 1e-400"}', '{"s":"\\"9007199254740993"}', '[1,2.0,3e0]']) expect(exactNumbers(text)).toBe(true)
+  for (const text of ['{"a":9007199254740993}', '{"a":1e-400}', '{"a":1e400}', '{"a":0.1000000000000000000001}', '{"s":"\\"","a":12345678901234567890}']) expect(exactNumbers(text)).toBe(false)
+})
+
 /**
  * A stand-in adapter (newline JSON-RPC on stdio): it answers `session/new` with the mode it is given
  * and echoes the params it saw; a prompt asks for two `norn_call_action` calls and ends on cancel.
  */
-const ADAPTER = (mode: string) => `
+const ADAPTER = (mode: string, rawInput: string) => `
 const out = (m) => process.stdout.write(JSON.stringify(m) + "\\n")
 let prompt = null
 let buffer = ""
@@ -191,20 +224,24 @@ process.stdin.on("data", (chunk) => {
     else if (m.method === "session/new") out({ jsonrpc: "2.0", id: m.id, result: { sessionId: "s1", modes: { currentModeId: ${JSON.stringify(mode)} }, _echo: m.params } })
     else if (m.method === "session/prompt") {
       prompt = m.id
-      for (const id of [900, 901]) out({ jsonrpc: "2.0", id, method: "session/request_permission", params: { sessionId: "s1", toolCall: { toolCallId: "t" + id, title: "Close", rawInput: { action: "x.close", input: { id: "R-1" } }, _meta: { claudeCode: { toolName: "mcp__norn__norn_call_action" } } }, options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }, { optionId: "reject", kind: "reject_once", name: "Reject" }] } })
+      if (m.params.prompt[0].text === "leave manual") out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "config_option_update", configOptions: [{ id: "mode", name: "Mode", type: "select", category: "mode", currentValue: "auto", options: [] }] } } })
+      else for (const id of [900, 901]) out({ jsonrpc: "2.0", id, method: "session/request_permission", params: { sessionId: "s1", toolCall: { toolCallId: "t" + id, title: "Close", rawInput: ${rawInput}, _meta: { claudeCode: { toolName: "mcp__norn__norn_call_action" } } }, options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }, { optionId: "reject", kind: "reject_once", name: "Reject" }] } })
     } else if (m.method === "session/cancel") out({ jsonrpc: "2.0", id: prompt, result: { stopReason: "cancelled" } })
     else if (m.method === undefined) out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "s1", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "answer " + m.id + " " + JSON.stringify(m.result) } } } })
   }
 })
 `
 
-async function harness(mode: string, listing: "paged" | "fails" = "paged") {
+async function harness(mode: string, listing: "paged" | "fails" = "paged", rawInput = `{ action: "x.close", input: { id: "R-1" } }`) {
   const { set, sign } = await keys()
   const scratch = mkdtempSync(join(tmpdir(), "sidekick-relay-"))
   const studio: { method: string; params?: Record<string, unknown> }[] = []
+  /** The exact bytes each request to Studio carried. */
+  const studioRaw: string[] = []
   const fetcher = (async (_url: string, init: RequestInit) => {
     const body = JSON.parse(String(init.body)) as { id: unknown; method: string; params?: Record<string, unknown> }
     studio.push(body)
+    studioRaw.push(String(init.body))
     if (body.method === "tools/list") {
       if (listing === "fails") return new Response("down", { status: 502 })
       return Response.json(body.params?.cursor === undefined
@@ -213,7 +250,7 @@ async function harness(mode: string, listing: "paged" | "fails" = "paged") {
     }
     return Response.json({ jsonrpc: "2.0", id: body.id, result: { content: [{ type: "text", text: "ok" }] } })
   }) as unknown as typeof fetch
-  const config: Config = { studioOrigin: STUDIO, allowedOrigins: new Set(["https://studio.norn.test"]), loginHeader: "x-login", allowedLogins: new Set(["me"]), listenHost: "127.0.0.1", listenPort: 0, mcpPort: 0, adapter: [process.execPath, "-e", ADAPTER(mode)], scratch, maxConnections: 2 }
+  const config: Config = { studioOrigin: STUDIO, allowedOrigins: new Set(["https://studio.norn.test"]), loginHeader: "x-login", allowedLogins: new Set(["me"]), listenHost: "127.0.0.1", listenPort: 0, mcpPort: 0, adapter: [process.execPath, "-e", ADAPTER(mode, rawInput)], scratch, maxConnections: 2 }
   const relay = startRelay(config, { keys: set, fetcher, log: () => undefined })
   const ws = new WebSocket(`ws://127.0.0.1:${relay.server.port}/ws`, { headers: { origin: "https://studio.norn.test", "x-login": "me" } } as unknown as string[])
   const inbox: Record<string, unknown>[] = []
@@ -228,10 +265,11 @@ async function harness(mode: string, listing: "paged" | "fails" = "paged") {
       await new Promise<void>((resolve) => waiters.push(resolve))
     }
   }
-  const proxy = (body: unknown) => fetch(`http://127.0.0.1:${relay.mcp.port}/mcp/${[...relay.connections.values()][0]!.capability}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }).then((response) => response.json() as Promise<{ result?: unknown; error?: { code: number } }>)
+  const proxyRaw = (text: string) => fetch(`http://127.0.0.1:${relay.mcp.port}/mcp/${[...relay.connections.values()][0]!.capability}`, { method: "POST", headers: { "content-type": "application/json" }, body: text }).then((response) => response.json() as Promise<{ result?: unknown; error?: { code: number } }>)
+  const proxy = (body: unknown) => proxyRaw(JSON.stringify(body))
   const grant = await sign(GRANT)
   const done = () => { relay.stop(); rmSync(scratch, { recursive: true, force: true }) }
-  return { ws, inbox, next, proxy, studio, grant, closed, done, send: (message: unknown) => ws.send(JSON.stringify(message)) }
+  return { ws, inbox, next, proxy, proxyRaw, studio, studioRaw, grant, closed, done, send: (message: unknown) => ws.send(JSON.stringify(message)) }
 }
 
 const callAction = (args: unknown) => ({ jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "norn_call_action", arguments: args } })
@@ -292,5 +330,72 @@ test("relay: a failed tools/list pre-allows nothing", async () => {
     const created = await h.next((message) => message.id === 2) as { result: { _echo: { _meta: { claudeCode: { options: Record<string, unknown> } } } } }
     expect(created.result._echo._meta.claudeCode.options.allowedTools).toEqual([])
     expect((await h.proxy({ jsonrpc: "2.0", id: 8, method: "tools/call", params: { name: "norn_answer", arguments: {} } })).error?.code).toBe(-32001)
+  } finally { h.done() }
+})
+
+/** Initialize, open a session and prompt; resolves with the two questions the stand-in agent asks. */
+async function prompted(h: Awaited<ReturnType<typeof harness>>, text = "close R-1") {
+  h.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1, _meta: { "norn.cloud/grant": h.grant } } })
+  h.send({ jsonrpc: "2.0", id: 2, method: "session/new", params: { cwd: "/", mcpServers: [] } })
+  h.send({ jsonrpc: "2.0", id: 3, method: "session/prompt", params: { sessionId: "s1", prompt: [{ type: "text", text }] } })
+  await h.next((message) => message.id === 2)
+  if (text === "leave manual") return []
+  const first = await h.next((message) => message.method === "session/request_permission") as { id: string }
+  const second = await h.next((message) => message.method === "session/request_permission" && message.id !== first.id) as { id: string }
+  return [first, second]
+}
+
+test("relay: Studio gets exactly the call that was approved: a number a double rounds is refused, and the checked object is what is forwarded", async () => {
+  const h = await harness("default", "paged", `{ n: 9007199254740992, z: 0 }`)
+  try {
+    const [first] = await prompted(h)
+    h.send({ jsonrpc: "2.0", id: first!.id, result: { outcome: { outcome: "selected", optionId: "allow" } } })
+    await h.next((message) => JSON.stringify(message).includes("answer 900"))
+    const calls = () => h.studio.filter((body) => body.method === "tools/call").length
+    const raw = (args: string) => `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"norn_call_action","arguments":${args}}}`
+    // 2^53 + 1 and 1e-400 parse to the approved 2^53 and 0, but Studio would read them exactly.
+    expect((await h.proxyRaw(raw(`{"n":9007199254740993,"z":0}`))).error?.code).toBe(-32602)
+    expect((await h.proxyRaw(raw(`{"n":9007199254740992,"z":1e-400}`))).error?.code).toBe(-32602)
+    expect(calls()).toBe(0)
+    // A duplicate key: whichever one Studio would keep, it gets only the checked object.
+    expect((await h.proxyRaw(raw(`{"z":1,"z":0,"n":9007199254740992.0}`))).result).toBeDefined()
+    expect(calls()).toBe(1)
+    expect(h.studioRaw.at(-1)).toBe(raw(`{"z":0,"n":9007199254740992}`))
+    // The approval was spent.
+    expect((await h.proxyRaw(raw(`{"n":9007199254740992,"z":0}`))).error?.code).toBe(-32001)
+  } finally { h.done() }
+})
+
+test("relay: a second session/new ends the turn before it: open questions are cancelled and unspent approvals lapse", async () => {
+  const h = await harness("default")
+  try {
+    const [first] = await prompted(h)
+    h.send({ jsonrpc: "2.0", id: first!.id, result: { outcome: { outcome: "selected", optionId: "allow" } } })
+    await h.next((message) => JSON.stringify(message).includes("answer 900"))
+    h.send({ jsonrpc: "2.0", id: 4, method: "session/new", params: { cwd: "/", mcpServers: [] } })
+    await h.next((message) => message.id === 4)
+    expect(JSON.stringify(await h.next((message) => JSON.stringify(message).includes("answer 901")))).toContain("cancelled")
+    expect((await h.proxy(callAction({ action: "x.close", input: { id: "R-1" } }))).error?.code).toBe(-32001)
+    expect(h.studio.filter((body) => body.method === "tools/call")).toHaveLength(0)
+  } finally { h.done() }
+})
+
+test("relay: a session/new sent as a notification never opens a session", async () => {
+  const h = await harness("default")
+  try {
+    h.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 1, _meta: { "norn.cloud/grant": h.grant } } })
+    h.send({ jsonrpc: "2.0", method: "session/new", params: { cwd: "/", mcpServers: [] } })
+    h.send({ jsonrpc: "2.0", id: 2, method: "session/new", params: { cwd: "/", mcpServers: [] } })
+    await h.next((message) => message.id === 2)
+    // Only the request was checked with Studio and reached the agent.
+    expect(h.studio.filter((body) => body.method === "initialize")).toHaveLength(1)
+  } finally { h.done() }
+})
+
+test("relay: a config option update that moves the session out of the manual mode closes the connection", async () => {
+  const h = await harness("default")
+  try {
+    await prompted(h, "leave manual")
+    expect(await h.closed).toBe(1011)
   } finally { h.done() }
 })

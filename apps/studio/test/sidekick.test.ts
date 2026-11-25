@@ -271,3 +271,63 @@ test("stop: a stopped prompt that never settles does not hold the chat: the foll
   await readUntil(two, seen, "finish")
   expect(seen.at(-1)).toEqual({ type: "finish" })
 })
+
+test("stop: after the reopen, the retired session's late traffic reaches no turn: its question is cancelled, its updates and its closed are dropped", async () => {
+  const bridge = scriptedSession()
+  const transport = new SidekickTransport({ open: bridge.open, settleMs: 20 })
+  const first = new AbortController()
+  await transport.sendMessages(send([user("one")], first.signal))
+  await bridge.prompted(1)
+  first.abort()
+  const two = (await transport.sendMessages(send([user("two")]))).getReader()
+  const seen: SidekickChunk[] = []
+  await bridge.prompted(2)
+  const [old, current] = [bridge.turns[0]!, bridge.turns[1]!]
+  // The retired session asks, talks and closes after turn two started.
+  expect(await old.events.permission(PERMISSION as never)).toEqual({ outcome: { outcome: "cancelled" } })
+  old.events.update(update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "late from session one" } }))
+  old.events.view({ tool: "norn_answer", view: "answer", input: {}, result: { content: [] } })
+  old.events.closed("late close")
+  // Turn two's own question still stands and its session is still the chat's.
+  const asked = current.events.permission({ ...PERMISSION, toolCall: { ...PERMISSION.toolCall, toolCallId: "t9" } } as never)
+  await readUntil(two, seen, "tool-approval-request")
+  const request = seen.find((chunk) => chunk.type === "tool-approval-request") as Extract<SidekickChunk, { type: "tool-approval-request" }>
+  expect(transport.respond(request.approvalId, true)).toBe(true)
+  expect(await asked).toEqual({ outcome: { outcome: "selected", optionId: "allow" } })
+  expect(await transport.callTool("norn_answer", {})).toEqual({ content: [] })
+  current.settle("end_turn")
+  await readUntil(two, seen, "finish")
+  expect(seen.filter((chunk) => chunk.type === "tool-approval-request")).toHaveLength(1)
+  expect(seen.some((chunk) => chunk.type === "data-view")).toBe(false)
+  expect(JSON.stringify(seen)).not.toContain("late from session one")
+  expect(bridge.state.opened).toBe(2)
+})
+
+test("stop: a follow-up stopped while it waits for the stopped turn to settle ends at once, without reopening or prompting", async () => {
+  const bridge = scriptedSession()
+  const transport = new SidekickTransport({ open: bridge.open, settleMs: 60_000 })
+  const first = new AbortController()
+  await transport.sendMessages(send([user("one")], first.signal))
+  await bridge.prompted(1)
+  first.abort()
+  const second = new AbortController()
+  const two = transport.sendMessages(send([user("two")], second.signal))
+  await Bun.sleep(5)
+  second.abort()
+  const chunks = await Promise.race([drain(await two), Bun.sleep(1_000).then(() => "still waiting" as const)])
+  expect(chunks).not.toBe("still waiting")
+  expect(bridge.state.prompts).toEqual(["one"])
+  expect(bridge.state.opened).toBe(1)
+})
+
+test("a question names its tool by the bridge's own identity and redraws the part when that differs from the name the call opened with", () => {
+  const chunks: SidekickChunk[] = []
+  const turn = new Turn((chunk) => chunks.push(chunk))
+  turn.start()
+  turn.update(update({ sessionUpdate: "tool_call", toolCallId: "t2", title: "mcp__norn__norn_answer", status: "pending", rawInput: PERMISSION.toolCall.rawInput }))
+  turn.approval("approval-1", PERMISSION.toolCall)
+  const inputs = chunks.filter((chunk): chunk is Extract<SidekickChunk, { type: "tool-input-available" }> => chunk.type === "tool-input-available")
+  expect(inputs.map((chunk) => chunk.toolName)).toEqual(["norn_answer", "norn_call_action"])
+  expect(inputs.at(-1)).toMatchObject({ input: PERMISSION.toolCall.rawInput, title: "Called an action" })
+  expect(chunks.at(-1)).toEqual({ type: "tool-approval-request", approvalId: "approval-1", toolCallId: "t2" })
+})

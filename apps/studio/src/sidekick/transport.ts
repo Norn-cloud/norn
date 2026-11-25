@@ -21,6 +21,10 @@ import { promptText, Turn, type SidekickChunk, type SidekickMessage } from "./tr
  * question it asks afterwards is answered `cancelled`), and only that turn's questions are cancelled.
  * The next prompt goes out only once the stopped one has settled at the bridge, so a fast follow-up
  * never receives the stopped turn's traffic; if it does not settle in time the session is reopened.
+ *
+ * Sessions: only the current session's traffic counts. A session that was replaced or closed is
+ * retired first; whatever it sends afterwards (an update, a view, its own `closed`) is dropped, and a
+ * question it asks is answered `cancelled`, so a late message never lands in a later turn.
  */
 
 interface Pending {
@@ -40,6 +44,8 @@ type Open = (events: SidekickEvents, options: { readonly scope?: StudioScope | n
 
 export class SidekickTransport implements ChatTransport<SidekickMessage> {
   private session: SidekickSession | null = null
+  /** The current session's link: retired (live false) before the session is replaced or closed. */
+  private link: { live: boolean } | null = null
   private opening: Promise<SidekickSession> | null = null
   private turn: Turn | null = null
   private readonly approvals = new Map<string, Pending>()
@@ -56,20 +62,29 @@ export class SidekickTransport implements ChatTransport<SidekickMessage> {
     if (this.opening !== null) return this.opening
     const generation = this.generation
     const open: Open = this.options.open ?? (async (events, options) => (await import("./client.ts")).SidekickSession.open(events, options))
+    // This session's own link: its events count only while it is the current session.
+    const link = { live: true }
     this.opening = open({
-      update: (notification) => this.turn?.update(notification),
-      view: (delivery) => this.turn?.view(delivery),
-      permission: (request) => this.ask(request),
-      closed: () => { this.session = null; this.cancelApprovals(null) },
+      update: (notification) => { if (link.live) this.turn?.update(notification) },
+      view: (delivery) => { if (link.live) this.turn?.view(delivery) },
+      permission: (request) => link.live ? this.ask(request) : Promise.resolve(CANCELLED),
+      closed: () => { if (!link.live) return; this.retire(); this.session = null; this.cancelApprovals(null) },
     }, this.options.scope === undefined ? {} : { scope: this.options.scope })
     try {
       const session = await this.opening
-      if (generation !== this.generation) { session.close(); throw new Error("Chat closed.") }
+      if (generation !== this.generation || !link.live) { link.live = false; session.close(); throw new Error("Chat closed.") }
+      this.link = link
       this.session = session
       return session
     } finally {
       this.opening = null
     }
+  }
+
+  /** Retire the current session's link: nothing it sends from now on reaches a turn. */
+  private retire() {
+    if (this.link !== null) this.link.live = false
+    this.link = null
   }
 
   /** The bridge asks before a tool call: hold its question open until the person answers. */
@@ -105,14 +120,21 @@ export class SidekickTransport implements ChatTransport<SidekickMessage> {
     }
   }
 
-  /** Wait for the previous prompt to settle; false when it did not in time. */
-  private async settled(previous: Promise<void>): Promise<boolean> {
+  /** Wait for the previous prompt to settle; false when it did not in time. Stopping the turn ends the wait at once. */
+  private async settled(previous: Promise<void>, abortSignal: AbortSignal | undefined): Promise<boolean> {
     let timer: ReturnType<typeof setTimeout> | undefined
+    let stopped: (() => void) | undefined
     const late = new Promise<false>((resolve) => { timer = setTimeout(() => resolve(false), this.options.settleMs ?? SETTLE_MS) })
+    const aborted = new Promise<true>((resolve) => {
+      stopped = () => resolve(true)
+      if (abortSignal?.aborted) stopped()
+      else abortSignal?.addEventListener("abort", stopped, { once: true })
+    })
     try {
-      return await Promise.race([previous.then(() => true as const), late])
+      return await Promise.race([previous.then(() => true as const), late, aborted])
     } finally {
       clearTimeout(timer)
+      if (stopped !== undefined) abortSignal?.removeEventListener("abort", stopped)
     }
   }
 
@@ -141,9 +163,10 @@ export class SidekickTransport implements ChatTransport<SidekickMessage> {
         try {
           if (text === "") throw new Error("Type a question first.")
           let session = await this.connect()
-          if (!(await this.settled(previous))) {
+          if (!(await this.settled(previous, abortSignal))) {
             // The stopped turn never settled: start over on a fresh session rather than share its traffic.
-            if (this.session === session) { this.session.close(); this.session = null }
+            // The old session is retired first, so nothing it sends later reaches the new turn.
+            if (this.session === session) { this.retire(); this.session = null; session.close() }
             session = await this.connect()
           }
           if (abortSignal?.aborted) return
@@ -179,9 +202,11 @@ export class SidekickTransport implements ChatTransport<SidekickMessage> {
   /** End the chat's session: it closes and nothing it sends later is drawn; a later send opens a new one. */
   close() {
     this.generation += 1
+    this.retire()
     this.cancelApprovals(null)
     this.turn = null
-    this.session?.close()
+    const session = this.session
     this.session = null
+    session?.close()
   }
 }

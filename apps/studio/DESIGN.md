@@ -361,23 +361,23 @@ backdrop; transparent in `luma`, `polar` and `open`). The main island's material
 nav islands' is `--sidebar` (section 4.6). In `luma` (the default) an island is opaque: a white
 (dark #111111) surface, a 1px hairline `--island-border` and a contact shadow `--island-shadow`, with
 no blur (`--island-blur: none`), at `--radius-island` (16px; monochrome supersedes the glass, owner
-2026-11-25). The opt-in `glass` skin keeps the liquid glass: the backdrop blur and saturate
-`--island-blur`, a 1px specular edge, and a depth shadow with a 1px inner highlight on its top edge,
+2026-11-25). The opt-in `glass` skin keeps the liquid glass: the backdrop blur
+`--island-blur` (`blur(24px)`), a 1px specular edge, and a depth shadow with a 1px inner highlight on its top edge,
 at 18px. It is CSS only, in the spirit of the shadcn liquid-glass registries
 (glasscn, Glass UI) and Panelo: **no WebGL, no SVG displacement and no refraction library**
 (`test/contrast.test.ts` refuses one in the shell).
 
 | Token | luma L | luma D | polar L | polar D | open L | open D | glass L | glass D |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `--backdrop` | #f6f6f6 | #090909 | #ebebee | #000000 | #f0f0f2 | #000000 | #eef1f8 | #0b0d17 |
-| `--backdrop-glow-1` | none | none | none | none | none | none | rgb(58 109 240 / .16) | rgb(58 109 240 / .22) |
-| `--backdrop-glow-2` | none | none | none | none | none | none | rgb(139 92 246 / .12) | rgb(139 92 246 / .18) |
-| `--island` | #ffffff | #111111 | #f6f6f8 | #0a0a0b | #ffffff | #0d0d0e | rgb(252 253 255 / .60) | rgb(18 21 34 / .62) |
+| `--backdrop` | #f6f6f6 | #090909 | #ebebee | #000000 | #f0f0f2 | #000000 | #eff0f2 | #0c0c0e |
+| `--backdrop-glow-1` | none | none | none | none | none | none | rgb(255 255 255 / .55) | rgb(255 255 255 / .05) |
+| `--backdrop-glow-2` | none | none | none | none | none | none | rgb(0 0 0 / .03) | rgb(255 255 255 / .03) |
+| `--island` | #ffffff | #111111 | #f6f6f8 | #0a0a0b | #ffffff | #0d0d0e | rgb(253 253 254 / .60) | rgb(20 20 23 / .62) |
 | `--island-border` | #e5e5e5 | #212121 | rgb(24 24 27 / .06) | rgb(255 255 255 / .07) | rgb(0 0 0 / .06) | rgb(255 255 255 / .07) | rgb(255 255 255 / .72) | rgb(255 255 255 / .13) |
-| `--island-blur` | blur(24px) saturate(160%) | same | none | none | none | none | blur(24px) saturate(165%) | same |
+| `--island-blur` | none | none | none | none | none | none | blur(24px) | same |
 
-`--canvas` is the main island's opaque equivalent (luma #f3f4f6 / #0b0b0e, the composite of the
-island over the flat backdrop), and `--shell` the nav islands'. Content measured "on canvas" is
+`--canvas` is the main island's opaque equivalent (luma #ffffff / #111111, the island itself, which is
+opaque; glass #eff0f2 / #0c0c0e, its composite over the flat backdrop), and `--shell` the nav islands'. Content measured "on canvas" is
 therefore measured on the main island's fallback, and the island itself over the backdrop:
 
 - **Worst-case backdrop.** A glow is brightest at its centre, so an island over a glow at its peak is

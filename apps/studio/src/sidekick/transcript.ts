@@ -16,11 +16,15 @@ export type SidekickChunk = UIMessageChunk<unknown, SidekickData>
 
 const TOOL_PREFIX = /^mcp__norn__/
 
+/** The tool identity a call carries in `_meta.claudeCode.toolName`, without the server prefix; null without one. */
+function metaToolName(update: { readonly _meta?: Record<string, unknown> | null }): string | null {
+  const meta = update._meta?.claudeCode as { toolName?: unknown } | undefined
+  return typeof meta?.toolName === "string" ? meta.toolName.replace(TOOL_PREFIX, "") : null
+}
+
 /** The Norn tool a tool call names, without the agent's server prefix. */
 export function toolName(update: { readonly title?: string | null; readonly _meta?: Record<string, unknown> | null }): string {
-  const meta = update._meta?.claudeCode as { toolName?: unknown } | undefined
-  const name = typeof meta?.toolName === "string" ? meta.toolName : update.title ?? "tool"
-  return name.replace(TOOL_PREFIX, "")
+  return metaToolName(update) ?? (update.title ?? "tool").replace(TOOL_PREFIX, "")
 }
 
 /** What each Norn tool did, in plain words; another tool reads as its name. */
@@ -82,16 +86,17 @@ export class Turn {
    * one. The agent announces a call before its input has finished streaming, then sends the whole
    * input in a later update and in the approval question; the part always shows the input the
    * person is asked about. Once the person was asked, only the question redraws it: the part keeps
-   * their question and the input that came with it.
+   * their question and the input that came with it. The question also names the tool by the bridge's
+   * own identity (`_meta.claudeCode.toolName`), which wins over the name the call opened with.
    */
   private openTool(call: Pick<ToolCallUpdate, "toolCallId" | "title" | "rawInput" | "_meta">, question = false) {
     const known = this.tools.get(call.toolCallId)
-    const input = call.rawInput ?? {}
+    // The name is the one the call opened with (a later update may not repeat it), unless the question names it.
+    const name = (question ? metaToolName(call) : null) ?? known?.name ?? toolName(call)
+    const input = call.rawInput ?? (known === undefined ? {} : JSON.parse(known.input) as unknown)
     const drawn = JSON.stringify(input)
-    if (known !== undefined && (known.settled || (known.asked && !question) || call.rawInput === undefined || known.input === drawn)) return
+    if (known !== undefined && (known.settled || (known.asked && !question) || (known.input === drawn && known.name === name))) return
     if (known === undefined) this.closeText()
-    // The name is the one the call opened with: a later update may not repeat it.
-    const name = known?.name ?? toolName(call)
     this.tools.set(call.toolCallId, { name, settled: false, input: drawn, asked: known?.asked ?? false })
     this.emit({ type: "tool-input-available", toolCallId: call.toolCallId, toolName: name, title: toolWords(name), input, dynamic: true })
   }

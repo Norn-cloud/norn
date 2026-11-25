@@ -245,22 +245,66 @@ export function canonicalJson(value: unknown): string {
 /** One call the person allowed once: the Norn tool and its exact arguments. */
 export interface Approval { readonly tool: string; readonly input: string }
 
+/** The MCP methods the proxy forwards without an approval: none of them runs a tool. Anything else but `tools/call` is refused. */
+export const PROXY_METHODS: ReadonlySet<string> = new Set(["initialize", "notifications/initialized", "ping", "tools/list", "resources/list", "resources/read", "resources/templates/list"])
+
+const plainObject = (value: unknown): value is Json =>
+  value !== null && typeof value === "object" && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype
+
 /**
- * Whether the agent's MCP request may reach Studio: anything but `tools/call` passes (the cell
- * still decides it), a read-only tool passes, and any other tool passes only by spending one
- * approval the person gave for that tool with those arguments. A batch is refused.
+ * Whether the agent's MCP request may reach Studio. Fails closed: only one plain JSON-RPC object
+ * passes (a batch is refused); a method that runs nothing (`PROXY_METHODS`) passes, a read-only tool
+ * passes, any other tool passes only by spending one approval the person gave for that tool with
+ * those arguments, and every other method is refused.
  */
 export function proxyAdmits(body: unknown, readOnly: ReadonlySet<string>, approvals: Approval[]): boolean {
-  if (Array.isArray(body)) return false
-  const call = body as { method?: unknown; params?: { name?: unknown; arguments?: unknown } } | null
-  if (call === null || typeof call !== "object" || call.method !== "tools/call") return true
-  const name = call.params?.name
+  if (!plainObject(body)) return false
+  if (body.method !== "tools/call") return typeof body.method === "string" && PROXY_METHODS.has(body.method)
+  const call = body as { params?: { name?: unknown; arguments?: unknown } }
+  if (!plainObject(call.params)) return false
+  const name = call.params.name
   if (typeof name !== "string") return false
   if (readOnly.has(name)) return true
   const input = canonicalJson(call.params?.arguments)
   const at = approvals.findIndex((approval) => approval.tool === name && approval.input === input)
   if (at < 0) return false
   approvals.splice(at, 1)
+  return true
+}
+
+/** A JSON number literal as an exact decimal: sign, significant digits and exponent; "0" for zero, "NaN" for anything else. */
+export function exactDecimal(literal: string): string {
+  const parts = /^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(literal)
+  if (parts === null) return "NaN"
+  const fraction = parts[3] ?? ""
+  const digits = `${parts[2]}${fraction}`.replace(/^0+/, "")
+  if (digits === "") return "0"
+  const significant = digits.replace(/0+$/, "")
+  const exponent = BigInt(parts[4] ?? "0") - BigInt(fraction.length) + BigInt(digits.length - significant.length)
+  return `${parts[1]}${significant}e${exponent}`
+}
+
+const NUMBER = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/y
+
+/**
+ * Whether every number in a JSON text survives JSON.parse exactly: re-serialised, it is the same
+ * decimal. Studio reads numbers as exact decimals, so a number a double rounds (2^53 + 1, 1e-400,
+ * 0.1000000000000000000001) would reach Studio as something other than what the person was shown.
+ * `text` must already be valid JSON.
+ */
+export function exactNumbers(text: string): boolean {
+  for (let at = 0; at < text.length; at += 1) {
+    const char = text[at] as string
+    if (char === '"') {
+      for (at += 1; at < text.length && text[at] !== '"'; at += text[at] === "\\" ? 2 : 1) { /* inside a string */ }
+      continue
+    }
+    if (char !== "-" && (char < "0" || char > "9")) continue
+    NUMBER.lastIndex = at
+    const literal = NUMBER.exec(text)?.[0]
+    if (literal === undefined || exactDecimal(literal) !== exactDecimal(String(Number(literal)))) return false
+    at += literal.length - 1
+  }
   return true
 }
 
@@ -328,9 +372,18 @@ export function forwardedUpdate(message: Message): boolean {
   return update?.sessionUpdate !== "usage_update"
 }
 
-/** Whether the adapter's `session/new` answer puts the session in the manual permission mode. */
+/** Whether every mode config option (id or category `mode`) in a list is set to the manual mode; true when there is none. */
+export function manualConfigOptions(options: unknown): boolean {
+  if (options === undefined || options === null) return true
+  if (!Array.isArray(options)) return false
+  return options.every((option: { id?: unknown; category?: unknown; currentValue?: unknown } | null) =>
+    option === null || typeof option !== "object" || (option.id !== "mode" && option.category !== "mode") || option.currentValue === MANUAL_MODE)
+}
+
+/** Whether the adapter's `session/new` answer puts the session in the manual permission mode (its mode and any mode config option). */
 export function manualMode(result: unknown): boolean {
-  return (result as { modes?: { currentModeId?: unknown } } | undefined)?.modes?.currentModeId === MANUAL_MODE
+  const answer = result as { modes?: { currentModeId?: unknown }; configOptions?: unknown } | undefined
+  return answer?.modes?.currentModeId === MANUAL_MODE && manualConfigOptions(answer.configOptions)
 }
 
 // ---------------------------------------------------------------- MCP views
@@ -512,8 +565,8 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
     // Only the session's own updates go to the browser. The adapter's extensions (account and
     // login status, rate limits, raw SDK messages) describe the host's login, never the person's work.
     if (!forwardedUpdate(message)) return
-    const update = message.params?.update as { sessionUpdate?: unknown; currentModeId?: unknown } | undefined
-    if (update?.sessionUpdate === "current_mode_update" && update.currentModeId !== MANUAL_MODE) {
+    const update = message.params?.update as { sessionUpdate?: unknown; currentModeId?: unknown; configOptions?: unknown } | undefined
+    if ((update?.sessionUpdate === "current_mode_update" && update.currentModeId !== MANUAL_MODE) || (update?.sessionUpdate === "config_option_update" && !manualConfigOptions(update.configOptions))) {
       log(`conn ${connection.id} closed: the session left the manual permission mode`)
       connection.ws.close(1011, "permission mode")
       return
@@ -560,6 +613,10 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
     let params: Json | null | undefined = message.params
     if (method === "initialize") params = rewriteInitialize(message.params)
     if (method === "session/new") {
+      // Only a request: the relay checks the adapter's answer for the manual mode, and a notification has none.
+      if (message.id === undefined || message.id === null) { log(`conn ${connection.id} session/new without an id refused`); return }
+      // A new session ends the last one's turn: its open questions answer `cancelled` and its approvals lapse.
+      endTurn(connection)
       if (!(await workerAccepts(connection))) {
         send(connection.ws, rpcError(message.id, -32001, "Studio did not accept the Sidekick grant."), secrets(connection))
         connection.ws.close(4403, "worker refused grant")
@@ -608,19 +665,27 @@ export function startRelay(config: Config, deps: { keys?: JWTVerifyGetKey; fetch
       const connection = match === null ? undefined : byCapability.get(match[1] as string)
       if (connection === undefined || connection.closed) return new Response("Not found", { status: 404 })
       if (request.method !== "POST") return new Response(null, { status: 405, headers: { allow: "POST" } })
-      const body = await request.text()
-      if (body.length > 262_144) return new Response("Too large", { status: 413 })
+      const raw = await request.text()
+      if (raw.length > 262_144) return new Response("Too large", { status: 413 })
       let call: { id?: Message["id"]; method?: string; params?: { name?: unknown; arguments?: unknown } } | null = null
-      try { call = JSON.parse(body) } catch { return Response.json(rpcError(null, -32700, "Parse error"), { status: 400 }) }
+      try { call = JSON.parse(raw) } catch { return Response.json(rpcError(null, -32700, "Parse error"), { status: 400 }) }
+      const id = plainObject(call) ? call.id : null
+      // A number a double would round reaches Studio as another number than the one checked and shown: refused.
+      if (!exactNumbers(raw)) {
+        log(`conn ${connection.id} tool call refused: a number does not survive exactly`)
+        return Response.json(rpcError(id, -32602, "A number in this call cannot be passed on exactly; send it as a string."), { headers: { "cache-control": "no-store" } })
+      }
       if (!proxyAdmits(call, connection.readOnly, connection.approvals)) {
         // Defence in depth: whatever the agent's own permission flow did, a call the person did not
         // allow never reaches Studio with their grant.
         log(`conn ${connection.id} tool call refused: not approved by the person`)
-        return Response.json(rpcError(Array.isArray(call) ? null : call?.id, -32001, "The person did not approve this call; ask them first."), { headers: { "cache-control": "no-store" } })
+        return Response.json(rpcError(id, -32001, "The person did not approve this call; ask them first."), { headers: { "cache-control": "no-store" } })
       }
       const forward: Record<string, string> = {}
       for (const name of ["mcp-protocol-version", "mcp-session-id"]) { const value = request.headers.get(name); if (value !== null) forward[name] = value }
-      const response = await studioMcp(connection, body, forward)
+      // Studio gets the object that was checked, re-serialised, never the agent's own bytes: a duplicate
+      // key or a number spelled differently cannot reach Studio as anything but what was approved.
+      const response = await studioMcp(connection, JSON.stringify(call), forward)
       const text = await response.text()
       if (call?.method === "tools/call" && typeof call.params?.name === "string") {
         const view = connection.views.get(call.params.name)
