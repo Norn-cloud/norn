@@ -29,7 +29,7 @@ const CASES = {
   answer: { view: "answer", input: { question: "demo.yield_week" }, text: ANSWER, isError: false },
   lineage: { view: "lineage", input: { question: "demo.yield_week", lineageRef: answer.lineageRef, bucket: BUCKET }, text: trace(BUCKET), isError: false },
   receipt: { view: "receipt", input: { id: "melt-9" }, text: '{"outcome":"committed","objectType":"constitution.Melt","objectId":"melt-9","version":1,"receipt":{"receiptHash":"h_8c1f0e7d2a9b44e1","commitSeq":12,"recordedAtMs":1792972800000}}', isError: false },
-  refused: { view: "receipt", input: { id: "melt-10" }, text: '{"format":"norn/refusal@2","retryable":false,"reason":null,"code":"action.precondition_failed","category":"law","message":"the output fine weight exceeds the input fine weight","explanation":"melt conservation: output_fine_g ≤ input_fine_g"}', isError: true },
+  refused: { view: "receipt", input: { id: "melt-10" }, text: '{"format":"norn/refusal@2","retryable":false,"reason":null,"code":"action.precondition_failed","category":"precondition","message":"the output fine weight exceeds the input fine weight","explanation":"melt conservation: output_fine_g ≤ input_fine_g"}', isError: true },
   proposal: { view: "dashboard", input: { kind: "dashboard", id: "yield-by-week" }, text: '{"admitted":true,"diagnostics":[],"restatement":"A dashboard named Yield by week with one chart: weekly gold yield for the last 16 weeks — exact to the gram.","restatementSha256":"ab"}', isError: false },
 } as const
 

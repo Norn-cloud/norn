@@ -27,6 +27,11 @@
 //!   rejected ([`SqliteDdlError::KeyNotLocal`]): uniqueness across tables is
 //!   not expressible in the subset. Normalized matching (identity rules) is
 //!   T8-ID-1's, not the index's.
+//! - **Physical names are distinct up to ASCII case.** SQLite resolves table
+//!   and index names (one namespace) ASCII-case-insensitively, so
+//!   `CREATE … IF NOT EXISTS` of two names equal up to case (the legal type
+//!   names `inventory.Sku` and `inventory.SKU`) would silently share one
+//!   object; they are rejected ([`SqliteDdlError::NameCollision`]).
 //! - **Computed properties are excluded**: they are derived, never stored.
 //! - **One table per link**, `"l:<source type>.<link id>"`: `(_world,
 //!   _source, _target)` plus one column per link property, primary key
@@ -52,7 +57,7 @@
 //! and text are `TEXT` (never `REAL`: there is no binary floating point),
 //! integers and booleans are `INTEGER`, and `json-ext` is `TEXT` JSON.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 use std::fmt::{self, Write as _};
 
 use norn_ir::{
@@ -317,6 +322,14 @@ pub enum SqliteDdlError {
     TooManyColumns(String),
     /// A statement exceeds [`MAX_STATEMENT_BYTES`].
     StatementTooLarge(String),
+    /// Two table or index names are equal up to ASCII case, which SQLite
+    /// resolves to one object.
+    NameCollision {
+        /// The name claimed first (in application order).
+        first: String,
+        /// The colliding name.
+        second: String,
+    },
 }
 
 impl fmt::Display for SqliteDdlError {
@@ -358,6 +371,10 @@ impl fmt::Display for SqliteDdlError {
             Self::StatementTooLarge(table) => write!(
                 f,
                 "a statement of table `{table}` exceeds {MAX_STATEMENT_BYTES} bytes"
+            ),
+            Self::NameCollision { first, second } => write!(
+                f,
+                "SQLite names `{first}` and `{second}` are equal up to ASCII case and would share one table or index"
             ),
         }
     }
@@ -449,15 +466,20 @@ fn project(
         .collect();
     order.sort_unstable();
 
+    let mut names = PhysicalNames::default();
     let mut schema = SqliteSchema::default();
     for (_, name) in &order {
         let Some(def) = by_name.get(name) else {
             continue;
         };
         let chain = ancestors.get(name).map_or(&[][..], Vec::as_slice);
-        schema
-            .object_tables
-            .push(object_table(def, chain, &property_types, naming)?);
+        schema.object_tables.push(object_table(
+            def,
+            chain,
+            &property_types,
+            naming,
+            &mut names,
+        )?);
     }
 
     let mut links = Vec::new();
@@ -477,6 +499,13 @@ fn project(
         }
     }
     links.sort_by(|a, b| (&a.source, &a.link).cmp(&(&b.source, &b.link)));
+    for link in &links {
+        names.claim(&link.table)?;
+        names.claim(&link_index_name(&link.table, "target"))?;
+        if link.cardinality.to == Multiplicity::One {
+            names.claim(&link_index_name(&link.table, "source"))?;
+        }
+    }
     schema.link_tables = links;
     Ok(schema)
 }
@@ -595,6 +624,32 @@ fn column_definitions(out: &mut Vec<String>, columns: &[PropertyColumn], has_ove
     }
 }
 
+/// The table and index names claimed so far. SQLite keeps tables and
+/// indexes in one namespace and resolves names ASCII-case-insensitively, so
+/// two names equal up to ASCII case are one object.
+#[derive(Default)]
+struct PhysicalNames(BTreeMap<String, String>);
+
+impl PhysicalNames {
+    fn claim(&mut self, name: &str) -> Result<(), SqliteDdlError> {
+        match self.0.entry(name.to_ascii_lowercase()) {
+            Entry::Vacant(slot) => {
+                slot.insert(name.to_owned());
+                Ok(())
+            }
+            Entry::Occupied(first) => Err(SqliteDdlError::NameCollision {
+                first: first.get().clone(),
+                second: name.to_owned(),
+            }),
+        }
+    }
+}
+
+/// The index over one end (`target` or `source`) of link table `table`.
+fn link_index_name(table: &str, end: &str) -> String {
+    format!("{table}/{end}")
+}
+
 fn create_table(table: &str, definitions: &[String]) -> String {
     let mut out = format!("CREATE TABLE IF NOT EXISTS {} (", quote_identifier(table));
     for (index, definition) in definitions.iter().enumerate() {
@@ -647,9 +702,11 @@ fn object_table(
     ancestors: &[&ObjectTypeDef],
     property_types: &BTreeMap<&str, &PropertyTypeDef>,
     naming: ColumnNaming,
+    names: &mut PhysicalNames,
 ) -> Result<ObjectTable, SqliteDdlError> {
     let name = def.name.as_str();
     let table = object_table_name(name);
+    names.claim(&table)?;
     let parent = def.extends.clone();
     let root = parent.is_none();
     let system: &[&str] = if root {
@@ -704,7 +761,7 @@ fn object_table(
     }
     let mut statements = vec![create_table(&table, &definitions)];
     for key in &def.identity {
-        statements.push(key_index(name, &table, key, &columns)?);
+        statements.push(key_index(name, &table, key, &columns, names)?);
     }
     check_statements(&table, &statements)?;
     Ok(ObjectTable {
@@ -722,6 +779,7 @@ fn key_index(
     table: &str,
     key: &KeySpec,
     columns: &[PropertyColumn],
+    names: &mut PhysicalNames,
 ) -> Result<String, SqliteDdlError> {
     let mut index_columns: Vec<&str> = vec![SCOPE_COLUMN, WORLD_COLUMN];
     for component in &key.properties {
@@ -736,12 +794,9 @@ fn key_index(
             })?;
         index_columns.push(column);
     }
-    Ok(create_index(
-        true,
-        &format!("{table}/key:{}", key.name.as_str()),
-        table,
-        &index_columns,
-    ))
+    let index = format!("{table}/key:{}", key.name.as_str());
+    names.claim(&index)?;
+    Ok(create_index(true, &index, table, &index_columns))
 }
 
 fn link_table(
@@ -792,14 +847,14 @@ fn link_table(
     let mut statements = vec![create_table(&table, &definitions)];
     statements.push(create_index(
         link.cardinality.from == Multiplicity::One,
-        &format!("{table}/target"),
+        &link_index_name(&table, "target"),
         &table,
         &[WORLD_COLUMN, TARGET_COLUMN],
     ));
     if link.cardinality.to == Multiplicity::One {
         statements.push(create_index(
             true,
-            &format!("{table}/source"),
+            &link_index_name(&table, "source"),
             &table,
             &[WORLD_COLUMN, SOURCE_COLUMN],
         ));

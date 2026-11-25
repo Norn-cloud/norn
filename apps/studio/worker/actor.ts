@@ -107,24 +107,28 @@ export async function verifyWriteScope(
 ): Promise<WriteScopeCheck> {
   const upgrade = request.headers.get("upgrade")?.toLowerCase() === "websocket"
   const safeRead = SAFE_METHODS.has(request.method) && !upgrade
+  // The Worker refuses before anything reaches the cell, in the cell's own Refusal@2 envelope, so a
+  // client (the SDK) reads it as a refusal: nothing was applied, and `error` stays for older readers.
+  const refusal = (code: string, category: "conflict" | "invalid", message: string) =>
+    ({ format: "norn/refusal@2", code, category, retryable: false, reason: null, message, explanation: "", error: message })
   const mismatch = () => ({
     ok: false as const,
     response: Response.json(
-      { code: "workspace.changed", message: WORKSPACE_CHANGED_MESSAGE, error: WORKSPACE_CHANGED_MESSAGE },
+      refusal("workspace.changed", "conflict", WORKSPACE_CHANGED_MESSAGE),
       { status: 409, headers: { "cache-control": "no-store" } },
     ),
   })
   const required = () => ({
     ok: false as const,
     response: Response.json(
-      { code: "scope.required", message: SCOPE_REQUIRED_MESSAGE, error: SCOPE_REQUIRED_MESSAGE },
+      refusal("scope.required", "invalid", SCOPE_REQUIRED_MESSAGE),
       { status: 400, headers: { "cache-control": "no-store" } },
     ),
   })
   const noCell = () => ({
     ok: false as const,
     response: Response.json(
-      { code: "workspace.no_cell", message: NO_DATA_CELL_MESSAGE, error: NO_DATA_CELL_MESSAGE },
+      refusal("workspace.no_cell", "conflict", NO_DATA_CELL_MESSAGE),
       { status: 409, headers: { "cache-control": "no-store" } },
     ),
   })
