@@ -248,6 +248,8 @@ export interface ObjectTypeDef extends TypeMetaBase {
 export interface InterfaceDef extends TypeMetaBase {
   readonly _tag: "Interface"
   readonly extends: ReadonlyArray<string>
+  /** Interfaces mutually exclusive with this one (`A ⊓ B = ∅`). */
+  readonly disjointWith?: ReadonlyArray<string>
   /** Links every implementing type must declare, at most this wide. */
   readonly links: ReadonlyArray<InterfaceLinkDecl>
   readonly invariants: ReadonlyArray<InvariantDecl>
@@ -320,12 +322,21 @@ export function objectType(
 export function interfaceType(
   meta: TypeMetaBase & {
     readonly extends?: ReadonlyArray<string | InterfaceDef>
+    readonly disjointWith?: ReadonlyArray<string | InterfaceDef>
     readonly links?: ReadonlyArray<InterfaceLinkDecl>
     readonly invariants?: ReadonlyArray<InvariantDecl>
   } & At,
 ): InterfaceDef {
-  const { at, extends: parents = [], links = [], invariants = [], ...rest } = meta
-  return located({ _tag: "Interface" as const, ...rest, extends: parents.map((parent) => typeof parent === "string" ? parent : parent.name), links: [...links], invariants: [...invariants] }, at)
+  const { at, extends: parents = [], disjointWith = [], links = [], invariants = [], ...rest } = meta
+  const disjoint = disjointWith.map((target) => typeof target === "string" ? target : target.name)
+  return located({
+    _tag: "Interface" as const,
+    ...rest,
+    extends: parents.map((parent) => typeof parent === "string" ? parent : parent.name),
+    ...(disjoint.length > 0 ? { disjointWith: disjoint } : {}),
+    links: [...links],
+    invariants: [...invariants],
+  }, at)
 }
 
 // ------------------------------------------------------------- lowering
@@ -380,6 +391,7 @@ export function lowerEntity(def: EntityDef, options: EnvelopeOptions): EntityBui
             name: def.name,
             role: def.role,
             extends: omitEmpty(def.extends),
+            disjointWith: omitEmpty(def.disjointWith ?? []),
             markings: omitEmpty(def.markings ?? []),
             description: def.description,
             properties: omitEmpty(def.properties.map((p) => propertyJson(p, false))),

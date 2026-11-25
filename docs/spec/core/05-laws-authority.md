@@ -630,11 +630,14 @@ every other stored scalar has explicit finite choices, parsed as exact runtime
 JSON literals and validated against its effective contract. Fields retain their
 scale and unit. Context products exceeding node, byte or document budgets are
 refused as a whole; no clipping, inferred defaults or sampling is permitted.
-A lifecycle-dependent identity, computed/nullable context, owned effects or
-unqualified invariant is outside this profile. Applicable unsupported law roots
-remain Unknown with the law identity. Retained snapshots include law-refused
-valuations: relation consumers must separately filter initialization and
-post-states through every supported governing law. Input snapshots alone never
+A lifecycle-dependent identity, computed context or owned effects are outside
+this profile. Nullable scalar context properties and inherited/declared
+`integrity` invariants over the frozen scalar subject are supported; `quality`
+invariants do not refuse writes, and any invariant or applicable unsupported law
+reading outside the frozen scalar subject remains Unknown with its identity.
+Retained snapshots include law- and invariant-refused valuations: relation
+consumers must separately filter initialization and post-states through every
+integrity invariant and supported governing law. Input snapshots alone never
 discharge a goal.
 
 Named scenarios: `lifecycle_inputs_are_exact_complete_and_source_bound`,
@@ -643,19 +646,22 @@ Named scenarios: `lifecycle_inputs_are_exact_complete_and_source_bound`,
 correspondence and checked backend evidence are subsequent qualification units.
 
 **PROOF-LIFECYCLE-3:** the conditional graph retains every bounded row and every
-enabled declared transition whose post-state satisfies all supported governing
-laws. Initialization requires a declared initial state satisfying their
-conjunction. Context stays frozen; unreachable input rows remain available for
-local correspondence and never become initial states. Always/Never predicate
-laws are supported; temporal/state scopes, advisory laws and invariant responses
-remain Unknown. A work budget of 2,000,000 (expression source bytes, compilation
-and evaluation units), 128 laws and 16,384 edges are pinned. Each guard evaluation
-gets the native decide budget of 1,000,000 units and evaluation stops at the first
-false guard; each row's law conjunction shares one such budget, with one extra
-unit per expression, as a native write does. Those units also charge the work
-budget, and both limits are pinned. Exhausting any budget, duplicate valuations,
-inexact expression values and any step leaving the profile refuse the complete
-graph. No partial relation or solver discharge is returned.
+enabled declared transition whose post-state satisfies all integrity invariants
+and supported governing laws. Initialization requires a declared initial state
+satisfying their conjunction. Context stays frozen; unreachable input rows
+remain available for local correspondence and never become initial states.
+Integrity invariants and Always/Never predicate laws are supported;
+temporal/state scopes, advisory laws and law invariant responses remain Unknown.
+A work budget of 2,000,000 (expression source bytes, compilation and evaluation
+units), 128 combined integrity invariants and laws, and 16,384 edges are pinned.
+Each guard evaluation gets the native decide budget of 1,000,000 units and
+evaluation stops at the first false guard; each row's integrity invariants share
+one such budget (after native typed-property units) and its law conjunction
+shares one, each with one extra unit per expression, as a native write does.
+Those units also charge the work budget, and all limits are pinned. Exhausting
+any budget, duplicate valuations, inexact expression values and any step leaving
+the profile refuse the complete graph. No partial relation or solver discharge is
+returned.
 
 `every_bounded_initialization_and_transition_matches_native_commit` compares
 all initializations and every pre-state/transition pair with the checked native

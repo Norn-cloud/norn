@@ -5942,6 +5942,8 @@ export interface components {
          */
         NornIrInterfaceDef: {
             description?: string;
+            /** @description Interfaces mutually exclusive with this one; no interface or object type may inherit both. Omitted when empty. */
+            disjointWith?: components["schemas"]["NornIrInterfaceName"][];
             /** @description Parent contracts. All members, constraints, markings and invariants apply. */
             extends?: components["schemas"]["NornIrInterfaceName"][];
             /**

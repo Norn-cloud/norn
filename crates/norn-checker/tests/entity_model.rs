@@ -277,6 +277,11 @@ fn every_code_has_a_negative_case() {
             serde_json::json!({"interfaces":[{"name":"test.Child","extends":["test.Absent"]}]}),
         ),
         (
+            interface_codes::DISJOINT_VIOLATION,
+            "/interfaces/0/disjointWith/0",
+            serde_json::json!({"interfaces":[{"name":"test.Solo","disjointWith":["test.Solo"]}]}),
+        ),
+        (
             codes::LINK_PROPERTY_MARKINGS_UNSUPPORTED,
             "/objectTypes/0/links/0/properties/0/markings",
             serde_json::json!({"objectTypes":[{"name":"test.Thing","links":[{"id":"owner","target":"crm.Customer","cardinality":one_of_many,"properties":[{"id":"email","type":{"kind":"text"},"markings":["pii.contact"]}]}]}]}),
@@ -2315,4 +2320,165 @@ proptest::proptest! {
             proptest::prop_assert_eq!(protected, flags[..=index].iter().any(|flag| *flag));
         }
     }
+}
+
+#[test]
+fn interface_disjoint_with_enforces_direct_transitive_and_symmetric_exclusion() {
+    let check = |doc: serde_json::Value| -> Vec<(String, String)> {
+        let layer = Layer::from_json(&doc);
+        let base = Layer::default();
+        let registry = BTreeSet::new();
+        let context = EntityContext {
+            catalog: &[],
+            registry: &registry,
+            base: base.model(),
+            tenant: None,
+        };
+        check_entity_model(&layer.model(), &context)
+            .into_iter()
+            .map(|d| {
+                let ptr = d.span.map(|s| s.pointer).unwrap_or_default();
+                assert!(
+                    doc.pointer(&ptr).is_some(),
+                    "diagnostic pointer {ptr} missing from {doc}"
+                );
+                (d.code.as_str().to_owned(), ptr)
+            })
+            .collect()
+    };
+
+    // Valid symmetric declaration: B declares disjointWith: [A]; separate implementers admit.
+    let valid = serde_json::json!({
+        "interfaces": [
+            {"name": "test.A"},
+            {"name": "test.B", "disjointWith": ["test.A"]}
+        ],
+        "objectTypes": [
+            {"name": "test.OnlyA", "implements": ["test.A"]},
+            {"name": "test.OnlyB", "implements": ["test.B"]}
+        ]
+    });
+    assert_eq!(check(valid), Vec::<(String, String)>::new());
+
+    // Direct violation (both orderings: symmetric even though only B declares disjointWith).
+    for implements in [["test.A", "test.B"], ["test.B", "test.A"]] {
+        let direct = serde_json::json!({
+            "interfaces": [
+                {"name": "test.A"},
+                {"name": "test.B", "disjointWith": ["test.A"]}
+            ],
+            "objectTypes": [
+                {"name": "test.Both", "implements": implements}
+            ]
+        });
+        assert_eq!(
+            check(direct),
+            vec![(
+                interface_codes::DISJOINT_VIOLATION.to_owned(),
+                "/objectTypes/0/implements".to_owned()
+            )]
+        );
+    }
+
+    // Transitive via interface extension.
+    let via_interface_extends = serde_json::json!({
+        "interfaces": [
+            {"name": "test.A"},
+            {"name": "test.SubA", "extends": ["test.A"]},
+            {"name": "test.B", "disjointWith": ["test.A"]}
+        ],
+        "objectTypes": [
+            {"name": "test.Both", "implements": ["test.SubA", "test.B"]}
+        ]
+    });
+    assert_eq!(
+        check(via_interface_extends),
+        vec![(
+            interface_codes::DISJOINT_VIOLATION.to_owned(),
+            "/objectTypes/0/implements".to_owned()
+        )]
+    );
+
+    // Transitive via object supertype.
+    let via_object_extends = serde_json::json!({
+        "interfaces": [
+            {"name": "test.A"},
+            {"name": "test.B", "disjointWith": ["test.A"]}
+        ],
+        "objectTypes": [
+            {"name": "test.Parent", "implements": ["test.A"]},
+            {"name": "test.Child", "extends": "test.Parent", "implements": ["test.B"]}
+        ]
+    });
+    assert_eq!(
+        check(via_object_extends),
+        vec![(
+            interface_codes::DISJOINT_VIOLATION.to_owned(),
+            "/objectTypes/1/implements".to_owned()
+        )]
+    );
+
+    // Interface extending two disjoint interfaces refuses even with zero implementors,
+    // and an object implementing it does not re-report the interface's own violation.
+    let impossible_interface = serde_json::json!({
+        "interfaces": [
+            {"name": "test.A"},
+            {"name": "test.B", "disjointWith": ["test.A"]},
+            {"name": "test.Impossible", "extends": ["test.A", "test.B"]}
+        ],
+        "objectTypes": [
+            {"name": "test.UsesImpossible", "implements": ["test.Impossible"]}
+        ]
+    });
+    assert_eq!(
+        check(impossible_interface),
+        vec![(
+            interface_codes::DISJOINT_VIOLATION.to_owned(),
+            "/interfaces/2/extends".to_owned()
+        )]
+    );
+
+    // Self-disjoint interface with extends and an implementor reports only once on disjointWith.
+    let self_disjoint_with_extends = serde_json::json!({
+        "interfaces": [
+            {"name": "test.Base"},
+            {"name": "test.SelfDisjoint", "extends": ["test.Base"], "disjointWith": ["test.SelfDisjoint"]}
+        ],
+        "objectTypes": [
+            {"name": "test.Impl", "implements": ["test.SelfDisjoint"]}
+        ]
+    });
+    assert_eq!(
+        check(self_disjoint_with_extends),
+        vec![(
+            interface_codes::DISJOINT_VIOLATION.to_owned(),
+            "/interfaces/1/disjointWith/0".to_owned()
+        )]
+    );
+
+    // Malformed disjointWith: duplicate, unknown target, and disjoint with own ancestor.
+    let malformed = serde_json::json!({
+        "interfaces": [
+            {"name": "test.A"},
+            {"name": "test.Bad", "extends": ["test.A"], "disjointWith": ["test.A", "test.A", "test.Missing"]}
+        ]
+    });
+    let found = check(malformed);
+    assert_eq!(
+        found,
+        vec![
+            (
+                interface_codes::DISJOINT_VIOLATION.to_owned(),
+                "/interfaces/1/disjointWith/0".to_owned()
+            ),
+            (
+                interface_codes::DISJOINT_VIOLATION.to_owned(),
+                "/interfaces/1/disjointWith/1".to_owned()
+            ),
+            (
+                interface_codes::DISJOINT_VIOLATION.to_owned(),
+                "/interfaces/1/disjointWith/2".to_owned()
+            ),
+        ]
+    );
 }

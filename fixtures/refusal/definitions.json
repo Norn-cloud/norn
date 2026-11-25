@@ -157,7 +157,7 @@
           },
           {
             "artifactId": "core.Claim.interface",
-            "sha256": "8cc6c743d623460a70afa1d2b30e0c81ceb2342e4c13263b12df44b6c046b2f5",
+            "sha256": "c17471feb74112b7bf775807a0b97656867f5f1ea2cf6244e688cc8beda8ebf4",
             "version": "0.2.0"
           },
           {
@@ -256,7 +256,7 @@
             "version": "0.2.0"
           }
         ],
-        "sha256": "29a0b52887f445173e20ca987dc9645d1f6101efd7c66756c2691ce90614cb8b"
+        "sha256": "67ae76c4fe93484013a1f1df8022a57ae3fc097193666574a2c85304ff33c947"
       },
       "checker": {
         "name": "norn-checker",
@@ -281,7 +281,7 @@
         "version": 3
       }
     },
-    "receiptSha256": "e9663a22209ceb725a82302b20c852e6f2766f1446d4628439225bf52c333389",
+    "receiptSha256": "07103cc23599cfcd972860aba56de1e227013224d9efaf1e0308e1a5dc01f723",
     "diagnostics": null,
     "registry": [],
     "baseArtifactIds": [
@@ -475,6 +475,9 @@
           "entityVersion": "2.0",
           "interface": {
             "description": "An economic claim: a right to receive resources, such as an invoice or a receivable, settled by economic events. Not a catalog claim about definitions. Disjoint from core.Commitment (Commitment ⊓ Claim = ∅): a promise is not yet a right, and no type is both. A fulfilled or accepted commitment gives rise to claims (givesRiseTo); the relation is recorded on the claim as `arises_from`, because a commitment is not edited when a claim arises.",
+            "disjointWith": [
+              "core.Commitment"
+            ],
             "invariants": [
               {
                 "expression": "self.amount > 0",

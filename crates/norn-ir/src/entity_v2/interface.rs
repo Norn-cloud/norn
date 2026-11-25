@@ -65,6 +65,9 @@ pub struct InterfaceDef {
     /// Parent contracts. All members, constraints, markings and invariants apply.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extends: Vec<InterfaceName>,
+    /// Interfaces mutually exclusive with this one; no interface or object type may inherit both. Omitted when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disjoint_with: Vec<InterfaceName>,
     #[serde(
         default,
         deserialize_with = "present_non_null",

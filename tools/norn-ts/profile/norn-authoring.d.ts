@@ -449,7 +449,12 @@ declare module "@norn/authoring" {
       S extends Schema.Top,
       const P extends ReadonlyArray<InterfaceDefinition<unknown> | string> = readonly [],
     >(
-      meta: InterfaceMeta<S> & InterfaceInvariantMeta & { readonly extends?: P; readonly links?: ReadonlyArray<InterfaceLinkSpec> },
+      meta: InterfaceMeta<S> & InterfaceInvariantMeta & {
+        readonly extends?: P
+        /** INTERFACE-DISJOINT-1: interfaces mutually exclusive with this one (`A ⊓ B = ∅`). */
+        readonly disjointWith?: ReadonlyArray<InterfaceDefinition<unknown> | string>
+        readonly links?: ReadonlyArray<InterfaceLinkSpec>
+      },
     ): InterfaceDefinition<EffectiveProperties<undefined, P, S["Type"]>>
 
     /** Opaque action definition; the syntax compiler lowers the call. */

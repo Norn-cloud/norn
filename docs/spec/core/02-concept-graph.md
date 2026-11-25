@@ -105,3 +105,5 @@ Present: `crates/norn-ir/src/entity_v2/`, `definition_catalog.rs`, `crates/norn-
 5. Connect effective member origins to 05 B2 law instantiation; GRAPH-DIAMOND, then lane C #227 core-aligned definitions.
 
 **VAL-DECIMAL-BIND-1:** An interface `decimal-binding` member obtains its exact unit and scale solely from the implementing type's concrete Decimal declaration, and same-group members require identical units/scales; missing bindings refuse `core.values.unit_binding_required`, mismatches refuse `core.values.unit_mismatch`, with no scalar or sibling-unit fallback.
+
+**INTERFACE-DISJOINT-1:** `InterfaceDef.disjointWith` declares mutually exclusive interfaces (`A ⊓ B = ∅`). Disjointness is symmetric and inherited through interface `extends`, object `implements`, and object `extends`: no interface or object type may inherit two mutually disjoint interfaces directly or transitively, and a disjoint target must name another declared interface without duplicates or conflict with the declaring interface's own ancestors (`interface.validation.disjoint_violation`). `core.Claim` declares `disjointWith: [core.Commitment]`.

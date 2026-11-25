@@ -18147,6 +18147,13 @@
           "description": {
             "type": "string"
           },
+          "disjointWith": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrInterfaceName"
+            },
+            "description": "Interfaces mutually exclusive with this one; no interface or object type may inherit both. Omitted when empty."
+          },
           "extends": {
             "type": "array",
             "items": {
