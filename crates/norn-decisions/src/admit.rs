@@ -136,9 +136,7 @@ impl AdmittedDecision {
                     });
                 }
                 if loaded_keys.insert(key) {
-                    closed_record(sub, "inputSchema")?;
-                    closed_record(sub, "outputSchema")?;
-
+                    contracts.insert_helper(key, sub)?;
                     if loaded_keys.len() > MAX_SUB_DECISION_CLOSURE {
                         return Err(AdmissionError::SubDecisionBound {
                             depth: child_depth,
@@ -699,7 +697,7 @@ fn sub_decision_content(content: &JdmSubDecisionContent) -> DecisionNodeContent 
     }
 }
 
-use crate::contract::{closed_record, decide_input, decide_output, invalid_schema};
+use crate::contract::{decide_input, decide_output, invalid_schema};
 
 fn defaults(
     rule: &RuleRoot,

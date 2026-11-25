@@ -375,7 +375,9 @@ type NodeTrace = (u64, String, String, Option<Variable>);
 /// order. A table node's trace data is one row record (first hit) or a list
 /// of them (collect), each with its `index` and its `rule` (with `_id`). A
 /// sub-decision node's trace data is its child graph's node traces, which
-/// are walked recursively in their execution order.
+/// are walked recursively in their execution order. A node in loop mode
+/// traces one such entry per iteration, in iteration order (see
+/// [`trace_records`]).
 fn matched_rows(trace: Option<&EvaluationTrace>) -> Vec<MatchedRow> {
     let Some(graph) = trace.and_then(EvaluationTrace::as_graph) else {
         return Vec::new();
@@ -406,7 +408,7 @@ fn collect_rows(mut nodes: Vec<NodeTrace>, rows: &mut Vec<MatchedRow>, depth: us
     nodes.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
     for (_, node_id, node_name, data) in nodes {
         let records: Vec<Variable> = match &data {
-            Some(Variable::Array(items)) => items.borrow().iter().cloned().collect(),
+            Some(Variable::Array(items)) => items.borrow().iter().flat_map(trace_records).collect(),
             Some(record @ Variable::Object(_)) => vec![record.clone()],
             _ => continue,
         };
@@ -460,6 +462,27 @@ fn collect_rows(mut nodes: Vec<NodeTrace>, rows: &mut Vec<MatchedRow>, depth: us
                 .collect();
             collect_rows(children, rows, depth.saturating_add(1));
         }
+    }
+}
+
+/// The records one element of a node's trace list stands for. A row or a
+/// child-graph trace (a `collect` table's row, or one iteration of a looped
+/// `first` table or sub-decision) is itself; one iteration of a looped
+/// `collect` table is its list of matched rows, in row order (#1708).
+fn trace_records(item: &Variable) -> Vec<Variable> {
+    match item {
+        Variable::Object(_) => vec![item.clone()],
+        Variable::Array(rows) => rows
+            .borrow()
+            .iter()
+            .filter(|row| matches!(row, Variable::Object(_)))
+            .cloned()
+            .collect(),
+        Variable::Null
+        | Variable::Bool(_)
+        | Variable::Number(_)
+        | Variable::String(_)
+        | Variable::Dynamic(_) => Vec::new(),
     }
 }
 
