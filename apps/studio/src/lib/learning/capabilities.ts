@@ -1,10 +1,14 @@
 import { useMemo } from "react"
 import { sameStudioScope, useStudioScope, type StudioScope } from "../definitions.ts"
 import { useMode, type Mode } from "../live-transport.ts"
-import { CURATED_CASE_TYPE, EVAL_SET_TYPE } from "./cases.ts"
-import { EPISODE_TYPE } from "./episode.ts"
-import { MISFIT_BY_LAW_QUESTION, TRIAGE_OVER_TIME_QUESTION } from "./misfit.ts"
-import { GAP_PROPOSAL_TYPE } from "./proposals.ts"
+import {
+  CURATED_CASE_TYPE,
+  EPISODE_TYPE,
+  EVAL_SET_TYPE,
+  GAP_PROPOSAL_TYPE,
+  MISFIT_BY_LAW_QUESTION,
+  TRIAGE_OVER_TIME_QUESTION,
+} from "./resource-names.ts"
 
 /**
  * Server-driven capability gating for Studio's Learning destinations (#1220, PR #1631 S1).
