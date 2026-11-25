@@ -854,6 +854,9 @@ struct ThreeAndOne {
 }
 
 impl norn_api::analytics_routes::Transport for ThreeAndOne {
+    fn capabilities(&self) -> norn_cell::analytics::EngineCapabilities {
+        norn_cell::analytics::EngineCapabilities::DUCKDB
+    }
     fn resumed(&self) -> Option<norn_api::analytics_routes::EngineAnswer> {
         None
     }
@@ -1322,6 +1325,9 @@ fn an_answer_of_another_landing_is_not_continued() {
     use norn_api::analytics_routes::{EngineAnswer, EngineCall, Transport, load_dataset};
     struct Forged(ThreeAndOne, std::sync::Mutex<Option<EngineAnswer>>);
     impl Transport for Forged {
+        fn capabilities(&self) -> norn_cell::analytics::EngineCapabilities {
+            self.0.capabilities()
+        }
         fn resumed(&self) -> Option<EngineAnswer> {
             self.1.lock().expect("slot").take()
         }

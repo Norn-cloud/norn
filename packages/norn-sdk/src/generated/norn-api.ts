@@ -12213,8 +12213,9 @@ export interface components {
              */
             approximate: boolean;
             /**
-             * @description The engine that computed the profile: `cell`, the native exact engine,
-             *     or `duckdb`, the tenant analytics engine.
+             * @description The engine that computed the profile: `cell` (the native exact engine),
+             *     `duckdb` (the historical tenant analytics engine), or `datafusion` (the
+             *     `DataFusion` tenant analytics engine).
              */
             engine: string;
             /** @description The concept profiled; rows may be of its subtypes. */
@@ -12454,7 +12455,7 @@ export interface components {
          * @description The evaluator that produced an answer.
          * @enum {string}
          */
-        NornQueryEngine: "ivm" | "cell" | "duckdb";
+        NornQueryEngine: "ivm" | "cell" | "duckdb" | "datafusion";
         /**
          * @description Snapshot freshness, independent of source cursor ordering.
          * @enum {string}
