@@ -726,6 +726,9 @@ test("classifyTriageActionResult treats structured HTTP 5xx as retryable error a
     status: 500,
     code: "internal.storage_busy",
     message: "Upstream ledger timeout",
+    category: "internal",
+    retryable: true,
+    explanation: "the ledger did not answer in time",
     diagnostics: [],
   })
   expect(server500.kind).toBe("error")
@@ -735,6 +738,9 @@ test("classifyTriageActionResult treats structured HTTP 5xx as retryable error a
     status: 422,
     code: "law.boundary_cap",
     message: "Cap exceeded",
+    category: "precondition",
+    retryable: false,
+    explanation: "a declared law does not hold",
     diagnostics: [],
   })
   expect(law422).toEqual({ kind: "refused", code: "law.boundary_cap", message: "Cap exceeded" })

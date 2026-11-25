@@ -89,6 +89,10 @@ pub enum CellError {
     /// DECISION-LEDGER-1: a decision resolution was refused (`decision.*`).
     #[error("{0}")]
     DecisionRefused(&'static str),
+    /// RECEIPT-STORE-1: a predicate or collection freshness pin has no
+    /// qualified fence on the durable receipt path.
+    #[error("action.receipt_effect_unsupported: unqualified predicate or collection pin")]
+    ReceiptPinUnqualified,
     /// MANIFEST-1: a dataset manifest was refused (`dataset.*`, `bulk.*`).
     #[error("{code}: {detail}")]
     DatasetRefused {
