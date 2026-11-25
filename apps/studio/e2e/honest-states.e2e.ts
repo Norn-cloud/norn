@@ -238,7 +238,7 @@ test("unreachable cell: 503 cell.unopenable (retryable: false) never shows Retry
   await expect(state).toContainText("Last reachable")
   await expect(banner).toHaveCount(0)
   await expect(page.getByRole("button", { name: "Retry", exact: true }).filter({ visible: true })).toHaveCount(1)
-  await expect(page.getByText("inc-cell-909").filter({ visible: true })).toHaveCount(1)
+  await expect(page.getByText("inc-cell-909", { exact: true }).filter({ visible: true })).toHaveCount(1)
   await expect(page.locator('[data-connection="retrying"]')).toHaveCount(0)
   await expect(page.getByText("Retrying…")).toHaveCount(0)
   await expect(state.getByRole("button", { name: "Retry" })).toBeEnabled()

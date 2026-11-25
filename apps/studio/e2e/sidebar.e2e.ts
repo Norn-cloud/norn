@@ -146,6 +146,22 @@ test("rail: one tab stop with roving focus (arrows, Home, End), Enter opens the 
   await expect(page.getByRole("tooltip")).toContainText("Builder")
 })
 
+test("rail: a page two applets list opens in the same applet on every fresh load, and a type's own page is the model's", async ({ page }) => {
+  await recorded(page)
+  // A type's record page is listed by the records (Data) and by the model (Builder); a fresh load settles on
+  // one of them however the two menus' reads race, and stays there while they load.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await page.goto("/sources/canon.Holding/demo%2Fholding%2F0001")
+    await settled(page)
+    await expect(current(page)).toHaveAttribute("data-applet", "data")
+  }
+  // The type's own page is the model's item: opened from Builder's menu it is Builder's.
+  await rail(page).getByRole("link", { name: "Builder" }).click()
+  await menu(page, "Builder").getByRole("link", { name: "Holding" }).click()
+  await expect(page).toHaveURL(/\/sources\/canon\.Holding$/)
+  await expect(current(page)).toHaveAttribute("data-applet", "builder")
+})
+
 test("submenu island: the toggle, ⌘B and Ctrl+B collapse it to nothing (rail and main island stay), the choice survives a reload, focus is never stranded, and 640–1023px starts collapsed", async ({ page }) => {
   await recorded(page)
   await page.goto("/sources")
@@ -393,7 +409,8 @@ test("islands under reduced motion: collapsing, rows and the phone sheet switch 
   await page.goto("/sources")
   await settled(page)
   expect(await style(island(page), "transition-property")).toBe("none")
-  expect(await style(menu(page, "Builder").locator('[data-slot="tree-label"]').first(), "transition-property")).toBe("none")
+  expect(await style(menu(page, "Builder").getByRole("link", { name: "Transforms" }), "transition-property")).toBe("none")
+  expect(await style(rail(page).locator("a[data-applet]").first(), "transition-property")).toBe("none")
   await page.setViewportSize({ width: 390, height: 844 })
   await toggle(page).click()
   const sheet = page.getByRole("dialog", { name: "Navigation" })
@@ -451,7 +468,7 @@ test("Workspace unavailable shows once: the page's full state, or a one-line sta
       // The one-line status never wraps into a column on a phone.
       if (await banner.count()) expect((await banner.boundingBox())!.height, `${path} status at ${width}`).toBeLessThanOrEqual(60)
       // The incident is shown once (the one-line status keeps it from 640px up; the page's state always).
-      const incidents = await page.getByText("inc-shell-404").filter({ visible: true }).count()
+      const incidents = await page.getByText("inc-shell-404", { exact: true }).filter({ visible: true }).count()
       expect(incidents, `${path} at ${width}`).toBe(await state.count() > 0 || width >= 640 ? 1 : 0)
       if (SHOTS && path === "/") await page.screenshot({ path: `${SHOTS}/islands-unavailable-${width === 390 ? "390" : "desktop"}-light.png` })
     }

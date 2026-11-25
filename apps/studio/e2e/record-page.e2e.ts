@@ -225,7 +225,9 @@ test("markings: a drawer's record opened in full while the workspace read fails 
   sessionDown = true
   await drawer.getByRole("link", { name: "Open full record" }).click()
   await expect(page).toHaveURL(/\/sources\/canon\.Party\/demo\/party\/0001$/)
-  await expect(page.locator('[data-connection="unavailable"]')).toBeVisible()
+  // Workspace unavailable shows once: the page's own full state, so the main island's one-line status stays away.
+  await expect(page.locator("[data-workspace-unavailable]")).toBeVisible()
+  await expect(page.locator('[data-connection="unavailable"]')).toHaveCount(0)
   // Nothing the drawer read shows here without a workspace, and nothing can be revealed: only the page's
   // Workspace unavailable state, with its Retry.
   await expect(page.locator("[data-fact]")).toHaveCount(0)

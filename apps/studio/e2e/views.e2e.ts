@@ -56,7 +56,14 @@ test("views: create 'Applications needing help' in Operations Space, keep column
   await page.getByRole("button", { name: "Save", exact: true }).click()
   await expect(page).toHaveURL(/\/views\/studio\.view\./)
   await expect(page.getByRole("heading", { name: "Applications needing help" })).toBeVisible()
-  await expect(page.getByRole("navigation", { name: "Operations menu" }).getByRole("link", { name: "Applications needing help" })).toBeVisible()
+  // The reader stays in Data, where they saved it; the Operations applet's menu lists it under "Pinned views",
+  // and opening it there shows it in Operations.
+  const viewUrl = page.url()
+  await page.getByRole("navigation", { name: "Applets" }).getByRole("link", { name: "Operations" }).click()
+  const operations = page.getByRole("navigation", { name: "Operations menu" })
+  await expect(operations.getByText("Pinned views")).toBeVisible()
+  await operations.getByRole("link", { name: "Applications needing help" }).click()
+  await expect(page).toHaveURL(viewUrl)
   await expect(page.getByRole("navigation", { name: "Applets" }).locator('[aria-current="page"]')).toHaveAttribute("data-applet", "operations")
 
   // 3. List -> saved column order puts `score` before `stage`, and row actions run through RecordDrawer's per-record /v1/actions read.

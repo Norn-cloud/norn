@@ -308,7 +308,7 @@ test("gating (same-tab environment switch): invalidates cached catalog, unmounts
   // 3. Release env-b's catalog with NO learning resources: gate settles as ready-unavailable with zero fetches to env-b.
   defsWaiters["env-b"]!()
   await expect(page.locator('[data-learning-gate="unavailable"][data-gate-status="ready"]')).toBeVisible()
-  await expect(nav).not.toContainText("Learning")
+  await expect(page.getByRole("navigation", { name: "Applets" }).getByRole("link", { name: "Learning" })).toHaveCount(0)
   expect(learningRequestsByEnv["env-b"]).toEqual([])
 
   // 4. Switch in the same tab (via visibilitychange/focus refetch, no reload) to env-c with env-c's catalog held pending.

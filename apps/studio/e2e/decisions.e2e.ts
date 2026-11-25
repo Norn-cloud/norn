@@ -78,14 +78,17 @@ test("view: the inbox lists what waits on you, soonest deadline first, with the 
   await expect(list(page).nth(0)).toContainText("Restock gold · Ask manager") // a step with no label reads its id in words
   await expect(list(page).nth(1)).toContainText("Refund review · Approve refund") // a flow with no title likewise
   await expect(list(page).nth(2)).toContainText(/(6 days|5 days 23 h) left/)
-  await expect(page.locator('a[href="/decisions"]').first()).toContainText("3")
+  // The Inbox applet names its count on the rail, and its menu row shows it.
+  await expect(page.getByRole("navigation", { name: "Applets" }).locator('a[href="/decisions"]')).toHaveAttribute("aria-label", "Inbox, 3 open")
+  await expect(page.getByRole("navigation", { name: "Inbox menu" }).locator('a[href="/decisions"]')).toContainText("3")
   await shoot(page, "inbox")
 })
 
 test("view: a capped count reads as a lower bound; nothing waiting reads as such", async ({ page }) => {
   await inbox(page, { capped: true })
   await expect(page.getByText("500+ waiting on you")).toBeVisible()
-  await expect(page.locator('a[href="/decisions"]').first()).toContainText("500+")
+  await expect(page.getByRole("navigation", { name: "Applets" }).locator('a[href="/decisions"]')).toHaveAttribute("aria-label", "Inbox, 500+ open")
+  await expect(page.getByRole("navigation", { name: "Inbox menu" }).locator('a[href="/decisions"]')).toContainText("500+")
   await page.unrouteAll({ behavior: "ignoreErrors" })
   await inbox(page, { empty: true })
   await expect(page.getByText("Nothing waits on you")).toBeVisible()

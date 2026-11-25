@@ -981,9 +981,16 @@ function LocalizedShell({ sections, tools, assistant, account, onSignOut }: { re
   const { shell } = useAppearance()
   const pathname = useRouterState({ select: (state) => state.location.pathname })
   const navigation = useNavigation(sections)
-  const [previous, setPrevious] = useState<string | undefined>(undefined)
-  const applet = appletOf(sections, pathname, navigation.menus, previous)
-  useEffect(() => { if (applet?.id !== undefined) setPrevious(applet.id) }, [applet?.id])
+  // The applet the reader was in on the page before this one decides a page two applets list. It is
+  // the last applet shown on that page, so a menu that loads late on this page never locks it in.
+  const [trail, setTrail] = useState<{ readonly path: string; readonly from?: string; readonly shown?: string }>({ path: pathname })
+  const from = trail.path === pathname ? trail.from : trail.shown
+  const applet = appletOf(sections, pathname, navigation.menus, from)
+  useEffect(() => {
+    setTrail((last) => last.path === pathname
+      ? (last.shown === applet?.id ? last : { ...last, shown: applet?.id })
+      : { path: pathname, from: last.shown, shown: applet?.id })
+  }, [pathname, applet?.id])
   const menu = applet && appletMenu(applet, sections, navigation.menus, navigation.badges)
   const current = menu && destinationIn(menu, pathname, navigation.menus)
   useHashScroll()
