@@ -832,6 +832,7 @@ fn seed_and_walk_inner<H: PackHost>(
             Err(err) => return Err(format!("seed {ty_name}/{id}: {err}")),
         }
     } else {
+        super::seed::stamp_link_targets(host, pack, catalog, &mut graph.setup_writes, 1)?;
         graph.setup_writes.push(FactWrite {
             key,
             expected: FactVersion::ABSENT,

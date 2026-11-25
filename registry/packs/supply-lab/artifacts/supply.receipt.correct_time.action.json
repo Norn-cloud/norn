@@ -1,0 +1,85 @@
+{
+  "artifactId": "supply.receipt.correct_time.action",
+  "dependencies": [],
+  "irVersion": "0.1",
+  "kind": "action",
+  "lifecycle": "active",
+  "name": "Correct a receipt's received time",
+  "namespace": "supply",
+  "payload": {
+    "access": {
+      "artifactId": "supply.access.policy",
+      "version": "0.1.0"
+    },
+    "actionId": "supply.receipt.correct_time",
+    "effectProgram": {
+      "entityArtifactId": "supply.ShipmentReceipt.entity",
+      "entityArtifactVersion": "0.1.0",
+      "kind": "upsert_input_object",
+      "objectIdField": "receipt_id",
+      "objectKind": "supply.ShipmentReceipt",
+      "writeMode": {
+        "kind": "update_only"
+      }
+    },
+    "idempotent": true,
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "receipt_id": {
+          "type": "string"
+        },
+        "received_at": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "receipt_id",
+        "received_at"
+      ],
+      "type": "object"
+    },
+    "ledgered": true,
+    "outputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "receipt_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "receipt_id"
+      ],
+      "type": "object"
+    },
+    "scopeRequired": [
+      "orgId",
+      "environmentId"
+    ],
+    "slice": [
+      {
+        "key": {
+          "property": {
+            "from": "input",
+            "property": "receipt_id"
+          }
+        },
+        "name": "receipt",
+        "objectType": "supply.ShipmentReceipt"
+      }
+    ],
+    "title": "Correct a receipt's received time",
+    "writes": [
+      {
+        "change": "modified",
+        "entityKind": "supply.ShipmentReceipt"
+      }
+    ]
+  },
+  "provenance": {
+    "source": "system",
+    "sourcePath": "registry/packs/supply-lab/artifacts/supply.receipt.correct_time.action.json"
+  },
+  "scope": {},
+  "version": "0.1.0"
+}

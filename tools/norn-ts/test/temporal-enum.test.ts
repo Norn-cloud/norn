@@ -72,6 +72,28 @@ test.skipIf(!checker)("Rust admits the authored mapping with a receipt-pinned so
   }
 }, 30_000)
 
+// MAP-ENUM-TEXT-1 relaxes free text only: a literal outside the target enum,
+// or a declared code set wider than it, still refuses statically.
+test.skipIf(!checker)("an enum target refuses an out-of-enum literal and a wider declared code set", () => {
+  const check = (edit: (mapping: any, source: any) => void) => {
+    const artifacts = JSON.parse(JSON.stringify(compiled().artifacts)) as any[]
+    const mapping = artifacts.find(a => a.kind === "mapping")
+    const source = artifacts.find(a => a.kind === "source_schema")
+    edit(mapping, source)
+    const pinned = checker!.checkArtifactSet(artifacts.filter(a => a !== mapping))
+    const receipt = pinned.receipt as { artifactSet: { artifacts: { artifactId: string; sha256: string }[] } }
+    mapping.payload.source.sha256 = receipt.artifactSet.artifacts.find(a => a.artifactId === source.artifactId)!.sha256
+    return checker!.checkArtifactSet(artifacts)
+  }
+  const state = (mapping: any) => mapping.payload.maps[0].properties.find((p: any) => p.property === "state")
+  const literal = check((mapping) => { state(mapping).value = "'archived'" })
+  expect(literal.admitted).toBe(false)
+  expect(literal.diagnostics.diagnostics.some((d: any) => d.code === "mapping.model.expression_type")).toBe(true)
+  const wider = check((_, source) => { source.payload.codeSets.find((c: any) => c.field === "state").values.push({ value: "archived" }) })
+  expect(wider.admitted).toBe(false)
+  expect(wider.diagnostics.diagnostics.some((d: any) => d.code === "mapping.model.expression_type")).toBe(true)
+}, 30_000)
+
 test("temporal conversion cannot extend closed contracts or admit unknown code-set keys", () => {
   const source = readFileSync(file, "utf8")
   const unknown = compileModule(source.replace('origin: "declared", values:', 'extra: true, origin: "declared", values:'), options.scope)

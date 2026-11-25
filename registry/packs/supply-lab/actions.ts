@@ -9,7 +9,6 @@ import {
 // laws on the written types decide every committed call.
 
 const Unit = Schema.Literals(["each", "kg", "l"])
-const UnitText = Schema.String
 const Currency = Schema.Literals(["EGP", "USD", "EUR"])
 const Access = { artifactId: "supply.access.policy", version: "0.1.0" } as const
 const Scope = ["orgId", "environmentId"] as const
@@ -59,7 +58,7 @@ export const RegisterSku = Norn.action({
 
 const CountInput = Schema.Struct({
   snapshot_id: Schema.String, warehouse_id: Schema.String, sku_id: Schema.String,
-  on_hand_qty: Norn.decimal(6), unit: UnitText, quantity_basis: Schema.Literals(["on_hand", "available", "reserved"]),
+  on_hand_qty: Norn.decimal(6), unit: Unit, quantity_basis: Schema.Literals(["on_hand", "available", "reserved"]),
   as_of: Norn.timestamp("utc"), count_source: Schema.Literals(["wms_scan", "cycle_count", "audit"]), count_ref: Schema.String,
 })
 const SnapshotRef = Schema.Struct({ snapshot_id: Schema.String })
@@ -134,7 +133,7 @@ export const RestateCount = Norn.action({
 
 const MovementInput = Schema.Struct({
   movement_id: Schema.String, warehouse_id: Schema.String, sku_id: Schema.String,
-  qty: Norn.decimal(6), unit: UnitText, movement_kind: Schema.Literals(["receipt", "issue", "adjustment", "transfer"]),
+  qty: Norn.decimal(6), unit: Unit, movement_kind: Schema.Literals(["receipt", "issue", "adjustment", "transfer"]),
   occurred_at: Norn.timestamp("utc"),
 })
 
@@ -220,7 +219,7 @@ export const CancelOrder = Norn.action({
 const LineInput = Schema.Struct({
   line_id: Schema.String, po_id: Schema.String, sku_id: Schema.String, promised_at: Norn.timestamp("utc"),
   ordered_qty: Norn.decimal(6), received_qty: Norn.decimal(6), fill_rate: Norn.decimal(6),
-  unit: UnitText, unit_price: Norn.decimal(4), currency: Currency,
+  unit: Unit, unit_price: Norn.decimal(4), currency: Currency,
 })
 const LineRef = Schema.Struct({ line_id: Schema.String })
 
@@ -283,11 +282,11 @@ export const RecordLineReceived = Norn.action({
 
 const ReceiptInput = Schema.Struct({
   receipt_id: Schema.String, supplier_id: Schema.String, warehouse_id: Schema.String, line_id: Schema.String,
-  received_qty: Norn.decimal(6), damaged_qty: Norn.decimal(6), unit: UnitText, received_at: Norn.timestamp("utc"),
+  received_qty: Norn.decimal(6), damaged_qty: Norn.decimal(6), unit: Unit, received_at: Norn.timestamp("utc"),
 })
 const BlindReceiptInput = Schema.Struct({
   receipt_id: Schema.String, supplier_id: Schema.String, warehouse_id: Schema.String, line_id: Schema.NullOr(Schema.String),
-  received_qty: Norn.decimal(6), damaged_qty: Norn.decimal(6), unit: UnitText, received_at: Norn.timestamp("utc"),
+  received_qty: Norn.decimal(6), damaged_qty: Norn.decimal(6), unit: Unit, received_at: Norn.timestamp("utc"),
 })
 const ReceiptRef = Schema.Struct({ receipt_id: Schema.String })
 
@@ -327,13 +326,30 @@ export const RecordBlindReceipt = Norn.action({
   effect: { kind: "upsert_input_object", type: ShipmentReceipt, objectIdField: "receipt_id", writeMode: { kind: "create_only" } },
 })
 
+const ReceiptTime = Schema.Struct({ receipt_id: Schema.String, received_at: Norn.timestamp("utc") })
+
+/**
+ * Correct when a delivery was received (an audit found the dock log wrong):
+ * an update, never a new receipt, so its inspections move with it to the
+ * corrected week (METRIC-GRAIN-LINK-1).
+ */
+export const CorrectReceiptTime = Norn.action({
+  id: "supply.receipt.correct_time", title: "Correct a receipt's received time", version: "0.1.0",
+  label: { en: "Correct receipt time", ar: "تصحيح وقت الاستلام" },
+  input: ReceiptTime, output: ReceiptRef,
+  scopeRequired: Scope, idempotent: true, ledgered: true, access: Access,
+  slice: [{ name: "receipt", type: ShipmentReceipt, key: { property: { from: "input", property: "receipt_id" } } }],
+  writes: [{ type: ShipmentReceipt, change: "modified" }],
+  effect: { kind: "upsert_input_object", type: ShipmentReceipt, objectIdField: "receipt_id", writeMode: { kind: "update_only" } },
+})
+
 const InspectionInput = Schema.Struct({
   inspection_id: Schema.String, receipt_id: Schema.String,
-  inspected_qty: Norn.decimal(6), rejected_qty: Norn.decimal(6), unit: UnitText,
+  inspected_qty: Norn.decimal(6), rejected_qty: Norn.decimal(6), unit: Unit,
 })
 const OrphanInspectionInput = Schema.Struct({
   inspection_id: Schema.String, receipt_id: Schema.NullOr(Schema.String),
-  inspected_qty: Norn.decimal(6), rejected_qty: Norn.decimal(6), unit: UnitText,
+  inspected_qty: Norn.decimal(6), rejected_qty: Norn.decimal(6), unit: Unit,
 })
 const InspectionRef = Schema.Struct({ inspection_id: Schema.String })
 
@@ -369,7 +385,7 @@ export const RecordOrphanInspection = Norn.action({
 
 const ObservationInput = Schema.Struct({
   observation_id: Schema.String, sku_id: Schema.String, warehouse_id: Schema.String, week_start: Norn.timestamp("utc"),
-  week_index: Schema.Int, issued_qty: Norn.decimal(6), unit: UnitText, lead_time_days: Schema.Int, promotion: Schema.Boolean,
+  week_index: Schema.Int, issued_qty: Norn.decimal(6), unit: Unit, lead_time_days: Schema.Int, promotion: Schema.Boolean,
 })
 
 export const RecordObservation = Norn.action({
@@ -437,6 +453,7 @@ export const SupplyAccess = Norn.access({
     { ruleId: "draft_line", actions: [AddLine], resourceType: OrderLine, scope: org, allOf: [{ role: { anyOf: ["planner"] } }] },
     { ruleId: "receive_line", actions: [RecordLineReceived], resourceType: OrderLine, scope: org, allOf: [{ role: { anyOf: ["warehouse_clerk"] } }] },
     { ruleId: "receive", actions: [RecordReceipt, RecordBlindReceipt], resourceType: ShipmentReceipt, scope: org, allOf: [{ role: { anyOf: ["warehouse_clerk"] } }] },
+    { ruleId: "correct_receipt", actions: [CorrectReceiptTime], resourceType: ShipmentReceipt, scope: org, allOf: [{ role: { anyOf: ["ops_manager"] } }] },
     { ruleId: "inspect", actions: [RecordInspection, RecordOrphanInspection], resourceType: Inspection, scope: org, allOf: [{ role: { anyOf: ["warehouse_clerk"] } }] },
     { ruleId: "observe_demand", actions: [RecordObservation], resourceType: DemandObservation, scope: org, allOf: [{ role: { anyOf: ["data_engineer"] } }] },
     { ruleId: "forecast", actions: [RecordForecast], resourceType: DemandForecast, scope: org, allOf: [{ role: { anyOf: ["data_engineer", "planner"] } }] },

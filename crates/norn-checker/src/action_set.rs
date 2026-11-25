@@ -1628,9 +1628,7 @@ impl Defined<'_> {
         if series_key.is_some()
             && !matches!(
                 write_mode,
-                UpsertWriteMode::CreateOnly
-                    | UpsertWriteMode::DraftOnly { .. }
-                    | UpsertWriteMode::UpdateOnly
+                UpsertWriteMode::CreateOnly | UpsertWriteMode::DraftOnly { .. }
             )
         {
             return vec![finding(

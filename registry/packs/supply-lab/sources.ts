@@ -42,8 +42,8 @@ export const ErpSupplierMapping = Norn.mapping({
       { property: "po_item_ref", value: "input.purchase_order_item" },
       { property: "received_qty", value: "input.received_qty" },
       { property: "damaged_qty", value: "input.rejected_qty" },
-      // ERP units onto canonical units; any other unit passes through and is quarantined by
-      // `unit_known`. Each `==` against this undeclared-length source text is charged the
+      // ERP units onto canonical units; any other unit passes through, and the `unit` enum
+      // quarantines it (MAP-ENUM-TEXT-1). Each `==` against this undeclared-length source text is charged the
       // text's full size bound (norn-expr's data-proportional Equal cost; a conditional costs
       // its condition + 3 + its dearer branch, so nothing is duplicated): a third branch
       // ('Litre') crosses the 1,000,000-unit decide fuel of `norn.limits/1`.

@@ -6,10 +6,13 @@
 //! member is retracted and re-derived exactly as recompute derives it
 //! (`subject_contributions`), so `IVM == recompute` holds for every plan
 //! shape. A linked time also changes when the link or the linked object does:
-//! a receipt that relinks a member re-derives it, and one that writes an
-//! object of the linked type re-derives every member (bounded by the plan's
-//! `max_items`). Shapes recompute refuses (a snapshot at a knowledge cutoff)
-//! stay refused here, through the same snapshot.
+//! a receipt that relinks or unlinks a member re-derives it, and one that
+//! writes (corrects or deletes) a linked object re-derives exactly the members
+//! whose live link reaches it, read through the link table under the plan's
+//! decode budget. Shapes recompute refuses (a snapshot at a knowledge cutoff)
+//! stay refused here, through the same snapshot; a linked-time plan at a
+//! knowledge cutoff is refused too, since a member's link and linked time are
+//! read live, not as of the cutoff.
 use super::{
     Contributions, Engine, QueryContext, QueryResult, Totals, finish, refused,
     subject_contributions,
@@ -19,7 +22,7 @@ use crate::{
     engine::SqlEngine,
     reactive::{BudgetedRead, DecodeBudget, ReactiveLimits},
 };
-use norn_checker::metric::compute::QuestionPlan;
+use norn_checker::metric::compute::{QuestionPlan, UNSUPPORTED_ENGINE};
 use norn_ir::ResourceLimitProfile;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -70,6 +73,10 @@ impl IncrementalQuestion {
         knowledge: Option<crate::KnowledgeCutoff>,
         visible: &mut impl FnMut(&ObjectRecord) -> Result<bool, CellError>,
     ) -> Result<Self, CellError> {
+        // METRIC-GRAIN-LINK-1: links and linked times are read live, never as of a cutoff.
+        if knowledge.is_some() && plan.time_link().is_some() {
+            return Err(refused(UNSUPPORTED_ENGINE));
+        }
         let (snapshot, source_pins, receipt_pin) = store.question_snapshot_at_with(
             plan,
             context,
@@ -257,27 +264,47 @@ impl IncrementalQuestion {
                         .into_iter()
                         .filter(|id| self.members.contains(id)),
                 );
-                // METRIC-GRAIN-LINK-1: a relinked member, or any member once the linked type changes.
+                // METRIC-GRAIN-LINK-1: a relinked or unlinked member, and the
+                // members linked to a written (corrected or deleted) target.
                 if let Some(link) = self.plan.time_link() {
                     let model = store.model();
+                    let related = |a: &str, b: &str| model.is_a(a, b) || model.is_a(b, a);
+                    let grain = self.plan.grain().as_str();
                     changed.extend(
                         receipt
                             .body
                             .linked
                             .iter()
                             .filter(|l| {
-                                l.link == link.link.as_str()
-                                    && model.is_a(&l.object_type, self.plan.grain().as_str())
+                                l.link == link.link.as_str() && related(&l.object_type, grain)
                             })
                             .map(|l| l.source.clone()),
                     );
-                    if receipt
+                    let limits =
+                        ReactiveLimits::from_profile(&ResourceLimitProfile::norn_limits_v1());
+                    let mut budget = DecodeBudget::new(&limits);
+                    let max = usize::try_from(self.plan.max_items()).map_err(|_n| stale())?;
+                    for written in receipt
                         .body
                         .written
                         .iter()
-                        .any(|w| model.is_a(&w.object_type, link.target_type.as_str()))
+                        .filter(|w| related(&w.object_type, link.target_type.as_str()))
                     {
-                        changed.extend(self.members.iter().cloned());
+                        match reader.link_sources_to_with_budget(
+                            &context.world,
+                            grain,
+                            link.link.as_str(),
+                            &written.key,
+                            max,
+                            &mut budget,
+                        )? {
+                            crate::reactive::BudgetedLinksRead::Complete(sources) => {
+                                changed.extend(sources);
+                            }
+                            crate::reactive::BudgetedLinksRead::Exhausted => {
+                                return Err(refused("core.compute.bound_exceeded"));
+                            }
+                        }
                     }
                 }
             }

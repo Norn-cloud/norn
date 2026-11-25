@@ -3,7 +3,7 @@
  * that a closed schema can read: what a `Norn.ref` resolves to when a law, guard,
  * precondition or action input compares or computes with it. The checker still
  * resolves every `ref` against the registry it admits; this table only types
- * expressions in the authoring shell, and `test/value-types.test.ts` keeps it
+ * expressions in the authoring shell, and `test/authoring-shell.test.ts` keeps it
  * equal to the committed artifacts. A text `format` is dropped: an expression
  * reads the text.
  */

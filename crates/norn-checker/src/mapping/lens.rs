@@ -230,20 +230,36 @@ fn check_laws(lens: &AdmittedLens) -> Result<(), String> {
     decision::check_laws(&lens.sources, &lens.get, &lens.put).map_err(refusal)
 }
 
-/// MAP-ENUM-TEXT-1: a property rule into an enum may produce source text. A
-/// mapping cannot know statically which codes an untrusted source sends, so
-/// the rule is typed as text; at runtime `compile::encode` refuses a value
-/// outside the enum, so its row lands quarantined, never dropped or coerced.
-pub(super) fn mapped_value_type(ty: &Type) -> Type {
-    if let Type::Enum { .. } = ty {
-        return Type::text();
-    }
-    if let Type::Optional(inner) = ty
+/// MAP-ENUM-TEXT-1: a property rule into an enum may produce free source
+/// text, since a mapping cannot know statically which codes an untrusted
+/// source sends; at runtime [`enum_member`] refuses a value outside the enum,
+/// so its row lands quarantined, never dropped or coerced. Only free text is
+/// admitted: a literal outside the enum, or an enum with other members, still
+/// refuses statically against the target type.
+pub(super) fn enum_text_admitted(
+    expression: &norn_ir::ZenExpression,
+    env: &norn_expr::ZenTypeEnv,
+    ty: &Type,
+) -> bool {
+    let text = if let Type::Enum { .. } = ty {
+        Type::text()
+    } else if let Type::Optional(inner) = ty
         && let Type::Enum { .. } = **inner
     {
-        return Type::text().optional();
+        Type::text().optional()
+    } else {
+        return false;
+    };
+    let Ok(compiled) = Expression::compile(expression.as_str()) else {
+        return false;
+    };
+    let Ok(inferred) = norn_expr::check_expression(&compiled, env, &text) else {
+        return false;
+    };
+    if let norn_expr::InferredType::Optional(inner) = inferred {
+        return matches!(*inner, norn_expr::InferredType::String);
     }
-    ty.clone()
+    matches!(inferred, norn_expr::InferredType::String)
 }
 
 /// MAP-ENUM-TEXT-1 at runtime: text reaches an enum only as one of its values;

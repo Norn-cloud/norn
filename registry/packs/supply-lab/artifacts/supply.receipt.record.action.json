@@ -65,6 +65,11 @@
           "type": "string"
         },
         "unit": {
+          "enum": [
+            "each",
+            "kg",
+            "l"
+          ],
           "type": "string"
         },
         "warehouse_id": {

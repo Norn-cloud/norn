@@ -21,8 +21,12 @@ use norn_checker::EntityArtifactSetContext;
 use norn_checker::entity_scopes::ScopedView;
 use norn_checker::metric::compute::QuestionPlan;
 use norn_checker::metric::derive::derive_metric_space;
-use norn_ir::{ArtifactEnvelope, DiagnosticSeverity, LawRoot, QuestionIR, RuntimeValue};
+use norn_ir::{
+    ArtifactEnvelope, DecisionOutput, DiagnosticSeverity, FactChange, LawRoot, LinkChange,
+    QuestionIR, RuntimeValue,
+};
 use norn_kernel::CellHost as _;
+use norn_kernel::cell_host::FactKey;
 use norn_kernel::cell_host::JsonObject;
 use norn_kernel::{
     ActionAuthorizer, ActionAuthzRequest, ActionCall, ActionDenial, ActionOutcome,
@@ -274,6 +278,73 @@ impl Stress {
                 Err(refusal) => Outcome::Refused(refusal.code().to_owned(), refusal.to_string()),
             },
         )
+    }
+
+    /// Commit one kernel decision: the relinks, unlinks and deletes no
+    /// governed supply-lab action makes.
+    fn decide(
+        &mut self,
+        step: &str,
+        facts: Vec<FactChange>,
+        links: Vec<LinkChange>,
+    ) -> Result<(), String> {
+        self.tick = self.tick.saturating_add(1_000);
+        let now = self.now();
+        self.cell.advance_to(now);
+        let keys: Vec<FactKey> = facts
+            .iter()
+            .filter_map(|fact| match fact {
+                FactChange::Delete { object_type, key } => {
+                    Some(FactKey::new(object_type.as_str(), key))
+                }
+                FactChange::Create { .. }
+                | FactChange::Set { .. }
+                | FactChange::Transition { .. } => None,
+            })
+            // A link change reads both its endpoints.
+            .chain(links.iter().flat_map(|link| {
+                let (source_type, source_key, target_type, target_key) = match link {
+                    LinkChange::Add {
+                        source_type,
+                        source_key,
+                        target_type,
+                        target_key,
+                        ..
+                    }
+                    | LinkChange::Remove {
+                        source_type,
+                        source_key,
+                        target_type,
+                        target_key,
+                        ..
+                    } => (source_type, source_key, target_type, target_key),
+                };
+                [
+                    FactKey::new(source_type.as_str(), source_key),
+                    FactKey::new(target_type.as_str(), target_key),
+                ]
+            }))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let slice =
+            norn_kernel::load_slice(&self.cell, keys).map_err(|e| format!("{step}: {e}"))?;
+        let turn = DecisionTurn {
+            id: format!("decide-{}", self.tick),
+            now,
+            world: self.cell.store().world(),
+            consumes: None,
+        };
+        let output = DecisionOutput {
+            facts,
+            links,
+            commands: Vec::new(),
+            timers: Vec::new(),
+        };
+        let catalog = self.lab.definitions.catalog();
+        norn_kernel::commit_decision(&mut self.cell, &catalog, &slice, &turn, &output)
+            .map(|_| ())
+            .map_err(|e| format!("{step}: {e}"))
     }
 
     /// Commit or fail with the action and its refusal.
@@ -694,6 +765,38 @@ fn supply_lab_pack_is_admitted_by_the_rust_checker() -> Result<(), String> {
     Ok(())
 }
 
+/// Every dashboard tile's question admits against the derived metric space,
+/// exactly as its `supply.questions.json` twin does.
+#[test]
+fn supply_lab_dashboard_tiles_admit_against_the_derived_space() -> Result<(), String> {
+    let lab = lab()?;
+    let path = repo().join("registry/packs/supply-lab/questions/supply.dashboard.json");
+    let text = fs::read_to_string(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let dashboards: Vec<Value> = serde_json::from_str(&text).map_err(|e| format!("{e}"))?;
+    let tiles = dashboards
+        .first()
+        .and_then(|dashboard| dashboard.get("tiles"))
+        .and_then(Value::as_array)
+        .ok_or("no tiles")?;
+    assert_eq!(tiles.len(), 5);
+    for tile in tiles {
+        let question: QuestionIR = serde_json::from_value(
+            tile.get("question")
+                .cloned()
+                .ok_or("tile without question")?,
+        )
+        .map_err(|e| format!("tile question: {e}"))?;
+        let name = question.name.clone();
+        assert_eq!(
+            question,
+            golden(&name)?,
+            "{name}: the tile asks its golden question"
+        );
+        admit(&lab, &question).map_err(|codes| format!("{name} refused: {codes:?}"))?;
+    }
+    Ok(())
+}
+
 // ------------------------------------------------- axis 1: semi-additive
 
 /// METRIC-SNAPSHOT-ASOF-1: ASOF-CARRY, ASOF-LAST-NOT-SUM and ASOF-ABSENT on the real cell.
@@ -831,6 +934,118 @@ fn axis2_fill_rate_is_a_ratio_of_sums_without_fan_out() -> Result<(), String> {
         Some(("1000".into(), "900".into(), "2".into())),
         "{fill_rows:?}"
     );
+    Ok(())
+}
+
+/// METRIC-LINK-MOVES and relinks: IVM follows a linked-time correction, a
+/// relink, an unlink and a delete of IN-5, then refuses a linked-time plan at
+/// a knowledge cutoff (links are read live, never as of a cutoff).
+fn ivm_follows_link_edits(
+    stress: &mut Stress,
+    views: &mut [(QuestionPlan, IncrementalQuestion)],
+    ctx: &QueryContext,
+) -> Result<(), String> {
+    // METRIC-LINK-MOVES: correcting the linked receipt's time moves IN-5 to W3.
+    stress.ok(
+        "supply.receipt.correct_time",
+        "ops:omar",
+        json!({"receipt_id": "RC-3", "received_at": "2026-07-22T08:00:00Z"}),
+    )?;
+    advance_equals_recompute(stress, views, ctx, "correct RC-3's time")?;
+    // Relink IN-5 to RC-1 (W2), unlink it, then delete it: no governed action
+    // does these, so each is a kernel decision.
+    let name = |text: &str| norn_ir::ObjectTypeName(text.to_owned());
+    let (from, to) = (name("supply.Inspection"), name("supply.ShipmentReceipt"));
+    let link = |add: bool, receipt: &str| {
+        let (source_type, source_key) = (from.clone(), "IN-5".to_owned());
+        let (link, target_type) = (norn_ir::LinkId("receipt".to_owned()), to.clone());
+        let target_key = receipt.to_owned();
+        if add {
+            LinkChange::Add {
+                source_type,
+                source_key,
+                link,
+                target_type,
+                target_key,
+                values: norn_ir::RuntimeObject::new(),
+            }
+        } else {
+            LinkChange::Remove {
+                source_type,
+                source_key,
+                link,
+                target_type,
+                target_key,
+            }
+        }
+    };
+    let edits: [(&str, Vec<FactChange>, Vec<LinkChange>); 3] = [
+        (
+            "relink IN-5 to RC-1",
+            Vec::new(),
+            vec![link(false, "RC-3"), link(true, "RC-1")],
+        ),
+        ("unlink IN-5", Vec::new(), vec![link(false, "RC-1")]),
+        (
+            "delete IN-5",
+            vec![FactChange::Delete {
+                object_type: from.clone(),
+                key: "IN-5".to_owned(),
+            }],
+            Vec::new(),
+        ),
+    ];
+    for (step, facts, links) in edits {
+        stress.decide(step, facts, links)?;
+        advance_equals_recompute(stress, views, ctx, step)?;
+    }
+    let (_, linked) = views.get(1).ok_or("two views")?;
+    assert_eq!(
+        total(linked.result(), &[WEEKS[1]]).as_deref(),
+        Some("120"),
+        "IN-5 is gone; W2 holds IN-1..IN-3"
+    );
+    assert_eq!(linked.result().unlinked, 2, "IN-4 and IN-6");
+    // A linked time is read live, never as of a cutoff: refused, not approximated.
+    let cutoff = KnowledgeCutoff {
+        recorded_at: stress.now(),
+        frontier: stress.head()?.commits,
+    };
+    let refused = IncrementalQuestion::rebuild_known_at(
+        stress.cell.store(),
+        &views.get(1).ok_or("two views")?.0,
+        ctx.clone(),
+        cutoff,
+        |_| Ok(true),
+    );
+    assert!(
+        matches!(
+            refused,
+            Err(CellError::ComputeRefused("core.compute.unsupported_engine"))
+        ),
+        "{:?}",
+        refused.err()
+    );
+    Ok(())
+}
+
+/// Advance every view one commit and require it equal recompute.
+fn advance_equals_recompute(
+    stress: &Stress,
+    views: &mut [(QuestionPlan, IncrementalQuestion)],
+    ctx: &QueryContext,
+    step: &str,
+) -> Result<(), String> {
+    for (question, view) in views {
+        let advanced = view
+            .advance(stress.cell.store(), ctx.clone(), |_| Ok(true))
+            .map_err(|e| format!("advance after {step}: {e}"))?
+            .clone();
+        let mut recompute = answer(stress, question)?;
+        recompute.engine = Engine::Ivm;
+        assert_eq!(advanced, recompute, "IVM = recompute after {step}");
+        assert!(!view.was_rebuilt(), "maintained, not rebuilt");
+    }
     Ok(())
 }
 
@@ -1025,14 +1240,14 @@ fn axis3_native_invalid_proposals_refuse_atomically() -> Result<(), String> {
     )?;
     assert_eq!(code, "core.laws.violated", "{message}");
     assert!(message.contains("damaged_within_received"), "{message}");
-    let (_, message) = stress.refused(
+    let (code, message) = stress.refused(
         "supply.receipt.record_blind",
         "clerk:hana",
         receipt("RC-U", None, "PALLET", "10", "0", "2026-07-17T08:00:00Z"),
     )?;
     assert!(
-        message.contains("unit_known"),
-        "an unknown unit refuses by its law: {message}"
+        code.starts_with("action.") && message.contains("unit"),
+        "an unknown unit refuses at the input, before any law: {code} {message}"
     );
     let mut cross = count(
         "WH-A/SKU-WATER/on_hand",
@@ -1232,24 +1447,14 @@ fn axis4_ivm_maintains_snapshot_and_linked_time_plans_equal_to_recompute() -> Re
     ];
     for (action, actor, input) in steps {
         stress.ok(action, actor, input)?;
-        for (question, view) in &mut views {
-            let advanced = view
-                .advance(stress.cell.store(), ctx.clone(), |_| Ok(true))
-                .map_err(|e| format!("advance after {action}: {e}"))?
-                .clone();
-            let mut recompute = answer(&stress, question)?;
-            recompute.engine = Engine::Ivm;
-            assert_eq!(advanced, recompute, "IVM = recompute after {action}");
-            assert!(!view.was_rebuilt(), "maintained, not rebuilt");
-        }
+        advance_equals_recompute(&stress, &mut views, &ctx, action)?;
     }
-    let (_, linked) = views.get(1).ok_or("two views")?;
     assert_eq!(
-        total(linked.result(), &[WEEKS[1]]).as_deref(),
+        total(views.get(1).ok_or("two views")?.1.result(), &[WEEKS[1]]).as_deref(),
         Some("145"),
         "120 + IN-5's 25 by RC-3's week"
     );
-    assert_eq!(linked.result().unlinked, 2, "IN-4 and IN-6");
+    ivm_follows_link_edits(&mut stress, &mut views, &ctx)?;
     let (_, snapshot) = views.first().ok_or("two views")?;
     assert_eq!(
         total(snapshot.result(), &[WEEKS[9], "WH-B", "each"]).as_deref(),
@@ -1824,17 +2029,15 @@ fn axis3_messy_feeds_quarantine_replay_stably_and_recover() -> Result<(), String
         (1, true),
         "negative quantity quarantined"
     );
-    scan(
+    // An unknown unit: the `unit` enum quarantines the row (MAP-ENUM-TEXT-1).
+    let codes = quarantined(
         &mut cell,
         "e-3",
-        "S-3",
-        "12",
-        "PALLET",
-        "2026-07-07T10:00:00Z",
+        &scan_row("S-3", "12", "PALLET", "2026-07-07T10:00:00Z"),
     )?;
     assert_eq!(
-        open_scan_findings(&cell, "S-3", "unit_known")?,
-        (1, true),
+        codes,
+        ["mapping.runtime.evaluation_failed"],
         "unknown unit quarantined"
     );
     // Redelivery of the same event, then the same row under a new event id.
@@ -1878,19 +2081,10 @@ fn axis3_unknown_enum_codes_land_in_quarantine() -> Result<(), String> {
     let dir = tempfile::tempdir().map_err(|e| format!("{e}"))?;
     let mut cell = mapping_cell(&lab, dir.path())?;
     let row = r#"{"scan_id":"S-9","site":"WH-A","item":"SKU-WATER","qty":5,"uom":"EA","basis":"damaged","counted_at":"2026-07-07T08:00:00Z"}"#;
-    let (bundle, fresh) = cell
-        .inject_mapping_bundle(
-            &raw("synthetic-wms", "e-9", "S-9", row)?,
-            &input("supply.wms_scan.mapping", "stock_count"),
-        )
-        .map_err(|e| format!("capture: {e}"))?;
-    assert!(fresh);
-    let outcome = cell
-        .process_mapping_outcome(&bundle)
-        .map_err(|e| format!("process: {e}"))?;
-    assert!(
-        matches!(outcome, norn_cell::MappingOutcome::Quarantined(_)),
-        "{outcome:?}"
+    assert_eq!(
+        quarantined(&mut cell, "e-9", row)?,
+        ["mapping.runtime.evaluation_failed"],
+        "an unknown basis is quarantined by the mapping"
     );
     let landed = |cell: &MapCell, id: &str| {
         cell.store()
@@ -1903,6 +2097,35 @@ fn axis3_unknown_enum_codes_land_in_quarantine() -> Result<(), String> {
     scan(&mut cell, "e-10", "S-10", "5", "EA", "2026-07-07T08:00:00Z")?;
     assert!(landed(&cell, "S-10")?, "a known basis lands");
     Ok(())
+}
+
+/// Capture one WMS row and process it as a sync does; the codes it is
+/// quarantined for (empty when it landed).
+fn quarantined(cell: &mut MapCell, event: &str, row: &str) -> Result<Vec<String>, String> {
+    let scan_id = serde_json::from_str::<Value>(row)
+        .map_err(|e| format!("{e}"))?
+        .get("scan_id")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or("no scan_id")?;
+    let (bundle, fresh) = cell
+        .inject_mapping_bundle(
+            &raw("synthetic-wms", event, &scan_id, row)?,
+            &input("supply.wms_scan.mapping", "stock_count"),
+        )
+        .map_err(|e| format!("capture: {e}"))?;
+    assert!(fresh, "{event} is captured once");
+    match cell
+        .process_mapping_outcome(&bundle)
+        .map_err(|e| format!("process: {e}"))?
+    {
+        norn_cell::MappingOutcome::Quarantined(reasons) => {
+            Ok(reasons.into_iter().map(|reason| reason.code).collect())
+        }
+        norn_cell::MappingOutcome::Landed | norn_cell::MappingOutcome::AlreadyLanded => {
+            Ok(Vec::new())
+        }
+    }
 }
 
 /// The ERP feed: vendor codes map to canonical suppliers; an over-damaged row is quarantined.

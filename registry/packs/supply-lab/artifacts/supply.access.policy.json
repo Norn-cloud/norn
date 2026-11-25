@@ -280,6 +280,28 @@
       },
       {
         "actions": [
+          "supply.receipt.correct_time"
+        ],
+        "allOf": [
+          {
+            "role": {
+              "anyOf": [
+                "ops_manager"
+              ]
+            }
+          }
+        ],
+        "resourceType": "supply.ShipmentReceipt",
+        "ruleId": "correct_receipt",
+        "scope": {
+          "dimensions": [
+            "org",
+            "environment"
+          ]
+        }
+      },
+      {
+        "actions": [
           "supply.inspection.record",
           "supply.inspection.record_orphan"
         ],

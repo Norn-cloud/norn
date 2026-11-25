@@ -362,9 +362,18 @@ fn bind_input_to_preconditions<H: PackHost>(
     host: &H,
 ) -> Result<(), String> {
     for (lhs, rhs) in precondition_equalities(&admitted.root.preconditions) {
+        // A precondition rooted at the input names its fields bare (`line_id == null`).
+        let bare = |side: &str| {
+            !side.is_empty()
+                && side
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                && literal(side).is_none()
+        };
         let (field, other) = match (lhs.strip_prefix("input."), rhs.strip_prefix("input.")) {
             (Some(field), _) => (field.to_owned(), rhs),
             (None, Some(field)) => (field.to_owned(), lhs),
+            (None, None) if bare(&lhs) && literal(&rhs).is_some() => (lhs, rhs),
             (None, None) => continue,
         };
         let value = if let Some(rest) = other.strip_prefix("slice.") {
@@ -452,6 +461,7 @@ fn seed_related_target<H: PackHost>(
     }
     let key = FactKey::new(target_ty_name, target_id);
     let mut graph = collect_required_link_graph(pack, target_ty, &key, seq)?;
+    stamp_link_targets(host, pack, catalog, &mut graph.setup_writes, seq)?;
     graph.setup_writes.push(FactWrite {
         key,
         expected: FactVersion::ABSENT,
@@ -479,4 +489,43 @@ pub(crate) fn ensure_unchanged<H: PackHost>(
     context: &str,
 ) -> Result<(), String> {
     super::driver::assert_zero_ledger_writes(host, before, "dst", context)
+}
+
+/// ACTOR-STAMP-1 for required-link targets: each fixture write `writes` would
+/// make directly of a type with protected creators is made by its governed
+/// create instead (or skipped when the target already exists), and removed
+/// from `writes`; every other write is kept for the direct fixture commit.
+pub(crate) fn stamp_link_targets<H: PackHost>(
+    host: &mut H,
+    pack: &AdmittedPack,
+    catalog: &TypeCatalog<'_>,
+    writes: &mut Vec<FactWrite>,
+    seq: u64,
+) -> Result<(), String> {
+    let mut kept = Vec::new();
+    for write in std::mem::take(writes) {
+        let protected_type = pack.object_types.iter().find(|ty| {
+            ty.name == write.key.object_type && !protected_properties(pack, ty).is_empty()
+        });
+        let (Some(object_type), FactMutation::Put { values }) = (protected_type, &write.mutation)
+        else {
+            kept.push(write);
+            continue;
+        };
+        if host
+            .load(&write.key)
+            .map_err(|err| format!("load {}: {err}", write.key))?
+            .exists()
+        {
+            continue;
+        }
+        let key = write.key.key.clone();
+        match seed_stamped(host, pack, catalog, object_type, &key, values, seq)? {
+            Some(Ok(()) | Err(DecisionRefusal::ObjectExists { .. })) => {}
+            Some(Err(refusal)) => return Err(format!("seed {}: {refusal}", write.key)),
+            None => kept.push(write),
+        }
+    }
+    *writes = kept;
+    Ok(())
 }

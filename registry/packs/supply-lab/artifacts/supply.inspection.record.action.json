@@ -54,6 +54,11 @@
           "type": "number"
         },
         "unit": {
+          "enum": [
+            "each",
+            "kg",
+            "l"
+          ],
           "type": "string"
         }
       },

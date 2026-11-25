@@ -37,7 +37,8 @@ pack holds what happens to a trained model:
   batches; admins and owners retire.
 
 `sdks/python/models/run-demo.sh` runs registration, the law, the separation
-of duties (a dev host has one principal, so its own promotion is refused) and applying a
+of duties (the registrant's own promotion is refused; the dev host's reviewer
+principal, `.norn/dev.reviewer.token`, promotes) and applying a
 model (`sdks/python/models/norn_models.apply_model`, which checks every output
 contract on every row before it writes anything) end to end on a dev host. The approval gate needs a hosted cell's roles (a dev host declares
 none); `crates/norn-cell-do/tests/ml_approval.rs` admits the definition against

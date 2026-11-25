@@ -12,9 +12,9 @@ import { Norn } from "@norn/authoring"
 // (`ml.promotion_policy`) this pack reuses rather than restates.
 
 const Unit = Schema.Literals(["each", "kg", "l"])
-// A recorded unit is the source's text: a law on each evidence interface
-// (`unit_known`) refuses or quarantines one outside the catalog's units.
-const UnitText = Schema.String
+// Every quantity is held in one of the catalog's units: a native call with
+// another unit is refused at its input, and a feed row with one is quarantined
+// by its mapping (MAP-ENUM-TEXT-1), so an unknown unit is never summed.
 const UnitLabels = { each: { en: "Each", ar: "قطعة" }, kg: { en: "Kilogram", ar: "كيلوغرام" }, l: { en: "Litre", ar: "لتر" } }
 
 // ------------------------------------------------------------------ catalog
@@ -64,7 +64,7 @@ export const Sku = Norn.type({
 const CountFacts = Schema.Struct({
   // A stock: summable across positions at one instant, never over time.
   on_hand_qty: Norn.decimal(6, { additivity: { kind: "semi_additive" }, unitSource: ["unit", "quantity_basis"] }),
-  unit: UnitText,
+  unit: Unit,
   quantity_basis: Schema.Literals(["on_hand", "available", "reserved"]),
   // When the count applies (valid time); METRIC-SNAPSHOT-ASOF-1 orders a position's versions by it.
   as_of: Norn.timestamp("utc"),
@@ -92,28 +92,12 @@ export const OnHandNegativeViolated = Norn.example("a negative count is refused"
   expect: "violated",
 })
 
-export const CountUnitKnown = Norn.law("unit_known", {
-  on: CountEvidence,
-  must: (self) => self.unit === "each" || self.unit === "kg" || self.unit === "l",
-  because: "A count is held in one of the catalog's units; an unknown unit is never summed with known ones.",
-})
-export const CountUnitKnownHolds = Norn.example("a count in kilograms holds", {
-  of: CountUnitKnown,
-  given: { on_hand_qty: 12, unit: "kg", quantity_basis: "on_hand", as_of: "2026-07-06T08:00:00Z" },
-  expect: "holds",
-})
-export const CountUnitUnknownViolated = Norn.example("a count in an unknown unit is refused", {
-  of: CountUnitKnown,
-  given: { on_hand_qty: 12, unit: "PALLET", quantity_basis: "on_hand", as_of: "2026-07-06T08:00:00Z" },
-  expect: "violated",
-})
-
 const SnapshotProps = Schema.Struct({
   snapshot_id: Schema.String, // "<warehouse>/<sku>/<basis>": one position, versioned by count
   warehouse_id: Schema.String,
   sku_id: Schema.String,
   on_hand_qty: Norn.decimal(6, { additivity: { kind: "semi_additive" }, unitSource: ["unit", "quantity_basis"] }),
-  unit: UnitText,
+  unit: Unit,
   quantity_basis: Schema.Literals(["on_hand", "available", "reserved"]),
   as_of: Norn.timestamp("utc"),
   count_source: Schema.Literals(["wms_scan", "cycle_count", "audit"]),
@@ -150,7 +134,7 @@ export const WmsCount = Norn.type({
     warehouse_code: Schema.String,
     sku_code: Schema.String,
     on_hand_qty: Norn.decimal(6, { additivity: { kind: "semi_additive" }, unitSource: ["unit", "quantity_basis"] }),
-    unit: UnitText,
+    unit: Unit,
     quantity_basis: Schema.Literals(["on_hand", "available", "reserved"]),
     as_of: Norn.timestamp("utc"),
   }),
@@ -164,7 +148,7 @@ const MovementProps = Schema.Struct({
   sku_id: Schema.String,
   // The same quantity concept as a position, declared additive at this use site (METRIC-ADDITIVITY-REF-1).
   qty: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["unit"] }),
-  unit: UnitText,
+  unit: Unit,
   movement_kind: Schema.Literals(["receipt", "issue", "adjustment", "transfer"]),
   occurred_at: Norn.timestamp("utc"),
 })
@@ -246,7 +230,7 @@ const OrderLineProps = Schema.Struct({
   received_qty: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["unit"] }),
   // Supplier fill rate is a ratio of sums, never an average of line ratios.
   fill_rate: Norn.decimal(6, { additivity: { kind: "ratio", numerator: "received_qty", denominator: "ordered_qty" } }),
-  unit: UnitText,
+  unit: Unit,
   unit_price: Norn.decimal(4, { currency: "currency", additivity: { kind: "non_additive" } }),
   currency: Schema.Literals(["EGP", "USD", "EUR"]),
 })
@@ -282,7 +266,7 @@ export const OrderedZeroViolated = Norn.example("a zero-quantity line is refused
 const ReceiptFacts = Schema.Struct({
   received_qty: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["unit"] }),
   damaged_qty: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["unit"] }),
-  unit: UnitText,
+  unit: Unit,
   received_at: Norn.timestamp("utc"),
 })
 
@@ -314,17 +298,6 @@ export const NegativeReceiptViolated = Norn.example("a negative receipt is refus
   expect: "violated",
 })
 
-export const ReceiptUnitKnown = Norn.law("unit_known", {
-  on: ReceiptEvidence,
-  must: (self) => self.unit === "each" || self.unit === "kg" || self.unit === "l",
-  because: "A receipt is held in one of the catalog's units; an unknown unit is never summed with known ones.",
-})
-export const ReceiptUnitUnknownViolated = Norn.example("a receipt in an unknown unit is refused", {
-  of: ReceiptUnitKnown,
-  given: { received_qty: 10, damaged_qty: 0, unit: "CRATE", received_at: "2026-07-09T09:00:00Z" },
-  expect: "violated",
-})
-
 /** One inspected delivery. The link to its order line is optional: a blind receipt is evidence too. */
 export const ShipmentReceipt = Norn.type({
   name: "supply.ShipmentReceipt", title: "Shipment receipt", version: "0.1.0",
@@ -337,7 +310,7 @@ export const ShipmentReceipt = Norn.type({
     line_id: Schema.NullOr(Schema.String),
     received_qty: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["unit"] }),
     damaged_qty: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["unit"] }),
-    unit: UnitText,
+    unit: Unit,
     received_at: Norn.timestamp("utc"),
   }),
   needsReview: ["ar"],
@@ -362,7 +335,7 @@ export const Inspection = Norn.type({
     receipt_id: Schema.NullOr(Schema.String),
     inspected_qty: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["unit"] }),
     rejected_qty: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["unit"] }),
-    unit: UnitText,
+    unit: Unit,
   }),
   needsReview: ["ar"],
   identity: [{ name: "primary", properties: ["inspection_id"] }],
@@ -399,7 +372,7 @@ export const SupplierReceiptLine = Norn.type({
     po_item_ref: Schema.NullOr(Schema.String),
     received_qty: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["unit"] }),
     damaged_qty: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["unit"] }),
-    unit: UnitText,
+    unit: Unit,
     received_at: Norn.timestamp("utc"),
   }),
   needsReview: ["ar"],
@@ -419,7 +392,7 @@ export const DemandObservation = Norn.type({
     week_start: Norn.timestamp("utc"),
     week_index: Schema.Int,
     issued_qty: Norn.decimal(6, { additivity: { kind: "additive" }, unitSource: ["unit"] }),
-    unit: UnitText,
+    unit: Unit,
     lead_time_days: Schema.Int,
     promotion: Schema.Boolean,
   }),

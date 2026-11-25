@@ -4,6 +4,7 @@ and the promotion law.
     python e2e_promotion.py /path/to/project
 """
 import sys
+from pathlib import Path
 
 from norn_regression import Cell
 from norn_regression.cell import Refused
@@ -16,6 +17,17 @@ def call(action: str, values: dict, key: str):
     """The answer's status and body, without raising on a refusal."""
     answer = http.post(f"/v1/actions/{action}", params={"orgId": cell.org_id, "environmentId": cell.environment_id},
                        json={"input": values, "idempotencyKey": key})
+    return answer.status_code, answer.json()
+
+
+# DEV-REVIEWER-1: the dev host's second local principal, with the developer's grants.
+REVIEWER = {"Authorization": "Bearer " + (Path(sys.argv[1]) / ".norn/dev.reviewer.token").read_text().strip()}
+
+
+def call_as_reviewer(action: str, values: dict, key: str):
+    """Call as the reviewer: separation of duties needs a principal other than the registrant."""
+    answer = http.post(f"/v1/actions/{action}", params={"orgId": cell.org_id, "environmentId": cell.environment_id},
+                       json={"input": values, "idempotencyKey": key}, headers=REVIEWER)
     return answer.status_code, answer.json()
 
 
@@ -59,13 +71,13 @@ ok("ml.modelversion.register", {**base, "version_id": "churn@2", "version": "2",
 status, _ = call("ml.modelversion.promote", {"version_id": "churn@2"}, "promote-2")
 assert status != 200 and version("churn@2")["status"] == "candidate"
 
-# Evaluated on the pinned revision with every contract held, but the dev host's one
-# principal registered it: separation of duties (ACTOR-INDEPENDENT-1) refuses its promotion.
-# Another principal promotes it on a hosted cell (crates/norn-cell/tests/supply_lab_stress.rs).
+# Evaluated on the pinned revision with every contract held. Separation of duties
+# (ACTOR-INDEPENDENT-1): the registrant's own promotion is refused; the reviewer's lands.
 ok("ml.modelversion.register", {**base, "version_id": "churn@3", "version": "3", "evaluation_revision": "c42"}, "reg-3")
-status, body = call("ml.modelversion.promote", {"version_id": "churn@3"}, "promote-3")
+status, body = call("ml.modelversion.promote", {"version_id": "churn@3"}, "promote-3-self")
 assert status != 200 and version("churn@3")["status"] == "candidate", (status, body)
-assert "ACTOR-INDEPENDENT-1" in str(body), body
+status, body = call_as_reviewer("ml.modelversion.promote", {"version_id": "churn@3"}, "promote-3")
+assert status == 200 and version("churn@3")["status"] == "production", (status, body)
 links = http.get("/v1/objects/ml.ModelVersion/churn@3/links", params={"orgId": cell.org_id, "environmentId": cell.environment_id}).json()
 assert {"trained_by", "evaluated_by"} <= {item.get("link") for item in links["items"]}, links
 
@@ -73,4 +85,4 @@ assert {"trained_by", "evaluated_by"} <= {item.get("link") for item in links["it
 # declares the admin and owner deciders; a dev host declares no roles and
 # installs no approvals. crates/norn-cell-do/tests/ml_approval.rs checks the
 # definition against the hosted table.
-print(f"model promotion: ok (registration needs finished runs; unevaluated and failed-contract promotions refused: {refused_code}; the registrant's own promotion refused; run links kept)")
+print(f"model promotion: ok (registration needs finished runs; unevaluated and failed-contract promotions refused: {refused_code}; the registrant's own promotion refused, the reviewer's promoted; run links kept)")

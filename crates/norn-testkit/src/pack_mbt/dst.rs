@@ -27,7 +27,7 @@ use proptest::prelude::*;
 use proptest::test_runner::{Config, RngAlgorithm, TestError, TestRng, TestRunner};
 
 use super::coverage::{DomainCoverage, DomainTransition};
-use super::seed::{ensure_unchanged, entity_id, seed_stamped};
+use super::seed::{ensure_unchanged, entity_id, seed_stamped, stamp_link_targets};
 use super::synth::{
     GuardEval, collect_required_link_graph, evaluate_guards, pick_non_lifecycle_mutation,
     synthesize_guard_satisfying,
@@ -410,7 +410,9 @@ impl<H: PackHost> DstCaseState<'_, H> {
         );
         values.insert(prop.to_owned(), JsonValue::String(init_state.clone()));
         let key = FactKey::new(ty_name, &id);
-        let graph = collect_required_link_graph(self.pack, target.object_type, &key, nonce)?;
+        let (pack, catalog, ty) = (self.pack, self.catalog, target.object_type);
+        let mut graph = collect_required_link_graph(pack, ty, &key, nonce)?;
+        stamp_link_targets(self.host, pack, catalog, &mut graph.setup_writes, nonce)?;
         let before = self.host.ledger_len();
         let already_exists = self.model.contains_key(&(type_idx, slot));
         let meta = CreateStepOutcome {
@@ -423,7 +425,6 @@ impl<H: PackHost> DstCaseState<'_, H> {
             already_exists,
             before,
         };
-        let (pack, catalog, ty) = (self.pack, self.catalog, target.object_type);
         if let Some(res) = seed_stamped(self.host, pack, catalog, ty, &id, &values, nonce)? {
             // The governed create seeds its slice targets first; only its own commit is the step's.
             let before = self

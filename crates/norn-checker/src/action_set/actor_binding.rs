@@ -513,6 +513,8 @@ mod tests {
                 lifecycle: PropertyId("status".into()),
                 state: "submitted".into(),
             },
+            // An update never stamps: it would overwrite the recorded principal.
+            UpsertWriteMode::UpdateOnly,
         ] {
             let mut overwrite = admitted.clone();
             let Some(ActionEffectProgram::UpsertInputObject { write_mode, .. }) =

@@ -63,7 +63,7 @@ pub mod vendor;
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use lens::mapped_value_type;
+use lens::enum_text_admitted;
 use norn_expr::{
     EnvOptions, Expression, FieldSource, RecordKind, RecordType, Type, ZenTypeEnv, check_expression,
 };
@@ -1479,7 +1479,7 @@ fn check_property_map(
                     );
                     typed(
                         &entry.value,
-                        &mapped_value_type(&field.ty),
+                        &field.ty,
                         &child_env,
                         &rule_at(context.index, "properties", rule, "value"),
                         out,
@@ -1487,8 +1487,9 @@ fn check_property_map(
                 }
             } else {
                 let value_at = rule_at(context.index, "properties", rule, "value");
-                let ty = mapped_value_type(&field.ty);
-                typed(&entry.value, &ty, context.env, &value_at, out);
+                if !enum_text_admitted(&entry.value, context.env, &field.ty) {
+                    typed(&entry.value, &field.ty, context.env, &value_at, out);
+                }
             }
         }
         Some((FieldSource::Property { read_only: true }, _)) => out.push(error(

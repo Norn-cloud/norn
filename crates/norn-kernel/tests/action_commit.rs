@@ -845,6 +845,64 @@ fn create_only_and_draft_only_action_modes_are_enforced() {
 }
 
 #[test]
+fn update_only_refuses_an_absent_target_and_only_patches_an_existing_one() {
+    let types = order_types();
+    let catalog = TypeCatalog::new(&types);
+    let mut cell = Cell::new(|command: &Command<JsonObject>| command.payload.clone());
+    let update_only = upsert_action(
+        "commerce.sales_order.update_only",
+        &json!({"kind": "update_only"}),
+    );
+    // No target slice masks the mode: the upsert itself refuses a create.
+    let refusal = commit_action(
+        &mut cell,
+        &catalog,
+        &call(&update_only, "SO-ABSENT", "update-absent"),
+        &Allow,
+    )
+    .unwrap_err();
+    assert_eq!(refusal.code(), "action.target_not_found");
+    assert_eq!(
+        cell.ledger().len(),
+        0,
+        "a refused update-only call writes nothing"
+    );
+    assert!(
+        !cell
+            .load(&FactKey::new(ORDER, "SO-ABSENT"))
+            .unwrap()
+            .exists()
+    );
+
+    let existing = seed(&mut cell, ORDER, "SO-OPEN", "draft");
+    let ledger_len = cell.ledger().len();
+    assert!(matches!(
+        commit_action(
+            &mut cell,
+            &catalog,
+            &call(&update_only, "SO-OPEN", "update-open"),
+            &Allow
+        )
+        .unwrap(),
+        ActionOutcome::Committed { .. }
+    ));
+    assert_eq!(cell.ledger().len(), ledger_len + 1);
+    let entry = cell.ledger().last().unwrap();
+    assert!(
+        !entry
+            .events
+            .iter()
+            .any(|event| matches!(event, FactEvent::Created { .. })),
+        "update_only patches, never creates: {:?}",
+        entry.events
+    );
+    assert_eq!(
+        status(&cell, &existing),
+        Some(JsonValue::String("draft".to_owned()))
+    );
+}
+
+#[test]
 fn upsert_authorizes_canonical_proposed_values_for_creates() {
     let types = business_unit_types();
     let catalog = TypeCatalog::new(&types);

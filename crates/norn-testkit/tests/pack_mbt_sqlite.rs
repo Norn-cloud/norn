@@ -710,11 +710,7 @@ fn real_canon_pack_runs_static_gap_and_mbt_cleanly() -> Result<(), String> {
 /// file-backed cell. Types with a protected creator (`supply.PurchaseOrder`,
 /// `ml.ModelVersion`) are seeded through their stamping create action
 /// (ACTOR-STAMP-1), and mapped evidence types are written by their admitted
-/// mappings, so they raise no `OrphanField`. Pinned harness limit: the
-/// generic synthesizer satisfies lifecycle guards and slice preconditions but
-/// not a membership law on free text (`unit_known`: `unit` is one of the
-/// catalog's units), so a fixture it synthesizes can be refused by that law;
-/// the test requires exactly that refusal, or a full pass once fixed.
+/// mappings, so they raise no `OrphanField`. Every phase must pass.
 #[test]
 fn real_supply_lab_pack_passes_sqlite_mbt_dst_and_static_gaps() -> Result<(), String> {
     let pack = load_supply_lab_pack()?;
@@ -744,29 +740,22 @@ fn real_supply_lab_pack_passes_sqlite_mbt_dst_and_static_gaps() -> Result<(), St
             .is_some_and(|fields| fields.contains("on_hand_qty")),
         "the WMS mapping writes its evidence type"
     );
-    let unit_law = |error: &str| error.contains("supply.CountEvidence.unit_known");
     let recorder = Arc::new(DomainCoverageRecorder::new());
-    match run_pack_mbt(&pack, |_| {
+    let mbt = run_pack_mbt(&pack, |_| {
         SqlitePackHost::open(&pack, Arc::clone(&recorder))
-    }) {
-        Ok(mbt) => {
-            mbt.coverage.check_transitions_covered()?;
-            mbt.coverage.check_immutable_refusals_covered()?;
-            mbt.coverage.check_cedar_covered()?;
-        }
-        Err(error) => assert!(unit_law(&error), "supply-lab MBT: {error}"),
-    }
+    })?;
+    mbt.coverage.check_transitions_covered()?;
+    mbt.coverage.check_immutable_refusals_covered()?;
+    mbt.coverage.check_cedar_covered()?;
     let config = PackDstConfig {
         cases: 12,
         max_steps: 18,
         ..PackDstConfig::default()
     };
-    match run_pack_dst(&pack, config, |_| {
+    let dst = run_pack_dst(&pack, config, |_| {
         SqlitePackHost::open(&pack, Arc::clone(&recorder))
-    }) {
-        Ok(dst) => assert_eq!(dst.cases_run, 12),
-        Err(error) => assert!(unit_law(&error), "supply-lab DST: {error}"),
-    }
+    })?;
+    assert_eq!(dst.cases_run, 12);
     Ok(())
 }
 
@@ -816,6 +805,7 @@ fn every_registry_pack_has_no_unexpected_structural_defects() -> Result<(), Stri
     dirs.sort();
     assert!(dirs.iter().any(|dir| dir == "supply-lab"), "{dirs:?}");
     let mut unexpected = Vec::new();
+    let mut seen = BTreeSet::new();
     for dir in &dirs {
         let with: Vec<&str> = if dir == "supply-lab" {
             vec!["tracking", "ml", "supply-lab"]
@@ -826,6 +816,7 @@ fn every_registry_pack_has_no_unexpected_structural_defects() -> Result<(), Stri
         let gaps = analyze_static_gaps(&pack);
         for defect in gaps.defects() {
             let rendered = format!("{defect:?}");
+            seen.insert((dir.clone(), rendered.clone()));
             if !KNOWN_PACK_DEFECTS
                 .iter()
                 .any(|(known_pack, known)| *known_pack == dir.as_str() && *known == rendered)
@@ -839,6 +830,13 @@ fn every_registry_pack_has_no_unexpected_structural_defects() -> Result<(), Stri
         "unexpected structural defects:\n{}",
         unexpected.join("\n")
     );
+    // The known list only shrinks: a defect fixed is removed from it.
+    for (pack, known) in KNOWN_PACK_DEFECTS {
+        assert!(
+            seen.contains(&((*pack).to_owned(), (*known).to_owned())),
+            "{pack}: {known} is fixed; remove it from KNOWN_PACK_DEFECTS"
+        );
+    }
     Ok(())
 }
 

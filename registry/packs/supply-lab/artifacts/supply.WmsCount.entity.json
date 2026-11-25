@@ -57,7 +57,18 @@
         {
           "id": "unit",
           "type": {
-            "kind": "text"
+            "kind": "enum",
+            "values": [
+              {
+                "value": "each"
+              },
+              {
+                "value": "kg"
+              },
+              {
+                "value": "l"
+              }
+            ]
           }
         },
         {
