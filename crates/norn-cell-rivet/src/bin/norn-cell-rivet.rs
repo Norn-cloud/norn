@@ -48,7 +48,7 @@ async fn main() -> Result<()> {
     let shutdown = CancellationToken::new();
     let runner = tokio::spawn(serve_actors(runner_config, shutdown.clone()));
     let client = Client::new(ClientConfig::new(endpoint));
-    let router = Arc::new(Router::new(client, Arc::clone(&config)));
+    let router = Arc::new(Router::new(client, Arc::clone(&config))?);
     let listener = tokio::net::TcpListener::bind(&listen)
         .await
         .with_context(|| format!("listen on {listen}"))?;
