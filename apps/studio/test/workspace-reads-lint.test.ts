@@ -8,10 +8,10 @@ import ts from "typescript"
  * server's mode answer decided (`src/lib/workspace.tsx`), never at the session's scope or at none.
  *
  * - The raw reads (`src/lib/raw/`: records, one record, its findings, the recording) are private to
- *   `src/lib/`: no module outside it imports them, statically or dynamically, and no module outside
- *   `src/lib/raw/` re-exports them (`export … from`, or a binding it imported from there), so no `lib/`
- *   module or barrel can hand a page the raw read in one hop. A type-only import or re-export is no read
- *   and is let through.
+ *   `src/lib/`: no module outside it imports them, statically, dynamically (a computed specifier
+ *   included) or by `import.meta.glob`, and no module outside `src/lib/raw/` re-exports them
+ *   (`export … from`, or a binding it imported from there), so no `lib/` module or barrel can hand a
+ *   page the raw read in one hop. A type-only import or re-export is no read and is let through.
  * - A `DecidedScope` is made in one place, `src/lib/workspace.tsx`. The TypeScript compiler, not the
  *   type's name, decides what is one: no other module asserts a value into a type that carries the brand
  *   from one that does not (an alias, `ScopedReader["scope"]`, a namespace's name, `as unknown as`, or
@@ -88,7 +88,21 @@ export function violations(file: string, source: string): readonly Violation[] {
       }
       if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
         const [specifier] = node.arguments
-        if (specifier !== undefined && ts.isStringLiteralLike(specifier) && insideRaw(target(file, specifier.text))) at(node, `imports ${specifier.text}`)
+        // A computed specifier can name lib/raw/ at run time: no page imports one.
+        if (specifier !== undefined && !ts.isStringLiteralLike(specifier)) at(node, "imports a computed specifier")
+        else if (specifier !== undefined && insideRaw(target(file, specifier.text))) at(node, `imports ${specifier.text}`)
+      }
+      if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === "glob"
+        && ts.isMetaProperty(node.expression.expression) && node.expression.expression.keywordToken === ts.SyntaxKind.ImportKeyword) {
+        const [patterns] = node.arguments
+        const each = patterns === undefined ? [] : ts.isArrayLiteralExpression(patterns) ? [...patterns.elements] : [patterns]
+        for (const pattern of each) {
+          if (!ts.isStringLiteralLike(pattern)) { at(node, "globs a computed pattern"); continue }
+          // The pattern's fixed directory: a glob that could reach lib/raw/ (below it, or above it) imports it.
+          const fixed = pattern.text.replace(/^!/, "").split(/[*?[{]/)[0] ?? ""
+          const base = target(file, fixed.endsWith("/") || fixed === "" ? fixed : dirname(fixed))
+          if (base !== undefined && (insideRaw(base) || RAW.startsWith(`${base}/`))) at(node, `globs ${pattern.text}`)
+        }
       }
     }
     if (outsideRaw && ts.isExportDeclaration(node) && !typeOnly(node)) {
@@ -192,12 +206,19 @@ test("the rule finds a page reaching the raw reads, and lets lib and type-only i
     'export type { RecordsRead } from "../lib/raw/records.ts"',
     'export { type ObjectReads } from "../lib/raw/record.ts"',
     'import { useWorkspace } from "../lib/workspace.tsx"',
+    'const named = "records"; const computed = await import(`../lib/raw/${named}.ts`)',
+    'const raws = import.meta.glob("../lib/raw/*.ts")',
+    'const libs = import.meta.glob(["../lib/**/*.ts", "!../lib/state/*"])',
+    'const registry = import.meta.glob("../../../../registry/core/artifacts/*.json", { eager: true })',
   ].join("\n")
   expect(violations(page, sample).map(({ line, text }) => [line, text])).toEqual([
     [1, "imports ../lib/raw/records.ts"],
     [5, "imports @/lib/raw/record"],
     [6, "re-exports ../lib/raw/recorded-transport.ts"],
     [7, "imports ../lib/raw/records.ts"],
+    [11, "imports a computed specifier"],
+    [12, "globs ../lib/raw/*.ts"],
+    [13, "globs ../lib/**/*.ts"],
   ])
   // The state unions import only each other.
   const state = ['import type { Read } from "../exact.ts"', 'import { useQuery } from "@tanstack/react-query"', 'export type { ReadState } from "./read.ts"', 'import { x } from "@/lib/state/other"'].join("\n")
