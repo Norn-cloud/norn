@@ -228,7 +228,7 @@ fn pdp_request(
             )]),
         },
         context: BTreeMap::new(),
-        binding: None,
+        binding: crate::Binding::Unbound(crate::UnboundProfile::HostedRead),
         delegation: Delegation::Direct,
     }
 }

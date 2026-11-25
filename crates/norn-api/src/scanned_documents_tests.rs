@@ -48,7 +48,7 @@ use norn_cell::{CellStore, MAIN_WORLD, ObjectRecord, SqliteCell};
 use norn_checker::entity_scopes::ScopedView;
 use norn_checker::metric::compute::QuestionPlan;
 use norn_ir::{DataQualityFindingStatus, DataQualityRuleRef, FactRef, RuntimeObject, RuntimeValue};
-use norn_kernel::authz::{ActorKind, Delegation, PrincipalInput, ResourceInput, ScopeKey};
+use norn_kernel::authz::{ActorKind, ResourceInput, ScopeKey};
 use norn_kernel::{
     ActionAuthzRequest, ActionDenial, ActionReadAuthzRequest, ActionReadTypeAuthzRequest,
     LogicalTime, ObservationEvent, ObservationId, Observed, Provenance,
@@ -307,7 +307,7 @@ impl Authorizer for Policy {
         }
     }
     fn read(&self, request: &ReadRequest<'_>) -> Result<(), Refusal> {
-        if request.access.principal.subject_id == STEWARD {
+        if request.access.principal().subject_id == STEWARD {
             Ok(())
         } else {
             Err(read_denied())
@@ -386,27 +386,26 @@ impl QuestionRuntime<NativeEngine> for Disclosure {
             workspace: None,
             business_unit: None,
         };
-        Ok(norn_kernel::authz::AccessRequest {
-            principal: PrincipalInput {
-                subject_id: actor.into(),
-                actor_kind: ActorKind::User,
-                agent_session_id: None,
-                roles: vec![],
-                attributes: BTreeMap::new(),
-            },
-            scope: Some(key.clone()),
-            capability: "norn.read.values".into(),
-            action_id: "norn.read".into(),
-            resource: ResourceInput {
+        Ok(norn_kernel::authz::AccessRequest::new(
+            &norn_kernel::authz::VerifiedPrincipal::new(
+                actor,
+                ActorKind::User,
+                None,
+                vec![],
+                BTreeMap::new(),
+            ),
+            Some(key.clone()),
+            "norn.read.values",
+            "norn.read",
+            ResourceInput {
                 object_type: object_type.into(),
                 id: object_type.into(),
                 scope: key,
                 attributes: BTreeMap::new(),
             },
-            context: BTreeMap::new(),
-            binding: None,
-            delegation: Delegation::Direct,
-        })
+            BTreeMap::new(),
+            norn_kernel::authz::Binding::Unbound(norn_kernel::authz::UnboundProfile::HostedRead),
+        ))
     }
 }
 
@@ -423,8 +422,9 @@ impl crate::object_routes::ObjectAccess for Access {
     ) -> Result<norn_kernel::authz::AccessRequest, Refusal> {
         let mut request = Disclosure.collection_access(scope, actor, capability, object_type)?;
         if let Some(row) = row {
-            request.resource.object_type.clone_from(&row.object_type);
-            request.resource.id.clone_from(&row.id);
+            let resource = request.resource_mut();
+            resource.object_type.clone_from(&row.object_type);
+            resource.id.clone_from(&row.id);
         }
         Ok(request)
     }

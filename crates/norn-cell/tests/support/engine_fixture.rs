@@ -181,9 +181,6 @@ fn park_and_approve(store: CellStore<NativeEngine>) -> CellStore<NativeEngine> {
     .expect("park the call");
     cell.advance_to(LogicalTime::from_millis(5_000));
     let answer: JsonObject = BTreeMap::from([("choice".to_owned(), text_value("approve"))]);
-    cell.complete_parked(&command, Generation(1), answer)
-        .expect("record the answer")
-        .expect("the call is parked");
     let resolved = DecisionResolved {
         decision_id: APPROVAL_DECISION.to_owned(),
         command_id: APPROVAL_COMMAND.to_owned(),
@@ -203,6 +200,7 @@ fn park_and_approve(store: CellStore<NativeEngine>) -> CellStore<NativeEngine> {
             generation: Generation(1),
         }),
         &resolved,
+        norn_cell::Settlement::Record(answer),
     )
     .expect("approve the call");
     cell.into_store()

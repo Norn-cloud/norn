@@ -6,7 +6,8 @@
 //!
 //! - **commit** runs the kernel's own admission check ([`Proposed`] →
 //!   [`Checked`], [`norn_kernel::check_commit`]) *inside* the store's commit transaction
-//!   (`CellStore::commit_guarded_unchecked`), then writes the consumed delivery, the
+//!   (`CellStore::commit_guarded_submitted`, which demands the check's
+//!   [`norn_kernel::CommitSeal`]), then writes the consumed delivery, the
 //!   whole-object writes, the ledger events, and the command/timer enqueues
 //!   in that one SQLite transaction: commit and enqueue are atomic, and a
 //!   refused commit writes nothing.
@@ -52,13 +53,36 @@ use crate::model::Model;
 use crate::predicate_scan::{self, predicate_objects};
 use crate::reactive::{BudgetedRead, DecodeBudget, ReactiveLimits};
 use crate::read::{PendingTimer, StoreReader};
+use crate::store::At;
 #[cfg(feature = "native")]
 use crate::store::StoreOptions;
 use crate::store::{
     CellStore, CommitBatch, CommitOutcome, Consumption, EffectRow, FactWriteRow, GuardedError,
     InstalledDefinitionInput, InstalledDefinitionSet, LinkChange, MAIN_WORLD,
-    MarkingDeclassification, MarkingReveal, OutboxCommand, TimerEntry,
+    MarkingDeclassification, MarkingReveal, OutboxCommand, SystemWrite, TimerEntry,
 };
+
+/// Where a system write of a host bound to `scope` lands.
+const fn at<'a>(scope: &'a str, world: &'a str, logical_time: u64) -> At<'a> {
+    At {
+        world,
+        scope,
+        logical_time,
+    }
+}
+
+/// PARKED-1 (P3): how a commit consuming a parked command's result settles it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Settlement<I> {
+    /// The result is already durable (an engine before P3 recorded it apart);
+    /// consume only.
+    #[default]
+    Recorded,
+    /// Record this result and consume it in the same transaction. Refused
+    /// with `NotPending` when the command is not parked and pending at that
+    /// generation, or already has a result: a parked command completes once.
+    Record(I),
+}
 
 /// The admission inputs beyond the commit, its authorization and quantity:
 /// derived properties, reference and property reads, mapping bundles, a
@@ -90,6 +114,9 @@ pub struct SqliteCell<E, C, I, S: SqlEngine = DefaultEngine> {
     /// S6c, S5a: the bookkeeping events the next commit carries, set only
     /// for the span of [`Self::attributed`].
     attached: Vec<norn_ir::RuntimeValue>,
+    /// PARKED-1 (P3): the parked result the next commit records and consumes
+    /// in its own transaction, set only for the span of [`Self::commit_settled`].
+    settling: Option<crate::store::ParkedSettlement>,
     /// RECEIPT-CONSUME-1: the host's Function receipt authority state.
     pub(crate) receipts: crate::function_receipt::ReceiptHost,
     events: PhantomData<fn() -> E>,
@@ -133,6 +160,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             responder: Box::new(responder),
             published: Vec::new(),
             attached: Vec::new(),
+            settling: None,
             receipts: crate::function_receipt::ReceiptHost::default(),
             events: PhantomData,
         })
@@ -164,6 +192,7 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             responder: self.responder,
             published: self.published,
             attached: self.attached,
+            settling: self.settling,
             receipts: self.receipts,
             events: PhantomData,
         }
@@ -260,14 +289,12 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .into_iter()
             .map(|event| to_runtime(&event))
             .collect::<Result<Vec<_>, _>>()?;
-        self.store.commit_unchecked(&CommitBatch {
-            world: MAIN_WORLD.to_owned(),
-            scope: self.scope.clone(),
-            logical_time: self.now.as_millis(),
-            idempotency_key: Some(idempotency_key.to_owned()),
+        let write = SystemWrite::HostEvents {
+            idempotency_key: idempotency_key.to_owned(),
             events,
-            ..CommitBatch::default()
-        })?;
+        };
+        self.store
+            .apply_system(&at(&self.scope, MAIN_WORLD, self.now.as_millis()), write)?;
         Ok(())
     }
 
@@ -296,15 +323,13 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .read()
             .receipt_by_idempotency_key(MAIN_WORLD, idempotency_key)?
             .map_or(self.now.as_millis(), |receipt| receipt.body.logical_time);
-        self.store.commit_unchecked(&CommitBatch {
-            world: MAIN_WORLD.to_owned(),
-            scope: self.scope.clone(),
-            logical_time,
-            idempotency_key: Some(idempotency_key.to_owned()),
-            events: vec![change.ledger_event()?],
-            marking_declassifications: vec![change],
-            ..CommitBatch::default()
-        })
+        let write = SystemWrite::Privacy {
+            idempotency_key: idempotency_key.to_owned(),
+            event: change.ledger_event()?,
+            declassification: Some(Box::new(change)),
+        };
+        self.store
+            .apply_system(&at(&self.scope, MAIN_WORLD, logical_time), write)
     }
 
     /// Append the receipt of one reveal to the ledger, at this host's clock.
@@ -337,14 +362,13 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .read()
             .receipt_by_idempotency_key(MAIN_WORLD, idempotency_key)?
             .map_or(self.now.as_millis(), |receipt| receipt.body.logical_time);
-        self.store.commit_unchecked(&CommitBatch {
-            world: MAIN_WORLD.to_owned(),
-            scope: self.scope.clone(),
-            logical_time,
-            idempotency_key: Some(idempotency_key.to_owned()),
-            events: vec![event],
-            ..CommitBatch::default()
-        })
+        let write = SystemWrite::Privacy {
+            idempotency_key: idempotency_key.to_owned(),
+            event,
+            declassification: None,
+        };
+        self.store
+            .apply_system(&at(&self.scope, MAIN_WORLD, logical_time), write)
     }
 
     /// MANIFEST-COMMIT-1: commit `manifest` as the current dataset of its
@@ -382,14 +406,13 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .receipt_by_idempotency_key(MAIN_WORLD, idempotency_key)?;
         let logical_time =
             previous.map_or(self.now.as_millis(), |receipt| receipt.body.logical_time);
-        self.store.commit_unchecked(&CommitBatch {
-            world: MAIN_WORLD.to_owned(),
-            scope: self.scope.clone(),
-            logical_time,
-            idempotency_key: Some(idempotency_key.to_owned()),
-            quantity: Some(request.clone().into()),
-            ..CommitBatch::default()
-        })
+        let write = SystemWrite::Quantity {
+            idempotency_key: idempotency_key.to_owned(),
+            request: Box::new(request.clone()),
+            timer: None,
+        };
+        self.store
+            .apply_system(&at(&self.scope, MAIN_WORLD, logical_time), write)
     }
 
     /// Submit one due quantity Expire through the ordinary atomic commit path.
@@ -456,18 +479,13 @@ impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S> {
             .store
             .read()
             .quantity_balance_versions(&deadline.world, &request)?;
-        self.store.commit_unchecked(&CommitBatch {
-            world: deadline.world,
-            scope: self.scope.clone(),
-            logical_time: self.now.as_millis(),
-            idempotency_key: Some(format!("{}:{}", id, pending.commit_seq)),
-            consumes: Some(crate::Consumption::Timer {
-                timer_id: id,
-                incarnation: pending.commit_seq,
-            }),
-            quantity: Some(request.into()),
-            ..CommitBatch::default()
-        })?;
+        let write = SystemWrite::Quantity {
+            idempotency_key: format!("{}:{}", id, pending.commit_seq),
+            request: Box::new(request),
+            timer: Some((id, pending.commit_seq)),
+        };
+        let place = at(&self.scope, &deadline.world, self.now.as_millis());
+        self.store.apply_system(&place, write)?;
         Ok(())
     }
 
@@ -1237,31 +1255,6 @@ where
     C: DeserializeOwned,
     I: DeserializeOwned,
 {
-    /// PARKED-1: redeliver the recorded, unconsumed results of parked
-    /// commands, oldest first, decoded from the store (never from memory).
-    /// After a crash between [`Self::complete_parked`] and the consuming
-    /// commit, this is how the result is delivered again; `perform` never
-    /// returns a parked command.
-    ///
-    /// # Errors
-    ///
-    /// Engine or decode errors.
-    pub fn parked_results(&self) -> Result<Vec<Performed<I>>, CellError> {
-        self.store
-            .read()
-            .parked_commands()?
-            .into_iter()
-            .filter_map(|pending| {
-                let result = pending.result?;
-                Some(from_runtime(&result).map(|input| Performed {
-                    command: CommandId(pending.command.command_id.clone()),
-                    generation: Generation(pending.command.generation),
-                    input,
-                }))
-            })
-            .collect()
-    }
-
     /// The pending commands, oldest first.
     ///
     /// # Errors
@@ -1391,35 +1384,6 @@ where
             input,
         }))
     }
-
-    /// PARKED-1: record the result the cell itself produced for a parked
-    /// command (for `norn.decision@1`, the receipt it issued), out of FIFO
-    /// order. Returns `None` without writing when the command is not a
-    /// pending parked command at `generation`, or already has a result, so a
-    /// parked command completes at most once. A commit consuming the returned
-    /// delivery applies it, exactly once, under the ordinary delivery fence.
-    ///
-    /// # Errors
-    ///
-    /// Serialization or SQLite errors.
-    pub fn complete_parked(
-        &mut self,
-        command: &CommandId,
-        generation: Generation,
-        input: I,
-    ) -> Result<Option<Performed<I>>, CellError> {
-        if !self
-            .store
-            .record_parked(&command.0, generation.0, &to_runtime(&input)?)?
-        {
-            return Ok(None);
-        }
-        Ok(Some(Performed {
-            command: command.clone(),
-            generation,
-            input,
-        }))
-    }
 }
 
 impl<E, C, I, S: SqlEngine> SqliteCell<E, C, I, S>
@@ -1538,9 +1502,68 @@ where
         &mut self,
         commit: CellCommit<E, C, I>,
         resolved: &crate::decision_ledger::DecisionResolved,
+        settlement: Settlement<I>,
     ) -> Result<CommitReceipt, CommitError<CellError>> {
         let event = resolved.event().map_err(CommitError::Host)?;
-        self.commit_with_authorization(commit, None, None, None, &[], &[], &[], &[], Some(event))
+        self.settle_next(&commit, settlement)?;
+        let answer = self.commit_with_authorization(
+            commit,
+            None,
+            None,
+            None,
+            &[],
+            &[],
+            &[],
+            &[],
+            Some(event),
+        );
+        self.settling = None;
+        answer
+    }
+
+    /// PARKED-1 (P3): commit a turn consuming a parked command's result,
+    /// recording that result in the same transaction when `settlement` is
+    /// [`Settlement::Record`]: no result is ever durable without the commit
+    /// that consumes it.
+    ///
+    /// # Errors
+    /// A [`CommitError`]; nothing was applied. `CommitError::Host` of
+    /// `CellError::NotPending` when the parked result cannot be recorded.
+    pub fn commit_settled(
+        &mut self,
+        commit: CellCommit<E, C, I>,
+        settlement: Settlement<I>,
+    ) -> Result<CommitReceipt, CommitError<CellError>> {
+        self.settle_next(&commit, settlement)?;
+        let answer =
+            self.commit_with_authorization(commit, None, None, None, &[], &[], &[], &[], None);
+        self.settling = None;
+        answer
+    }
+
+    /// Hold `settlement` for the next commit, `commit`; the caller clears it
+    /// after that commit returns.
+    fn settle_next(
+        &mut self,
+        commit: &CellCommit<E, C, I>,
+        settlement: Settlement<I>,
+    ) -> Result<(), CommitError<CellError>> {
+        if let Settlement::Record(input) = settlement {
+            let Some(Consumed::Result {
+                command,
+                generation,
+            }) = &commit.consumes
+            else {
+                let reason = "a settlement needs a consumed result".to_owned();
+                return Err(CommitError::Host(CellError::Encoding(reason)));
+            };
+            self.settling = Some(crate::store::ParkedSettlement {
+                command_id: command.0.clone(),
+                generation: generation.0,
+                outcome: to_runtime(&input).map_err(CommitError::Host)?,
+            });
+        }
+        Ok(())
     }
 
     /// S6c, S5a: run `act` with `events`, bookkeeping events, attached to
@@ -1765,6 +1788,7 @@ where
                 batch.logical_time = receipt.body.logical_time;
             }
         }
+        let settling = self.settling.take();
         let guard = |reader: &StoreReader<'_, S>| {
             let mapping_proof = crate::link_guard::verify_mapping_links(reader, &commit, mapped)?;
             if authorization.is_none() {
@@ -1817,19 +1841,21 @@ where
                 .with_governing_laws(model.law_artifacts());
             let model = CommitModel::new(&catalog);
             // ACTOR-STAMP-1: a creator stamp is its own kernel admission.
-            let versions = Proposed::new(&commit)
+            // P3: the store writes only with the seal this check mints.
+            let (seal, versions) = Proposed::new(&commit)
                 .authorize_with(authorization, owned_rows, stamp)?
                 .check(&model, &GuardView(reader))
-                .map(Checked::into_versions)?;
+                .map(Checked::seal)?;
             // RECEIPT-CONSUME-1: command authority and the deadline are
             // rechecked at the commit's own clock, under its write lock.
             let receipts = (&self.receipts, self.scope.as_str(), self.now, mode);
             crate::function_receipt::check_consumption(reader, &commit, &batch, receipts)?;
-            Ok((versions, mapping_proof))
+            Ok((seal, versions, mapping_proof))
         };
         match self.store.commit_guarded_submitted(
             &batch,
             submitted.as_ref(),
+            settling.as_ref(),
             guard,
             &mut |_point| Ok(()),
         ) {

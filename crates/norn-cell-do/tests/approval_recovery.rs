@@ -597,8 +597,9 @@ fn restart_crashing(cell: &Cell<Faulty>, _id: &str) {
 }
 
 /// The crash points of the starter's retry that leave the step's call
-/// committed and its run not yet past it: before the step's result is
-/// recorded, and after it is recorded but before the run consumed it.
+/// committed and its run not yet past it: before the commit that records and
+/// consumes the step's result (P3: one transaction, so no crash point lies
+/// between recording and consuming it).
 fn undelivered(directory: &Path) -> Vec<(PathBuf, String)> {
     let crashes = crashes_leaving(directory, (true, true), approved_step, &restart_crashing);
     let undelivered: Vec<_> = crashes
@@ -606,7 +607,7 @@ fn undelivered(directory: &Path) -> Vec<(PathBuf, String)> {
         .filter(|(path, _id)| run_state(&cell_on(file(path), false)) != json!("completed"))
         .collect();
     assert!(
-        undelivered.len() >= 2,
+        !undelivered.is_empty(),
         "{} crash points leave the outcome undelivered",
         undelivered.len()
     );
@@ -1005,12 +1006,13 @@ fn an_approved_step_call_never_runs_after_its_attempt_ended() {
 }
 
 /// End the step attempt the parked call on `path` was made for: an earlier
-/// host recorded its result.
+/// host (an engine before P3) recorded its result apart from any consuming
+/// commit.
 fn end_attempt(path: &Path, (command, generation): &(String, u64)) {
     let ended = norn_ir::RuntimeValue::from_json(json!({ "_tag": "Denied" })).unwrap();
     assert!(
         store(path)
-            .record_parked(command, *generation, &ended)
+            .record_parked_apart(command, *generation, &ended)
             .unwrap()
     );
 }

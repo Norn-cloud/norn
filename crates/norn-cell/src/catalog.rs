@@ -71,10 +71,10 @@ impl CatalogSnapshot {
     ) -> Result<SliceResult, CatalogReadError> {
         if query.binding.is_some()
             || query.limit > limits.max_records
-            || request.action_id != "norn.read"
-            || request.capability != "norn.read"
-            || request.scope.as_ref() != Some(scope)
-            || request.binding.is_some()
+            || request.action_id() != "norn.read"
+            || request.capability() != "norn.read"
+            || request.scope() != Some(scope)
+            || request.binding().is_some()
         {
             return Err(CatalogReadError::Refused("bounded norn.read required"));
         }
@@ -108,7 +108,7 @@ impl CatalogSnapshot {
                 continue;
             }
             let mut access = request.clone();
-            access.resource = ResourceInput {
+            *access.resource_mut() = ResourceInput {
                 object_type: query.object_type.clone(),
                 id: item.key.clone(),
                 scope: scope.clone(),

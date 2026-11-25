@@ -224,13 +224,14 @@ pub(crate) fn frame<E: SqlEngine>(
 #[cfg(all(test, feature = "native"))]
 mod tests {
     use super::*;
+    use crate::test_door::TestCommit as _;
     #[test]
     fn frontier_receipt_and_fact_share_one_bounded_authentication() {
         let definition:norn_ir::ObjectTypeDef=serde_json::from_value(serde_json::json!({"name":"budget.Item","properties":[{"id":"value","type":{"kind":"text"}}]})).expect("typed fixture");
         let model = crate::Model::from_definitions(&[definition], &[]).expect("model");
         let mut store = CellStore::open_in_memory(model).expect("store");
         store
-            .commit_unchecked(&crate::CommitBatch {
+            .commit(&crate::CommitBatch {
                 world: crate::MAIN_WORLD.into(),
                 scope: "synthetic".into(),
                 logical_time: 7,

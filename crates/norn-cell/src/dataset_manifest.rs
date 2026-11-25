@@ -35,7 +35,7 @@ use serde_json::Value;
 use crate::analytics::{FileFormat, RuleCount, TableSchema, ValidRange, dataset_cache_id};
 use crate::engine::{SqlEngine, params};
 use crate::system::LEDGER;
-use crate::{CellError, CellStore, CommitBatch, GuardedError, Receipt, StoreReader};
+use crate::{CellError, CellStore, Receipt, StoreReader};
 
 /// The ledger event type of a committed manifest.
 pub const MANIFEST_EVENT: &str = "dataset.manifest";
@@ -350,19 +350,21 @@ impl<E: SqlEngine> CellStore<E> {
             request,
         })
         .map_err(CellError::Encoding)?;
-        let batch = CommitBatch {
-            world: world.to_owned(),
-            scope: scope.to_owned(),
+        let at = crate::store::At {
+            world,
+            scope,
             logical_time,
+        };
+        let write = crate::store::SystemWrite::DatasetManifest {
             idempotency_key: request.map(DatasetRequest::idempotency_key),
-            events: vec![event],
-            ..CommitBatch::default()
+            event,
         };
         let pinned = manifest.pins.definitions_version;
         // The definitions version is re-read inside the commit transaction:
         // an install between the landing's first step and this commit refuses.
-        let guarded = self.commit_guarded_unchecked(
-            &batch,
+        let outcome = self.apply_system_guarded(
+            &at,
+            write,
             |reader| {
                 if reader.active_definitions_version()?.unwrap_or(0) == pinned {
                     Ok(())
@@ -374,11 +376,8 @@ impl<E: SqlEngine> CellStore<E> {
                 }
             },
             &mut |_point| Ok(()),
-        );
-        match guarded {
-            Ok(((), outcome)) => Ok((hash, outcome.receipt().clone())),
-            Err(GuardedError::Guard(error) | GuardedError::Store(error)) => Err(error),
-        }
+        )?;
+        Ok((hash, outcome.receipt().clone()))
     }
 
     /// MANIFEST-04: the manifest a request key committed, with the

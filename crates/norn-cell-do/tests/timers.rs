@@ -429,11 +429,11 @@ fn failing_items_never_starve_a_healthy_one() {
 
 // --- A decision's expiry whose resolving commit fails ---
 
-/// DECISION-TERMINAL-1: an expiry records the step's `Expired` result, then
-/// commits the resolution that consumes it. When that commit fails (an I/O
-/// error), the decision is no longer open, but it never vanishes: the wake
-/// keeps it due on its backoff and, after a reopen, resumes exactly the
-/// recorded result, so the run ends `failed_expired`.
+/// DECISION-TERMINAL-1: an expiry records the step's `Expired` result in
+/// the resolving commit that consumes it (P3: one transaction). When that
+/// commit fails (an I/O error), nothing is recorded, but the decision never
+/// vanishes: the wake keeps it due on its backoff and, after a reopen,
+/// expires it again, so the run ends `failed_expired`.
 #[test]
 fn a_failed_expiry_commit_is_resumed_after_a_reopen() {
     let directory = tempfile::tempdir().unwrap();
@@ -447,11 +447,11 @@ fn a_failed_expiry_commit_is_resumed_after_a_reopen() {
         .expect("the decision's deadline");
     let waiting = state(&cell);
 
-    // The wake's transactions: retry pruning, recording the expiry as the
-    // parked result, then the resolving commit, which fails.
+    // The wake's transactions: retry pruning, then the resolving commit that
+    // records and consumes the expiry, which fails.
     faults.arm(EngineFault {
         kind: EngineFaultKind::Io,
-        transaction: 2,
+        transaction: 1,
         at_statement: 0,
     });
     let failed = run_due(&cell.host, at(deadline)).unwrap();
@@ -461,8 +461,8 @@ fn a_failed_expiry_commit_is_resumed_after_a_reopen() {
         (0, 1),
         "{failed:?}"
     );
-    // The expiry is recorded and unconsumed: the run has not moved, and the
-    // decision is still due, on its backoff.
+    // Nothing was recorded: the run has not moved, and the decision is still
+    // due, on its backoff.
     assert_eq!(state(&cell), waiting);
     let retry = deadline + norn_api::timers::STUCK_RETRY_MS;
     assert_eq!(failed.next, Some(retry));

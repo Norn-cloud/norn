@@ -9,7 +9,8 @@ use norn_api::{
 };
 use norn_cell::{CellStore, Model};
 use norn_kernel::authz::{
-    AccessRequest as PdpRequest, ActorKind, Delegation, PrincipalInput, ResourceInput, ScopeKey,
+    AccessRequest as PdpRequest, ActorKind, Binding, ResourceInput, ScopeKey, UnboundProfile,
+    VerifiedPrincipal,
 };
 use std::{
     collections::BTreeMap,
@@ -44,27 +45,24 @@ fn key(scope: &CellScope) -> ScopeKey {
     }
 }
 fn request(scope: &CellScope) -> PdpRequest {
-    PdpRequest {
-        principal: PrincipalInput {
-            subject_id: "viewer".into(),
-            actor_kind: ActorKind::User,
-            agent_session_id: None,
-            roles: vec![],
-            attributes: BTreeMap::new(),
-        },
-        scope: Some(key(scope)),
-        capability: "example.read".into(),
-        action_id: "norn.read".into(),
-        resource: ResourceInput {
+    request_with(Some(key(scope)), key(scope), "norn.read")
+}
+/// The mapped request with its request scope, resource scope and action set.
+fn request_with(scope: Option<ScopeKey>, resource_scope: ScopeKey, action: &str) -> PdpRequest {
+    PdpRequest::new(
+        &VerifiedPrincipal::new("viewer", ActorKind::User, None, vec![], BTreeMap::new()),
+        scope,
+        "example.read",
+        action,
+        ResourceInput {
             object_type: "example.Record".into(),
             id: "all".into(),
-            scope: key(scope),
+            scope: resource_scope,
             attributes: BTreeMap::new(),
         },
-        context: BTreeMap::new(),
-        binding: None,
-        delegation: Delegation::Direct,
-    }
+        BTreeMap::new(),
+        Binding::Unbound(UnboundProfile::HostedRead),
+    )
 }
 struct Metadata;
 impl Authorizer for Metadata {
@@ -83,8 +81,8 @@ impl Authorizer for Policy {
     }
     fn read(&self, read: &ReadRequest<'_>) -> Result<(), Refusal> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        assert_eq!(read.access.scope.as_ref(), Some(&self.physical));
-        assert_eq!(read.access.resource.scope, self.physical);
+        assert_eq!(read.access.scope(), Some(&self.physical));
+        assert_eq!(read.access.resource().scope, self.physical);
         if self.allowed && read.capability == ReadCapability::Population {
             Ok(())
         } else {
@@ -196,8 +194,7 @@ fn physical_scope_is_the_only_policy_scope() {
         physical: key(&physical),
         allowed: true,
     });
-    let mut access = request(&physical);
-    access.scope = None;
+    let access = request_with(None, key(&physical), "norn.read");
     assert!(
         host.read_access(
             &explicit(&physical),
@@ -208,8 +205,9 @@ fn physical_scope_is_the_only_policy_scope() {
         )
         .is_err()
     );
-    access.scope = Some(key(&physical));
-    access.resource.scope.org = "foreign".into();
+    let mut foreign = key(&physical);
+    foreign.org = "foreign".into();
+    let access = request_with(Some(key(&physical)), foreign, "norn.read");
     assert!(
         host.read_access(
             &explicit(&physical),
@@ -220,8 +218,9 @@ fn physical_scope_is_the_only_policy_scope() {
         )
         .is_err()
     );
-    access.resource.scope = key(&physical);
-    access.resource.scope.tenant = Some("unbound".into());
+    let mut unbound = key(&physical);
+    unbound.tenant = Some("unbound".into());
+    let access = request_with(Some(key(&physical)), unbound, "norn.read");
     assert!(
         host.read_access(
             &explicit(&physical),
@@ -232,8 +231,7 @@ fn physical_scope_is_the_only_policy_scope() {
         )
         .is_err()
     );
-    access.resource.scope = key(&physical);
-    access.action_id = "example.write".into();
+    let access = request_with(Some(key(&physical)), key(&physical), "example.write");
     assert!(
         host.read_access(
             &explicit(&physical),

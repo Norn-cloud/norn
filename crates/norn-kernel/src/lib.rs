@@ -155,7 +155,7 @@ pub use action_commit::{
     prepare_action_input, prepare_action_input_for_call, prepare_action_intent,
     retained_person_matches, validate_accountable_person, validate_automation_static_input,
 };
-pub use cell_host::{Authorized, Checked, Committed, Proposed};
+pub use cell_host::{Authorized, Checked, CommitSeal, Committed, Proposed};
 pub use cell_host::{
     BoundedFact, CellCommit, CellHost, CommitError, CommitModel, CommitReceipt, CommitVersions,
     CommitView, Consumed, DueTimer, FactExpectation, FactKey, FactMutation, FactState, FactVersion,

@@ -6,7 +6,8 @@
 use super::*;
 use crate::{authz::DenyAll, scope::CellScope};
 use norn_kernel::authz::{
-    ActorKind, AuthzSchema, CapabilityGrant, Delegation, PrincipalInput, ResourceInput,
+    ActorKind, AuthzSchema, Binding, CapabilityGrant, Delegation, PrincipalInput, ResourceInput,
+    UnboundProfile, VerifiedPrincipal,
 };
 use std::collections::BTreeMap;
 
@@ -53,7 +54,32 @@ fn pdp(capabilities: &[&str], declared: bool) -> Pdp {
     )
     .unwrap()
 }
-fn claims(request: &RefusalDetailRequest<'_>) -> Option<authz::AccessRequest> {
+/// The trusted mapper's claims, before they are sealed into a request; the
+/// mutants below edit one claim each.
+struct Claim {
+    principal: PrincipalInput,
+    scope: ScopeKey,
+    capability: String,
+    action_id: String,
+    resource: ResourceInput,
+    context: BTreeMap<String, AttrValue>,
+    delegation: Delegation,
+}
+impl Claim {
+    fn build(self) -> authz::AccessRequest {
+        authz::AccessRequest::new(
+            &VerifiedPrincipal::from_input(self.principal),
+            Some(self.scope),
+            self.capability,
+            self.action_id,
+            self.resource,
+            self.context,
+            Binding::Unbound(UnboundProfile::HostedRead),
+        )
+        .with_delegation(self.delegation)
+    }
+}
+fn claim(request: &RefusalDetailRequest<'_>) -> Option<Claim> {
     if request.actor != "principal:operator" {
         return None;
     }
@@ -62,7 +88,7 @@ fn claims(request: &RefusalDetailRequest<'_>) -> Option<authz::AccessRequest> {
         environment: Some(request.scope.environment_id.clone()),
         ..key()
     };
-    Some(authz::AccessRequest {
+    Some(Claim {
         principal: PrincipalInput {
             subject_id: request.actor.into(),
             actor_kind: ActorKind::User,
@@ -70,7 +96,7 @@ fn claims(request: &RefusalDetailRequest<'_>) -> Option<authz::AccessRequest> {
             roles: vec!["Operator".into()],
             attributes: BTreeMap::new(),
         },
-        scope: Some(scope.clone()),
+        scope: scope.clone(),
         capability: DISCLOSE_REFUSAL_DETAIL_ACTION.into(),
         action_id: DISCLOSE_REFUSAL_DETAIL_ACTION.into(),
         resource: ResourceInput {
@@ -83,9 +109,11 @@ fn claims(request: &RefusalDetailRequest<'_>) -> Option<authz::AccessRequest> {
             "governedAction".into(),
             AttrValue::String(request.action_id.into()),
         )]),
-        binding: None,
         delegation: Delegation::Direct,
     })
+}
+fn claims(request: &RefusalDetailRequest<'_>) -> Option<authz::AccessRequest> {
+    claim(request).map(Claim::build)
 }
 fn refused() -> norn_kernel::Refusal {
     let mut source = norn_kernel::Refusal::new(
@@ -181,9 +209,9 @@ fn absent_capability_policy_role_principal_or_scope_stays_redacted() {
         DenyAll,
         pdp(&[DISCLOSE_REFUSAL_DETAIL_ACTION], true),
         |r: &RefusalDetailRequest<'_>| {
-            let mut access = claims(r)?;
+            let mut access = claim(r)?;
             access.principal.roles = vec!["Viewer".into()];
-            Some(access)
+            Some(access.build())
         },
     );
     assert!(!viewer.disclose_refusal_detail(&request));
@@ -201,7 +229,7 @@ fn trusted_mapper_cannot_change_the_bound_identity_action_resource_or_scope() {
             DenyAll,
             pdp(&[DISCLOSE_REFUSAL_DETAIL_ACTION], true),
             move |r: &RefusalDetailRequest<'_>| {
-                let mut access = claims(r)?;
+                let mut access = claim(r)?;
                 match field {
                     0 => access.principal.subject_id = "other".into(),
                     1 => access.action_id = "norn.read".into(),
@@ -211,7 +239,7 @@ fn trusted_mapper_cannot_change_the_bound_identity_action_resource_or_scope() {
                     5 => access.capability = "norn.read".into(),
                     _ => access.delegation = Delegation::Biscuit("unverified".into()),
                 }
-                Some(access)
+                Some(access.build())
             },
         );
         assert!(!authorizer.disclose_refusal_detail(&request));

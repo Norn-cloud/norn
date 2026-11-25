@@ -208,8 +208,8 @@ fn catalog_access(
     capabilities: &[&str],
 ) -> (norn_kernel::authz::Pdp, norn_kernel::authz::AccessRequest) {
     use norn_kernel::authz::{
-        AccessRequest, ActorKind, AuthzSchema, CapabilityGrant, Delegation, PrincipalInput,
-        ResourceInput, ScopeKey,
+        AccessRequest, ActorKind, AuthzSchema, Binding, CapabilityGrant, ResourceInput, ScopeKey,
+        UnboundProfile, VerifiedPrincipal,
     };
     let types = norn_cell::catalog::resource_types().expect("virtual resources");
     let projection = norn_projections::project_cedar_schema(&types, &[], &[]);
@@ -239,27 +239,20 @@ fn catalog_access(
         }],
     )
     .expect("PDP");
-    let request = AccessRequest {
-        principal: PrincipalInput {
-            subject_id: "reader".into(),
-            actor_kind: ActorKind::User,
-            agent_session_id: None,
-            roles: vec![],
-            attributes: BTreeMap::new(),
-        },
-        scope: Some(scope.clone()),
-        capability: "norn.read".into(),
-        action_id: "norn.read".into(),
-        resource: ResourceInput {
+    let request = AccessRequest::new(
+        &VerifiedPrincipal::new("reader", ActorKind::User, None, vec![], BTreeMap::new()),
+        Some(scope.clone()),
+        "norn.read",
+        "norn.read",
+        ResourceInput {
             object_type: "unrelated.Type".into(),
             id: "unrelated-object".into(),
             scope,
             attributes: BTreeMap::new(),
         },
-        context: BTreeMap::new(),
-        binding: None,
-        delegation: Delegation::Direct,
-    };
+        BTreeMap::new(),
+        Binding::Unbound(UnboundProfile::HostedRead),
+    );
     (pdp, request)
 }
 #[test]
@@ -282,7 +275,7 @@ fn graph_catalog_reads_exact_member_ids_through_slice_and_kernel_pdp() {
         binding: None,
     };
     let (pdp, request) = catalog_access(&["norn.read"]);
-    let scope = request.scope.as_ref().expect("scope");
+    let scope = request.scope().expect("scope");
     let result = snapshot
         .read(&query, &limits, &pdp, &request, scope)
         .expect("ordinary read");
@@ -317,8 +310,18 @@ fn graph_catalog_reads_exact_member_ids_through_slice_and_kernel_pdp() {
             .items,
         []
     );
-    let mut wrong = request.clone();
-    wrong.action_id = "norn.write".into();
+    let wrong = {
+        use norn_kernel::authz::{AccessRequest, Binding, UnboundProfile, VerifiedPrincipal};
+        AccessRequest::new(
+            &VerifiedPrincipal::from_input(request.principal().clone()),
+            request.scope().cloned(),
+            request.capability(),
+            "norn.write",
+            request.resource().clone(),
+            request.context().clone(),
+            Binding::Unbound(UnboundProfile::HostedRead),
+        )
+    };
     assert!(snapshot.read(&query, &limits, &pdp, &wrong, scope).is_err());
     let mut truncated = limits;
     truncated.max_canonical_bytes = 1;

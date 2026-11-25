@@ -11,11 +11,11 @@ use norn_kernel::world::outbox::{OutboxEvent, OutboxRefusal, OutboxState, Queue,
 use norn_kernel::{Command, CommandId, Generation, Performed};
 use serde::de::DeserializeOwned;
 
-use super::{SqliteCell, from_runtime};
+use super::{SqliteCell, at, from_runtime};
 use crate::engine::SqlEngine;
 use crate::error::CellError;
 use crate::read::PendingCommand;
-use crate::store::{CommitBatch, EffectRow, MAIN_WORLD};
+use crate::store::{MAIN_WORLD, SystemWrite};
 
 /// What a perform claim found at a FIFO outbox command.
 #[derive(Debug, Clone, PartialEq)]
@@ -195,16 +195,12 @@ where
     /// Durably claim `row` with a zero-event commit before it is dispatched.
     fn commit_claim(&mut self, row: PendingCommand) -> Result<ClaimOutcome<C, I>, CellError> {
         let command: Command<C> = from_runtime(&row.command.command)?;
-        self.store.commit_unchecked(&CommitBatch {
-            world: MAIN_WORLD.to_owned(),
-            scope: self.scope.clone(),
-            logical_time: self.now.as_millis(),
-            effects: vec![EffectRow::ClaimPerform {
-                command_id: row.command.command_id,
-                generation: row.command.generation,
-            }],
-            ..CommitBatch::default()
-        })?;
+        let write = SystemWrite::ClaimPerform {
+            command_id: row.command.command_id,
+            generation: row.command.generation,
+        };
+        self.store
+            .apply_system(&at(&self.scope, MAIN_WORLD, self.now.as_millis()), write)?;
         Ok(ClaimOutcome::Fresh(command))
     }
 }

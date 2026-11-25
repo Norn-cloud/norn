@@ -4,7 +4,7 @@
 //! Objects and links live in the tables the DDL projection derives from the
 //! object model ([`Model`]); events, receipts, the command outbox, timers,
 //! the observation inbox, `perform` runs, and version high-water marks live in the
-//! system tables ([`crate::system`]). One `CellStore::commit_unchecked` is one engine
+//! system tables ([`crate::system`]). One commit is one engine
 //! transaction: the consumed delivery, object
 //! writes and fact changes, link changes, ledger events, outbox and timer
 //! effects, and the receipt either all land or none do. A crash anywhere
@@ -1870,10 +1870,26 @@ struct DefinitionPreflight {
 type ProvisionIdentity<'a> =
     RefCell<dyn FnMut() -> Result<norn_ir::cell_id::CellId, CellError> + 'a>;
 
+mod system_write;
+pub(crate) use system_write::{At, SystemWrite};
+
+/// PARKED-1 (P3): a parked command's result, recorded by the commit that
+/// consumes it, in its transaction: a result row exists iff its consuming
+/// commit does.
+#[derive(Debug)]
+pub(crate) struct ParkedSettlement {
+    /// The parked command.
+    pub(crate) command_id: String,
+    /// Its generation.
+    pub(crate) generation: u64,
+    /// The result recorded and consumed.
+    pub(crate) outcome: Value,
+}
+
 /// ID-NORMALIZED-RETAINED: only verified-prefix callers select retained input.
 #[derive(Clone, Copy)]
 enum CommitOrigin<'a> {
-    Host,
+    Host(Option<&'a ParkedSettlement>),
     Current,
     Provisioning(&'a str, &'a ProvisionIdentity<'a>),
     Retained(&'a crate::export::ExportRecord),
@@ -2786,57 +2802,13 @@ impl<E: SqlEngine> CellStore<E> {
         Ok(head)
     }
 
-    /// Commit `batch` atomically as a trusted, actorless embedding primitive.
-    /// Authored adapters use the checked kernel boundary; raw Put carries no
-    /// authored/observed authority. Canonical `FactChange::Create` still refuses reuse.
-    ///
-    /// Crate-private (#1375 S4, #1444 fix 5): no law check runs here, so a
-    /// crate outside the kernel path cannot reach it. A host's own actorless
-    /// writes are the fixed-input [`crate::provision`] operations.
-    ///
-    /// ```compile_fail,E0624
-    /// // A raw, unchecked write from outside the kernel does not compile:
-    /// // the raw commit is private to `norn-cell`.
-    /// use norn_cell::{CellStore, CommitBatch};
-    /// fn bypass(store: &mut CellStore) {
-    ///     let _ = store.commit_unchecked(&CommitBatch::default());
-    /// }
-    /// ```
-    ///
-    /// ```compile_fail,E0624
-    /// // Nor does the probed variant.
-    /// use norn_cell::{CellStore, CommitBatch};
-    /// fn bypass(store: &mut CellStore) {
-    ///     let _ = store.commit_probed_unchecked(&CommitBatch::default(), &mut |_| Ok(()));
-    /// }
-    /// ```
-    ///
-    /// ```compile_fail,E0624
-    /// // Nor a guarded commit whose guard admits anything.
-    /// use norn_cell::{CellStore, CommitBatch};
-    /// fn bypass(store: &mut CellStore) {
-    ///     let _ = store.commit_guarded_unchecked(
-    ///         &CommitBatch::default(),
-    ///         |_reader| Ok::<(), ()>(()),
-    ///         &mut |_| Ok(()),
-    ///     );
-    /// }
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Any [`CellError`]; on error nothing was written.
-    pub(crate) fn commit_unchecked(
-        &mut self,
-        batch: &CommitBatch,
-    ) -> Result<CommitOutcome, CellError> {
-        self.commit_probed_unchecked(batch, &mut |_point| Ok(()))
-    }
-
-    /// [`Self::commit_unchecked`] with a fault probe called at every [`CommitPoint`].
+    /// A raw commit with no law check, for this crate's own suites only
+    /// (`crate::test_door`); production writes go through
+    /// [`Self::commit_guarded_submitted`] or a [`system_write::SystemWrite`].
     ///
     /// # Errors
     /// Any [`CellError`], including the probe's.
+    #[cfg(test)]
     pub(crate) fn commit_probed_unchecked(
         &mut self,
         batch: &CommitBatch,
@@ -2848,10 +2820,12 @@ impl<E: SqlEngine> CellStore<E> {
         }
     }
 
-    /// Commit `batch` after `guard` admits it in the same transaction.
+    /// Commit `batch` after `guard` admits it in the same transaction; this
+    /// crate's own suites only, as [`Self::commit_probed_unchecked`].
     ///
     /// # Errors
     /// [`GuardedError::Guard`] on refusal; otherwise as [`Self::commit_probed_unchecked`].
+    #[cfg(test)]
     pub(crate) fn commit_guarded_unchecked<T: Default, X>(
         &mut self,
         batch: &CommitBatch,
@@ -2868,17 +2842,33 @@ impl<E: SqlEngine> CellStore<E> {
         )
     }
 
-    // Driver-only input; verified replay uses record-bound input.
+    /// P3: the one business write door. `guard` runs inside the commit
+    /// transaction and must return the [`norn_kernel::CommitSeal`] the
+    /// kernel's admission check minted there; `settlement` records a parked
+    /// command's result in that same transaction, before the guard reads it.
+    /// Driver-only input; verified replay uses record-bound input.
     pub(crate) fn commit_guarded_submitted<T: Default, X>(
         &mut self,
         batch: &CommitBatch,
         submitted: Option<&Value>,
+        settlement: Option<&ParkedSettlement>,
         guard: impl FnOnce(
             &StoreReader<'_, E>,
-        ) -> Result<(T, Option<crate::link_guard::VerifiedMappingProof>), X>,
+        ) -> Result<
+            (
+                norn_kernel::CommitSeal,
+                T,
+                Option<crate::link_guard::VerifiedMappingProof>,
+            ),
+            X,
+        >,
         probe: &mut dyn FnMut(CommitPoint) -> Result<(), CellError>,
     ) -> Result<(T, CommitOutcome), GuardedError<X>> {
-        self.commit_guarded_inner(batch, None, submitted, CommitOrigin::Host, guard, probe)
+        let guard = |reader: &StoreReader<'_, E>| {
+            guard(reader).map(|(_seal, admitted, proof)| (admitted, proof))
+        };
+        let origin = CommitOrigin::Host(settlement);
+        self.commit_guarded_inner(batch, None, submitted, origin, guard, probe)
     }
 
     /// The verified-prefix callers compare the full resulting receipt and journal.
@@ -3208,7 +3198,7 @@ impl<E: SqlEngine> CellStore<E> {
             crate::open_checkpoint::check_fence(&self.conn)?;
             let retained = match origin {
                 CommitOrigin::Retained(record) => Some(record),
-                CommitOrigin::Host | CommitOrigin::Current | CommitOrigin::Provisioning(..) => None,
+                CommitOrigin::Host(_) | CommitOrigin::Current | CommitOrigin::Provisioning(..) => None,
             };
             let actual_version = active_definition_version(&self.conn)?;
             let (version, install_record, synthetic_batch) = if let Some(install) = &installation {
@@ -3270,7 +3260,7 @@ impl<E: SqlEngine> CellStore<E> {
             // Reconcile host time only after the transaction-local retry lookup.
             let mut reconciled = effective_batch.clone();
             // RECEIPT-CONSUME-1: a host commit consuming a Function result follows the floor.
-            if matches!(origin, CommitOrigin::Host) && prior_receipt.is_none() && crate::function_receipt::follows_floor(&self.conn, &reconciled)? {
+            if matches!(origin, CommitOrigin::Host(_)) && prior_receipt.is_none() && crate::function_receipt::follows_floor(&self.conn, &reconciled)? {
                 reconciled.logical_time = reconciled.logical_time.max(floor);
             }
             if let Some(prior) = &prior_receipt
@@ -3333,6 +3323,12 @@ impl<E: SqlEngine> CellStore<E> {
                 .with_mapping_plans(&self.mapping_plans).with_transaction_source_disputes(&transaction_disputes);
             if effective_batch.logical_time < reader.clock_floor()? {
                 return Err(CellError::Quantity(norn_kernel::quantity::QuantityError::ClockRegression).into());
+            }
+            if let CommitOrigin::Host(Some(settle)) = origin
+                && !self.record_parked_in_tx(&settle.command_id, settle.generation, &settle.outcome)?
+            {
+                let (command_id, generation) = (settle.command_id.clone(), settle.generation);
+                return Err(CellError::NotPending(Consumption::Result { command_id, generation }).into());
             }
             let (admitted, mapping_proof) = {
                 // The guard only reads: a plan it proves holds for every
@@ -3459,7 +3455,7 @@ impl<E: SqlEngine> CellStore<E> {
             probe(CommitPoint::FactsApplied)?;
             let linked = writer.apply_links(crate::link_guard::LinkGuardMode::from_origin(
                 matches!(origin, CommitOrigin::Retained(_)),
-                matches!(origin, CommitOrigin::Host),
+                matches!(origin, CommitOrigin::Host(_)),
                 mapping_proof,
             ))?;
             probe(CommitPoint::LinksApplied)?;
@@ -3545,7 +3541,7 @@ impl<E: SqlEngine> CellStore<E> {
                 // A replayed record keeps the version that first wrote it.
                 match origin {
                     CommitOrigin::Retained(record) => record.storage_version,
-                    CommitOrigin::Host | CommitOrigin::Current | CommitOrigin::Provisioning(..) => {
+                    CommitOrigin::Host(_) | CommitOrigin::Current | CommitOrigin::Provisioning(..) => {
                         Some(crate::engine_release::STORAGE_VERSION)
                     }
                 },
@@ -3629,35 +3625,50 @@ impl<E: SqlEngine> CellStore<E> {
         })
     }
 
-    /// PARKED-1: record the result of a parked command (one the cell resolves
-    /// itself, such as a `norn.decision@1` the cell issued a receipt for). A
-    /// parked command may complete out of FIFO order, but at most once: a
-    /// second record of the same generation, or of a command that is not
-    /// parked and pending, returns `false` and writes nothing.
+    /// Fault fixture: record a parked command's result in its own
+    /// transaction, apart from any consuming commit, as an engine before P3
+    /// did; a file such an engine wrote can still hold one, and recovery
+    /// consumes it with `Settlement::Recorded`. Production records a parked
+    /// result only inside the commit that consumes it.
     ///
     /// # Errors
     ///
     /// Serialization or SQL engine errors.
-    pub fn record_parked(
+    #[cfg(any(test, feature = "fault-injection"))]
+    #[doc(hidden)]
+    pub fn record_parked_apart(
         &mut self,
         command_id: &str,
         generation: u64,
         outcome: &Value,
     ) -> Result<bool, CellError> {
-        self.write_tx(|| {
-            let parked = StoreReader::new(&self.conn, &self.model)
-                .with_source_disputes(&self.source_disputes)
-                .pending_command(command_id)?
-                .filter(|row| {
-                    row.queue == norn_kernel::world::outbox::Queue::Parked
-                        && row.command.generation == generation
-                        && row.result.is_none()
-                });
-            let Some(parked) = parked else {
-                return Ok(false);
-            };
-            self.store_result(&parked, command_id, generation, outcome)
-        })
+        self.write_tx(|| self.record_parked_in_tx(command_id, generation, outcome))
+    }
+
+    /// PARKED-1: record the result of a parked command (one the cell resolves
+    /// itself, such as a `norn.decision@1` the cell issued a receipt for) in
+    /// the open transaction. A parked command may complete out of FIFO order,
+    /// but at most once: a second record of the same generation, or of a
+    /// command that is not parked and pending, returns `false` and writes
+    /// nothing.
+    fn record_parked_in_tx(
+        &self,
+        command_id: &str,
+        generation: u64,
+        outcome: &Value,
+    ) -> Result<bool, CellError> {
+        let parked = StoreReader::new(&self.conn, &self.model)
+            .with_source_disputes(&self.source_disputes)
+            .pending_command(command_id)?
+            .filter(|row| {
+                row.queue == norn_kernel::world::outbox::Queue::Parked
+                    && row.command.generation == generation
+                    && row.result.is_none()
+            });
+        let Some(parked) = parked else {
+            return Ok(false);
+        };
+        self.store_result(&parked, command_id, generation, outcome)
     }
 
     /// Record `outcome` as `head`'s result, with its run attempt.
@@ -3770,6 +3781,7 @@ mod identity_history_tests {
         Model, NativeEngine, StoreOptions, Value,
     };
     use crate::model::ModelDefinitionSnapshot;
+    use crate::test_door::TestCommit as _;
     use norn_ir::{
         ComponentNormalization, IdentityRule, KeyName, KeySpec, Normalization, ObjectTypeDef,
         ObjectTypeName, PropertyId, PropertyType,
@@ -3888,9 +3900,7 @@ mod identity_history_tests {
     fn legacy_fixture(path: &Path, steps: usize) -> (CellStore, Model) {
         let current = Model::from_snapshot(&snapshot(1)).expect("current model");
         let mut template = CellStore::open_in_memory(current.clone()).expect("template");
-        template
-            .commit_unchecked(&batch(vec![]))
-            .expect("template receipt");
+        template.commit(&batch(vec![])).expect("template receipt");
         let cell_id = template.cell_id().expect("cell id").expect("bound cell id");
         let template = template.export_record(1).expect("export").expect("record");
         let retained =
@@ -3991,7 +4001,7 @@ mod identity_history_tests {
         )
         .expect("public provisioning");
         store
-            .commit_unchecked(&batch(vec![put("first", "abc")]))
+            .commit(&batch(vec![put("first", "abc")]))
             .expect("live fact");
         let legacy = Model::from_retained_snapshot(&snapshot(17)).expect("legacy projection");
         let legacy_input = definition_input(&legacy);
@@ -4079,7 +4089,7 @@ mod identity_history_tests {
             assert_eq!(rebuilt.read().dump().expect("rebuilt state"), expected);
             let before = rebuilt.read().dump().expect("before refusal");
             assert!(matches!(
-                rebuilt.commit_unchecked(&batch(vec![put("third", "Abc")])),
+                rebuilt.commit(&batch(vec![put("third", "Abc")])),
                 Err(CellError::IdentityCollision { .. })
             ));
             assert_eq!(rebuilt.read().dump().expect("atomic refusal"), before);

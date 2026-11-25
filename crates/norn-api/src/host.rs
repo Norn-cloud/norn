@@ -419,12 +419,12 @@ impl<E: SqlEngine> DevHost<E> {
             workspace: None,
             business_unit: None,
         };
-        let mut bound = request.access.clone();
-        let matches = bound.scope.as_ref() == Some(&physical)
-            && bound.resource.scope == physical
-            && (request.capability != ReadCapability::Population || bound.action_id == "norn.read");
-        bound.scope = Some(physical.clone());
-        bound.resource.scope = physical;
+        let access = request.access;
+        let matches = access.scope() == Some(&physical)
+            && access.resource().scope == physical
+            && (request.capability != ReadCapability::Population
+                || access.action_id() == "norn.read");
+        let bound = access.clone().with_physical_scope(physical);
         let allowed = self
             .authorizer
             .read(&ReadRequest {

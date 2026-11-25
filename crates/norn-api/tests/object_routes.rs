@@ -20,7 +20,8 @@ use norn_cell::engine::NativeEngine;
 // #1485 S6: fixtures write through the kernel path, never the raw door.
 use norn_cell::{CellStore, CommitBatch, MAIN_WORLD, Model, ObjectRecord};
 use norn_kernel::authz::{
-    AccessRequest as PdpRequest, ActorKind, Delegation, PrincipalInput, ResourceInput, ScopeKey,
+    AccessRequest as PdpRequest, ActorKind, Binding, ResourceInput, ScopeKey, UnboundProfile,
+    VerifiedPrincipal,
 };
 use query_support::governed::GovernedCommit as _;
 use query_support::{TYPE, capture_quality, fixture, fixture_writes, put};
@@ -53,11 +54,11 @@ impl Authorizer for Policy {
         Ok(())
     }
     fn read(&self, request: &ReadRequest<'_>) -> Result<(), Refusal> {
-        let actor = request.access.principal.subject_id.as_str();
+        let actor = request.access.principal().subject_id.as_str();
         let hidden = actor == "partial"
             && request.capability == ReadCapability::Values
-            && request.access.resource.id == HIDDEN;
-        let resource = request.access.resource.id.as_str();
+            && request.access.resource().id == HIDDEN;
+        let resource = request.access.resource().id.as_str();
         // Values without row Population, and Population without the quarantined row's Values.
         let withheld = match actor {
             "nopop" => request.capability == ReadCapability::Population && resource == HIDDEN,
@@ -103,18 +104,12 @@ impl ObjectAccess for Mapping {
             workspace: None,
             business_unit: None,
         };
-        Ok(PdpRequest {
-            principal: PrincipalInput {
-                subject_id: actor.into(),
-                actor_kind: ActorKind::User,
-                agent_session_id: None,
-                roles: vec![],
-                attributes: BTreeMap::new(),
-            },
-            scope: Some(key.clone()),
-            capability: format!("fixture.{capability:?}"),
-            action_id: "norn.read".into(),
-            resource: ResourceInput {
+        Ok(PdpRequest::new(
+            &VerifiedPrincipal::new(actor, ActorKind::User, None, vec![], BTreeMap::new()),
+            Some(key.clone()),
+            format!("fixture.{capability:?}"),
+            "norn.read",
+            ResourceInput {
                 object_type: row
                     .map_or(object_type, |row| row.object_type.as_str())
                     .into(),
@@ -122,10 +117,9 @@ impl ObjectAccess for Mapping {
                 scope: key,
                 attributes: BTreeMap::new(),
             },
-            context: BTreeMap::new(),
-            binding: None,
-            delegation: Delegation::Direct,
-        })
+            BTreeMap::new(),
+            Binding::Unbound(UnboundProfile::HostedRead),
+        ))
     }
 }
 

@@ -32,8 +32,8 @@ use norn_cell::Model;
 use norn_ir::access::{AccessCondition, AccessIr, AccessRule, PolicyRoot};
 use norn_ir::{ActionRoot, ArtifactEnvelope, ArtifactKind, IrVersion01, RuntimeValue};
 use norn_kernel::authz::{
-    self, AccessRequest, ActorKind, AttrValue, AuthzSchema, CapabilityGrant, Delegation, Pdp,
-    PdpActionAuthorizer, PdpDecision, PrincipalInput, ResourceInput, ScopeKey,
+    self, AccessRequest, ActorKind, AttrValue, AuthzSchema, Binding, CapabilityGrant, Pdp,
+    PdpActionAuthorizer, PdpDecision, ResourceInput, ScopeKey, UnboundProfile, VerifiedPrincipal,
 };
 use norn_kernel::{ActionAuthorizer, ActionAuthzRequest, ActionDenial};
 use norn_projections::{CedarAttribute, CedarPrincipalAttribute};
@@ -445,27 +445,26 @@ impl ActionPolicy {
                 let permitted = pdp.as_ref().is_ok_and(|pdp| {
                     authz::authorize(
                         pdp,
-                        &AccessRequest {
-                            principal: PrincipalInput {
-                                subject_id: subject.clone(),
-                                actor_kind: ActorKind::User,
-                                agent_session_id: None,
-                                roles: vec![role.to_owned()],
-                                attributes: BTreeMap::new(),
-                            },
-                            scope: Some(self.key.clone()),
-                            capability: action_id.clone(),
-                            action_id: action_id.clone(),
-                            resource: ResourceInput {
+                        &AccessRequest::new(
+                            &VerifiedPrincipal::new(
+                                subject.clone(),
+                                ActorKind::User,
+                                None,
+                                vec![role.to_owned()],
+                                BTreeMap::new(),
+                            ),
+                            Some(self.key.clone()),
+                            action_id,
+                            action_id,
+                            ResourceInput {
                                 object_type: object_type.to_owned(),
                                 id: String::new(),
                                 scope: self.key.clone(),
                                 attributes: BTreeMap::new(),
                             },
-                            context: BTreeMap::new(),
-                            binding: None,
-                            delegation: Delegation::Direct,
-                        },
+                            BTreeMap::new(),
+                            Binding::Unbound(UnboundProfile::HostedAction),
+                        ),
                     )
                     .is_ok()
                 });
@@ -546,27 +545,27 @@ impl ActionPolicy {
         };
         let mut parent_grant_ids = BTreeSet::new();
         for resource_type in matched_types {
-            let explanation = pdp.explain(&AccessRequest {
-                principal: PrincipalInput {
-                    subject_id: caller.subject_id.clone(),
-                    actor_kind,
-                    agent_session_id: None,
-                    roles: caller.roles.clone(),
-                    attributes: principal_attributes.clone(),
-                },
-                scope: Some(self.key.clone()),
-                capability: action_id.to_owned(),
-                action_id: action_id.to_owned(),
-                resource: ResourceInput {
+            let principal = VerifiedPrincipal::new(
+                caller.subject_id.clone(),
+                actor_kind,
+                None,
+                caller.roles.clone(),
+                principal_attributes.clone(),
+            );
+            let explanation = pdp.explain(&AccessRequest::new(
+                &principal,
+                Some(self.key.clone()),
+                action_id,
+                action_id,
+                ResourceInput {
                     object_type: resource_type.clone(),
                     id: String::new(),
                     scope: self.key.clone(),
                     attributes: BTreeMap::new(),
                 },
-                context: BTreeMap::new(),
-                binding: None,
-                delegation: Delegation::Direct,
-            });
+                BTreeMap::new(),
+                Binding::Unbound(UnboundProfile::HostedAction),
+            ));
             if !matches!(explanation.decision, PdpDecision::Allow)
                 || explanation.determining_policies.is_empty()
             {
@@ -648,28 +647,28 @@ impl ActionPolicy {
             BTreeMap::new()
         };
         PdpActionAuthorizer::new(pdp, move |call: &ActionAuthzRequest<'_>| {
-            Ok(AccessRequest {
-                principal: PrincipalInput {
-                    subject_id: call.actor.to_owned(),
-                    actor_kind,
-                    agent_session_id: None,
-                    roles: roles.clone(),
-                    attributes: principal_attributes.clone(),
-                },
-                scope: Some(key.clone()),
-                capability: call.action.action_id.clone(),
-                action_id: call.action.action_id.clone(),
-                resource: ResourceInput {
+            let principal = VerifiedPrincipal::new(
+                call.actor,
+                actor_kind,
+                None,
+                roles.clone(),
+                principal_attributes.clone(),
+            );
+            Ok(AccessRequest::new(
+                &principal,
+                Some(key.clone()),
+                &call.action.action_id,
+                &call.action.action_id,
+                ResourceInput {
                     object_type: call.target.object_type.as_str().to_owned(),
                     id: call.target.key.clone(),
                     scope: key.clone(),
                     attributes: self
                         .resource_values(call.target.object_type.as_str(), call.target_values),
                 },
-                context: BTreeMap::new(),
-                binding: None,
-                delegation: Delegation::Direct,
-            })
+                BTreeMap::new(),
+                Binding::Unbound(UnboundProfile::HostedAction),
+            ))
         })
         .authorize(request)
     }
@@ -682,25 +681,19 @@ pub(crate) fn collection_access_key(
     object_type: &str,
 ) -> AccessRequest {
     let key = key.clone();
-    AccessRequest {
-        principal: PrincipalInput {
-            subject_id: subject.into(),
-            actor_kind: ActorKind::User,
-            agent_session_id: None,
-            roles: vec![],
-            attributes: BTreeMap::new(),
-        },
-        scope: Some(key.clone()),
-        capability: crate::policy::capability_name(capability).into(),
-        action_id: crate::policy::READ_ACTION.into(),
-        resource: ResourceInput {
+    let who = VerifiedPrincipal::new(subject, ActorKind::User, None, vec![], BTreeMap::new());
+    AccessRequest::new(
+        &who,
+        Some(key.clone()),
+        crate::policy::capability_name(capability),
+        crate::policy::READ_ACTION,
+        ResourceInput {
             object_type: object_type.into(),
             id: object_type.into(),
             scope: key,
             attributes: BTreeMap::new(),
         },
-        context: BTreeMap::new(),
-        binding: None,
-        delegation: Delegation::Direct,
-    }
+        BTreeMap::new(),
+        Binding::Unbound(UnboundProfile::HostedRead),
+    )
 }
