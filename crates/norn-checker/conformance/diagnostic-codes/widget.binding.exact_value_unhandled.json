@@ -1,0 +1,7 @@
+{
+  "code": "widget.binding.exact_value_unhandled",
+  "message": "an exact decimal property is rendered by a catalog component that does not declare it handles exact values: {detail}",
+  "severity": "error",
+  "since": "0.2.0",
+  "tier": "T2"
+}

@@ -10651,17 +10651,17 @@ export interface components {
             routes: components["schemas"]["NornIrWidgetRoute"][];
         };
         /**
-         * @description Accessibility behaviours a node requires, named as UI SDK's behaviour
-         *     primitives (`@ui-sdk/core`). They say what the control must do for
-         *     keyboard, focus and assistive technology, never how it looks.
-         * @enum {string}
+         * @description A UI SDK foundation behaviour a node requires, `<area>/<module>` in the
+         *     catalog `norn-ui-checker` generates from the pinned `@ui-sdk/core`. It
+         *     says what the control must do for keyboard, focus and assistive
+         *     technology, never how it looks.
          */
-        NornIrWidgetBehavior: "focus_scope" | "roving_focus" | "typeahead" | "selection" | "popup" | "dismiss" | "drag_and_drop" | "live_region";
+        NornIrWidgetBehavior: string;
         /**
          * @description Every way a call or read the page awaits can end.
          * @enum {string}
          */
-        NornIrWidgetCallOutcome: "accepted" | "refused" | "pending_approval" | "answer_moved" | "network_failure" | "timeout" | "cancelled";
+        NornIrWidgetCallOutcome: "accepted" | "refused" | "pending_approval" | "answer_moved" | "network_failure" | "not_served" | "stale" | "subscription_refused" | "timeout" | "cancelled";
         /**
          * @description One catalog component (UI-CATALOG-1): custom UI in any framework, joined
          *     to Norn only through these typed contracts. A renderer is an
@@ -10684,6 +10684,8 @@ export interface components {
              *     renderers and reviewers): `ui-sdk`, `foldkit`, `solid`, `react`, ...
              */
             framework?: string;
+            /** @description Values it draws faithfully beyond plain ones (a masked value, an exact decimal). */
+            handles?: components["schemas"]["NornIrWidgetValueHandling"][];
             /** @description Human-readable name. */
             label: components["schemas"]["NornIrLocaleText"];
             /** @description The component's own interaction machine; an opaque island has none. */
@@ -10827,9 +10829,16 @@ export interface components {
          * @description An instance of a catalog component (UI-CATALOG-1): its props bound by
          *     ZEN expressions over the page machine's `input.fields`, its declared
          *     events raised as the page machine's `user` events that name this node.
+         *     The entry `ui-sdk:<component>` is that UI SDK primitive at the version
+         *     the checker's catalog pins: props are its options, events its callbacks.
          */
         NornIrWidgetComponentOneOf9: {
             entry: components["schemas"]["NornIrWidgetCatalogRef"];
+            /**
+             * @description Page machine states the layer is open in; one that refuses a
+             *     dismissal there must be waiting, asking or offering Cancel.
+             */
+            heldIn?: string[];
             /** @enum {string} */
             kind: "catalog";
             props?: components["schemas"]["NornIrWidgetComponentOneOf9PropertyProps"];
@@ -11296,6 +11305,11 @@ export interface components {
              * @enum {string}
              */
             category?: "visibility" | "permission" | "precondition" | "conflict" | "invalid" | "limit" | "internal";
+            /**
+             * @description For `refused` only: an error code the awaited action declares. It
+             *     refines its category and never covers it.
+             */
+            code?: string;
             /** @enum {string} */
             kind: "outcome";
             outcome: components["schemas"]["NornIrWidgetCallOutcome"];
@@ -11749,6 +11763,11 @@ export interface components {
         NornIrWidgetUxActionBindingPropertyInputMapping: {
             [key: string]: components["schemas"]["NornIrZenExpression"];
         };
+        /**
+         * @description Values a field renderer declares it draws faithfully.
+         * @enum {string}
+         */
+        NornIrWidgetValueHandling: "masked" | "exact";
         /**
          * @description Scalar value types allowed in page context parameters.
          * @enum {string}

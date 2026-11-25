@@ -29336,27 +29336,7 @@
       },
       "NornIrWidgetBehavior": {
         "type": "string",
-        "description": "Accessibility behaviours a node requires, named as UI SDK's behaviour\nprimitives (`@ui-sdk/core`). They say what the control must do for\nkeyboard, focus and assistive technology, never how it looks.",
-        "enum": [
-          "focus_scope",
-          "roving_focus",
-          "typeahead",
-          "selection",
-          "popup",
-          "dismiss",
-          "drag_and_drop",
-          "live_region"
-        ],
-        "x-enumDescriptions": [
-          "Focus is contained while open and restored on close.",
-          "Arrow keys move focus among items; one tab stop.",
-          "Typing moves to the first matching item.",
-          "Items can be selected and the selection is announced.",
-          "Opens anchored to its invoker.",
-          "Escape and outside press dismiss it.",
-          "Items can be reordered or moved with pointer and keyboard.",
-          "Changes are announced politely."
-        ]
+        "description": "A UI SDK foundation behaviour a node requires, `<area>/<module>` in the\ncatalog `norn-ui-checker` generates from the pinned `@ui-sdk/core`. It\nsays what the control must do for keyboard, focus and assistive\ntechnology, never how it looks."
       },
       "NornIrWidgetCallOutcome": {
         "type": "string",
@@ -29367,6 +29347,9 @@
           "pending_approval",
           "answer_moved",
           "network_failure",
+          "not_served",
+          "stale",
+          "subscription_refused",
           "timeout",
           "cancelled"
         ],
@@ -29375,7 +29358,10 @@
           "The server refused with a coded refusal.",
           "The call waits for an approval decision (HTTP 202, APPROVAL-1).",
           "The read's answer or snapshot moved under it (HTTP 409\n`core.projection.answer_moved`, `object.snapshot_moved`).",
-          "No answer arrived from the server (network failure, 5xx without a\ncoded refusal, route not served).",
+          "No answer arrived (a network failure, a 5xx without a coded refusal).",
+          "The host does not serve the route (a 404, the no-host 503).",
+          "A subscribed read answered, but its live feed lapsed: show the\nsnapshot as of its time, never as current.",
+          "A subscribed read answered, but the server refused its subscription.",
           "The state's declared deadline passed first.",
           "The page cancelled the call."
         ]
@@ -29424,6 +29410,13 @@
           "framework": {
             "type": "string",
             "description": "The framework the implementation is written in (informational, for\nrenderers and reviewers): `ui-sdk`, `foldkit`, `solid`, `react`, ..."
+          },
+          "handles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/NornIrWidgetValueHandling"
+            },
+            "description": "Values it draws faithfully beyond plain ones (a masked value, an exact decimal)."
           },
           "label": {
             "$ref": "#/components/schemas/NornIrLocaleText",
@@ -29867,7 +29860,7 @@
       },
       "NornIrWidgetComponentOneOf9": {
         "type": "object",
-        "description": "An instance of a catalog component (UI-CATALOG-1): its props bound by\nZEN expressions over the page machine's `input.fields`, its declared\nevents raised as the page machine's `user` events that name this node.",
+        "description": "An instance of a catalog component (UI-CATALOG-1): its props bound by\nZEN expressions over the page machine's `input.fields`, its declared\nevents raised as the page machine's `user` events that name this node.\nThe entry `ui-sdk:<component>` is that UI SDK primitive at the version\nthe checker's catalog pins: props are its options, events its callbacks.",
         "required": [
           "kind",
           "entry"
@@ -29875,6 +29868,13 @@
         "properties": {
           "entry": {
             "$ref": "#/components/schemas/NornIrWidgetCatalogRef"
+          },
+          "heldIn": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Page machine states the layer is open in; one that refuses a\ndismissal there must be waiting, asking or offering Cancel."
           },
           "kind": {
             "type": "string",
@@ -31268,6 +31268,10 @@
               "The server failed internally."
             ]
           },
+          "code": {
+            "type": "string",
+            "description": "For `refused` only: an error code the awaited action declares. It\nrefines its category and never covers it."
+          },
           "kind": {
             "type": "string",
             "enum": [
@@ -32492,6 +32496,18 @@
         "additionalProperties": {
           "$ref": "#/components/schemas/NornIrZenExpression"
         }
+      },
+      "NornIrWidgetValueHandling": {
+        "type": "string",
+        "description": "Values a field renderer declares it draws faithfully.",
+        "enum": [
+          "masked",
+          "exact"
+        ],
+        "x-enumDescriptions": [
+          "A marked property's masked or withheld value, shown as such.",
+          "An exact decimal, never rounded through a binary float."
+        ]
       },
       "NornIrWidgetValueType": {
         "type": "string",

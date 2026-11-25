@@ -2560,6 +2560,18 @@
     "fix": "Include the referenced declaration at its exact required identity, kind and version in the effective definition set."
   },
   {
+    "code": "widget.authority.action_outside_binding",
+    "fix": "Declare an action binding for the action and start it with a call of kind \"action\"; never call the action or MCP route as a host operation."
+  },
+  {
+    "code": "widget.binding.exact_value_unhandled",
+    "fix": "Declare handles: [\"exact\"] on the catalog entry that renders numbers, once it never rounds through a binary float, or render the property natively."
+  },
+  {
+    "code": "widget.binding.marked_value_unhandled",
+    "fix": "Declare handles: [\"masked\"] on the catalog entry that renders the field type, once it shows a masked or withheld value as such, or render the property natively."
+  },
+  {
     "code": "widget.catalog.duplicate_entry",
     "fix": "Give every catalog entry its own id."
   },
@@ -2632,6 +2644,14 @@
     "no_fix": "No specific guidance is recorded for this code yet; the message and the reported path say what was refused."
   },
   {
+    "code": "widget.layer.dismissal_refused_without_cause",
+    "fix": "Hold a layer that cannot be dismissed only in pending states; hold an accidental-dismissal lock only in pending states, idle states that ask through onDismissAttempt, or idle confirmations with a Cancel control inside the layer."
+  },
+  {
+    "code": "widget.layer.notification_intrusive",
+    "fix": "Keep toasts and live regions non-modal and never held open, announce them with priority \"polite\", and let them expire or be dismissed."
+  },
+  {
     "code": "widget.lifecycle.assumption_violated",
     "fix": "Handle the lifecycle state the run reaches, or widen the state's assumption."
   },
@@ -2693,7 +2713,11 @@
   },
   {
     "code": "widget.machine.error_without_recovery",
-    "fix": "Add a retry, edit or dismiss transition on a user event, or a timed recovery."
+    "fix": "Add an unguarded Retry or Close transition on a user event; a timer alone is no recovery."
+  },
+  {
+    "code": "widget.machine.failure_without_retry_or_close",
+    "fix": "Give the state an unguarded transition on a user event (Retry or Close), make it an error state with one, or end the page in a terminal state."
   },
   {
     "code": "widget.machine.initial_not_idle",
@@ -2718,6 +2742,10 @@
   {
     "code": "widget.machine.nondeterministic",
     "fix": "Keep one unguarded transition per event and outcome, and guard the others."
+  },
+  {
+    "code": "widget.machine.outcome_code_undeclared",
+    "fix": "Name only an error code the bound action declares in uiEffects.errorCodes, or handle the refusal by its category."
   },
   {
     "code": "widget.machine.outcome_impossible",

@@ -10,7 +10,10 @@
 //! - every `pending` state names the one call or read it awaits, has a deadline, is entered only by
 //!   a transition that starts that call, is left only by its outcome, and handles every outcome the
 //!   server can produce for it with an unguarded transition (`pending_outcome_uncovered`);
-//! - every `error` state has a recovery a person or a deadline drives;
+//! - every `error` state, and every state a failure outcome enters, offers a person Retry or Close
+//!   (a timer alone is no recovery);
+//! - a refusal handler that names an error code names one the awaited action declares; it refines
+//!   its category and never covers it (coverage stays at the seven refusal categories);
 //! - no cycle runs on timers alone (`input_free_cycle`): a loop needs an input;
 //! - for one state and one event, at most one unguarded transition fires (`nondeterministic`);
 //! - guards, assignments and request members type-check against the field record and the event
@@ -66,9 +69,12 @@ pub(super) const NONDETERMINISTIC: &str = "widget.machine.nondeterministic";
 pub(super) const CONTROL_WITHOUT_EVENT: &str = "widget.machine.control_without_event";
 pub(super) const COMPONENT_GUARD_OUTSIDE_CATALOG: &str =
     "widget.machine.component_guard_outside_catalog";
+pub(super) const OUTCOME_CODE_UNDECLARED: &str = "widget.machine.outcome_code_undeclared";
+pub(super) const FAILURE_WITHOUT_RETRY_OR_CLOSE: &str =
+    "widget.machine.failure_without_retry_or_close";
 
 /// Every code these laws can emit.
-pub const CODES: [&str; 26] = [
+pub const CODES: [&str; 28] = [
     DUPLICATE_ID,
     UNKNOWN_REFERENCE,
     INVALID_EVENT,
@@ -95,6 +101,8 @@ pub const CODES: [&str; 26] = [
     NONDETERMINISTIC,
     CONTROL_WITHOUT_EVENT,
     COMPONENT_GUARD_OUTSIDE_CATALOG,
+    OUTCOME_CODE_UNDECLARED,
+    FAILURE_WITHOUT_RETRY_OR_CLOSE,
 ];
 
 const REFUSAL_CATEGORIES: [WidgetRefusalCategory; 7] = [
@@ -113,6 +121,9 @@ pub(super) type OutcomeValue = (WidgetCallOutcome, Option<WidgetRefusalCategory>
 /// Outcome value to the unguarded transitions that take it: `(index, specific)`.
 pub(super) type Covered = BTreeMap<OutcomeValue, Vec<(usize, bool)>>;
 
+/// Action binding id to the error codes its action declares (`ActionUiEffect::Error`).
+pub(crate) type DeclaredCodes = BTreeMap<String, BTreeSet<String>>;
+
 /// The field record and the event payload an expression sees.
 pub(crate) type Env<'e> = (&'e BTreeMap<String, Type>, &'e BTreeMap<String, Type>);
 
@@ -126,15 +137,28 @@ pub(super) struct Finding {
 /// that decide it are the server's to evaluate, not this pass's.
 const INFO: [&str; 1] = [COMPLETION_UNKNOWN];
 
-/// Check the declared machine of every page in one widget's UX contract.
+/// Check the declared machine of every page in one widget's UX contract, without the declared
+/// error codes of its actions (a code-specific handler is then not judged).
 #[must_use]
 pub(crate) fn check(owner: &ArtifactEnvelope, ux: &WidgetUx) -> Vec<Diagnostic> {
+    check_with_codes(owner, ux, None)
+}
+
+/// Check the declared machine of every page in one widget's UX contract against the error codes
+/// its action bindings' actions declare.
+#[must_use]
+pub(crate) fn check_with_codes(
+    owner: &ArtifactEnvelope,
+    ux: &WidgetUx,
+    codes: Option<&DeclaredCodes>,
+) -> Vec<Diagnostic> {
     let mut findings = Vec::new();
     for (index, page) in ux.pages.iter().enumerate() {
         if let Some(machine) = &page.machine {
             let base = format!("/payload/ux/pages/{index}/machine");
             let checker = MachineChecker {
                 ux,
+                codes,
                 in_catalog: false,
                 machine,
                 base: &base,
@@ -150,6 +174,7 @@ pub(crate) fn check(owner: &ArtifactEnvelope, ux: &WidgetUx) -> Vec<Diagnostic> 
             let base = format!("/payload/ux/catalog/{index}/machine");
             let checker = MachineChecker {
                 ux,
+                codes,
                 in_catalog: true,
                 machine,
                 base: &base,
@@ -177,14 +202,18 @@ pub(crate) fn check(owner: &ArtifactEnvelope, ux: &WidgetUx) -> Vec<Diagnostic> 
 }
 
 /// Every outcome value the server can produce for `call`. Approval gates only calls; only reads
-/// can see their answer move. `cancelled` is possible only where the page offers a cancel.
+/// can see their answer move, and only a read of a binding the machine subscribes to can find its
+/// live feed lapsed (`stale`) or its subscription refused. `cancelled` is possible only where the
+/// page offers a cancel.
 pub(super) fn possible_outcomes(
     call: &WidgetMachineCall,
     cancellable: bool,
+    subscribed: bool,
 ) -> BTreeSet<OutcomeValue> {
     let mut values: BTreeSet<OutcomeValue> = [
         (WidgetCallOutcome::Accepted, None),
         (WidgetCallOutcome::NetworkFailure, None),
+        (WidgetCallOutcome::NotServed, None),
         (WidgetCallOutcome::Timeout, None),
     ]
     .into_iter()
@@ -200,12 +229,42 @@ pub(super) fn possible_outcomes(
         }
         WidgetMachineCall::Read { .. } => {
             values.insert((WidgetCallOutcome::AnswerMoved, None));
+            if subscribed {
+                values.insert((WidgetCallOutcome::Stale, None));
+                values.insert((WidgetCallOutcome::SubscriptionRefused, None));
+            }
         }
     }
     if cancellable {
         values.insert((WidgetCallOutcome::Cancelled, None));
     }
     values
+}
+
+/// Whether `call` reads a binding `machine` subscribes to (it has a `subscription` event for it).
+pub(super) fn subscribed(machine: &WidgetMachine, call: &WidgetMachineCall) -> bool {
+    let WidgetMachineCall::Read { binding_id } = call else {
+        return false;
+    };
+    machine.events.iter().any(|event| {
+        matches!(&event.source, WidgetMachineEventSource::Subscription { binding_id: read } if read == binding_id)
+    })
+}
+
+/// Outcomes that end a call without its answer: a person needs Retry or Close after one.
+pub(super) const fn is_failure(outcome: WidgetCallOutcome) -> bool {
+    match outcome {
+        WidgetCallOutcome::Refused
+        | WidgetCallOutcome::NetworkFailure
+        | WidgetCallOutcome::NotServed
+        | WidgetCallOutcome::Timeout
+        | WidgetCallOutcome::SubscriptionRefused => true,
+        WidgetCallOutcome::Accepted
+        | WidgetCallOutcome::PendingApproval
+        | WidgetCallOutcome::AnswerMoved
+        | WidgetCallOutcome::Stale
+        | WidgetCallOutcome::Cancelled => false,
+    }
 }
 
 /// The outcome values one `outcome` event source matches.
@@ -232,6 +291,9 @@ pub(super) fn outcome_name(outcome: WidgetCallOutcome) -> &'static str {
         WidgetCallOutcome::PendingApproval => "pending_approval",
         WidgetCallOutcome::AnswerMoved => "answer_moved",
         WidgetCallOutcome::NetworkFailure => "network_failure",
+        WidgetCallOutcome::NotServed => "not_served",
+        WidgetCallOutcome::Stale => "stale",
+        WidgetCallOutcome::SubscriptionRefused => "subscription_refused",
         WidgetCallOutcome::Timeout => "timeout",
         WidgetCallOutcome::Cancelled => "cancelled",
     }
@@ -263,12 +325,17 @@ fn outcome_payload(outcome: WidgetCallOutcome) -> BTreeMap<String, Type> {
             ("code".to_owned(), Type::text()),
             ("retryable".to_owned(), Type::Bool),
         ]),
+        WidgetCallOutcome::SubscriptionRefused => {
+            BTreeMap::from([("code".to_owned(), Type::text())])
+        }
         WidgetCallOutcome::PendingApproval => {
             BTreeMap::from([("decisionId".to_owned(), Type::text())])
         }
         WidgetCallOutcome::AnswerMoved => BTreeMap::from([("code".to_owned(), Type::text())]),
         WidgetCallOutcome::Accepted
         | WidgetCallOutcome::NetworkFailure
+        | WidgetCallOutcome::NotServed
+        | WidgetCallOutcome::Stale
         | WidgetCallOutcome::Timeout
         | WidgetCallOutcome::Cancelled => BTreeMap::new(),
     }
@@ -291,7 +358,9 @@ pub(super) fn event_payload(event: &WidgetMachineEvent) -> BTreeMap<String, Type
 
 pub(super) fn outcome_of(event: &WidgetMachineEvent) -> Option<OutcomeValue> {
     match &event.source {
-        WidgetMachineEventSource::Outcome { outcome, category } => Some((*outcome, *category)),
+        WidgetMachineEventSource::Outcome {
+            outcome, category, ..
+        } => Some((*outcome, *category)),
         WidgetMachineEventSource::PageOpened
         | WidgetMachineEventSource::User { .. }
         | WidgetMachineEventSource::Subscription { .. }
@@ -355,7 +424,7 @@ pub(crate) fn machine_env(env: Env<'_>) -> Result<ZenTypeEnv, String> {
 /// A page machine as a [`Net`] (LIFE-SOUND-1's core, shared with the backend lifecycles): states
 /// by declaration index, an `idle` state a resting ending and a `terminal` one a good ending, and
 /// one edge per transition between declared states (its label is the transition's index), may when
-/// a guard (the page's or a catalog component's) decides it. Transitions that name an undeclared
+/// a guard (the page's or a catalog component's) decides it, or when it handles one refusal code. Transitions that name an undeclared
 /// state or event, or leave a terminal state, are reported by the laws and left out.
 pub(crate) fn page_net(machine: &WidgetMachine) -> Net {
     let index = |id: &str| machine.states.iter().position(|state| state.state_id == id);
@@ -374,8 +443,12 @@ pub(crate) fn page_net(machine: &WidgetMachine) -> Net {
                 return None;
             }
             let input = !matches!(event.source, WidgetMachineEventSource::Timer { .. });
+            let coded = matches!(
+                &event.source,
+                WidgetMachineEventSource::Outcome { code: Some(_), .. }
+            );
             Some(
-                if transition.guard.is_some() || transition.component_guard.is_some() {
+                if transition.guard.is_some() || transition.component_guard.is_some() || coded {
                     NetEdge::guarded(from, to, label, input)
                 } else {
                     NetEdge::unguarded(from, to, label, input)
@@ -401,8 +474,12 @@ pub(crate) fn page_net(machine: &WidgetMachine) -> Net {
 
 #[derive(Default)]
 pub(super) struct Facts<'m> {
-    /// States with an exit a person or a timer drives.
+    /// States with an unguarded exit a person drives (Retry or Close).
     pub(super) recovers: BTreeSet<&'m str>,
+    /// `(state, refusal code)` to the code-specific transitions that handle it.
+    pub(super) coded: BTreeMap<(&'m str, &'m str), Vec<usize>>,
+    /// States a failure outcome enters, with the transition that enters each.
+    pub(super) failures: BTreeMap<&'m str, usize>,
     /// Pending states that offer a cancel.
     pub(super) cancellable: BTreeSet<&'m str>,
     /// `(state, event)` to unguarded transition indexes, for non-outcome events.
@@ -415,6 +492,8 @@ pub(super) struct Facts<'m> {
 
 pub(super) struct MachineChecker<'m> {
     pub(super) ux: &'m WidgetUx,
+    /// Error codes each action binding's action declares; `None` when they are not known here.
+    pub(super) codes: Option<&'m DeclaredCodes>,
     /// Checking a catalog entry's own machine (component guards allowed).
     pub(super) in_catalog: bool,
     pub(super) machine: &'m WidgetMachine,
@@ -579,9 +658,18 @@ mod tests {
         let read = WidgetMachineCall::Read {
             binding_id: "b".into(),
         };
-        let possible = possible_outcomes(&read, false);
+        let possible = possible_outcomes(&read, false, false);
         assert!(possible.contains(&(WidgetCallOutcome::AnswerMoved, None)));
         assert!(!possible.contains(&(WidgetCallOutcome::PendingApproval, None)));
         assert!(!possible.contains(&(WidgetCallOutcome::Cancelled, None)));
+        assert!(possible.contains(&(WidgetCallOutcome::NotServed, None)));
+        assert!(!possible.contains(&(WidgetCallOutcome::Stale, None)));
+        let live = possible_outcomes(&read, false, true);
+        assert!(live.contains(&(WidgetCallOutcome::Stale, None)));
+        assert!(live.contains(&(WidgetCallOutcome::SubscriptionRefused, None)));
+        let call = WidgetMachineCall::Action {
+            binding_id: "a".into(),
+        };
+        assert!(!possible_outcomes(&call, false, true).contains(&(WidgetCallOutcome::Stale, None)));
     }
 }

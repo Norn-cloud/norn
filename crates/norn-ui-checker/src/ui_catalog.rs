@@ -255,6 +255,16 @@ fn check_entries(ux: &WidgetUx, findings: &mut Vec<Finding>) {
                 message: format!("catalog entry `{}` is declared twice", entry.entry_id),
             });
         }
+        if crate::ui_sdk::component(&entry.entry_id).is_some() {
+            findings.push(Finding {
+                code: DUPLICATE_ENTRY,
+                pointer: format!("{pointer}/entryId"),
+                message: format!(
+                    "`{}` would shadow a UI SDK primitive: `ui-sdk:` names the pinned catalog's",
+                    entry.entry_id
+                ),
+            });
+        }
         if entry.trust == WidgetTrust::OpaqueIsland && entry.machine.is_some() {
             findings.push(Finding {
                 code: ISLAND_MACHINE,
@@ -294,6 +304,10 @@ fn resolve(
             .cloned()
     };
     match &reference.widget {
+        // `ui-sdk:<component>` names the pinned UI SDK primitive, never a declared entry.
+        None if crate::ui_sdk::component(&reference.entry_id).is_some() => {
+            crate::ui_sdk::entry(&reference.entry_id)
+        }
         None => find(&ux.catalog),
         Some(widget) => composed(widget).and_then(|other| find(&other.catalog)),
     }
@@ -308,7 +322,7 @@ fn place(
     placed: &mut BTreeMap<String, (String, WidgetCatalogEntry)>,
     findings: &mut Vec<Finding>,
 ) {
-    if let WidgetComponent::Catalog { entry, props } = &node.component {
+    if let WidgetComponent::Catalog { entry, props, .. } = &node.component {
         match resolve(ux, composed, entry) {
             None => findings.push(Finding {
                 code: UNKNOWN_ENTRY,

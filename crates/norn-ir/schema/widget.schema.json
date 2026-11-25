@@ -422,49 +422,8 @@
       ]
     },
     "WidgetBehavior": {
-      "description": "Accessibility behaviours a node requires, named as UI SDK's behaviour\nprimitives (`@ui-sdk/core`). They say what the control must do for\nkeyboard, focus and assistive technology, never how it looks.",
-      "oneOf": [
-        {
-          "description": "Focus is contained while open and restored on close.",
-          "type": "string",
-          "const": "focus_scope"
-        },
-        {
-          "description": "Arrow keys move focus among items; one tab stop.",
-          "type": "string",
-          "const": "roving_focus"
-        },
-        {
-          "description": "Typing moves to the first matching item.",
-          "type": "string",
-          "const": "typeahead"
-        },
-        {
-          "description": "Items can be selected and the selection is announced.",
-          "type": "string",
-          "const": "selection"
-        },
-        {
-          "description": "Opens anchored to its invoker.",
-          "type": "string",
-          "const": "popup"
-        },
-        {
-          "description": "Escape and outside press dismiss it.",
-          "type": "string",
-          "const": "dismiss"
-        },
-        {
-          "description": "Items can be reordered or moved with pointer and keyboard.",
-          "type": "string",
-          "const": "drag_and_drop"
-        },
-        {
-          "description": "Changes are announced politely.",
-          "type": "string",
-          "const": "live_region"
-        }
-      ]
+      "description": "A UI SDK foundation behaviour a node requires, `<area>/<module>` in the\ncatalog `norn-ui-checker` generates from the pinned `@ui-sdk/core`. It\nsays what the control must do for keyboard, focus and assistive\ntechnology, never how it looks.",
+      "type": "string"
     },
     "WidgetCallOutcome": {
       "description": "Every way a call or read the page awaits can end.",
@@ -490,9 +449,24 @@
           "const": "answer_moved"
         },
         {
-          "description": "No answer arrived from the server (network failure, 5xx without a\ncoded refusal, route not served).",
+          "description": "No answer arrived (a network failure, a 5xx without a coded refusal).",
           "type": "string",
           "const": "network_failure"
+        },
+        {
+          "description": "The host does not serve the route (a 404, the no-host 503).",
+          "type": "string",
+          "const": "not_served"
+        },
+        {
+          "description": "A subscribed read answered, but its live feed lapsed: show the\nsnapshot as of its time, never as current.",
+          "type": "string",
+          "const": "stale"
+        },
+        {
+          "description": "A subscribed read answered, but the server refused its subscription.",
+          "type": "string",
+          "const": "subscription_refused"
         },
         {
           "description": "The state's declared deadline passed first.",
@@ -535,6 +509,13 @@
         "framework": {
           "description": "The framework the implementation is written in (informational, for\nrenderers and reviewers): `ui-sdk`, `foldkit`, `solid`, `react`, ...",
           "type": "string"
+        },
+        "handles": {
+          "description": "Values it draws faithfully beyond plain ones (a masked value, an exact decimal).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/WidgetValueHandling"
+          }
         },
         "label": {
           "description": "Human-readable name.",
@@ -835,11 +816,18 @@
           ]
         },
         {
-          "description": "An instance of a catalog component (UI-CATALOG-1): its props bound by\nZEN expressions over the page machine's `input.fields`, its declared\nevents raised as the page machine's `user` events that name this node.",
+          "description": "An instance of a catalog component (UI-CATALOG-1): its props bound by\nZEN expressions over the page machine's `input.fields`, its declared\nevents raised as the page machine's `user` events that name this node.\nThe entry `ui-sdk:<component>` is that UI SDK primitive at the version\nthe checker's catalog pins: props are its options, events its callbacks.",
           "type": "object",
           "properties": {
             "entry": {
               "$ref": "#/$defs/WidgetCatalogRef"
+            },
+            "heldIn": {
+              "description": "Page machine states the layer is open in; one that refuses a\ndismissal there must be waiting, asking or offering Cancel.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
             },
             "kind": {
               "type": "string",
@@ -2125,6 +2113,10 @@
               "description": "For `refused` only: the refusal category matched. Omitted, it\nmatches every category.",
               "$ref": "#/$defs/WidgetRefusalCategory"
             },
+            "code": {
+              "description": "For `refused` only: an error code the awaited action declares. It\nrefines its category and never covers it.",
+              "type": "string"
+            },
             "kind": {
               "type": "string",
               "const": "outcome"
@@ -3213,6 +3205,21 @@
         "inputMapping",
         "inputs",
         "requiredCapability"
+      ]
+    },
+    "WidgetValueHandling": {
+      "description": "Values a field renderer declares it draws faithfully.",
+      "oneOf": [
+        {
+          "description": "A marked property's masked or withheld value, shown as such.",
+          "type": "string",
+          "const": "masked"
+        },
+        {
+          "description": "An exact decimal, never rounded through a binary float.",
+          "type": "string",
+          "const": "exact"
+        }
       ]
     },
     "WidgetValueType": {
