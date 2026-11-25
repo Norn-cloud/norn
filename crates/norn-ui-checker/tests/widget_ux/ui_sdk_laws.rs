@@ -269,17 +269,21 @@ fn l1_a_control_that_starts_the_call_is_not_cancel() {
     );
 }
 
-/// The layer's own `onOpenChange`, raised as `confirm-close`.
-fn open_change(machine: &mut Value) {
-    machine
-        .at_mut("events")
-        .as_array_mut()
-        .req("events")
-        .push(json!({
+/// A layer held in `confirming` with no Cancel, whose own `onOpenChange` (raised as
+/// `confirm-close`) leads back to `browsing`.
+fn closed_by_open_change(entry: &str) -> Vec<(String, String, String)> {
+    layer_codes(layered(entry, &json!({}), &json!(["confirming"]), |m| {
+        without(m, "confirm-cancel");
+        m.at_mut("events").as_array_mut().req("events").push(json!({
             "eventId": "confirm-close",
             "source": { "kind": "user", "nodeId": "confirm-layer", "emits": "onOpenChange" },
             "payload": [{ "fieldId": "value", "type": "boolean", "required": true }]
         }));
+        push_transition(
+            m,
+            json!({ "transitionId": "confirm-close", "from": "confirming", "on": "confirm-close", "target": "browsing" }),
+        );
+    }))
 }
 
 #[test]
@@ -294,41 +298,10 @@ fn l1_a_held_layer_that_refuses_nothing_still_needs_a_way_out() {
     ));
     assert_refuses(&found, LAYER, "is held open in `confirming`");
     // Admitted: the same dialog whose own `onOpenChange` (Escape, an outside press, Close) leaves.
-    let close = |entry: &str| {
-        layer_codes(layered(entry, &json!({}), &json!(["confirming"]), |m| {
-            without(m, "confirm-cancel");
-            open_change(m);
-            push_transition(
-                m,
-                json!({ "transitionId": "confirm-close", "from": "confirming", "on": "confirm-close", "target": "browsing" }),
-            );
-        }))
-    };
-    let found = close("ui-sdk:dialog");
+    let found = closed_by_open_change("ui-sdk:dialog");
     assert_admits(&found, LAYER);
     assert_admits(&found, "widget.catalog.unknown_event");
     assert_admits(&found, "widget.catalog.event_payload_mismatch");
-    // Admitted: an alert dialog closes on Escape too, so its `onOpenChange` is a way out.
-    assert_admits(&close("ui-sdk:alert-dialog"), LAYER);
-    // Refused: an alert dialog whose only exit is `onDismissAttempt`. It refuses only an outside
-    // press or a swipe, never Escape, so a keyboard user never raises it.
-    let found = layer_codes(layered(
-        "ui-sdk:alert-dialog",
-        &json!({}),
-        &json!(["confirming"]),
-        |m| {
-            without(m, "confirm-cancel");
-            push_transition(
-                m,
-                json!({ "transitionId": "confirm-ask", "from": "confirming", "on": "confirm-ask", "target": "browsing" }),
-            );
-        },
-    ));
-    assert_refuses(
-        &found,
-        LAYER,
-        "locks out an outside press or swipe in `confirming`",
-    );
     // Refused: a plain dialog held in an error state whose only exit is outside the layer.
     let failed = |exit: Option<Value>| {
         layer_codes(layered(
@@ -350,6 +323,31 @@ fn l1_a_held_layer_that_refuses_nothing_still_needs_a_way_out() {
         )),
         LAYER,
     );
+}
+
+#[test]
+fn l1_a_way_out_is_the_event_escape_raises() {
+    // Refused: an alert dialog whose only exit is `onDismissAttempt`. It refuses only an outside
+    // press or a swipe, never Escape, so a keyboard user never raises it.
+    let found = layer_codes(layered(
+        "ui-sdk:alert-dialog",
+        &json!({}),
+        &json!(["confirming"]),
+        |m| {
+            without(m, "confirm-cancel");
+            push_transition(
+                m,
+                json!({ "transitionId": "confirm-ask", "from": "confirming", "on": "confirm-ask", "target": "browsing" }),
+            );
+        },
+    ));
+    assert_refuses(
+        &found,
+        LAYER,
+        "locks out an outside press or swipe in `confirming`",
+    );
+    // Admitted: Escape closes an alert dialog and raises `onOpenChange`, which leaves.
+    assert_admits(&closed_by_open_change("ui-sdk:alert-dialog"), LAYER);
 }
 
 #[test]
